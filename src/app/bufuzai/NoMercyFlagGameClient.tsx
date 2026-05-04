@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import NoMercyFlagIcon from "@/components/NoMercyFlagIcon";
 
 type Country = {
@@ -25,6 +25,9 @@ type TrayTile = {
 
 type GameStatus = "playing" | "won" | "failed";
 type TileSkin = "classic" | "passport" | "night";
+type AppScreen = "home" | "game" | "growth" | "skins" | "social" | "multiplayer";
+type PlayMode = "campaign" | "dailyHell" | "multiplayer";
+type Difficulty = "easy" | "normal" | "hard" | "hell";
 
 type ProfileState = {
   level: number;
@@ -50,6 +53,75 @@ const STORAGE_KEY = "faolla:bufuzai-flag-game:v1";
 const BOARD_COLS = 8;
 const BOARD_ROWS = 8;
 const MAX_TRAY = 7;
+const DIFFICULTY_CONFIG: Record<
+  Difficulty,
+  {
+    label: string;
+    subtitle: string;
+    seedOffset: number;
+    baseGroups: number;
+    levelScale: number;
+    maxGroups: number;
+    layers: number;
+    thresholdBase: number;
+    thresholdStep: number;
+    edgePenalty: number;
+    trayBonus: number;
+  }
+> = {
+  easy: {
+    label: "简单",
+    subtitle: "国旗少，覆盖浅，适合热身。",
+    seedOffset: 101,
+    baseGroups: 8,
+    levelScale: 1.2,
+    maxGroups: 18,
+    layers: 4,
+    thresholdBase: 0.62,
+    thresholdStep: 0.14,
+    edgePenalty: 0.14,
+    trayBonus: 1,
+  },
+  normal: {
+    label: "中等",
+    subtitle: "标准闯关节奏。",
+    seedOffset: 307,
+    baseGroups: 10,
+    levelScale: 2,
+    maxGroups: 24,
+    layers: 5,
+    thresholdBase: 0.72,
+    thresholdStep: 0.12,
+    edgePenalty: 0.1,
+    trayBonus: 0,
+  },
+  hard: {
+    label: "困难",
+    subtitle: "覆盖更深，槽位更紧。",
+    seedOffset: 701,
+    baseGroups: 14,
+    levelScale: 2.2,
+    maxGroups: 28,
+    layers: 6,
+    thresholdBase: 0.77,
+    thresholdStep: 0.1,
+    edgePenalty: 0.08,
+    trayBonus: 0,
+  },
+  hell: {
+    label: "地狱",
+    subtitle: "每天一关，极高难度。",
+    seedOffset: 1201,
+    baseGroups: 24,
+    levelScale: 1.4,
+    maxGroups: 36,
+    layers: 7,
+    thresholdBase: 0.84,
+    thresholdStep: 0.075,
+    edgePenalty: 0.04,
+    trayBonus: -1,
+  },
+};
 const SKIN_LABELS: Record<TileSkin, string> = {
   classic: "经典白牌",
   passport: "护照蓝牌",
@@ -145,16 +217,36 @@ function shuffleWithSeed<T>(items: T[], seed: number) {
   return copy;
 }
 
+function hashString(input: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return Math.abs(hash);
+}
+
+function getDailyHellSeed() {
+  const today = new Date();
+  const key = `${today.getFullYear()}-${today.getMonth() + 1}-${today.getDate()}`;
+  return hashString(`bufuzai-daily-hell-${key}`);
+}
+
+function createRoomCode() {
+  return `BF${Math.floor(100000 + Math.random() * 900000)}`;
+}
+
 function countryByCode(code: string) {
   return countries.find((country) => country.code === code) ?? countries[0];
 }
 
-function buildLevelTiles(level: number, reroll = 0): FlagTile[] {
-  const seed = level * 911 + reroll * 1013;
+function buildLevelTiles(level: number, reroll = 0, difficulty: Difficulty = "normal", seedOverride?: number): FlagTile[] {
+  const config = DIFFICULTY_CONFIG[difficulty];
+  const seed = seedOverride ?? level * 911 + reroll * 1013 + config.seedOffset;
   const rng = createRng(seed);
-  const groupCount = Math.min(10 + level * 2, 24);
+  const groupCount = Math.min(Math.round(config.baseGroups + level * config.levelScale), config.maxGroups);
   const preferred = countries.filter((country) => country.region !== "world");
-  const pool = level <= 6 ? preferred : countries;
+  const pool = level <= 6 && difficulty !== "hell" ? preferred : countries;
   const selected = shuffleWithSeed(pool, seed).slice(0, groupCount);
   const codes = shuffleWithSeed(
     selected.flatMap((country) => [country.code, country.code, country.code]),
@@ -162,11 +254,11 @@ function buildLevelTiles(level: number, reroll = 0): FlagTile[] {
   );
 
   const slots: Array<{ x: number; y: number; z: number }> = [];
-  for (let z = 0; z < 5; z += 1) {
+  for (let z = 0; z < config.layers; z += 1) {
     for (let y = 0; y < BOARD_ROWS; y += 1) {
       for (let x = 0; x < BOARD_COLS; x += 1) {
         const edge = x === 0 || y === 0 || x === BOARD_COLS - 1 || y === BOARD_ROWS - 1;
-        const threshold = Math.max(0.18, 0.72 - z * 0.12 - (edge ? 0.1 : 0));
+        const threshold = Math.max(0.16, config.thresholdBase - z * config.thresholdStep - (edge ? config.edgePenalty : 0));
         if (rng() < threshold) {
           slots.push({
             x: x + (z % 2) * 0.28,
@@ -260,8 +352,14 @@ function findHintTile(tray: TrayTile[], openTiles: FlagTile[]) {
 }
 
 export default function NoMercyFlagGameClient({ subtitle = "游戏大厅", lobbyHref = "/game-lobby" }: NoMercyFlagGameClientProps) {
+  const [screen, setScreen] = useState<AppScreen>("home");
+  const [playMode, setPlayMode] = useState<PlayMode>("campaign");
+  const [difficulty, setDifficulty] = useState<Difficulty>("normal");
+  const [currentSeed, setCurrentSeed] = useState<number | undefined>(undefined);
+  const [modeTitle, setModeTitle] = useState("闯关模式");
   const [profile, setProfile] = useState<ProfileState>(defaultProfile);
-  const [tiles, setTiles] = useState<FlagTile[]>(() => buildLevelTiles(1));
+  const [profileLoaded, setProfileLoaded] = useState(false);
+  const [tiles, setTiles] = useState<FlagTile[]>(() => buildLevelTiles(1, 0, "normal"));
   const [tray, setTray] = useState<TrayTile[]>([]);
   const [status, setStatus] = useState<GameStatus>("playing");
   const [reroll, setReroll] = useState(0);
@@ -269,19 +367,24 @@ export default function NoMercyFlagGameClient({ subtitle = "游戏大厅", lobby
   const [message, setMessage] = useState("点击未被压住的国旗，槽内三张相同会自动消除。");
   const [challengeCode, setChallengeCode] = useState("FLAG-0827");
   const [shareCopied, setShareCopied] = useState(false);
+  const [roomCode, setRoomCode] = useState(() => createRoomCode());
+  const [roomInput, setRoomInput] = useState("");
+  const [roomDifficulty, setRoomDifficulty] = useState<Difficulty>("normal");
+  const [roomPlayers, setRoomPlayers] = useState(2);
   const hintTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     const storedProfile = readStoredProfile();
     setProfile(storedProfile);
-    setTiles(buildLevelTiles(storedProfile.level));
+    setTiles(buildLevelTiles(storedProfile.level, 0, "normal"));
+    setProfileLoaded(true);
   }, []);
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
+    if (profileLoaded && typeof window !== "undefined") {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(profile));
     }
-  }, [profile]);
+  }, [profile, profileLoaded]);
 
   useEffect(() => {
     return () => {
@@ -295,16 +398,44 @@ export default function NoMercyFlagGameClient({ subtitle = "游戏大厅", lobby
   const progress = tiles.length > 0 ? Math.round(((tiles.length - remaining) / tiles.length) * 100) : 0;
   const advice = getAdvice(tray, openTiles, remaining);
   const xpTarget = 180 + profile.level * 30;
-  const trayLimit = profile.level >= 5 ? MAX_TRAY + 1 : MAX_TRAY;
+  const trayLimit = Math.max(5, MAX_TRAY + (profile.level >= 5 ? 1 : 0) + DIFFICULTY_CONFIG[difficulty].trayBonus);
 
-  const startLevel = useCallback((nextLevel: number, nextReroll = 0) => {
+  const startLevel = useCallback((nextLevel: number, nextReroll = 0, options?: { difficulty?: Difficulty; mode?: PlayMode; seed?: number; title?: string }) => {
     const normalizedLevel = Math.max(1, nextLevel);
-    setTiles(buildLevelTiles(normalizedLevel, nextReroll));
+    const nextDifficulty = options?.difficulty ?? difficulty;
+    setDifficulty(nextDifficulty);
+    setPlayMode(options?.mode ?? "campaign");
+    setCurrentSeed(options?.seed);
+    setModeTitle(options?.title ?? "闯关模式");
+    setTiles(buildLevelTiles(normalizedLevel, nextReroll, nextDifficulty, options?.seed));
     setTray([]);
     setStatus("playing");
     setHintId("");
-    setMessage(`第 ${normalizedLevel} 关开始，先观察上层可点国旗。`);
-  }, []);
+    setScreen("game");
+    setMessage(`${options?.title ?? "闯关模式"}开始，先观察上层可点国旗。`);
+  }, [difficulty]);
+
+  const startCampaign = useCallback(() => {
+    startLevel(profile.level, reroll, { difficulty: "normal", mode: "campaign", title: `闯关模式 · 第 ${profile.level} 关` });
+  }, [profile.level, reroll, startLevel]);
+
+  const startDailyHell = useCallback(() => {
+    const seed = getDailyHellSeed();
+    startLevel(30, 0, { difficulty: "hell", mode: "dailyHell", seed, title: "地狱模式 · 今日一关" });
+  }, [startLevel]);
+
+  const startMultiplayerRace = useCallback(() => {
+    const normalizedCode = (roomInput.trim() || roomCode).toUpperCase();
+    const seed = hashString(`bufuzai-room-${normalizedCode}-${roomDifficulty}`);
+    setRoomCode(normalizedCode);
+    setRoomInput("");
+    startLevel(roomDifficulty === "easy" ? 8 : roomDifficulty === "normal" ? 16 : roomDifficulty === "hard" ? 26 : 36, 0, {
+      difficulty: roomDifficulty,
+      mode: "multiplayer",
+      seed,
+      title: `多人竞赛 · ${DIFFICULTY_CONFIG[roomDifficulty].label}`,
+    });
+  }, [roomCode, roomDifficulty, roomInput, startLevel]);
 
   const unlockProgress = useCallback((rewardXp: number, rewardCoins: number) => {
     setProfile((current) => {
@@ -438,15 +569,20 @@ export default function NoMercyFlagGameClient({ subtitle = "游戏大厅", lobby
   }, []);
 
   const nextLevel = useCallback(() => {
+    if (playMode !== "campaign") {
+      setScreen("home");
+      return;
+    }
     setProfile((current) => ({ ...current, bestLevel: Math.max(current.bestLevel, current.level + 1), level: current.level + 1 }));
-    startLevel(profile.level + 1, reroll);
-  }, [profile.level, reroll, startLevel]);
+    startLevel(profile.level + 1, reroll, { difficulty: "normal", mode: "campaign", title: `闯关模式 · 第 ${profile.level + 1} 关` });
+  }, [playMode, profile.level, reroll, startLevel]);
 
   const restart = useCallback(() => {
-    const nextReroll = reroll + 1;
+    const nextReroll = currentSeed === undefined ? reroll + 1 : reroll;
     setReroll(nextReroll);
-    startLevel(profile.level, nextReroll);
-  }, [profile.level, reroll, startLevel]);
+    const level = playMode === "dailyHell" ? 30 : playMode === "multiplayer" ? (difficulty === "easy" ? 8 : difficulty === "normal" ? 16 : difficulty === "hard" ? 26 : 36) : profile.level;
+    startLevel(level, nextReroll, { difficulty, mode: playMode, seed: currentSeed, title: modeTitle });
+  }, [currentSeed, difficulty, modeTitle, playMode, profile.level, reroll, startLevel]);
 
   const share = useCallback(async () => {
     const text = `不服再试｜第 ${profile.level} 关｜进度 ${progress}%｜公会 ${profile.guild}`;
@@ -472,193 +608,337 @@ export default function NoMercyFlagGameClient({ subtitle = "游戏大厅", lobby
         : "border-slate-200 bg-white text-slate-950";
 
   return (
-    <main className="min-h-screen bg-[#eef3ef] px-3 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-[calc(env(safe-area-inset-top)+0.75rem)] text-slate-950">
-      <div className="mx-auto grid max-w-7xl gap-3 lg:grid-cols-[minmax(0,1fr)_360px]">
-        <section className="grid gap-3">
-          <header className="flex items-center justify-between gap-3 rounded-[22px] border border-slate-200 bg-white px-4 py-3 shadow-[0_12px_26px_rgba(15,23,42,0.08)]">
-            <div className="flex min-w-0 items-center gap-3">
-              <span className="grid h-12 w-12 shrink-0 place-items-center rounded-[16px] bg-teal-700 text-white">
-                <NoMercyFlagIcon />
-              </span>
-              <div className="min-w-0">
-                <h1 className="truncate text-2xl font-black">不服再试</h1>
-                <div className="truncate text-xs text-slate-500">{subtitle}</div>
-              </div>
-            </div>
-            <button type="button" className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 active:scale-95" onClick={returnToLobby}>
-              返回大厅
-            </button>
-          </header>
-
-          <section className="rounded-[22px] border border-slate-200 bg-white p-3 shadow-[0_12px_26px_rgba(15,23,42,0.08)]">
-            <div className="grid grid-cols-4 gap-2 text-center text-xs font-bold text-slate-500">
-              <div className="rounded-2xl bg-slate-50 px-2 py-2">
-                <div>关卡</div>
-                <div className="mt-1 text-lg font-black text-slate-950">{profile.level}</div>
-              </div>
-              <div className="rounded-2xl bg-slate-50 px-2 py-2">
-                <div>进度</div>
-                <div className="mt-1 text-lg font-black text-teal-700">{progress}%</div>
-              </div>
-              <div className="rounded-2xl bg-slate-50 px-2 py-2">
-                <div>金币</div>
-                <div className="mt-1 text-lg font-black text-amber-600">{profile.coins}</div>
-              </div>
-              <div className="rounded-2xl bg-slate-50 px-2 py-2">
-                <div>槽位</div>
-                <div className="mt-1 text-lg font-black text-slate-950">{tray.length}/{trayLimit}</div>
-              </div>
-            </div>
-            <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
-              <div className="h-full rounded-full bg-teal-600" style={{ width: `${progress}%` }} />
-            </div>
-          </section>
-
-          <section className="relative min-h-[430px] overflow-hidden rounded-[22px] border border-slate-200 bg-[radial-gradient(circle_at_50%_20%,#ffffff,#dce9e1)] p-3 shadow-inner sm:min-h-[540px]">
-            <div className="absolute left-3 top-3 z-20 rounded-full bg-white/85 px-3 py-1 text-xs font-bold text-slate-600 shadow-sm">
-              可点 {openTiles.length} 张 · 剩余 {remaining} 张
-            </div>
-            {tiles.map((tile) => {
-              if (tile.removed || tray.some((item) => item.id === tile.id)) return null;
-              const country = countryByCode(tile.countryCode);
-              const open = isTileOpen(tile, tiles, tray);
-              return (
-                <button
-                  key={tile.id}
-                  type="button"
-                  className={`absolute flex h-[42px] w-[58px] touch-manipulation flex-col items-center justify-center rounded-xl border shadow-[0_8px_18px_rgba(15,23,42,0.16)] transition sm:h-[58px] sm:w-[78px] ${
-                    open ? `${skinClass} active:scale-95` : "border-slate-300 bg-slate-200 text-slate-400"
-                  } ${hintId === tile.id ? "ring-4 ring-amber-300" : ""}`}
-                  style={{
-                    left: `${4 + (tile.x / (BOARD_COLS - 1)) * 84}%`,
-                    top: `${8 + (tile.y / (BOARD_ROWS - 1)) * 76}%`,
-                    zIndex: 10 + tile.z,
-                    transform: `translate(-50%, -50%) translate(${tile.z * 4}px, ${tile.z * -3}px)`,
-                  }}
-                  onClick={() => selectTile(tile)}
-                >
-                  <img className={`h-5 w-8 rounded object-cover sm:h-7 sm:w-11 ${open ? "" : "grayscale"}`} src={`https://flagcdn.com/w80/${country.code}.png`} alt={`${country.name}国旗`} draggable={false} />
-                  <span className="mt-0.5 max-w-full truncate px-1 text-[10px] font-black sm:text-xs">{country.name}</span>
-                </button>
-              );
-            })}
-            {status !== "playing" ? (
-              <div className="absolute inset-0 z-40 grid place-items-center bg-slate-950/60 p-4">
-                <div className="w-full max-w-sm rounded-[24px] bg-white p-4 text-center shadow-[0_24px_60px_rgba(0,0,0,0.28)]">
-                  <div className="text-2xl font-black">{status === "won" ? "通关" : "还差一点"}</div>
-                  <div className="mt-2 text-sm leading-6 text-slate-500">{message}</div>
-                  <div className="mt-4 grid gap-2">
-                    {status === "won" ? (
-                      <button type="button" className="rounded-2xl bg-teal-700 px-4 py-3 text-sm font-black text-white active:scale-95" onClick={nextLevel}>
-                        下一关
-                      </button>
-                    ) : (
-                      <button type="button" className="rounded-2xl bg-rose-600 px-4 py-3 text-sm font-black text-white active:scale-95" onClick={reviveByAd}>
-                        广告复活
-                      </button>
-                    )}
-                    <button type="button" className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-black text-slate-700 active:scale-95" onClick={restart}>
-                      不服再试
-                    </button>
-                  </div>
+    <main className="min-h-dvh overscroll-none bg-[#07140f] text-slate-950">
+      <div className="mx-auto flex min-h-dvh w-full max-w-[480px] flex-col bg-[#eef3ef] px-3 pb-[calc(env(safe-area-inset-bottom)+0.85rem)] pt-[calc(env(safe-area-inset-top)+0.75rem)]">
+        {screen === "home" ? (
+          <>
+            <header className="flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-3">
+                <span className="grid h-14 w-14 shrink-0 place-items-center rounded-[18px] bg-teal-700 text-white shadow-[0_14px_28px_rgba(15,118,110,0.26)]">
+                  <NoMercyFlagIcon />
+                </span>
+                <div className="min-w-0">
+                  <h1 className="truncate text-2xl font-black">不服再试</h1>
+                  <div className="truncate text-xs font-semibold text-slate-500">{subtitle}</div>
                 </div>
               </div>
-            ) : null}
-          </section>
+              <button type="button" className="shrink-0 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 active:scale-95" onClick={returnToLobby}>
+                大厅
+              </button>
+            </header>
 
-          <section className="rounded-[22px] border border-slate-200 bg-white p-3 shadow-[0_12px_26px_rgba(15,23,42,0.08)]">
-            <div className="flex items-center justify-between gap-3">
-              <div className="text-sm font-black">收集槽</div>
-              <div className="text-xs font-semibold text-slate-500">{message}</div>
-            </div>
-            <div className="mt-3 grid grid-cols-7 gap-1.5">
-              {Array.from({ length: trayLimit }).map((_, index) => {
-                const item = tray[index];
-                const country = item ? countryByCode(item.countryCode) : null;
-                return (
-                  <div key={`tray-${index}`} className="grid h-[54px] place-items-center rounded-xl border border-slate-200 bg-slate-50 sm:h-[68px]">
-                    {country ? (
-                      <div className="flex flex-col items-center">
-                        <img className="h-5 w-8 rounded object-cover sm:h-6 sm:w-10" src={`https://flagcdn.com/w80/${country.code}.png`} alt={`${country.name}国旗`} draggable={false} />
-                        <span className="mt-0.5 max-w-full truncate px-1 text-[10px] font-black">{country.name}</span>
-                      </div>
-                    ) : (
-                      <span className="text-xs font-bold text-slate-300">{index + 1}</span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        </section>
+            <section className="mt-4 grid grid-cols-3 gap-2">
+              <HomeEntry label="成长系统" value={`Lv.${profile.level}`} onClick={() => setScreen("growth")} />
+              <HomeEntry label="皮肤" value={SKIN_LABELS[profile.skin]} onClick={() => setScreen("skins")} />
+              <HomeEntry label="社交" value={profile.guild} onClick={() => setScreen("social")} />
+            </section>
 
-        <aside className="grid gap-3">
-          <section className="rounded-[22px] border border-slate-200 bg-white p-4 shadow-[0_12px_26px_rgba(15,23,42,0.08)]">
-            <div className="text-sm font-black">策略建议</div>
-            <div className="mt-2 rounded-2xl bg-teal-50 px-3 py-3 text-sm leading-6 text-teal-900">{advice}</div>
-            <div className="mt-3 grid grid-cols-4 gap-2">
-              <ToolButton label="提示" count={profile.hints} onClick={useHint} disabled={profile.hints <= 0 || status !== "playing"} />
-              <ToolButton label="洗牌" count={profile.shuffles} onClick={useShuffle} disabled={profile.shuffles <= 0 || status !== "playing"} />
-              <ToolButton label="撤回" count={profile.undos} onClick={useUndo} disabled={profile.undos <= 0 || tray.length === 0 || status !== "playing"} />
-              <ToolButton label="整理" count={profile.clears} onClick={useClearTray} disabled={profile.clears <= 0 || tray.length === 0} />
-            </div>
-          </section>
+            <section className="flex flex-1 flex-col justify-center gap-3 py-5">
+              <ModeButton
+                title="闯关模式"
+                subtitle={`第 ${profile.level} 关开始，难度会逐关提高`}
+                meta={`最高 ${profile.bestLevel} · 通关 ${profile.wins}`}
+                tone="bg-teal-700 text-white shadow-[0_18px_40px_rgba(15,118,110,0.3)]"
+                onClick={startCampaign}
+              />
+              <ModeButton
+                title="地狱模式"
+                subtitle="每天只有一关，国旗更多、覆盖更深"
+                meta="今日挑战 · 极难"
+                tone="bg-slate-950 text-white shadow-[0_18px_40px_rgba(15,23,42,0.28)]"
+                onClick={startDailyHell}
+              />
+              <ModeButton
+                title="多人竞赛"
+                subtitle="2-5 人同房，输入同一房间码进入相同随机关卡"
+                meta="简单 / 中等 / 困难 / 地狱"
+                tone="bg-amber-500 text-slate-950 shadow-[0_18px_40px_rgba(245,158,11,0.26)]"
+                onClick={() => setScreen("multiplayer")}
+              />
+            </section>
 
-          <section className="rounded-[22px] border border-slate-200 bg-white p-4 shadow-[0_12px_26px_rgba(15,23,42,0.08)]">
-            <div className="flex items-center justify-between">
-              <div className="text-sm font-black">成长系统</div>
-              <div className="text-xs font-bold text-slate-500">Lv.{profile.level}</div>
-            </div>
-            <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
-              <div className="h-full rounded-full bg-amber-500" style={{ width: `${Math.min(100, Math.round((profile.xp / xpTarget) * 100))}%` }} />
-            </div>
-            <div className="mt-3 grid gap-2 text-sm text-slate-600">
-              <InfoLine label="技能" value={profile.level >= 5 ? "外交加槽已启用" : "Lv.5 解锁外交加槽"} />
-              <InfoLine label="公会" value={profile.guild} />
-              <InfoLine label="最高关" value={`${profile.bestLevel}`} />
-              <InfoLine label="通关数" value={`${profile.wins}`} />
-            </div>
-          </section>
-
-          <section className="rounded-[22px] border border-slate-200 bg-white p-4 shadow-[0_12px_26px_rgba(15,23,42,0.08)]">
-            <div className="text-sm font-black">道具商店</div>
-            <div className="mt-3 grid grid-cols-2 gap-2">
-              <ShopButton label="买提示" cost={120} onClick={() => buyItem("hints", 120)} disabled={profile.coins < 120} />
-              <ShopButton label="买洗牌" cost={160} onClick={() => buyItem("shuffles", 160)} disabled={profile.coins < 160} />
-              <ShopButton label="买撤回" cost={100} onClick={() => buyItem("undos", 100)} disabled={profile.coins < 100} />
-              <ShopButton label="买整理" cost={180} onClick={() => buyItem("clears", 180)} disabled={profile.coins < 180} />
-            </div>
-          </section>
-
-          <section className="rounded-[22px] border border-slate-200 bg-white p-4 shadow-[0_12px_26px_rgba(15,23,42,0.08)]">
-            <div className="text-sm font-black">皮肤</div>
-            <div className="mt-3 grid gap-2">
+            <section className="grid grid-cols-4 gap-2 rounded-[22px] border border-slate-200 bg-white p-3 text-center text-xs font-bold text-slate-500 shadow-[0_12px_26px_rgba(15,23,42,0.08)]">
+              <InfoBadge label="金币" value={`${profile.coins}`} />
+              <InfoBadge label="提示" value={`${profile.hints}`} />
+              <InfoBadge label="洗牌" value={`${profile.shuffles}`} />
+              <InfoBadge label="撤回" value={`${profile.undos}`} />
+            </section>
+          </>
+        ) : screen === "growth" ? (
+          <Panel title="成长系统" onBack={() => setScreen("home")}>
+            <section className="rounded-[22px] border border-slate-200 bg-white p-4 shadow-[0_12px_26px_rgba(15,23,42,0.08)]">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-black">等级 Lv.{profile.level}</div>
+                  <div className="mt-1 text-xs font-semibold text-slate-500">金币 {profile.coins}</div>
+                </div>
+                <div className="rounded-2xl bg-amber-50 px-3 py-2 text-sm font-black text-amber-700">最高 {profile.bestLevel}</div>
+              </div>
+              <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100">
+                <div className="h-full rounded-full bg-amber-500" style={{ width: `${Math.min(100, Math.round((profile.xp / xpTarget) * 100))}%` }} />
+              </div>
+              <div className="mt-4 grid gap-2 text-sm text-slate-600">
+                <InfoLine label="技能" value={profile.level >= 5 ? "外交加槽已启用" : "Lv.5 解锁外交加槽"} />
+                <InfoLine label="公会" value={profile.guild} />
+                <InfoLine label="通关数" value={`${profile.wins}`} />
+              </div>
+            </section>
+            <section className="rounded-[22px] border border-slate-200 bg-white p-4 shadow-[0_12px_26px_rgba(15,23,42,0.08)]">
+              <div className="text-sm font-black">道具商店</div>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <ShopButton label="买提示" cost={120} onClick={() => buyItem("hints", 120)} disabled={profile.coins < 120} />
+                <ShopButton label="买洗牌" cost={160} onClick={() => buyItem("shuffles", 160)} disabled={profile.coins < 160} />
+                <ShopButton label="买撤回" cost={100} onClick={() => buyItem("undos", 100)} disabled={profile.coins < 100} />
+                <ShopButton label="买整理" cost={180} onClick={() => buyItem("clears", 180)} disabled={profile.coins < 180} />
+              </div>
+            </section>
+          </Panel>
+        ) : screen === "skins" ? (
+          <Panel title="皮肤" onBack={() => setScreen("home")}>
+            <section className="grid gap-3">
               {(["classic", "passport", "night"] as TileSkin[]).map((skin) => {
                 const unlocked = profile.unlockedSkins.includes(skin);
                 const cost = skin === "passport" ? 360 : skin === "night" ? 520 : 0;
                 return (
-                  <button key={skin} type="button" className={`rounded-2xl border px-3 py-2 text-left text-sm font-bold ${profile.skin === skin ? "border-teal-600 bg-teal-50 text-teal-800" : "border-slate-200 text-slate-700"}`} onClick={() => buySkin(skin, cost)}>
-                    {SKIN_LABELS[skin]} <span className="float-right text-xs">{unlocked ? "使用" : `${cost} 金币`}</span>
+                  <button
+                    key={skin}
+                    type="button"
+                    className={`rounded-[22px] border px-4 py-4 text-left shadow-[0_12px_26px_rgba(15,23,42,0.08)] active:scale-[0.99] ${
+                      profile.skin === skin ? "border-teal-600 bg-teal-50 text-teal-900" : "border-slate-200 bg-white text-slate-800"
+                    }`}
+                    onClick={() => buySkin(skin, cost)}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-base font-black">{SKIN_LABELS[skin]}</span>
+                      <span className="rounded-full bg-white px-3 py-1 text-xs font-black">{unlocked ? "使用" : `${cost} 金币`}</span>
+                    </div>
+                    <div className="mt-3 flex gap-2">
+                      {["es", "fr", "cn"].map((code) => (
+                        <span key={`${skin}-${code}`} className={`grid h-12 w-16 place-items-center rounded-xl border p-1 ${skin === "night" ? "border-slate-700 bg-slate-950" : skin === "passport" ? "border-sky-200 bg-sky-50" : "border-slate-200 bg-white"}`}>
+                          <img className="h-7 w-11 rounded object-cover" src={`https://flagcdn.com/w80/${code}.png`} alt="" draggable={false} />
+                        </span>
+                      ))}
+                    </div>
                   </button>
                 );
               })}
-            </div>
-          </section>
+            </section>
+          </Panel>
+        ) : screen === "social" ? (
+          <Panel title="社交" onBack={() => setScreen("home")}>
+            <section className="rounded-[22px] border border-slate-200 bg-white p-4 shadow-[0_12px_26px_rgba(15,23,42,0.08)]">
+              <InfoLine label="公会" value={profile.guild} />
+              <InfoLine label="好友挑战码" value={challengeCode} />
+              <InfoLine label="当前关卡" value={`${profile.level}`} />
+            </section>
+            <button type="button" className="rounded-[22px] bg-slate-950 px-4 py-4 text-sm font-black text-white active:scale-95" onClick={() => setChallengeCode(`FLAG-${Math.floor(1000 + Math.random() * 9000)}`)}>
+              生成好友挑战
+            </button>
+            <button type="button" className="rounded-[22px] border border-slate-200 bg-white px-4 py-4 text-sm font-black text-slate-800 active:scale-95" onClick={share}>
+              {shareCopied ? "已复制分享卡" : "复制分享卡"}
+            </button>
+          </Panel>
+        ) : screen === "multiplayer" ? (
+          <Panel title="多人竞赛" onBack={() => setScreen("home")}>
+            <section className="rounded-[22px] border border-slate-200 bg-white p-4 shadow-[0_12px_26px_rgba(15,23,42,0.08)]">
+              <div className="text-sm font-black">房间码</div>
+              <div className="mt-3 grid grid-cols-[1fr_auto] gap-2">
+                <input
+                  value={roomInput}
+                  onChange={(event) => setRoomInput(event.target.value.toUpperCase())}
+                  placeholder={roomCode}
+                  className="h-12 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-base font-black tracking-wider outline-none focus:border-teal-600"
+                />
+                <button type="button" className="rounded-2xl bg-slate-950 px-4 text-sm font-black text-white active:scale-95" onClick={() => setRoomCode(createRoomCode())}>
+                  换房
+                </button>
+              </div>
+              <div className="mt-3 text-xs font-semibold text-slate-500">同一房间码 + 同一难度，会生成完全相同的随机关卡。</div>
+            </section>
 
-          <section className="rounded-[22px] border border-slate-200 bg-white p-4 shadow-[0_12px_26px_rgba(15,23,42,0.08)]">
-            <div className="text-sm font-black">社交</div>
-            <div className="mt-3 grid gap-2">
-              <button type="button" className="rounded-2xl bg-slate-950 px-3 py-3 text-sm font-black text-white active:scale-95" onClick={() => setChallengeCode(`FLAG-${Math.floor(1000 + Math.random() * 9000)}`)}>
-                好友挑战 {challengeCode}
+            <section className="rounded-[22px] border border-slate-200 bg-white p-4 shadow-[0_12px_26px_rgba(15,23,42,0.08)]">
+              <div className="text-sm font-black">人数</div>
+              <div className="mt-3 grid grid-cols-4 gap-2">
+                {[2, 3, 4, 5].map((count) => (
+                  <button key={count} type="button" className={`rounded-2xl border px-3 py-3 text-sm font-black active:scale-95 ${roomPlayers === count ? "border-teal-600 bg-teal-50 text-teal-800" : "border-slate-200 bg-slate-50 text-slate-700"}`} onClick={() => setRoomPlayers(count)}>
+                    {count}人
+                  </button>
+                ))}
+              </div>
+              <div className="mt-3 grid gap-2">
+                {Array.from({ length: roomPlayers }).map((_, index) => (
+                  <div key={`room-player-${index}`} className="flex items-center justify-between rounded-2xl bg-slate-50 px-3 py-2 text-sm font-bold text-slate-700">
+                    <span>{index === 0 ? "我" : `玩家 ${index + 1}`}</span>
+                    <span className="text-xs text-slate-400">{index === 0 ? "已就绪" : "等待进入"}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="rounded-[22px] border border-slate-200 bg-white p-4 shadow-[0_12px_26px_rgba(15,23,42,0.08)]">
+              <div className="text-sm font-black">难度</div>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                {(["easy", "normal", "hard", "hell"] as Difficulty[]).map((item) => (
+                  <button key={item} type="button" className={`rounded-2xl border px-3 py-3 text-left active:scale-95 ${roomDifficulty === item ? "border-teal-600 bg-teal-50 text-teal-900" : "border-slate-200 bg-slate-50 text-slate-700"}`} onClick={() => setRoomDifficulty(item)}>
+                    <span className="block text-sm font-black">{DIFFICULTY_CONFIG[item].label}</span>
+                    <span className="mt-1 block text-xs font-semibold text-slate-500">{DIFFICULTY_CONFIG[item].subtitle}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+            <button type="button" className="rounded-[24px] bg-teal-700 px-4 py-4 text-base font-black text-white shadow-[0_18px_40px_rgba(15,118,110,0.28)] active:scale-95" onClick={startMultiplayerRace}>
+              开始竞赛
+            </button>
+          </Panel>
+        ) : (
+          <section className="flex min-h-0 flex-1 flex-col gap-3">
+            <header className="flex items-center justify-between gap-2">
+              <button type="button" className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 active:scale-95" onClick={() => setScreen("home")}>
+                首页
               </button>
-              <button type="button" className="rounded-2xl border border-slate-200 px-3 py-3 text-sm font-black text-slate-700 active:scale-95" onClick={share}>
-                {shareCopied ? "已复制分享卡" : "复制分享卡"}
+              <div className="min-w-0 text-center">
+                <div className="truncate text-base font-black">{modeTitle}</div>
+                <div className="truncate text-xs font-semibold text-slate-500">{DIFFICULTY_CONFIG[difficulty].label} · 可点 {openTiles.length} · 剩余 {remaining}</div>
+              </div>
+              <button type="button" className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 active:scale-95" onClick={returnToLobby}>
+                大厅
               </button>
-            </div>
+            </header>
+
+            <section className="grid grid-cols-4 gap-2 rounded-[20px] border border-slate-200 bg-white p-2 text-center text-xs font-bold text-slate-500">
+              <InfoBadge label="关卡" value={playMode === "dailyHell" ? "今日" : `${profile.level}`} />
+              <InfoBadge label="进度" value={`${progress}%`} />
+              <InfoBadge label="金币" value={`${profile.coins}`} />
+              <InfoBadge label="槽位" value={`${tray.length}/${trayLimit}`} />
+            </section>
+
+            <section className="rounded-[20px] border border-slate-200 bg-white p-2">
+              <div className="mb-2 line-clamp-2 text-xs font-semibold leading-5 text-teal-900">{advice}</div>
+              <div className="grid grid-cols-4 gap-2">
+                <ToolButton label="提示" count={profile.hints} onClick={useHint} disabled={profile.hints <= 0 || status !== "playing"} />
+                <ToolButton label="洗牌" count={profile.shuffles} onClick={useShuffle} disabled={profile.shuffles <= 0 || status !== "playing"} />
+                <ToolButton label="撤回" count={profile.undos} onClick={useUndo} disabled={profile.undos <= 0 || tray.length === 0 || status !== "playing"} />
+                <ToolButton label="整理" count={profile.clears} onClick={useClearTray} disabled={profile.clears <= 0 || tray.length === 0} />
+              </div>
+            </section>
+
+            <section className="relative min-h-[46dvh] flex-1 overflow-hidden rounded-[22px] border border-slate-200 bg-[radial-gradient(circle_at_50%_20%,#ffffff,#dce9e1)] shadow-inner">
+              {tiles.map((tile) => {
+                if (tile.removed || tray.some((item) => item.id === tile.id)) return null;
+                const country = countryByCode(tile.countryCode);
+                const open = isTileOpen(tile, tiles, tray);
+                return (
+                  <button
+                    key={tile.id}
+                    type="button"
+                    className={`absolute flex h-[42px] w-[58px] touch-manipulation flex-col items-center justify-center rounded-xl border shadow-[0_8px_18px_rgba(15,23,42,0.16)] transition ${
+                      open ? `${skinClass} active:scale-95` : "border-slate-300 bg-slate-200 text-slate-400"
+                    } ${hintId === tile.id ? "ring-4 ring-amber-300" : ""}`}
+                    style={{
+                      left: `${4 + (tile.x / (BOARD_COLS - 1)) * 84}%`,
+                      top: `${8 + (tile.y / (BOARD_ROWS - 1)) * 76}%`,
+                      zIndex: 10 + tile.z,
+                      transform: `translate(-50%, -50%) translate(${tile.z * 4}px, ${tile.z * -3}px)`,
+                    }}
+                    onClick={() => selectTile(tile)}
+                  >
+                    <img className={`h-5 w-8 rounded object-cover ${open ? "" : "grayscale"}`} src={`https://flagcdn.com/w80/${country.code}.png`} alt={`${country.name}国旗`} draggable={false} />
+                    <span className="mt-0.5 max-w-full truncate px-1 text-[10px] font-black">{country.name}</span>
+                  </button>
+                );
+              })}
+              {status !== "playing" ? (
+                <div className="absolute inset-0 z-40 grid place-items-center bg-slate-950/60 p-4">
+                  <div className="w-full max-w-sm rounded-[24px] bg-white p-4 text-center shadow-[0_24px_60px_rgba(0,0,0,0.28)]">
+                    <div className="text-2xl font-black">{status === "won" ? "通关" : "还差一点"}</div>
+                    <div className="mt-2 text-sm leading-6 text-slate-500">{message}</div>
+                    <div className="mt-4 grid gap-2">
+                      {status === "won" ? (
+                        <button type="button" className="rounded-2xl bg-teal-700 px-4 py-3 text-sm font-black text-white active:scale-95" onClick={nextLevel}>
+                          {playMode === "campaign" ? "下一关" : "回首页"}
+                        </button>
+                      ) : (
+                        <button type="button" className="rounded-2xl bg-rose-600 px-4 py-3 text-sm font-black text-white active:scale-95" onClick={reviveByAd}>
+                          广告复活
+                        </button>
+                      )}
+                      <button type="button" className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-black text-slate-700 active:scale-95" onClick={restart}>
+                        不服再试
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </section>
+
+            <section className="rounded-[20px] border border-slate-200 bg-white p-2">
+              <div className="mb-2 line-clamp-1 text-xs font-semibold text-slate-500">{message}</div>
+              <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${trayLimit}, minmax(0, 1fr))` }}>
+                {Array.from({ length: trayLimit }).map((_, index) => {
+                  const item = tray[index];
+                  const country = item ? countryByCode(item.countryCode) : null;
+                  return (
+                    <div key={`tray-${index}`} className="grid h-[52px] place-items-center rounded-xl border border-slate-200 bg-slate-50">
+                      {country ? (
+                        <div className="flex min-w-0 flex-col items-center">
+                          <img className="h-5 w-8 rounded object-cover" src={`https://flagcdn.com/w80/${country.code}.png`} alt={`${country.name}国旗`} draggable={false} />
+                          <span className="mt-0.5 max-w-full truncate px-1 text-[10px] font-black">{country.name}</span>
+                        </div>
+                      ) : (
+                        <span className="text-xs font-bold text-slate-300">{index + 1}</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
           </section>
-        </aside>
+        )}
       </div>
     </main>
+  );
+}
+
+function HomeEntry({ label, value, onClick }: { label: string; value: string; onClick: () => void }) {
+  return (
+    <button type="button" className="min-w-0 rounded-[20px] border border-slate-200 bg-white px-2 py-3 text-center shadow-[0_10px_24px_rgba(15,23,42,0.08)] active:scale-95" onClick={onClick}>
+      <span className="block text-sm font-black text-slate-900">{label}</span>
+      <span className="mt-1 block truncate text-[11px] font-bold text-slate-500">{value}</span>
+    </button>
+  );
+}
+
+function ModeButton({ title, subtitle, meta, tone, onClick }: { title: string; subtitle: string; meta: string; tone: string; onClick: () => void }) {
+  return (
+    <button type="button" className={`rounded-[28px] px-5 py-5 text-left active:scale-[0.99] ${tone}`} onClick={onClick}>
+      <span className="block text-2xl font-black">{title}</span>
+      <span className="mt-2 block text-sm font-semibold opacity-85">{subtitle}</span>
+      <span className="mt-4 inline-flex rounded-full bg-white/20 px-3 py-1 text-xs font-black">{meta}</span>
+    </button>
+  );
+}
+
+function InfoBadge({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <div>{label}</div>
+      <div className="mt-1 truncate text-base font-black text-slate-950">{value}</div>
+    </div>
+  );
+}
+
+function Panel({ title, onBack, children }: { title: string; onBack: () => void; children: ReactNode }) {
+  return (
+    <section className="flex min-h-0 flex-1 flex-col gap-3">
+      <header className="flex items-center justify-between gap-3">
+        <button type="button" className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 active:scale-95" onClick={onBack}>
+          首页
+        </button>
+        <div className="text-base font-black">{title}</div>
+        <span className="w-[52px]" aria-hidden="true" />
+      </header>
+      <div className="grid gap-3">{children}</div>
+    </section>
   );
 }
 
