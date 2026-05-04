@@ -256,12 +256,21 @@ import NoMercyFlagIcon from "@/components/NoMercyFlagIcon";
 import ShuangkouToolIcon from "@/components/ShuangkouToolIcon";
 import TankBattleIcon from "@/components/TankBattleIcon";
 import ToolboxIcon from "@/components/ToolboxIcon";
+import {
+  FaollaMobileSettingsContent,
+  getFaollaMobileSettingsBackView,
+  getFaollaMobileSettingsSubtitle,
+  getFaollaMobileSettingsTitle,
+  isFaollaMobileSettingsView,
+  type FaollaMobileSettingsView,
+} from "@/components/FaollaMobileSettingsPages";
 import { buildFaollaShellHref, isFaollaSectionSearch, resolveFaollaEntryUrlFromBrowser } from "@/lib/faollaEntry";
 import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
 import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
 import { MOBILE_SWIPE_BACK_EVENT } from "@/lib/mobileSwipeBack";
 import { clearTankBattleLobbyReturnTarget, readTankBattleLobbyReturnTarget } from "@/lib/tankBattleLobbyReturn";
+import { useFaollaAndroidAppUpdate } from "@/lib/useFaollaAndroidAppUpdate";
 import { useMobilePortraitOrientationLock } from "@/lib/useMobilePortraitOrientationLock";
 
 function DeferredAdminPanelLoading({ label }: { label: string }) {
@@ -4699,7 +4708,7 @@ type SupportContactRow = {
 };
 
 type SupportMobileHomeTab = "conversations" | "business" | "faolla" | "self";
-type SupportSelfSectionView = "home" | "profile" | "cards" | "tools" | "games" | "notifications";
+type SupportSelfSectionView = "home" | "profile" | "cards" | "tools" | "games" | FaollaMobileSettingsView;
 type SupportNotificationPreferences = {
   systemNotificationsEnabled: boolean;
   messageSoundEnabled: boolean;
@@ -5294,6 +5303,7 @@ export default function AdminClient({
   }, []);
   const [supportMobileBusinessSection, setSupportMobileBusinessSection] = useState<"booking" | "orders">("booking");
   const [supportSelfSectionView, setSupportSelfSectionView] = useState<SupportSelfSectionView>("home");
+  const faollaAndroidAppUpdate = useFaollaAndroidAppUpdate();
   const supportSelfSectionResetReadyRef = useRef(false);
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -5309,10 +5319,13 @@ export default function AdminClient({
       targetSection === "profile" ||
       targetSection === "cards" ||
       targetSection === "tools" ||
-      targetSection === "games" ||
-      targetSection === "notifications"
+      targetSection === "games"
     ) {
       setSupportSelfSectionView(targetSection);
+    } else if (isFaollaMobileSettingsView(targetSection)) {
+      setSupportSelfSectionView(targetSection);
+    } else if (targetSection === "notifications") {
+      setSupportSelfSectionView("settings-notifications");
     } else if (tankBattleReturnTarget) {
       setSupportSelfSectionView("games");
     }
@@ -5580,7 +5593,11 @@ export default function AdminClient({
       const deltaX = touch.clientX - start.x;
       const deltaY = touch.clientY - start.y;
       if (deltaX >= 72 && Math.abs(deltaY) <= 64 && deltaX > Math.abs(deltaY) * 1.2) {
-        setSupportSelfSectionView("home");
+        if (isFaollaMobileSettingsView(supportSelfSectionView)) {
+          setSupportSelfSectionView(getFaollaMobileSettingsBackView(supportSelfSectionView));
+        } else {
+          setSupportSelfSectionView("home");
+        }
       }
     },
     [supportSelfSectionView],
@@ -11049,7 +11066,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       }
       if (supportMobileHomeTab === "self" && supportSelfSectionView !== "home") {
         event.preventDefault();
-        setSupportSelfSectionView("home");
+        if (isFaollaMobileSettingsView(supportSelfSectionView)) {
+          setSupportSelfSectionView(getFaollaMobileSettingsBackView(supportSelfSectionView));
+        } else {
+          setSupportSelfSectionView("home");
+        }
         return;
       }
       event.preventDefault();
@@ -15415,7 +15436,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             <button
               type="button"
               className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-900 hover:bg-slate-100"
-              onClick={() => setSupportSelfSectionView("home")}
+              onClick={() => {
+                if (isFaollaMobileSettingsView(supportSelfSectionView)) {
+                  setSupportSelfSectionView(getFaollaMobileSettingsBackView(supportSelfSectionView));
+                } else {
+                  setSupportSelfSectionView("home");
+                }
+              }}
               aria-label="返回自己主页"
             >
               <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" aria-hidden="true">
@@ -15438,7 +15465,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     ? "小工具"
                   : supportSelfSectionView === "games"
                     ? "游戏大厅"
-                  : "通知"}
+                    : isFaollaMobileSettingsView(supportSelfSectionView)
+                      ? getFaollaMobileSettingsTitle(supportSelfSectionView)
+                      : "通知"}
               </div>
               <div className="mt-1 truncate text-xs text-slate-500">
                 {supportSelfSectionView === "profile"
@@ -15449,7 +15478,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     ? "商家后台里的常用计分工具。"
                   : supportSelfSectionView === "games"
                     ? "坦克大战等休闲游戏。"
-                  : "这里控制系统消息通知、提示音和震动。"}
+                    : isFaollaMobileSettingsView(supportSelfSectionView)
+                      ? getFaollaMobileSettingsSubtitle(supportSelfSectionView, supportSelfNotificationSummary)
+                      : "这里控制系统消息通知、提示音和震动。"}
               </div>
             </div>
           </div>
@@ -15515,21 +15546,21 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     onClick: () => setSupportSelfSectionView("games" as const),
                   },
                   {
-                    key: "notifications",
-                    label: "通知",
-                    summary: supportSelfNotificationSummary,
+                    key: "settings",
+                    label: "设置",
+                    summary: faollaAndroidAppUpdate.updateAvailable ? "有新版本可更新" : "通知、版本和法律",
                     icon: (
                       <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+                        <path d="M12 8.4a3.6 3.6 0 1 0 0 7.2 3.6 3.6 0 0 0 0-7.2Z" stroke="currentColor" strokeWidth="1.8" />
                         <path
-                          d="M12 4.5a4.5 4.5 0 0 0-4.5 4.5v2.1c0 .6-.2 1.2-.6 1.7L5.8 14a1 1 0 0 0 .8 1.6h10.8a1 1 0 0 0 .8-1.6l-1.1-1.2c-.4-.5-.6-1.1-.6-1.7V9A4.5 4.5 0 0 0 12 4.5Z"
+                          d="m18.4 13.6.2 1.6 1.5 1-1.8 3.1-1.7-.7-1.3 1H8.7l-1.3-1-1.7.7-1.8-3.1 1.5-1 .2-1.6L4.3 12l1.3-1.6-.2-1.6-1.5-1 1.8-3.1 1.7.7 1.3-1h6.6l1.3 1 1.7-.7 1.8 3.1-1.5 1-.2 1.6 1.3 1.6-1.3 1.6Z"
                           stroke="currentColor"
                           strokeWidth="1.8"
                           strokeLinejoin="round"
                         />
-                        <path d="M10.3 18a1.9 1.9 0 0 0 3.4 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
                       </svg>
                     ),
-                    onClick: () => setSupportSelfSectionView("notifications" as const),
+                    onClick: () => setSupportSelfSectionView("settings" as const),
                   },
                 ].map((item) => (
                   <button
@@ -15542,7 +15573,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       {item.icon}
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-semibold text-slate-900">{item.label}</span>
+                      <span className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                        <span className="truncate">{item.label}</span>
+                        {item.key === "settings" && faollaAndroidAppUpdate.updateAvailable ? (
+                          <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-500 ring-2 ring-emerald-50" aria-label="有更新" />
+                        ) : null}
+                      </span>
                       <span className="mt-1 block truncate text-xs leading-5 text-slate-500">{item.summary}</span>
                     </span>
                     <span className="text-slate-300">
@@ -15822,76 +15858,86 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               </button>
             </div>
           </section>
-        ) : (
-          <div className="space-y-4">
-            <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
-              <div className="border-b border-slate-100 px-5 py-4">
-                <div className="text-sm font-semibold text-slate-900">通知</div>
-                <div className="mt-1 text-xs text-slate-500">{supportPushStatusText}</div>
-              </div>
-              <div className="divide-y divide-slate-100">
-                {[
-                  {
-                    key: "system",
-                    label: "系统消息通知",
-                    description: supportPushStatusText,
-                    checked: supportSystemNotificationsEnabled,
-                    disabled: supportPushBusy || (!supportPushAvailable && !supportSystemNotificationsEnabled),
-                    onToggle: () => {
-                      void handleSupportSystemNotificationsToggle(!supportSystemNotificationsEnabled);
-                    },
-                  },
-                  {
-                    key: "sound",
-                    label: "消息提示音",
-                    description: "新消息到达时播放提示音。",
-                    checked: supportMessageSoundEnabled,
-                    disabled: false,
-                    onToggle: () => setSupportMessageSoundEnabled((current) => !current),
-                  },
-                  {
-                    key: "vibration",
-                    label: "震动",
-                    description:
-                      typeof navigator !== "undefined" && typeof navigator.vibrate === "function"
-                        ? "新消息到达时使用设备震动提醒。"
-                        : "当前设备或浏览器暂不支持震动提醒。",
-                    checked: supportVibrationEnabled,
-                    disabled: typeof navigator === "undefined" || typeof navigator.vibrate !== "function",
-                    onToggle: () => setSupportVibrationEnabled((current) => !current),
-                  },
-                ].map((item) => (
-                  <div key={item.key} className="flex items-center gap-3 px-5 py-4">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-semibold text-slate-900">{item.label}</div>
-                      <div className="mt-1 text-xs leading-5 text-slate-500">{item.description}</div>
-                    </div>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={item.checked}
-                      className={`support-mobile-switch-track relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition ${
-                        item.checked ? "bg-slate-900" : "bg-slate-200"
-                      } ${item.disabled ? "opacity-45" : ""}`}
-                      onClick={item.onToggle}
-                      disabled={item.disabled}
-                    >
-                      <span
-                        className={`support-mobile-switch-thumb inline-block h-5 w-5 rounded-full bg-white shadow-sm transition ${
-                          item.checked ? "translate-x-6" : "translate-x-1"
-                        }`}
-                      />
-                    </button>
+        ) : isFaollaMobileSettingsView(supportSelfSectionView) ? (
+          <FaollaMobileSettingsContent
+            view={supportSelfSectionView}
+            notificationSummary={supportSelfNotificationSummary}
+            appUpdateState={faollaAndroidAppUpdate}
+            onViewChange={(nextView) => setSupportSelfSectionView(nextView)}
+            notificationContent={
+              <div className="space-y-4">
+                <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+                  <div className="border-b border-slate-100 px-5 py-4">
+                    <div className="text-sm font-semibold text-slate-900">通知</div>
+                    <div className="mt-1 text-xs text-slate-500">{supportPushStatusText}</div>
                   </div>
-                ))}
+                  <div className="divide-y divide-slate-100">
+                    {[
+                      {
+                        key: "system",
+                        label: "系统消息通知",
+                        description: supportPushStatusText,
+                        checked: supportSystemNotificationsEnabled,
+                        disabled: supportPushBusy || (!supportPushAvailable && !supportSystemNotificationsEnabled),
+                        onToggle: () => {
+                          void handleSupportSystemNotificationsToggle(!supportSystemNotificationsEnabled);
+                        },
+                      },
+                      {
+                        key: "sound",
+                        label: "消息提示音",
+                        description: "新消息到达时播放提示音。",
+                        checked: supportMessageSoundEnabled,
+                        disabled: false,
+                        onToggle: () => setSupportMessageSoundEnabled((current) => !current),
+                      },
+                      {
+                        key: "vibration",
+                        label: "震动",
+                        description:
+                          typeof navigator !== "undefined" && typeof navigator.vibrate === "function"
+                            ? "新消息到达时使用设备震动提醒。"
+                            : "当前设备或浏览器暂不支持震动提醒。",
+                        checked: supportVibrationEnabled,
+                        disabled: typeof navigator === "undefined" || typeof navigator.vibrate !== "function",
+                        onToggle: () => setSupportVibrationEnabled((current) => !current),
+                      },
+                    ].map((item) => (
+                      <div key={item.key} className="flex items-center gap-3 px-5 py-4">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-semibold text-slate-900">{item.label}</div>
+                          <div className="mt-1 text-xs leading-5 text-slate-500">{item.description}</div>
+                        </div>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={item.checked}
+                          className={`support-mobile-switch-track relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition ${
+                            item.checked ? "bg-slate-900" : "bg-slate-200"
+                          } ${item.disabled ? "opacity-45" : ""}`}
+                          onClick={item.onToggle}
+                          disabled={item.disabled}
+                        >
+                          <span
+                            className={`support-mobile-switch-thumb inline-block h-5 w-5 rounded-full bg-white shadow-sm transition ${
+                              item.checked ? "translate-x-6" : "translate-x-1"
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  {supportPushError ? (
+                    <div className="border-t border-rose-100 bg-rose-50 px-5 py-3 text-xs leading-5 text-rose-600">
+                      {supportPushError}
+                    </div>
+                  ) : null}
+                </section>
               </div>
-              {supportPushError ? (
-                <div className="border-t border-rose-100 bg-rose-50 px-5 py-3 text-xs leading-5 text-rose-600">
-                  {supportPushError}
-                </div>
-              ) : null}
-            </section>
-          </div>
+            }
+          />
+        ) : (
+          null
         )}
       </div>
     </div>
