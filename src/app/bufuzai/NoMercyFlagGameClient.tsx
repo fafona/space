@@ -392,6 +392,53 @@ export default function NoMercyFlagGameClient({ subtitle = "游戏大厅", lobby
     };
   }, []);
 
+  useEffect(() => {
+    if (typeof document === "undefined" || typeof window === "undefined") return;
+
+    let startX = 0;
+    let startY = 0;
+    let trackingEdgeSwipe = false;
+
+    const resetEdgeSwipe = () => {
+      trackingEdgeSwipe = false;
+    };
+
+    const handleTouchStart = (event: TouchEvent) => {
+      if (event.touches.length !== 1) {
+        resetEdgeSwipe();
+        return;
+      }
+      const touch = event.touches[0];
+      if (!touch) return;
+      startX = touch.clientX;
+      startY = touch.clientY;
+      trackingEdgeSwipe = startX <= Math.max(48, Math.min(112, Math.round((window.innerWidth || 0) * 0.26)));
+    };
+
+    const handleTouchMove = (event: TouchEvent) => {
+      if (!trackingEdgeSwipe || event.touches.length !== 1) return;
+      const touch = event.touches[0];
+      if (!touch) return;
+      const deltaX = touch.clientX - startX;
+      const deltaY = touch.clientY - startY;
+      if (deltaX > 18 && Math.abs(deltaX) > Math.abs(deltaY) * 1.25) {
+        if (event.cancelable) event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+
+    document.addEventListener("touchstart", handleTouchStart, { capture: true, passive: true });
+    document.addEventListener("touchmove", handleTouchMove, { capture: true, passive: false });
+    document.addEventListener("touchend", resetEdgeSwipe, { capture: true, passive: true });
+    document.addEventListener("touchcancel", resetEdgeSwipe, { capture: true, passive: true });
+    return () => {
+      document.removeEventListener("touchstart", handleTouchStart, { capture: true });
+      document.removeEventListener("touchmove", handleTouchMove, { capture: true });
+      document.removeEventListener("touchend", resetEdgeSwipe, { capture: true });
+      document.removeEventListener("touchcancel", resetEdgeSwipe, { capture: true });
+    };
+  }, []);
+
   const activeTiles = useMemo(() => tiles.filter((tile) => !tile.removed && !tray.some((item) => item.id === tile.id)), [tiles, tray]);
   const openTiles = useMemo(() => activeTiles.filter((tile) => isTileOpen(tile, tiles, tray)), [activeTiles, tiles, tray]);
   const remaining = activeTiles.length + tray.length;
@@ -608,7 +655,7 @@ export default function NoMercyFlagGameClient({ subtitle = "游戏大厅", lobby
         : "border-slate-200 bg-white text-slate-950";
 
   return (
-    <main className="min-h-dvh overscroll-none bg-[#07140f] text-slate-950">
+    <main data-mobile-swipe-back-ignore className="min-h-dvh overscroll-none bg-[#07140f] text-slate-950">
       <div className="mx-auto flex min-h-dvh w-full max-w-[480px] flex-col bg-[#eef3ef] px-3 pb-[calc(env(safe-area-inset-bottom)+0.85rem)] pt-[calc(env(safe-area-inset-top)+0.75rem)]">
         {screen === "home" ? (
           <>
