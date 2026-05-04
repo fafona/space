@@ -222,26 +222,33 @@ function LoginPageInner() {
 
   useEffect(() => {
     if (!isFaollaAppShellLogin || typeof window === "undefined") return;
-    window.location.replace(buildFaollaShellHref(loginFromUrl || "/", locale, window.location.origin));
+    if (isNativeAppRuntime() && isEmbeddedFrame()) return;
+    window.location.replace(
+      buildFaollaShellHref(loginFromUrl || "/", locale, window.location.origin, { preferRuntimeOrigin: true }),
+    );
   }, [isFaollaAppShellLogin, locale, loginFromUrl]);
 
   useEffect(() => {
-    if (loggedOut || isFaollaAppShellLogin || typeof window === "undefined") return;
+    if (loggedOut || typeof window === "undefined") return;
     if (!isNativeAppRuntime()) return;
     let cancelled = false;
 
     void (async () => {
+      const embeddedFrame = isEmbeddedFrame();
       const payload = await resolveFrontendAuthPayload(6200).catch(() => null);
       if (cancelled) return;
 
       const workspaceHref = resolveAuthenticatedWorkspaceHref(payload);
       if (workspaceHref) {
-        window.location.replace(workspaceHref);
+        window.location.replace(
+          embeddedFrame
+            ? buildFaollaShellHref(loginFromUrl || "/", locale, window.location.origin, { preferRuntimeOrigin: true })
+            : workspaceHref,
+        );
         return;
       }
 
-      if (isEmbeddedFrame()) {
-        window.location.replace(buildFaollaShellHref("/", locale, window.location.origin));
+      if (embeddedFrame || isFaollaAppShellLogin) {
         return;
       }
 
@@ -254,7 +261,7 @@ function LoginPageInner() {
     return () => {
       cancelled = true;
     };
-  }, [isFaollaAppShellLogin, launchRetry, locale, loggedOut]);
+  }, [isFaollaAppShellLogin, launchRetry, locale, loggedOut, loginFromUrl]);
   const resetCodePreferredHint = useMemo(() => {
     if (normalizedLocale.startsWith("zh-tw")) {
       return "QQ、Foxmail、Hotmail、Outlook、Live 這些信箱請使用郵件驗證碼重設密碼，不要點郵件連結。";
