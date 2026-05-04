@@ -252,6 +252,7 @@ import BlockRenderer from "@/components/blocks/BlockRenderer";
 import BookingBlock from "@/components/blocks/BookingBlock";
 import { useI18n } from "@/components/I18nProvider";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
+import NoMercyFlagIcon from "@/components/NoMercyFlagIcon";
 import ShuangkouToolIcon from "@/components/ShuangkouToolIcon";
 import TankBattleIcon from "@/components/TankBattleIcon";
 import ToolboxIcon from "@/components/ToolboxIcon";
@@ -10785,6 +10786,21 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
     window.location.assign(targetUrl);
   }, []);
+  const openSupportNoMercyFlagGame = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const targetUrl = new URL("/admin/games/bufuzai", window.location.origin).toString();
+    const openedWindow = window.open(targetUrl, "_blank");
+    if (openedWindow) {
+      try {
+        openedWindow.opener = null;
+        openedWindow.focus();
+      } catch {
+        // Some mobile browsers restrict access to the opened window.
+      }
+      return;
+    }
+    window.location.assign(targetUrl);
+  }, []);
   const supportMobileFaollaContent = (
     <div className="support-preserve-light-surface relative min-h-0 flex-1 overflow-hidden bg-white">
       <div className="pointer-events-none absolute left-4 top-[calc(env(safe-area-inset-top)+0.75rem)] z-10">
@@ -15791,6 +15807,16 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   <TankBattleIcon />
                 </span>
                 <span className="w-full truncate text-xs font-semibold text-slate-900">坦克大战</span>
+              </button>
+              <button
+                type="button"
+                className="group flex min-w-0 flex-col items-center gap-2.5 text-center"
+                onClick={openSupportNoMercyFlagGame}
+              >
+                <span className="flex h-14 w-14 items-center justify-center rounded-[18px] bg-teal-700 text-white shadow-[0_12px_24px_rgba(15,118,110,0.28)] transition group-active:scale-95">
+                  <NoMercyFlagIcon />
+                </span>
+                <span className="w-full truncate text-xs font-semibold text-slate-900">不服再试</span>
               </button>
             </div>
           </section>

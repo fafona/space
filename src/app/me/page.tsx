@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import AccountSwitcherDialog from "@/components/AccountSwitcherDialog";
 import { useI18n } from "@/components/I18nProvider";
+import NoMercyFlagIcon from "@/components/NoMercyFlagIcon";
 import ShuangkouToolIcon from "@/components/ShuangkouToolIcon";
 import TankBattleIcon from "@/components/TankBattleIcon";
 import ToolboxIcon from "@/components/ToolboxIcon";
@@ -5974,6 +5975,20 @@ export default function MePage() {
       }
       window.location.assign(targetUrl);
     };
+    const openNoMercyFlagGame = () => {
+      const targetUrl = new URL("/me/games/bufuzai", window.location.origin).toString();
+      const openedWindow = window.open(targetUrl, "_blank");
+      if (openedWindow) {
+        try {
+          openedWindow.opener = null;
+          openedWindow.focus();
+        } catch {
+          // Some mobile browsers restrict access to the opened window.
+        }
+        return;
+      }
+      window.location.assign(targetUrl);
+    };
 
     return (
       <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
@@ -5987,6 +6002,16 @@ export default function MePage() {
               <TankBattleIcon />
             </span>
             <span className="w-full truncate text-xs font-semibold text-slate-900">坦克大战</span>
+          </button>
+          <button
+            type="button"
+            className="group flex min-w-0 flex-col items-center gap-2.5 text-center"
+            onClick={openNoMercyFlagGame}
+          >
+            <span className="flex h-14 w-14 items-center justify-center rounded-[18px] bg-teal-700 text-white shadow-[0_12px_24px_rgba(15,118,110,0.28)] transition group-active:scale-95">
+              <NoMercyFlagIcon />
+            </span>
+            <span className="w-full truncate text-xs font-semibold text-slate-900">不服再试</span>
           </button>
         </div>
       </section>

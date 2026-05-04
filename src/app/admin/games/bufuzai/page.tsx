@@ -1,0 +1,10 @@
+import NoMercyFlagGameClient from "@/app/bufuzai/NoMercyFlagGameClient";
+
+export const metadata = {
+  title: "不服再试 | 商家后台 | Faolla",
+  description: "商家后台游戏大厅里的国旗叠层三消小游戏。",
+};
+
+export default function MerchantBuFuZaiPage() {
+  return <NoMercyFlagGameClient subtitle="商家后台 / 游戏大厅" lobbyHref="/admin?mobileTab=self&selfSection=games" />;
+}
