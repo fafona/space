@@ -76,9 +76,9 @@ export default function SupportMessageContent({
 
   if (!attachmentPreview) {
     return (
-      <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-[15px] leading-6">
+      <span className="faolla-support-message-text inline whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-[15px] leading-[1.35]">
         {renderSupportMessageText(value)}
-      </div>
+      </span>
     );
   }
 

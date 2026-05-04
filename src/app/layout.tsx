@@ -414,6 +414,124 @@ const FAOLLA_MOBILE_SHELL_INLINE_STYLE = `
     padding-left: 0.85rem !important;
     padding-right: 0.85rem !important;
   }
+  .faolla-personal-mobile-shell .faolla-message-bubble,
+  .support-mobile-shell .faolla-message-bubble {
+    border-radius: 1rem !important;
+    box-shadow: none !important;
+    font-size: 0.94rem !important;
+    line-height: 1.35 !important;
+    max-width: 84% !important;
+  }
+  .faolla-personal-mobile-shell .faolla-message-bubble .faolla-support-message-text,
+  .support-mobile-shell .faolla-message-bubble .faolla-support-message-text {
+    font-size: 0.94rem !important;
+    line-height: 1.35 !important;
+  }
+  .faolla-personal-mobile-shell .faolla-message-time,
+  .support-mobile-shell .faolla-message-time {
+    float: right !important;
+    margin-left: 0.5rem !important;
+    margin-top: 0.32rem !important;
+    font-size: 0.68rem !important;
+    line-height: 0.85rem !important;
+  }
+  .faolla-personal-mobile-shell .faolla-mobile-composer,
+  .support-mobile-shell .faolla-mobile-composer {
+    background: #f0f2f5 !important;
+    padding-left: 0.5rem !important;
+    padding-right: 0.5rem !important;
+    padding-top: 0.25rem !important;
+    box-shadow: none !important;
+  }
+  .faolla-personal-mobile-shell .faolla-mobile-input-shell,
+  .support-mobile-shell .faolla-mobile-input-shell {
+    min-height: 2.35rem !important;
+    border-radius: 1.2rem !important;
+    padding: 0.42rem 0.75rem !important;
+    box-shadow: none !important;
+  }
+  .faolla-personal-mobile-shell .faolla-mobile-input-shell textarea,
+  .support-mobile-shell .faolla-mobile-input-shell textarea {
+    min-height: 1.35rem !important;
+    font-size: 1rem !important;
+    line-height: 1.35rem !important;
+  }
+  .faolla-personal-mobile-shell .faolla-mobile-composer-icon,
+  .faolla-personal-mobile-shell .faolla-mobile-composer-send,
+  .support-mobile-shell .faolla-mobile-composer-icon,
+  .support-mobile-shell .faolla-mobile-composer-send {
+    width: 2.35rem !important;
+    height: 2.35rem !important;
+    min-height: 2.35rem !important;
+    box-shadow: none !important;
+  }
+  .faolla-personal-mobile-shell .faolla-mobile-attachment-menu,
+  .support-mobile-shell .faolla-mobile-attachment-menu {
+    border-radius: 1rem !important;
+    padding: 0.55rem !important;
+    box-shadow: none !important;
+  }
+  .faolla-personal-mobile-shell .faolla-mobile-attachment-button,
+  .support-mobile-shell .faolla-mobile-attachment-button {
+    min-height: 3.25rem !important;
+    padding: 0.25rem !important;
+    font-size: 0.63rem !important;
+  }
+  .faolla-personal-mobile-shell article,
+  .support-mobile-shell article {
+    border-radius: 1rem !important;
+    padding: 0.75rem !important;
+    box-shadow: none !important;
+  }
+  .faolla-personal-mobile-shell .faolla-mobile-record-card,
+  .support-mobile-shell .faolla-mobile-record-card {
+    border-radius: 1rem !important;
+    padding: 0.75rem !important;
+    box-shadow: none !important;
+  }
+  .faolla-personal-mobile-shell .faolla-mobile-record-search,
+  .support-mobile-shell .faolla-mobile-record-search,
+  .faolla-personal-mobile-shell input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]),
+  .support-mobile-shell input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]),
+  .faolla-personal-mobile-shell select,
+  .support-mobile-shell select,
+  .faolla-personal-mobile-shell textarea,
+  .support-mobile-shell textarea {
+    border-radius: 1rem !important;
+    font-size: 1rem !important;
+    min-height: 2.35rem !important;
+    padding: 0.45rem 0.75rem !important;
+    box-shadow: none !important;
+  }
+  .faolla-personal-mobile-shell button.rounded-full,
+  .support-mobile-shell button.rounded-full,
+  .faolla-personal-mobile-shell button[class*="rounded-[14px]"],
+  .support-mobile-shell button[class*="rounded-[14px]"],
+  .faolla-personal-mobile-shell .faolla-mobile-record-action,
+  .support-mobile-shell .faolla-mobile-record-action {
+    min-height: 2rem !important;
+    border-radius: 1rem !important;
+    padding: 0.35rem 0.65rem !important;
+    font-size: 0.72rem !important;
+    line-height: 0.95rem !important;
+    box-shadow: none !important;
+  }
+  .faolla-personal-mobile-shell a.rounded-full,
+  .support-mobile-shell a.rounded-full {
+    min-height: 2rem !important;
+    border-radius: 1rem !important;
+    padding: 0.35rem 0.65rem !important;
+    font-size: 0.72rem !important;
+    line-height: 0.95rem !important;
+    box-shadow: none !important;
+  }
+  .faolla-personal-mobile-shell .faolla-mobile-input-shell textarea,
+  .support-mobile-shell .faolla-mobile-input-shell textarea {
+    min-height: 1.35rem !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+  }
 }
 `;
 

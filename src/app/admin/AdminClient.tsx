@@ -16297,7 +16297,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             正在加载聊天记录...
           </div>
         ) : visibleSupportMessages.length ? (
-          <div className="space-y-3">
+          <div className="space-y-2">
             {visibleSupportMessages.map((message, index) => {
               const previousMessage = index > 0 ? visibleSupportMessages[index - 1] : null;
               const showDateDivider =
@@ -16315,7 +16315,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   ref={(node) => {
                     supportMessageElementByKeyRef.current[messageKey] = node;
                   }}
-                  className="space-y-3"
+                  className="space-y-2"
                 >
                   {showDateDivider ? (
                     <div className="flex justify-center">
@@ -16326,12 +16326,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   ) : null}
                   <div className={`flex ${message.isSelf ? "justify-end" : "justify-start"}`}>
                     <div
-                      className={`max-w-[84%] min-w-0 rounded-[24px] shadow-[0_10px_24px_rgba(15,23,42,0.08)] ${
+                      className={`faolla-message-bubble max-w-[84%] min-w-0 rounded-[18px] shadow-sm ${
                         parseSupportMessageAttachmentPreview(message.text)
                           ? "border border-transparent bg-transparent px-0 py-0"
                           : message.isSelf
-                            ? "bg-slate-900 px-4 py-3 text-white"
-                            : "border border-slate-200 bg-white px-4 py-3 text-slate-900"
+                            ? "bg-[#d9fdd3] px-3 py-1.5 text-slate-950"
+                            : "border border-transparent bg-white px-3 py-1.5 text-slate-950"
                       }`}
                     >
                       <SupportMessageContent
@@ -16339,13 +16339,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         isSelf={message.isSelf}
                         onImageActivate={handleSupportMessageImageActivate}
                       />
-                      <div
-                        className={`mt-2 text-right text-[10px] ${
-                          message.isSelf ? "text-white/70" : "text-slate-400"
-                        }`}
-                      >
+                      <span className={`faolla-message-time ml-2 inline-block align-baseline text-[11px] leading-none ${message.isSelf ? "text-slate-500" : "text-slate-400"}`}>
                         {messageMeta}
-                      </div>
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -16361,7 +16357,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       </div>
       <div
         ref={supportComposerRef}
-        className="shrink-0 overscroll-none border-t border-slate-200/80 bg-[#edf1f7]/98 px-3 pb-[var(--faolla-mobile-safe-bottom)] pt-1 shadow-[0_-8px_30px_rgba(15,23,42,0.06)] backdrop-blur"
+        className="faolla-mobile-composer shrink-0 overscroll-none border-t border-slate-200/80 bg-[#f0f2f5]/98 px-2 pb-[var(--faolla-mobile-safe-bottom)] pt-1 shadow-none backdrop-blur"
         style={
           isIosSupportBrowser && isSupportMobileKeyboardVisible
             ? {
@@ -16375,18 +16371,18 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         }}
       >
         {supportAttachmentMenuOpen ? (
-          <div className="mb-2 rounded-[28px] bg-white px-3 py-3 shadow-[0_12px_28px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/80">
+          <div className="faolla-mobile-attachment-menu mb-2 rounded-[20px] bg-white px-2.5 py-2.5 shadow-none ring-1 ring-slate-200/80">
             <div className="grid grid-cols-5 gap-2">
               <button
                 type="button"
-                className="flex flex-col items-center gap-2 rounded-2xl px-1 py-2 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                className="faolla-mobile-attachment-button flex flex-col items-center gap-1.5 rounded-2xl px-1 py-1.5 text-[10px] font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
                 onClick={() => {
                   void openSupportPhotoPicker();
                 }}
                 disabled={supportComposerBusy}
               >
-                <span className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-50 text-blue-500">
-                  <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" aria-hidden="true">
+                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-50 text-blue-500">
+                  <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
                     <path d="M6 8h2.3l1.2-1.7A1 1 0 0 1 10.3 6h3.4a1 1 0 0 1 .8.3L15.7 8H18a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2Z" stroke="currentColor" strokeWidth="1.8" />
                     <circle cx="12" cy="13" r="3.1" stroke="currentColor" strokeWidth="1.8" />
                   </svg>
@@ -16395,14 +16391,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               </button>
               <button
                 type="button"
-                className="flex flex-col items-center gap-2 rounded-2xl px-1 py-2 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                className="faolla-mobile-attachment-button flex flex-col items-center gap-1.5 rounded-2xl px-1 py-1.5 text-[10px] font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
                 onClick={() => {
                   void openSupportCameraPicker();
                 }}
                 disabled={supportComposerBusy}
               >
-                <span className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-700">
-                  <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" aria-hidden="true">
+                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-700">
+                  <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
                     <path d="M4 9a2 2 0 0 1 2-2h1.8l1.2-1.8A1 1 0 0 1 9.8 5h4.4a1 1 0 0 1 .8.2L16.2 7H18a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V9Z" stroke="currentColor" strokeWidth="1.8" />
                     <circle cx="12" cy="12.5" r="3.1" stroke="currentColor" strokeWidth="1.8" />
                   </svg>
@@ -16411,14 +16407,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               </button>
               <button
                 type="button"
-                className="flex flex-col items-center gap-2 rounded-2xl px-1 py-2 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                className="faolla-mobile-attachment-button flex flex-col items-center gap-1.5 rounded-2xl px-1 py-1.5 text-[10px] font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
                 onClick={() => {
                   void handleSupportLocationAttachment();
                 }}
                 disabled={supportComposerBusy}
               >
-                <span className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-50 text-emerald-500">
-                  <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" aria-hidden="true">
+                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-50 text-emerald-500">
+                  <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
                     <path d="M12 20s6-5.5 6-10a6 6 0 1 0-12 0c0 4.5 6 10 6 10Z" stroke="currentColor" strokeWidth="1.8" />
                     <circle cx="12" cy="10" r="2.2" fill="currentColor" />
                   </svg>
@@ -16427,12 +16423,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               </button>
               <button
                 type="button"
-                className="flex flex-col items-center gap-2 rounded-2xl px-1 py-2 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                className="faolla-mobile-attachment-button flex flex-col items-center gap-1.5 rounded-2xl px-1 py-1.5 text-[10px] font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
                 onClick={openSupportSelfCardPicker}
                 disabled={supportComposerBusy}
               >
-                <span className="flex h-12 w-12 items-center justify-center rounded-full bg-violet-50 text-violet-500">
-                  <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" aria-hidden="true">
+                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-violet-50 text-violet-500">
+                  <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
                     <path d="M5 7.5A2.5 2.5 0 0 1 7.5 5h9A2.5 2.5 0 0 1 19 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-9A2.5 2.5 0 0 1 5 16.5v-9Z" stroke="currentColor" strokeWidth="1.8" />
                     <circle cx="12" cy="10" r="2.2" stroke="currentColor" strokeWidth="1.8" />
                     <path d="M8.5 16a3.5 3.5 0 0 1 7 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
@@ -16442,14 +16438,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               </button>
               <button
                 type="button"
-                className="flex flex-col items-center gap-2 rounded-2xl px-1 py-2 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                className="faolla-mobile-attachment-button flex flex-col items-center gap-1.5 rounded-2xl px-1 py-1.5 text-[10px] font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
                 onClick={() => {
                   void openSupportFilePicker();
                 }}
                 disabled={supportComposerBusy}
               >
-                <span className="flex h-12 w-12 items-center justify-center rounded-full bg-amber-50 text-amber-500">
-                  <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" aria-hidden="true">
+                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-amber-50 text-amber-500">
+                  <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
                     <path d="M8 4.5h5.2L18 9.3V18a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6.5a2 2 0 0 1 2-2Z" stroke="currentColor" strokeWidth="1.8" />
                     <path d="M13 4.8V9h4.2" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
                   </svg>
@@ -16459,10 +16455,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             </div>
           </div>
         ) : null}
-        <div className="flex items-end gap-2">
+        <div className="flex items-end gap-1.5">
           <button
             type="button"
-            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-slate-700 shadow-[0_8px_18px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/80 transition ${
+            className={`faolla-mobile-composer-icon flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-700 shadow-none ring-1 ring-slate-200/80 transition ${
               supportAttachmentMenuOpen ? "bg-slate-900 text-white" : "bg-white hover:bg-slate-50"
             }`}
             onClick={toggleSupportAttachmentMenu}
@@ -16474,7 +16470,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             </svg>
           </button>
           <div
-            className="flex min-h-11 min-w-0 flex-1 items-end overflow-hidden rounded-[28px] bg-white px-3 py-2 shadow-[0_8px_18px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/80"
+            className="faolla-mobile-input-shell flex min-h-10 min-w-0 flex-1 items-end overflow-hidden rounded-[22px] bg-white px-3 py-2 shadow-none ring-1 ring-slate-200/80"
             style={isIosSupportBrowser && isSupportMobileKeyboardVisible ? { paddingTop: "0.3rem", paddingBottom: "0.3rem" } : undefined}
           >
             <textarea
@@ -16527,7 +16523,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           </div>
           <button
             type="button"
-            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-white shadow-[0_10px_22px_rgba(34,197,94,0.28)] transition ${
+            className={`faolla-mobile-composer-send flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-white shadow-none transition ${
               supportComposerBusy || supportCanSend
                 ? "bg-emerald-500 hover:bg-emerald-600"
                 : "bg-slate-300 shadow-none"
@@ -17362,7 +17358,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           {selectedSupportLoading ? (
             <div className="rounded-2xl border border-dashed bg-white px-4 py-6 text-center text-sm text-slate-500">正在加载聊天记录...</div>
           ) : visibleSupportMessages.length ? (
-            <div className="min-w-0 space-y-3">
+            <div className="min-w-0 space-y-2">
               {visibleSupportMessages.map((message, index) => {
                 const previousMessage = index > 0 ? visibleSupportMessages[index - 1] : null;
                 const showDateDivider =
@@ -17380,7 +17376,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     ref={(node) => {
                       supportMessageElementByKeyRef.current[messageKey] = node;
                     }}
-                    className="space-y-3"
+                    className="space-y-2"
                   >
                     {showDateDivider ? (
                       <div className="flex justify-center">
@@ -17392,12 +17388,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     <div className={`flex min-w-0 ${message.isSelf ? "justify-end" : "justify-start"}`}>
                       <div className={`flex max-w-[82%] min-w-0 items-end ${message.isSelf ? "flex-row" : "flex-row-reverse"}`}>
                         <div
-                          className={`min-w-0 rounded-2xl shadow-sm ${
+                          className={`faolla-message-bubble min-w-0 rounded-[18px] shadow-sm ${
                             parseSupportMessageAttachmentPreview(message.text)
                               ? "border border-transparent bg-transparent px-0 py-0"
                               : message.isSelf
-                                ? "bg-slate-900 px-4 py-3 text-white"
-                                : "border bg-white px-4 py-3 text-slate-900"
+                                ? "bg-[#d9fdd3] px-3 py-1.5 text-slate-950"
+                                : "border border-transparent bg-white px-3 py-1.5 text-slate-950"
                           }`}
                         >
                           <SupportMessageContent
@@ -17405,13 +17401,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                             isSelf={message.isSelf}
                             onImageActivate={handleSupportMessageImageActivate}
                           />
-                          <div
-                            className={`mt-2 text-right text-[10px] ${
-                              message.isSelf ? "text-white/70" : "text-slate-400"
-                            }`}
-                          >
+                          <span className={`faolla-message-time ml-2 inline-block align-baseline text-[11px] leading-none ${message.isSelf ? "text-slate-500" : "text-slate-400"}`}>
                             {messageMeta}
-                          </div>
+                          </span>
                         </div>
                         {message.isSelf && message.localStatus === "failed" ? (
                           <span
