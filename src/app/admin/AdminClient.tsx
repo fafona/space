@@ -5419,11 +5419,6 @@ export default function AdminClient({
     peer: false,
   });
   const [supportPushStandalone, setSupportPushStandalone] = useState(() => isSupportStandaloneDisplayMode());
-  const [prefersSystemDarkMode, setPrefersSystemDarkMode] = useState(() =>
-    typeof window !== "undefined" && typeof window.matchMedia === "function"
-      ? window.matchMedia("(prefers-color-scheme: dark)").matches
-      : false,
-  );
   const [supportSystemNotificationsEnabled, setSupportSystemNotificationsEnabled] = useState(
     DEFAULT_SUPPORT_NOTIFICATION_PREFERENCES.systemNotificationsEnabled,
   );
@@ -8415,19 +8410,6 @@ export default function AdminClient({
       window.removeEventListener("resize", updateLayoutMode);
       window.removeEventListener("orientationchange", updateLayoutMode);
     };
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const updatePreferredColorScheme = () => setPrefersSystemDarkMode(media.matches);
-    updatePreferredColorScheme();
-    if (typeof media.addEventListener === "function") {
-      media.addEventListener("change", updatePreferredColorScheme);
-      return () => media.removeEventListener("change", updatePreferredColorScheme);
-    }
-    media.addListener(updatePreferredColorScheme);
-    return () => media.removeListener(updatePreferredColorScheme);
   }, []);
 
   useEffect(() => {
@@ -15434,11 +15416,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     supportMessageSoundEnabled ? "提示音已开" : "提示音已关",
     supportVibrationEnabled ? "震动已开" : "震动已关",
   ].join(" · ");
-  const supportMobileDarkMode = prefersSystemDarkMode;
-  const supportMobileShellClassName = supportMobileDarkMode ? "support-mobile-shell support-mobile-dark" : "support-mobile-shell";
-  const supportMobileBackgroundClassName = supportMobileDarkMode
-    ? "bg-[linear-gradient(180deg,#020617_0%,#0f172a_42%,#111827_100%)] text-slate-100"
-    : "bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)]";
+  const supportMobileDarkMode = false;
+  const supportMobileShellClassName = "support-mobile-shell";
+  const supportMobileBackgroundClassName = "bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)]";
 
   const supportMobileConversationsContent = (
     <>
@@ -16288,7 +16268,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
 
   const supportMobileBottomNav = (
     <div
-      className={`${supportMobileDarkMode ? "support-mobile-dark " : ""}support-mobile-nav-shell pointer-events-none fixed bottom-0 left-1/2 z-[2147483298] w-full max-w-md -translate-x-1/2 overscroll-none touch-none transition duration-200 ${
+      className={`support-mobile-nav-shell pointer-events-none fixed bottom-0 left-1/2 z-[2147483298] w-full max-w-md -translate-x-1/2 overscroll-none touch-none transition duration-200 ${
         isSupportMobileKeyboardVisible ? "translate-y-full opacity-0" : "opacity-100"
       }`}
       aria-hidden={isSupportMobileKeyboardVisible}
@@ -16769,7 +16749,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             />
             <div className="fixed inset-x-0 bottom-0 z-[2147483399] px-3 pb-[calc(var(--faolla-mobile-safe-bottom)+0.5rem)]">
               <div
-                className={`${supportMobileDarkMode ? "support-mobile-dark " : ""}support-mobile-sheet mx-auto w-full max-w-md overflow-hidden rounded-[30px] bg-white shadow-[0_24px_80px_rgba(15,23,42,0.2)]`}
+                className="support-mobile-sheet mx-auto w-full max-w-md overflow-hidden rounded-[30px] bg-white shadow-[0_24px_80px_rgba(15,23,42,0.2)]"
               >
                 <div className="px-4 pb-3 pt-3">
                   <div className="mx-auto h-1.5 w-12 rounded-full bg-slate-200" />
@@ -16848,7 +16828,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             {showMobileSupportThread ? (
               <div className="fixed inset-x-0 bottom-0 z-[2147483401] px-3 pb-[calc(var(--faolla-mobile-safe-bottom)+0.75rem)]">
                 <div
-                  className={`${supportMobileDarkMode ? "support-mobile-dark " : ""}support-mobile-sheet mx-auto w-full max-w-md rounded-[30px] bg-white px-4 pb-4 pt-3 shadow-[0_24px_80px_rgba(15,23,42,0.2)]`}
+                  className="support-mobile-sheet mx-auto w-full max-w-md rounded-[30px] bg-white px-4 pb-4 pt-3 shadow-[0_24px_80px_rgba(15,23,42,0.2)]"
                 >
                   <div className="mx-auto h-1.5 w-12 rounded-full bg-slate-200" />
                   <div className="mt-4 flex items-start justify-between gap-3">

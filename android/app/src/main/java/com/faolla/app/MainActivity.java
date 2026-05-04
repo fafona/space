@@ -188,6 +188,12 @@ public class MainActivity extends BridgeActivity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             settings.setOffscreenPreRaster(true);
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            settings.setForceDark(WebSettings.FORCE_DARK_OFF);
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            settings.setAlgorithmicDarkeningAllowed(false);
+        }
 
         CookieManager cookieManager = CookieManager.getInstance();
         cookieManager.setAcceptCookie(true);

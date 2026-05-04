@@ -1,9 +1,9 @@
 {
   "platform": "android",
   "version": "1.0",
-  "build": 17,
+  "build": 18,
   "nativeBuildRequired": true,
-  "minimumNativeBuild": 17,
+  "minimumNativeBuild": 18,
   "apkUrl": "/downloads/faolla-android.apk",
-  "releasedAt": "2026-05-04T16:40:00Z"
+  "releasedAt": "2026-05-04T20:40:00Z"
 }
