@@ -8,7 +8,7 @@ import {
   readMerchantSessionPayload,
   resolveFrontendAuthPayload,
 } from "@/lib/authSessionRecovery";
-import { buildBackendFaollaHref } from "@/lib/faollaEntry";
+import { buildBackendAppShellHref } from "@/lib/faollaEntry";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { persistRecentMerchantLaunchState, readRecentMerchantLaunchMerchantId } from "@/lib/merchantLaunchState";
 import { buildMerchantBackendHref } from "@/lib/siteRouting";
@@ -52,7 +52,7 @@ export default function LaunchBootstrap() {
 
         if (payload?.authenticated === true) {
           if (payload.accountType === "personal") {
-            window.location.replace(buildBackendFaollaHref("/me", "/"));
+            window.location.replace(buildBackendAppShellHref("/me"));
             return;
           }
 
@@ -63,7 +63,7 @@ export default function LaunchBootstrap() {
             (typeof payload.merchantId === "string" ? payload.merchantId.trim() : "");
           if (isMerchantNumericId(merchantId)) {
             persistRecentMerchantLaunchState(merchantId);
-            window.location.replace(buildBackendFaollaHref(buildMerchantBackendHref(merchantId), "/"));
+            window.location.replace(buildBackendAppShellHref(buildMerchantBackendHref(merchantId)));
             return;
           }
         }

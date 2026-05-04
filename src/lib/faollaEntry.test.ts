@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   FAOLLA_LAST_ENTRY_STORAGE_KEY,
+  buildBackendAppShellHref,
   buildBackendFaollaHref,
   buildFaollaShellHref,
   isFaollaBackendShellUrl,
@@ -124,6 +125,14 @@ test("detects Faolla app shell URLs for login suppression", () => {
   assert.equal(isFaollaAppShellUrl("https://faolla.com/?appShell=faolla", "https://faolla.com"), true);
   assert.equal(isFaollaAppShellUrl("https://fafona.faolla.com/?uiLocale=zh-CN&appShell=faolla", "https://faolla.com"), true);
   assert.equal(isFaollaAppShellUrl("https://faolla.com/login", "https://faolla.com"), false);
+});
+
+test("builds backend app shell links without opening the embedded Faolla tab", () => {
+  installBrowser("https://www.faolla.com");
+
+  assert.equal(buildBackendAppShellHref("/me?section=faolla&faollaUrl=https%3A%2F%2Fwww.faolla.com%2F"), "/me?appShell=faolla");
+  assert.equal(buildBackendAppShellHref("/12345678?section=faolla"), "/12345678?appShell=faolla");
+  assert.equal(buildBackendAppShellHref("/admin?mobileTab=self"), "/admin?mobileTab=self&appShell=faolla");
 });
 
 test("preserves Faolla shell params for frontend merchant navigation", () => {

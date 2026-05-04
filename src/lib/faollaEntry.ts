@@ -194,6 +194,19 @@ export function buildBackendFaollaHref(baseHref: string, faollaUrl: string, fall
   }
 }
 
+export function buildBackendAppShellHref(baseHref: string, fallbackOrigin?: string | null) {
+  const runtimeOrigin = getRuntimeOrigin(fallbackOrigin);
+  try {
+    const url = new URL(baseHref || "/", runtimeOrigin);
+    url.searchParams.delete(FAOLLA_SECTION_PARAM);
+    url.searchParams.delete(FAOLLA_URL_PARAM);
+    url.searchParams.set(FAOLLA_APP_SHELL_PARAM, FAOLLA_APP_SHELL_VALUE);
+    return url.origin === runtimeOrigin ? `${url.pathname}${url.search}${url.hash}` : url.toString();
+  } catch {
+    return baseHref;
+  }
+}
+
 export function buildFaollaShellHref(
   sourceHref: string,
   locale?: string | null,

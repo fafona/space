@@ -26,6 +26,7 @@ import {
 } from "@/lib/merchantLaunchState";
 import { clearMerchantSignInBridge, setMerchantSignInBridge } from "@/lib/merchantSignInBridge";
 import {
+  buildBackendAppShellHref,
   buildBackendFaollaHref,
   buildFaollaShellHref,
   isFaollaAppShellSearch,
@@ -119,7 +120,7 @@ function resolveAuthenticatedWorkspaceHref(payload: Awaited<ReturnType<typeof re
   if (payload?.authenticated !== true) return "";
   const accountType = normalizePlatformAccountType(payload.accountType);
   if (accountType === "personal") {
-    return buildBackendFaollaHref("/me", "/");
+    return buildBackendAppShellHref("/me");
   }
 
   const merchantId = pickPrimaryMerchantId(
@@ -128,7 +129,7 @@ function resolveAuthenticatedWorkspaceHref(payload: Awaited<ReturnType<typeof re
   );
   if (!isMerchantNumericId(merchantId)) return "";
   persistRecentMerchantLaunchState(merchantId);
-  return buildBackendFaollaHref(buildMerchantBackendHref(merchantId), "/");
+  return buildBackendAppShellHref(buildMerchantBackendHref(merchantId));
 }
 
 function LoginPageInner() {
@@ -227,8 +228,7 @@ function LoginPageInner() {
   }, [isFaollaAppShellLogin]);
 
   useEffect(() => {
-    if (!isFaollaAppShellLogin || typeof window === "undefined") return;
-    if (embeddedShellLogin) return;
+    if (!(isFaollaAppShellLogin || embeddedShellLogin) || typeof window === "undefined") return;
     window.location.replace(
       buildFaollaShellHref(loginFromUrl || "/", locale, window.location.origin, { preferRuntimeOrigin: true }),
     );
@@ -584,13 +584,14 @@ function LoginPageInner() {
       options?: { withSignInBridge?: boolean },
     ) => {
       const accountType = session?.accountType === "personal" ? "personal" : "merchant";
+      const nativeAppRuntime = isNativeAppRuntime();
       if (accountType === "personal") {
         if (loginFromUrl) {
           window.location.href = buildBackendFaollaHref("/me", loginFromUrl);
           return;
         }
         const targetHref = requestedRedirectPath.startsWith("/me") ? requestedRedirectPath : "/me";
-        window.location.href = targetHref;
+        window.location.href = nativeAppRuntime ? buildBackendAppShellHref(targetHref) : targetHref;
         return;
       }
 
@@ -627,19 +628,22 @@ function LoginPageInner() {
       }
 
       if (requestedRedirectPath && !requestedRedirectPath.startsWith("/me")) {
-        window.location.href = decorateMerchantHref(requestedRedirectPath);
+        const targetHref = nativeAppRuntime ? buildBackendAppShellHref(requestedRedirectPath) : requestedRedirectPath;
+        window.location.href = decorateMerchantHref(targetHref);
         return;
       }
 
       if (directMerchantId) {
-        window.location.href = decorateMerchantHref(buildMerchantBackendHref(directMerchantId));
+        const targetHref = buildMerchantBackendHref(directMerchantId);
+        window.location.href = decorateMerchantHref(nativeAppRuntime ? buildBackendAppShellHref(targetHref) : targetHref);
         return;
       }
       if (resolvedMerchantId) {
-        window.location.href = decorateMerchantHref(buildMerchantBackendHref(resolvedMerchantId));
+        const targetHref = buildMerchantBackendHref(resolvedMerchantId);
+        window.location.href = decorateMerchantHref(nativeAppRuntime ? buildBackendAppShellHref(targetHref) : targetHref);
         return;
       }
-      window.location.href = decorateMerchantHref("/admin");
+      window.location.href = decorateMerchantHref(nativeAppRuntime ? buildBackendAppShellHref("/admin") : "/admin");
     },
     [loginFromUrl, requestedRedirectPath],
   );
