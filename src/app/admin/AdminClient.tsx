@@ -132,6 +132,14 @@ import {
 import { buildPublicBlockId } from "@/lib/blockPublicId";
 import { countInlineAssets, hasInlineAssets, type InlineAssetStats } from "@/lib/inlineAssetStats";
 import { useNotificationSound } from "@/lib/useNotificationSound";
+import {
+  canUseFaollaNativeNotifications,
+  readFaollaNativeNotificationPermission,
+  requestFaollaNativeNotificationPermission,
+  showFaollaNativeMessageNotification,
+  syncFaollaNativeUnreadBadge,
+  type FaollaNativeNotificationPermission,
+} from "@/lib/faollaNativeNotifications";
 import usePullToRefresh from "@/lib/usePullToRefresh";
 import {
   PLAN_TEMPLATE_FILTER_OPTIONS,
@@ -4814,6 +4822,7 @@ type SupportPushSubscriptionSnapshot = {
 };
 
 async function syncSupportAppBadge(unreadCount: number) {
+  syncFaollaNativeUnreadBadge(unreadCount);
   if (typeof navigator === "undefined") return;
   const badgingNavigator = navigator as SupportBadgingNavigator;
   try {
@@ -4833,6 +4842,26 @@ async function syncSupportAppBadge(unreadCount: number) {
   } catch {
     // Ignore unsupported browsers or temporarily blocked badge updates.
   }
+}
+
+function canUseSupportSystemNotifications() {
+  return canUseSupportPushInBrowser() || canUseFaollaNativeNotifications();
+}
+
+function readSupportNativeNotificationPermission(): FaollaNativeNotificationPermission {
+  return canUseFaollaNativeNotifications() ? readFaollaNativeNotificationPermission() : "unsupported";
+}
+
+function buildSupportNativeNotificationBody(text: unknown) {
+  const preview = formatSupportConversationPreview(String(text ?? ""));
+  if (!preview) return "你有一条新消息";
+  return preview.length > 72 ? `${preview.slice(0, 69).trimEnd()}...` : preview;
+}
+
+function buildSupportNativeNotificationUrl(merchantId: string, supportTarget: string) {
+  const normalizedMerchantId = normalizeSupportDisplayValue(merchantId);
+  const path = normalizedMerchantId || "admin";
+  return `/${path}?support=${encodeURIComponent(supportTarget)}&appShell=faolla`;
 }
 
 function readSupportPushPublicKey() {
@@ -11124,6 +11153,44 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     supportUnreadStateHydrated
       ? supportUnreadBadgeCount
       : Math.max(supportUnreadBadgeCount, supportPushBadgeHydrated ? supportRemoteBadgeCount : 0);
+  const latestSupportAdminNotificationPayload = latestSupportAdminMessage
+    ? {
+        title: "Faolla 官方回复",
+        body: buildSupportNativeNotificationBody(latestSupportAdminMessage.text),
+        url: buildSupportNativeNotificationUrl(supportReadMerchantId || currentSupportMerchantId, "official"),
+        badgeCount: supportEffectiveBadgeCount,
+      }
+    : null;
+  const latestIncomingPeerNotificationPayload = useMemo(() => {
+    let latestPayload: { title: string; body: string; url: string; badgeCount: number } | null = null;
+    let latestTimestamp = 0;
+    if (!currentSupportMerchantId) return latestPayload;
+    supportPeerThreads.forEach((thread) => {
+      const latestIncomingMessage = findLatestIncomingPeerMessage(thread, currentSupportMerchantId);
+      if (!latestIncomingMessage) return;
+      const contactMerchantId =
+        thread.merchantAId === currentSupportMerchantId
+          ? thread.merchantBId
+          : thread.merchantBId === currentSupportMerchantId
+            ? thread.merchantAId
+            : "";
+      if (!contactMerchantId) return;
+      const timestamp = new Date(latestIncomingMessage.createdAt).getTime();
+      const normalizedTimestamp = Number.isFinite(timestamp) ? timestamp : 0;
+      if (normalizedTimestamp < latestTimestamp) return;
+      const contactName =
+        supportPeerContacts.find((contact) => contact.merchantId === contactMerchantId)?.merchantName ||
+        contactMerchantId;
+      latestTimestamp = normalizedTimestamp;
+      latestPayload = {
+        title: `新消息 - ${contactName}`,
+        body: buildSupportNativeNotificationBody(latestIncomingMessage.text),
+        url: buildSupportNativeNotificationUrl(currentSupportMerchantId, `merchant:${contactMerchantId}`),
+        badgeCount: supportEffectiveBadgeCount,
+      };
+    });
+    return latestPayload;
+  }, [currentSupportMerchantId, supportEffectiveBadgeCount, supportPeerContacts, supportPeerThreads]);
   const supportHasUnreadMessages = supportUnreadBadgeCount > 0;
   const supportContactRows: SupportContactRow[] = [
     {
@@ -11684,8 +11751,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   const syncCurrentSupportPushSubscriptionState = useCallback(async () => {
     if (!canUseSupportPushInBrowser()) {
-      setSupportPushPermission("unsupported");
-      setSupportPushSubscribed(false);
+      const nativePermission = readSupportNativeNotificationPermission();
+      setSupportPushPermission(nativePermission);
+      setSupportPushSubscribed(nativePermission !== "unsupported" && nativePermission !== "denied");
       setSupportPushEndpoint("");
       setSupportRemoteBadgeCount(0);
       setSupportPushBadgeHydrated(true);
@@ -11800,10 +11868,32 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         setSupportPushBusy(true);
         try {
           await disableSupportPushNotifications();
+          if (canUseFaollaNativeNotifications()) {
+            syncFaollaNativeUnreadBadge(0);
+            setSupportPushPermission(readSupportNativeNotificationPermission());
+            setSupportPushSubscribed(false);
+          }
           showTip("已关闭系统消息通知");
         } catch (error) {
           setSupportSystemNotificationsEnabled(true);
           setSupportPushError(error instanceof Error ? error.message : "关闭系统消息通知失败");
+        } finally {
+          setSupportPushBusy(false);
+        }
+        return;
+      }
+      if (canUseFaollaNativeNotifications()) {
+        setSupportPushBusy(true);
+        try {
+          const nativePermission = requestFaollaNativeNotificationPermission();
+          const nextPermission = nativePermission === "unsupported" ? readSupportNativeNotificationPermission() : nativePermission;
+          setSupportPushPermission(nextPermission === "unsupported" ? "default" : nextPermission);
+          setSupportPushSubscribed(nextPermission !== "denied");
+          setSupportPushEndpoint("");
+          setSupportPushError(
+            nextPermission === "denied" ? "通知已被系统拦截，请在系统设置里允许 Faolla 通知。" : "",
+          );
+          showTip(nextPermission === "denied" ? "通知未开启" : "已开启系统消息通知");
         } finally {
           setSupportPushBusy(false);
         }
@@ -11839,7 +11929,24 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     ],
   );
 
-  const triggerSupportNotificationFeedback = useCallback(async () => {
+  const triggerSupportNotificationFeedback = useCallback(async (notification?: {
+    title: string;
+    body: string;
+    url: string;
+    badgeCount: number;
+  }) => {
+    const nativeNotificationShown =
+      supportSystemNotificationsEnabled &&
+      notification &&
+      canUseFaollaNativeNotifications() &&
+      showFaollaNativeMessageNotification({
+        ...notification,
+        sound: supportMessageSoundEnabled,
+        vibrate: supportVibrationEnabled,
+      });
+    if (nativeNotificationShown) {
+      return;
+    }
     if (supportMessageSoundEnabled) {
       await playNotificationSound();
     }
@@ -11850,7 +11957,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     ) {
       navigator.vibrate(35);
     }
-  }, [playNotificationSound, supportMessageSoundEnabled, supportVibrationEnabled]);
+  }, [
+    playNotificationSound,
+    supportMessageSoundEnabled,
+    supportSystemNotificationsEnabled,
+    supportVibrationEnabled,
+  ]);
 
   const requestSupportWithSessionRecovery = useCallback(
     (init: RequestInit) => {
@@ -13283,16 +13395,26 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     const previousKey = supportLastIncomingAdminMessageKeyRef.current;
     supportLastIncomingAdminMessageKeyRef.current = latestSupportAdminMessageKey;
     if (!previousKey || previousKey === latestSupportAdminMessageKey) return;
-    void triggerSupportNotificationFeedback();
-  }, [isPlatformEditor, latestSupportAdminMessageKey, triggerSupportNotificationFeedback]);
+    void triggerSupportNotificationFeedback(latestSupportAdminNotificationPayload ?? undefined);
+  }, [
+    isPlatformEditor,
+    latestSupportAdminMessageKey,
+    latestSupportAdminNotificationPayload,
+    triggerSupportNotificationFeedback,
+  ]);
 
   useEffect(() => {
     if (isPlatformEditor || !latestIncomingPeerMessageKey) return;
     const previousKey = supportLastIncomingPeerMessageKeyRef.current;
     supportLastIncomingPeerMessageKeyRef.current = latestIncomingPeerMessageKey;
     if (!previousKey || previousKey === latestIncomingPeerMessageKey) return;
-    void triggerSupportNotificationFeedback();
-  }, [isPlatformEditor, latestIncomingPeerMessageKey, triggerSupportNotificationFeedback]);
+    void triggerSupportNotificationFeedback(latestIncomingPeerNotificationPayload ?? undefined);
+  }, [
+    isPlatformEditor,
+    latestIncomingPeerMessageKey,
+    latestIncomingPeerNotificationPayload,
+    triggerSupportNotificationFeedback,
+  ]);
 
   useEffect(() => {
     if (isPlatformEditor || !supportInterfaceOpen || !selectedSupportConversationVisible || typeof window === "undefined") return;
@@ -13374,7 +13496,39 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, [isPlatformEditor, syncCurrentSupportPushSubscriptionState]);
 
   useEffect(() => {
-    if (isPlatformEditor || !supportSystemNotificationsEnabled) return;
+    if (isPlatformEditor || typeof window === "undefined") return () => {};
+    const handleNativePermission = (event: Event) => {
+      const detail = (event as CustomEvent<{ permission?: unknown }>).detail;
+      const permission =
+        detail?.permission === "granted" || detail?.permission === "denied" || detail?.permission === "default"
+          ? detail.permission
+          : readSupportNativeNotificationPermission();
+      setSupportPushPermission(permission);
+      setSupportPushSubscribed(permission !== "unsupported" && permission !== "denied");
+      if (permission === "denied") {
+        setSupportPushError("通知已被系统拦截，请在系统设置里允许 Faolla 通知。");
+      } else {
+        setSupportPushError("");
+      }
+    };
+    window.addEventListener("faolla-native-notification-permission", handleNativePermission as EventListener);
+    return () => {
+      window.removeEventListener("faolla-native-notification-permission", handleNativePermission as EventListener);
+    };
+  }, [isPlatformEditor]);
+
+  useEffect(() => {
+    if (isPlatformEditor || !supportSystemNotificationsEnabled || !canUseFaollaNativeNotifications()) return;
+    const permission = readSupportNativeNotificationPermission();
+    setSupportPushPermission(permission);
+    setSupportPushSubscribed(permission !== "unsupported" && permission !== "denied");
+    if (permission === "default") {
+      requestFaollaNativeNotificationPermission();
+    }
+  }, [isPlatformEditor, supportSystemNotificationsEnabled]);
+
+  useEffect(() => {
+    if (isPlatformEditor || !supportSystemNotificationsEnabled || canUseFaollaNativeNotifications()) return;
     void ensureSupportPushSubscription().catch(() => {
       // Ignore background subscription refresh failures.
     });
@@ -15226,16 +15380,17 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       href: supportSelfWebsiteHref || undefined,
     },
   ];
-  const supportPushAvailable = canUseSupportPushInBrowser();
+  const supportPushAvailable = canUseSupportSystemNotifications();
+  const supportNativeNotificationsAvailable = canUseFaollaNativeNotifications();
   const supportPushStatusText = !supportPushAvailable
     ? "当前环境暂不支持系统通知。"
     : !supportSystemNotificationsEnabled
       ? "系统消息通知已关闭。"
-      : !supportPushStandalone
+      : !supportNativeNotificationsAvailable && !supportPushStandalone
         ? "添加到主屏幕后可显示系统通知和角标。"
         : supportPushPermission === "granted"
           ? supportPushSubscribed
-            ? "已开启后台新消息通知和角标。"
+            ? "已开启新消息通知和角标。"
             : "通知权限已开启，正在连接当前设备。"
           : supportPushPermission === "denied"
             ? "通知已被系统拦截，请在浏览器或系统设置里重新允许。"
@@ -16028,11 +16183,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         key: "vibration",
                         label: "震动",
                         description:
-                          typeof navigator !== "undefined" && typeof navigator.vibrate === "function"
+                          canUseFaollaNativeNotifications() ||
+                          (typeof navigator !== "undefined" && typeof navigator.vibrate === "function")
                             ? "新消息到达时使用设备震动提醒。"
                             : "当前设备或浏览器暂不支持震动提醒。",
                         checked: supportVibrationEnabled,
-                        disabled: typeof navigator === "undefined" || typeof navigator.vibrate !== "function",
+                        disabled:
+                          !canUseFaollaNativeNotifications() &&
+                          (typeof navigator === "undefined" || typeof navigator.vibrate !== "function"),
                         onToggle: () => setSupportVibrationEnabled((current) => !current),
                       },
                     ].map((item) => (

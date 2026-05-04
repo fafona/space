@@ -1,20 +1,29 @@
 package com.faolla.app;
 
+import android.Manifest;
 import android.app.DownloadManager;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.ActivityNotFoundException;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
+import android.media.AudioAttributes;
+import android.media.RingtoneManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
 import android.provider.Settings;
 import android.view.ViewGroup;
 import android.view.ViewParent;
@@ -27,7 +36,10 @@ import android.webkit.WebView;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.Toast;
-import androidx.core.splashscreen.SplashScreen;
+import androidx.core.app.ActivityCompat;
+import androidx.core.app.NotificationCompat;
+import androidx.core.app.NotificationManagerCompat;
+import androidx.core.content.ContextCompat;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 import com.getcapacitor.BridgeActivity;
@@ -35,6 +47,13 @@ import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
     private static final String APK_MIME_TYPE = "application/vnd.android.package-archive";
+    private static final String MESSAGE_CHANNEL_ID = "faolla_messages";
+    private static final String BADGE_CHANNEL_ID = "faolla_badges";
+    private static final String NOTIFICATION_ACTION_OPEN = "com.faolla.app.OPEN_NOTIFICATION";
+    private static final String NOTIFICATION_EXTRA_URL = "faolla_url";
+    private static final int NOTIFICATION_PERMISSION_REQUEST_CODE = 7301;
+    private static final int BADGE_NOTIFICATION_ID = 73010;
+    private static final int MESSAGE_NOTIFICATION_BASE_ID = 73100;
     private final Handler updateProgressHandler = new Handler(Looper.getMainLooper());
     private long pendingUpdateDownloadId = -1L;
     private Uri pendingUpdateApkUri;
@@ -42,13 +61,14 @@ public class MainActivity extends BridgeActivity {
     private boolean updateInstallStarted = false;
     private FrameLayout launchCover;
     private boolean launchCoverHidden = false;
+    private int messageNotificationSerial = 0;
+    private int nativeUnreadBadgeCount = 0;
     private Runnable launchCoverFallbackRunnable;
     private BroadcastReceiver updateDownloadReceiver;
     private Runnable updateProgressRunnable;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        SplashScreen.installSplashScreen(this);
         getWindow().setBackgroundDrawable(new ColorDrawable(Color.rgb(8, 17, 33)));
         applyLaunchSystemBars();
         super.onCreate(savedInstanceState);
@@ -59,6 +79,22 @@ public class MainActivity extends BridgeActivity {
 
         configureWebViewRuntime();
         installDownloadListener();
+        handleNotificationIntent(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleNotificationIntent(intent);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == NOTIFICATION_PERMISSION_REQUEST_CODE) {
+            dispatchNotificationPermissionEvent(resolveNotificationPermissionState());
+        }
     }
 
     private void applyLaunchSystemBars() {
@@ -90,7 +126,7 @@ public class MainActivity extends BridgeActivity {
         cover.setBackgroundColor(Color.rgb(8, 17, 33));
         cover.setClickable(true);
         ImageView welcomePoster = new ImageView(this);
-        welcomePoster.setImageResource(R.drawable.splash);
+        welcomePoster.setImageResource(R.drawable.faolla_launch);
         welcomePoster.setScaleType(ImageView.ScaleType.CENTER_CROP);
         cover.addView(
             welcomePoster,
@@ -445,6 +481,256 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
+    private boolean hasPostNotificationPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            return true;
+        }
+        return ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private String resolveNotificationPermissionState() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            return "granted";
+        }
+        return hasPostNotificationPermission() ? "granted" : "default";
+    }
+
+    private void requestNativeNotificationPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || hasPostNotificationPermission()) {
+            dispatchNotificationPermissionEvent(resolveNotificationPermissionState());
+            return;
+        }
+        ActivityCompat.requestPermissions(
+            this,
+            new String[] { Manifest.permission.POST_NOTIFICATIONS },
+            NOTIFICATION_PERMISSION_REQUEST_CODE
+        );
+    }
+
+    private void dispatchNotificationPermissionEvent(String permission) {
+        if (this.bridge == null || this.bridge.getWebView() == null) {
+            return;
+        }
+
+        try {
+            JSONObject detail = new JSONObject();
+            detail.put("permission", permission);
+            String script =
+                "window.dispatchEvent(new CustomEvent('faolla-native-notification-permission',{detail:" +
+                    detail.toString() +
+                    "}));";
+            WebView webView = this.bridge.getWebView();
+            webView.post(() -> webView.evaluateJavascript(script, null));
+        } catch (Exception ignored) {
+            // The web layer will retry permission checks when settings are opened again.
+        }
+    }
+
+    private void ensureNotificationChannels() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return;
+        }
+
+        NotificationManager notificationManager = getSystemService(NotificationManager.class);
+        if (notificationManager == null) {
+            return;
+        }
+
+        Uri defaultSound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+        AudioAttributes audioAttributes = new AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .build();
+
+        NotificationChannel messageChannel = new NotificationChannel(
+            MESSAGE_CHANNEL_ID,
+            "Faolla messages",
+            NotificationManager.IMPORTANCE_HIGH
+        );
+        messageChannel.setDescription("New Faolla message alerts");
+        messageChannel.enableVibration(true);
+        messageChannel.setVibrationPattern(new long[] { 0L, 120L, 70L, 160L });
+        messageChannel.setSound(defaultSound, audioAttributes);
+        messageChannel.setShowBadge(true);
+        notificationManager.createNotificationChannel(messageChannel);
+
+        NotificationChannel badgeChannel = new NotificationChannel(
+            BADGE_CHANNEL_ID,
+            "Faolla unread badges",
+            NotificationManager.IMPORTANCE_LOW
+        );
+        badgeChannel.setDescription("Faolla unread count badge sync");
+        badgeChannel.enableVibration(false);
+        badgeChannel.setSound(null, null);
+        badgeChannel.setShowBadge(true);
+        notificationManager.createNotificationChannel(badgeChannel);
+    }
+
+    private String readJsonString(JSONObject json, String key, String fallback) {
+        String value = json.optString(key, fallback);
+        if (value == null || value.trim().isEmpty()) {
+            return fallback;
+        }
+        return value.trim();
+    }
+
+    private int readJsonInt(JSONObject json, String key, int fallback) {
+        int value = json.optInt(key, fallback);
+        return Math.max(0, Math.min(999, value));
+    }
+
+    private boolean readJsonBoolean(JSONObject json, String key, boolean fallback) {
+        return json.has(key) ? json.optBoolean(key, fallback) : fallback;
+    }
+
+    private PendingIntent buildNotificationPendingIntent(String url, int requestCode) {
+        Intent intent = new Intent(this, MainActivity.class);
+        intent.setAction(NOTIFICATION_ACTION_OPEN);
+        intent.putExtra(NOTIFICATION_EXTRA_URL, url);
+        intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            flags |= PendingIntent.FLAG_IMMUTABLE;
+        }
+        return PendingIntent.getActivity(this, requestCode, intent, flags);
+    }
+
+    private String resolveNotificationUrl(String rawUrl) {
+        String trimmedUrl = rawUrl == null ? "" : rawUrl.trim();
+        if (trimmedUrl.startsWith("http://") || trimmedUrl.startsWith("https://")) {
+            return trimmedUrl;
+        }
+
+        String origin = "https://www.faolla.com";
+        try {
+            WebView webView = this.bridge == null ? null : this.bridge.getWebView();
+            String currentUrl = webView == null ? "" : webView.getUrl();
+            if (currentUrl != null && !currentUrl.trim().isEmpty()) {
+                Uri currentUri = Uri.parse(currentUrl);
+                if (currentUri.getScheme() != null && currentUri.getAuthority() != null) {
+                    origin = currentUri.getScheme() + "://" + currentUri.getAuthority();
+                }
+            }
+        } catch (Exception ignored) {
+            origin = "https://www.faolla.com";
+        }
+
+        String path = trimmedUrl.startsWith("/") ? trimmedUrl : "/" + trimmedUrl;
+        if (!path.contains("appShell=")) {
+            path += path.contains("?") ? "&appShell=faolla" : "?appShell=faolla";
+        }
+        return origin + path;
+    }
+
+    private void handleNotificationIntent(Intent intent) {
+        if (intent == null || !NOTIFICATION_ACTION_OPEN.equals(intent.getAction())) {
+            return;
+        }
+        String targetUrl = resolveNotificationUrl(intent.getStringExtra(NOTIFICATION_EXTRA_URL));
+        updateProgressHandler.postDelayed(() -> openUrlInCurrentApp(targetUrl), 220L);
+    }
+
+    @SuppressWarnings("deprecation")
+    private void vibrateForNativeNotification() {
+        try {
+            Vibrator vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+            if (vibrator == null) {
+                return;
+            }
+            long[] pattern = new long[] { 0L, 120L, 70L, 160L };
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator.vibrate(VibrationEffect.createWaveform(pattern, -1));
+            } else {
+                vibrator.vibrate(pattern, -1);
+            }
+        } catch (Exception ignored) {
+            // Vibration is best-effort.
+        }
+    }
+
+    private void showNativeMessageNotification(String payloadJson) {
+        JSONObject payload;
+        try {
+            payload = new JSONObject(payloadJson == null ? "{}" : payloadJson);
+        } catch (Exception ignored) {
+            payload = new JSONObject();
+        }
+
+        String title = readJsonString(payload, "title", "Faolla");
+        String body = readJsonString(payload, "body", "New Faolla message");
+        String url = resolveNotificationUrl(readJsonString(payload, "url", "/launch?appShell=faolla"));
+        int unreadCount = readJsonInt(payload, "badgeCount", nativeUnreadBadgeCount);
+        boolean soundEnabled = readJsonBoolean(payload, "sound", true);
+        boolean vibrationEnabled = readJsonBoolean(payload, "vibrate", true);
+
+        nativeUnreadBadgeCount = unreadCount;
+        if (vibrationEnabled) {
+            vibrateForNativeNotification();
+        }
+        if (!hasPostNotificationPermission()) {
+            return;
+        }
+
+        ensureNotificationChannels();
+        Uri defaultSound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+        int serial = messageNotificationSerial++ % 900;
+        int notificationId = MESSAGE_NOTIFICATION_BASE_ID + serial;
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, MESSAGE_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_stat_faolla)
+            .setColor(Color.rgb(8, 17, 33))
+            .setContentTitle(title)
+            .setContentText(body)
+            .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(buildNotificationPendingIntent(url, notificationId))
+            .setBadgeIconType(NotificationCompat.BADGE_ICON_SMALL)
+            .setNumber(unreadCount);
+        if (soundEnabled) {
+            builder.setSound(defaultSound);
+        } else {
+            builder.setSilent(true);
+        }
+        if (vibrationEnabled) {
+            builder.setVibrate(new long[] { 0L, 120L, 70L, 160L });
+        } else {
+            builder.setVibrate(new long[] { 0L });
+        }
+        NotificationManagerCompat.from(this).notify(notificationId, builder.build());
+        syncNativeUnreadBadge(unreadCount);
+    }
+
+    private void syncNativeUnreadBadge(int unreadCount) {
+        nativeUnreadBadgeCount = Math.max(0, Math.min(999, unreadCount));
+        if (!hasPostNotificationPermission()) {
+            return;
+        }
+
+        NotificationManagerCompat notificationManager = NotificationManagerCompat.from(this);
+        if (nativeUnreadBadgeCount <= 0) {
+            notificationManager.cancelAll();
+            return;
+        }
+
+        ensureNotificationChannels();
+        String body = nativeUnreadBadgeCount + " unread messages";
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, BADGE_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_stat_faolla)
+            .setColor(Color.rgb(8, 17, 33))
+            .setContentTitle("Faolla")
+            .setContentText(body)
+            .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setSilent(true)
+            .setOnlyAlertOnce(true)
+            .setAutoCancel(false)
+            .setContentIntent(buildNotificationPendingIntent("/launch?appShell=faolla", BADGE_NOTIFICATION_ID))
+            .setBadgeIconType(NotificationCompat.BADGE_ICON_SMALL)
+            .setNumber(nativeUnreadBadgeCount);
+        notificationManager.notify(BADGE_NOTIFICATION_ID, builder.build());
+    }
+
     private void openUrlInCurrentApp(String url) {
         if (this.bridge != null && this.bridge.getWebView() != null) {
             this.bridge.getWebView().loadUrl(url);
@@ -455,6 +741,28 @@ public class MainActivity extends BridgeActivity {
         @JavascriptInterface
         public void hideLaunchCover() {
             runOnUiThread(() -> MainActivity.this.hideLaunchCover());
+        }
+
+        @JavascriptInterface
+        public String getNotificationPermissionState() {
+            return resolveNotificationPermissionState();
+        }
+
+        @JavascriptInterface
+        public String requestNotificationPermission() {
+            String currentState = resolveNotificationPermissionState();
+            runOnUiThread(() -> MainActivity.this.requestNativeNotificationPermission());
+            return currentState;
+        }
+
+        @JavascriptInterface
+        public void showMessageNotification(String payloadJson) {
+            runOnUiThread(() -> MainActivity.this.showNativeMessageNotification(payloadJson));
+        }
+
+        @JavascriptInterface
+        public void syncUnreadBadge(int unreadCount) {
+            runOnUiThread(() -> MainActivity.this.syncNativeUnreadBadge(unreadCount));
         }
 
         @JavascriptInterface
