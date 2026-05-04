@@ -1,7 +1,7 @@
 {
   "platform": "android",
   "version": "1.0",
-  "build": 3,
+  "build": 4,
   "apkUrl": "/downloads/faolla-android.apk",
   "releasedAt": "2026-05-04T00:00:00Z"
 }

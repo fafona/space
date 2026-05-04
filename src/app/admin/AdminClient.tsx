@@ -85,6 +85,7 @@ import { installFrontendAuthBridgeResponder } from "@/lib/frontendAuthBridge";
 import {
   clearRecentMerchantLaunchState,
   persistRecentMerchantLaunchState,
+  readRecentMerchantLaunchMerchantId,
 } from "@/lib/merchantLaunchState";
 import { clearMerchantSignInBridge } from "@/lib/merchantSignInBridge";
 import { buildPublishedMerchantProfilePatch } from "@/lib/merchantProfileBinding";
@@ -7257,8 +7258,45 @@ export default function AdminClient({
         setCheckingAuth(false);
       }
     };
+    const redirectNativeMerchantShellToLaunch = () => {
+      if (isPlatformEditor || typeof window === "undefined" || typeof document === "undefined") return false;
+      const nativeRuntime =
+        document.documentElement.dataset.capacitor === "true" ||
+        Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
+      if (!nativeRuntime) return false;
+      const recentMerchantId = readRecentMerchantLaunchMerchantId();
+      if (!isMerchantNumericId(recentMerchantId)) return false;
+
+      const retryStorageKey = "faolla:native-merchant-auth-retry";
+      let retryCount = 0;
+      try {
+        const raw = window.sessionStorage.getItem(retryStorageKey);
+        const parsed = raw ? (JSON.parse(raw) as { count?: unknown; at?: unknown }) : null;
+        const timestamp = typeof parsed?.at === "number" && Number.isFinite(parsed.at) ? parsed.at : 0;
+        if (Date.now() - timestamp <= 60_000) {
+          retryCount = Math.max(0, Math.min(3, Number(parsed?.count) || 0));
+        }
+      } catch {
+        retryCount = 0;
+      }
+      if (retryCount >= 2) return false;
+      try {
+        window.sessionStorage.setItem(
+          retryStorageKey,
+          JSON.stringify({
+            count: retryCount + 1,
+            at: Date.now(),
+          }),
+        );
+      } catch {
+        // Best effort only; the redirect itself is what matters.
+      }
+      window.location.replace(`/launch?nativeAuthRetry=${retryCount + 1}`);
+      return true;
+    };
     const releaseMerchantUnauthenticatedState = (notice: string) => {
       if (!mounted) return;
+      if (redirectNativeMerchantShellToLaunch()) return;
       merchantIdsRef.current = [];
       setRemoteContentVerified(false);
       setHasEditorContent(false);

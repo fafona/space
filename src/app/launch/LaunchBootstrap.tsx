@@ -43,11 +43,11 @@ export default function LaunchBootstrap() {
     void (async () => {
       try {
         const recentMerchantId = readRecentMerchantLaunchMerchantId();
-        const directPayload = await readMerchantSessionPayload(3200, { includeClientTokens: true }).catch(() => null);
+        const directPayload = await readMerchantSessionPayload(2400, { includeClientTokens: true }).catch(() => null);
         const payload =
           directPayload?.authenticated === true
             ? directPayload
-            : await resolveFrontendAuthPayload(7200).catch(() => null);
+            : await resolveFrontendAuthPayload(5200).catch(() => null);
         if (cancelled) return;
 
         if (payload?.authenticated === true) {

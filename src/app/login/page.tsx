@@ -928,7 +928,7 @@ function LoginPageInner() {
     try {
       const result = await signInViaServer(account, password);
       clearStoredBrowserSupabaseSessionTokens();
-      await readMerchantSessionPayload(4200, { includeClientTokens: true }).catch(() => null);
+      void readMerchantSessionPayload(4200, { includeClientTokens: true }).catch(() => null);
       await redirectToAccountHome(result.user, {
         accountType: result.accountType,
         accountId: result.accountId,

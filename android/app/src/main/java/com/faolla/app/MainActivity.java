@@ -17,6 +17,8 @@ import android.view.Window;
 import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.URLUtil;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
 import android.widget.Toast;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
@@ -40,7 +42,28 @@ public class MainActivity extends BridgeActivity {
         controller.setAppearanceLightStatusBars(true);
         controller.setAppearanceLightNavigationBars(true);
 
+        configureWebViewRuntime();
         installDownloadListener();
+    }
+
+    private void configureWebViewRuntime() {
+        if (this.bridge == null || this.bridge.getWebView() == null) {
+            return;
+        }
+
+        WebView webView = this.bridge.getWebView();
+        webView.setBackgroundColor(Color.rgb(8, 17, 33));
+
+        WebSettings settings = webView.getSettings();
+        settings.setDomStorageEnabled(true);
+        settings.setDatabaseEnabled(true);
+        settings.setCacheMode(WebSettings.LOAD_DEFAULT);
+
+        CookieManager cookieManager = CookieManager.getInstance();
+        cookieManager.setAcceptCookie(true);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            cookieManager.setAcceptThirdPartyCookies(webView, true);
+        }
     }
 
     private void installDownloadListener() {
@@ -52,6 +75,25 @@ public class MainActivity extends BridgeActivity {
         this.bridge.getWebView().setDownloadListener((url, userAgent, contentDisposition, mimeType, contentLength) -> {
             enqueueUpdateDownload(url, userAgent, contentDisposition, mimeType, true);
         });
+    }
+
+    @Override
+    public void onPause() {
+        CookieManager.getInstance().flush();
+        super.onPause();
+    }
+
+    @Override
+    public void onStop() {
+        CookieManager.getInstance().flush();
+        super.onStop();
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        configureWebViewRuntime();
+        CookieManager.getInstance().flush();
     }
 
     @Override
