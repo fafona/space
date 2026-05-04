@@ -25,6 +25,7 @@ import android.webkit.URLUtil;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.Toast;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
@@ -86,6 +87,13 @@ public class MainActivity extends BridgeActivity {
         FrameLayout cover = new FrameLayout(this);
         cover.setBackgroundColor(Color.rgb(8, 17, 33));
         cover.setClickable(true);
+        ImageView welcomePoster = new ImageView(this);
+        welcomePoster.setImageResource(R.drawable.splash);
+        welcomePoster.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        cover.addView(
+            welcomePoster,
+            new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        );
         addContentView(
             cover,
             new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)

@@ -15522,7 +15522,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           <div className="faolla-mobile-self-profile-hero flex flex-col items-center px-4 text-center">
             <button
               type="button"
-              className="faolla-mobile-self-avatar relative flex h-24 w-24 items-center justify-center overflow-hidden rounded-full bg-slate-900 text-xl font-semibold text-white shadow-[0_18px_40px_rgba(15,23,42,0.16)]"
+              className="faolla-mobile-self-avatar relative flex h-[98px] w-[98px] shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-900 text-xl font-semibold text-white shadow-[0_18px_40px_rgba(15,23,42,0.16)]"
               onClick={openSupportSelfAvatarPicker}
               disabled={supportSelfAvatarUploading || supportSelfProfileSaving}
               aria-label="上传头像"
@@ -15531,7 +15531,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 label={supportSelfAvatarLabel}
                 imageUrl={supportSelfAvatarImageUrl}
                 imageAlt={supportSelfDisplayName}
-                className="flex h-full w-full items-center justify-center bg-slate-900 text-white"
+                className="faolla-mobile-self-avatar-image flex h-full w-full items-center justify-center rounded-full bg-slate-900 text-white"
                 labelClassName="text-xl font-semibold text-white"
               />
               {(supportSelfAvatarUploading || supportSelfProfileSaving) ? (
@@ -16241,13 +16241,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               <SupportAvatarBadge
                 label={selectedSupportAvatarLabel}
                 imageAlt={selectedSupportDisplayName}
-                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white shadow-sm"
+                className="faolla-mobile-thread-avatar flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white shadow-sm"
                 labelClassName="text-sm font-semibold text-white"
               />
             ) : (
               <button
                 type="button"
-                className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-900 text-sm font-semibold text-white shadow-sm transition hover:scale-[1.02]"
+                className="faolla-mobile-thread-avatar-button flex h-11 w-11 shrink-0 items-center justify-center overflow-visible rounded-full bg-slate-900 text-sm font-semibold text-white shadow-sm transition hover:scale-[1.02]"
                 onClick={() => setSupportMerchantInfoSheetOpen(true)}
                 aria-label="查看商户资料"
               >
@@ -16255,7 +16255,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   label={selectedSupportAvatarLabel}
                   imageUrl={selectedSupportAvatarImageUrl}
                   imageAlt={selectedSupportDisplayName}
-                  className="flex h-full w-full items-center justify-center rounded-full bg-slate-900 text-white"
+                  className="faolla-mobile-thread-avatar flex h-full w-full items-center justify-center rounded-full bg-slate-900 text-white"
                   labelClassName="text-sm font-semibold text-white"
                   showMerchantBadge={selectedSupportPeerIsMerchant}
                 />

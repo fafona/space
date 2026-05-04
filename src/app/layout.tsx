@@ -299,13 +299,32 @@ html[data-faolla-app-shell="true"][data-faolla-launch="false"] body {
     box-shadow: none !important;
   }
   .faolla-mobile-chat-avatar,
+  .faolla-mobile-thread-avatar,
   .faolla-mobile-self-avatar,
-  .faolla-mobile-self-avatar *,
   .faolla-support-avatar,
   .faolla-support-avatar *,
   .faolla-support-avatar > div,
   .faolla-support-avatar img {
     border-radius: 9999px !important;
+  }
+  .faolla-personal-mobile-shell .faolla-mobile-thread-avatar-button,
+  .support-mobile-shell .faolla-mobile-thread-avatar-button,
+  .faolla-personal-mobile-shell .faolla-mobile-thread-avatar,
+  .support-mobile-shell .faolla-mobile-thread-avatar {
+    width: 2.75rem !important;
+    min-width: 2.75rem !important;
+    max-width: 2.75rem !important;
+    height: 2.75rem !important;
+    min-height: 2.75rem !important;
+    max-height: 2.75rem !important;
+    aspect-ratio: 1 / 1 !important;
+    border-radius: 9999px !important;
+  }
+  .faolla-personal-mobile-shell .faolla-mobile-thread-avatar-button .faolla-support-avatar,
+  .support-mobile-shell .faolla-mobile-thread-avatar-button .faolla-support-avatar {
+    width: 100% !important;
+    height: 100% !important;
+    aspect-ratio: 1 / 1 !important;
   }
   .faolla-mobile-chat-row .faolla-mobile-chat-name {
     font-size: 0.96rem !important;
@@ -376,9 +395,33 @@ html[data-faolla-app-shell="true"][data-faolla-launch="false"] body {
   .faolla-personal-mobile-shell .faolla-mobile-self-avatar,
   .support-mobile-shell .faolla-mobile-self-avatar {
     width: 6.1rem !important;
+    min-width: 6.1rem !important;
+    max-width: 6.1rem !important;
     height: 6.1rem !important;
+    min-height: 6.1rem !important;
+    max-height: 6.1rem !important;
+    aspect-ratio: 1 / 1 !important;
     border-radius: 9999px !important;
+    overflow: hidden !important;
     box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12) !important;
+  }
+  .faolla-personal-mobile-shell .faolla-mobile-self-avatar .faolla-support-avatar,
+  .support-mobile-shell .faolla-mobile-self-avatar .faolla-support-avatar,
+  .faolla-personal-mobile-shell .faolla-mobile-self-avatar .faolla-support-avatar > div,
+  .support-mobile-shell .faolla-mobile-self-avatar .faolla-support-avatar > div {
+    width: 100% !important;
+    height: 100% !important;
+    aspect-ratio: 1 / 1 !important;
+    border-radius: 9999px !important;
+    overflow: hidden !important;
+  }
+  .faolla-personal-mobile-shell .faolla-mobile-self-avatar img,
+  .support-mobile-shell .faolla-mobile-self-avatar img {
+    width: 100% !important;
+    height: 100% !important;
+    aspect-ratio: 1 / 1 !important;
+    object-fit: cover !important;
+    border-radius: 9999px !important;
   }
   .faolla-personal-mobile-shell .faolla-mobile-self-name,
   .support-mobile-shell .faolla-mobile-self-name {

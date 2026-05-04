@@ -261,7 +261,7 @@ export default function CapacitorAppBridge() {
       void readMerchantSessionPayload(5200, { includeClientTokens: true }).catch(() => null);
     };
     void syncNativeWebBuild(true).finally(() => {
-      window.setTimeout(hideNativeLaunchCover, 120);
+      window.setTimeout(hideNativeLaunchCover, 700);
     });
     refreshNativeSession();
 
