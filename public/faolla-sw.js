@@ -1,4 +1,4 @@
-const FAOLLA_SW_VERSION = "faolla-pwa-v20260504-1";
+const FAOLLA_SW_VERSION = "faolla-pwa-v20260504-2";
 const FAOLLA_BADGE_CACHE = "faolla-badge-state-v1";
 const FAOLLA_BADGE_STATE_URL = "/__faolla_badge_state__";
 const FAOLLA_VISIBILITY_STATE_URL = "/__faolla_visibility_state__";
@@ -383,6 +383,19 @@ async function persistNavigationResponse(cacheName, cacheKey, response, maxEntri
 async function cacheStaticAsset(request) {
   const cache = await caches.open(FAOLLA_STATIC_CACHE);
   const cached = await cache.match(request);
+
+  if (new URL(request.url).pathname.startsWith("/_next/static/")) {
+    try {
+      const response = await fetch(new Request(request, { cache: "no-store" }));
+      if (response && response.ok) {
+        await cache.put(request, response.clone());
+      }
+      return response;
+    } catch {
+      return cached || Response.error();
+    }
+  }
+
   if (cached) {
     fetch(request)
       .then((response) => {
@@ -403,6 +416,18 @@ async function cacheStaticAsset(request) {
   } catch {
     return cached || Response.error();
   }
+}
+
+async function clearRuntimeCaches() {
+  const cacheKeys = await caches.keys();
+  await Promise.all(
+    cacheKeys.map((key) => {
+      if (key.startsWith("faolla-") && key !== FAOLLA_BADGE_CACHE) {
+        return caches.delete(key);
+      }
+      return Promise.resolve(false);
+    }),
+  );
 }
 
 async function handleAuthNavigationRequest(event, request, url) {
@@ -703,6 +728,10 @@ self.addEventListener("message", (event) => {
   if (!data || typeof data !== "object") return;
   if (data.type === "SKIP_WAITING") {
     event.waitUntil(self.skipWaiting());
+    return;
+  }
+  if (data.type === "CLEAR_RUNTIME_CACHES") {
+    event.waitUntil(clearRuntimeCaches());
     return;
   }
   if (data.type === "SYNC_BADGE") {

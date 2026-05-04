@@ -13,6 +13,7 @@ import {
 
 const FAOLLA_NATIVE_WEB_VERSION_URL = "/api/app-web-version";
 const FAOLLA_NATIVE_WEB_BUILD_STORAGE_KEY = "faolla:native-web-build:v1";
+const FAOLLA_NATIVE_WEB_CACHE_BUILD_STORAGE_KEY = "faolla:native-web-cache-build:v1";
 const FAOLLA_NATIVE_WEB_RELOAD_STORAGE_KEY = "faolla:native-web-build-reload:v1";
 const FAOLLA_NATIVE_WEB_BUILD_CHECK_THROTTLE_MS = 60_000;
 
@@ -84,6 +85,8 @@ async function refreshFaollaServiceWorker() {
   const registrations = await navigator.serviceWorker.getRegistrations().catch(() => []);
   await Promise.all(
     registrations.map(async (registration) => {
+      const target = registration.active ?? registration.waiting ?? registration.installing ?? navigator.serviceWorker.controller;
+      target?.postMessage({ type: "CLEAR_RUNTIME_CACHES" });
       await registration.update().catch(() => undefined);
       const waitingWorker = registration.waiting;
       if (waitingWorker) {
@@ -100,7 +103,13 @@ async function clearFaollaRuntimeCaches() {
     tasks.push(
       window.caches
         .keys()
-        .then((keys) => Promise.all(keys.filter((key) => key.startsWith("faolla-")).map((key) => window.caches.delete(key))))
+        .then((keys) =>
+          Promise.all(
+            keys
+              .filter((key) => key.startsWith("faolla-") && key !== "faolla-badge-state-v1")
+              .map((key) => window.caches.delete(key)),
+          ),
+        )
         .catch(() => undefined),
     );
   }
@@ -180,16 +189,22 @@ export default function CapacitorAppBridge() {
       if (!nextBuildId) return;
 
       let previousBuildId = "";
+      let cacheBuildId = "";
       let lastReloadBuildId = "";
       try {
         previousBuildId = window.localStorage.getItem(FAOLLA_NATIVE_WEB_BUILD_STORAGE_KEY) ?? "";
+        cacheBuildId = window.localStorage.getItem(FAOLLA_NATIVE_WEB_CACHE_BUILD_STORAGE_KEY) ?? "";
         lastReloadBuildId = window.localStorage.getItem(FAOLLA_NATIVE_WEB_RELOAD_STORAGE_KEY) ?? "";
       } catch {
         previousBuildId = "";
+        cacheBuildId = "";
         lastReloadBuildId = "";
       }
 
-      if (!previousBuildId) {
+      const needsCacheRefresh = cacheBuildId !== nextBuildId;
+      const needsReload = lastReloadBuildId !== nextBuildId && (previousBuildId !== nextBuildId || needsCacheRefresh);
+
+      if (!needsCacheRefresh && !needsReload) {
         try {
           window.localStorage.setItem(FAOLLA_NATIVE_WEB_BUILD_STORAGE_KEY, nextBuildId);
         } catch {
@@ -198,17 +213,23 @@ export default function CapacitorAppBridge() {
         return;
       }
 
-      if (previousBuildId === nextBuildId || lastReloadBuildId === nextBuildId) return;
+      if (needsCacheRefresh) {
+        await clearFaollaRuntimeCaches();
+      }
 
       try {
         window.localStorage.setItem(FAOLLA_NATIVE_WEB_BUILD_STORAGE_KEY, nextBuildId);
-        window.localStorage.setItem(FAOLLA_NATIVE_WEB_RELOAD_STORAGE_KEY, nextBuildId);
+        window.localStorage.setItem(FAOLLA_NATIVE_WEB_CACHE_BUILD_STORAGE_KEY, nextBuildId);
+        if (needsReload) {
+          window.localStorage.setItem(FAOLLA_NATIVE_WEB_RELOAD_STORAGE_KEY, nextBuildId);
+        }
       } catch {
         // Ignore localStorage failures and still refresh once.
       }
 
-      await clearFaollaRuntimeCaches();
-      window.location.replace(buildNativeWebReloadHref(nextBuildId));
+      if (needsReload) {
+        window.location.replace(buildNativeWebReloadHref(nextBuildId));
+      }
     };
 
     const refreshNativeSession = () => {
