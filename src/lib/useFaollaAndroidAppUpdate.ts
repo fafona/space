@@ -6,6 +6,8 @@ export const FAOLLA_DISPLAY_VERSION = "1.0";
 export const FAOLLA_ANDROID_BUILD = 2;
 export const FAOLLA_ANDROID_MANIFEST_URL = "/downloads/faolla-android-version.json";
 export const FAOLLA_ANDROID_APK_URL = "/downloads/faolla-android.apk";
+export const FAOLLA_ANDROID_EXTERNAL_APK_URL =
+  "https://raw.githubusercontent.com/fafona/space/main/public/downloads/faolla-android.apk";
 
 export type FaollaAndroidAppUpdateState = {
   checking: boolean;
@@ -43,7 +45,7 @@ function readString(value: unknown, fallback = "") {
 }
 
 function resolveManifestApkUrl(rawValue: unknown) {
-  const rawUrl = readString(rawValue, FAOLLA_ANDROID_APK_URL);
+  const rawUrl = readString(rawValue, FAOLLA_ANDROID_EXTERNAL_APK_URL);
   if (typeof window === "undefined") return rawUrl;
   try {
     return new URL(rawUrl, window.location.origin).toString();
@@ -55,7 +57,17 @@ function resolveManifestApkUrl(rawValue: unknown) {
 export function openFaollaAndroidUpdate(apkUrl: string) {
   if (typeof window === "undefined") return;
   const targetUrl = resolveManifestApkUrl(apkUrl);
-  window.location.assign(targetUrl);
+  const anchor = document.createElement("a");
+  anchor.href = targetUrl;
+  anchor.target = "_blank";
+  anchor.rel = "noopener noreferrer";
+  anchor.download = "faolla-android.apk";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => {
+    window.location.assign(targetUrl);
+  }, 500);
 }
 
 export function useFaollaAndroidAppUpdate(): FaollaAndroidAppUpdateState {
@@ -93,12 +105,18 @@ export function useFaollaAndroidAppUpdate(): FaollaAndroidAppUpdateState {
         const latestVersion = readString(manifest.version, FAOLLA_DISPLAY_VERSION);
         const latestBuild = readInteger(manifest.build, FAOLLA_ANDROID_BUILD);
         const apkUrl = resolveManifestApkUrl(manifest.apkUrl);
+        const hasComparableBuild = currentBuild > 0 && latestBuild > 0;
+        const updateAvailable = supported
+          ? hasComparableBuild
+            ? latestBuild > currentBuild
+            : latestVersion !== currentVersion
+          : false;
         if (!cancelled) {
           setState({
             checking: false,
             supported,
             platform,
-            updateAvailable: supported && latestBuild > currentBuild,
+            updateAvailable,
             currentVersion,
             currentBuild,
             latestVersion,
