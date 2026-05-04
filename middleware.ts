@@ -180,6 +180,7 @@ function shouldNoStoreAppShellPath(pathname: string) {
     pathname === "/admin" ||
     pathname === "/me" ||
     pathname === "/login" ||
+    pathname.startsWith("/_next/static/") ||
     pathname.startsWith("/me/") ||
     /^\/\d{8}(?:\/|$)/.test(pathname)
   );
@@ -283,5 +284,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/", "/((?!_next/static|_next/image|favicon.ico|icon.svg|.*\\..*).*)"],
+  matcher: ["/", "/_next/static/:path*", "/((?!_next/image|favicon.ico|icon.svg|.*\\..*).*)"],
 };

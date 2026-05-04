@@ -58,5 +58,5 @@ test("resolveHttpsRedirectUrl avoids redirecting when a proxy omits forwarded pr
 });
 
 test("middleware matcher now covers api routes for https enforcement", () => {
-  assert.deepEqual(config.matcher, ["/", "/((?!_next/static|_next/image|favicon.ico|icon.svg|.*\\..*).*)"]);
+  assert.deepEqual(config.matcher, ["/", "/_next/static/:path*", "/((?!_next/image|favicon.ico|icon.svg|.*\\..*).*)"]);
 });

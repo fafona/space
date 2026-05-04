@@ -154,6 +154,106 @@ const FAOLLA_APP_SHELL_LOCATION_SCRIPT = `
 })();
 `;
 
+const FAOLLA_MOBILE_SHELL_INLINE_STYLE = `
+@media (max-width: 767px), (pointer: coarse) and (max-width: 1024px) {
+  .faolla-personal-mobile-shell,
+  .support-mobile-shell {
+    background: #f7f8fa !important;
+  }
+  .support-mobile-nav-shell {
+    max-width: min(430px, 100vw) !important;
+  }
+  .support-mobile-nav-shell > div {
+    padding: 0.5rem 0.7rem calc(var(--faolla-mobile-safe-bottom, env(safe-area-inset-bottom, 0px)) + 0.45rem) !important;
+  }
+  .support-mobile-nav-shell > div > div {
+    min-height: 4.6rem !important;
+    border-radius: 2.15rem !important;
+    gap: 0.2rem !important;
+    padding: 0.42rem !important;
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.11) !important;
+  }
+  .support-mobile-nav-shell button {
+    min-height: 3.65rem !important;
+    border-radius: 1.65rem !important;
+    gap: 0.1rem !important;
+    padding: 0.45rem 0.35rem !important;
+    font-size: 0.76rem !important;
+    line-height: 1rem !important;
+  }
+  .support-mobile-nav-shell svg {
+    width: 1.6rem !important;
+    height: 1.6rem !important;
+  }
+  .faolla-personal-mobile-shell button[aria-label="上传头像"],
+  .support-mobile-shell button[aria-label="上传头像"],
+  .faolla-personal-mobile-shell .faolla-mobile-self-avatar,
+  .support-mobile-shell .faolla-mobile-self-avatar {
+    width: 7.25rem !important;
+    height: 7.25rem !important;
+    border-radius: 9999px !important;
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12) !important;
+  }
+  .faolla-personal-mobile-shell .faolla-mobile-self-name,
+  .support-mobile-shell .faolla-mobile-self-name {
+    margin-top: 1.15rem !important;
+    font-size: 2rem !important;
+    line-height: 2.15rem !important;
+    font-weight: 600 !important;
+  }
+  .faolla-personal-mobile-shell .faolla-mobile-self-subtitle,
+  .support-mobile-shell .faolla-mobile-self-subtitle {
+    margin-top: 0.55rem !important;
+    font-size: 0.9rem !important;
+    line-height: 1.2rem !important;
+  }
+  .faolla-personal-mobile-shell .divide-y > button,
+  .support-mobile-shell .divide-y > button,
+  .faolla-personal-mobile-shell .faolla-mobile-menu-row,
+  .support-mobile-shell .faolla-mobile-menu-row {
+    min-height: 4.9rem !important;
+    padding: 1rem 1.25rem !important;
+    gap: 1rem !important;
+  }
+  .faolla-personal-mobile-shell .divide-y > button > span:first-of-type,
+  .support-mobile-shell .divide-y > button > span:first-of-type,
+  .faolla-personal-mobile-shell .faolla-mobile-menu-icon,
+  .support-mobile-shell .faolla-mobile-menu-icon {
+    width: 3rem !important;
+    height: 3rem !important;
+    border-radius: 1.1rem !important;
+  }
+  .faolla-personal-mobile-shell .divide-y > button svg,
+  .support-mobile-shell .divide-y > button svg,
+  .faolla-personal-mobile-shell .faolla-mobile-menu-icon svg,
+  .support-mobile-shell .faolla-mobile-menu-icon svg {
+    width: 1.55rem !important;
+    height: 1.55rem !important;
+  }
+  .faolla-personal-mobile-shell .divide-y > button .text-sm,
+  .support-mobile-shell .divide-y > button .text-sm,
+  .faolla-personal-mobile-shell .faolla-mobile-menu-title,
+  .support-mobile-shell .faolla-mobile-menu-title {
+    font-size: 1.06rem !important;
+    line-height: 1.35rem !important;
+    font-weight: 600 !important;
+  }
+  .faolla-personal-mobile-shell .divide-y > button .text-xs,
+  .support-mobile-shell .divide-y > button .text-xs,
+  .faolla-personal-mobile-shell .faolla-mobile-menu-summary,
+  .support-mobile-shell .faolla-mobile-menu-summary {
+    font-size: 0.82rem !important;
+    line-height: 1.1rem !important;
+  }
+  .faolla-personal-mobile-shell [class*="rounded-[28px]"],
+  .faolla-personal-mobile-shell [class*="rounded-[30px]"],
+  .support-mobile-shell [class*="rounded-[28px]"],
+  .support-mobile-shell [class*="rounded-[30px]"] {
+    border-radius: 1.9rem !important;
+  }
+}
+`;
+
 function buildFaollaInlineCacheRefreshScript(buildId: string) {
   const serializedBuildId = JSON.stringify(buildId || "local");
   return `
@@ -263,6 +363,7 @@ export default async function RootLayout({
         <link rel="shortcut icon" href="/favicon.ico?v=20260409c" />
         <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=20260409c" />
         <link rel="manifest" href="/manifest.webmanifest" />
+        <style id="faolla-mobile-shell-size-overrides" dangerouslySetInnerHTML={{ __html: FAOLLA_MOBILE_SHELL_INLINE_STYLE }} />
       </head>
       <body>
         <Script id="faolla-inline-cache-refresh" strategy="beforeInteractive">
