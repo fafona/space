@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 export const FAOLLA_DISPLAY_VERSION = "1.0";
-export const FAOLLA_ANDROID_BUILD = 15;
+export const FAOLLA_ANDROID_BUILD = 16;
 export const FAOLLA_ANDROID_MANIFEST_URL = "/downloads/faolla-android-version.json";
 export const FAOLLA_ANDROID_APK_URL = "/downloads/faolla-android.apk";
 const FAOLLA_WEB_VERSION_URL = "/api/app-web-version";

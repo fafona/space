@@ -114,7 +114,12 @@ const FAOLLA_APP_SHELL_PREPAINT_SCRIPT = `
 (() => {
   if (typeof window === "undefined" || typeof document === "undefined") return;
   try {
-    const isAppShell = (new URLSearchParams(window.location.search || "").get("appShell") || "").trim().toLowerCase() === "faolla";
+    const params = new URLSearchParams(window.location.search || "");
+    const isExplicitAppShell = (params.get("appShell") || "").trim().toLowerCase() === "faolla";
+    const isStandalone =
+      window.matchMedia?.("(display-mode: standalone)")?.matches ||
+      navigator.standalone === true;
+    const isAppShell = isExplicitAppShell || isStandalone || (params.get("nativeStart") || "").trim() === "1";
     if (!isAppShell) return;
     const isLaunch = (window.location.pathname || "") === "/launch";
     const color = isLaunch ? "#081121" : "#f2f3f5";
@@ -200,6 +205,30 @@ html[data-faolla-app-shell="true"][data-faolla-launch="true"] body {
 html[data-faolla-app-shell="true"][data-faolla-launch="false"],
 html[data-faolla-app-shell="true"][data-faolla-launch="false"] body {
   background: #f2f3f5 !important;
+}
+#faolla-app-web-launch-cover {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  display: none;
+  pointer-events: none;
+  background:
+    #081121
+    url("/loading-progress-mobile-zh.webp")
+    center center / cover
+    no-repeat;
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity 180ms ease,
+    visibility 180ms ease;
+}
+html[data-faolla-app-shell="true"] #faolla-app-web-launch-cover {
+  display: block;
+}
+html[data-faolla-web-launch-ready="true"] #faolla-app-web-launch-cover {
+  opacity: 0;
+  visibility: hidden;
 }
 @media (max-width: 767px), (pointer: coarse) and (max-width: 1024px) {
   .faolla-personal-mobile-shell,
@@ -778,6 +807,84 @@ html[data-faolla-app-shell="true"][data-faolla-launch="false"] body {
     border-radius: 0 !important;
     background: transparent !important;
   }
+  .faolla-personal-mobile-shell button.faolla-mobile-thread-avatar-button,
+  .support-mobile-shell button.faolla-mobile-thread-avatar-button {
+    box-sizing: border-box !important;
+    width: 2.75rem !important;
+    min-width: 2.75rem !important;
+    max-width: 2.75rem !important;
+    height: 2.75rem !important;
+    min-height: 2.75rem !important;
+    max-height: 2.75rem !important;
+    flex: 0 0 2.75rem !important;
+    aspect-ratio: 1 / 1 !important;
+    padding: 0 !important;
+    border-radius: 9999px !important;
+    overflow: visible !important;
+  }
+  .faolla-personal-mobile-shell .faolla-mobile-thread-avatar,
+  .support-mobile-shell .faolla-mobile-thread-avatar {
+    box-sizing: border-box !important;
+    width: 2.75rem !important;
+    min-width: 2.75rem !important;
+    max-width: 2.75rem !important;
+    height: 2.75rem !important;
+    min-height: 2.75rem !important;
+    max-height: 2.75rem !important;
+    flex: 0 0 2.75rem !important;
+    aspect-ratio: 1 / 1 !important;
+    padding: 0 !important;
+    border-radius: 9999px !important;
+    overflow: visible !important;
+  }
+  .faolla-personal-mobile-shell .faolla-mobile-thread-avatar > div,
+  .support-mobile-shell .faolla-mobile-thread-avatar > div,
+  .faolla-personal-mobile-shell .faolla-mobile-thread-avatar img,
+  .support-mobile-shell .faolla-mobile-thread-avatar img {
+    box-sizing: border-box !important;
+    width: 100% !important;
+    min-width: 100% !important;
+    max-width: 100% !important;
+    height: 100% !important;
+    min-height: 100% !important;
+    max-height: 100% !important;
+    aspect-ratio: 1 / 1 !important;
+    border-radius: 9999px !important;
+    object-fit: cover !important;
+  }
+  .faolla-personal-mobile-shell button.faolla-mobile-self-avatar,
+  .support-mobile-shell button.faolla-mobile-self-avatar {
+    box-sizing: border-box !important;
+    width: 6.125rem !important;
+    min-width: 6.125rem !important;
+    max-width: 6.125rem !important;
+    height: 6.125rem !important;
+    min-height: 6.125rem !important;
+    max-height: 6.125rem !important;
+    flex: 0 0 6.125rem !important;
+    aspect-ratio: 1 / 1 !important;
+    padding: 0 !important;
+    border-radius: 9999px !important;
+    overflow: visible !important;
+  }
+  .faolla-personal-mobile-shell .faolla-mobile-self-avatar-image,
+  .support-mobile-shell .faolla-mobile-self-avatar-image,
+  .faolla-personal-mobile-shell .faolla-mobile-self-avatar-image > div,
+  .support-mobile-shell .faolla-mobile-self-avatar-image > div,
+  .faolla-personal-mobile-shell .faolla-mobile-self-avatar-image img,
+  .support-mobile-shell .faolla-mobile-self-avatar-image img {
+    box-sizing: border-box !important;
+    width: 6.125rem !important;
+    min-width: 6.125rem !important;
+    max-width: 6.125rem !important;
+    height: 6.125rem !important;
+    min-height: 6.125rem !important;
+    max-height: 6.125rem !important;
+    aspect-ratio: 1 / 1 !important;
+    border-radius: 9999px !important;
+    overflow: hidden !important;
+    object-fit: cover !important;
+  }
 }
 `;
 
@@ -918,6 +1025,7 @@ export default async function RootLayout({
         <style id="faolla-mobile-shell-size-overrides" dangerouslySetInnerHTML={{ __html: FAOLLA_MOBILE_SHELL_INLINE_STYLE }} />
       </head>
       <body>
+        <div id="faolla-app-web-launch-cover" aria-hidden="true" />
         <Script id="faolla-inline-cache-refresh" strategy="beforeInteractive">
           {faollaInlineCacheRefreshScript}
         </Script>

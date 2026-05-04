@@ -57,6 +57,21 @@ function isFaollaAppShellDocument() {
   }
 }
 
+function isStandaloneShellDocument() {
+  try {
+    const standalone =
+      window.matchMedia?.("(display-mode: standalone)")?.matches ||
+      (navigator as Navigator & { standalone?: boolean }).standalone === true;
+    return Boolean(standalone);
+  } catch {
+    return false;
+  }
+}
+
+function shouldUseWebLaunchCover() {
+  return isFaollaAppShellDocument() || isStandaloneShellDocument();
+}
+
 function resolveNativeBackHref(pathname: string) {
   if (pathname.startsWith("/admin/games/") || pathname.startsWith("/admin/tools/")) {
     return "/admin?mobileTab=self&selfSection=games";
@@ -102,6 +117,24 @@ function hideNativeLaunchCover() {
   }).FaollaNativeUpdates;
   if (typeof nativeBridge?.hideLaunchCover !== "function") return;
   nativeBridge.hideLaunchCover();
+}
+
+function hideWebLaunchCover() {
+  if (typeof document === "undefined") return;
+  document.documentElement.dataset.faollaWebLaunchReady = "true";
+}
+
+function hideLaunchCovers() {
+  hideWebLaunchCover();
+  hideNativeLaunchCover();
+}
+
+function scheduleLaunchCoverHide(delayMs = 900) {
+  window.setTimeout(() => {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(hideLaunchCovers);
+    });
+  }, delayMs);
 }
 
 async function refreshFaollaServiceWorker() {
@@ -154,6 +187,12 @@ async function fetchCurrentWebBuildId() {
 
 export default function CapacitorAppBridge() {
   useEffect(() => {
+    if (shouldUseWebLaunchCover() && !Capacitor.isNativePlatform()) {
+      window.setTimeout(() => {
+        window.requestAnimationFrame(hideWebLaunchCover);
+      }, 900);
+    }
+
     if (!Capacitor.isNativePlatform()) return;
     if (isEmbeddedDocument()) return;
 
@@ -205,13 +244,13 @@ export default function CapacitorAppBridge() {
     let removeAppStateListener: (() => void) | undefined;
     let lastWebBuildCheckAt = 0;
 
-    const syncNativeWebBuild = async (force = false) => {
+    const syncNativeWebBuild = async (force = false): Promise<"ready" | "reloading"> => {
       const now = Date.now();
-      if (!force && now - lastWebBuildCheckAt < FAOLLA_NATIVE_WEB_BUILD_CHECK_THROTTLE_MS) return;
+      if (!force && now - lastWebBuildCheckAt < FAOLLA_NATIVE_WEB_BUILD_CHECK_THROTTLE_MS) return "ready";
       lastWebBuildCheckAt = now;
 
       const nextBuildId = await fetchCurrentWebBuildId().catch(() => "");
-      if (!nextBuildId) return;
+      if (!nextBuildId) return "ready";
 
       let previousBuildId = "";
       let cacheBuildId = "";
@@ -235,7 +274,7 @@ export default function CapacitorAppBridge() {
         } catch {
           // Ignore localStorage failures; the current page can continue.
         }
-        return;
+        return "ready";
       }
 
       if (needsCacheRefresh) {
@@ -254,15 +293,23 @@ export default function CapacitorAppBridge() {
 
       if (needsReload) {
         window.location.replace(buildNativeWebReloadHref(nextBuildId));
+        return "reloading";
       }
+      return "ready";
     };
 
     const refreshNativeSession = () => {
       void readMerchantSessionPayload(5200, { includeClientTokens: true }).catch(() => null);
     };
-    void syncNativeWebBuild(true).finally(() => {
-      window.setTimeout(hideNativeLaunchCover, 700);
-    });
+    void syncNativeWebBuild(true)
+      .then((result) => {
+        if (result === "ready") {
+          scheduleLaunchCoverHide();
+        }
+      })
+      .catch(() => {
+        scheduleLaunchCoverHide();
+      });
     refreshNativeSession();
 
     void App.addListener("appStateChange", ({ isActive }) => {
