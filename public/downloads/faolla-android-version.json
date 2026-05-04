@@ -1,8 +1,7 @@
 {
   "platform": "android",
   "version": "1.0",
-  "build": 2,
-  "apkUrl": "https://raw.githubusercontent.com/fafona/space/main/public/downloads/faolla-android.apk",
-  "siteApkUrl": "/downloads/faolla-android.apk",
+  "build": 3,
+  "apkUrl": "/downloads/faolla-android.apk",
   "releasedAt": "2026-05-04T00:00:00Z"
 }

@@ -3,11 +3,18 @@
 import { useEffect, useState } from "react";
 
 export const FAOLLA_DISPLAY_VERSION = "1.0";
-export const FAOLLA_ANDROID_BUILD = 2;
+export const FAOLLA_ANDROID_BUILD = 3;
 export const FAOLLA_ANDROID_MANIFEST_URL = "/downloads/faolla-android-version.json";
 export const FAOLLA_ANDROID_APK_URL = "/downloads/faolla-android.apk";
-export const FAOLLA_ANDROID_EXTERNAL_APK_URL =
-  "https://raw.githubusercontent.com/fafona/space/main/public/downloads/faolla-android.apk";
+
+type FaollaNativeUpdateBridge = {
+  downloadAndInstall?: (url: string) => void;
+};
+
+type FaollaNativeUpdateWindow = Window &
+  typeof globalThis & {
+    FaollaNativeUpdates?: FaollaNativeUpdateBridge;
+  };
 
 export type FaollaAndroidAppUpdateState = {
   checking: boolean;
@@ -45,7 +52,7 @@ function readString(value: unknown, fallback = "") {
 }
 
 function resolveManifestApkUrl(rawValue: unknown) {
-  const rawUrl = readString(rawValue, FAOLLA_ANDROID_EXTERNAL_APK_URL);
+  const rawUrl = readString(rawValue, FAOLLA_ANDROID_APK_URL);
   if (typeof window === "undefined") return rawUrl;
   try {
     return new URL(rawUrl, window.location.origin).toString();
@@ -57,17 +64,12 @@ function resolveManifestApkUrl(rawValue: unknown) {
 export function openFaollaAndroidUpdate(apkUrl: string) {
   if (typeof window === "undefined") return;
   const targetUrl = resolveManifestApkUrl(apkUrl);
-  const anchor = document.createElement("a");
-  anchor.href = targetUrl;
-  anchor.target = "_blank";
-  anchor.rel = "noopener noreferrer";
-  anchor.download = "faolla-android.apk";
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  window.setTimeout(() => {
-    window.location.assign(targetUrl);
-  }, 500);
+  const nativeBridge = (window as FaollaNativeUpdateWindow).FaollaNativeUpdates;
+  if (typeof nativeBridge?.downloadAndInstall === "function") {
+    nativeBridge.downloadAndInstall(targetUrl);
+    return;
+  }
+  window.location.assign(targetUrl);
 }
 
 export function useFaollaAndroidAppUpdate(): FaollaAndroidAppUpdateState {
