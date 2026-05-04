@@ -394,6 +394,53 @@ export default function NoMercyFlagGameClient({ subtitle = "游戏大厅", lobby
 
   useEffect(() => {
     if (typeof document === "undefined" || typeof window === "undefined") return;
+    const html = document.documentElement;
+    const body = document.body;
+    const scrollY = window.scrollY || window.pageYOffset || 0;
+    const previousStyles = {
+      htmlOverflow: html.style.overflow,
+      htmlOverscrollBehavior: html.style.overscrollBehavior,
+      htmlHeight: html.style.height,
+      bodyOverflow: body.style.overflow,
+      bodyOverscrollBehavior: body.style.overscrollBehavior,
+      bodyPosition: body.style.position,
+      bodyTop: body.style.top,
+      bodyLeft: body.style.left,
+      bodyRight: body.style.right,
+      bodyWidth: body.style.width,
+      bodyHeight: body.style.height,
+    };
+
+    html.style.overflow = "hidden";
+    html.style.overscrollBehavior = "none";
+    html.style.height = "100%";
+    body.style.overflow = "hidden";
+    body.style.overscrollBehavior = "none";
+    body.style.position = "fixed";
+    body.style.top = `-${scrollY}px`;
+    body.style.left = "0";
+    body.style.right = "0";
+    body.style.width = "100%";
+    body.style.height = "100%";
+
+    return () => {
+      html.style.overflow = previousStyles.htmlOverflow;
+      html.style.overscrollBehavior = previousStyles.htmlOverscrollBehavior;
+      html.style.height = previousStyles.htmlHeight;
+      body.style.overflow = previousStyles.bodyOverflow;
+      body.style.overscrollBehavior = previousStyles.bodyOverscrollBehavior;
+      body.style.position = previousStyles.bodyPosition;
+      body.style.top = previousStyles.bodyTop;
+      body.style.left = previousStyles.bodyLeft;
+      body.style.right = previousStyles.bodyRight;
+      body.style.width = previousStyles.bodyWidth;
+      body.style.height = previousStyles.bodyHeight;
+      window.scrollTo(0, scrollY);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof document === "undefined" || typeof window === "undefined") return;
 
     let startX = 0;
     let startY = 0;
@@ -655,8 +702,8 @@ export default function NoMercyFlagGameClient({ subtitle = "游戏大厅", lobby
         : "border-slate-200 bg-white text-slate-950";
 
   return (
-    <main data-mobile-swipe-back-ignore className="min-h-dvh overscroll-none bg-[#07140f] text-slate-950">
-      <div className="mx-auto flex min-h-dvh w-full max-w-[480px] flex-col bg-[#eef3ef] px-3 pb-[calc(env(safe-area-inset-bottom)+0.85rem)] pt-[calc(env(safe-area-inset-top)+0.75rem)]">
+    <main data-mobile-swipe-back-ignore className="fixed inset-0 h-dvh w-screen overflow-hidden overscroll-none bg-[#07140f] text-slate-950">
+      <div className="mx-auto flex h-full min-h-0 w-full max-w-[480px] flex-col overflow-hidden bg-[#eef3ef] px-3 pb-[calc(env(safe-area-inset-bottom)+0.85rem)] pt-[calc(env(safe-area-inset-top)+0.75rem)]">
         {screen === "home" ? (
           <>
             <header className="flex items-center justify-between gap-3">
@@ -984,7 +1031,7 @@ function Panel({ title, onBack, children }: { title: string; onBack: () => void;
         <div className="text-base font-black">{title}</div>
         <span className="w-[52px]" aria-hidden="true" />
       </header>
-      <div className="grid gap-3">{children}</div>
+      <div className="grid min-h-0 flex-1 gap-3 overflow-y-auto overscroll-contain pr-1">{children}</div>
     </section>
   );
 }
