@@ -142,6 +142,117 @@ html[data-i18n-pending="1"] body {
   }
 }
 
+@media (max-width: 767px), (pointer: coarse) and (max-width: 1024px) {
+  .faolla-personal-mobile-shell,
+  .support-mobile-shell {
+    --faolla-whatsapp-radius: 1.9rem;
+    --faolla-whatsapp-row-min: 4.65rem;
+    --faolla-whatsapp-icon: 2.7rem;
+    --faolla-whatsapp-page-gutter: 1rem;
+  }
+
+  .support-mobile-nav-shell {
+    max-width: min(430px, 100vw) !important;
+  }
+
+  .support-mobile-nav-shell > div {
+    padding: 0.45rem 0.85rem calc(var(--faolla-mobile-safe-bottom) + 0.35rem) !important;
+  }
+
+  .support-mobile-nav-shell > div > div {
+    min-height: 4.25rem !important;
+    border-radius: 2rem !important;
+    gap: 0.15rem !important;
+    padding: 0.35rem !important;
+    box-shadow: 0 14px 34px rgba(15, 23, 42, 0.13) !important;
+  }
+
+  .support-mobile-nav-shell button {
+    min-height: 3.35rem !important;
+    border-radius: 1.55rem !important;
+    gap: 0.1rem !important;
+    padding: 0.4rem 0.35rem !important;
+    font-size: 0.72rem !important;
+    line-height: 1rem !important;
+  }
+
+  .support-mobile-nav-shell button[class*="bg-slate-900"] {
+    border-radius: 1.8rem !important;
+  }
+
+  .support-mobile-nav-shell svg {
+    width: 1.45rem !important;
+    height: 1.45rem !important;
+  }
+
+  .faolla-personal-mobile-shell [class*="px-4"],
+  .support-mobile-shell [class*="px-4"] {
+    padding-left: var(--faolla-whatsapp-page-gutter) !important;
+    padding-right: var(--faolla-whatsapp-page-gutter) !important;
+  }
+
+  .faolla-personal-mobile-shell [class*="rounded-[28px]"],
+  .faolla-personal-mobile-shell [class*="rounded-[30px]"],
+  .support-mobile-shell [class*="rounded-[28px]"],
+  .support-mobile-shell [class*="rounded-[30px]"],
+  .support-mobile-sheet[class*="rounded-[30px]"] {
+    border-radius: var(--faolla-whatsapp-radius) !important;
+  }
+
+  .faolla-personal-mobile-shell [class*="shadow-[0_14px_34px"],
+  .support-mobile-shell [class*="shadow-[0_14px_34px"] {
+    box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08) !important;
+  }
+
+  .faolla-personal-mobile-shell .divide-y > button,
+  .support-mobile-shell .divide-y > button {
+    min-height: var(--faolla-whatsapp-row-min) !important;
+    gap: 1.05rem !important;
+    padding: 0.95rem 1.25rem !important;
+  }
+
+  .faolla-personal-mobile-shell .divide-y > button > span:first-of-type,
+  .support-mobile-shell .divide-y > button > span:first-of-type {
+    width: var(--faolla-whatsapp-icon) !important;
+    height: var(--faolla-whatsapp-icon) !important;
+    border-radius: 1.05rem !important;
+  }
+
+  .faolla-personal-mobile-shell .divide-y > button svg,
+  .support-mobile-shell .divide-y > button svg {
+    width: 1.5rem !important;
+    height: 1.5rem !important;
+  }
+
+  .faolla-personal-mobile-shell .divide-y > button .text-sm,
+  .support-mobile-shell .divide-y > button .text-sm {
+    font-size: 1rem !important;
+    line-height: 1.35rem !important;
+  }
+
+  .faolla-personal-mobile-shell .divide-y > button .text-xs,
+  .support-mobile-shell .divide-y > button .text-xs {
+    font-size: 0.82rem !important;
+    line-height: 1.15rem !important;
+  }
+
+  .faolla-personal-mobile-shell input,
+  .faolla-personal-mobile-shell select,
+  .faolla-personal-mobile-shell textarea,
+  .support-mobile-shell input,
+  .support-mobile-shell select,
+  .support-mobile-shell textarea {
+    border-radius: 1.25rem !important;
+  }
+
+  .faolla-personal-mobile-shell [class*="h-14"][class*="w-14"],
+  .support-mobile-shell [class*="h-14"][class*="w-14"] {
+    width: 3.25rem !important;
+    height: 3.25rem !important;
+    border-radius: 1.1rem !important;
+  }
+}
+
 .editor-mobile-preview .mobile-fit-screen-section {
   width: 100% !important;
   max-width: 100% !important;

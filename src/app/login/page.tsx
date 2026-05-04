@@ -176,6 +176,7 @@ function LoginPageInner() {
   }, [searchParams]);
   const loggedOut = useMemo(() => (searchParams.get("loggedOut") ?? "").trim() === "1", [searchParams]);
   const launchRetry = useMemo(() => (searchParams.get("launchRetry") ?? "").trim() === "1", [searchParams]);
+  const [nativeEmbeddedLogin, setNativeEmbeddedLogin] = useState(false);
   const normalizedLocale = useMemo(() => locale.trim().toLowerCase(), [locale]);
   const loginAccountLabel = useMemo(() => {
     if (normalizedLocale.startsWith("zh-tw")) return "登入帳號";
@@ -219,6 +220,11 @@ function LoginPageInner() {
     if (normalizedLocale.startsWith("zh")) return "登录支持邮箱、用户名或 8 位 ID；注册仍需填写邮箱。";
     return "Sign in supports email, username, or 8-digit ID. Sign up still requires an email.";
   }, [normalizedLocale]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setNativeEmbeddedLogin(isNativeAppRuntime() && isEmbeddedFrame());
+  }, []);
 
   useEffect(() => {
     if (!isFaollaAppShellLogin || typeof window === "undefined") return;
@@ -1237,7 +1243,7 @@ function LoginPageInner() {
         }
       : undefined;
 
-  if (isFaollaAppShellLogin) {
+  if (isFaollaAppShellLogin || nativeEmbeddedLogin) {
     return <main className="min-h-screen bg-white" aria-hidden="true" />;
   }
 

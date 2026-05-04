@@ -110,6 +110,10 @@ test("can keep the Faolla shell on the current portal origin for embedded app vi
     buildFaollaShellHref("https://faolla.com/me", "zh-CN", "https://www.faolla.com", { preferRuntimeOrigin: true }),
     "https://www.faolla.com/?uiLocale=zh-CN&appShell=faolla",
   );
+  assert.equal(
+    buildFaollaShellHref("/", "zh-CN", "https://fafona.faolla.com", { preferRuntimeOrigin: true }),
+    "https://faolla.com/?uiLocale=zh-CN&appShell=faolla",
+  );
 });
 
 test("detects Faolla app shell URLs for login suppression", () => {

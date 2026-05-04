@@ -29,6 +29,11 @@ function isFaollaHostname(hostname: string) {
   return normalized === "faolla.com" || normalized.endsWith(".faolla.com");
 }
 
+function isFaollaPortalHostname(hostname: string) {
+  const normalized = hostname.trim().toLowerCase();
+  return normalized === "faolla.com" || normalized === "www.faolla.com";
+}
+
 function isSameLocalHostname(left: string, right: string) {
   const normalizedLeft = left.trim().toLowerCase();
   const normalizedRight = right.trim().toLowerCase();
@@ -234,7 +239,7 @@ function getFaollaDefaultOrigin(fallbackOrigin?: string | null, options: BuildFa
   try {
     const url = new URL(runtimeOrigin);
     if (isFaollaHostname(url.hostname)) {
-      if (options.preferRuntimeOrigin) {
+      if (options.preferRuntimeOrigin && isFaollaPortalHostname(url.hostname)) {
         return `${url.origin}/`;
       }
       return `${url.protocol}//faolla.com${url.port ? `:${url.port}` : ""}/`;
