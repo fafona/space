@@ -16,12 +16,15 @@ import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
+import android.view.ViewGroup;
+import android.view.ViewParent;
 import android.view.Window;
 import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.URLUtil;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
+import android.widget.FrameLayout;
 import android.widget.Toast;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
@@ -35,6 +38,9 @@ public class MainActivity extends BridgeActivity {
     private Uri pendingUpdateApkUri;
     private boolean pendingUpdateAutoInstall = false;
     private boolean updateInstallStarted = false;
+    private FrameLayout launchCover;
+    private boolean launchCoverHidden = false;
+    private Runnable launchCoverFallbackRunnable;
     private BroadcastReceiver updateDownloadReceiver;
     private Runnable updateProgressRunnable;
 
@@ -42,6 +48,7 @@ public class MainActivity extends BridgeActivity {
     protected void onCreate(Bundle savedInstanceState) {
         getWindow().setBackgroundDrawable(new ColorDrawable(Color.rgb(8, 17, 33)));
         super.onCreate(savedInstanceState);
+        installLaunchCover();
 
         Window window = getWindow();
         WindowCompat.setDecorFitsSystemWindows(window, true);
@@ -54,6 +61,53 @@ public class MainActivity extends BridgeActivity {
 
         configureWebViewRuntime();
         installDownloadListener();
+    }
+
+    private void installLaunchCover() {
+        if (launchCover != null) {
+            return;
+        }
+
+        FrameLayout cover = new FrameLayout(this);
+        cover.setBackgroundColor(Color.rgb(8, 17, 33));
+        cover.setClickable(true);
+        addContentView(
+            cover,
+            new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        );
+        launchCover = cover;
+        launchCoverHidden = false;
+        launchCoverFallbackRunnable = () -> hideLaunchCover();
+        updateProgressHandler.postDelayed(launchCoverFallbackRunnable, 12000L);
+    }
+
+    private void hideLaunchCover() {
+        if (launchCoverHidden) {
+            return;
+        }
+        launchCoverHidden = true;
+        if (launchCoverFallbackRunnable != null) {
+            updateProgressHandler.removeCallbacks(launchCoverFallbackRunnable);
+            launchCoverFallbackRunnable = null;
+        }
+
+        FrameLayout cover = launchCover;
+        if (cover == null) {
+            return;
+        }
+        cover.animate()
+            .alpha(0f)
+            .setDuration(160L)
+            .withEndAction(() -> {
+                ViewParent parent = cover.getParent();
+                if (parent instanceof ViewGroup) {
+                    ((ViewGroup) parent).removeView(cover);
+                }
+                if (launchCover == cover) {
+                    launchCover = null;
+                }
+            })
+            .start();
     }
 
     private void configureWebViewRuntime() {
@@ -118,6 +172,10 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onDestroy() {
+        if (launchCoverFallbackRunnable != null) {
+            updateProgressHandler.removeCallbacks(launchCoverFallbackRunnable);
+            launchCoverFallbackRunnable = null;
+        }
         stopUpdateProgressPolling();
         if (updateDownloadReceiver != null) {
             try {
@@ -368,6 +426,11 @@ public class MainActivity extends BridgeActivity {
     }
 
     private class FaollaUpdateBridge {
+        @JavascriptInterface
+        public void hideLaunchCover() {
+            runOnUiThread(() -> MainActivity.this.hideLaunchCover());
+        }
+
         @JavascriptInterface
         public void downloadUpdate(String url) {
             runOnUiThread(() -> {

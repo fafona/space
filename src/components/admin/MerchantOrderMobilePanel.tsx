@@ -202,17 +202,17 @@ export default function MerchantOrderMobilePanel({
       : "bg-[rgba(248,250,252,0.96)] supports-[backdrop-filter]:bg-[rgba(248,250,252,0.9)]"
   }`;
   const filterSelectShellClassName = darkMode
-    ? "faolla-mobile-filter-select rounded-[18px] border border-slate-700 bg-slate-900/75 px-3 py-2.5 text-slate-100 shadow-sm"
-    : "faolla-mobile-filter-select rounded-[18px] border border-slate-200 bg-white px-3 py-2.5 text-slate-900 shadow-sm";
+    ? "faolla-mobile-filter-select rounded-[16px] border border-slate-700 bg-slate-900/75 py-1.5 pl-3.5 pr-8 text-slate-100 shadow-sm"
+    : "faolla-mobile-filter-select rounded-[16px] border border-slate-200 bg-white py-1.5 pl-3.5 pr-8 text-slate-900 shadow-sm";
   const filterSelectLabelClassName = darkMode ? "text-slate-400" : "text-slate-500";
   const filterSelectIconClassName = darkMode ? "text-slate-500" : "text-slate-400";
   const overflowMenuButtonClassName = overflowMenuOpen
     ? darkMode
-      ? "relative inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-amber-300/40 bg-amber-200/10 text-amber-100 shadow-sm"
-      : "relative inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-slate-300 bg-slate-900 text-white shadow-sm"
+      ? "faolla-mobile-business-menu-button relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[18px] border border-amber-300/40 bg-amber-200/10 text-amber-100 shadow-sm"
+      : "faolla-mobile-business-menu-button relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[18px] border border-slate-300 bg-slate-900 text-white shadow-sm"
     : darkMode
-      ? "relative inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-slate-100 shadow-sm transition hover:bg-white/10"
-      : "relative inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:bg-slate-50";
+      ? "faolla-mobile-business-menu-button relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[18px] border border-white/10 bg-white/5 text-slate-100 shadow-sm transition hover:bg-white/10"
+      : "faolla-mobile-business-menu-button relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[18px] border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:bg-slate-50";
   const overflowMenuPanelClassName = darkMode
     ? "absolute right-0 top-[calc(100%+0.6rem)] z-30 w-[min(18rem,calc(100vw-2rem))] rounded-[24px] border border-white/10 bg-[rgba(15,23,42,0.98)] p-3 shadow-[0_24px_60px_rgba(2,6,23,0.4)]"
     : "absolute right-0 top-[calc(100%+0.6rem)] z-30 w-[min(18rem,calc(100vw-2rem))] rounded-[24px] border border-slate-200 bg-white p-3 shadow-[0_24px_60px_rgba(15,23,42,0.18)]";
@@ -1017,13 +1017,13 @@ export default function MerchantOrderMobilePanel({
             <div className="flex items-center gap-2.5">
               {onSectionChange ? (
                 <div
-                  className={`inline-flex shrink-0 items-center rounded-[20px] p-1 shadow-sm ${
+                  className={`faolla-mobile-business-segment inline-flex h-9 shrink-0 items-center rounded-[18px] p-0.5 shadow-sm ${
                     darkMode ? "border border-white/10 bg-white/5" : "border border-slate-200 bg-white"
                   }`}
                 >
                   <button
                     type="button"
-                    className={`rounded-[16px] px-3.5 py-2 text-[12px] font-semibold transition ${
+                    className={`faolla-mobile-business-segment-button h-8 rounded-[16px] px-3 py-0 text-[12px] font-semibold transition ${
                       darkMode ? "text-slate-300 hover:bg-white/5" : "text-slate-500 hover:bg-slate-100"
                     }`}
                     onClick={() => onSectionChange("booking")}
@@ -1032,23 +1032,23 @@ export default function MerchantOrderMobilePanel({
                   </button>
                   <button
                     type="button"
-                    className="rounded-[16px] bg-slate-900 px-3.5 py-2 text-[12px] font-semibold text-white shadow-sm"
+                    className="faolla-mobile-business-segment-button h-8 rounded-[16px] bg-slate-900 px-3 py-0 text-[12px] font-semibold text-white shadow-sm"
                     onClick={() => onSectionChange("orders")}
                   >
                     订单
                   </button>
                 </div>
               ) : (
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-[12px] font-semibold text-white shadow-sm">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[18px] bg-slate-900 text-[12px] font-semibold text-white shadow-sm">
                   订单
                 </div>
               )}
               <div
-                className={`flex min-h-[41px] min-w-0 flex-1 items-center gap-2.5 rounded-[20px] border px-3.5 py-2 shadow-sm ${
+                  className={`faolla-mobile-business-search flex h-9 min-h-9 min-w-0 flex-1 items-center gap-2 rounded-[18px] border px-3 py-1.5 shadow-sm ${
                   darkMode ? "border-white/10 bg-white/5 text-white" : "border-slate-200 bg-[#f3f4f6] text-slate-900"
                 }`}
               >
-                <svg viewBox="0 0 24 24" className="h-[17px] w-[17px] shrink-0 text-slate-400" fill="none" aria-hidden="true">
+                <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0 text-slate-400" fill="none" aria-hidden="true">
                   <circle cx="11" cy="11" r="6.5" stroke="currentColor" strokeWidth="1.9" />
                   <path d="m16 16 4 4" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
                 </svg>
@@ -1057,7 +1057,7 @@ export default function MerchantOrderMobilePanel({
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
                   placeholder="搜索订单号 / 客户 / 产品"
-                  className={`min-w-0 flex-1 bg-transparent text-[14px] leading-5 outline-none ${
+                  className={`min-w-0 flex-1 bg-transparent text-[13px] leading-4 outline-none ${
                     darkMode ? "text-white placeholder:text-slate-400" : "text-slate-900 placeholder:text-slate-400"
                   }`}
                 />
@@ -1070,7 +1070,7 @@ export default function MerchantOrderMobilePanel({
                   aria-label="更多操作"
                   aria-expanded={overflowMenuOpen}
                 >
-                  <svg viewBox="0 0 24 24" className="h-[18px] w-[18px]" fill="currentColor" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor" aria-hidden="true">
                     <circle cx="5" cy="12" r="1.8" />
                     <circle cx="12" cy="12" r="1.8" />
                     <circle cx="19" cy="12" r="1.8" />
@@ -1094,7 +1094,7 @@ export default function MerchantOrderMobilePanel({
                           <span className={`shrink-0 text-[12px] font-medium ${filterSelectLabelClassName}`}>排序</span>
                           <div className={`relative min-w-0 flex-1 ${filterSelectShellClassName}`}>
                             <select
-                              className="w-full min-w-0 appearance-none bg-transparent pr-6 text-[13px] font-medium outline-none"
+                              className="w-full min-w-0 appearance-none bg-transparent pr-8 text-[13px] font-medium outline-none"
                               value={sortMode}
                               onChange={(event) => setSortMode(event.target.value as MerchantOrderSortMode)}
                             >
@@ -1118,7 +1118,7 @@ export default function MerchantOrderMobilePanel({
                           <span className={`shrink-0 text-[12px] font-medium ${filterSelectLabelClassName}`}>隐藏</span>
                           <div className={`relative min-w-0 flex-1 ${filterSelectShellClassName}`}>
                             <select
-                              className="w-full min-w-0 appearance-none bg-transparent pr-6 text-[13px] font-medium outline-none"
+                              className="w-full min-w-0 appearance-none bg-transparent pr-8 text-[13px] font-medium outline-none"
                               value={historyVisibility}
                               onChange={(event) => setHistoryVisibility(event.target.value as MerchantOrderHistoryVisibility)}
                             >
@@ -1154,11 +1154,11 @@ export default function MerchantOrderMobilePanel({
                 className={
                   filter === key
                     ? darkMode
-                      ? "rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-900"
-                      : "rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+                      ? "rounded-full bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-900"
+                      : "rounded-full bg-slate-900 px-2.5 py-1.5 text-xs font-semibold text-white"
                     : darkMode
-                      ? "rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-200"
-                      : "rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-600"
+                      ? "rounded-full border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs text-slate-200"
+                      : "rounded-full border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-600"
                 }
                 onClick={() => setFilter(key)}
               >

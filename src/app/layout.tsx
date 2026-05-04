@@ -267,7 +267,7 @@ html[data-faolla-app-shell="true"][data-faolla-launch="false"] body {
   }
   .faolla-personal-mobile-shell .faolla-mobile-language-button,
   .support-mobile-shell .faolla-mobile-language-button {
-    width: 2.4375rem !important;
+    width: 2.2rem !important;
     height: 1.5rem !important;
     min-height: 1.5rem !important;
     border-radius: 0.1875rem !important;
@@ -300,7 +300,9 @@ html[data-faolla-app-shell="true"][data-faolla-launch="false"] body {
   }
   .faolla-mobile-chat-avatar,
   .faolla-mobile-self-avatar,
+  .faolla-mobile-self-avatar *,
   .faolla-support-avatar,
+  .faolla-support-avatar *,
   .faolla-support-avatar > div,
   .faolla-support-avatar img {
     border-radius: 9999px !important;
@@ -588,13 +590,13 @@ html[data-faolla-app-shell="true"][data-faolla-launch="false"] body {
   .faolla-personal-mobile-shell .faolla-mobile-filter-select {
     min-height: 2rem !important;
     border-radius: 1rem !important;
-    padding: 0.28rem 0.62rem !important;
+    padding: 0.28rem 1.95rem 0.28rem 0.85rem !important;
     box-shadow: none !important;
   }
   .support-mobile-shell .faolla-mobile-filter-select select,
   .faolla-personal-mobile-shell .faolla-mobile-filter-select select {
     min-height: 1.2rem !important;
-    padding: 0 !important;
+    padding: 0 0.35rem 0 0 !important;
     font-size: 0.78rem !important;
     line-height: 1rem !important;
   }
@@ -645,6 +647,42 @@ html[data-faolla-app-shell="true"][data-faolla-launch="false"] body {
     line-height: 0.9rem !important;
     box-shadow: none !important;
   }
+  .faolla-personal-mobile-shell .faolla-mobile-business-segment,
+  .support-mobile-shell .faolla-mobile-business-segment {
+    height: 2.125rem !important;
+    min-height: 2.125rem !important;
+    border-radius: 1.0625rem !important;
+    padding: 0.125rem !important;
+    box-shadow: none !important;
+  }
+  .faolla-personal-mobile-shell .faolla-mobile-business-segment-button,
+  .support-mobile-shell .faolla-mobile-business-segment-button {
+    height: 1.875rem !important;
+    min-height: 1.875rem !important;
+    border-radius: 0.9375rem !important;
+    padding: 0 0.65rem !important;
+    font-size: 0.75rem !important;
+    line-height: 0.95rem !important;
+    box-shadow: none !important;
+  }
+  .faolla-personal-mobile-shell .faolla-mobile-business-search,
+  .support-mobile-shell .faolla-mobile-business-search {
+    height: 2.125rem !important;
+    min-height: 2.125rem !important;
+    border-radius: 1.0625rem !important;
+    padding: 0.25rem 0.65rem !important;
+    box-shadow: none !important;
+  }
+  .faolla-personal-mobile-shell .faolla-mobile-business-menu-button,
+  .support-mobile-shell .faolla-mobile-business-menu-button {
+    width: 2.125rem !important;
+    min-width: 2.125rem !important;
+    height: 2.125rem !important;
+    min-height: 2.125rem !important;
+    border-radius: 1.0625rem !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+  }
   .support-mobile-shell a[href^="mailto:"],
   .support-mobile-shell a[href^="tel:"],
   .support-mobile-shell button[aria-label*="会话"],
@@ -661,6 +699,22 @@ html[data-faolla-app-shell="true"][data-faolla-launch="false"] body {
     min-height: 2rem !important;
     border-radius: 9999px !important;
     padding: 0 !important;
+  }
+  .faolla-personal-mobile-shell .faolla-mobile-composer-icon,
+  .faolla-personal-mobile-shell .faolla-mobile-composer-send,
+  .support-mobile-shell .faolla-mobile-composer-icon,
+  .support-mobile-shell .faolla-mobile-composer-send {
+    width: 2.35rem !important;
+    min-width: 2.35rem !important;
+    height: 2.35rem !important;
+    min-height: 2.35rem !important;
+    border-radius: 9999px !important;
+    padding: 0 !important;
+  }
+  .faolla-mobile-chat-avatar img,
+  .faolla-mobile-self-avatar img,
+  .faolla-support-avatar img {
+    border-radius: 9999px !important;
   }
   .faolla-personal-mobile-shell .faolla-mobile-input-shell textarea,
   .support-mobile-shell .faolla-mobile-input-shell textarea {

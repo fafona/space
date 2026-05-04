@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 export const FAOLLA_DISPLAY_VERSION = "1.0";
-export const FAOLLA_ANDROID_BUILD = 12;
+export const FAOLLA_ANDROID_BUILD = 13;
 export const FAOLLA_ANDROID_MANIFEST_URL = "/downloads/faolla-android-version.json";
 export const FAOLLA_ANDROID_APK_URL = "/downloads/faolla-android.apk";
 const FAOLLA_WEB_VERSION_URL = "/api/app-web-version";
@@ -19,6 +19,7 @@ export type FaollaAndroidUpdateDownloadStatus =
   | "failed";
 
 type FaollaNativeUpdateBridge = {
+  hideLaunchCover?: () => void;
   downloadUpdate?: (url: string) => void;
   installDownloadedUpdate?: () => void;
   downloadAndInstall?: (url: string) => void;

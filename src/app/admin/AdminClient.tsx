@@ -15465,7 +15465,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           <div ref={supportSelfLanguageRootRef} className="relative">
             <button
               type="button"
-              className="faolla-mobile-language-button block h-6 w-[39px] overflow-hidden rounded-[3px] border border-slate-300/80 bg-transparent p-0 transition hover:brightness-105"
+              className="faolla-mobile-language-button block h-6 w-[35px] overflow-hidden rounded-[3px] border border-slate-300/80 bg-transparent p-0 transition hover:brightness-105"
               onClick={() => setSupportSelfLanguageMenuOpen((current) => !current)}
               aria-label={t("lang.placeholder")}
               aria-expanded={supportSelfLanguageMenuOpen}

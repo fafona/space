@@ -96,6 +96,14 @@ function buildNativeWebReloadHref(buildId: string) {
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
+function hideNativeLaunchCover() {
+  const nativeBridge = (window as typeof window & {
+    FaollaNativeUpdates?: { hideLaunchCover?: () => void };
+  }).FaollaNativeUpdates;
+  if (typeof nativeBridge?.hideLaunchCover !== "function") return;
+  nativeBridge.hideLaunchCover();
+}
+
 async function refreshFaollaServiceWorker() {
   if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
   const registrations = await navigator.serviceWorker.getRegistrations().catch(() => []);
@@ -252,7 +260,9 @@ export default function CapacitorAppBridge() {
     const refreshNativeSession = () => {
       void readMerchantSessionPayload(5200, { includeClientTokens: true }).catch(() => null);
     };
-    void syncNativeWebBuild(true);
+    void syncNativeWebBuild(true).finally(() => {
+      window.setTimeout(hideNativeLaunchCover, 120);
+    });
     refreshNativeSession();
 
     void App.addListener("appStateChange", ({ isActive }) => {
