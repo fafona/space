@@ -69,6 +69,26 @@ function isStandaloneDisplayMode() {
   return window.matchMedia?.("(display-mode: standalone)").matches || navigatorWithStandalone.standalone === true;
 }
 
+function isNativeAppRuntime() {
+  if (typeof window === "undefined" || typeof document === "undefined") return false;
+  try {
+    const capacitor = (window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
+    if (capacitor?.isNativePlatform?.()) return true;
+  } catch {
+    // Ignore native runtime detection failures.
+  }
+  return document.documentElement.dataset.capacitor === "true";
+}
+
+function isEmbeddedFrame() {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.parent !== window;
+  } catch {
+    return false;
+  }
+}
+
 function pickPrimaryMerchantId(preferredMerchantId: string | null | undefined, merchantIds: string[]) {
   const directMerchantId = String(preferredMerchantId ?? "").trim();
   if (directMerchantId) return directMerchantId;
@@ -93,6 +113,22 @@ function readAndroidKeyboardInset() {
   const topRaw = Number.isFinite(visualViewport.offsetTop) ? visualViewport.offsetTop : 0;
   const bottomRaw = window.innerHeight - (visualViewport.height + topRaw);
   return Number.isFinite(bottomRaw) ? Math.max(0, Math.round(bottomRaw)) : 0;
+}
+
+function resolveAuthenticatedWorkspaceHref(payload: Awaited<ReturnType<typeof resolveFrontendAuthPayload>>) {
+  if (payload?.authenticated !== true) return "";
+  const accountType = normalizePlatformAccountType(payload.accountType);
+  if (accountType === "personal") {
+    return buildBackendFaollaHref("/me", "/");
+  }
+
+  const merchantId = pickPrimaryMerchantId(
+    typeof payload.merchantId === "string" ? payload.merchantId : "",
+    readMerchantSessionMerchantIds(payload),
+  );
+  if (!isMerchantNumericId(merchantId)) return "";
+  persistRecentMerchantLaunchState(merchantId);
+  return buildBackendFaollaHref(buildMerchantBackendHref(merchantId), "/");
 }
 
 function LoginPageInner() {
@@ -188,6 +224,37 @@ function LoginPageInner() {
     if (!isFaollaAppShellLogin || typeof window === "undefined") return;
     window.location.replace(buildFaollaShellHref(loginFromUrl || "/", locale, window.location.origin));
   }, [isFaollaAppShellLogin, locale, loginFromUrl]);
+
+  useEffect(() => {
+    if (loggedOut || isFaollaAppShellLogin || typeof window === "undefined") return;
+    if (!isNativeAppRuntime()) return;
+    let cancelled = false;
+
+    void (async () => {
+      const payload = await resolveFrontendAuthPayload(6200).catch(() => null);
+      if (cancelled) return;
+
+      const workspaceHref = resolveAuthenticatedWorkspaceHref(payload);
+      if (workspaceHref) {
+        window.location.replace(workspaceHref);
+        return;
+      }
+
+      if (isEmbeddedFrame()) {
+        window.location.replace(buildFaollaShellHref("/", locale, window.location.origin));
+        return;
+      }
+
+      const recentMerchantId = readRecentMerchantLaunchMerchantId();
+      if (!launchRetry && isMerchantNumericId(recentMerchantId)) {
+        window.location.replace("/launch");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isFaollaAppShellLogin, launchRetry, locale, loggedOut]);
   const resetCodePreferredHint = useMemo(() => {
     if (normalizedLocale.startsWith("zh-tw")) {
       return "QQ、Foxmail、Hotmail、Outlook、Live 這些信箱請使用郵件驗證碼重設密碼，不要點郵件連結。";
