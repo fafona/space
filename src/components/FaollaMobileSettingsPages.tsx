@@ -74,7 +74,7 @@ export function getFaollaMobileSettingsSubtitle(view: FaollaMobileSettingsView, 
   if (view === "settings") return "通知、版本和法律";
   if (view === "settings-notifications") return notificationSummary;
   if (view === "settings-about") return `版本 ${FAOLLA_DISPLAY_VERSION}`;
-  if (view === "settings-update") return "检查并安装最新版本";
+  if (view === "settings-update") return "检查并热更新到最新版本";
   if (view === "settings-legal") return "服务条款、隐私政策、Cookie 使用政策和法律声明";
   return "Faolla 法律文件";
 }
@@ -193,17 +193,17 @@ function UpdateStatus({ appUpdateState }: { appUpdateState: FaollaAndroidAppUpda
         ? "当前为最新版本"
         : appUpdateState.updateKind === "web"
           ? appUpdateState.downloadStatus === "installing"
-            ? "正在应用内部更新"
+            ? "正在热更新"
             : appUpdateState.downloadStatus === "failed"
-              ? appUpdateState.downloadMessage || "内部更新失败，请重试"
-              : "发现界面更新"
+              ? appUpdateState.downloadMessage || "热更新失败，请重试"
+              : "发现新版本"
         : appUpdateState.downloadStatus === "downloaded"
           ? "安装包已下载"
           : appUpdateState.downloadStatus === "installing"
-            ? "正在安装更新"
+            ? "正在安装必要更新"
             : appUpdateState.downloadStatus === "failed"
               ? appUpdateState.downloadMessage || "下载失败，请重试"
-              : `发现新版本 ${appUpdateState.latestVersion}`;
+              : `发现原生必要更新 ${appUpdateState.latestVersion}`;
   const buttonLabel = appUpdateState.checking
     ? "检查中"
     : !appUpdateState.supported
@@ -213,16 +213,16 @@ function UpdateStatus({ appUpdateState }: { appUpdateState: FaollaAndroidAppUpda
         : appUpdateState.downloadStatus === "downloading"
           ? `下载中 ${progress}%`
           : appUpdateState.downloadStatus === "downloaded"
-            ? "安装更新"
+            ? "安装必要更新"
             : appUpdateState.downloadStatus === "installing"
               ? appUpdateState.updateKind === "web"
-                ? "更新中"
-                : "安装更新中"
+                ? "热更中"
+                : "必要更新安装中"
               : appUpdateState.downloadStatus === "failed"
                 ? "重新下载"
                 : appUpdateState.updateKind === "web"
-                  ? "立即更新"
-                  : "下载更新";
+                  ? "立即热更"
+                  : "下载必要更新";
   const buttonDisabled =
     appUpdateState.checking ||
     !appUpdateState.supported ||
@@ -275,7 +275,7 @@ function UpdateStatus({ appUpdateState }: { appUpdateState: FaollaAndroidAppUpda
       </button>
 
       {!appUpdateState.supported ? (
-        <div className="mt-3 text-xs leading-5 text-slate-500">App 内更新仅支持 Android 安装包版本。</div>
+        <div className="mt-3 text-xs leading-5 text-slate-500">App 内热更仅支持 Android App。</div>
       ) : null}
     </section>
   );
@@ -336,7 +336,7 @@ export function FaollaMobileSettingsContent({
           <SettingsRow
             icon={<SettingsIcon type="refresh" />}
             label="版本更新"
-            summary={appUpdateState.updateAvailable ? "有新版本可下载" : "检查并安装最新版本"}
+            summary={appUpdateState.updateAvailable ? "有新版本可热更" : "检查并热更新到最新版本"}
             showDot={appUpdateState.updateAvailable}
             onClick={() => onViewChange("settings-update")}
           />

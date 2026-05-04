@@ -87,6 +87,16 @@ function readInteger(value: unknown, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function readBoolean(value: unknown, fallback = false) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["1", "true", "yes", "required"].includes(normalized)) return true;
+    if (["0", "false", "no", "none"].includes(normalized)) return false;
+  }
+  return fallback;
+}
+
 function clampProgress(value: unknown) {
   const parsed = typeof value === "number" ? value : Number.parseInt(String(value ?? ""), 10);
   if (!Number.isFinite(parsed)) return 0;
@@ -302,12 +312,15 @@ export function useFaollaAndroidAppUpdate(): FaollaAndroidAppUpdateState {
         const latestVersion = readString(manifest.version, FAOLLA_DISPLAY_VERSION);
         const latestBuild = readInteger(manifest.build, FAOLLA_ANDROID_BUILD);
         const apkUrl = resolveManifestApkUrl(manifest.apkUrl);
-        const hasComparableBuild = currentBuild > 0 && latestBuild > 0;
-        const androidUpdateAvailable = supported
-          ? hasComparableBuild
-            ? latestBuild > currentBuild
-            : latestVersion !== currentVersion
-          : false;
+        const nativeBuildRequired =
+          readBoolean(manifest.nativeBuildRequired) || readBoolean(manifest.requiresNativeInstall);
+        const minimumNativeBuild = readInteger(manifest.minimumNativeBuild, 0);
+        const androidUpdateAvailable = Boolean(
+          supported &&
+            ((minimumNativeBuild > 0 && currentBuild > 0 && currentBuild < minimumNativeBuild) ||
+              (nativeBuildRequired &&
+                (currentBuild > 0 && latestBuild > 0 ? latestBuild > currentBuild : latestVersion !== currentVersion))),
+        );
         const latestWebBuildId = await latestWebBuildIdTask;
         const storedWebBuildId = readStoredNativeWebBuildId();
         if (supported && latestWebBuildId && !storedWebBuildId) {
@@ -317,8 +330,7 @@ export function useFaollaAndroidAppUpdate(): FaollaAndroidAppUpdateState {
           supported &&
             latestWebBuildId &&
             storedWebBuildId &&
-            latestWebBuildId !== storedWebBuildId &&
-            !androidUpdateAvailable,
+            latestWebBuildId !== storedWebBuildId,
         );
         const updateKind: FaollaUpdateKind = androidUpdateAvailable ? "android" : webUpdateAvailable ? "web" : "none";
         const updateAvailable = updateKind !== "none";
@@ -376,14 +388,14 @@ export function useFaollaAndroidAppUpdate(): FaollaAndroidAppUpdateState {
         ...current,
         downloadStatus: "installing",
         downloadProgress: 100,
-        downloadMessage: "正在应用内部更新。",
+        downloadMessage: "正在热更新。",
       }));
       void applyFaollaWebUpdate(state.latestWebBuildId).catch(() => {
         setState((current) => ({
           ...current,
           downloadStatus: "failed",
           downloadProgress: 0,
-          downloadMessage: "内部更新失败，请重试。",
+          downloadMessage: "热更新失败，请重试。",
         }));
       });
       return;
