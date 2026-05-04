@@ -153,7 +153,7 @@ export default function CapacitorAppBridge() {
     document.documentElement.dataset.capacitorPlatform = Capacitor.getPlatform();
 
     void StatusBar.setOverlaysWebView({ overlay: false }).catch(() => undefined);
-    void StatusBar.setStyle({ style: Style.Dark }).catch(() => undefined);
+    void StatusBar.setStyle({ style: Style.Light }).catch(() => undefined);
     void StatusBar.setBackgroundColor({ color: "#ffffff" }).catch(() => undefined);
 
     let activeOrientation = "";

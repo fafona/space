@@ -249,7 +249,7 @@ export default function GlobalLanguageSwitcher() {
       <div ref={rootRef} className="pointer-events-auto relative">
         <button
           type="button"
-          className="block h-6 w-9 overflow-hidden rounded-[4px] border border-slate-300/80 bg-transparent p-0 transition hover:brightness-105"
+          className="block h-6 w-[39px] overflow-hidden rounded-[3px] border border-slate-300/80 bg-transparent p-0 transition hover:brightness-105"
           onClick={() => setOpen((prev) => !prev)}
           aria-label={t("lang.placeholder")}
           aria-expanded={open}

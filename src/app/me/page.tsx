@@ -5258,9 +5258,9 @@ export default function MePage() {
       return renderPersonalConsumptionState("bookings");
     }
     const compactActionButtonClassName =
-      "faolla-mobile-record-action rounded-full border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50";
+      "faolla-mobile-record-action rounded-full border border-slate-200 bg-white px-2 py-1 text-[10.5px] font-medium leading-none text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50";
     const compactDangerActionButtonClassName =
-      "faolla-mobile-record-action rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[11px] font-medium text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50";
+      "faolla-mobile-record-action rounded-full border border-rose-200 bg-rose-50 px-2 py-1 text-[10.5px] font-medium leading-none text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50";
     return (
       <div className={compact ? "space-y-3" : "space-y-4"}>
         <input
@@ -5544,9 +5544,9 @@ export default function MePage() {
       return renderPersonalConsumptionState("orders");
     }
     const compactActionButtonClassName =
-      "faolla-mobile-record-action rounded-full border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50";
+      "faolla-mobile-record-action rounded-full border border-slate-200 bg-white px-2 py-1 text-[10.5px] font-medium leading-none text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50";
     const compactDangerActionButtonClassName =
-      "faolla-mobile-record-action rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[11px] font-medium text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50";
+      "faolla-mobile-record-action rounded-full border border-rose-200 bg-rose-50 px-2 py-1 text-[10.5px] font-medium leading-none text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50";
     return (
       <div className={compact ? "space-y-3" : "space-y-4"}>
         {renderPersonalOrderFilters()}

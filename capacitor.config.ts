@@ -8,14 +8,14 @@ const config: CapacitorConfig = {
   webDir: "app-shell",
   server: {
     url: serverUrl,
-    appStartPath: "/launch?appShell=faolla&nativeStart=1&nativeBuild=10",
+    appStartPath: "/launch?appShell=faolla&nativeStart=1&nativeBuild=11",
     cleartext: false,
     allowNavigation: ["faolla.com", "*.faolla.com"],
   },
   plugins: {
     StatusBar: {
       overlaysWebView: false,
-      style: "DARK",
+      style: "LIGHT",
       backgroundColor: "#ffffff",
     },
   },

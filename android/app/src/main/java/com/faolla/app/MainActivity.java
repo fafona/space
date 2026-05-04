@@ -61,11 +61,15 @@ public class MainActivity extends BridgeActivity {
 
         WebView webView = this.bridge.getWebView();
         webView.setBackgroundColor(Color.rgb(8, 17, 33));
+        webView.setLayerType(WebView.LAYER_TYPE_HARDWARE, null);
 
         WebSettings settings = webView.getSettings();
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            settings.setOffscreenPreRaster(true);
+        }
 
         CookieManager cookieManager = CookieManager.getInstance();
         cookieManager.setAcceptCookie(true);
@@ -104,7 +108,6 @@ public class MainActivity extends BridgeActivity {
     public void onResume() {
         super.onResume();
         configureWebViewRuntime();
-        CookieManager.getInstance().flush();
         if (updateInstallStarted && pendingUpdateApkUri != null) {
             updateInstallStarted = false;
             dispatchUpdateEvent("downloaded", 100, "");

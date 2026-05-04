@@ -119,6 +119,18 @@ const FAOLLA_APP_SHELL_LOCATION_SCRIPT = `
   } catch {
     isAppShell = false;
   }
+  const syncAppShellPaint = () => {
+    if (!isAppShell || typeof document === "undefined") return;
+    const isLaunch = (window.location.pathname || "") === "/launch";
+    document.documentElement.dataset.faollaAppShell = "true";
+    document.documentElement.dataset.faollaLaunch = isLaunch ? "true" : "false";
+    document.documentElement.style.backgroundColor = isLaunch ? "#081121" : "#f2f3f5";
+    if (document.body) {
+      document.body.style.backgroundColor = isLaunch ? "#081121" : "#f2f3f5";
+    }
+  };
+
+  syncAppShellPaint();
   if (!isAppShell || !window.parent || window.parent === window) return;
 
   const notifyParent = () => {
@@ -140,6 +152,7 @@ const FAOLLA_APP_SHELL_LOCATION_SCRIPT = `
     if (typeof original !== "function") return;
     window.history[name] = function (...args) {
       const result = original.apply(this, args);
+      window.setTimeout(syncAppShellPaint, 0);
       window.setTimeout(notifyParent, 0);
       return result;
     };
@@ -147,6 +160,9 @@ const FAOLLA_APP_SHELL_LOCATION_SCRIPT = `
 
   wrapHistoryMethod("pushState");
   wrapHistoryMethod("replaceState");
+  window.addEventListener("popstate", syncAppShellPaint);
+  window.addEventListener("hashchange", syncAppShellPaint);
+  window.addEventListener("pageshow", syncAppShellPaint);
   window.addEventListener("popstate", notifyParent);
   window.addEventListener("hashchange", notifyParent);
   window.addEventListener("pageshow", notifyParent);
@@ -155,6 +171,14 @@ const FAOLLA_APP_SHELL_LOCATION_SCRIPT = `
 `;
 
 const FAOLLA_MOBILE_SHELL_INLINE_STYLE = `
+html[data-faolla-app-shell="true"][data-faolla-launch="true"],
+html[data-faolla-app-shell="true"][data-faolla-launch="true"] body {
+  background: #081121 !important;
+}
+html[data-faolla-app-shell="true"][data-faolla-launch="false"],
+html[data-faolla-app-shell="true"][data-faolla-launch="false"] body {
+  background: #f2f3f5 !important;
+}
 @media (max-width: 767px), (pointer: coarse) and (max-width: 1024px) {
   .faolla-personal-mobile-shell,
   .support-mobile-shell {
@@ -509,20 +533,26 @@ const FAOLLA_MOBILE_SHELL_INLINE_STYLE = `
   .support-mobile-shell button[class*="rounded-[14px]"],
   .faolla-personal-mobile-shell .faolla-mobile-record-action,
   .support-mobile-shell .faolla-mobile-record-action {
-    min-height: 2rem !important;
-    border-radius: 1rem !important;
-    padding: 0.35rem 0.65rem !important;
-    font-size: 0.72rem !important;
-    line-height: 0.95rem !important;
+    min-height: 1.75rem !important;
+    height: auto !important;
+    border-radius: 0.875rem !important;
+    padding: 0.22rem 0.55rem !important;
+    font-size: 0.68rem !important;
+    line-height: 0.9rem !important;
     box-shadow: none !important;
+  }
+  .faolla-personal-mobile-shell button[class*="rounded-[14px]"],
+  .support-mobile-shell button[class*="rounded-[14px]"] {
+    width: auto !important;
+    min-width: 2.55rem !important;
   }
   .faolla-personal-mobile-shell a.rounded-full,
   .support-mobile-shell a.rounded-full {
-    min-height: 2rem !important;
-    border-radius: 1rem !important;
-    padding: 0.35rem 0.65rem !important;
-    font-size: 0.72rem !important;
-    line-height: 0.95rem !important;
+    min-height: 1.75rem !important;
+    border-radius: 0.875rem !important;
+    padding: 0.22rem 0.55rem !important;
+    font-size: 0.68rem !important;
+    line-height: 0.9rem !important;
     box-shadow: none !important;
   }
   .faolla-personal-mobile-shell .faolla-mobile-input-shell textarea,
