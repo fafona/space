@@ -2,6 +2,7 @@ import { cookies, headers } from "next/headers";
 import type { Viewport } from "next";
 import Script from "next/script";
 import ClientDomTranslator from "@/components/ClientDomTranslator";
+import CapacitorAppBridge from "@/components/CapacitorAppBridge";
 import GlobalLanguageSwitcher from "@/components/GlobalLanguageSwitcher";
 import { I18nProvider } from "@/components/I18nProvider";
 import MobileSwipeBack from "@/components/MobileSwipeBack";
@@ -195,6 +196,7 @@ export default async function RootLayout({
         </Script>
         <I18nProvider initialLocale={initialLocale}>
           <ClientDomTranslator />
+          <CapacitorAppBridge />
           <UnhandledRejectionGuard />
           <PwaBootstrapLoader />
           <GlobalLanguageSwitcher />
