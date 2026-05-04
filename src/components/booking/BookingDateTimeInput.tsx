@@ -119,6 +119,7 @@ export default function BookingDateTimeInput({
   const timeTextInputRef = useRef<HTMLInputElement>(null);
   const dateNativeInputRef = useRef<HTMLInputElement>(null);
   const timeNativeInputRef = useRef<HTMLInputElement>(null);
+  const timeFieldShouldStretch = /\bflex-1\b/.test(timeInputClassName);
 
   const openNativePicker = (input: HTMLInputElement | null, fallback: HTMLInputElement | null) => {
     if (!input || disabled) return;
@@ -178,7 +179,7 @@ export default function BookingDateTimeInput({
           onChange={(event) => onDateChange(event.target.value)}
         />
       </div>
-      <div className="relative shrink-0">
+      <div className={timeFieldShouldStretch ? "relative min-w-[180px] flex-1" : "relative shrink-0"}>
         <input
           ref={timeTextInputRef}
           type="text"

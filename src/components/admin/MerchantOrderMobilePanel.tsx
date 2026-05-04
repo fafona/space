@@ -202,8 +202,8 @@ export default function MerchantOrderMobilePanel({
       : "bg-[rgba(248,250,252,0.96)] supports-[backdrop-filter]:bg-[rgba(248,250,252,0.9)]"
   }`;
   const filterSelectShellClassName = darkMode
-    ? "faolla-mobile-filter-select rounded-[16px] border border-slate-700 bg-slate-900/75 py-1.5 pl-3.5 pr-8 text-slate-100 shadow-sm"
-    : "faolla-mobile-filter-select rounded-[16px] border border-slate-200 bg-white py-1.5 pl-3.5 pr-8 text-slate-900 shadow-sm";
+    ? "faolla-mobile-filter-select rounded-[16px] border border-slate-700 bg-slate-900/75 py-1.5 pl-4 pr-9 text-slate-100 shadow-sm"
+    : "faolla-mobile-filter-select rounded-[16px] border border-slate-200 bg-white py-1.5 pl-4 pr-9 text-slate-900 shadow-sm";
   const filterSelectLabelClassName = darkMode ? "text-slate-400" : "text-slate-500";
   const filterSelectIconClassName = darkMode ? "text-slate-500" : "text-slate-400";
   const overflowMenuButtonClassName = overflowMenuOpen
@@ -1094,7 +1094,7 @@ export default function MerchantOrderMobilePanel({
                           <span className={`shrink-0 text-[12px] font-medium ${filterSelectLabelClassName}`}>排序</span>
                           <div className={`relative min-w-0 flex-1 ${filterSelectShellClassName}`}>
                             <select
-                              className="w-full min-w-0 appearance-none bg-transparent pr-8 text-[13px] font-medium outline-none"
+                              className="w-full min-w-0 appearance-none bg-transparent pl-1 pr-9 text-[13px] font-medium outline-none"
                               value={sortMode}
                               onChange={(event) => setSortMode(event.target.value as MerchantOrderSortMode)}
                             >
@@ -1118,7 +1118,7 @@ export default function MerchantOrderMobilePanel({
                           <span className={`shrink-0 text-[12px] font-medium ${filterSelectLabelClassName}`}>隐藏</span>
                           <div className={`relative min-w-0 flex-1 ${filterSelectShellClassName}`}>
                             <select
-                              className="w-full min-w-0 appearance-none bg-transparent pr-8 text-[13px] font-medium outline-none"
+                              className="w-full min-w-0 appearance-none bg-transparent pl-1 pr-9 text-[13px] font-medium outline-none"
                               value={historyVisibility}
                               onChange={(event) => setHistoryVisibility(event.target.value as MerchantOrderHistoryVisibility)}
                             >

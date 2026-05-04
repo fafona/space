@@ -542,8 +542,8 @@ export default function MerchantBookingMobilePanel({
   const [customerEmailLocale, setCustomerEmailLocale] = useState(defaultCustomerEmailLocale);
   const [customerEmailLocaleLoaded, setCustomerEmailLocaleLoaded] = useState(false);
   const filterSelectShellClassName = darkMode
-    ? "faolla-mobile-filter-select rounded-[16px] border border-slate-700 bg-slate-900/75 py-1.5 pl-3.5 pr-8 text-slate-100 shadow-sm"
-    : "faolla-mobile-filter-select rounded-[16px] border border-slate-200 bg-white py-1.5 pl-3.5 pr-8 text-slate-900 shadow-sm";
+    ? "faolla-mobile-filter-select rounded-[16px] border border-slate-700 bg-slate-900/75 py-1.5 pl-4 pr-9 text-slate-100 shadow-sm"
+    : "faolla-mobile-filter-select rounded-[16px] border border-slate-200 bg-white py-1.5 pl-4 pr-9 text-slate-900 shadow-sm";
   const filterSelectLabelClassName = darkMode ? "text-slate-400" : "text-slate-500";
   const filterSelectIconClassName = darkMode ? "text-slate-500" : "text-slate-400";
   const showSectionSwitch = allowOrderManagement && typeof onSectionChange === "function";
@@ -1257,13 +1257,13 @@ export default function MerchantBookingMobilePanel({
                     )}
                   </div>
                   <div className="grid gap-0.5 text-xs text-slate-500">
-                    <div className="flex min-w-0 items-center gap-1.5">
+                    <div className="flex min-w-0 items-start gap-1.5">
                       <span className="shrink-0">{getMerchantBookingFieldText("bookingId", locale)}:</span>
-                      <span className="min-w-0 truncate font-medium text-slate-600">{detailRecord.id}</span>
+                      <span className="min-w-0 break-all font-medium text-slate-600">{detailRecord.id}</span>
                     </div>
-                    <div className="flex min-w-0 items-center gap-1.5">
+                    <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
                       <span className="shrink-0">{getMerchantBookingFieldText("submittedAt", locale)}:</span>
-                      <span className="min-w-0 truncate">{formatMerchantBookingDateTime(detailRecord.createdAt, locale)}</span>
+                      <span className="min-w-0 break-words">{formatMerchantBookingDateTime(detailRecord.createdAt, locale)}</span>
                     </div>
                   </div>
                 </div>
@@ -1355,7 +1355,7 @@ export default function MerchantBookingMobilePanel({
                       dateValue={detailDraft.appointmentDateInput}
                       timeValue={detailDraft.appointmentTimeInput}
                       dateInputClassName="min-w-[180px] flex-1 rounded-[18px] border border-slate-200 px-4 py-3 text-base text-slate-900"
-                      timeInputClassName="w-[116px] shrink-0 rounded-[18px] border border-slate-200 px-4 py-3 text-base text-slate-900"
+                      timeInputClassName="min-w-[180px] flex-1 rounded-[18px] border border-slate-200 px-4 py-3 text-base text-slate-900"
                       onDateChange={(value) => handleDraftChange(detailRecord.id, "appointmentDateInput", value)}
                       onTimeChange={(value) => handleDraftChange(detailRecord.id, "appointmentTimeInput", value)}
                     />
@@ -1575,7 +1575,7 @@ export default function MerchantBookingMobilePanel({
                           </span>
                           <div className={`relative min-w-0 flex-1 ${filterSelectShellClassName}`}>
                             <select
-                              className="w-full min-w-0 appearance-none bg-transparent pr-8 text-[13px] font-medium outline-none"
+                              className="w-full min-w-0 appearance-none bg-transparent pl-1 pr-9 text-[13px] font-medium outline-none"
                               value={sortMode}
                               onChange={(event) => setSortMode(event.target.value as MerchantBookingSortMode)}
                             >
@@ -1601,7 +1601,7 @@ export default function MerchantBookingMobilePanel({
                           </span>
                           <div className={`relative min-w-0 flex-1 ${filterSelectShellClassName}`}>
                             <select
-                              className="w-full min-w-0 appearance-none bg-transparent pr-8 text-[13px] font-medium outline-none"
+                              className="w-full min-w-0 appearance-none bg-transparent pl-1 pr-9 text-[13px] font-medium outline-none"
                               value={historyVisibility}
                               onChange={(event) => setHistoryVisibility(event.target.value as MerchantBookingHistoryVisibility)}
                             >

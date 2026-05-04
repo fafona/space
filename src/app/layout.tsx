@@ -590,13 +590,13 @@ html[data-faolla-app-shell="true"][data-faolla-launch="false"] body {
   .faolla-personal-mobile-shell .faolla-mobile-filter-select {
     min-height: 2rem !important;
     border-radius: 1rem !important;
-    padding: 0.28rem 1.95rem 0.28rem 0.85rem !important;
+    padding: 0.28rem 2.15rem 0.28rem 1.1rem !important;
     box-shadow: none !important;
   }
   .support-mobile-shell .faolla-mobile-filter-select select,
   .faolla-personal-mobile-shell .faolla-mobile-filter-select select {
     min-height: 1.2rem !important;
-    padding: 0 0.35rem 0 0 !important;
+    padding: 0 0.55rem 0 0.15rem !important;
     font-size: 0.78rem !important;
     line-height: 1rem !important;
   }
@@ -706,10 +706,22 @@ html[data-faolla-app-shell="true"][data-faolla-launch="false"] body {
   .support-mobile-shell .faolla-mobile-composer-send {
     width: 2.35rem !important;
     min-width: 2.35rem !important;
+    max-width: 2.35rem !important;
     height: 2.35rem !important;
     min-height: 2.35rem !important;
+    max-height: 2.35rem !important;
+    flex: 0 0 2.35rem !important;
+    aspect-ratio: 1 / 1 !important;
     border-radius: 9999px !important;
     padding: 0 !important;
+  }
+  .faolla-personal-mobile-shell .faolla-mobile-search-button,
+  .support-mobile-shell .faolla-mobile-search-button {
+    height: 2.125rem !important;
+    min-height: 2.125rem !important;
+    border-radius: 1.0625rem !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
   }
   .faolla-mobile-chat-avatar img,
   .faolla-mobile-self-avatar img,

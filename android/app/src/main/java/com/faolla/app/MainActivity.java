@@ -47,20 +47,35 @@ public class MainActivity extends BridgeActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         getWindow().setBackgroundDrawable(new ColorDrawable(Color.rgb(8, 17, 33)));
+        applyLaunchSystemBars();
         super.onCreate(savedInstanceState);
         installLaunchCover();
 
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), true);
+        applyLaunchSystemBars();
+
+        configureWebViewRuntime();
+        installDownloadListener();
+    }
+
+    private void applyLaunchSystemBars() {
         Window window = getWindow();
-        WindowCompat.setDecorFitsSystemWindows(window, true);
+        window.setStatusBarColor(Color.rgb(8, 17, 33));
+        window.setNavigationBarColor(Color.rgb(8, 17, 33));
+
+        WindowInsetsControllerCompat controller = WindowCompat.getInsetsController(window, window.getDecorView());
+        controller.setAppearanceLightStatusBars(false);
+        controller.setAppearanceLightNavigationBars(false);
+    }
+
+    private void applyContentSystemBars() {
+        Window window = getWindow();
         window.setStatusBarColor(Color.WHITE);
         window.setNavigationBarColor(Color.WHITE);
 
         WindowInsetsControllerCompat controller = WindowCompat.getInsetsController(window, window.getDecorView());
         controller.setAppearanceLightStatusBars(true);
         controller.setAppearanceLightNavigationBars(true);
-
-        configureWebViewRuntime();
-        installDownloadListener();
     }
 
     private void installLaunchCover() {
@@ -90,6 +105,7 @@ public class MainActivity extends BridgeActivity {
             updateProgressHandler.removeCallbacks(launchCoverFallbackRunnable);
             launchCoverFallbackRunnable = null;
         }
+        applyContentSystemBars();
 
         FrameLayout cover = launchCover;
         if (cover == null) {

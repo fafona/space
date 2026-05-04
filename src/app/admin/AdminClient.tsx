@@ -15299,7 +15299,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           </div>
         </div>
         <div className="faolla-mobile-search-row mt-4 flex items-center gap-2">
-          <div className="faolla-mobile-search-box flex min-h-[41px] min-w-0 flex-1 items-center gap-2.5 rounded-[20px] border border-slate-200 bg-[#f3f4f6] px-3.5 py-2 shadow-sm">
+          <div className="faolla-mobile-search-box flex h-[34px] min-h-[34px] min-w-0 flex-1 items-center gap-2.5 rounded-[17px] border border-slate-200 bg-[#f3f4f6] px-3 py-1.5 shadow-sm">
             <svg viewBox="0 0 24 24" className="h-[17px] w-[17px] shrink-0 text-slate-400" fill="none" aria-hidden="true">
               <circle cx="11" cy="11" r="6.5" stroke="currentColor" strokeWidth="1.9" />
               <path d="m16 16 4 4" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
@@ -15319,7 +15319,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           </div>
           <button
             type="button"
-            className="faolla-mobile-search-button inline-flex h-[41px] shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white px-4 text-sm shadow-sm hover:bg-slate-50 disabled:opacity-50"
+            className="faolla-mobile-search-button inline-flex h-[34px] min-h-[34px] shrink-0 items-center justify-center rounded-[17px] border border-slate-200 bg-white px-3 py-0 text-[13px] leading-none shadow-sm hover:bg-slate-50 disabled:opacity-50"
             onClick={() => void searchSupportPeerMerchant()}
             disabled={supportSearchLoading}
           >
@@ -16241,13 +16241,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               <SupportAvatarBadge
                 label={selectedSupportAvatarLabel}
                 imageAlt={selectedSupportDisplayName}
-                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm"
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white shadow-sm"
                 labelClassName="text-sm font-semibold text-white"
               />
             ) : (
               <button
                 type="button"
-                className="flex h-11 w-11 shrink-0 items-center justify-center overflow-visible rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm transition hover:scale-[1.02]"
+                className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-900 text-sm font-semibold text-white shadow-sm transition hover:scale-[1.02]"
                 onClick={() => setSupportMerchantInfoSheetOpen(true)}
                 aria-label="查看商户资料"
               >
@@ -16255,7 +16255,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   label={selectedSupportAvatarLabel}
                   imageUrl={selectedSupportAvatarImageUrl}
                   imageAlt={selectedSupportDisplayName}
-                  className="flex h-full w-full items-center justify-center bg-slate-900 text-white"
+                  className="flex h-full w-full items-center justify-center rounded-full bg-slate-900 text-white"
                   labelClassName="text-sm font-semibold text-white"
                   showMerchantBadge={selectedSupportPeerIsMerchant}
                 />
@@ -16458,7 +16458,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         <div className="flex items-end gap-1.5">
           <button
             type="button"
-            className={`faolla-mobile-composer-icon flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-700 shadow-none ring-1 ring-slate-200/80 transition ${
+            className={`faolla-mobile-composer-icon flex h-[38px] min-h-[38px] w-[38px] min-w-[38px] shrink-0 items-center justify-center rounded-full p-0 text-slate-700 shadow-none ring-1 ring-slate-200/80 transition ${
               supportAttachmentMenuOpen ? "bg-slate-900 text-white" : "bg-white hover:bg-slate-50"
             }`}
             onClick={toggleSupportAttachmentMenu}
@@ -16470,7 +16470,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             </svg>
           </button>
           <div
-            className="faolla-mobile-input-shell flex min-h-10 min-w-0 flex-1 items-end overflow-hidden rounded-[22px] bg-white px-3 py-2 shadow-none ring-1 ring-slate-200/80"
+            className="faolla-mobile-input-shell flex min-h-[38px] min-w-0 flex-1 items-end overflow-hidden rounded-[22px] bg-white px-3 py-2 shadow-none ring-1 ring-slate-200/80"
             style={isIosSupportBrowser && isSupportMobileKeyboardVisible ? { paddingTop: "0.3rem", paddingBottom: "0.3rem" } : undefined}
           >
             <textarea
@@ -16523,7 +16523,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           </div>
           <button
             type="button"
-            className={`faolla-mobile-composer-send flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-white shadow-none transition ${
+            className={`faolla-mobile-composer-send flex h-[38px] min-h-[38px] w-[38px] min-w-[38px] shrink-0 items-center justify-center rounded-full p-0 text-white shadow-none transition ${
               supportComposerBusy || supportCanSend
                 ? "bg-emerald-500 hover:bg-emerald-600"
                 : "bg-slate-300 shadow-none"
@@ -16669,7 +16669,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         label={selectedSupportAvatarLabel}
                         imageUrl={selectedSupportAvatarImageUrl}
                         imageAlt={selectedSupportDisplayName}
-                        className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white"
+                        className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white"
                         labelClassName="text-sm font-semibold text-white"
                         showMerchantBadge={selectedSupportPeerIsMerchant}
                       />
@@ -16718,7 +16718,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         label={selectedSupportAvatarLabel}
                         imageUrl={selectedSupportAvatarImageUrl}
                         imageAlt={selectedSupportDisplayName}
-                        className="flex h-16 w-16 shrink-0 items-center justify-center rounded-[22px] bg-slate-900 text-base font-semibold text-white shadow-sm"
+                        className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-slate-900 text-base font-semibold text-white shadow-sm"
                         labelClassName="text-base font-semibold text-white"
                         showMerchantBadge={selectedSupportPeerIsMerchant}
                       />
@@ -17229,7 +17229,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         label={contactRow.avatarLabel}
                         imageUrl={contactRow.avatarImageUrl}
                         imageAlt={contactRow.name}
-                        className={`mt-0.5 flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-sm font-semibold shadow-sm ${
+                        className={`mt-0.5 flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-sm font-semibold shadow-sm ${
                           contactRow.isOfficial || contactRow.unread
                             ? "bg-slate-900 text-white"
                             : "bg-slate-100 text-slate-700"
@@ -17286,13 +17286,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               <SupportAvatarBadge
                 label={selectedSupportAvatarLabel}
                 imageAlt={selectedSupportDisplayName}
-                className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm"
+                className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white shadow-sm"
                 labelClassName="text-sm font-semibold text-white"
               />
             ) : showDesktopMerchantSupportPanel ? (
               <button
                 type="button"
-                className="flex h-12 w-12 shrink-0 items-center justify-center overflow-visible rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm transition hover:scale-[1.02]"
+                className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-900 text-sm font-semibold text-white shadow-sm transition hover:scale-[1.02]"
                 onClick={() => setSupportMerchantInfoSheetOpen(true)}
                 aria-label="查看商户资料"
               >
@@ -17300,7 +17300,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   label={selectedSupportAvatarLabel}
                   imageUrl={selectedSupportAvatarImageUrl}
                   imageAlt={selectedSupportDisplayName}
-                  className="flex h-full w-full items-center justify-center bg-slate-900 text-white"
+                  className="flex h-full w-full items-center justify-center rounded-full bg-slate-900 text-white"
                   labelClassName="text-sm font-semibold text-white"
                   showMerchantBadge={selectedSupportPeerIsMerchant}
                 />
@@ -17310,7 +17310,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 label={selectedSupportAvatarLabel}
                 imageUrl={selectedSupportAvatarImageUrl}
                 imageAlt={selectedSupportDisplayName}
-                className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm"
+                className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white shadow-sm"
                 labelClassName="text-sm font-semibold text-white"
                 showMerchantBadge={selectedSupportPeerIsMerchant}
               />
