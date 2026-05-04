@@ -3,7 +3,6 @@
 import type { ReactNode } from "react";
 import {
   FAOLLA_DISPLAY_VERSION,
-  openFaollaAndroidUpdate,
   type FaollaAndroidAppUpdateState,
 } from "@/lib/useFaollaAndroidAppUpdate";
 import { FAOLLA_LEGAL_DOCUMENTS, getFaollaLegalDocument, type FaollaLegalDocumentKey } from "@/lib/faollaLegalContent";
@@ -184,13 +183,50 @@ function SettingsList({ children }: { children: ReactNode }) {
 }
 
 function UpdateStatus({ appUpdateState }: { appUpdateState: FaollaAndroidAppUpdateState }) {
+  const progress = Math.max(0, Math.min(100, appUpdateState.downloadProgress));
+  const busy = appUpdateState.downloadStatus === "downloading" || appUpdateState.downloadStatus === "installing";
   const statusText = appUpdateState.checking
     ? "正在检查更新"
     : appUpdateState.error
       ? appUpdateState.error
-      : appUpdateState.updateAvailable
-        ? `发现新版本 ${appUpdateState.latestVersion}`
-        : "当前已是最新版本";
+      : !appUpdateState.updateAvailable
+        ? "当前为最新版本"
+        : appUpdateState.downloadStatus === "downloaded"
+          ? "安装包已下载"
+          : appUpdateState.downloadStatus === "installing"
+            ? "正在安装更新"
+            : appUpdateState.downloadStatus === "failed"
+              ? appUpdateState.downloadMessage || "下载失败，请重试"
+              : `发现新版本 ${appUpdateState.latestVersion}`;
+  const buttonLabel = appUpdateState.checking
+    ? "检查中"
+    : !appUpdateState.supported
+      ? "仅 Android App 支持"
+      : !appUpdateState.updateAvailable
+        ? "当前为最新版本"
+        : appUpdateState.downloadStatus === "downloading"
+          ? `下载中 ${progress}%`
+          : appUpdateState.downloadStatus === "downloaded"
+            ? "安装更新"
+            : appUpdateState.downloadStatus === "installing"
+              ? "安装更新中"
+              : appUpdateState.downloadStatus === "failed"
+                ? "重新下载"
+                : "下载更新";
+  const buttonDisabled =
+    appUpdateState.checking ||
+    !appUpdateState.supported ||
+    !appUpdateState.updateAvailable ||
+    busy;
+  const handleUpdateButtonClick = () => {
+    if (buttonDisabled) return;
+    if (appUpdateState.downloadStatus === "downloaded") {
+      appUpdateState.installUpdate();
+      return;
+    }
+    appUpdateState.downloadUpdate();
+  };
+
   return (
     <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
       <div className="flex items-start justify-between gap-4">
@@ -206,14 +242,26 @@ function UpdateStatus({ appUpdateState }: { appUpdateState: FaollaAndroidAppUpda
           <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-500 ring-4 ring-emerald-50" aria-label="有更新" />
         ) : null}
       </div>
+
+      {appUpdateState.downloadStatus === "downloading" ? (
+        <div className="mt-5 overflow-hidden rounded-2xl bg-slate-100">
+          <div className="h-2 bg-emerald-500 transition-[width] duration-200" style={{ width: `${progress}%` }} />
+        </div>
+      ) : null}
+
+      {appUpdateState.downloadMessage ? (
+        <div className="mt-3 text-xs leading-5 text-slate-500">{appUpdateState.downloadMessage}</div>
+      ) : null}
+
       <button
         type="button"
         className="mt-5 flex h-12 w-full items-center justify-center rounded-2xl bg-slate-950 px-4 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:bg-slate-300"
-        disabled={!appUpdateState.updateAvailable}
-        onClick={() => openFaollaAndroidUpdate(appUpdateState.apkUrl)}
+        disabled={buttonDisabled}
+        onClick={handleUpdateButtonClick}
       >
-        {appUpdateState.updateAvailable ? "下载更新" : "无需更新"}
+        {buttonLabel}
       </button>
+
       {!appUpdateState.supported ? (
         <div className="mt-3 text-xs leading-5 text-slate-500">App 内更新仅支持 Android 安装包版本。</div>
       ) : null}
