@@ -254,6 +254,23 @@ const FAOLLA_MOBILE_SHELL_INLINE_STYLE = `
 }
 `;
 
+const FAOLLA_MOBILE_SHELL_STYLE_SCRIPT = `
+(() => {
+  if (typeof document === "undefined") return;
+  const css = ${JSON.stringify(FAOLLA_MOBILE_SHELL_INLINE_STYLE)};
+  const styleId = "faolla-mobile-shell-size-overrides-runtime";
+  let style = document.getElementById(styleId);
+  if (!style) {
+    style = document.createElement("style");
+    style.id = styleId;
+    document.head.appendChild(style);
+  }
+  if (style.textContent !== css) {
+    style.textContent = css;
+  }
+})();
+`;
+
 function buildFaollaInlineCacheRefreshScript(buildId: string) {
   const serializedBuildId = JSON.stringify(buildId || "local");
   return `
@@ -378,6 +395,9 @@ export default async function RootLayout({
         </Script>
         <Script id="standalone-launch" strategy="beforeInteractive">
           {STANDALONE_LAUNCH_SCRIPT}
+        </Script>
+        <Script id="faolla-mobile-shell-style-runtime" strategy="beforeInteractive">
+          {FAOLLA_MOBILE_SHELL_STYLE_SCRIPT}
         </Script>
         <Script id="faolla-app-shell-location" strategy="beforeInteractive">
           {FAOLLA_APP_SHELL_LOCATION_SCRIPT}

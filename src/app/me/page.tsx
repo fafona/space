@@ -100,6 +100,14 @@ const MOBILE_FAOLLA_FRAME_STYLE: CSSProperties = {
   touchAction: "pan-y",
 };
 
+function readSameOriginFrameHref(frame: HTMLIFrameElement | null) {
+  try {
+    return frame?.contentWindow?.location.href ?? "";
+  } catch {
+    return "";
+  }
+}
+
 type MeSessionPayload = {
   authenticated?: unknown;
   accountType?: unknown;
@@ -2913,6 +2921,24 @@ export default function MePage() {
       personalMobileFaollaFrameRef.current.src = faollaHomeTargetHref;
     }
   }, [faollaHomeTargetHref, isMobileViewport]);
+  const resetPersonalFaollaBackendFrame = useCallback(
+    (frame: HTMLIFrameElement | null) => {
+      if (typeof window === "undefined") return false;
+      const href = readSameOriginFrameHref(frame);
+      const normalized = normalizeFaollaEntryUrl(href, window.location.origin, { allowFaollaCrossOrigin: true });
+      if (!normalized || !isFaollaBackendShellUrl(normalized, window.location.origin)) return false;
+
+      const now = Date.now();
+      if (now - personalFaollaBackendResetAtRef.current < 1200) return true;
+      personalFaollaBackendResetAtRef.current = now;
+      setFaollaEmbedHref("/");
+      if (frame && frame.src !== faollaHomeTargetHref) {
+        frame.src = faollaHomeTargetHref;
+      }
+      return true;
+    },
+    [faollaHomeTargetHref],
+  );
   const currentFaollaFavoriteSite = useMemo(
     () =>
       buildCurrentFavoriteSiteFromHref(
@@ -3089,16 +3115,8 @@ export default function MePage() {
       const normalized = normalizeFaollaEntryUrl(href, window.location.origin, { allowFaollaCrossOrigin: true });
       if (!normalized) return;
       if (isFaollaBackendShellUrl(normalized, window.location.origin)) {
-        const now = Date.now();
-        if (now - personalFaollaBackendResetAtRef.current < 1200) return;
-        personalFaollaBackendResetAtRef.current = now;
-        setFaollaEmbedHref("/");
-        if (personalDesktopFaollaFrameRef.current) {
-          personalDesktopFaollaFrameRef.current.src = faollaHomeTargetHref;
-        }
-        if (personalMobileFaollaFrameRef.current) {
-          personalMobileFaollaFrameRef.current.src = faollaHomeTargetHref;
-        }
+        resetPersonalFaollaBackendFrame(personalDesktopFaollaFrameRef.current);
+        resetPersonalFaollaBackendFrame(personalMobileFaollaFrameRef.current);
         return;
       }
       setFaollaEmbedHref((current) => (current === normalized ? current : normalized));
@@ -3107,7 +3125,7 @@ export default function MePage() {
     return () => {
       window.removeEventListener("message", handleMessage);
     };
-  }, [faollaHomeTargetHref]);
+  }, [resetPersonalFaollaBackendFrame]);
   useEffect(() => {
     if (!faollaFavoriteToast) return;
     const timer = window.setTimeout(() => {
@@ -6566,6 +6584,7 @@ export default function MePage() {
                 ref={personalDesktopFaollaFrameRef}
                 title="Faolla"
                 src={desktopFaollaTargetHref}
+                onLoad={(event) => resetPersonalFaollaBackendFrame(event.currentTarget)}
                 className="absolute inset-0 h-full w-full border-0 bg-transparent"
               />
             </div>
@@ -6600,6 +6619,7 @@ export default function MePage() {
             ref={personalMobileFaollaFrameRef}
             title="Faolla"
             src={mobileFaollaTargetHref}
+            onLoad={(event) => resetPersonalFaollaBackendFrame(event.currentTarget)}
             scrolling="yes"
             style={MOBILE_FAOLLA_FRAME_STYLE}
             className="absolute inset-0 h-full w-full border-0 bg-white"

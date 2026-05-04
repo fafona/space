@@ -290,6 +290,14 @@ function DeferredAdminPanelLoading({ label }: { label: string }) {
   );
 }
 
+function readSameOriginFrameHref(frame: HTMLIFrameElement | null) {
+  try {
+    return frame?.contentWindow?.location.href ?? "";
+  } catch {
+    return "";
+  }
+}
+
 const MerchantBusinessCardManager = dynamic(() => import("@/components/admin/MerchantBusinessCardManager"), {
   ssr: false,
   loading: () => <DeferredAdminPanelLoading label="名片夹加载中..." />,
@@ -10847,6 +10855,24 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       supportMobileFaollaFrameRef.current.src = supportFaollaHomeTargetHref;
     }
   }, [supportFaollaHomeTargetHref]);
+  const resetSupportFaollaBackendFrame = useCallback(
+    (frame: HTMLIFrameElement | null) => {
+      if (typeof window === "undefined") return false;
+      const href = readSameOriginFrameHref(frame);
+      const normalized = normalizeFaollaEntryUrl(href, window.location.origin, { allowFaollaCrossOrigin: true });
+      if (!normalized || !isFaollaBackendShellUrl(normalized, window.location.origin)) return false;
+
+      const now = Date.now();
+      if (now - supportFaollaBackendResetAtRef.current < 1200) return true;
+      supportFaollaBackendResetAtRef.current = now;
+      setSupportFaollaEmbedHref("/");
+      if (frame && frame.src !== supportFaollaHomeTargetHref) {
+        frame.src = supportFaollaHomeTargetHref;
+      }
+      return true;
+    },
+    [supportFaollaHomeTargetHref],
+  );
   useEffect(() => {
     if (typeof window === "undefined") return;
     const handleSupportFaollaMessage = (event: MessageEvent) => {
@@ -10860,16 +10886,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       const normalized = normalizeFaollaEntryUrl(href, window.location.origin, { allowFaollaCrossOrigin: true });
       if (!normalized) return;
       if (isFaollaBackendShellUrl(normalized, window.location.origin)) {
-        const now = Date.now();
-        if (now - supportFaollaBackendResetAtRef.current < 1200) return;
-        supportFaollaBackendResetAtRef.current = now;
-        setSupportFaollaEmbedHref("/");
-        if (supportDesktopFaollaFrameRef.current) {
-          supportDesktopFaollaFrameRef.current.src = supportFaollaHomeTargetHref;
-        }
-        if (supportMobileFaollaFrameRef.current) {
-          supportMobileFaollaFrameRef.current.src = supportFaollaHomeTargetHref;
-        }
+        resetSupportFaollaBackendFrame(supportDesktopFaollaFrameRef.current);
+        resetSupportFaollaBackendFrame(supportMobileFaollaFrameRef.current);
         return;
       }
       setSupportFaollaEmbedHref((current) => (current === normalized ? current : normalized));
@@ -10878,7 +10896,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     return () => {
       window.removeEventListener("message", handleSupportFaollaMessage);
     };
-  }, [supportFaollaHomeTargetHref]);
+  }, [resetSupportFaollaBackendFrame]);
   const openMerchantFaollaPanel = useCallback(() => {
     setMerchantDesktopSection("faolla");
   }, []);
@@ -10939,6 +10957,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         ref={supportMobileFaollaFrameRef}
         title="Faolla.com"
         src={supportMobileFaollaTargetHref}
+        onLoad={(event) => resetSupportFaollaBackendFrame(event.currentTarget)}
         className="absolute inset-0 h-full w-full border-0 bg-white"
       />
     </div>
@@ -17508,6 +17527,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               ref={supportDesktopFaollaFrameRef}
               title="Faolla"
               src={supportMobileFaollaTargetHref}
+              onLoad={(event) => resetSupportFaollaBackendFrame(event.currentTarget)}
               className="absolute inset-0 h-full w-full border-0 bg-transparent"
             />
           </div>
