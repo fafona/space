@@ -129,12 +129,39 @@ function hideLaunchCovers() {
   hideNativeLaunchCover();
 }
 
-function scheduleLaunchCoverHide(delayMs = 900) {
-  window.setTimeout(() => {
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(hideLaunchCovers);
-    });
-  }, delayMs);
+function isLaunchContentReady() {
+  if (typeof document === "undefined" || typeof window === "undefined") return false;
+  const pathname = window.location.pathname || "/";
+  if (pathname === "/launch") return false;
+  if (
+    document.querySelector(
+      [
+        ".support-mobile-shell",
+        ".faolla-personal-mobile-shell",
+        "main[data-editor-mode]",
+        "main",
+      ].join(","),
+    )
+  ) {
+    return true;
+  }
+  const visibleText = (document.body?.textContent ?? "").trim();
+  return document.readyState === "complete" && visibleText.length > 0;
+}
+
+function scheduleLaunchCoverHideWhenContentReady(minDelayMs = 700, maxDelayMs = 7000) {
+  const startedAt = Date.now();
+  const tick = () => {
+    const elapsed = Date.now() - startedAt;
+    if (elapsed >= minDelayMs && (isLaunchContentReady() || elapsed >= maxDelayMs)) {
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(hideLaunchCovers);
+      });
+      return;
+    }
+    window.setTimeout(tick, 120);
+  };
+  window.setTimeout(tick, minDelayMs);
 }
 
 async function refreshFaollaServiceWorker() {
@@ -301,15 +328,8 @@ export default function CapacitorAppBridge() {
     const refreshNativeSession = () => {
       void readMerchantSessionPayload(5200, { includeClientTokens: true }).catch(() => null);
     };
-    void syncNativeWebBuild(true)
-      .then((result) => {
-        if (result === "ready") {
-          scheduleLaunchCoverHide();
-        }
-      })
-      .catch(() => {
-        scheduleLaunchCoverHide();
-      });
+    scheduleLaunchCoverHideWhenContentReady();
+    void syncNativeWebBuild(false).catch(() => undefined);
     refreshNativeSession();
 
     void App.addListener("appStateChange", ({ isActive }) => {

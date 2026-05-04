@@ -10841,26 +10841,37 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     ""
   ).trim();
   const supportFaollaBlankTargetHref = "about:blank";
-  const supportMobileFaollaHref = supportFaollaEmbedHref.trim();
-  const supportHasEmbeddedFaollaHref = supportMobileFaollaHref.length > 0;
+  const supportMobileFaollaHref = supportFaollaEmbedHref.trim() || "/";
+  const supportFaollaShellActive = merchantDesktopSection === "faolla" || supportMobileHomeTab === "faolla";
   const supportMobileFaollaTargetHref = useMemo(() => {
-    if (!supportHasEmbeddedFaollaHref) return supportFaollaBlankTargetHref;
+    if (!supportFaollaShellActive) return supportFaollaBlankTargetHref;
     return buildFaollaShellHref(
       supportMobileFaollaHref,
       locale,
       typeof window !== "undefined" ? window.location.origin : "https://faolla.com",
       { preferRuntimeOrigin: true },
     );
-  }, [locale, supportFaollaBlankTargetHref, supportHasEmbeddedFaollaHref, supportMobileFaollaHref]);
+  }, [locale, supportFaollaBlankTargetHref, supportFaollaShellActive, supportMobileFaollaHref]);
+  const supportShouldRenderFaollaFrame = supportMobileFaollaTargetHref !== supportFaollaBlankTargetHref;
+  const supportFaollaHomeTargetHref = useMemo(
+    () =>
+      buildFaollaShellHref(
+        "/",
+        locale,
+        typeof window !== "undefined" ? window.location.origin : "https://faolla.com",
+        { preferRuntimeOrigin: true },
+      ),
+    [locale],
+  );
   const navigateSupportFaollaHome = useCallback(() => {
-    setSupportFaollaEmbedHref("");
+    setSupportFaollaEmbedHref("/");
     if (supportDesktopFaollaFrameRef.current) {
-      supportDesktopFaollaFrameRef.current.src = supportFaollaBlankTargetHref;
+      supportDesktopFaollaFrameRef.current.src = supportFaollaHomeTargetHref;
     }
     if (supportMobileFaollaFrameRef.current) {
-      supportMobileFaollaFrameRef.current.src = supportFaollaBlankTargetHref;
+      supportMobileFaollaFrameRef.current.src = supportFaollaHomeTargetHref;
     }
-  }, [supportFaollaBlankTargetHref]);
+  }, [supportFaollaHomeTargetHref]);
   const resetSupportFaollaBackendFrame = useCallback(
     (frame: HTMLIFrameElement | null) => {
       if (typeof window === "undefined") return false;
@@ -10871,13 +10882,13 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       const now = Date.now();
       if (now - supportFaollaBackendResetAtRef.current < 1200) return true;
       supportFaollaBackendResetAtRef.current = now;
-      setSupportFaollaEmbedHref("");
-      if (frame && frame.src !== supportFaollaBlankTargetHref) {
-        frame.src = supportFaollaBlankTargetHref;
+      setSupportFaollaEmbedHref("/");
+      if (frame && frame.src !== supportFaollaHomeTargetHref) {
+        frame.src = supportFaollaHomeTargetHref;
       }
       return true;
     },
-    [supportFaollaBlankTargetHref],
+    [supportFaollaHomeTargetHref],
   );
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -10985,7 +10996,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   );
   const supportMobileFaollaContent = (
     <div className="support-preserve-light-surface relative min-h-0 flex-1 overflow-hidden bg-white">
-      {supportHasEmbeddedFaollaHref ? (
+      {supportShouldRenderFaollaFrame ? (
         <>
           <div className="pointer-events-none absolute left-4 top-[calc(var(--faolla-mobile-safe-top)+0.75rem)] z-10">
             <FaollaHomeButton className="pointer-events-auto h-11 w-11" onClick={navigateSupportFaollaHome} />
@@ -17680,7 +17691,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               merchantDesktopSection === "faolla" ? "h-[100dvh] min-h-[720px]" : "hidden h-[calc(100vh-9rem)] min-h-[560px]"
             }`}
           >
-            {supportHasEmbeddedFaollaHref ? (
+            {supportShouldRenderFaollaFrame ? (
               <>
                 <div className="pointer-events-none absolute left-4 top-4 z-10">
                   <FaollaHomeButton className="pointer-events-auto h-11 w-11" onClick={navigateSupportFaollaHome} />
