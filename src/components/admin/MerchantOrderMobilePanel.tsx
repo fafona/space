@@ -202,8 +202,8 @@ export default function MerchantOrderMobilePanel({
       : "bg-[rgba(248,250,252,0.96)] supports-[backdrop-filter]:bg-[rgba(248,250,252,0.9)]"
   }`;
   const filterSelectShellClassName = darkMode
-    ? "rounded-[18px] border border-slate-700 bg-slate-900/75 px-3 py-2.5 text-slate-100 shadow-sm"
-    : "rounded-[18px] border border-slate-200 bg-white px-3 py-2.5 text-slate-900 shadow-sm";
+    ? "faolla-mobile-filter-select rounded-[18px] border border-slate-700 bg-slate-900/75 px-3 py-2.5 text-slate-100 shadow-sm"
+    : "faolla-mobile-filter-select rounded-[18px] border border-slate-200 bg-white px-3 py-2.5 text-slate-900 shadow-sm";
   const filterSelectLabelClassName = darkMode ? "text-slate-400" : "text-slate-500";
   const filterSelectIconClassName = darkMode ? "text-slate-500" : "text-slate-400";
   const overflowMenuButtonClassName = overflowMenuOpen

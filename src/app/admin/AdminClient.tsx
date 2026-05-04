@@ -5008,8 +5008,8 @@ function SupportAvatarBadge({
 }: SupportAvatarBadgeProps) {
   const normalizedImageUrl = normalizePublicAssetUrl(imageUrl ?? "");
   return (
-    <div className={`relative ${className}`.trim()}>
-      <div className="flex h-full w-full items-center justify-center overflow-hidden rounded-[inherit]">
+    <div className={`faolla-support-avatar relative rounded-full ${className}`.trim()}>
+      <div className="flex h-full w-full items-center justify-center overflow-hidden rounded-full">
         {normalizedImageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={normalizedImageUrl} alt={imageAlt || label} className="h-full w-full object-cover" />
@@ -15465,7 +15465,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           <div ref={supportSelfLanguageRootRef} className="relative">
             <button
               type="button"
-              className="block h-6 w-9 overflow-hidden rounded-[4px] border border-slate-300/80 bg-transparent p-0 transition hover:brightness-105"
+              className="faolla-mobile-language-button block h-6 w-[39px] overflow-hidden rounded-[3px] border border-slate-300/80 bg-transparent p-0 transition hover:brightness-105"
               onClick={() => setSupportSelfLanguageMenuOpen((current) => !current)}
               aria-label={t("lang.placeholder")}
               aria-expanded={supportSelfLanguageMenuOpen}
@@ -15522,7 +15522,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           <div className="faolla-mobile-self-profile-hero flex flex-col items-center px-4 text-center">
             <button
               type="button"
-              className="faolla-mobile-self-avatar relative flex h-24 w-24 items-center justify-center overflow-hidden rounded-[30px] bg-slate-900 text-xl font-semibold text-white shadow-[0_18px_40px_rgba(15,23,42,0.16)]"
+              className="faolla-mobile-self-avatar relative flex h-24 w-24 items-center justify-center overflow-hidden rounded-full bg-slate-900 text-xl font-semibold text-white shadow-[0_18px_40px_rgba(15,23,42,0.16)]"
               onClick={openSupportSelfAvatarPicker}
               disabled={supportSelfAvatarUploading || supportSelfProfileSaving}
               aria-label="上传头像"

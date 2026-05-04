@@ -134,13 +134,13 @@ export default function BookingStatusFilterDropdown({
   return (
     <div ref={containerRef} className="relative">
       <div
-        className={`inline-flex items-stretch overflow-hidden rounded-full border border-slate-200 bg-white shadow-sm transition ${
+        className={`faolla-mobile-status-dropdown inline-flex items-stretch overflow-hidden rounded-full border border-slate-200 bg-white shadow-sm transition ${
           open ? "border-slate-300" : "hover:bg-slate-50"
         }`}
       >
         <button
           type="button"
-          className={`inline-flex min-h-10 items-center gap-2 transition hover:bg-slate-50 ${
+          className={`faolla-mobile-status-dropdown-button inline-flex min-h-10 items-center gap-2 transition hover:bg-slate-50 ${
             compact ? "px-3 py-2 text-xs" : "px-3 py-2 text-sm"
           }`}
           onClick={() => {
@@ -153,7 +153,7 @@ export default function BookingStatusFilterDropdown({
         </button>
         <button
           type="button"
-          className={`inline-flex min-h-10 items-center justify-center border-l border-slate-200 text-slate-500 transition hover:bg-slate-50 ${
+          className={`faolla-mobile-status-dropdown-toggle inline-flex min-h-10 items-center justify-center border-l border-slate-200 text-slate-500 transition hover:bg-slate-50 ${
             compact ? "w-9" : "w-10"
           }`}
           onClick={() => {

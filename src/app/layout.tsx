@@ -110,6 +110,28 @@ const STANDALONE_LAUNCH_SCRIPT = `
 })();
 `;
 
+const FAOLLA_APP_SHELL_PREPAINT_SCRIPT = `
+(() => {
+  if (typeof window === "undefined" || typeof document === "undefined") return;
+  try {
+    const isAppShell = (new URLSearchParams(window.location.search || "").get("appShell") || "").trim().toLowerCase() === "faolla";
+    if (!isAppShell) return;
+    const isLaunch = (window.location.pathname || "") === "/launch";
+    const color = isLaunch ? "#081121" : "#f2f3f5";
+    document.documentElement.dataset.faollaAppShell = "true";
+    document.documentElement.dataset.faollaLaunch = isLaunch ? "true" : "false";
+    document.documentElement.style.backgroundColor = color;
+    const paintBody = () => {
+      if (document.body) document.body.style.backgroundColor = color;
+    };
+    paintBody();
+    document.addEventListener("DOMContentLoaded", paintBody, { once: true });
+  } catch {
+    // Prepaint is best-effort only.
+  }
+})();
+`;
+
 const FAOLLA_APP_SHELL_LOCATION_SCRIPT = `
 (() => {
   if (typeof window === "undefined") return;
@@ -219,26 +241,37 @@ html[data-faolla-app-shell="true"][data-faolla-launch="false"] body {
     gap: 0.5rem !important;
   }
   .faolla-mobile-search-box {
-    min-height: 2.25rem !important;
+    min-height: 2.125rem !important;
+    height: 2.125rem !important;
     border-color: transparent !important;
-    border-radius: 1.125rem !important;
+    border-radius: 1.0625rem !important;
     background: #ffffff !important;
-    padding: 0.38rem 0.78rem !important;
+    padding: 0.28rem 0.68rem !important;
     box-shadow: none !important;
   }
   .faolla-mobile-search-box input {
-    font-size: 0.86rem !important;
-    line-height: 1.08rem !important;
+    min-height: 1.2rem !important;
+    padding: 0 !important;
+    font-size: 0.82rem !important;
+    line-height: 1rem !important;
   }
   .faolla-mobile-search-button {
-    height: 2.25rem !important;
-    min-height: 2.25rem !important;
+    height: 2.125rem !important;
+    min-height: 2.125rem !important;
     border-color: transparent !important;
-    border-radius: 1.125rem !important;
-    padding: 0 0.8rem !important;
+    border-radius: 1.0625rem !important;
+    padding: 0 0.68rem !important;
     background: #ffffff !important;
-    font-size: 0.82rem !important;
+    font-size: 0.78rem !important;
     box-shadow: none !important;
+  }
+  .faolla-personal-mobile-shell .faolla-mobile-language-button,
+  .support-mobile-shell .faolla-mobile-language-button {
+    width: 2.4375rem !important;
+    height: 1.5rem !important;
+    min-height: 1.5rem !important;
+    border-radius: 0.1875rem !important;
+    padding: 0 !important;
   }
   .faolla-mobile-chat-list {
     background: #f2f3f5 !important;
@@ -264,6 +297,13 @@ html[data-faolla-app-shell="true"][data-faolla-launch="false"] body {
     height: 3rem !important;
     border-radius: 9999px !important;
     box-shadow: none !important;
+  }
+  .faolla-mobile-chat-avatar,
+  .faolla-mobile-self-avatar,
+  .faolla-support-avatar,
+  .faolla-support-avatar > div,
+  .faolla-support-avatar img {
+    border-radius: 9999px !important;
   }
   .faolla-mobile-chat-row .faolla-mobile-chat-name {
     font-size: 0.96rem !important;
@@ -470,6 +510,8 @@ html[data-faolla-app-shell="true"][data-faolla-launch="false"] body {
   .faolla-personal-mobile-shell .faolla-mobile-input-shell,
   .support-mobile-shell .faolla-mobile-input-shell {
     min-height: 2.35rem !important;
+    height: 2.35rem !important;
+    align-items: center !important;
     border-radius: 1.2rem !important;
     padding: 0.42rem 0.75rem !important;
     box-shadow: none !important;
@@ -522,10 +564,57 @@ html[data-faolla-app-shell="true"][data-faolla-launch="false"] body {
   .faolla-personal-mobile-shell textarea,
   .support-mobile-shell textarea {
     border-radius: 1rem !important;
-    font-size: 1rem !important;
-    min-height: 2.35rem !important;
-    padding: 0.45rem 0.75rem !important;
+    font-size: 0.9rem !important;
+    min-height: 2.15rem !important;
+    padding: 0.34rem 0.68rem !important;
     box-shadow: none !important;
+  }
+  .faolla-personal-mobile-shell .faolla-mobile-record-search,
+  .support-mobile-shell .faolla-mobile-record-search {
+    min-height: 2.125rem !important;
+    padding: 0.3rem 0.68rem !important;
+    font-size: 0.82rem !important;
+  }
+  .faolla-personal-mobile-shell .faolla-mobile-search-box input,
+  .support-mobile-shell .faolla-mobile-search-box input {
+    min-height: 1.2rem !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    font-size: 0.82rem !important;
+    line-height: 1rem !important;
+  }
+  .support-mobile-shell .faolla-mobile-filter-select,
+  .faolla-personal-mobile-shell .faolla-mobile-filter-select {
+    min-height: 2rem !important;
+    border-radius: 1rem !important;
+    padding: 0.28rem 0.62rem !important;
+    box-shadow: none !important;
+  }
+  .support-mobile-shell .faolla-mobile-filter-select select,
+  .faolla-personal-mobile-shell .faolla-mobile-filter-select select {
+    min-height: 1.2rem !important;
+    padding: 0 !important;
+    font-size: 0.78rem !important;
+    line-height: 1rem !important;
+  }
+  .support-mobile-shell .faolla-mobile-status-dropdown {
+    min-height: 1.875rem !important;
+    height: 1.875rem !important;
+    border-radius: 0.9375rem !important;
+    box-shadow: none !important;
+  }
+  .support-mobile-shell .faolla-mobile-status-dropdown-button,
+  .support-mobile-shell .faolla-mobile-status-dropdown-toggle {
+    min-height: 1.875rem !important;
+    height: 1.875rem !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    font-size: 0.72rem !important;
+    line-height: 0.9rem !important;
+  }
+  .support-mobile-shell .faolla-mobile-status-dropdown-toggle {
+    width: 1.9rem !important;
   }
   .faolla-personal-mobile-shell button.rounded-full,
   .support-mobile-shell button.rounded-full,
@@ -549,11 +638,29 @@ html[data-faolla-app-shell="true"][data-faolla-launch="false"] body {
   .faolla-personal-mobile-shell a.rounded-full,
   .support-mobile-shell a.rounded-full {
     min-height: 1.75rem !important;
+    height: auto !important;
     border-radius: 0.875rem !important;
     padding: 0.22rem 0.55rem !important;
     font-size: 0.68rem !important;
     line-height: 0.9rem !important;
     box-shadow: none !important;
+  }
+  .support-mobile-shell a[href^="mailto:"],
+  .support-mobile-shell a[href^="tel:"],
+  .support-mobile-shell button[aria-label*="会话"],
+  .support-mobile-shell button[aria-label*="邮件"],
+  .support-mobile-shell button[aria-label*="电话"],
+  .faolla-personal-mobile-shell a[href^="mailto:"],
+  .faolla-personal-mobile-shell a[href^="tel:"],
+  .faolla-personal-mobile-shell button[aria-label*="会话"],
+  .faolla-personal-mobile-shell button[aria-label*="邮件"],
+  .faolla-personal-mobile-shell button[aria-label*="电话"] {
+    width: 2rem !important;
+    min-width: 2rem !important;
+    height: 2rem !important;
+    min-height: 2rem !important;
+    border-radius: 9999px !important;
+    padding: 0 !important;
   }
   .faolla-personal-mobile-shell .faolla-mobile-input-shell textarea,
   .support-mobile-shell .faolla-mobile-input-shell textarea {
@@ -698,6 +805,7 @@ export default async function RootLayout({
         <link rel="shortcut icon" href="/favicon.ico?v=20260409c" />
         <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=20260409c" />
         <link rel="manifest" href="/manifest.webmanifest" />
+        <script id="faolla-app-shell-prepaint" dangerouslySetInnerHTML={{ __html: FAOLLA_APP_SHELL_PREPAINT_SCRIPT }} />
         <style id="faolla-mobile-shell-size-overrides" dangerouslySetInnerHTML={{ __html: FAOLLA_MOBILE_SHELL_INLINE_STYLE }} />
       </head>
       <body>
