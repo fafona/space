@@ -23,6 +23,8 @@ const DeferredSitePageClient = dynamic(() => import("@/app/site/[siteId]/SitePag
   loading: () => <LoadingProgressScreen />,
 });
 
+const ANDROID_APP_DOWNLOAD_HREF = "/downloads/faolla-android.apk";
+
 function readViewportWidth() {
   if (typeof window === "undefined") return 0;
   const visualViewportWidth = window.visualViewport?.width;
@@ -280,6 +282,17 @@ export default function HomePageClient({
   const authEntryClassName = suppressStandaloneLaunchRedirect
     ? "fixed right-16 top-[calc(env(safe-area-inset-top)+0.75rem)] z-[2147483000] md:right-16 md:top-5"
     : "fixed right-16 top-3 z-[20000] md:right-20 md:top-5";
+  const appDownloadCopy = locale.startsWith("zh")
+    ? {
+        title: "Faolla 安卓 App",
+        description: "内测安装包，安卓手机可直接下载体验。",
+        button: "下载安卓内测版",
+      }
+    : {
+        title: "Faolla Android App",
+        description: "Test build for Android phones.",
+        button: "Download Android beta",
+      };
 
   return (
     <main
@@ -308,6 +321,21 @@ export default function HomePageClient({
             if (activePlan?.pages?.some((page) => page.id === pageId)) setCurrentPageId(pageId);
           }}
         />
+        <footer className="mx-auto mt-10 w-[calc(100%-2rem)] max-w-4xl border-t border-slate-200/80 px-1 py-6">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="text-sm font-semibold text-slate-900">{appDownloadCopy.title}</div>
+              <div className="mt-1 text-xs leading-5 text-slate-500">{appDownloadCopy.description}</div>
+            </div>
+            <a
+              href={ANDROID_APP_DOWNLOAD_HREF}
+              download="faolla-android.apk"
+              className="inline-flex h-11 items-center justify-center rounded-lg bg-slate-950 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 active:scale-[0.99]"
+            >
+              {appDownloadCopy.button}
+            </a>
+          </div>
+        </footer>
       </div>
     </main>
   );
