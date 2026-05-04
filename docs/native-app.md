@@ -31,4 +31,28 @@ npm run app:open:ios
 npm run app:open:android
 ```
 
-The native shell locks the app to portrait by default and lets game pages use their in-page controls instead of browser navigation.
+## Android Package
+
+Debug APK for direct testing:
+
+```bash
+npm run app:android:debug
+```
+
+The debug APK is generated at:
+
+```text
+android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+For a release APK, create a private keystore and copy the signing template:
+
+```bash
+keytool -genkeypair -v -keystore android/release/faolla-release-key.jks -keyalg RSA -keysize 2048 -validity 10000 -alias faolla
+copy android\keystore.properties.example android\keystore.properties
+npm run app:android:release
+```
+
+Do not commit `android/keystore.properties` or any `.jks`/`.keystore` file.
+
+The native shell locks the app to portrait by default. Tank Battle switches to landscape inside the native app.

@@ -27,6 +27,11 @@ function resolveNativeBackHref(pathname: string) {
   return "";
 }
 
+function resolveNativeOrientation(pathname: string) {
+  if (pathname.endsWith("/games/tank-battle")) return "landscape";
+  return "portrait";
+}
+
 export default function CapacitorAppBridge() {
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
@@ -36,7 +41,38 @@ export default function CapacitorAppBridge() {
     void StatusBar.setOverlaysWebView({ overlay: false }).catch(() => undefined);
     void StatusBar.setStyle({ style: Style.Light }).catch(() => undefined);
     void StatusBar.setBackgroundColor({ color: "#081121" }).catch(() => undefined);
-    void ScreenOrientation.lock({ orientation: "portrait" }).catch(() => undefined);
+
+    let activeOrientation = "";
+    const syncNativeOrientation = () => {
+      const nextOrientation = resolveNativeOrientation(window.location.pathname);
+      if (nextOrientation === activeOrientation) return;
+      activeOrientation = nextOrientation;
+      void ScreenOrientation.lock({ orientation: nextOrientation }).catch(() => undefined);
+    };
+
+    const scheduleNativeOrientationSync = () => {
+      window.setTimeout(syncNativeOrientation, 0);
+    };
+
+    const originalPushState = window.history.pushState;
+    const originalReplaceState = window.history.replaceState;
+
+    window.history.pushState = function pushState(...args) {
+      const result = originalPushState.apply(this, args);
+      scheduleNativeOrientationSync();
+      return result;
+    };
+
+    window.history.replaceState = function replaceState(...args) {
+      const result = originalReplaceState.apply(this, args);
+      scheduleNativeOrientationSync();
+      return result;
+    };
+
+    syncNativeOrientation();
+    window.addEventListener("popstate", syncNativeOrientation);
+    window.addEventListener("hashchange", syncNativeOrientation);
+    window.addEventListener("visibilitychange", syncNativeOrientation);
 
     if (window.location.pathname === "/") {
       window.location.replace(appendAppShellParam("/launch"));
@@ -63,6 +99,11 @@ export default function CapacitorAppBridge() {
 
     return () => {
       removeBackButtonListener?.();
+      window.history.pushState = originalPushState;
+      window.history.replaceState = originalReplaceState;
+      window.removeEventListener("popstate", syncNativeOrientation);
+      window.removeEventListener("hashchange", syncNativeOrientation);
+      window.removeEventListener("visibilitychange", syncNativeOrientation);
       delete document.documentElement.dataset.capacitor;
     };
   }, []);
