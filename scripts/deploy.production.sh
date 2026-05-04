@@ -71,6 +71,12 @@ git fetch origin "$APP_BRANCH" --prune
 git checkout "$APP_BRANCH"
 git reset --hard "origin/$APP_BRANCH"
 
+FAOLLA_WEB_BUILD_ID="$(git rev-parse HEAD)"
+FAOLLA_WEB_RELEASED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+write_env_value "FAOLLA_WEB_BUILD_ID" "$FAOLLA_WEB_BUILD_ID"
+write_env_value "NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID" "$FAOLLA_WEB_BUILD_ID"
+write_env_value "FAOLLA_WEB_RELEASED_AT" "$FAOLLA_WEB_RELEASED_AT"
+
 npm ci
 npm run build
 

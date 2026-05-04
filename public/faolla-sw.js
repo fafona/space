@@ -1,4 +1,4 @@
-const FAOLLA_SW_VERSION = "faolla-pwa-v20260423-3";
+const FAOLLA_SW_VERSION = "faolla-pwa-v20260504-1";
 const FAOLLA_BADGE_CACHE = "faolla-badge-state-v1";
 const FAOLLA_BADGE_STATE_URL = "/__faolla_badge_state__";
 const FAOLLA_VISIBILITY_STATE_URL = "/__faolla_visibility_state__";
@@ -38,6 +38,7 @@ const FAOLLA_SHELL_URLS = [
 self.addEventListener("install", (event) => {
   event.waitUntil(
     (async () => {
+      await self.skipWaiting();
       const cache = await caches.open(FAOLLA_SHELL_CACHE);
       await Promise.all(
         FAOLLA_SHELL_URLS.map(async (path) => {

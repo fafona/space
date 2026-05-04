@@ -11,6 +11,25 @@ import {
   resolveMobileSwipeBackHref,
 } from "@/lib/mobileSwipeBack";
 
+const FAOLLA_NATIVE_WEB_VERSION_URL = "/api/app-web-version";
+const FAOLLA_NATIVE_WEB_BUILD_STORAGE_KEY = "faolla:native-web-build:v1";
+const FAOLLA_NATIVE_WEB_RELOAD_STORAGE_KEY = "faolla:native-web-build-reload:v1";
+const FAOLLA_NATIVE_WEB_BUILD_CHECK_THROTTLE_MS = 60_000;
+
+function readObjectRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function readTrimmedString(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function readWebBuildId(payload: unknown) {
+  const record = readObjectRecord(payload);
+  return readTrimmedString(record?.buildId);
+}
+
 function appendAppShellParam(path: string) {
   try {
     const url = new URL(path, window.location.origin);
@@ -51,6 +70,53 @@ function dispatchNativeAppBackEvent() {
 function resolveNativeOrientation(pathname: string) {
   if (pathname.endsWith("/games/tank-battle")) return "landscape";
   return "portrait";
+}
+
+function buildNativeWebReloadHref(buildId: string) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("appShell", "faolla");
+  url.searchParams.set("__faollaWebBuild", buildId.slice(0, 12));
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
+async function refreshFaollaServiceWorker() {
+  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
+  const registrations = await navigator.serviceWorker.getRegistrations().catch(() => []);
+  await Promise.all(
+    registrations.map(async (registration) => {
+      await registration.update().catch(() => undefined);
+      const waitingWorker = registration.waiting;
+      if (waitingWorker) {
+        waitingWorker.postMessage({ type: "SKIP_WAITING" });
+      }
+    }),
+  );
+}
+
+async function clearFaollaRuntimeCaches() {
+  const tasks: Array<Promise<unknown>> = [refreshFaollaServiceWorker()];
+
+  if (typeof window !== "undefined" && "caches" in window) {
+    tasks.push(
+      window.caches
+        .keys()
+        .then((keys) => Promise.all(keys.filter((key) => key.startsWith("faolla-")).map((key) => window.caches.delete(key))))
+        .catch(() => undefined),
+    );
+  }
+
+  await Promise.all(tasks);
+}
+
+async function fetchCurrentWebBuildId() {
+  const url = new URL(FAOLLA_NATIVE_WEB_VERSION_URL, window.location.origin);
+  url.searchParams.set("t", String(Date.now()));
+  const response = await fetch(url.toString(), {
+    cache: "no-store",
+    credentials: "same-origin",
+  });
+  if (!response.ok) return "";
+  return readWebBuildId(await response.json().catch(() => null));
 }
 
 export default function CapacitorAppBridge() {
@@ -103,14 +169,57 @@ export default function CapacitorAppBridge() {
 
     let removeBackButtonListener: (() => void) | undefined;
     let removeAppStateListener: (() => void) | undefined;
+    let lastWebBuildCheckAt = 0;
+
+    const syncNativeWebBuild = async (force = false) => {
+      const now = Date.now();
+      if (!force && now - lastWebBuildCheckAt < FAOLLA_NATIVE_WEB_BUILD_CHECK_THROTTLE_MS) return;
+      lastWebBuildCheckAt = now;
+
+      const nextBuildId = await fetchCurrentWebBuildId().catch(() => "");
+      if (!nextBuildId) return;
+
+      let previousBuildId = "";
+      let lastReloadBuildId = "";
+      try {
+        previousBuildId = window.localStorage.getItem(FAOLLA_NATIVE_WEB_BUILD_STORAGE_KEY) ?? "";
+        lastReloadBuildId = window.localStorage.getItem(FAOLLA_NATIVE_WEB_RELOAD_STORAGE_KEY) ?? "";
+      } catch {
+        previousBuildId = "";
+        lastReloadBuildId = "";
+      }
+
+      if (!previousBuildId) {
+        try {
+          window.localStorage.setItem(FAOLLA_NATIVE_WEB_BUILD_STORAGE_KEY, nextBuildId);
+        } catch {
+          // Ignore localStorage failures; the current page can continue.
+        }
+        return;
+      }
+
+      if (previousBuildId === nextBuildId || lastReloadBuildId === nextBuildId) return;
+
+      try {
+        window.localStorage.setItem(FAOLLA_NATIVE_WEB_BUILD_STORAGE_KEY, nextBuildId);
+        window.localStorage.setItem(FAOLLA_NATIVE_WEB_RELOAD_STORAGE_KEY, nextBuildId);
+      } catch {
+        // Ignore localStorage failures and still refresh once.
+      }
+
+      await clearFaollaRuntimeCaches();
+      window.location.replace(buildNativeWebReloadHref(nextBuildId));
+    };
 
     const refreshNativeSession = () => {
       void readMerchantSessionPayload(5200, { includeClientTokens: true }).catch(() => null);
     };
+    void syncNativeWebBuild(true);
     refreshNativeSession();
 
     void App.addListener("appStateChange", ({ isActive }) => {
       if (isActive) {
+        void syncNativeWebBuild(true);
         refreshNativeSession();
         scheduleNativeOrientationSync();
       }
