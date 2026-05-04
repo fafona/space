@@ -269,6 +269,7 @@ import {
   FAOLLA_APP_SHELL_LOCATION_MESSAGE,
   buildFaollaShellHref,
   isFaollaBackendShellUrl,
+  isFaollaAppShellSearch,
   isFaollaSectionSearch,
   normalizeFaollaEntryUrl,
   resolveFaollaEntryUrlFromBrowser,
@@ -7278,10 +7279,13 @@ export default function AdminClient({
       );
     };
     const preserveNativeFaollaShell = () => {
-      if (!isNativeMerchantShellRuntime()) return false;
+      const faollaAppShellActive =
+        typeof window !== "undefined" && isFaollaAppShellSearch(window.location.search);
+      if (!isNativeMerchantShellRuntime() && !faollaAppShellActive) return false;
       const faollaSectionActive =
         supportMobileHomeTabRef.current === "faolla" ||
-        (typeof window !== "undefined" && isFaollaSectionSearch(window.location.search));
+        (typeof window !== "undefined" && isFaollaSectionSearch(window.location.search)) ||
+        faollaAppShellActive;
       if (!faollaSectionActive) return false;
       const recentMerchantId = readRecentMerchantLaunchMerchantId();
       if (isMerchantNumericId(recentMerchantId)) {
