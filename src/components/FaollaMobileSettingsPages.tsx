@@ -191,6 +191,12 @@ function UpdateStatus({ appUpdateState }: { appUpdateState: FaollaAndroidAppUpda
       ? appUpdateState.error
       : !appUpdateState.updateAvailable
         ? "当前为最新版本"
+        : appUpdateState.updateKind === "web"
+          ? appUpdateState.downloadStatus === "installing"
+            ? "正在应用内部更新"
+            : appUpdateState.downloadStatus === "failed"
+              ? appUpdateState.downloadMessage || "内部更新失败，请重试"
+              : "发现界面更新"
         : appUpdateState.downloadStatus === "downloaded"
           ? "安装包已下载"
           : appUpdateState.downloadStatus === "installing"
@@ -209,10 +215,14 @@ function UpdateStatus({ appUpdateState }: { appUpdateState: FaollaAndroidAppUpda
           : appUpdateState.downloadStatus === "downloaded"
             ? "安装更新"
             : appUpdateState.downloadStatus === "installing"
-              ? "安装更新中"
+              ? appUpdateState.updateKind === "web"
+                ? "更新中"
+                : "安装更新中"
               : appUpdateState.downloadStatus === "failed"
                 ? "重新下载"
-                : "下载更新";
+                : appUpdateState.updateKind === "web"
+                  ? "立即更新"
+                  : "下载更新";
   const buttonDisabled =
     appUpdateState.checking ||
     !appUpdateState.supported ||
@@ -235,7 +245,9 @@ function UpdateStatus({ appUpdateState }: { appUpdateState: FaollaAndroidAppUpda
           <div className="mt-2 text-xs leading-5 text-slate-500">
             当前版本 {appUpdateState.currentVersion}
             {appUpdateState.currentBuild ? ` (${appUpdateState.currentBuild})` : ""}
-            {appUpdateState.latestBuild ? ` · 最新 ${appUpdateState.latestVersion} (${appUpdateState.latestBuild})` : ""}
+            {appUpdateState.updateKind === "android" && appUpdateState.latestBuild
+              ? ` · 最新 ${appUpdateState.latestVersion} (${appUpdateState.latestBuild})`
+              : ""}
           </div>
         </div>
         {appUpdateState.updateAvailable ? (
@@ -243,7 +255,7 @@ function UpdateStatus({ appUpdateState }: { appUpdateState: FaollaAndroidAppUpda
         ) : null}
       </div>
 
-      {appUpdateState.downloadStatus === "downloading" ? (
+      {appUpdateState.downloadStatus === "downloading" && appUpdateState.updateKind === "android" ? (
         <div className="mt-5 overflow-hidden rounded-2xl bg-slate-100">
           <div className="h-2 bg-emerald-500 transition-[width] duration-200" style={{ width: `${progress}%` }} />
         </div>

@@ -172,94 +172,94 @@ const FAOLLA_MOBILE_SHELL_INLINE_STYLE = `
     border-bottom: 0 !important;
     background: #f2f3f5 !important;
     box-shadow: none !important;
-    padding: calc(var(--faolla-mobile-safe-top, env(safe-area-inset-top, 0px)) + 0.72rem) 1rem 0.72rem !important;
+    padding: calc(var(--faolla-mobile-safe-top, env(safe-area-inset-top, 0px)) + 0.5rem) 0.85rem 0.48rem !important;
   }
   .faolla-mobile-list-title {
-    font-size: 1.08rem !important;
-    line-height: 1.35rem !important;
+    font-size: 1.06rem !important;
+    line-height: 1.28rem !important;
     font-weight: 700 !important;
   }
   .faolla-mobile-list-summary {
     margin-top: 0.12rem !important;
-    font-size: 0.75rem !important;
-    line-height: 1rem !important;
+    font-size: 0.72rem !important;
+    line-height: 0.92rem !important;
   }
   .faolla-mobile-list-badge {
-    width: 2.45rem !important;
-    height: 2.45rem !important;
-    border-radius: 0.95rem !important;
-    font-size: 0.75rem !important;
+    width: 2.2rem !important;
+    height: 2.2rem !important;
+    border-radius: 0.7rem !important;
+    font-size: 0.7rem !important;
   }
   .faolla-mobile-search-row {
-    margin-top: 0.65rem !important;
+    margin-top: 0.5rem !important;
     gap: 0.5rem !important;
   }
   .faolla-mobile-search-box {
-    min-height: 2.42rem !important;
+    min-height: 2.25rem !important;
     border-color: transparent !important;
-    border-radius: 1.24rem !important;
+    border-radius: 1.125rem !important;
     background: #ffffff !important;
-    padding: 0.46rem 0.85rem !important;
-    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06) !important;
+    padding: 0.38rem 0.78rem !important;
+    box-shadow: none !important;
   }
   .faolla-mobile-search-box input {
-    font-size: 0.88rem !important;
-    line-height: 1.15rem !important;
+    font-size: 0.86rem !important;
+    line-height: 1.08rem !important;
   }
   .faolla-mobile-search-button {
-    height: 2.42rem !important;
-    min-height: 2.42rem !important;
+    height: 2.25rem !important;
+    min-height: 2.25rem !important;
     border-color: transparent !important;
-    border-radius: 1.24rem !important;
-    padding: 0 0.92rem !important;
+    border-radius: 1.125rem !important;
+    padding: 0 0.8rem !important;
     background: #ffffff !important;
-    font-size: 0.86rem !important;
-    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06) !important;
+    font-size: 0.82rem !important;
+    box-shadow: none !important;
   }
   .faolla-mobile-chat-list {
     background: #f2f3f5 !important;
-    padding: 0.2rem 0.95rem calc(var(--faolla-mobile-safe-bottom, env(safe-area-inset-bottom, 0px)) + 4.8rem) !important;
+    padding: 0 0.85rem calc(var(--faolla-mobile-safe-bottom, env(safe-area-inset-bottom, 0px)) + 3.9rem) !important;
   }
   .faolla-mobile-chat-list > div {
     gap: 0 !important;
   }
   .faolla-mobile-chat-row {
-    min-height: 4.55rem !important;
+    min-height: 4rem !important;
     border: 0 !important;
     border-bottom: 1px solid rgba(148, 163, 184, 0.2) !important;
     border-radius: 0 !important;
     background: transparent !important;
     box-shadow: none !important;
-    padding: 0.62rem 0.1rem !important;
+    padding: 0.46rem 0.08rem !important;
   }
   .faolla-mobile-chat-row:active {
     background: rgba(15, 23, 42, 0.04) !important;
   }
   .faolla-mobile-chat-row .faolla-mobile-chat-avatar {
-    width: 3.15rem !important;
-    height: 3.15rem !important;
+    width: 3rem !important;
+    height: 3rem !important;
     border-radius: 9999px !important;
     box-shadow: none !important;
   }
   .faolla-mobile-chat-row .faolla-mobile-chat-name {
-    font-size: 0.98rem !important;
-    line-height: 1.22rem !important;
+    font-size: 0.96rem !important;
+    line-height: 1.16rem !important;
     font-weight: 650 !important;
   }
   .faolla-mobile-chat-row .faolla-mobile-chat-preview {
-    margin-top: 0.28rem !important;
-    font-size: 0.82rem !important;
-    line-height: 1.12rem !important;
+    margin-top: 0.2rem !important;
+    font-size: 0.8rem !important;
+    line-height: 1rem !important;
   }
   .faolla-mobile-chat-row .faolla-mobile-chat-time {
-    font-size: 0.72rem !important;
-    line-height: 0.95rem !important;
+    font-size: 0.68rem !important;
+    line-height: 0.86rem !important;
   }
   .faolla-personal-mobile-shell .faolla-mobile-self-header,
   .support-mobile-shell .faolla-mobile-self-header {
     border-bottom: 0 !important;
     box-shadow: none !important;
-    padding: calc(var(--faolla-mobile-safe-top, env(safe-area-inset-top, 0px)) + 0.72rem) 1rem 1rem !important;
+    padding: calc(var(--faolla-mobile-safe-top, env(safe-area-inset-top, 0px)) + 0.5rem) 0.85rem 0.75rem !important;
   }
   .faolla-personal-mobile-shell .faolla-mobile-self-profile-hero,
   .support-mobile-shell .faolla-mobile-self-profile-hero {
@@ -269,31 +269,31 @@ const FAOLLA_MOBILE_SHELL_INLINE_STYLE = `
   }
   .faolla-personal-mobile-shell .faolla-mobile-self-scroll,
   .support-mobile-shell .faolla-mobile-self-scroll {
-    padding-left: 1rem !important;
-    padding-right: 1rem !important;
-    padding-top: 0.75rem !important;
-    padding-bottom: calc(var(--faolla-mobile-safe-bottom, env(safe-area-inset-bottom, 0px)) + 4.9rem) !important;
+    padding-left: 0.85rem !important;
+    padding-right: 0.85rem !important;
+    padding-top: 0.55rem !important;
+    padding-bottom: calc(var(--faolla-mobile-safe-bottom, env(safe-area-inset-bottom, 0px)) + 4rem) !important;
   }
   .support-mobile-nav-shell {
     max-width: min(430px, 100vw) !important;
   }
   .support-mobile-nav-shell > div {
-    padding: 0.25rem 0.85rem calc(var(--faolla-mobile-safe-bottom, env(safe-area-inset-bottom, 0px)) + 0.24rem) !important;
+    padding: 0.12rem 0.55rem calc(var(--faolla-mobile-safe-bottom, env(safe-area-inset-bottom, 0px)) + 0.12rem) !important;
   }
   .support-mobile-nav-shell > div > div {
-    min-height: 3.85rem !important;
-    border-radius: 1.95rem !important;
-    gap: 0.08rem !important;
-    padding: 0.28rem !important;
-    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08) !important;
+    min-height: 3.28rem !important;
+    border-radius: 1.38rem !important;
+    gap: 0 !important;
+    padding: 0.18rem !important;
+    box-shadow: 0 3px 12px rgba(15, 23, 42, 0.07) !important;
   }
   .support-mobile-nav-shell button {
-    min-height: 3.05rem !important;
-    border-radius: 1.35rem !important;
-    gap: 0.1rem !important;
-    padding: 0.34rem 0.22rem !important;
-    font-size: 0.69rem !important;
-    line-height: 0.9rem !important;
+    min-height: 2.75rem !important;
+    border-radius: 1.1rem !important;
+    gap: 0.02rem !important;
+    padding: 0.24rem 0.16rem !important;
+    font-size: 0.66rem !important;
+    line-height: 0.82rem !important;
   }
   .support-mobile-nav-shell button.bg-slate-900,
   .support-mobile-nav-shell button.bg-slate-950 {
@@ -302,39 +302,39 @@ const FAOLLA_MOBILE_SHELL_INLINE_STYLE = `
     box-shadow: none !important;
   }
   .support-mobile-nav-shell svg {
-    width: 1.35rem !important;
-    height: 1.35rem !important;
+    width: 1.25rem !important;
+    height: 1.25rem !important;
   }
   .faolla-personal-mobile-shell button[aria-label="上传头像"],
   .support-mobile-shell button[aria-label="上传头像"],
   .faolla-personal-mobile-shell .faolla-mobile-self-avatar,
   .support-mobile-shell .faolla-mobile-self-avatar {
-    width: 6.8rem !important;
-    height: 6.8rem !important;
+    width: 6.1rem !important;
+    height: 6.1rem !important;
     border-radius: 9999px !important;
     box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12) !important;
   }
   .faolla-personal-mobile-shell .faolla-mobile-self-name,
   .support-mobile-shell .faolla-mobile-self-name {
-    margin-top: 0.9rem !important;
-    font-size: 1.82rem !important;
-    line-height: 2rem !important;
+    margin-top: 0.72rem !important;
+    font-size: 1.55rem !important;
+    line-height: 1.78rem !important;
     font-weight: 600 !important;
   }
   .faolla-personal-mobile-shell .faolla-mobile-self-subtitle,
   .support-mobile-shell .faolla-mobile-self-subtitle {
-    margin-top: 0.55rem !important;
-    font-size: 0.9rem !important;
-    line-height: 1.2rem !important;
+    margin-top: 0.38rem !important;
+    font-size: 0.8rem !important;
+    line-height: 1.05rem !important;
   }
   .faolla-personal-mobile-shell .faolla-mobile-card-stack,
   .support-mobile-shell .faolla-mobile-card-stack {
-    gap: 1.05rem !important;
+    gap: 0.72rem !important;
   }
   .faolla-personal-mobile-shell .faolla-mobile-menu-card,
   .support-mobile-shell .faolla-mobile-menu-card {
     border: 0 !important;
-    border-radius: 1.45rem !important;
+    border-radius: 1.1rem !important;
     background: #ffffff !important;
     box-shadow: 0 10px 28px rgba(15, 23, 42, 0.07) !important;
   }
@@ -342,45 +342,77 @@ const FAOLLA_MOBILE_SHELL_INLINE_STYLE = `
   .support-mobile-shell .divide-y > button,
   .faolla-personal-mobile-shell .faolla-mobile-menu-row,
   .support-mobile-shell .faolla-mobile-menu-row {
-    min-height: 4.25rem !important;
-    padding: 0.82rem 1rem !important;
-    gap: 0.85rem !important;
+    min-height: 3.5rem !important;
+    padding: 0.58rem 0.82rem !important;
+    gap: 0.7rem !important;
   }
   .faolla-personal-mobile-shell .divide-y > button > span:first-of-type,
   .support-mobile-shell .divide-y > button > span:first-of-type,
   .faolla-personal-mobile-shell .faolla-mobile-menu-icon,
   .support-mobile-shell .faolla-mobile-menu-icon {
-    width: 2.65rem !important;
-    height: 2.65rem !important;
-    border-radius: 1rem !important;
+    width: 2.1rem !important;
+    height: 2.1rem !important;
+    border-radius: 0.75rem !important;
   }
   .faolla-personal-mobile-shell .divide-y > button svg,
   .support-mobile-shell .divide-y > button svg,
   .faolla-personal-mobile-shell .faolla-mobile-menu-icon svg,
   .support-mobile-shell .faolla-mobile-menu-icon svg {
-    width: 1.55rem !important;
-    height: 1.55rem !important;
+    width: 1.25rem !important;
+    height: 1.25rem !important;
   }
   .faolla-personal-mobile-shell .divide-y > button .text-sm,
   .support-mobile-shell .divide-y > button .text-sm,
   .faolla-personal-mobile-shell .faolla-mobile-menu-title,
   .support-mobile-shell .faolla-mobile-menu-title {
-    font-size: 0.98rem !important;
-    line-height: 1.24rem !important;
+    font-size: 0.92rem !important;
+    line-height: 1.12rem !important;
     font-weight: 600 !important;
   }
   .faolla-personal-mobile-shell .divide-y > button .text-xs,
   .support-mobile-shell .divide-y > button .text-xs,
   .faolla-personal-mobile-shell .faolla-mobile-menu-summary,
   .support-mobile-shell .faolla-mobile-menu-summary {
-    font-size: 0.76rem !important;
-    line-height: 1.05rem !important;
+    font-size: 0.7rem !important;
+    line-height: 0.9rem !important;
   }
   .faolla-personal-mobile-shell [class*="rounded-[28px]"],
   .faolla-personal-mobile-shell [class*="rounded-[30px]"],
   .support-mobile-shell [class*="rounded-[28px]"],
   .support-mobile-shell [class*="rounded-[30px]"] {
-    border-radius: 1.9rem !important;
+    border-radius: 1.1rem !important;
+  }
+  .faolla-personal-mobile-shell .rounded-2xl,
+  .support-mobile-shell .rounded-2xl {
+    border-radius: 0.9rem !important;
+  }
+  .faolla-personal-mobile-shell button:not([aria-label="上传头像"]),
+  .support-mobile-shell button:not([aria-label="上传头像"]) {
+    min-height: 2.25rem;
+  }
+  .faolla-personal-mobile-shell button.h-12,
+  .support-mobile-shell button.h-12,
+  .faolla-personal-mobile-shell .h-12[role="button"],
+  .support-mobile-shell .h-12[role="button"] {
+    height: 2.5rem !important;
+    min-height: 2.5rem !important;
+  }
+  .faolla-personal-mobile-shell button.h-11,
+  .support-mobile-shell button.h-11 {
+    height: 2.35rem !important;
+    min-height: 2.35rem !important;
+  }
+  .faolla-personal-mobile-shell button.h-10,
+  .support-mobile-shell button.h-10 {
+    height: 2.25rem !important;
+    min-height: 2.25rem !important;
+  }
+  .faolla-personal-mobile-shell button.px-4,
+  .support-mobile-shell button.px-4,
+  .faolla-personal-mobile-shell button.px-5,
+  .support-mobile-shell button.px-5 {
+    padding-left: 0.85rem !important;
+    padding-right: 0.85rem !important;
   }
 }
 `;

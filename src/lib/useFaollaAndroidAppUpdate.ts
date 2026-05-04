@@ -3,9 +3,13 @@
 import { useCallback, useEffect, useState } from "react";
 
 export const FAOLLA_DISPLAY_VERSION = "1.0";
-export const FAOLLA_ANDROID_BUILD = 9;
+export const FAOLLA_ANDROID_BUILD = 10;
 export const FAOLLA_ANDROID_MANIFEST_URL = "/downloads/faolla-android-version.json";
 export const FAOLLA_ANDROID_APK_URL = "/downloads/faolla-android.apk";
+const FAOLLA_WEB_VERSION_URL = "/api/app-web-version";
+const FAOLLA_NATIVE_WEB_BUILD_STORAGE_KEY = "faolla:native-web-build:v1";
+const FAOLLA_NATIVE_WEB_CACHE_BUILD_STORAGE_KEY = "faolla:native-web-cache-build:v1";
+const FAOLLA_NATIVE_WEB_RELOAD_STORAGE_KEY = "faolla:native-web-build-reload:v1";
 
 export type FaollaAndroidUpdateDownloadStatus =
   | "idle"
@@ -31,15 +35,19 @@ type NativeUpdateEventDetail = {
   message?: unknown;
 };
 
+type FaollaUpdateKind = "none" | "web" | "android";
+
 type FaollaAndroidAppUpdateData = {
   checking: boolean;
   supported: boolean;
   platform: string;
   updateAvailable: boolean;
+  updateKind: FaollaUpdateKind;
   currentVersion: string;
   currentBuild: number;
   latestVersion: string;
   latestBuild: number;
+  latestWebBuildId: string;
   apkUrl: string;
   error: string;
   downloadStatus: FaollaAndroidUpdateDownloadStatus;
@@ -59,10 +67,12 @@ const DEFAULT_STATE: FaollaAndroidAppUpdateData = {
   supported: false,
   platform: "web",
   updateAvailable: false,
+  updateKind: "none",
   currentVersion: FAOLLA_DISPLAY_VERSION,
   currentBuild: 0,
   latestVersion: FAOLLA_DISPLAY_VERSION,
   latestBuild: FAOLLA_ANDROID_BUILD,
+  latestWebBuildId: "",
   apkUrl: FAOLLA_ANDROID_APK_URL,
   error: "",
   downloadStatus: "idle",
@@ -86,6 +96,10 @@ function readString(value: unknown, fallback = "") {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
 
+function readRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
 function resolveManifestApkUrl(rawValue: unknown) {
   const rawUrl = readString(rawValue, FAOLLA_ANDROID_APK_URL);
   if (typeof window === "undefined") return rawUrl;
@@ -106,6 +120,79 @@ function hasStagedInstallBridge(nativeBridge: FaollaNativeUpdateBridge | undefin
     typeof nativeBridge?.downloadUpdate === "function" &&
     typeof nativeBridge.installDownloadedUpdate === "function"
   );
+}
+
+async function refreshFaollaServiceWorker() {
+  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
+  const registrations = await navigator.serviceWorker.getRegistrations().catch(() => []);
+  await Promise.all(
+    registrations.map(async (registration) => {
+      const target = registration.active ?? registration.waiting ?? registration.installing ?? navigator.serviceWorker.controller;
+      target?.postMessage({ type: "CLEAR_RUNTIME_CACHES" });
+      await registration.update().catch(() => undefined);
+      registration.waiting?.postMessage({ type: "SKIP_WAITING" });
+    }),
+  );
+}
+
+async function clearFaollaRuntimeCaches() {
+  await Promise.all([
+    refreshFaollaServiceWorker(),
+    typeof window !== "undefined" && "caches" in window
+      ? window.caches
+          .keys()
+          .then((keys) =>
+            Promise.all(
+              keys
+                .filter((key) => key.startsWith("faolla-") && key !== "faolla-badge-state-v1")
+                .map((key) => window.caches.delete(key)),
+            ),
+          )
+          .catch(() => undefined)
+      : Promise.resolve(),
+  ]);
+}
+
+function readStoredNativeWebBuildId() {
+  if (typeof window === "undefined") return "";
+  try {
+    return window.localStorage.getItem(FAOLLA_NATIVE_WEB_BUILD_STORAGE_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+async function fetchLatestWebBuildId() {
+  if (typeof window === "undefined") return "";
+  const url = new URL(FAOLLA_WEB_VERSION_URL, window.location.origin);
+  url.searchParams.set("t", String(Date.now()));
+  const response = await fetch(url.toString(), {
+    cache: "no-store",
+    credentials: "same-origin",
+  });
+  if (!response.ok) return "";
+  return readString(readRecord(await response.json().catch(() => null))?.buildId);
+}
+
+function markNativeWebBuildApplied(buildId: string) {
+  if (typeof window === "undefined" || !buildId) return;
+  try {
+    window.localStorage.setItem(FAOLLA_NATIVE_WEB_BUILD_STORAGE_KEY, buildId);
+    window.localStorage.setItem(FAOLLA_NATIVE_WEB_CACHE_BUILD_STORAGE_KEY, buildId);
+    window.localStorage.setItem(FAOLLA_NATIVE_WEB_RELOAD_STORAGE_KEY, buildId);
+  } catch {
+    // Ignore storage failures; the reload still applies the latest web code.
+  }
+}
+
+async function applyFaollaWebUpdate(buildId: string) {
+  if (typeof window === "undefined") return;
+  await clearFaollaRuntimeCaches();
+  markNativeWebBuildApplied(buildId);
+  const url = new URL(window.location.href);
+  url.searchParams.set("appShell", "faolla");
+  if (buildId) url.searchParams.set("__faollaWebBuild", buildId.slice(0, 12));
+  window.location.replace(`${url.pathname}${url.search}${url.hash}`);
 }
 
 export function openFaollaAndroidUpdate(apkUrl: string) {
@@ -206,6 +293,7 @@ export function useFaollaAndroidAppUpdate(): FaollaAndroidAppUpdateState {
       }
 
       try {
+        const latestWebBuildIdTask = fetchLatestWebBuildId().catch(() => "");
         const manifestUrl = `${FAOLLA_ANDROID_MANIFEST_URL}?t=${Date.now()}`;
         const response = await fetch(manifestUrl, { cache: "no-store" });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -214,11 +302,25 @@ export function useFaollaAndroidAppUpdate(): FaollaAndroidAppUpdateState {
         const latestBuild = readInteger(manifest.build, FAOLLA_ANDROID_BUILD);
         const apkUrl = resolveManifestApkUrl(manifest.apkUrl);
         const hasComparableBuild = currentBuild > 0 && latestBuild > 0;
-        const updateAvailable = supported
+        const androidUpdateAvailable = supported
           ? hasComparableBuild
             ? latestBuild > currentBuild
             : latestVersion !== currentVersion
           : false;
+        const latestWebBuildId = await latestWebBuildIdTask;
+        const storedWebBuildId = readStoredNativeWebBuildId();
+        if (supported && latestWebBuildId && !storedWebBuildId) {
+          markNativeWebBuildApplied(latestWebBuildId);
+        }
+        const webUpdateAvailable = Boolean(
+          supported &&
+            latestWebBuildId &&
+            storedWebBuildId &&
+            latestWebBuildId !== storedWebBuildId &&
+            !androidUpdateAvailable,
+        );
+        const updateKind: FaollaUpdateKind = androidUpdateAvailable ? "android" : webUpdateAvailable ? "web" : "none";
+        const updateAvailable = updateKind !== "none";
         if (!cancelled) {
           setState((current) => ({
             ...current,
@@ -226,10 +328,12 @@ export function useFaollaAndroidAppUpdate(): FaollaAndroidAppUpdateState {
             supported,
             platform,
             updateAvailable,
+            updateKind,
             currentVersion,
             currentBuild,
             latestVersion,
             latestBuild,
+            latestWebBuildId,
             apkUrl,
             error: "",
             downloadStatus: updateAvailable ? current.downloadStatus : "idle",
@@ -247,6 +351,7 @@ export function useFaollaAndroidAppUpdate(): FaollaAndroidAppUpdateState {
             platform,
             currentVersion,
             currentBuild,
+            updateKind: "none",
             error: "暂时无法检查更新。",
             stagedInstallSupported,
           });
@@ -263,6 +368,23 @@ export function useFaollaAndroidAppUpdate(): FaollaAndroidAppUpdateState {
 
   const downloadUpdate = useCallback(() => {
     if (!state.updateAvailable || state.downloadStatus === "downloading" || state.downloadStatus === "installing") {
+      return;
+    }
+    if (state.updateKind === "web") {
+      setState((current) => ({
+        ...current,
+        downloadStatus: "installing",
+        downloadProgress: 100,
+        downloadMessage: "正在应用内部更新。",
+      }));
+      void applyFaollaWebUpdate(state.latestWebBuildId).catch(() => {
+        setState((current) => ({
+          ...current,
+          downloadStatus: "failed",
+          downloadProgress: 0,
+          downloadMessage: "内部更新失败，请重试。",
+        }));
+      });
       return;
     }
     const targetUrl = resolveManifestApkUrl(state.apkUrl);
@@ -289,7 +411,7 @@ export function useFaollaAndroidAppUpdate(): FaollaAndroidAppUpdateState {
       return;
     }
     window.location.assign(targetUrl);
-  }, [state.apkUrl, state.downloadStatus, state.updateAvailable]);
+  }, [state.apkUrl, state.downloadStatus, state.latestWebBuildId, state.updateAvailable, state.updateKind]);
 
   const installUpdate = useCallback(() => {
     if (state.downloadStatus !== "downloaded") return;

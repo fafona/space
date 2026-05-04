@@ -1928,18 +1928,18 @@ function MobileBottomNav({
   return (
     <div className="faolla-personal-mobile-bottom-nav support-mobile-nav-shell pointer-events-none fixed bottom-0 left-1/2 z-[2147483298] w-full max-w-md -translate-x-1/2 overscroll-none touch-none transition duration-200 md:hidden">
       <div
-        className="pointer-events-auto relative px-4 pt-3 touch-manipulation"
-        style={{ paddingBottom: "calc(var(--faolla-mobile-safe-bottom) + 0.15rem)" }}
+        className="pointer-events-auto relative px-3 pt-1.5 touch-manipulation"
+        style={{ paddingBottom: "calc(var(--faolla-mobile-safe-bottom) + 0.1rem)" }}
       >
-        <div className="flex items-center gap-1 rounded-[28px] border border-slate-200/80 bg-white/95 px-1.5 py-1.5 shadow-[0_18px_36px_rgba(15,23,42,0.12)] backdrop-blur">
+        <div className="flex items-center gap-0 rounded-[22px] border border-slate-200/80 bg-white/95 px-1 py-1 shadow-[0_8px_22px_rgba(15,23,42,0.08)] backdrop-blur">
           {items.map((item) => {
             const active = activeTab === item.key;
             return (
               <button
                 key={item.key}
                 type="button"
-                className={`relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-[22px] px-2 py-1.5 text-[10.5px] font-medium transition ${
-                  active ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
+                className={`relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0 rounded-[18px] px-1 py-1 text-[10px] font-medium transition ${
+                  active ? "bg-slate-100 text-slate-950 shadow-none" : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
                 }`}
                 onClick={() => onChange(item.key)}
               >
