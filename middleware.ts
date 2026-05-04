@@ -173,6 +173,26 @@ function pickResolvedSiteRow(rows: SiteResolveRow[]) {
     .reduce<SiteResolveRow | null>((best, item) => choosePreferredSiteResolveRow(best, item), null);
 }
 
+function shouldNoStoreAppShellPath(pathname: string) {
+  return (
+    pathname === "/" ||
+    pathname === "/launch" ||
+    pathname === "/admin" ||
+    pathname === "/me" ||
+    pathname === "/login" ||
+    pathname.startsWith("/me/") ||
+    /^\/\d{8}(?:\/|$)/.test(pathname)
+  );
+}
+
+function withAppShellNoStore(response: NextResponse, pathname: string) {
+  if (!shouldNoStoreAppShellPath(pathname)) return response;
+  response.headers.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
+  response.headers.set("Pragma", "no-cache");
+  response.headers.set("Expires", "0");
+  return response;
+}
+
 async function resolveSiteIdByPrefix(prefix: string, request: NextRequest) {
   const normalizedPrefix = normalizeDomainPrefix(prefix);
   if (!normalizedPrefix) return "";
@@ -230,10 +250,10 @@ export async function middleware(request: NextRequest) {
     rewriteUrl.pathname = "/admin";
     rewriteUrl.searchParams.set("scope", `site-${segments[0]}`);
     rewriteUrl.searchParams.set(INTERNAL_MERCHANT_REWRITE_PARAM, "1");
-    return NextResponse.rewrite(rewriteUrl);
+    return withAppShellNoStore(NextResponse.rewrite(rewriteUrl), pathname);
   }
 
-  if (pathname !== "/" && segments.length !== 1) return NextResponse.next();
+  if (pathname !== "/" && segments.length !== 1) return withAppShellNoStore(NextResponse.next(), pathname);
 
   const rewriteToPublishedSite = async (prefix: string) => {
     const resolvedSiteId = await resolveSiteIdByPrefix(prefix, request);
@@ -245,21 +265,21 @@ export async function middleware(request: NextRequest) {
 
   if (segments.length === 1) {
     const firstSegment = normalizeDomainPrefix(segments[0] ?? "");
-    if (!firstSegment || RESERVED_PATH_SEGMENTS.has(firstSegment)) return NextResponse.next();
-    return (await rewriteToPublishedSite(firstSegment)) ?? NextResponse.next();
+    if (!firstSegment || RESERVED_PATH_SEGMENTS.has(firstSegment)) return withAppShellNoStore(NextResponse.next(), pathname);
+    return withAppShellNoStore((await rewriteToPublishedSite(firstSegment)) ?? NextResponse.next(), pathname);
   }
 
   const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? "";
   const baseDomain = process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "";
   const domainPrefix = extractMerchantPrefixFromHost(host, baseDomain) || getFallbackPrefixFromHost(host);
-  if (!domainPrefix) return NextResponse.next();
+  if (!domainPrefix) return withAppShellNoStore(NextResponse.next(), pathname);
 
   const resolvedPrefixRewrite = await rewriteToPublishedSite(domainPrefix);
-  if (resolvedPrefixRewrite) return resolvedPrefixRewrite;
+  if (resolvedPrefixRewrite) return withAppShellNoStore(resolvedPrefixRewrite, pathname);
 
   const rewriteUrl = request.nextUrl.clone();
   rewriteUrl.pathname = `/${encodeURIComponent(domainPrefix)}`;
-  return NextResponse.rewrite(rewriteUrl);
+  return withAppShellNoStore(NextResponse.rewrite(rewriteUrl), pathname);
 }
 
 export const config = {

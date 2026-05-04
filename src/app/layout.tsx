@@ -9,6 +9,7 @@ import MobileSwipeBack from "@/components/MobileSwipeBack";
 import PwaBootstrapLoader from "@/components/PwaBootstrapLoader";
 import UnhandledRejectionGuard from "@/components/UnhandledRejectionGuard";
 import "./globals.css";
+import { resolveFaollaWebBuildId } from "@/lib/faollaWebBuild";
 import { DEFAULT_LOCALE, I18N_COOKIE_KEY, readPreferredLocaleFromAcceptLanguage, resolveSupportedLocale } from "@/lib/i18n";
 
 export const viewport: Viewport = {
@@ -153,6 +154,87 @@ const FAOLLA_APP_SHELL_LOCATION_SCRIPT = `
 })();
 `;
 
+function buildFaollaInlineCacheRefreshScript(buildId: string) {
+  const serializedBuildId = JSON.stringify(buildId || "local");
+  return `
+(() => {
+  if (typeof window === "undefined") return;
+  const buildId = ${serializedBuildId};
+  const storageKey = "faolla:inline-cache-build:v1";
+  let previous = "";
+  try {
+    previous = window.localStorage.getItem(storageKey) || "";
+  } catch {
+    previous = "";
+  }
+  if (previous === buildId) return;
+
+  const clearCaches = async () => {
+    try {
+      if ("caches" in window) {
+        const keys = await window.caches.keys();
+        await Promise.all(
+          keys
+            .filter((key) => key.indexOf("faolla-") === 0 && key !== "faolla-badge-state-v1")
+            .map((key) => window.caches.delete(key)),
+        );
+      }
+    } catch {
+      // Best effort only.
+    }
+    try {
+      if ("serviceWorker" in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(
+          registrations.map(async (registration) => {
+            const target = registration.active || registration.waiting || registration.installing || navigator.serviceWorker.controller;
+            if (target) {
+              target.postMessage({ type: "CLEAR_RUNTIME_CACHES" });
+              target.postMessage({ type: "SKIP_WAITING" });
+            }
+            await registration.update().catch(() => undefined);
+          }),
+        );
+      }
+    } catch {
+      // Best effort only.
+    }
+  };
+
+  const shouldReload = () => {
+    try {
+      const url = new URL(window.location.href);
+      const marker = url.searchParams.get("__faollaInlineBuild") || "";
+      const embedded = url.searchParams.get("appShell") === "faolla";
+      const nativeRuntime =
+        document.documentElement.dataset.capacitor === "true" ||
+        Boolean(window.Capacitor && typeof window.Capacitor.isNativePlatform === "function" && window.Capacitor.isNativePlatform());
+      return marker !== buildId.slice(0, 12) && (embedded || nativeRuntime || url.pathname === "/launch");
+    } catch {
+      return false;
+    }
+  };
+
+  clearCaches().finally(() => {
+    try {
+      window.localStorage.setItem(storageKey, buildId);
+    } catch {
+      // Ignore storage failures.
+    }
+    if (!shouldReload()) return;
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set("appShell", "faolla");
+      url.searchParams.set("__faollaInlineBuild", buildId.slice(0, 12));
+      window.location.replace(url.pathname + url.search + url.hash);
+    } catch {
+      window.location.reload();
+    }
+  });
+})();
+`;
+}
+
 export default async function RootLayout({
   children,
 }: {
@@ -163,6 +245,7 @@ export default async function RootLayout({
   const cookieLocale = cookieStore.get(I18N_COOKIE_KEY)?.value ?? "";
   const acceptLanguageLocale = readPreferredLocaleFromAcceptLanguage(headerStore.get("accept-language"));
   const initialLocale = resolveSupportedLocale(cookieLocale || acceptLanguageLocale || DEFAULT_LOCALE);
+  const faollaInlineCacheRefreshScript = buildFaollaInlineCacheRefreshScript(resolveFaollaWebBuildId());
 
   return (
     <html lang={initialLocale} data-ui-locale={initialLocale} suppressHydrationWarning>
@@ -182,6 +265,9 @@ export default async function RootLayout({
         <link rel="manifest" href="/manifest.webmanifest" />
       </head>
       <body>
+        <Script id="faolla-inline-cache-refresh" strategy="beforeInteractive">
+          {faollaInlineCacheRefreshScript}
+        </Script>
         <Script id="standalone-launch" strategy="beforeInteractive">
           {STANDALONE_LAUNCH_SCRIPT}
         </Script>
