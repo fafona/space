@@ -2121,6 +2121,7 @@ export default function MePage() {
   const personalSessionRecoveryInFlightRef = useRef<Promise<MeSessionPayload | null> | null>(null);
   const personalDesktopFaollaFrameRef = useRef<HTMLIFrameElement | null>(null);
   const personalMobileFaollaFrameRef = useRef<HTMLIFrameElement | null>(null);
+  const personalFaollaBackendResetAtRef = useRef(0);
   const personalAvatarInputRef = useRef<HTMLInputElement | null>(null);
   const mobileSelfLanguageRootRef = useRef<HTMLDivElement | null>(null);
   const mobileSelfLanguageMenuRef = useRef<HTMLDivElement | null>(null);
@@ -3086,14 +3087,27 @@ export default function MePage() {
       if (message?.type !== FAOLLA_APP_SHELL_LOCATION_MESSAGE) return;
       const href = typeof message.href === "string" ? message.href.trim() : "";
       const normalized = normalizeFaollaEntryUrl(href, window.location.origin, { allowFaollaCrossOrigin: true });
-      if (!normalized || isFaollaBackendShellUrl(normalized, window.location.origin)) return;
+      if (!normalized) return;
+      if (isFaollaBackendShellUrl(normalized, window.location.origin)) {
+        const now = Date.now();
+        if (now - personalFaollaBackendResetAtRef.current < 1200) return;
+        personalFaollaBackendResetAtRef.current = now;
+        setFaollaEmbedHref("/");
+        if (personalDesktopFaollaFrameRef.current) {
+          personalDesktopFaollaFrameRef.current.src = faollaHomeTargetHref;
+        }
+        if (personalMobileFaollaFrameRef.current) {
+          personalMobileFaollaFrameRef.current.src = faollaHomeTargetHref;
+        }
+        return;
+      }
       setFaollaEmbedHref((current) => (current === normalized ? current : normalized));
     };
     window.addEventListener("message", handleMessage);
     return () => {
       window.removeEventListener("message", handleMessage);
     };
-  }, []);
+  }, [faollaHomeTargetHref]);
   useEffect(() => {
     if (!faollaFavoriteToast) return;
     const timer = window.setTimeout(() => {
@@ -6106,7 +6120,7 @@ export default function MePage() {
       ];
       return (
         <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
-          <div className="relative shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(var(--faolla-mobile-safe-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+          <div className="faolla-mobile-self-header relative shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(var(--faolla-mobile-safe-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
             <div className="absolute right-4 top-[calc(var(--faolla-mobile-safe-top)+0.7rem)] z-20">
               {mobileSelfSection === "profile" ? (
                 <button
@@ -6176,10 +6190,10 @@ export default function MePage() {
               )}
             </div>
             {mobileSelfSection === "home" ? (
-              <div className="flex flex-col items-center px-4 text-center">
+              <div className="faolla-mobile-self-profile-hero flex flex-col items-center px-4 text-center">
                 <button
                   type="button"
-                  className="relative flex h-24 w-24 items-center justify-center overflow-hidden rounded-[30px] bg-slate-900 text-xl font-semibold text-white shadow-[0_18px_40px_rgba(15,23,42,0.16)]"
+                  className="faolla-mobile-self-avatar relative flex h-24 w-24 items-center justify-center overflow-hidden rounded-[30px] bg-slate-900 text-xl font-semibold text-white shadow-[0_18px_40px_rgba(15,23,42,0.16)]"
                   onClick={openPersonalAvatarPicker}
                   disabled={personalAvatarUploading || personalProfileSaving}
                   aria-label="上传头像"
@@ -6216,8 +6230,8 @@ export default function MePage() {
                     </span>
                   )}
                 </button>
-                <div className="mt-4 max-w-full truncate text-[28px] font-semibold leading-none text-slate-950">{profileName}</div>
-                <div className="mt-2 max-w-full truncate text-sm text-slate-500">
+                <div className="faolla-mobile-self-name mt-4 max-w-full truncate text-[28px] font-semibold leading-none text-slate-950">{profileName}</div>
+                <div className="faolla-mobile-self-subtitle mt-2 max-w-full truncate text-sm text-slate-500">
                   {personalProfileDraft.signature || accountId || email || "点击头像上传资料照片"}
                 </div>
                 {personalProfileMessage ? (
@@ -6279,7 +6293,7 @@ export default function MePage() {
               </div>
             )}
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(var(--faolla-mobile-safe-bottom)+5.85rem)] pt-4">
+          <div className="faolla-mobile-self-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(var(--faolla-mobile-safe-bottom)+5.85rem)] pt-4">
             <input
               ref={personalAvatarInputRef}
               className="hidden"
@@ -6292,28 +6306,28 @@ export default function MePage() {
               }}
             />
             {mobileSelfSection === "home" ? (
-              <div className="space-y-4">
+              <div className="faolla-mobile-card-stack space-y-4">
                 {renderMobileCurrentFavoriteAction()}
-                <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+                <section className="faolla-mobile-menu-card overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
                   <div className="divide-y divide-slate-100">
                     {selfMenuItems.map((item) => (
                       <button
                         key={item.key}
                         type="button"
-                        className="flex w-full items-center gap-4 px-5 py-4 text-left transition hover:bg-slate-50"
+                        className="faolla-mobile-menu-row flex w-full items-center gap-4 px-5 py-4 text-left transition hover:bg-slate-50"
                         onClick={() => setMobileSelfSection(item.key)}
                       >
-                        <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-100 text-slate-700">
+                        <span className="faolla-mobile-menu-icon inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-100 text-slate-700">
                           {item.icon}
                         </span>
                         <span className="min-w-0 flex-1">
-                          <span className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                          <span className="faolla-mobile-menu-title flex items-center gap-2 text-sm font-semibold text-slate-900">
                             <span className="truncate">{item.label}</span>
                             {item.key === "settings" && faollaAndroidAppUpdate.updateAvailable ? (
                               <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-500 ring-2 ring-emerald-50" aria-label="有更新" />
                             ) : null}
                           </span>
-                          <span className="mt-1 block truncate text-xs leading-5 text-slate-500">{item.summary}</span>
+                          <span className="faolla-mobile-menu-summary mt-1 block truncate text-xs leading-5 text-slate-500">{item.summary}</span>
                         </span>
                         <span className="text-slate-300">
                           <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
@@ -6325,11 +6339,11 @@ export default function MePage() {
                   </div>
                 </section>
 
-                <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+                <section className="faolla-mobile-menu-card overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
                   <div className="grid grid-cols-2 divide-x divide-slate-100">
                     <button
                       type="button"
-                      className="flex items-center justify-between gap-3 px-5 py-4 text-left transition hover:bg-slate-50 disabled:opacity-50"
+                      className="faolla-mobile-menu-row flex items-center justify-between gap-3 px-5 py-4 text-left transition hover:bg-slate-50 disabled:opacity-50"
                       onClick={() => {
                         void openAccountSwitcher();
                       }}
@@ -6346,7 +6360,7 @@ export default function MePage() {
                     </button>
                     <button
                       type="button"
-                      className="flex items-center justify-between gap-3 px-5 py-4 text-left transition hover:bg-rose-50/70 disabled:opacity-50"
+                      className="faolla-mobile-menu-row flex items-center justify-between gap-3 px-5 py-4 text-left transition hover:bg-rose-50/70 disabled:opacity-50"
                       onClick={() => void requestLogout()}
                       disabled={loggingOut}
                     >

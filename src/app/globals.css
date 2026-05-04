@@ -156,33 +156,121 @@ html[data-i18n-pending="1"] body {
   }
 
   .support-mobile-nav-shell > div {
-    padding: 0.45rem 0.85rem calc(var(--faolla-mobile-safe-bottom) + 0.35rem) !important;
+    padding: 0.5rem 0.7rem calc(var(--faolla-mobile-safe-bottom) + 0.45rem) !important;
   }
 
   .support-mobile-nav-shell > div > div {
-    min-height: 4.25rem !important;
-    border-radius: 2rem !important;
-    gap: 0.15rem !important;
-    padding: 0.35rem !important;
-    box-shadow: 0 14px 34px rgba(15, 23, 42, 0.13) !important;
+    min-height: 4.6rem !important;
+    border-radius: 2.15rem !important;
+    gap: 0.2rem !important;
+    padding: 0.42rem !important;
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.11) !important;
   }
 
   .support-mobile-nav-shell button {
-    min-height: 3.35rem !important;
-    border-radius: 1.55rem !important;
+    min-height: 3.65rem !important;
+    border-radius: 1.65rem !important;
     gap: 0.1rem !important;
-    padding: 0.4rem 0.35rem !important;
-    font-size: 0.72rem !important;
+    padding: 0.45rem 0.35rem !important;
+    font-size: 0.76rem !important;
     line-height: 1rem !important;
   }
 
   .support-mobile-nav-shell button[class*="bg-slate-900"] {
-    border-radius: 1.8rem !important;
+    border-radius: 1.95rem !important;
   }
 
   .support-mobile-nav-shell svg {
-    width: 1.45rem !important;
-    height: 1.45rem !important;
+    width: 1.6rem !important;
+    height: 1.6rem !important;
+  }
+
+  .faolla-personal-mobile-shell .faolla-mobile-self-header,
+  .support-mobile-shell .faolla-mobile-self-header {
+    border-bottom-width: 0 !important;
+    background: #f7f8fa !important;
+    box-shadow: none !important;
+    padding-bottom: 1.2rem !important;
+  }
+
+  .faolla-personal-mobile-shell .faolla-mobile-self-profile-hero,
+  .support-mobile-shell .faolla-mobile-self-profile-hero {
+    padding-top: 0.35rem !important;
+  }
+
+  .faolla-personal-mobile-shell .faolla-mobile-self-avatar,
+  .support-mobile-shell .faolla-mobile-self-avatar {
+    width: 7.25rem !important;
+    height: 7.25rem !important;
+    border-radius: 9999px !important;
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12) !important;
+  }
+
+  .faolla-personal-mobile-shell .faolla-mobile-self-name,
+  .support-mobile-shell .faolla-mobile-self-name {
+    margin-top: 1.15rem !important;
+    font-size: 2rem !important;
+    line-height: 2.15rem !important;
+    font-weight: 600 !important;
+  }
+
+  .faolla-personal-mobile-shell .faolla-mobile-self-subtitle,
+  .support-mobile-shell .faolla-mobile-self-subtitle {
+    margin-top: 0.55rem !important;
+    font-size: 0.9rem !important;
+    line-height: 1.2rem !important;
+  }
+
+  .faolla-personal-mobile-shell .faolla-mobile-self-scroll,
+  .support-mobile-shell .faolla-mobile-self-scroll {
+    padding-top: 1.05rem !important;
+    padding-bottom: calc(var(--faolla-mobile-safe-bottom) + 6.25rem) !important;
+    background: #f7f8fa !important;
+  }
+
+  .faolla-personal-mobile-shell .faolla-mobile-card-stack,
+  .support-mobile-shell .faolla-mobile-card-stack {
+    gap: 1.05rem !important;
+  }
+
+  .faolla-personal-mobile-shell .faolla-mobile-menu-card,
+  .support-mobile-shell .faolla-mobile-menu-card {
+    border-width: 0 !important;
+    border-radius: 1.9rem !important;
+    box-shadow: none !important;
+  }
+
+  .faolla-personal-mobile-shell .faolla-mobile-menu-row,
+  .support-mobile-shell .faolla-mobile-menu-row {
+    min-height: 4.9rem !important;
+    padding: 1rem 1.25rem !important;
+    gap: 1rem !important;
+  }
+
+  .faolla-personal-mobile-shell .faolla-mobile-menu-icon,
+  .support-mobile-shell .faolla-mobile-menu-icon {
+    width: 3rem !important;
+    height: 3rem !important;
+    border-radius: 1.1rem !important;
+  }
+
+  .faolla-personal-mobile-shell .faolla-mobile-menu-icon svg,
+  .support-mobile-shell .faolla-mobile-menu-icon svg {
+    width: 1.55rem !important;
+    height: 1.55rem !important;
+  }
+
+  .faolla-personal-mobile-shell .faolla-mobile-menu-title,
+  .support-mobile-shell .faolla-mobile-menu-title {
+    font-size: 1.06rem !important;
+    line-height: 1.35rem !important;
+    font-weight: 600 !important;
+  }
+
+  .faolla-personal-mobile-shell .faolla-mobile-menu-summary,
+  .support-mobile-shell .faolla-mobile-menu-summary {
+    font-size: 0.82rem !important;
+    line-height: 1.1rem !important;
   }
 
   .faolla-personal-mobile-shell [class*="px-4"],

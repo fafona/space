@@ -81,7 +81,7 @@ import {
   startMerchantSessionKeepAlive,
   syncMerchantSessionCookies,
 } from "@/lib/authSessionRecovery";
-import { installFrontendAuthBridgeResponder } from "@/lib/frontendAuthBridge";
+import { installFrontendAuthBridgeResponder, isTrustedFrontendAuthBridgeOrigin } from "@/lib/frontendAuthBridge";
 import {
   clearRecentMerchantLaunchState,
   persistRecentMerchantLaunchState,
@@ -265,7 +265,14 @@ import {
   isFaollaMobileSettingsView,
   type FaollaMobileSettingsView,
 } from "@/components/FaollaMobileSettingsPages";
-import { buildFaollaShellHref, isFaollaSectionSearch, resolveFaollaEntryUrlFromBrowser } from "@/lib/faollaEntry";
+import {
+  FAOLLA_APP_SHELL_LOCATION_MESSAGE,
+  buildFaollaShellHref,
+  isFaollaBackendShellUrl,
+  isFaollaSectionSearch,
+  normalizeFaollaEntryUrl,
+  resolveFaollaEntryUrlFromBrowser,
+} from "@/lib/faollaEntry";
 import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
 import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
@@ -5409,6 +5416,7 @@ export default function AdminClient({
   const supportMobileConversationsViewportRef = useRef<HTMLDivElement>(null);
   const supportDesktopFaollaFrameRef = useRef<HTMLIFrameElement>(null);
   const supportMobileFaollaFrameRef = useRef<HTMLIFrameElement>(null);
+  const supportFaollaBackendResetAtRef = useRef(0);
   const supportInputRef = useRef<HTMLTextAreaElement>(null);
   const supportComposerRef = useRef<HTMLDivElement>(null);
   const supportSelfLanguageRootRef = useRef<HTMLDivElement>(null);
@@ -10835,6 +10843,38 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       supportMobileFaollaFrameRef.current.src = supportFaollaHomeTargetHref;
     }
   }, [supportFaollaHomeTargetHref]);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleSupportFaollaMessage = (event: MessageEvent) => {
+      if (!isTrustedFrontendAuthBridgeOrigin(event.origin, window.location.origin)) return;
+      const message =
+        event.data && typeof event.data === "object" && !Array.isArray(event.data)
+          ? (event.data as Record<string, unknown>)
+          : null;
+      if (message?.type !== FAOLLA_APP_SHELL_LOCATION_MESSAGE) return;
+      const href = typeof message.href === "string" ? message.href.trim() : "";
+      const normalized = normalizeFaollaEntryUrl(href, window.location.origin, { allowFaollaCrossOrigin: true });
+      if (!normalized) return;
+      if (isFaollaBackendShellUrl(normalized, window.location.origin)) {
+        const now = Date.now();
+        if (now - supportFaollaBackendResetAtRef.current < 1200) return;
+        supportFaollaBackendResetAtRef.current = now;
+        setSupportFaollaEmbedHref("/");
+        if (supportDesktopFaollaFrameRef.current) {
+          supportDesktopFaollaFrameRef.current.src = supportFaollaHomeTargetHref;
+        }
+        if (supportMobileFaollaFrameRef.current) {
+          supportMobileFaollaFrameRef.current.src = supportFaollaHomeTargetHref;
+        }
+        return;
+      }
+      setSupportFaollaEmbedHref((current) => (current === normalized ? current : normalized));
+    };
+    window.addEventListener("message", handleSupportFaollaMessage);
+    return () => {
+      window.removeEventListener("message", handleSupportFaollaMessage);
+    };
+  }, [supportFaollaHomeTargetHref]);
   const openMerchantFaollaPanel = useCallback(() => {
     setMerchantDesktopSection("faolla");
   }, []);
@@ -15397,7 +15437,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         supportSelfSwipeStartRef.current = null;
       }}
     >
-      <div className="relative shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(var(--faolla-mobile-safe-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+      <div className="faolla-mobile-self-header relative shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(var(--faolla-mobile-safe-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
         <div className="absolute right-4 top-[calc(var(--faolla-mobile-safe-top)+0.7rem)] z-20">
           <div ref={supportSelfLanguageRootRef} className="relative">
             <button
@@ -15456,10 +15496,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           </div>
         </div>
         {supportSelfSectionView === "home" ? (
-          <div className="flex flex-col items-center px-4 text-center">
+          <div className="faolla-mobile-self-profile-hero flex flex-col items-center px-4 text-center">
             <button
               type="button"
-              className="relative flex h-24 w-24 items-center justify-center overflow-hidden rounded-[30px] bg-slate-900 text-xl font-semibold text-white shadow-[0_18px_40px_rgba(15,23,42,0.16)]"
+              className="faolla-mobile-self-avatar relative flex h-24 w-24 items-center justify-center overflow-hidden rounded-[30px] bg-slate-900 text-xl font-semibold text-white shadow-[0_18px_40px_rgba(15,23,42,0.16)]"
               onClick={openSupportSelfAvatarPicker}
               disabled={supportSelfAvatarUploading || supportSelfProfileSaving}
               aria-label="上传头像"
@@ -15496,8 +15536,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 </span>
               )}
             </button>
-            <div className="mt-4 truncate text-[28px] font-semibold leading-none text-slate-950">{supportSelfDisplayName}</div>
-            <div className="mt-2 max-w-full truncate text-sm text-slate-500">
+            <div className="faolla-mobile-self-name mt-4 truncate text-[28px] font-semibold leading-none text-slate-950">{supportSelfDisplayName}</div>
+            <div className="faolla-mobile-self-subtitle mt-2 max-w-full truncate text-sm text-slate-500">
               {supportSelfWebsiteLabel !== "-" ? supportSelfWebsiteLabel : normalizeSupportDisplayValue(editingSiteId) || "点击头像上传资料照片"}
             </div>
           </div>
@@ -15558,7 +15598,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       </div>
       <div
         ref={supportSelfScrollContainerRef}
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(var(--faolla-mobile-safe-bottom)+5.85rem)] pt-4"
+        className="faolla-mobile-self-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(var(--faolla-mobile-safe-bottom)+5.85rem)] pt-4"
       >
         <input
           ref={supportSelfAvatarInputRef}
@@ -15572,8 +15612,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           }}
         />
         {supportSelfSectionView === "home" ? (
-          <div className="space-y-4">
-            <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+          <div className="faolla-mobile-card-stack space-y-4">
+            <section className="faolla-mobile-menu-card overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
               <div className="divide-y divide-slate-100">
                 {[
                   {
@@ -15636,20 +15676,20 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   <button
                     key={item.key}
                     type="button"
-                    className="flex w-full items-center gap-4 px-5 py-4 text-left transition hover:bg-slate-50"
+                    className="faolla-mobile-menu-row flex w-full items-center gap-4 px-5 py-4 text-left transition hover:bg-slate-50"
                     onClick={item.onClick}
                   >
-                    <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-100 text-slate-700">
+                    <span className="faolla-mobile-menu-icon inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-100 text-slate-700">
                       {item.icon}
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                      <span className="faolla-mobile-menu-title flex items-center gap-2 text-sm font-semibold text-slate-900">
                         <span className="truncate">{item.label}</span>
                         {item.key === "settings" && faollaAndroidAppUpdate.updateAvailable ? (
                           <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-500 ring-2 ring-emerald-50" aria-label="有更新" />
                         ) : null}
                       </span>
-                      <span className="mt-1 block truncate text-xs leading-5 text-slate-500">{item.summary}</span>
+                      <span className="faolla-mobile-menu-summary mt-1 block truncate text-xs leading-5 text-slate-500">{item.summary}</span>
                     </span>
                     <span className="text-slate-300">
                       <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
@@ -15661,11 +15701,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               </div>
             </section>
 
-            <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+            <section className="faolla-mobile-menu-card overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
               <div className="grid grid-cols-2 divide-x divide-slate-100">
                 <button
                   type="button"
-                  className="flex items-center justify-between gap-3 px-5 py-4 text-left transition hover:bg-slate-50 disabled:opacity-50"
+                  className="faolla-mobile-menu-row flex items-center justify-between gap-3 px-5 py-4 text-left transition hover:bg-slate-50 disabled:opacity-50"
                   onClick={() => {
                     void openAccountSwitcher();
                   }}
@@ -15682,7 +15722,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 </button>
                 <button
                   type="button"
-                  className="flex items-center justify-between gap-3 px-5 py-4 text-left transition hover:bg-rose-50/70 disabled:opacity-50"
+                  className="faolla-mobile-menu-row flex items-center justify-between gap-3 px-5 py-4 text-left transition hover:bg-rose-50/70 disabled:opacity-50"
                   onClick={() => {
                     void requestLogout();
                   }}

@@ -176,7 +176,7 @@ function LoginPageInner() {
   }, [searchParams]);
   const loggedOut = useMemo(() => (searchParams.get("loggedOut") ?? "").trim() === "1", [searchParams]);
   const launchRetry = useMemo(() => (searchParams.get("launchRetry") ?? "").trim() === "1", [searchParams]);
-  const [nativeEmbeddedLogin, setNativeEmbeddedLogin] = useState(false);
+  const [embeddedShellLogin, setEmbeddedShellLogin] = useState(false);
   const normalizedLocale = useMemo(() => locale.trim().toLowerCase(), [locale]);
   const loginAccountLabel = useMemo(() => {
     if (normalizedLocale.startsWith("zh-tw")) return "登入帳號";
@@ -223,16 +223,16 @@ function LoginPageInner() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    setNativeEmbeddedLogin(isNativeAppRuntime() && isEmbeddedFrame());
-  }, []);
+    setEmbeddedShellLogin(isEmbeddedFrame() && (isNativeAppRuntime() || isFaollaAppShellLogin));
+  }, [isFaollaAppShellLogin]);
 
   useEffect(() => {
     if (!isFaollaAppShellLogin || typeof window === "undefined") return;
-    if (isNativeAppRuntime() && isEmbeddedFrame()) return;
+    if (embeddedShellLogin) return;
     window.location.replace(
       buildFaollaShellHref(loginFromUrl || "/", locale, window.location.origin, { preferRuntimeOrigin: true }),
     );
-  }, [isFaollaAppShellLogin, locale, loginFromUrl]);
+  }, [embeddedShellLogin, isFaollaAppShellLogin, locale, loginFromUrl]);
 
   useEffect(() => {
     if (loggedOut || typeof window === "undefined") return;
@@ -1243,7 +1243,7 @@ function LoginPageInner() {
         }
       : undefined;
 
-  if (isFaollaAppShellLogin || nativeEmbeddedLogin) {
+  if (isFaollaAppShellLogin || embeddedShellLogin) {
     return <main className="min-h-screen bg-white" aria-hidden="true" />;
   }
 
