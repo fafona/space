@@ -5,6 +5,7 @@ import { Capacitor } from "@capacitor/core";
 import { App } from "@capacitor/app";
 import { ScreenOrientation } from "@capacitor/screen-orientation";
 import { StatusBar, Style } from "@capacitor/status-bar";
+import { readMerchantSessionPayload } from "@/lib/authSessionRecovery";
 
 function appendAppShellParam(path: string) {
   try {
@@ -37,10 +38,11 @@ export default function CapacitorAppBridge() {
     if (!Capacitor.isNativePlatform()) return;
 
     document.documentElement.dataset.capacitor = "true";
+    document.documentElement.dataset.capacitorPlatform = Capacitor.getPlatform();
 
     void StatusBar.setOverlaysWebView({ overlay: false }).catch(() => undefined);
-    void StatusBar.setStyle({ style: Style.Light }).catch(() => undefined);
-    void StatusBar.setBackgroundColor({ color: "#081121" }).catch(() => undefined);
+    void StatusBar.setStyle({ style: Style.Dark }).catch(() => undefined);
+    void StatusBar.setBackgroundColor({ color: "#ffffff" }).catch(() => undefined);
 
     let activeOrientation = "";
     const syncNativeOrientation = () => {
@@ -80,6 +82,24 @@ export default function CapacitorAppBridge() {
     }
 
     let removeBackButtonListener: (() => void) | undefined;
+    let removeAppStateListener: (() => void) | undefined;
+
+    const refreshNativeSession = () => {
+      void readMerchantSessionPayload(5200, { includeClientTokens: true }).catch(() => null);
+    };
+    refreshNativeSession();
+
+    void App.addListener("appStateChange", ({ isActive }) => {
+      if (isActive) {
+        refreshNativeSession();
+        scheduleNativeOrientationSync();
+      }
+    }).then((handle) => {
+      removeAppStateListener = () => {
+        void handle.remove();
+      };
+    });
+
     void App.addListener("backButton", ({ canGoBack }) => {
       const nativeBackHref = resolveNativeBackHref(window.location.pathname);
       if (nativeBackHref) {
@@ -99,12 +119,14 @@ export default function CapacitorAppBridge() {
 
     return () => {
       removeBackButtonListener?.();
+      removeAppStateListener?.();
       window.history.pushState = originalPushState;
       window.history.replaceState = originalReplaceState;
       window.removeEventListener("popstate", syncNativeOrientation);
       window.removeEventListener("hashchange", syncNativeOrientation);
       window.removeEventListener("visibilitychange", syncNativeOrientation);
       delete document.documentElement.dataset.capacitor;
+      delete document.documentElement.dataset.capacitorPlatform;
     };
   }, []);
 

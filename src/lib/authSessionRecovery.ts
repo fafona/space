@@ -29,6 +29,48 @@ export type MerchantCookieSessionPayload = {
 };
 
 let merchantSessionPayloadInFlight: Promise<MerchantCookieSessionPayload | null> | null = null;
+let merchantSessionPayloadWithTokensInFlight: Promise<MerchantCookieSessionPayload | null> | null = null;
+
+type ReadMerchantSessionPayloadOptions = {
+  includeClientTokens?: boolean;
+};
+
+function isNativeAppShellRuntime() {
+  if (typeof window === "undefined") return false;
+  try {
+    const capacitor = (window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
+    if (capacitor?.isNativePlatform?.()) return true;
+  } catch {
+    // Ignore native runtime detection failures.
+  }
+  try {
+    return document.documentElement.dataset.capacitor === "true";
+  } catch {
+    return false;
+  }
+}
+
+function buildMerchantSessionRequestHref(includeClientTokens: boolean) {
+  return includeClientTokens ? "/api/auth/merchant-session?accountSwitch=1" : "/api/auth/merchant-session";
+}
+
+function persistBrowserSupabaseSessionFromMerchantPayload(payload: MerchantCookieSessionPayload | null | undefined) {
+  const accessToken = typeof payload?.accessToken === "string" ? payload.accessToken.trim() : "";
+  const refreshToken = typeof payload?.refreshToken === "string" ? payload.refreshToken.trim() : "";
+  const user = payload?.user ?? null;
+  if (payload?.authenticated !== true || !accessToken || !refreshToken || !user) return false;
+  const session = buildSyntheticSessionFromMerchantCookiePayload({
+    accessToken,
+    refreshToken,
+    expiresIn: typeof payload.expiresIn === "number" && Number.isFinite(payload.expiresIn) ? payload.expiresIn : null,
+    tokenType: typeof payload.tokenType === "string" ? payload.tokenType : null,
+    user,
+  });
+  return persistBrowserSupabaseSessionSnapshot({
+    currentSession: session,
+    session,
+  });
+}
 
 export function readMerchantSessionMerchantIds(
   payload: { merchantId?: unknown; merchantIds?: unknown } | null | undefined,
@@ -279,14 +321,19 @@ function buildSyntheticSessionFromMerchantCookiePayload(payload: {
   } as Session;
 }
 
-export async function readMerchantSessionPayload(timeoutMs = 4500): Promise<MerchantCookieSessionPayload | null> {
+export async function readMerchantSessionPayload(
+  timeoutMs = 4500,
+  options: ReadMerchantSessionPayloadOptions = {},
+): Promise<MerchantCookieSessionPayload | null> {
   if (typeof window === "undefined") return null;
-  if (merchantSessionPayloadInFlight) return merchantSessionPayloadInFlight;
+  const includeClientTokens = options.includeClientTokens === true || isNativeAppShellRuntime();
+  const inFlight = includeClientTokens ? merchantSessionPayloadWithTokensInFlight : merchantSessionPayloadInFlight;
+  if (inFlight) return inFlight;
   let task: Promise<MerchantCookieSessionPayload | null> | null = null;
   task = (async () => {
     try {
       const response = await withTimeout(
-        fetch("/api/auth/merchant-session", {
+        fetch(buildMerchantSessionRequestHref(includeClientTokens), {
           method: "GET",
           cache: "no-store",
           credentials: "include",
@@ -297,16 +344,25 @@ export async function readMerchantSessionPayload(timeoutMs = 4500): Promise<Merc
         Math.max(1200, timeoutMs),
       );
       if (!response.ok) return null;
-      return (await response.json().catch(() => null)) as MerchantCookieSessionPayload | null;
+      const payload = (await response.json().catch(() => null)) as MerchantCookieSessionPayload | null;
+      persistBrowserSupabaseSessionFromMerchantPayload(payload);
+      return payload;
     } catch {
       return null;
     } finally {
       if (task && merchantSessionPayloadInFlight === task) {
         merchantSessionPayloadInFlight = null;
       }
+      if (task && merchantSessionPayloadWithTokensInFlight === task) {
+        merchantSessionPayloadWithTokensInFlight = null;
+      }
     }
   })();
-  merchantSessionPayloadInFlight = task;
+  if (includeClientTokens) {
+    merchantSessionPayloadWithTokensInFlight = task;
+  } else {
+    merchantSessionPayloadInFlight = task;
+  }
   return task;
 }
 

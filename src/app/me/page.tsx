@@ -1912,7 +1912,7 @@ function MobileBottomNav({
     <div className="faolla-personal-mobile-bottom-nav support-mobile-nav-shell pointer-events-none fixed bottom-0 left-1/2 z-[2147483298] w-full max-w-md -translate-x-1/2 overscroll-none touch-none transition duration-200 md:hidden">
       <div
         className="pointer-events-auto relative px-4 pt-3 touch-manipulation"
-        style={{ paddingBottom: "calc((env(safe-area-inset-bottom) / 2) + 0.03rem)" }}
+        style={{ paddingBottom: "calc(var(--faolla-mobile-safe-bottom) + 0.15rem)" }}
       >
         <div className="flex items-center gap-1 rounded-[28px] border border-slate-200/80 bg-white/95 px-1.5 py-1.5 shadow-[0_18px_36px_rgba(15,23,42,0.12)] backdrop-blur">
           {items.map((item) => {
@@ -2866,11 +2866,18 @@ export default function MePage() {
         faollaEmbedHref,
         locale,
         typeof window !== "undefined" ? window.location.origin : "https://faolla.com",
+        { preferRuntimeOrigin: true },
       ),
     [faollaEmbedHref, locale],
   );
   const faollaHomeTargetHref = useMemo(
-    () => buildFaollaShellHref("/", locale, typeof window !== "undefined" ? window.location.origin : "https://faolla.com"),
+    () =>
+      buildFaollaShellHref(
+        "/",
+        locale,
+        typeof window !== "undefined" ? window.location.origin : "https://faolla.com",
+        { preferRuntimeOrigin: true },
+      ),
     [locale],
   );
   const desktopFaollaTargetHref = desktopSection === "faolla" && !isMobileViewport ? faollaTargetHref : "about:blank";
@@ -2906,6 +2913,7 @@ export default function MePage() {
         nextHref,
         locale,
         typeof window !== "undefined" ? window.location.origin : "https://faolla.com",
+        { preferRuntimeOrigin: true },
       );
       setFaollaEmbedHref(nextHref);
       setDesktopSection("faolla");
@@ -4352,7 +4360,7 @@ export default function MePage() {
           onClick={() => setSupportSelfCardPickerOpen(false)}
           aria-label="关闭名片夹"
         />
-        <div className="absolute inset-x-0 bottom-0 flex justify-center px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] md:inset-0 md:items-center md:pb-0">
+        <div className="absolute inset-x-0 bottom-0 flex justify-center px-3 pb-[calc(var(--faolla-mobile-safe-bottom)+0.75rem)] md:inset-0 md:items-center md:pb-0">
           <div className="relative flex w-full max-w-md flex-col overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-[0_24px_80px_rgba(15,23,42,0.2)] md:max-w-2xl">
             <div className="border-b border-slate-100 px-4 pb-3 pt-3 md:px-5 md:py-4">
               <div className="mx-auto h-1.5 w-12 rounded-full bg-slate-200 md:hidden" />
@@ -4422,7 +4430,7 @@ export default function MePage() {
 
   function renderMobileSupportComposer() {
     return (
-      <div className="shrink-0 overscroll-none border-t border-slate-200/80 bg-[#edf1f7]/98 px-3 pb-[env(safe-area-inset-bottom)] pt-1 shadow-[0_-8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+      <div className="shrink-0 overscroll-none border-t border-slate-200/80 bg-[#edf1f7]/98 px-3 pb-[var(--faolla-mobile-safe-bottom)] pt-1 shadow-[0_-8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
         {supportAttachmentMenuOpen ? (
           <div className="mb-2 rounded-[28px] bg-white px-3 py-3 shadow-[0_12px_28px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/80">
             <div className="grid grid-cols-5 gap-2">
@@ -4738,7 +4746,7 @@ export default function MePage() {
           onClick={() => setConversationInfoOpen(false)}
           aria-label="关闭资料"
         />
-        <div className="fixed inset-x-0 bottom-0 z-[2147483401] px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] md:hidden">
+        <div className="fixed inset-x-0 bottom-0 z-[2147483401] px-3 pb-[calc(var(--faolla-mobile-safe-bottom)+0.75rem)] md:hidden">
           <div className="mx-auto w-full max-w-md rounded-[30px] bg-white px-4 pb-4 pt-3 shadow-[0_24px_80px_rgba(15,23,42,0.2)]">
             <div className="mx-auto h-1.5 w-12 rounded-full bg-slate-200" />
             <div className="mt-4">{renderInfoContent(true)}</div>
@@ -5779,7 +5787,7 @@ export default function MePage() {
     const isBookings = consumptionSection === "bookings";
     return (
       <div className="flex h-full min-h-0 flex-col">
-        <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+        <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(var(--faolla-mobile-safe-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
           <div className="flex items-center gap-3">
             <div className="inline-flex rounded-[24px] border border-slate-200 bg-white p-1 shadow-sm">
               <button
@@ -5803,7 +5811,7 @@ export default function MePage() {
             </div>
           </div>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(env(safe-area-inset-bottom)+5.85rem)] pt-4">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(var(--faolla-mobile-safe-bottom)+5.85rem)] pt-4">
           {isBookings ? renderPersonalBookingCards(true) : renderPersonalOrderCards(true)}
         </div>
       </div>
@@ -5814,7 +5822,7 @@ export default function MePage() {
     if (mobileConversationView === "thread") {
       return (
         <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)]">
-          <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-3 pb-3 pt-[calc(env(safe-area-inset-top)+0.55rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+          <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-3 pb-3 pt-[calc(var(--faolla-mobile-safe-top)+0.55rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
             <div className="flex items-start justify-between gap-3">
               <div className="flex min-w-0 items-center gap-3">
                 <button
@@ -5870,7 +5878,7 @@ export default function MePage() {
 
     return (
       <>
-        <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+        <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(var(--faolla-mobile-safe-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
           <div className="flex items-center gap-3">
             <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm">
               会话
@@ -5914,7 +5922,7 @@ export default function MePage() {
             </div>
           ) : null}
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-[calc(env(safe-area-inset-bottom)+5.85rem)] pt-3">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-[calc(var(--faolla-mobile-safe-bottom)+5.85rem)] pt-3">
           <div className="space-y-2.5">
             {supportContactRows.map((contactRow) => (
               <div key={contactRow.key}>{renderSupportContactRow(contactRow, { mobile: true })}</div>
@@ -6077,8 +6085,8 @@ export default function MePage() {
       ];
       return (
         <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
-          <div className="relative shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
-            <div className="absolute right-4 top-[calc(env(safe-area-inset-top)+0.7rem)] z-20">
+          <div className="relative shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(var(--faolla-mobile-safe-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+            <div className="absolute right-4 top-[calc(var(--faolla-mobile-safe-top)+0.7rem)] z-20">
               {mobileSelfSection === "profile" ? (
                 <button
                   type="button"
@@ -6240,7 +6248,7 @@ export default function MePage() {
               </div>
             )}
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(env(safe-area-inset-bottom)+5.85rem)] pt-4">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(var(--faolla-mobile-safe-bottom)+5.85rem)] pt-4">
             <input
               ref={personalAvatarInputRef}
               className="hidden"
@@ -6508,15 +6516,15 @@ export default function MePage() {
       <main className="faolla-personal-mobile-shell fixed inset-x-0 top-0 bottom-0 z-[120] flex min-h-0 flex-col overflow-hidden overscroll-none bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)] touch-manipulation md:hidden">
         {renderMobileContent()}
         <div className={`support-preserve-light-surface relative min-h-0 flex-1 overflow-hidden bg-white ${mobileTab === "faolla" ? "" : "hidden"}`}>
-          <div className="pointer-events-none absolute left-4 top-[calc(env(safe-area-inset-top)+0.75rem)] z-10">
+          <div className="pointer-events-none absolute left-4 top-[calc(var(--faolla-mobile-safe-top)+0.75rem)] z-10">
             <FaollaHomeButton className="pointer-events-auto h-11 w-11" onClick={navigatePersonalFaollaHome} />
           </div>
-          <div className="pointer-events-none absolute right-4 top-[calc(env(safe-area-inset-top)+0.75rem)] z-20 flex items-center gap-2">
+          <div className="pointer-events-none absolute right-4 top-[calc(var(--faolla-mobile-safe-top)+0.75rem)] z-20 flex items-center gap-2">
             {renderFaollaFavoriteButton("pointer-events-auto h-10 w-10")}
             {renderFaollaShellAvatar("pointer-events-auto h-11 w-11")}
           </div>
           {faollaFavoriteToast ? (
-            <div className="pointer-events-none absolute left-1/2 top-[calc(env(safe-area-inset-top)+4.25rem)] z-30 -translate-x-1/2 px-4">
+            <div className="pointer-events-none absolute left-1/2 top-[calc(var(--faolla-mobile-safe-top)+4.25rem)] z-30 -translate-x-1/2 px-4">
               <div
                 className={`whitespace-nowrap rounded-full px-4 py-2 text-sm font-semibold shadow-[0_14px_34px_rgba(15,23,42,0.20)] ring-1 ${
                   faollaFavoriteToast.tone === "error"

@@ -13,6 +13,10 @@ type NormalizeFaollaEntryOptions = {
   allowFaollaCrossOrigin?: boolean;
 };
 
+type BuildFaollaShellHrefOptions = {
+  preferRuntimeOrigin?: boolean;
+};
+
 function getRuntimeOrigin(fallbackOrigin?: string | null) {
   const fallback = String(fallbackOrigin ?? "").trim();
   if (/^https?:\/\//i.test(fallback)) return fallback;
@@ -185,8 +189,13 @@ export function buildBackendFaollaHref(baseHref: string, faollaUrl: string, fall
   }
 }
 
-export function buildFaollaShellHref(sourceHref: string, locale?: string | null, fallbackOrigin?: string | null) {
-  const defaultOrigin = getFaollaDefaultOrigin(fallbackOrigin);
+export function buildFaollaShellHref(
+  sourceHref: string,
+  locale?: string | null,
+  fallbackOrigin?: string | null,
+  options: BuildFaollaShellHrefOptions = {},
+) {
+  const defaultOrigin = getFaollaDefaultOrigin(fallbackOrigin, options);
   const rawSourceHref = String(sourceHref ?? "").trim();
   const source = rawSourceHref === "/" ? defaultOrigin : rawSourceHref || defaultOrigin;
   const normalized =
@@ -220,11 +229,14 @@ export function preserveFaollaAppShellHref(sourceHref: string, locale?: string |
   }
 }
 
-function getFaollaDefaultOrigin(fallbackOrigin?: string | null) {
+function getFaollaDefaultOrigin(fallbackOrigin?: string | null, options: BuildFaollaShellHrefOptions = {}) {
   const runtimeOrigin = getRuntimeOrigin(fallbackOrigin);
   try {
     const url = new URL(runtimeOrigin);
     if (isFaollaHostname(url.hostname)) {
+      if (options.preferRuntimeOrigin) {
+        return `${url.origin}/`;
+      }
       return `${url.protocol}//faolla.com${url.port ? `:${url.port}` : ""}/`;
     }
     return `${url.origin}/`;

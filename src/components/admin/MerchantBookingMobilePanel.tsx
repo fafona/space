@@ -1222,7 +1222,7 @@ export default function MerchantBookingMobilePanel({
     detailRecord && detailDraft
         ? overlay(
           <div
-            className="fixed inset-0 z-[2147482950] flex justify-center overflow-hidden bg-black/45 px-4 pb-[calc(env(safe-area-inset-bottom,0px)+1rem)] pt-[calc(env(safe-area-inset-top,0px)+0.75rem)]"
+            className="fixed inset-0 z-[2147482950] flex justify-center overflow-hidden bg-black/45 px-4 pb-[calc(var(--faolla-mobile-safe-bottom)+1rem)] pt-[calc(var(--faolla-mobile-safe-top)+0.75rem)]"
             onMouseDown={(event) => {
               if (event.target === event.currentTarget) closeDetailDialog();
             }}
@@ -1444,7 +1444,7 @@ export default function MerchantBookingMobilePanel({
     <>
       <div ref={rootRef} className="space-y-3">
         <div
-          className={`sticky top-0 z-20 -mx-4 space-y-2.5 border-b border-slate-200/80 px-4 pb-3 pt-0 shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur ${
+          className={`sticky top-0 z-20 -mx-4 space-y-2.5 border-b border-slate-200/80 px-4 pb-3 pt-[calc(var(--faolla-mobile-safe-top)+0.25rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur ${
             darkMode
               ? "bg-[rgba(15,23,42,0.96)] supports-[backdrop-filter]:bg-[rgba(15,23,42,0.9)]"
               : "bg-[rgba(248,250,252,0.96)] supports-[backdrop-filter]:bg-[rgba(248,250,252,0.9)]"

@@ -99,6 +99,19 @@ test("defaults the Faolla shell to the portal home instead of the backend origin
   );
 });
 
+test("can keep the Faolla shell on the current portal origin for embedded app views", () => {
+  installBrowser("https://www.faolla.com");
+
+  assert.equal(
+    buildFaollaShellHref("/", "zh-CN", "https://www.faolla.com", { preferRuntimeOrigin: true }),
+    "https://www.faolla.com/?uiLocale=zh-CN&appShell=faolla",
+  );
+  assert.equal(
+    buildFaollaShellHref("https://faolla.com/me", "zh-CN", "https://www.faolla.com", { preferRuntimeOrigin: true }),
+    "https://www.faolla.com/?uiLocale=zh-CN&appShell=faolla",
+  );
+});
+
 test("detects Faolla app shell URLs for login suppression", () => {
   installBrowser();
 

@@ -9,6 +9,7 @@ import {
   hasStoredBrowserSupabaseSessionTokens,
   readMerchantSessionMerchantIds,
   readMerchantSessionPayload,
+  resolveFrontendAuthPayload,
 } from "@/lib/authSessionRecovery";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import {
@@ -578,7 +579,11 @@ function LoginPageInner() {
   }
 
   async function readValidatedCookieBackedSession() {
-    const payload = await readMerchantSessionPayload(2600).catch(() => null);
+    const directPayload = await readMerchantSessionPayload(3200, { includeClientTokens: true }).catch(() => null);
+    const payload =
+      directPayload?.authenticated === true
+        ? directPayload
+        : await resolveFrontendAuthPayload(7200).catch(() => null);
     if (!payload || payload.authenticated !== true || !payload.user) return null;
     const merchantIds = readMerchantSessionMerchantIds(payload);
     const accountType = normalizePlatformAccountType(payload.accountType) || (merchantIds.length > 0 ? "merchant" : "");
@@ -622,7 +627,6 @@ function LoginPageInner() {
         const cookieBackedSession = await readValidatedCookieBackedSession();
         if (!mounted) return;
         if (cookieBackedSession?.user) {
-          clearStoredBrowserSupabaseSessionTokens();
           await redirectToAccountHome(cookieBackedSession.user, {
             accountType: cookieBackedSession.accountType,
             accountId: cookieBackedSession.accountId,
@@ -924,6 +928,7 @@ function LoginPageInner() {
     try {
       const result = await signInViaServer(account, password);
       clearStoredBrowserSupabaseSessionTokens();
+      await readMerchantSessionPayload(4200, { includeClientTokens: true }).catch(() => null);
       await redirectToAccountHome(result.user, {
         accountType: result.accountType,
         accountId: result.accountId,

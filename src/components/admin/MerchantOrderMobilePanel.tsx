@@ -196,7 +196,7 @@ export default function MerchantOrderMobilePanel({
   const emptyPanelClassName = darkMode
     ? "rounded-[28px] border border-white/10 bg-[rgba(15,23,42,0.84)] px-5 py-8 text-center text-sm text-slate-300 shadow-[0_22px_50px_rgba(2,6,23,0.32)]"
     : "rounded-[28px] border border-slate-200 bg-white px-5 py-8 text-center text-sm text-slate-500 shadow-[0_22px_50px_rgba(15,23,42,0.08)]";
-  const toolbarClassName = `sticky top-0 z-20 -mx-4 space-y-2.5 border-b border-slate-200/80 px-4 pb-3 pt-0 shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur ${
+  const toolbarClassName = `sticky top-0 z-20 -mx-4 space-y-2.5 border-b border-slate-200/80 px-4 pb-3 pt-[calc(var(--faolla-mobile-safe-top)+0.25rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur ${
     darkMode
       ? "bg-[rgba(15,23,42,0.96)] supports-[backdrop-filter]:bg-[rgba(15,23,42,0.9)]"
       : "bg-[rgba(248,250,252,0.96)] supports-[backdrop-filter]:bg-[rgba(248,250,252,0.9)]"
@@ -685,7 +685,7 @@ export default function MerchantOrderMobilePanel({
 
   const detailOverlay = detailOrder ? (
     <div
-      className="fixed inset-0 z-[2147483000] flex items-start justify-center overflow-hidden overscroll-none bg-black/55 px-4 pb-[calc(env(safe-area-inset-bottom)+6.5rem)] pt-4"
+      className="fixed inset-0 z-[2147483000] flex items-start justify-center overflow-hidden overscroll-none bg-black/55 px-4 pb-[calc(var(--faolla-mobile-safe-bottom)+6.5rem)] pt-4"
       onMouseDown={(event: ReactMouseEvent<HTMLDivElement>) => {
         if (event.target === event.currentTarget) closeDetailDialog();
       }}
@@ -786,7 +786,7 @@ export default function MerchantOrderMobilePanel({
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] pt-4">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pb-[calc(var(--faolla-mobile-safe-bottom)+1.25rem)] pt-4">
           <div className="space-y-3">
             <div className={`flex max-h-[min(42vh,24rem)] min-h-[14rem] flex-col rounded-[24px] border px-4 py-4 ${darkMode ? "border-white/10 bg-white/5" : "border-slate-200 bg-slate-50"}`}>
               <div className={`text-sm font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>商品明细</div>

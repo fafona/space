@@ -10732,6 +10732,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       supportMobileFaollaHref,
       locale,
       typeof window !== "undefined" ? window.location.origin : "https://faolla.com",
+      { preferRuntimeOrigin: true },
     );
   }, [locale, supportMobileFaollaHref]);
   const supportFaollaHomeTargetHref = useMemo(() => {
@@ -10739,6 +10740,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       "/",
       locale,
       typeof window !== "undefined" ? window.location.origin : "https://faolla.com",
+      { preferRuntimeOrigin: true },
     );
   }, [locale]);
   const navigateSupportFaollaHome = useCallback(() => {
@@ -10803,7 +10805,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, []);
   const supportMobileFaollaContent = (
     <div className="support-preserve-light-surface relative min-h-0 flex-1 overflow-hidden bg-white">
-      <div className="pointer-events-none absolute left-4 top-[calc(env(safe-area-inset-top)+0.75rem)] z-10">
+      <div className="pointer-events-none absolute left-4 top-[calc(var(--faolla-mobile-safe-top)+0.75rem)] z-10">
         <FaollaHomeButton className="pointer-events-auto h-11 w-11" onClick={navigateSupportFaollaHome} />
       </div>
       <iframe
@@ -14600,7 +14602,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           <div className="absolute right-[-3rem] top-40 h-56 w-56 rounded-full bg-emerald-300/16 blur-3xl" />
           <div className="absolute bottom-[-5rem] left-1/2 h-64 w-64 -translate-x-1/2 rounded-full bg-white/12 blur-3xl" />
           <div className="relative flex min-h-screen flex-col">
-            <div className="px-5 pb-8 pt-[calc(env(safe-area-inset-top)+1.5rem)] sm:px-6">
+            <div className="px-5 pb-8 pt-[calc(var(--faolla-mobile-safe-top)+1.5rem)] sm:px-6">
               <div className="inline-flex items-center gap-3 rounded-full border border-white/14 bg-white/10 px-4 py-2 text-xs font-medium uppercase tracking-[0.24em] text-cyan-50/90 backdrop-blur">
                 <span className="inline-flex h-2 w-2 rounded-full bg-emerald-300" />
                 Faolla.com
@@ -14615,7 +14617,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 </div>
               </div>
             </div>
-            <div className="mt-auto rounded-t-[32px] bg-[linear-gradient(180deg,_rgba(248,251,255,0.96)_0%,_#ffffff_34%,_#f8fbff_100%)] px-5 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] pt-6 text-slate-900 shadow-[0_-24px_60px_rgba(8,17,33,0.24)] sm:px-6">
+            <div className="mt-auto rounded-t-[32px] bg-[linear-gradient(180deg,_rgba(248,251,255,0.96)_0%,_#ffffff_34%,_#f8fbff_100%)] px-5 pb-[calc(var(--faolla-mobile-safe-bottom)+1.5rem)] pt-6 text-slate-900 shadow-[0_-24px_60px_rgba(8,17,33,0.24)] sm:px-6">
               <div className="mx-auto max-w-md">
                 <div className="mx-auto mb-5 h-1.5 w-14 rounded-full bg-slate-200" />
                 <div className="rounded-[28px] border border-white/70 bg-white/90 p-6 shadow-[0_18px_40px_rgba(15,23,42,0.10)]">
@@ -15101,7 +15103,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
 
   const supportMobileConversationsContent = (
     <>
-      <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+      <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(var(--faolla-mobile-safe-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
         <div className="flex items-center gap-3">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm">
             会话
@@ -15183,7 +15185,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       </div>
       <div
         ref={supportMobileConversationsViewportRef}
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-[calc(env(safe-area-inset-bottom)+5.85rem)] pt-3"
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-[calc(var(--faolla-mobile-safe-bottom)+5.85rem)] pt-3"
         {...supportMobileConversationPullBind}
       >
         <div className="space-y-2.5">
@@ -15249,7 +15251,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
 
   const supportMobileBusinessContent = (
     <>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(env(safe-area-inset-bottom)+5.85rem)] pt-0">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(var(--faolla-mobile-safe-bottom)+5.85rem)] pt-0">
         {supportMobileBookingSiteId ? (
           <div className="space-y-4">
             {resolvedSupportMobileBusinessSection === "orders" && canUseOrderManagement ? (
@@ -15304,8 +15306,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         supportSelfSwipeStartRef.current = null;
       }}
     >
-      <div className="relative shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
-        <div className="absolute right-4 top-[calc(env(safe-area-inset-top)+0.7rem)] z-20">
+      <div className="relative shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(var(--faolla-mobile-safe-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+        <div className="absolute right-4 top-[calc(var(--faolla-mobile-safe-top)+0.7rem)] z-20">
           <div ref={supportSelfLanguageRootRef} className="relative">
             <button
               type="button"
@@ -15455,7 +15457,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       </div>
       <div
         ref={supportSelfScrollContainerRef}
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(env(safe-area-inset-bottom)+5.85rem)] pt-4"
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(var(--faolla-mobile-safe-bottom)+5.85rem)] pt-4"
       >
         <input
           ref={supportSelfAvatarInputRef}
@@ -15929,7 +15931,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     >
       <div
         className="pointer-events-auto relative px-4 pt-3 touch-manipulation"
-        style={{ paddingBottom: "calc((env(safe-area-inset-bottom) / 2) + 0.03rem)" }}
+        style={{ paddingBottom: "calc(var(--faolla-mobile-safe-bottom) + 0.15rem)" }}
       >
         <div className="flex items-center gap-1 rounded-[28px] border border-slate-200/80 bg-white/95 px-1.5 py-1.5 shadow-[0_18px_36px_rgba(15,23,42,0.12)] backdrop-blur">
           {([
@@ -16037,7 +16039,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         supportMobileSwipeStartRef.current = null;
       }}
     >
-      <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-3 pb-3 pt-[calc(env(safe-area-inset-top)+0.55rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+      <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-3 pb-3 pt-[calc(var(--faolla-mobile-safe-top)+0.55rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
             <button
@@ -16180,7 +16182,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       </div>
       <div
         ref={supportComposerRef}
-        className="shrink-0 overscroll-none border-t border-slate-200/80 bg-[#edf1f7]/98 px-3 pb-[env(safe-area-inset-bottom)] pt-1 shadow-[0_-8px_30px_rgba(15,23,42,0.06)] backdrop-blur"
+        className="shrink-0 overscroll-none border-t border-slate-200/80 bg-[#edf1f7]/98 px-3 pb-[var(--faolla-mobile-safe-bottom)] pt-1 shadow-[0_-8px_30px_rgba(15,23,42,0.06)] backdrop-blur"
         style={
           isIosSupportBrowser && isSupportMobileKeyboardVisible
             ? {
@@ -16402,7 +16404,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               onClick={() => setSupportSelfCardPickerOpen(false)}
               aria-label="关闭名片夹"
             />
-            <div className="fixed inset-x-0 bottom-0 z-[2147483399] px-3 pb-[calc(env(safe-area-inset-bottom)+0.5rem)]">
+            <div className="fixed inset-x-0 bottom-0 z-[2147483399] px-3 pb-[calc(var(--faolla-mobile-safe-bottom)+0.5rem)]">
               <div
                 className={`${supportMobileDarkMode ? "support-mobile-dark " : ""}support-mobile-sheet mx-auto w-full max-w-md overflow-hidden rounded-[30px] bg-white shadow-[0_24px_80px_rgba(15,23,42,0.2)]`}
               >
@@ -16481,7 +16483,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               aria-label="关闭商户资料"
             />
             {showMobileSupportThread ? (
-              <div className="fixed inset-x-0 bottom-0 z-[2147483401] px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]">
+              <div className="fixed inset-x-0 bottom-0 z-[2147483401] px-3 pb-[calc(var(--faolla-mobile-safe-bottom)+0.75rem)]">
                 <div
                   className={`${supportMobileDarkMode ? "support-mobile-dark " : ""}support-mobile-sheet mx-auto w-full max-w-md rounded-[30px] bg-white px-4 pb-4 pt-3 shadow-[0_24px_80px_rgba(15,23,42,0.2)]`}
                 >
@@ -16692,7 +16694,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       : "fixed inset-x-0 top-0 z-[15000] border-b border-white/70 bg-[rgba(248,251,255,0.88)] shadow-[0_22px_48px_rgba(15,23,42,0.10)] backdrop-blur-xl";
   const toolbarContentClassName = shouldUseDesktopEditorSidebar
     ? "mx-0 flex max-w-none flex-col items-stretch justify-start gap-3 px-4 py-4"
-    : "mx-auto flex max-w-[460px] flex-col items-stretch gap-4 px-4 pb-4 pt-[calc(env(safe-area-inset-top)+0.9rem)]";
+    : "mx-auto flex max-w-[460px] flex-col items-stretch gap-4 px-4 pb-4 pt-[calc(var(--faolla-mobile-safe-top)+0.9rem)]";
   const toolbarHeaderClassName = shouldUseDesktopEditorSidebar
     ? "flex flex-col items-stretch gap-3"
     : "flex flex-col gap-4";
@@ -17383,7 +17385,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               ? "left-0 top-6"
               : "left-[320px] top-6"
             : isMobileMerchantEditorShell
-              ? `left-4 ${topBarCollapsed ? "top-[calc(env(safe-area-inset-top)+1rem)]" : "top-[calc(env(safe-area-inset-top)+1.1rem)]"}`
+              ? `left-4 ${topBarCollapsed ? "top-[calc(var(--faolla-mobile-safe-top)+1rem)]" : "top-[calc(var(--faolla-mobile-safe-top)+1.1rem)]"}`
               : "left-0 top-3"
         }`}
       >
@@ -18255,7 +18257,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         <div
           className={
             isMobileMerchantEditorShell
-              ? "min-h-screen pb-[calc(env(safe-area-inset-bottom)+2rem)] pt-5"
+              ? "min-h-screen pb-[calc(var(--faolla-mobile-safe-bottom)+2rem)] pt-5"
               : "min-h-screen bg-gray-200 py-6"
           }
         >

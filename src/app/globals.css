@@ -3,6 +3,13 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  --faolla-mobile-safe-top: env(safe-area-inset-top, 0px);
+  --faolla-mobile-safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+html[data-capacitor-platform="android"] {
+  --faolla-mobile-safe-top: max(env(safe-area-inset-top, 0px), 24px);
+  --faolla-mobile-safe-bottom: max(env(safe-area-inset-bottom, 0px), 48px);
 }
 
 @theme inline {

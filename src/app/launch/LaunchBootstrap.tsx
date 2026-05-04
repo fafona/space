@@ -3,7 +3,11 @@
 import { useEffect } from "react";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import { useI18n } from "@/components/I18nProvider";
-import { readMerchantSessionMerchantIds, readMerchantSessionPayload } from "@/lib/authSessionRecovery";
+import {
+  readMerchantSessionMerchantIds,
+  readMerchantSessionPayload,
+  resolveFrontendAuthPayload,
+} from "@/lib/authSessionRecovery";
 import { buildBackendFaollaHref } from "@/lib/faollaEntry";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { persistRecentMerchantLaunchState, readRecentMerchantLaunchMerchantId } from "@/lib/merchantLaunchState";
@@ -39,7 +43,11 @@ export default function LaunchBootstrap() {
     void (async () => {
       try {
         const recentMerchantId = readRecentMerchantLaunchMerchantId();
-        const payload = await readMerchantSessionPayload(2600).catch(() => null);
+        const directPayload = await readMerchantSessionPayload(3200, { includeClientTokens: true }).catch(() => null);
+        const payload =
+          directPayload?.authenticated === true
+            ? directPayload
+            : await resolveFrontendAuthPayload(7200).catch(() => null);
         if (cancelled) return;
 
         if (payload?.authenticated === true) {
