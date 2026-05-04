@@ -41,6 +41,22 @@ function appendAppShellParam(path: string) {
   }
 }
 
+function isEmbeddedDocument() {
+  try {
+    return window.parent !== window;
+  } catch {
+    return true;
+  }
+}
+
+function isFaollaAppShellDocument() {
+  try {
+    return (new URLSearchParams(window.location.search || "").get("appShell") ?? "").trim().toLowerCase() === "faolla";
+  } catch {
+    return false;
+  }
+}
+
 function resolveNativeBackHref(pathname: string) {
   if (pathname.startsWith("/admin/games/") || pathname.startsWith("/admin/tools/")) {
     return "/admin?mobileTab=self&selfSection=games";
@@ -131,6 +147,7 @@ async function fetchCurrentWebBuildId() {
 export default function CapacitorAppBridge() {
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
+    if (isEmbeddedDocument()) return;
 
     document.documentElement.dataset.capacitor = "true";
     document.documentElement.dataset.capacitorPlatform = Capacitor.getPlatform();
@@ -171,7 +188,7 @@ export default function CapacitorAppBridge() {
     window.addEventListener("hashchange", syncNativeOrientation);
     window.addEventListener("visibilitychange", syncNativeOrientation);
 
-    if (window.location.pathname === "/") {
+    if (window.location.pathname === "/" && !isFaollaAppShellDocument()) {
       window.location.replace(appendAppShellParam("/launch"));
       return undefined;
     }

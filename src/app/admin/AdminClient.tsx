@@ -15257,14 +15257,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
 
   const supportMobileConversationsContent = (
     <>
-      <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(var(--faolla-mobile-safe-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+      <div className="faolla-mobile-list-header shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(var(--faolla-mobile-safe-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
         <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm">
+          <div className="faolla-mobile-list-badge flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm">
             会话
           </div>
           <div className="min-w-0 flex-1">
-            <div className="text-[15px] font-semibold text-slate-900">聊天列表</div>
-            <div className="mt-1 text-xs text-slate-500">{mobileSupportContactListSummary}</div>
+            <div className="faolla-mobile-list-title text-[15px] font-semibold text-slate-900">聊天列表</div>
+            <div className="faolla-mobile-list-summary mt-1 text-xs text-slate-500">{mobileSupportContactListSummary}</div>
           </div>
           {!isMobileMerchantSupportOnlyMode ? (
             <button
@@ -15298,8 +15298,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             </span>
           </div>
         </div>
-        <div className="mt-4 flex items-center gap-2">
-          <div className="flex min-h-[41px] min-w-0 flex-1 items-center gap-2.5 rounded-[20px] border border-slate-200 bg-[#f3f4f6] px-3.5 py-2 shadow-sm">
+        <div className="faolla-mobile-search-row mt-4 flex items-center gap-2">
+          <div className="faolla-mobile-search-box flex min-h-[41px] min-w-0 flex-1 items-center gap-2.5 rounded-[20px] border border-slate-200 bg-[#f3f4f6] px-3.5 py-2 shadow-sm">
             <svg viewBox="0 0 24 24" className="h-[17px] w-[17px] shrink-0 text-slate-400" fill="none" aria-hidden="true">
               <circle cx="11" cy="11" r="6.5" stroke="currentColor" strokeWidth="1.9" />
               <path d="m16 16 4 4" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
@@ -15319,7 +15319,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           </div>
           <button
             type="button"
-            className="inline-flex h-[41px] shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white px-4 text-sm shadow-sm hover:bg-slate-50 disabled:opacity-50"
+            className="faolla-mobile-search-button inline-flex h-[41px] shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white px-4 text-sm shadow-sm hover:bg-slate-50 disabled:opacity-50"
             onClick={() => void searchSupportPeerMerchant()}
             disabled={supportSearchLoading}
           >
@@ -15339,18 +15339,18 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       </div>
       <div
         ref={supportMobileConversationsViewportRef}
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-[calc(var(--faolla-mobile-safe-bottom)+5.85rem)] pt-3"
+        className="faolla-mobile-chat-list min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-[calc(var(--faolla-mobile-safe-bottom)+5.85rem)] pt-3"
         {...supportMobileConversationPullBind}
       >
-        <div className="space-y-2.5">
+        <div className="flex flex-col">
           {supportContactRows.map((contactRow) => {
             const active = supportSelectedContactKey === contactRow.key;
             return (
               <button
                 key={contactRow.key}
                 type="button"
-                className={`w-full rounded-[26px] border px-3 py-3.5 text-left shadow-[0_10px_24px_rgba(15,23,42,0.06)] transition ${
-                  active ? "border-slate-900 bg-white" : "border-slate-200 bg-white/90 hover:bg-white"
+                className={`faolla-mobile-chat-row w-full rounded-none border-0 border-b border-slate-200/60 bg-transparent px-1 py-3 text-left shadow-none transition ${
+                  active ? "bg-slate-50" : "hover:bg-slate-50"
                 }`}
                 onClick={() => openSupportContactThread(contactRow.key)}
               >
@@ -15359,7 +15359,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     label={contactRow.avatarLabel}
                     imageUrl={contactRow.avatarImageUrl}
                     imageAlt={contactRow.name}
-                    className={`mt-0.5 flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-sm font-semibold ${
+                    className={`faolla-mobile-chat-avatar mt-0.5 flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${
                       contactRow.isOfficial || contactRow.unread
                         ? "bg-slate-900 text-white"
                         : "bg-slate-100 text-slate-700"
@@ -15371,7 +15371,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                          <div className="truncate text-sm font-semibold text-slate-900">{contactRow.name}</div>
+                          <div className="faolla-mobile-chat-name truncate text-sm font-semibold text-slate-900">{contactRow.name}</div>
                           {!contactRow.isOfficial ? (
                             <span className="truncate text-[11px] font-medium text-slate-400">{contactRow.subtitle}</span>
                           ) : null}
@@ -15388,11 +15388,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                           <div className="mt-1 truncate text-[11px] text-slate-500">{contactRow.subtitle}</div>
                         ) : null}
                       </div>
-                      <div className="shrink-0 text-[11px] text-slate-400">
+                      <div className="faolla-mobile-chat-time shrink-0 text-[11px] text-slate-400">
                         {contactRow.updatedAt ? formatSupportConversationTime(contactRow.updatedAt) : "未开始"}
                       </div>
                     </div>
-                    <div className="mt-2 truncate text-[13px] leading-5 text-slate-600">{contactRow.preview}</div>
+                    <div className="faolla-mobile-chat-preview mt-2 truncate text-[13px] leading-5 text-slate-600">{contactRow.preview}</div>
                   </div>
                 </div>
               </button>

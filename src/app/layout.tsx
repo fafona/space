@@ -158,7 +158,7 @@ const FAOLLA_MOBILE_SHELL_INLINE_STYLE = `
 @media (max-width: 767px), (pointer: coarse) and (max-width: 1024px) {
   .faolla-personal-mobile-shell,
   .support-mobile-shell {
-    background: #f7f8fa !important;
+    background: #f2f3f5 !important;
   }
   .faolla-personal-mobile-shell,
   .support-mobile-shell,
@@ -166,13 +166,100 @@ const FAOLLA_MOBILE_SHELL_INLINE_STYLE = `
   .support-mobile-shell .faolla-mobile-self-header,
   .faolla-personal-mobile-shell .faolla-mobile-self-scroll,
   .support-mobile-shell .faolla-mobile-self-scroll {
-    background: #f7f8fa !important;
+    background: #f2f3f5 !important;
+  }
+  .faolla-mobile-list-header {
+    border-bottom: 0 !important;
+    background: #f2f3f5 !important;
+    box-shadow: none !important;
+    padding: calc(var(--faolla-mobile-safe-top, env(safe-area-inset-top, 0px)) + 0.72rem) 1rem 0.72rem !important;
+  }
+  .faolla-mobile-list-title {
+    font-size: 1.08rem !important;
+    line-height: 1.35rem !important;
+    font-weight: 700 !important;
+  }
+  .faolla-mobile-list-summary {
+    margin-top: 0.12rem !important;
+    font-size: 0.75rem !important;
+    line-height: 1rem !important;
+  }
+  .faolla-mobile-list-badge {
+    width: 2.45rem !important;
+    height: 2.45rem !important;
+    border-radius: 0.95rem !important;
+    font-size: 0.75rem !important;
+  }
+  .faolla-mobile-search-row {
+    margin-top: 0.65rem !important;
+    gap: 0.5rem !important;
+  }
+  .faolla-mobile-search-box {
+    min-height: 2.42rem !important;
+    border-color: transparent !important;
+    border-radius: 1.24rem !important;
+    background: #ffffff !important;
+    padding: 0.46rem 0.85rem !important;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06) !important;
+  }
+  .faolla-mobile-search-box input {
+    font-size: 0.88rem !important;
+    line-height: 1.15rem !important;
+  }
+  .faolla-mobile-search-button {
+    height: 2.42rem !important;
+    min-height: 2.42rem !important;
+    border-color: transparent !important;
+    border-radius: 1.24rem !important;
+    padding: 0 0.92rem !important;
+    background: #ffffff !important;
+    font-size: 0.86rem !important;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06) !important;
+  }
+  .faolla-mobile-chat-list {
+    background: #f2f3f5 !important;
+    padding: 0.2rem 0.95rem calc(var(--faolla-mobile-safe-bottom, env(safe-area-inset-bottom, 0px)) + 4.8rem) !important;
+  }
+  .faolla-mobile-chat-list > div {
+    gap: 0 !important;
+  }
+  .faolla-mobile-chat-row {
+    min-height: 4.55rem !important;
+    border: 0 !important;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.2) !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    padding: 0.62rem 0.1rem !important;
+  }
+  .faolla-mobile-chat-row:active {
+    background: rgba(15, 23, 42, 0.04) !important;
+  }
+  .faolla-mobile-chat-row .faolla-mobile-chat-avatar {
+    width: 3.15rem !important;
+    height: 3.15rem !important;
+    border-radius: 9999px !important;
+    box-shadow: none !important;
+  }
+  .faolla-mobile-chat-row .faolla-mobile-chat-name {
+    font-size: 0.98rem !important;
+    line-height: 1.22rem !important;
+    font-weight: 650 !important;
+  }
+  .faolla-mobile-chat-row .faolla-mobile-chat-preview {
+    margin-top: 0.28rem !important;
+    font-size: 0.82rem !important;
+    line-height: 1.12rem !important;
+  }
+  .faolla-mobile-chat-row .faolla-mobile-chat-time {
+    font-size: 0.72rem !important;
+    line-height: 0.95rem !important;
   }
   .faolla-personal-mobile-shell .faolla-mobile-self-header,
   .support-mobile-shell .faolla-mobile-self-header {
     border-bottom: 0 !important;
     box-shadow: none !important;
-    padding: calc(var(--faolla-mobile-safe-top, env(safe-area-inset-top, 0px)) + 0.95rem) 1.15rem 1.45rem !important;
+    padding: calc(var(--faolla-mobile-safe-top, env(safe-area-inset-top, 0px)) + 0.72rem) 1rem 1rem !important;
   }
   .faolla-personal-mobile-shell .faolla-mobile-self-profile-hero,
   .support-mobile-shell .faolla-mobile-self-profile-hero {
@@ -182,50 +269,56 @@ const FAOLLA_MOBILE_SHELL_INLINE_STYLE = `
   }
   .faolla-personal-mobile-shell .faolla-mobile-self-scroll,
   .support-mobile-shell .faolla-mobile-self-scroll {
-    padding-left: 1.15rem !important;
-    padding-right: 1.15rem !important;
-    padding-top: 0.9rem !important;
-    padding-bottom: calc(var(--faolla-mobile-safe-bottom, env(safe-area-inset-bottom, 0px)) + 6.1rem) !important;
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+    padding-top: 0.75rem !important;
+    padding-bottom: calc(var(--faolla-mobile-safe-bottom, env(safe-area-inset-bottom, 0px)) + 4.9rem) !important;
   }
   .support-mobile-nav-shell {
     max-width: min(430px, 100vw) !important;
   }
   .support-mobile-nav-shell > div {
-    padding: 0.48rem 0.65rem calc(var(--faolla-mobile-safe-bottom, env(safe-area-inset-bottom, 0px)) + 0.42rem) !important;
+    padding: 0.25rem 0.85rem calc(var(--faolla-mobile-safe-bottom, env(safe-area-inset-bottom, 0px)) + 0.24rem) !important;
   }
   .support-mobile-nav-shell > div > div {
-    min-height: 4.55rem !important;
-    border-radius: 2.25rem !important;
-    gap: 0.2rem !important;
-    padding: 0.42rem !important;
-    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.11) !important;
+    min-height: 3.85rem !important;
+    border-radius: 1.95rem !important;
+    gap: 0.08rem !important;
+    padding: 0.28rem !important;
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08) !important;
   }
   .support-mobile-nav-shell button {
-    min-height: 3.65rem !important;
-    border-radius: 1.65rem !important;
+    min-height: 3.05rem !important;
+    border-radius: 1.35rem !important;
     gap: 0.1rem !important;
-    padding: 0.45rem 0.35rem !important;
-    font-size: 0.76rem !important;
-    line-height: 1rem !important;
+    padding: 0.34rem 0.22rem !important;
+    font-size: 0.69rem !important;
+    line-height: 0.9rem !important;
+  }
+  .support-mobile-nav-shell button.bg-slate-900,
+  .support-mobile-nav-shell button.bg-slate-950 {
+    background: #eef2f7 !important;
+    color: #0f172a !important;
+    box-shadow: none !important;
   }
   .support-mobile-nav-shell svg {
-    width: 1.6rem !important;
-    height: 1.6rem !important;
+    width: 1.35rem !important;
+    height: 1.35rem !important;
   }
   .faolla-personal-mobile-shell button[aria-label="上传头像"],
   .support-mobile-shell button[aria-label="上传头像"],
   .faolla-personal-mobile-shell .faolla-mobile-self-avatar,
   .support-mobile-shell .faolla-mobile-self-avatar {
-    width: 7.6rem !important;
-    height: 7.6rem !important;
+    width: 6.8rem !important;
+    height: 6.8rem !important;
     border-radius: 9999px !important;
     box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12) !important;
   }
   .faolla-personal-mobile-shell .faolla-mobile-self-name,
   .support-mobile-shell .faolla-mobile-self-name {
-    margin-top: 1.05rem !important;
-    font-size: 2.18rem !important;
-    line-height: 2.32rem !important;
+    margin-top: 0.9rem !important;
+    font-size: 1.82rem !important;
+    line-height: 2rem !important;
     font-weight: 600 !important;
   }
   .faolla-personal-mobile-shell .faolla-mobile-self-subtitle,
@@ -241,7 +334,7 @@ const FAOLLA_MOBILE_SHELL_INLINE_STYLE = `
   .faolla-personal-mobile-shell .faolla-mobile-menu-card,
   .support-mobile-shell .faolla-mobile-menu-card {
     border: 0 !important;
-    border-radius: 2.05rem !important;
+    border-radius: 1.45rem !important;
     background: #ffffff !important;
     box-shadow: 0 10px 28px rgba(15, 23, 42, 0.07) !important;
   }
@@ -249,17 +342,17 @@ const FAOLLA_MOBILE_SHELL_INLINE_STYLE = `
   .support-mobile-shell .divide-y > button,
   .faolla-personal-mobile-shell .faolla-mobile-menu-row,
   .support-mobile-shell .faolla-mobile-menu-row {
-    min-height: 5.15rem !important;
-    padding: 1.08rem 1.35rem !important;
-    gap: 1.05rem !important;
+    min-height: 4.25rem !important;
+    padding: 0.82rem 1rem !important;
+    gap: 0.85rem !important;
   }
   .faolla-personal-mobile-shell .divide-y > button > span:first-of-type,
   .support-mobile-shell .divide-y > button > span:first-of-type,
   .faolla-personal-mobile-shell .faolla-mobile-menu-icon,
   .support-mobile-shell .faolla-mobile-menu-icon {
-    width: 3.15rem !important;
-    height: 3.15rem !important;
-    border-radius: 1.18rem !important;
+    width: 2.65rem !important;
+    height: 2.65rem !important;
+    border-radius: 1rem !important;
   }
   .faolla-personal-mobile-shell .divide-y > button svg,
   .support-mobile-shell .divide-y > button svg,
@@ -272,16 +365,16 @@ const FAOLLA_MOBILE_SHELL_INLINE_STYLE = `
   .support-mobile-shell .divide-y > button .text-sm,
   .faolla-personal-mobile-shell .faolla-mobile-menu-title,
   .support-mobile-shell .faolla-mobile-menu-title {
-    font-size: 1.13rem !important;
-    line-height: 1.42rem !important;
+    font-size: 0.98rem !important;
+    line-height: 1.24rem !important;
     font-weight: 600 !important;
   }
   .faolla-personal-mobile-shell .divide-y > button .text-xs,
   .support-mobile-shell .divide-y > button .text-xs,
   .faolla-personal-mobile-shell .faolla-mobile-menu-summary,
   .support-mobile-shell .faolla-mobile-menu-summary {
-    font-size: 0.86rem !important;
-    line-height: 1.18rem !important;
+    font-size: 0.76rem !important;
+    line-height: 1.05rem !important;
   }
   .faolla-personal-mobile-shell [class*="rounded-[28px]"],
   .faolla-personal-mobile-shell [class*="rounded-[30px]"],
