@@ -75,7 +75,7 @@ import {
 } from "@/lib/supportMessageAttachments";
 import type { MerchantBookingEditableInput, MerchantBookingRecord } from "@/lib/merchantBookings";
 import { getMerchantBookingDayLabel } from "@/lib/merchantBookingLocale";
-import { MOBILE_SWIPE_BACK_EVENT } from "@/lib/mobileSwipeBack";
+import { MOBILE_SWIPE_BACK_EVENT, type MobileSwipeBackEventDetail } from "@/lib/mobileSwipeBack";
 import { useFaollaAndroidAppUpdate } from "@/lib/useFaollaAndroidAppUpdate";
 import { useMobilePortraitOrientationLock } from "@/lib/useMobilePortraitOrientationLock";
 import type { MerchantOrderRecord } from "@/lib/merchantOrders";
@@ -2247,6 +2247,8 @@ export default function MePage() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const handleMobileSwipeBack = (event: Event) => {
+      const source = (event as CustomEvent<MobileSwipeBackEventDetail>).detail?.source;
+      const isAndroidBack = source === "android-back";
       if (!isMobileViewport) return;
       if (conversationInfoOpen) {
         event.preventDefault();
@@ -2267,7 +2269,9 @@ export default function MePage() {
         }
         return;
       }
-      event.preventDefault();
+      if (!isAndroidBack) {
+        event.preventDefault();
+      }
     };
     window.addEventListener(MOBILE_SWIPE_BACK_EVENT, handleMobileSwipeBack);
     return () => {

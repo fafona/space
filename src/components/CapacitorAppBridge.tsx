@@ -6,6 +6,10 @@ import { App } from "@capacitor/app";
 import { ScreenOrientation } from "@capacitor/screen-orientation";
 import { StatusBar, Style } from "@capacitor/status-bar";
 import { readMerchantSessionPayload } from "@/lib/authSessionRecovery";
+import {
+  createMobileSwipeBackEvent,
+  resolveMobileSwipeBackHref,
+} from "@/lib/mobileSwipeBack";
 
 function appendAppShellParam(path: string) {
   try {
@@ -26,6 +30,22 @@ function resolveNativeBackHref(pathname: string) {
   }
   if (pathname === "/bufuzai" || pathname === "/game-lobby") return "/launch";
   return "";
+}
+
+function dispatchNativeAppBackEvent() {
+  const origin = window.location.origin;
+  const pathname = window.location.pathname || "/";
+  const search = window.location.search || "";
+  const fallbackHref = resolveMobileSwipeBackHref(pathname, search, origin);
+  const backEvent = createMobileSwipeBackEvent({
+    pathname,
+    search,
+    fallbackHref,
+    origin,
+    source: "android-back",
+  });
+  window.dispatchEvent(backEvent);
+  return backEvent.defaultPrevented;
 }
 
 function resolveNativeOrientation(pathname: string) {
@@ -101,6 +121,9 @@ export default function CapacitorAppBridge() {
     });
 
     void App.addListener("backButton", ({ canGoBack }) => {
+      if (dispatchNativeAppBackEvent()) {
+        return;
+      }
       const nativeBackHref = resolveNativeBackHref(window.location.pathname);
       if (nativeBackHref) {
         window.location.assign(appendAppShellParam(nativeBackHref));

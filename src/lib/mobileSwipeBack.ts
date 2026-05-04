@@ -5,6 +5,7 @@ export type MobileSwipeBackEventDetail = {
   search: string;
   fallbackHref: string;
   origin: string;
+  source?: "touch" | "android-back";
 };
 
 type MobileSwipeBackGesture = {

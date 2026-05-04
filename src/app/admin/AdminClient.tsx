@@ -269,7 +269,7 @@ import { buildFaollaShellHref, isFaollaSectionSearch, resolveFaollaEntryUrlFromB
 import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
 import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
-import { MOBILE_SWIPE_BACK_EVENT } from "@/lib/mobileSwipeBack";
+import { MOBILE_SWIPE_BACK_EVENT, type MobileSwipeBackEventDetail } from "@/lib/mobileSwipeBack";
 import { clearTankBattleLobbyReturnTarget, readTankBattleLobbyReturnTarget } from "@/lib/tankBattleLobbyReturn";
 import { useFaollaAndroidAppUpdate } from "@/lib/useFaollaAndroidAppUpdate";
 import { useMobilePortraitOrientationLock } from "@/lib/useMobilePortraitOrientationLock";
@@ -5291,6 +5291,10 @@ export default function AdminClient({
   const [supportSelectedContactKey, setSupportSelectedContactKey] = useState(SUPPORT_OFFICIAL_CONTACT_KEY);
   const [supportMobileView, setSupportMobileView] = useState<"list" | "thread">("list");
   const [supportMobileHomeTab, setSupportMobileHomeTab] = useState<SupportMobileHomeTab>("conversations");
+  const supportMobileHomeTabRef = useRef<SupportMobileHomeTab>("conversations");
+  useEffect(() => {
+    supportMobileHomeTabRef.current = supportMobileHomeTab;
+  }, [supportMobileHomeTab]);
   const [supportFaollaEmbedHref, setSupportFaollaEmbedHref] = useState("");
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -7258,12 +7262,35 @@ export default function AdminClient({
         setCheckingAuth(false);
       }
     };
-    const redirectNativeMerchantShellToLaunch = () => {
+    const isNativeMerchantShellRuntime = () => {
       if (isPlatformEditor || typeof window === "undefined" || typeof document === "undefined") return false;
-      const nativeRuntime =
+      return (
         document.documentElement.dataset.capacitor === "true" ||
-        Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
-      if (!nativeRuntime) return false;
+        Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.())
+      );
+    };
+    const preserveNativeFaollaShell = () => {
+      if (!isNativeMerchantShellRuntime()) return false;
+      const faollaSectionActive =
+        supportMobileHomeTabRef.current === "faolla" ||
+        (typeof window !== "undefined" && isFaollaSectionSearch(window.location.search));
+      if (!faollaSectionActive) return false;
+      const recentMerchantId = readRecentMerchantLaunchMerchantId();
+      if (isMerchantNumericId(recentMerchantId)) {
+        merchantIdsRef.current = mergePreferredMerchantIds([recentMerchantId], merchantIdsRef.current);
+        setMerchantSiteIdOverride((current) => current || recentMerchantId);
+      }
+      setRemoteContentVerified(false);
+      setHasEditorContent(true);
+      setSelectedId("");
+      setBackendNotice(null);
+      setMerchantDesktopSection("faolla");
+      setSupportMobileHomeTab("faolla");
+      releaseCheckingScreen({ notice: null });
+      return true;
+    };
+    const redirectNativeMerchantShellToLaunch = () => {
+      if (!isNativeMerchantShellRuntime()) return false;
       const recentMerchantId = readRecentMerchantLaunchMerchantId();
       if (!isMerchantNumericId(recentMerchantId)) return false;
 
@@ -7296,6 +7323,7 @@ export default function AdminClient({
     };
     const releaseMerchantUnauthenticatedState = (notice: string) => {
       if (!mounted) return;
+      if (preserveNativeFaollaShell()) return;
       if (redirectNativeMerchantShellToLaunch()) return;
       merchantIdsRef.current = [];
       setRemoteContentVerified(false);
@@ -11091,6 +11119,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   useEffect(() => {
     if (typeof window === "undefined") return;
     const handleMobileSwipeBack = (event: Event) => {
+      const source = (event as CustomEvent<MobileSwipeBackEventDetail>).detail?.source;
+      const isAndroidBack = source === "android-back";
       if (!supportInterfaceOpen || !isMobileSupportDialog) return;
       if (supportMerchantInfoSheetOpen) {
         event.preventDefault();
@@ -11111,7 +11141,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         }
         return;
       }
-      event.preventDefault();
+      if (!isAndroidBack) {
+        event.preventDefault();
+      }
     };
     window.addEventListener(MOBILE_SWIPE_BACK_EVENT, handleMobileSwipeBack);
     return () => {

@@ -176,6 +176,7 @@ export default function MobileSwipeBack() {
         search: currentSearch,
         fallbackHref,
         origin,
+        source: "touch",
       });
 
       window.dispatchEvent(swipeEvent);
