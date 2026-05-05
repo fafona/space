@@ -46,6 +46,7 @@ import com.getcapacitor.BridgeActivity;
 import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
+    private static final int LAUNCH_BACKGROUND_COLOR = Color.rgb(8, 17, 33);
     private static final String APK_MIME_TYPE = "application/vnd.android.package-archive";
     private static final String MESSAGE_CHANNEL_ID = "faolla_messages";
     private static final String BADGE_CHANNEL_ID = "faolla_badges";
@@ -69,7 +70,7 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        getWindow().setBackgroundDrawable(new ColorDrawable(Color.rgb(8, 17, 33)));
+        getWindow().setBackgroundDrawable(new ColorDrawable(LAUNCH_BACKGROUND_COLOR));
         applyLaunchSystemBars();
         super.onCreate(savedInstanceState);
         installLaunchCover();
@@ -99,8 +100,8 @@ public class MainActivity extends BridgeActivity {
 
     private void applyLaunchSystemBars() {
         Window window = getWindow();
-        window.setStatusBarColor(Color.rgb(8, 17, 33));
-        window.setNavigationBarColor(Color.rgb(8, 17, 33));
+        window.setStatusBarColor(LAUNCH_BACKGROUND_COLOR);
+        window.setNavigationBarColor(LAUNCH_BACKGROUND_COLOR);
 
         WindowInsetsControllerCompat controller = WindowCompat.getInsetsController(window, window.getDecorView());
         controller.setAppearanceLightStatusBars(false);
@@ -123,7 +124,7 @@ public class MainActivity extends BridgeActivity {
         }
 
         FrameLayout cover = new FrameLayout(this);
-        cover.setBackgroundColor(Color.rgb(8, 17, 33));
+        cover.setBackgroundColor(LAUNCH_BACKGROUND_COLOR);
         cover.setClickable(true);
         ImageView welcomePoster = new ImageView(this);
         welcomePoster.setImageResource(R.drawable.faolla_launch);
@@ -138,8 +139,28 @@ public class MainActivity extends BridgeActivity {
         );
         launchCover = cover;
         launchCoverHidden = false;
+        scheduleLaunchCoverFallback();
+    }
+
+    private void scheduleLaunchCoverFallback() {
+        if (launchCoverFallbackRunnable != null) {
+            updateProgressHandler.removeCallbacks(launchCoverFallbackRunnable);
+        }
         launchCoverFallbackRunnable = () -> hideLaunchCover();
         updateProgressHandler.postDelayed(launchCoverFallbackRunnable, 12000L);
+    }
+
+    private void showLaunchCover() {
+        applyLaunchSystemBars();
+        if (launchCover != null) {
+            launchCover.animate().cancel();
+            launchCover.setAlpha(1f);
+            launchCover.bringToFront();
+            launchCoverHidden = false;
+            scheduleLaunchCoverFallback();
+            return;
+        }
+        installLaunchCover();
     }
 
     private void hideLaunchCover() {
@@ -151,10 +172,10 @@ public class MainActivity extends BridgeActivity {
             updateProgressHandler.removeCallbacks(launchCoverFallbackRunnable);
             launchCoverFallbackRunnable = null;
         }
-        applyContentSystemBars();
 
         FrameLayout cover = launchCover;
         if (cover == null) {
+            applyContentSystemBars();
             return;
         }
         cover.animate()
@@ -168,6 +189,7 @@ public class MainActivity extends BridgeActivity {
                 if (launchCover == cover) {
                     launchCover = null;
                 }
+                applyContentSystemBars();
             })
             .start();
     }
@@ -178,7 +200,7 @@ public class MainActivity extends BridgeActivity {
         }
 
         WebView webView = this.bridge.getWebView();
-        webView.setBackgroundColor(Color.rgb(8, 17, 33));
+        webView.setBackgroundColor(LAUNCH_BACKGROUND_COLOR);
         webView.setLayerType(WebView.LAYER_TYPE_HARDWARE, null);
 
         WebSettings settings = webView.getSettings();
@@ -836,6 +858,11 @@ public class MainActivity extends BridgeActivity {
         @JavascriptInterface
         public void hideLaunchCover() {
             runOnUiThread(() -> MainActivity.this.hideLaunchCover());
+        }
+
+        @JavascriptInterface
+        public void showLaunchCover() {
+            runOnUiThread(() -> MainActivity.this.showLaunchCover());
         }
 
         @JavascriptInterface

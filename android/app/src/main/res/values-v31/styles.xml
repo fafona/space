@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <style name="AppTheme.NoActionBarLaunch" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+        <item name="android:windowBackground">#081121</item>
+        <item name="android:background">#081121</item>
+        <item name="android:statusBarColor">#081121</item>
+        <item name="android:navigationBarColor">#081121</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:forceDarkAllowed">false</item>
+        <item name="android:windowSplashScreenBackground">#081121</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/faolla_splash_transparent</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">#081121</item>
+    </style>
+
+</resources>

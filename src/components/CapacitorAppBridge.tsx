@@ -16,6 +16,8 @@ const FAOLLA_NATIVE_WEB_BUILD_STORAGE_KEY = "faolla:native-web-build:v1";
 const FAOLLA_NATIVE_WEB_CACHE_BUILD_STORAGE_KEY = "faolla:native-web-cache-build:v1";
 const FAOLLA_NATIVE_WEB_RELOAD_STORAGE_KEY = "faolla:native-web-build-reload:v1";
 const FAOLLA_NATIVE_WEB_BUILD_CHECK_THROTTLE_MS = 60_000;
+const FAOLLA_LAUNCH_BAR_COLOR = "#081121";
+const FAOLLA_CONTENT_BAR_COLOR = "#ffffff";
 
 function readObjectRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -119,14 +121,56 @@ function hideNativeLaunchCover() {
   nativeBridge.hideLaunchCover();
 }
 
+function showNativeLaunchCover() {
+  const nativeBridge = (window as typeof window & {
+    FaollaNativeUpdates?: { showLaunchCover?: () => void };
+  }).FaollaNativeUpdates;
+  if (typeof nativeBridge?.showLaunchCover !== "function") return;
+  nativeBridge.showLaunchCover();
+}
+
+function applyNativeLaunchStatusBar() {
+  if (!Capacitor.isNativePlatform()) return;
+  void StatusBar.setOverlaysWebView({ overlay: false }).catch(() => undefined);
+  void StatusBar.setStyle({ style: Style.Dark }).catch(() => undefined);
+  void StatusBar.setBackgroundColor({ color: FAOLLA_LAUNCH_BAR_COLOR }).catch(() => undefined);
+}
+
+function applyNativeContentStatusBar() {
+  if (!Capacitor.isNativePlatform()) return;
+  void StatusBar.setOverlaysWebView({ overlay: false }).catch(() => undefined);
+  void StatusBar.setStyle({ style: Style.Light }).catch(() => undefined);
+  void StatusBar.setBackgroundColor({ color: FAOLLA_CONTENT_BAR_COLOR }).catch(() => undefined);
+}
+
 function hideWebLaunchCover() {
   if (typeof document === "undefined") return;
   document.documentElement.dataset.faollaWebLaunchReady = "true";
 }
 
+function showWebLaunchCover() {
+  if (typeof document === "undefined") return;
+  delete document.documentElement.dataset.faollaWebLaunchReady;
+}
+
 function hideLaunchCovers() {
   hideWebLaunchCover();
   hideNativeLaunchCover();
+  window.setTimeout(applyNativeContentStatusBar, 220);
+}
+
+function showLaunchCovers() {
+  showWebLaunchCover();
+  showNativeLaunchCover();
+  applyNativeLaunchStatusBar();
+}
+
+function waitForNextTwoFrames() {
+  return new Promise<void>((resolve) => {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => resolve());
+    });
+  });
 }
 
 function isLaunchContentReady() {
@@ -226,9 +270,7 @@ export default function CapacitorAppBridge() {
     document.documentElement.dataset.capacitor = "true";
     document.documentElement.dataset.capacitorPlatform = Capacitor.getPlatform();
 
-    void StatusBar.setOverlaysWebView({ overlay: false }).catch(() => undefined);
-    void StatusBar.setStyle({ style: Style.Light }).catch(() => undefined);
-    void StatusBar.setBackgroundColor({ color: "#ffffff" }).catch(() => undefined);
+    applyNativeLaunchStatusBar();
 
     let activeOrientation = "";
     const syncNativeOrientation = () => {
@@ -319,6 +361,8 @@ export default function CapacitorAppBridge() {
       }
 
       if (needsReload) {
+        showLaunchCovers();
+        await waitForNextTwoFrames();
         window.location.replace(buildNativeWebReloadHref(nextBuildId));
         return "reloading";
       }
@@ -328,8 +372,22 @@ export default function CapacitorAppBridge() {
     const refreshNativeSession = () => {
       void readMerchantSessionPayload(5200, { includeClientTokens: true }).catch(() => null);
     };
-    scheduleLaunchCoverHideWhenContentReady();
-    void syncNativeWebBuild(false).catch(() => undefined);
+
+    let launchCoverHideScheduled = false;
+    const scheduleInitialLaunchCoverHide = () => {
+      if (launchCoverHideScheduled) return;
+      launchCoverHideScheduled = true;
+      scheduleLaunchCoverHideWhenContentReady();
+    };
+    const launchCoverHideFallback = window.setTimeout(scheduleInitialLaunchCoverHide, 9000);
+
+    void syncNativeWebBuild(false)
+      .then((status) => {
+        if (status === "ready") scheduleInitialLaunchCoverHide();
+      })
+      .catch(() => {
+        scheduleInitialLaunchCoverHide();
+      });
     refreshNativeSession();
 
     void App.addListener("appStateChange", ({ isActive }) => {
@@ -367,6 +425,7 @@ export default function CapacitorAppBridge() {
     return () => {
       removeBackButtonListener?.();
       removeAppStateListener?.();
+      window.clearTimeout(launchCoverHideFallback);
       window.history.pushState = originalPushState;
       window.history.replaceState = originalReplaceState;
       window.removeEventListener("popstate", syncNativeOrientation);
