@@ -24,6 +24,7 @@ import androidx.work.Constraints;
 import androidx.work.ExistingWorkPolicy;
 import androidx.work.NetworkType;
 import androidx.work.OneTimeWorkRequest;
+import androidx.work.OutOfQuotaPolicy;
 import androidx.work.WorkManager;
 import androidx.work.Worker;
 import androidx.work.WorkerParameters;
@@ -58,8 +59,8 @@ public class FaollaNotificationWorker extends Worker {
     static final String KEY_INITIALIZED = "initialized";
     static final String KEY_UNREAD_COUNT = "unread_count";
 
-    private static final String MESSAGE_CHANNEL_ID = "faolla_messages_v2";
-    private static final String BADGE_CHANNEL_ID = "faolla_badges_v3";
+    private static final String MESSAGE_CHANNEL_ID = "faolla_messages_v4";
+    private static final String BADGE_CHANNEL_ID = "faolla_badges_v4";
     private static final String NOTIFICATION_ACTION_OPEN = "com.faolla.app.OPEN_NOTIFICATION";
     private static final String NOTIFICATION_EXTRA_URL = "faolla_url";
     private static final int BADGE_NOTIFICATION_ID = 73010;
@@ -127,6 +128,17 @@ public class FaollaNotificationWorker extends Worker {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
     }
 
+    static boolean isEnabled(Context context) {
+        return getPrefs(context).getBoolean(KEY_ENABLED, false);
+    }
+
+    static void restoreStoredBadge(Context context) {
+        SharedPreferences prefs = getPrefs(context);
+        int unreadCount = Math.max(0, Math.min(999, prefs.getInt(KEY_UNREAD_COUNT, 0)));
+        applyLauncherBadgeCount(context, unreadCount);
+        syncUnreadBadge(context, unreadCount);
+    }
+
     static Set<String> readNotifiedNotificationKeys(SharedPreferences prefs) {
         Set<String> keys = new HashSet<>();
         Set<String> storedKeys = prefs.getStringSet(KEY_NOTIFIED_NOTIFICATION_KEYS, null);
@@ -159,18 +171,18 @@ public class FaollaNotificationWorker extends Worker {
     }
 
     static void scheduleNow(Context context) {
-        enqueue(context, 0L);
+        enqueue(context, 0L, ExistingWorkPolicy.REPLACE);
     }
 
     static void scheduleNext(Context context) {
-        enqueue(context, POLL_DELAY_MS);
+        enqueue(context, POLL_DELAY_MS, ExistingWorkPolicy.APPEND_OR_REPLACE);
     }
 
     static void cancel(Context context) {
         WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME);
     }
 
-    private static void enqueue(Context context, long delayMs) {
+    private static void enqueue(Context context, long delayMs, ExistingWorkPolicy policy) {
         Constraints constraints = new Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build();
@@ -178,8 +190,10 @@ public class FaollaNotificationWorker extends Worker {
             .setConstraints(constraints);
         if (delayMs > 0L) {
             builder.setInitialDelay(delayMs, TimeUnit.MILLISECONDS);
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST);
         }
-        WorkManager.getInstance(context).enqueueUniqueWork(WORK_NAME, ExistingWorkPolicy.REPLACE, builder.build());
+        WorkManager.getInstance(context).enqueueUniqueWork(WORK_NAME, policy, builder.build());
     }
 
     private JSONObject fetchSnapshot(SharedPreferences prefs) throws Exception {

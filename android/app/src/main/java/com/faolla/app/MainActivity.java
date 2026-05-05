@@ -48,13 +48,13 @@ import com.getcapacitor.BridgeActivity;
 import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
-    private static final int CURRENT_NATIVE_BUILD = 34;
+    private static final int CURRENT_NATIVE_BUILD = 35;
     private static final int LAUNCH_BACKGROUND_COLOR = Color.rgb(8, 17, 33);
     private static final String RUNTIME_PREFS_NAME = "faolla_native_runtime";
     private static final String KEY_NATIVE_CACHE_BUILD = "native_cache_build";
     private static final String APK_MIME_TYPE = "application/vnd.android.package-archive";
-    private static final String MESSAGE_CHANNEL_ID = "faolla_messages_v2";
-    private static final String BADGE_CHANNEL_ID = "faolla_badges_v3";
+    private static final String MESSAGE_CHANNEL_ID = "faolla_messages_v4";
+    private static final String BADGE_CHANNEL_ID = "faolla_badges_v4";
     private static final String NOTIFICATION_ACTION_OPEN = "com.faolla.app.OPEN_NOTIFICATION";
     private static final String NOTIFICATION_EXTRA_URL = "faolla_url";
     private static final int NOTIFICATION_PERMISSION_REQUEST_CODE = 7301;
@@ -88,6 +88,7 @@ public class MainActivity extends BridgeActivity {
 
         configureWebViewRuntime();
         installDownloadListener();
+        scheduleNativeNotificationWorkerIfEnabled();
         handleNotificationIntent(getIntent());
     }
 
@@ -276,6 +277,7 @@ public class MainActivity extends BridgeActivity {
         CookieManager.getInstance().flush();
         restoreNativeUnreadBadgeFromPrefs(true);
         scheduleNativeUnreadBadgeRestore();
+        scheduleNativeNotificationWorkerIfEnabled();
         super.onPause();
     }
 
@@ -284,6 +286,7 @@ public class MainActivity extends BridgeActivity {
         CookieManager.getInstance().flush();
         restoreNativeUnreadBadgeFromPrefs(true);
         scheduleNativeUnreadBadgeRestore();
+        scheduleNativeNotificationWorkerIfEnabled();
         super.onStop();
     }
 
@@ -293,6 +296,7 @@ public class MainActivity extends BridgeActivity {
         configureWebViewRuntime();
         restoreNativeUnreadBadgeFromPrefs(true);
         scheduleNativeUnreadBadgeRestore();
+        scheduleNativeNotificationWorkerIfEnabled();
         if (updateInstallStarted && pendingUpdateApkUri != null) {
             updateInstallStarted = false;
             dispatchUpdateEvent("downloaded", 100, "");
@@ -848,6 +852,7 @@ public class MainActivity extends BridgeActivity {
 
         boolean enabled = readJsonBoolean(payload, "enabled", true);
         android.content.SharedPreferences prefs = FaollaNotificationWorker.getPrefs(this);
+        boolean wasInitialized = prefs.getBoolean(FaollaNotificationWorker.KEY_INITIALIZED, false);
         int storedUnreadCount = prefs.getInt(FaollaNotificationWorker.KEY_UNREAD_COUNT, nativeUnreadBadgeCount);
         int requestedUnreadCount = readJsonInt(payload, "unreadCount", storedUnreadCount);
         int unreadCount = requestedUnreadCount > 0
@@ -892,10 +897,12 @@ public class MainActivity extends BridgeActivity {
             .putBoolean(FaollaNotificationWorker.KEY_SOUND, readJsonBoolean(payload, "sound", true))
             .putBoolean(FaollaNotificationWorker.KEY_VIBRATE, readJsonBoolean(payload, "vibrate", true))
             .putInt(FaollaNotificationWorker.KEY_UNREAD_COUNT, unreadCount)
-            .putBoolean(FaollaNotificationWorker.KEY_INITIALIZED, true)
-            .putString(FaollaNotificationWorker.KEY_LAST_NOTIFICATION_KEY, latestNotificationKey);
+            .putBoolean(FaollaNotificationWorker.KEY_INITIALIZED, true);
+        if (!wasInitialized) {
+            editor.putString(FaollaNotificationWorker.KEY_LAST_NOTIFICATION_KEY, latestNotificationKey);
+        }
         editor.apply();
-        if (!latestNotificationKey.trim().isEmpty()) {
+        if (!wasInitialized && !latestNotificationKey.trim().isEmpty()) {
             FaollaNotificationWorker.rememberNotificationKey(prefs, latestNotificationKey);
         }
 
@@ -908,6 +915,12 @@ public class MainActivity extends BridgeActivity {
             requestNativeNotificationPermission();
         }
         FaollaNotificationWorker.scheduleNow(this);
+    }
+
+    private void scheduleNativeNotificationWorkerIfEnabled() {
+        if (FaollaNotificationWorker.isEnabled(this)) {
+            FaollaNotificationWorker.scheduleNow(this);
+        }
     }
 
     private void syncNativeUnreadBadge(int unreadCount) {
