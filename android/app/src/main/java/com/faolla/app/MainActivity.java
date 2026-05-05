@@ -48,8 +48,8 @@ import org.json.JSONObject;
 public class MainActivity extends BridgeActivity {
     private static final int LAUNCH_BACKGROUND_COLOR = Color.rgb(8, 17, 33);
     private static final String APK_MIME_TYPE = "application/vnd.android.package-archive";
-    private static final String MESSAGE_CHANNEL_ID = "faolla_messages";
-    private static final String BADGE_CHANNEL_ID = "faolla_badges";
+    private static final String MESSAGE_CHANNEL_ID = "faolla_messages_v2";
+    private static final String BADGE_CHANNEL_ID = "faolla_badges_v2";
     private static final String NOTIFICATION_ACTION_OPEN = "com.faolla.app.OPEN_NOTIFICATION";
     private static final String NOTIFICATION_EXTRA_URL = "faolla_url";
     private static final int NOTIFICATION_PERMISSION_REQUEST_CODE = 7301;
@@ -64,6 +64,7 @@ public class MainActivity extends BridgeActivity {
     private boolean launchCoverHidden = false;
     private int messageNotificationSerial = 0;
     private int nativeUnreadBadgeCount = 0;
+    private String pendingNotificationUrl = "";
     private Runnable launchCoverFallbackRunnable;
     private BroadcastReceiver updateDownloadReceiver;
     private Runnable updateProgressRunnable;
@@ -655,7 +656,31 @@ public class MainActivity extends BridgeActivity {
             return;
         }
         String targetUrl = resolveNotificationUrl(intent.getStringExtra(NOTIFICATION_EXTRA_URL));
-        updateProgressHandler.postDelayed(() -> openUrlInCurrentApp(targetUrl), 220L);
+        pendingNotificationUrl = targetUrl;
+        schedulePendingNotificationOpen(targetUrl, 160L);
+        schedulePendingNotificationOpen(targetUrl, 800L);
+        schedulePendingNotificationOpen(targetUrl, 1800L);
+    }
+
+    private void schedulePendingNotificationOpen(String targetUrl, long delayMs) {
+        updateProgressHandler.postDelayed(() -> {
+            if (targetUrl == null || targetUrl.trim().isEmpty()) {
+                return;
+            }
+            if (!targetUrl.equals(pendingNotificationUrl)) {
+                return;
+            }
+            WebView webView = this.bridge == null ? null : this.bridge.getWebView();
+            if (webView == null) {
+                return;
+            }
+            String currentUrl = webView.getUrl();
+            if (targetUrl.equals(currentUrl)) {
+                pendingNotificationUrl = "";
+                return;
+            }
+            openUrlInCurrentApp(targetUrl);
+        }, delayMs);
     }
 
     @SuppressWarnings("deprecation")
@@ -691,7 +716,7 @@ public class MainActivity extends BridgeActivity {
         boolean soundEnabled = readJsonBoolean(payload, "sound", true);
         boolean vibrationEnabled = readJsonBoolean(payload, "vibrate", true);
 
-        nativeUnreadBadgeCount = unreadCount;
+        storeNativeUnreadBadgeCount(unreadCount);
         if (vibrationEnabled) {
             vibrateForNativeNotification();
         }
@@ -700,6 +725,7 @@ public class MainActivity extends BridgeActivity {
         }
 
         ensureNotificationChannels();
+        cancelNativeBadgeSummaryNotification();
         Uri defaultSound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
         int serial = messageNotificationSerial++ % 900;
         int notificationId = MESSAGE_NOTIFICATION_BASE_ID + serial;
@@ -726,7 +752,6 @@ public class MainActivity extends BridgeActivity {
             builder.setVibrate(new long[] { 0L });
         }
         NotificationManagerCompat.from(this).notify(notificationId, builder.build());
-        syncNativeUnreadBadge(unreadCount);
     }
 
     private String resolveCurrentOrigin() {
@@ -815,11 +840,7 @@ public class MainActivity extends BridgeActivity {
     }
 
     private void syncNativeUnreadBadge(int unreadCount) {
-        nativeUnreadBadgeCount = Math.max(0, Math.min(999, unreadCount));
-        FaollaNotificationWorker.getPrefs(this)
-            .edit()
-            .putInt(FaollaNotificationWorker.KEY_UNREAD_COUNT, nativeUnreadBadgeCount)
-            .apply();
+        storeNativeUnreadBadgeCount(unreadCount);
         if (!hasPostNotificationPermission()) {
             return;
         }
@@ -848,9 +869,26 @@ public class MainActivity extends BridgeActivity {
         notificationManager.notify(BADGE_NOTIFICATION_ID, builder.build());
     }
 
+    private void storeNativeUnreadBadgeCount(int unreadCount) {
+        nativeUnreadBadgeCount = Math.max(0, Math.min(999, unreadCount));
+        FaollaNotificationWorker.getPrefs(this)
+            .edit()
+            .putInt(FaollaNotificationWorker.KEY_UNREAD_COUNT, nativeUnreadBadgeCount)
+            .apply();
+    }
+
+    private void cancelNativeBadgeSummaryNotification() {
+        try {
+            NotificationManagerCompat.from(this).cancel(BADGE_NOTIFICATION_ID);
+        } catch (Exception ignored) {
+            // Badge summary cleanup is best-effort.
+        }
+    }
+
     private void openUrlInCurrentApp(String url) {
         if (this.bridge != null && this.bridge.getWebView() != null) {
-            this.bridge.getWebView().loadUrl(url);
+            WebView webView = this.bridge.getWebView();
+            webView.post(() -> webView.loadUrl(url));
         }
     }
 

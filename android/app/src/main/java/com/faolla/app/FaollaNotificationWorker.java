@@ -52,8 +52,8 @@ public class FaollaNotificationWorker extends Worker {
     static final String KEY_INITIALIZED = "initialized";
     static final String KEY_UNREAD_COUNT = "unread_count";
 
-    private static final String MESSAGE_CHANNEL_ID = "faolla_messages";
-    private static final String BADGE_CHANNEL_ID = "faolla_badges";
+    private static final String MESSAGE_CHANNEL_ID = "faolla_messages_v2";
+    private static final String BADGE_CHANNEL_ID = "faolla_badges_v2";
     private static final String NOTIFICATION_ACTION_OPEN = "com.faolla.app.OPEN_NOTIFICATION";
     private static final String NOTIFICATION_EXTRA_URL = "faolla_url";
     private static final int BADGE_NOTIFICATION_ID = 73010;
@@ -77,7 +77,6 @@ public class FaollaNotificationWorker extends Worker {
         try {
             JSONObject payload = fetchSnapshot(prefs);
             int unreadCount = Math.max(0, Math.min(999, payload.optInt("unreadCount", 0)));
-            syncUnreadBadge(context, unreadCount);
             prefs.edit().putInt(KEY_UNREAD_COUNT, unreadCount).apply();
 
             JSONObject latest = payload.optJSONObject("latest");
@@ -86,6 +85,7 @@ public class FaollaNotificationWorker extends Worker {
             String previousKey = prefs.getString(KEY_LAST_NOTIFICATION_KEY, "");
 
             if (!initialized) {
+                syncUnreadBadge(context, unreadCount);
                 prefs.edit()
                     .putBoolean(KEY_INITIALIZED, true)
                     .putString(KEY_LAST_NOTIFICATION_KEY, latestKey)
@@ -101,6 +101,8 @@ public class FaollaNotificationWorker extends Worker {
                     prefs.getBoolean(KEY_VIBRATE, true)
                 );
                 prefs.edit().putString(KEY_LAST_NOTIFICATION_KEY, latestKey).apply();
+            } else {
+                syncUnreadBadge(context, unreadCount);
             }
             scheduleNext(context);
             return Result.success();
@@ -292,6 +294,7 @@ public class FaollaNotificationWorker extends Worker {
         }
 
         ensureNotificationChannels(context);
+        NotificationManagerCompat.from(context).cancel(BADGE_NOTIFICATION_ID);
         int notificationId = MESSAGE_NOTIFICATION_BASE_ID + (int) (System.currentTimeMillis() % 900L);
         NotificationCompat.Builder notification = new NotificationCompat.Builder(context, MESSAGE_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_faolla)
@@ -316,7 +319,6 @@ public class FaollaNotificationWorker extends Worker {
             notification.setVibrate(new long[] { 0L });
         }
         NotificationManagerCompat.from(context).notify(notificationId, notification.build());
-        syncUnreadBadge(context, unreadCount);
     }
 
     static void syncUnreadBadge(Context context, int unreadCount) {

@@ -866,6 +866,18 @@ self.addEventListener("notificationclick", (event) => {
           return;
         }
       }
+      for (const client of windowClients) {
+        if (!("focus" in client)) continue;
+        try {
+          if ("navigate" in client) {
+            await client.navigate(absoluteUrl);
+          }
+          await client.focus();
+          return;
+        } catch {
+          // Fall back to opening a new app window below.
+        }
+      }
       if (self.clients.openWindow) {
         await self.clients.openWindow(absoluteUrl);
       }

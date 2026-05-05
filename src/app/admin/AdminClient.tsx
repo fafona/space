@@ -7519,6 +7519,12 @@ export default function AdminClient({
     const releaseMerchantUnauthenticatedState = (notice: string) => {
       if (!mounted) return;
       if (preserveNativeFaollaShell()) return;
+      if (shouldPreserveMerchantSessionDuringResume()) {
+        setRemoteContentVerified(false);
+        setHasEditorContent(true);
+        releaseCheckingScreen({ notice: null });
+        return;
+      }
       if (redirectNativeMerchantShellToLaunch()) return;
       merchantIdsRef.current = [];
       setRemoteContentVerified(false);
@@ -7538,7 +7544,13 @@ export default function AdminClient({
     const shouldPreserveMerchantSessionDuringResume = () => {
       if (isPlatformEditor || typeof document === "undefined") return false;
       if (document.visibilityState !== "visible") return true;
-      return Date.now() - lastMerchantResumeAtRef.current <= 12_000;
+      if (Date.now() - lastMerchantResumeAtRef.current <= 45_000) return true;
+      if (!isNativeMerchantShellRuntime()) return false;
+      const recentMerchantId = readRecentMerchantLaunchMerchantId();
+      if (!isMerchantNumericId(recentMerchantId)) return false;
+      const backgroundedAt = lastMerchantBackgroundedAtRef.current;
+      if (backgroundedAt <= 0) return true;
+      return Date.now() - backgroundedAt <= 12 * 60 * 60 * 1000;
     };
     const getCandidateStoreScopes = () =>
       storeScope !== "default"
@@ -10530,19 +10542,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         lastMerchantBackgroundedAtRef.current = Date.now();
         return;
       }
-      if (
-        document.visibilityState === "visible" &&
-        lastMerchantBackgroundedAtRef.current > 0 &&
-        Date.now() - lastMerchantBackgroundedAtRef.current <= 10 * 60 * 1000
-      ) {
+      if (document.visibilityState === "visible" && lastMerchantBackgroundedAtRef.current > 0) {
         lastMerchantResumeAtRef.current = Date.now();
       }
     };
     const handleForeground = () => {
-      if (
-        lastMerchantBackgroundedAtRef.current > 0 &&
-        Date.now() - lastMerchantBackgroundedAtRef.current <= 10 * 60 * 1000
-      ) {
+      if (lastMerchantBackgroundedAtRef.current > 0) {
         lastMerchantResumeAtRef.current = Date.now();
       }
     };
@@ -12200,7 +12205,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }) => {
     if (typeof document !== "undefined") {
       if (document.visibilityState !== "visible") return;
-      if (Date.now() - lastMerchantResumeAtRef.current <= 15_000) return;
+      if (Date.now() - lastMerchantResumeAtRef.current <= 60_000) return;
     }
     const nativeNotificationShown =
       supportSystemNotificationsEnabled &&
@@ -13362,8 +13367,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       clearSupportDeepLink();
       return;
     }
+    if (!supportUnreadHydrationState.peer || supportPeerLoading) return;
     if (!supportPeerContacts.some((item) => item.merchantId === targetMerchantId)) {
-      if (supportPeerLoading) return;
       clearSupportDeepLink();
       return;
     }
@@ -13377,6 +13382,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     supportPeerContacts,
     supportPeerLoading,
     supportPendingDeepLink,
+    supportUnreadHydrationState.peer,
   ]);
 
   useEffect(() => {

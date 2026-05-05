@@ -43,6 +43,11 @@ export default function LaunchBootstrap() {
     void (async () => {
       try {
         const recentMerchantId = readRecentMerchantLaunchMerchantId();
+        const launchParams = new URLSearchParams(window.location.search);
+        const isNativeAppLaunch =
+          (launchParams.get("appShell") || "").trim().toLowerCase() === "faolla" ||
+          (launchParams.get("nativeStart") || "").trim() === "1" ||
+          launchParams.has("nativeAuthRetry");
         const directPayload = await readMerchantSessionPayload(2400, { includeClientTokens: true }).catch(() => null);
         const payload =
           directPayload?.authenticated === true
@@ -69,6 +74,10 @@ export default function LaunchBootstrap() {
         }
 
         if (isMerchantNumericId(recentMerchantId)) {
+          if (isNativeAppLaunch) {
+            window.location.replace(buildBackendAppShellHref(buildMerchantBackendHref(recentMerchantId)));
+            return;
+          }
           window.location.replace(`/login?launchRetry=1&merchantHint=${encodeURIComponent(recentMerchantId)}`);
           return;
         }
