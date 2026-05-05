@@ -26,7 +26,7 @@ import {
   type MerchantIndustryTabIndustry,
   type MerchantIndustryTabInput,
 } from "@/lib/merchantIndustryTabs";
-import { buildMerchantFrontendHref } from "@/lib/siteRouting";
+import { buildSiteHref } from "@/lib/siteRouting";
 import { useI18n } from "@/components/I18nProvider";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
 import { isFaollaAppShellSearch, preserveFaollaAppShellHref } from "@/lib/faollaEntry";
@@ -824,7 +824,7 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
                   ? Math.max(0, Math.min(1, site.merchantCardImageOpacity))
                   : 1;
               const hasMerchantCardImage = merchantCardImageUrl.length > 0;
-              const baseMerchantHref = buildMerchantFrontendHref(site.id, site.domainPrefix ?? site.domainSuffix);
+              const baseMerchantHref = buildSiteHref(site.id);
               const merchantHref = faollaAppShell
                 ? preserveFaollaAppShellHref(
                     baseMerchantHref,
