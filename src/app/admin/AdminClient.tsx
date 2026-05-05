@@ -233,10 +233,6 @@ import {
   isMerchantOrderPendingMerchantTouch,
   type MerchantOrderRecord,
 } from "@/lib/merchantOrders";
-import {
-  filterMerchantBookingRecordsByHistory,
-  loadMerchantBookingManagerPreferences,
-} from "@/lib/merchantBookingManagerPreferences";
 import { broadcastPublishSync } from "@/lib/publishSync";
 import {
   BUTTON_BLOCK_MIN_HEIGHT,
@@ -4762,6 +4758,7 @@ type SupportContactRow = {
   key: string;
   name: string;
   badge?: string;
+  unreadCount: number;
   subtitle: string;
   preview: string;
   updatedAt: string;
@@ -10467,17 +10464,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     editingSiteId && merchantPlatformState
       ? merchantPlatformState.sites.find((item) => item.id === editingSiteId) ?? null
       : null;
-  const summarizeMerchantBookingAttention = useCallback((records: MerchantBookingRecord[], applyPreferences = true) => {
-    const preferences = applyPreferences ? loadMerchantBookingManagerPreferences(editingSiteId) : null;
-    const scopedRecords = preferences
-      ? filterMerchantBookingRecordsByHistory(records, preferences.historyVisibility).filter((record) =>
-          preferences.selectedStatuses.includes(record.status),
-        )
-      : records;
-    return summarizeMerchantBookingAttentionRecords(scopedRecords, editingSiteId);
+  const summarizeMerchantBookingAttention = useCallback((records: MerchantBookingRecord[]) => {
+    return summarizeMerchantBookingAttentionRecords(records, editingSiteId);
   }, [editingSiteId]);
   const handleMerchantBookingRecordsChange = useCallback((records: MerchantBookingRecord[]) => {
-    setMerchantBookingAttentionSummary(summarizeMerchantBookingAttention(records, false));
+    setMerchantBookingAttentionSummary(summarizeMerchantBookingAttention(records));
     setMerchantBusinessAttentionHydrationState((current) => (current.booking ? current : { ...current, booking: true }));
   }, [summarizeMerchantBookingAttention]);
   const summarizeMerchantOrderAttention = useCallback(
@@ -11344,28 +11335,29 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     };
   }, [isMobileSupportDialog]);
 
-  const supportPeerUnreadContactIds = useMemo(() => {
-    const unreadContactIds = new Set<string>();
-    if (!currentSupportMerchantId || !supportReadStateHydrated.peer) return unreadContactIds;
+  const supportPeerUnreadMessageCountByContactId = useMemo(() => {
+    const unreadCountByContactId = new Map<string, number>();
+    if (!currentSupportMerchantId || !supportReadStateHydrated.peer) return unreadCountByContactId;
     supportPeerContacts.forEach((contact) => {
-      const latestIncomingMessage = findLatestIncomingPeerMessage(
-        supportPeerThreadByContactMerchantId.get(contact.merchantId),
-        currentSupportMerchantId,
-      );
-      const latestIncomingAt = normalizeSupportMessageTimestamp(latestIncomingMessage?.createdAt);
-      if (!latestIncomingAt) return;
+      const thread = supportPeerThreadByContactMerchantId.get(contact.merchantId);
+      if (!thread) return;
       const lastReadAt = normalizeSupportMessageTimestamp(supportPeerLastReadMap[contact.merchantId]);
-      if (new Date(latestIncomingAt).getTime() > new Date(lastReadAt || 0).getTime()) {
-        unreadContactIds.add(contact.merchantId);
+      const lastReadTimestamp = new Date(lastReadAt || 0).getTime();
+      const unreadCount = thread.messages.reduce((count, message) => {
+        if (message.senderMerchantId === currentSupportMerchantId) return count;
+        const createdAt = new Date(normalizeSupportMessageTimestamp(message.createdAt) || 0).getTime();
+        return createdAt > lastReadTimestamp ? count + 1 : count;
+      }, 0);
+      if (unreadCount > 0) {
+        unreadCountByContactId.set(contact.merchantId, unreadCount);
       }
     });
-    return unreadContactIds;
+    return unreadCountByContactId;
   }, [currentSupportMerchantId, supportPeerContacts, supportPeerLastReadMap, supportPeerThreadByContactMerchantId, supportReadStateHydrated.peer]);
-  const supportHasUnreadOfficialMessages =
-    supportReadStateHydrated.official &&
-    !!latestSupportAdminMessageAt &&
-    !!supportReadMerchantId &&
-    new Date(latestSupportAdminMessageAt).getTime() > new Date(supportLastReadAt || 0).getTime();
+  const supportPeerUnreadContactIds = useMemo(
+    () => new Set(supportPeerUnreadMessageCountByContactId.keys()),
+    [supportPeerUnreadMessageCountByContactId],
+  );
   const supportUnreadOfficialMessageCount = useMemo(() => {
     if (!supportReadMerchantId || !supportReadStateHydrated.official) return 0;
     const lastReadTimestamp = new Date(supportLastReadAt || 0).getTime();
@@ -11375,25 +11367,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       return createdAt > lastReadTimestamp ? count + 1 : count;
     }, 0);
   }, [supportLastReadAt, supportReadMerchantId, supportThread?.messages, supportReadStateHydrated.official]);
+  const supportHasUnreadOfficialMessages = supportUnreadOfficialMessageCount > 0;
   const supportUnreadPeerMessageCount = useMemo(() => {
     if (!currentSupportMerchantId || !supportReadStateHydrated.peer) return 0;
-    let unreadCount = 0;
-    supportPeerContacts.forEach((contact) => {
-      const thread = supportPeerThreadByContactMerchantId.get(contact.merchantId);
-      if (!thread) return;
-      const lastReadTimestamp = new Date(
-        normalizeSupportMessageTimestamp(supportPeerLastReadMap[contact.merchantId]) || 0,
-      ).getTime();
-      thread.messages.forEach((message) => {
-        if (message.senderMerchantId === currentSupportMerchantId) return;
-        const createdAt = new Date(normalizeSupportMessageTimestamp(message.createdAt) || 0).getTime();
-        if (createdAt > lastReadTimestamp) {
-          unreadCount += 1;
-        }
-      });
-    });
-    return unreadCount;
-  }, [currentSupportMerchantId, supportPeerContacts, supportPeerLastReadMap, supportPeerThreadByContactMerchantId, supportReadStateHydrated.peer]);
+    return [...supportPeerUnreadMessageCountByContactId.values()].reduce((sum, count) => sum + count, 0);
+  }, [currentSupportMerchantId, supportPeerUnreadMessageCountByContactId, supportReadStateHydrated.peer]);
   const merchantBusinessAttentionCount = merchantBookingAttentionSummary.count + merchantOrderAttentionSummary.count;
   const merchantBusinessAttentionHydrated =
     merchantBusinessAttentionHydrationState.booking && merchantBusinessAttentionHydrationState.orders;
@@ -11514,6 +11492,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       key: SUPPORT_OFFICIAL_CONTACT_KEY,
       name: supportOfficialName,
       badge: supportOfficialBadgeLabel,
+      unreadCount: supportUnreadOfficialMessageCount,
       subtitle: supportOfficialSiteLabel,
       preview:
         formatSupportConversationPreview(latestOfficialVisibleSupportMessage?.text) ||
@@ -11535,6 +11514,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         key: `merchant:${contact.merchantId}`,
         name: contact.merchantName || contact.merchantId,
         badge: undefined as string | undefined,
+        unreadCount: supportPeerUnreadMessageCountByContactId.get(contact.merchantId) ?? 0,
         subtitle: contact.merchantId,
         preview: formatSupportConversationPreview(contact.lastMessage?.text) || "还没有聊天记录，可以直接开始对话。",
         updatedAt: contact.updatedAt || contact.savedAt,
@@ -15964,8 +15944,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                               {contactRow.badge}
                             </span>
                           ) : null}
-                          {contactRow.unread ? (
-                            <span aria-label="有未读消息" className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full bg-rose-500" />
+                          {contactRow.unreadCount > 0 ? (
+                            <span
+                              aria-label={`有 ${contactRow.unreadCount} 条未读消息`}
+                              className="inline-flex min-w-[18px] shrink-0 items-center justify-center rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white"
+                            >
+                              {contactRow.unreadCount > 99 ? "99+" : contactRow.unreadCount}
+                            </span>
                           ) : null}
                         </div>
                         {contactRow.isOfficial ? (
@@ -17841,8 +17826,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                                       {contactRow.badge}
                                     </span>
                                   ) : null}
-                                  {contactRow.unread ? (
-                                    <span aria-label="有未读消息" className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full bg-rose-500" />
+                                  {contactRow.unreadCount > 0 ? (
+                                    <span
+                                      aria-label={`有 ${contactRow.unreadCount} 条未读消息`}
+                                      className="inline-flex min-w-[18px] shrink-0 items-center justify-center rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white"
+                                    >
+                                      {contactRow.unreadCount > 99 ? "99+" : contactRow.unreadCount}
+                                    </span>
                                   ) : null}
                                 </div>
                                 {contactRow.isOfficial ? (

@@ -75,6 +75,7 @@ public class MainActivity extends BridgeActivity {
         applyLaunchSystemBars();
         super.onCreate(savedInstanceState);
         installLaunchCover();
+        restoreNativeUnreadBadgeFromPrefs(true);
 
         WindowCompat.setDecorFitsSystemWindows(getWindow(), true);
         applyLaunchSystemBars();
@@ -259,6 +260,7 @@ public class MainActivity extends BridgeActivity {
     public void onResume() {
         super.onResume();
         configureWebViewRuntime();
+        restoreNativeUnreadBadgeFromPrefs(true);
         if (updateInstallStarted && pendingUpdateApkUri != null) {
             updateInstallStarted = false;
             dispatchUpdateEvent("downloaded", 100, "");
@@ -919,6 +921,15 @@ public class MainActivity extends BridgeActivity {
 
     private void applyLauncherBadgeCount(int unreadCount) {
         FaollaLauncherBadge.applyCount(this, unreadCount);
+    }
+
+    private void restoreNativeUnreadBadgeFromPrefs(boolean syncNotification) {
+        int storedUnreadCount = FaollaNotificationWorker.getPrefs(this).getInt(FaollaNotificationWorker.KEY_UNREAD_COUNT, 0);
+        nativeUnreadBadgeCount = Math.max(0, Math.min(999, storedUnreadCount));
+        applyLauncherBadgeCount(nativeUnreadBadgeCount);
+        if (syncNotification && nativeUnreadBadgeCount > 0 && hasPostNotificationPermission()) {
+            syncNativeUnreadBadge(nativeUnreadBadgeCount);
+        }
     }
 
     private void openUrlInCurrentApp(String url) {
