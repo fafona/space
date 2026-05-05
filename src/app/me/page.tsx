@@ -4676,11 +4676,11 @@ export default function MePage() {
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <div className={`faolla-mobile-chat-name truncate text-sm ${options?.mobile ? "font-semibold" : "font-medium"} text-slate-900`}>
+                  <div className={`faolla-mobile-chat-name truncate text-sm ${options?.mobile ? "font-semibold" : "font-medium"} text-slate-900`} data-no-translate="1">
                     {contactRow.name}
                   </div>
                   {!contactRow.isOfficial ? (
-                    <span className="truncate text-[11px] font-medium text-slate-400">{contactRow.subtitle}</span>
+                    <span className="truncate text-[11px] font-medium text-slate-400" data-no-translate="1">{contactRow.subtitle}</span>
                   ) : null}
                   {contactRow.badge ? (
                     <span className="inline-flex shrink-0 items-center rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium leading-none text-white">
@@ -4692,7 +4692,7 @@ export default function MePage() {
                   ) : null}
                 </div>
                 {contactRow.isOfficial ? (
-                  <div className={`${options?.mobile ? "mt-1" : ""} truncate text-[11px] text-slate-500`}>
+                  <div className={`${options?.mobile ? "mt-1" : ""} truncate text-[11px] text-slate-500`} data-no-translate="1">
                     {contactRow.subtitle}
                   </div>
                 ) : null}
@@ -4701,7 +4701,7 @@ export default function MePage() {
                 {contactRow.updatedAt ? formatSupportConversationTime(contactRow.updatedAt) : options?.mobile ? "未开始" : "未聊天"}
               </div>
             </div>
-            <div className={`faolla-mobile-chat-preview ${options?.mobile ? "text-[13px]" : "text-xs"} mt-2 truncate leading-5 text-slate-600`}>
+            <div className={`faolla-mobile-chat-preview ${options?.mobile ? "text-[13px]" : "text-xs"} mt-2 truncate leading-5 text-slate-600`} data-no-translate="1">
               {contactRow.preview}
             </div>
           </div>

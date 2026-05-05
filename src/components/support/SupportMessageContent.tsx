@@ -76,7 +76,10 @@ export default function SupportMessageContent({
 
   if (!attachmentPreview) {
     return (
-      <span className="faolla-support-message-text inline whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-[15px] leading-[1.35]">
+      <span
+        className="faolla-support-message-text inline whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-[15px] leading-[1.35]"
+        data-no-translate="1"
+      >
         {renderSupportMessageText(value)}
       </span>
     );
@@ -101,7 +104,7 @@ export default function SupportMessageContent({
   };
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2" data-no-translate="1">
       <button
         type="button"
         className="support-preserve-light-surface block w-full overflow-hidden rounded-[20px] bg-white p-1 shadow-[0_10px_24px_rgba(15,23,42,0.08)]"

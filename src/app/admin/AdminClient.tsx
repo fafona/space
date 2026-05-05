@@ -16208,9 +16208,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                          <div className="faolla-mobile-chat-name truncate text-sm font-semibold text-slate-900">{contactRow.name}</div>
+                          <div className="faolla-mobile-chat-name truncate text-sm font-semibold text-slate-900" data-no-translate="1">{contactRow.name}</div>
                           {!contactRow.isOfficial ? (
-                            <span className="truncate text-[11px] font-medium text-slate-400">{contactRow.subtitle}</span>
+                            <span className="truncate text-[11px] font-medium text-slate-400" data-no-translate="1">{contactRow.subtitle}</span>
                           ) : null}
                           {contactRow.badge ? (
                             <span className="inline-flex shrink-0 items-center rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium text-white">
@@ -16227,14 +16227,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                           ) : null}
                         </div>
                         {contactRow.isOfficial ? (
-                          <div className="mt-1 truncate text-[11px] text-slate-500">{contactRow.subtitle}</div>
+                          <div className="mt-1 truncate text-[11px] text-slate-500" data-no-translate="1">{contactRow.subtitle}</div>
                         ) : null}
                       </div>
                       <div className="faolla-mobile-chat-time shrink-0 text-[11px] text-slate-400">
                         {contactRow.updatedAt ? formatSupportConversationTime(contactRow.updatedAt) : "未开始"}
                       </div>
                     </div>
-                    <div className="faolla-mobile-chat-preview mt-2 truncate text-[13px] leading-5 text-slate-600">{contactRow.preview}</div>
+                    <div className="faolla-mobile-chat-preview mt-2 truncate text-[13px] leading-5 text-slate-600" data-no-translate="1">{contactRow.preview}</div>
                   </div>
                 </div>
               </button>
@@ -18127,9 +18127,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                             <div className="flex items-start justify-between gap-2">
                               <div className="min-w-0">
                                 <div className="flex items-center gap-2">
-                                  <div className="truncate text-sm font-medium text-slate-900">{contactRow.name}</div>
+                                  <div className="truncate text-sm font-medium text-slate-900" data-no-translate="1">{contactRow.name}</div>
                                   {!contactRow.isOfficial ? (
-                                    <span className="truncate text-[11px] font-medium text-slate-400">{contactRow.subtitle}</span>
+                                    <span className="truncate text-[11px] font-medium text-slate-400" data-no-translate="1">{contactRow.subtitle}</span>
                                   ) : null}
                                   {contactRow.badge ? (
                                     <span className="inline-flex shrink-0 items-center rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium leading-none text-white">
@@ -18146,14 +18146,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                                   ) : null}
                                 </div>
                                 {contactRow.isOfficial ? (
-                                  <div className="truncate text-[11px] text-slate-500">{contactRow.subtitle}</div>
+                                  <div className="truncate text-[11px] text-slate-500" data-no-translate="1">{contactRow.subtitle}</div>
                                 ) : null}
                               </div>
                               <div className="shrink-0 text-[11px] text-slate-400">
                                 {contactRow.updatedAt ? formatSupportConversationTime(contactRow.updatedAt) : "未聊天"}
                               </div>
                             </div>
-                            <div className="mt-2 truncate text-xs leading-5 text-slate-600">{contactRow.preview}</div>
+                            <div className="mt-2 truncate text-xs leading-5 text-slate-600" data-no-translate="1">{contactRow.preview}</div>
                           </div>
                         </div>
                       </div>
