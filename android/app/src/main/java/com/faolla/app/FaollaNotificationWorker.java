@@ -57,7 +57,7 @@ public class FaollaNotificationWorker extends Worker {
     private static final String NOTIFICATION_ACTION_OPEN = "com.faolla.app.OPEN_NOTIFICATION";
     private static final String NOTIFICATION_EXTRA_URL = "faolla_url";
     private static final int BADGE_NOTIFICATION_ID = 73010;
-    private static final int MESSAGE_NOTIFICATION_BASE_ID = 73100;
+    private static final int MESSAGE_NOTIFICATION_ID = 73100;
     private static final long POLL_DELAY_MS = 45_000L;
 
     public FaollaNotificationWorker(@NonNull Context context, @NonNull WorkerParameters workerParams) {
@@ -295,7 +295,6 @@ public class FaollaNotificationWorker extends Worker {
 
         ensureNotificationChannels(context);
         NotificationManagerCompat.from(context).cancel(BADGE_NOTIFICATION_ID);
-        int notificationId = MESSAGE_NOTIFICATION_BASE_ID + (int) (System.currentTimeMillis() % 900L);
         NotificationCompat.Builder notification = new NotificationCompat.Builder(context, MESSAGE_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_faolla)
             .setColor(Color.rgb(8, 17, 33))
@@ -305,7 +304,7 @@ public class FaollaNotificationWorker extends Worker {
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
-            .setContentIntent(buildNotificationPendingIntent(context, url, notificationId))
+            .setContentIntent(buildNotificationPendingIntent(context, url, MESSAGE_NOTIFICATION_ID))
             .setBadgeIconType(NotificationCompat.BADGE_ICON_SMALL)
             .setNumber(unreadCount);
         if (soundEnabled) {
@@ -318,7 +317,7 @@ public class FaollaNotificationWorker extends Worker {
         } else {
             notification.setVibrate(new long[] { 0L });
         }
-        NotificationManagerCompat.from(context).notify(notificationId, notification.build());
+        NotificationManagerCompat.from(context).notify(MESSAGE_NOTIFICATION_ID, notification.build());
     }
 
     static void syncUnreadBadge(Context context, int unreadCount) {
@@ -330,10 +329,12 @@ public class FaollaNotificationWorker extends Worker {
         NotificationManagerCompat notificationManager = NotificationManagerCompat.from(context);
         if (normalizedUnreadCount <= 0) {
             notificationManager.cancel(BADGE_NOTIFICATION_ID);
+            notificationManager.cancel(MESSAGE_NOTIFICATION_ID);
             return;
         }
 
         ensureNotificationChannels(context);
+        notificationManager.cancel(MESSAGE_NOTIFICATION_ID);
         String body = normalizedUnreadCount + " unread messages";
         NotificationCompat.Builder notification = new NotificationCompat.Builder(context, BADGE_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_faolla)

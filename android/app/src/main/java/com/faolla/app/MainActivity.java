@@ -54,7 +54,7 @@ public class MainActivity extends BridgeActivity {
     private static final String NOTIFICATION_EXTRA_URL = "faolla_url";
     private static final int NOTIFICATION_PERMISSION_REQUEST_CODE = 7301;
     private static final int BADGE_NOTIFICATION_ID = 73010;
-    private static final int MESSAGE_NOTIFICATION_BASE_ID = 73100;
+    private static final int MESSAGE_NOTIFICATION_ID = 73100;
     private final Handler updateProgressHandler = new Handler(Looper.getMainLooper());
     private long pendingUpdateDownloadId = -1L;
     private Uri pendingUpdateApkUri;
@@ -62,7 +62,6 @@ public class MainActivity extends BridgeActivity {
     private boolean updateInstallStarted = false;
     private FrameLayout launchCover;
     private boolean launchCoverHidden = false;
-    private int messageNotificationSerial = 0;
     private int nativeUnreadBadgeCount = 0;
     private String pendingNotificationUrl = "";
     private Runnable launchCoverFallbackRunnable;
@@ -727,8 +726,6 @@ public class MainActivity extends BridgeActivity {
         ensureNotificationChannels();
         cancelNativeBadgeSummaryNotification();
         Uri defaultSound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
-        int serial = messageNotificationSerial++ % 900;
-        int notificationId = MESSAGE_NOTIFICATION_BASE_ID + serial;
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, MESSAGE_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_faolla)
             .setColor(Color.rgb(8, 17, 33))
@@ -738,7 +735,7 @@ public class MainActivity extends BridgeActivity {
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
-            .setContentIntent(buildNotificationPendingIntent(url, notificationId))
+            .setContentIntent(buildNotificationPendingIntent(url, MESSAGE_NOTIFICATION_ID))
             .setBadgeIconType(NotificationCompat.BADGE_ICON_SMALL)
             .setNumber(unreadCount);
         if (soundEnabled) {
@@ -751,7 +748,7 @@ public class MainActivity extends BridgeActivity {
         } else {
             builder.setVibrate(new long[] { 0L });
         }
-        NotificationManagerCompat.from(this).notify(notificationId, builder.build());
+        NotificationManagerCompat.from(this).notify(MESSAGE_NOTIFICATION_ID, builder.build());
     }
 
     private String resolveCurrentOrigin() {
@@ -847,11 +844,13 @@ public class MainActivity extends BridgeActivity {
 
         NotificationManagerCompat notificationManager = NotificationManagerCompat.from(this);
         if (nativeUnreadBadgeCount <= 0) {
-            notificationManager.cancelAll();
+            notificationManager.cancel(BADGE_NOTIFICATION_ID);
+            notificationManager.cancel(MESSAGE_NOTIFICATION_ID);
             return;
         }
 
         ensureNotificationChannels();
+        notificationManager.cancel(MESSAGE_NOTIFICATION_ID);
         String body = nativeUnreadBadgeCount + " unread messages";
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, BADGE_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_faolla)
