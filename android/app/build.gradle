@@ -15,7 +15,7 @@ android {
         applicationId "com.faolla.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 38
+        versionCode 39
         versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
@@ -58,6 +58,7 @@ dependencies {
     implementation "androidx.core:core:$androidxCoreVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation "androidx.work:work-runtime:2.9.1"
+    implementation "com.google.firebase:firebase-messaging:25.0.1"
     implementation "me.leolin:ShortcutBadger:1.1.22@aar"
     implementation project(':capacitor-android')
     testImplementation "junit:junit:$junitVersion"

@@ -1,4 +1,3 @@
-import webpush from "web-push";
 import {
   incrementMerchantPushSubscriptionBadges,
   listMerchantPushSubscriptionsForMerchant,
@@ -11,6 +10,10 @@ import {
   saveStoredMerchantPushSubscriptions,
   type MerchantPushSubscriptionStoreClient,
 } from "@/lib/merchantPushSubscriptionStore";
+import {
+  notifyMerchantNativePushTokens,
+} from "@/lib/firebaseCloudMessaging";
+import type { MerchantNativePushTokenStoreClient } from "@/lib/merchantNativePushTokenStore";
 
 type MerchantPushNotificationInput = {
   merchantId: string;
@@ -27,7 +30,11 @@ type WebPushErrorLike = {
   message?: string;
 };
 
+type WebPushModule = typeof import("web-push");
+type WebPushSubscriptionInput = import("web-push").PushSubscription;
+
 let webPushConfigured = false;
+let webPushModule: WebPushModule | null = null;
 
 function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -60,21 +67,33 @@ export function isMerchantWebPushConfigured() {
   return Boolean(publicKey && privateKey && subject);
 }
 
-function ensureMerchantWebPushConfigured() {
+async function loadWebPushModule() {
+  if (webPushModule) return webPushModule;
+  const loaded = (await import(/* webpackIgnore: true */ "web-push")) as
+    | WebPushModule
+    | { default?: WebPushModule };
+  const resolved = "default" in loaded && loaded.default ? loaded.default : loaded;
+  webPushModule = resolved as WebPushModule;
+  return webPushModule;
+}
+
+async function ensureMerchantWebPushConfigured() {
   const { publicKey, privateKey, subject } = readWebPushConfig();
   if (!publicKey || !privateKey || !subject) return false;
+  const webpush = await loadWebPushModule();
   if (!webPushConfigured) {
     webpush.setVapidDetails(subject, publicKey, privateKey);
     webPushConfigured = true;
   }
-  return true;
+  return webpush;
 }
 
 async function sendMerchantWebPushMessage(
   subscription: MerchantWebPushSubscription,
   payload: Record<string, unknown>,
 ) {
-  if (!ensureMerchantWebPushConfigured()) {
+  const webpush = await ensureMerchantWebPushConfigured();
+  if (!webpush) {
     return {
       ok: false,
       expired: false,
@@ -82,7 +101,7 @@ async function sendMerchantWebPushMessage(
     };
   }
   try {
-    await webpush.sendNotification(subscription as webpush.PushSubscription, JSON.stringify(payload), {
+    await webpush.sendNotification(subscription as WebPushSubscriptionInput, JSON.stringify(payload), {
       TTL: 60,
       urgency: "high",
       topic: trimText(payload.tag),
@@ -131,15 +150,29 @@ export async function syncMerchantPushBadgeCountForSubscription(
 }
 
 export async function notifyMerchantPushSubscribers(
-  supabase: MerchantPushSubscriptionStoreClient,
+  supabase: MerchantPushSubscriptionStoreClient & MerchantNativePushTokenStoreClient,
   input: MerchantPushNotificationInput,
 ) {
   const merchantId = normalizeMerchantId(input.merchantId);
-  if (!merchantId || !isMerchantWebPushConfigured()) {
+  if (!merchantId) {
     return {
       delivered: 0,
       pruned: 0,
       skipped: true,
+    };
+  }
+
+  const nativeDelivery = await notifyMerchantNativePushTokens(supabase, input).catch(() => ({
+    delivered: 0,
+    pruned: 0,
+    skipped: true,
+  }));
+
+  if (!isMerchantWebPushConfigured()) {
+    return {
+      delivered: nativeDelivery.delivered,
+      pruned: nativeDelivery.pruned,
+      skipped: nativeDelivery.skipped,
     };
   }
 
@@ -147,18 +180,18 @@ export async function notifyMerchantPushSubscribers(
   const activeSubscriptions = listMerchantPushSubscriptionsForMerchant(payload, merchantId);
   if (activeSubscriptions.length === 0) {
     return {
-      delivered: 0,
-      pruned: 0,
-      skipped: true,
+      delivered: nativeDelivery.delivered,
+      pruned: nativeDelivery.pruned,
+      skipped: nativeDelivery.skipped,
     };
   }
 
   const prepared = incrementMerchantPushSubscriptionBadges(payload, merchantId, 1);
   if (prepared.deliveries.length === 0) {
     return {
-      delivered: 0,
-      pruned: 0,
-      skipped: true,
+      delivered: nativeDelivery.delivered,
+      pruned: nativeDelivery.pruned,
+      skipped: nativeDelivery.skipped,
     };
   }
 
@@ -188,8 +221,8 @@ export async function notifyMerchantPushSubscribers(
 
   if (expiredEndpoints.length === 0) {
     return {
-      delivered,
-      pruned: 0,
+      delivered: delivered + nativeDelivery.delivered,
+      pruned: nativeDelivery.pruned,
       skipped: false,
     };
   }
@@ -197,8 +230,8 @@ export async function notifyMerchantPushSubscribers(
   const prunedPayload = removeMerchantPushSubscriptionsByEndpoint(prepared.payload, expiredEndpoints);
   const saveResult = await saveStoredMerchantPushSubscriptions(supabase, prunedPayload);
   return {
-    delivered,
-    pruned: saveResult.error ? 0 : expiredEndpoints.length,
+    delivered: delivered + nativeDelivery.delivered,
+    pruned: (saveResult.error ? 0 : expiredEndpoints.length) + nativeDelivery.pruned,
     skipped: false,
   };
 }

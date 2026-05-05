@@ -48,7 +48,7 @@ import com.getcapacitor.BridgeActivity;
 import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
-    private static final int CURRENT_NATIVE_BUILD = 38;
+    private static final int CURRENT_NATIVE_BUILD = 39;
     private static final int LAUNCH_BACKGROUND_COLOR = Color.rgb(8, 17, 33);
     private static final String RUNTIME_PREFS_NAME = "faolla_native_runtime";
     private static final String KEY_NATIVE_CACHE_BUILD = "native_cache_build";
@@ -886,6 +886,7 @@ public class MainActivity extends BridgeActivity {
         nativeUnreadBadgeCount = persistedUnreadCount;
 
         if (!enabled) {
+            FaollaFirebaseTokenRegistrar.unregisterCurrentToken(this);
             prefs.edit()
                 .putBoolean(FaollaNotificationWorker.KEY_ENABLED, false)
                 .putBoolean(FaollaNotificationWorker.KEY_ALERTS_ENABLED, false)
@@ -944,6 +945,7 @@ public class MainActivity extends BridgeActivity {
         if (!hasPostNotificationPermission()) {
             requestNativeNotificationPermission();
         }
+        FaollaFirebaseTokenRegistrar.registerCurrentToken(this);
         FaollaNotificationWorker.scheduleNow(this);
     }
 

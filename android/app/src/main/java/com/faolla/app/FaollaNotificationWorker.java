@@ -59,6 +59,7 @@ public class FaollaNotificationWorker extends Worker {
     static final String KEY_NOTIFIED_NOTIFICATION_KEYS = "notified_notification_keys";
     static final String KEY_INITIALIZED = "initialized";
     static final String KEY_UNREAD_COUNT = "unread_count";
+    static final String KEY_FCM_TOKEN = "fcm_token";
 
     private static final String MESSAGE_CHANNEL_ID = "faolla_messages_v4";
     private static final String BADGE_CHANNEL_ID = "faolla_badges_v4";
@@ -348,7 +349,7 @@ public class FaollaNotificationWorker extends Worker {
         }
     }
 
-    private static void showMessageNotification(
+    static void showMessageNotification(
         Context context,
         String title,
         String body,
