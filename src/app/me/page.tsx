@@ -49,7 +49,9 @@ import {
   isFaollaSectionSearch,
   normalizeFaollaEntryUrl,
   readFaollaEntryUrlFromSearch,
+  readStoredFaollaEntryUrl,
   resolveFaollaEntryUrlFromBrowser,
+  writeStoredFaollaEntryUrl,
 } from "@/lib/faollaEntry";
 import { installFrontendAuthBridgeResponder, isTrustedFrontendAuthBridgeOrigin } from "@/lib/frontendAuthBridge";
 import { PERSONAL_CONSUMPTION_CHANGED_MESSAGE } from "@/lib/personalConsumptionBridge";
@@ -538,8 +540,10 @@ function readPersonalMobileViewport() {
 }
 
 function readInitialFaollaEmbedHref() {
-  if (typeof window === "undefined" || !isFaollaSectionSearch(window.location.search)) return "";
-  return readFaollaEntryUrlFromSearch(window.location.search, window.location.origin);
+  if (typeof window === "undefined") return "/";
+  const storedHref = readStoredFaollaEntryUrl(window.location.origin) || "/";
+  if (!isFaollaSectionSearch(window.location.search)) return storedHref;
+  return readFaollaEntryUrlFromSearch(window.location.search, window.location.origin) || storedHref;
 }
 
 function normalizePersonalFavoriteSiteUrl(value: unknown, fallbackOrigin = "https://faolla.com") {
@@ -2027,9 +2031,11 @@ export default function MePage() {
     if (typeof window === "undefined") return;
     const explicitFaollaSection = isFaollaSectionSearch(window.location.search);
     if (!explicitFaollaSection && !isStandaloneDisplayMode()) return;
-    setFaollaEmbedHref(
-      explicitFaollaSection ? resolveFaollaEntryUrlFromBrowser(window.location.search, window.location.origin) : "",
-    );
+    const storedHref = readStoredFaollaEntryUrl(window.location.origin) || "/";
+    const nextHref = explicitFaollaSection
+      ? resolveFaollaEntryUrlFromBrowser(window.location.search, window.location.origin) || storedHref
+      : storedHref;
+    setFaollaEmbedHref(nextHref);
     setDesktopSection("faolla");
     setMobileTab("faolla");
   }, []);
@@ -2893,10 +2899,9 @@ export default function MePage() {
   const faollaTargetHref = useMemo(
     () =>
       buildFaollaShellHref(
-        faollaEmbedHref,
+        faollaEmbedHref || "/",
         locale,
         typeof window !== "undefined" ? window.location.origin : "https://faolla.com",
-        { preferRuntimeOrigin: true },
       ),
     [faollaEmbedHref, locale],
   );
@@ -2906,14 +2911,16 @@ export default function MePage() {
         "/",
         locale,
         typeof window !== "undefined" ? window.location.origin : "https://faolla.com",
-        { preferRuntimeOrigin: true },
       ),
     [locale],
   );
-  const desktopFaollaTargetHref = desktopSection === "faolla" && !isMobileViewport ? faollaTargetHref : "about:blank";
-  const mobileFaollaTargetHref = mobileTab === "faolla" && isMobileViewport ? faollaTargetHref : "about:blank";
+  const desktopFaollaTargetHref = faollaTargetHref;
+  const mobileFaollaTargetHref = faollaTargetHref;
   const navigatePersonalFaollaHome = useCallback(() => {
     setFaollaEmbedHref("/");
+    if (typeof window !== "undefined") {
+      writeStoredFaollaEntryUrl(faollaHomeTargetHref, window.location.origin);
+    }
     if (!isMobileViewport && personalDesktopFaollaFrameRef.current) {
       personalDesktopFaollaFrameRef.current.src = faollaHomeTargetHref;
     }
@@ -2932,6 +2939,7 @@ export default function MePage() {
       if (now - personalFaollaBackendResetAtRef.current < 1200) return true;
       personalFaollaBackendResetAtRef.current = now;
       setFaollaEmbedHref("/");
+      writeStoredFaollaEntryUrl(faollaHomeTargetHref, window.location.origin);
       if (frame && frame.src !== faollaHomeTargetHref) {
         frame.src = faollaHomeTargetHref;
       }
@@ -2961,9 +2969,11 @@ export default function MePage() {
         nextHref,
         locale,
         typeof window !== "undefined" ? window.location.origin : "https://faolla.com",
-        { preferRuntimeOrigin: true },
       );
       setFaollaEmbedHref(nextHref);
+      if (typeof window !== "undefined") {
+        writeStoredFaollaEntryUrl(nextHref, window.location.origin);
+      }
       setDesktopSection("faolla");
       setMobileTab("faolla");
       if (!isMobileViewport && personalDesktopFaollaFrameRef.current) {
@@ -3120,6 +3130,7 @@ export default function MePage() {
         return;
       }
       setFaollaEmbedHref((current) => (current === normalized ? current : normalized));
+      writeStoredFaollaEntryUrl(normalized, window.location.origin);
     };
     window.addEventListener("message", handleMessage);
     return () => {

@@ -281,7 +281,9 @@ import {
   isFaollaAppShellSearch,
   isFaollaSectionSearch,
   normalizeFaollaEntryUrl,
+  readStoredFaollaEntryUrl,
   resolveFaollaEntryUrlFromBrowser,
+  writeStoredFaollaEntryUrl,
 } from "@/lib/faollaEntry";
 import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
@@ -4741,6 +4743,13 @@ type SupportNotificationPreferences = {
   vibrationEnabled: boolean;
 };
 
+function readInitialSupportFaollaEmbedHref() {
+  if (typeof window === "undefined") return "/";
+  const storedHref = readStoredFaollaEntryUrl(window.location.origin) || "/";
+  if (!isFaollaSectionSearch(window.location.search)) return storedHref;
+  return resolveFaollaEntryUrlFromBrowser(window.location.search, window.location.origin) || storedHref;
+}
+
 const SUPPORT_EMPTY_SIGNATURE_TEXT = "这家伙很懒，什么都没有留下。";
 const SUPPORT_PUSH_SERVICE_WORKER_PATH = "/faolla-sw.js";
 const DEFAULT_SUPPORT_NOTIFICATION_PREFERENCES: SupportNotificationPreferences = {
@@ -5341,13 +5350,14 @@ export default function AdminClient({
   useEffect(() => {
     supportMobileHomeTabRef.current = supportMobileHomeTab;
   }, [supportMobileHomeTab]);
-  const [supportFaollaEmbedHref, setSupportFaollaEmbedHref] = useState("");
+  const [supportFaollaEmbedHref, setSupportFaollaEmbedHref] = useState(readInitialSupportFaollaEmbedHref);
   useEffect(() => {
     if (typeof window === "undefined") return;
     const explicitFaollaSection = isFaollaSectionSearch(window.location.search);
     if (!explicitFaollaSection) return;
+    const storedHref = readStoredFaollaEntryUrl(window.location.origin) || "/";
     setSupportFaollaEmbedHref(
-      resolveFaollaEntryUrlFromBrowser(window.location.search, window.location.origin),
+      resolveFaollaEntryUrlFromBrowser(window.location.search, window.location.origin) || storedHref,
     );
     setMerchantDesktopSection("faolla");
     setSupportMobileHomeTab("faolla");
@@ -10841,31 +10851,30 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     getSiteIdFromStoreScope(storeScope) ||
     ""
   ).trim();
-  const supportFaollaBlankTargetHref = "about:blank";
   const supportMobileFaollaHref = supportFaollaEmbedHref.trim() || "/";
-  const supportFaollaShellActive = merchantDesktopSection === "faolla" || supportMobileHomeTab === "faolla";
-  const supportMobileFaollaTargetHref = useMemo(() => {
-    if (!supportFaollaShellActive) return supportFaollaBlankTargetHref;
-    return buildFaollaShellHref(
-      supportMobileFaollaHref,
-      locale,
-      typeof window !== "undefined" ? window.location.origin : "https://faolla.com",
-      { preferRuntimeOrigin: true },
-    );
-  }, [locale, supportFaollaBlankTargetHref, supportFaollaShellActive, supportMobileFaollaHref]);
-  const supportShouldRenderFaollaFrame = supportMobileFaollaTargetHref !== supportFaollaBlankTargetHref;
+  const supportMobileFaollaTargetHref = useMemo(
+    () =>
+      buildFaollaShellHref(
+        supportMobileFaollaHref,
+        locale,
+        typeof window !== "undefined" ? window.location.origin : "https://faolla.com",
+      ),
+    [locale, supportMobileFaollaHref],
+  );
   const supportFaollaHomeTargetHref = useMemo(
     () =>
       buildFaollaShellHref(
         "/",
         locale,
         typeof window !== "undefined" ? window.location.origin : "https://faolla.com",
-        { preferRuntimeOrigin: true },
       ),
     [locale],
   );
   const navigateSupportFaollaHome = useCallback(() => {
     setSupportFaollaEmbedHref("/");
+    if (typeof window !== "undefined") {
+      writeStoredFaollaEntryUrl(supportFaollaHomeTargetHref, window.location.origin);
+    }
     if (supportDesktopFaollaFrameRef.current) {
       supportDesktopFaollaFrameRef.current.src = supportFaollaHomeTargetHref;
     }
@@ -10884,6 +10893,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       if (now - supportFaollaBackendResetAtRef.current < 1200) return true;
       supportFaollaBackendResetAtRef.current = now;
       setSupportFaollaEmbedHref("/");
+      writeStoredFaollaEntryUrl(supportFaollaHomeTargetHref, window.location.origin);
       if (frame && frame.src !== supportFaollaHomeTargetHref) {
         frame.src = supportFaollaHomeTargetHref;
       }
@@ -10909,6 +10919,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         return;
       }
       setSupportFaollaEmbedHref((current) => (current === normalized ? current : normalized));
+      writeStoredFaollaEntryUrl(normalized, window.location.origin);
     };
     window.addEventListener("message", handleSupportFaollaMessage);
     return () => {
@@ -10920,12 +10931,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, []);
   const openSupportMobileHomeTab = useCallback((tab: SupportMobileHomeTab) => {
     setSupportMobileHomeTab(tab);
-  }, []);
-  const openSupportOfficialConversation = useCallback(() => {
-    setSupportDataActivated(true);
-    setSupportSelectedContactKey(SUPPORT_OFFICIAL_CONTACT_KEY);
-    setSupportMobileHomeTab("conversations");
-    setSupportMobileView("thread");
   }, []);
   const openSupportShuangkouScoreTool = useCallback(() => {
     if (typeof window === "undefined") return;
@@ -10972,47 +10977,18 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
     window.location.assign(targetUrl);
   }, []);
-  const supportFaollaDefaultContent = (
-    <div className="support-preserve-light-surface flex h-full min-h-0 w-full flex-1 flex-col bg-[#f7f8fa] px-5 pb-[calc(var(--faolla-mobile-safe-bottom)+5.5rem)] pt-[calc(var(--faolla-mobile-safe-top)+2rem)] text-slate-950">
-      <div className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center">
-        <div className="flex items-center gap-4">
-          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-lg font-semibold tracking-[0.08em] text-white">
-            FA
-          </div>
-          <div className="min-w-0">
-            <div className="text-2xl font-semibold tracking-tight">Faolla</div>
-            <div className="mt-1 text-sm text-slate-500">官方消息和系统通知</div>
-          </div>
-        </div>
-        <button
-          type="button"
-          className="mt-8 flex h-14 w-full items-center justify-between rounded-[20px] bg-white px-5 text-left text-[16px] font-semibold text-slate-950 shadow-[0_12px_32px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70"
-          onClick={openSupportOfficialConversation}
-        >
-          <span>进入官方会话</span>
-          <span className="text-2xl leading-none text-slate-300">›</span>
-        </button>
-      </div>
-    </div>
-  );
   const supportMobileFaollaContent = (
     <div className="support-preserve-light-surface relative min-h-0 flex-1 overflow-hidden bg-white">
-      {supportShouldRenderFaollaFrame ? (
-        <>
-          <div className="pointer-events-none absolute left-4 top-[calc(var(--faolla-mobile-safe-top)+0.75rem)] z-10">
-            <FaollaHomeButton className="pointer-events-auto h-11 w-11" onClick={navigateSupportFaollaHome} />
-          </div>
-          <iframe
-            ref={supportMobileFaollaFrameRef}
-            title="Faolla.com"
-            src={supportMobileFaollaTargetHref}
-            onLoad={(event) => resetSupportFaollaBackendFrame(event.currentTarget)}
-            className="absolute inset-0 h-full w-full border-0 bg-white"
-          />
-        </>
-      ) : (
-        supportFaollaDefaultContent
-      )}
+      <div className="pointer-events-none absolute left-4 top-[calc(var(--faolla-mobile-safe-top)+0.75rem)] z-10">
+        <FaollaHomeButton className="pointer-events-auto h-11 w-11" onClick={navigateSupportFaollaHome} />
+      </div>
+      <iframe
+        ref={supportMobileFaollaFrameRef}
+        title="Faolla.com"
+        src={supportMobileFaollaTargetHref}
+        onLoad={(event) => resetSupportFaollaBackendFrame(event.currentTarget)}
+        className="absolute inset-0 h-full w-full border-0 bg-white"
+      />
     </div>
   );
   const supportSelfSignature = normalizeSupportDisplayValue(supportSelfProfile?.signature);
@@ -17756,22 +17732,16 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               merchantDesktopSection === "faolla" ? "h-[100dvh] min-h-[720px]" : "hidden h-[calc(100vh-9rem)] min-h-[560px]"
             }`}
           >
-            {supportShouldRenderFaollaFrame ? (
-              <>
-                <div className="pointer-events-none absolute left-4 top-4 z-10">
-                  <FaollaHomeButton className="pointer-events-auto h-11 w-11" onClick={navigateSupportFaollaHome} />
-                </div>
-                <iframe
-                  ref={supportDesktopFaollaFrameRef}
-                  title="Faolla"
-                  src={supportMobileFaollaTargetHref}
-                  onLoad={(event) => resetSupportFaollaBackendFrame(event.currentTarget)}
-                  className="absolute inset-0 h-full w-full border-0 bg-transparent"
-                />
-              </>
-            ) : (
-              supportFaollaDefaultContent
-            )}
+            <div className="pointer-events-none absolute left-4 top-4 z-10">
+              <FaollaHomeButton className="pointer-events-auto h-11 w-11" onClick={navigateSupportFaollaHome} />
+            </div>
+            <iframe
+              ref={supportDesktopFaollaFrameRef}
+              title="Faolla"
+              src={supportMobileFaollaTargetHref}
+              onLoad={(event) => resetSupportFaollaBackendFrame(event.currentTarget)}
+              className="absolute inset-0 h-full w-full border-0 bg-transparent"
+            />
           </div>
         </div>
       </div>

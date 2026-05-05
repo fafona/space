@@ -59,6 +59,20 @@ function isUsableFrontendEntryUrl(value: string) {
   }
 }
 
+function canonicalizeStoredFaollaEntryUrl(value: string) {
+  try {
+    const url = new URL(value);
+    if (url.hostname.trim().toLowerCase() === "www.faolla.com") {
+      url.hostname = "faolla.com";
+    }
+    url.searchParams.delete("__faollaInlineBuild");
+    url.searchParams.delete("__faollaWebBuild");
+    return url.toString();
+  } catch {
+    return value;
+  }
+}
+
 export function isFaollaBackendShellUrl(value: unknown, fallbackOrigin?: string | null) {
   const normalized = normalizeFaollaEntryUrl(value, fallbackOrigin, { allowFaollaCrossOrigin: true });
   if (!normalized) return false;
@@ -105,13 +119,31 @@ export function readStoredFaollaEntryUrl(fallbackOrigin?: string | null) {
         allowFaollaCrossOrigin: true,
       });
       if (!normalized) continue;
-      if (isUsableFrontendEntryUrl(normalized)) return normalized;
+      const storedValue = canonicalizeStoredFaollaEntryUrl(normalized);
+      if (isUsableFrontendEntryUrl(storedValue)) return storedValue;
       storage.removeItem(FAOLLA_LAST_ENTRY_STORAGE_KEY);
     } catch {
       // Some browsers block storage in private or embedded contexts.
     }
   }
   return "";
+}
+
+export function writeStoredFaollaEntryUrl(value: unknown, fallbackOrigin?: string | null) {
+  if (typeof window === "undefined") return "";
+  const normalized = normalizeFaollaEntryUrl(value, fallbackOrigin, { allowFaollaCrossOrigin: true });
+  if (!normalized || !isUsableFrontendEntryUrl(normalized)) return "";
+
+  const storedValue = canonicalizeStoredFaollaEntryUrl(normalized);
+
+  for (const storage of [window.sessionStorage, window.localStorage]) {
+    try {
+      storage.setItem(FAOLLA_LAST_ENTRY_STORAGE_KEY, storedValue);
+    } catch {
+      // Some browsers block storage in private or embedded contexts.
+    }
+  }
+  return storedValue;
 }
 
 export function clearStoredFaollaEntryUrl() {

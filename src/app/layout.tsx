@@ -123,8 +123,12 @@ const FAOLLA_APP_SHELL_PREPAINT_SCRIPT = `
     if (!isAppShell) return;
     const isLaunch = (window.location.pathname || "") === "/launch";
     const color = isLaunch ? "#081121" : "#f2f3f5";
+    const isEmbedded = window.parent && window.parent !== window;
     document.documentElement.dataset.faollaAppShell = "true";
     document.documentElement.dataset.faollaLaunch = isLaunch ? "true" : "false";
+    if (isEmbedded) {
+      document.documentElement.dataset.faollaWebLaunchReady = "true";
+    }
     document.documentElement.style.backgroundColor = color;
     const paintBody = () => {
       if (document.body) document.body.style.backgroundColor = color;

@@ -10,7 +10,9 @@ import {
   isFaollaAppShellSearch,
   isFaollaAppShellUrl,
   preserveFaollaAppShellHref,
+  readStoredFaollaEntryUrl,
   resolveFaollaEntryUrlFromBrowser,
+  writeStoredFaollaEntryUrl,
 } from "./faollaEntry";
 
 function makeStorage() {
@@ -70,6 +72,22 @@ test("does not use cached or referrer guesses for Faolla shell entry", () => {
   assert.equal(resolveFaollaEntryUrlFromBrowser("", "https://faolla.com"), "");
   assert.equal(localStorage.getItem(FAOLLA_LAST_ENTRY_STORAGE_KEY), null);
   assert.equal(sessionStorage.getItem(FAOLLA_LAST_ENTRY_STORAGE_KEY), null);
+});
+
+test("stores and restores the last usable Faolla frontend entry", () => {
+  installBrowser("https://www.faolla.com");
+
+  assert.equal(
+    writeStoredFaollaEntryUrl("https://fafona.faolla.com/?appShell=faolla&__faollaInlineBuild=abc123", "https://www.faolla.com"),
+    "https://fafona.faolla.com/?appShell=faolla",
+  );
+  assert.equal(readStoredFaollaEntryUrl("https://www.faolla.com"), "https://fafona.faolla.com/?appShell=faolla");
+  assert.equal(writeStoredFaollaEntryUrl("https://www.faolla.com/admin", "https://www.faolla.com"), "");
+  assert.equal(readStoredFaollaEntryUrl("https://www.faolla.com"), "https://fafona.faolla.com/?appShell=faolla");
+  assert.equal(
+    writeStoredFaollaEntryUrl("https://www.faolla.com/?appShell=faolla", "https://www.faolla.com"),
+    "https://faolla.com/?appShell=faolla",
+  );
 });
 
 test("rejects backend routes as Faolla frontend entries", () => {
