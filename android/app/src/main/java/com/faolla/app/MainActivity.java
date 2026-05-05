@@ -48,7 +48,7 @@ import com.getcapacitor.BridgeActivity;
 import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
-    private static final int CURRENT_NATIVE_BUILD = 32;
+    private static final int CURRENT_NATIVE_BUILD = 33;
     private static final int LAUNCH_BACKGROUND_COLOR = Color.rgb(8, 17, 33);
     private static final String RUNTIME_PREFS_NAME = "faolla_native_runtime";
     private static final String KEY_NATIVE_CACHE_BUILD = "native_cache_build";
@@ -840,20 +840,23 @@ public class MainActivity extends BridgeActivity {
         }
 
         boolean enabled = readJsonBoolean(payload, "enabled", true);
-        int unreadCount = readJsonInt(payload, "unreadCount", nativeUnreadBadgeCount);
+        android.content.SharedPreferences prefs = FaollaNotificationWorker.getPrefs(this);
+        int storedUnreadCount = prefs.getInt(FaollaNotificationWorker.KEY_UNREAD_COUNT, nativeUnreadBadgeCount);
+        int requestedUnreadCount = readJsonInt(payload, "unreadCount", storedUnreadCount);
+        int unreadCount = requestedUnreadCount > 0
+            ? requestedUnreadCount
+            : Math.max(0, Math.min(999, storedUnreadCount));
         nativeUnreadBadgeCount = unreadCount;
 
-        android.content.SharedPreferences prefs = FaollaNotificationWorker.getPrefs(this);
         if (!enabled) {
-            int badgeCount = Math.max(0, Math.min(999, unreadCount));
             prefs.edit()
                 .putBoolean(FaollaNotificationWorker.KEY_ENABLED, false)
                 .putBoolean(FaollaNotificationWorker.KEY_INITIALIZED, false)
-                .putInt(FaollaNotificationWorker.KEY_UNREAD_COUNT, badgeCount)
+                .putInt(FaollaNotificationWorker.KEY_UNREAD_COUNT, 0)
                 .remove(FaollaNotificationWorker.KEY_NOTIFIED_NOTIFICATION_KEYS)
                 .apply();
             FaollaNotificationWorker.cancel(this);
-            syncNativeUnreadBadge(badgeCount, true);
+            syncNativeUnreadBadge(0, true);
             return;
         }
 
@@ -889,10 +892,10 @@ public class MainActivity extends BridgeActivity {
             FaollaNotificationWorker.rememberNotificationKey(prefs, latestNotificationKey);
         }
 
-        if (unreadCount > 0) {
-            syncNativeUnreadBadge(unreadCount);
-        } else {
-            syncNativeUnreadBadge(0);
+        if (requestedUnreadCount > 0) {
+            syncNativeUnreadBadge(requestedUnreadCount);
+        } else if (unreadCount > 0) {
+            applyLauncherBadgeCount(unreadCount);
         }
         if (!hasPostNotificationPermission()) {
             requestNativeNotificationPermission();

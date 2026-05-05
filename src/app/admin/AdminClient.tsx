@@ -13904,9 +13904,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       readRecentMerchantLaunchMerchantId() ||
       ""
     ).trim();
-    if (supportSystemNotificationsEnabled && !siteId) return;
-    const enabled = Boolean(supportSystemNotificationsEnabled && siteId);
-    if (enabled && (!supportDataActivated || !supportUnreadStateHydrated)) return;
+    if (!siteId) return;
+    if (!supportDataActivated || !supportUnreadStateHydrated) return;
+    const enabled = Boolean(supportSystemNotificationsEnabled);
     configureFaollaNativeNotificationSync({
       enabled,
       baseUrl: window.location.origin,
