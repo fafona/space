@@ -18,6 +18,8 @@ const FAOLLA_NATIVE_WEB_CACHE_BUILD_STORAGE_KEY = "faolla:native-web-cache-build
 const FAOLLA_NATIVE_BUILD_STORAGE_KEY = "faolla:native-build:v1";
 const FAOLLA_NATIVE_WEB_RELOAD_STORAGE_KEY = "faolla:native-web-build-reload:v1";
 const FAOLLA_NATIVE_WEB_BUILD_CHECK_THROTTLE_MS = 60_000;
+const FAOLLA_NATIVE_STARTUP_MAINTENANCE_DELAY_MS = 3_200;
+const FAOLLA_NATIVE_RESUME_MAINTENANCE_DELAY_MS = 1_400;
 const FAOLLA_LAUNCH_BAR_COLOR = "#081121";
 const FAOLLA_CONTENT_BAR_COLOR = "#ffffff";
 
@@ -221,7 +223,7 @@ function isLaunchContentReady() {
   return document.readyState === "complete" && visibleText.length > 0;
 }
 
-function scheduleLaunchCoverHideWhenContentReady(minDelayMs = 260, maxDelayMs = 3800) {
+function scheduleLaunchCoverHideWhenContentReady(minDelayMs = 120, maxDelayMs = 2400) {
   const startedAt = Date.now();
   const tick = () => {
     const elapsed = Date.now() - startedAt;
@@ -231,7 +233,7 @@ function scheduleLaunchCoverHideWhenContentReady(minDelayMs = 260, maxDelayMs = 
       });
       return;
     }
-    window.setTimeout(tick, 80);
+    window.setTimeout(tick, 50);
   };
   window.setTimeout(tick, minDelayMs);
 }
@@ -454,28 +456,18 @@ export default function CapacitorAppBridge() {
     const launchCoverHideFallback = window.setTimeout(scheduleInitialLaunchCoverHide, 9000);
 
     scheduleInitialLaunchCoverHide();
-    const nativeWebBuildCheckTimer = window.setTimeout(() => {
-      void syncNativeWebBuild(false)
-        .then((status) => {
-          if (status === "ready") scheduleInitialLaunchCoverHide();
-        })
-        .catch(() => {
-          scheduleInitialLaunchCoverHide();
-        });
-    }, 700);
-    void refreshNativeBuildCachesOnce()
-      .then(() => syncNativeWebBuild(true))
-      .then((status) => {
-        if (status === "ready") scheduleInitialLaunchCoverHide();
-      })
-      .catch(() => {
-        scheduleInitialLaunchCoverHide();
-      });
+    const nativeStartupMaintenanceTimer = window.setTimeout(() => {
+      void refreshNativeBuildCachesOnce()
+        .then(() => syncNativeWebBuild(true))
+        .catch(() => undefined);
+    }, FAOLLA_NATIVE_STARTUP_MAINTENANCE_DELAY_MS);
     const nativeSessionRefreshTimer = window.setTimeout(refreshNativeSession, 1800);
 
     void App.addListener("appStateChange", ({ isActive }) => {
       if (isActive) {
-        void syncNativeWebBuild(true);
+        window.setTimeout(() => {
+          void syncNativeWebBuild(true);
+        }, FAOLLA_NATIVE_RESUME_MAINTENANCE_DELAY_MS);
         refreshNativeSession();
         scheduleNativeOrientationSync();
       }
@@ -509,7 +501,7 @@ export default function CapacitorAppBridge() {
       removeBackButtonListener?.();
       removeAppStateListener?.();
       window.clearTimeout(launchCoverHideFallback);
-      window.clearTimeout(nativeWebBuildCheckTimer);
+      window.clearTimeout(nativeStartupMaintenanceTimer);
       window.clearTimeout(nativeSessionRefreshTimer);
       if (previousNativeOpenUrlHandler) {
         nativeOpenUrlWindow.__faollaNativeOpenUrl = previousNativeOpenUrlHandler;

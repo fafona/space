@@ -141,6 +141,55 @@ const FAOLLA_APP_SHELL_PREPAINT_SCRIPT = `
 })();
 `;
 
+const FAOLLA_NATIVE_FAST_LAUNCH_SCRIPT = `
+(() => {
+  if (typeof window === "undefined") return;
+  try {
+    if ((window.location.pathname || "") !== "/launch") return;
+    const params = new URLSearchParams(window.location.search || "");
+    const isNativeLaunch =
+      (params.get("appShell") || "").trim().toLowerCase() === "faolla" ||
+      (params.get("nativeStart") || "").trim() === "1";
+    if (!isNativeLaunch || params.has("nativeAuthRetry")) return;
+
+    const storageKey = "merchant-space:recent-merchant-launch:v1";
+    const maxAgeMs = 30 * 24 * 60 * 60 * 1000;
+    const readRecentMerchantId = (storage) => {
+      if (!storage) return "";
+      const raw = storage.getItem(storageKey) || "";
+      if (!raw) return "";
+      const record = JSON.parse(raw);
+      const merchantId = String(record && record.merchantId ? record.merchantId : "").trim();
+      const updatedAt = Number(record && record.updatedAt ? record.updatedAt : 0);
+      if (!/^\\d{8}$/.test(merchantId)) return "";
+      if (!Number.isFinite(updatedAt) || updatedAt <= 0 || Date.now() - updatedAt > maxAgeMs) return "";
+      return merchantId;
+    };
+
+    let merchantId = "";
+    try {
+      merchantId = readRecentMerchantId(window.sessionStorage);
+    } catch {
+      merchantId = "";
+    }
+    if (!merchantId) {
+      try {
+        merchantId = readRecentMerchantId(window.localStorage);
+      } catch {
+        merchantId = "";
+      }
+    }
+    if (!merchantId) return;
+
+    const target = new URL("/" + merchantId, window.location.origin);
+    target.searchParams.set("appShell", "faolla");
+    window.location.replace(target.pathname + target.search + target.hash);
+  } catch {
+    // Fast launch is best-effort; the normal launch page can still recover.
+  }
+})();
+`;
+
 const FAOLLA_APP_SHELL_LOCATION_SCRIPT = `
 (() => {
   if (typeof window === "undefined") return;
@@ -1057,6 +1106,7 @@ export default async function RootLayout({
         <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=20260409c" />
         <link rel="manifest" href="/manifest.webmanifest" />
         <script id="faolla-app-shell-prepaint" dangerouslySetInnerHTML={{ __html: FAOLLA_APP_SHELL_PREPAINT_SCRIPT }} />
+        <script id="faolla-native-fast-launch" dangerouslySetInnerHTML={{ __html: FAOLLA_NATIVE_FAST_LAUNCH_SCRIPT }} />
         <style id="faolla-mobile-shell-size-overrides" dangerouslySetInnerHTML={{ __html: FAOLLA_MOBILE_SHELL_INLINE_STYLE }} />
       </head>
       <body>
