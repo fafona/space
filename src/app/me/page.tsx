@@ -1943,7 +1943,9 @@ function MobileBottomNav({
                 key={item.key}
                 type="button"
                 className={`relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0 rounded-[18px] px-1 py-1 text-[10px] font-medium transition ${
-                  active ? "bg-slate-100 text-slate-950 shadow-none" : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
+                  active
+                    ? "faolla-mobile-nav-tab-active bg-slate-200 text-slate-950 ring-1 ring-slate-950/10 shadow-sm"
+                    : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
                 }`}
                 onClick={() => onChange(item.key)}
               >

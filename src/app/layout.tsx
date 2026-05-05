@@ -419,6 +419,14 @@ html[data-faolla-web-launch-ready="true"] #faolla-app-web-launch-cover {
     color: #0f172a !important;
     box-shadow: none !important;
   }
+  .support-mobile-nav-shell button.faolla-mobile-nav-tab-active {
+    background: #e2e8f0 !important;
+    color: #020617 !important;
+    font-weight: 700 !important;
+    box-shadow:
+      inset 0 0 0 1px rgba(15, 23, 42, 0.1),
+      0 8px 18px rgba(15, 23, 42, 0.12) !important;
+  }
   .support-mobile-nav-shell svg {
     width: 1.25rem !important;
     height: 1.25rem !important;

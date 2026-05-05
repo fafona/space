@@ -197,6 +197,15 @@ html[data-i18n-pending="1"] body {
     border-radius: 1.95rem !important;
   }
 
+  .support-mobile-nav-shell button.faolla-mobile-nav-tab-active {
+    background: #e2e8f0 !important;
+    color: #020617 !important;
+    font-weight: 700 !important;
+    box-shadow:
+      inset 0 0 0 1px rgba(15, 23, 42, 0.1),
+      0 8px 18px rgba(15, 23, 42, 0.12) !important;
+  }
+
   .support-mobile-nav-shell svg {
     width: 1.6rem !important;
     height: 1.6rem !important;
