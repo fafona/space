@@ -729,7 +729,6 @@ public class MainActivity extends BridgeActivity {
         }
 
         ensureNotificationChannels();
-        cancelNativeBadgeSummaryNotification();
         Uri defaultSound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, MESSAGE_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_faolla)
@@ -755,6 +754,7 @@ public class MainActivity extends BridgeActivity {
         }
         Notification notification = FaollaLauncherBadge.withBadgeCount(builder.build(), unreadCount);
         NotificationManagerCompat.from(this).notify(MESSAGE_NOTIFICATION_ID, notification);
+        syncNativeUnreadBadge(unreadCount, false);
     }
 
     private String resolveCurrentOrigin() {
@@ -846,6 +846,10 @@ public class MainActivity extends BridgeActivity {
     }
 
     private void syncNativeUnreadBadge(int unreadCount) {
+        syncNativeUnreadBadge(unreadCount, true);
+    }
+
+    private void syncNativeUnreadBadge(int unreadCount, boolean cancelMessageNotification) {
         storeNativeUnreadBadgeCount(unreadCount);
         if (!hasPostNotificationPermission()) {
             return;
@@ -859,7 +863,9 @@ public class MainActivity extends BridgeActivity {
         }
 
         ensureNotificationChannels();
-        notificationManager.cancel(MESSAGE_NOTIFICATION_ID);
+        if (cancelMessageNotification) {
+            notificationManager.cancel(MESSAGE_NOTIFICATION_ID);
+        }
         String body = nativeUnreadBadgeCount + " unread messages";
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, BADGE_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_faolla)
@@ -889,14 +895,6 @@ public class MainActivity extends BridgeActivity {
 
     private void applyLauncherBadgeCount(int unreadCount) {
         FaollaLauncherBadge.applyCount(this, unreadCount);
-    }
-
-    private void cancelNativeBadgeSummaryNotification() {
-        try {
-            NotificationManagerCompat.from(this).cancel(BADGE_NOTIFICATION_ID);
-        } catch (Exception ignored) {
-            // Badge summary cleanup is best-effort.
-        }
     }
 
     private void openUrlInCurrentApp(String url) {

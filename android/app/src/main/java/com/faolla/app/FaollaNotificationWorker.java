@@ -296,7 +296,6 @@ public class FaollaNotificationWorker extends Worker {
         }
 
         ensureNotificationChannels(context);
-        NotificationManagerCompat.from(context).cancel(BADGE_NOTIFICATION_ID);
         NotificationCompat.Builder notification = new NotificationCompat.Builder(context, MESSAGE_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_faolla)
             .setColor(Color.rgb(8, 17, 33))
@@ -321,9 +320,14 @@ public class FaollaNotificationWorker extends Worker {
         }
         Notification postedNotification = FaollaLauncherBadge.withBadgeCount(notification.build(), unreadCount);
         NotificationManagerCompat.from(context).notify(MESSAGE_NOTIFICATION_ID, postedNotification);
+        syncUnreadBadge(context, unreadCount, false);
     }
 
     static void syncUnreadBadge(Context context, int unreadCount) {
+        syncUnreadBadge(context, unreadCount, true);
+    }
+
+    private static void syncUnreadBadge(Context context, int unreadCount, boolean cancelMessageNotification) {
         int normalizedUnreadCount = Math.max(0, Math.min(999, unreadCount));
         applyLauncherBadgeCount(context, normalizedUnreadCount);
         if (!hasPostNotificationPermission(context)) {
@@ -338,7 +342,9 @@ public class FaollaNotificationWorker extends Worker {
         }
 
         ensureNotificationChannels(context);
-        notificationManager.cancel(MESSAGE_NOTIFICATION_ID);
+        if (cancelMessageNotification) {
+            notificationManager.cancel(MESSAGE_NOTIFICATION_ID);
+        }
         String body = normalizedUnreadCount + " unread messages";
         NotificationCompat.Builder notification = new NotificationCompat.Builder(context, BADGE_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_faolla)

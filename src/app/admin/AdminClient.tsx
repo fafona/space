@@ -13769,10 +13769,17 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   useEffect(() => {
     if (isPlatformEditor || !supportDataActivated) return;
+    if (!supportUnreadStateHydrated && supportEffectiveBadgeCount <= 0) return;
     if (!supportPushBadgeHydrated && supportEffectiveBadgeCount <= 0) return;
     void syncSupportAppBadge(supportEffectiveBadgeCount);
     void syncSupportServiceWorkerBadge(supportEffectiveBadgeCount);
-  }, [isPlatformEditor, supportDataActivated, supportEffectiveBadgeCount, supportPushBadgeHydrated]);
+  }, [
+    isPlatformEditor,
+    supportDataActivated,
+    supportEffectiveBadgeCount,
+    supportPushBadgeHydrated,
+    supportUnreadStateHydrated,
+  ]);
 
   useEffect(() => {
     if (isPlatformEditor || typeof window === "undefined" || !canUseFaollaNativeNotifications()) return;
@@ -13787,6 +13794,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       ""
     ).trim();
     const enabled = Boolean(supportSystemNotificationsEnabled && siteId);
+    if (enabled && !supportUnreadStateHydrated && supportEffectiveBadgeCount <= 0) return;
     configureFaollaNativeNotificationSync({
       enabled,
       baseUrl: window.location.origin,
@@ -13813,6 +13821,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     supportPeerLastReadMap,
     supportReadMerchantId,
     supportSystemNotificationsEnabled,
+    supportUnreadStateHydrated,
     supportVibrationEnabled,
   ]);
 
