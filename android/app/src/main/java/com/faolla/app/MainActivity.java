@@ -48,7 +48,7 @@ import com.getcapacitor.BridgeActivity;
 import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
-    private static final int CURRENT_NATIVE_BUILD = 33;
+    private static final int CURRENT_NATIVE_BUILD = 34;
     private static final int LAUNCH_BACKGROUND_COLOR = Color.rgb(8, 17, 33);
     private static final String RUNTIME_PREFS_NAME = "faolla_native_runtime";
     private static final String KEY_NATIVE_CACHE_BUILD = "native_cache_build";
@@ -68,6 +68,7 @@ public class MainActivity extends BridgeActivity {
     private FrameLayout launchCover;
     private boolean launchCoverHidden = false;
     private int nativeUnreadBadgeCount = 0;
+    private final Runnable nativeBadgeRestoreRunnable = () -> restoreNativeUnreadBadgeFromPrefs(true);
     private String pendingNotificationUrl = "";
     private Runnable launchCoverFallbackRunnable;
     private BroadcastReceiver updateDownloadReceiver;
@@ -273,12 +274,16 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onPause() {
         CookieManager.getInstance().flush();
+        restoreNativeUnreadBadgeFromPrefs(true);
+        scheduleNativeUnreadBadgeRestore();
         super.onPause();
     }
 
     @Override
     public void onStop() {
         CookieManager.getInstance().flush();
+        restoreNativeUnreadBadgeFromPrefs(true);
+        scheduleNativeUnreadBadgeRestore();
         super.onStop();
     }
 
@@ -287,6 +292,7 @@ public class MainActivity extends BridgeActivity {
         super.onResume();
         configureWebViewRuntime();
         restoreNativeUnreadBadgeFromPrefs(true);
+        scheduleNativeUnreadBadgeRestore();
         if (updateInstallStarted && pendingUpdateApkUri != null) {
             updateInstallStarted = false;
             dispatchUpdateEvent("downloaded", 100, "");
@@ -295,6 +301,7 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onDestroy() {
+        updateProgressHandler.removeCallbacks(nativeBadgeRestoreRunnable);
         if (launchCoverFallbackRunnable != null) {
             updateProgressHandler.removeCallbacks(launchCoverFallbackRunnable);
             launchCoverFallbackRunnable = null;
@@ -966,6 +973,13 @@ public class MainActivity extends BridgeActivity {
         if (syncNotification && nativeUnreadBadgeCount > 0 && hasPostNotificationPermission()) {
             syncNativeUnreadBadge(nativeUnreadBadgeCount);
         }
+    }
+
+    private void scheduleNativeUnreadBadgeRestore() {
+        updateProgressHandler.removeCallbacks(nativeBadgeRestoreRunnable);
+        updateProgressHandler.postDelayed(nativeBadgeRestoreRunnable, 300L);
+        updateProgressHandler.postDelayed(nativeBadgeRestoreRunnable, 1200L);
+        updateProgressHandler.postDelayed(nativeBadgeRestoreRunnable, 3000L);
     }
 
     private void openUrlInCurrentApp(String url) {
