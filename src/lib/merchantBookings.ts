@@ -540,6 +540,12 @@ export function isMerchantBookingPendingMerchantTouch(
   return new Date(updatedAt).getTime() > new Date(merchantTouchedAt).getTime();
 }
 
+export function isMerchantBookingNewForMerchant(
+  record: Pick<MerchantBookingRecord, "status" | "updatedAt" | "merchantTouchedAt">,
+) {
+  return record.status === "active" && isMerchantBookingPendingMerchantTouch(record);
+}
+
 export function shouldSendMerchantBookingConfirmationEmail(input: {
   currentStatus: MerchantBookingStatus;
   nextStatus: MerchantBookingStatus;

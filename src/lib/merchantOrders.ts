@@ -265,6 +265,12 @@ export function isMerchantOrderPendingMerchantTouch(
   return new Date(updatedAt).getTime() > new Date(merchantTouchedAt).getTime();
 }
 
+export function isMerchantOrderNewForMerchant(
+  record: Pick<MerchantOrderRecord, "status" | "updatedAt" | "merchantTouchedAt">,
+) {
+  return record.status === "pending" && isMerchantOrderPendingMerchantTouch(record);
+}
+
 export function applyMerchantOrderAction(
   record: MerchantOrderRecord,
   action: MerchantOrderAction,

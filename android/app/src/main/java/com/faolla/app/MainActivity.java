@@ -31,6 +31,7 @@ import android.view.ViewParent;
 import android.view.Window;
 import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
+import android.webkit.ServiceWorkerController;
 import android.webkit.URLUtil;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -47,7 +48,10 @@ import com.getcapacitor.BridgeActivity;
 import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
+    private static final int CURRENT_NATIVE_BUILD = 31;
     private static final int LAUNCH_BACKGROUND_COLOR = Color.rgb(8, 17, 33);
+    private static final String RUNTIME_PREFS_NAME = "faolla_native_runtime";
+    private static final String KEY_NATIVE_CACHE_BUILD = "native_cache_build";
     private static final String APK_MIME_TYPE = "application/vnd.android.package-archive";
     private static final String MESSAGE_CHANNEL_ID = "faolla_messages_v2";
     private static final String BADGE_CHANNEL_ID = "faolla_badges_v3";
@@ -74,6 +78,7 @@ public class MainActivity extends BridgeActivity {
         getWindow().setBackgroundDrawable(new ColorDrawable(LAUNCH_BACKGROUND_COLOR));
         applyLaunchSystemBars();
         super.onCreate(savedInstanceState);
+        clearWebViewCacheAfterNativeUpgrade();
         installLaunchCover();
         restoreNativeUnreadBadgeFromPrefs(true);
 
@@ -222,11 +227,32 @@ public class MainActivity extends BridgeActivity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             settings.setAlgorithmicDarkeningAllowed(false);
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            ServiceWorkerController
+                .getInstance()
+                .getServiceWorkerWebSettings()
+                .setCacheMode(WebSettings.LOAD_DEFAULT);
+        }
 
         CookieManager cookieManager = CookieManager.getInstance();
         cookieManager.setAcceptCookie(true);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             cookieManager.setAcceptThirdPartyCookies(webView, true);
+        }
+    }
+
+    private void clearWebViewCacheAfterNativeUpgrade() {
+        try {
+            android.content.SharedPreferences prefs = getSharedPreferences(RUNTIME_PREFS_NAME, Context.MODE_PRIVATE);
+            int seenBuild = prefs.getInt(KEY_NATIVE_CACHE_BUILD, 0);
+            if (seenBuild >= CURRENT_NATIVE_BUILD) return;
+            WebView webView = this.bridge == null ? null : this.bridge.getWebView();
+            if (webView != null) {
+                webView.clearCache(true);
+            }
+            prefs.edit().putInt(KEY_NATIVE_CACHE_BUILD, CURRENT_NATIVE_BUILD).apply();
+        } catch (Exception ignored) {
+            // Cache clearing is best effort; the web layer also refreshes service worker caches.
         }
     }
 
@@ -879,6 +905,9 @@ public class MainActivity extends BridgeActivity {
     private void syncNativeUnreadBadge(int unreadCount, boolean cancelMessageNotification) {
         storeNativeUnreadBadgeCount(unreadCount);
         if (!hasPostNotificationPermission()) {
+            if (nativeUnreadBadgeCount > 0) {
+                requestNativeNotificationPermission();
+            }
             return;
         }
 
@@ -900,8 +929,9 @@ public class MainActivity extends BridgeActivity {
             .setContentTitle("Faolla")
             .setContentText(body)
             .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setSilent(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setSound(null)
+            .setVibrate(new long[] { 0L })
             .setOnlyAlertOnce(true)
             .setAutoCancel(false)
             .setContentIntent(buildNotificationPendingIntent("/launch?appShell=faolla", BADGE_NOTIFICATION_ID))

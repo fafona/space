@@ -19,13 +19,13 @@ import {
 } from "@/lib/platformSupportInboxStore";
 import { listMerchantBookings } from "@/lib/merchantBookings.server";
 import {
-  isMerchantBookingPendingMerchantTouch,
+  isMerchantBookingNewForMerchant,
   type MerchantBookingRecord,
 } from "@/lib/merchantBookings";
 import { listMerchantOrders } from "@/lib/merchantOrders.server";
 import {
   formatMerchantOrderAmount,
-  isMerchantOrderPendingMerchantTouch,
+  isMerchantOrderNewForMerchant,
   type MerchantOrderRecord,
 } from "@/lib/merchantOrders";
 import {
@@ -292,13 +292,13 @@ export async function GET(request: Request) {
   });
 
   bookingRecords.forEach((booking) => {
-    if (booking.status !== "active" || !isMerchantBookingPendingMerchantTouch(booking)) return;
+    if (!isMerchantBookingNewForMerchant(booking)) return;
     unreadCount += 1;
     latest = compareCandidate(latest, buildBookingCandidate(merchantId, booking));
   });
 
   orderRecords.forEach((order) => {
-    if (order.status !== "pending" || !isMerchantOrderPendingMerchantTouch(order)) return;
+    if (!isMerchantOrderNewForMerchant(order)) return;
     unreadCount += 1;
     latest = compareCandidate(latest, buildOrderCandidate(merchantId, order));
   });

@@ -224,13 +224,13 @@ import {
   buildDefaultBookingItemOptions,
   buildDefaultBookingStoreOptions,
   buildDefaultBookingTitleOptions,
-  isMerchantBookingPendingMerchantTouch,
+  isMerchantBookingNewForMerchant,
   normalizeBookingOptionList,
   type MerchantBookingRecord,
 } from "@/lib/merchantBookings";
 import {
   formatMerchantOrderAmount,
-  isMerchantOrderPendingMerchantTouch,
+  isMerchantOrderNewForMerchant,
   type MerchantOrderRecord,
 } from "@/lib/merchantOrders";
 import { broadcastPublishSync } from "@/lib/publishSync";
@@ -4960,7 +4960,7 @@ function summarizeMerchantBookingAttentionRecords(
 ): MerchantBusinessAttentionSummary {
   return records.reduce<MerchantBusinessAttentionSummary>(
     (summary, booking) => {
-      if (booking.status !== "active" || !isMerchantBookingPendingMerchantTouch(booking)) return summary;
+      if (!isMerchantBookingNewForMerchant(booking)) return summary;
       const createdAt = normalizeMerchantBusinessAttentionTimestamp(booking.updatedAt, booking.createdAt);
       const customerName = normalizeSupportDisplayValue(booking.customerName) || "客户";
       const serviceParts = [
@@ -4992,7 +4992,7 @@ function summarizeMerchantOrderAttentionRecords(
 ): MerchantBusinessAttentionSummary {
   return records.reduce<MerchantBusinessAttentionSummary>(
     (summary, order) => {
-      if (order.status !== "pending" || !isMerchantOrderPendingMerchantTouch(order)) return summary;
+      if (!isMerchantOrderNewForMerchant(order)) return summary;
       const createdAt = normalizeMerchantBusinessAttentionTimestamp(order.updatedAt, order.createdAt);
       const customerName =
         normalizeSupportDisplayValue(order.customer?.name) ||

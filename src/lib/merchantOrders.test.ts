@@ -5,6 +5,7 @@ import {
   buildMerchantOrderId,
   createMerchantOrder,
   formatMerchantOrderAmount,
+  isMerchantOrderNewForMerchant,
   isMerchantOrderPendingMerchantTouch,
   normalizeMerchantOrderLineItems,
   normalizeMerchantOrderRecord,
@@ -114,6 +115,33 @@ test("isMerchantOrderPendingMerchantTouch only clears after a merchant action ca
       merchantTouchedAt: "2026-04-18T10:00:00.000Z",
     }),
     true,
+  );
+});
+
+test("isMerchantOrderNewForMerchant only counts untouched pending orders", () => {
+  assert.equal(
+    isMerchantOrderNewForMerchant({
+      status: "pending",
+      updatedAt: "2026-04-18T10:00:00.000Z",
+      merchantTouchedAt: "",
+    }),
+    true,
+  );
+  assert.equal(
+    isMerchantOrderNewForMerchant({
+      status: "confirmed",
+      updatedAt: "2026-04-18T10:00:00.000Z",
+      merchantTouchedAt: "",
+    }),
+    false,
+  );
+  assert.equal(
+    isMerchantOrderNewForMerchant({
+      status: "pending",
+      updatedAt: "2026-04-18T10:00:00.000Z",
+      merchantTouchedAt: "2026-04-18T10:00:00.000Z",
+    }),
+    false,
   );
 });
 

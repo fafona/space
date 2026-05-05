@@ -7,6 +7,7 @@ import {
   getMerchantBookingDateAvailabilityIssue,
   getMerchantBookingMatchedTimeSlotRule,
   getMerchantBookingSlotCapacityIssue,
+  isMerchantBookingNewForMerchant,
   isMerchantBookingPendingMerchantTouch,
   getMerchantBookingTimeAvailabilityIssue,
   getMerchantBookingStatusLabel,
@@ -488,6 +489,33 @@ test("isMerchantBookingPendingMerchantTouch only clears after a merchant action 
       merchantTouchedAt: "2026-03-19T10:00:00.000Z",
     }),
     true,
+  );
+});
+
+test("isMerchantBookingNewForMerchant only counts untouched active bookings", () => {
+  assert.equal(
+    isMerchantBookingNewForMerchant({
+      status: "active",
+      updatedAt: "2026-03-19T10:00:00.000Z",
+      merchantTouchedAt: "",
+    }),
+    true,
+  );
+  assert.equal(
+    isMerchantBookingNewForMerchant({
+      status: "confirmed",
+      updatedAt: "2026-03-19T10:00:00.000Z",
+      merchantTouchedAt: "",
+    }),
+    false,
+  );
+  assert.equal(
+    isMerchantBookingNewForMerchant({
+      status: "active",
+      updatedAt: "2026-03-19T10:00:00.000Z",
+      merchantTouchedAt: "2026-03-19T10:00:00.000Z",
+    }),
+    false,
   );
 });
 

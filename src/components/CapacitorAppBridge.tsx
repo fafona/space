@@ -15,6 +15,7 @@ import {
 const FAOLLA_NATIVE_WEB_VERSION_URL = "/api/app-web-version";
 const FAOLLA_NATIVE_WEB_BUILD_STORAGE_KEY = "faolla:native-web-build:v1";
 const FAOLLA_NATIVE_WEB_CACHE_BUILD_STORAGE_KEY = "faolla:native-web-cache-build:v1";
+const FAOLLA_NATIVE_BUILD_STORAGE_KEY = "faolla:native-build:v1";
 const FAOLLA_NATIVE_WEB_RELOAD_STORAGE_KEY = "faolla:native-web-build-reload:v1";
 const FAOLLA_NATIVE_WEB_BUILD_CHECK_THROTTLE_MS = 60_000;
 const FAOLLA_LAUNCH_BAR_COLOR = "#081121";
@@ -117,6 +118,14 @@ function buildNativeWebReloadHref(buildId: string) {
   url.searchParams.set("appShell", "faolla");
   url.searchParams.set("__faollaWebBuild", buildId.slice(0, 12));
   return `${url.pathname}${url.search}${url.hash}`;
+}
+
+function readNativeBuildParam() {
+  try {
+    return new URLSearchParams(window.location.search || "").get("nativeBuild")?.trim() || "";
+  } catch {
+    return "";
+  }
 }
 
 function resolveNativeClientNavigationHref(rawUrl: string) {
@@ -351,6 +360,29 @@ export default function CapacitorAppBridge() {
     let removeBackButtonListener: (() => void) | undefined;
     let removeAppStateListener: (() => void) | undefined;
     let lastWebBuildCheckAt = 0;
+    let nativeBuildCacheRefreshPromise: Promise<void> | null = null;
+
+    const refreshNativeBuildCachesOnce = () => {
+      const nativeBuild = readNativeBuildParam();
+      if (!nativeBuild) return Promise.resolve();
+      let previousNativeBuild = "";
+      try {
+        previousNativeBuild = window.localStorage.getItem(FAOLLA_NATIVE_BUILD_STORAGE_KEY) ?? "";
+      } catch {
+        previousNativeBuild = "";
+      }
+      if (previousNativeBuild === nativeBuild) return Promise.resolve();
+      if (!nativeBuildCacheRefreshPromise) {
+        nativeBuildCacheRefreshPromise = clearFaollaRuntimeCaches().finally(() => {
+          try {
+            window.localStorage.setItem(FAOLLA_NATIVE_BUILD_STORAGE_KEY, nativeBuild);
+          } catch {
+            // Ignore localStorage failures.
+          }
+        });
+      }
+      return nativeBuildCacheRefreshPromise;
+    };
 
     const syncNativeWebBuild = async (force = false): Promise<"ready" | "reloading"> => {
       const now = Date.now();
@@ -430,7 +462,15 @@ export default function CapacitorAppBridge() {
         .catch(() => {
           scheduleInitialLaunchCoverHide();
         });
-    }, 2800);
+    }, 700);
+    void refreshNativeBuildCachesOnce()
+      .then(() => syncNativeWebBuild(true))
+      .then((status) => {
+        if (status === "ready") scheduleInitialLaunchCoverHide();
+      })
+      .catch(() => {
+        scheduleInitialLaunchCoverHide();
+      });
     const nativeSessionRefreshTimer = window.setTimeout(refreshNativeSession, 1800);
 
     void App.addListener("appStateChange", ({ isActive }) => {
