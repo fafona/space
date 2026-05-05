@@ -44,6 +44,7 @@ import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 import com.getcapacitor.BridgeActivity;
 import org.json.JSONObject;
+import me.leolin.shortcutbadger.ShortcutBadger;
 
 public class MainActivity extends BridgeActivity {
     private static final int LAUNCH_BACKGROUND_COLOR = Color.rgb(8, 17, 33);
@@ -95,6 +96,10 @@ public class MainActivity extends BridgeActivity {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == NOTIFICATION_PERMISSION_REQUEST_CODE) {
             dispatchNotificationPermissionEvent(resolveNotificationPermissionState());
+            if (hasPostNotificationPermission()) {
+                syncNativeUnreadBadge(nativeUnreadBadgeCount);
+                FaollaNotificationWorker.scheduleNow(this);
+            }
         }
     }
 
@@ -833,6 +838,9 @@ public class MainActivity extends BridgeActivity {
         } else {
             syncNativeUnreadBadge(0);
         }
+        if (!hasPostNotificationPermission()) {
+            requestNativeNotificationPermission();
+        }
         FaollaNotificationWorker.scheduleNow(this);
     }
 
@@ -870,10 +878,24 @@ public class MainActivity extends BridgeActivity {
 
     private void storeNativeUnreadBadgeCount(int unreadCount) {
         nativeUnreadBadgeCount = Math.max(0, Math.min(999, unreadCount));
+        applyLauncherBadgeCount(nativeUnreadBadgeCount);
         FaollaNotificationWorker.getPrefs(this)
             .edit()
             .putInt(FaollaNotificationWorker.KEY_UNREAD_COUNT, nativeUnreadBadgeCount)
             .apply();
+    }
+
+    private void applyLauncherBadgeCount(int unreadCount) {
+        try {
+            int normalizedUnreadCount = Math.max(0, Math.min(999, unreadCount));
+            if (normalizedUnreadCount > 0) {
+                ShortcutBadger.applyCount(this, normalizedUnreadCount);
+            } else {
+                ShortcutBadger.removeCount(this);
+            }
+        } catch (Exception ignored) {
+            // Launcher badge support varies by Android vendor.
+        }
     }
 
     private void cancelNativeBadgeSummaryNotification() {

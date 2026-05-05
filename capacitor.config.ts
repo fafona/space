@@ -8,7 +8,7 @@ const config: CapacitorConfig = {
   webDir: "app-shell",
   server: {
     url: serverUrl,
-    appStartPath: "/launch?appShell=faolla&nativeStart=1&nativeBuild=22",
+    appStartPath: "/launch?appShell=faolla&nativeStart=1&nativeBuild=23",
     cleartext: false,
     allowNavigation: ["faolla.com", "*.faolla.com"],
   },

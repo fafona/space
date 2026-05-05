@@ -13776,7 +13776,16 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   useEffect(() => {
     if (isPlatformEditor || typeof window === "undefined" || !canUseFaollaNativeNotifications()) return;
-    const siteId = (currentSupportMerchantId || supportReadMerchantId || editingSiteId || "").trim();
+    const siteId = (
+      currentSupportMerchantId ||
+      supportReadMerchantId ||
+      editingSiteId ||
+      merchantSessionIdentityRef.current.merchantId ||
+      merchantIdsRef.current.find((item) => isMerchantNumericId(item)) ||
+      merchantIdsRef.current[0] ||
+      readRecentMerchantLaunchMerchantId() ||
+      ""
+    ).trim();
     const enabled = Boolean(supportSystemNotificationsEnabled && siteId);
     configureFaollaNativeNotificationSync({
       enabled,

@@ -34,6 +34,7 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
 import org.json.JSONObject;
+import me.leolin.shortcutbadger.ShortcutBadger;
 
 public class FaollaNotificationWorker extends Worker {
     static final String PREFS_NAME = "faolla_native_notifications";
@@ -58,7 +59,7 @@ public class FaollaNotificationWorker extends Worker {
     private static final String NOTIFICATION_EXTRA_URL = "faolla_url";
     private static final int BADGE_NOTIFICATION_ID = 73010;
     private static final int MESSAGE_NOTIFICATION_ID = 73100;
-    private static final long POLL_DELAY_MS = 45_000L;
+    private static final long POLL_DELAY_MS = 15_000L;
 
     public FaollaNotificationWorker(@NonNull Context context, @NonNull WorkerParameters workerParams) {
         super(context, workerParams);
@@ -77,6 +78,7 @@ public class FaollaNotificationWorker extends Worker {
         try {
             JSONObject payload = fetchSnapshot(prefs);
             int unreadCount = Math.max(0, Math.min(999, payload.optInt("unreadCount", 0)));
+            applyLauncherBadgeCount(context, unreadCount);
             prefs.edit().putInt(KEY_UNREAD_COUNT, unreadCount).apply();
 
             JSONObject latest = payload.optJSONObject("latest");
@@ -322,6 +324,7 @@ public class FaollaNotificationWorker extends Worker {
 
     static void syncUnreadBadge(Context context, int unreadCount) {
         int normalizedUnreadCount = Math.max(0, Math.min(999, unreadCount));
+        applyLauncherBadgeCount(context, normalizedUnreadCount);
         if (!hasPostNotificationPermission(context)) {
             return;
         }
@@ -350,5 +353,18 @@ public class FaollaNotificationWorker extends Worker {
             .setBadgeIconType(NotificationCompat.BADGE_ICON_SMALL)
             .setNumber(normalizedUnreadCount);
         notificationManager.notify(BADGE_NOTIFICATION_ID, notification.build());
+    }
+
+    private static void applyLauncherBadgeCount(Context context, int unreadCount) {
+        try {
+            int normalizedUnreadCount = Math.max(0, Math.min(999, unreadCount));
+            if (normalizedUnreadCount > 0) {
+                ShortcutBadger.applyCount(context, normalizedUnreadCount);
+            } else {
+                ShortcutBadger.removeCount(context);
+            }
+        } catch (Exception ignored) {
+            // Launcher badge support varies by Android vendor.
+        }
     }
 }
