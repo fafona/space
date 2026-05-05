@@ -268,7 +268,7 @@ export function isMerchantOrderPendingMerchantTouch(
 export function isMerchantOrderNewForMerchant(
   record: Pick<MerchantOrderRecord, "status" | "updatedAt" | "merchantTouchedAt">,
 ) {
-  return record.status === "pending" && isMerchantOrderPendingMerchantTouch(record);
+  return record.status === "pending" && !trimText(record.merchantTouchedAt ?? "");
 }
 
 export function applyMerchantOrderAction(

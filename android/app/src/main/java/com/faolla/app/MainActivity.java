@@ -48,7 +48,7 @@ import com.getcapacitor.BridgeActivity;
 import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
-    private static final int CURRENT_NATIVE_BUILD = 31;
+    private static final int CURRENT_NATIVE_BUILD = 32;
     private static final int LAUNCH_BACKGROUND_COLOR = Color.rgb(8, 17, 33);
     private static final String RUNTIME_PREFS_NAME = "faolla_native_runtime";
     private static final String KEY_NATIVE_CACHE_BUILD = "native_cache_build";
@@ -874,6 +874,8 @@ public class MainActivity extends BridgeActivity {
             .putString(FaollaNotificationWorker.KEY_SITE_ID, readJsonString(payload, "siteId", ""))
             .putString(FaollaNotificationWorker.KEY_MERCHANT_EMAIL, readJsonString(payload, "merchantEmail", ""))
             .putString(FaollaNotificationWorker.KEY_MERCHANT_NAME, readJsonString(payload, "merchantName", ""))
+            .putString(FaollaNotificationWorker.KEY_ACCESS_TOKEN, readJsonString(payload, "accessToken", ""))
+            .putString(FaollaNotificationWorker.KEY_REFRESH_TOKEN, readJsonString(payload, "refreshToken", ""))
             .putString(FaollaNotificationWorker.KEY_OFFICIAL_LAST_READ_AT, readJsonString(payload, "officialLastReadAt", ""))
             .putString(FaollaNotificationWorker.KEY_PEER_LAST_READ_JSON, payload.optString("peerLastRead", "{}"))
             .putString(FaollaNotificationWorker.KEY_COOKIE_HEADER, cookieHeader)

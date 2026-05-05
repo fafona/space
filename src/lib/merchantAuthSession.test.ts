@@ -38,15 +38,16 @@ test("parseCookieValue prefers the latest non-empty duplicate cookie value", () 
   );
 });
 
-test("readMerchantRequestAccessTokens only reads the httpOnly merchant auth cookie", () => {
+test("readMerchantRequestAccessTokens reads the merchant cookie and internal token fallback", () => {
   const request = new Request("http://localhost/api/business-card-share", {
     headers: {
       authorization: "Bearer bearer-token",
       cookie: `${MERCHANT_AUTH_COOKIE}=cookie-token`,
+      "x-merchant-access-token": "header-token",
     },
   });
 
-  assert.deepEqual(readMerchantRequestAccessTokens(request), ["cookie-token"]);
+  assert.deepEqual(readMerchantRequestAccessTokens(request), ["header-token", "cookie-token"]);
 });
 
 test("readMerchantRequestAccessTokens ignores duplicate cookie tokens", () => {
@@ -84,10 +85,11 @@ test("readMerchantRequestRefreshTokens preserves older refresh cookies for sessi
   const request = new Request("http://localhost/api/business-card-share", {
     headers: {
       cookie: `${MERCHANT_AUTH_REFRESH_COOKIE}=fresh-refresh; ${MERCHANT_AUTH_REFRESH_COOKIE}=stale-refresh`,
+      "x-merchant-refresh-token": "header-refresh",
     },
   });
 
-  assert.deepEqual(readMerchantRequestRefreshTokens(request), ["stale-refresh", "fresh-refresh"]);
+  assert.deepEqual(readMerchantRequestRefreshTokens(request), ["header-refresh", "stale-refresh", "fresh-refresh"]);
 });
 
 test("setMerchantAuthCookies writes browser-session cookies", () => {

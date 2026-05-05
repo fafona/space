@@ -517,6 +517,14 @@ test("isMerchantBookingNewForMerchant only counts untouched active bookings", ()
     }),
     false,
   );
+  assert.equal(
+    isMerchantBookingNewForMerchant({
+      status: "active",
+      updatedAt: "2026-03-19T10:15:00.000Z",
+      merchantTouchedAt: "2026-03-19T10:00:00.000Z",
+    }),
+    false,
+  );
 });
 
 test("shouldSendMerchantBookingConfirmationEmail only allows the first transition to confirmed", () => {

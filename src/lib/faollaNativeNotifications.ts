@@ -17,6 +17,8 @@ type FaollaNativeNotificationSyncPayload = {
   siteId: string;
   merchantEmail: string;
   merchantName: string;
+  accessToken: string;
+  refreshToken: string;
   officialLastReadAt: string;
   peerLastRead: string;
   unreadCount: number;

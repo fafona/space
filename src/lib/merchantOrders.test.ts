@@ -143,6 +143,14 @@ test("isMerchantOrderNewForMerchant only counts untouched pending orders", () =>
     }),
     false,
   );
+  assert.equal(
+    isMerchantOrderNewForMerchant({
+      status: "pending",
+      updatedAt: "2026-04-18T10:05:00.000Z",
+      merchantTouchedAt: "2026-04-18T10:00:00.000Z",
+    }),
+    false,
+  );
 });
 
 test("applyMerchantOrderAction supports complete and restore flows", () => {

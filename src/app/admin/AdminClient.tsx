@@ -5589,6 +5589,9 @@ export default function AdminClient({
   const [supportPushError, setSupportPushError] = useState("");
   const [supportRemoteBadgeCount, setSupportRemoteBadgeCount] = useState(0);
   const [supportPushBadgeHydrated, setSupportPushBadgeHydrated] = useState(false);
+  const [supportNativeAccessToken, setSupportNativeAccessToken] = useState("");
+  const [supportNativeRefreshToken, setSupportNativeRefreshToken] = useState("");
+  const [supportFailedMessageActionKey, setSupportFailedMessageActionKey] = useState("");
   const [supportUnreadHydrationState, setSupportUnreadHydrationState] = useState({
     official: false,
     peer: false,
@@ -5633,6 +5636,27 @@ export default function AdminClient({
   const supportComposerRef = useRef<HTMLDivElement>(null);
   const supportSelfLanguageRootRef = useRef<HTMLDivElement>(null);
   const supportSelfLanguageMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (isPlatformEditor || typeof window === "undefined") return;
+    let cancelled = false;
+    const applySessionTokens = (session: { access_token?: string | null; refresh_token?: string | null } | null | undefined) => {
+      if (cancelled) return;
+      setSupportNativeAccessToken(String(session?.access_token ?? "").trim());
+      setSupportNativeRefreshToken(String(session?.refresh_token ?? "").trim());
+    };
+    void supabase.auth
+      .getSession()
+      .then(({ data }) => applySessionTokens(data.session))
+      .catch(() => applySessionTokens(null));
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      applySessionTokens(session);
+    });
+    return () => {
+      cancelled = true;
+      data.subscription.unsubscribe();
+    };
+  }, [isPlatformEditor]);
   const supportSelfAvatarInputRef = useRef<HTMLInputElement>(null);
   const [supportSelfResolvedCardHref, setSupportSelfResolvedCardHref] = useState("");
   const [supportSelfResolvedCardId, setSupportSelfResolvedCardId] = useState("");
@@ -11777,6 +11801,17 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       if (allowRecovery) {
         await ensureMerchantChatSessionReady();
       }
+      const {
+        data: { session },
+      } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
+      const accessToken = String(session?.access_token ?? "").trim();
+      const refreshToken = String(session?.refresh_token ?? "").trim();
+      if (accessToken) {
+        headers.set("x-merchant-access-token", accessToken);
+      }
+      if (refreshToken) {
+        headers.set("x-merchant-refresh-token", refreshToken);
+      }
 
       return {
         credentials: "same-origin" as const,
@@ -13838,10 +13873,13 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     supportScrollToLatestPendingRef.current = true;
     setSupportAttachmentMenuOpen(false);
     setSupportSelfCardPickerOpen(false);
+    setSupportFailedMessageActionKey("");
   }, [supportInterfaceOpen, supportSelectedContactKey, supportMobileView]);
 
   useEffect(() => {
     if (isPlatformEditor || !supportDataActivated) return;
+    if (canUseFaollaNativeNotifications()) return;
+    if (!supportUnreadStateHydrated) return;
     if (!supportUnreadStateHydrated && supportEffectiveBadgeCount <= 0) return;
     if (!supportPushBadgeHydrated && supportEffectiveBadgeCount <= 0) return;
     void syncSupportAppBadge(supportEffectiveBadgeCount);
@@ -13868,13 +13906,15 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     ).trim();
     if (supportSystemNotificationsEnabled && !siteId) return;
     const enabled = Boolean(supportSystemNotificationsEnabled && siteId);
-    if (enabled && !supportUnreadStateHydrated && supportEffectiveBadgeCount <= 0) return;
+    if (enabled && (!supportDataActivated || !supportUnreadStateHydrated)) return;
     configureFaollaNativeNotificationSync({
       enabled,
       baseUrl: window.location.origin,
       siteId,
       merchantEmail: ((editingSite?.contactEmail ?? "").trim() || String(merchantSessionIdentityRef.current.email ?? "").trim()) ?? "",
       merchantName: merchantDisplayName,
+      accessToken: supportNativeAccessToken,
+      refreshToken: supportNativeRefreshToken,
       officialLastReadAt: supportLastReadAt,
       peerLastRead: JSON.stringify(supportPeerLastReadMap),
       unreadCount: supportEffectiveBadgeCount,
@@ -13888,10 +13928,13 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     editingSiteId,
     isPlatformEditor,
     merchantDisplayName,
+    supportDataActivated,
     supportEffectiveBadgeCount,
     supportLastReadAt,
     supportLatestNativeNotificationKey,
     supportMessageSoundEnabled,
+    supportNativeAccessToken,
+    supportNativeRefreshToken,
     supportPeerLastReadMap,
     supportReadMerchantId,
     supportSystemNotificationsEnabled,
@@ -14371,6 +14414,26 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
 
   async function sendSupportMessage() {
     await sendSupportTextPayload(supportDraft, { clearDraft: true });
+  }
+
+  function removeFailedSupportMessage(message: { id: string }) {
+    if (supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY) {
+      setSupportLocalMessages((current) => current.filter((item) => item.id !== message.id));
+    } else {
+      setSupportPeerLocalMessages((current) => current.filter((item) => item.id !== message.id));
+    }
+    setSupportFailedMessageActionKey("");
+    setSupportError("");
+  }
+
+  async function retryFailedSupportMessage(message: { id: string; text: string }) {
+    const text = String(message.text ?? "").trim();
+    if (!text) {
+      removeFailedSupportMessage(message);
+      return;
+    }
+    removeFailedSupportMessage(message);
+    await sendSupportTextPayload(text, { clearDraft: false });
   }
 
   async function handleSupportImageAttachment(file: File, label: "照片" | "拍照") {
@@ -16898,23 +16961,58 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     </div>
                   ) : null}
                   <div className={`flex ${message.isSelf ? "justify-end" : "justify-start"}`}>
-                    <div
-                      className={`faolla-message-bubble max-w-[84%] min-w-0 rounded-[18px] shadow-sm ${
-                        parseSupportMessageAttachmentPreview(message.text)
-                          ? "border border-transparent bg-transparent px-0 py-0"
-                          : message.isSelf
-                            ? "bg-[#d9fdd3] px-3 py-1.5 text-slate-950"
-                            : "border border-transparent bg-white px-3 py-1.5 text-slate-950"
-                      }`}
-                    >
-                      <SupportMessageContent
-                        value={message.text}
-                        isSelf={message.isSelf}
-                        onImageActivate={handleSupportMessageImageActivate}
-                      />
-                      <span className={`faolla-message-time ml-2 inline-block align-baseline text-[11px] leading-none ${message.isSelf ? "text-slate-500" : "text-slate-400"}`}>
-                        {messageMeta}
-                      </span>
+                    <div className={`flex max-w-[84%] min-w-0 items-end ${message.isSelf ? "flex-row" : "flex-row-reverse"}`}>
+                      <div
+                        className={`faolla-message-bubble min-w-0 rounded-[18px] shadow-sm ${
+                          parseSupportMessageAttachmentPreview(message.text)
+                            ? "border border-transparent bg-transparent px-0 py-0"
+                            : message.isSelf
+                              ? "bg-[#d9fdd3] px-3 py-1.5 text-slate-950"
+                              : "border border-transparent bg-white px-3 py-1.5 text-slate-950"
+                        }`}
+                      >
+                        <SupportMessageContent
+                          value={message.text}
+                          isSelf={message.isSelf}
+                          onImageActivate={handleSupportMessageImageActivate}
+                        />
+                        <span className={`faolla-message-time ml-2 inline-block align-baseline text-[11px] leading-none ${message.isSelf ? "text-slate-500" : "text-slate-400"}`}>
+                          {messageMeta}
+                        </span>
+                      </div>
+                      {message.isSelf && message.localStatus === "failed" ? (
+                        <div className="relative mb-1 ml-2 shrink-0">
+                          <button
+                            type="button"
+                            aria-label="发送失败，打开操作"
+                            className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-rose-500 bg-white text-[12px] font-semibold leading-none text-rose-600 shadow-sm"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setSupportFailedMessageActionKey((current) => (current === messageKey ? "" : messageKey));
+                            }}
+                          >
+                            !
+                          </button>
+                          {supportFailedMessageActionKey === messageKey ? (
+                            <div className="absolute bottom-7 right-0 z-30 w-28 overflow-hidden rounded-2xl border border-slate-200 bg-white text-sm text-slate-900 shadow-xl">
+                              <button
+                                type="button"
+                                className="block w-full px-3 py-2 text-left hover:bg-slate-50"
+                                onClick={() => void retryFailedSupportMessage(message)}
+                              >
+                                重新发送
+                              </button>
+                              <button
+                                type="button"
+                                className="block w-full border-t border-slate-100 px-3 py-2 text-left text-rose-600 hover:bg-rose-50"
+                                onClick={() => removeFailedSupportMessage(message)}
+                              >
+                                删除
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 </div>
@@ -17985,12 +18083,37 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                           </span>
                         </div>
                         {message.isSelf && message.localStatus === "failed" ? (
-                          <span
-                            aria-label="发送失败"
-                            className="mb-1 ml-2 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-rose-500 bg-white text-[12px] font-semibold leading-none text-rose-600"
-                          >
-                            !
-                          </span>
+                          <div className="relative mb-1 ml-2 shrink-0">
+                            <button
+                              type="button"
+                              aria-label="发送失败，打开操作"
+                              className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-rose-500 bg-white text-[12px] font-semibold leading-none text-rose-600"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setSupportFailedMessageActionKey((current) => (current === messageKey ? "" : messageKey));
+                              }}
+                            >
+                              !
+                            </button>
+                            {supportFailedMessageActionKey === messageKey ? (
+                              <div className="absolute bottom-7 right-0 z-30 w-28 overflow-hidden rounded-2xl border border-slate-200 bg-white text-sm text-slate-900 shadow-xl">
+                                <button
+                                  type="button"
+                                  className="block w-full px-3 py-2 text-left hover:bg-slate-50"
+                                  onClick={() => void retryFailedSupportMessage(message)}
+                                >
+                                  重新发送
+                                </button>
+                                <button
+                                  type="button"
+                                  className="block w-full border-t border-slate-100 px-3 py-2 text-left text-rose-600 hover:bg-rose-50"
+                                  onClick={() => removeFailedSupportMessage(message)}
+                                >
+                                  删除
+                                </button>
+                              </div>
+                            ) : null}
+                          </div>
                         ) : null}
                       </div>
                     </div>

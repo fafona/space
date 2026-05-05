@@ -543,7 +543,7 @@ export function isMerchantBookingPendingMerchantTouch(
 export function isMerchantBookingNewForMerchant(
   record: Pick<MerchantBookingRecord, "status" | "updatedAt" | "merchantTouchedAt">,
 ) {
-  return record.status === "active" && isMerchantBookingPendingMerchantTouch(record);
+  return record.status === "active" && !normalizeSingleLineText(record.merchantTouchedAt ?? "");
 }
 
 export function shouldSendMerchantBookingConfirmationEmail(input: {

@@ -46,6 +46,8 @@ public class FaollaNotificationWorker extends Worker {
     static final String KEY_SITE_ID = "site_id";
     static final String KEY_MERCHANT_EMAIL = "merchant_email";
     static final String KEY_MERCHANT_NAME = "merchant_name";
+    static final String KEY_ACCESS_TOKEN = "access_token";
+    static final String KEY_REFRESH_TOKEN = "refresh_token";
     static final String KEY_OFFICIAL_LAST_READ_AT = "official_last_read_at";
     static final String KEY_PEER_LAST_READ_JSON = "peer_last_read_json";
     static final String KEY_COOKIE_HEADER = "cookie_header";
@@ -200,6 +202,14 @@ public class FaollaNotificationWorker extends Worker {
         String cookieHeader = prefs.getString(KEY_COOKIE_HEADER, "");
         if (cookieHeader != null && !cookieHeader.trim().isEmpty()) {
             connection.setRequestProperty("Cookie", cookieHeader);
+        }
+        String accessToken = prefs.getString(KEY_ACCESS_TOKEN, "");
+        if (accessToken != null && !accessToken.trim().isEmpty()) {
+            connection.setRequestProperty("x-merchant-access-token", accessToken.trim());
+        }
+        String refreshToken = prefs.getString(KEY_REFRESH_TOKEN, "");
+        if (refreshToken != null && !refreshToken.trim().isEmpty()) {
+            connection.setRequestProperty("x-merchant-refresh-token", refreshToken.trim());
         }
 
         int statusCode = connection.getResponseCode();

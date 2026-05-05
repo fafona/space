@@ -118,12 +118,33 @@ export function readMerchantAuthMerchantIdCookie(request: Request) {
   return normalizeMerchantId(parseCookieValue(request.headers.get("cookie") ?? "", MERCHANT_AUTH_MERCHANT_ID_COOKIE));
 }
 
+function readRequestTokenHeader(request: Request, key: string) {
+  const normalized = request.headers.get(key)?.trim() ?? "";
+  return normalized ? [normalized] : [];
+}
+
+function uniqueRequestTokenCandidates(values: string[]) {
+  const candidates: string[] = [];
+  for (const value of values) {
+    const normalized = value.trim();
+    if (!normalized || candidates.includes(normalized)) continue;
+    candidates.push(normalized);
+  }
+  return candidates;
+}
+
 export function readMerchantRequestAccessTokens(request: Request) {
-  return readMerchantCookieCandidates(request, MERCHANT_AUTH_COOKIE);
+  return uniqueRequestTokenCandidates([
+    ...readRequestTokenHeader(request, "x-merchant-access-token"),
+    ...readMerchantCookieCandidates(request, MERCHANT_AUTH_COOKIE),
+  ]);
 }
 
 export function readMerchantRequestRefreshTokens(request: Request) {
-  return readMerchantCookieCandidates(request, MERCHANT_AUTH_REFRESH_COOKIE);
+  return uniqueRequestTokenCandidates([
+    ...readRequestTokenHeader(request, "x-merchant-refresh-token"),
+    ...readMerchantCookieCandidates(request, MERCHANT_AUTH_REFRESH_COOKIE),
+  ]);
 }
 
 export function setMerchantAuthCookie(response: NextResponse, accessToken: string, maxAgeSeconds?: unknown, request?: Request) {
