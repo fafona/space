@@ -13,6 +13,16 @@ import {
   saveMerchantPeerInbox,
   type MerchantPeerInboxStoreClient,
 } from "@/lib/merchantPeerInboxStore";
+import {
+  getMerchantSupportReadState,
+  mergeMerchantSupportReadState,
+  type MerchantSupportReadStatePayload,
+} from "@/lib/merchantSupportReadState";
+import {
+  loadStoredMerchantSupportReadState,
+  saveMerchantSupportReadState,
+  type MerchantSupportReadStateStoreClient,
+} from "@/lib/merchantSupportReadStateStore";
 import { buildMerchantPeerPushNotification } from "@/lib/merchantPushEvents";
 import { type MerchantAuthUserSummary } from "@/lib/merchantAuthIdentity";
 import {
@@ -95,6 +105,13 @@ function normalizeEmail(value: unknown) {
 function normalizeMerchantId(value: unknown) {
   const normalized = trimText(value);
   return /^\d{8}$/.test(normalized) ? normalized : "";
+}
+
+function normalizeIsoString(value: unknown) {
+  const normalized = trimText(value);
+  if (!normalized) return "";
+  const timestamp = new Date(normalized).getTime();
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : "";
 }
 
 function normalizeSupportText(value: unknown) {
@@ -555,6 +572,7 @@ async function buildInboxResponse(
   payload: Awaited<ReturnType<typeof loadStoredMerchantPeerInbox>>,
   merchantId: string,
   supabase?: (PlatformIdentitySupabaseClient & PlatformMerchantSnapshotStoreClient) | null,
+  readStatePayload?: MerchantSupportReadStatePayload | null,
 ) {
   const contacts = listMerchantPeerContactsForMerchant(payload, merchantId);
   const personalProfiles = await loadPersonalPeerProfiles(
@@ -597,10 +615,12 @@ async function buildInboxResponse(
     };
   });
   const threads = listMerchantPeerThreadsForMerchant(payload, merchantId);
+  const readState = readStatePayload ? getMerchantSupportReadState(readStatePayload, merchantId) : null;
   return {
     ok: true,
     contacts: enrichedContacts,
     threads,
+    ...(readState ? { readState: { peerLastRead: readState.peerLastRead } } : {}),
   };
 }
 
@@ -615,12 +635,16 @@ export async function GET(request: Request) {
     return noStoreJson({ error: "merchant_peer_inbox_env_missing" }, { status: 503 });
   }
 
-  const payload = await loadStoredMerchantPeerInbox(supabase as unknown as MerchantPeerInboxStoreClient);
+  const [payload, readStatePayload] = await Promise.all([
+    loadStoredMerchantPeerInbox(supabase as unknown as MerchantPeerInboxStoreClient),
+    loadStoredMerchantSupportReadState(supabase as unknown as MerchantSupportReadStateStoreClient),
+  ]);
   return noStoreJson({
     ...(await buildInboxResponse(
       payload,
       session.merchantId,
       supabase as unknown as PlatformIdentitySupabaseClient & PlatformMerchantSnapshotStoreClient,
+      readStatePayload,
     )),
     currentMerchantId: session.merchantId,
     currentMerchantEmail: session.merchantEmail,
@@ -638,6 +662,8 @@ export async function POST(request: Request) {
           query?: unknown;
           text?: unknown;
           recipientMerchantId?: unknown;
+          contactMerchantId?: unknown;
+          lastReadAt?: unknown;
           merchantName?: unknown;
           merchantEmail?: unknown;
           siteId?: unknown;
@@ -658,6 +684,38 @@ export async function POST(request: Request) {
   }
 
   const action = trimText(body?.action);
+
+  if (action === "mark_read") {
+    const contactMerchantId = normalizeMerchantId(body?.contactMerchantId);
+    const lastReadAt = normalizeIsoString(body?.lastReadAt);
+    if (!contactMerchantId || !lastReadAt || contactMerchantId === session.merchantId) {
+      return noStoreJson({ error: "merchant_read_state_invalid" }, { status: 400 });
+    }
+
+    const readStatePayload = await loadStoredMerchantSupportReadState(supabase as unknown as MerchantSupportReadStateStoreClient);
+    const nextReadStatePayload = mergeMerchantSupportReadState(readStatePayload, session.merchantId, {
+      peerLastRead: {
+        [contactMerchantId]: lastReadAt,
+      },
+    });
+    const saveReadStateResult = await saveMerchantSupportReadState(
+      supabase as unknown as MerchantSupportReadStateStoreClient,
+      nextReadStatePayload,
+    );
+    if (saveReadStateResult.error) {
+      return noStoreJson(
+        { error: "merchant_read_state_save_failed", message: saveReadStateResult.error },
+        { status: 500 },
+      );
+    }
+    const readState = getMerchantSupportReadState(nextReadStatePayload, session.merchantId);
+    return noStoreJson({
+      ok: true,
+      readState: {
+        peerLastRead: readState.peerLastRead,
+      },
+    });
+  }
 
   if (action === "search") {
     const resolved = await resolveMerchantByExactQuery(supabase, trimText(body?.query));
@@ -686,7 +744,10 @@ export async function POST(request: Request) {
       );
     }
 
-    const payload = await loadStoredMerchantPeerInbox(supabase as unknown as MerchantPeerInboxStoreClient);
+    const [payload, readStatePayload] = await Promise.all([
+      loadStoredMerchantPeerInbox(supabase as unknown as MerchantPeerInboxStoreClient),
+      loadStoredMerchantSupportReadState(supabase as unknown as MerchantSupportReadStateStoreClient),
+    ]);
     const nextPayload = upsertMerchantPeerContact(payload, {
       ownerMerchantId: session.merchantId,
       contactMerchantId: resolved.record.merchantId,
@@ -706,6 +767,7 @@ export async function POST(request: Request) {
         nextPayload,
         session.merchantId,
         supabase as unknown as PlatformIdentitySupabaseClient & PlatformMerchantSnapshotStoreClient,
+        readStatePayload,
       )),
       contact: resolved.record,
     });
@@ -739,7 +801,10 @@ export async function POST(request: Request) {
       return noStoreJson({ error: "cannot_chat_with_self", message: "不能和自己发起会话。" }, { status: 400 });
     }
 
-    const payload = await loadStoredMerchantPeerInbox(supabase as unknown as MerchantPeerInboxStoreClient);
+    const [payload, readStatePayload] = await Promise.all([
+      loadStoredMerchantPeerInbox(supabase as unknown as MerchantPeerInboxStoreClient),
+      loadStoredMerchantSupportReadState(supabase as unknown as MerchantSupportReadStateStoreClient),
+    ]);
     const nextPayload = upsertMerchantPeerContact(payload, {
       ownerMerchantId: session.merchantId,
       contactMerchantId: resolved.record.merchantId,
@@ -759,6 +824,7 @@ export async function POST(request: Request) {
         nextPayload,
         session.merchantId,
         supabase as unknown as PlatformIdentitySupabaseClient & PlatformMerchantSnapshotStoreClient,
+        readStatePayload,
       )),
       contact: resolved.record,
     });
@@ -793,7 +859,10 @@ export async function POST(request: Request) {
         accountType: "merchant",
       } satisfies ResolvedPeerRecord);
 
-    const payload = await loadStoredMerchantPeerInbox(supabase as unknown as MerchantPeerInboxStoreClient);
+    const [payload, readStatePayload] = await Promise.all([
+      loadStoredMerchantPeerInbox(supabase as unknown as MerchantPeerInboxStoreClient),
+      loadStoredMerchantSupportReadState(supabase as unknown as MerchantSupportReadStateStoreClient),
+    ]);
     const nextPayload = upsertMerchantPeerMessage(payload, {
       senderMerchantId: sender.merchantId,
       senderMerchantName: trimText(body?.merchantName) || sender.merchantName,
@@ -835,6 +904,7 @@ export async function POST(request: Request) {
         nextPayload,
         session.merchantId,
         supabase as unknown as PlatformIdentitySupabaseClient & PlatformMerchantSnapshotStoreClient,
+        readStatePayload,
       )),
       thread: findMerchantPeerThreadForMerchants(nextPayload, session.merchantId, recipient.merchantId),
     });

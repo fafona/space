@@ -20,6 +20,15 @@ import {
   savePlatformSupportInbox,
   type PlatformSupportInboxStoreClient,
 } from "@/lib/platformSupportInboxStore";
+import {
+  getMerchantSupportReadState,
+  mergeMerchantSupportReadState,
+} from "@/lib/merchantSupportReadState";
+import {
+  loadStoredMerchantSupportReadState,
+  saveMerchantSupportReadState,
+  type MerchantSupportReadStateStoreClient,
+} from "@/lib/merchantSupportReadStateStore";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { createServerSupabaseAuthClient, createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
@@ -48,6 +57,13 @@ function normalizeSupportEmail(value: unknown) {
 function normalizeMerchantId(value: unknown) {
   const normalized = trimText(value);
   return /^\d{8}$/.test(normalized) ? normalized : "";
+}
+
+function normalizeIsoString(value: unknown) {
+  const normalized = trimText(value);
+  if (!normalized) return "";
+  const timestamp = new Date(normalized).getTime();
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : "";
 }
 
 function noStoreJson(body: unknown, init?: ResponseInit) {
@@ -117,11 +133,18 @@ export async function GET(request: Request) {
     return noStoreJson({ error: "support_inbox_env_missing" }, { status: 503 });
   }
 
-  const payload = await loadStoredPlatformSupportInbox(supabase as unknown as PlatformSupportInboxStoreClient);
+  const [payload, readStatePayload] = await Promise.all([
+    loadStoredPlatformSupportInbox(supabase as unknown as PlatformSupportInboxStoreClient),
+    loadStoredMerchantSupportReadState(supabase as unknown as MerchantSupportReadStateStoreClient),
+  ]);
   const thread = payload.threads.find((item) => item.merchantId === session.merchantId) ?? null;
+  const readState = getMerchantSupportReadState(readStatePayload, session.merchantId);
   return noStoreJson({
     ok: true,
     thread: buildThreadResponse(thread, session.merchantId, thread?.merchantEmail || session.merchantEmail),
+    readState: {
+      officialLastReadAt: readState.officialLastReadAt,
+    },
     officialContact: OFFICIAL_SERVICE_CONTACT,
   });
 }
@@ -134,6 +157,8 @@ export async function POST(request: Request) {
   const body = (await request.json().catch(() => null)) as
     | {
         text?: unknown;
+        action?: unknown;
+        lastReadAt?: unknown;
         merchantName?: unknown;
         merchantEmail?: unknown;
         siteId?: unknown;
@@ -147,6 +172,39 @@ export async function POST(request: Request) {
   const supabase = createServerSupabaseServiceClient();
   if (!supabase) {
     return noStoreJson({ error: "support_inbox_env_missing" }, { status: 503 });
+  }
+
+  const action = trimText(body?.action);
+  if (action === "mark_read") {
+    const lastReadAt = normalizeIsoString(body?.lastReadAt);
+    if (!lastReadAt) {
+      return noStoreJson({ error: "support_read_timestamp_invalid" }, { status: 400 });
+    }
+
+    const readStatePayload = await loadStoredMerchantSupportReadState(supabase as unknown as MerchantSupportReadStateStoreClient);
+    const nextReadStatePayload = mergeMerchantSupportReadState(readStatePayload, session.merchantId, {
+      officialLastReadAt: lastReadAt,
+    });
+    const saveReadStateResult = await saveMerchantSupportReadState(
+      supabase as unknown as MerchantSupportReadStateStoreClient,
+      nextReadStatePayload,
+    );
+    if (saveReadStateResult.error) {
+      return noStoreJson(
+        {
+          error: "support_read_state_save_failed",
+          message: saveReadStateResult.error,
+        },
+        { status: 500 },
+      );
+    }
+    const readState = getMerchantSupportReadState(nextReadStatePayload, session.merchantId);
+    return noStoreJson({
+      ok: true,
+      readState: {
+        officialLastReadAt: readState.officialLastReadAt,
+      },
+    });
   }
 
   const text = normalizeSupportText(body?.text);

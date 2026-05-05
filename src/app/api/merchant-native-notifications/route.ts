@@ -17,6 +17,15 @@ import {
   loadStoredPlatformSupportInbox,
   type PlatformSupportInboxStoreClient,
 } from "@/lib/platformSupportInboxStore";
+import {
+  getLatestSupportReadTimestamp,
+  getMerchantSupportReadState,
+  mergeSupportPeerLastRead,
+} from "@/lib/merchantSupportReadState";
+import {
+  loadStoredMerchantSupportReadState,
+  type MerchantSupportReadStateStoreClient,
+} from "@/lib/merchantSupportReadStateStore";
 import { listMerchantBookings } from "@/lib/merchantBookings.server";
 import {
   isMerchantBookingNewForMerchant,
@@ -245,16 +254,23 @@ export async function GET(request: Request) {
   }
 
   const merchantId = session.merchantId;
-  const officialLastReadAt = normalizeIsoString(url.searchParams.get("officialLastReadAt"));
-  const peerLastReadMap = normalizeLastReadMap(url.searchParams.get("peerLastRead"));
-  const officialLastReadTs = new Date(officialLastReadAt || 0).getTime();
+  const queryOfficialLastReadAt = normalizeIsoString(url.searchParams.get("officialLastReadAt"));
+  const queryPeerLastReadMap = normalizeLastReadMap(url.searchParams.get("peerLastRead"));
 
-  const [supportPayload, peerPayload, bookingRecords, orderRecords] = await Promise.all([
+  const [supportPayload, peerPayload, readStatePayload, bookingRecords, orderRecords] = await Promise.all([
     loadStoredPlatformSupportInbox(supabase as unknown as PlatformSupportInboxStoreClient),
     loadStoredMerchantPeerInbox(supabase as unknown as MerchantPeerInboxStoreClient),
+    loadStoredMerchantSupportReadState(supabase as unknown as MerchantSupportReadStateStoreClient),
     listMerchantBookings(merchantId, { includeAutomationState: true }).catch(() => [] as MerchantBookingRecord[]),
     listMerchantOrders(merchantId).catch(() => [] as MerchantOrderRecord[]),
   ]);
+  const storedReadState = getMerchantSupportReadState(readStatePayload, merchantId);
+  const officialLastReadAt = getLatestSupportReadTimestamp(
+    queryOfficialLastReadAt,
+    storedReadState.officialLastReadAt,
+  );
+  const peerLastReadMap = mergeSupportPeerLastRead(queryPeerLastReadMap, storedReadState.peerLastRead);
+  const officialLastReadTs = new Date(officialLastReadAt || 0).getTime();
 
   let unreadCount = 0;
   let latest: NativeNotificationCandidate | null = null;

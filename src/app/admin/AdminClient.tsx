@@ -4696,6 +4696,51 @@ function normalizeSupportMessageTimestamp(value: string | null | undefined) {
   return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : "";
 }
 
+function selectLatestSupportReadTimestamp(left: string | null | undefined, right: string | null | undefined) {
+  const leftNormalized = normalizeSupportMessageTimestamp(left);
+  const rightNormalized = normalizeSupportMessageTimestamp(right);
+  if (!leftNormalized) return rightNormalized;
+  if (!rightNormalized) return leftNormalized;
+  return new Date(rightNormalized).getTime() > new Date(leftNormalized).getTime() ? rightNormalized : leftNormalized;
+}
+
+function isSupportReadTimestampNewer(left: string | null | undefined, right: string | null | undefined) {
+  const leftNormalized = normalizeSupportMessageTimestamp(left);
+  const rightNormalized = normalizeSupportMessageTimestamp(right);
+  if (!leftNormalized) return false;
+  if (!rightNormalized) return true;
+  return new Date(leftNormalized).getTime() > new Date(rightNormalized).getTime();
+}
+
+function normalizeSupportPeerLastReadRecord(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {} as Record<string, string>;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .map(([merchantId, timestamp]) => {
+        const normalizedMerchantId = merchantId.trim();
+        const normalizedTimestamp = normalizeSupportMessageTimestamp(String(timestamp ?? ""));
+        return [normalizedMerchantId, normalizedTimestamp] as const;
+      })
+      .filter(([merchantId, timestamp]) => /^\d{8}$/.test(merchantId) && timestamp),
+  );
+}
+
+function mergeSupportPeerLastReadMaps(...maps: Array<Record<string, unknown> | null | undefined>) {
+  const merged: Record<string, string> = {};
+  maps.forEach((map) => {
+    Object.entries(normalizeSupportPeerLastReadRecord(map)).forEach(([merchantId, timestamp]) => {
+      merged[merchantId] = selectLatestSupportReadTimestamp(merged[merchantId], timestamp);
+    });
+  });
+  return merged;
+}
+
+function areSupportPeerLastReadMapsEqual(left: Record<string, string>, right: Record<string, string>) {
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  return leftKeys.length === rightKeys.length && leftKeys.every((key, index) => key === rightKeys[index] && left[key] === right[key]);
+}
+
 function buildSupportLastReadStorageKey(merchantId: string) {
   return `${SUPPORT_LAST_READ_STORAGE_KEY_PREFIX}${merchantId.trim() || "default"}`;
 }
@@ -4704,6 +4749,60 @@ function buildSupportPeerLastReadStorageKey(ownerMerchantId: string, contactMerc
   const owner = ownerMerchantId.trim() || "default";
   const contact = contactMerchantId.trim() || "default";
   return `${SUPPORT_LAST_READ_STORAGE_KEY_PREFIX}peer:${owner}:${contact}`;
+}
+
+function readLocalSupportLastReadAt(merchantId: string) {
+  if (typeof window === "undefined") return "";
+  try {
+    return normalizeSupportMessageTimestamp(localStorage.getItem(buildSupportLastReadStorageKey(merchantId)));
+  } catch {
+    return "";
+  }
+}
+
+function writeLocalSupportLastReadAt(merchantId: string, timestamp: string) {
+  if (typeof window === "undefined") return;
+  const normalizedTimestamp = normalizeSupportMessageTimestamp(timestamp);
+  if (!merchantId.trim() || !normalizedTimestamp) return;
+  try {
+    localStorage.setItem(buildSupportLastReadStorageKey(merchantId), normalizedTimestamp);
+  } catch {
+    // Local storage is only a fallback cache; server state is authoritative.
+  }
+}
+
+function readLocalSupportPeerLastReadMap(ownerMerchantId: string, contacts: MerchantPeerContactSummary[]) {
+  if (typeof window === "undefined") return {} as Record<string, string>;
+  const owner = ownerMerchantId.trim();
+  if (!owner) return {};
+  try {
+    return contacts.reduce<Record<string, string>>((accumulator, contact) => {
+      const merchantId = contact.merchantId.trim();
+      if (!merchantId) return accumulator;
+      const stored = normalizeSupportMessageTimestamp(
+        localStorage.getItem(buildSupportPeerLastReadStorageKey(owner, merchantId)),
+      );
+      if (stored) {
+        accumulator[merchantId] = stored;
+      }
+      return accumulator;
+    }, {});
+  } catch {
+    return {};
+  }
+}
+
+function writeLocalSupportPeerLastReadAt(ownerMerchantId: string, contactMerchantId: string, timestamp: string) {
+  if (typeof window === "undefined") return;
+  const owner = ownerMerchantId.trim();
+  const contact = contactMerchantId.trim();
+  const normalizedTimestamp = normalizeSupportMessageTimestamp(timestamp);
+  if (!owner || !contact || !normalizedTimestamp) return;
+  try {
+    localStorage.setItem(buildSupportPeerLastReadStorageKey(owner, contact), normalizedTimestamp);
+  } catch {
+    // Local storage is only a fallback cache; server state is authoritative.
+  }
 }
 
 function buildSupportNotifiedEventStorageKey(merchantId: string) {
@@ -12932,6 +13031,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       const payload = (await response.json().catch(() => null)) as
         | {
             thread?: PlatformSupportThread | null;
+            readState?: {
+              officialLastReadAt?: string | null;
+            } | null;
             error?: string;
           }
         | null;
@@ -12946,9 +13048,30 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         setSupportError("");
       }
       const nextThread = payload?.thread ?? null;
+      const readStateMerchantId = (nextThread?.merchantId || supportReadMerchantId || editingSiteId || "").trim();
+      const remoteLastReadAt = normalizeSupportMessageTimestamp(payload?.readState?.officialLastReadAt ?? "");
+      const localLastReadAt = readStateMerchantId ? readLocalSupportLastReadAt(readStateMerchantId) : "";
+      const nextLastReadAt = selectLatestSupportReadTimestamp(remoteLastReadAt, localLastReadAt);
+      if (readStateMerchantId && nextLastReadAt) {
+        writeLocalSupportLastReadAt(readStateMerchantId, nextLastReadAt);
+      }
       writeMerchantAdminDataCache(supportThreadCacheKey, nextThread);
       setSupportThread(nextThread);
+      setSupportLastReadAt((current) => (current === nextLastReadAt ? current : nextLastReadAt));
+      setSupportReadStateHydrated((current) => (current.official ? current : { ...current, official: true }));
       setSupportUnreadHydrationState((current) => (current.official ? current : { ...current, official: true }));
+      if (isSupportReadTimestampNewer(localLastReadAt, remoteLastReadAt)) {
+        void requestSupportWithSessionRecovery({
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            action: "mark_read",
+            lastReadAt: localLastReadAt,
+          }),
+        }).catch(() => null);
+      }
     } catch {
       if (requestId !== supportRequestIdRef.current) return;
       if (!suppressError) {
@@ -12959,7 +13082,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         setSupportLoading(false);
       }
     }
-  }, [editingSiteId, isPlatformEditor, requestSupportWithSessionRecovery]);
+  }, [editingSiteId, isPlatformEditor, requestSupportWithSessionRecovery, supportReadMerchantId]);
 
   const loadSupportPeerInbox = useCallback(async (options?: { silent?: boolean; suppressError?: boolean }) => {
     if (isPlatformEditor) return;
@@ -12992,6 +13115,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         | {
             contacts?: MerchantPeerContactSummary[];
             threads?: MerchantPeerThread[];
+            readState?: {
+              peerLastRead?: Record<string, unknown> | null;
+            } | null;
+            currentMerchantId?: string | null;
             error?: string;
           }
         | null;
@@ -13005,13 +13132,50 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       setSupportPeerError("");
       const nextContacts = Array.isArray(payload?.contacts) ? payload.contacts : [];
       const nextThreads = Array.isArray(payload?.threads) ? payload.threads : [];
+      const responseMerchantId = String(payload?.currentMerchantId ?? "").trim();
+      const readStateMerchantId = (
+        responseMerchantId ||
+        currentSupportMerchantId ||
+        editingSiteId ||
+        merchantSessionIdentityRef.current.merchantId ||
+        ""
+      ).trim();
+      const remoteLastReadMap = normalizeSupportPeerLastReadRecord(payload?.readState?.peerLastRead);
+      const localLastReadMap = readStateMerchantId ? readLocalSupportPeerLastReadMap(readStateMerchantId, nextContacts) : {};
+      const nextLastReadMap = mergeSupportPeerLastReadMaps(remoteLastReadMap, localLastReadMap);
+      if (readStateMerchantId) {
+        Object.entries(nextLastReadMap).forEach(([contactMerchantId, timestamp]) => {
+          writeLocalSupportPeerLastReadAt(readStateMerchantId, contactMerchantId, timestamp);
+        });
+      }
       writeMerchantAdminDataCache(peerInboxCacheKey, {
         contacts: nextContacts,
         threads: nextThreads,
       });
       setSupportPeerContacts(nextContacts);
       setSupportPeerThreads(nextThreads);
+      setSupportPeerLastReadMap((current) => (areSupportPeerLastReadMapsEqual(current, nextLastReadMap) ? current : nextLastReadMap));
+      setSupportReadStateHydrated((current) => (current.peer ? current : { ...current, peer: true }));
       setSupportUnreadHydrationState((current) => (current.peer ? current : { ...current, peer: true }));
+      if (readStateMerchantId) {
+        Object.entries(localLastReadMap)
+          .filter(([contactMerchantId, timestamp]) =>
+            isSupportReadTimestampNewer(timestamp, remoteLastReadMap[contactMerchantId]),
+          )
+          .forEach(([contactMerchantId, timestamp]) => {
+            void requestMerchantPeerWithSessionRecovery({
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                action: "mark_read",
+                contactMerchantId,
+                lastReadAt: timestamp,
+              }),
+            }).catch(() => null);
+          });
+      }
     } catch {
       if (requestId !== supportPeerRequestIdRef.current) return;
       if (!suppressError) {
@@ -13022,7 +13186,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         setSupportPeerLoading(false);
       }
     }
-  }, [editingSiteId, isPlatformEditor, requestMerchantPeerWithSessionRecovery]);
+  }, [currentSupportMerchantId, editingSiteId, isPlatformEditor, requestMerchantPeerWithSessionRecovery]);
 
   const refreshSupportMobileConversations = useCallback(async () => {
     await Promise.all([
@@ -13408,12 +13572,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       setSupportLastReadAt("");
       setSupportReadStateHydrated((current) => (current.official ? { ...current, official: false } : current));
       supportLastIncomingAdminMessageKeyRef.current = "";
-      return;
     }
-    setSupportLastReadAt(
-      normalizeSupportMessageTimestamp(localStorage.getItem(buildSupportLastReadStorageKey(supportReadMerchantId))),
-    );
-    setSupportReadStateHydrated((current) => (current.official ? current : { ...current, official: true }));
   }, [isPlatformEditor, supportReadMerchantId]);
 
   useEffect(() => {
@@ -13422,32 +13581,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       setSupportPeerLastReadMap({});
       setSupportReadStateHydrated((current) => (current.peer ? { ...current, peer: false } : current));
       supportLastIncomingPeerMessageKeyRef.current = "";
-      return;
     }
-    const nextLastReadMap = supportPeerContacts.reduce<Record<string, string>>((accumulator, contact) => {
-      const merchantId = contact.merchantId.trim();
-      if (!merchantId) return accumulator;
-      const stored = normalizeSupportMessageTimestamp(
-        localStorage.getItem(buildSupportPeerLastReadStorageKey(currentSupportMerchantId, merchantId)),
-      );
-      if (stored) {
-        accumulator[merchantId] = stored;
-      }
-      return accumulator;
-    }, {});
-    setSupportPeerLastReadMap((current) => {
-      const currentKeys = Object.keys(current);
-      const nextKeys = Object.keys(nextLastReadMap);
-      if (
-        currentKeys.length === nextKeys.length &&
-        nextKeys.every((merchantId) => current[merchantId] === nextLastReadMap[merchantId])
-      ) {
-        return current;
-      }
-      return nextLastReadMap;
-    });
-    setSupportReadStateHydrated((current) => (current.peer ? current : { ...current, peer: true }));
-  }, [currentSupportMerchantId, isPlatformEditor, supportPeerContacts]);
+  }, [currentSupportMerchantId, isPlatformEditor]);
 
   useEffect(() => {
     if (supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY) return;
@@ -13863,12 +13998,23 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (isPlatformEditor || !supportInterfaceOpen || !selectedSupportConversationVisible || typeof window === "undefined") return;
     if (supportSelectedContactKey !== SUPPORT_OFFICIAL_CONTACT_KEY) return;
     if (!supportReadMerchantId || !latestSupportAdminMessageAt) return;
-    if (latestSupportAdminMessageAt === supportLastReadAt) return;
+    if (!isSupportReadTimestampNewer(latestSupportAdminMessageAt, supportLastReadAt)) return;
     setSupportLastReadAt(latestSupportAdminMessageAt);
-    localStorage.setItem(buildSupportLastReadStorageKey(supportReadMerchantId), latestSupportAdminMessageAt);
+    writeLocalSupportLastReadAt(supportReadMerchantId, latestSupportAdminMessageAt);
+    void requestSupportWithSessionRecovery({
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        action: "mark_read",
+        lastReadAt: latestSupportAdminMessageAt,
+      }),
+    }).catch(() => null);
   }, [
     isPlatformEditor,
     latestSupportAdminMessageAt,
+    requestSupportWithSessionRecovery,
     selectedSupportConversationVisible,
     supportInterfaceOpen,
     supportLastReadAt,
@@ -13881,7 +14027,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY) return;
     if (!currentSupportMerchantId || !selectedSupportPeerMerchantId || !latestSelectedSupportPeerIncomingMessageAt) return;
     const currentLastReadAt = normalizeSupportMessageTimestamp(supportPeerLastReadMap[selectedSupportPeerMerchantId]);
-    if (latestSelectedSupportPeerIncomingMessageAt === currentLastReadAt) return;
+    if (!isSupportReadTimestampNewer(latestSelectedSupportPeerIncomingMessageAt, currentLastReadAt)) return;
     setSupportPeerLastReadMap((current) =>
       current[selectedSupportPeerMerchantId] === latestSelectedSupportPeerIncomingMessageAt
         ? current
@@ -13890,14 +14036,27 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             [selectedSupportPeerMerchantId]: latestSelectedSupportPeerIncomingMessageAt,
           },
     );
-    localStorage.setItem(
-      buildSupportPeerLastReadStorageKey(currentSupportMerchantId, selectedSupportPeerMerchantId),
+    writeLocalSupportPeerLastReadAt(
+      currentSupportMerchantId,
+      selectedSupportPeerMerchantId,
       latestSelectedSupportPeerIncomingMessageAt,
     );
+    void requestMerchantPeerWithSessionRecovery({
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        action: "mark_read",
+        contactMerchantId: selectedSupportPeerMerchantId,
+        lastReadAt: latestSelectedSupportPeerIncomingMessageAt,
+      }),
+    }).catch(() => null);
   }, [
     currentSupportMerchantId,
     isPlatformEditor,
     latestSelectedSupportPeerIncomingMessageAt,
+    requestMerchantPeerWithSessionRecovery,
     selectedSupportConversationVisible,
     selectedSupportPeerMerchantId,
     supportInterfaceOpen,
