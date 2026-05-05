@@ -30,7 +30,6 @@ import {
   buildBackendFaollaHref,
   buildFaollaShellHref,
   isFaollaAppShellSearch,
-  isFaollaAppShellUrl,
   normalizeFaollaEntryUrl,
 } from "@/lib/faollaEntry";
 import { buildMerchantBackendHref } from "@/lib/siteRouting";
@@ -170,10 +169,7 @@ function LoginPageInner() {
   );
   const isFaollaAppShellLogin = useMemo(() => {
     const rawSearch = searchParams.toString();
-    return (
-      isFaollaAppShellSearch(rawSearch ? `?${rawSearch}` : "") ||
-      isFaollaAppShellUrl(searchParams.get("loginFrom") ?? "", typeof window !== "undefined" ? window.location.origin : undefined)
-    );
+    return isFaollaAppShellSearch(rawSearch ? `?${rawSearch}` : "");
   }, [searchParams]);
   const loggedOut = useMemo(() => (searchParams.get("loggedOut") ?? "").trim() === "1", [searchParams]);
   const launchRetry = useMemo(() => (searchParams.get("launchRetry") ?? "").trim() === "1", [searchParams]);
@@ -228,11 +224,11 @@ function LoginPageInner() {
   }, [isFaollaAppShellLogin]);
 
   useEffect(() => {
-    if (!(isFaollaAppShellLogin || embeddedShellLogin) || typeof window === "undefined") return;
+    if (!embeddedShellLogin || typeof window === "undefined") return;
     window.location.replace(
       buildFaollaShellHref(loginFromUrl || "/", locale, window.location.origin, { preferRuntimeOrigin: true }),
     );
-  }, [embeddedShellLogin, isFaollaAppShellLogin, locale, loginFromUrl]);
+  }, [embeddedShellLogin, locale, loginFromUrl]);
 
   useEffect(() => {
     if (loggedOut || typeof window === "undefined") return;
@@ -1247,7 +1243,7 @@ function LoginPageInner() {
         }
       : undefined;
 
-  if (isFaollaAppShellLogin || embeddedShellLogin) {
+  if (embeddedShellLogin) {
     return <main className="min-h-screen bg-white" aria-hidden="true" />;
   }
 

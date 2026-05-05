@@ -29,6 +29,22 @@ function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function buildLoginHrefFromCurrentUrl(currentUrl: string) {
+  if (!currentUrl) return "/login";
+  let loginFrom = currentUrl;
+  try {
+    const url = new URL(currentUrl, typeof window !== "undefined" ? window.location.origin : "https://www.faolla.com");
+    url.searchParams.delete("appShell");
+    url.searchParams.delete("__faollaInlineBuild");
+    url.searchParams.delete("__faollaWebBuild");
+    url.searchParams.delete("nativeBuild");
+    loginFrom = url.toString();
+  } catch {
+    loginFrom = currentUrl;
+  }
+  return `/login?loginFrom=${encodeURIComponent(loginFrom)}`;
+}
+
 async function resolveDeferredFrontendAuthPayload(timeoutMs: number) {
   const { resolveFrontendAuthPayload } = await import("@/lib/authSessionRecovery");
   return resolveFrontendAuthPayload(timeoutMs);
@@ -248,10 +264,7 @@ export default function FrontendAuthEntry({
     };
   }, []);
 
-  const loginHref = useMemo(
-    () => (currentUrl ? `/login?loginFrom=${encodeURIComponent(currentUrl)}` : "/login"),
-    [currentUrl],
-  );
+  const loginHref = useMemo(() => buildLoginHrefFromCurrentUrl(currentUrl), [currentUrl]);
 
   useEffect(() => {
     if (!accountMenuOpen) return;
