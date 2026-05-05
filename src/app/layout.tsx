@@ -431,6 +431,19 @@ html[data-faolla-web-launch-ready="true"] #faolla-app-web-launch-cover {
     width: 1.25rem !important;
     height: 1.25rem !important;
   }
+  @supports (-webkit-touch-callout: none) {
+    html:not([data-capacitor-platform="android"]) .support-mobile-nav-shell {
+      max-width: min(430px, calc(100vw - 32px)) !important;
+    }
+    html:not([data-capacitor-platform="android"]) .support-mobile-nav-shell > div {
+      padding-left: 0 !important;
+      padding-right: 0 !important;
+      padding-bottom: max(
+        0.42rem,
+        calc(var(--faolla-mobile-safe-bottom, env(safe-area-inset-bottom, 0px)) - 1.55rem)
+      ) !important;
+    }
+  }
   .faolla-personal-mobile-shell button[aria-label="上传头像"],
   .support-mobile-shell button[aria-label="上传头像"],
   .faolla-personal-mobile-shell .faolla-mobile-self-avatar,
