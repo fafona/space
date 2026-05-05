@@ -1,4 +1,5 @@
 import { formatMerchantBookingDateTime, type MerchantBookingRecord } from "@/lib/merchantBookings";
+import { formatMerchantOrderAmount, type MerchantOrderRecord } from "@/lib/merchantOrders";
 
 function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -56,8 +57,33 @@ export function buildMerchantBookingPushNotification(input: {
   return {
     title: "新预约订单",
     body: buildMerchantPushPreview(previewSource || "您有一笔新的预约订单"),
-    url: `/${merchantId}`,
+    url: `/${merchantId}?mobileTab=business&businessSection=booking&appShell=faolla`,
     tag: `booking:${merchantId}`,
+  };
+}
+
+export function buildMerchantOrderPushNotification(input: {
+  siteId: string;
+  order: MerchantOrderRecord;
+}) {
+  const merchantId = trimText(input.siteId) || trimText(input.order.siteId);
+  const customerName = trimText(input.order.customer.name) || trimText(input.order.customer.phone) || "客户";
+  const itemSummary =
+    input.order.items
+      .slice(0, 2)
+      .map((item) => {
+        const name = trimText(item.name) || trimText(item.code) || "商品";
+        return item.quantity > 1 ? `${name}×${item.quantity}` : name;
+      })
+      .filter(Boolean)
+      .join("、") || `${Math.max(1, input.order.totalQuantity)}件商品`;
+  const amount = formatMerchantOrderAmount(input.order.totalAmount, input.order.pricePrefix);
+
+  return {
+    title: "新订单",
+    body: buildMerchantPushPreview([customerName, itemSummary, amount].filter(Boolean).join(" / ") || "有新的订单需要处理"),
+    url: `/${merchantId}?mobileTab=business&businessSection=orders&appShell=faolla`,
+    tag: `order:${merchantId}`,
   };
 }
 

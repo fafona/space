@@ -17,6 +17,17 @@ import {
   loadStoredPlatformSupportInbox,
   type PlatformSupportInboxStoreClient,
 } from "@/lib/platformSupportInboxStore";
+import { listMerchantBookings } from "@/lib/merchantBookings.server";
+import {
+  isMerchantBookingPendingMerchantTouch,
+  type MerchantBookingRecord,
+} from "@/lib/merchantBookings";
+import { listMerchantOrders } from "@/lib/merchantOrders.server";
+import {
+  formatMerchantOrderAmount,
+  isMerchantOrderPendingMerchantTouch,
+  type MerchantOrderRecord,
+} from "@/lib/merchantOrders";
 import {
   resolvePlatformAccountIdentityForUser,
   type PlatformIdentitySupabaseClient,
@@ -128,6 +139,21 @@ function buildPreview(text: string, maxLength = 88) {
   return `${normalized.slice(0, Math.max(1, maxLength - 3)).trimEnd()}...`;
 }
 
+function normalizeNotificationTimestamp(value: unknown, fallback: unknown = "") {
+  return normalizeIsoString(value) || normalizeIsoString(fallback) || new Date(0).toISOString();
+}
+
+function formatNotificationDateTime(value: unknown) {
+  const normalized = normalizeIsoString(value);
+  if (!normalized) return "";
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(normalized));
+}
+
 function compareCandidate(left: NativeNotificationCandidate | null, right: NativeNotificationCandidate | null) {
   if (!left) return right;
   if (!right) return left;
@@ -165,6 +191,42 @@ function buildPeerCandidate(input: {
   } satisfies NativeNotificationCandidate;
 }
 
+function buildBookingCandidate(merchantId: string, booking: MerchantBookingRecord) {
+  const createdAt = normalizeNotificationTimestamp(booking.updatedAt, booking.createdAt);
+  const customerName = trimText(booking.customerName) || "客户";
+  const serviceParts = [trimText(booking.store), trimText(booking.item) || trimText(booking.title)].filter(Boolean);
+  const appointmentText = formatNotificationDateTime(booking.appointmentAt);
+  return {
+    key: `booking:${booking.id}:${createdAt}`,
+    title: `新预约 - ${customerName}`,
+    body: buildPreview([serviceParts.join(" · "), appointmentText].filter(Boolean).join(" · ") || "有新的预约需要处理"),
+    url: `/${merchantId}?mobileTab=business&businessSection=booking&appShell=faolla`,
+    createdAt,
+  } satisfies NativeNotificationCandidate;
+}
+
+function buildOrderCandidate(merchantId: string, order: MerchantOrderRecord) {
+  const createdAt = normalizeNotificationTimestamp(order.updatedAt, order.createdAt);
+  const customerName = trimText(order.customer?.name) || trimText(order.customer?.phone) || "客户";
+  const itemSummary =
+    order.items
+      .slice(0, 2)
+      .map((item) => {
+        const name = trimText(item.name) || trimText(item.code) || "商品";
+        return item.quantity > 1 ? `${name}×${item.quantity}` : name;
+      })
+      .filter(Boolean)
+      .join("、") || `${Math.max(1, order.totalQuantity)}件商品`;
+  const amount = formatMerchantOrderAmount(order.totalAmount, order.pricePrefix);
+  return {
+    key: `order:${order.id}:${createdAt}`,
+    title: `新订单 - ${customerName}`,
+    body: buildPreview([itemSummary, amount].filter(Boolean).join(" · ") || "有新的订单需要处理"),
+    url: `/${merchantId}?mobileTab=business&businessSection=orders&appShell=faolla`,
+    createdAt,
+  } satisfies NativeNotificationCandidate;
+}
+
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const hint = {
@@ -187,9 +249,11 @@ export async function GET(request: Request) {
   const peerLastReadMap = normalizeLastReadMap(url.searchParams.get("peerLastRead"));
   const officialLastReadTs = new Date(officialLastReadAt || 0).getTime();
 
-  const [supportPayload, peerPayload] = await Promise.all([
+  const [supportPayload, peerPayload, bookingRecords, orderRecords] = await Promise.all([
     loadStoredPlatformSupportInbox(supabase as unknown as PlatformSupportInboxStoreClient),
     loadStoredMerchantPeerInbox(supabase as unknown as MerchantPeerInboxStoreClient),
+    listMerchantBookings(merchantId, { includeAutomationState: true }).catch(() => [] as MerchantBookingRecord[]),
+    listMerchantOrders(merchantId).catch(() => [] as MerchantOrderRecord[]),
   ]);
 
   let unreadCount = 0;
@@ -225,6 +289,18 @@ export async function GET(request: Request) {
       unreadCount += 1;
       latest = compareCandidate(latest, buildPeerCandidate({ merchantId, contactId, contactName, message }));
     });
+  });
+
+  bookingRecords.forEach((booking) => {
+    if (!isMerchantBookingPendingMerchantTouch(booking)) return;
+    unreadCount += 1;
+    latest = compareCandidate(latest, buildBookingCandidate(merchantId, booking));
+  });
+
+  orderRecords.forEach((order) => {
+    if (!isMerchantOrderPendingMerchantTouch(order)) return;
+    unreadCount += 1;
+    latest = compareCandidate(latest, buildOrderCandidate(merchantId, order));
   });
 
   return noStoreJson({

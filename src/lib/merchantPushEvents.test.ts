@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   buildMerchantBookingPushNotification,
   buildMerchantBookingReminderPushNotification,
+  buildMerchantOrderPushNotification,
   buildMerchantPeerPushNotification,
   buildMerchantPushPreview,
   buildSuperAdminReplyPushNotification,
@@ -67,8 +68,58 @@ test("buildMerchantBookingPushNotification builds new-order payload", () => {
   assert.deepEqual(payload, {
     title: "新预约订单",
     body: "Felix / 咨询预约 / 2026-04-10 12:30",
-    url: "/10000000",
+    url: "/10000000?mobileTab=business&businessSection=booking&appShell=faolla",
     tag: "booking:10000000",
+  });
+});
+
+test("buildMerchantOrderPushNotification builds new order payload", () => {
+  const payload = buildMerchantOrderPushNotification({
+    siteId: "10000000",
+    order: {
+      id: "O10000000202604100001",
+      siteId: "10000000",
+      siteName: "faolla",
+      blockId: "products",
+      createdAt: "2026-04-10T12:30:00.000Z",
+      updatedAt: "2026-04-10T12:30:00.000Z",
+      status: "pending",
+      customer: {
+        name: "Felix",
+        phone: "+34 633130577",
+        email: "felix@example.com",
+        note: "",
+      },
+      items: [
+        {
+          productId: "p1",
+          code: "A1",
+          name: "套餐",
+          description: "",
+          imageUrl: "",
+          tag: "",
+          quantity: 2,
+          unitPrice: 10,
+          unitPriceText: "€10.00",
+          subtotal: 20,
+        },
+      ],
+      totalQuantity: 2,
+      totalAmount: 20,
+      pricePrefix: "€",
+      confirmedAt: null,
+      completedAt: null,
+      cancelledAt: null,
+      printedAt: null,
+      printCount: 0,
+    },
+  });
+
+  assert.deepEqual(payload, {
+    title: "新订单",
+    body: "Felix / 套餐×2 / €20.00",
+    url: "/10000000?mobileTab=business&businessSection=orders&appShell=faolla",
+    tag: "order:10000000",
   });
 });
 

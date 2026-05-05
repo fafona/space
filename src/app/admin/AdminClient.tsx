@@ -229,6 +229,11 @@ import {
   type MerchantBookingRecord,
 } from "@/lib/merchantBookings";
 import {
+  formatMerchantOrderAmount,
+  isMerchantOrderPendingMerchantTouch,
+  type MerchantOrderRecord,
+} from "@/lib/merchantOrders";
+import {
   filterMerchantBookingRecordsByHistory,
   loadMerchantBookingManagerPreferences,
 } from "@/lib/merchantBookingManagerPreferences";
@@ -4874,6 +4879,121 @@ function buildSupportNativeNotificationUrl(merchantId: string, supportTarget: st
   return `/${path}?support=${encodeURIComponent(supportTarget)}&appShell=faolla`;
 }
 
+type MerchantBusinessAttentionNotification = {
+  key: string;
+  title: string;
+  body: string;
+  url: string;
+  createdAt: string;
+};
+
+type MerchantBusinessAttentionSummary = {
+  count: number;
+  latest: MerchantBusinessAttentionNotification | null;
+};
+
+function normalizeMerchantBusinessAttentionTimestamp(value: unknown, fallback: unknown = "") {
+  return normalizeSupportMessageTimestamp(String(value ?? "")) || normalizeSupportMessageTimestamp(String(fallback ?? ""));
+}
+
+function formatMerchantBusinessAttentionDateTime(value: unknown) {
+  const normalized = normalizeMerchantBusinessAttentionTimestamp(value);
+  if (!normalized) return "";
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(normalized));
+}
+
+function buildMerchantBusinessNotificationUrl(merchantId: string, section: "booking" | "orders") {
+  const path = normalizeSupportDisplayValue(merchantId) || "admin";
+  return `/${path}?mobileTab=business&businessSection=${section}&appShell=faolla`;
+}
+
+function compareMerchantBusinessAttentionNotification(
+  left: MerchantBusinessAttentionNotification | null,
+  right: MerchantBusinessAttentionNotification | null,
+) {
+  if (!left) return right;
+  if (!right) return left;
+  const leftTime = new Date(left.createdAt).getTime();
+  const rightTime = new Date(right.createdAt).getTime();
+  if (rightTime > leftTime) return right;
+  if (rightTime < leftTime) return left;
+  return right.key > left.key ? right : left;
+}
+
+function summarizeMerchantBookingAttentionRecords(
+  records: MerchantBookingRecord[],
+  merchantId: string,
+): MerchantBusinessAttentionSummary {
+  return records.reduce<MerchantBusinessAttentionSummary>(
+    (summary, booking) => {
+      if (!isMerchantBookingPendingMerchantTouch(booking)) return summary;
+      const createdAt = normalizeMerchantBusinessAttentionTimestamp(booking.updatedAt, booking.createdAt);
+      const customerName = normalizeSupportDisplayValue(booking.customerName) || "客户";
+      const serviceParts = [
+        normalizeSupportDisplayValue(booking.store),
+        normalizeSupportDisplayValue(booking.item) || normalizeSupportDisplayValue(booking.title),
+      ].filter(Boolean);
+      const appointmentText = formatMerchantBusinessAttentionDateTime(booking.appointmentAt);
+      const body = buildSupportNativeNotificationBody(
+        [serviceParts.join(" · "), appointmentText].filter(Boolean).join(" · ") || "有新的预约需要处理",
+      );
+      return {
+        count: summary.count + 1,
+        latest: compareMerchantBusinessAttentionNotification(summary.latest, {
+          key: `booking:${booking.id}:${createdAt}`,
+          title: `新预约 - ${customerName}`,
+          body,
+          url: buildMerchantBusinessNotificationUrl(merchantId, "booking"),
+          createdAt,
+        }),
+      };
+    },
+    { count: 0, latest: null },
+  );
+}
+
+function summarizeMerchantOrderAttentionRecords(
+  records: MerchantOrderRecord[],
+  merchantId: string,
+): MerchantBusinessAttentionSummary {
+  return records.reduce<MerchantBusinessAttentionSummary>(
+    (summary, order) => {
+      if (!isMerchantOrderPendingMerchantTouch(order)) return summary;
+      const createdAt = normalizeMerchantBusinessAttentionTimestamp(order.updatedAt, order.createdAt);
+      const customerName =
+        normalizeSupportDisplayValue(order.customer?.name) ||
+        normalizeSupportDisplayValue(order.customer?.phone) ||
+        "客户";
+      const itemSummary =
+        order.items
+          .slice(0, 2)
+          .map((item) => {
+            const name = normalizeSupportDisplayValue(item.name) || normalizeSupportDisplayValue(item.code) || "商品";
+            return item.quantity > 1 ? `${name}×${item.quantity}` : name;
+          })
+          .filter(Boolean)
+          .join("、") || `${Math.max(1, order.totalQuantity)}件商品`;
+      const amount = formatMerchantOrderAmount(order.totalAmount, order.pricePrefix);
+      return {
+        count: summary.count + 1,
+        latest: compareMerchantBusinessAttentionNotification(summary.latest, {
+          key: `order:${order.id}:${createdAt}`,
+          title: `新订单 - ${customerName}`,
+          body: buildSupportNativeNotificationBody([itemSummary, amount].filter(Boolean).join(" · ")),
+          url: buildMerchantBusinessNotificationUrl(merchantId, "orders"),
+          createdAt,
+        }),
+      };
+    },
+    { count: 0, latest: null },
+  );
+}
+
 function readSupportPushPublicKey() {
   return String(process.env.NEXT_PUBLIC_WEB_PUSH_PUBLIC_KEY ?? "").trim();
 }
@@ -5321,7 +5441,18 @@ export default function AdminClient({
   const [merchantOrderManagerOpen, setMerchantOrderManagerOpen] = useState(false);
   const [merchantBookingWorkbenchOpen, setMerchantBookingWorkbenchOpen] = useState(false);
   const [merchantOrderWorkbenchOpen, setMerchantOrderWorkbenchOpen] = useState(false);
-  const [merchantBookingAttentionCount, setMerchantBookingAttentionCount] = useState(0);
+  const [merchantBookingAttentionSummary, setMerchantBookingAttentionSummary] = useState<MerchantBusinessAttentionSummary>({
+    count: 0,
+    latest: null,
+  });
+  const [merchantOrderAttentionSummary, setMerchantOrderAttentionSummary] = useState<MerchantBusinessAttentionSummary>({
+    count: 0,
+    latest: null,
+  });
+  const [merchantBusinessAttentionHydrationState, setMerchantBusinessAttentionHydrationState] = useState({
+    booking: false,
+    orders: false,
+  });
   const [supportDialogOpen, setSupportDialogOpen] = useState(false);
   const [supportDataActivated, setSupportDataActivated] = useState(false);
   const [supportThread, setSupportThread] = useState<PlatformSupportThread | null>(null);
@@ -5371,7 +5502,15 @@ export default function AdminClient({
     const params = new URLSearchParams(window.location.search);
     const targetTab = params.get("mobileTab");
     const targetSection = params.get("selfSection");
+    const targetBusinessSection = params.get("businessSection");
     const tankBattleReturnTarget = readTankBattleLobbyReturnTarget("merchant");
+    if (targetTab === "business") {
+      const nextBusinessSection = targetBusinessSection === "orders" ? "orders" : "booking";
+      setSupportMobileHomeTab("business");
+      setSupportMobileBusinessSection(nextBusinessSection);
+      setMerchantDesktopSection(nextBusinessSection === "orders" ? "orders" : "booking");
+      return;
+    }
     if (targetTab !== "self" && !targetSection && !tankBattleReturnTarget) return;
     setSupportMobileHomeTab("self");
     let clearReturnTargetTimer: number | null = null;
@@ -5473,6 +5612,7 @@ export default function AdminClient({
   );
   const supportLastIncomingAdminMessageKeyRef = useRef("");
   const supportLastIncomingPeerMessageKeyRef = useRef("");
+  const supportLastIncomingBusinessAttentionKeyRef = useRef("");
   const supportLastVisibleMessageKeyRef = useRef("");
   const supportScrollToLatestPendingRef = useRef(false);
   const supportMobileSwipeStartRef = useRef<{ x: number; y: number; fromEdge: boolean } | null>(null);
@@ -10276,21 +10416,27 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     editingSiteId && merchantPlatformState
       ? merchantPlatformState.sites.find((item) => item.id === editingSiteId) ?? null
       : null;
-  const countMerchantBookingAttention = useCallback((records: MerchantBookingRecord[], applyPreferences = true) => {
+  const summarizeMerchantBookingAttention = useCallback((records: MerchantBookingRecord[], applyPreferences = true) => {
     const preferences = applyPreferences ? loadMerchantBookingManagerPreferences(editingSiteId) : null;
     const scopedRecords = preferences
       ? filterMerchantBookingRecordsByHistory(records, preferences.historyVisibility).filter((record) =>
           preferences.selectedStatuses.includes(record.status),
         )
       : records;
-    return scopedRecords.reduce(
-      (count, record) => (isMerchantBookingPendingMerchantTouch(record) ? count + 1 : count),
-      0,
-    );
+    return summarizeMerchantBookingAttentionRecords(scopedRecords, editingSiteId);
   }, [editingSiteId]);
   const handleMerchantBookingRecordsChange = useCallback((records: MerchantBookingRecord[]) => {
-    setMerchantBookingAttentionCount(countMerchantBookingAttention(records, false));
-  }, [countMerchantBookingAttention]);
+    setMerchantBookingAttentionSummary(summarizeMerchantBookingAttention(records, false));
+    setMerchantBusinessAttentionHydrationState((current) => (current.booking ? current : { ...current, booking: true }));
+  }, [summarizeMerchantBookingAttention]);
+  const summarizeMerchantOrderAttention = useCallback(
+    (records: MerchantOrderRecord[]) => summarizeMerchantOrderAttentionRecords(records, editingSiteId),
+    [editingSiteId],
+  );
+  const handleMerchantOrderRecordsChange = useCallback((records: MerchantOrderRecord[]) => {
+    setMerchantOrderAttentionSummary(summarizeMerchantOrderAttention(records));
+    setMerchantBusinessAttentionHydrationState((current) => (current.orders ? current : { ...current, orders: true }));
+  }, [summarizeMerchantOrderAttention]);
 
   useEffect(() => {
     if (isPlatformEditor || typeof window === "undefined") return;
@@ -10300,7 +10446,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   useEffect(() => {
     if (isPlatformEditor || !isMerchantNumericId(editingSiteId)) {
-      setMerchantBookingAttentionCount(0);
+      setMerchantBookingAttentionSummary({ count: 0, latest: null });
+      setMerchantBusinessAttentionHydrationState((current) => (current.booking ? current : { ...current, booking: true }));
       return;
     }
     let cancelled = false;
@@ -10317,7 +10464,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           throw new Error("booking_attention_failed");
         }
         if (!cancelled) {
-          setMerchantBookingAttentionCount(countMerchantBookingAttention(json.bookings));
+          setMerchantBookingAttentionSummary(summarizeMerchantBookingAttention(json.bookings));
+          setMerchantBusinessAttentionHydrationState((current) => (current.booking ? current : { ...current, booking: true }));
         }
       } catch {
         // Keep the last known badge count when the lightweight refresh fails.
@@ -10331,7 +10479,49 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       cancelled = true;
       if (timer) clearInterval(timer);
     };
-  }, [countMerchantBookingAttention, editingSiteId, isPlatformEditor]);
+  }, [editingSiteId, isPlatformEditor, summarizeMerchantBookingAttention]);
+
+  useEffect(() => {
+    if (isPlatformEditor || !isMerchantNumericId(editingSiteId)) {
+      setMerchantOrderAttentionSummary({ count: 0, latest: null });
+      setMerchantBusinessAttentionHydrationState((current) => (current.orders ? current : { ...current, orders: true }));
+      return;
+    }
+    let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const loadMerchantOrderAttention = async () => {
+      try {
+        const response = await fetch(`/api/orders?siteId=${encodeURIComponent(editingSiteId)}`, {
+          cache: "no-store",
+          credentials: "same-origin",
+        });
+        const json = (await response.json().catch(() => null)) as
+          | { ok?: boolean; orders?: MerchantOrderRecord[] }
+          | null;
+        if (!response.ok || !json?.ok || !Array.isArray(json.orders)) {
+          if (response.status === 403 && !cancelled) {
+            setMerchantOrderAttentionSummary({ count: 0, latest: null });
+            setMerchantBusinessAttentionHydrationState((current) => (current.orders ? current : { ...current, orders: true }));
+          }
+          throw new Error("order_attention_failed");
+        }
+        if (!cancelled) {
+          setMerchantOrderAttentionSummary(summarizeMerchantOrderAttention(json.orders));
+          setMerchantBusinessAttentionHydrationState((current) => (current.orders ? current : { ...current, orders: true }));
+        }
+      } catch {
+        // Keep the last known badge count when the lightweight refresh fails.
+      }
+    };
+    void loadMerchantOrderAttention();
+    timer = setInterval(() => {
+      void loadMerchantOrderAttention();
+    }, 60000);
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
+  }, [editingSiteId, isPlatformEditor, summarizeMerchantOrderAttention]);
 
   useEffect(() => {
     if (isPlatformEditor || typeof window === "undefined" || typeof document === "undefined") return;
@@ -11143,16 +11333,21 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     });
     return unreadCount;
   }, [currentSupportMerchantId, supportPeerContacts, supportPeerLastReadMap, supportPeerThreadByContactMerchantId, supportReadStateHydrated.peer]);
+  const merchantBusinessAttentionCount = merchantBookingAttentionSummary.count + merchantOrderAttentionSummary.count;
+  const merchantBusinessAttentionHydrated =
+    merchantBusinessAttentionHydrationState.booking && merchantBusinessAttentionHydrationState.orders;
   const supportUnreadBadgeCount = supportUnreadOfficialMessageCount + supportUnreadPeerMessageCount;
+  const supportTotalBadgeCount = supportUnreadBadgeCount + merchantBusinessAttentionCount;
   const supportUnreadStateHydrated =
     supportUnreadHydrationState.official &&
     supportUnreadHydrationState.peer &&
     supportReadStateHydrated.official &&
-    supportReadStateHydrated.peer;
+    supportReadStateHydrated.peer &&
+    merchantBusinessAttentionHydrated;
   const supportEffectiveBadgeCount =
     supportUnreadStateHydrated
-      ? supportUnreadBadgeCount
-      : Math.max(supportUnreadBadgeCount, supportPushBadgeHydrated ? supportRemoteBadgeCount : 0);
+      ? supportTotalBadgeCount
+      : Math.max(supportTotalBadgeCount, supportPushBadgeHydrated ? supportRemoteBadgeCount : 0);
   const latestSupportAdminNotificationPayload = latestSupportAdminMessage
     ? {
         title: "Faolla 官方回复",
@@ -11191,6 +11386,26 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     });
     return latestPayload;
   }, [currentSupportMerchantId, supportEffectiveBadgeCount, supportPeerContacts, supportPeerThreads]);
+  const latestMerchantBusinessAttention = useMemo(
+    () =>
+      compareMerchantBusinessAttentionNotification(
+        merchantBookingAttentionSummary.latest,
+        merchantOrderAttentionSummary.latest,
+      ),
+    [merchantBookingAttentionSummary.latest, merchantOrderAttentionSummary.latest],
+  );
+  const latestMerchantBusinessNotificationPayload = useMemo(
+    () =>
+      latestMerchantBusinessAttention
+        ? {
+            title: latestMerchantBusinessAttention.title,
+            body: latestMerchantBusinessAttention.body,
+            url: latestMerchantBusinessAttention.url,
+            badgeCount: supportEffectiveBadgeCount,
+          }
+        : null,
+    [latestMerchantBusinessAttention, supportEffectiveBadgeCount],
+  );
   const supportLatestNativeNotificationKey = useMemo(() => {
     let latestKey = "";
     let latestTimestamp = 0;
@@ -11220,8 +11435,18 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         latestKey = nextKey;
       }
     });
+    if (latestMerchantBusinessAttention) {
+      const timestamp = new Date(latestMerchantBusinessAttention.createdAt).getTime();
+      if (Number.isFinite(timestamp)) {
+        const nextKey = latestMerchantBusinessAttention.key;
+        if (timestamp > latestTimestamp || (timestamp === latestTimestamp && nextKey > latestKey)) {
+          latestTimestamp = timestamp;
+          latestKey = nextKey;
+        }
+      }
+    }
     return latestKey;
-  }, [currentSupportMerchantId, latestSupportAdminMessage, supportPeerThreads]);
+  }, [currentSupportMerchantId, latestMerchantBusinessAttention, latestSupportAdminMessage, supportPeerThreads]);
   const supportHasUnreadMessages = supportUnreadBadgeCount > 0;
   const supportContactRows: SupportContactRow[] = [
     {
@@ -11642,6 +11867,13 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   useEffect(() => {
     if (isPlatformEditor) return;
+    supportLastIncomingBusinessAttentionKeyRef.current = "";
+    setMerchantBookingAttentionSummary({ count: 0, latest: null });
+    setMerchantOrderAttentionSummary({ count: 0, latest: null });
+    setMerchantBusinessAttentionHydrationState({
+      booking: false,
+      orders: false,
+    });
     setSupportUnreadHydrationState({
       official: false,
       peer: false,
@@ -13448,6 +13680,19 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   ]);
 
   useEffect(() => {
+    if (isPlatformEditor || !latestMerchantBusinessAttention?.key) return;
+    const previousKey = supportLastIncomingBusinessAttentionKeyRef.current;
+    supportLastIncomingBusinessAttentionKeyRef.current = latestMerchantBusinessAttention.key;
+    if (!previousKey || previousKey === latestMerchantBusinessAttention.key) return;
+    void triggerSupportNotificationFeedback(latestMerchantBusinessNotificationPayload ?? undefined);
+  }, [
+    isPlatformEditor,
+    latestMerchantBusinessAttention,
+    latestMerchantBusinessNotificationPayload,
+    triggerSupportNotificationFeedback,
+  ]);
+
+  useEffect(() => {
     if (isPlatformEditor || !supportInterfaceOpen || !selectedSupportConversationVisible || typeof window === "undefined") return;
     if (supportSelectedContactKey !== SUPPORT_OFFICIAL_CONTACT_KEY) return;
     if (!supportReadMerchantId || !latestSupportAdminMessageAt) return;
@@ -14720,9 +14965,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const resolvedSupportMobileBusinessSection =
     canUseOrderManagement || supportMobileBusinessSection === "booking" ? supportMobileBusinessSection : "booking";
   const isBookingBlockAddLocked = merchantHasBookingBlockConfigured;
-  const merchantBookingBadgeLabel =
-    merchantBookingAttentionCount > 99 ? "99+" : String(merchantBookingAttentionCount);
-  const merchantHasBookingAttention = merchantBookingAttentionCount > 0;
+  const merchantBusinessBadgeLabel =
+    merchantBusinessAttentionCount > 99 ? "99+" : String(merchantBusinessAttentionCount);
+  const merchantHasBusinessAttention = merchantBusinessAttentionCount > 0;
   const isCurrentBlockTypeLocked =
     (!canUseButtonBlock && newBlockType === "button") ||
     (!canUseGalleryBlock && newBlockType === "gallery") ||
@@ -15630,6 +15875,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 siteId={supportMobileBookingSiteId}
                 siteName={merchantDisplayName}
                 darkMode={supportMobileDarkMode}
+                onOrdersChange={handleMerchantOrderRecordsChange}
                 onOpenConversation={openSupportConversationFromBusinessRecord}
                 onSectionChange={setSupportMobileBusinessSection}
               />
@@ -16408,9 +16654,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     {supportUnreadBadgeLabel}
                   </span>
                 ) : null}
-                {item.key === "business" && merchantHasBookingAttention ? (
+                {item.key === "business" && merchantHasBusinessAttention ? (
                   <span className="absolute right-2 top-1 inline-flex min-w-[18px] items-center justify-center rounded-full bg-emerald-500 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white shadow-[0_8px_18px_rgba(16,185,129,0.28)]">
-                    {merchantBookingBadgeLabel}
+                    {merchantBusinessBadgeLabel}
                   </span>
                 ) : null}
                 <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
@@ -17148,6 +17394,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       ? {
           siteId: editingSiteId || "",
           siteName: effectiveMerchantDisplayName || merchantDisplayName,
+          onOrdersChange: handleMerchantOrderRecordsChange,
           onOpenConversation: openSupportConversationFromBusinessRecord,
           onClose: () => {
             setMerchantOrderManagerOpen(false);
@@ -17913,9 +18160,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         }}
                       >
                         <span>预约管理</span>
-                        {merchantHasBookingAttention ? (
+                        {merchantBookingAttentionSummary.count > 0 ? (
                           <span className="ml-2 inline-flex min-w-[1.5rem] items-center justify-center rounded-full bg-emerald-500 px-2 py-0.5 text-xs font-semibold leading-none text-white">
-                            {merchantBookingBadgeLabel}
+                            {merchantBookingAttentionSummary.count > 99 ? "99+" : merchantBookingAttentionSummary.count}
                           </span>
                         ) : null}
                       </button>
@@ -17929,6 +18176,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         }}
                       >
                         <span>订单管理</span>
+                        {merchantOrderAttentionSummary.count > 0 ? (
+                          <span className="ml-2 inline-flex min-w-[1.5rem] items-center justify-center rounded-full bg-emerald-500 px-2 py-0.5 text-xs font-semibold leading-none text-white">
+                            {merchantOrderAttentionSummary.count > 99 ? "99+" : merchantOrderAttentionSummary.count}
+                          </span>
+                        ) : null}
                       </button>
                     ) : null}
                     <button

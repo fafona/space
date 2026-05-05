@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
+import { buildMerchantOrderPushNotification } from "@/lib/merchantPushEvents";
 import { loadCurrentMerchantSnapshotSiteBySiteId } from "@/lib/publishedMerchantService";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import {
@@ -15,6 +16,9 @@ import { readPersonalCustomerProfileFromSession } from "@/lib/personalCustomerPr
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 import { verifyFrontendAuthProof } from "@/lib/frontendAuthProof.server";
 import { buildPersonalMerchantContactMap } from "@/lib/personalMerchantContacts.server";
+import type { MerchantPushSubscriptionStoreClient } from "@/lib/merchantPushSubscriptionStore";
+import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
+import { notifyMerchantPushSubscribers } from "@/lib/webPush";
 import type { MerchantOrderAction, MerchantOrderCreateInput, MerchantOrderLineItemInput, MerchantOrderStatus } from "@/lib/merchantOrders";
 
 export const dynamic = "force-dynamic";
@@ -142,6 +146,21 @@ export async function POST(request: Request) {
       customerLoginEmail: personalSession?.email ?? personalProof?.email ?? "",
       items: Array.isArray(body.items) ? body.items : [],
     });
+
+    const supabase = createServerSupabaseServiceClient();
+    if (supabase) {
+      const notification = buildMerchantOrderPushNotification({
+        siteId,
+        order,
+      });
+      await notifyMerchantPushSubscribers(supabase as unknown as MerchantPushSubscriptionStoreClient, {
+        merchantId: siteId,
+        ...notification,
+      }).catch(() => {
+        // Ignore notification delivery failures; the order itself should still succeed.
+      });
+    }
+
     return NextResponse.json({ ok: true, order });
   } catch (error) {
     return NextResponse.json(
