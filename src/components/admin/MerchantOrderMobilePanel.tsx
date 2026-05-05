@@ -9,6 +9,11 @@ import {
   type MerchantOrderRecord,
   type MerchantOrderStatus,
 } from "@/lib/merchantOrders";
+import {
+  buildMerchantAdminDataCacheKey,
+  readMerchantAdminDataCache,
+  writeMerchantAdminDataCache,
+} from "@/lib/merchantAdminDataCache";
 
 type MerchantOrderMobilePanelProps = {
   siteId: string;
@@ -167,6 +172,17 @@ function buildPrintHtml(order: MerchantOrderRecord) {
     .join("")}</ul><div>合计：${formatMerchantOrderAmount(order.totalAmount, order.pricePrefix)}</div></body></html>`;
 }
 
+function readCachedOrderRecords(siteId: string) {
+  const cached = readMerchantAdminDataCache<MerchantOrderRecord[]>(
+    buildMerchantAdminDataCacheKey("orders", siteId),
+  );
+  return Array.isArray(cached) ? cached : [];
+}
+
+function writeCachedOrderRecords(siteId: string, records: MerchantOrderRecord[]) {
+  writeMerchantAdminDataCache(buildMerchantAdminDataCacheKey("orders", siteId), records);
+}
+
 export default function MerchantOrderMobilePanel({
   siteId,
   siteName,
@@ -176,7 +192,7 @@ export default function MerchantOrderMobilePanel({
   onSectionChange,
 }: MerchantOrderMobilePanelProps) {
   const overflowMenuRef = useRef<HTMLDivElement>(null);
-  const [records, setRecords] = useState<MerchantOrderRecord[]>([]);
+  const [records, setRecords] = useState<MerchantOrderRecord[]>(() => readCachedOrderRecords(siteId));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
@@ -225,7 +241,14 @@ export default function MerchantOrderMobilePanel({
 
   const loadOrders = useCallback(async () => {
     if (!siteId) return;
-    setLoading(true);
+    const cachedRecords = readCachedOrderRecords(siteId);
+    if (cachedRecords.length > 0) {
+      setRecords(cachedRecords);
+      setLoading(false);
+    } else {
+      setRecords([]);
+      setLoading(true);
+    }
     setError("");
     try {
       const response = await fetch(`/api/orders?siteId=${encodeURIComponent(siteId)}`, {
@@ -238,7 +261,9 @@ export default function MerchantOrderMobilePanel({
       if (!response.ok) {
         throw new Error(payload?.message || payload?.error || "order_list_failed");
       }
-      setRecords(Array.isArray(payload?.orders) ? payload.orders : []);
+      const nextRecords = Array.isArray(payload?.orders) ? payload.orders : [];
+      writeCachedOrderRecords(siteId, nextRecords);
+      setRecords(nextRecords);
     } catch (nextError) {
       setError(nextError instanceof Error && nextError.message ? nextError.message : "订单读取失败");
     } finally {

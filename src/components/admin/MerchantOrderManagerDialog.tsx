@@ -20,6 +20,11 @@ import {
   type MerchantOrderHistoryVisibility,
   type MerchantOrderSortMode,
 } from "@/lib/merchantOrderManagerPreferences";
+import {
+  buildMerchantAdminDataCacheKey,
+  readMerchantAdminDataCache,
+  writeMerchantAdminDataCache,
+} from "@/lib/merchantAdminDataCache";
 
 type MerchantOrderManagerDialogProps = {
   open: boolean;
@@ -224,6 +229,17 @@ function buildPrintHtml(order: MerchantOrderRecord) {
   </html>`;
 }
 
+function readCachedOrderRecords(siteId: string) {
+  const cached = readMerchantAdminDataCache<MerchantOrderRecord[]>(
+    buildMerchantAdminDataCacheKey("orders", siteId),
+  );
+  return Array.isArray(cached) ? cached : [];
+}
+
+function writeCachedOrderRecords(siteId: string, records: MerchantOrderRecord[]) {
+  writeMerchantAdminDataCache(buildMerchantAdminDataCacheKey("orders", siteId), records);
+}
+
 export default function MerchantOrderManagerDialog({
   open,
   mode = "dialog",
@@ -238,7 +254,7 @@ export default function MerchantOrderManagerDialog({
   onClose,
 }: MerchantOrderManagerDialogProps) {
   const isInline = mode === "inline";
-  const [records, setRecords] = useState<MerchantOrderRecord[]>([]);
+  const [records, setRecords] = useState<MerchantOrderRecord[]>(() => readCachedOrderRecords(siteId));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
@@ -291,7 +307,15 @@ export default function MerchantOrderManagerDialog({
 
   const loadOrders = useCallback(async () => {
     if (!siteId) return;
-    setLoading(true);
+    const cachedRecords = readCachedOrderRecords(siteId);
+    if (cachedRecords.length > 0) {
+      setRecords(cachedRecords);
+      onOrdersChange?.(cachedRecords);
+      setLoading(false);
+    } else {
+      setRecords([]);
+      setLoading(true);
+    }
     setError("");
     try {
       const response = await fetch(`/api/orders?siteId=${encodeURIComponent(siteId)}`, {
@@ -305,6 +329,7 @@ export default function MerchantOrderManagerDialog({
         throw new Error(payload?.message || payload?.error || "order_list_failed");
       }
       const nextRecords = Array.isArray(payload?.orders) ? payload.orders : [];
+      writeCachedOrderRecords(siteId, nextRecords);
       setRecords(nextRecords);
       onOrdersChange?.(nextRecords);
     } catch (nextError) {

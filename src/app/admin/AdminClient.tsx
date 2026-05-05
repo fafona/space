@@ -88,6 +88,11 @@ import {
   readRecentMerchantLaunchMerchantId,
 } from "@/lib/merchantLaunchState";
 import { clearMerchantSignInBridge } from "@/lib/merchantSignInBridge";
+import {
+  buildMerchantAdminDataCacheKey,
+  readMerchantAdminDataCache,
+  writeMerchantAdminDataCache,
+} from "@/lib/merchantAdminDataCache";
 import { buildPublishedMerchantProfilePatch } from "@/lib/merchantProfileBinding";
 import { buildMerchantBusinessCardShareUrl, resolveMerchantBusinessCardShareOrigin } from "@/lib/merchantBusinessCardShare";
 import { resolveCommonCanvasLayout } from "@/lib/commonCanvasLayout";
@@ -10518,6 +10523,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
     let cancelled = false;
     let timer: ReturnType<typeof setInterval> | null = null;
+    const bookingCacheKey = buildMerchantAdminDataCacheKey("bookings", editingSiteId);
+    const cachedBookings = readMerchantAdminDataCache<MerchantBookingRecord[]>(bookingCacheKey);
+    if (Array.isArray(cachedBookings)) {
+      setMerchantBookingAttentionSummary(summarizeMerchantBookingAttention(cachedBookings));
+      setMerchantBusinessAttentionHydrationState((current) => (current.booking ? current : { ...current, booking: true }));
+    }
     const loadMerchantBookingAttention = async () => {
       try {
         const response = await fetch(`/api/bookings?siteId=${encodeURIComponent(editingSiteId)}`, {
@@ -10529,6 +10540,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         if (!response.ok || !json?.ok || !Array.isArray(json.bookings)) {
           throw new Error("booking_attention_failed");
         }
+        writeMerchantAdminDataCache(bookingCacheKey, json.bookings);
         if (!cancelled) {
           setMerchantBookingAttentionSummary(summarizeMerchantBookingAttention(json.bookings));
           setMerchantBusinessAttentionHydrationState((current) => (current.booking ? current : { ...current, booking: true }));
@@ -10555,6 +10567,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
     let cancelled = false;
     let timer: ReturnType<typeof setInterval> | null = null;
+    const orderCacheKey = buildMerchantAdminDataCacheKey("orders", editingSiteId);
+    const cachedOrders = readMerchantAdminDataCache<MerchantOrderRecord[]>(orderCacheKey);
+    if (Array.isArray(cachedOrders)) {
+      setMerchantOrderAttentionSummary(summarizeMerchantOrderAttention(cachedOrders));
+      setMerchantBusinessAttentionHydrationState((current) => (current.orders ? current : { ...current, orders: true }));
+    }
     const loadMerchantOrderAttention = async () => {
       try {
         const response = await fetch(`/api/orders?siteId=${encodeURIComponent(editingSiteId)}`, {
@@ -10571,6 +10589,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           }
           throw new Error("order_attention_failed");
         }
+        writeMerchantAdminDataCache(orderCacheKey, json.orders);
         if (!cancelled) {
           setMerchantOrderAttentionSummary(summarizeMerchantOrderAttention(json.orders));
           setMerchantBusinessAttentionHydrationState((current) => (current.orders ? current : { ...current, orders: true }));
@@ -12892,10 +12911,20 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (isPlatformEditor) return;
     const silent = options?.silent === true;
     const suppressError = options?.suppressError === true;
+    const supportThreadCacheKey = buildMerchantAdminDataCacheKey("support-thread", editingSiteId);
+    let usedCachedSupportThread = false;
+    if (!silent && editingSiteId) {
+      const cachedThread = readMerchantAdminDataCache<PlatformSupportThread | null>(supportThreadCacheKey);
+      if (cachedThread !== null) {
+        setSupportThread(cachedThread);
+        setSupportUnreadHydrationState((current) => (current.official ? current : { ...current, official: true }));
+        usedCachedSupportThread = true;
+      }
+    }
     if (silent && supportSendingRef.current) return;
     const requestId = ++supportRequestIdRef.current;
     if (!silent) {
-      setSupportLoading(true);
+      setSupportLoading(!usedCachedSupportThread);
       setSupportError("");
     }
     try {
@@ -12918,7 +12947,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       if (!suppressError) {
         setSupportError("");
       }
-      setSupportThread(payload?.thread ?? null);
+      const nextThread = payload?.thread ?? null;
+      writeMerchantAdminDataCache(supportThreadCacheKey, nextThread);
+      setSupportThread(nextThread);
       setSupportUnreadHydrationState((current) => (current.official ? current : { ...current, official: true }));
     } catch {
       if (requestId !== supportRequestIdRef.current) return;
@@ -12930,15 +12961,29 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         setSupportLoading(false);
       }
     }
-  }, [isPlatformEditor, requestSupportWithSessionRecovery]);
+  }, [editingSiteId, isPlatformEditor, requestSupportWithSessionRecovery]);
 
   const loadSupportPeerInbox = useCallback(async (options?: { silent?: boolean; suppressError?: boolean }) => {
     if (isPlatformEditor) return;
     const silent = options?.silent === true;
     const suppressError = options?.suppressError === true;
+    const peerInboxCacheKey = buildMerchantAdminDataCacheKey("peer-inbox", editingSiteId);
+    let usedCachedPeerInbox = false;
+    if (!silent && editingSiteId) {
+      const cachedInbox = readMerchantAdminDataCache<{
+        contacts?: MerchantPeerContactSummary[];
+        threads?: MerchantPeerThread[];
+      }>(peerInboxCacheKey);
+      if (cachedInbox) {
+        setSupportPeerContacts(Array.isArray(cachedInbox.contacts) ? cachedInbox.contacts : []);
+        setSupportPeerThreads(Array.isArray(cachedInbox.threads) ? cachedInbox.threads : []);
+        setSupportUnreadHydrationState((current) => (current.peer ? current : { ...current, peer: true }));
+        usedCachedPeerInbox = true;
+      }
+    }
     const requestId = ++supportPeerRequestIdRef.current;
     if (!silent) {
-      setSupportPeerLoading(true);
+      setSupportPeerLoading(!usedCachedPeerInbox);
       setSupportPeerError("");
     }
     try {
@@ -12960,8 +13005,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         return;
       }
       setSupportPeerError("");
-      setSupportPeerContacts(Array.isArray(payload?.contacts) ? payload.contacts : []);
-      setSupportPeerThreads(Array.isArray(payload?.threads) ? payload.threads : []);
+      const nextContacts = Array.isArray(payload?.contacts) ? payload.contacts : [];
+      const nextThreads = Array.isArray(payload?.threads) ? payload.threads : [];
+      writeMerchantAdminDataCache(peerInboxCacheKey, {
+        contacts: nextContacts,
+        threads: nextThreads,
+      });
+      setSupportPeerContacts(nextContacts);
+      setSupportPeerThreads(nextThreads);
       setSupportUnreadHydrationState((current) => (current.peer ? current : { ...current, peer: true }));
     } catch {
       if (requestId !== supportPeerRequestIdRef.current) return;
@@ -12973,7 +13024,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         setSupportPeerLoading(false);
       }
     }
-  }, [isPlatformEditor, requestMerchantPeerWithSessionRecovery]);
+  }, [editingSiteId, isPlatformEditor, requestMerchantPeerWithSessionRecovery]);
 
   const refreshSupportMobileConversations = useCallback(async () => {
     await Promise.all([

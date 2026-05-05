@@ -68,6 +68,11 @@ import {
   buildMerchantBookingReminderOffsetLabel,
   resolveMerchantBookingCustomerEmailLocale,
 } from "@/lib/merchantBookingCustomerEmail";
+import {
+  buildMerchantAdminDataCacheKey,
+  readMerchantAdminDataCache,
+  writeMerchantAdminDataCache,
+} from "@/lib/merchantAdminDataCache";
 
 type MerchantBookingManagerDialogProps = {
   open: boolean;
@@ -139,6 +144,17 @@ function createDraft(record: MerchantBookingRecord): MerchantBookingAdminDraft {
     phone: record.phone,
     note: record.note,
   };
+}
+
+function readCachedBookingRecords(siteId: string) {
+  const cached = readMerchantAdminDataCache<MerchantBookingRecord[]>(
+    buildMerchantAdminDataCacheKey("bookings", siteId),
+  );
+  return Array.isArray(cached) ? cached : [];
+}
+
+function writeCachedBookingRecords(siteId: string, records: MerchantBookingRecord[]) {
+  writeMerchantAdminDataCache(buildMerchantAdminDataCacheKey("bookings", siteId), records);
 }
 
 function createStatusCounts(records: MerchantBookingRecord[]) {
@@ -496,7 +512,7 @@ export default function MerchantBookingManagerDialog({
   const loadFailedText = locale.startsWith("es") ? "No se pudieron cargar las citas." : "预约记录读取失败";
   const updateFailedText = locale.startsWith("es") ? "No se pudo actualizar la cita." : "预约更新失败";
   const [todayDateValue, setTodayDateValue] = useState("");
-  const [records, setRecords] = useState<MerchantBookingRecord[]>([]);
+  const [records, setRecords] = useState<MerchantBookingRecord[]>(() => readCachedBookingRecords(siteId));
   const [drafts, setDrafts] = useState<Record<string, MerchantBookingAdminDraft>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -602,7 +618,17 @@ export default function MerchantBookingManagerDialog({
     if (!open || !siteId) return;
     let cancelled = false;
     const load = async () => {
-      setLoading(true);
+      const cachedRecords = readCachedBookingRecords(siteId);
+      if (cachedRecords.length > 0) {
+        setRecords(cachedRecords);
+        setDrafts(Object.fromEntries(cachedRecords.map((record) => [record.id, createDraft(record)])));
+        onRecordsChange?.(cachedRecords);
+        setLoading(false);
+      } else {
+        setRecords([]);
+        setDrafts({});
+        setLoading(true);
+      }
       setError("");
       try {
         const response = await fetch(`/api/bookings?siteId=${encodeURIComponent(siteId)}`, {
@@ -615,6 +641,7 @@ export default function MerchantBookingManagerDialog({
           throw new Error(json?.message || loadFailedText);
         }
         if (!cancelled) {
+          writeCachedBookingRecords(siteId, json.bookings);
           setRecords(json.bookings);
           setDrafts(Object.fromEntries(json.bookings.map((record) => [record.id, createDraft(record)])));
         }
@@ -630,7 +657,7 @@ export default function MerchantBookingManagerDialog({
     return () => {
       cancelled = true;
     };
-  }, [loadFailedText, open, siteId]);
+  }, [loadFailedText, onRecordsChange, open, siteId]);
 
   useEffect(() => {
     if (!open || !siteId) return;
