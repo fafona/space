@@ -258,14 +258,18 @@ async function fetchCurrentWebBuildId() {
 
 export default function CapacitorAppBridge() {
   useEffect(() => {
-    if (shouldUseWebLaunchCover() && !Capacitor.isNativePlatform()) {
+    const embeddedDocument = isEmbeddedDocument();
+
+    if (shouldUseWebLaunchCover() && embeddedDocument) {
+      window.requestAnimationFrame(hideWebLaunchCover);
+    } else if (shouldUseWebLaunchCover() && !Capacitor.isNativePlatform()) {
       window.setTimeout(() => {
         window.requestAnimationFrame(hideWebLaunchCover);
       }, 900);
     }
 
     if (!Capacitor.isNativePlatform()) return;
-    if (isEmbeddedDocument()) return;
+    if (embeddedDocument) return;
 
     document.documentElement.dataset.capacitor = "true";
     document.documentElement.dataset.capacitorPlatform = Capacitor.getPlatform();
