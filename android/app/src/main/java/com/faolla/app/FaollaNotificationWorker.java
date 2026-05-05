@@ -66,7 +66,7 @@ public class FaollaNotificationWorker extends Worker {
     private static final String NOTIFICATION_EXTRA_URL = "faolla_url";
     private static final int BADGE_NOTIFICATION_ID = 73010;
     private static final int MESSAGE_NOTIFICATION_ID = 73100;
-    private static final long POLL_DELAY_MS = 15_000L;
+    private static final long POLL_DELAY_MS = 5_000L;
 
     public FaollaNotificationWorker(@NonNull Context context, @NonNull WorkerParameters workerParams) {
         super(context, workerParams);
