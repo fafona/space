@@ -439,8 +439,8 @@ html[data-faolla-web-launch-ready="true"] #faolla-app-web-launch-cover {
       padding-left: 0 !important;
       padding-right: 0 !important;
       padding-bottom: max(
-        0.42rem,
-        calc(var(--faolla-mobile-safe-bottom, env(safe-area-inset-bottom, 0px)) - 1.55rem)
+        0.62rem,
+        calc(var(--faolla-mobile-safe-bottom, env(safe-area-inset-bottom, 0px)) - 1.35rem)
       ) !important;
     }
   }
