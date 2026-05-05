@@ -33,6 +33,8 @@ import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.json.JSONObject;
 
@@ -50,6 +52,7 @@ public class FaollaNotificationWorker extends Worker {
     static final String KEY_SOUND = "sound";
     static final String KEY_VIBRATE = "vibrate";
     static final String KEY_LAST_NOTIFICATION_KEY = "last_notification_key";
+    static final String KEY_NOTIFIED_NOTIFICATION_KEYS = "notified_notification_keys";
     static final String KEY_INITIALIZED = "initialized";
     static final String KEY_UNREAD_COUNT = "unread_count";
 
@@ -84,15 +87,19 @@ public class FaollaNotificationWorker extends Worker {
             JSONObject latest = payload.optJSONObject("latest");
             String latestKey = latest == null ? "" : latest.optString("key", "").trim();
             boolean initialized = prefs.getBoolean(KEY_INITIALIZED, false);
-            String previousKey = prefs.getString(KEY_LAST_NOTIFICATION_KEY, "");
+            Set<String> notifiedKeys = readNotifiedNotificationKeys(prefs);
 
             if (!initialized) {
                 syncUnreadBadge(context, unreadCount);
+                if (!latestKey.isEmpty()) {
+                    notifiedKeys.add(latestKey);
+                }
                 prefs.edit()
                     .putBoolean(KEY_INITIALIZED, true)
                     .putString(KEY_LAST_NOTIFICATION_KEY, latestKey)
+                    .putStringSet(KEY_NOTIFIED_NOTIFICATION_KEYS, notifiedKeys)
                     .apply();
-            } else if (unreadCount > 0 && latest != null && !latestKey.isEmpty() && !latestKey.equals(previousKey)) {
+            } else if (unreadCount > 0 && latest != null && !latestKey.isEmpty() && !notifiedKeys.contains(latestKey)) {
                 showMessageNotification(
                     context,
                     latest.optString("title", "Faolla"),
@@ -102,7 +109,7 @@ public class FaollaNotificationWorker extends Worker {
                     prefs.getBoolean(KEY_SOUND, true),
                     prefs.getBoolean(KEY_VIBRATE, true)
                 );
-                prefs.edit().putString(KEY_LAST_NOTIFICATION_KEY, latestKey).apply();
+                rememberNotificationKey(prefs, latestKey);
             } else {
                 syncUnreadBadge(context, unreadCount);
             }
@@ -116,6 +123,37 @@ public class FaollaNotificationWorker extends Worker {
 
     static SharedPreferences getPrefs(Context context) {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+    }
+
+    static Set<String> readNotifiedNotificationKeys(SharedPreferences prefs) {
+        Set<String> keys = new HashSet<>();
+        Set<String> storedKeys = prefs.getStringSet(KEY_NOTIFIED_NOTIFICATION_KEYS, null);
+        if (storedKeys != null) {
+            for (String key : storedKeys) {
+                if (key != null && !key.trim().isEmpty()) {
+                    keys.add(key.trim());
+                }
+            }
+        }
+        String lastKey = prefs.getString(KEY_LAST_NOTIFICATION_KEY, "");
+        if (lastKey != null && !lastKey.trim().isEmpty()) {
+            keys.add(lastKey.trim());
+        }
+        return keys;
+    }
+
+    static void rememberNotificationKey(SharedPreferences prefs, String key) {
+        String normalizedKey = key == null ? "" : key.trim();
+        if (normalizedKey.isEmpty()) return;
+        Set<String> keys = readNotifiedNotificationKeys(prefs);
+        if (keys.size() > 500) {
+            keys.clear();
+        }
+        keys.add(normalizedKey);
+        prefs.edit()
+            .putString(KEY_LAST_NOTIFICATION_KEY, normalizedKey)
+            .putStringSet(KEY_NOTIFIED_NOTIFICATION_KEYS, keys)
+            .apply();
     }
 
     static void scheduleNow(Context context) {

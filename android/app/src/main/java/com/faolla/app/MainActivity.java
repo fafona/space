@@ -821,6 +821,7 @@ public class MainActivity extends BridgeActivity {
                 .putBoolean(FaollaNotificationWorker.KEY_ENABLED, false)
                 .putBoolean(FaollaNotificationWorker.KEY_INITIALIZED, false)
                 .putInt(FaollaNotificationWorker.KEY_UNREAD_COUNT, 0)
+                .remove(FaollaNotificationWorker.KEY_NOTIFIED_NOTIFICATION_KEYS)
                 .apply();
             FaollaNotificationWorker.cancel(this);
             syncNativeUnreadBadge(0);
@@ -853,6 +854,9 @@ public class MainActivity extends BridgeActivity {
             .putBoolean(FaollaNotificationWorker.KEY_INITIALIZED, true)
             .putString(FaollaNotificationWorker.KEY_LAST_NOTIFICATION_KEY, latestNotificationKey);
         editor.apply();
+        if (!latestNotificationKey.trim().isEmpty()) {
+            FaollaNotificationWorker.rememberNotificationKey(prefs, latestNotificationKey);
+        }
 
         if (unreadCount > 0) {
             syncNativeUnreadBadge(unreadCount);

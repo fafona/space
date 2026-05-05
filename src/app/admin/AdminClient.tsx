@@ -720,6 +720,8 @@ const ADMIN_PAGE_LOAD_TIMEOUT_MS = 35000;
 const SUPPORT_THREAD_OPEN_POLL_INTERVAL_MS = 1200;
 const SUPPORT_THREAD_POLL_INTERVAL_MS = 5000;
 const SUPPORT_LAST_READ_STORAGE_KEY_PREFIX = "merchant-space:admin:support-last-read:";
+const SUPPORT_NOTIFIED_EVENT_STORAGE_KEY_PREFIX = "merchant-space:admin:support-notified-events:v1:";
+const SUPPORT_NOTIFIED_EVENT_LIMIT = 240;
 const SUPPORT_OFFICIAL_CONTACT_KEY = "official";
 const MERCHANT_IDS_CACHE_KEY = "merchant-space:admin:merchant-ids:v2";
 const MERCHANT_IDS_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
@@ -4703,6 +4705,36 @@ function buildSupportPeerLastReadStorageKey(ownerMerchantId: string, contactMerc
   return `${SUPPORT_LAST_READ_STORAGE_KEY_PREFIX}peer:${owner}:${contact}`;
 }
 
+function buildSupportNotifiedEventStorageKey(merchantId: string) {
+  return `${SUPPORT_NOTIFIED_EVENT_STORAGE_KEY_PREFIX}${merchantId.trim() || "default"}`;
+}
+
+function readSupportNotifiedEventKeys(merchantId: string) {
+  if (typeof window === "undefined") return [] as string[];
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(buildSupportNotifiedEventStorageKey(merchantId)) ?? "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((item) => (typeof item === "string" ? item.trim() : ""))
+      .filter(Boolean)
+      .slice(-SUPPORT_NOTIFIED_EVENT_LIMIT);
+  } catch {
+    return [];
+  }
+}
+
+function writeSupportNotifiedEventKeys(merchantId: string, keys: string[]) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      buildSupportNotifiedEventStorageKey(merchantId),
+      JSON.stringify(keys.map((key) => key.trim()).filter(Boolean).slice(-SUPPORT_NOTIFIED_EVENT_LIMIT)),
+    );
+  } catch {
+    // Ignore storage failures; in-memory de-dupe still applies.
+  }
+}
+
 function findLatestIncomingPeerMessage(thread: MerchantPeerThread | null | undefined, currentMerchantId: string) {
   const normalizedCurrentMerchantId = currentMerchantId.trim();
   if (!thread || !normalizedCurrentMerchantId) return null;
@@ -4945,7 +4977,7 @@ function summarizeMerchantBookingAttentionRecords(
       return {
         count: summary.count + 1,
         latest: compareMerchantBusinessAttentionNotification(summary.latest, {
-          key: `booking:${booking.id}:${createdAt}`,
+          key: `booking:${booking.id}`,
           title: `新预约 - ${customerName}`,
           body,
           url: buildMerchantBusinessNotificationUrl(merchantId, "booking"),
@@ -4982,7 +5014,7 @@ function summarizeMerchantOrderAttentionRecords(
       return {
         count: summary.count + 1,
         latest: compareMerchantBusinessAttentionNotification(summary.latest, {
-          key: `order:${order.id}:${createdAt}`,
+          key: `order:${order.id}`,
           title: `新订单 - ${customerName}`,
           body: buildSupportNativeNotificationBody([itemSummary, amount].filter(Boolean).join(" · ")),
           url: buildMerchantBusinessNotificationUrl(merchantId, "orders"),
@@ -5613,6 +5645,8 @@ export default function AdminClient({
   const supportLastIncomingAdminMessageKeyRef = useRef("");
   const supportLastIncomingPeerMessageKeyRef = useRef("");
   const supportLastIncomingBusinessAttentionKeyRef = useRef("");
+  const supportNotifiedEventStorageKeyRef = useRef("");
+  const supportNotifiedEventKeysRef = useRef<Set<string>>(new Set());
   const supportLastVisibleMessageKeyRef = useRef("");
   const supportScrollToLatestPendingRef = useRef(false);
   const supportMobileSwipeStartRef = useRef<{ x: number; y: number; fromEdge: boolean } | null>(null);
@@ -10589,6 +10623,23 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     ? `${latestSupportAdminMessage.id}:${latestSupportAdminMessage.createdAt}`
     : "";
   const supportReadMerchantId = (supportThread?.merchantId || editingSiteId || "").trim();
+  const rememberSupportNotificationEvent = useCallback((eventKey: string) => {
+    const normalizedEventKey = eventKey.trim();
+    if (!normalizedEventKey || typeof window === "undefined") return true;
+    const merchantId = (currentSupportMerchantId || supportReadMerchantId || editingSiteId || "").trim();
+    const storageKey = buildSupportNotifiedEventStorageKey(merchantId);
+    if (supportNotifiedEventStorageKeyRef.current !== storageKey) {
+      supportNotifiedEventStorageKeyRef.current = storageKey;
+      supportNotifiedEventKeysRef.current = new Set(readSupportNotifiedEventKeys(merchantId));
+    }
+    if (supportNotifiedEventKeysRef.current.has(normalizedEventKey)) {
+      return true;
+    }
+    const nextKeys = [...supportNotifiedEventKeysRef.current, normalizedEventKey].slice(-SUPPORT_NOTIFIED_EVENT_LIMIT);
+    supportNotifiedEventKeysRef.current = new Set(nextKeys);
+    writeSupportNotifiedEventKeys(merchantId, nextKeys);
+    return false;
+  }, [currentSupportMerchantId, editingSiteId, supportReadMerchantId]);
   const latestSupportAdminMessageAt = normalizeSupportMessageTimestamp(
     latestSupportAdminMessage?.createdAt,
   );
@@ -13670,40 +13721,77 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   useEffect(() => {
     if (isPlatformEditor || !latestSupportAdminMessageKey) return;
+    const eventKey = `official:${supportReadMerchantId || currentSupportMerchantId}:${latestSupportAdminMessageKey}`;
+    const alreadyNotified = rememberSupportNotificationEvent(eventKey);
     const previousKey = supportLastIncomingAdminMessageKeyRef.current;
     supportLastIncomingAdminMessageKeyRef.current = latestSupportAdminMessageKey;
-    if (!previousKey || previousKey === latestSupportAdminMessageKey) return;
+    const officialConversationVisible =
+      supportInterfaceOpen &&
+      selectedSupportConversationVisible &&
+      supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY;
+    if (!previousKey || previousKey === latestSupportAdminMessageKey || alreadyNotified || officialConversationVisible) return;
     void triggerSupportNotificationFeedback(latestSupportAdminNotificationPayload ?? undefined);
   }, [
+    currentSupportMerchantId,
     isPlatformEditor,
     latestSupportAdminMessageKey,
     latestSupportAdminNotificationPayload,
+    rememberSupportNotificationEvent,
+    selectedSupportConversationVisible,
+    supportInterfaceOpen,
+    supportReadMerchantId,
+    supportSelectedContactKey,
     triggerSupportNotificationFeedback,
   ]);
 
   useEffect(() => {
     if (isPlatformEditor || !latestIncomingPeerMessageKey) return;
+    const eventKey = `peer:${currentSupportMerchantId}:${latestIncomingPeerMessageKey}`;
+    const alreadyNotified = rememberSupportNotificationEvent(eventKey);
     const previousKey = supportLastIncomingPeerMessageKeyRef.current;
     supportLastIncomingPeerMessageKeyRef.current = latestIncomingPeerMessageKey;
-    if (!previousKey || previousKey === latestIncomingPeerMessageKey) return;
+    const peerConversationVisible =
+      supportInterfaceOpen &&
+      selectedSupportConversationVisible &&
+      !!selectedSupportPeerMerchantId &&
+      latestIncomingPeerMessageKey.startsWith(`${selectedSupportPeerMerchantId}:`);
+    if (!previousKey || previousKey === latestIncomingPeerMessageKey || alreadyNotified || peerConversationVisible) return;
     void triggerSupportNotificationFeedback(latestIncomingPeerNotificationPayload ?? undefined);
   }, [
+    currentSupportMerchantId,
     isPlatformEditor,
     latestIncomingPeerMessageKey,
     latestIncomingPeerNotificationPayload,
+    rememberSupportNotificationEvent,
+    selectedSupportConversationVisible,
+    selectedSupportPeerMerchantId,
+    supportInterfaceOpen,
     triggerSupportNotificationFeedback,
   ]);
 
   useEffect(() => {
     if (isPlatformEditor || !latestMerchantBusinessAttention?.key) return;
+    const eventKey = `business:${currentSupportMerchantId}:${latestMerchantBusinessAttention.key}`;
+    const alreadyNotified = rememberSupportNotificationEvent(eventKey);
     const previousKey = supportLastIncomingBusinessAttentionKeyRef.current;
     supportLastIncomingBusinessAttentionKeyRef.current = latestMerchantBusinessAttention.key;
-    if (!previousKey || previousKey === latestMerchantBusinessAttention.key) return;
+    const businessVisible =
+      (supportInterfaceOpen && isMobileSupportDialog && supportMobileHomeTab === "business") ||
+      merchantDesktopSection === "business" ||
+      merchantDesktopSection === "booking" ||
+      merchantDesktopSection === "orders";
+    if (!previousKey || previousKey === latestMerchantBusinessAttention.key || alreadyNotified || businessVisible) return;
     void triggerSupportNotificationFeedback(latestMerchantBusinessNotificationPayload ?? undefined);
   }, [
+    currentSupportMerchantId,
+    isMobileSupportDialog,
     isPlatformEditor,
     latestMerchantBusinessAttention,
     latestMerchantBusinessNotificationPayload,
+    merchantDesktopSection,
+    rememberSupportNotificationEvent,
+    supportInterfaceOpen,
+    supportMobileHomeTab,
     triggerSupportNotificationFeedback,
   ]);
 

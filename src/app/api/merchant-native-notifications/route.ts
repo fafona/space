@@ -197,7 +197,7 @@ function buildBookingCandidate(merchantId: string, booking: MerchantBookingRecor
   const serviceParts = [trimText(booking.store), trimText(booking.item) || trimText(booking.title)].filter(Boolean);
   const appointmentText = formatNotificationDateTime(booking.appointmentAt);
   return {
-    key: `booking:${booking.id}:${createdAt}`,
+    key: `booking:${booking.id}`,
     title: `新预约 - ${customerName}`,
     body: buildPreview([serviceParts.join(" · "), appointmentText].filter(Boolean).join(" · ") || "有新的预约需要处理"),
     url: `/${merchantId}?mobileTab=business&businessSection=booking&appShell=faolla`,
@@ -219,7 +219,7 @@ function buildOrderCandidate(merchantId: string, order: MerchantOrderRecord) {
       .join("、") || `${Math.max(1, order.totalQuantity)}件商品`;
   const amount = formatMerchantOrderAmount(order.totalAmount, order.pricePrefix);
   return {
-    key: `order:${order.id}:${createdAt}`,
+    key: `order:${order.id}`,
     title: `新订单 - ${customerName}`,
     body: buildPreview([itemSummary, amount].filter(Boolean).join(" · ") || "有新的订单需要处理"),
     url: `/${merchantId}?mobileTab=business&businessSection=orders&appShell=faolla`,
