@@ -332,6 +332,53 @@ export function useFaollaAndroidAppUpdate(): FaollaAndroidAppUpdateState {
             storedWebBuildId &&
             latestWebBuildId !== storedWebBuildId,
         );
+        if (!androidUpdateAvailable && webUpdateAvailable) {
+          if (!cancelled) {
+            setState((current) => ({
+              ...current,
+              checking: false,
+              supported,
+              platform,
+              updateAvailable: false,
+              updateKind: "none",
+              currentVersion,
+              currentBuild,
+              latestVersion,
+              latestBuild,
+              latestWebBuildId,
+              apkUrl,
+              error: "",
+              downloadStatus: "installing",
+              downloadProgress: 100,
+              downloadMessage: "",
+              stagedInstallSupported,
+            }));
+          }
+          await applyFaollaWebUpdate(latestWebBuildId).catch(() => {
+            if (!cancelled) {
+              setState((current) => ({
+                ...current,
+                checking: false,
+                supported,
+                platform,
+                updateAvailable: false,
+                updateKind: "none",
+                currentVersion,
+                currentBuild,
+                latestVersion,
+                latestBuild,
+                latestWebBuildId,
+                apkUrl,
+                error: "",
+                downloadStatus: "failed",
+                downloadProgress: 0,
+                downloadMessage: "",
+                stagedInstallSupported,
+              }));
+            }
+          });
+          return;
+        }
         const updateKind: FaollaUpdateKind = androidUpdateAvailable ? "android" : webUpdateAvailable ? "web" : "none";
         const updateAvailable = updateKind !== "none";
         if (!cancelled) {

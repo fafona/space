@@ -26,13 +26,6 @@ type BeforeInstallPromptEvent = Event & {
   userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
 };
 
-type NativeRuntimeWindow = Window &
-  typeof globalThis & {
-    Capacitor?: {
-      isNativePlatform?: () => boolean;
-    };
-  };
-
 type PwaCopy = {
   offlineTitle: string;
   offlineBody: string;
@@ -191,16 +184,6 @@ function hasCompletedInstall() {
   if (typeof window === "undefined") return false;
   try {
     return window.localStorage.getItem(PWA_INSTALL_COMPLETED_STORAGE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function isNativeFaollaRuntime() {
-  if (typeof window === "undefined") return false;
-  try {
-    const capacitor = (window as NativeRuntimeWindow).Capacitor;
-    return document.documentElement.dataset.capacitor === "true" || capacitor?.isNativePlatform?.() === true;
   } catch {
     return false;
   }
@@ -409,33 +392,24 @@ export default function PwaBootstrap() {
       void registration.update().catch(() => undefined);
     };
 
-    const markWaitingWorker = (worker: ServiceWorker | null) => {
-      waitingWorkerRef.current = worker;
-      setUpdateReady(Boolean(worker));
-    };
-
-    const activateOrMarkWaitingWorker = (worker: ServiceWorker | null) => {
+    const activateWaitingWorker = (worker: ServiceWorker | null) => {
       if (!worker) return;
-      if (isNativeFaollaRuntime()) {
-        waitingWorkerRef.current = worker;
-        setUpdateReady(false);
-        setIsApplyingUpdate(true);
-        worker.postMessage({ type: "SKIP_WAITING" });
-        return;
-      }
-      markWaitingWorker(worker);
+      waitingWorkerRef.current = worker;
+      setUpdateReady(false);
+      setIsApplyingUpdate(true);
+      worker.postMessage({ type: "SKIP_WAITING" });
     };
 
     const bindRegistration = (registration: ServiceWorkerRegistration) => {
       if (registration.waiting) {
-        activateOrMarkWaitingWorker(registration.waiting);
+        activateWaitingWorker(registration.waiting);
       }
 
       const trackInstallingWorker = (worker: ServiceWorker | null) => {
         if (!worker) return;
         worker.addEventListener("statechange", () => {
           if (worker.state === "installed" && navigator.serviceWorker.controller) {
-            activateOrMarkWaitingWorker(registration.waiting ?? worker);
+            activateWaitingWorker(registration.waiting ?? worker);
           }
         });
       };
