@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { Capacitor } from "@capacitor/core";
 import { App } from "@capacitor/app";
+import { useRouter } from "next/navigation";
 import { ScreenOrientation } from "@capacitor/screen-orientation";
 import { StatusBar, Style } from "@capacitor/status-bar";
 import { readMerchantSessionPayload } from "@/lib/authSessionRecovery";
@@ -18,6 +19,11 @@ const FAOLLA_NATIVE_WEB_RELOAD_STORAGE_KEY = "faolla:native-web-build-reload:v1"
 const FAOLLA_NATIVE_WEB_BUILD_CHECK_THROTTLE_MS = 60_000;
 const FAOLLA_LAUNCH_BAR_COLOR = "#081121";
 const FAOLLA_CONTENT_BAR_COLOR = "#ffffff";
+
+type FaollaNativeOpenUrlWindow = Window &
+  typeof globalThis & {
+    __faollaNativeOpenUrl?: (url: string) => boolean;
+  };
 
 function readObjectRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -111,6 +117,19 @@ function buildNativeWebReloadHref(buildId: string) {
   url.searchParams.set("appShell", "faolla");
   url.searchParams.set("__faollaWebBuild", buildId.slice(0, 12));
   return `${url.pathname}${url.search}${url.hash}`;
+}
+
+function resolveNativeClientNavigationHref(rawUrl: string) {
+  const trimmedUrl = rawUrl.trim();
+  if (!trimmedUrl) return "";
+  try {
+    const url = new URL(trimmedUrl, window.location.origin);
+    if (url.origin !== window.location.origin) return url.toString();
+    url.searchParams.set("appShell", "faolla");
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return "";
+  }
 }
 
 function hideNativeLaunchCover() {
@@ -257,6 +276,8 @@ async function fetchCurrentWebBuildId() {
 }
 
 export default function CapacitorAppBridge() {
+  const router = useRouter();
+
   useEffect(() => {
     const embeddedDocument = isEmbeddedDocument();
 
@@ -286,6 +307,20 @@ export default function CapacitorAppBridge() {
 
     const scheduleNativeOrientationSync = () => {
       window.setTimeout(syncNativeOrientation, 0);
+    };
+
+    const nativeOpenUrlWindow = window as FaollaNativeOpenUrlWindow;
+    const previousNativeOpenUrlHandler = nativeOpenUrlWindow.__faollaNativeOpenUrl;
+    nativeOpenUrlWindow.__faollaNativeOpenUrl = (rawUrl: string) => {
+      const href = resolveNativeClientNavigationHref(rawUrl);
+      if (!href) return false;
+      if (href.startsWith("http://") || href.startsWith("https://")) {
+        window.location.assign(href);
+        return true;
+      }
+      router.push(href);
+      scheduleNativeOrientationSync();
+      return true;
     };
 
     const originalPushState = window.history.pushState;
@@ -436,6 +471,11 @@ export default function CapacitorAppBridge() {
       window.clearTimeout(launchCoverHideFallback);
       window.clearTimeout(nativeWebBuildCheckTimer);
       window.clearTimeout(nativeSessionRefreshTimer);
+      if (previousNativeOpenUrlHandler) {
+        nativeOpenUrlWindow.__faollaNativeOpenUrl = previousNativeOpenUrlHandler;
+      } else {
+        delete nativeOpenUrlWindow.__faollaNativeOpenUrl;
+      }
       window.history.pushState = originalPushState;
       window.history.replaceState = originalReplaceState;
       window.removeEventListener("popstate", syncNativeOrientation);
@@ -444,7 +484,7 @@ export default function CapacitorAppBridge() {
       delete document.documentElement.dataset.capacitor;
       delete document.documentElement.dataset.capacitorPlatform;
     };
-  }, []);
+  }, [router]);
 
   return null;
 }

@@ -681,12 +681,12 @@ public class MainActivity extends BridgeActivity {
         }
         String targetUrl = resolveNotificationUrl(intent.getStringExtra(NOTIFICATION_EXTRA_URL));
         pendingNotificationUrl = targetUrl;
-        schedulePendingNotificationOpen(targetUrl, 160L);
-        schedulePendingNotificationOpen(targetUrl, 800L);
-        schedulePendingNotificationOpen(targetUrl, 1800L);
+        schedulePendingNotificationOpen(targetUrl, 160L, false);
+        schedulePendingNotificationOpen(targetUrl, 800L, false);
+        schedulePendingNotificationOpen(targetUrl, 1800L, true);
     }
 
-    private void schedulePendingNotificationOpen(String targetUrl, long delayMs) {
+    private void schedulePendingNotificationOpen(String targetUrl, long delayMs, boolean allowLoadFallback) {
         updateProgressHandler.postDelayed(() -> {
             if (targetUrl == null || targetUrl.trim().isEmpty()) {
                 return;
@@ -703,7 +703,7 @@ public class MainActivity extends BridgeActivity {
                 pendingNotificationUrl = "";
                 return;
             }
-            openUrlInCurrentApp(targetUrl);
+            openUrlInCurrentApp(targetUrl, allowLoadFallback);
         }, delayMs);
     }
 
@@ -918,9 +918,48 @@ public class MainActivity extends BridgeActivity {
     }
 
     private void openUrlInCurrentApp(String url) {
+        openUrlInCurrentApp(url, true);
+    }
+
+    private void openUrlInCurrentApp(String url, boolean allowLoadFallback) {
         if (this.bridge != null && this.bridge.getWebView() != null) {
             WebView webView = this.bridge.getWebView();
-            webView.post(() -> webView.loadUrl(url));
+            webView.post(() -> {
+                String targetUrl = url == null ? "" : url.trim();
+                if (targetUrl.isEmpty()) {
+                    return;
+                }
+                String currentUrl = webView.getUrl();
+                boolean canTryClientNavigation =
+                    currentUrl != null &&
+                    (currentUrl.startsWith("http://") || currentUrl.startsWith("https://"));
+                if (!canTryClientNavigation) {
+                    if (allowLoadFallback) {
+                        pendingNotificationUrl = "";
+                        webView.loadUrl(targetUrl);
+                    }
+                    return;
+                }
+
+                String script =
+                    "(function(url){try{" +
+                    "if(typeof window.__faollaNativeOpenUrl==='function'){" +
+                    "return window.__faollaNativeOpenUrl(url)===true;" +
+                    "}" +
+                    "return false;" +
+                    "}catch(e){return false;}})(" + JSONObject.quote(targetUrl) + ");";
+                webView.evaluateJavascript(script, handledValue -> {
+                    boolean handled = "true".equals(String.valueOf(handledValue));
+                    if (handled) {
+                        pendingNotificationUrl = "";
+                        return;
+                    }
+                    if (allowLoadFallback) {
+                        pendingNotificationUrl = "";
+                        webView.loadUrl(targetUrl);
+                    }
+                });
+            });
         }
     }
 
