@@ -12324,7 +12324,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         try {
           await disableSupportPushNotifications();
           if (canUseFaollaNativeNotifications()) {
-            syncFaollaNativeUnreadBadge(0);
+            syncFaollaNativeUnreadBadge(supportEffectiveBadgeCount);
             setSupportPushPermission(readSupportNativeNotificationPermission());
             setSupportPushSubscribed(false);
           }
@@ -12380,6 +12380,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     [
       disableSupportPushNotifications,
       ensureSupportPushSubscription,
+      supportEffectiveBadgeCount,
       supportPushBusy,
     ],
   );
@@ -14086,12 +14087,13 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   useEffect(() => {
     if (isPlatformEditor || !supportDataActivated) return;
-    if (canUseFaollaNativeNotifications()) return;
     if (!supportUnreadStateHydrated) return;
     if (!supportUnreadStateHydrated && supportEffectiveBadgeCount <= 0) return;
     if (!supportPushBadgeHydrated && supportEffectiveBadgeCount <= 0) return;
     void syncSupportAppBadge(supportEffectiveBadgeCount);
-    void syncSupportServiceWorkerBadge(supportEffectiveBadgeCount);
+    if (!canUseFaollaNativeNotifications()) {
+      void syncSupportServiceWorkerBadge(supportEffectiveBadgeCount);
+    }
   }, [
     isPlatformEditor,
     supportDataActivated,
@@ -14114,9 +14116,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     ).trim();
     if (!siteId) return;
     if (!supportDataActivated || !supportUnreadStateHydrated) return;
-    const enabled = Boolean(supportSystemNotificationsEnabled);
     configureFaollaNativeNotificationSync({
-      enabled,
+      enabled: true,
+      alertsEnabled: Boolean(supportSystemNotificationsEnabled),
       baseUrl: window.location.origin,
       siteId,
       merchantEmail: ((editingSite?.contactEmail ?? "").trim() || String(merchantSessionIdentityRef.current.email ?? "").trim()) ?? "",

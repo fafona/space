@@ -48,7 +48,7 @@ import com.getcapacitor.BridgeActivity;
 import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
-    private static final int CURRENT_NATIVE_BUILD = 35;
+    private static final int CURRENT_NATIVE_BUILD = 36;
     private static final int LAUNCH_BACKGROUND_COLOR = Color.rgb(8, 17, 33);
     private static final String RUNTIME_PREFS_NAME = "faolla_native_runtime";
     private static final String KEY_NATIVE_CACHE_BUILD = "native_cache_build";
@@ -851,24 +851,26 @@ public class MainActivity extends BridgeActivity {
         }
 
         boolean enabled = readJsonBoolean(payload, "enabled", true);
+        boolean alertsEnabled = readJsonBoolean(payload, "alertsEnabled", enabled);
         android.content.SharedPreferences prefs = FaollaNotificationWorker.getPrefs(this);
         boolean wasInitialized = prefs.getBoolean(FaollaNotificationWorker.KEY_INITIALIZED, false);
         int storedUnreadCount = prefs.getInt(FaollaNotificationWorker.KEY_UNREAD_COUNT, nativeUnreadBadgeCount);
-        int requestedUnreadCount = readJsonInt(payload, "unreadCount", storedUnreadCount);
-        int unreadCount = requestedUnreadCount > 0
-            ? requestedUnreadCount
-            : Math.max(0, Math.min(999, storedUnreadCount));
+        int requestedUnreadCount = payload.has("unreadCount")
+            ? readJsonInt(payload, "unreadCount", storedUnreadCount)
+            : storedUnreadCount;
+        int unreadCount = Math.max(0, Math.min(999, requestedUnreadCount));
         nativeUnreadBadgeCount = unreadCount;
 
         if (!enabled) {
             prefs.edit()
                 .putBoolean(FaollaNotificationWorker.KEY_ENABLED, false)
+                .putBoolean(FaollaNotificationWorker.KEY_ALERTS_ENABLED, false)
                 .putBoolean(FaollaNotificationWorker.KEY_INITIALIZED, false)
-                .putInt(FaollaNotificationWorker.KEY_UNREAD_COUNT, 0)
+                .putInt(FaollaNotificationWorker.KEY_UNREAD_COUNT, unreadCount)
                 .remove(FaollaNotificationWorker.KEY_NOTIFIED_NOTIFICATION_KEYS)
                 .apply();
             FaollaNotificationWorker.cancel(this);
-            syncNativeUnreadBadge(0, true);
+            syncNativeUnreadBadge(unreadCount, true);
             return;
         }
 
@@ -894,6 +896,7 @@ public class MainActivity extends BridgeActivity {
             .putString(FaollaNotificationWorker.KEY_OFFICIAL_LAST_READ_AT, readJsonString(payload, "officialLastReadAt", ""))
             .putString(FaollaNotificationWorker.KEY_PEER_LAST_READ_JSON, payload.optString("peerLastRead", "{}"))
             .putString(FaollaNotificationWorker.KEY_COOKIE_HEADER, cookieHeader)
+            .putBoolean(FaollaNotificationWorker.KEY_ALERTS_ENABLED, alertsEnabled)
             .putBoolean(FaollaNotificationWorker.KEY_SOUND, readJsonBoolean(payload, "sound", true))
             .putBoolean(FaollaNotificationWorker.KEY_VIBRATE, readJsonBoolean(payload, "vibrate", true))
             .putInt(FaollaNotificationWorker.KEY_UNREAD_COUNT, unreadCount)

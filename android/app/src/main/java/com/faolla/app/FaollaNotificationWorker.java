@@ -54,6 +54,7 @@ public class FaollaNotificationWorker extends Worker {
     static final String KEY_COOKIE_HEADER = "cookie_header";
     static final String KEY_SOUND = "sound";
     static final String KEY_VIBRATE = "vibrate";
+    static final String KEY_ALERTS_ENABLED = "alerts_enabled";
     static final String KEY_LAST_NOTIFICATION_KEY = "last_notification_key";
     static final String KEY_NOTIFIED_NOTIFICATION_KEYS = "notified_notification_keys";
     static final String KEY_INITIALIZED = "initialized";
@@ -103,6 +104,12 @@ public class FaollaNotificationWorker extends Worker {
                     .putStringSet(KEY_NOTIFIED_NOTIFICATION_KEYS, notifiedKeys)
                     .apply();
             } else if (unreadCount > 0 && latest != null && !latestKey.isEmpty() && !notifiedKeys.contains(latestKey)) {
+                if (!prefs.getBoolean(KEY_ALERTS_ENABLED, true)) {
+                    syncUnreadBadge(context, unreadCount);
+                    rememberNotificationKey(prefs, latestKey);
+                    scheduleNext(context);
+                    return Result.success();
+                }
                 showMessageNotification(
                     context,
                     latest.optString("title", "Faolla"),

@@ -13,6 +13,7 @@ type FaollaNativeNotificationPayload = {
 
 type FaollaNativeNotificationSyncPayload = {
   enabled: boolean;
+  alertsEnabled?: boolean;
   baseUrl: string;
   siteId: string;
   merchantEmail: string;
