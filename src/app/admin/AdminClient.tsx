@@ -11177,14 +11177,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       const now = Date.now();
       if (now - supportFaollaBackendResetAtRef.current < 1200) return true;
       supportFaollaBackendResetAtRef.current = now;
-      setSupportFaollaEmbedHref("/");
-      writeStoredFaollaEntryUrl(supportFaollaHomeTargetHref, window.location.origin);
-      if (frame && frame.src !== supportFaollaHomeTargetHref) {
-        frame.src = supportFaollaHomeTargetHref;
+      if (frame && frame.src !== supportMobileFaollaTargetHref) {
+        frame.src = supportMobileFaollaTargetHref;
       }
       return true;
     },
-    [supportFaollaHomeTargetHref],
+    [supportMobileFaollaTargetHref],
   );
   useEffect(() => {
     if (typeof window === "undefined") return;

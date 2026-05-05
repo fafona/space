@@ -307,7 +307,10 @@ export default function HomePageClient({
       />
       <div style={faollaPullContentStyle}>
         <div className={authEntryClassName}>
-          <FrontendAuthEntry autoOpenWorkspace />
+          <FrontendAuthEntry
+            autoOpenWorkspace={!suppressStandaloneLaunchRedirect}
+            hideLogin={suppressStandaloneLaunchRedirect}
+          />
         </div>
         <BlockRenderer
           blocks={activeBlocks}

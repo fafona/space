@@ -17,6 +17,7 @@ type FrontendAuthEntryProps = {
   merchantName?: string;
   merchantAvatarUrl?: string;
   autoOpenWorkspace?: boolean;
+  hideLogin?: boolean;
 };
 
 type PersonalProfileResponsePayload = {
@@ -219,6 +220,7 @@ export default function FrontendAuthEntry({
   merchantName = "",
   merchantAvatarUrl = "",
   autoOpenWorkspace = false,
+  hideLogin = false,
 }: FrontendAuthEntryProps) {
   const [resolved, setResolved] = useState(false);
   const [currentUrl] = useState(() => (typeof window !== "undefined" ? window.location.href : ""));
@@ -379,6 +381,7 @@ export default function FrontendAuthEntry({
 
   const loggedIn = payload?.authenticated === true;
   if (!loggedIn) {
+    if (hideLogin) return null;
     return (
       <div className={className}>
         <Link
