@@ -631,7 +631,7 @@ public class MainActivity extends BridgeActivity {
     private String resolveNotificationUrl(String rawUrl) {
         String trimmedUrl = rawUrl == null ? "" : rawUrl.trim();
         if (trimmedUrl.startsWith("http://") || trimmedUrl.startsWith("https://")) {
-            return trimmedUrl;
+            return appendNativeNotificationLaunchParams(trimmedUrl);
         }
 
         String origin = "https://www.faolla.com";
@@ -652,7 +652,27 @@ public class MainActivity extends BridgeActivity {
         if (!path.contains("appShell=")) {
             path += path.contains("?") ? "&appShell=faolla" : "?appShell=faolla";
         }
-        return origin + path;
+        return appendNativeNotificationLaunchParams(origin + path);
+    }
+
+    private String appendNativeNotificationLaunchParams(String url) {
+        try {
+            Uri uri = Uri.parse(url);
+            Uri.Builder builder = uri.buildUpon();
+            if (uri.getQueryParameter("appShell") == null) {
+                builder.appendQueryParameter("appShell", "faolla");
+            }
+            if (uri.getQueryParameter("nativeNotification") == null) {
+                builder.appendQueryParameter("nativeNotification", "1");
+            }
+            if (uri.getQueryParameter("nativeStart") == null) {
+                builder.appendQueryParameter("nativeStart", "1");
+            }
+            return builder.build().toString();
+        } catch (Exception ignored) {
+            String separator = url.contains("?") ? "&" : "?";
+            return url + separator + "appShell=faolla&nativeNotification=1&nativeStart=1";
+        }
     }
 
     private void handleNotificationIntent(Intent intent) {
@@ -846,7 +866,7 @@ public class MainActivity extends BridgeActivity {
     }
 
     private void syncNativeUnreadBadge(int unreadCount) {
-        syncNativeUnreadBadge(unreadCount, true);
+        syncNativeUnreadBadge(unreadCount, false);
     }
 
     private void syncNativeUnreadBadge(int unreadCount, boolean cancelMessageNotification) {

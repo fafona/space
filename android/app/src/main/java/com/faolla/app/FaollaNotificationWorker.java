@@ -324,7 +324,7 @@ public class FaollaNotificationWorker extends Worker {
     }
 
     static void syncUnreadBadge(Context context, int unreadCount) {
-        syncUnreadBadge(context, unreadCount, true);
+        syncUnreadBadge(context, unreadCount, false);
     }
 
     private static void syncUnreadBadge(Context context, int unreadCount, boolean cancelMessageNotification) {

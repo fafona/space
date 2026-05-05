@@ -33,9 +33,21 @@ export default function MerchantNumericEntryPageClient() {
       capacitor?.isNativePlatform?.() === true || document.documentElement.dataset.capacitor === "true";
     return isNativeRuntime && hasRecentLaunchEntry && isFaollaAppShellSearch(window.location.search);
   }, [hasRecentLaunchEntry, hydrated]);
+  const isNativeNotificationAppShellEntry = useMemo(() => {
+    if (!hydrated || typeof window === "undefined" || typeof document === "undefined") return false;
+    const capacitor = (window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
+    const isNativeRuntime =
+      capacitor?.isNativePlatform?.() === true || document.documentElement.dataset.capacitor === "true";
+    const params = new URLSearchParams(window.location.search);
+    return (
+      isNativeRuntime &&
+      isFaollaAppShellSearch(window.location.search) &&
+      params.get("nativeNotification") === "1"
+    );
+  }, [hydrated]);
   const skipEntrySessionCheck = useMemo(
-    () => hydrated && (justSignedIn || isNativeRecentAppShellEntry),
-    [hydrated, isNativeRecentAppShellEntry, justSignedIn],
+    () => hydrated && (justSignedIn || isNativeRecentAppShellEntry || isNativeNotificationAppShellEntry),
+    [hydrated, isNativeNotificationAppShellEntry, isNativeRecentAppShellEntry, justSignedIn],
   );
   const recentSignInBridgeActive = useMemo(
     () => hydrated && justSignedIn && hasMerchantSignInBridge(merchantEntry),

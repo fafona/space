@@ -7461,6 +7461,10 @@ export default function AdminClient({
         Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.())
       );
     };
+    const isNativeNotificationLaunch = () => {
+      if (typeof window === "undefined") return false;
+      return new URLSearchParams(window.location.search).get("nativeNotification") === "1";
+    };
     const preserveNativeFaollaShell = () => {
       const faollaAppShellActive =
         typeof window !== "undefined" && isFaollaAppShellSearch(window.location.search);
@@ -7546,6 +7550,7 @@ export default function AdminClient({
       if (document.visibilityState !== "visible") return true;
       if (Date.now() - lastMerchantResumeAtRef.current <= 45_000) return true;
       if (!isNativeMerchantShellRuntime()) return false;
+      if (isNativeNotificationLaunch()) return true;
       const recentMerchantId = readRecentMerchantLaunchMerchantId();
       if (!isMerchantNumericId(recentMerchantId)) return false;
       const backgroundedAt = lastMerchantBackgroundedAtRef.current;
@@ -13793,6 +13798,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       readRecentMerchantLaunchMerchantId() ||
       ""
     ).trim();
+    if (supportSystemNotificationsEnabled && !siteId) return;
     const enabled = Boolean(supportSystemNotificationsEnabled && siteId);
     if (enabled && !supportUnreadStateHydrated && supportEffectiveBadgeCount <= 0) return;
     configureFaollaNativeNotificationSync({
