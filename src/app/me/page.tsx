@@ -4312,6 +4312,7 @@ export default function MePage() {
               const showDateDivider = !previousMessage || !isSameSupportCalendarDay(previousMessage.createdAt, message.createdAt);
               const messageKey = buildVisibleSupportMessageKey(message);
               const messageMeta = formatSupportClockTime(message.createdAt);
+              const hasAttachmentPreview = Boolean(parseSupportMessageAttachmentPreview(message.text));
               return (
                 <div key={messageKey} className="space-y-2">
                   {showDateDivider ? (
@@ -4322,10 +4323,10 @@ export default function MePage() {
                     </div>
                   ) : null}
                   <div className={`flex min-w-0 ${message.isSelf ? "justify-end" : "justify-start"}`}>
-                    <div className={`flex max-w-[82%] min-w-0 items-end ${message.isSelf ? "flex-row" : "flex-row-reverse"}`}>
+                    <div className="flex max-w-[82%] min-w-0 items-end">
                       <div
-                        className={`faolla-message-bubble min-w-0 rounded-[18px] shadow-sm ${
-                          parseSupportMessageAttachmentPreview(message.text)
+                        className={`faolla-message-bubble max-w-full min-w-0 rounded-[18px] shadow-sm ${
+                          hasAttachmentPreview
                             ? "border border-transparent bg-transparent px-0 py-0"
                             : message.isSelf
                               ? "bg-[#d9fdd3] px-3 py-1.5 text-slate-950"
@@ -4333,7 +4334,7 @@ export default function MePage() {
                         }`}
                       >
                         <SupportMessageContent value={message.text} isSelf={message.isSelf} />
-                        <span className={`faolla-message-time ml-2 inline-block align-baseline text-[11px] leading-none ${message.isSelf ? "text-slate-500" : "text-slate-400"}`}>
+                        <span className={`faolla-message-time text-[11px] leading-none ${hasAttachmentPreview ? "mt-1 block text-right" : "ml-2 inline-block align-baseline"} ${message.isSelf ? "text-slate-500" : "text-slate-400"}`}>
                           {messageMeta}
                         </span>
                       </div>
