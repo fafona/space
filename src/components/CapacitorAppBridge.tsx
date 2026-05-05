@@ -193,7 +193,7 @@ function isLaunchContentReady() {
   return document.readyState === "complete" && visibleText.length > 0;
 }
 
-function scheduleLaunchCoverHideWhenContentReady(minDelayMs = 700, maxDelayMs = 7000) {
+function scheduleLaunchCoverHideWhenContentReady(minDelayMs = 420, maxDelayMs = 5500) {
   const startedAt = Date.now();
   const tick = () => {
     const elapsed = Date.now() - startedAt;
@@ -374,6 +374,7 @@ export default function CapacitorAppBridge() {
     };
 
     const refreshNativeSession = () => {
+      if (window.location.pathname === "/launch") return;
       void readMerchantSessionPayload(5200, { includeClientTokens: true }).catch(() => null);
     };
 
@@ -385,13 +386,16 @@ export default function CapacitorAppBridge() {
     };
     const launchCoverHideFallback = window.setTimeout(scheduleInitialLaunchCoverHide, 9000);
 
-    void syncNativeWebBuild(false)
-      .then((status) => {
-        if (status === "ready") scheduleInitialLaunchCoverHide();
-      })
-      .catch(() => {
-        scheduleInitialLaunchCoverHide();
-      });
+    scheduleInitialLaunchCoverHide();
+    window.setTimeout(() => {
+      void syncNativeWebBuild(false)
+        .then((status) => {
+          if (status === "ready") scheduleInitialLaunchCoverHide();
+        })
+        .catch(() => {
+          scheduleInitialLaunchCoverHide();
+        });
+    }, 1200);
     refreshNativeSession();
 
     void App.addListener("appStateChange", ({ isActive }) => {

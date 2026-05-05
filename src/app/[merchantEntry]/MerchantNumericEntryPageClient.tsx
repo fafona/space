@@ -10,6 +10,7 @@ import {
   readMerchantSessionMerchantIds,
   readMerchantSessionPayload,
 } from "@/lib/authSessionRecovery";
+import { isFaollaAppShellSearch } from "@/lib/faollaEntry";
 import { buildMerchantSiteLinker } from "@/lib/merchantSiteLinking";
 import { clearMerchantSignInBridge, hasMerchantSignInBridge } from "@/lib/merchantSignInBridge";
 import { canReachSupabaseGateway, isSupabaseEnabled } from "@/lib/supabase";
@@ -25,7 +26,17 @@ export default function MerchantNumericEntryPageClient() {
     if (!hydrated || typeof window === "undefined") return false;
     return readRecentMerchantLaunchMerchantId() === merchantEntry;
   }, [hydrated, merchantEntry]);
-  const skipEntrySessionCheck = useMemo(() => hydrated && justSignedIn, [hydrated, justSignedIn]);
+  const isNativeRecentAppShellEntry = useMemo(() => {
+    if (!hydrated || typeof window === "undefined" || typeof document === "undefined") return false;
+    const capacitor = (window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
+    const isNativeRuntime =
+      capacitor?.isNativePlatform?.() === true || document.documentElement.dataset.capacitor === "true";
+    return isNativeRuntime && hasRecentLaunchEntry && isFaollaAppShellSearch(window.location.search);
+  }, [hasRecentLaunchEntry, hydrated]);
+  const skipEntrySessionCheck = useMemo(
+    () => hydrated && (justSignedIn || isNativeRecentAppShellEntry),
+    [hydrated, isNativeRecentAppShellEntry, justSignedIn],
+  );
   const recentSignInBridgeActive = useMemo(
     () => hydrated && justSignedIn && hasMerchantSignInBridge(merchantEntry),
     [hydrated, justSignedIn, merchantEntry],
