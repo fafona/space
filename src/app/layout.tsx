@@ -632,7 +632,7 @@ html[data-faolla-web-launch-ready="true"] #faolla-app-web-launch-cover {
     box-shadow: none !important;
     font-size: 0.94rem !important;
     line-height: 1.35 !important;
-    max-width: 84% !important;
+    max-width: 100% !important;
   }
   .faolla-personal-mobile-shell .faolla-message-bubble .faolla-support-message-text,
   .support-mobile-shell .faolla-message-bubble .faolla-support-message-text {

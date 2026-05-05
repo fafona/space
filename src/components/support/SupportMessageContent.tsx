@@ -104,10 +104,13 @@ export default function SupportMessageContent({
   };
 
   return (
-    <div className="space-y-2" data-no-translate="1">
+    <div
+      className={`flex max-w-full flex-col space-y-2 ${isSelf ? "ml-auto items-end" : "mr-auto items-start"}`}
+      data-no-translate="1"
+    >
       <button
         type="button"
-        className="support-preserve-light-surface block w-full overflow-hidden rounded-[20px] bg-white p-1 shadow-[0_10px_24px_rgba(15,23,42,0.08)]"
+        className="support-preserve-light-surface block w-fit max-w-full overflow-hidden rounded-[20px] bg-white p-1 shadow-[0_10px_24px_rgba(15,23,42,0.08)]"
         onClick={openImagePreview}
         aria-label="查看图片大图"
       >
@@ -115,7 +118,7 @@ export default function SupportMessageContent({
         <img
           src={normalizedImageUrl}
           alt={linkUrl ? "名片图片" : "聊天图片"}
-          className="support-preserve-light-surface block h-auto max-h-[18rem] w-full rounded-[16px] bg-white object-contain"
+          className="support-preserve-light-surface block h-auto max-h-[18rem] max-w-full rounded-[16px] bg-white object-contain"
         />
       </button>
       {linkUrl ? (
@@ -123,9 +126,7 @@ export default function SupportMessageContent({
           href={linkUrl}
           target="_blank"
           rel="noreferrer"
-          className={`block break-all text-sm underline underline-offset-4 ${
-            isSelf ? "text-white/90" : "text-slate-700"
-          }`}
+          className="block max-w-full break-all text-sm text-slate-700 underline underline-offset-4"
         >
           {linkUrl}
         </a>

@@ -4323,11 +4323,11 @@ export default function MePage() {
                     </div>
                   ) : null}
                   <div className={`flex min-w-0 ${message.isSelf ? "justify-end" : "justify-start"}`}>
-                    <div className="flex max-w-[82%] min-w-0 items-end">
+                    <div className={`flex max-w-[82%] min-w-0 items-end ${message.isSelf ? "ml-auto justify-end" : "mr-auto justify-start"}`}>
                       <div
                         className={`faolla-message-bubble max-w-full min-w-0 rounded-[18px] shadow-sm ${
                           hasAttachmentPreview
-                            ? "border border-transparent bg-transparent px-0 py-0"
+                            ? `border border-transparent bg-transparent px-0 py-0 ${message.isSelf ? "ml-auto" : "mr-auto"}`
                             : message.isSelf
                               ? "bg-[#d9fdd3] px-3 py-1.5 text-slate-950"
                               : "border border-transparent bg-white px-3 py-1.5 text-slate-950"
