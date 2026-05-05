@@ -48,7 +48,7 @@ import com.getcapacitor.BridgeActivity;
 import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
-    private static final int CURRENT_NATIVE_BUILD = 36;
+    private static final int CURRENT_NATIVE_BUILD = 37;
     private static final int LAUNCH_BACKGROUND_COLOR = Color.rgb(8, 17, 33);
     private static final String RUNTIME_PREFS_NAME = "faolla_native_runtime";
     private static final String KEY_NATIVE_CACHE_BUILD = "native_cache_build";
@@ -288,6 +288,24 @@ public class MainActivity extends BridgeActivity {
         scheduleNativeUnreadBadgeRestore();
         scheduleNativeNotificationWorkerIfEnabled();
         super.onStop();
+    }
+
+    @Override
+    public void onUserLeaveHint() {
+        restoreNativeUnreadBadgeFromPrefs(true);
+        scheduleNativeUnreadBadgeRestore();
+        scheduleNativeNotificationWorkerIfEnabled();
+        super.onUserLeaveHint();
+    }
+
+    @Override
+    public void onTrimMemory(int level) {
+        super.onTrimMemory(level);
+        if (level >= TRIM_MEMORY_UI_HIDDEN) {
+            restoreNativeUnreadBadgeFromPrefs(true);
+            scheduleNativeUnreadBadgeRestore();
+            scheduleNativeNotificationWorkerIfEnabled();
+        }
     }
 
     @Override
@@ -859,7 +877,12 @@ public class MainActivity extends BridgeActivity {
             ? readJsonInt(payload, "unreadCount", storedUnreadCount)
             : storedUnreadCount;
         int unreadCount = Math.max(0, Math.min(999, requestedUnreadCount));
-        nativeUnreadBadgeCount = unreadCount;
+        boolean deferZeroClearUntilServerConfirms =
+            enabled && wasInitialized && unreadCount <= 0 && Math.max(0, storedUnreadCount) > 0;
+        int persistedUnreadCount = deferZeroClearUntilServerConfirms
+            ? Math.max(0, Math.min(999, storedUnreadCount))
+            : unreadCount;
+        nativeUnreadBadgeCount = persistedUnreadCount;
 
         if (!enabled) {
             prefs.edit()
@@ -899,7 +922,7 @@ public class MainActivity extends BridgeActivity {
             .putBoolean(FaollaNotificationWorker.KEY_ALERTS_ENABLED, alertsEnabled)
             .putBoolean(FaollaNotificationWorker.KEY_SOUND, readJsonBoolean(payload, "sound", true))
             .putBoolean(FaollaNotificationWorker.KEY_VIBRATE, readJsonBoolean(payload, "vibrate", true))
-            .putInt(FaollaNotificationWorker.KEY_UNREAD_COUNT, unreadCount)
+            .putInt(FaollaNotificationWorker.KEY_UNREAD_COUNT, persistedUnreadCount)
             .putBoolean(FaollaNotificationWorker.KEY_INITIALIZED, true);
         if (!wasInitialized) {
             editor.putString(FaollaNotificationWorker.KEY_LAST_NOTIFICATION_KEY, latestNotificationKey);
@@ -909,10 +932,12 @@ public class MainActivity extends BridgeActivity {
             FaollaNotificationWorker.rememberNotificationKey(prefs, latestNotificationKey);
         }
 
-        if (requestedUnreadCount > 0) {
+        if (deferZeroClearUntilServerConfirms) {
+            restoreNativeUnreadBadgeFromPrefs(true);
+        } else if (requestedUnreadCount > 0) {
             syncNativeUnreadBadge(requestedUnreadCount);
-        } else if (unreadCount > 0) {
-            applyLauncherBadgeCount(unreadCount);
+        } else if (persistedUnreadCount > 0) {
+            applyLauncherBadgeCount(persistedUnreadCount);
         }
         if (!hasPostNotificationPermission()) {
             requestNativeNotificationPermission();
@@ -931,6 +956,12 @@ public class MainActivity extends BridgeActivity {
     }
 
     private void syncNativeUnreadBadge(int unreadCount, boolean cancelMessageNotification) {
+        int normalizedUnreadCount = Math.max(0, Math.min(999, unreadCount));
+        if (normalizedUnreadCount <= 0 && shouldDeferNativeZeroBadgeClear()) {
+            restoreNativeUnreadBadgeFromPrefs(true);
+            FaollaNotificationWorker.scheduleNow(this);
+            return;
+        }
         storeNativeUnreadBadgeCount(unreadCount);
         if (!hasPostNotificationPermission()) {
             if (nativeUnreadBadgeCount > 0) {
@@ -982,6 +1013,12 @@ public class MainActivity extends BridgeActivity {
         FaollaLauncherBadge.applyCount(this, unreadCount);
     }
 
+    private boolean shouldDeferNativeZeroBadgeClear() {
+        android.content.SharedPreferences prefs = FaollaNotificationWorker.getPrefs(this);
+        int storedUnreadCount = Math.max(0, prefs.getInt(FaollaNotificationWorker.KEY_UNREAD_COUNT, nativeUnreadBadgeCount));
+        return storedUnreadCount > 0 && prefs.getBoolean(FaollaNotificationWorker.KEY_ENABLED, false);
+    }
+
     private void restoreNativeUnreadBadgeFromPrefs(boolean syncNotification) {
         int storedUnreadCount = FaollaNotificationWorker.getPrefs(this).getInt(FaollaNotificationWorker.KEY_UNREAD_COUNT, 0);
         nativeUnreadBadgeCount = Math.max(0, Math.min(999, storedUnreadCount));
@@ -996,6 +1033,8 @@ public class MainActivity extends BridgeActivity {
         updateProgressHandler.postDelayed(nativeBadgeRestoreRunnable, 300L);
         updateProgressHandler.postDelayed(nativeBadgeRestoreRunnable, 1200L);
         updateProgressHandler.postDelayed(nativeBadgeRestoreRunnable, 3000L);
+        updateProgressHandler.postDelayed(nativeBadgeRestoreRunnable, 6000L);
+        updateProgressHandler.postDelayed(nativeBadgeRestoreRunnable, 10000L);
     }
 
     private void openUrlInCurrentApp(String url) {
