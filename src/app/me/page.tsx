@@ -3091,30 +3091,6 @@ export default function MePage() {
       </section>
     );
   };
-  const renderFaollaShellAvatar = (className = "") => (
-    <button
-      type="button"
-      className={`inline-flex items-center justify-center overflow-hidden rounded-full border border-white/80 bg-slate-950 text-sm font-bold text-white shadow-[0_12px_30px_rgba(15,23,42,0.22)] ring-1 ring-slate-950/10 transition hover:scale-[1.03] ${className}`}
-      onClick={() => {
-        if (isMobileViewport) {
-          setMobileTab("self");
-          setMobileSelfSection("home");
-          return;
-        }
-        setDesktopSection("profile");
-      }}
-      title="账号信息"
-      aria-label="账号信息"
-    >
-      <SupportAvatarBadge
-        label={avatarLabel}
-        imageUrl={personalAvatarImageUrl}
-        imageAlt={profileName}
-        className="h-full w-full rounded-full bg-slate-950 text-white"
-        labelClassName="text-sm font-bold text-white"
-      />
-    </button>
-  );
   useEffect(() => {
     if (typeof window === "undefined") return;
     const handleMessage = (event: MessageEvent) => {
@@ -6589,7 +6565,6 @@ export default function MePage() {
               </div>
               <div className="pointer-events-none absolute right-4 top-4 z-20 flex items-center gap-2">
                 {renderFaollaFavoriteButton("pointer-events-auto h-10 w-10")}
-                {renderFaollaShellAvatar("pointer-events-auto h-10 w-10")}
               </div>
               <iframe
                 ref={personalDesktopFaollaFrameRef}
@@ -6611,7 +6586,6 @@ export default function MePage() {
           </div>
           <div className="pointer-events-none absolute right-4 top-[calc(var(--faolla-mobile-safe-top)+0.75rem)] z-20 flex items-center gap-2">
             {renderFaollaFavoriteButton("pointer-events-auto h-10 w-10")}
-            {renderFaollaShellAvatar("pointer-events-auto h-11 w-11")}
           </div>
           {faollaFavoriteToast ? (
             <div className="pointer-events-none absolute left-1/2 top-[calc(var(--faolla-mobile-safe-top)+4.25rem)] z-30 -translate-x-1/2 px-4">
