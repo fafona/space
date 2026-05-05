@@ -207,13 +207,14 @@ function isLaunchContentReady() {
   if (typeof document === "undefined" || typeof window === "undefined") return false;
   const pathname = window.location.pathname || "/";
   if (pathname === "/launch") return false;
+  if (document.querySelector(".faolla-loading-progress-screen")) return false;
   if (
     document.querySelector(
       [
         ".support-mobile-shell",
         ".faolla-personal-mobile-shell",
+        ".faolla-personal-desktop-shell",
         "main[data-editor-mode]",
-        "main",
       ].join(","),
     )
   ) {
@@ -223,7 +224,7 @@ function isLaunchContentReady() {
   return document.readyState === "complete" && visibleText.length > 0;
 }
 
-function scheduleLaunchCoverHideWhenContentReady(minDelayMs = 120, maxDelayMs = 2400) {
+function scheduleLaunchCoverHideWhenContentReady(minDelayMs = 160, maxDelayMs = 9000) {
   const startedAt = Date.now();
   const tick = () => {
     const elapsed = Date.now() - startedAt;

@@ -27,7 +27,7 @@ export default function LoadingProgressScreen(props: LoadingProgressScreenProps)
   const posterAlt = useChinesePoster ? "FAOLLA 欢迎页" : "FAOLLA welcome screen";
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#081121]">
+    <main className="faolla-loading-progress-screen relative min-h-screen overflow-hidden bg-[#081121]">
       <div className="absolute inset-0 lg:hidden">
         <Image
           src={mobileSrc}
