@@ -138,6 +138,7 @@ import {
   requestFaollaNativeNotificationPermission,
   showFaollaNativeMessageNotification,
   syncFaollaNativeUnreadBadge,
+  configureFaollaNativeNotificationSync,
   type FaollaNativeNotificationPermission,
 } from "@/lib/faollaNativeNotifications";
 import usePullToRefresh from "@/lib/usePullToRefresh";
@@ -11214,6 +11215,37 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     });
     return latestPayload;
   }, [currentSupportMerchantId, supportEffectiveBadgeCount, supportPeerContacts, supportPeerThreads]);
+  const supportLatestNativeNotificationKey = useMemo(() => {
+    let latestKey = "";
+    let latestTimestamp = 0;
+    if (latestSupportAdminMessage) {
+      const timestamp = new Date(latestSupportAdminMessage.createdAt).getTime();
+      if (Number.isFinite(timestamp)) {
+        latestTimestamp = timestamp;
+        latestKey = `official:${latestSupportAdminMessage.id}:${latestSupportAdminMessage.createdAt}`;
+      }
+    }
+    if (!currentSupportMerchantId) return latestKey;
+    supportPeerThreads.forEach((thread) => {
+      const latestIncomingMessage = findLatestIncomingPeerMessage(thread, currentSupportMerchantId);
+      if (!latestIncomingMessage) return;
+      const contactMerchantId =
+        thread.merchantAId === currentSupportMerchantId
+          ? thread.merchantBId
+          : thread.merchantBId === currentSupportMerchantId
+            ? thread.merchantAId
+            : "";
+      if (!contactMerchantId) return;
+      const timestamp = new Date(latestIncomingMessage.createdAt).getTime();
+      if (!Number.isFinite(timestamp)) return;
+      const nextKey = `peer:${contactMerchantId}:${latestIncomingMessage.id}:${latestIncomingMessage.createdAt}`;
+      if (timestamp > latestTimestamp || (timestamp === latestTimestamp && nextKey > latestKey)) {
+        latestTimestamp = timestamp;
+        latestKey = nextKey;
+      }
+    });
+    return latestKey;
+  }, [currentSupportMerchantId, latestSupportAdminMessage, supportPeerThreads]);
   const supportHasUnreadMessages = supportUnreadBadgeCount > 0;
   const supportContactRows: SupportContactRow[] = [
     {
@@ -13510,6 +13542,39 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     void syncSupportAppBadge(supportEffectiveBadgeCount);
     void syncSupportServiceWorkerBadge(supportEffectiveBadgeCount);
   }, [isPlatformEditor, supportDataActivated, supportEffectiveBadgeCount, supportPushBadgeHydrated]);
+
+  useEffect(() => {
+    if (isPlatformEditor || typeof window === "undefined" || !canUseFaollaNativeNotifications()) return;
+    const siteId = (currentSupportMerchantId || supportReadMerchantId || editingSiteId || "").trim();
+    const enabled = Boolean(supportSystemNotificationsEnabled && siteId);
+    configureFaollaNativeNotificationSync({
+      enabled,
+      baseUrl: window.location.origin,
+      siteId,
+      merchantEmail: ((editingSite?.contactEmail ?? "").trim() || String(merchantSessionIdentityRef.current.email ?? "").trim()) ?? "",
+      merchantName: merchantDisplayName,
+      officialLastReadAt: supportLastReadAt,
+      peerLastRead: JSON.stringify(supportPeerLastReadMap),
+      unreadCount: supportEffectiveBadgeCount,
+      latestNotificationKey: supportLatestNativeNotificationKey,
+      sound: supportMessageSoundEnabled,
+      vibrate: supportVibrationEnabled,
+    });
+  }, [
+    currentSupportMerchantId,
+    editingSite?.contactEmail,
+    editingSiteId,
+    isPlatformEditor,
+    merchantDisplayName,
+    supportEffectiveBadgeCount,
+    supportLastReadAt,
+    supportLatestNativeNotificationKey,
+    supportMessageSoundEnabled,
+    supportPeerLastReadMap,
+    supportReadMerchantId,
+    supportSystemNotificationsEnabled,
+    supportVibrationEnabled,
+  ]);
 
   useEffect(() => {
     if (isPlatformEditor) return;

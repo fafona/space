@@ -707,8 +707,97 @@ public class MainActivity extends BridgeActivity {
         syncNativeUnreadBadge(unreadCount);
     }
 
+    private String resolveCurrentOrigin() {
+        try {
+            WebView webView = this.bridge == null ? null : this.bridge.getWebView();
+            String currentUrl = webView == null ? "" : webView.getUrl();
+            if (currentUrl != null && !currentUrl.trim().isEmpty()) {
+                Uri currentUri = Uri.parse(currentUrl);
+                if (currentUri.getScheme() != null && currentUri.getAuthority() != null) {
+                    return currentUri.getScheme() + "://" + currentUri.getAuthority();
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return "https://www.faolla.com";
+    }
+
+    private String normalizeOrigin(String value) {
+        String normalized = value == null ? "" : value.trim();
+        if (normalized.endsWith("/")) {
+            normalized = normalized.substring(0, normalized.length() - 1);
+        }
+        if (normalized.startsWith("http://") || normalized.startsWith("https://")) {
+            return normalized;
+        }
+        return resolveCurrentOrigin();
+    }
+
+    private void configureNativeNotificationSync(String payloadJson) {
+        JSONObject payload;
+        try {
+            payload = new JSONObject(payloadJson == null ? "{}" : payloadJson);
+        } catch (Exception ignored) {
+            payload = new JSONObject();
+        }
+
+        boolean enabled = readJsonBoolean(payload, "enabled", true);
+        int unreadCount = readJsonInt(payload, "unreadCount", nativeUnreadBadgeCount);
+        nativeUnreadBadgeCount = unreadCount;
+
+        android.content.SharedPreferences prefs = FaollaNotificationWorker.getPrefs(this);
+        if (!enabled) {
+            prefs.edit()
+                .putBoolean(FaollaNotificationWorker.KEY_ENABLED, false)
+                .putBoolean(FaollaNotificationWorker.KEY_INITIALIZED, false)
+                .putInt(FaollaNotificationWorker.KEY_UNREAD_COUNT, 0)
+                .apply();
+            FaollaNotificationWorker.cancel(this);
+            syncNativeUnreadBadge(0);
+            return;
+        }
+
+        String baseUrl = normalizeOrigin(readJsonString(payload, "baseUrl", resolveCurrentOrigin()));
+        String cookieHeader = CookieManager.getInstance().getCookie(baseUrl);
+        if (cookieHeader == null || cookieHeader.trim().isEmpty()) {
+            cookieHeader = CookieManager.getInstance().getCookie(resolveCurrentOrigin());
+        }
+        if (cookieHeader == null) {
+            cookieHeader = "";
+        }
+        CookieManager.getInstance().flush();
+
+        String latestNotificationKey = readJsonString(payload, "latestNotificationKey", "");
+        android.content.SharedPreferences.Editor editor = prefs.edit()
+            .putBoolean(FaollaNotificationWorker.KEY_ENABLED, true)
+            .putString(FaollaNotificationWorker.KEY_BASE_URL, baseUrl)
+            .putString(FaollaNotificationWorker.KEY_SITE_ID, readJsonString(payload, "siteId", ""))
+            .putString(FaollaNotificationWorker.KEY_MERCHANT_EMAIL, readJsonString(payload, "merchantEmail", ""))
+            .putString(FaollaNotificationWorker.KEY_MERCHANT_NAME, readJsonString(payload, "merchantName", ""))
+            .putString(FaollaNotificationWorker.KEY_OFFICIAL_LAST_READ_AT, readJsonString(payload, "officialLastReadAt", ""))
+            .putString(FaollaNotificationWorker.KEY_PEER_LAST_READ_JSON, payload.optString("peerLastRead", "{}"))
+            .putString(FaollaNotificationWorker.KEY_COOKIE_HEADER, cookieHeader)
+            .putBoolean(FaollaNotificationWorker.KEY_SOUND, readJsonBoolean(payload, "sound", true))
+            .putBoolean(FaollaNotificationWorker.KEY_VIBRATE, readJsonBoolean(payload, "vibrate", true))
+            .putInt(FaollaNotificationWorker.KEY_UNREAD_COUNT, unreadCount)
+            .putBoolean(FaollaNotificationWorker.KEY_INITIALIZED, true)
+            .putString(FaollaNotificationWorker.KEY_LAST_NOTIFICATION_KEY, latestNotificationKey);
+        editor.apply();
+
+        if (unreadCount > 0) {
+            syncNativeUnreadBadge(unreadCount);
+        } else {
+            syncNativeUnreadBadge(0);
+        }
+        FaollaNotificationWorker.scheduleNow(this);
+    }
+
     private void syncNativeUnreadBadge(int unreadCount) {
         nativeUnreadBadgeCount = Math.max(0, Math.min(999, unreadCount));
+        FaollaNotificationWorker.getPrefs(this)
+            .edit()
+            .putInt(FaollaNotificationWorker.KEY_UNREAD_COUNT, nativeUnreadBadgeCount)
+            .apply();
         if (!hasPostNotificationPermission()) {
             return;
         }
@@ -769,6 +858,11 @@ public class MainActivity extends BridgeActivity {
         @JavascriptInterface
         public void syncUnreadBadge(int unreadCount) {
             runOnUiThread(() -> MainActivity.this.syncNativeUnreadBadge(unreadCount));
+        }
+
+        @JavascriptInterface
+        public void configureNotificationSync(String payloadJson) {
+            runOnUiThread(() -> MainActivity.this.configureNativeNotificationSync(payloadJson));
         }
 
         @JavascriptInterface

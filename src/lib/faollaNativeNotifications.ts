@@ -11,11 +11,26 @@ type FaollaNativeNotificationPayload = {
   vibrate: boolean;
 };
 
+type FaollaNativeNotificationSyncPayload = {
+  enabled: boolean;
+  baseUrl: string;
+  siteId: string;
+  merchantEmail: string;
+  merchantName: string;
+  officialLastReadAt: string;
+  peerLastRead: string;
+  unreadCount: number;
+  latestNotificationKey: string;
+  sound: boolean;
+  vibrate: boolean;
+};
+
 type FaollaNativeNotificationBridge = {
   getNotificationPermissionState?: () => string;
   requestNotificationPermission?: () => string;
   showMessageNotification?: (payloadJson: string) => void;
   syncUnreadBadge?: (unreadCount: number) => void;
+  configureNotificationSync?: (payloadJson: string) => void;
 };
 
 type FaollaNativeNotificationWindow = Window &
@@ -79,6 +94,17 @@ export function syncFaollaNativeUnreadBadge(unreadCount: number) {
   if (!bridge || typeof bridge.syncUnreadBadge !== "function") return false;
   try {
     bridge.syncUnreadBadge(Math.max(0, Math.min(999, Math.round(unreadCount))));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function configureFaollaNativeNotificationSync(payload: FaollaNativeNotificationSyncPayload) {
+  const bridge = getBridge();
+  if (!bridge || typeof bridge.configureNotificationSync !== "function") return false;
+  try {
+    bridge.configureNotificationSync(JSON.stringify(payload));
     return true;
   } catch {
     return false;
