@@ -48,17 +48,19 @@ export default function LaunchBootstrap() {
           (launchParams.get("appShell") || "").trim().toLowerCase() === "faolla" ||
           (launchParams.get("nativeStart") || "").trim() === "1" ||
           launchParams.has("nativeAuthRetry");
+        const directSessionTimeoutMs = isNativeAppLaunch ? 1600 : 2400;
+        const recoverySessionTimeoutMs = isNativeAppLaunch ? 3200 : 5200;
         if (isNativeAppLaunch && !launchParams.has("nativeAuthRetry") && isMerchantNumericId(recentMerchantId)) {
           persistRecentMerchantLaunchState(recentMerchantId);
           window.location.replace(buildBackendAppShellHref(buildMerchantBackendHref(recentMerchantId)));
           return;
         }
 
-        const directPayload = await readMerchantSessionPayload(2400, { includeClientTokens: true }).catch(() => null);
+        const directPayload = await readMerchantSessionPayload(directSessionTimeoutMs, { includeClientTokens: true }).catch(() => null);
         const payload =
           directPayload?.authenticated === true
             ? directPayload
-            : await resolveFrontendAuthPayload(5200).catch(() => null);
+            : await resolveFrontendAuthPayload(recoverySessionTimeoutMs).catch(() => null);
         if (cancelled) return;
 
         if (payload?.authenticated === true) {

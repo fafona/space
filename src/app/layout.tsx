@@ -915,6 +915,16 @@ function buildFaollaInlineCacheRefreshScript(buildId: string) {
 (() => {
   if (typeof window === "undefined") return;
   const buildId = ${serializedBuildId};
+  try {
+    const startupParams = new URLSearchParams(window.location.search || "");
+    const isNativeAppShell =
+      (startupParams.get("appShell") || "").trim().toLowerCase() === "faolla" ||
+      (startupParams.get("nativeStart") || "").trim() === "1" ||
+      startupParams.has("nativeBuild");
+    if (isNativeAppShell) return;
+  } catch {
+    // Native app update checks are handled after first paint by CapacitorAppBridge.
+  }
   const storageKey = "faolla:inline-cache-build:v1";
   let previous = "";
   try {

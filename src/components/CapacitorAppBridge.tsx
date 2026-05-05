@@ -193,7 +193,7 @@ function isLaunchContentReady() {
   return document.readyState === "complete" && visibleText.length > 0;
 }
 
-function scheduleLaunchCoverHideWhenContentReady(minDelayMs = 420, maxDelayMs = 5500) {
+function scheduleLaunchCoverHideWhenContentReady(minDelayMs = 260, maxDelayMs = 3800) {
   const startedAt = Date.now();
   const tick = () => {
     const elapsed = Date.now() - startedAt;
@@ -203,7 +203,7 @@ function scheduleLaunchCoverHideWhenContentReady(minDelayMs = 420, maxDelayMs = 
       });
       return;
     }
-    window.setTimeout(tick, 120);
+    window.setTimeout(tick, 80);
   };
   window.setTimeout(tick, minDelayMs);
 }
@@ -387,7 +387,7 @@ export default function CapacitorAppBridge() {
     const launchCoverHideFallback = window.setTimeout(scheduleInitialLaunchCoverHide, 9000);
 
     scheduleInitialLaunchCoverHide();
-    window.setTimeout(() => {
+    const nativeWebBuildCheckTimer = window.setTimeout(() => {
       void syncNativeWebBuild(false)
         .then((status) => {
           if (status === "ready") scheduleInitialLaunchCoverHide();
@@ -395,8 +395,8 @@ export default function CapacitorAppBridge() {
         .catch(() => {
           scheduleInitialLaunchCoverHide();
         });
-    }, 1200);
-    refreshNativeSession();
+    }, 2800);
+    const nativeSessionRefreshTimer = window.setTimeout(refreshNativeSession, 1800);
 
     void App.addListener("appStateChange", ({ isActive }) => {
       if (isActive) {
@@ -434,6 +434,8 @@ export default function CapacitorAppBridge() {
       removeBackButtonListener?.();
       removeAppStateListener?.();
       window.clearTimeout(launchCoverHideFallback);
+      window.clearTimeout(nativeWebBuildCheckTimer);
+      window.clearTimeout(nativeSessionRefreshTimer);
       window.history.pushState = originalPushState;
       window.history.replaceState = originalReplaceState;
       window.removeEventListener("popstate", syncNativeOrientation);
