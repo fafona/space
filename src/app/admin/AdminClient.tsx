@@ -12198,6 +12198,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     url: string;
     badgeCount: number;
   }) => {
+    if (typeof document !== "undefined") {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - lastMerchantResumeAtRef.current <= 15_000) return;
+    }
     const nativeNotificationShown =
       supportSystemNotificationsEnabled &&
       notification &&
