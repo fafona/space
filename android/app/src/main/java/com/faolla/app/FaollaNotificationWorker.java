@@ -1,6 +1,7 @@
 package com.faolla.app;
 
 import android.Manifest;
+import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
@@ -34,7 +35,6 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
 import org.json.JSONObject;
-import me.leolin.shortcutbadger.ShortcutBadger;
 
 public class FaollaNotificationWorker extends Worker {
     static final String PREFS_NAME = "faolla_native_notifications";
@@ -319,7 +319,8 @@ public class FaollaNotificationWorker extends Worker {
         } else {
             notification.setVibrate(new long[] { 0L });
         }
-        NotificationManagerCompat.from(context).notify(MESSAGE_NOTIFICATION_ID, notification.build());
+        Notification postedNotification = FaollaLauncherBadge.withBadgeCount(notification.build(), unreadCount);
+        NotificationManagerCompat.from(context).notify(MESSAGE_NOTIFICATION_ID, postedNotification);
     }
 
     static void syncUnreadBadge(Context context, int unreadCount) {
@@ -352,19 +353,11 @@ public class FaollaNotificationWorker extends Worker {
             .setContentIntent(buildNotificationPendingIntent(context, "/launch?appShell=faolla", BADGE_NOTIFICATION_ID))
             .setBadgeIconType(NotificationCompat.BADGE_ICON_SMALL)
             .setNumber(normalizedUnreadCount);
-        notificationManager.notify(BADGE_NOTIFICATION_ID, notification.build());
+        Notification postedNotification = FaollaLauncherBadge.withBadgeCount(notification.build(), normalizedUnreadCount);
+        notificationManager.notify(BADGE_NOTIFICATION_ID, postedNotification);
     }
 
     private static void applyLauncherBadgeCount(Context context, int unreadCount) {
-        try {
-            int normalizedUnreadCount = Math.max(0, Math.min(999, unreadCount));
-            if (normalizedUnreadCount > 0) {
-                ShortcutBadger.applyCount(context, normalizedUnreadCount);
-            } else {
-                ShortcutBadger.removeCount(context);
-            }
-        } catch (Exception ignored) {
-            // Launcher badge support varies by Android vendor.
-        }
+        FaollaLauncherBadge.applyCount(context, unreadCount);
     }
 }

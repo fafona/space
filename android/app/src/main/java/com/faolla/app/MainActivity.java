@@ -2,6 +2,7 @@ package com.faolla.app;
 
 import android.Manifest;
 import android.app.DownloadManager;
+import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
@@ -44,7 +45,6 @@ import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 import com.getcapacitor.BridgeActivity;
 import org.json.JSONObject;
-import me.leolin.shortcutbadger.ShortcutBadger;
 
 public class MainActivity extends BridgeActivity {
     private static final int LAUNCH_BACKGROUND_COLOR = Color.rgb(8, 17, 33);
@@ -753,7 +753,8 @@ public class MainActivity extends BridgeActivity {
         } else {
             builder.setVibrate(new long[] { 0L });
         }
-        NotificationManagerCompat.from(this).notify(MESSAGE_NOTIFICATION_ID, builder.build());
+        Notification notification = FaollaLauncherBadge.withBadgeCount(builder.build(), unreadCount);
+        NotificationManagerCompat.from(this).notify(MESSAGE_NOTIFICATION_ID, notification);
     }
 
     private String resolveCurrentOrigin() {
@@ -873,7 +874,8 @@ public class MainActivity extends BridgeActivity {
             .setContentIntent(buildNotificationPendingIntent("/launch?appShell=faolla", BADGE_NOTIFICATION_ID))
             .setBadgeIconType(NotificationCompat.BADGE_ICON_SMALL)
             .setNumber(nativeUnreadBadgeCount);
-        notificationManager.notify(BADGE_NOTIFICATION_ID, builder.build());
+        Notification notification = FaollaLauncherBadge.withBadgeCount(builder.build(), nativeUnreadBadgeCount);
+        notificationManager.notify(BADGE_NOTIFICATION_ID, notification);
     }
 
     private void storeNativeUnreadBadgeCount(int unreadCount) {
@@ -886,16 +888,7 @@ public class MainActivity extends BridgeActivity {
     }
 
     private void applyLauncherBadgeCount(int unreadCount) {
-        try {
-            int normalizedUnreadCount = Math.max(0, Math.min(999, unreadCount));
-            if (normalizedUnreadCount > 0) {
-                ShortcutBadger.applyCount(this, normalizedUnreadCount);
-            } else {
-                ShortcutBadger.removeCount(this);
-            }
-        } catch (Exception ignored) {
-            // Launcher badge support varies by Android vendor.
-        }
+        FaollaLauncherBadge.applyCount(this, unreadCount);
     }
 
     private void cancelNativeBadgeSummaryNotification() {
