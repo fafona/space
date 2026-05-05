@@ -50,7 +50,7 @@ public class MainActivity extends BridgeActivity {
     private static final int LAUNCH_BACKGROUND_COLOR = Color.rgb(8, 17, 33);
     private static final String APK_MIME_TYPE = "application/vnd.android.package-archive";
     private static final String MESSAGE_CHANNEL_ID = "faolla_messages_v2";
-    private static final String BADGE_CHANNEL_ID = "faolla_badges_v2";
+    private static final String BADGE_CHANNEL_ID = "faolla_badges_v3";
     private static final String NOTIFICATION_ACTION_OPEN = "com.faolla.app.OPEN_NOTIFICATION";
     private static final String NOTIFICATION_EXTRA_URL = "faolla_url";
     private static final int NOTIFICATION_PERMISSION_REQUEST_CODE = 7301;
@@ -592,7 +592,7 @@ public class MainActivity extends BridgeActivity {
         NotificationChannel badgeChannel = new NotificationChannel(
             BADGE_CHANNEL_ID,
             "Faolla unread badges",
-            NotificationManager.IMPORTANCE_LOW
+            NotificationManager.IMPORTANCE_DEFAULT
         );
         badgeChannel.setDescription("Faolla unread count badge sync");
         badgeChannel.enableVibration(false);
@@ -819,14 +819,15 @@ public class MainActivity extends BridgeActivity {
 
         android.content.SharedPreferences prefs = FaollaNotificationWorker.getPrefs(this);
         if (!enabled) {
+            int badgeCount = Math.max(0, Math.min(999, unreadCount));
             prefs.edit()
                 .putBoolean(FaollaNotificationWorker.KEY_ENABLED, false)
                 .putBoolean(FaollaNotificationWorker.KEY_INITIALIZED, false)
-                .putInt(FaollaNotificationWorker.KEY_UNREAD_COUNT, 0)
+                .putInt(FaollaNotificationWorker.KEY_UNREAD_COUNT, badgeCount)
                 .remove(FaollaNotificationWorker.KEY_NOTIFIED_NOTIFICATION_KEYS)
                 .apply();
             FaollaNotificationWorker.cancel(this);
-            syncNativeUnreadBadge(0);
+            syncNativeUnreadBadge(badgeCount, true);
             return;
         }
 

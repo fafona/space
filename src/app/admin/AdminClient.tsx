@@ -4960,7 +4960,7 @@ function summarizeMerchantBookingAttentionRecords(
 ): MerchantBusinessAttentionSummary {
   return records.reduce<MerchantBusinessAttentionSummary>(
     (summary, booking) => {
-      if (!isMerchantBookingPendingMerchantTouch(booking)) return summary;
+      if (booking.status !== "active" || !isMerchantBookingPendingMerchantTouch(booking)) return summary;
       const createdAt = normalizeMerchantBusinessAttentionTimestamp(booking.updatedAt, booking.createdAt);
       const customerName = normalizeSupportDisplayValue(booking.customerName) || "客户";
       const serviceParts = [
@@ -4992,7 +4992,7 @@ function summarizeMerchantOrderAttentionRecords(
 ): MerchantBusinessAttentionSummary {
   return records.reduce<MerchantBusinessAttentionSummary>(
     (summary, order) => {
-      if (!isMerchantOrderPendingMerchantTouch(order)) return summary;
+      if (order.status !== "pending" || !isMerchantOrderPendingMerchantTouch(order)) return summary;
       const createdAt = normalizeMerchantBusinessAttentionTimestamp(order.updatedAt, order.createdAt);
       const customerName =
         normalizeSupportDisplayValue(order.customer?.name) ||

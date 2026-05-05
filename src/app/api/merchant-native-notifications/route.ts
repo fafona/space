@@ -292,13 +292,13 @@ export async function GET(request: Request) {
   });
 
   bookingRecords.forEach((booking) => {
-    if (!isMerchantBookingPendingMerchantTouch(booking)) return;
+    if (booking.status !== "active" || !isMerchantBookingPendingMerchantTouch(booking)) return;
     unreadCount += 1;
     latest = compareCandidate(latest, buildBookingCandidate(merchantId, booking));
   });
 
   orderRecords.forEach((order) => {
-    if (!isMerchantOrderPendingMerchantTouch(order)) return;
+    if (order.status !== "pending" || !isMerchantOrderPendingMerchantTouch(order)) return;
     unreadCount += 1;
     latest = compareCandidate(latest, buildOrderCandidate(merchantId, order));
   });

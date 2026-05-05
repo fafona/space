@@ -57,7 +57,7 @@ public class FaollaNotificationWorker extends Worker {
     static final String KEY_UNREAD_COUNT = "unread_count";
 
     private static final String MESSAGE_CHANNEL_ID = "faolla_messages_v2";
-    private static final String BADGE_CHANNEL_ID = "faolla_badges_v2";
+    private static final String BADGE_CHANNEL_ID = "faolla_badges_v3";
     private static final String NOTIFICATION_ACTION_OPEN = "com.faolla.app.OPEN_NOTIFICATION";
     private static final String NOTIFICATION_EXTRA_URL = "faolla_url";
     private static final int BADGE_NOTIFICATION_ID = 73010;
@@ -281,7 +281,7 @@ public class FaollaNotificationWorker extends Worker {
         NotificationChannel badgeChannel = new NotificationChannel(
             BADGE_CHANNEL_ID,
             "Faolla unread badges",
-            NotificationManager.IMPORTANCE_LOW
+            NotificationManager.IMPORTANCE_DEFAULT
         );
         badgeChannel.setDescription("Faolla unread count badge sync");
         badgeChannel.enableVibration(false);
