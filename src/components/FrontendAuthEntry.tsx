@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MerchantCookieSessionPayload } from "@/lib/authSessionRecovery";
-import { buildBackendFaollaHref, isFaollaAppShellSearch } from "@/lib/faollaEntry";
+import { buildBackendFaollaHref } from "@/lib/faollaEntry";
 import { readFrontendAuthMerchantIds, resolveFrontendAuthAvatarUrl } from "@/lib/frontendAuthAvatar";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
@@ -212,10 +212,6 @@ export default function FrontendAuthEntry({
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (typeof window !== "undefined" && isFaollaAppShellSearch(window.location.search)) {
-      return;
-    }
-
     let cancelled = false;
     const retryDelays = [0, 1200, 3200, 7000];
     let retryTimer: number | null = null;
@@ -366,23 +362,7 @@ export default function FrontendAuthEntry({
     };
   }, [currentMerchantId, payload, resolved]);
 
-  const renderLoginLink = () => (
-    <div className={className}>
-      <Link
-        href={loginHref}
-        target="_top"
-        className={
-          loginClassName ||
-          "inline-flex items-center rounded-full border border-slate-200/80 bg-white/90 px-4 py-2 text-sm font-semibold text-slate-900 shadow-[0_12px_30px_rgba(15,23,42,0.14)] backdrop-blur transition hover:bg-white"
-        }
-        aria-label="登录"
-      >
-        登录
-      </Link>
-    </div>
-  );
-
-  if (!resolved) return renderLoginLink();
+  if (!resolved) return null;
 
   const loggedIn = payload?.authenticated === true;
   if (!loggedIn) {
