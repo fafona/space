@@ -48,7 +48,7 @@ import com.getcapacitor.BridgeActivity;
 import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
-    private static final int CURRENT_NATIVE_BUILD = 42;
+    private static final int CURRENT_NATIVE_BUILD = 43;
     private static final int LAUNCH_BACKGROUND_COLOR = Color.rgb(8, 17, 33);
     private static final String RUNTIME_PREFS_NAME = "faolla_native_runtime";
     private static final String KEY_NATIVE_CACHE_BUILD = "native_cache_build";
@@ -1023,7 +1023,6 @@ public class MainActivity extends BridgeActivity {
             .setBadgeIconType(NotificationCompat.BADGE_ICON_SMALL)
             .setNumber(nativeUnreadBadgeCount);
         Notification notification = FaollaLauncherBadge.withBadgeCount(builder.build(), nativeUnreadBadgeCount);
-        notificationManager.cancel(BADGE_NOTIFICATION_ID);
         notificationManager.notify(BADGE_NOTIFICATION_ID, notification);
     }
 
@@ -1064,11 +1063,8 @@ public class MainActivity extends BridgeActivity {
     private void scheduleNativeUnreadBadgeRestore() {
         updateProgressHandler.removeCallbacks(nativeBadgeRestoreRunnable);
         FaollaBadgeRestoreReceiver.schedule(this);
-        updateProgressHandler.postDelayed(nativeBadgeRestoreRunnable, 300L);
-        updateProgressHandler.postDelayed(nativeBadgeRestoreRunnable, 1200L);
-        updateProgressHandler.postDelayed(nativeBadgeRestoreRunnable, 3000L);
-        updateProgressHandler.postDelayed(nativeBadgeRestoreRunnable, 6000L);
-        updateProgressHandler.postDelayed(nativeBadgeRestoreRunnable, 10000L);
+        updateProgressHandler.postDelayed(nativeBadgeRestoreRunnable, 1000L);
+        updateProgressHandler.postDelayed(nativeBadgeRestoreRunnable, 5000L);
     }
 
     private void openUrlInCurrentApp(String url) {

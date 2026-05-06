@@ -435,7 +435,6 @@ public class FaollaNotificationWorker extends Worker {
             .setBadgeIconType(NotificationCompat.BADGE_ICON_SMALL)
             .setNumber(normalizedUnreadCount);
         Notification postedNotification = FaollaLauncherBadge.withBadgeCount(notification.build(), normalizedUnreadCount);
-        notificationManager.cancel(BADGE_NOTIFICATION_ID);
         notificationManager.notify(BADGE_NOTIFICATION_ID, postedNotification);
     }
 

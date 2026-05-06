@@ -9,7 +9,7 @@ import android.os.SystemClock;
 
 public class FaollaBadgeRestoreReceiver extends BroadcastReceiver {
     private static final String ACTION_RESTORE_BADGE = "com.faolla.app.RESTORE_BADGE";
-    private static final long[] RESTORE_DELAYS_MS = new long[] { 500L, 2000L, 6000L, 12000L };
+    private static final long[] RESTORE_DELAYS_MS = new long[] { 1500L, 6000L };
 
     @Override
     public void onReceive(Context context, Intent intent) {
@@ -34,6 +34,7 @@ public class FaollaBadgeRestoreReceiver extends BroadcastReceiver {
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
             );
             long triggerAt = SystemClock.elapsedRealtime() + RESTORE_DELAYS_MS[index];
+            alarmManager.cancel(pendingIntent);
             alarmManager.set(AlarmManager.ELAPSED_REALTIME, triggerAt, pendingIntent);
         }
     }
