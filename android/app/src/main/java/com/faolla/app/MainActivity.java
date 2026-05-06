@@ -26,6 +26,7 @@ import android.os.Looper;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.provider.Settings;
+import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewParent;
 import android.view.Window;
@@ -49,7 +50,7 @@ import com.getcapacitor.BridgeActivity;
 import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
-    private static final int CURRENT_NATIVE_BUILD = 49;
+    private static final int CURRENT_NATIVE_BUILD = 50;
     private static final int LAUNCH_BACKGROUND_COLOR = Color.rgb(8, 17, 33);
     private static final String RUNTIME_PREFS_NAME = "faolla_native_runtime";
     private static final String KEY_NATIVE_CACHE_BUILD = "native_cache_build";
@@ -73,19 +74,26 @@ public class MainActivity extends BridgeActivity {
     private final Runnable nativeBadgeRestoreRunnable = () -> restoreNativeUnreadBadgeFromPrefs(true);
     private String pendingNotificationUrl = "";
     private Runnable launchCoverFallbackRunnable;
+    private Runnable systemSplashReleaseFallbackRunnable;
     private BroadcastReceiver updateDownloadReceiver;
     private Runnable updateProgressRunnable;
     private boolean holdSystemSplash = true;
+    private boolean systemSplashReleased = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         SplashScreen splashScreen = SplashScreen.installSplashScreen(this);
         splashScreen.setKeepOnScreenCondition(() -> holdSystemSplash);
+        splashScreen.setOnExitAnimationListener((splashScreenViewProvider) -> {
+            installLaunchCover();
+            splashScreenViewProvider.remove();
+        });
         getWindow().setBackgroundDrawable(new ColorDrawable(LAUNCH_BACKGROUND_COLOR));
+        getWindow().getDecorView().setBackgroundColor(LAUNCH_BACKGROUND_COLOR);
         applyLaunchSystemBars();
         super.onCreate(savedInstanceState);
         installLaunchCover();
-        holdSystemSplash = false;
+        releaseSystemSplashAfterLaunchCoverAttached();
         recordNativeBuildSeen();
         restoreNativeUnreadBadgeFromPrefs(true);
 
@@ -139,6 +147,7 @@ public class MainActivity extends BridgeActivity {
 
     private void installLaunchCover() {
         if (launchCover != null) {
+            launchCover.bringToFront();
             return;
         }
 
@@ -159,6 +168,33 @@ public class MainActivity extends BridgeActivity {
         launchCover = cover;
         launchCoverHidden = false;
         scheduleLaunchCoverFallback();
+    }
+
+    private void releaseSystemSplashAfterLaunchCoverAttached() {
+        FrameLayout cover = launchCover;
+        if (cover == null) {
+            releaseSystemSplash();
+            return;
+        }
+
+        if (systemSplashReleaseFallbackRunnable != null) {
+            updateProgressHandler.removeCallbacks(systemSplashReleaseFallbackRunnable);
+        }
+        systemSplashReleaseFallbackRunnable = () -> releaseSystemSplash();
+        updateProgressHandler.postDelayed(systemSplashReleaseFallbackRunnable, 250L);
+        cover.post(() -> releaseSystemSplash());
+    }
+
+    private void releaseSystemSplash() {
+        if (systemSplashReleased) {
+            return;
+        }
+        systemSplashReleased = true;
+        holdSystemSplash = false;
+        if (systemSplashReleaseFallbackRunnable != null) {
+            updateProgressHandler.removeCallbacks(systemSplashReleaseFallbackRunnable);
+            systemSplashReleaseFallbackRunnable = null;
+        }
     }
 
     private void scheduleLaunchCoverFallback() {
@@ -258,6 +294,15 @@ public class MainActivity extends BridgeActivity {
 
         WebView webView = this.bridge.getWebView();
         webView.setBackgroundColor(LAUNCH_BACKGROUND_COLOR);
+        View rootView = webView.getRootView();
+        if (rootView != null) {
+            rootView.setBackgroundColor(LAUNCH_BACKGROUND_COLOR);
+        }
+        ViewParent parent = webView.getParent();
+        while (parent instanceof View) {
+            ((View) parent).setBackgroundColor(LAUNCH_BACKGROUND_COLOR);
+            parent = parent.getParent();
+        }
         webView.setLayerType(WebView.LAYER_TYPE_HARDWARE, null);
 
         WebSettings settings = webView.getSettings();
@@ -385,6 +430,10 @@ public class MainActivity extends BridgeActivity {
         if (launchCoverFallbackRunnable != null) {
             updateProgressHandler.removeCallbacks(launchCoverFallbackRunnable);
             launchCoverFallbackRunnable = null;
+        }
+        if (systemSplashReleaseFallbackRunnable != null) {
+            updateProgressHandler.removeCallbacks(systemSplashReleaseFallbackRunnable);
+            systemSplashReleaseFallbackRunnable = null;
         }
         stopUpdateProgressPolling();
         if (updateDownloadReceiver != null) {

@@ -1244,11 +1244,11 @@ function LoginPageInner() {
       : undefined;
 
   if (embeddedShellLogin) {
-    return <main className="min-h-screen bg-white" aria-hidden="true" />;
+    return <main className="faolla-login-shell min-h-screen bg-[#081121]" aria-hidden="true" />;
   }
 
   return (
-    <main className="relative h-[100dvh] min-h-screen overflow-hidden overscroll-none bg-[#0b1424] text-slate-900">
+    <main className="faolla-login-shell relative h-[100dvh] min-h-screen overflow-hidden overscroll-none bg-[#0b1424] text-slate-900">
       <div className="absolute inset-0 bg-[linear-gradient(180deg,_#0b1424_0%,_#13213a_52%,_#eef4ff_100%)]" />
       <div className="absolute inset-x-0 top-0 h-[30rem] bg-[radial-gradient(circle_at_top,_rgba(125,211,252,0.16),_transparent_58%)]" />
 

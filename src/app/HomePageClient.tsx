@@ -297,7 +297,7 @@ export default function HomePageClient({
   return (
     <main
       {...faollaPullRefreshBind}
-      className="min-h-screen w-full overflow-x-hidden bg-gray-50 py-8"
+      className="faolla-home-shell min-h-screen w-full overflow-x-hidden bg-gray-50 py-8"
       style={{ ...pageBackgroundStyle, paddingBottom: `calc(2rem + ${backgroundExtendPadding}px)` }}
     >
       <FaollaPullRefreshIndicator

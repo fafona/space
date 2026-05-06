@@ -208,18 +208,21 @@ function isLaunchContentReady() {
   const pathname = window.location.pathname || "/";
   if (pathname === "/launch") return false;
   if (document.querySelector(".faolla-loading-progress-screen")) return false;
+  const stableShellSelector = [
+    ".support-mobile-shell",
+    ".faolla-personal-mobile-shell",
+    ".faolla-personal-desktop-shell",
+    ".faolla-home-shell",
+    ".faolla-public-site-shell",
+    ".faolla-login-shell",
+    "main[data-editor-mode]",
+  ].join(",");
   if (
-    document.querySelector(
-      [
-        ".support-mobile-shell",
-        ".faolla-personal-mobile-shell",
-        ".faolla-personal-desktop-shell",
-        "main[data-editor-mode]",
-      ].join(","),
-    )
+    document.querySelector(stableShellSelector)
   ) {
     return true;
   }
+  if (isFaollaAppShellDocument() || isStandaloneShellDocument()) return false;
   const visibleText = (document.body?.textContent ?? "").trim();
   return document.readyState === "complete" && visibleText.length > 0;
 }
