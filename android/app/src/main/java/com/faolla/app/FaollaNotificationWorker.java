@@ -61,8 +61,8 @@ public class FaollaNotificationWorker extends Worker {
     static final String KEY_UNREAD_COUNT = "unread_count";
     static final String KEY_FCM_TOKEN = "fcm_token";
 
-    private static final String MESSAGE_CHANNEL_ID = "faolla_messages_v8";
-    private static final String BADGE_CHANNEL_ID = "faolla_badges_v8";
+    private static final String MESSAGE_CHANNEL_ID = "faolla_messages_v9";
+    private static final String BADGE_CHANNEL_ID = "faolla_badges_v9";
     private static final String NOTIFICATION_ACTION_OPEN = "com.faolla.app.OPEN_NOTIFICATION";
     private static final String NOTIFICATION_EXTRA_URL = "faolla_url";
     private static final int BADGE_NOTIFICATION_ID = 73010;
@@ -413,11 +413,13 @@ public class FaollaNotificationWorker extends Worker {
             notificationManager.cancel(MESSAGE_NOTIFICATION_ID);
             return;
         }
-        notificationManager.cancel(BADGE_NOTIFICATION_ID);
-
         ensureNotificationChannels(context);
         if (cancelMessageNotification) {
             notificationManager.cancel(MESSAGE_NOTIFICATION_ID);
+        }
+        if (isNotificationActive(context, MESSAGE_NOTIFICATION_ID)) {
+            notificationManager.cancel(BADGE_NOTIFICATION_ID);
+            return;
         }
         String body = normalizedUnreadCount + " new items";
         NotificationCompat.Builder notification = new NotificationCompat.Builder(context, BADGE_CHANNEL_ID)
@@ -426,7 +428,7 @@ public class FaollaNotificationWorker extends Worker {
             .setContentTitle("Faolla")
             .setContentText(body)
             .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
-            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setSound(null)
@@ -440,7 +442,26 @@ public class FaollaNotificationWorker extends Worker {
             .setBadgeIconType(NotificationCompat.BADGE_ICON_SMALL)
             .setNumber(normalizedUnreadCount);
         Notification postedNotification = FaollaLauncherBadge.withBadgeCount(notification.build(), normalizedUnreadCount);
-        notificationManager.notify(MESSAGE_NOTIFICATION_ID, postedNotification);
+        notificationManager.notify(BADGE_NOTIFICATION_ID, postedNotification);
+    }
+
+    private static boolean isNotificationActive(Context context, int notificationId) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return false;
+        }
+        try {
+            NotificationManager notificationManager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (notificationManager == null) return false;
+            android.service.notification.StatusBarNotification[] notifications = notificationManager.getActiveNotifications();
+            if (notifications == null) return false;
+            for (android.service.notification.StatusBarNotification notification : notifications) {
+                if (notification != null && notification.getId() == notificationId) {
+                    return true;
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return false;
     }
 
     private static boolean applyLauncherBadgeCount(Context context, int unreadCount) {
