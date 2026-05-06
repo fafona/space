@@ -49,13 +49,13 @@ import com.getcapacitor.BridgeActivity;
 import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
-    private static final int CURRENT_NATIVE_BUILD = 47;
+    private static final int CURRENT_NATIVE_BUILD = 48;
     private static final int LAUNCH_BACKGROUND_COLOR = Color.rgb(8, 17, 33);
     private static final String RUNTIME_PREFS_NAME = "faolla_native_runtime";
     private static final String KEY_NATIVE_CACHE_BUILD = "native_cache_build";
     private static final String APK_MIME_TYPE = "application/vnd.android.package-archive";
-    private static final String MESSAGE_CHANNEL_ID = "faolla_messages_v7";
-    private static final String BADGE_CHANNEL_ID = "faolla_badges_v7";
+    private static final String MESSAGE_CHANNEL_ID = "faolla_messages_v8";
+    private static final String BADGE_CHANNEL_ID = "faolla_badges_v8";
     private static final String NOTIFICATION_ACTION_OPEN = "com.faolla.app.OPEN_NOTIFICATION";
     private static final String NOTIFICATION_EXTRA_URL = "faolla_url";
     private static final int NOTIFICATION_PERMISSION_REQUEST_CODE = 7301;
@@ -68,6 +68,7 @@ public class MainActivity extends BridgeActivity {
     private boolean updateInstallStarted = false;
     private FrameLayout launchCover;
     private boolean launchCoverHidden = false;
+    private boolean launchCoverHidePending = false;
     private int nativeUnreadBadgeCount = 0;
     private final Runnable nativeBadgeRestoreRunnable = () -> restoreNativeUnreadBadgeFromPrefs(true);
     private String pendingNotificationUrl = "";
@@ -182,6 +183,44 @@ public class MainActivity extends BridgeActivity {
     }
 
     private void hideLaunchCover() {
+        if (launchCoverHidden || launchCoverHidePending) {
+            return;
+        }
+        WebView webView = this.bridge == null ? null : this.bridge.getWebView();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && webView != null) {
+            launchCoverHidePending = true;
+            long requestId = System.nanoTime();
+            webView.postVisualStateCallback(
+                requestId,
+                new WebView.VisualStateCallback() {
+                    @Override
+                    public void onComplete(long callbackRequestId) {
+                        runOnUiThread(() -> {
+                            if (!launchCoverHidePending) {
+                                return;
+                            }
+                            launchCoverHidePending = false;
+                            hideLaunchCoverNow();
+                        });
+                    }
+                }
+            );
+            updateProgressHandler.postDelayed(
+                () -> {
+                    if (!launchCoverHidePending) {
+                        return;
+                    }
+                    launchCoverHidePending = false;
+                    hideLaunchCoverNow();
+                },
+                900L
+            );
+            return;
+        }
+        hideLaunchCoverNow();
+    }
+
+    private void hideLaunchCoverNow() {
         if (launchCoverHidden) {
             return;
         }
@@ -660,7 +699,7 @@ public class MainActivity extends BridgeActivity {
         messageChannel.enableVibration(true);
         messageChannel.setVibrationPattern(new long[] { 0L, 120L, 70L, 160L });
         messageChannel.setSound(defaultSound, audioAttributes);
-        messageChannel.setShowBadge(false);
+        messageChannel.setShowBadge(true);
         notificationManager.createNotificationChannel(messageChannel);
 
         NotificationChannel badgeChannel = new NotificationChannel(
@@ -835,8 +874,9 @@ public class MainActivity extends BridgeActivity {
             .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setBadgeIconType(NotificationCompat.BADGE_ICON_NONE)
-            .setAutoCancel(true)
+            .setBadgeIconType(NotificationCompat.BADGE_ICON_SMALL)
+            .setNumber(unreadCount)
+            .setAutoCancel(false)
             .setContentIntent(buildNotificationPendingIntent(url, MESSAGE_NOTIFICATION_ID));
         if (soundEnabled) {
             builder.setSound(defaultSound);
@@ -848,8 +888,10 @@ public class MainActivity extends BridgeActivity {
         } else {
             builder.setVibrate(new long[] { 0L });
         }
-        NotificationManagerCompat.from(this).notify(MESSAGE_NOTIFICATION_ID, builder.build());
-        syncNativeUnreadBadge(unreadCount, false);
+        Notification notification = FaollaLauncherBadge.withBadgeCount(builder.build(), unreadCount);
+        NotificationManagerCompat.from(this).cancel(BADGE_NOTIFICATION_ID);
+        NotificationManagerCompat.from(this).notify(MESSAGE_NOTIFICATION_ID, notification);
+        applyLauncherBadgeCount(unreadCount);
     }
 
     private String resolveCurrentOrigin() {
@@ -997,10 +1039,7 @@ public class MainActivity extends BridgeActivity {
             notificationManager.cancel(MESSAGE_NOTIFICATION_ID);
             return;
         }
-        if (launcherBadgeApplied) {
-            notificationManager.cancel(BADGE_NOTIFICATION_ID);
-            return;
-        }
+        notificationManager.cancel(BADGE_NOTIFICATION_ID);
 
         ensureNotificationChannels();
         if (cancelMessageNotification) {
@@ -1019,16 +1058,15 @@ public class MainActivity extends BridgeActivity {
             .setSound(null)
             .setVibrate(new long[] { 0L })
             .setOnlyAlertOnce(true)
-            .setOngoing(true)
+            .setOngoing(false)
             .setAutoCancel(false)
-            .setLocalOnly(true)
             .setShowWhen(false)
             .setWhen(System.currentTimeMillis())
             .setContentIntent(buildNotificationPendingIntent("/launch?appShell=faolla", BADGE_NOTIFICATION_ID))
             .setBadgeIconType(NotificationCompat.BADGE_ICON_SMALL)
             .setNumber(nativeUnreadBadgeCount);
         Notification notification = FaollaLauncherBadge.withBadgeCount(builder.build(), nativeUnreadBadgeCount);
-        notificationManager.notify(BADGE_NOTIFICATION_ID, notification);
+        notificationManager.notify(MESSAGE_NOTIFICATION_ID, notification);
     }
 
     private boolean storeNativeUnreadBadgeCount(int unreadCount) {
