@@ -61,8 +61,8 @@ public class FaollaNotificationWorker extends Worker {
     static final String KEY_UNREAD_COUNT = "unread_count";
     static final String KEY_FCM_TOKEN = "fcm_token";
 
-    private static final String MESSAGE_CHANNEL_ID = "faolla_messages_v4";
-    private static final String BADGE_CHANNEL_ID = "faolla_badges_v4";
+    private static final String MESSAGE_CHANNEL_ID = "faolla_messages_v5";
+    private static final String BADGE_CHANNEL_ID = "faolla_badges_v5";
     private static final String NOTIFICATION_ACTION_OPEN = "com.faolla.app.OPEN_NOTIFICATION";
     private static final String NOTIFICATION_EXTRA_URL = "faolla_url";
     private static final int BADGE_NOTIFICATION_ID = 73010;
@@ -86,7 +86,6 @@ public class FaollaNotificationWorker extends Worker {
         try {
             JSONObject payload = fetchSnapshot(prefs);
             int unreadCount = Math.max(0, Math.min(999, payload.optInt("unreadCount", 0)));
-            applyLauncherBadgeCount(context, unreadCount);
             prefs.edit().putInt(KEY_UNREAD_COUNT, unreadCount).apply();
 
             JSONObject latest = payload.optJSONObject("latest");
@@ -143,7 +142,6 @@ public class FaollaNotificationWorker extends Worker {
     static void restoreStoredBadge(Context context) {
         SharedPreferences prefs = getPrefs(context);
         int unreadCount = Math.max(0, Math.min(999, prefs.getInt(KEY_UNREAD_COUNT, 0)));
-        applyLauncherBadgeCount(context, unreadCount);
         syncUnreadBadge(context, unreadCount);
     }
 
@@ -307,13 +305,13 @@ public class FaollaNotificationWorker extends Worker {
         messageChannel.enableVibration(true);
         messageChannel.setVibrationPattern(new long[] { 0L, 120L, 70L, 160L });
         messageChannel.setSound(defaultSound, audioAttributes);
-        messageChannel.setShowBadge(true);
+        messageChannel.setShowBadge(false);
         notificationManager.createNotificationChannel(messageChannel);
 
         NotificationChannel badgeChannel = new NotificationChannel(
             BADGE_CHANNEL_ID,
             "Faolla unread badges",
-            NotificationManager.IMPORTANCE_DEFAULT
+            NotificationManager.IMPORTANCE_LOW
         );
         badgeChannel.setDescription("Faolla unread count badge sync");
         badgeChannel.enableVibration(false);
@@ -375,9 +373,7 @@ public class FaollaNotificationWorker extends Worker {
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
-            .setContentIntent(buildNotificationPendingIntent(context, url, MESSAGE_NOTIFICATION_ID))
-            .setBadgeIconType(NotificationCompat.BADGE_ICON_SMALL)
-            .setNumber(unreadCount);
+            .setContentIntent(buildNotificationPendingIntent(context, url, MESSAGE_NOTIFICATION_ID));
         if (soundEnabled) {
             notification.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION));
         } else {
@@ -388,8 +384,7 @@ public class FaollaNotificationWorker extends Worker {
         } else {
             notification.setVibrate(new long[] { 0L });
         }
-        Notification postedNotification = FaollaLauncherBadge.withBadgeCount(notification.build(), unreadCount);
-        NotificationManagerCompat.from(context).notify(MESSAGE_NOTIFICATION_ID, postedNotification);
+        NotificationManagerCompat.from(context).notify(MESSAGE_NOTIFICATION_ID, notification.build());
         syncUnreadBadge(context, unreadCount, false);
     }
 
@@ -399,7 +394,11 @@ public class FaollaNotificationWorker extends Worker {
 
     private static void syncUnreadBadge(Context context, int unreadCount, boolean cancelMessageNotification) {
         int normalizedUnreadCount = Math.max(0, Math.min(999, unreadCount));
-        applyLauncherBadgeCount(context, normalizedUnreadCount);
+        getPrefs(context)
+            .edit()
+            .putInt(KEY_UNREAD_COUNT, normalizedUnreadCount)
+            .apply();
+        boolean launcherBadgeApplied = applyLauncherBadgeCount(context, normalizedUnreadCount);
         if (!hasPostNotificationPermission(context)) {
             return;
         }
@@ -410,23 +409,28 @@ public class FaollaNotificationWorker extends Worker {
             notificationManager.cancel(MESSAGE_NOTIFICATION_ID);
             return;
         }
+        if (launcherBadgeApplied) {
+            notificationManager.cancel(BADGE_NOTIFICATION_ID);
+            return;
+        }
 
         ensureNotificationChannels(context);
         if (cancelMessageNotification) {
             notificationManager.cancel(MESSAGE_NOTIFICATION_ID);
         }
-        String body = normalizedUnreadCount + " unread messages";
+        String body = normalizedUnreadCount + " new items";
         NotificationCompat.Builder notification = new NotificationCompat.Builder(context, BADGE_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_faolla)
             .setColor(Color.rgb(8, 17, 33))
             .setContentTitle("Faolla")
             .setContentText(body)
             .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .setSound(null)
             .setSilent(true)
             .setVibrate(new long[] { 0L })
             .setOnlyAlertOnce(true)
+            .setOngoing(true)
             .setAutoCancel(false)
             .setLocalOnly(true)
             .setShowWhen(false)
@@ -438,7 +442,7 @@ public class FaollaNotificationWorker extends Worker {
         notificationManager.notify(BADGE_NOTIFICATION_ID, postedNotification);
     }
 
-    private static void applyLauncherBadgeCount(Context context, int unreadCount) {
-        FaollaLauncherBadge.applyCount(context, unreadCount);
+    private static boolean applyLauncherBadgeCount(Context context, int unreadCount) {
+        return FaollaLauncherBadge.applyCount(context, unreadCount);
     }
 }

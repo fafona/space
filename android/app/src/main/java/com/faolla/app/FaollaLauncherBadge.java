@@ -6,29 +6,43 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import me.leolin.shortcutbadger.ShortcutBadger;
 
 final class FaollaLauncherBadge {
     private FaollaLauncherBadge() {}
 
-    static void applyCount(Context context, int unreadCount) {
+    static boolean applyCount(Context context, int unreadCount) {
         int count = normalizeCount(unreadCount);
         Context appContext = context.getApplicationContext();
+        boolean applied = false;
         try {
             if (count > 0) {
-                ShortcutBadger.applyCount(appContext, count);
+                applied = ShortcutBadger.applyCount(appContext, count);
             } else {
-                ShortcutBadger.removeCount(appContext);
+                applied = ShortcutBadger.removeCount(appContext);
             }
         } catch (Exception ignored) {
             // Launcher badge support varies by Android vendor.
         }
 
-        applyXiaomiBroadcast(appContext, count);
-        applyVivoBroadcast(appContext, count);
-        applyOppoBroadcast(appContext, count);
-        applyHuaweiProvider(appContext, count);
+        String maker = ((Build.MANUFACTURER == null ? "" : Build.MANUFACTURER) +
+            " " +
+            (Build.BRAND == null ? "" : Build.BRAND)).toLowerCase();
+        if (maker.contains("xiaomi") || maker.contains("redmi") || maker.contains("poco")) {
+            applied = applyXiaomiBroadcast(appContext, count) || applied;
+        }
+        if (maker.contains("vivo")) {
+            applied = applyVivoBroadcast(appContext, count) || applied;
+        }
+        if (maker.contains("oppo") || maker.contains("realme") || maker.contains("oneplus")) {
+            applied = applyOppoBroadcast(appContext, count) || applied;
+        }
+        if (maker.contains("huawei") || maker.contains("honor")) {
+            applied = applyHuaweiProvider(appContext, count) || applied;
+        }
+        return applied;
     }
 
     static Notification withBadgeCount(Notification notification, int unreadCount) {
@@ -70,7 +84,7 @@ final class FaollaLauncherBadge {
         }
     }
 
-    private static void applyXiaomiBroadcast(Context context, int count) {
+    private static boolean applyXiaomiBroadcast(Context context, int count) {
         try {
             ComponentName componentName = resolveLauncherComponent(context);
             Intent intent = new Intent("android.intent.action.APPLICATION_MESSAGE_UPDATE");
@@ -80,12 +94,14 @@ final class FaollaLauncherBadge {
             );
             intent.putExtra("android.intent.extra.update_application_message_text", count > 0 ? String.valueOf(count) : "");
             context.sendBroadcast(intent);
+            return true;
         } catch (Exception ignored) {
             // Best-effort vendor badge update.
         }
+        return false;
     }
 
-    private static void applyVivoBroadcast(Context context, int count) {
+    private static boolean applyVivoBroadcast(Context context, int count) {
         try {
             ComponentName componentName = resolveLauncherComponent(context);
             Intent intent = new Intent("launcher.action.CHANGE_APPLICATION_NOTIFICATION_NUM");
@@ -93,24 +109,28 @@ final class FaollaLauncherBadge {
             intent.putExtra("className", componentName.getClassName());
             intent.putExtra("notificationNum", count);
             context.sendBroadcast(intent);
+            return true;
         } catch (Exception ignored) {
             // Best-effort vendor badge update.
         }
+        return false;
     }
 
-    private static void applyOppoBroadcast(Context context, int count) {
+    private static boolean applyOppoBroadcast(Context context, int count) {
         try {
             Intent intent = new Intent("com.oppo.unsettledevent");
             intent.putExtra("pakeageName", context.getPackageName());
             intent.putExtra("number", count);
             intent.putExtra("upgradeNumber", count);
             context.sendBroadcast(intent);
+            return true;
         } catch (Exception ignored) {
             // Best-effort vendor badge update.
         }
+        return false;
     }
 
-    private static void applyHuaweiProvider(Context context, int count) {
+    private static boolean applyHuaweiProvider(Context context, int count) {
         try {
             ComponentName componentName = resolveLauncherComponent(context);
             Bundle bundle = new Bundle();
@@ -120,8 +140,10 @@ final class FaollaLauncherBadge {
             context
                 .getContentResolver()
                 .call(Uri.parse("content://com.huawei.android.launcher.settings/badge/"), "change_badge", null, bundle);
+            return true;
         } catch (Exception ignored) {
             // Best-effort vendor badge update.
         }
+        return false;
     }
 }

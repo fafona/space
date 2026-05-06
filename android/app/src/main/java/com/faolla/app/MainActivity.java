@@ -49,13 +49,13 @@ import com.getcapacitor.BridgeActivity;
 import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
-    private static final int CURRENT_NATIVE_BUILD = 44;
+    private static final int CURRENT_NATIVE_BUILD = 45;
     private static final int LAUNCH_BACKGROUND_COLOR = Color.rgb(8, 17, 33);
     private static final String RUNTIME_PREFS_NAME = "faolla_native_runtime";
     private static final String KEY_NATIVE_CACHE_BUILD = "native_cache_build";
     private static final String APK_MIME_TYPE = "application/vnd.android.package-archive";
-    private static final String MESSAGE_CHANNEL_ID = "faolla_messages_v4";
-    private static final String BADGE_CHANNEL_ID = "faolla_badges_v4";
+    private static final String MESSAGE_CHANNEL_ID = "faolla_messages_v5";
+    private static final String BADGE_CHANNEL_ID = "faolla_badges_v5";
     private static final String NOTIFICATION_ACTION_OPEN = "com.faolla.app.OPEN_NOTIFICATION";
     private static final String NOTIFICATION_EXTRA_URL = "faolla_url";
     private static final int NOTIFICATION_PERMISSION_REQUEST_CODE = 7301;
@@ -660,13 +660,13 @@ public class MainActivity extends BridgeActivity {
         messageChannel.enableVibration(true);
         messageChannel.setVibrationPattern(new long[] { 0L, 120L, 70L, 160L });
         messageChannel.setSound(defaultSound, audioAttributes);
-        messageChannel.setShowBadge(true);
+        messageChannel.setShowBadge(false);
         notificationManager.createNotificationChannel(messageChannel);
 
         NotificationChannel badgeChannel = new NotificationChannel(
             BADGE_CHANNEL_ID,
             "Faolla unread badges",
-            NotificationManager.IMPORTANCE_DEFAULT
+            NotificationManager.IMPORTANCE_LOW
         );
         badgeChannel.setDescription("Faolla unread count badge sync");
         badgeChannel.enableVibration(false);
@@ -836,9 +836,7 @@ public class MainActivity extends BridgeActivity {
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
-            .setContentIntent(buildNotificationPendingIntent(url, MESSAGE_NOTIFICATION_ID))
-            .setBadgeIconType(NotificationCompat.BADGE_ICON_SMALL)
-            .setNumber(unreadCount);
+            .setContentIntent(buildNotificationPendingIntent(url, MESSAGE_NOTIFICATION_ID));
         if (soundEnabled) {
             builder.setSound(defaultSound);
         } else {
@@ -849,8 +847,7 @@ public class MainActivity extends BridgeActivity {
         } else {
             builder.setVibrate(new long[] { 0L });
         }
-        Notification notification = FaollaLauncherBadge.withBadgeCount(builder.build(), unreadCount);
-        NotificationManagerCompat.from(this).notify(MESSAGE_NOTIFICATION_ID, notification);
+        NotificationManagerCompat.from(this).notify(MESSAGE_NOTIFICATION_ID, builder.build());
         syncNativeUnreadBadge(unreadCount, false);
     }
 
@@ -985,7 +982,7 @@ public class MainActivity extends BridgeActivity {
             FaollaNotificationWorker.scheduleNow(this);
             return;
         }
-        storeNativeUnreadBadgeCount(unreadCount);
+        boolean launcherBadgeApplied = storeNativeUnreadBadgeCount(normalizedUnreadCount);
         if (!hasPostNotificationPermission()) {
             if (nativeUnreadBadgeCount > 0) {
                 requestNativeNotificationPermission();
@@ -999,23 +996,28 @@ public class MainActivity extends BridgeActivity {
             notificationManager.cancel(MESSAGE_NOTIFICATION_ID);
             return;
         }
+        if (launcherBadgeApplied) {
+            notificationManager.cancel(BADGE_NOTIFICATION_ID);
+            return;
+        }
 
         ensureNotificationChannels();
         if (cancelMessageNotification) {
             notificationManager.cancel(MESSAGE_NOTIFICATION_ID);
         }
-        String body = nativeUnreadBadgeCount + " unread messages";
+        String body = nativeUnreadBadgeCount + " new items";
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, BADGE_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_faolla)
             .setColor(Color.rgb(8, 17, 33))
             .setContentTitle("Faolla")
             .setContentText(body)
             .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .setSound(null)
             .setSilent(true)
             .setVibrate(new long[] { 0L })
             .setOnlyAlertOnce(true)
+            .setOngoing(true)
             .setAutoCancel(false)
             .setLocalOnly(true)
             .setShowWhen(false)
@@ -1027,17 +1029,18 @@ public class MainActivity extends BridgeActivity {
         notificationManager.notify(BADGE_NOTIFICATION_ID, notification);
     }
 
-    private void storeNativeUnreadBadgeCount(int unreadCount) {
+    private boolean storeNativeUnreadBadgeCount(int unreadCount) {
         nativeUnreadBadgeCount = Math.max(0, Math.min(999, unreadCount));
-        applyLauncherBadgeCount(nativeUnreadBadgeCount);
+        boolean launcherBadgeApplied = applyLauncherBadgeCount(nativeUnreadBadgeCount);
         FaollaNotificationWorker.getPrefs(this)
             .edit()
             .putInt(FaollaNotificationWorker.KEY_UNREAD_COUNT, nativeUnreadBadgeCount)
             .apply();
+        return launcherBadgeApplied;
     }
 
-    private void applyLauncherBadgeCount(int unreadCount) {
-        FaollaLauncherBadge.applyCount(this, unreadCount);
+    private boolean applyLauncherBadgeCount(int unreadCount) {
+        return FaollaLauncherBadge.applyCount(this, unreadCount);
     }
 
     private int readStoredNativeUnreadBadgeCount() {
@@ -1064,8 +1067,10 @@ public class MainActivity extends BridgeActivity {
     private void scheduleNativeUnreadBadgeRestore() {
         updateProgressHandler.removeCallbacks(nativeBadgeRestoreRunnable);
         FaollaBadgeRestoreReceiver.schedule(this);
+        updateProgressHandler.postDelayed(nativeBadgeRestoreRunnable, 250L);
         updateProgressHandler.postDelayed(nativeBadgeRestoreRunnable, 1000L);
-        updateProgressHandler.postDelayed(nativeBadgeRestoreRunnable, 5000L);
+        updateProgressHandler.postDelayed(nativeBadgeRestoreRunnable, 3500L);
+        updateProgressHandler.postDelayed(nativeBadgeRestoreRunnable, 10000L);
     }
 
     private void openUrlInCurrentApp(String url) {
