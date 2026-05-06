@@ -49,13 +49,13 @@ import com.getcapacitor.BridgeActivity;
 import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
-    private static final int CURRENT_NATIVE_BUILD = 46;
+    private static final int CURRENT_NATIVE_BUILD = 47;
     private static final int LAUNCH_BACKGROUND_COLOR = Color.rgb(8, 17, 33);
     private static final String RUNTIME_PREFS_NAME = "faolla_native_runtime";
     private static final String KEY_NATIVE_CACHE_BUILD = "native_cache_build";
     private static final String APK_MIME_TYPE = "application/vnd.android.package-archive";
-    private static final String MESSAGE_CHANNEL_ID = "faolla_messages_v6";
-    private static final String BADGE_CHANNEL_ID = "faolla_badges_v6";
+    private static final String MESSAGE_CHANNEL_ID = "faolla_messages_v7";
+    private static final String BADGE_CHANNEL_ID = "faolla_badges_v7";
     private static final String NOTIFICATION_ACTION_OPEN = "com.faolla.app.OPEN_NOTIFICATION";
     private static final String NOTIFICATION_EXTRA_URL = "faolla_url";
     private static final int NOTIFICATION_PERMISSION_REQUEST_CODE = 7301;
@@ -666,7 +666,7 @@ public class MainActivity extends BridgeActivity {
         NotificationChannel badgeChannel = new NotificationChannel(
             BADGE_CHANNEL_ID,
             "Faolla unread badges",
-            NotificationManager.IMPORTANCE_LOW
+            NotificationManager.IMPORTANCE_DEFAULT
         );
         badgeChannel.setDescription("Faolla unread count badge sync");
         badgeChannel.enableVibration(false);
@@ -835,6 +835,7 @@ public class MainActivity extends BridgeActivity {
             .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setBadgeIconType(NotificationCompat.BADGE_ICON_NONE)
             .setAutoCancel(true)
             .setContentIntent(buildNotificationPendingIntent(url, MESSAGE_NOTIFICATION_ID));
         if (soundEnabled) {
@@ -1012,9 +1013,10 @@ public class MainActivity extends BridgeActivity {
             .setContentTitle("Faolla")
             .setContentText(body)
             .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setSound(null)
-            .setSilent(true)
             .setVibrate(new long[] { 0L })
             .setOnlyAlertOnce(true)
             .setOngoing(true)

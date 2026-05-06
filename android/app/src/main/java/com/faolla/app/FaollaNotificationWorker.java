@@ -61,8 +61,8 @@ public class FaollaNotificationWorker extends Worker {
     static final String KEY_UNREAD_COUNT = "unread_count";
     static final String KEY_FCM_TOKEN = "fcm_token";
 
-    private static final String MESSAGE_CHANNEL_ID = "faolla_messages_v6";
-    private static final String BADGE_CHANNEL_ID = "faolla_badges_v6";
+    private static final String MESSAGE_CHANNEL_ID = "faolla_messages_v7";
+    private static final String BADGE_CHANNEL_ID = "faolla_badges_v7";
     private static final String NOTIFICATION_ACTION_OPEN = "com.faolla.app.OPEN_NOTIFICATION";
     private static final String NOTIFICATION_EXTRA_URL = "faolla_url";
     private static final int BADGE_NOTIFICATION_ID = 73010;
@@ -311,7 +311,7 @@ public class FaollaNotificationWorker extends Worker {
         NotificationChannel badgeChannel = new NotificationChannel(
             BADGE_CHANNEL_ID,
             "Faolla unread badges",
-            NotificationManager.IMPORTANCE_LOW
+            NotificationManager.IMPORTANCE_DEFAULT
         );
         badgeChannel.setDescription("Faolla unread count badge sync");
         badgeChannel.enableVibration(false);
@@ -372,6 +372,7 @@ public class FaollaNotificationWorker extends Worker {
             .setStyle(new NotificationCompat.BigTextStyle().bigText(body == null ? "" : body.trim()))
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setBadgeIconType(NotificationCompat.BADGE_ICON_NONE)
             .setAutoCancel(true)
             .setContentIntent(buildNotificationPendingIntent(context, url, MESSAGE_NOTIFICATION_ID));
         if (soundEnabled) {
@@ -425,9 +426,10 @@ public class FaollaNotificationWorker extends Worker {
             .setContentTitle("Faolla")
             .setContentText(body)
             .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setSound(null)
-            .setSilent(true)
             .setVibrate(new long[] { 0L })
             .setOnlyAlertOnce(true)
             .setOngoing(true)
