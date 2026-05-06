@@ -122,7 +122,7 @@ const FAOLLA_APP_SHELL_PREPAINT_SCRIPT = `
     const isAppShell = isExplicitAppShell || isStandalone || (params.get("nativeStart") || "").trim() === "1";
     if (!isAppShell) return;
     const isLaunch = (window.location.pathname || "") === "/launch";
-    const color = isLaunch ? "#081121" : "#f2f3f5";
+    const color = "#081121";
     const isEmbedded = window.parent && window.parent !== window;
     document.documentElement.dataset.faollaAppShell = "true";
     document.documentElement.dataset.faollaLaunch = isLaunch ? "true" : "false";
@@ -202,11 +202,13 @@ const FAOLLA_APP_SHELL_LOCATION_SCRIPT = `
   const syncAppShellPaint = () => {
     if (!isAppShell || typeof document === "undefined") return;
     const isLaunch = (window.location.pathname || "") === "/launch";
+    const launchReady = document.documentElement.dataset.faollaWebLaunchReady === "true";
+    const color = launchReady && !isLaunch ? "#f2f3f5" : "#081121";
     document.documentElement.dataset.faollaAppShell = "true";
     document.documentElement.dataset.faollaLaunch = isLaunch ? "true" : "false";
-    document.documentElement.style.backgroundColor = isLaunch ? "#081121" : "#f2f3f5";
+    document.documentElement.style.backgroundColor = color;
     if (document.body) {
-      document.body.style.backgroundColor = isLaunch ? "#081121" : "#f2f3f5";
+      document.body.style.backgroundColor = color;
     }
   };
 
@@ -255,9 +257,13 @@ html[data-faolla-app-shell="true"][data-faolla-launch="true"],
 html[data-faolla-app-shell="true"][data-faolla-launch="true"] body {
   background: #081121 !important;
 }
-html[data-faolla-app-shell="true"][data-faolla-launch="false"],
-html[data-faolla-app-shell="true"][data-faolla-launch="false"] body {
+html[data-faolla-app-shell="true"][data-faolla-web-launch-ready="true"][data-faolla-launch="false"],
+html[data-faolla-app-shell="true"][data-faolla-web-launch-ready="true"][data-faolla-launch="false"] body {
   background: #f2f3f5 !important;
+}
+html[data-faolla-app-shell="true"]:not([data-faolla-web-launch-ready="true"]),
+html[data-faolla-app-shell="true"]:not([data-faolla-web-launch-ready="true"]) body {
+  background: #081121 !important;
 }
 #faolla-app-web-launch-cover {
   position: fixed;

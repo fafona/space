@@ -18,8 +18,8 @@ const FAOLLA_NATIVE_WEB_CACHE_BUILD_STORAGE_KEY = "faolla:native-web-cache-build
 const FAOLLA_NATIVE_BUILD_STORAGE_KEY = "faolla:native-build:v1";
 const FAOLLA_NATIVE_WEB_RELOAD_STORAGE_KEY = "faolla:native-web-build-reload:v1";
 const FAOLLA_NATIVE_WEB_BUILD_CHECK_THROTTLE_MS = 60_000;
-const FAOLLA_NATIVE_STARTUP_MAINTENANCE_DELAY_MS = 3_200;
-const FAOLLA_NATIVE_RESUME_MAINTENANCE_DELAY_MS = 1_400;
+const FAOLLA_NATIVE_STARTUP_MAINTENANCE_DELAY_MS = 12_000;
+const FAOLLA_NATIVE_RESUME_MAINTENANCE_DELAY_MS = 4_000;
 const FAOLLA_LAUNCH_BAR_COLOR = "#081121";
 const FAOLLA_CONTENT_BAR_COLOR = "#ffffff";
 
@@ -370,9 +370,7 @@ export default function CapacitorAppBridge() {
     let removeBackButtonListener: (() => void) | undefined;
     let removeAppStateListener: (() => void) | undefined;
     let lastWebBuildCheckAt = 0;
-    let nativeBuildCacheRefreshPromise: Promise<void> | null = null;
-
-    const refreshNativeBuildCachesOnce = () => {
+    const recordNativeBuildOnce = () => {
       const nativeBuild = readNativeBuildParam();
       if (!nativeBuild) return Promise.resolve();
       let previousNativeBuild = "";
@@ -382,16 +380,12 @@ export default function CapacitorAppBridge() {
         previousNativeBuild = "";
       }
       if (previousNativeBuild === nativeBuild) return Promise.resolve();
-      if (!nativeBuildCacheRefreshPromise) {
-        nativeBuildCacheRefreshPromise = clearFaollaRuntimeCaches().finally(() => {
-          try {
-            window.localStorage.setItem(FAOLLA_NATIVE_BUILD_STORAGE_KEY, nativeBuild);
-          } catch {
-            // Ignore localStorage failures.
-          }
-        });
+      try {
+        window.localStorage.setItem(FAOLLA_NATIVE_BUILD_STORAGE_KEY, nativeBuild);
+      } catch {
+        // Ignore localStorage failures.
       }
-      return nativeBuildCacheRefreshPromise;
+      return Promise.resolve();
     };
 
     const syncNativeWebBuild = async (force = false): Promise<"ready" | "reloading"> => {
@@ -465,7 +459,7 @@ export default function CapacitorAppBridge() {
 
     scheduleInitialLaunchCoverHide();
     const nativeStartupMaintenanceTimer = window.setTimeout(() => {
-      void refreshNativeBuildCachesOnce()
+      void recordNativeBuildOnce()
         .then(() => syncNativeWebBuild(true))
         .catch(() => undefined);
     }, FAOLLA_NATIVE_STARTUP_MAINTENANCE_DELAY_MS);

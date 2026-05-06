@@ -13,10 +13,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate, WKScriptMessageHandler {
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         window?.backgroundColor = launchBackgroundColor
-        DispatchQueue.main.async {
-            self.installNativeLaunchCoverIfPossible()
-            self.installNativeLaunchBridgeIfPossible()
-        }
+        window?.rootViewController?.view.backgroundColor = launchBackgroundColor
+        installNativeLaunchCoverIfPossible()
+        installNativeLaunchBridgeIfPossible()
         return true
     }
 
@@ -148,6 +147,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, WKScriptMessageHandler {
 
         webView.isOpaque = false
         webView.backgroundColor = launchBackgroundColor
+        webView.scrollView.isOpaque = false
         webView.scrollView.backgroundColor = launchBackgroundColor
 
         guard !launchBridgeInstalled else { return }

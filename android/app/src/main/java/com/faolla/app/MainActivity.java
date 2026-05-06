@@ -42,13 +42,14 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
+import androidx.core.splashscreen.SplashScreen;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 import com.getcapacitor.BridgeActivity;
 import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
-    private static final int CURRENT_NATIVE_BUILD = 43;
+    private static final int CURRENT_NATIVE_BUILD = 44;
     private static final int LAUNCH_BACKGROUND_COLOR = Color.rgb(8, 17, 33);
     private static final String RUNTIME_PREFS_NAME = "faolla_native_runtime";
     private static final String KEY_NATIVE_CACHE_BUILD = "native_cache_build";
@@ -73,14 +74,18 @@ public class MainActivity extends BridgeActivity {
     private Runnable launchCoverFallbackRunnable;
     private BroadcastReceiver updateDownloadReceiver;
     private Runnable updateProgressRunnable;
+    private boolean holdSystemSplash = true;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        SplashScreen splashScreen = SplashScreen.installSplashScreen(this);
+        splashScreen.setKeepOnScreenCondition(() -> holdSystemSplash);
         getWindow().setBackgroundDrawable(new ColorDrawable(LAUNCH_BACKGROUND_COLOR));
         applyLaunchSystemBars();
         super.onCreate(savedInstanceState);
-        clearWebViewCacheAfterNativeUpgrade();
         installLaunchCover();
+        holdSystemSplash = false;
+        recordNativeBuildSeen();
         restoreNativeUnreadBadgeFromPrefs(true);
 
         WindowCompat.setDecorFitsSystemWindows(getWindow(), true);
@@ -243,18 +248,14 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
-    private void clearWebViewCacheAfterNativeUpgrade() {
+    private void recordNativeBuildSeen() {
         try {
             android.content.SharedPreferences prefs = getSharedPreferences(RUNTIME_PREFS_NAME, Context.MODE_PRIVATE);
             int seenBuild = prefs.getInt(KEY_NATIVE_CACHE_BUILD, 0);
             if (seenBuild >= CURRENT_NATIVE_BUILD) return;
-            WebView webView = this.bridge == null ? null : this.bridge.getWebView();
-            if (webView != null) {
-                webView.clearCache(true);
-            }
             prefs.edit().putInt(KEY_NATIVE_CACHE_BUILD, CURRENT_NATIVE_BUILD).apply();
         } catch (Exception ignored) {
-            // Cache clearing is best effort; the web layer also refreshes service worker caches.
+            // Native build tracking is best effort; web updates are handled by the web layer.
         }
     }
 
