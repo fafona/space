@@ -424,13 +424,18 @@ public class FaollaNotificationWorker extends Worker {
             .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setSound(null)
+            .setSilent(true)
             .setVibrate(new long[] { 0L })
             .setOnlyAlertOnce(true)
             .setAutoCancel(false)
+            .setLocalOnly(true)
+            .setShowWhen(false)
+            .setWhen(System.currentTimeMillis())
             .setContentIntent(buildNotificationPendingIntent(context, "/launch?appShell=faolla", BADGE_NOTIFICATION_ID))
             .setBadgeIconType(NotificationCompat.BADGE_ICON_SMALL)
             .setNumber(normalizedUnreadCount);
         Notification postedNotification = FaollaLauncherBadge.withBadgeCount(notification.build(), normalizedUnreadCount);
+        notificationManager.cancel(BADGE_NOTIFICATION_ID);
         notificationManager.notify(BADGE_NOTIFICATION_ID, postedNotification);
     }
 

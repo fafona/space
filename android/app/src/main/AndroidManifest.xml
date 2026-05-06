@@ -59,6 +59,11 @@
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
             </intent-filter>
         </receiver>
+
+        <receiver
+            android:name=".FaollaBadgeRestoreReceiver"
+            android:enabled="true"
+            android:exported="false" />
     </application>
 
     <!-- Permissions -->
