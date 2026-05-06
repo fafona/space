@@ -9,6 +9,7 @@ const RESERVED_PATH_SEGMENTS = new Set([
   "api",
   "auth",
   "card",
+  "connect",
   "icon.svg",
   "industry",
   "login",

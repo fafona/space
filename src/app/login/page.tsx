@@ -586,7 +586,10 @@ function LoginPageInner() {
           window.location.href = buildBackendFaollaHref("/me", loginFromUrl);
           return;
         }
-        const targetHref = requestedRedirectPath.startsWith("/me") ? requestedRedirectPath : "/me";
+        const targetHref =
+          requestedRedirectPath.startsWith("/me") || requestedRedirectPath.startsWith("/connect")
+            ? requestedRedirectPath
+            : "/me";
         window.location.href = nativeAppRuntime ? buildBackendAppShellHref(targetHref) : targetHref;
         return;
       }

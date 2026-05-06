@@ -17,6 +17,7 @@ import NextImage from "next/image";
 import dynamic from "next/dynamic";
 import { createPortal } from "react-dom";
 import AccountSwitcherDialog from "@/components/AccountSwitcherDialog";
+import FaollaQrPanel from "@/components/FaollaQrPanel";
 import {
   homeBlocks,
   type BlockBorderStyle,
@@ -4874,7 +4875,7 @@ type SupportContactRow = {
 };
 
 type SupportMobileHomeTab = "conversations" | "business" | "faolla" | "self";
-type SupportSelfSectionView = "home" | "profile" | "cards" | "tools" | "games" | FaollaMobileSettingsView;
+type SupportSelfSectionView = "home" | "profile" | "cards" | "tools" | "games" | "qr" | FaollaMobileSettingsView;
 type SupportNotificationPreferences = {
   systemNotificationsEnabled: boolean;
   messageSoundEnabled: boolean;
@@ -5652,7 +5653,8 @@ export default function AdminClient({
       targetSection === "profile" ||
       targetSection === "cards" ||
       targetSection === "tools" ||
-      targetSection === "games"
+      targetSection === "games" ||
+      targetSection === "qr"
     ) {
       setSupportSelfSectionView(targetSection);
     } else if (isFaollaMobileSettingsView(targetSection)) {
@@ -11229,6 +11231,29 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   ]);
   const supportSelfWebsiteLabel =
     supportSelfWebsiteHref ? formatSupportUrlLabel(supportSelfWebsiteHref) : "-";
+  const supportSelfQrMerchantId =
+    normalizeSupportDisplayValue(editingSiteId) ||
+    normalizeSupportDisplayValue(merchantSessionIdentityRef.current.merchantId);
+  const supportSelfQrUrl = useMemo(() => {
+    if (!supportSelfQrMerchantId || typeof window === "undefined") return "";
+    const url = new URL("/connect", window.location.origin);
+    url.searchParams.set("type", "merchant");
+    url.searchParams.set("id", supportSelfQrMerchantId);
+    if (supportSelfDisplayName) url.searchParams.set("name", supportSelfDisplayName);
+    return url.toString();
+  }, [supportSelfDisplayName, supportSelfQrMerchantId]);
+  const handleSupportQrScanResult = useCallback((value: string) => {
+    try {
+      const url = new URL(value, window.location.origin);
+      if (url.pathname === "/connect" && url.searchParams.get("id")) {
+        window.location.href = url.toString();
+        return;
+      }
+      setSupportPeerError("这不是有效的 Faolla 二维码");
+    } catch {
+      setSupportPeerError("这不是有效的 Faolla 二维码");
+    }
+  }, []);
   const supportMobileBookingSiteId = (
     editingSiteId ||
     merchantSessionIdentityRef.current.merchantId ||
@@ -16294,7 +16319,19 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     </>
   );
 
-  const supportMobileSelfContent = (
+  const supportMobileSelfContent =
+    supportSelfSectionView === "qr" ? (
+      <FaollaQrPanel
+        profileName={supportSelfDisplayName}
+        profileSubtitle="Faolla 商户"
+        avatarUrl={supportSelfAvatarImageUrl}
+        avatarFallback={supportSelfAvatarLabel}
+        qrUrl={supportSelfQrUrl}
+        note="个人用户扫码后会在 Faolla 会话中添加该商户，并自动收藏该商户。"
+        onBack={() => setSupportSelfSectionView("home")}
+        onScanResult={handleSupportQrScanResult}
+      />
+    ) : (
     <div
       className="flex h-full min-h-0 flex-1 flex-col overflow-hidden"
       onTouchStart={handleSupportSelfSectionTouchStart}
@@ -16304,6 +16341,19 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       }}
     >
       <div className="faolla-mobile-self-header relative shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(var(--faolla-mobile-safe-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+        {supportSelfSectionView === "home" ? (
+          <button
+            type="button"
+            className="absolute left-4 top-[calc(var(--faolla-mobile-safe-top)+0.7rem)] z-20 flex h-11 w-11 items-center justify-center rounded-full bg-white text-slate-900 shadow-[0_10px_24px_rgba(15,23,42,0.10)]"
+            onClick={() => setSupportSelfSectionView("qr")}
+            aria-label="打开二维码"
+          >
+            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+              <path d="M5 5h5v5H5V5Zm9 0h5v5h-5V5ZM5 14h5v5H5v-5Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+              <path d="M14 14h2.5v2.5H19M14 19h2M19 14v2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        ) : null}
         <div className="absolute right-4 top-[calc(var(--faolla-mobile-safe-top)+0.7rem)] z-20">
           <div ref={supportSelfLanguageRootRef} className="relative">
             <button

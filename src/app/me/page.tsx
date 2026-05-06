@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import AccountSwitcherDialog from "@/components/AccountSwitcherDialog";
+import FaollaQrPanel from "@/components/FaollaQrPanel";
 import { useI18n } from "@/components/I18nProvider";
 import NoMercyFlagIcon from "@/components/NoMercyFlagIcon";
 import ShuangkouToolIcon from "@/components/ShuangkouToolIcon";
@@ -131,7 +132,7 @@ type ConsumptionSection = "bookings" | "orders";
 type PersonalBookingFilter = "all" | "active" | "confirmed" | "cancelled";
 type PersonalOrderFilter = "all" | "pending" | "confirmed" | "cancelled";
 type MobileConversationView = "list" | "thread";
-type MobileSelfSection = "home" | "profile" | "favorites" | "cards" | "tools" | "games" | FaollaMobileSettingsView;
+type MobileSelfSection = "home" | "profile" | "favorites" | "cards" | "tools" | "games" | "qr" | FaollaMobileSettingsView;
 
 type MenuItem = {
   key: DesktopSection;
@@ -564,7 +565,12 @@ function normalizePersonalFavoriteSiteUrl(value: unknown, fallbackOrigin = "http
 function getFavoriteSiteRootUrl(value: string) {
   try {
     const url = new URL(value);
-    url.pathname = "/";
+    const normalizedPath = url.pathname.replace(/\/+$/g, "");
+    if (/^\/site\/\d{8}$/.test(normalizedPath) || /^\/\d{8}$/.test(normalizedPath)) {
+      url.pathname = normalizedPath;
+    } else {
+      url.pathname = "/";
+    }
     url.search = "";
     url.hash = "";
     return url.toString();
@@ -2060,7 +2066,8 @@ export default function MePage() {
       targetSection === "favorites" ||
       targetSection === "cards" ||
       targetSection === "tools" ||
-      targetSection === "games"
+      targetSection === "games" ||
+      targetSection === "qr"
     ) {
       setMobileSelfSection(targetSection);
     } else if (isFaollaMobileSettingsView(targetSection)) {
@@ -2080,6 +2087,7 @@ export default function MePage() {
   const [mobileSelfLanguageMenuOpen, setMobileSelfLanguageMenuOpen] = useState(false);
   const [conversationInfoOpen, setConversationInfoOpen] = useState(false);
   const [selectedConversationKey, setSelectedConversationKey] = useState<PersonalConversationKey>(OFFICIAL_CONVERSATION_KEY);
+  const pendingQrConnectPeerRef = useRef("");
   const [supportThread, setSupportThread] = useState<PlatformSupportThread | null>(null);
   const [peerContacts, setPeerContacts] = useState<MerchantPeerContactSummary[]>([]);
   const [peerThreads, setPeerThreads] = useState<MerchantPeerThread[]>([]);
@@ -2558,6 +2566,26 @@ export default function MePage() {
   }, [accountId, loading]);
   const avatarLabel = getInitialLabel(profileName);
   const personalAvatarImageUrl = personalProfileDraft.avatarUrl || personalProfile.avatarUrl;
+  const personalQrUrl = useMemo(() => {
+    if (!accountId || typeof window === "undefined") return "";
+    const url = new URL("/connect", window.location.origin);
+    url.searchParams.set("type", "personal");
+    url.searchParams.set("id", accountId);
+    if (profileName) url.searchParams.set("name", profileName);
+    return url.toString();
+  }, [accountId, profileName]);
+  const handlePersonalQrScanResult = useCallback((value: string) => {
+    try {
+      const url = new URL(value, window.location.origin);
+      if (url.pathname === "/connect" && url.searchParams.get("id")) {
+        window.location.href = url.toString();
+        return;
+      }
+      setPersonalProfileMessage("这不是有效的 Faolla 二维码");
+    } catch {
+      setPersonalProfileMessage("这不是有效的 Faolla 二维码");
+    }
+  }, []);
   const mobileSelfSelectedLanguage = useMemo(
     () => LANGUAGE_OPTIONS.find((item) => item.code === locale) ?? LANGUAGE_OPTIONS[0],
     [locale],
@@ -3754,6 +3782,15 @@ export default function MePage() {
       setSupportSearching(false);
     }
   }
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !accountId) return;
+    const params = new URLSearchParams(window.location.search);
+    const peerId = trimText(params.get("peerMerchantId"));
+    if (!/^\d{8}$/.test(peerId) || pendingQrConnectPeerRef.current === peerId) return;
+    pendingQrConnectPeerRef.current = peerId;
+    void openPersonalMerchantConversation({ siteId: peerId });
+  }, [accountId, peerContacts]);
 
   function toggleSupportAttachmentMenu() {
     if (!supportComposerAvailable || supportComposerBusy) return;
@@ -6073,6 +6110,20 @@ export default function MePage() {
     if (mobileTab === "conversations") return renderMobileConversationsContent();
     if (mobileTab === "consumption") return renderConsumptionContent();
     if (mobileTab === "self") {
+      if (mobileSelfSection === "qr") {
+        return (
+          <FaollaQrPanel
+            profileName={profileName}
+            profileSubtitle="Faolla 个人用户"
+            avatarUrl={personalAvatarImageUrl}
+            avatarFallback={avatarLabel}
+            qrUrl={personalQrUrl}
+            note="对方扫码后会在 Faolla 会话中添加你。"
+            onBack={() => setMobileSelfSection("home")}
+            onScanResult={handlePersonalQrScanResult}
+          />
+        );
+      }
       const selfMenuItems: Array<{
         key: MobileSelfSection;
         label: string;
@@ -6129,6 +6180,19 @@ export default function MePage() {
       return (
         <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
           <div className="faolla-mobile-self-header relative shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(var(--faolla-mobile-safe-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+            {mobileSelfSection === "home" ? (
+              <button
+                type="button"
+                className="absolute left-4 top-[calc(var(--faolla-mobile-safe-top)+0.7rem)] z-20 flex h-11 w-11 items-center justify-center rounded-full bg-white text-slate-900 shadow-[0_10px_24px_rgba(15,23,42,0.10)]"
+                onClick={() => setMobileSelfSection("qr")}
+                aria-label="打开二维码"
+              >
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+                  <path d="M5 5h5v5H5V5Zm9 0h5v5h-5V5ZM5 14h5v5H5v-5Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+                  <path d="M14 14h2.5v2.5H19M14 19h2M19 14v2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+            ) : null}
             <div className="absolute right-4 top-[calc(var(--faolla-mobile-safe-top)+0.7rem)] z-20">
               {mobileSelfSection === "profile" ? (
                 <button
