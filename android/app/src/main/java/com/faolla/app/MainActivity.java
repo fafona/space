@@ -48,7 +48,7 @@ import com.getcapacitor.BridgeActivity;
 import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
-    private static final int CURRENT_NATIVE_BUILD = 40;
+    private static final int CURRENT_NATIVE_BUILD = 41;
     private static final int LAUNCH_BACKGROUND_COLOR = Color.rgb(8, 17, 33);
     private static final String RUNTIME_PREFS_NAME = "faolla_native_runtime";
     private static final String KEY_NATIVE_CACHE_BUILD = "native_cache_build";
@@ -160,7 +160,7 @@ public class MainActivity extends BridgeActivity {
             updateProgressHandler.removeCallbacks(launchCoverFallbackRunnable);
         }
         launchCoverFallbackRunnable = () -> hideLaunchCover();
-        updateProgressHandler.postDelayed(launchCoverFallbackRunnable, 12000L);
+        updateProgressHandler.postDelayed(launchCoverFallbackRunnable, 60000L);
     }
 
     private void showLaunchCover() {

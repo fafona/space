@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="faolla_notification_color">#081121</color>
+    <color name="faolla_launch_background">#081121</color>
 </resources>

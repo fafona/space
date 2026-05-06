@@ -224,11 +224,18 @@ function isLaunchContentReady() {
   return document.readyState === "complete" && visibleText.length > 0;
 }
 
-function scheduleLaunchCoverHideWhenContentReady(minDelayMs = 160, maxDelayMs = 9000) {
+function canForceHideLaunchCoverAfterTimeout() {
+  if (typeof document === "undefined" || typeof window === "undefined") return false;
+  if ((window.location.pathname || "/") === "/launch") return false;
+  if (document.querySelector(".faolla-loading-progress-screen")) return false;
+  return document.readyState === "complete" && (document.body?.children.length ?? 0) > 0;
+}
+
+function scheduleLaunchCoverHideWhenContentReady(minDelayMs = 220, maxDelayMs = 60000) {
   const startedAt = Date.now();
   const tick = () => {
     const elapsed = Date.now() - startedAt;
-    if (elapsed >= minDelayMs && (isLaunchContentReady() || elapsed >= maxDelayMs)) {
+    if (elapsed >= minDelayMs && (isLaunchContentReady() || (elapsed >= maxDelayMs && canForceHideLaunchCoverAfterTimeout()))) {
       window.requestAnimationFrame(() => {
         window.requestAnimationFrame(hideLaunchCovers);
       });
@@ -454,7 +461,7 @@ export default function CapacitorAppBridge() {
       launchCoverHideScheduled = true;
       scheduleLaunchCoverHideWhenContentReady();
     };
-    const launchCoverHideFallback = window.setTimeout(scheduleInitialLaunchCoverHide, 9000);
+    const launchCoverHideFallback = window.setTimeout(scheduleInitialLaunchCoverHide, 60000);
 
     scheduleInitialLaunchCoverHide();
     const nativeStartupMaintenanceTimer = window.setTimeout(() => {

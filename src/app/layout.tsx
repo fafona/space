@@ -276,6 +276,27 @@ html[data-faolla-app-shell="true"][data-faolla-launch="false"] body {
     opacity 180ms ease,
     visibility 180ms ease;
 }
+html[data-faolla-app-shell="true"]:not([data-faolla-web-launch-ready="true"])::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 2147482999;
+  pointer-events: none;
+  background:
+    #081121
+    url("/loading-progress-mobile-zh.webp")
+    center center / cover
+    no-repeat;
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity 180ms ease,
+    visibility 180ms ease;
+}
+html[data-faolla-app-shell="true"][data-faolla-web-launch-ready="true"]::before {
+  opacity: 0;
+  visibility: hidden;
+}
 html[data-faolla-app-shell="true"] #faolla-app-web-launch-cover {
   display: block;
 }
@@ -1105,9 +1126,10 @@ export default async function RootLayout({
         <link rel="shortcut icon" href="/favicon.ico?v=20260409c" />
         <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=20260409c" />
         <link rel="manifest" href="/manifest.webmanifest" />
+        <link rel="preload" as="image" href="/loading-progress-mobile-zh.webp" />
         <script id="faolla-app-shell-prepaint" dangerouslySetInnerHTML={{ __html: FAOLLA_APP_SHELL_PREPAINT_SCRIPT }} />
-        <script id="faolla-native-fast-launch" dangerouslySetInnerHTML={{ __html: FAOLLA_NATIVE_FAST_LAUNCH_SCRIPT }} />
         <style id="faolla-mobile-shell-size-overrides" dangerouslySetInnerHTML={{ __html: FAOLLA_MOBILE_SHELL_INLINE_STYLE }} />
+        <script id="faolla-native-fast-launch" dangerouslySetInnerHTML={{ __html: FAOLLA_NATIVE_FAST_LAUNCH_SCRIPT }} />
       </head>
       <body>
         <div id="faolla-app-web-launch-cover" aria-hidden="true" />
