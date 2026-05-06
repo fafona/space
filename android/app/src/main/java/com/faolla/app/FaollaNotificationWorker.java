@@ -61,8 +61,8 @@ public class FaollaNotificationWorker extends Worker {
     static final String KEY_UNREAD_COUNT = "unread_count";
     static final String KEY_FCM_TOKEN = "fcm_token";
 
-    private static final String MESSAGE_CHANNEL_ID = "faolla_messages_v5";
-    private static final String BADGE_CHANNEL_ID = "faolla_badges_v5";
+    private static final String MESSAGE_CHANNEL_ID = "faolla_messages_v6";
+    private static final String BADGE_CHANNEL_ID = "faolla_badges_v6";
     private static final String NOTIFICATION_ACTION_OPEN = "com.faolla.app.OPEN_NOTIFICATION";
     private static final String NOTIFICATION_EXTRA_URL = "faolla_url";
     private static final int BADGE_NOTIFICATION_ID = 73010;

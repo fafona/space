@@ -16,6 +16,12 @@ final class FaollaLauncherBadge {
     static boolean applyCount(Context context, int unreadCount) {
         int count = normalizeCount(unreadCount);
         Context appContext = context.getApplicationContext();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && count > 0) {
+            // Android 8+ launchers derive badges from one active notification on a
+            // showBadge channel. Returning false keeps that notification as the
+            // single badge source instead of mixing it with vendor badge writes.
+            return false;
+        }
         boolean applied = false;
         try {
             if (count > 0) {

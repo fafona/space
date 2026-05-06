@@ -49,13 +49,13 @@ import com.getcapacitor.BridgeActivity;
 import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
-    private static final int CURRENT_NATIVE_BUILD = 45;
+    private static final int CURRENT_NATIVE_BUILD = 46;
     private static final int LAUNCH_BACKGROUND_COLOR = Color.rgb(8, 17, 33);
     private static final String RUNTIME_PREFS_NAME = "faolla_native_runtime";
     private static final String KEY_NATIVE_CACHE_BUILD = "native_cache_build";
     private static final String APK_MIME_TYPE = "application/vnd.android.package-archive";
-    private static final String MESSAGE_CHANNEL_ID = "faolla_messages_v5";
-    private static final String BADGE_CHANNEL_ID = "faolla_badges_v5";
+    private static final String MESSAGE_CHANNEL_ID = "faolla_messages_v6";
+    private static final String BADGE_CHANNEL_ID = "faolla_badges_v6";
     private static final String NOTIFICATION_ACTION_OPEN = "com.faolla.app.OPEN_NOTIFICATION";
     private static final String NOTIFICATION_EXTRA_URL = "faolla_url";
     private static final int NOTIFICATION_PERMISSION_REQUEST_CODE = 7301;
