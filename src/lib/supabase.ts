@@ -46,13 +46,38 @@ export function resolveBrowserSupabaseProxyUrl(browserOrigin: string, upstreamUr
   }
 }
 
+export function resolveBrowserSupabaseGatewayUrl(browserOrigin: string, upstreamUrl: string) {
+  const normalizedBrowserOrigin = String(browserOrigin ?? "").trim();
+  const normalizedUpstreamUrl = String(upstreamUrl ?? "").trim();
+  if (!normalizedBrowserOrigin || !normalizedUpstreamUrl) return "";
+
+  try {
+    const browserUrl = new URL(normalizedBrowserOrigin);
+    const targetUrl = new URL(normalizedUpstreamUrl);
+    if (browserUrl.origin === targetUrl.origin) return "";
+    const isFaollaHost = browserUrl.hostname === "faolla.com" || browserUrl.hostname.endsWith(".faolla.com");
+    const isInsecureOrRawHost = targetUrl.protocol !== "https:" || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(targetUrl.hostname);
+    if (isFaollaHost && browserUrl.protocol === "https:" && isInsecureOrRawHost) {
+      return browserUrl.origin;
+    }
+    return "";
+  } catch {
+    return "";
+  }
+}
+
+function getBrowserSupabaseGatewayUrl() {
+  if (typeof window === "undefined" || !rawUrl) return "";
+  return resolveBrowserSupabaseGatewayUrl(window.location.origin, rawUrl);
+}
+
 function getBrowserSupabaseProxyUrl() {
   if (typeof window === "undefined" || !rawUrl) return "";
   return resolveBrowserSupabaseProxyUrl(window.location.origin, rawUrl);
 }
 
 export function getResolvedSupabaseUrl() {
-  return getBrowserSupabaseProxyUrl() || configuredSupabaseUrl;
+  return getBrowserSupabaseGatewayUrl() || getBrowserSupabaseProxyUrl() || configuredSupabaseUrl;
 }
 
 export const resolvedSupabaseUrl = configuredSupabaseUrl;
@@ -267,7 +292,9 @@ const safeSupabaseFetch: typeof fetch = async (input, init) => {
   }
 };
 
-export const supabase = createClient(resolvedSupabaseUrl, resolvedSupabaseAnonKey, {
+const browserAwareSupabaseUrl = typeof window === "undefined" ? configuredSupabaseUrl : getResolvedSupabaseUrl();
+
+export const supabase = createClient(browserAwareSupabaseUrl, resolvedSupabaseAnonKey, {
   global: {
     fetch: safeSupabaseFetch,
   },

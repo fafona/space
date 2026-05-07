@@ -272,15 +272,40 @@ html[data-faolla-app-shell="true"]:not([data-faolla-web-launch-ready="true"]) bo
   display: none;
   pointer-events: none;
   background:
-    #081121
-    url("/loading-progress-mobile-zh.webp")
-    center center / cover
-    no-repeat;
+    radial-gradient(circle at 50% 35%, rgba(47, 70, 104, 0.72), rgba(8, 17, 33, 0) 28rem),
+    linear-gradient(180deg, #081121 0%, #0d1b2d 56%, #081121 100%);
   opacity: 1;
   visibility: visible;
   transition:
     opacity 180ms ease,
     visibility 180ms ease;
+}
+#faolla-app-web-launch-cover::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 43%;
+  width: 6rem;
+  height: 6rem;
+  border-radius: 1.45rem;
+  transform: translate(-50%, -50%);
+  background:
+    #f8fafc
+    url("/faolla-app-icon-192.png")
+    center center / 82% auto
+    no-repeat;
+  box-shadow: 0 1.4rem 4rem rgba(0, 0, 0, 0.34);
+}
+#faolla-app-web-launch-cover::after {
+  content: "Faolla";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(43% + 4.6rem);
+  color: #f8fafc;
+  font-size: 1.35rem;
+  font-weight: 800;
+  text-align: center;
 }
 html[data-faolla-app-shell="true"]:not([data-faolla-web-launch-ready="true"])::before {
   content: "";
@@ -289,10 +314,8 @@ html[data-faolla-app-shell="true"]:not([data-faolla-web-launch-ready="true"])::b
   z-index: 2147482999;
   pointer-events: none;
   background:
-    #081121
-    url("/loading-progress-mobile-zh.webp")
-    center center / cover
-    no-repeat;
+    radial-gradient(circle at 50% 35%, rgba(47, 70, 104, 0.72), rgba(8, 17, 33, 0) 28rem),
+    linear-gradient(180deg, #081121 0%, #0d1b2d 56%, #081121 100%);
   opacity: 1;
   visibility: visible;
   transition:
@@ -1132,7 +1155,7 @@ export default async function RootLayout({
         <link rel="shortcut icon" href="/favicon.ico?v=20260409c" />
         <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=20260409c" />
         <link rel="manifest" href="/manifest.webmanifest" />
-        <link rel="preload" as="image" href="/loading-progress-mobile-zh.webp" />
+        <link rel="preload" as="image" href="/faolla-app-icon-192.png?v=20260409c" />
         <script id="faolla-app-shell-prepaint" dangerouslySetInnerHTML={{ __html: FAOLLA_APP_SHELL_PREPAINT_SCRIPT }} />
         <style id="faolla-mobile-shell-size-overrides" dangerouslySetInnerHTML={{ __html: FAOLLA_MOBILE_SHELL_INLINE_STYLE }} />
         <script id="faolla-native-fast-launch" dangerouslySetInnerHTML={{ __html: FAOLLA_NATIVE_FAST_LAUNCH_SCRIPT }} />

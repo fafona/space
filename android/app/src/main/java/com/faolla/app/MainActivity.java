@@ -26,6 +26,7 @@ import android.os.Looper;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.provider.Settings;
+import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewParent;
@@ -155,11 +156,14 @@ public class MainActivity extends BridgeActivity {
         cover.setBackgroundColor(LAUNCH_BACKGROUND_COLOR);
         cover.setClickable(true);
         ImageView welcomePoster = new ImageView(this);
-        welcomePoster.setImageResource(R.drawable.faolla_launch);
-        welcomePoster.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        welcomePoster.setImageResource(R.mipmap.ic_launcher);
+        welcomePoster.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        int iconSize = Math.round(96 * getResources().getDisplayMetrics().density);
+        FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(iconSize, iconSize);
+        iconParams.gravity = Gravity.CENTER;
         cover.addView(
             welcomePoster,
-            new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            iconParams
         );
         addContentView(
             cover,
