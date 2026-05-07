@@ -585,6 +585,16 @@ function getFavoriteSiteRootUrl(value: string) {
   }
 }
 
+function readFavoriteMerchantSiteId(value: string) {
+  try {
+    const url = new URL(value);
+    const normalizedPath = url.pathname.replace(/\/+$/g, "");
+    return normalizedPath.match(/^\/(?:site\/)?(\d{8})$/)?.[1] ?? "";
+  } catch {
+    return "";
+  }
+}
+
 function getFavoriteSiteDefaultName(hostname: string) {
   const normalized = hostname.trim().toLowerCase();
   if (!normalized) return "商户网站";
@@ -606,7 +616,8 @@ function normalizePersonalFavoriteSites(value: unknown): PersonalFavoriteSite[] 
     if (!url) continue;
     const rootUrl = getFavoriteSiteRootUrl(url);
     const parsed = new URL(rootUrl);
-    const id = trimText(record.id) || parsed.origin;
+    const merchantSiteId = readFavoriteMerchantSiteId(rootUrl);
+    const id = trimText(record.id) || (merchantSiteId ? `merchant:${merchantSiteId}` : parsed.origin);
     if (seen.has(id)) continue;
     seen.add(id);
     output.push({
@@ -628,9 +639,10 @@ function buildCurrentFavoriteSiteFromHref(value: unknown, fallbackOrigin = "http
     const rootUrl = getFavoriteSiteRootUrl(url);
     const parsed = new URL(rootUrl);
     const hostname = parsed.hostname.toLowerCase();
-    if (hostname === "faolla.com" || hostname === "www.faolla.com") return null;
+    const merchantSiteId = readFavoriteMerchantSiteId(rootUrl);
+    if (!merchantSiteId && (hostname === "faolla.com" || hostname === "www.faolla.com")) return null;
     return {
-      id: parsed.origin,
+      id: merchantSiteId ? `merchant:${merchantSiteId}` : parsed.origin,
       url: rootUrl,
       name: getFavoriteSiteDefaultName(hostname),
       subtitle: hostname,
