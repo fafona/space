@@ -59,6 +59,11 @@ type ServerSignInResult = {
 
 type AuthView = "signin" | "signup_personal" | "signup_merchant";
 
+type SupabaseAuthSettings = {
+  mailer_autoconfirm?: unknown;
+  external?: Record<string, unknown> | null;
+};
+
 function isAndroidBrowser() {
   if (typeof navigator === "undefined") return false;
   return /android/i.test(String(navigator.userAgent ?? ""));
@@ -148,6 +153,7 @@ function LoginPageInner() {
   const [gatewayReachable, setGatewayReachable] = useState<boolean | null>(null);
   const [needConfirmEmail, setNeedConfirmEmail] = useState(false);
   const [emailConfirmationRequired, setEmailConfirmationRequired] = useState<boolean | null>(null);
+  const [googleProviderEnabled, setGoogleProviderEnabled] = useState<boolean | null>(null);
   const [pendingResetEmail, setPendingResetEmail] = useState("");
   const [pendingResetEmailMasked, setPendingResetEmailMasked] = useState("");
   const [pendingSignupVerificationEmail, setPendingSignupVerificationEmail] = useState("");
@@ -664,18 +670,26 @@ function LoginPageInner() {
     [loginFromUrl, requestedRedirectPath],
   );
 
-  async function readEmailConfirmationRequired() {
+  async function readSupabaseAuthSettings(): Promise<SupabaseAuthSettings | null> {
     try {
       const response = await fetch(`${getResolvedSupabaseUrl()}/auth/v1/settings`, {
         headers: { apikey: resolvedSupabaseAnonKey },
         cache: "no-store",
       });
       if (!response.ok) return null;
-      const payload = (await response.json()) as { mailer_autoconfirm?: unknown };
-      return typeof payload.mailer_autoconfirm === "boolean" ? !payload.mailer_autoconfirm : null;
+      return (await response.json()) as SupabaseAuthSettings;
     } catch {
       return null;
     }
+  }
+
+  function readEmailConfirmationRequiredFromSettings(settings: SupabaseAuthSettings | null) {
+    return typeof settings?.mailer_autoconfirm === "boolean" ? !settings.mailer_autoconfirm : null;
+  }
+
+  function readGoogleProviderEnabledFromSettings(settings: SupabaseAuthSettings | null) {
+    const googleEnabled = settings?.external?.google;
+    return typeof googleEnabled === "boolean" ? googleEnabled : null;
   }
 
   async function readValidatedCookieBackedSession() {
@@ -711,10 +725,16 @@ function LoginPageInner() {
 
     void gatewayProbe.then((gatewayReady) => {
       if (!mounted || gatewayReady !== true) return;
-      void readEmailConfirmationRequired()
-        .then((nextEmailConfirmationRequired) => {
-          if (mounted && nextEmailConfirmationRequired !== null) {
+      void readSupabaseAuthSettings()
+        .then((settings) => {
+          if (!mounted) return;
+          const nextEmailConfirmationRequired = readEmailConfirmationRequiredFromSettings(settings);
+          if (nextEmailConfirmationRequired !== null) {
             setEmailConfirmationRequired(nextEmailConfirmationRequired);
+          }
+          const nextGoogleProviderEnabled = readGoogleProviderEnabledFromSettings(settings);
+          if (nextGoogleProviderEnabled !== null) {
+            setGoogleProviderEnabled(nextGoogleProviderEnabled);
           }
         })
         .catch(() => {
@@ -1096,6 +1116,20 @@ function LoginPageInner() {
     setPendingAction("google");
 
     try {
+      let nextGoogleProviderEnabled = googleProviderEnabled;
+      if (nextGoogleProviderEnabled === null) {
+        const settings = await readSupabaseAuthSettings();
+        nextGoogleProviderEnabled = readGoogleProviderEnabledFromSettings(settings);
+        if (nextGoogleProviderEnabled !== null) {
+          setGoogleProviderEnabled(nextGoogleProviderEnabled);
+        }
+      }
+      if (nextGoogleProviderEnabled === false) {
+        setMsg("Google 登录尚未在认证服务中启用。请先在 Supabase/Auth 中配置 Google Provider。");
+        setPendingAction(null);
+        return;
+      }
+
       const callbackUrl = new URL("/login", window.location.origin);
       const accountType = activeSignupAccountType ?? "personal";
       callbackUrl.searchParams.set("oauth", "google");
