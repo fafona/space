@@ -84,9 +84,6 @@ export async function GET(request: Request) {
     if (!session) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
-    if (!(await isOrderManagementEnabled(siteId))) {
-      return NextResponse.json({ error: "order_management_disabled" }, { status: 403 });
-    }
     const orders = await listMerchantOrders(siteId);
     return NextResponse.json({ ok: true, orders });
   } catch (error) {

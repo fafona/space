@@ -2202,6 +2202,8 @@ export default function MePage() {
   const [personalBookingLoadError, setPersonalBookingLoadError] = useState("");
   const [personalOrderLoadError, setPersonalOrderLoadError] = useState("");
   const [personalConsumptionReloadKey, setPersonalConsumptionReloadKey] = useState(0);
+  const personalBookingsRef = useRef<MerchantBookingRecord[]>([]);
+  const personalOrdersRef = useRef<MerchantOrderRecord[]>([]);
   const supportMessagesViewportRef = useRef<HTMLDivElement | null>(null);
   const supportInputRef = useRef<HTMLTextAreaElement | null>(null);
   const supportSendingRef = useRef(false);
@@ -2695,6 +2697,14 @@ export default function MePage() {
   }, []);
 
   useEffect(() => {
+    personalBookingsRef.current = personalBookings;
+  }, [personalBookings]);
+
+  useEffect(() => {
+    personalOrdersRef.current = personalOrders;
+  }, [personalOrders]);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
     const handleMessage = (event: MessageEvent) => {
       if (!isTrustedFrontendAuthBridgeOrigin(event.origin)) return;
@@ -2757,7 +2767,9 @@ export default function MePage() {
             : {},
         );
       } else {
-        setPersonalBookingLoadError("预约记录加载失败，请稍后重试。");
+        setPersonalBookingLoadError(
+          personalBookingsRef.current.length > 0 ? "" : "预约记录加载失败，请稍后重试。",
+        );
       }
 
       if (ordersResult.status === "fulfilled") {
@@ -2770,7 +2782,9 @@ export default function MePage() {
             : {},
         );
       } else {
-        setPersonalOrderLoadError("订单记录加载失败，请稍后重试。");
+        setPersonalOrderLoadError(
+          personalOrdersRef.current.length > 0 ? "" : "订单记录加载失败，请稍后重试。",
+        );
       }
 
       setPersonalMerchantContacts(nextContacts);

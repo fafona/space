@@ -773,7 +773,12 @@ export async function listMerchantBookings(
 ): Promise<MerchantBookingRecord[]> {
   const normalizedSiteId = trimText(siteId);
   if (!normalizedSiteId) return [];
-  const store = await runMerchantBookingAutomationForSite(normalizedSiteId);
+  let store: MerchantBookingStoreFile;
+  try {
+    store = await runMerchantBookingAutomationForSite(normalizedSiteId);
+  } catch {
+    store = await readMerchantBookingStore();
+  }
   return sortNewestFirst(
     store.records
       .filter((item) => item.siteId === normalizedSiteId)
@@ -811,10 +816,16 @@ export async function listPersonalMerchantBookings(
         .filter(Boolean),
     ),
   );
+  let automationCompleted = false;
   for (const siteId of siteIds) {
-    await runMerchantBookingAutomationForSite(siteId);
+    try {
+      await runMerchantBookingAutomationForSite(siteId);
+      automationCompleted = true;
+    } catch {
+      // Personal consumption lists must remain readable even when reminder/status automation is temporarily unavailable.
+    }
   }
-  if (siteIds.length > 0) {
+  if (automationCompleted) {
     store = await readMerchantBookingStore();
   }
 

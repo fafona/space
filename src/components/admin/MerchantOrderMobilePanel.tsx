@@ -265,7 +265,7 @@ export default function MerchantOrderMobilePanel({
       writeCachedOrderRecords(siteId, nextRecords);
       setRecords(nextRecords);
     } catch (nextError) {
-      setError(nextError instanceof Error && nextError.message ? nextError.message : "订单读取失败");
+      setError(cachedRecords.length > 0 ? "" : nextError instanceof Error && nextError.message ? nextError.message : "订单读取失败");
     } finally {
       setLoading(false);
     }

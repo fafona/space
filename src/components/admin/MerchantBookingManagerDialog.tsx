@@ -633,6 +633,7 @@ export default function MerchantBookingManagerDialog({
       try {
         const response = await fetch(`/api/bookings?siteId=${encodeURIComponent(siteId)}`, {
           cache: "no-store",
+          credentials: "same-origin",
         });
         const json = (await response.json().catch(() => null)) as
           | { ok?: boolean; bookings?: MerchantBookingRecord[]; message?: string }
@@ -647,7 +648,7 @@ export default function MerchantBookingManagerDialog({
         }
       } catch (loadError) {
         if (!cancelled) {
-          setError(loadError instanceof Error ? loadError.message : loadFailedText);
+          setError(cachedRecords.length > 0 ? "" : loadError instanceof Error ? loadError.message : loadFailedText);
         }
       } finally {
         if (!cancelled) setLoading(false);
