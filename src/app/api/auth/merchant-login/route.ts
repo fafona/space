@@ -80,6 +80,27 @@ function normalizeAccountValue(value: string | null | undefined) {
   return String(value ?? "").trim().toLowerCase();
 }
 
+function normalizeRequestedAccountType(value: unknown): PlatformAccountType | null {
+  if (value === "personal") return "personal";
+  if (value === "merchant") return "merchant";
+  return null;
+}
+
+function buildAccountTypeConflictMessage(requestedAccountType: PlatformAccountType) {
+  return requestedAccountType === "personal"
+    ? "该账号已注册为商户账号，请从商户入口登录。"
+    : "该账号已注册为个人账号，请从个人入口登录。";
+}
+
+function readExistingAccountType(user: MerchantAuthUserSummary | null, fallbackAccountType: PlatformAccountType | "") {
+  const metadataAccountType = readPlatformAccountTypeFromMetadata(user, "");
+  if (metadataAccountType) return metadataAccountType;
+  const accountId = readPlatformAccountIdFromMetadata(user);
+  if (isPersonalAccountNumericId(accountId)) return "personal";
+  if (accountId) return "merchant";
+  return fallbackAccountType || "";
+}
+
 function isEightDigitAccountId(value: string | null | undefined) {
   return /^\d{8}$/.test(String(value ?? "").trim());
 }
@@ -359,9 +380,12 @@ export async function POST(request: Request) {
   }
 
   try {
-    const payload = (await request.json().catch(() => null)) as { account?: unknown; password?: unknown } | null;
+    const payload = (await request.json().catch(() => null)) as
+      | { account?: unknown; password?: unknown; preferredAccountType?: unknown }
+      | null;
     const account = typeof payload?.account === "string" ? payload.account.trim() : "";
     const password = typeof payload?.password === "string" ? payload.password : "";
+    const requestedAccountType = normalizeRequestedAccountType(payload?.preferredAccountType);
 
     if (!account) {
       return NextResponse.json({ error: "invalid_account" }, { status: 400 });
@@ -438,12 +462,25 @@ export async function POST(request: Request) {
       upstreamPayload?.user && typeof upstreamPayload.user === "object"
         ? (upstreamPayload.user as MerchantAuthUserSummary)
         : null;
+    const existingAccountType = readExistingAccountType(authUser, resolvedAccount.accountType);
+    if (requestedAccountType && existingAccountType && existingAccountType !== requestedAccountType) {
+      return NextResponse.json(
+        { error: "account_type_conflict", message: buildAccountTypeConflictMessage(requestedAccountType) },
+        { status: 409 },
+      );
+    }
     const platformIdentity = await resolvePlatformAccountIdentityForUser(supabase, authUser, {
-      preferredAccountType: resolvedAccount.accountType || null,
+      preferredAccountType: requestedAccountType ?? (resolvedAccount.accountType || null),
       preferredAccountId: resolvedAccount.accountId || null,
       preferredMerchantId: resolvedAccount.merchantId,
       preferredEmail: email,
     });
+    if (requestedAccountType && platformIdentity.accountType !== requestedAccountType) {
+      return NextResponse.json(
+        { error: "account_type_conflict", message: buildAccountTypeConflictMessage(requestedAccountType) },
+        { status: 409 },
+      );
+    }
     const merchantId = platformIdentity.merchantId ?? "";
 
     const response = NextResponse.json({

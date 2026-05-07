@@ -17,6 +17,7 @@ import {
   type PlatformIdentitySupabaseClient,
 } from "@/lib/platformAccountIdentity";
 import {
+  isPersonalAccountNumericId,
   readPlatformAccountIdFromMetadata,
   readPlatformAccountTypeFromMetadata,
   type PlatformAccountType,
@@ -99,6 +100,21 @@ function normalizeSessionPreferredAccountType(value: unknown): PlatformAccountTy
   if (value === "personal") return "personal";
   if (value === "merchant") return "merchant";
   return null;
+}
+
+function buildAccountTypeConflictMessage(requestedAccountType: PlatformAccountType) {
+  return requestedAccountType === "personal"
+    ? "该账号已注册为商户账号，请从商户入口登录。"
+    : "该账号已注册为个人账号，请从个人入口登录。";
+}
+
+function readExistingSessionAccountType(user: MerchantAuthUserSummary | null): PlatformAccountType | "" {
+  const metadataAccountType = readPlatformAccountTypeFromMetadata(user, "");
+  if (metadataAccountType) return metadataAccountType;
+  const accountId = readPlatformAccountIdFromMetadata(user);
+  if (isPersonalAccountNumericId(accountId)) return "personal";
+  if (accountId) return "merchant";
+  return "";
 }
 
 async function resolveMerchantSessionPlatformIdentity(
@@ -533,10 +549,23 @@ export async function POST(request: Request) {
     }
 
     const requestedPreferredAccountType = normalizeSessionPreferredAccountType(payload?.preferredAccountType);
+    const existingAccountType = readExistingSessionAccountType(user);
+    if (requestedPreferredAccountType && existingAccountType && existingAccountType !== requestedPreferredAccountType) {
+      return noStoreJson(
+        { ok: false, error: "account_type_conflict", message: buildAccountTypeConflictMessage(requestedPreferredAccountType) },
+        { status: 409 },
+      );
+    }
     const platformIdentity = await resolveMerchantSessionPlatformIdentity(adminSupabase, user, {
       preferredAccountType: requestedPreferredAccountType,
       preferredEmail: user.email,
     });
+    if (requestedPreferredAccountType && platformIdentity.accountType !== requestedPreferredAccountType) {
+      return noStoreJson(
+        { ok: false, error: "account_type_conflict", message: buildAccountTypeConflictMessage(requestedPreferredAccountType) },
+        { status: 409 },
+      );
+    }
     const personalServiceConfig =
       platformIdentity.accountType === "personal" ? readPersonalAccountServiceConfigFromMetadata(user) : null;
 

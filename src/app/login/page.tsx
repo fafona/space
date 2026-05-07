@@ -58,6 +58,7 @@ type ServerSignInResult = {
 };
 
 type AuthView = "signin" | "signup_personal" | "signup_merchant";
+type LoginEntryAccountType = PlatformAccountType | null;
 
 type SupabaseAuthSettings = {
   mailer_autoconfirm?: unknown;
@@ -161,6 +162,11 @@ function LoginPageInner() {
   const [pendingSignupVerificationAccountType, setPendingSignupVerificationAccountType] =
     useState<PlatformAccountType | null>(null);
   const [signupCode, setSignupCode] = useState("");
+  const requestedEntryAccountType = useMemo<LoginEntryAccountType>(
+    () => normalizePlatformAccountType(searchParams.get("accountType")) || null,
+    [searchParams],
+  );
+  const [entryAccountType, setEntryAccountType] = useState<LoginEntryAccountType>(requestedEntryAccountType);
   const [authView, setAuthView] = useState<AuthView>("signin");
   const [pendingAction, setPendingAction] = useState<
     | "signin"
@@ -195,6 +201,10 @@ function LoginPageInner() {
     () => normalizePlatformAccountType(searchParams.get("accountType")) || "personal",
     [searchParams],
   );
+  useEffect(() => {
+    if (!requestedEntryAccountType) return;
+    setEntryAccountType(requestedEntryAccountType);
+  }, [requestedEntryAccountType]);
   const launchRetry = useMemo(() => (searchParams.get("launchRetry") ?? "").trim() === "1", [searchParams]);
   const [embeddedShellLogin, setEmbeddedShellLogin] = useState(false);
   const normalizedLocale = useMemo(() => locale.trim().toLowerCase(), [locale]);
@@ -484,22 +494,32 @@ function LoginPageInner() {
   const authSectionLabel = useMemo(() => {
     if (authView === "signup_personal") return personalSignUpLabel;
     if (authView === "signup_merchant") return merchantSignUpLabel;
+    if (entryAccountType === "personal") return normalizedLocale.startsWith("zh") ? "个人入口" : "Personal Entry";
+    if (entryAccountType === "merchant") return normalizedLocale.startsWith("zh") ? "商户入口" : "Merchant Entry";
     if (normalizedLocale.startsWith("zh-tw")) return "帳號";
     if (normalizedLocale.startsWith("ja")) return "アカウント";
     if (normalizedLocale.startsWith("ko")) return "계정";
     if (normalizedLocale.startsWith("zh")) return "账号";
     return "Account";
-  }, [authView, merchantSignUpLabel, normalizedLocale, personalSignUpLabel]);
+  }, [authView, entryAccountType, merchantSignUpLabel, normalizedLocale, personalSignUpLabel]);
   const authPrimaryTitle = useMemo(() => {
     if (authView === "signup_personal") return personalSignUpLabel;
     if (authView === "signup_merchant") return merchantSignUpLabel;
+    if (entryAccountType === "personal") return normalizedLocale.startsWith("zh") ? "个人用户登录" : "Personal Sign In";
+    if (entryAccountType === "merchant") return normalizedLocale.startsWith("zh") ? "商户登录" : "Merchant Sign In";
     return welcomeLoginTitle;
-  }, [authView, merchantSignUpLabel, personalSignUpLabel, welcomeLoginTitle]);
+  }, [authView, entryAccountType, merchantSignUpLabel, normalizedLocale, personalSignUpLabel, welcomeLoginTitle]);
   const authDescription = useMemo(() => {
     if (authView === "signup_personal") return personalSignUpTip;
     if (authView === "signup_merchant") return merchantSignUpTip;
+    if (entryAccountType === "personal") {
+      return normalizedLocale.startsWith("zh") ? "用于消费、收藏商户、会话、小工具和游戏大厅。" : "For customer use: favorites, chats, tools, and games.";
+    }
+    if (entryAccountType === "merchant") {
+      return normalizedLocale.startsWith("zh") ? "用于商户后台、预约订单、生意会话和商户资料管理。" : "For merchant admin, bookings, orders, business chats, and profiles.";
+    }
     return loginAccountTip;
-  }, [authView, loginAccountTip, merchantSignUpTip, personalSignUpTip]);
+  }, [authView, entryAccountType, loginAccountTip, merchantSignUpTip, normalizedLocale, personalSignUpTip]);
   const authHeroPills = useMemo(() => {
     if (authView === "signup_personal") {
       if (normalizedLocale.startsWith("zh")) return ["邮箱注册", "个人中心"];
@@ -509,12 +529,33 @@ function LoginPageInner() {
       if (normalizedLocale.startsWith("zh")) return ["邮箱注册", "商户后台"];
       return ["Email Sign Up", "Merchant Admin"];
     }
+    if (entryAccountType === "personal") {
+      return normalizedLocale.startsWith("zh") ? ["个人用户", "Google 登录", "收藏与会话"] : ["Personal", "Google", "Favorites"];
+    }
+    if (entryAccountType === "merchant") {
+      return normalizedLocale.startsWith("zh") ? ["商户", "Google 登录", "预约与订单"] : ["Merchant", "Google", "Bookings"];
+    }
     return loginMethodPills;
-  }, [authView, loginMethodPills, normalizedLocale]);
+  }, [authView, entryAccountType, loginMethodPills, normalizedLocale]);
   const accountFieldLabel = authView === "signin" ? loginAccountLabel : registrationEmailLabel;
   const accountFieldPlaceholder = authView === "signin" ? loginAccountPlaceholder : registrationEmailPlaceholder;
   const activeSignupAccountType: PlatformAccountType | null =
     authView === "signup_personal" ? "personal" : authView === "signup_merchant" ? "merchant" : null;
+  const activeEntryAccountType = activeSignupAccountType ?? entryAccountType;
+  const shouldShowEntrySelection = !isGoogleOAuthReturn && !entryAccountType;
+  const entryTitle = normalizedLocale.startsWith("zh") ? "请选择登录入口" : "Choose Sign-In Entry";
+  const entryDescription = normalizedLocale.startsWith("zh")
+    ? "选择一次后，本次登录、注册和 Google 登录都会按该身份处理。"
+    : "Choose once. Sign in, sign up, and Google sign-in will use that identity.";
+  const personalEntryDescription = normalizedLocale.startsWith("zh")
+    ? "用于消费、收藏商户、会话、小工具和游戏大厅。"
+    : "For customer use: favorites, chats, tools, and games.";
+  const merchantEntryDescription = normalizedLocale.startsWith("zh")
+    ? "用于商户后台、预约订单、生意会话和商户资料管理。"
+    : "For merchant admin, bookings, orders, business chats, and profiles.";
+  const backToEntryLabel = normalizedLocale.startsWith("zh") ? "返回入口选择" : "Back to Entry";
+  const switchToSignInLabel = normalizedLocale.startsWith("zh") ? "返回登录" : "Back to Sign In";
+  const switchToSignUpLabel = normalizedLocale.startsWith("zh") ? "注册账号" : "Create Account";
   const signUpSubmitLabel = useMemo(() => {
     if (normalizedLocale.startsWith("zh-tw")) return "註冊";
     if (normalizedLocale.startsWith("ja")) return "登録";
@@ -962,7 +1003,11 @@ function LoginPageInner() {
     };
   }, [googleOAuthAccountType, isGoogleOAuthReturn, loggedOut, redirectToAccountHome, t]);
 
-  async function signInViaServer(accountValue: string, passwordValue: string): Promise<ServerSignInResult> {
+  async function signInViaServer(
+    accountValue: string,
+    passwordValue: string,
+    preferredAccountType: PlatformAccountType,
+  ): Promise<ServerSignInResult> {
     const response = await withTimeout(
       fetch("/api/auth/merchant-login", {
         method: "POST",
@@ -973,6 +1018,7 @@ function LoginPageInner() {
         body: JSON.stringify({
           account: accountValue.trim(),
           password: passwordValue,
+          preferredAccountType,
         }),
       }),
       20000,
@@ -1109,8 +1155,43 @@ function LoginPageInner() {
     setSignupCode("");
   }
 
+  function selectLoginEntry(accountType: PlatformAccountType) {
+    if (pendingAction) return;
+    setEntryAccountType(accountType);
+    setAuthView("signin");
+    setMsg("");
+    setNeedConfirmEmail(false);
+    setPendingResetEmail("");
+    setPendingResetEmailMasked("");
+    setPendingSignupVerificationEmail("");
+    setPendingSignupVerificationMaskedEmail("");
+    setPendingSignupVerificationAccountType(null);
+    setResetCode("");
+    setSignupCode("");
+  }
+
+  function returnToEntrySelection() {
+    if (pendingAction) return;
+    setEntryAccountType(null);
+    setAuthView("signin");
+    setMsg("");
+    setNeedConfirmEmail(false);
+    setPendingResetEmail("");
+    setPendingResetEmailMasked("");
+    setPendingSignupVerificationEmail("");
+    setPendingSignupVerificationMaskedEmail("");
+    setPendingSignupVerificationAccountType(null);
+    setResetCode("");
+    setSignupCode("");
+  }
+
   async function signInWithGoogle() {
     if (pendingAction) return;
+    const accountType = activeEntryAccountType;
+    if (!accountType) {
+      setMsg("请先选择个人入口或商户入口。");
+      return;
+    }
     setMsg("");
     setNeedConfirmEmail(false);
     setPendingAction("google");
@@ -1131,7 +1212,6 @@ function LoginPageInner() {
       }
 
       const callbackUrl = new URL("/login", window.location.origin);
-      const accountType = activeSignupAccountType ?? "personal";
       callbackUrl.searchParams.set("oauth", "google");
       callbackUrl.searchParams.set("accountType", accountType);
       if (requestedRedirectPath) callbackUrl.searchParams.set("redirect", requestedRedirectPath);
@@ -1160,6 +1240,10 @@ function LoginPageInner() {
       void signUp(activeSignupAccountType);
       return;
     }
+    if (!entryAccountType) {
+      setMsg("请先选择个人入口或商户入口。");
+      return;
+    }
     void signIn();
   }
 
@@ -1168,6 +1252,10 @@ function LoginPageInner() {
     setAuthView("signin");
     setMsg("");
     setNeedConfirmEmail(false);
+
+    if (!entryAccountType) {
+      return setMsg("请先选择个人入口或商户入口。");
+    }
 
     const validationError = validateSignInForm();
     if (validationError) return setMsg(validationError);
@@ -1180,7 +1268,7 @@ function LoginPageInner() {
 
     setPendingAction("signin");
     try {
-      const result = await signInViaServer(account, password);
+      const result = await signInViaServer(account, password, entryAccountType);
       clearStoredBrowserSupabaseSessionTokens();
       void readMerchantSessionPayload(4200, { includeClientTokens: true }).catch(() => null);
       await redirectToAccountHome(result.user, {
@@ -1484,7 +1572,86 @@ function LoginPageInner() {
                 androidKeyboardOpen ? "justify-start pt-2" : "justify-center"
               } md:overflow-visible`}
             >
+              {shouldShowEntrySelection ? (
+                <div className="space-y-5 md:space-y-6">
+                  <div className="space-y-2">
+                    <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">
+                      Faolla Account
+                    </div>
+                    <div className="text-2xl font-semibold tracking-tight text-slate-950">{entryTitle}</div>
+                    <div className="text-sm leading-6 text-slate-500">{entryDescription}</div>
+                  </div>
+
+                  <div className="grid gap-4">
+                    <button
+                      type="button"
+                      className="group rounded-[26px] border border-slate-200 bg-white px-5 py-5 text-left shadow-[0_18px_48px_rgba(15,23,42,0.09)] transition hover:-translate-y-0.5 hover:border-emerald-200 hover:shadow-[0_22px_54px_rgba(15,23,42,0.12)] disabled:opacity-50"
+                      onClick={() => selectLoginEntry("personal")}
+                      disabled={pendingAction !== null}
+                    >
+                      <div className="flex items-center justify-between gap-4">
+                        <div>
+                          <div className="text-xl font-semibold text-slate-950">个人入口</div>
+                          <div className="mt-2 text-sm leading-6 text-slate-500">{personalEntryDescription}</div>
+                        </div>
+                        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-emerald-50 text-lg font-semibold text-emerald-700 transition group-hover:bg-emerald-100">
+                          个
+                        </span>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="group rounded-[26px] border border-slate-200 bg-white px-5 py-5 text-left shadow-[0_18px_48px_rgba(15,23,42,0.09)] transition hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-[0_22px_54px_rgba(15,23,42,0.12)] disabled:opacity-50"
+                      onClick={() => selectLoginEntry("merchant")}
+                      disabled={pendingAction !== null}
+                    >
+                      <div className="flex items-center justify-between gap-4">
+                        <div>
+                          <div className="text-xl font-semibold text-slate-950">商户入口</div>
+                          <div className="mt-2 text-sm leading-6 text-slate-500">{merchantEntryDescription}</div>
+                        </div>
+                        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-sky-50 text-lg font-semibold text-sky-700 transition group-hover:bg-sky-100">
+                          商
+                        </span>
+                      </div>
+                    </button>
+                  </div>
+
+                  {msg ? (
+                    <div className="rounded-[20px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-700 shadow-[0_10px_28px_rgba(15,23,42,0.04)] md:rounded-[22px]">
+                      {msg}
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
                 <div className="space-y-4 md:space-y-6">
+                  <div className="flex items-center justify-between gap-3">
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-[0_10px_24px_rgba(15,23,42,0.06)] transition hover:bg-slate-50 disabled:opacity-50"
+                      onClick={returnToEntrySelection}
+                      disabled={pendingAction !== null}
+                    >
+                      <span aria-hidden="true">←</span>
+                      {backToEntryLabel}
+                    </button>
+                    {activeSignupAccountType ? (
+                      <button
+                        type="button"
+                        className="rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-[0_10px_24px_rgba(15,23,42,0.06)] transition hover:bg-slate-50 disabled:opacity-50"
+                        onClick={() => {
+                          setAuthView("signin");
+                          setMsg("");
+                          setNeedConfirmEmail(false);
+                        }}
+                        disabled={pendingAction !== null}
+                      >
+                        {switchToSignInLabel}
+                      </button>
+                    ) : null}
+                  </div>
+
                   <div className="space-y-1.5 md:space-y-2">
                   <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">{authSectionLabel}</div>
                   <div className="text-2xl font-semibold tracking-tight text-slate-950">{authPrimaryTitle}</div>
@@ -1573,20 +1740,21 @@ function LoginPageInner() {
                     {pendingAction === "google" ? "正在连接 Google..." : "使用 Google 登录"}
                   </button>
 
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                     <button
-                      className={signupSwitchButtonClassName(authView === "signup_personal")}
-                      onClick={() => selectSignupView("personal")}
+                      className={signupSwitchButtonClassName(Boolean(activeSignupAccountType))}
+                      onClick={() => {
+                        if (activeSignupAccountType) {
+                          setAuthView("signin");
+                          setMsg("");
+                          setNeedConfirmEmail(false);
+                          return;
+                        }
+                        selectSignupView(entryAccountType ?? "personal");
+                      }}
                       disabled={pendingAction !== null}
                     >
-                      {personalSignUpLabel}
-                    </button>
-                    <button
-                      className={signupSwitchButtonClassName(authView === "signup_merchant")}
-                      onClick={() => selectSignupView("merchant")}
-                      disabled={pendingAction !== null}
-                    >
-                      {merchantSignUpLabel}
+                      {activeSignupAccountType ? switchToSignInLabel : switchToSignUpLabel}
                     </button>
                     <button className={secondaryButtonClassName} onClick={forgotPassword} disabled={pendingAction !== null}>
                       {pendingAction === "forgot" ? t("common.sending") : t("login.forgot")}
@@ -1690,6 +1858,7 @@ function LoginPageInner() {
                   </div>
                 </div>
               </div>
+              )}
             </div>
             </section>
           </div>
