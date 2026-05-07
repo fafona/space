@@ -183,7 +183,7 @@ export default function FaollaQrPanel({
   const fallback = avatarFallback || getAvatarFallback(profileName);
 
   return (
-    <div className="min-h-full bg-slate-50 px-4 pb-[calc(var(--faolla-mobile-safe-bottom)+1.5rem)] pt-[calc(var(--faolla-mobile-safe-top)+0.9rem)] text-slate-950">
+    <div className="min-h-full bg-slate-50 px-4 pb-[calc(var(--faolla-mobile-safe-bottom)+8.75rem)] pt-[calc(var(--faolla-mobile-safe-top)+0.9rem)] text-slate-950">
       <div className="flex items-center justify-between">
         <button
           type="button"
@@ -241,10 +241,10 @@ export default function FaollaQrPanel({
         ) : null}
       </div>
 
-      <div className="mx-auto mt-20 max-w-[360px] space-y-4">
+      <div className="fixed inset-x-4 bottom-[calc(var(--faolla-mobile-safe-bottom)+1rem)] z-30 mx-auto max-w-[360px] space-y-3">
         <button
           type="button"
-          className="h-14 w-full rounded-full bg-emerald-600 text-base font-semibold text-white shadow-[0_16px_36px_rgba(16,185,129,0.24)] active:scale-[0.99] disabled:bg-slate-300"
+          className="h-14 w-full rounded-full bg-emerald-600 text-base font-semibold text-white shadow-[0_16px_36px_rgba(16,185,129,0.24)] active:scale-[0.99]"
           onClick={() => setScannerActive(true)}
         >
           扫描
