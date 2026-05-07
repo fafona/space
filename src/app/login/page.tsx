@@ -54,6 +54,9 @@ type ServerSignInResult = {
   accountId: string;
   merchantId: string;
   merchantIds: string[];
+  requestedAccountType: PlatformAccountType | null;
+  entrySwitched: boolean;
+  message: string;
   needsJustSignedInBridge: boolean;
 };
 
@@ -556,6 +559,29 @@ function LoginPageInner() {
   const backToEntryLabel = normalizedLocale.startsWith("zh") ? "返回入口选择" : "Back to Entry";
   const switchToSignInLabel = normalizedLocale.startsWith("zh") ? "返回登录" : "Back to Sign In";
   const switchToSignUpLabel = normalizedLocale.startsWith("zh") ? "注册账号" : "Create Account";
+  const buildAutoSwitchedEntryMessage = useCallback(
+    (accountType: PlatformAccountType) => {
+      if (normalizedLocale.startsWith("zh")) {
+        return accountType === "personal"
+          ? "您是个人用户，已帮您切换入口进行登录。"
+          : "您是商户，已帮您切换入口进行登录。";
+      }
+      return accountType === "personal"
+        ? "You are a personal user. We switched the entry and signed you in."
+        : "You are a merchant. We switched the entry and signed you in.";
+    },
+    [normalizedLocale],
+  );
+  const showAutoSwitchedEntryNotice = useCallback(
+    async (accountType: PlatformAccountType, requestedAccountType: PlatformAccountType | null, message?: string) => {
+      if (!requestedAccountType || requestedAccountType === accountType) return;
+      setEntryAccountType(accountType);
+      setAuthView("signin");
+      setMsg(message?.trim() || buildAutoSwitchedEntryMessage(accountType));
+      await new Promise((resolve) => setTimeout(resolve, 900));
+    },
+    [buildAutoSwitchedEntryMessage],
+  );
   const signUpSubmitLabel = useMemo(() => {
     if (normalizedLocale.startsWith("zh-tw")) return "註冊";
     if (normalizedLocale.startsWith("ja")) return "登録";
@@ -965,6 +991,8 @@ function LoginPageInner() {
               message?: unknown;
               user?: LoginAuthUser | null;
               accountType?: unknown;
+              requestedAccountType?: unknown;
+              entrySwitched?: unknown;
               accountId?: unknown;
               merchantId?: unknown;
               merchantIds?: unknown;
@@ -980,8 +1008,21 @@ function LoginPageInner() {
           throw new Error(message);
         }
         const merchantIds = readMerchantSessionMerchantIds(payload);
+        const accountType = normalizePlatformAccountType(payload?.accountType) || googleOAuthAccountType;
+        const requestedAccountType =
+          normalizePlatformAccountType(payload?.requestedAccountType) || googleOAuthAccountType;
+        const entrySwitched =
+          payload?.entrySwitched === true || Boolean(requestedAccountType && requestedAccountType !== accountType);
+        if (entrySwitched) {
+          await showAutoSwitchedEntryNotice(
+            accountType,
+            requestedAccountType,
+            typeof payload?.message === "string" ? payload.message : "",
+          );
+          if (!mounted) return;
+        }
         await redirectToAccountHome(payload?.user ?? null, {
-          accountType: normalizePlatformAccountType(payload?.accountType) || googleOAuthAccountType,
+          accountType,
           accountId: normalizePlatformAccountId(payload?.accountId),
           merchantId: pickPrimaryMerchantId(
             typeof payload?.merchantId === "string" ? payload.merchantId.trim() : "",
@@ -1001,7 +1042,7 @@ function LoginPageInner() {
     return () => {
       mounted = false;
     };
-  }, [googleOAuthAccountType, isGoogleOAuthReturn, loggedOut, redirectToAccountHome, t]);
+  }, [googleOAuthAccountType, isGoogleOAuthReturn, loggedOut, redirectToAccountHome, showAutoSwitchedEntryNotice, t]);
 
   async function signInViaServer(
     accountValue: string,
@@ -1030,6 +1071,8 @@ function LoginPageInner() {
           message?: unknown;
           user?: LoginAuthUser | null;
           accountType?: unknown;
+          requestedAccountType?: unknown;
+          entrySwitched?: unknown;
           accountId?: unknown;
           merchantId?: unknown;
           merchantIds?: unknown;
@@ -1047,15 +1090,22 @@ function LoginPageInner() {
     }
 
     const merchantIds = readMerchantSessionMerchantIds(payload);
+    const accountType = normalizePlatformAccountType(payload?.accountType) || "merchant";
+    const requestedAccountType = normalizePlatformAccountType(payload?.requestedAccountType) || null;
+    const entrySwitched =
+      payload?.entrySwitched === true || Boolean(requestedAccountType && requestedAccountType !== accountType);
     return {
       user: (payload?.user ?? null) as LoginAuthUser | null,
-      accountType: normalizePlatformAccountType(payload?.accountType) || "merchant",
+      accountType,
       accountId: normalizePlatformAccountId(payload?.accountId),
       merchantId: pickPrimaryMerchantId(
         typeof payload?.merchantId === "string" ? payload.merchantId.trim() : "",
         merchantIds,
       ),
       merchantIds,
+      requestedAccountType,
+      entrySwitched,
+      message: typeof payload?.message === "string" ? payload.message.trim() : "",
       needsJustSignedInBridge: false,
     };
   }
@@ -1271,6 +1321,13 @@ function LoginPageInner() {
       const result = await signInViaServer(account, password, entryAccountType);
       clearStoredBrowserSupabaseSessionTokens();
       void readMerchantSessionPayload(4200, { includeClientTokens: true }).catch(() => null);
+      if (result.entrySwitched) {
+        await showAutoSwitchedEntryNotice(
+          result.accountType,
+          result.requestedAccountType ?? entryAccountType,
+          result.message,
+        );
+      }
       await redirectToAccountHome(result.user, {
         accountType: result.accountType,
         accountId: result.accountId,

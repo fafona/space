@@ -102,12 +102,6 @@ function normalizeSessionPreferredAccountType(value: unknown): PlatformAccountTy
   return null;
 }
 
-function buildAccountTypeConflictMessage(requestedAccountType: PlatformAccountType) {
-  return requestedAccountType === "personal"
-    ? "该账号已注册为商户账号，请从商户入口登录。"
-    : "该账号已注册为个人账号，请从个人入口登录。";
-}
-
 function readExistingSessionAccountType(user: MerchantAuthUserSummary | null): PlatformAccountType | "" {
   const metadataAccountType = readPlatformAccountTypeFromMetadata(user, "");
   if (metadataAccountType) return metadataAccountType;
@@ -549,23 +543,16 @@ export async function POST(request: Request) {
     }
 
     const requestedPreferredAccountType = normalizeSessionPreferredAccountType(payload?.preferredAccountType);
-    const existingAccountType = readExistingSessionAccountType(user);
-    if (requestedPreferredAccountType && existingAccountType && existingAccountType !== requestedPreferredAccountType) {
-      return noStoreJson(
-        { ok: false, error: "account_type_conflict", message: buildAccountTypeConflictMessage(requestedPreferredAccountType) },
-        { status: 409 },
-      );
-    }
     const platformIdentity = await resolveMerchantSessionPlatformIdentity(adminSupabase, user, {
       preferredAccountType: requestedPreferredAccountType,
       preferredEmail: user.email,
     });
-    if (requestedPreferredAccountType && platformIdentity.accountType !== requestedPreferredAccountType) {
-      return noStoreJson(
-        { ok: false, error: "account_type_conflict", message: buildAccountTypeConflictMessage(requestedPreferredAccountType) },
-        { status: 409 },
-      );
-    }
+    const existingAccountType = readExistingSessionAccountType(user);
+    const entrySwitched = Boolean(
+      requestedPreferredAccountType &&
+        platformIdentity.accountType !== requestedPreferredAccountType &&
+        (existingAccountType || platformIdentity.accountId || platformIdentity.merchantId),
+    );
     const personalServiceConfig =
       platformIdentity.accountType === "personal" ? readPersonalAccountServiceConfigFromMetadata(user) : null;
 
@@ -585,6 +572,13 @@ export async function POST(request: Request) {
         personalServicePaused: personalServiceConfig?.servicePaused === true,
         user,
       }),
+      requestedAccountType: requestedPreferredAccountType || null,
+      entrySwitched,
+      message: entrySwitched
+        ? platformIdentity.accountType === "personal"
+          ? "您是个人用户，已帮您切换入口进行登录。"
+          : "您是商户，已帮您切换入口进行登录。"
+        : undefined,
     });
     setMerchantAuthCookies(response, {
       accessToken: verifiedAccessToken,
