@@ -54,6 +54,12 @@ import {
   resolveFaollaEntryUrlFromBrowser,
   writeStoredFaollaEntryUrl,
 } from "@/lib/faollaEntry";
+import {
+  buildFaollaQrConnectUrl,
+  fetchFaollaQrToken,
+  openScannedQrValue,
+  resetFaollaQrToken,
+} from "@/lib/faollaQrClient";
 import { installFrontendAuthBridgeResponder, isTrustedFrontendAuthBridgeOrigin } from "@/lib/frontendAuthBridge";
 import { PERSONAL_CONSUMPTION_CHANGED_MESSAGE } from "@/lib/personalConsumptionBridge";
 import { buildMerchantBusinessCardShareUrl, resolveMerchantBusinessCardShareOrigin } from "@/lib/merchantBusinessCardShare";
@@ -2312,7 +2318,28 @@ export default function MePage() {
   const personalProfile = useMemo(() => readPersonalProfile(payload), [payload]);
   const displayName = personalProfile.displayName || readDisplayName(payload);
   const profileName = displayName || email.split("@")[0] || accountId || "个人用户";
+  const [personalQrToken, setPersonalQrToken] = useState("");
   const personalAccountSwitchCurrentKey = getAccountSwitchEntryKey("personal", accountId);
+  useEffect(() => {
+    if (mobileTab !== "self" || mobileSelfSection !== "qr" || !accountId) {
+      setPersonalQrToken("");
+      return;
+    }
+    let cancelled = false;
+    void fetchFaollaQrToken("personal", accountId)
+      .then((token) => {
+        if (!cancelled) setPersonalQrToken(token);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setPersonalQrToken("");
+          setPersonalProfileMessage(error instanceof Error ? error.message : "二维码令牌获取失败，请稍后重试");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [accountId, mobileSelfSection, mobileTab]);
   useEffect(() => {
     if (payload?.authenticated !== true || payload.accountType !== "personal" || !accountId) return;
     let cancelled = false;
@@ -2567,24 +2594,22 @@ export default function MePage() {
   const avatarLabel = getInitialLabel(profileName);
   const personalAvatarImageUrl = personalProfileDraft.avatarUrl || personalProfile.avatarUrl;
   const personalQrUrl = useMemo(() => {
-    if (!accountId || typeof window === "undefined") return "";
-    const url = new URL("/connect", window.location.origin);
-    url.searchParams.set("type", "personal");
-    url.searchParams.set("id", accountId);
-    if (profileName) url.searchParams.set("name", profileName);
-    return url.toString();
-  }, [accountId, profileName]);
+    if (!accountId || !personalQrToken || typeof window === "undefined") return "";
+    return buildFaollaQrConnectUrl({
+      origin: window.location.origin,
+      type: "personal",
+      id: accountId,
+      name: profileName,
+      token: personalQrToken,
+    });
+  }, [accountId, personalQrToken, profileName]);
+  const resetPersonalQrCode = useCallback(async () => {
+    if (!accountId) throw new Error("二维码暂不可用");
+    const token = await resetFaollaQrToken("personal", accountId);
+    setPersonalQrToken(token);
+  }, [accountId]);
   const handlePersonalQrScanResult = useCallback((value: string) => {
-    try {
-      const url = new URL(value, window.location.origin);
-      if (url.pathname === "/connect" && url.searchParams.get("id")) {
-        window.location.href = url.toString();
-        return;
-      }
-      setPersonalProfileMessage("这不是有效的 Faolla 二维码");
-    } catch {
-      setPersonalProfileMessage("这不是有效的 Faolla 二维码");
-    }
+    void openScannedQrValue(value, window.location.origin, setPersonalProfileMessage);
   }, []);
   const mobileSelfSelectedLanguage = useMemo(
     () => LANGUAGE_OPTIONS.find((item) => item.code === locale) ?? LANGUAGE_OPTIONS[0],
@@ -6121,6 +6146,7 @@ export default function MePage() {
             note="对方扫码后会在 Faolla 会话中添加你。"
             onBack={() => setMobileSelfSection("home")}
             onScanResult={handlePersonalQrScanResult}
+            onResetQr={resetPersonalQrCode}
           />
         );
       }

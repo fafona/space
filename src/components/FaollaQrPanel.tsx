@@ -13,6 +13,7 @@ type FaollaQrPanelProps = {
   note: string;
   onBack: () => void;
   onScanResult: (value: string) => void;
+  onResetQr?: () => Promise<void> | void;
 };
 
 function trimText(value: unknown) {
@@ -33,11 +34,13 @@ export default function FaollaQrPanel({
   note,
   onBack,
   onScanResult,
+  onResetQr,
 }: FaollaQrPanelProps) {
   const [qrDataUrl, setQrDataUrl] = useState("");
   const [shareMessage, setShareMessage] = useState("");
   const [scannerActive, setScannerActive] = useState(false);
   const [scannerMessage, setScannerMessage] = useState("");
+  const [resettingQr, setResettingQr] = useState(false);
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -113,7 +116,7 @@ export default function FaollaQrPanel({
       }
       context.drawImage(video, 0, 0, width, height);
       const imageData = context.getImageData(0, 0, width, height);
-      const code = jsQR(imageData.data, width, height);
+      const code = jsQR(imageData.data, width, height, { inversionAttempts: "attemptBoth" });
       const value = trimText(code?.data);
       if (value) {
         cancelled = true;
@@ -185,6 +188,28 @@ export default function FaollaQrPanel({
     }
   }
 
+  async function resetQr() {
+    if (!qrUrl || resettingQr) return;
+    setShareMessage("");
+    try {
+      setResettingQr(true);
+      if (onResetQr) {
+        setQrDataUrl("");
+        await onResetQr();
+        setShareMessage("二维码已重置");
+        return;
+      }
+      setQrDataUrl("");
+      const nextDataUrl = await QRCode.toDataURL(qrUrl, { errorCorrectionLevel: "M", margin: 1, width: 720 });
+      setQrDataUrl(nextDataUrl);
+      setShareMessage("二维码已刷新");
+    } catch {
+      setShareMessage("二维码重置失败，请稍后重试");
+    } finally {
+      setResettingQr(false);
+    }
+  }
+
   const fallback = getAvatarFallback(avatarFallback || profileName);
   const showAvatarImage = Boolean(avatarUrl && !avatarLoadFailed);
 
@@ -252,12 +277,11 @@ export default function FaollaQrPanel({
             type="button"
             className="mt-2 h-9 w-full rounded-full text-sm font-semibold text-emerald-700 disabled:text-slate-300"
             onClick={() => {
-              setQrDataUrl("");
-              void QRCode.toDataURL(qrUrl, { errorCorrectionLevel: "M", margin: 1, width: 720 }).then(setQrDataUrl);
+              void resetQr();
             }}
-            disabled={!qrUrl}
+            disabled={!qrUrl || resettingQr}
           >
-            重置二维码
+            {resettingQr ? "正在重置..." : "重置二维码"}
           </button>
         </section>
         <p className="mx-auto mt-3 max-w-[330px] text-center text-xs leading-5 text-slate-500">{note}</p>
@@ -269,7 +293,7 @@ export default function FaollaQrPanel({
       <div className="fixed inset-x-4 bottom-[calc(var(--faolla-mobile-safe-bottom)+5.5rem)] z-30 mx-auto max-w-[360px]">
         <button
           type="button"
-          className="h-16 w-full rounded-full bg-emerald-600 text-lg font-semibold text-white shadow-[0_16px_36px_rgba(16,185,129,0.24)] active:scale-[0.99]"
+          className="h-[5.6rem] w-full rounded-full bg-emerald-600 text-xl font-semibold text-white shadow-[0_16px_36px_rgba(16,185,129,0.24)] active:scale-[0.99]"
           onClick={() => setScannerActive(true)}
         >
           扫描

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { FAOLLA_SECTION_PARAM, FAOLLA_SECTION_VALUE, FAOLLA_URL_PARAM } from "@/lib/faollaEntry";
 
 type AccountType = "merchant" | "personal";
 
@@ -74,8 +75,14 @@ function buildAccountHomeHref(session: SessionPayload | null, targetType: Accoun
   const accountType = normalizeAccountType(session?.accountType);
   if (accountType === "personal") {
     const url = new URL("/me", window.location.origin);
-    url.searchParams.set("mobileTab", "conversations");
-    if (targetId) url.searchParams.set("peerMerchantId", targetId);
+    if (targetType === "merchant" && targetId) {
+      url.searchParams.set("mobileTab", "faolla");
+      url.searchParams.set(FAOLLA_SECTION_PARAM, FAOLLA_SECTION_VALUE);
+      url.searchParams.set(FAOLLA_URL_PARAM, new URL(`/site/${targetId}`, window.location.origin).toString());
+    } else {
+      url.searchParams.set("mobileTab", "conversations");
+      if (targetId) url.searchParams.set("peerMerchantId", targetId);
+    }
     return `${url.pathname}${url.search}`;
   }
 
@@ -163,12 +170,32 @@ async function addMerchantFavorite(targetId: string, targetName: string, contact
   }).catch(() => undefined);
 }
 
+async function validateQrToken(targetType: AccountType, targetId: string, token: string) {
+  const params = new URLSearchParams({
+    mode: "validate",
+    type: targetType,
+    id: targetId,
+    token,
+  });
+  const response = await fetch(`/api/faolla-qr-token?${params.toString()}`, {
+    method: "GET",
+    cache: "no-store",
+    credentials: "same-origin",
+    headers: { accept: "application/json" },
+  });
+  const payload = (await response.json().catch(() => null)) as { ok?: unknown; valid?: unknown; message?: unknown } | null;
+  if (!response.ok || payload?.valid !== true) {
+    throw new Error(readPayloadMessage(payload?.message, "二维码已失效，请让对方重新出示"));
+  }
+}
+
 export default function ConnectClient() {
   const searchParams = useSearchParams();
   const [message, setMessage] = useState("正在识别二维码...");
   const targetType = useMemo(() => normalizeAccountType(searchParams.get("type")), [searchParams]);
   const targetId = useMemo(() => normalizeAccountId(searchParams.get("id")), [searchParams]);
   const targetName = useMemo(() => trimText(searchParams.get("name")).slice(0, 80), [searchParams]);
+  const targetToken = useMemo(() => trimText(searchParams.get("token")).slice(0, 128), [searchParams]);
 
   useEffect(() => {
     let cancelled = false;
@@ -178,6 +205,15 @@ export default function ConnectClient() {
         setMessage("二维码无效，请重新扫描");
         return;
       }
+
+      if (!targetToken) {
+        setMessage("二维码已失效，请让对方重新出示");
+        return;
+      }
+
+      setMessage("正在验证二维码...");
+      await validateQrToken(targetType, targetId, targetToken);
+      if (cancelled) return;
 
       setMessage("正在检查登录状态...");
       const sessionResponse = await fetch("/api/auth/merchant-session", {
@@ -218,7 +254,7 @@ export default function ConnectClient() {
         await addMerchantFavorite(targetId, targetName, trimText(result.contact?.merchantName)).catch(() => undefined);
       }
 
-      setMessage("正在打开会话...");
+      setMessage(targetType === "merchant" && accountType === "personal" ? "正在打开商户前台..." : "正在打开会话...");
       window.location.replace(buildAccountHomeHref(session, targetType, targetId));
     })().catch((error) => {
       if (cancelled) return;
@@ -228,7 +264,7 @@ export default function ConnectClient() {
     return () => {
       cancelled = true;
     };
-  }, [targetId, targetName, targetType]);
+  }, [targetId, targetName, targetToken, targetType]);
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-slate-50 px-6 text-center text-slate-950">

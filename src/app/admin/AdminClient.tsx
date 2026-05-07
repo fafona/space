@@ -292,6 +292,12 @@ import {
   resolveFaollaEntryUrlFromBrowser,
   writeStoredFaollaEntryUrl,
 } from "@/lib/faollaEntry";
+import {
+  buildFaollaQrConnectUrl,
+  fetchFaollaQrToken,
+  openScannedQrValue,
+  resetFaollaQrToken,
+} from "@/lib/faollaQrClient";
 import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
 import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
@@ -11234,25 +11240,44 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const supportSelfQrMerchantId =
     normalizeSupportDisplayValue(editingSiteId) ||
     normalizeSupportDisplayValue(merchantSessionIdentityRef.current.merchantId);
-  const supportSelfQrUrl = useMemo(() => {
-    if (!supportSelfQrMerchantId || typeof window === "undefined") return "";
-    const url = new URL("/connect", window.location.origin);
-    url.searchParams.set("type", "merchant");
-    url.searchParams.set("id", supportSelfQrMerchantId);
-    if (supportSelfDisplayName) url.searchParams.set("name", supportSelfDisplayName);
-    return url.toString();
-  }, [supportSelfDisplayName, supportSelfQrMerchantId]);
-  const handleSupportQrScanResult = useCallback((value: string) => {
-    try {
-      const url = new URL(value, window.location.origin);
-      if (url.pathname === "/connect" && url.searchParams.get("id")) {
-        window.location.href = url.toString();
-        return;
-      }
-      setSupportPeerError("这不是有效的 Faolla 二维码");
-    } catch {
-      setSupportPeerError("这不是有效的 Faolla 二维码");
+  const [supportSelfQrToken, setSupportSelfQrToken] = useState("");
+  useEffect(() => {
+    if (supportSelfSectionView !== "qr" || !supportSelfQrMerchantId) {
+      setSupportSelfQrToken("");
+      return;
     }
+    let cancelled = false;
+    void fetchFaollaQrToken("merchant", supportSelfQrMerchantId)
+      .then((token) => {
+        if (!cancelled) setSupportSelfQrToken(token);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setSupportSelfQrToken("");
+          setSupportPeerError(error instanceof Error ? error.message : "二维码令牌获取失败，请稍后重试");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [supportSelfQrMerchantId, supportSelfSectionView]);
+  const supportSelfQrUrl = useMemo(() => {
+    if (!supportSelfQrMerchantId || !supportSelfQrToken || typeof window === "undefined") return "";
+    return buildFaollaQrConnectUrl({
+      origin: window.location.origin,
+      type: "merchant",
+      id: supportSelfQrMerchantId,
+      name: supportSelfDisplayName,
+      token: supportSelfQrToken,
+    });
+  }, [supportSelfDisplayName, supportSelfQrMerchantId, supportSelfQrToken]);
+  const resetSupportSelfQrCode = useCallback(async () => {
+    if (!supportSelfQrMerchantId) throw new Error("二维码暂不可用");
+    const token = await resetFaollaQrToken("merchant", supportSelfQrMerchantId);
+    setSupportSelfQrToken(token);
+  }, [supportSelfQrMerchantId]);
+  const handleSupportQrScanResult = useCallback((value: string) => {
+    void openScannedQrValue(value, window.location.origin, setSupportPeerError);
   }, []);
   const supportMobileBookingSiteId = (
     editingSiteId ||
@@ -16327,9 +16352,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         avatarUrl={supportSelfAvatarImageUrl}
         avatarFallback={supportSelfAvatarLabel}
         qrUrl={supportSelfQrUrl}
-        note="个人用户扫码后会在 Faolla 会话中添加该商户，并自动收藏该商户。"
+        note="个人用户扫码后会打开该商户前台，并自动收藏该商户。"
         onBack={() => setSupportSelfSectionView("home")}
         onScanResult={handleSupportQrScanResult}
+        onResetQr={resetSupportSelfQrCode}
       />
     ) : (
     <div
