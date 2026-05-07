@@ -37,6 +37,7 @@ import {
   canReachSupabaseGateway,
   getResolvedSupabaseUrl,
   resolvedSupabaseAnonKey,
+  supabase,
 } from "@/lib/supabase";
 import { type PlatformAccountType } from "@/lib/platformAccounts";
 
@@ -156,7 +157,15 @@ function LoginPageInner() {
   const [signupCode, setSignupCode] = useState("");
   const [authView, setAuthView] = useState<AuthView>("signin");
   const [pendingAction, setPendingAction] = useState<
-    "signin" | "signup" | "forgot" | "resend" | "resend_signup_code" | "verify_reset_code" | "verify_signup_code" | null
+    | "signin"
+    | "signup"
+    | "google"
+    | "forgot"
+    | "resend"
+    | "resend_signup_code"
+    | "verify_reset_code"
+    | "verify_signup_code"
+    | null
   >(null);
   const requestedRedirectPath = useMemo(() => {
     const raw = (searchParams.get("redirect") ?? "").trim();
@@ -172,6 +181,14 @@ function LoginPageInner() {
     return isFaollaAppShellSearch(rawSearch ? `?${rawSearch}` : "");
   }, [searchParams]);
   const loggedOut = useMemo(() => (searchParams.get("loggedOut") ?? "").trim() === "1", [searchParams]);
+  const isGoogleOAuthReturn = useMemo(
+    () => (searchParams.get("oauth") ?? "").trim().toLowerCase() === "google",
+    [searchParams],
+  );
+  const googleOAuthAccountType = useMemo(
+    () => normalizePlatformAccountType(searchParams.get("accountType")) || "personal",
+    [searchParams],
+  );
   const launchRetry = useMemo(() => (searchParams.get("launchRetry") ?? "").trim() === "1", [searchParams]);
   const [embeddedShellLogin, setEmbeddedShellLogin] = useState(false);
   const normalizedLocale = useMemo(() => locale.trim().toLowerCase(), [locale]);
@@ -706,6 +723,7 @@ function LoginPageInner() {
     });
 
     void (async () => {
+      if (isGoogleOAuthReturn) return;
       try {
         const cookieBackedSession = await readValidatedCookieBackedSession();
         if (!mounted) return;
@@ -727,7 +745,7 @@ function LoginPageInner() {
     return () => {
       mounted = false;
     };
-  }, [redirectToAccountHome]);
+  }, [isGoogleOAuthReturn, redirectToAccountHome]);
 
   function validateSignInForm(): string | null {
     const trimmedAccount = account.trim();
@@ -836,6 +854,93 @@ function LoginPageInner() {
       if (timer) clearTimeout(timer);
     }
   }
+
+  async function readGoogleOAuthSession(timeoutMs = 9000) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      const { data, error } = await supabase.auth.getSession();
+      if (data.session?.access_token) return data.session;
+      if (error) break;
+      await new Promise((resolve) => setTimeout(resolve, 180));
+    }
+    return null;
+  }
+
+  useEffect(() => {
+    if (!isGoogleOAuthReturn || loggedOut) return;
+    let mounted = true;
+    setAuthView("signin");
+    setPendingAction("google");
+    setMsg("正在使用 Google 登录...");
+
+    void (async () => {
+      try {
+        const session = await readGoogleOAuthSession();
+        if (!mounted) return;
+        if (!session?.access_token) {
+          setMsg("Google 登录未完成，请重新点击 Google 登录。");
+          setPendingAction(null);
+          return;
+        }
+
+        const response = await fetch("/api/auth/merchant-session", {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          cache: "no-store",
+          body: JSON.stringify({
+            accessToken: session.access_token,
+            refreshToken: session.refresh_token,
+            expiresIn: session.expires_in,
+            authProvider: "google",
+            preferredAccountType: googleOAuthAccountType,
+          }),
+        });
+        const payload = (await response.json().catch(() => null)) as
+          | {
+              error?: unknown;
+              message?: unknown;
+              user?: LoginAuthUser | null;
+              accountType?: unknown;
+              accountId?: unknown;
+              merchantId?: unknown;
+              merchantIds?: unknown;
+            }
+          | null;
+        if (!response.ok) {
+          const message =
+            typeof payload?.message === "string"
+              ? payload.message
+              : typeof payload?.error === "string"
+                ? payload.error
+                : t("login.backendUnavailable");
+          throw new Error(message);
+        }
+        const merchantIds = readMerchantSessionMerchantIds(payload);
+        await redirectToAccountHome(payload?.user ?? null, {
+          accountType: normalizePlatformAccountType(payload?.accountType) || googleOAuthAccountType,
+          accountId: normalizePlatformAccountId(payload?.accountId),
+          merchantId: pickPrimaryMerchantId(
+            typeof payload?.merchantId === "string" ? payload.merchantId.trim() : "",
+            merchantIds,
+          ),
+          merchantIds,
+        }, {
+          withSignInBridge: false,
+        });
+      } catch (error) {
+        if (!mounted) return;
+        setMsg(error instanceof Error ? error.message : t("login.requestFailed"));
+        setPendingAction(null);
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, [googleOAuthAccountType, isGoogleOAuthReturn, loggedOut, redirectToAccountHome, t]);
 
   async function signInViaServer(accountValue: string, passwordValue: string): Promise<ServerSignInResult> {
     const response = await withTimeout(
@@ -982,6 +1087,38 @@ function LoginPageInner() {
     setPendingSignupVerificationAccountType(null);
     setResetCode("");
     setSignupCode("");
+  }
+
+  async function signInWithGoogle() {
+    if (pendingAction) return;
+    setMsg("");
+    setNeedConfirmEmail(false);
+    setPendingAction("google");
+
+    try {
+      const callbackUrl = new URL("/login", window.location.origin);
+      const accountType = activeSignupAccountType ?? "personal";
+      callbackUrl.searchParams.set("oauth", "google");
+      callbackUrl.searchParams.set("accountType", accountType);
+      if (requestedRedirectPath) callbackUrl.searchParams.set("redirect", requestedRedirectPath);
+      if (loginFromUrl) callbackUrl.searchParams.set("loginFrom", loginFromUrl);
+
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: callbackUrl.toString(),
+          queryParams: {
+            prompt: "select_account",
+          },
+        },
+      });
+      if (error) throw error;
+      if (!data.url) throw new Error("google_oauth_url_missing");
+      window.location.href = data.url;
+    } catch (error) {
+      setMsg(error instanceof Error ? normalizeError(error.message) : t("login.requestFailed"));
+      setPendingAction(null);
+    }
   }
 
   function submitPrimaryAuthAction() {
@@ -1389,6 +1526,17 @@ function LoginPageInner() {
                         : activeSignupAccountType
                           ? signUpSubmitLabel
                           : t("login.signIn")}
+                  </button>
+
+                  <button
+                    className="flex w-full items-center justify-center gap-3 rounded-[20px] border border-slate-200 bg-white px-4 py-3.5 text-[15px] font-semibold text-slate-900 shadow-[0_14px_30px_rgba(15,23,42,0.08)] transition hover:bg-slate-50 disabled:opacity-50 md:rounded-[22px] md:py-4"
+                    onClick={signInWithGoogle}
+                    disabled={pendingAction !== null}
+                  >
+                    <span className="grid h-6 w-6 place-items-center rounded-full border border-slate-200 bg-white text-sm font-bold text-blue-600">
+                      G
+                    </span>
+                    {pendingAction === "google" ? "正在连接 Google..." : "使用 Google 登录"}
                   </button>
 
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-3">

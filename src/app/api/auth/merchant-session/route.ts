@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import {
   type MerchantAuthUserSummary,
+  listMerchantIdsForUser,
 } from "@/lib/merchantAuthIdentity";
 import {
   clearMerchantAuthCookies,
@@ -15,7 +16,11 @@ import {
   resolvePlatformAccountIdentityForUser,
   type PlatformIdentitySupabaseClient,
 } from "@/lib/platformAccountIdentity";
-import { type PlatformAccountType } from "@/lib/platformAccounts";
+import {
+  readPlatformAccountIdFromMetadata,
+  readPlatformAccountTypeFromMetadata,
+  type PlatformAccountType,
+} from "@/lib/platformAccounts";
 import {
   readPersonalAccountServiceConfigFromMetadata,
   type PersonalAccountServiceConfig,
@@ -88,6 +93,42 @@ const merchantSessionInflight = new Map<string, Promise<AuthenticatedMerchantSes
 
 function readEnv(name: string) {
   return (process.env[name] ?? "").trim();
+}
+
+function normalizeSessionPreferredAccountType(value: unknown): PlatformAccountType | null {
+  if (value === "personal") return "personal";
+  if (value === "merchant") return "merchant";
+  return null;
+}
+
+async function resolveMerchantSessionPlatformIdentity(
+  supabase: PlatformIdentitySupabaseClient | null,
+  user: MerchantAuthUserSummary | null,
+  options: { preferredAccountType?: PlatformAccountType | null; preferredEmail?: string | null } = {},
+) {
+  const metadataAccountType = readPlatformAccountTypeFromMetadata(user, "");
+  const metadataAccountId = readPlatformAccountIdFromMetadata(user);
+  const email = String(options.preferredEmail ?? user?.email ?? "").trim().toLowerCase();
+
+  if (metadataAccountType || metadataAccountId) {
+    return resolvePlatformAccountIdentityForUser(supabase, user, {
+      preferredEmail: email,
+    });
+  }
+
+  const matchedMerchantIds = await listMerchantIdsForUser(supabase, user).catch(() => [] as string[]);
+  if (matchedMerchantIds.length > 0) {
+    return resolvePlatformAccountIdentityForUser(supabase, user, {
+      preferredAccountType: "merchant",
+      preferredMerchantIds: matchedMerchantIds,
+      preferredEmail: email,
+    });
+  }
+
+  return resolvePlatformAccountIdentityForUser(supabase, user, {
+    preferredAccountType: options.preferredAccountType ?? null,
+    preferredEmail: email,
+  });
 }
 
 function isTransientMerchantSessionError(error: unknown) {
@@ -379,7 +420,7 @@ export async function GET(request: Request) {
         return null;
       }
 
-      const platformIdentity = await resolvePlatformAccountIdentityForUser(adminSupabase, user);
+      const platformIdentity = await resolveMerchantSessionPlatformIdentity(adminSupabase, user);
       const personalServiceConfig =
         platformIdentity.accountType === "personal" ? readPersonalAccountServiceConfigFromMetadata(user) : null;
 
@@ -435,11 +476,13 @@ export async function POST(request: Request) {
     }
 
     const payload = (await request.json().catch(() => null)) as
-      | {
-          accessToken?: unknown;
-          refreshToken?: unknown;
-          expiresIn?: unknown;
-        }
+        | {
+            accessToken?: unknown;
+            refreshToken?: unknown;
+            expiresIn?: unknown;
+            preferredAccountType?: unknown;
+            authProvider?: unknown;
+          }
       | null;
 
     const accessToken = typeof payload?.accessToken === "string" ? payload.accessToken.trim() : "";
@@ -489,7 +532,11 @@ export async function POST(request: Request) {
       return response;
     }
 
-    const platformIdentity = await resolvePlatformAccountIdentityForUser(adminSupabase, user);
+    const requestedPreferredAccountType = normalizeSessionPreferredAccountType(payload?.preferredAccountType);
+    const platformIdentity = await resolveMerchantSessionPlatformIdentity(adminSupabase, user, {
+      preferredAccountType: requestedPreferredAccountType,
+      preferredEmail: user.email,
+    });
     const personalServiceConfig =
       platformIdentity.accountType === "personal" ? readPersonalAccountServiceConfigFromMetadata(user) : null;
 
