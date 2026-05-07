@@ -616,6 +616,45 @@ function getFavoriteSiteDefaultName(hostname: string) {
   return normalized.replace(/^www\./, "");
 }
 
+function getPersonalFavoriteSiteMatchKeys(site: Pick<PersonalFavoriteSite, "id" | "url"> | null | undefined) {
+  const keys = new Set<string>();
+  if (!site) return keys;
+  const id = trimText(site.id);
+  if (id) {
+    keys.add(`id:${id}`);
+    const merchantIdFromId = id.match(/^merchant:(\d{8})$/)?.[1] ?? "";
+    if (merchantIdFromId) keys.add(`merchant:${merchantIdFromId}`);
+  }
+  const url = normalizePersonalFavoriteSiteUrl(site.url);
+  if (!url) return keys;
+  const rootUrl = getFavoriteSiteRootUrl(url);
+  if (rootUrl) keys.add(`url:${rootUrl}`);
+  try {
+    const parsed = new URL(rootUrl);
+    keys.add(`origin:${parsed.origin}`);
+    const merchantSiteId = readFavoriteMerchantSiteId(rootUrl);
+    if (merchantSiteId) {
+      keys.add(`id:merchant:${merchantSiteId}`);
+      keys.add(`merchant:${merchantSiteId}`);
+    }
+  } catch {
+    // Ignore malformed legacy favorite URLs.
+  }
+  return keys;
+}
+
+function isSamePersonalFavoriteSite(
+  first: Pick<PersonalFavoriteSite, "id" | "url"> | null | undefined,
+  second: Pick<PersonalFavoriteSite, "id" | "url"> | null | undefined,
+) {
+  const firstKeys = getPersonalFavoriteSiteMatchKeys(first);
+  if (firstKeys.size === 0) return false;
+  for (const key of getPersonalFavoriteSiteMatchKeys(second)) {
+    if (firstKeys.has(key)) return true;
+  }
+  return false;
+}
+
 function normalizePersonalFavoriteSites(value: unknown): PersonalFavoriteSite[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
@@ -630,15 +669,17 @@ function normalizePersonalFavoriteSites(value: unknown): PersonalFavoriteSite[] 
     const parsed = new URL(rootUrl);
     const merchantSiteId = readFavoriteMerchantSiteId(rootUrl);
     const id = trimText(record.id) || (merchantSiteId ? `merchant:${merchantSiteId}` : parsed.origin);
-    if (seen.has(id)) continue;
-    seen.add(id);
-    output.push({
+    const normalizedSite = {
       id,
       url: rootUrl,
       name: trimText(record.name) || getFavoriteSiteDefaultName(parsed.hostname),
       subtitle: trimText(record.subtitle) || parsed.hostname,
       addedAt: trimText(record.addedAt) || new Date().toISOString(),
-    });
+    };
+    const matchKeys = getPersonalFavoriteSiteMatchKeys(normalizedSite);
+    if (Array.from(matchKeys).some((key) => seen.has(key))) continue;
+    matchKeys.forEach((key) => seen.add(key));
+    output.push(normalizedSite);
     if (output.length >= PERSONAL_FAVORITE_SITE_LIMIT) break;
   }
   return output;
@@ -3034,10 +3075,13 @@ export default function MePage() {
       ),
     [faollaEmbedHref],
   );
-  const currentFaollaFavoriteSiteId = currentFaollaFavoriteSite?.id ?? "";
   const currentFaollaFavoriteActive = useMemo(
-    () => Boolean(currentFaollaFavoriteSiteId && personalFavoriteSites.some((site) => site.id === currentFaollaFavoriteSiteId)),
-    [currentFaollaFavoriteSiteId, personalFavoriteSites],
+    () =>
+      Boolean(
+        currentFaollaFavoriteSite &&
+          personalFavoriteSites.some((site) => isSamePersonalFavoriteSite(site, currentFaollaFavoriteSite)),
+      ),
+    [currentFaollaFavoriteSite, personalFavoriteSites],
   );
   const openPersonalFavoriteSite = useCallback(
     (site: PersonalFavoriteSite) => {
@@ -3082,10 +3126,10 @@ export default function MePage() {
     if (!currentFaollaFavoriteSite) return;
     const removingFavorite = currentFaollaFavoriteActive;
     const nextSites = currentFaollaFavoriteActive
-      ? personalFavoriteSites.filter((site) => site.id !== currentFaollaFavoriteSite.id)
+      ? personalFavoriteSites.filter((site) => !isSamePersonalFavoriteSite(site, currentFaollaFavoriteSite))
       : [
           { ...currentFaollaFavoriteSite, addedAt: new Date().toISOString() },
-          ...personalFavoriteSites.filter((site) => site.id !== currentFaollaFavoriteSite.id),
+          ...personalFavoriteSites.filter((site) => !isSamePersonalFavoriteSite(site, currentFaollaFavoriteSite)),
         ].slice(0, PERSONAL_FAVORITE_SITE_LIMIT);
     void persistPersonalFavoriteSites(nextSites)
       .then(() => {
