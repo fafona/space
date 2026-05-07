@@ -38,6 +38,7 @@ export default function FaollaQrPanel({
   const [shareMessage, setShareMessage] = useState("");
   const [scannerActive, setScannerActive] = useState(false);
   const [scannerMessage, setScannerMessage] = useState("");
+  const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -66,6 +67,10 @@ export default function FaollaQrPanel({
       cancelled = true;
     };
   }, [qrUrl]);
+
+  useEffect(() => {
+    setAvatarLoadFailed(false);
+  }, [avatarUrl]);
 
   const stopScanner = useCallback(() => {
     if (scanFrameRef.current !== null) {
@@ -180,14 +185,15 @@ export default function FaollaQrPanel({
     }
   }
 
-  const fallback = avatarFallback || getAvatarFallback(profileName);
+  const fallback = getAvatarFallback(avatarFallback || profileName);
+  const showAvatarImage = Boolean(avatarUrl && !avatarLoadFailed);
 
   return (
-    <div className="min-h-full bg-slate-50 px-4 pb-[calc(var(--faolla-mobile-safe-bottom)+8.75rem)] pt-[calc(var(--faolla-mobile-safe-top)+0.9rem)] text-slate-950">
-      <div className="flex items-center justify-between">
+    <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-slate-50 px-4 pb-[calc(var(--faolla-mobile-safe-bottom)+6.75rem)] pt-[calc(var(--faolla-mobile-safe-top)+0.75rem)] text-slate-950">
+      <div className="flex shrink-0 items-center justify-between">
         <button
           type="button"
-          className="flex h-12 w-12 items-center justify-center rounded-full bg-white text-slate-950 shadow-[0_12px_26px_rgba(15,23,42,0.08)]"
+          className="flex h-11 w-11 items-center justify-center rounded-full bg-white text-slate-950 shadow-[0_12px_26px_rgba(15,23,42,0.08)]"
           onClick={onBack}
           aria-label="返回"
         >
@@ -198,7 +204,7 @@ export default function FaollaQrPanel({
         <div className="text-lg font-semibold">二维码</div>
         <button
           type="button"
-          className="flex h-12 w-12 items-center justify-center rounded-full bg-white text-slate-950 shadow-[0_12px_26px_rgba(15,23,42,0.08)] disabled:opacity-45"
+          className="flex h-11 w-11 items-center justify-center rounded-full bg-white text-slate-950 shadow-[0_12px_26px_rgba(15,23,42,0.08)] disabled:opacity-45"
           onClick={() => {
             void shareQr();
           }}
@@ -212,19 +218,27 @@ export default function FaollaQrPanel({
         </button>
       </div>
 
-      <div className="mx-auto mt-24 max-w-[360px]">
-        <section className="relative rounded-[34px] bg-white px-6 pb-8 pt-16 text-center shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
-          <div className="absolute left-1/2 top-0 flex h-20 w-20 -translate-x-1/2 -translate-y-1/2 items-center justify-center overflow-hidden rounded-full border-4 border-slate-50 bg-slate-900 text-lg font-semibold text-white">
-            {avatarUrl ? (
+      <div className="mx-auto flex min-h-0 w-full max-w-[360px] flex-1 flex-col items-center justify-center pt-10">
+        <section className="relative w-full rounded-[30px] bg-white px-5 pb-5 pt-12 text-center shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
+          <div className="absolute left-1/2 top-0 flex h-16 w-16 -translate-x-1/2 -translate-y-1/2 items-center justify-center overflow-hidden rounded-full border-4 border-slate-50 bg-slate-900 text-base font-semibold text-white">
+            {showAvatarImage ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={avatarUrl} alt={profileName} className="h-full w-full rounded-full object-cover" />
+              <img
+                src={avatarUrl}
+                alt={profileName}
+                className="h-full w-full rounded-full object-cover"
+                onError={() => setAvatarLoadFailed(true)}
+              />
             ) : (
               fallback
             )}
           </div>
-          <div className="truncate text-2xl font-semibold">{profileName || "Faolla"}</div>
+          <div className="truncate text-[22px] font-semibold leading-tight">{profileName || "Faolla"}</div>
           <div className="mt-1 truncate text-sm text-slate-500">{profileSubtitle}</div>
-          <div className="mt-8 flex aspect-square w-full items-center justify-center rounded-[24px] bg-white p-2">
+          <div
+            className="mx-auto mt-5 flex aspect-square items-center justify-center rounded-[22px] bg-white p-1.5"
+            style={{ width: "min(72vw, 296px, 36dvh)" }}
+          >
             {qrDataUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={qrDataUrl} alt="Faolla 二维码" className="h-full w-full object-contain" />
@@ -234,31 +248,31 @@ export default function FaollaQrPanel({
               </div>
             )}
           </div>
+          <button
+            type="button"
+            className="mt-2 h-9 w-full rounded-full text-sm font-semibold text-emerald-700 disabled:text-slate-300"
+            onClick={() => {
+              setQrDataUrl("");
+              void QRCode.toDataURL(qrUrl, { errorCorrectionLevel: "M", margin: 1, width: 720 }).then(setQrDataUrl);
+            }}
+            disabled={!qrUrl}
+          >
+            重置二维码
+          </button>
         </section>
-        <p className="mx-auto mt-6 max-w-[330px] text-center text-sm leading-7 text-slate-500">{note}</p>
+        <p className="mx-auto mt-3 max-w-[330px] text-center text-xs leading-5 text-slate-500">{note}</p>
         {shareMessage || scannerMessage ? (
           <div className="mt-3 text-center text-xs font-medium text-emerald-700">{shareMessage || scannerMessage}</div>
         ) : null}
       </div>
 
-      <div className="fixed inset-x-4 bottom-[calc(var(--faolla-mobile-safe-bottom)+1rem)] z-30 mx-auto max-w-[360px] space-y-3">
+      <div className="fixed inset-x-4 bottom-[calc(var(--faolla-mobile-safe-bottom)+5.5rem)] z-30 mx-auto max-w-[360px]">
         <button
           type="button"
-          className="h-14 w-full rounded-full bg-emerald-600 text-base font-semibold text-white shadow-[0_16px_36px_rgba(16,185,129,0.24)] active:scale-[0.99]"
+          className="h-16 w-full rounded-full bg-emerald-600 text-lg font-semibold text-white shadow-[0_16px_36px_rgba(16,185,129,0.24)] active:scale-[0.99]"
           onClick={() => setScannerActive(true)}
         >
           扫描
-        </button>
-        <button
-          type="button"
-          className="h-11 w-full rounded-full text-sm font-semibold text-emerald-700"
-          onClick={() => {
-            setQrDataUrl("");
-            void QRCode.toDataURL(qrUrl, { errorCorrectionLevel: "M", margin: 1, width: 720 }).then(setQrDataUrl);
-          }}
-          disabled={!qrUrl}
-        >
-          重置二维码
         </button>
       </div>
 
