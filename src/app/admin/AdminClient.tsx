@@ -11174,11 +11174,20 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     editingSiteId ||
     "我的资料";
   const supportSelfAvatarLabel = getSupportContactAvatarLabel(supportSelfDisplayName, "我");
+  const supportSelfBusinessCardAvatarUrl =
+    supportSelfBusinessCards
+      .map((card) =>
+        normalizeSupportDisplayValue(card.contactPagePublicImageUrl) ||
+        normalizeSupportDisplayValue(card.shareImageUrl) ||
+        normalizeSupportDisplayValue(card.imageUrl),
+      )
+      .find(Boolean) ?? "";
   const supportSelfAvatarImageUrl =
     normalizeSupportDisplayValue(supportSelfProfile?.chatAvatarImageUrl) ||
     normalizeSupportDisplayValue(supportSelfProfile?.merchantCardImageUrl) ||
     normalizeSupportDisplayValue(editingSite?.chatAvatarImageUrl) ||
-    normalizeSupportDisplayValue(editingSite?.merchantCardImageUrl);
+    normalizeSupportDisplayValue(editingSite?.merchantCardImageUrl) ||
+    supportSelfBusinessCardAvatarUrl;
   const merchantAccountSwitchCurrentKey = getAccountSwitchEntryKey("merchant", currentSupportMerchantId, currentSupportMerchantId);
   useEffect(() => {
     if (isPlatformEditor) return;
@@ -11269,8 +11278,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       id: supportSelfQrMerchantId,
       name: supportSelfDisplayName,
       token: supportSelfQrToken,
+      url: supportSelfWebsiteHref || new URL(`/site/${supportSelfQrMerchantId}`, window.location.origin).toString(),
     });
-  }, [supportSelfDisplayName, supportSelfQrMerchantId, supportSelfQrToken]);
+  }, [supportSelfDisplayName, supportSelfQrMerchantId, supportSelfQrToken, supportSelfWebsiteHref]);
   const resetSupportSelfQrCode = useCallback(async () => {
     if (!supportSelfQrMerchantId) throw new Error("二维码暂不可用");
     const token = await resetFaollaQrToken("merchant", supportSelfQrMerchantId);

@@ -86,6 +86,17 @@ function normalizeFavoriteSiteUrl(value: unknown) {
   }
 }
 
+function isFaollaPortalRootFavoriteUrl(value: string) {
+  try {
+    const url = new URL(value);
+    const hostname = url.hostname.trim().toLowerCase();
+    const pathname = url.pathname.replace(/\/+$/g, "") || "/";
+    return (hostname === "faolla.com" || hostname === "www.faolla.com") && pathname === "/";
+  } catch {
+    return false;
+  }
+}
+
 function normalizePersonalFavoriteSites(value: unknown): PersonalFavoriteSite[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
@@ -95,6 +106,7 @@ function normalizePersonalFavoriteSites(value: unknown): PersonalFavoriteSite[] 
     const record = item as Record<string, unknown>;
     const url = normalizeFavoriteSiteUrl(record.url);
     if (!url) continue;
+    if (isFaollaPortalRootFavoriteUrl(url)) continue;
     const id = trimText(record.id, 240) || url;
     if (seen.has(id)) continue;
     seen.add(id);

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import jsQR from "jsqr";
 import QRCode from "qrcode";
+import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 
 type FaollaQrPanelProps = {
   profileName: string;
@@ -211,7 +212,8 @@ export default function FaollaQrPanel({
   }
 
   const fallback = getAvatarFallback(avatarFallback || profileName);
-  const showAvatarImage = Boolean(avatarUrl && !avatarLoadFailed);
+  const normalizedAvatarUrl = normalizePublicAssetUrl(avatarUrl || "");
+  const showAvatarImage = Boolean(normalizedAvatarUrl && !avatarLoadFailed);
 
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-slate-50 px-4 pb-[calc(var(--faolla-mobile-safe-bottom)+6.75rem)] pt-[calc(var(--faolla-mobile-safe-top)+0.75rem)] text-slate-950">
@@ -249,7 +251,7 @@ export default function FaollaQrPanel({
             {showAvatarImage ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={avatarUrl}
+                src={normalizedAvatarUrl}
                 alt={profileName}
                 className="h-full w-full rounded-full object-cover"
                 onError={() => setAvatarLoadFailed(true)}

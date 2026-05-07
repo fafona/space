@@ -21,14 +21,17 @@ export function buildFaollaQrConnectUrl(input: {
   id: string;
   name?: string;
   token?: string;
+  url?: string;
 }) {
   const url = new URL("/connect", input.origin);
   url.searchParams.set("type", input.type);
   url.searchParams.set("id", input.id);
   const name = trimText(input.name, 80);
   const token = trimText(input.token, 128);
+  const targetUrl = trimText(input.url, 1200);
   if (name) url.searchParams.set("name", name);
   if (token) url.searchParams.set("token", token);
+  if (targetUrl) url.searchParams.set("url", targetUrl);
   return url.toString();
 }
 

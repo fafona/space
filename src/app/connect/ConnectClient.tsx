@@ -36,8 +36,8 @@ type PersonalProfilePayload = {
   }> | null;
 };
 
-function trimText(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
+function trimText(value: unknown, maxLength = 4096) {
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
 
 function normalizeAccountType(value: unknown): AccountType | "" {
@@ -61,6 +61,80 @@ function readPayloadMessage(value: unknown, fallback: string) {
   return message || fallback;
 }
 
+function readMerchantSiteIdFromUrl(value: URL) {
+  const normalizedPath = value.pathname.replace(/\/+$/g, "");
+  return normalizedPath.match(/^\/(?:site\/)?(\d{8})$/)?.[1] ?? "";
+}
+
+function isFaollaLikeHostname(value: string) {
+  const hostname = value.trim().toLowerCase();
+  return hostname === "faolla.com" || hostname.endsWith(".faolla.com");
+}
+
+function isFaollaPortalHostname(value: string) {
+  const hostname = value.trim().toLowerCase();
+  return hostname === "faolla.com" || hostname === "www.faolla.com";
+}
+
+function isSameLocalHostname(left: string, right: string) {
+  const normalizedLeft = left.trim().toLowerCase();
+  const normalizedRight = right.trim().toLowerCase();
+  if (normalizedLeft !== normalizedRight) return false;
+  return normalizedLeft === "localhost" || /^\d+\.\d+\.\d+\.\d+$/.test(normalizedLeft);
+}
+
+function isTrustedMerchantFrontendHost(candidate: URL, runtime: URL) {
+  if (candidate.origin === runtime.origin) return true;
+  if (isFaollaLikeHostname(candidate.hostname) && isFaollaLikeHostname(runtime.hostname)) return true;
+  return isSameLocalHostname(candidate.hostname, runtime.hostname);
+}
+
+function normalizeMerchantFrontendTargetUrl(value: unknown, targetId: string, fallbackOrigin: string) {
+  const runtime = new URL(fallbackOrigin || "https://faolla.com");
+  const fallbackUrl = new URL(`/site/${targetId}`, runtime.origin);
+  const raw = trimText(value, 1200);
+  const candidates = raw ? [raw, fallbackUrl.toString()] : [fallbackUrl.toString()];
+
+  for (const candidate of candidates) {
+    try {
+      const url = new URL(candidate, runtime.origin);
+      if (url.protocol !== "http:" && url.protocol !== "https:") continue;
+      if (!isTrustedMerchantFrontendHost(url, runtime)) continue;
+
+      url.searchParams.delete("appShell");
+      url.searchParams.delete("uiLocale");
+      url.hash = "";
+
+      const merchantIdFromPath = readMerchantSiteIdFromUrl(url);
+      if (merchantIdFromPath) {
+        if (merchantIdFromPath !== targetId) continue;
+        return url.toString();
+      }
+
+      const normalizedPath = url.pathname.replace(/\/+$/g, "") || "/";
+      if (isFaollaPortalHostname(url.hostname) && normalizedPath === "/") continue;
+      if (isFaollaLikeHostname(url.hostname) && !isFaollaPortalHostname(url.hostname)) {
+        return url.toString();
+      }
+    } catch {
+      // Try the next candidate.
+    }
+  }
+
+  return fallbackUrl.toString();
+}
+
+function isFaollaPortalRootFavoriteUrl(value: string) {
+  try {
+    const url = new URL(value);
+    const hostname = url.hostname.trim().toLowerCase();
+    const pathname = url.pathname.replace(/\/+$/g, "") || "/";
+    return (hostname === "faolla.com" || hostname === "www.faolla.com") && pathname === "/";
+  } catch {
+    return false;
+  }
+}
+
 function buildCurrentRedirectPath() {
   if (typeof window === "undefined") return "/connect";
   return `${window.location.pathname}${window.location.search}`;
@@ -71,14 +145,17 @@ function redirectToPersonalLogin() {
   window.location.replace(`/login?accountType=personal&redirect=${redirect}`);
 }
 
-function buildAccountHomeHref(session: SessionPayload | null, targetType: AccountType, targetId: string) {
+function buildAccountHomeHref(session: SessionPayload | null, targetType: AccountType, targetId: string, targetUrl = "") {
   const accountType = normalizeAccountType(session?.accountType);
   if (accountType === "personal") {
     const url = new URL("/me", window.location.origin);
     if (targetType === "merchant" && targetId) {
       url.searchParams.set("mobileTab", "faolla");
       url.searchParams.set(FAOLLA_SECTION_PARAM, FAOLLA_SECTION_VALUE);
-      url.searchParams.set(FAOLLA_URL_PARAM, new URL(`/site/${targetId}`, window.location.origin).toString());
+      url.searchParams.set(
+        FAOLLA_URL_PARAM,
+        normalizeMerchantFrontendTargetUrl(targetUrl, targetId, window.location.origin),
+      );
     } else {
       url.searchParams.set("mobileTab", "conversations");
       if (targetId) url.searchParams.set("peerMerchantId", targetId);
@@ -103,6 +180,7 @@ function normalizeFavoriteSites(value: PersonalProfilePayload["favoriteSites"]) 
       const id = trimText(item?.id);
       const url = trimText(item?.url);
       if (!id || !url) return null;
+      if (isFaollaPortalRootFavoriteUrl(url)) return null;
       return {
         id,
         url,
@@ -137,7 +215,7 @@ async function ensureContact(targetType: AccountType, targetId: string, targetNa
   return payload;
 }
 
-async function addMerchantFavorite(targetId: string, targetName: string, contactName: string) {
+async function addMerchantFavorite(targetId: string, targetName: string, contactName: string, targetUrl: string) {
   const profileResponse = await fetch("/api/personal-profile", {
     method: "GET",
     cache: "no-store",
@@ -147,7 +225,7 @@ async function addMerchantFavorite(targetId: string, targetName: string, contact
   if (!profileResponse.ok) return;
   const profilePayload = (await profileResponse.json().catch(() => null)) as PersonalProfilePayload | null;
   const currentSites = normalizeFavoriteSites(profilePayload?.favoriteSites ?? null);
-  const favoriteUrl = new URL(`/site/${targetId}`, window.location.origin).toString();
+  const favoriteUrl = normalizeMerchantFrontendTargetUrl(targetUrl, targetId, window.location.origin);
   const nextSite = {
     id: `merchant:${targetId}`,
     url: favoriteUrl,
@@ -196,6 +274,13 @@ export default function ConnectClient() {
   const targetId = useMemo(() => normalizeAccountId(searchParams.get("id")), [searchParams]);
   const targetName = useMemo(() => trimText(searchParams.get("name")).slice(0, 80), [searchParams]);
   const targetToken = useMemo(() => trimText(searchParams.get("token")).slice(0, 128), [searchParams]);
+  const targetUrl = useMemo(
+    () =>
+      targetType === "merchant" && targetId && typeof window !== "undefined"
+        ? normalizeMerchantFrontendTargetUrl(searchParams.get("url"), targetId, window.location.origin)
+        : "",
+    [searchParams, targetId, targetType],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -238,7 +323,7 @@ export default function ConnectClient() {
       if (selfId && selfId === targetId && accountType === targetType) {
         setMessage("这是你自己的二维码");
         window.setTimeout(() => {
-          if (!cancelled) window.location.replace(buildAccountHomeHref(session, targetType, targetId));
+          if (!cancelled) window.location.replace(buildAccountHomeHref(session, targetType, targetId, targetUrl));
         }, 600);
         return;
       }
@@ -251,11 +336,11 @@ export default function ConnectClient() {
 
       if (targetType === "merchant" && accountType === "personal") {
         setMessage("正在收藏商户...");
-        await addMerchantFavorite(targetId, targetName, trimText(result.contact?.merchantName)).catch(() => undefined);
+        await addMerchantFavorite(targetId, targetName, trimText(result.contact?.merchantName), targetUrl).catch(() => undefined);
       }
 
       setMessage(targetType === "merchant" && accountType === "personal" ? "正在打开商户前台..." : "正在打开会话...");
-      window.location.replace(buildAccountHomeHref(session, targetType, targetId));
+      window.location.replace(buildAccountHomeHref(session, targetType, targetId, targetUrl));
     })().catch((error) => {
       if (cancelled) return;
       setMessage(error instanceof Error ? error.message : "二维码处理失败，请稍后重试");
@@ -264,7 +349,7 @@ export default function ConnectClient() {
     return () => {
       cancelled = true;
     };
-  }, [targetId, targetName, targetToken, targetType]);
+  }, [targetId, targetName, targetToken, targetType, targetUrl]);
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-slate-50 px-6 text-center text-slate-950">
@@ -277,7 +362,7 @@ export default function ConnectClient() {
           className="mt-6 h-12 w-full rounded-full bg-slate-950 text-sm font-semibold text-white"
           onClick={() => {
             if (targetType && targetId) {
-              window.location.href = buildAccountHomeHref(null, targetType, targetId);
+              window.location.href = buildAccountHomeHref(null, targetType, targetId, targetUrl);
             } else {
               window.location.href = "/";
             }

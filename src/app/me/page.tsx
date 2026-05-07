@@ -595,6 +595,17 @@ function readFavoriteMerchantSiteId(value: string) {
   }
 }
 
+function isFaollaPortalRootFavoriteUrl(value: string) {
+  try {
+    const url = new URL(value);
+    const hostname = url.hostname.trim().toLowerCase();
+    const pathname = url.pathname.replace(/\/+$/g, "") || "/";
+    return (hostname === "faolla.com" || hostname === "www.faolla.com") && pathname === "/";
+  } catch {
+    return false;
+  }
+}
+
 function getFavoriteSiteDefaultName(hostname: string) {
   const normalized = hostname.trim().toLowerCase();
   if (!normalized) return "商户网站";
@@ -615,6 +626,7 @@ function normalizePersonalFavoriteSites(value: unknown): PersonalFavoriteSite[] 
     const url = normalizePersonalFavoriteSiteUrl(record.url);
     if (!url) continue;
     const rootUrl = getFavoriteSiteRootUrl(url);
+    if (isFaollaPortalRootFavoriteUrl(rootUrl)) continue;
     const parsed = new URL(rootUrl);
     const merchantSiteId = readFavoriteMerchantSiteId(rootUrl);
     const id = trimText(record.id) || (merchantSiteId ? `merchant:${merchantSiteId}` : parsed.origin);
