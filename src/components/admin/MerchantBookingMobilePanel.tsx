@@ -422,9 +422,38 @@ function resolveBookingRuleFieldLabel(
   return customLabel?.trim() || getMerchantBookingFieldText(field, locale);
 }
 
-function downloadBookingsCsv(records: MerchantBookingRecord[], locale: string, siteId: string) {
+function resolveBookingCsvLabels(
+  records: MerchantBookingRecord[],
+  bookingRulesSnapshot: MerchantBookingRulesSnapshot | null | undefined,
+  locale: string,
+) {
+  const fallbackEntry = resolveMerchantBookingRuleEntry(bookingRulesSnapshot) ?? bookingRulesSnapshot?.entries?.[0] ?? null;
+  let storeLabel = resolveBookingRuleFieldLabel(fallbackEntry, "store", locale);
+  let itemLabel = resolveBookingRuleFieldLabel(fallbackEntry, "item", locale);
+
+  for (const record of records) {
+    const entry = resolveMerchantBookingRuleEntry(bookingRulesSnapshot, {
+      bookingBlockId: record.bookingBlockId,
+      bookingViewport: record.bookingViewport,
+    });
+    if (!entry) continue;
+    storeLabel = resolveBookingRuleFieldLabel(entry, "store", locale);
+    itemLabel = resolveBookingRuleFieldLabel(entry, "item", locale);
+    break;
+  }
+
+  return { storeLabel, itemLabel };
+}
+
+function downloadBookingsCsv(
+  records: MerchantBookingRecord[],
+  locale: string,
+  siteId: string,
+  bookingRulesSnapshot: MerchantBookingRulesSnapshot | null | undefined,
+) {
   if (typeof document === "undefined" || records.length === 0) return;
-  const blob = new Blob([buildMerchantBookingsCsv(records, locale)], {
+  const csvLabels = resolveBookingCsvLabels(records, bookingRulesSnapshot, locale);
+  const blob = new Blob([`\uFEFF${buildMerchantBookingsCsv(records, locale, csvLabels)}`], {
     type: "text/csv;charset=utf-8",
   });
   const url = URL.createObjectURL(blob);
@@ -1752,8 +1781,8 @@ export default function MerchantBookingMobilePanel({
                   </button>
                   <button
                     type="button"
-                    className="rounded-full border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700"
-                    onClick={() => downloadBookingsCsv(selectedRecords, locale, siteId)}
+                    className="rounded-full border border-emerald-950 bg-emerald-950 px-3 py-2 text-xs font-semibold text-white shadow-[0_8px_18px_rgba(6,78,59,0.22)] hover:bg-emerald-900"
+                    onClick={() => downloadBookingsCsv(selectedRecords, locale, siteId, bookingRulesSnapshot)}
                   >
                     CSV
                   </button>

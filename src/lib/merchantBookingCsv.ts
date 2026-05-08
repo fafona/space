@@ -7,16 +7,23 @@ import {
 
 function escapeCsvValue(value: string) {
   const normalized = String(value ?? "");
-  if (!/[",\n]/.test(normalized)) return normalized;
+  if (!/[",\r\n]/.test(normalized)) return normalized;
   return `"${normalized.replaceAll('"', '""')}"`;
 }
 
-export function buildMerchantBookingsCsv(records: MerchantBookingRecord[], locale: string) {
+type MerchantBookingsCsvLabels = {
+  storeLabel?: string;
+  itemLabel?: string;
+};
+
+export function buildMerchantBookingsCsv(records: MerchantBookingRecord[], locale: string, labels?: MerchantBookingsCsvLabels) {
   const statusHeader = locale.startsWith("es") ? "Estado" : "状态";
+  const storeHeader = labels?.storeLabel?.trim() || getMerchantBookingFieldText("store", locale);
+  const itemHeader = labels?.itemLabel?.trim() || getMerchantBookingFieldText("item", locale);
   const headers = [
     getMerchantBookingFieldText("bookingId", locale),
-    getMerchantBookingFieldText("store", locale),
-    getMerchantBookingFieldText("item", locale),
+    storeHeader,
+    itemHeader,
     getMerchantBookingFieldText("appointmentAt", locale),
     getMerchantBookingFieldText("customerName", locale),
     getMerchantBookingFieldText("email", locale),
@@ -39,5 +46,5 @@ export function buildMerchantBookingsCsv(records: MerchantBookingRecord[], local
   ]);
   return [headers, ...rows]
     .map((row) => row.map((cell) => escapeCsvValue(String(cell ?? ""))).join(","))
-    .join("\n");
+    .join("\r\n");
 }
