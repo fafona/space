@@ -58,8 +58,11 @@ export default function LaunchBootstrap() {
           (launchParams.get("appShell") || "").trim().toLowerCase() === "faolla" ||
           (launchParams.get("nativeStart") || "").trim() === "1" ||
           launchParams.has("nativeAuthRetry");
-        const directSessionTimeoutMs = isNativeAppLaunch ? 900 : 1600;
-        const recoverySessionTimeoutMs = isNativeAppLaunch ? 2400 : 3800;
+        const standaloneNavigator = navigator as Navigator & { standalone?: boolean };
+        const isStandaloneLaunch =
+          window.matchMedia?.("(display-mode: standalone)")?.matches === true || standaloneNavigator.standalone === true;
+        const directSessionTimeoutMs = isNativeAppLaunch ? 900 : isStandaloneLaunch ? 1800 : 1600;
+        const recoverySessionTimeoutMs = isNativeAppLaunch ? 2400 : isStandaloneLaunch ? 5200 : 3800;
         if (isNativeAppLaunch && !launchParams.has("nativeAuthRetry") && isMerchantNumericId(recentMerchantId)) {
           persistRecentMerchantLaunchState(recentMerchantId);
           navigate(buildBackendAppShellHref(buildMerchantBackendHref(recentMerchantId)));

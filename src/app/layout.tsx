@@ -253,6 +253,12 @@ const FAOLLA_APP_SHELL_LOCATION_SCRIPT = `
 `;
 
 const FAOLLA_MOBILE_SHELL_INLINE_STYLE = `
+@media (display-mode: standalone) {
+  html:not([data-faolla-web-launch-ready="true"]),
+  html:not([data-faolla-web-launch-ready="true"]) body {
+    background: #081121 !important;
+  }
+}
 html[data-faolla-app-shell="true"][data-faolla-launch="true"],
 html[data-faolla-app-shell="true"][data-faolla-launch="true"] body {
   background: #081121 !important;

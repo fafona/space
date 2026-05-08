@@ -570,9 +570,6 @@ function LoginPageInner() {
   const activeEntryAccountType = activeSignupAccountType ?? entryAccountType;
   const shouldShowEntrySelection = !isGoogleOAuthReturn && !entryAccountType;
   const entryTitle = normalizedLocale.startsWith("zh") ? "请选择登录入口" : "Choose Sign-In Entry";
-  const entryDescription = normalizedLocale.startsWith("zh")
-    ? "选择一次后，本次登录、注册和 Google 登录都会按该身份处理。"
-    : "Choose once. Sign in, sign up, and Google sign-in will use that identity.";
   const personalEntryDescription = normalizedLocale.startsWith("zh")
     ? "用于消费、收藏商户、会话、小工具和游戏大厅。"
     : "For customer use: favorites, chats, tools, and games.";
@@ -1662,11 +1659,7 @@ function LoginPageInner() {
               {shouldShowEntrySelection ? (
                 <div className="space-y-5 md:space-y-6">
                   <div className="space-y-2">
-                    <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">
-                      Faolla Account
-                    </div>
                     <div className="text-2xl font-semibold tracking-tight text-slate-950">{entryTitle}</div>
-                    <div className="text-sm leading-6 text-slate-500">{entryDescription}</div>
                   </div>
 
                   <div className="grid gap-4">
