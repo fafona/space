@@ -225,6 +225,20 @@ type PersonalFavoriteSite = {
   addedAt: string;
 };
 
+type PersonalFavoritePublishedSite = {
+  id: string;
+  name?: string;
+  merchantName?: string;
+  domain?: string;
+  domainPrefix?: string;
+  domainSuffix?: string;
+  category?: string;
+  industry?: string;
+  location?: Partial<SiteLocation>;
+  merchantCardImageUrl?: string;
+  merchantCardImageOpacity?: number;
+};
+
 type PersonalProfileResponsePayload = {
   ok?: unknown;
   error?: unknown;
@@ -346,6 +360,125 @@ function formatPersonalOrderAmount(amount: number, pricePrefix: string) {
 
 function readRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function normalizeFavoriteHost(value: unknown) {
+  return trimText(value)
+    .replace(/^https?:\/\//i, "")
+    .replace(/\/.*$/g, "")
+    .replace(/^www\./i, "")
+    .trim()
+    .toLowerCase();
+}
+
+function addFavoritePublishedHostKeys(keys: Set<string>, value: unknown) {
+  const host = normalizeFavoriteHost(value);
+  if (!host) return;
+  keys.add(`host:${host}`);
+  if (host.endsWith(".faolla.com")) {
+    const prefix = host.slice(0, -".faolla.com".length).split(".").filter(Boolean).pop();
+    if (prefix) keys.add(`prefix:${prefix}`);
+  }
+}
+
+function normalizeFavoritePublishedSite(value: unknown): PersonalFavoritePublishedSite | null {
+  const record = readRecord(value);
+  if (!record) return null;
+  const id = trimText(record.id || record.siteId || record.merchantId);
+  if (!id) return null;
+  const locationRecord = readRecord(record.location);
+  return {
+    id,
+    name: trimText(record.name),
+    merchantName: trimText(record.merchantName),
+    domain: trimText(record.domain),
+    domainPrefix: trimText(record.domainPrefix || record.domainSuffix),
+    domainSuffix: trimText(record.domainSuffix || record.domainPrefix),
+    category: trimText(record.category),
+    industry: trimText(record.industry),
+    location: locationRecord
+      ? {
+          country: trimText(locationRecord.country),
+          province: trimText(locationRecord.province),
+          city: trimText(locationRecord.city),
+        }
+      : undefined,
+    merchantCardImageUrl: trimText(record.merchantCardImageUrl),
+    merchantCardImageOpacity:
+      typeof record.merchantCardImageOpacity === "number" && Number.isFinite(record.merchantCardImageOpacity)
+        ? Math.max(0, Math.min(1, record.merchantCardImageOpacity))
+        : undefined,
+  };
+}
+
+function extractFavoritePublishedSitesFromBlocks(value: unknown): PersonalFavoritePublishedSite[] {
+  const output: PersonalFavoritePublishedSite[] = [];
+  const seen = new Set<string>();
+
+  const visit = (item: unknown, depth: number) => {
+    if (depth > 12 || item == null) return;
+    if (Array.isArray(item)) {
+      item.forEach((child) => visit(child, depth + 1));
+      return;
+    }
+    const record = readRecord(item);
+    if (!record) return;
+
+    const props = readRecord(record.props);
+    const snapshot = props?.publishedMerchantSnapshot ?? record.publishedMerchantSnapshot;
+    if (Array.isArray(snapshot)) {
+      snapshot.forEach((entry) => {
+        const site = normalizeFavoritePublishedSite(entry);
+        if (!site || seen.has(site.id)) return;
+        seen.add(site.id);
+        output.push(site);
+      });
+    }
+
+    Object.values(record).forEach((child) => visit(child, depth + 1));
+  };
+
+  visit(value, 0);
+  return output;
+}
+
+function getFavoritePublishedSiteKeys(site: PersonalFavoritePublishedSite) {
+  const keys = new Set<string>();
+  const id = trimText(site.id);
+  if (id) {
+    keys.add(`merchant:${id}`);
+    keys.add(`id:merchant:${id}`);
+  }
+  addFavoritePublishedHostKeys(keys, site.domain);
+  addFavoritePublishedHostKeys(keys, site.domainPrefix ? `${site.domainPrefix}.faolla.com` : "");
+  addFavoritePublishedHostKeys(keys, site.domainSuffix ? `${site.domainSuffix}.faolla.com` : "");
+  return keys;
+}
+
+function getPersonalFavoritePublishedMatchKeys(site: PersonalFavoriteSite) {
+  const keys = new Set<string>();
+  const id = trimText(site.id);
+  const merchantIdFromId = id.match(/^merchant:(\d{8})$/)?.[1] ?? "";
+  const merchantIdFromUrl = readFavoriteMerchantSiteId(site.url);
+  const merchantId = merchantIdFromId || merchantIdFromUrl;
+  if (merchantId) {
+    keys.add(`merchant:${merchantId}`);
+    keys.add(`id:merchant:${merchantId}`);
+  }
+  try {
+    const url = new URL(getFavoriteSiteRootUrl(site.url));
+    addFavoritePublishedHostKeys(keys, url.hostname);
+  } catch {
+    addFavoritePublishedHostKeys(keys, site.url);
+  }
+  return keys;
+}
+
+function formatFavoritePublishedLocation(location: Partial<SiteLocation> | null | undefined) {
+  const country = trimText(location?.country);
+  const province = trimText(location?.province);
+  const city = trimText(location?.city);
+  return [country, province, city].filter(Boolean).join(" / ");
 }
 
 function readPayloadMessage(value: unknown, fallback: string) {
@@ -2177,6 +2310,7 @@ export default function MePage() {
   const [personalProfileDraft, setPersonalProfileDraft] = useState<PersonalProfileDraft>(EMPTY_PERSONAL_PROFILE);
   const [personalBusinessCards, setPersonalBusinessCards] = useState<MerchantBusinessCardAsset[]>([]);
   const [personalFavoriteSites, setPersonalFavoriteSites] = useState<PersonalFavoriteSite[]>([]);
+  const [personalFavoritePublishedSites, setPersonalFavoritePublishedSites] = useState<PersonalFavoritePublishedSite[]>([]);
   const [personalProfileSaving, setPersonalProfileSaving] = useState(false);
   const [personalAvatarUploading, setPersonalAvatarUploading] = useState(false);
   const [personalProfileMessage, setPersonalProfileMessage] = useState("");
@@ -2565,6 +2699,51 @@ export default function MePage() {
   useEffect(() => {
     personalFavoriteSitesRef.current = personalFavoriteSites;
   }, [personalFavoriteSites]);
+  useEffect(() => {
+    if (personalFavoriteSites.length === 0) {
+      setPersonalFavoritePublishedSites([]);
+      return;
+    }
+
+    let cancelled = false;
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const response = await fetch("/api/platform-published", {
+          method: "GET",
+          cache: "no-store",
+          credentials: "same-origin",
+          signal: controller.signal,
+          headers: {
+            accept: "application/json",
+          },
+        });
+        const payload = (await response.json().catch(() => null)) as { blocks?: unknown } | null;
+        if (!response.ok || !Array.isArray(payload?.blocks)) {
+          if (!cancelled) setPersonalFavoritePublishedSites([]);
+          return;
+        }
+        const sites = extractFavoritePublishedSitesFromBlocks(payload.blocks);
+        if (!cancelled) setPersonalFavoritePublishedSites(sites);
+      } catch {
+        if (!cancelled) setPersonalFavoritePublishedSites([]);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [personalFavoriteSites.length]);
+  const personalFavoritePublishedSitesByMatchKey = useMemo(() => {
+    const map = new Map<string, PersonalFavoritePublishedSite>();
+    personalFavoritePublishedSites.forEach((site) => {
+      getFavoritePublishedSiteKeys(site).forEach((key) => {
+        if (!map.has(key)) map.set(key, site);
+      });
+    });
+    return map;
+  }, [personalFavoritePublishedSites]);
   useEffect(() => {
     supportSelfCardShareBundleRef.current = {};
   }, [personalBusinessCards]);
@@ -3121,13 +3300,6 @@ export default function MePage() {
       }
     },
     [isMobileViewport, locale],
-  );
-  const removePersonalFavoriteSite = useCallback(
-    (siteId: string) => {
-      const nextSites = personalFavoriteSites.filter((site) => site.id !== siteId);
-      void persistPersonalFavoriteSites(nextSites).catch(() => undefined);
-    },
-    [persistPersonalFavoriteSites, personalFavoriteSites],
   );
   const showFaollaFavoriteToast = useCallback((text: string, tone: "success" | "error" = "success") => {
     setFaollaFavoriteToast({
@@ -5887,38 +6059,57 @@ export default function MePage() {
           </div>
         ) : null}
         <div className={compact ? "space-y-3" : "grid gap-3 md:grid-cols-2 xl:grid-cols-3"}>
-          {personalFavoriteSites.map((site) => (
-            <article
-              key={site.id}
-              className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_14px_34px_rgba(15,23,42,0.07)]"
-            >
-              <div className="flex items-start gap-3">
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-amber-50 text-amber-600">
-                  <Icon name="star" />
+          {personalFavoriteSites.map((site) => {
+            const matchedPublishedSite = Array.from(getPersonalFavoritePublishedMatchKeys(site))
+              .map((key) => personalFavoritePublishedSitesByMatchKey.get(key))
+              .find((item): item is PersonalFavoritePublishedSite => Boolean(item));
+            const cardImageUrl = normalizePublicAssetUrl(matchedPublishedSite?.merchantCardImageUrl || "");
+            const cardImageOpacity =
+              typeof matchedPublishedSite?.merchantCardImageOpacity === "number" &&
+              Number.isFinite(matchedPublishedSite.merchantCardImageOpacity)
+                ? Math.max(0, Math.min(1, matchedPublishedSite.merchantCardImageOpacity))
+                : 1;
+            const merchantName =
+              trimText(matchedPublishedSite?.merchantName) ||
+              trimText(matchedPublishedSite?.name) ||
+              trimText(site.name) ||
+              "商户网站";
+            const merchantIndustry =
+              trimText(matchedPublishedSite?.industry) || trimText(matchedPublishedSite?.category) || "商户";
+            const merchantLocation = formatFavoritePublishedLocation(matchedPublishedSite?.location);
+            const merchantSubtitle =
+              merchantLocation ||
+              trimText(matchedPublishedSite?.domain) ||
+              trimText(site.subtitle) ||
+              trimText(site.url);
+
+            return (
+              <button
+                key={site.id}
+                type="button"
+                className="group relative block h-[136px] w-full overflow-hidden rounded-xl border border-slate-200 bg-white text-left shadow-[0_14px_34px_rgba(15,23,42,0.07)] transition hover:brightness-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/70"
+                onClick={() => openPersonalFavoriteSite(site)}
+              >
+                {cardImageUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={cardImageUrl}
+                    alt={merchantName}
+                    className="absolute inset-0 h-full w-full object-cover"
+                    style={{ opacity: cardImageOpacity }}
+                  />
+                ) : (
+                  <div className="absolute inset-0 bg-[linear-gradient(135deg,#f8fafc_0%,#e0f2fe_48%,#fef3c7_100%)]" />
+                )}
+                <div className="absolute inset-0 bg-gradient-to-t from-white/95 via-white/62 to-white/15" />
+                <div className="relative flex h-full flex-col justify-end p-4">
+                  <div className="max-w-full truncate text-lg font-bold leading-tight text-slate-950">{merchantName}</div>
+                  <div className="mt-1 max-w-full truncate text-sm font-semibold text-slate-700">{merchantIndustry}</div>
+                  <div className="mt-1 max-w-full truncate text-xs text-slate-600">{merchantSubtitle}</div>
                 </div>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-base font-semibold text-slate-950">{site.name || "商户网站"}</div>
-                  <div className="mt-1 truncate text-xs text-slate-500">{site.subtitle || site.url}</div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      className="rounded-full bg-slate-950 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-800"
-                      onClick={() => openPersonalFavoriteSite(site)}
-                    >
-                      打开
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
-                      onClick={() => removePersonalFavoriteSite(site.id)}
-                    >
-                      取消收藏
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </article>
-          ))}
+              </button>
+            );
+          })}
         </div>
       </div>
     );
