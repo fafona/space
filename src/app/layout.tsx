@@ -333,15 +333,16 @@ html[data-faolla-app-shell="true"]:not([data-faolla-web-launch-ready="true"]) bo
   position: relative;
   z-index: 1;
   display: block;
-  width: 3.85rem;
-  height: 3.78rem;
-  background-image: url("/faolla-logo-f.png?v=20260508a");
+  width: 3.46rem;
+  height: 3.4rem;
+  background-image: url("/faolla-logo-f.png?v=20260508b");
   background-position: center;
   background-repeat: no-repeat;
   background-size: contain;
   filter:
     drop-shadow(0 0 1.1rem rgba(125, 211, 252, 0.32))
     drop-shadow(0 0.65rem 1.1rem rgba(14, 165, 233, 0.18));
+  transform: translate(0.08rem, 0.1rem);
 }
 .faolla-launch-cover-title {
   margin-top: 1.75rem;
@@ -1206,7 +1207,7 @@ export default async function RootLayout({
         <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=20260409c" />
         <link rel="manifest" href="/manifest.webmanifest" />
         <link rel="preload" as="image" href="/faolla-app-icon-192.png?v=20260409c" />
-        <link rel="preload" as="image" href="/faolla-logo-f.png?v=20260508a" />
+        <link rel="preload" as="image" href="/faolla-logo-f.png?v=20260508b" />
         <script id="faolla-app-shell-prepaint" dangerouslySetInnerHTML={{ __html: FAOLLA_APP_SHELL_PREPAINT_SCRIPT }} />
         <style id="faolla-mobile-shell-size-overrides" dangerouslySetInnerHTML={{ __html: FAOLLA_MOBILE_SHELL_INLINE_STYLE }} />
         <script id="faolla-native-fast-launch" dangerouslySetInnerHTML={{ __html: FAOLLA_NATIVE_FAST_LAUNCH_SCRIPT }} />
