@@ -481,6 +481,13 @@ function formatFavoritePublishedLocation(location: Partial<SiteLocation> | null 
   return [country, province, city].filter(Boolean).join(" / ");
 }
 
+function formatFavoritePublishedPortalLocation(location: Partial<SiteLocation> | null | undefined) {
+  const country = trimText(location?.country) || "-";
+  const province = trimText(location?.province) || "-";
+  const city = trimText(location?.city) || "-";
+  return `${country} / ${province} / ${city}`;
+}
+
 function readPayloadMessage(value: unknown, fallback: string) {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
@@ -6058,7 +6065,7 @@ export default function MePage() {
             </div>
           </div>
         ) : null}
-        <div className={compact ? "space-y-3" : "grid gap-3 md:grid-cols-2 xl:grid-cols-3"}>
+        <div className={compact ? "space-y-3" : "grid gap-2 md:grid-cols-[repeat(auto-fit,minmax(320px,488px))]"}>
           {personalFavoriteSites.map((site) => {
             const matchedPublishedSite = Array.from(getPersonalFavoritePublishedMatchKeys(site))
               .map((key) => personalFavoritePublishedSitesByMatchKey.get(key))
@@ -6075,10 +6082,12 @@ export default function MePage() {
               trimText(site.name) ||
               "商户网站";
             const merchantIndustry =
-              trimText(matchedPublishedSite?.industry) || trimText(matchedPublishedSite?.category) || "商户";
-            const merchantLocation = formatFavoritePublishedLocation(matchedPublishedSite?.location);
+              trimText(matchedPublishedSite?.industry) || trimText(matchedPublishedSite?.category) || "未分类";
+            const portalLocation = matchedPublishedSite
+              ? formatFavoritePublishedPortalLocation(matchedPublishedSite.location)
+              : trimText(site.subtitle) || trimText(site.url);
             const merchantSubtitle =
-              merchantLocation ||
+              formatFavoritePublishedLocation(matchedPublishedSite?.location) ||
               trimText(matchedPublishedSite?.domain) ||
               trimText(site.subtitle) ||
               trimText(site.url);
@@ -6087,25 +6096,34 @@ export default function MePage() {
               <button
                 key={site.id}
                 type="button"
-                className="group relative block h-[136px] w-full overflow-hidden rounded-xl border border-slate-200 bg-white text-left shadow-[0_14px_34px_rgba(15,23,42,0.07)] transition hover:brightness-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/70"
+                className={`relative block h-[152px] w-full overflow-auto rounded-xl border border-slate-300 bg-[#f8fafc] p-4 text-left transition hover:brightness-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/70 ${
+                  compact ? "" : "max-w-[488px]"
+                }`}
                 onClick={() => openPersonalFavoriteSite(site)}
               >
                 {cardImageUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={cardImageUrl}
-                    alt={merchantName}
-                    className="absolute inset-0 h-full w-full object-cover"
-                    style={{ opacity: cardImageOpacity }}
+                  <div
+                    className="absolute inset-0 bg-cover bg-center bg-no-repeat"
+                    style={{ backgroundImage: `url(${cardImageUrl})`, opacity: cardImageOpacity }}
                   />
-                ) : (
-                  <div className="absolute inset-0 bg-[linear-gradient(135deg,#f8fafc_0%,#e0f2fe_48%,#fef3c7_100%)]" />
-                )}
-                <div className="absolute inset-0 bg-gradient-to-t from-white/95 via-white/62 to-white/15" />
-                <div className="relative flex h-full flex-col justify-end p-4">
-                  <div className="max-w-full truncate text-lg font-bold leading-tight text-slate-950">{merchantName}</div>
-                  <div className="mt-1 max-w-full truncate text-sm font-semibold text-slate-700">{merchantIndustry}</div>
-                  <div className="mt-1 max-w-full truncate text-xs text-slate-600">{merchantSubtitle}</div>
+                ) : null}
+                <div className="relative h-full min-w-0">
+                  <div
+                    className="absolute inline-flex w-fit max-w-full text-base font-semibold text-slate-900"
+                    style={{ left: 0, top: 0 }}
+                  >
+                    <span className="truncate">{merchantName}</span>
+                  </div>
+                  <div className="absolute inline-flex w-fit max-w-full text-xs text-slate-500" style={{ left: 0, top: 30 }}>
+                    <span className="truncate">{merchantIndustry}</span>
+                  </div>
+                  <div
+                    className="absolute inline-flex w-fit max-w-full text-xs text-slate-500"
+                    style={{ left: 0, top: 52 }}
+                    title={merchantSubtitle}
+                  >
+                    <span className="truncate">{portalLocation}</span>
+                  </div>
                 </div>
               </button>
             );
