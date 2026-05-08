@@ -333,10 +333,21 @@ html[data-faolla-app-shell="true"]:not([data-faolla-web-launch-ready="true"]) bo
 .faolla-launch-solar-loader span {
   position: relative;
   z-index: 1;
-  color: #081121;
-  font-size: 1.52rem;
-  font-weight: 950;
-  line-height: 1;
+  width: 2.42rem;
+  height: 2.42rem;
+  border-radius: 0.74rem;
+  background:
+    #f8fafc
+    url("/faolla-app-icon-192.png")
+    center center / 92% auto
+    no-repeat;
+  box-shadow:
+    0 0.16rem 0.42rem rgba(8, 17, 33, 0.2),
+    inset 0 0.06rem 0.16rem rgba(255, 255, 255, 0.72);
+  color: transparent;
+  font-size: 0;
+  line-height: 0;
+  overflow: hidden;
 }
 .faolla-launch-cover-title {
   margin-top: 1.75rem;
