@@ -273,8 +273,9 @@ html[data-faolla-app-shell="true"]:not([data-faolla-web-launch-ready="true"]) bo
   place-items: center;
   pointer-events: none;
   background:
-    radial-gradient(circle at 50% 38%, rgba(42, 74, 118, 0.7), rgba(8, 17, 33, 0) 21rem),
+    radial-gradient(circle at 50% 38%, rgba(40, 123, 173, 0.42), rgba(8, 17, 33, 0) 21rem),
     linear-gradient(180deg, #081121 0%, #0d1b2d 56%, #081121 100%);
+  background-color: #081121;
   opacity: 1;
   visibility: visible;
   transition:
@@ -295,8 +296,8 @@ html[data-faolla-app-shell="true"]:not([data-faolla-web-launch-ready="true"]) bo
   border-radius: 9999px;
   display: grid;
   place-items: center;
-  background: radial-gradient(circle, rgba(255, 197, 82, 0.13) 0%, rgba(255, 197, 82, 0.04) 58%, transparent 72%);
-  filter: drop-shadow(0 1rem 2.4rem rgba(0, 0, 0, 0.3));
+  background: radial-gradient(circle, rgba(125, 211, 252, 0.12) 0%, rgba(14, 165, 233, 0.06) 58%, transparent 72%);
+  filter: drop-shadow(0 1rem 2.4rem rgba(14, 165, 233, 0.18));
 }
 .faolla-launch-solar-loader::before {
   content: "";
@@ -307,10 +308,10 @@ html[data-faolla-app-shell="true"]:not([data-faolla-web-launch-ready="true"]) bo
     conic-gradient(
       from -90deg,
       transparent 0deg,
-      rgba(255, 221, 124, 0.1) 42deg,
-      rgba(255, 204, 92, 0.72) 96deg,
-      rgba(255, 243, 186, 0.98) 132deg,
-      rgba(255, 185, 72, 0.46) 165deg,
+      rgba(147, 197, 253, 0.1) 42deg,
+      rgba(125, 211, 252, 0.7) 96deg,
+      rgba(219, 234, 254, 0.98) 132deg,
+      rgba(56, 189, 248, 0.48) 165deg,
       transparent 220deg,
       transparent 360deg
     );
@@ -320,34 +321,18 @@ html[data-faolla-app-shell="true"]:not([data-faolla-web-launch-ready="true"]) bo
 }
 .faolla-launch-solar-loader::after {
   content: "";
-  position: absolute;
-  inset: 1.72rem;
-  border-radius: inherit;
-  background:
-    radial-gradient(circle at 36% 30%, rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.16) 34%, transparent 35%),
-    linear-gradient(145deg, #fff4cf 0%, #ffd166 50%, #f59e0b 100%);
-  box-shadow:
-    inset 0 0.13rem 0.32rem rgba(255, 255, 255, 0.42),
-    0 0 1.75rem rgba(255, 190, 72, 0.28);
+  display: none;
 }
 .faolla-launch-solar-loader span {
   position: relative;
   z-index: 1;
-  width: 2.42rem;
-  height: 2.42rem;
-  border-radius: 0.74rem;
-  background:
-    #f8fafc
-    url("/faolla-app-icon-192.png")
-    center center / 92% auto
-    no-repeat;
-  box-shadow:
-    0 0.16rem 0.42rem rgba(8, 17, 33, 0.2),
-    inset 0 0.06rem 0.16rem rgba(255, 255, 255, 0.72);
-  color: transparent;
-  font-size: 0;
-  line-height: 0;
-  overflow: hidden;
+  color: #eaf7ff;
+  font-size: 2.18rem;
+  line-height: 1;
+  font-weight: 950;
+  text-shadow:
+    0 0 1.1rem rgba(125, 211, 252, 0.34),
+    0 0.65rem 1.55rem rgba(14, 165, 233, 0.2);
 }
 .faolla-launch-cover-title {
   margin-top: 1.75rem;
