@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import type { ReactNode } from "react";
 
 type LoadingProgressScreenProps = {
@@ -17,36 +16,19 @@ function isChineseLocale(locale?: string | null) {
 }
 
 export default function LoadingProgressScreen(props: LoadingProgressScreenProps) {
-  const useChinesePoster = isChineseLocale(props.locale);
-  const desktopSrc = useChinesePoster
-    ? "/loading-progress-desktop-zh.webp"
-    : "/loading-progress-desktop-en.webp";
-  const mobileSrc = useChinesePoster
-    ? "/loading-progress-mobile-zh.webp"
-    : "/loading-progress-mobile-en.webp";
-  const posterAlt = useChinesePoster ? "FAOLLA 欢迎页" : "FAOLLA welcome screen";
+  const useChineseCopy = isChineseLocale(props.locale);
+  const title = props.statusTitle || props.message || (useChineseCopy ? "正在进入 Faolla" : "Opening Faolla");
+  const description = props.statusDescription || (useChineseCopy ? "正在加载，请稍候。" : "Loading. Please wait.");
 
   return (
-    <main className="faolla-loading-progress-screen relative min-h-screen overflow-hidden bg-[#081121]">
-      <div className="absolute inset-0 lg:hidden">
-        <Image
-          src={mobileSrc}
-          alt={posterAlt}
-          fill
-          priority
-          sizes="100vw"
-          className="object-cover object-center"
-        />
-      </div>
-      <div className="absolute inset-0 hidden lg:block">
-        <Image
-          src={desktopSrc}
-          alt={posterAlt}
-          fill
-          priority
-          sizes="100vw"
-          className="object-cover object-center"
-        />
+    <main className="faolla-loading-progress-screen relative grid min-h-screen place-items-center overflow-hidden bg-[#081121] px-6 text-white">
+      <div className="faolla-loading-progress-card relative z-10 flex w-full max-w-sm flex-col items-center text-center">
+        <div className="faolla-launch-solar-loader" aria-hidden="true">
+          <span>F</span>
+        </div>
+        <div className="mt-7 text-3xl font-black tracking-normal">Faolla</div>
+        <div className="mt-6 text-base font-semibold text-white/90">{title}</div>
+        <div className="mt-2 text-sm leading-6 text-white/60">{description}</div>
       </div>
 
       {props.children ? (

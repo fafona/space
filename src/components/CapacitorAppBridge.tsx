@@ -195,6 +195,13 @@ function showLaunchCovers() {
   applyNativeLaunchStatusBar();
 }
 
+function revealWebLaunchCoverAfterFirstPaint() {
+  showWebLaunchCover();
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(hideNativeLaunchCover);
+  });
+}
+
 function waitForNextTwoFrames() {
   return new Promise<void>((resolve) => {
     window.requestAnimationFrame(() => {
@@ -306,9 +313,7 @@ export default function CapacitorAppBridge() {
     if (shouldUseWebLaunchCover() && embeddedDocument) {
       window.requestAnimationFrame(hideWebLaunchCover);
     } else if (shouldUseWebLaunchCover() && !Capacitor.isNativePlatform()) {
-      window.setTimeout(() => {
-        window.requestAnimationFrame(hideWebLaunchCover);
-      }, 900);
+      scheduleLaunchCoverHideWhenContentReady(240, 9000);
     }
 
     if (!Capacitor.isNativePlatform()) return;
@@ -318,6 +323,7 @@ export default function CapacitorAppBridge() {
     document.documentElement.dataset.capacitorPlatform = Capacitor.getPlatform();
 
     applyNativeLaunchStatusBar();
+    revealWebLaunchCoverAfterFirstPaint();
 
     let activeOrientation = "";
     const syncNativeOrientation = () => {

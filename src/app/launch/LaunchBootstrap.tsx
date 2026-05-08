@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import { useI18n } from "@/components/I18nProvider";
 import {
@@ -17,14 +18,14 @@ function resolveLaunchCopy(locale: string) {
   const normalized = (locale || "").trim().toLowerCase();
   if (normalized.startsWith("zh")) {
     return {
-      title: "正在进入工作区",
-      body: "正在检查登录状态并恢复最近的工作入口。",
+      title: "正在进入 Faolla",
+      body: "正在检查登录状态并恢复最近的入口。",
     };
   }
   if (normalized.startsWith("es")) {
     return {
       title: "Abriendo tu espacio",
-      body: "Estamos comprobando la sesión y recuperando tu último acceso.",
+      body: "Estamos comprobando la sesion y recuperando tu ultimo acceso.",
     };
   }
   return {
@@ -35,10 +36,19 @@ function resolveLaunchCopy(locale: string) {
 
 export default function LaunchBootstrap() {
   const { locale } = useI18n();
+  const router = useRouter();
   const copy = resolveLaunchCopy(locale);
 
   useEffect(() => {
     let cancelled = false;
+    const navigate = (href: string) => {
+      if (cancelled) return;
+      if (/^https?:\/\//i.test(href)) {
+        window.location.replace(href);
+        return;
+      }
+      router.replace(href);
+    };
 
     void (async () => {
       try {
@@ -48,24 +58,23 @@ export default function LaunchBootstrap() {
           (launchParams.get("appShell") || "").trim().toLowerCase() === "faolla" ||
           (launchParams.get("nativeStart") || "").trim() === "1" ||
           launchParams.has("nativeAuthRetry");
-        const directSessionTimeoutMs = isNativeAppLaunch ? 1600 : 2400;
-        const recoverySessionTimeoutMs = isNativeAppLaunch ? 3200 : 5200;
+        const directSessionTimeoutMs = isNativeAppLaunch ? 900 : 1600;
+        const recoverySessionTimeoutMs = isNativeAppLaunch ? 2400 : 3800;
         if (isNativeAppLaunch && !launchParams.has("nativeAuthRetry") && isMerchantNumericId(recentMerchantId)) {
           persistRecentMerchantLaunchState(recentMerchantId);
-          window.location.replace(buildBackendAppShellHref(buildMerchantBackendHref(recentMerchantId)));
+          navigate(buildBackendAppShellHref(buildMerchantBackendHref(recentMerchantId)));
           return;
         }
 
-        const directPayload = await readMerchantSessionPayload(directSessionTimeoutMs, { includeClientTokens: true }).catch(() => null);
-        const payload =
-          directPayload?.authenticated === true
-            ? directPayload
-            : await resolveFrontendAuthPayload(recoverySessionTimeoutMs).catch(() => null);
+        const directPayloadTask = readMerchantSessionPayload(directSessionTimeoutMs, { includeClientTokens: true }).catch(() => null);
+        const recoveryPayloadTask = resolveFrontendAuthPayload(recoverySessionTimeoutMs).catch(() => null);
+        const directPayload = await directPayloadTask;
+        const payload = directPayload?.authenticated === true ? directPayload : await recoveryPayloadTask;
         if (cancelled) return;
 
         if (payload?.authenticated === true) {
           if (payload.accountType === "personal") {
-            window.location.replace(buildBackendAppShellHref("/me"));
+            navigate(buildBackendAppShellHref("/me"));
             return;
           }
 
@@ -76,31 +85,31 @@ export default function LaunchBootstrap() {
             (typeof payload.merchantId === "string" ? payload.merchantId.trim() : "");
           if (isMerchantNumericId(merchantId)) {
             persistRecentMerchantLaunchState(merchantId);
-            window.location.replace(buildBackendAppShellHref(buildMerchantBackendHref(merchantId)));
+            navigate(buildBackendAppShellHref(buildMerchantBackendHref(merchantId)));
             return;
           }
         }
 
         if (isMerchantNumericId(recentMerchantId)) {
           if (isNativeAppLaunch) {
-            window.location.replace(buildBackendAppShellHref(buildMerchantBackendHref(recentMerchantId)));
+            navigate(buildBackendAppShellHref(buildMerchantBackendHref(recentMerchantId)));
             return;
           }
-          window.location.replace(`/login?launchRetry=1&merchantHint=${encodeURIComponent(recentMerchantId)}`);
+          navigate(`/login?launchRetry=1&merchantHint=${encodeURIComponent(recentMerchantId)}`);
           return;
         }
 
-        window.location.replace("/login?launchRetry=1");
+        navigate("/login?launchRetry=1");
       } catch {
         if (cancelled) return;
-        window.location.replace("/login?launchRetry=1");
+        navigate("/login?launchRetry=1");
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [router]);
 
   return <LoadingProgressScreen locale={locale} statusTitle={copy.title} statusDescription={copy.body} />;
 }
