@@ -106,7 +106,7 @@ const STANDALONE_LAUNCH_SCRIPT = `
     // Ignore search param parsing failures and continue normal launch bootstrap.
   }
   if ((window.location.pathname || "/") !== "/") return;
-  window.location.replace("/launch");
+  window.location.replace("/launch?appShell=faolla");
 })();
 `;
 

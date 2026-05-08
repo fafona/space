@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { config, isLocalLikeRequestHostname, resolveHttpsRedirectUrl } from "../middleware";
+import { NextRequest } from "next/server";
+import { config, isLocalLikeRequestHostname, middleware, resolveHttpsRedirectUrl } from "../middleware";
+import {
+  MERCHANT_AUTH_ACCOUNT_TYPE_COOKIE,
+  MERCHANT_AUTH_COOKIE,
+  MERCHANT_AUTH_MERCHANT_ID_COOKIE,
+  MERCHANT_AUTH_REFRESH_COOKIE,
+} from "./lib/merchantAuthSession";
 
 test("isLocalLikeRequestHostname only treats local hosts and IPs as local-like", () => {
   assert.equal(isLocalLikeRequestHostname("localhost"), true);
@@ -59,4 +66,32 @@ test("resolveHttpsRedirectUrl avoids redirecting when a proxy omits forwarded pr
 
 test("middleware matcher now covers api routes for https enforcement", () => {
   assert.deepEqual(config.matcher, ["/", "/_next/static/:path*", "/((?!_next/image|favicon.ico|icon.svg|.*\\..*).*)"]);
+});
+
+test("middleware redirects authenticated personal launch requests before page render", async () => {
+  const request = new NextRequest("https://faolla.com/launch?appShell=faolla", {
+    headers: {
+      cookie: `${MERCHANT_AUTH_COOKIE}=access-token; ${MERCHANT_AUTH_ACCOUNT_TYPE_COOKIE}=personal`,
+    },
+  });
+
+  const response = await middleware(request);
+
+  assert.equal(response.status, 307);
+  assert.equal(response.headers.get("location"), "https://faolla.com/me?appShell=faolla");
+  assert.match(response.headers.get("cache-control") ?? "", /no-store/);
+});
+
+test("middleware redirects authenticated merchant launch requests before page render", async () => {
+  const request = new NextRequest("https://faolla.com/launch?appShell=faolla&nativeStart=1", {
+    headers: {
+      cookie: `${MERCHANT_AUTH_REFRESH_COOKIE}=refresh-token; ${MERCHANT_AUTH_ACCOUNT_TYPE_COOKIE}=merchant; ${MERCHANT_AUTH_MERCHANT_ID_COOKIE}=10000003`,
+    },
+  });
+
+  const response = await middleware(request);
+
+  assert.equal(response.status, 307);
+  assert.equal(response.headers.get("location"), "https://faolla.com/10000003?appShell=faolla");
+  assert.match(response.headers.get("cache-control") ?? "", /no-store/);
 });

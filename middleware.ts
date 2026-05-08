@@ -2,6 +2,12 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { extractMerchantPrefixFromHost } from "@/lib/siteRouting";
 import { isMerchantNumericId, normalizeDomainPrefix } from "@/lib/merchantIdentity";
+import {
+  MERCHANT_AUTH_ACCOUNT_TYPE_COOKIE,
+  MERCHANT_AUTH_COOKIE,
+  MERCHANT_AUTH_MERCHANT_ID_COOKIE,
+  MERCHANT_AUTH_REFRESH_COOKIE,
+} from "@/lib/merchantAuthSession";
 
 const RESERVED_SUBDOMAIN_PREFIXES = new Set(["www", "main", "portal"]);
 const RESERVED_PATH_SEGMENTS = new Set([
@@ -23,6 +29,8 @@ const INTERNAL_MERCHANT_REWRITE_PARAM = "__merchantInternalRewrite";
 const HTTPS_REDIRECT_STATUS = 308;
 const FORWARDED_PROTO_HEADER = "x-forwarded-proto";
 const FORWARDED_HOST_HEADER = "x-forwarded-host";
+const FAOLLA_APP_SHELL_PARAM = "appShell";
+const FAOLLA_APP_SHELL_VALUE = "faolla";
 const PROXY_HINT_HEADERS = [
   FORWARDED_HOST_HEADER,
   "x-forwarded-for",
@@ -195,6 +203,28 @@ function withAppShellNoStore(response: NextResponse, pathname: string) {
   return response;
 }
 
+function buildLaunchSessionRedirectUrl(request: NextRequest) {
+  if (request.nextUrl.pathname !== "/launch") return null;
+
+  const accessToken = String(request.cookies.get(MERCHANT_AUTH_COOKIE)?.value ?? "").trim();
+  const refreshToken = String(request.cookies.get(MERCHANT_AUTH_REFRESH_COOKIE)?.value ?? "").trim();
+  if (!accessToken && !refreshToken) return null;
+
+  const accountType = String(request.cookies.get(MERCHANT_AUTH_ACCOUNT_TYPE_COOKIE)?.value ?? "")
+    .trim()
+    .toLowerCase();
+  const merchantId = String(request.cookies.get(MERCHANT_AUTH_MERCHANT_ID_COOKIE)?.value ?? "").trim();
+  const targetPath =
+    accountType === "personal" ? "/me" : isMerchantNumericId(merchantId) ? `/${merchantId}` : "";
+  if (!targetPath) return null;
+
+  const redirectUrl = request.nextUrl.clone();
+  redirectUrl.pathname = targetPath;
+  redirectUrl.search = "";
+  redirectUrl.searchParams.set(FAOLLA_APP_SHELL_PARAM, FAOLLA_APP_SHELL_VALUE);
+  return redirectUrl;
+}
+
 async function resolveSiteIdByPrefix(prefix: string, request: NextRequest) {
   const normalizedPrefix = normalizeDomainPrefix(prefix);
   if (!normalizedPrefix) return "";
@@ -245,6 +275,11 @@ export async function middleware(request: NextRequest) {
   }
 
   const pathname = request.nextUrl.pathname;
+  const launchSessionRedirectUrl = buildLaunchSessionRedirectUrl(request);
+  if (launchSessionRedirectUrl) {
+    return withAppShellNoStore(NextResponse.redirect(launchSessionRedirectUrl), pathname);
+  }
+
   const segments = pathname.split("/").filter(Boolean);
 
   if (segments.length === 1 && isMerchantNumericId(segments[0] ?? "")) {

@@ -1,4 +1,4 @@
-const FAOLLA_SW_VERSION = "faolla-pwa-v20260508-1";
+const FAOLLA_SW_VERSION = "faolla-pwa-v20260508-2";
 const FAOLLA_BADGE_CACHE = "faolla-badge-state-v1";
 const FAOLLA_BADGE_STATE_URL = "/__faolla_badge_state__";
 const FAOLLA_VISIBILITY_STATE_URL = "/__faolla_visibility_state__";
@@ -253,6 +253,15 @@ function isAuthNavigationPath(pathname) {
   );
 }
 
+function isFastAppShellLaunchRequest(url) {
+  if (url.pathname !== "/launch") return false;
+  return (
+    String(url.searchParams.get("appShell") || "").trim().toLowerCase() === "faolla" ||
+    String(url.searchParams.get("nativeStart") || "").trim() === "1" ||
+    url.searchParams.has("nativeBuild")
+  );
+}
+
 function isAppNavigationPath(pathname) {
   return (
     pathname === "/admin" ||
@@ -455,6 +464,28 @@ async function handleAuthNavigationRequest(event, request, url) {
     if (cachedResponse) return cachedResponse;
     return buildOfflineFallbackResponse(request);
   }
+}
+
+async function handleFastAppShellLaunchRequest(event, request, url) {
+  const launchTarget = await readLaunchTarget();
+  if (launchTarget) {
+    const cachedLaunchTarget = await caches.match(
+      normalizeNavigationCacheKey(new URL(launchTarget, self.location.origin)),
+      {
+        cacheName: FAOLLA_APP_PAGE_CACHE,
+      },
+    );
+    if (cachedLaunchTarget) {
+      event.waitUntil(
+        Promise.allSettled([
+          fetch(new Request(request, { cache: "reload" })).catch(() => null),
+          warmRecentRoutes([launchTarget]),
+        ]),
+      );
+      return cachedLaunchTarget;
+    }
+  }
+  return handleAuthNavigationRequest(event, request, url);
 }
 
 async function resolveNavigationResponse(event, request) {
@@ -891,6 +922,10 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
 
   if (isNavigationRequest(request, url)) {
+    if (isFastAppShellLaunchRequest(url)) {
+      event.respondWith(handleFastAppShellLaunchRequest(event, request, url));
+      return;
+    }
     if (isAuthNavigationPath(url.pathname)) {
       event.respondWith(handleAuthNavigationRequest(event, request, url));
       return;
