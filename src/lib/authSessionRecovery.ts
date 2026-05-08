@@ -1,4 +1,9 @@
 import type { Session } from "@supabase/supabase-js";
+import {
+  deleteBrowserAuthStorageCookie,
+  readBrowserAuthStorageCookie,
+  writeBrowserAuthStorageCookie,
+} from "@/lib/browserAuthStorage";
 import { requestParentFrontendAuthPayload } from "@/lib/frontendAuthBridge";
 import { legacySupabaseAuthStorageKey, resolvedSupabaseAuthStorageKey, supabase } from "@/lib/supabase";
 
@@ -122,6 +127,12 @@ function getRecoveryBrowserStorages() {
   return [...getEphemeralBrowserStorages(), ...getPersistentBrowserStorages()];
 }
 
+function getRecoveryStorageKeys() {
+  return [resolvedSupabaseAuthStorageKey, legacySupabaseAuthStorageKey].filter(
+    (value, index, list) => value && list.indexOf(value) === index,
+  );
+}
+
 async function withTimeout<T>(task: Promise<T>, timeoutMs: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   const timeoutTask = new Promise<never>((_, reject) => {
@@ -186,9 +197,7 @@ function extractStoredSessionTokens(input: unknown): SessionTokens | null {
 }
 
 async function tryRecoverSessionFromStoredToken(timeoutMs: number): Promise<Session | null> {
-  const storageKeys = [resolvedSupabaseAuthStorageKey, legacySupabaseAuthStorageKey].filter(
-    (value, index, list) => value && list.indexOf(value) === index,
-  );
+  const storageKeys = getRecoveryStorageKeys();
   for (const storage of getRecoveryBrowserStorages()) {
     for (const storageKey of storageKeys) {
       try {
@@ -211,16 +220,29 @@ async function tryRecoverSessionFromStoredToken(timeoutMs: number): Promise<Sess
       }
     }
   }
+  for (const storageKey of storageKeys) {
+    try {
+      const raw = readBrowserAuthStorageCookie(storageKey);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw) as unknown;
+      const tokens = extractStoredSessionTokens(parsed);
+      if (!tokens) continue;
+      const { data } = await withTimeout(supabase.auth.setSession(tokens), Math.max(3000, timeoutMs));
+      if (data.session) return data.session;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (isInvalidRefreshTokenMessage(message)) {
+        deleteBrowserAuthStorageCookie(storageKey);
+      }
+    }
+  }
   return null;
 }
 
 export function persistBrowserSupabaseSessionSnapshot(session: BrowserSessionSnapshot) {
-  const storageKeys = [resolvedSupabaseAuthStorageKey, legacySupabaseAuthStorageKey].filter(
-    (value, index, list) => value && list.indexOf(value) === index,
-  );
+  const storageKeys = getRecoveryStorageKeys();
   if (storageKeys.length === 0) return false;
   const storages = getRecoveryBrowserStorages();
-  if (storages.length === 0) return false;
 
   const snapshot = JSON.stringify(session);
   let stored = false;
@@ -232,6 +254,11 @@ export function persistBrowserSupabaseSessionSnapshot(session: BrowserSessionSna
       } catch {
         // Ignore browser storage write failures and keep trying others.
       }
+    }
+  }
+  for (const storageKey of storageKeys) {
+    if (writeBrowserAuthStorageCookie(storageKey, snapshot)) {
+      stored = true;
     }
   }
   return stored;
@@ -268,9 +295,7 @@ export async function establishBrowserSupabaseSession(
 }
 
 export function hasStoredBrowserSupabaseSessionTokens(): boolean {
-  const storageKeys = [resolvedSupabaseAuthStorageKey, legacySupabaseAuthStorageKey].filter(
-    (value, index, list) => value && list.indexOf(value) === index,
-  );
+  const storageKeys = getRecoveryStorageKeys();
   for (const storage of getRecoveryBrowserStorages()) {
     for (const storageKey of storageKeys) {
       try {
@@ -283,13 +308,21 @@ export function hasStoredBrowserSupabaseSessionTokens(): boolean {
       }
     }
   }
+  for (const storageKey of storageKeys) {
+    try {
+      const raw = readBrowserAuthStorageCookie(storageKey);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw) as unknown;
+      if (extractStoredSessionTokens(parsed)) return true;
+    } catch {
+      // ignore malformed cookie entries
+    }
+  }
   return false;
 }
 
 export function clearStoredBrowserSupabaseSessionTokens() {
-  const storageKeys = [resolvedSupabaseAuthStorageKey, legacySupabaseAuthStorageKey].filter(
-    (value, index, list) => value && list.indexOf(value) === index,
-  );
+  const storageKeys = getRecoveryStorageKeys();
   for (const storage of getRecoveryBrowserStorages()) {
     for (const storageKey of storageKeys) {
       try {
@@ -298,6 +331,9 @@ export function clearStoredBrowserSupabaseSessionTokens() {
         // ignore browser storage cleanup failures
       }
     }
+  }
+  for (const storageKey of storageKeys) {
+    deleteBrowserAuthStorageCookie(storageKey);
   }
 }
 

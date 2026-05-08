@@ -20,6 +20,111 @@ function getBrowserAuthStorages() {
   return collectUsableBrowserStorages([window.sessionStorage, window.localStorage]);
 }
 
+const browserAuthCookiePrefix = "faolla-auth-storage.";
+const browserAuthCookieMaxAgeSeconds = 60 * 60 * 24 * 180;
+const browserAuthCookieMaxValueLength = 3800;
+
+type CompactAuthSession = {
+  access_token: string;
+  refresh_token: string;
+  expires_at?: number;
+  expires_in?: number;
+  token_type?: string;
+};
+
+function canUseDocumentCookies() {
+  return typeof document !== "undefined" && typeof window !== "undefined";
+}
+
+function isBrowserAuthStorageKey(key: string) {
+  const normalized = String(key ?? "").trim();
+  return /^sb-[A-Za-z0-9_-]+-auth-token$/.test(normalized) || /auth-token/i.test(normalized);
+}
+
+function getBrowserAuthCookieName(key: string) {
+  return `${browserAuthCookiePrefix}${String(key).replace(/[^A-Za-z0-9_-]/g, "_")}`;
+}
+
+function getBrowserAuthCookieAttributes() {
+  if (typeof window === "undefined") return "; Path=/; SameSite=Lax";
+  const hostname = window.location.hostname.toLowerCase();
+  const secure = window.location.protocol === "https:" ? "; Secure" : "";
+  const domain = hostname === "faolla.com" || hostname.endsWith(".faolla.com") ? "; Domain=.faolla.com" : "";
+  return `; Path=/; SameSite=Lax${domain}${secure}`;
+}
+
+function readCookieValue(name: string) {
+  if (!canUseDocumentCookies()) return null;
+  const prefix = `${name}=`;
+  const parts = document.cookie.split("; ");
+  for (const part of parts) {
+    if (!part.startsWith(prefix)) continue;
+    try {
+      return decodeURIComponent(part.slice(prefix.length));
+    } catch {
+      return part.slice(prefix.length);
+    }
+  }
+  return null;
+}
+
+function normalizeFiniteNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function compactAuthStorageValue(value: string) {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== "object") return "";
+    const record = parsed as Record<string, unknown>;
+    const containers = [record, record.currentSession, record.session];
+    for (const container of containers) {
+      if (!container || typeof container !== "object") continue;
+      const candidate = container as Record<string, unknown>;
+      const accessToken = typeof candidate.access_token === "string" ? candidate.access_token.trim() : "";
+      const refreshToken = typeof candidate.refresh_token === "string" ? candidate.refresh_token.trim() : "";
+      if (!accessToken || !refreshToken) continue;
+      const compact: CompactAuthSession = {
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      };
+      const expiresAt = normalizeFiniteNumber(candidate.expires_at);
+      const expiresIn = normalizeFiniteNumber(candidate.expires_in);
+      const tokenType = typeof candidate.token_type === "string" ? candidate.token_type.trim() : "";
+      if (expiresAt !== undefined) compact.expires_at = expiresAt;
+      if (expiresIn !== undefined) compact.expires_in = expiresIn;
+      if (tokenType) compact.token_type = tokenType;
+      return JSON.stringify({
+        currentSession: compact,
+        session: compact,
+      });
+    }
+  } catch {
+    // Ignore malformed storage values; they are not useful for cookie-backed recovery.
+  }
+  return "";
+}
+
+export function readBrowserAuthStorageCookie(key: string) {
+  if (!isBrowserAuthStorageKey(key)) return null;
+  return readCookieValue(getBrowserAuthCookieName(key));
+}
+
+export function writeBrowserAuthStorageCookie(key: string, value: string) {
+  if (!canUseDocumentCookies() || !isBrowserAuthStorageKey(key)) return false;
+  const compact = compactAuthStorageValue(value);
+  if (!compact) return false;
+  const encoded = encodeURIComponent(compact);
+  if (encoded.length > browserAuthCookieMaxValueLength) return false;
+  document.cookie = `${getBrowserAuthCookieName(key)}=${encoded}; Max-Age=${browserAuthCookieMaxAgeSeconds}${getBrowserAuthCookieAttributes()}`;
+  return true;
+}
+
+export function deleteBrowserAuthStorageCookie(key: string) {
+  if (!canUseDocumentCookies() || !isBrowserAuthStorageKey(key)) return;
+  document.cookie = `${getBrowserAuthCookieName(key)}=; Max-Age=0${getBrowserAuthCookieAttributes()}`;
+}
+
 export function createMirroredBrowserAuthStorageAdapter() {
   return {
     getItem(key: string) {
@@ -55,6 +160,7 @@ export function createMirroredBrowserAuthStorageAdapter() {
           // Ignore partial persistence failures.
         }
       }
+      writeBrowserAuthStorageCookie(key, value);
     },
     removeItem(key: string) {
       for (const storage of getBrowserAuthStorages()) {
@@ -64,6 +170,7 @@ export function createMirroredBrowserAuthStorageAdapter() {
           // Ignore partial cleanup failures.
         }
       }
+      deleteBrowserAuthStorageCookie(key);
     },
   };
 }

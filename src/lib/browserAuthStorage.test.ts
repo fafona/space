@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createMirroredBrowserAuthStorageAdapter } from "@/lib/browserAuthStorage";
+import { createMirroredBrowserAuthStorageAdapter, readBrowserAuthStorageCookie } from "@/lib/browserAuthStorage";
 
 class MemoryStorage implements Storage {
   private store = new Map<string, string>();
@@ -30,17 +30,49 @@ class MemoryStorage implements Storage {
   }
 }
 
-function withWindowStorageHarness(run: (harness: { sessionStorage: MemoryStorage; localStorage: MemoryStorage }) => void) {
+function withWindowStorageHarness(
+  run: (harness: { sessionStorage: MemoryStorage; localStorage: MemoryStorage }) => void,
+  options: { cookies?: boolean } = {},
+) {
   const sessionStorage = new MemoryStorage();
   const localStorage = new MemoryStorage();
   const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const cookieJar = new Map<string, string>();
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     value: {
       sessionStorage,
       localStorage,
+      location: {
+        hostname: "www.faolla.com",
+        protocol: "https:",
+      },
     },
   });
+  if (options.cookies) {
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      value: {
+        get cookie() {
+          return [...cookieJar.entries()].map(([key, value]) => `${key}=${value}`).join("; ");
+        },
+        set cookie(value: string) {
+          const [pair, ...attributes] = String(value).split(";");
+          const separatorIndex = pair.indexOf("=");
+          if (separatorIndex < 0) return;
+          const key = pair.slice(0, separatorIndex);
+          const cookieValue = pair.slice(separatorIndex + 1);
+          const isExpired = attributes.some((attribute) => /^ max-age=0$/i.test(attribute));
+          if (isExpired) {
+            cookieJar.delete(key);
+            return;
+          }
+          cookieJar.set(key, cookieValue);
+        },
+      },
+    });
+  }
   try {
     run({ sessionStorage, localStorage });
   } finally {
@@ -50,6 +82,14 @@ function withWindowStorageHarness(run: (harness: { sessionStorage: MemoryStorage
       Object.defineProperty(globalThis, "window", {
         configurable: true,
         value: previousWindow,
+      });
+    }
+    if (typeof previousDocument === "undefined") {
+      Reflect.deleteProperty(globalThis, "document");
+    } else {
+      Object.defineProperty(globalThis, "document", {
+        configurable: true,
+        value: previousDocument,
       });
     }
   }
@@ -81,4 +121,33 @@ test("browser auth storage adapter clears both storage layers", () => {
     assert.equal(sessionStorage.getItem("sb-demo-auth-token"), null);
     assert.equal(localStorage.getItem("sb-demo-auth-token"), null);
   });
+});
+
+test("browser auth storage adapter writes a compact cookie snapshot for PWA recovery", () => {
+  withWindowStorageHarness(
+    () => {
+      const adapter = createMirroredBrowserAuthStorageAdapter();
+      adapter.setItem(
+        "sb-demo-auth-token",
+        JSON.stringify({
+          currentSession: {
+            access_token: "access-token",
+            refresh_token: "refresh-token",
+            token_type: "bearer",
+            user: {
+              email: "person@example.com",
+            },
+          },
+        }),
+      );
+
+      const cookieValue = readBrowserAuthStorageCookie("sb-demo-auth-token");
+      assert.match(String(cookieValue), /access-token/);
+      assert.doesNotMatch(String(cookieValue), /person@example.com/);
+
+      adapter.removeItem("sb-demo-auth-token");
+      assert.equal(readBrowserAuthStorageCookie("sb-demo-auth-token"), null);
+    },
+    { cookies: true },
+  );
 });
