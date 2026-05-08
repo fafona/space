@@ -25,7 +25,7 @@ export default function LoadingProgressScreen(props: LoadingProgressScreenProps)
     <main className="faolla-loading-progress-screen relative grid min-h-screen place-items-center overflow-hidden bg-[#081121] px-6 text-white">
       <div className="faolla-loading-progress-card relative z-10 flex w-full max-w-sm flex-col items-center text-center">
         <div className="faolla-launch-solar-loader" aria-hidden="true">
-          <span>F</span>
+          <span className="faolla-launch-logo-mark" />
         </div>
         <div className="mt-7 text-3xl font-black tracking-normal">Faolla</div>
         <div className="mt-6 text-base font-semibold text-white/90">{title}</div>
