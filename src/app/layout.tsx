@@ -290,46 +290,51 @@ html[data-faolla-app-shell="true"]:not([data-faolla-web-launch-ready="true"]) bo
 }
 .faolla-launch-solar-loader {
   position: relative;
-  width: 7.25rem;
-  height: 7.25rem;
+  width: 6.8rem;
+  height: 6.8rem;
   border-radius: 9999px;
   display: grid;
   place-items: center;
-  filter: drop-shadow(0 1.2rem 2.8rem rgba(0, 0, 0, 0.32));
+  background: radial-gradient(circle, rgba(255, 197, 82, 0.13) 0%, rgba(255, 197, 82, 0.04) 58%, transparent 72%);
+  filter: drop-shadow(0 1rem 2.4rem rgba(0, 0, 0, 0.3));
 }
 .faolla-launch-solar-loader::before {
   content: "";
   position: absolute;
-  inset: 0;
+  inset: 0.18rem;
   border-radius: inherit;
   background:
-    repeating-conic-gradient(
-      from 0deg,
-      rgba(255, 210, 88, 0.98) 0deg 9deg,
-      rgba(255, 158, 58, 0.78) 9deg 15deg,
-      transparent 15deg 24deg
+    conic-gradient(
+      from -90deg,
+      transparent 0deg,
+      rgba(255, 221, 124, 0.1) 42deg,
+      rgba(255, 204, 92, 0.72) 96deg,
+      rgba(255, 243, 186, 0.98) 132deg,
+      rgba(255, 185, 72, 0.46) 165deg,
+      transparent 220deg,
+      transparent 360deg
     );
-  -webkit-mask: radial-gradient(circle, transparent 0 38%, #000 39% 70%, transparent 71%);
-  mask: radial-gradient(circle, transparent 0 38%, #000 39% 70%, transparent 71%);
-  animation: faolla-launch-solar-spin 1.05s linear infinite;
+  -webkit-mask: radial-gradient(circle, transparent 0 50%, #000 51% 65%, transparent 66%);
+  mask: radial-gradient(circle, transparent 0 50%, #000 51% 65%, transparent 66%);
+  animation: faolla-launch-solar-spin 1.8s linear infinite;
 }
 .faolla-launch-solar-loader::after {
   content: "";
   position: absolute;
-  inset: 1.48rem;
+  inset: 1.72rem;
   border-radius: inherit;
   background:
-    radial-gradient(circle at 35% 28%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.16) 36%, transparent 37%),
-    linear-gradient(145deg, #fff7c8 0%, #ffbf4d 52%, #f97316 100%);
+    radial-gradient(circle at 36% 30%, rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.16) 34%, transparent 35%),
+    linear-gradient(145deg, #fff4cf 0%, #ffd166 50%, #f59e0b 100%);
   box-shadow:
-    inset 0 0.16rem 0.4rem rgba(255, 255, 255, 0.45),
-    0 0 2.25rem rgba(255, 190, 72, 0.42);
+    inset 0 0.13rem 0.32rem rgba(255, 255, 255, 0.42),
+    0 0 1.75rem rgba(255, 190, 72, 0.28);
 }
 .faolla-launch-solar-loader span {
   position: relative;
   z-index: 1;
   color: #081121;
-  font-size: 1.75rem;
+  font-size: 1.52rem;
   font-weight: 950;
   line-height: 1;
 }

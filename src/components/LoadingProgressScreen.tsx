@@ -17,8 +17,9 @@ function isChineseLocale(locale?: string | null) {
 
 export default function LoadingProgressScreen(props: LoadingProgressScreenProps) {
   const useChineseCopy = isChineseLocale(props.locale);
-  const title = props.statusTitle || props.message || (useChineseCopy ? "正在进入 Faolla" : "Opening Faolla");
-  const description = props.statusDescription || (useChineseCopy ? "正在加载，请稍候。" : "Loading. Please wait.");
+  const title = props.statusTitle || props.message || (useChineseCopy ? "\u6b63\u5728\u8fdb\u5165 Faolla" : "Opening Faolla");
+  const description =
+    props.statusDescription || (useChineseCopy ? "\u6b63\u5728\u52a0\u8f7d\uff0c\u8bf7\u7a0d\u5019\u3002" : "Loading. Please wait.");
 
   return (
     <main className="faolla-loading-progress-screen relative grid min-h-screen place-items-center overflow-hidden bg-[#081121] px-6 text-white">
