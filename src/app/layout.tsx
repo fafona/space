@@ -153,6 +153,7 @@ const FAOLLA_NATIVE_FAST_LAUNCH_SCRIPT = `
     if (!isNativeLaunch || params.has("nativeAuthRetry")) return;
 
     const storageKey = "merchant-space:recent-merchant-launch:v1";
+    const recentRoutesKey = "merchant-space:pwa-recent-routes:v1";
     const maxAgeMs = 30 * 24 * 60 * 60 * 1000;
     const readRecentMerchantId = (storage) => {
       if (!storage) return "";
@@ -165,23 +166,50 @@ const FAOLLA_NATIVE_FAST_LAUNCH_SCRIPT = `
       if (!Number.isFinite(updatedAt) || updatedAt <= 0 || Date.now() - updatedAt > maxAgeMs) return "";
       return merchantId;
     };
+    const normalizePreferredAppPath = (value) => {
+      const path = String(value || "").trim();
+      if (!path.startsWith("/")) return "";
+      if (path === "/me" || path.indexOf("/me/") === 0) return path;
+      if (/^\\/\\d{8}(?:\\/|$)/.test(path)) return path;
+      return "";
+    };
+    const readRecentAppPath = (storage) => {
+      if (!storage) return "";
+      const raw = storage.getItem(recentRoutesKey) || "";
+      if (!raw) return "";
+      const records = JSON.parse(raw);
+      if (!Array.isArray(records)) return "";
+      for (const record of records) {
+        const path = normalizePreferredAppPath(record && record.path);
+        const updatedAt = Number(record && record.updatedAt ? record.updatedAt : 0);
+        if (!path || !Number.isFinite(updatedAt) || updatedAt <= 0 || Date.now() - updatedAt > maxAgeMs) continue;
+        return path;
+      }
+      return "";
+    };
 
     let merchantId = "";
+    let appPath = "";
     try {
       merchantId = readRecentMerchantId(window.sessionStorage);
+      appPath = readRecentAppPath(window.sessionStorage);
     } catch {
       merchantId = "";
+      appPath = "";
     }
-    if (!merchantId) {
+    if (!merchantId || !appPath) {
       try {
-        merchantId = readRecentMerchantId(window.localStorage);
+        if (!merchantId) merchantId = readRecentMerchantId(window.localStorage);
+        if (!appPath) appPath = readRecentAppPath(window.localStorage);
       } catch {
-        merchantId = "";
+        merchantId = merchantId || "";
+        appPath = appPath || "";
       }
     }
-    if (!merchantId) return;
+    const preferredPath = appPath || (merchantId ? "/" + merchantId : "");
+    if (!preferredPath) return;
 
-    const target = new URL("/" + merchantId, window.location.origin);
+    const target = new URL(preferredPath, window.location.origin);
     target.searchParams.set("appShell", "faolla");
     window.location.replace(target.pathname + target.search + target.hash);
   } catch {
@@ -1206,7 +1234,6 @@ export default async function RootLayout({
         <link rel="shortcut icon" href="/favicon.ico?v=20260409c" />
         <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=20260409c" />
         <link rel="manifest" href="/manifest.webmanifest" />
-        <link rel="preload" as="image" href="/faolla-app-icon-192.png?v=20260409c" />
         <link rel="preload" as="image" href="/faolla-logo-f.png?v=20260508b" />
         <script id="faolla-app-shell-prepaint" dangerouslySetInnerHTML={{ __html: FAOLLA_APP_SHELL_PREPAINT_SCRIPT }} />
         <style id="faolla-mobile-shell-size-overrides" dangerouslySetInnerHTML={{ __html: FAOLLA_MOBILE_SHELL_INLINE_STYLE }} />

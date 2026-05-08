@@ -11,6 +11,7 @@ import {
   createMobileSwipeBackEvent,
   resolveMobileSwipeBackHref,
 } from "@/lib/mobileSwipeBack";
+import { persistRecentPwaRoute } from "@/lib/pwaRecentRoutes";
 
 const FAOLLA_NATIVE_WEB_VERSION_URL = "/api/app-web-version";
 const FAOLLA_NATIVE_WEB_BUILD_STORAGE_KEY = "faolla:native-web-build:v1";
@@ -336,6 +337,13 @@ export default function CapacitorAppBridge() {
     const scheduleNativeOrientationSync = () => {
       window.setTimeout(syncNativeOrientation, 0);
     };
+    const persistNativeRecentRoute = () => {
+      persistRecentPwaRoute(window.location.pathname || "");
+    };
+    const syncNativeLocationState = () => {
+      syncNativeOrientation();
+      persistNativeRecentRoute();
+    };
 
     const nativeOpenUrlWindow = window as FaollaNativeOpenUrlWindow;
     const previousNativeOpenUrlHandler = nativeOpenUrlWindow.__faollaNativeOpenUrl;
@@ -357,19 +365,22 @@ export default function CapacitorAppBridge() {
     window.history.pushState = function pushState(...args) {
       const result = originalPushState.apply(this, args);
       scheduleNativeOrientationSync();
+      persistNativeRecentRoute();
       return result;
     };
 
     window.history.replaceState = function replaceState(...args) {
       const result = originalReplaceState.apply(this, args);
       scheduleNativeOrientationSync();
+      persistNativeRecentRoute();
       return result;
     };
 
     syncNativeOrientation();
-    window.addEventListener("popstate", syncNativeOrientation);
-    window.addEventListener("hashchange", syncNativeOrientation);
-    window.addEventListener("visibilitychange", syncNativeOrientation);
+    persistNativeRecentRoute();
+    window.addEventListener("popstate", syncNativeLocationState);
+    window.addEventListener("hashchange", syncNativeLocationState);
+    window.addEventListener("visibilitychange", syncNativeLocationState);
 
     if (window.location.pathname === "/" && !isFaollaAppShellDocument()) {
       window.location.replace(appendAppShellParam("/launch"));
@@ -521,9 +532,9 @@ export default function CapacitorAppBridge() {
       }
       window.history.pushState = originalPushState;
       window.history.replaceState = originalReplaceState;
-      window.removeEventListener("popstate", syncNativeOrientation);
-      window.removeEventListener("hashchange", syncNativeOrientation);
-      window.removeEventListener("visibilitychange", syncNativeOrientation);
+      window.removeEventListener("popstate", syncNativeLocationState);
+      window.removeEventListener("hashchange", syncNativeLocationState);
+      window.removeEventListener("visibilitychange", syncNativeLocationState);
       delete document.documentElement.dataset.capacitor;
       delete document.documentElement.dataset.capacitorPlatform;
     };
