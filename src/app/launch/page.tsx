@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import LaunchBootstrap from "@/app/launch/LaunchBootstrap";
 import {
+  MERCHANT_AUTH_ACCOUNT_TYPE_COOKIE,
   MERCHANT_AUTH_COOKIE,
   MERCHANT_AUTH_MERCHANT_ID_COOKIE,
   MERCHANT_AUTH_REFRESH_COOKIE,
@@ -22,9 +23,15 @@ export default async function LaunchPage() {
   const accessToken = String(cookieStore.get(MERCHANT_AUTH_COOKIE)?.value ?? "").trim();
   const refreshToken = String(cookieStore.get(MERCHANT_AUTH_REFRESH_COOKIE)?.value ?? "").trim();
   const merchantId = normalizeMerchantId(cookieStore.get(MERCHANT_AUTH_MERCHANT_ID_COOKIE)?.value);
+  const accountType = String(cookieStore.get(MERCHANT_AUTH_ACCOUNT_TYPE_COOKIE)?.value ?? "").trim();
 
-  if ((accessToken || refreshToken) && merchantId) {
-    redirect(buildBackendAppShellHref(buildMerchantBackendHref(merchantId)));
+  if (accessToken || refreshToken) {
+    if (accountType === "personal") {
+      redirect(buildBackendAppShellHref("/me"));
+    }
+    if (merchantId) {
+      redirect(buildBackendAppShellHref(buildMerchantBackendHref(merchantId)));
+    }
   }
 
   return <LaunchBootstrap />;

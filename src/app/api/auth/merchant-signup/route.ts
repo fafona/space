@@ -182,6 +182,7 @@ export async function POST(request: Request) {
     refreshToken: data.session.refresh_token,
     maxAgeSeconds: data.session.expires_in,
     merchantId: platformIdentity.merchantId,
+    accountType: platformIdentity.accountType,
   }, request);
   return response;
 }

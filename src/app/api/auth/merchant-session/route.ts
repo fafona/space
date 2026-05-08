@@ -342,6 +342,7 @@ function respondWithMerchantSession(request: Request, payload: AuthenticatedMerc
     refreshToken: payload.refreshToken,
     maxAgeSeconds: payload.expiresIn ?? undefined,
     merchantId: payload.merchantId,
+    accountType: payload.accountType,
   }, request);
   return response;
 }
@@ -585,6 +586,7 @@ export async function POST(request: Request) {
       refreshToken: verifiedRefreshToken,
       maxAgeSeconds: verifiedExpiresIn,
       merchantId: platformIdentity.merchantId,
+      accountType: platformIdentity.accountType,
       preserveRefreshToken: !verifiedRefreshToken,
     }, request);
     return response;

@@ -493,6 +493,7 @@ export async function POST(request: Request) {
       refreshToken,
       maxAgeSeconds: upstreamPayload?.expires_in,
       merchantId,
+      accountType: platformIdentity.accountType,
     }, request);
     return response;
   } catch {

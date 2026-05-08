@@ -3,12 +3,20 @@ import type { NextResponse } from "next/server";
 export const MERCHANT_AUTH_COOKIE = "merchant-space-merchant-auth";
 export const MERCHANT_AUTH_REFRESH_COOKIE = "merchant-space-merchant-refresh";
 export const MERCHANT_AUTH_MERCHANT_ID_COOKIE = "merchant-space-merchant-id";
+export const MERCHANT_AUTH_ACCOUNT_TYPE_COOKIE = "merchant-space-account-type";
 export const MERCHANT_AUTH_ACCESS_COOKIE_FALLBACK_MAX_AGE_SECONDS = 60 * 60;
 export const MERCHANT_AUTH_REFRESH_COOKIE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
+
+type MerchantAuthAccountType = "merchant" | "personal";
 
 function normalizeMerchantId(value: unknown) {
   const normalized = String(value ?? "").trim();
   return /^\d{8}$/.test(normalized) ? normalized : "";
+}
+
+function normalizeMerchantAccountType(value: unknown): MerchantAuthAccountType | "" {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return normalized === "merchant" || normalized === "personal" ? normalized : "";
 }
 
 function normalizeCookieMaxAge(value: unknown, fallback: number) {
@@ -118,6 +126,10 @@ export function readMerchantAuthMerchantIdCookie(request: Request) {
   return normalizeMerchantId(parseCookieValue(request.headers.get("cookie") ?? "", MERCHANT_AUTH_MERCHANT_ID_COOKIE));
 }
 
+export function readMerchantAuthAccountTypeCookie(request: Request) {
+  return normalizeMerchantAccountType(parseCookieValue(request.headers.get("cookie") ?? "", MERCHANT_AUTH_ACCOUNT_TYPE_COOKIE));
+}
+
 function readRequestTokenHeader(request: Request, key: string) {
   const normalized = request.headers.get(key)?.trim() ?? "";
   return normalized ? [normalized] : [];
@@ -158,6 +170,7 @@ export function setMerchantAuthCookies(
     refreshToken?: string | null;
     maxAgeSeconds?: unknown;
     merchantId?: string | null;
+    accountType?: MerchantAuthAccountType | null;
     preserveRefreshToken?: boolean;
   },
   request?: Request,
@@ -165,6 +178,7 @@ export function setMerchantAuthCookies(
   const normalizedAccessToken = String(input.accessToken ?? "").trim();
   const normalizedRefreshToken = String(input.refreshToken ?? "").trim();
   const normalizedMerchantId = normalizeMerchantId(input.merchantId);
+  const normalizedAccountType = normalizeMerchantAccountType(input.accountType);
   const accessCookieMaxAge = normalizeCookieMaxAge(
     input.maxAgeSeconds,
     MERCHANT_AUTH_ACCESS_COOKIE_FALLBACK_MAX_AGE_SECONDS,
@@ -224,6 +238,26 @@ export function setMerchantAuthCookies(
       ...(cookieDomain ? { domain: cookieDomain } : {}),
     });
   }
+
+  if (normalizedAccountType) {
+    response.cookies.set(MERCHANT_AUTH_ACCOUNT_TYPE_COOKIE, normalizedAccountType, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure,
+      path: "/",
+      maxAge: MERCHANT_AUTH_REFRESH_COOKIE_MAX_AGE_SECONDS,
+      ...(cookieDomain ? { domain: cookieDomain } : {}),
+    });
+  } else if (!(input.preserveRefreshToken && input.accountType === undefined)) {
+    response.cookies.set(MERCHANT_AUTH_ACCOUNT_TYPE_COOKIE, "", {
+      httpOnly: true,
+      sameSite: "lax",
+      secure,
+      path: "/",
+      maxAge: 0,
+      ...(cookieDomain ? { domain: cookieDomain } : {}),
+    });
+  }
 }
 
 export function clearMerchantAuthCookie(response: NextResponse, request?: Request) {
@@ -250,6 +284,14 @@ export function clearMerchantAuthCookies(response: NextResponse, request?: Reque
     ...(cookieDomain ? { domain: cookieDomain } : {}),
   });
   response.cookies.set(MERCHANT_AUTH_MERCHANT_ID_COOKIE, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure,
+    path: "/",
+    maxAge: 0,
+    ...(cookieDomain ? { domain: cookieDomain } : {}),
+  });
+  response.cookies.set(MERCHANT_AUTH_ACCOUNT_TYPE_COOKIE, "", {
     httpOnly: true,
     sameSite: "lax",
     secure,

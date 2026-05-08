@@ -1588,13 +1588,20 @@ function LoginPageInner() {
           paddingBottom: `calc(env(safe-area-inset-bottom) + 0.9rem + ${androidKeyboardInset}px)`,
         }
       : undefined;
+  const formViewportClassName = shouldShowEntrySelection
+    ? `mx-auto flex h-full min-h-0 w-full max-w-md flex-col overflow-hidden overscroll-none ${
+        androidKeyboardOpen ? "justify-start pt-2" : "justify-start pt-8 sm:pt-10 md:justify-center md:pt-0"
+      }`
+    : `mx-auto flex h-full min-h-0 w-full max-w-md flex-col overflow-y-auto overscroll-contain ${
+        androidKeyboardOpen ? "justify-start pt-2" : "justify-center"
+      } md:overflow-visible`;
 
   if (embeddedShellLogin) {
     return <main className="faolla-login-shell min-h-screen bg-[#081121]" aria-hidden="true" />;
   }
 
   return (
-    <main className="faolla-login-shell relative h-[100dvh] min-h-screen overflow-hidden overscroll-none bg-[#0b1424] text-slate-900">
+    <main className="faolla-login-shell relative h-[100dvh] max-h-[100dvh] overflow-hidden overscroll-none bg-[#0b1424] text-slate-900 md:max-h-none md:min-h-screen">
       <div className="absolute inset-0 bg-[linear-gradient(180deg,_#0b1424_0%,_#13213a_52%,_#eef4ff_100%)]" />
       <div className="absolute inset-x-0 top-0 h-[30rem] bg-[radial-gradient(circle_at_top,_rgba(125,211,252,0.16),_transparent_58%)]" />
 
@@ -1652,9 +1659,7 @@ function LoginPageInner() {
           >
             <div
               ref={formViewportRef}
-              className={`mx-auto flex h-full min-h-0 w-full max-w-md flex-col overflow-y-auto overscroll-contain ${
-                androidKeyboardOpen ? "justify-start pt-2" : "justify-center"
-              } md:overflow-visible`}
+              className={formViewportClassName}
             >
               {shouldShowEntrySelection ? (
                 <div className="space-y-5 md:space-y-6">
