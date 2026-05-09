@@ -138,6 +138,10 @@ async function loadSnapshotSites() {
   return [...mergedCurrent, ...appendedStored];
 }
 
+export async function loadPublishedMerchantSnapshotSites() {
+  return loadSnapshotSites();
+}
+
 async function loadCurrentSnapshotSites() {
   const supabase = createServerSupabaseServiceClient();
   if (!supabase) return [] as MerchantListPublishedSite[];

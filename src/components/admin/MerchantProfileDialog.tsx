@@ -14,6 +14,7 @@ import {
   getEuropeProvinceOptions,
 } from "@/lib/europeLocationOptions";
 import { normalizeMerchantBusinessCards, type MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
+import { getMerchantSeoReadiness, type MerchantSeoProfile } from "@/lib/merchantSeo";
 import {
   getMerchantProfileContactNameError,
   getMerchantProfileDomainPrefixError,
@@ -504,6 +505,46 @@ export default function MerchantProfileDialog({
       selectedProvinceName,
     ],
   );
+  const merchantSeoProfile = useMemo<MerchantSeoProfile>(
+    () => ({
+      id: siteId ?? "",
+      merchantName: merchantName.trim(),
+      name: merchantName.trim(),
+      domainPrefix: domainPrefixConfirmed || domainPrefixInput.trim(),
+      contactAddress: contactAddress.trim(),
+      contactName: contactName.trim(),
+      contactPhone: contactPhone.trim(),
+      contactEmail: contactEmail.trim(),
+      industry,
+      location: {
+        countryCode: countryCode.trim().toUpperCase(),
+        country: selectedCountryName || countryInput.trim(),
+        provinceCode: isCustomProvinceCode(provinceCode) ? "" : provinceCode.trim(),
+        province: (selectedProvinceName || provinceInput).trim(),
+        city: (cityInput || city).trim(),
+      },
+    }),
+    [
+      city,
+      cityInput,
+      contactAddress,
+      contactEmail,
+      contactName,
+      contactPhone,
+      countryCode,
+      countryInput,
+      domainPrefixConfirmed,
+      domainPrefixInput,
+      industry,
+      merchantName,
+      provinceCode,
+      provinceInput,
+      selectedCountryName,
+      selectedProvinceName,
+      siteId,
+    ],
+  );
+  const merchantSeoReadiness = useMemo(() => getMerchantSeoReadiness(merchantSeoProfile), [merchantSeoProfile]);
 
   const countrySearchOptions = useMemo<SearchOption[]>(
     () => countryOptions.map((item) => ({ value: item.code, label: item.name })),
@@ -630,6 +671,44 @@ export default function MerchantProfileDialog({
           <div className="mt-2 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
             <span className="text-slate-500">到期时间：</span>
             <span>{formatServiceExpiresAt(initialServiceExpiresAt)}</span>
+          </div>
+          <div
+            className={`mt-2 rounded-lg border px-3 py-3 text-sm ${
+              merchantSeoReadiness.ready ? "border-emerald-200 bg-emerald-50" : "border-amber-200 bg-amber-50"
+            }`}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="font-semibold text-slate-900">Google 搜索优化</div>
+                <div className="mt-1 text-xs text-slate-600">资料完整并发布后，会自动生成 Google 可读取的页面信息。</div>
+              </div>
+              <span
+                className={`shrink-0 rounded-full px-2 py-1 text-xs font-semibold ${
+                  merchantSeoReadiness.ready ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
+                }`}
+              >
+                {merchantSeoReadiness.ready
+                  ? "已满足"
+                  : `${merchantSeoReadiness.requiredCompleteCount}/${merchantSeoReadiness.requiredTotal}`}
+              </span>
+            </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {merchantSeoReadiness.required.map((item) => (
+                <div
+                  key={item.key}
+                  className={`flex items-center gap-2 text-xs ${item.complete ? "text-emerald-700" : "text-slate-600"}`}
+                >
+                  <span
+                    className={`flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-bold ${
+                      item.complete ? "bg-emerald-100 text-emerald-700" : "bg-white text-amber-700"
+                    }`}
+                  >
+                    {item.complete ? "✓" : "!"}
+                  </span>
+                  <span>{item.label}</span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 

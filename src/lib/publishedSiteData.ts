@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import type { Block } from "@/data/homeBlocks";
+import type { Block, MerchantListPublishedSite } from "@/data/homeBlocks";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import type { PublishedMerchantServiceState } from "@/lib/publishedMerchantService";
 import { loadCurrentMerchantSnapshotSiteBySiteId, loadPublishedMerchantServiceStateBySiteId } from "@/lib/publishedMerchantService";
@@ -20,6 +20,7 @@ export type PublishedSitePayload = {
   slug: string;
   merchantName: string;
   blocks: Block[];
+  merchantProfile: MerchantListPublishedSite | null;
   serviceState: PublishedMerchantServiceState | null;
   orderManagementEnabled: boolean;
 };
@@ -133,9 +134,12 @@ export async function fetchPublishedSitePayloadFromSupabase(siteId: string): Pro
     .eq("id", normalizedSiteId)
     .limit(1)
     .maybeSingle();
-  const merchantName = String((merchantProfile as MerchantProfileRow | null)?.name ?? "").trim();
   const serviceState = await loadPublishedMerchantServiceStateBySiteId(normalizedSiteId).catch(() => null);
   const snapshotSite = await loadCurrentMerchantSnapshotSiteBySiteId(normalizedSiteId).catch(() => null);
+  const merchantName =
+    String(snapshotSite?.merchantName ?? "").trim() ||
+    String(snapshotSite?.name ?? "").trim() ||
+    String((merchantProfile as MerchantProfileRow | null)?.name ?? "").trim();
   const orderManagementEnabled = Boolean(
     snapshotSite?.permissionConfig?.allowProductBlock && snapshotSite?.permissionConfig?.allowOrderManagement,
   );
@@ -145,6 +149,7 @@ export async function fetchPublishedSitePayloadFromSupabase(siteId: string): Pro
     slug: String(chosen.slug ?? "").trim(),
     merchantName,
     blocks: chosen.blocks,
+    merchantProfile: snapshotSite,
     serviceState,
     orderManagementEnabled,
   };
