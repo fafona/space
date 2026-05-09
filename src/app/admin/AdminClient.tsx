@@ -765,7 +765,7 @@ const MAX_CHAT_FILE_BYTES = 12_000_000;
 const EXTERNALIZE_MIN_IMAGE_BYTES = 300_000;
 type UploadCompressionPreset = "high" | "balanced" | "compact";
 type ImageCompressionOption = { label: string; maxSide: number; quality: number };
-type EditorImageUploadPurpose = "common" | "gallery";
+type EditorImageUploadPurpose = "common" | "gallery" | "page-background";
 type PersistedEditorAssetResult = {
   value: string;
   externalized: boolean;
@@ -783,6 +783,10 @@ const PUBLISH_AUTO_COMPRESSION_OPTIONS: Array<ImageCompressionOption & { id: str
   { id: "auto-min", label: "自动极限压缩", maxSide: 1200, quality: 0.64 },
 ];
 const PRODUCT_IMAGE_UPLOAD_OPTIONS = { maxSide: 1600, quality: 0.82 } as const;
+const PAGE_BACKGROUND_IMAGE_COMPRESSION_OPTIONS = {
+  desktop: { label: "PC背景", maxSide: 2200, quality: 0.8 },
+  mobile: { label: "手机背景", maxSide: 1400, quality: 0.76 },
+} as const;
 type ThemePresetKey = "none" | "cartoon" | "retro" | "minimal" | "future" | "luxury" | "magazine" | "commerce" | "cinema";
 type ThemeTone = {
   bgColor?: string;
@@ -6667,7 +6671,7 @@ export default function AdminClient({
 
   async function persistImageFileForEditor(
     file: File,
-    options?: { purpose?: EditorImageUploadPurpose },
+    options?: { purpose?: EditorImageUploadPurpose; viewport?: ViewportKey },
   ): Promise<PersistedEditorAssetResult> {
     let dataUrl: string;
     const limitKb =
@@ -6676,7 +6680,13 @@ export default function AdminClient({
         : !isPlatformEditor && options?.purpose === "gallery"
           ? Math.max(50, Math.round(merchantPermissionConfig?.galleryBlockImageLimitKb ?? 300))
           : null;
-    if (limitKb) {
+    if (options?.purpose === "page-background") {
+      const backgroundOptions =
+        options.viewport === "mobile"
+          ? PAGE_BACKGROUND_IMAGE_COMPRESSION_OPTIONS.mobile
+          : PAGE_BACKGROUND_IMAGE_COMPRESSION_OPTIONS.desktop;
+      dataUrl = await fileToOptimizedImageDataUrl(file, backgroundOptions);
+    } else if (limitKb) {
       const limitBytes = limitKb * 1024;
       const compressed = await compressImageFileWithinLimit(file, limitBytes, imageCompressionOptions);
       if (compressed.bytes > limitBytes) {
@@ -9833,7 +9843,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     const file = event.target.files?.[0];
     if (!file) return;
     try {
-      const result = await persistImageFileForEditor(file);
+      const result = await persistImageFileForEditor(file, { purpose: "page-background", viewport: previewViewport });
       updatePageBackground({ pageBgImageUrl: result.value });
       setPageImageDialogOpen(false);
       setTip(result.externalized ? "页面背景图片已上传" : "页面背景图片已更");
@@ -20393,7 +20403,10 @@ function InlineEditorBlock({
   onRecordColor: (color: string) => void;
   onClearRecentColors: () => void;
   onApplyNavSettingsToOtherPages: (blockId: string) => void;
-  onPersistImageFile: (file: File, options?: { purpose?: EditorImageUploadPurpose }) => Promise<PersistedEditorAssetResult>;
+  onPersistImageFile: (
+    file: File,
+    options?: { purpose?: EditorImageUploadPurpose; viewport?: ViewportKey },
+  ) => Promise<PersistedEditorAssetResult>;
   onPersistProductImageFile: (file: File) => Promise<PersistedEditorAssetResult>;
   onPersistAudioFile: (file: File) => Promise<PersistedEditorAssetResult>;
   previewViewport: "desktop" | "mobile";
