@@ -2,7 +2,7 @@ import type { MetadataRoute } from "next";
 import type { MerchantListPublishedSite } from "@/data/homeBlocks";
 import type { MerchantContactVisibility, SiteLocation } from "@/data/platformControlStore";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
-import { buildSiteHref } from "@/lib/siteRouting";
+import { buildMerchantFrontendHref } from "@/lib/siteRouting";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -84,9 +84,14 @@ function merchantDisplayName(profile: MerchantSeoProfile) {
 export function buildMerchantSeoCanonicalUrl(profile: MerchantSeoProfile, publicOrigin?: string | null) {
   const id = trimText(profile.id);
   const origin = normalizeOrigin(publicOrigin ?? process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN);
-  if (id) return `${origin}${buildSiteHref(id)}`;
-  const domainPrefix = trimText(profile.domainPrefix || profile.domainSuffix || profile.domain);
-  return domainPrefix ? `${origin}/${encodeURIComponent(domainPrefix)}` : origin;
+  const domainPrefix = trimText(profile.domainPrefix || profile.domainSuffix);
+  if (id) {
+    const href = buildMerchantFrontendHref(id, domainPrefix, origin);
+    return /^https?:\/\//i.test(href) ? href : `${origin}${href.startsWith("/") ? href : `/${href}`}`;
+  }
+  const domain = trimText(profile.domain);
+  const fallbackPrefix = domain.includes(".") ? domain.split(".")[0] : domain;
+  return fallbackPrefix ? `${origin}/${encodeURIComponent(fallbackPrefix)}` : origin;
 }
 
 export function getMerchantSeoReadiness(profile: MerchantSeoProfile): MerchantSeoReadiness {

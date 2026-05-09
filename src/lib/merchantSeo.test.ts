@@ -41,6 +41,10 @@ test("reports merchant SEO readiness from required public profile fields", () =>
 
 test("builds canonical URLs and indexable sitemap entries for complete online merchants", () => {
   assert.equal(buildMerchantSeoCanonicalUrl(completeProfile, "https://www.faolla.com"), "https://www.faolla.com/site/10000001");
+  assert.equal(
+    buildMerchantSeoCanonicalUrl({ ...completeProfile, domainPrefix: "abc" }, "https://www.faolla.com"),
+    "https://abc.faolla.com",
+  );
   assert.equal(isMerchantSeoIndexable(completeProfile), true);
 
   const entry = buildMerchantSitemapEntry(
@@ -48,6 +52,7 @@ test("builds canonical URLs and indexable sitemap entries for complete online me
       ...completeProfile,
       id: "10000001",
       name: "ABC",
+      domainPrefix: "abc",
       domain: "abc.faolla.com",
       category: "餐饮",
       industry: "餐饮",
@@ -56,7 +61,7 @@ test("builds canonical URLs and indexable sitemap entries for complete online me
     },
     "https://www.faolla.com",
   );
-  assert.equal(entry?.url, "https://www.faolla.com/site/10000001");
+  assert.equal(entry?.url, "https://abc.faolla.com");
   assert.equal(entry?.changeFrequency, "weekly");
 });
 
