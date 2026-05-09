@@ -18631,15 +18631,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                             </div>
                             <div className="mt-2 text-sm leading-6 text-slate-200/84">手机上也能像 app 一样编辑站点内容。</div>
                           </div>
-                          <button
-                            className="shrink-0 rounded-[18px] border border-white/16 bg-white/10 px-4 py-3 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(8,17,33,0.18)] transition hover:bg-white/16 disabled:opacity-50"
-                            onClick={() => {
-                              void requestLogout();
-                            }}
-                            disabled={loggingOut}
-                          >
-                            {loggingOut ? "退出中..." : "退出"}
-                          </button>
                         </div>
                       </div>
                     </div>
@@ -18650,37 +18641,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       <div className="max-w-[160px] truncate text-sm font-semibold text-slate-900" title={merchantDisplayName}>
                         {merchantDisplayName}
                       </div>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <button
-                        ref={merchantProfileButtonRef}
-                        type="button"
-                        className={`rounded border px-3 py-2 text-sm transition-colors disabled:opacity-50 ${
-                          merchantProfileAttention
-                            ? "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"
-                            : "bg-white text-slate-900 hover:bg-gray-50"
-                        }`}
-                        onClick={() => {
-                          void openMerchantProfilePanel();
-                        }}
-                      >
-                        商户信息
-                      </button>
-                      <button
-                        type="button"
-                        className="inline-flex h-10 w-10 items-center justify-center rounded border bg-white text-rose-600 transition hover:bg-rose-50 disabled:opacity-50"
-                        onClick={() => {
-                          void requestLogout();
-                        }}
-                        disabled={loggingOut}
-                        title={loggingOut ? "退出中..." : "退出登录"}
-                        aria-label={loggingOut ? "退出中..." : "退出登录"}
-                      >
-                        <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
-                          <path d="M14 7h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                          <path d="M10 8 6 12l4 4M7 12h9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                      </button>
                     </div>
                   </div>
                 )
