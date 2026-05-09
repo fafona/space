@@ -713,8 +713,37 @@ function countBlocksByTypeInPlanConfig(config: PagePlanConfig | null | undefined
   return count;
 }
 
+function countBlocksByTypeInSinglePlanConfig(
+  config: PagePlanConfig | null | undefined,
+  type: Block["type"],
+  planId?: PlanId,
+) {
+  if (!config) return 0;
+  const plan =
+    (planId ? config.plans.find((item) => item.id === planId) : null) ??
+    config.plans.find((item) => item.id === config.activePlanId) ??
+    config.plans[0] ??
+    null;
+  if (!plan) return 0;
+  let count = 0;
+  const pages =
+    Array.isArray(plan.pages) && plan.pages.length > 0
+      ? plan.pages
+      : [{ id: plan.activePageId, name: "", blocks: getBlocksForPage(plan, plan.activePageId) }];
+  for (const page of pages) {
+    for (const block of page.blocks ?? []) {
+      if (block.type === type) count += 1;
+    }
+  }
+  return count;
+}
+
 function countBookingBlocksInPlanConfig(config: PagePlanConfig | null | undefined) {
   return countBlocksByTypeInPlanConfig(config, "booking");
+}
+
+function countBookingBlocksInSinglePlanConfig(config: PagePlanConfig | null | undefined, planId?: PlanId) {
+  return countBlocksByTypeInSinglePlanConfig(config, "booking", planId);
 }
 
 const MIN_BLOCK_WIDTH = 240;
@@ -9579,7 +9608,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         blocksRef.current,
         { syncNavPages: false },
       );
-      if (countBookingBlocksInPlanConfig(mergedConfig) > 0) {
+      if (countBookingBlocksInSinglePlanConfig(mergedConfig, editingPlanIdRef.current) > 0) {
         setTip("预约区块只能有一个");
         setTimeout(() => setTip(""), 1200);
         return;
@@ -9748,8 +9777,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       ...mergedConfig,
       plans: mergedConfig.plans.map((plan, index) => (index === safePlanIndex ? nextPlan : plan)),
     };
-    const previousBookingBlockCount = countBookingBlocksInPlanConfig(mergedConfig);
-    const nextBookingBlockCount = countBookingBlocksInPlanConfig(nextPlanConfig);
+    const previousBookingBlockCount = countBookingBlocksInSinglePlanConfig(mergedConfig, editingPlanIdRef.current);
+    const nextBookingBlockCount = countBookingBlocksInSinglePlanConfig(nextPlanConfig, editingPlanIdRef.current);
     if (nextBookingBlockCount > previousBookingBlockCount && nextBookingBlockCount > 1) {
       showTip("预约区块只能有一个");
       return;
@@ -10222,7 +10251,15 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     );
     const desktopConfig = previewViewport === "desktop" ? mergedConfig : viewportStatesRef.current.desktop.planConfig;
     const mobileConfig = previewViewport === "mobile" ? mergedConfig : viewportStatesRef.current.mobile.planConfig;
-    if (countBookingBlocksInPlanConfig(desktopConfig) > 1 || countBookingBlocksInPlanConfig(mobileConfig) > 1) {
+    const desktopPublishPlanId = getViewportEditingPlanId("desktop");
+    const mobilePublishPlanId = getViewportEditingPlanId("mobile");
+    const desktopBookingBlockCount = isPlatformEditor
+      ? countBookingBlocksInPlanConfig(desktopConfig)
+      : countBookingBlocksInSinglePlanConfig(desktopConfig, desktopPublishPlanId);
+    const mobileBookingBlockCount = isPlatformEditor
+      ? countBookingBlocksInPlanConfig(mobileConfig)
+      : countBookingBlocksInSinglePlanConfig(mobileConfig, mobilePublishPlanId);
+    if (desktopBookingBlockCount > 1 || mobileBookingBlockCount > 1) {
       showTip("预约区块只能有一个，请先删除重复的预约区块后再发布", {
         durationMs: 4200,
         dismissOnPointer: true,
