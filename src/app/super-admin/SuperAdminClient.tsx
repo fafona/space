@@ -6465,6 +6465,20 @@ export default function SuperAdminClient() {
       window.removeEventListener(MOBILE_SWIPE_BACK_EVENT, handleMobileSwipeBack);
     };
   }, [closeMobileSupportThread, isMobileSupportOnlyMode, supportMerchantInfoSheetOpen, supportMobileView]);
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const active = isMobileSupportOnlyMode && (supportMerchantInfoSheetOpen || supportMobileView === "thread");
+    if (active) {
+      document.documentElement.dataset.faollaMobileSwipeBackActive = "true";
+      return () => {
+        delete document.documentElement.dataset.faollaMobileSwipeBackActive;
+      };
+    }
+    if (document.documentElement.dataset.faollaMobileSwipeBackActive === "true") {
+      delete document.documentElement.dataset.faollaMobileSwipeBackActive;
+    }
+    return undefined;
+  }, [isMobileSupportOnlyMode, supportMerchantInfoSheetOpen, supportMobileView]);
   function logoutSuperAdmin() {
     clearSuperAdminAuthenticated();
     void fetch("/api/super-admin/auth/logout", {

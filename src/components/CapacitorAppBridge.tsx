@@ -85,12 +85,16 @@ function shouldUseWebLaunchCover() {
 }
 
 function resolveNativeBackHref(pathname: string) {
-  if (pathname.startsWith("/admin/games/") || pathname.startsWith("/admin/tools/")) {
+  if (pathname.startsWith("/admin/games/")) {
     return "/admin?mobileTab=self&selfSection=games";
   }
-  if (pathname.startsWith("/me/games/") || pathname.startsWith("/me/tools/")) {
+  if (pathname.startsWith("/admin/tools/")) {
+    return "/admin?mobileTab=self&selfSection=tools";
+  }
+  if (pathname.startsWith("/me/games/")) {
     return "/me?mobileTab=self&selfSection=games";
   }
+  if (pathname.startsWith("/me/tools/")) return "/me?mobileTab=self&selfSection=tools";
   if (pathname === "/bufuzai" || pathname === "/game-lobby") return "/launch";
   return "";
 }

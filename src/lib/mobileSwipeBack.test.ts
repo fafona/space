@@ -14,33 +14,43 @@ test("normalizes mobile swipe back pathnames", () => {
   assert.equal(normalizeMobileSwipeBackPathname("https://faolla.com/site/10000000?x=1"), "/site/10000000");
 });
 
-test("resolves known mobile routes to their upper level", () => {
-  assert.equal(resolveMobileSwipeBackHref("/industry/food"), "/");
-  assert.equal(resolveMobileSwipeBackHref("/site/10000000"), "/");
-  assert.equal(resolveMobileSwipeBackHref("/u/10000000"), "/");
-  assert.equal(resolveMobileSwipeBackHref("/share/business-card?target=/abc"), "/");
+test("does not resolve main mobile routes", () => {
+  assert.equal(resolveMobileSwipeBackHref("/industry/food"), "");
+  assert.equal(resolveMobileSwipeBackHref("/site/10000000"), "");
+  assert.equal(resolveMobileSwipeBackHref("/u/10000000"), "");
+  assert.equal(resolveMobileSwipeBackHref("/share/business-card?target=/abc"), "");
+  assert.equal(resolveMobileSwipeBackHref("/10000000"), "");
+  assert.equal(resolveMobileSwipeBackHref("/card/demo"), "");
+  assert.equal(resolveMobileSwipeBackHref("/admin"), "");
+  assert.equal(resolveMobileSwipeBackHref("/me"), "");
+  assert.equal(resolveMobileSwipeBackHref("/login"), "");
+  assert.equal(resolveMobileSwipeBackHref("/foo"), "");
+});
+
+test("resolves known child routes with visible back affordances", () => {
   assert.equal(resolveMobileSwipeBackHref("/booking-calendar"), "/me");
+  assert.equal(resolveMobileSwipeBackHref("/me/tools/shuangkoujifen"), "/me?mobileTab=self&selfSection=tools");
+  assert.equal(resolveMobileSwipeBackHref("/admin/tools/shuangkoujifen"), "/admin?mobileTab=self&selfSection=tools");
   assert.equal(resolveMobileSwipeBackHref("/reset-password/bridge"), "/reset-password");
   assert.equal(resolveMobileSwipeBackHref("/reset-password"), "/login");
-  assert.equal(resolveMobileSwipeBackHref("/10000000"), "/");
-  assert.equal(resolveMobileSwipeBackHref("/card/demo"), "/");
   assert.equal(resolveMobileSwipeBackHref("/card/demo/contact"), "/card/demo");
-  assert.equal(resolveMobileSwipeBackHref("/admin"), "/");
-  assert.equal(resolveMobileSwipeBackHref("/me"), "/");
 });
 
 test("resolves super admin and generic nested routes", () => {
   assert.equal(resolveMobileSwipeBackHref("/super-admin/editor/latest"), "/super-admin/latest");
-  assert.equal(resolveMobileSwipeBackHref("/super-admin/latest"), "/");
+  assert.equal(resolveMobileSwipeBackHref("/super-admin/latest"), "");
   assert.equal(resolveMobileSwipeBackHref("/foo/bar/baz"), "/foo/bar");
-  assert.equal(resolveMobileSwipeBackHref("/foo"), "/");
   assert.equal(resolveMobileSwipeBackHref("/"), "");
 });
 
 test("preserves app shell params on fallback URLs", () => {
   assert.equal(
-    resolveMobileSwipeBackHref("/site/10000000", "?uiLocale=zh-CN&appShell=faolla&ignored=1"),
-    "/?appShell=faolla&uiLocale=zh-CN",
+    resolveMobileSwipeBackHref("/booking-calendar", "?uiLocale=zh-CN&appShell=faolla&ignored=1"),
+    "/me?appShell=faolla&uiLocale=zh-CN",
+  );
+  assert.equal(
+    resolveMobileSwipeBackHref("/me/tools/shuangkoujifen", "?uiLocale=zh-CN&appShell=faolla&ignored=1"),
+    "/me?mobileTab=self&selfSection=tools&appShell=faolla&uiLocale=zh-CN",
   );
   assert.equal(
     resolveMobileSwipeBackHref("/", "?appShell=faolla&uiLocale=zh-CN", "https://fafona.faolla.com"),

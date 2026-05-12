@@ -106,17 +106,19 @@ function resolveFallbackPath(path: string) {
   if (path === "/reset-password") return "/login";
   if (path === "/super-admin/editor/latest") return "/super-admin/latest";
   if (path === "/super-admin/editor") return "/super-admin/latest";
-  if (path === "/super-admin/latest" || path === "/super-admin/login" || path === "/super-admin") return "/";
+  if (path === "/super-admin/latest" || path === "/super-admin/login" || path === "/super-admin") return "";
   if (path === "/booking-calendar") return "/me";
-  if (path === "/admin" || path === "/me") return "/";
-  if (path === "/launch" || path === "/login" || path === "/offline" || path === "/portal" || path === "/pwa") return "/";
-  if (/^\/(?:industry|site|u)\/[^/]+$/i.test(path)) return "/";
-  if (/^\/card\/[^/]+$/i.test(path)) return "/";
-  if (/^\/share\/business-card(?:\/|$)/i.test(path)) return "/";
-  if (/^\/\d{8}$/.test(path)) return "/";
+  if (/^\/admin\/tools\/[^/]+$/i.test(path)) return "/admin?mobileTab=self&selfSection=tools";
+  if (/^\/me\/tools\/[^/]+$/i.test(path)) return "/me?mobileTab=self&selfSection=tools";
+  if (path === "/admin" || path === "/me") return "";
+  if (path === "/launch" || path === "/login" || path === "/offline" || path === "/portal" || path === "/pwa") return "";
+  if (/^\/(?:industry|site|u)\/[^/]+$/i.test(path)) return "";
+  if (/^\/card\/[^/]+$/i.test(path)) return "";
+  if (/^\/share\/business-card(?:\/|$)/i.test(path)) return "";
+  if (/^\/\d{8}$/.test(path)) return "";
 
   const segments = path.split("/").filter(Boolean);
-  if (segments.length <= 1) return "/";
+  if (segments.length <= 1) return "";
   return `/${segments.slice(0, -1).join("/")}`;
 }
 

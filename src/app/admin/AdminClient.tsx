@@ -301,7 +301,7 @@ import {
 import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
 import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
-import { MOBILE_SWIPE_BACK_EVENT, type MobileSwipeBackEventDetail } from "@/lib/mobileSwipeBack";
+import { MOBILE_SWIPE_BACK_EVENT } from "@/lib/mobileSwipeBack";
 import { clearTankBattleLobbyReturnTarget, readTankBattleLobbyReturnTarget } from "@/lib/tankBattleLobbyReturn";
 import { useFaollaAndroidAppUpdate } from "@/lib/useFaollaAndroidAppUpdate";
 import { useMobilePortraitOrientationLock } from "@/lib/useMobilePortraitOrientationLock";
@@ -11634,14 +11634,18 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     supportUnreadStateHydrated
       ? supportTotalBadgeCount
       : Math.max(supportTotalBadgeCount, supportPushBadgeHydrated ? supportRemoteBadgeCount : 0);
-  const latestSupportAdminNotificationPayload = latestSupportAdminMessage
-    ? {
-        title: "Faolla 官方回复",
-        body: buildSupportNativeNotificationBody(latestSupportAdminMessage.text),
-        url: buildSupportNativeNotificationUrl(supportReadMerchantId || currentSupportMerchantId, "official"),
-        badgeCount: supportEffectiveBadgeCount,
-      }
-    : null;
+  const latestSupportAdminNotificationPayload = useMemo(
+    () =>
+      latestSupportAdminMessage
+        ? {
+            title: "Faolla 官方回复",
+            body: buildSupportNativeNotificationBody(latestSupportAdminMessage.text),
+            url: buildSupportNativeNotificationUrl(supportReadMerchantId || currentSupportMerchantId, "official"),
+            badgeCount: supportEffectiveBadgeCount,
+          }
+        : null,
+    [currentSupportMerchantId, latestSupportAdminMessage, supportEffectiveBadgeCount, supportReadMerchantId],
+  );
   const latestIncomingPeerNotificationPayload = useMemo(() => {
     let latestPayload: { title: string; body: string; url: string; badgeCount: number } | null = null;
     let latestTimestamp = 0;
@@ -11793,8 +11797,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   useEffect(() => {
     if (typeof window === "undefined") return;
     const handleMobileSwipeBack = (event: Event) => {
-      const source = (event as CustomEvent<MobileSwipeBackEventDetail>).detail?.source;
-      const isAndroidBack = source === "android-back";
       if (!supportInterfaceOpen || !isMobileSupportDialog) return;
       if (supportMerchantInfoSheetOpen) {
         event.preventDefault();
@@ -11815,9 +11817,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         }
         return;
       }
-      if (!isAndroidBack) {
-        event.preventDefault();
-      }
     };
     window.addEventListener(MOBILE_SWIPE_BACK_EVENT, handleMobileSwipeBack);
     return () => {
@@ -11825,6 +11824,32 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     };
   }, [
     closeMobileSupportThread,
+    isMobileSupportDialog,
+    supportInterfaceOpen,
+    supportMerchantInfoSheetOpen,
+    supportMobileHomeTab,
+    supportMobileView,
+    supportSelfSectionView,
+  ]);
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const active =
+      supportInterfaceOpen &&
+      isMobileSupportDialog &&
+      (supportMerchantInfoSheetOpen ||
+        supportMobileView === "thread" ||
+        (supportMobileHomeTab === "self" && supportSelfSectionView !== "home"));
+    if (active) {
+      document.documentElement.dataset.faollaMobileSwipeBackActive = "true";
+      return () => {
+        delete document.documentElement.dataset.faollaMobileSwipeBackActive;
+      };
+    }
+    if (document.documentElement.dataset.faollaMobileSwipeBackActive === "true") {
+      delete document.documentElement.dataset.faollaMobileSwipeBackActive;
+    }
+    return undefined;
+  }, [
     isMobileSupportDialog,
     supportInterfaceOpen,
     supportMerchantInfoSheetOpen,

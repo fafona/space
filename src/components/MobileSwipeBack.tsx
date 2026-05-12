@@ -33,6 +33,18 @@ const INTERACTIVE_SWIPE_START_SELECTOR = [
   ".support-mobile-nav-shell",
 ].join(",");
 
+const VISIBLE_BACK_CONTROL_SELECTOR = [
+  "[data-mobile-swipe-back-control]",
+  "button[aria-label*='返回']",
+  "a[aria-label*='返回']",
+  "button[title*='返回']",
+  "a[title*='返回']",
+  "button[aria-label*='Back']",
+  "a[aria-label*='Back']",
+  "button[title*='Back']",
+  "a[title*='Back']",
+].join(",");
+
 function isMobileSwipeBackEnabled() {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
   return window.matchMedia("(max-width: 767px), (pointer: coarse)").matches;
@@ -60,6 +72,42 @@ function hasHorizontalScrollAncestor(target: EventTarget | null) {
     if (scrollable && node.scrollWidth > node.clientWidth + 16) return true;
   }
   return false;
+}
+
+function isVisibleElement(element: Element) {
+  if (typeof window === "undefined") return false;
+  const style = window.getComputedStyle(element);
+  if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
+  return element.getClientRects().length > 0;
+}
+
+function hasVisibleMobileBackControl() {
+  if (typeof document === "undefined") return false;
+  const candidates = Array.from(document.querySelectorAll(VISIBLE_BACK_CONTROL_SELECTOR));
+  if (
+    candidates.some((element) => {
+      if (!(element instanceof HTMLElement) || !isVisibleElement(element)) return false;
+      if (element.getAttribute("aria-disabled") === "true" || element.hasAttribute("disabled")) return false;
+      return true;
+    })
+  ) {
+    return true;
+  }
+
+  const textCandidates = Array.from(document.querySelectorAll("button,a"));
+  return textCandidates.some((element) => {
+    if (!(element instanceof HTMLElement) || !isVisibleElement(element)) return false;
+    if (element.getAttribute("aria-disabled") === "true" || element.hasAttribute("disabled")) return false;
+    const text = (element.textContent || "").trim();
+    return text.includes("返回") || /\bback\b/i.test(text);
+  });
+}
+
+function isMobileSwipeBackContextActive(pathname: string, search: string) {
+  if (typeof window === "undefined" || typeof document === "undefined") return false;
+  if (document.documentElement.dataset.faollaMobileSwipeBackActive === "true") return true;
+  if (resolveMobileSwipeBackHref(pathname, search, window.location.origin)) return true;
+  return hasVisibleMobileBackControl();
 }
 
 function getSearchString(searchParams: ReturnType<typeof useSearchParams>) {
@@ -106,6 +154,10 @@ export default function MobileSwipeBack() {
         return;
       }
       if (isInteractiveSwipeStart(event.target) || hasHorizontalScrollAncestor(event.target)) {
+        resetSwipe();
+        return;
+      }
+      if (!isMobileSwipeBackContextActive(pathnameRef.current || "/", searchRef.current)) {
         resetSwipe();
         return;
       }

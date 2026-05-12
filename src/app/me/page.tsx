@@ -84,7 +84,7 @@ import {
 } from "@/lib/supportMessageAttachments";
 import type { MerchantBookingEditableInput, MerchantBookingRecord } from "@/lib/merchantBookings";
 import { getMerchantBookingDayLabel } from "@/lib/merchantBookingLocale";
-import { MOBILE_SWIPE_BACK_EVENT, type MobileSwipeBackEventDetail } from "@/lib/mobileSwipeBack";
+import { MOBILE_SWIPE_BACK_EVENT } from "@/lib/mobileSwipeBack";
 import { useFaollaAndroidAppUpdate } from "@/lib/useFaollaAndroidAppUpdate";
 import { useMobilePortraitOrientationLock } from "@/lib/useMobilePortraitOrientationLock";
 import type { MerchantOrderRecord } from "@/lib/merchantOrders";
@@ -2486,8 +2486,6 @@ export default function MePage() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const handleMobileSwipeBack = (event: Event) => {
-      const source = (event as CustomEvent<MobileSwipeBackEventDetail>).detail?.source;
-      const isAndroidBack = source === "android-back";
       if (!isMobileViewport) return;
       if (conversationInfoOpen) {
         event.preventDefault();
@@ -2508,14 +2506,30 @@ export default function MePage() {
         }
         return;
       }
-      if (!isAndroidBack) {
-        event.preventDefault();
-      }
     };
     window.addEventListener(MOBILE_SWIPE_BACK_EVENT, handleMobileSwipeBack);
     return () => {
       window.removeEventListener(MOBILE_SWIPE_BACK_EVENT, handleMobileSwipeBack);
     };
+  }, [conversationInfoOpen, isMobileViewport, mobileConversationView, mobileSelfSection, mobileTab]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const active =
+      isMobileViewport &&
+      (conversationInfoOpen ||
+        (mobileTab === "conversations" && mobileConversationView === "thread") ||
+        (mobileTab === "self" && mobileSelfSection !== "home"));
+    if (active) {
+      document.documentElement.dataset.faollaMobileSwipeBackActive = "true";
+      return () => {
+        delete document.documentElement.dataset.faollaMobileSwipeBackActive;
+      };
+    }
+    if (document.documentElement.dataset.faollaMobileSwipeBackActive === "true") {
+      delete document.documentElement.dataset.faollaMobileSwipeBackActive;
+    }
+    return undefined;
   }, [conversationInfoOpen, isMobileViewport, mobileConversationView, mobileSelfSection, mobileTab]);
 
   const accountId =
@@ -3979,11 +3993,12 @@ export default function MePage() {
     focusSupportInput();
   }
 
-  async function openPersonalMerchantConversation(target: {
-    siteId?: string;
-    email?: string;
-    name?: string;
-  }) {
+  const openPersonalMerchantConversation = useCallback(
+    async (target: {
+      siteId?: string;
+      email?: string;
+      name?: string;
+    }) => {
     const merchantId = trimText(target.siteId);
     const merchantEmail = trimText(target.email).toLowerCase();
     const merchantName = trimText(target.name) || merchantId || "商户";
@@ -4067,7 +4082,9 @@ export default function MePage() {
     } finally {
       setSupportSearching(false);
     }
-  }
+    },
+    [accountId, email, peerContacts, profileName, supportSearching],
+  );
 
   useEffect(() => {
     if (typeof window === "undefined" || !accountId) return;
@@ -4076,7 +4093,7 @@ export default function MePage() {
     if (!/^\d{8}$/.test(peerId) || pendingQrConnectPeerRef.current === peerId) return;
     pendingQrConnectPeerRef.current = peerId;
     void openPersonalMerchantConversation({ siteId: peerId });
-  }, [accountId, peerContacts]);
+  }, [accountId, openPersonalMerchantConversation, peerContacts]);
 
   function toggleSupportAttachmentMenu() {
     if (!supportComposerAvailable || supportComposerBusy) return;
