@@ -14,6 +14,13 @@ import {
   getEuropeProvinceOptions,
 } from "@/lib/europeLocationOptions";
 import { normalizeMerchantBusinessCards, type MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
+import {
+  buildGoogleBusinessProfileOpenUrl,
+  buildGoogleBusinessProfileReadiness,
+  buildGoogleBusinessProfileSearchUrl,
+  buildGoogleBusinessProfileWebsiteUrl,
+  buildGoogleBusinessProfileWorksheet,
+} from "@/lib/googleBusinessProfileAssistant";
 import { getMerchantSeoReadiness, type MerchantSeoProfile } from "@/lib/merchantSeo";
 import {
   getMerchantProfileContactNameError,
@@ -316,6 +323,7 @@ export default function MerchantProfileDialog({
   const [domainPrefixPending, setDomainPrefixPending] = useState(false);
   const [savePending, setSavePending] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const [googleBusinessProfileCopyMessage, setGoogleBusinessProfileCopyMessage] = useState("");
   const normalizedTakenPrefixes = useMemo(
     () =>
       new Set(
@@ -545,6 +553,23 @@ export default function MerchantProfileDialog({
     ],
   );
   const merchantSeoReadiness = useMemo(() => getMerchantSeoReadiness(merchantSeoProfile), [merchantSeoProfile]);
+  const googleBusinessProfileWebsiteUrl = useMemo(
+    () => buildGoogleBusinessProfileWebsiteUrl(merchantSeoProfile, siteBaseDomain),
+    [merchantSeoProfile, siteBaseDomain],
+  );
+  const googleBusinessProfileReadiness = useMemo(
+    () => buildGoogleBusinessProfileReadiness(merchantSeoProfile, googleBusinessProfileWebsiteUrl),
+    [googleBusinessProfileWebsiteUrl, merchantSeoProfile],
+  );
+  const googleBusinessProfileWorksheet = useMemo(
+    () => buildGoogleBusinessProfileWorksheet(merchantSeoProfile, siteBaseDomain),
+    [merchantSeoProfile, siteBaseDomain],
+  );
+  const googleBusinessProfileSearchUrl = useMemo(
+    () => buildGoogleBusinessProfileSearchUrl(merchantSeoProfile),
+    [merchantSeoProfile],
+  );
+  const googleBusinessProfileOpenUrl = useMemo(() => buildGoogleBusinessProfileOpenUrl(), []);
 
   const countrySearchOptions = useMemo<SearchOption[]>(
     () => countryOptions.map((item) => ({ value: item.code, label: item.name })),
@@ -579,6 +604,26 @@ export default function MerchantProfileDialog({
     window.addEventListener("keydown", onEscape);
     return () => window.removeEventListener("keydown", onEscape);
   }, [isInline, onClose, open]);
+
+  useEffect(() => {
+    if (!googleBusinessProfileCopyMessage) return;
+    const timer = window.setTimeout(() => setGoogleBusinessProfileCopyMessage(""), 2600);
+    return () => window.clearTimeout(timer);
+  }, [googleBusinessProfileCopyMessage]);
+
+  const copyGoogleBusinessProfileWorksheet = useCallback(async () => {
+    const text = googleBusinessProfileWorksheet.trim();
+    if (!text) {
+      setGoogleBusinessProfileCopyMessage("暂无可复制资料");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      setGoogleBusinessProfileCopyMessage("资料已复制");
+    } catch {
+      setGoogleBusinessProfileCopyMessage("复制失败，请手动复制");
+    }
+  }, [googleBusinessProfileWorksheet]);
 
   const selectCountryCode = (nextCountryCode: string) => {
     const nextCountry = countryOptions.find((item) => item.code === nextCountryCode);
@@ -708,6 +753,80 @@ export default function MerchantProfileDialog({
                   <span>{item.label}</span>
                 </div>
               ))}
+            </div>
+          </div>
+          <div
+            className={`mt-2 rounded-lg border px-3 py-3 text-sm ${
+              googleBusinessProfileReadiness.ready ? "border-sky-200 bg-sky-50" : "border-amber-200 bg-amber-50"
+            }`}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="font-semibold text-slate-900">Google 商家资料验证助手</div>
+                <div className="mt-1 text-xs text-slate-600">
+                  先自动整理创建 Google Business Profile 所需资料，API 权限开通后这里会继续接发起验证。
+                </div>
+              </div>
+              <span
+                className={`shrink-0 rounded-full px-2 py-1 text-xs font-semibold ${
+                  googleBusinessProfileReadiness.ready ? "bg-sky-100 text-sky-700" : "bg-amber-100 text-amber-700"
+                }`}
+              >
+                {googleBusinessProfileReadiness.ready
+                  ? "资料齐全"
+                  : `${googleBusinessProfileReadiness.requiredCompleteCount}/${googleBusinessProfileReadiness.requiredTotal}`}
+              </span>
+            </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {googleBusinessProfileReadiness.required.map((item) => (
+                <div
+                  key={item.key}
+                  className={`flex items-center gap-2 text-xs ${item.complete ? "text-sky-700" : "text-slate-600"}`}
+                >
+                  <span
+                    className={`flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-bold ${
+                      item.complete ? "bg-sky-100 text-sky-700" : "bg-white text-amber-700"
+                    }`}
+                  >
+                    {item.complete ? "✓" : "!"}
+                  </span>
+                  <span>{item.label}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 rounded border border-white/70 bg-white/70 px-2 py-2 text-xs text-slate-600">
+              <span className="font-semibold text-slate-800">商户网站：</span>
+              <span className="break-all">{googleBusinessProfileWebsiteUrl}</span>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className="rounded border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-50"
+                onClick={() => {
+                  void copyGoogleBusinessProfileWorksheet();
+                }}
+              >
+                复制商户资料
+              </button>
+              <a
+                href={googleBusinessProfileOpenUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded bg-slate-950 px-3 py-2 text-xs font-semibold text-white hover:opacity-90"
+              >
+                打开 Google 商家资料
+              </a>
+              <a
+                href={googleBusinessProfileSearchUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-50"
+              >
+                搜索现有档案
+              </a>
+              {googleBusinessProfileCopyMessage ? (
+                <span className="text-xs text-sky-700">{googleBusinessProfileCopyMessage}</span>
+              ) : null}
             </div>
           </div>
         </div>
