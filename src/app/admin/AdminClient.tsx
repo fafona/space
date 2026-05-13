@@ -18704,6 +18704,39 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         {merchantDisplayName}
                       </div>
                     </div>
+                    {isDesktopMerchantWorkspace && merchantDesktopSection !== "editor" ? (
+                      <div className="flex shrink-0 items-center gap-2">
+                        <button
+                          ref={merchantProfileButtonRef}
+                          type="button"
+                          className={`rounded border px-3 py-2 text-sm transition-colors disabled:opacity-50 ${
+                            merchantProfileAttention
+                              ? "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                              : "bg-white text-slate-900 hover:bg-gray-50"
+                          }`}
+                          onClick={() => {
+                            void openMerchantProfilePanel();
+                          }}
+                        >
+                          商户信息
+                        </button>
+                        <button
+                          type="button"
+                          className="inline-flex h-10 w-10 items-center justify-center rounded border bg-white text-rose-600 transition hover:bg-rose-50 disabled:opacity-50"
+                          onClick={() => {
+                            void requestLogout();
+                          }}
+                          disabled={loggingOut}
+                          title={loggingOut ? "退出中..." : "退出登录"}
+                          aria-label={loggingOut ? "退出中..." : "退出登录"}
+                        >
+                          <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+                            <path d="M14 7h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                            <path d="M10 8 6 12l4 4M7 12h9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                 )
               ) : null}
