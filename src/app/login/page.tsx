@@ -1917,35 +1917,29 @@ function LoginPageInner() {
                   <div className="grid gap-4">
                     <button
                       type="button"
-                      className="group rounded-[26px] border border-slate-200 bg-white px-5 py-5 text-left shadow-[0_18px_48px_rgba(15,23,42,0.09)] transition hover:-translate-y-0.5 hover:border-emerald-200 hover:shadow-[0_22px_54px_rgba(15,23,42,0.12)] disabled:opacity-50"
+                      className="group rounded-[26px] border border-emerald-200 bg-emerald-50/85 px-5 py-5 text-left shadow-[0_18px_48px_rgba(15,23,42,0.08)] transition hover:-translate-y-0.5 hover:border-emerald-300 hover:bg-emerald-50 hover:shadow-[0_22px_54px_rgba(15,23,42,0.12)] disabled:opacity-50"
                       onClick={() => selectLoginEntry("personal")}
                       disabled={pendingAction !== null}
                     >
-                      <div className="flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-4">
                         <div>
                           <div className="text-xl font-semibold text-slate-950">个人入口</div>
                           <div className="mt-2 text-sm leading-6 text-slate-500">{personalEntryDescription}</div>
                         </div>
-                        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-emerald-50 text-lg font-semibold text-emerald-700 transition group-hover:bg-emerald-100">
-                          个
-                        </span>
                       </div>
                     </button>
 
                     <button
                       type="button"
-                      className="group rounded-[26px] border border-slate-200 bg-white px-5 py-5 text-left shadow-[0_18px_48px_rgba(15,23,42,0.09)] transition hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-[0_22px_54px_rgba(15,23,42,0.12)] disabled:opacity-50"
+                      className="group rounded-[26px] border border-sky-200 bg-sky-50/85 px-5 py-5 text-left shadow-[0_18px_48px_rgba(15,23,42,0.08)] transition hover:-translate-y-0.5 hover:border-sky-300 hover:bg-sky-50 hover:shadow-[0_22px_54px_rgba(15,23,42,0.12)] disabled:opacity-50"
                       onClick={() => selectLoginEntry("merchant")}
                       disabled={pendingAction !== null}
                     >
-                      <div className="flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-4">
                         <div>
                           <div className="text-xl font-semibold text-slate-950">商户入口</div>
                           <div className="mt-2 text-sm leading-6 text-slate-500">{merchantEntryDescription}</div>
                         </div>
-                        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-sky-50 text-lg font-semibold text-sky-700 transition group-hover:bg-sky-100">
-                          商
-                        </span>
                       </div>
                     </button>
                   </div>
