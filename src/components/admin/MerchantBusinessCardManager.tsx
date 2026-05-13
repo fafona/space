@@ -294,9 +294,7 @@ async function normalizeClipboardImageBlob(sourceImageUrl: string) {
   if (sourceBlob.type === "image/png") {
     return sourceBlob;
   }
-  return new Blob([await sourceBlob.arrayBuffer()], {
-    type: "image/png",
-  });
+  return await convertImageBlobToPngBlob(sourceBlob);
 }
 
 async function blobToDataUrl(blob: Blob) {
@@ -350,6 +348,24 @@ async function loadImageElementFromBlob(blob: Blob) {
   } finally {
     URL.revokeObjectURL(objectUrl);
   }
+}
+
+async function convertImageBlobToPngBlob(blob: Blob) {
+  const image = await loadImageElementFromBlob(blob);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, image.naturalWidth);
+  canvas.height = Math.max(1, image.naturalHeight);
+  const context = canvas.getContext("2d");
+  if (!context) {
+    throw new Error("image_clipboard_unavailable");
+  }
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  const pngBlob = await canvasToBlob(canvas, "image/png", 1);
+  if (!pngBlob) {
+    throw new Error("image_clipboard_unavailable");
+  }
+  return pngBlob;
 }
 
 function buildInitialImageCompressionPlan(sourceBytes: number, limitBytes: number) {
@@ -470,12 +486,77 @@ async function compressImageFileWithinLimit(file: Blob, limitBytes: number) {
   };
 }
 
+async function compressImageDataUrlWithinLimit(dataUrl: string, limitBytes: number) {
+  const originalBytes = estimateDataUrlBytes(dataUrl);
+  if (originalBytes <= limitBytes) {
+    return {
+      dataUrl,
+      compressed: false,
+      bytes: originalBytes,
+    };
+  }
+
+  const image = await loadImageElement(dataUrl);
+  let plan = buildInitialImageCompressionPlan(originalBytes || limitBytes + 1, limitBytes);
+  let bestCandidate:
+    | {
+        blob: Blob | null;
+        dataUrl: string;
+        bytes: number;
+      }
+    | null = null;
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    await yieldToBrowser();
+    const candidate = await renderCompressedImageCandidate(image, plan.scale, plan.quality);
+    if (!bestCandidate || candidate.bytes < bestCandidate.bytes) {
+      bestCandidate = candidate;
+    }
+    if (candidate.bytes <= limitBytes) {
+      const finalized = await finalizeCompressedImageCandidate(candidate);
+      return {
+        dataUrl: finalized.dataUrl,
+        compressed: true,
+        bytes: finalized.bytes,
+      };
+    }
+    const nextPlan = refineImageCompressionPlan(plan, candidate.bytes, limitBytes);
+    plan = {
+      scale: Math.max(0.06, Math.min(nextPlan.scale, plan.scale * 0.92)),
+      quality: Math.max(0.3, Math.min(nextPlan.quality, plan.quality * 0.9)),
+    };
+  }
+
+  if (bestCandidate) {
+    const finalized = await finalizeCompressedImageCandidate(bestCandidate);
+    return {
+      dataUrl: finalized.dataUrl,
+      compressed: true,
+      bytes: finalized.bytes,
+    };
+  }
+
+  return {
+    dataUrl,
+    compressed: false,
+    bytes: originalBytes,
+  };
+}
+
 function estimateDataUrlBytes(dataUrl: string) {
   const base64 = dataUrl.split(",")[1] ?? "";
   if (!base64) {
     return typeof TextEncoder !== "undefined" ? new TextEncoder().encode(dataUrl).length : dataUrl.length;
   }
   return Math.max(0, Math.floor((base64.length * 3) / 4));
+}
+
+function getImageFileExtension(imageUrl: string) {
+  const dataUrlType = imageUrl.match(/^data:image\/([a-z0-9.+-]+);/i)?.[1]?.toLowerCase();
+  const type = dataUrlType || imageUrl.split(/[?#]/, 1)[0]?.split(".").pop()?.toLowerCase() || "";
+  if (type === "jpeg" || type === "jpg") return "jpg";
+  if (type === "webp") return "webp";
+  return "png";
 }
 
 async function copyImageViaLegacyClipboard(blob: Blob) {
@@ -1319,7 +1400,7 @@ export default function MerchantBusinessCardManager({
       if (error instanceof Error && error.message === "business_card_limit_reached") {
         setTip(`名片夹已达到上限（${normalizedCardLimit} 张），请先删除旧名片或到超级后台调整数量限制`);
       } else if (error instanceof Error && error.message === "export_image_limit_exceeded") {
-        setTip(`导出名片图片不能超过 ${normalizedExportImageLimitKb} KB，请调整内容或背景后再试`);
+        setTip(`自动压缩后仍超过 ${normalizedExportImageLimitKb} KB，请减少内容或更换背景后再试`);
       } else if (error instanceof Error && error.message === "share_auth_unavailable") {
         setTip("登录状态还没准备好，请刷新后台后再试一次");
       } else if (error instanceof Error && error.message === "share_request_timeout") {
@@ -2813,7 +2894,7 @@ export default function MerchantBusinessCardManager({
       .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
       .join(" ");
     const safeBaseName = normalizedContactName.replace(/[\\/:*?"<>|]+/g, "").trim() || "business card";
-    return `${safeBaseName}'s card.png`;
+    return `${safeBaseName}'s card.${getImageFileExtension(card.imageUrl)}`;
   }
 
   async function saveCard(card: MerchantBusinessCardAsset) {
@@ -3079,10 +3160,14 @@ export default function MerchantBusinessCardManager({
       throw new Error("business_card_limit_reached");
     }
 
-    const imageUrl = await renderCardNodeToImage(node);
-    if (estimateDataUrlBytes(imageUrl) > normalizedExportImageLimitKb * 1024) {
+    const exportedImage = await compressImageDataUrlWithinLimit(
+      await renderCardNodeToImage(node),
+      normalizedExportImageLimitKb * 1024,
+    );
+    if (exportedImage.bytes > normalizedExportImageLimitKb * 1024) {
       throw new Error("export_image_limit_exceeded");
     }
+    const imageUrl = exportedImage.dataUrl;
     const nextDraft = normalizeMerchantBusinessCardDraft(draft);
     const existingCard = editingCardId ? normalizedCards.find((card) => card.id === editingCardId) ?? null : null;
     const resolvedShareKey =
