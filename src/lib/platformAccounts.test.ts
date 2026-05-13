@@ -4,6 +4,7 @@ import {
   buildPlatformAccountMetadataPatch,
   isPersonalAccountNumericId,
   readPlatformAccountIdFromMetadata,
+  readPlatformAccountTypeHintFromMetadata,
   readPlatformAccountTypeFromMetadata,
 } from "@/lib/platformAccounts";
 
@@ -19,6 +20,25 @@ test("platform account metadata helpers read type and account id", () => {
   assert.equal(readPlatformAccountIdFromMetadata(user), "50010105");
   assert.equal(isPersonalAccountNumericId("50010105"), true);
   assert.equal(isPersonalAccountNumericId("10000001"), false);
+});
+
+test("platform account type hints use metadata keys instead of numeric ranges", () => {
+  assert.equal(
+    readPlatformAccountTypeHintFromMetadata({
+      user_metadata: {
+        merchant_id: "51888888",
+      },
+    }),
+    "merchant",
+  );
+  assert.equal(
+    readPlatformAccountTypeHintFromMetadata({
+      user_metadata: {
+        personal_id: "10000001",
+      },
+    }),
+    "personal",
+  );
 });
 
 test("platform account metadata patch keeps mirrored account fields", () => {

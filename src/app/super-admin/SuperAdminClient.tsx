@@ -76,7 +76,7 @@ import {
   normalizePersonalAccountServiceConfig,
   type PersonalAccountServiceConfig,
 } from "@/lib/personalAccountServiceConfig";
-import { isPersonalAccountNumericId, type PlatformAccountType } from "@/lib/platformAccounts";
+import type { PlatformAccountType } from "@/lib/platformAccounts";
 import { buildMerchantSiteLinker } from "@/lib/merchantSiteLinking";
 import {
   DEFAULT_PLAN_TEMPLATE_REPLACE_OPTIONS,
@@ -5529,14 +5529,6 @@ export default function SuperAdminClient() {
       setManualUserError("ID 必须是 8 位数字");
       return;
     }
-    if (accountType === "personal" && !isPersonalAccountNumericId(accountId)) {
-      setManualUserError("个人 ID 必须在 50010105 - 59999999 范围内");
-      return;
-    }
-    if (accountType === "merchant" && isPersonalAccountNumericId(accountId)) {
-      setManualUserError("商户 ID 不能落在个人号段内");
-      return;
-    }
     if (!email) {
       setManualUserError("请输入邮箱");
       return;
@@ -7257,7 +7249,7 @@ export default function SuperAdminClient() {
                                   className="w-full rounded border px-3 py-2 text-sm"
                                   inputMode="numeric"
                                   maxLength={8}
-                                  placeholder={manualUserAccountType === "personal" ? "8位数字，例如 50010105" : "8位数字，例如 10000001"}
+                                  placeholder="8位数字"
                                   value={manualUserId}
                                   onChange={(event) => setManualUserId(event.target.value.replace(/\D+/g, "").slice(0, 8))}
                                 />
@@ -7283,8 +7275,8 @@ export default function SuperAdminClient() {
                               </label>
                               <div className="rounded border border-dashed bg-slate-50 px-3 py-2 text-xs text-slate-500">
                                 {manualUserAccountType === "personal"
-                                  ? "名称无需填写；系统不会发送邮箱验证，创建后该账号会登录到个人中心。"
-                                  : "名称无需填写；系统不会发送邮箱验证，创建后该账号会像普通商户一样登录后台。"}
+                                  ? "名称无需填写；系统不会发送邮箱验证，账号类型以当前选择为准，创建后会登录到个人中心。"
+                                  : "名称无需填写；系统不会发送邮箱验证，账号类型以当前选择为准，创建后会像普通商户一样登录后台。"}
                               </div>
                               {manualUserError ? <div className="text-sm text-rose-600">{manualUserError}</div> : null}
                             </div>

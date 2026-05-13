@@ -59,6 +59,23 @@ export function readPlatformAccountTypeFromMetadata(
   );
 }
 
+export function readPlatformAccountTypeHintFromMetadata(
+  user: MerchantAuthUserSummary | null | undefined,
+  fallback: PlatformAccountType | "" = "",
+) {
+  const explicitAccountType = readPlatformAccountTypeFromMetadata(user, "");
+  if (explicitAccountType) return explicitAccountType;
+  const personalId =
+    readMetadataString(user?.user_metadata, "personal_id", "personalId") ||
+    readMetadataString(user?.app_metadata, "personal_id", "personalId");
+  if (personalId) return "personal";
+  const merchantId =
+    readMetadataString(user?.user_metadata, "merchant_id", "merchantId", "merchantID") ||
+    readMetadataString(user?.app_metadata, "merchant_id", "merchantId", "merchantID");
+  if (merchantId) return "merchant";
+  return fallback;
+}
+
 export function readPlatformAccountIdFromMetadata(user: MerchantAuthUserSummary | null | undefined) {
   return normalizePlatformAccountNumericId(
     readMetadataString(

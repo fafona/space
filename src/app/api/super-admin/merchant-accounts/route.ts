@@ -13,8 +13,8 @@ import {
 } from "@/lib/personalAccountServiceConfig";
 import {
   buildPlatformAccountMetadataPatch,
-  isPersonalAccountNumericId,
   readPlatformAccountIdFromMetadata,
+  readPlatformAccountTypeHintFromMetadata,
   readPlatformAccountTypeFromMetadata,
   readPlatformUsernameFromMetadata,
   type PlatformAccountType,
@@ -159,9 +159,7 @@ function readAccountMetadata(user?: AuthUserSummary | null) {
   const userMetadata = user?.user_metadata ?? null;
   const appMetadata = user?.app_metadata ?? null;
   const accountId = readPlatformAccountIdFromMetadata(user);
-  const metadataAccountType = readPlatformAccountTypeFromMetadata(user, "");
-  const accountType =
-    metadataAccountType || (isPersonalAccountNumericId(accountId) ? "personal" : accountId ? "merchant" : "merchant");
+  const accountType = readPlatformAccountTypeHintFromMetadata(user, "") || "merchant";
   const username = readPlatformUsernameFromMetadata(user);
   const loginId =
     readMetadataString(
@@ -953,11 +951,8 @@ export async function POST(request: Request) {
           ? payload.username.trim()
           : "";
     const password = typeof payload?.password === "string" ? payload.password : "";
-    if (accountType === "personal" && !isPersonalAccountNumericId(accountId)) {
-      return badRequestJson("invalid_personal_id", "个人 ID 必须是 50010105 - 59999999 之间的 8 位数字");
-    }
-    if (accountType === "merchant" && (!isMerchantNumericId(accountId) || isPersonalAccountNumericId(accountId))) {
-      return badRequestJson("invalid_merchant_id", "商户 ID 必须是非个人号段的 8 位数字");
+    if (!isMerchantNumericId(accountId)) {
+      return badRequestJson("invalid_account_id", "ID 必须是 8 位数字");
     }
 
     if (!loginAccount) {
@@ -1175,8 +1170,8 @@ export async function PATCH(request: Request) {
     if (!accountId && !authUserId) {
       return badRequestJson("invalid_personal_account", "请选择要操作的个人账号");
     }
-    if (accountId && !isPersonalAccountNumericId(accountId)) {
-      return badRequestJson("invalid_personal_id", "个人 ID 必须是 50010105 - 59999999 之间的 8 位数字");
+    if (accountId && !isMerchantNumericId(accountId)) {
+      return badRequestJson("invalid_account_id", "ID 必须是 8 位数字");
     }
     if (servicePaused === undefined && !configPatch) {
       return badRequestJson("invalid_personal_service_update", "请提供要更新的个人账号服务配置");
@@ -1266,13 +1261,8 @@ export async function DELETE(request: Request) {
     if (!accountId && !authUserId) {
       return badRequestJson("invalid_account", "请选择要删除的账号");
     }
-    if (accountId) {
-      if (accountType === "personal" && !isPersonalAccountNumericId(accountId)) {
-        return badRequestJson("invalid_personal_id", "个人 ID 必须是 50010105 - 59999999 之间的 8 位数字");
-      }
-      if (accountType === "merchant" && (!isMerchantNumericId(accountId) || isPersonalAccountNumericId(accountId))) {
-        return badRequestJson("invalid_merchant_id", "商户 ID 必须是非个人号段的 8 位数字");
-      }
+    if (accountId && !isMerchantNumericId(accountId)) {
+      return badRequestJson("invalid_account_id", "ID 必须是 8 位数字");
     }
 
     const codeError = await verifyAccountDeleteCode(code);

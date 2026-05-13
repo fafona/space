@@ -12,9 +12,8 @@ import {
   type PlatformIdentitySupabaseClient,
 } from "@/lib/platformAccountIdentity";
 import {
-  isPersonalAccountNumericId,
   readPlatformAccountIdFromMetadata,
-  readPlatformAccountTypeFromMetadata,
+  readPlatformAccountTypeHintFromMetadata,
   readPlatformUsernameFromMetadata,
   type PlatformAccountType,
 } from "@/lib/platformAccounts";
@@ -94,12 +93,10 @@ function buildAutoSwitchedEntryMessage(actualAccountType: PlatformAccountType) {
 }
 
 function readExistingAccountType(user: MerchantAuthUserSummary | null, fallbackAccountType: PlatformAccountType | "") {
-  const metadataAccountType = readPlatformAccountTypeFromMetadata(user, "");
+  const metadataAccountType = readPlatformAccountTypeHintFromMetadata(user, "");
   if (metadataAccountType) return metadataAccountType;
   const accountId = readPlatformAccountIdFromMetadata(user);
-  if (isPersonalAccountNumericId(accountId)) return "personal";
-  if (accountId) return "merchant";
-  return fallbackAccountType || "";
+  return fallbackAccountType || (accountId ? "merchant" : "");
 }
 
 function isEightDigitAccountId(value: string | null | undefined) {
@@ -145,12 +142,15 @@ async function runBackendLookupWithRetry<T extends { error?: unknown }>(task: ()
   return result;
 }
 
-function buildManualIdentityFallback(account: string): ResolvedAccountIdentity {
+function buildManualIdentityFallback(
+  account: string,
+  preferredAccountType: PlatformAccountType | null = null,
+): ResolvedAccountIdentity {
   const accountId = normalizeAccountValue(account);
   if (!isEightDigitAccountId(accountId)) {
     return { email: "", accountType: "", accountId: "", merchantId: "" };
   }
-  const accountType: PlatformAccountType = isPersonalAccountNumericId(accountId) ? "personal" : "merchant";
+  const accountType: PlatformAccountType = preferredAccountType ?? "merchant";
   return {
     email: buildManualUserEmail(accountType, accountId),
     accountType,
@@ -247,8 +247,17 @@ async function listAuthUsers(supabase: AdminListUsersClient) {
   return users;
 }
 
-function readCachedAccountIdentity(account: string): ResolvedAccountIdentity | null {
-  const cacheKey = normalizeAccountValue(account);
+function buildAccountIdentityCacheKey(account: string, preferredAccountType: PlatformAccountType | null) {
+  const accountKey = normalizeAccountValue(account);
+  if (!accountKey) return "";
+  return `${preferredAccountType ?? "default"}:${accountKey}`;
+}
+
+function readCachedAccountIdentity(
+  account: string,
+  preferredAccountType: PlatformAccountType | null,
+): ResolvedAccountIdentity | null {
+  const cacheKey = buildAccountIdentityCacheKey(account, preferredAccountType);
   if (!cacheKey) return null;
   const cached = accountIdentityCache.get(cacheKey) ?? null;
   if (!cached) return null;
@@ -259,8 +268,12 @@ function readCachedAccountIdentity(account: string): ResolvedAccountIdentity | n
   return cached.identity;
 }
 
-function writeCachedAccountIdentity(account: string, identity: ResolvedAccountIdentity) {
-  const cacheKey = normalizeAccountValue(account);
+function writeCachedAccountIdentity(
+  account: string,
+  identity: ResolvedAccountIdentity,
+  preferredAccountType: PlatformAccountType | null,
+) {
+  const cacheKey = buildAccountIdentityCacheKey(account, preferredAccountType);
   if (!cacheKey || !identity.email) return;
   accountIdentityCache.set(cacheKey, {
     expiresAt: Date.now() + ACCOUNT_IDENTITY_CACHE_TTL_MS,
@@ -268,8 +281,12 @@ function writeCachedAccountIdentity(account: string, identity: ResolvedAccountId
   });
 }
 
-async function resolveAccountIdentity(supabase: AdminListUsersClient, account: string): Promise<ResolvedAccountIdentity> {
-  const cached = readCachedAccountIdentity(account);
+async function resolveAccountIdentity(
+  supabase: AdminListUsersClient,
+  account: string,
+  preferredAccountType: PlatformAccountType | null = null,
+): Promise<ResolvedAccountIdentity> {
+  const cached = readCachedAccountIdentity(account, preferredAccountType);
   if (cached) return cached;
   const normalizedAccount = normalizeAccountValue(account);
   if (!normalizedAccount) {
@@ -282,7 +299,7 @@ async function resolveAccountIdentity(supabase: AdminListUsersClient, account: s
       accountId: "",
       merchantId: "",
     };
-    writeCachedAccountIdentity(account, identity);
+    writeCachedAccountIdentity(account, identity, preferredAccountType);
     return identity;
   }
 
@@ -295,9 +312,9 @@ async function resolveAccountIdentity(supabase: AdminListUsersClient, account: s
         .limit(1),
     );
     if (error) {
-      const fallbackIdentity = buildManualIdentityFallback(normalizedAccount);
+      const fallbackIdentity = buildManualIdentityFallback(normalizedAccount, preferredAccountType);
       if (fallbackIdentity.email && isTransientBackendLookupError(error)) {
-        writeCachedAccountIdentity(account, fallbackIdentity);
+        writeCachedAccountIdentity(account, fallbackIdentity, preferredAccountType);
         return fallbackIdentity;
       }
       throw error;
@@ -316,7 +333,7 @@ async function resolveAccountIdentity(supabase: AdminListUsersClient, account: s
         accountId: normalizedAccount,
         merchantId: normalizedAccount,
       };
-      writeCachedAccountIdentity(account, identity);
+      writeCachedAccountIdentity(account, identity, preferredAccountType);
       return identity;
     }
   }
@@ -345,7 +362,7 @@ async function resolveAccountIdentity(supabase: AdminListUsersClient, account: s
         accountId: isMerchantNumericId(String(merchantByName?.id ?? "").trim()) ? String(merchantByName?.id ?? "").trim() : "",
         merchantId: isMerchantNumericId(String(merchantByName?.id ?? "").trim()) ? String(merchantByName?.id ?? "").trim() : "",
       };
-      writeCachedAccountIdentity(account, identity);
+      writeCachedAccountIdentity(account, identity, preferredAccountType);
       return identity;
     }
   }
@@ -354,24 +371,24 @@ async function resolveAccountIdentity(supabase: AdminListUsersClient, account: s
   try {
     authUsers = await listAuthUsers(supabase);
   } catch (error) {
-    const fallbackIdentity = buildManualIdentityFallback(normalizedAccount);
+    const fallbackIdentity = buildManualIdentityFallback(normalizedAccount, preferredAccountType);
     if (fallbackIdentity.email && isTransientBackendLookupError(error)) {
-      writeCachedAccountIdentity(account, fallbackIdentity);
+      writeCachedAccountIdentity(account, fallbackIdentity, preferredAccountType);
       return fallbackIdentity;
     }
     throw error;
   }
   const matchedUser = authUsers.find((user) => readAccountKeys(user).includes(normalizedAccount));
   const accountId = readPlatformAccountIdFromMetadata(matchedUser);
-  const metadataAccountType = readPlatformAccountTypeFromMetadata(matchedUser, "");
+  const metadataAccountType = readPlatformAccountTypeHintFromMetadata(matchedUser, "");
+  const accountType = metadataAccountType || (accountId ? "merchant" : "");
   const identity: ResolvedAccountIdentity = {
     email: normalizeMerchantEmail(matchedUser?.email),
-    accountType:
-      metadataAccountType || (isPersonalAccountNumericId(accountId) ? "personal" : accountId ? "merchant" : ""),
+    accountType,
     accountId,
-    merchantId: metadataAccountType === "merchant" || (!metadataAccountType && accountId && !isPersonalAccountNumericId(accountId)) ? accountId : "",
+    merchantId: accountType === "merchant" ? accountId : "",
   };
-  writeCachedAccountIdentity(account, identity);
+  writeCachedAccountIdentity(account, identity, preferredAccountType);
   return identity;
 }
 
@@ -402,7 +419,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "merchant_login_env_missing" }, { status: 503 });
     }
 
-    const resolvedAccount = await resolveAccountIdentity(supabase, account);
+    const resolvedAccount = await resolveAccountIdentity(supabase, account, requestedAccountType);
     const email = resolvedAccount.email;
     if (!email) {
       return NextResponse.json({ error: "invalid_credentials" }, { status: 401 });

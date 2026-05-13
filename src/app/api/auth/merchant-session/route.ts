@@ -17,9 +17,8 @@ import {
   type PlatformIdentitySupabaseClient,
 } from "@/lib/platformAccountIdentity";
 import {
-  isPersonalAccountNumericId,
   readPlatformAccountIdFromMetadata,
-  readPlatformAccountTypeFromMetadata,
+  readPlatformAccountTypeHintFromMetadata,
   type PlatformAccountType,
 } from "@/lib/platformAccounts";
 import {
@@ -103,12 +102,10 @@ function normalizeSessionPreferredAccountType(value: unknown): PlatformAccountTy
 }
 
 function readExistingSessionAccountType(user: MerchantAuthUserSummary | null): PlatformAccountType | "" {
-  const metadataAccountType = readPlatformAccountTypeFromMetadata(user, "");
+  const metadataAccountType = readPlatformAccountTypeHintFromMetadata(user, "");
   if (metadataAccountType) return metadataAccountType;
   const accountId = readPlatformAccountIdFromMetadata(user);
-  if (isPersonalAccountNumericId(accountId)) return "personal";
-  if (accountId) return "merchant";
-  return "";
+  return accountId ? "merchant" : "";
 }
 
 async function resolveMerchantSessionPlatformIdentity(
@@ -116,7 +113,7 @@ async function resolveMerchantSessionPlatformIdentity(
   user: MerchantAuthUserSummary | null,
   options: { preferredAccountType?: PlatformAccountType | null; preferredEmail?: string | null } = {},
 ) {
-  const metadataAccountType = readPlatformAccountTypeFromMetadata(user, "");
+  const metadataAccountType = readPlatformAccountTypeHintFromMetadata(user, "");
   const metadataAccountId = readPlatformAccountIdFromMetadata(user);
   const email = String(options.preferredEmail ?? user?.email ?? "").trim().toLowerCase();
 

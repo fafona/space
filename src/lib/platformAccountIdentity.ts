@@ -8,7 +8,7 @@ import {
   isPersonalAccountNumericId,
   normalizePlatformAccountNumericId,
   readPlatformAccountIdFromMetadata,
-  readPlatformAccountTypeFromMetadata,
+  readPlatformAccountTypeHintFromMetadata,
   type PlatformAccountType,
   PERSONAL_ACCOUNT_ID_MAX,
   PERSONAL_ACCOUNT_ID_MIN,
@@ -138,11 +138,9 @@ export async function resolvePlatformAccountIdentityForUser(
   user: MerchantAuthUserSummary | null,
   options: PlatformAccountIdentityOptions = {},
 ) {
-  const metadataAccountType = readPlatformAccountTypeFromMetadata(user, "");
+  const metadataAccountType = readPlatformAccountTypeHintFromMetadata(user, "");
   const currentAccountId = readPlatformAccountIdFromMetadata(user);
-  const inferredAccountType =
-    metadataAccountType ||
-    (isPersonalAccountNumericId(currentAccountId) ? "personal" : currentAccountId ? "merchant" : "");
+  const inferredAccountType = metadataAccountType || (currentAccountId ? "merchant" : "");
   const accountType = options.preferredAccountType || inferredAccountType || "merchant";
 
   if (accountType === "merchant") {
@@ -164,7 +162,7 @@ export async function resolvePlatformAccountIdentityForUser(
   }
 
   let personalAccountId = normalizePlatformAccountNumericId(options.preferredAccountId) || currentAccountId;
-  if (!isPersonalAccountNumericId(personalAccountId)) {
+  if (!personalAccountId) {
     personalAccountId = supabase ? await allocateSequentialPersonalAccountId(supabase) : "";
   }
   if (personalAccountId && supabase) {

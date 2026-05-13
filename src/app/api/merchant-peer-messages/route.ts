@@ -34,9 +34,8 @@ import {
   type PlatformIdentitySupabaseClient,
 } from "@/lib/platformAccountIdentity";
 import {
-  isPersonalAccountNumericId,
   readPlatformAccountIdFromMetadata,
-  readPlatformAccountTypeFromMetadata,
+  readPlatformAccountTypeHintFromMetadata,
   readPlatformUsernameFromMetadata,
 } from "@/lib/platformAccounts";
 import {
@@ -181,7 +180,7 @@ async function loadPersonalPeerProfiles(
   supabase: PlatformIdentitySupabaseClient | null,
   accountIds: string[],
 ) {
-  const targetIds = new Set(accountIds.filter((accountId) => isPersonalAccountNumericId(accountId)));
+  const targetIds = new Set(accountIds.map((accountId) => normalizeMerchantId(accountId)).filter(Boolean));
   const profileMap = new Map<string, PersonalPeerProfile>();
   if (!supabase || targetIds.size === 0) return profileMap;
 
@@ -197,8 +196,7 @@ async function loadPersonalPeerProfiles(
       const summary = toAuthUserSummary(user);
       const accountId = readPlatformAccountIdFromMetadata(summary);
       if (!targetIds.has(accountId)) continue;
-      const accountType =
-        readPlatformAccountTypeFromMetadata(summary, isPersonalAccountNumericId(accountId) ? "personal" : "") || "";
+      const accountType = readPlatformAccountTypeHintFromMetadata(summary, "") || "";
       if (accountType !== "personal") continue;
       profileMap.set(accountId, readPersonalPeerProfile(summary));
     }
@@ -321,7 +319,7 @@ function toResolvedMerchantRecord(record: Record<string, unknown> | null | undef
 
 function toResolvedPersonalRecord(user: MerchantAuthUserSummary | null | undefined) {
   const accountId = readPlatformAccountIdFromMetadata(user);
-  if (!accountId || readPlatformAccountTypeFromMetadata(user, "") !== "personal") return null;
+  if (!accountId || readPlatformAccountTypeHintFromMetadata(user, "") !== "personal") return null;
   const profile = readPersonalPeerProfile(
     user ?? {
       id: "",
@@ -392,7 +390,7 @@ async function resolvePersonalById(
   accountId: string,
 ) {
   const normalizedAccountId = normalizeMerchantId(accountId);
-  if (!supabase || !isPersonalAccountNumericId(normalizedAccountId)) return null;
+  if (!supabase || !normalizedAccountId) return null;
 
   let page = 1;
   while (true) {
@@ -435,7 +433,7 @@ async function resolvePersonalByEmail(
     const users = data?.users ?? [];
     for (const user of users) {
       const summary = toAuthUserSummary(user);
-      if (readPlatformAccountTypeFromMetadata(summary, "") !== "personal") continue;
+      if (readPlatformAccountTypeHintFromMetadata(summary, "") !== "personal") continue;
       const profile = readPersonalPeerProfile(summary);
       const matched =
         normalizeEmail(summary.email) === normalizedEmail || normalizeEmail(profile.email) === normalizedEmail;
@@ -493,11 +491,6 @@ async function resolvePeerById(
   const normalizedAccountId = normalizeMerchantId(accountId);
   if (!supabase || !normalizedAccountId) return null;
   const identitySupabase = supabase as unknown as PlatformIdentitySupabaseClient | null;
-
-  if (isPersonalAccountNumericId(normalizedAccountId)) {
-    const personalRecord = await resolvePersonalById(identitySupabase, normalizedAccountId);
-    return personalRecord ?? (await resolveMerchantById(supabase, normalizedAccountId));
-  }
 
   const merchantRecord = await resolveMerchantById(supabase, normalizedAccountId);
   return merchantRecord ?? (await resolvePersonalById(identitySupabase, normalizedAccountId));
