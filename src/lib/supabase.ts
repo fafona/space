@@ -303,6 +303,7 @@ export const supabase = createClient(browserAwareSupabaseUrl, resolvedSupabaseAn
     storageKey: legacySupabaseAuthStorageKey || undefined,
     persistSession: true,
     detectSessionInUrl: true,
+    flowType: "pkce",
     autoRefreshToken: shouldAutoRefreshSession,
   },
 });

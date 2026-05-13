@@ -1146,7 +1146,44 @@ function LoginPageInner() {
     }
   }
 
-  async function readGoogleOAuthSession(timeoutMs = 9000) {
+  const readGoogleOAuthSession = useCallback(async (timeoutMs = 9000) => {
+    const clearGoogleOAuthCodeFromUrl = () => {
+      if (typeof window === "undefined") return;
+      const url = new URL(window.location.href);
+      let changed = false;
+
+      for (const key of ["code", "state"]) {
+        if (url.searchParams.has(key)) {
+          url.searchParams.delete(key);
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+        window.history.replaceState(window.history.state, "", nextUrl || "/login");
+      }
+    };
+
+    const exchangeGoogleOAuthCodeFromUrl = async () => {
+      if (typeof window === "undefined") return null;
+      const code = new URL(window.location.href).searchParams.get("code")?.trim();
+      if (!code) return null;
+
+      const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+      if (error) throw error;
+      clearGoogleOAuthCodeFromUrl();
+      return data.session ?? null;
+    };
+
+    let exchangeError: unknown = null;
+    try {
+      const exchangedSession = await exchangeGoogleOAuthCodeFromUrl();
+      if (exchangedSession?.access_token) return exchangedSession;
+    } catch (error) {
+      exchangeError = error;
+    }
+
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
       const { data, error } = await supabase.auth.getSession();
@@ -1154,8 +1191,9 @@ function LoginPageInner() {
       if (error) break;
       await new Promise((resolve) => setTimeout(resolve, 180));
     }
+    if (exchangeError) throw exchangeError;
     return null;
-  }
+  }, []);
 
   useEffect(() => {
     if (!isGoogleOAuthReturn || loggedOut || googleOAuthStateExpired) return;
@@ -1253,6 +1291,7 @@ function LoginPageInner() {
     googleOAuthStateExpired,
     isGoogleOAuthReturn,
     loggedOut,
+    readGoogleOAuthSession,
     redirectToAccountHome,
     showAutoSwitchedEntryNotice,
     t,
