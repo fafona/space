@@ -1,18 +1,14 @@
 ﻿"use client";
 
 import { createPortal } from "react-dom";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import dynamic from "next/dynamic";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   MERCHANT_INDUSTRY_OPTIONS,
   type MerchantIndustry,
   type SiteLocation,
 } from "@/data/platformControlStore";
-import {
-  findEuropeCountryByCode,
-  getEuropeCityOptions,
-  getEuropeCountryOptions,
-  getEuropeProvinceOptions,
-} from "@/lib/europeLocationOptions";
+import { loadEuropeLocationOptionsApi, type EuropeLocationOptionsApi } from "@/lib/europeLocationOptionsLoader";
 import { normalizeMerchantBusinessCards, type MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
 import {
   buildGoogleBusinessProfileOpenUrl,
@@ -34,7 +30,6 @@ import {
   truncateUtf8ByBytes,
 } from "@/lib/merchantProfileBinding";
 import { buildMerchantDomain, resolveMerchantRootHost } from "@/lib/siteRouting";
-import MerchantBusinessCardManager from "@/components/admin/MerchantBusinessCardManager";
 
 type MerchantProfileDialogProps = {
   open: boolean;
@@ -74,6 +69,9 @@ type MerchantProfileDialogProps = {
   }) => void | Promise<void>;
 };
 
+type EuropeCountryOptions = ReturnType<EuropeLocationOptionsApi["getEuropeCountryOptions"]>;
+type EuropeProvinceOptions = ReturnType<EuropeLocationOptionsApi["getEuropeProvinceOptions"]>;
+
 type SearchOption = {
   value: string;
   label: string;
@@ -82,6 +80,18 @@ type SearchOption = {
 const CUSTOM_PROVINCE_PREFIX = "__custom_province__:";
 const TYPEAHEAD_LIMIT = 30;
 const DOMAIN_SUFFIX_SUBMIT_COOLDOWN_MS = 60 * 1000;
+const EMPTY_COUNTRY_OPTIONS: EuropeCountryOptions = [];
+const EMPTY_PROVINCE_OPTIONS: EuropeProvinceOptions = [];
+const EMPTY_CITY_OPTIONS: string[] = [];
+
+const MerchantBusinessCardManager = dynamic(() => import("@/components/admin/MerchantBusinessCardManager"), {
+  ssr: false,
+  loading: () => (
+    <div className="rounded border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-xs text-slate-500">
+      名片工具加载中...
+    </div>
+  ),
+});
 
 function getDomainSuffixCooldownStorageKey(siteId?: string | null) {
   const normalizedSiteId = String(siteId ?? "").trim() || "unknown-site";
@@ -179,7 +189,6 @@ type MerchantProfileInitialState = {
 };
 
 function buildInitialState(
-  countryOptions: ReturnType<typeof getEuropeCountryOptions>,
   initialMerchantName?: string | null,
   initialDomainPrefix?: string | null,
   initialContactAddress?: string | null,
@@ -189,38 +198,20 @@ function buildInitialState(
   initialLocation?: Partial<SiteLocation> | null,
   initialIndustry?: string | null,
 ): MerchantProfileInitialState {
-  const nextCountryCodeCandidate = (initialLocation?.countryCode ?? "").toUpperCase();
-  const nextCountryCode = countryOptions.some((item) => item.code === nextCountryCodeCandidate)
-    ? nextCountryCodeCandidate
-    : "";
-  const nextCountryName =
-    countryOptions.find((item) => item.code === nextCountryCode)?.name ?? (initialLocation?.country ?? "").trim();
-
-  const allProvinces = getEuropeProvinceOptions(nextCountryCode);
+  const nextCountryCode = (initialLocation?.countryCode ?? "").trim().toUpperCase();
+  const nextCountryName = (initialLocation?.country ?? "").trim();
   const initialProvinceCode = (initialLocation?.provinceCode ?? "").trim();
   const initialProvinceName = (initialLocation?.province ?? "").trim();
-  let nextProvinceCode = "";
+  let nextProvinceCode = initialProvinceCode;
   let nextCustomProvince = "";
-  if (initialProvinceCode && allProvinces.some((item) => item.code === initialProvinceCode)) {
-    nextProvinceCode = initialProvinceCode;
-  } else if (initialProvinceName) {
-    const byName = allProvinces.find(
-      (item) => normalizeLocationValue(item.name) === normalizeLocationValue(initialProvinceName),
-    );
-    if (byName) nextProvinceCode = byName.code;
-    else {
-      nextProvinceCode = `${CUSTOM_PROVINCE_PREFIX}${initialProvinceName}`;
-      nextCustomProvince = initialProvinceName;
-    }
+  if (isCustomProvinceCode(nextProvinceCode)) {
+    nextCustomProvince = initialProvinceName || nextProvinceCode.slice(CUSTOM_PROVINCE_PREFIX.length);
+  } else if (!nextProvinceCode && initialProvinceName) {
+    nextProvinceCode = `${CUSTOM_PROVINCE_PREFIX}${initialProvinceName}`;
+    nextCustomProvince = initialProvinceName;
   }
 
-  const resolvedProvinceName =
-    allProvinces.find((item) => item.code === nextProvinceCode)?.name ?? initialProvinceName;
-  const allCities = nextProvinceCode && !isCustomProvinceCode(nextProvinceCode) ? getEuropeCityOptions(nextCountryCode, nextProvinceCode) : [];
   const initialCityName = (initialLocation?.city ?? "").trim();
-  const matchedCity =
-    allCities.find((item) => normalizeLocationValue(item) === normalizeLocationValue(initialCityName)) ?? "";
-  const resolvedCity = matchedCity || initialCityName;
 
   return {
     merchantName: (initialMerchantName ?? "").trim(),
@@ -232,11 +223,11 @@ function buildInitialState(
     countryCode: nextCountryCode,
     countryInput: nextCountryName,
     provinceCode: nextProvinceCode,
-    provinceInput: resolvedProvinceName,
-    city: resolvedCity,
-    cityInput: resolvedCity,
+    provinceInput: initialProvinceName,
+    city: initialCityName,
+    cityInput: initialCityName,
     customProvinceName: nextCustomProvince,
-    customCityName: resolvedCity && !allCities.includes(resolvedCity) ? resolvedCity : "",
+    customCityName: "",
     industry: normalizeIndustry(initialIndustry),
   };
 }
@@ -269,13 +260,14 @@ export default function MerchantProfileDialog({
   onCardsChange,
   onSave,
 }: MerchantProfileDialogProps) {
-  const countryOptions = useMemo(() => getEuropeCountryOptions(), []);
+  const [locationOptionsApi, setLocationOptionsApi] = useState<EuropeLocationOptionsApi | null>(null);
+  const locationOptionsApiTaskRef = useRef<Promise<EuropeLocationOptionsApi> | null>(null);
+  const mountedRef = useRef(false);
   const isInline = mode === "inline";
   const resolvedShowCloseButton = showCloseButton ?? !isInline;
   const initialState = useMemo(
     () =>
       buildInitialState(
-        countryOptions,
         initialMerchantName,
         initialDomainPrefix,
         initialContactAddress,
@@ -286,7 +278,6 @@ export default function MerchantProfileDialog({
         initialIndustry,
       ),
     [
-      countryOptions,
       initialMerchantName,
       initialDomainPrefix,
       initialContactAddress,
@@ -324,6 +315,33 @@ export default function MerchantProfileDialog({
   const [savePending, setSavePending] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [googleBusinessProfileCopyMessage, setGoogleBusinessProfileCopyMessage] = useState("");
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const ensureLocationOptionsLoaded = useCallback(() => {
+    if (locationOptionsApi) return Promise.resolve(locationOptionsApi);
+    if (!locationOptionsApiTaskRef.current) {
+      locationOptionsApiTaskRef.current = loadEuropeLocationOptionsApi()
+        .then((api) => {
+          if (mountedRef.current) setLocationOptionsApi(api);
+          return api;
+        })
+        .finally(() => {
+          locationOptionsApiTaskRef.current = null;
+        });
+    }
+    return locationOptionsApiTaskRef.current;
+  }, [locationOptionsApi]);
+
+  const countryOptions = useMemo(
+    () => locationOptionsApi?.getEuropeCountryOptions() ?? EMPTY_COUNTRY_OPTIONS,
+    [locationOptionsApi],
+  );
   const normalizedTakenPrefixes = useMemo(
     () =>
       new Set(
@@ -447,10 +465,16 @@ export default function MerchantProfileDialog({
     }
   }
 
-  const provinceOptions = useMemo(() => getEuropeProvinceOptions(countryCode), [countryCode]);
+  const provinceOptions = useMemo(
+    () => locationOptionsApi?.getEuropeProvinceOptions(countryCode) ?? EMPTY_PROVINCE_OPTIONS,
+    [countryCode, locationOptionsApi],
+  );
   const cityOptions = useMemo(
-    () => (isCustomProvinceCode(provinceCode) ? [] : getEuropeCityOptions(countryCode, provinceCode)),
-    [countryCode, provinceCode],
+    () =>
+      locationOptionsApi && !isCustomProvinceCode(provinceCode)
+        ? locationOptionsApi.getEuropeCityOptions(countryCode, provinceCode)
+        : EMPTY_CITY_OPTIONS,
+    [countryCode, locationOptionsApi, provinceCode],
   );
 
   const provinceSelectOptions = useMemo(() => {
@@ -476,6 +500,25 @@ export default function MerchantProfileDialog({
     () => provinceSelectOptions.find((item) => item.code === provinceCode)?.name ?? customProvinceName,
     [provinceSelectOptions, provinceCode, customProvinceName],
   );
+
+  useEffect(() => {
+    if (!locationOptionsApi) return;
+    const normalizedCountryCode = countryCode.trim().toUpperCase();
+    if (normalizedCountryCode && !countryInput.trim()) {
+      const country = locationOptionsApi.findEuropeCountryByCode(normalizedCountryCode);
+      if (country?.name) setCountryInput(country.name);
+    }
+    if (normalizedCountryCode && provinceCode && !isCustomProvinceCode(provinceCode) && !provinceInput.trim()) {
+      const province = locationOptionsApi
+        .getEuropeProvinceOptions(normalizedCountryCode)
+        .find((item) => item.code === provinceCode);
+      if (province?.name) setProvinceInput(province.name);
+    }
+    if (city && !cityInput.trim()) {
+      setCityInput(city);
+    }
+  }, [city, cityInput, countryCode, countryInput, locationOptionsApi, provinceCode, provinceInput]);
+
   const merchantNameBytes = useMemo(() => getUtf8ByteLength(merchantName.trim()), [merchantName]);
   const merchantNameError = useMemo(() => getMerchantProfileMerchantNameError(merchantName), [merchantName]);
   const domainPrefixBytes = useMemo(() => getUtf8ByteLength(domainPrefixInput.trim().toLowerCase()), [domainPrefixInput]);
@@ -912,6 +955,7 @@ export default function MerchantProfileDialog({
               value={countryInput}
               placeholder="输入国家"
               onChange={(event) => {
+                void ensureLocationOptionsLoaded();
                 const next = event.target.value;
                 setCountryInput(next);
                 setCountryOpen(true);
@@ -927,7 +971,10 @@ export default function MerchantProfileDialog({
                   setCityOpen(false);
                 }
               }}
-              onFocus={() => setCountryOpen(true)}
+              onFocus={() => {
+                setCountryOpen(true);
+                void ensureLocationOptionsLoaded();
+              }}
               onBlur={() => window.setTimeout(() => setCountryOpen(false), 120)}
               onKeyDown={(event) => {
                 if (event.key !== "Enter") return;
@@ -974,6 +1021,7 @@ export default function MerchantProfileDialog({
               value={provinceInput}
               placeholder="输入省份"
               onChange={(event) => {
+                void ensureLocationOptionsLoaded();
                 const next = event.target.value;
                 setProvinceInput(next);
                 setProvinceOpen(true);
@@ -986,7 +1034,10 @@ export default function MerchantProfileDialog({
                   setCityOpen(false);
                 }
               }}
-              onFocus={() => setProvinceOpen(true)}
+              onFocus={() => {
+                setProvinceOpen(true);
+                void ensureLocationOptionsLoaded();
+              }}
               onBlur={() => window.setTimeout(() => setProvinceOpen(false), 120)}
               onKeyDown={(event) => {
                 if (event.key !== "Enter") return;
@@ -1034,6 +1085,7 @@ export default function MerchantProfileDialog({
               value={cityInput}
               placeholder="输入城市"
               onChange={(event) => {
+                void ensureLocationOptionsLoaded();
                 const next = event.target.value;
                 setCityInput(next);
                 setCityOpen(true);
@@ -1052,7 +1104,10 @@ export default function MerchantProfileDialog({
                 setCity(next.trim());
                 setCustomCityName(next.trim());
               }}
-              onFocus={() => setCityOpen(true)}
+              onFocus={() => {
+                setCityOpen(true);
+                void ensureLocationOptionsLoaded();
+              }}
               onBlur={() => {
                 window.setTimeout(() => {
                   setCityOpen(false);
@@ -1193,15 +1248,43 @@ export default function MerchantProfileDialog({
                 return;
               }
               const normalizedCountryCode = countryCode.trim().toUpperCase();
+              let locationApi = locationOptionsApi;
+              if (normalizedCountryCode) {
+                try {
+                  locationApi = await ensureLocationOptionsLoaded();
+                } catch {
+                  locationApi = null;
+                }
+              }
               const resolvedCountryName =
-                selectedCountryName || countryInput.trim() || findEuropeCountryByCode(normalizedCountryCode)?.name || "";
-              const resolvedProvinceName = (selectedProvinceName || provinceInput).trim();
-              const resolvedCity = (cityInput || city).trim();
+                selectedCountryName || countryInput.trim() || locationApi?.findEuropeCountryByCode(normalizedCountryCode)?.name || "";
+              let resolvedProvinceCode = isCustomProvinceCode(provinceCode) ? "" : provinceCode.trim();
+              let resolvedProvinceName = (selectedProvinceName || provinceInput).trim();
+              let resolvedCity = (cityInput || city).trim();
+              if (locationApi && normalizedCountryCode) {
+                if (!resolvedProvinceCode && (resolvedProvinceName || resolvedCity)) {
+                  const best = locationApi.findBestProvinceAndCity(
+                    normalizedCountryCode,
+                    resolvedProvinceName,
+                    resolvedCity,
+                  );
+                  resolvedProvinceCode = best.provinceCode;
+                  if (best.cityName) resolvedCity = best.cityName;
+                }
+                if (resolvedProvinceCode) {
+                  const matchedProvince = locationApi
+                    .getEuropeProvinceOptions(normalizedCountryCode)
+                    .find((item) => item.code === resolvedProvinceCode);
+                  resolvedProvinceName = resolvedProvinceName || matchedProvince?.name || "";
+                  const matchedCity = locationApi.findBestCityName(normalizedCountryCode, resolvedProvinceCode, resolvedCity);
+                  if (matchedCity) resolvedCity = matchedCity;
+                }
+              }
               const location: SiteLocation = normalizedCountryCode
                 ? {
                     countryCode: normalizedCountryCode,
                     country: resolvedCountryName,
-                    provinceCode: isCustomProvinceCode(provinceCode) ? "" : provinceCode.trim(),
+                    provinceCode: resolvedProvinceCode,
                     province: resolvedProvinceName,
                     city: resolvedCity,
                   }
