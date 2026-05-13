@@ -15574,7 +15574,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       : "support";
   useEffect(() => {
     if (checkingAuth || !isDesktopMerchantWorkspace || merchantEditorOnly) return;
-    if (typeof window !== "undefined" && isFaollaSectionSearch(window.location.search)) return;
+    const explicitFaollaSection = typeof window !== "undefined" && isFaollaSectionSearch(window.location.search);
     const merchantWorkspaceSiteId = (
       editingSiteId ||
       merchantSiteIdOverride ||
@@ -15584,6 +15584,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     ).trim();
     if (!isMerchantNumericId(merchantWorkspaceSiteId)) return;
     if (merchantDesktopDefaultSectionSiteRef.current === merchantWorkspaceSiteId) return;
+    if (explicitFaollaSection) {
+      merchantDesktopDefaultSectionSiteRef.current = merchantWorkspaceSiteId;
+      if (!editingSiteId) {
+        setMerchantSiteIdOverride((current) => current || merchantWorkspaceSiteId);
+      }
+      setMerchantDesktopSection("faolla");
+      return;
+    }
     if (merchantDesktopSection !== "editor" && merchantDesktopSection !== "faolla") return;
     merchantDesktopDefaultSectionSiteRef.current = merchantWorkspaceSiteId;
     if (!editingSiteId) {
