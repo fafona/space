@@ -78,11 +78,51 @@ test("builds local business JSON-LD without hidden contact fields", () => {
     "https://www.faolla.com",
   );
 
-  assert.equal(jsonLd?.["@type"], "LocalBusiness");
+  assert.equal(jsonLd?.["@type"], "Restaurant");
   assert.equal(jsonLd?.telephone, undefined);
   assert.equal(jsonLd?.email, undefined);
   assert.equal((jsonLd?.contactPoint as Record<string, unknown> | undefined)?.telephone, undefined);
   assert.equal((jsonLd?.contactPoint as Record<string, unknown> | undefined)?.email, undefined);
+});
+
+test("adds Google local business fields when precise location and hours are available", () => {
+  const jsonLd = buildMerchantLocalBusinessJsonLd(
+    {
+      ...completeProfile,
+      industry: "restaurant",
+      domainPrefix: "abc",
+      latitude: "37.389092",
+      longitude: "-5.984459",
+      priceRange: "$$",
+      sameAs: ["https://www.instagram.com/abc/", "not-a-url", "https://www.instagram.com/abc/"],
+      openingHoursSpecification: [
+        {
+          dayOfWeek: ["Monday", "https://schema.org/Tuesday"],
+          opens: "9:00",
+          closes: "18:30",
+        },
+      ],
+    },
+    "https://www.faolla.com",
+  );
+
+  assert.equal(jsonLd?.["@type"], "Restaurant");
+  assert.deepEqual(jsonLd?.geo, {
+    "@type": "GeoCoordinates",
+    latitude: 37.389092,
+    longitude: -5.984459,
+  });
+  assert.equal(jsonLd?.hasMap, "https://www.google.com/maps/search/?api=1&query=37.389092%2C-5.984459");
+  assert.deepEqual(jsonLd?.openingHoursSpecification, [
+    {
+      "@type": "OpeningHoursSpecification",
+      dayOfWeek: ["Monday", "Tuesday"],
+      opens: "09:00",
+      closes: "18:30",
+    },
+  ]);
+  assert.equal(jsonLd?.priceRange, "$$");
+  assert.deepEqual(jsonLd?.sameAs, ["https://www.instagram.com/abc/"]);
 });
 
 test("uses merchant location and industry in default SEO descriptions", () => {

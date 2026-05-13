@@ -6,6 +6,14 @@ import { buildMerchantFrontendHref } from "@/lib/siteRouting";
 
 type JsonRecord = Record<string, unknown>;
 
+export type MerchantSeoOpeningHoursInput = {
+  dayOfWeek?: string | string[] | null;
+  opens?: string | null;
+  closes?: string | null;
+  validFrom?: string | null;
+  validThrough?: string | null;
+};
+
 export type MerchantSeoProfile = {
   id?: string | null;
   merchantName?: string | null;
@@ -21,6 +29,16 @@ export type MerchantSeoProfile = {
   contactName?: string | null;
   contactPhone?: string | null;
   contactEmail?: string | null;
+  latitude?: string | number | null;
+  longitude?: string | number | null;
+  geo?: {
+    latitude?: string | number | null;
+    longitude?: string | number | null;
+  } | null;
+  openingHoursSpecification?: MerchantSeoOpeningHoursInput | MerchantSeoOpeningHoursInput[] | null;
+  businessHours?: MerchantSeoOpeningHoursInput | MerchantSeoOpeningHoursInput[] | null;
+  priceRange?: string | null;
+  sameAs?: string[] | null;
   merchantCardImageUrl?: string | null;
   chatAvatarImageUrl?: string | null;
   contactVisibility?: Partial<MerchantContactVisibility> | null;
@@ -163,6 +181,142 @@ export function resolveMerchantSeoImageUrl(profile: MerchantSeoProfile, publicOr
   return direct ? normalizePublicAssetUrl(direct, publicOrigin ?? undefined) : "";
 }
 
+function resolveMerchantLocalBusinessType(profile: MerchantSeoProfile) {
+  const value = `${trimText(profile.industry)} ${trimText(profile.category)}`.toLowerCase();
+  if (/餐|饭|饮|restaurant|cafe|coffee|food|bar|bakery/.test(value)) return "Restaurant";
+  if (/零售|商店|店铺|retail|shop|store|market/.test(value)) return "Store";
+  if (/娱乐|ktv|cinema|game|club|entertainment/.test(value)) return "EntertainmentBusiness";
+  if (/服务|service|salon|spa|beauty|repair|consult/.test(value)) return "ProfessionalService";
+  return "LocalBusiness";
+}
+
+function normalizeUrl(value: unknown) {
+  const text = trimText(value);
+  if (!/^https?:\/\//i.test(text)) return "";
+  try {
+    return new URL(text).toString();
+  } catch {
+    return "";
+  }
+}
+
+function normalizeSameAs(value: unknown) {
+  const urls = Array.isArray(value) ? value : [];
+  const seen = new Set<string>();
+  return urls
+    .map((item) => normalizeUrl(item))
+    .filter((item) => {
+      if (!item || seen.has(item)) return false;
+      seen.add(item);
+      return true;
+    });
+}
+
+function normalizeGeoNumber(value: unknown, min: number, max: number) {
+  const numberValue =
+    typeof value === "number"
+      ? value
+      : Number.parseFloat(String(value ?? "").trim().replace(",", "."));
+  if (!Number.isFinite(numberValue) || numberValue < min || numberValue > max) return null;
+  return Number(numberValue.toFixed(6));
+}
+
+function resolveMerchantGeo(profile: MerchantSeoProfile) {
+  const latitude = normalizeGeoNumber(profile.latitude ?? profile.geo?.latitude, -90, 90);
+  const longitude = normalizeGeoNumber(profile.longitude ?? profile.geo?.longitude, -180, 180);
+  if (latitude == null || longitude == null) return null;
+  return {
+    "@type": "GeoCoordinates",
+    latitude,
+    longitude,
+  };
+}
+
+function buildMerchantMapUrl(profile: MerchantSeoProfile, geo: ReturnType<typeof resolveMerchantGeo>) {
+  if (geo) {
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${geo.latitude},${geo.longitude}`)}`;
+  }
+  const location = profile.location ?? {};
+  const query = [
+    trimText(profile.contactAddress),
+    trimText(location.city),
+    trimText(location.province),
+    trimText(location.countryCode || location.country),
+  ]
+    .filter(Boolean)
+    .join(", ");
+  return query ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}` : "";
+}
+
+const DAY_OF_WEEK_ALIASES: Record<string, string> = {
+  monday: "Monday",
+  mon: "Monday",
+  tuesday: "Tuesday",
+  tue: "Tuesday",
+  tues: "Tuesday",
+  wednesday: "Wednesday",
+  wed: "Wednesday",
+  thursday: "Thursday",
+  thu: "Thursday",
+  thur: "Thursday",
+  thurs: "Thursday",
+  friday: "Friday",
+  fri: "Friday",
+  saturday: "Saturday",
+  sat: "Saturday",
+  sunday: "Sunday",
+  sun: "Sunday",
+};
+
+function normalizeDayOfWeek(value: unknown) {
+  const values = Array.isArray(value) ? value : [value];
+  const days = values
+    .map((item) => {
+      const text = trimText(item).replace(/^https:\/\/schema\.org\//i, "").toLowerCase();
+      return DAY_OF_WEEK_ALIASES[text] ?? "";
+    })
+    .filter(Boolean);
+  return days.length > 1 ? days : days[0] ?? "";
+}
+
+function normalizeBusinessTime(value: unknown) {
+  const match = trimText(value).match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (!match) return "";
+  const hour = Number.parseInt(match[1] ?? "", 10);
+  const minute = Number.parseInt(match[2] ?? "", 10);
+  const second = match[3] == null ? null : Number.parseInt(match[3], 10);
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59 || (second != null && (second < 0 || second > 59))) return "";
+  const base = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+  return second == null ? base : `${base}:${String(second).padStart(2, "0")}`;
+}
+
+function normalizeIsoDate(value: unknown) {
+  const text = trimText(value);
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
+}
+
+function normalizeOpeningHoursSpecification(value: unknown) {
+  const entries = Array.isArray(value) ? value : value ? [value] : [];
+  return entries
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") return null;
+      const record = entry as MerchantSeoOpeningHoursInput;
+      const dayOfWeek = normalizeDayOfWeek(record.dayOfWeek);
+      const opens = normalizeBusinessTime(record.opens);
+      const closes = normalizeBusinessTime(record.closes);
+      if (!dayOfWeek || !opens || !closes) return null;
+      return compactRecord({
+        "@type": "OpeningHoursSpecification",
+        dayOfWeek,
+        opens,
+        closes,
+        validFrom: normalizeIsoDate(record.validFrom),
+        validThrough: normalizeIsoDate(record.validThrough),
+      });
+    })
+    .filter((entry): entry is JsonRecord => Boolean(entry));
+}
+
 function compactRecord(record: JsonRecord) {
   return Object.fromEntries(
     Object.entries(record).filter(([, value]) => {
@@ -181,6 +335,11 @@ export function buildMerchantLocalBusinessJsonLd(profile: MerchantSeoProfile, pu
   const canonicalUrl = buildMerchantSeoCanonicalUrl(profile, publicOrigin);
   const location = profile.location ?? {};
   const visibility = profile.contactVisibility ?? {};
+  const geo = resolveMerchantGeo(profile);
+  const openingHoursSpecification = normalizeOpeningHoursSpecification(
+    profile.openingHoursSpecification ?? profile.businessHours,
+  );
+  const sameAs = normalizeSameAs(profile.sameAs);
   const address = compactRecord({
     "@type": "PostalAddress",
     streetAddress: trimText(profile.contactAddress),
@@ -192,15 +351,20 @@ export function buildMerchantLocalBusinessJsonLd(profile: MerchantSeoProfile, pu
 
   return compactRecord({
     "@context": "https://schema.org",
-    "@type": "LocalBusiness",
+    "@type": resolveMerchantLocalBusinessType(profile),
     "@id": `${canonicalUrl}#localbusiness`,
     name,
     url: canonicalUrl,
     image,
     description: buildMerchantSeoDescription(profile),
+    priceRange: trimText(profile.priceRange).slice(0, 99),
     telephone: visibility.phoneHidden ? "" : trimText(profile.contactPhone),
     email: visibility.emailHidden ? "" : trimText(profile.contactEmail),
     address,
+    geo,
+    hasMap: buildMerchantMapUrl(profile, geo),
+    openingHoursSpecification,
+    sameAs,
     areaServed: [trimText(location.country), trimText(location.province), trimText(location.city)].filter(Boolean),
     contactPoint: compactRecord({
       "@type": "ContactPoint",
