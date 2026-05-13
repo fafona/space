@@ -1128,7 +1128,29 @@ function buildFaollaInlineCacheRefreshScript(buildId: string) {
   } catch {
     previous = "";
   }
-  if (previous === buildId) return;
+
+  const shouldReload = () => {
+    try {
+      const url = new URL(window.location.href);
+      const marker = url.searchParams.get("__faollaInlineBuild") || "";
+      const embedded = url.searchParams.get("appShell") === "faolla";
+      const nativeRuntime =
+        document.documentElement.dataset.capacitor === "true" ||
+        Boolean(window.Capacitor && typeof window.Capacitor.isNativePlatform === "function" && window.Capacitor.isNativePlatform());
+      const appPath =
+        url.pathname === "/launch" ||
+        url.pathname === "/admin" ||
+        url.pathname === "/me" ||
+        url.pathname === "/login" ||
+        url.pathname.indexOf("/me/") === 0 ||
+        /^\\/\\d{8}(?:\\/|$)/.test(url.pathname);
+      return marker !== buildId.slice(0, 12) && (embedded || nativeRuntime || appPath);
+    } catch {
+      return false;
+    }
+  };
+  const reloadRequired = shouldReload();
+  if (previous === buildId && !reloadRequired) return;
 
   const clearCaches = async () => {
     try {
@@ -1162,34 +1184,13 @@ function buildFaollaInlineCacheRefreshScript(buildId: string) {
     }
   };
 
-  const shouldReload = () => {
-    try {
-      const url = new URL(window.location.href);
-      const marker = url.searchParams.get("__faollaInlineBuild") || "";
-      const embedded = url.searchParams.get("appShell") === "faolla";
-      const nativeRuntime =
-        document.documentElement.dataset.capacitor === "true" ||
-        Boolean(window.Capacitor && typeof window.Capacitor.isNativePlatform === "function" && window.Capacitor.isNativePlatform());
-      const appPath =
-        url.pathname === "/launch" ||
-        url.pathname === "/admin" ||
-        url.pathname === "/me" ||
-        url.pathname === "/login" ||
-        url.pathname.indexOf("/me/") === 0 ||
-        /^\\/\\d{8}(?:\\/|$)/.test(url.pathname);
-      return marker !== buildId.slice(0, 12) && (embedded || nativeRuntime || appPath);
-    } catch {
-      return false;
-    }
-  };
-
   clearCaches().finally(() => {
     try {
       window.localStorage.setItem(storageKey, buildId);
     } catch {
       // Ignore storage failures.
     }
-    if (!shouldReload()) return;
+    if (!reloadRequired) return;
     try {
       const url = new URL(window.location.href);
       url.searchParams.set("appShell", "faolla");
