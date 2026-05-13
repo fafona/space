@@ -568,14 +568,11 @@ async function buildInboxResponse(
   readStatePayload?: MerchantSupportReadStatePayload | null,
 ) {
   const contacts = listMerchantPeerContactsForMerchant(payload, merchantId);
-  const personalProfiles = await loadPersonalPeerProfiles(
-    supabase ?? null,
-    contacts.map((contact) => contact.merchantId),
-  );
-  const merchantProfiles = await loadMerchantPeerProfiles(
-    supabase ?? null,
-    contacts.map((contact) => contact.merchantId),
-  );
+  const contactMerchantIds = contacts.map((contact) => contact.merchantId);
+  const [personalProfiles, merchantProfiles] = await Promise.all([
+    loadPersonalPeerProfiles(supabase ?? null, contactMerchantIds),
+    loadMerchantPeerProfiles(supabase ?? null, contactMerchantIds),
+  ]);
   const enrichedContacts = contacts.map((contact) => {
     const personalProfile = personalProfiles.get(contact.merchantId);
     const merchantProfile = merchantProfiles.get(contact.merchantId);
@@ -833,29 +830,29 @@ export async function POST(request: Request) {
       return noStoreJson({ error: "cannot_chat_with_self", message: "不能给自己发送消息。" }, { status: 400 });
     }
 
-    const recipient = await resolvePeerById(
-      supabase as unknown as ReturnType<typeof createServerSupabaseServiceClient>,
-      recipientMerchantId,
-    );
+    const [recipient, senderRecord, payload, readStatePayload] = await Promise.all([
+      resolvePeerById(
+        supabase as unknown as ReturnType<typeof createServerSupabaseServiceClient>,
+        recipientMerchantId,
+      ),
+      resolvePeerById(
+        supabase as unknown as ReturnType<typeof createServerSupabaseServiceClient>,
+        session.merchantId,
+      ),
+      loadStoredMerchantPeerInbox(supabase as unknown as MerchantPeerInboxStoreClient),
+      loadStoredMerchantSupportReadState(supabase as unknown as MerchantSupportReadStateStoreClient),
+    ]);
     if (!recipient) {
       return noStoreJson({ error: "merchant_not_found", message: "目标商户不存在。" }, { status: 404 });
     }
     const sender =
-      (await resolvePeerById(
-        supabase as unknown as ReturnType<typeof createServerSupabaseServiceClient>,
-        session.merchantId,
-      )) ??
+      senderRecord ??
       ({
         merchantId: session.merchantId,
         merchantName: trimText(body?.merchantName) || session.merchantName || session.merchantId,
         merchantEmail: normalizeEmail(body?.merchantEmail) || session.merchantEmail,
         accountType: "merchant",
       } satisfies ResolvedPeerRecord);
-
-    const [payload, readStatePayload] = await Promise.all([
-      loadStoredMerchantPeerInbox(supabase as unknown as MerchantPeerInboxStoreClient),
-      loadStoredMerchantSupportReadState(supabase as unknown as MerchantSupportReadStateStoreClient),
-    ]);
     const nextPayload = upsertMerchantPeerMessage(payload, {
       senderMerchantId: sender.merchantId,
       senderMerchantName: trimText(body?.merchantName) || sender.merchantName,
@@ -884,7 +881,7 @@ export async function POST(request: Request) {
         text,
       });
 
-      await notifyMerchantPushSubscribers(supabase as unknown as MerchantPeerInboxStoreClient, {
+      void notifyMerchantPushSubscribers(supabase as unknown as MerchantPeerInboxStoreClient, {
         merchantId: recipient.merchantId,
         ...notification,
       }).catch(() => {
