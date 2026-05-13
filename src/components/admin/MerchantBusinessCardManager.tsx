@@ -1381,6 +1381,13 @@ export default function MerchantBusinessCardManager({
     }
   };
 
+  const handleClearBackgroundImage = () => {
+    setBackgroundImageFileName("");
+    setBackgroundImageFileDetail("");
+    setIsBackgroundImageProcessing(false);
+    applyDraft((current) => ({ ...current, backgroundImageUrl: "" }));
+  };
+
   const handleGenerate = async () => {
     if (!websiteUrl || !qrReadyForCurrentDraft) return;
     setIsGenerating(true);
@@ -2004,13 +2011,23 @@ export default function MerchantBusinessCardManager({
                       <div className="grid gap-3 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
                         <div className="space-y-3">
                           <div>
-                            <ImageFilePicker
-                              label="背景图"
-                              statusText={backgroundImagePickerStatus}
-                              detailText={backgroundImagePickerDetail}
-                              disabled={isBackgroundImageProcessing}
-                              onChange={(event) => void handleBackgroundUpload(event)}
-                            />
+                            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_76px]">
+                              <ImageFilePicker
+                                label="背景图"
+                                statusText={backgroundImagePickerStatus}
+                                detailText={backgroundImagePickerDetail}
+                                disabled={isBackgroundImageProcessing}
+                                onChange={(event) => void handleBackgroundUpload(event)}
+                              />
+                              <button
+                                type="button"
+                                className="self-end rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                onClick={handleClearBackgroundImage}
+                                disabled={isBackgroundImageProcessing || !normalizeText(draft.backgroundImageUrl)}
+                              >
+                                清除
+                              </button>
+                            </div>
                             <div className="mt-1 text-[11px] text-slate-400">默认上限 {normalizedBackgroundImageLimitKb} KB，超过上限时会自动压缩到限制内。</div>
                           </div>
                           <label className="block text-xs text-slate-600">图片透明度<div className="mt-1 flex items-center gap-3 rounded border bg-white px-3 py-2"><input type="range" min="0" max="1" step="0.01" className="min-w-0 flex-1" value={draft.backgroundImageOpacity} onChange={(event) => applyDraft((current) => ({ ...current, backgroundImageOpacity: clamp(Number(event.target.value), 0, 1) }))} /><span className="w-12 shrink-0 text-right text-xs text-slate-500">{formatOpacityPercent(draft.backgroundImageOpacity)}</span></div></label>
