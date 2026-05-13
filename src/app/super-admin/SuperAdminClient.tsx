@@ -831,6 +831,75 @@ function badgeClass(value: string) {
   return "border-slate-300 bg-slate-50 text-slate-700";
 }
 
+function buildPersonalSupportRow(account: BackendMerchantAccount): MerchantUserRow | null {
+  const accountId =
+    normalizeMerchantIdValue(account.accountId) ||
+    normalizeMerchantIdValue(account.loginId) ||
+    normalizeMerchantIdValue(account.merchantId);
+  if (!accountId) return null;
+  const timestamp = account.createdAt ?? nextIsoNow();
+  const displayName = pickPreferredText(account.username, account.loginId, account.email, accountId, "个人用户");
+  const site: Site = {
+    id: accountId,
+    tenantId: "personal-support",
+    merchantName: displayName,
+    domainPrefix: "",
+    domainSuffix: "",
+    contactAddress: "",
+    contactName: displayName,
+    contactPhone: "",
+    contactEmail: account.email,
+    name: displayName,
+    domain: "",
+    categoryId: "personal-support",
+    category: "个人用户",
+    industry: "",
+    status: account.personalServicePaused ? "offline" : "online",
+    publishedVersion: 0,
+    lastPublishedAt: null,
+    features: createFeaturePackage("basic"),
+    location: {
+      countryCode: "",
+      country: "",
+      provinceCode: "",
+      province: "",
+      city: "",
+    },
+    serviceExpiresAt: null,
+    permissionConfig: createDefaultMerchantPermissionConfig(),
+    merchantCardImageUrl: "",
+    chatAvatarImageUrl: "",
+    merchantCardImageOpacity: 1,
+    sortConfig: createDefaultMerchantSortConfig(),
+    configHistory: [],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+
+  return {
+    site,
+    hasSite: false,
+    hasLocalSite: false,
+    backendAccount: account,
+    merchantId: accountId,
+    loginAccount: account.email || account.loginId || account.username || accountId,
+    userEmail: account.email || "-",
+    merchantName: displayName,
+    prefix: "-",
+    industry: "个人用户",
+    city: "-",
+    sizeBytes: 0,
+    sizeKnown: false,
+    visits: { today: 0, day7: 0, day30: 0, total: 0 },
+    visitsKnown: false,
+    registerAt: timestamp,
+    expireAt: null,
+    expired: false,
+    statusLabel: account.personalServicePaused ? "暂停" : "正常",
+    statusKey: account.personalServicePaused ? "paused" : "active",
+  };
+}
+
 function formatBackendAccountSourceLabel(account: Pick<BackendMerchantAccount, "manualCreated">) {
   return account.manualCreated ? "手动创建" : "前台注册";
 }
@@ -2869,6 +2938,20 @@ export default function SuperAdminClient() {
       });
     });
 
+    personalAccounts.forEach((account) => {
+      const row = buildPersonalSupportRow(account);
+      if (!row) return;
+      const selectionKey = buildSupportMerchantSelectionKey(row.merchantId, row.site.id);
+      if (!selectionKey || merged.has(selectionKey)) return;
+      const thread = supportThreadBySelectionKey.get(selectionKey) ?? null;
+      merged.set(selectionKey, {
+        row,
+        selectionKey,
+        thread,
+        lastMessage: thread?.messages[thread.messages.length - 1] ?? null,
+      });
+    });
+
     supportThreads.forEach((thread) => {
       const selectionKey = buildSupportMerchantSelectionKey(thread.merchantId, thread.siteId);
       if (!selectionKey || merged.has(selectionKey)) return;
@@ -2882,7 +2965,7 @@ export default function SuperAdminClient() {
     });
 
     return [...merged.values()];
-  }, [merchantRows, supportThreadBySelectionKey, supportThreads]);
+  }, [merchantRows, personalAccounts, supportThreadBySelectionKey, supportThreads]);
   const supportListRows = useMemo(() => {
     const q = supportMerchantKeyword.trim().toLowerCase();
     return supportBaseRows
@@ -2893,6 +2976,8 @@ export default function SuperAdminClient() {
           item.row.loginAccount,
           item.row.merchantId,
           item.row.merchantName,
+          item.row.backendAccount?.accountId,
+          item.row.backendAccount?.accountType,
           item.row.backendAccount?.username,
           item.row.backendAccount?.loginId,
           item.thread?.merchantEmail,
@@ -2937,6 +3022,9 @@ export default function SuperAdminClient() {
     selectedSupportThread?.merchantName ||
     selectedSupportThread?.merchantId ||
     "-";
+  const selectedSupportAccountType =
+    selectedSupportMerchantRow?.backendAccount?.accountType === "personal" ? "personal" : "merchant";
+  const selectedSupportAccountTypeLabel = selectedSupportAccountType === "personal" ? "个人用户" : "商户";
   const selectedSupportMerchantId =
     normalizeSupportDisplayValue(selectedSupportMerchantRow?.merchantId) ||
     normalizeSupportDisplayValue(selectedSupportThread?.merchantId) ||
@@ -3076,7 +3164,7 @@ export default function SuperAdminClient() {
       selectedSupportMerchantEmail !== "-" ? selectedSupportMerchantEmail : "",
     ]
       .filter(Boolean)
-      .join(" · ") || "商户留言与回复";
+      .join(" · ") || "会话留言与回复";
   const selectedSupportMerchantHeaderIndustry =
     selectedSupportMerchantIndustry !== "-" ? selectedSupportMerchantIndustry : "未设置行业";
   const selectedSupportMerchantWebsiteHref = useMemo(() => {
@@ -3154,7 +3242,7 @@ export default function SuperAdminClient() {
     ],
   );
   const mobileSupportListSummary = supportThreadsLoading
-    ? "正在同步商户留言..."
+    ? "正在同步会话..."
     : supportUnreadThreadCount > 0
       ? `${supportUnreadThreadCount} 个会话待处理`
       : `全部 ${supportListRows.length} 个会话已处理`;
@@ -6439,7 +6527,7 @@ export default function SuperAdminClient() {
   const sidebarMenus: Array<{ key: "site_editor" | "user_manage" | "support_messages" | "merchant_id_rules" | "trusted_devices" | "stats" | "logs"; label: string; hint: string }> = [
     { key: "site_editor", label: "网站编辑", hint: "总站页面与站点配置" },
     { key: "user_manage", label: "用户管理", hint: "用户列表与权限服务" },
-    { key: "support_messages", label: "信息处理", hint: "商户留言与回复" },
+    { key: "support_messages", label: "信息处理", hint: "会话留言与回复" },
     { key: "merchant_id_rules", label: "禁用ID设置", hint: "注册跳号与规则管理" },
     { key: "trusted_devices", label: "白名单设备", hint: "超级后台登录设备管理" },
     { key: "stats", label: "数据统计", hint: "平台关键指标" },
@@ -8902,10 +8990,10 @@ export default function SuperAdminClient() {
                               type="button"
                               className="shrink-0 rounded-2xl shadow-sm transition hover:scale-[1.02]"
                               onClick={() => setSupportMerchantInfoSheetOpen(true)}
-                              aria-label="查看商户信息"
+                              aria-label="查看账号信息"
                             >
                               <SupportAvatarBadge
-                                label={getSupportAvatarLabel(selectedSupportDisplayLabel, "商")}
+                                label={getSupportAvatarLabel(selectedSupportDisplayLabel, selectedSupportAccountType === "personal" ? "个" : "商")}
                                 imageUrl={selectedSupportAvatarImageUrl}
                                 imageAlt={selectedSupportDisplayLabel}
                                 className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white"
@@ -8972,7 +9060,7 @@ export default function SuperAdminClient() {
                           <div className="rounded-[28px] border border-dashed border-slate-300 bg-white/90 px-5 py-8 text-center shadow-sm">
                             <div className="text-sm font-medium text-slate-900">还没有留言记录</div>
                             <div className="mt-2 text-xs leading-6 text-slate-500">
-                              你可以直接在下方发第一条消息，商户会在后台即时看到。
+                              你可以直接在下方发第一条消息，对方会在会话中看到。
                             </div>
                           </div>
                         )}
@@ -8993,7 +9081,7 @@ export default function SuperAdminClient() {
                             disabled={supportSending}
                           />
                           <div className="flex items-center justify-between gap-3 border-t border-slate-100 px-2 pb-1 pt-2">
-                            <div className="text-[11px] leading-5 text-slate-500">消息会同步到商户后台的“联系我们”。</div>
+                            <div className="text-[11px] leading-5 text-slate-500">消息会同步到对方的会话窗口。</div>
                             <button
                               type="button"
                               className="shrink-0 rounded-full bg-slate-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
@@ -9041,7 +9129,7 @@ export default function SuperAdminClient() {
                         {supportThreadsError ? <div className="mt-3 text-sm text-rose-600">{supportThreadsError}</div> : null}
                         {backendMerchantAccountsError ? (
                           <div className="mt-3 text-sm text-amber-600">
-                            商户列表加载失败，当前先展示已有会话。{describeBackendMerchantAccountsError(backendMerchantAccountsError)}
+                            账号列表加载失败，当前先展示已有会话。{describeBackendMerchantAccountsError(backendMerchantAccountsError)}
                           </div>
                         ) : null}
                       </div>
@@ -9050,8 +9138,11 @@ export default function SuperAdminClient() {
                           <div className="space-y-2.5">
                             {supportListRows.map(({ row, selectionKey, thread, lastMessage }) => {
                               const displayLabel = row.merchantName || thread?.merchantName || row.merchantId || thread?.merchantId || selectionKey;
+                              const accountTypeLabel = row.backendAccount?.accountType === "personal" ? "个人用户" : "商户";
+                              const avatarFallback = accountTypeLabel === "个人用户" ? "个" : "商";
                               const avatarImageUrl = resolveSupportRowAvatarImageUrl(row);
                               const subtitle = [
+                                accountTypeLabel,
                                 row.backendAccount?.loginId || row.backendAccount?.username || "",
                                 row.userEmail || row.loginAccount || thread?.merchantEmail || "",
                               ]
@@ -9075,7 +9166,7 @@ export default function SuperAdminClient() {
                                 >
                                   <div className="flex items-start gap-3">
                                     <SupportAvatarBadge
-                                      label={getSupportAvatarLabel(displayLabel || row.merchantId || selectionKey, "商")}
+                                      label={getSupportAvatarLabel(displayLabel || row.merchantId || selectionKey, avatarFallback)}
                                       imageUrl={avatarImageUrl}
                                       imageAlt={displayLabel || row.merchantId || selectionKey}
                                       className={`mt-0.5 flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-sm font-semibold ${
@@ -9111,15 +9202,15 @@ export default function SuperAdminClient() {
                           </div>
                         ) : backendMerchantAccountsLoading ? (
                           <div className="rounded-[28px] border border-dashed border-slate-300 bg-white/90 px-4 py-8 text-center text-sm text-slate-500 shadow-sm">
-                            正在加载商户列表…
+                            正在加载账号列表…
                           </div>
                         ) : supportMerchantKeyword.trim() ? (
                           <div className="rounded-[28px] border border-dashed border-slate-300 bg-white/90 px-4 py-8 text-center text-sm text-slate-500 shadow-sm">
-                            没有匹配的商户，请换个关键词试试。
+                            没有匹配的账号，请换个关键词试试。
                           </div>
                         ) : (
                           <div className="rounded-[28px] border border-dashed border-slate-300 bg-white/90 px-4 py-8 text-center text-sm text-slate-500 shadow-sm">
-                            当前还没有已注册商户。
+                            当前还没有可联系账号。
                           </div>
                         )}
                       </div>
@@ -9132,11 +9223,11 @@ export default function SuperAdminClient() {
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="space-y-1">
                       <div className="text-sm font-semibold text-slate-900">信息处理</div>
-                      <div className="text-xs text-slate-500">商户留言会集中在这里处理，右侧可以直接回复并查看商户详情。</div>
+                      <div className="text-xs text-slate-500">商户和个人用户的会话会集中在这里处理，右侧可以直接回复。</div>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <div className="rounded border bg-slate-50 px-3 py-2 text-sm">
-                        商户数：
+                        账号数：
                         {supportMerchantKeyword.trim()
                           ? `${supportMerchantListCount}/${supportMerchantTotalCount}`
                           : supportMerchantTotalCount}
@@ -9154,7 +9245,7 @@ export default function SuperAdminClient() {
                   {supportThreadsError ? <div className="mt-3 text-sm text-rose-600">{supportThreadsError}</div> : null}
                   {backendMerchantAccountsError ? (
                     <div className="mt-3 text-sm text-amber-600">
-                      商户列表加载失败，当前先展示已有会话。{describeBackendMerchantAccountsError(backendMerchantAccountsError)}
+                      账号列表加载失败，当前先展示已有会话。{describeBackendMerchantAccountsError(backendMerchantAccountsError)}
                     </div>
                   ) : null}
                 </div>
@@ -9163,7 +9254,7 @@ export default function SuperAdminClient() {
                   <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border bg-white">
                     <div className="border-b px-4 py-3">
                       <div className="flex items-center gap-2">
-                        <div className="shrink-0 text-sm font-semibold text-slate-900">商户</div>
+                        <div className="shrink-0 text-sm font-semibold text-slate-900">账号</div>
                         <input
                           type="text"
                           className="min-w-0 flex-1 rounded border px-3 py-2 text-sm outline-none transition focus:border-slate-400"
@@ -9178,8 +9269,11 @@ export default function SuperAdminClient() {
                         <div className="space-y-2">
                           {supportListRows.map(({ row, selectionKey, thread, lastMessage }) => {
                             const displayLabel = row.merchantName || thread?.merchantName || row.merchantId || thread?.merchantId || selectionKey;
+                            const accountTypeLabel = row.backendAccount?.accountType === "personal" ? "个人用户" : "商户";
+                            const avatarFallback = accountTypeLabel === "个人用户" ? "个" : "商";
                             const avatarImageUrl = resolveSupportRowAvatarImageUrl(row);
                             const subtitle = [
+                              accountTypeLabel,
                               row.backendAccount?.loginId || row.backendAccount?.username || "",
                               row.userEmail || row.loginAccount || thread?.merchantEmail || "",
                             ]
@@ -9198,7 +9292,7 @@ export default function SuperAdminClient() {
                               >
                                 <div className="flex items-start gap-3">
                                   <SupportAvatarBadge
-                                    label={getSupportAvatarLabel(displayLabel || row.merchantId || selectionKey, "商")}
+                                    label={getSupportAvatarLabel(displayLabel || row.merchantId || selectionKey, avatarFallback)}
                                     imageUrl={avatarImageUrl}
                                     imageAlt={displayLabel || row.merchantId || selectionKey}
                                     className={`mt-0.5 flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-sm font-semibold ${
@@ -9231,14 +9325,14 @@ export default function SuperAdminClient() {
                           })}
                         </div>
                       ) : backendMerchantAccountsLoading ? (
-                        <div className="rounded border border-dashed px-3 py-4 text-xs text-slate-500">正在加载商户列表…</div>
+                        <div className="rounded border border-dashed px-3 py-4 text-xs text-slate-500">正在加载账号列表…</div>
                       ) : supportMerchantKeyword.trim() ? (
                         <div className="rounded border border-dashed px-3 py-4 text-xs text-slate-500">
-                          没有匹配的商户，请换个关键词试试。
+                          没有匹配的账号，请换个关键词试试。
                         </div>
                       ) : (
                         <div className="rounded border border-dashed px-3 py-4 text-xs text-slate-500">
-                          当前还没有已注册商户。
+                          当前还没有可联系账号。
                         </div>
                       )}
                     </div>
@@ -9250,7 +9344,7 @@ export default function SuperAdminClient() {
                         <div className="flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
                           <div className="flex min-w-0 items-start gap-3">
                             <SupportAvatarBadge
-                              label={getSupportAvatarLabel(selectedSupportDisplayLabel, "商")}
+                              label={getSupportAvatarLabel(selectedSupportDisplayLabel, selectedSupportAccountType === "personal" ? "个" : "商")}
                               imageUrl={selectedSupportAvatarImageUrl}
                               imageAlt={selectedSupportDisplayLabel}
                               className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white"
@@ -9277,9 +9371,9 @@ export default function SuperAdminClient() {
                               type="button"
                               className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
                               onClick={() => openMerchantDetailPanelForRow(selectedSupportMerchantRow)}
-                              disabled={!selectedSupportMerchantRow}
+                              disabled={!selectedSupportMerchantRow?.hasSite}
                             >
-                              查看详情
+                              查看商户详情
                             </button>
                           </div>
                         </div>
@@ -9302,7 +9396,7 @@ export default function SuperAdminClient() {
                                       }`}
                                     >
                                       <div className="text-[11px] opacity-70">
-                                        {isMerchantMessage ? "商户" : "超级后台"} | {formatSupportMessageTime(message.createdAt)}
+                                        {isMerchantMessage ? selectedSupportAccountTypeLabel : "超级后台"} | {formatSupportMessageTime(message.createdAt)}
                                       </div>
                                       <div className="mt-1">
                                         <SupportMessageContent
@@ -9327,7 +9421,7 @@ export default function SuperAdminClient() {
                           <textarea
                             ref={supportReplyInputRef}
                             className="h-32 w-full resize-none rounded-2xl border px-4 py-3 text-sm outline-none transition focus:border-slate-400"
-                            placeholder="请输入要回复商户的内容"
+                            placeholder="请输入要回复的内容"
                             value={supportReplyDraft}
                             onChange={(event) => setSupportReplyDraft(event.target.value)}
                             onKeyDown={(event) => {
@@ -9338,7 +9432,7 @@ export default function SuperAdminClient() {
                             disabled={supportSending}
                           />
                           <div className="flex items-center justify-between gap-3">
-                            <div className="text-xs text-slate-500">回复会直接出现在商户后台的“联系我们”窗口里。</div>
+                            <div className="text-xs text-slate-500">回复会直接出现在对方会话里。</div>
                             <button
                               type="button"
                               className="rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50"
@@ -9352,7 +9446,7 @@ export default function SuperAdminClient() {
                       </div>
                     ) : (
                       <div className="flex h-full min-h-0 items-center justify-center px-6 text-center text-sm text-slate-500">
-                        {supportMerchantKeyword.trim() ? "暂无匹配商户，请调整搜索条件。" : "暂无可处理商户，请先确认注册用户数据是否已加载。"}
+                        {supportMerchantKeyword.trim() ? "暂无匹配账号，请调整搜索条件。" : "暂无可处理账号，请先确认注册用户数据是否已加载。"}
                       </div>
                     )}
                   </div>
@@ -9585,7 +9679,7 @@ export default function SuperAdminClient() {
                       type="button"
                       className="fixed inset-0 z-[2147483400] bg-slate-950/40 backdrop-blur-[1px]"
                       onClick={() => setSupportMerchantInfoSheetOpen(false)}
-                      aria-label="关闭商户信息"
+                      aria-label="关闭账号信息"
                     />
                     <div className="fixed inset-x-0 bottom-0 z-[2147483401] px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]">
                       <div className="mx-auto w-full max-w-md rounded-[30px] bg-white px-4 pb-4 pt-3 shadow-[0_24px_80px_rgba(15,23,42,0.2)]">
@@ -9593,7 +9687,7 @@ export default function SuperAdminClient() {
                         <div className="mt-4 flex items-start justify-between gap-3">
                           <div className="flex min-w-0 items-center gap-3">
                             <SupportAvatarBadge
-                              label={getSupportAvatarLabel(selectedSupportDisplayLabel, "商")}
+                              label={getSupportAvatarLabel(selectedSupportDisplayLabel, selectedSupportAccountType === "personal" ? "个" : "商")}
                               imageUrl={selectedSupportAvatarImageUrl}
                               imageAlt={selectedSupportDisplayLabel}
                               className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white"
