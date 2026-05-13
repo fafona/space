@@ -315,6 +315,8 @@ export default function MerchantProfileDialog({
   const [savePending, setSavePending] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [googleBusinessProfileCopyMessage, setGoogleBusinessProfileCopyMessage] = useState("");
+  const [googleSeoPanelOpen, setGoogleSeoPanelOpen] = useState(false);
+  const [googleBusinessProfilePanelOpen, setGoogleBusinessProfilePanelOpen] = useState(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -761,116 +763,144 @@ export default function MerchantProfileDialog({
             <span>{formatServiceExpiresAt(initialServiceExpiresAt)}</span>
           </div>
           <div
-            className={`mt-2 rounded-lg border px-3 py-3 text-sm ${
+            className={`mt-2 overflow-hidden rounded-lg border text-sm ${
               merchantSeoReadiness.ready ? "border-emerald-200 bg-emerald-50" : "border-amber-200 bg-amber-50"
             }`}
           >
-            <div className="flex items-start justify-between gap-3">
+            <button
+              type="button"
+              className="flex w-full items-start justify-between gap-3 px-3 py-3 text-left"
+              aria-expanded={googleSeoPanelOpen}
+              onClick={() => setGoogleSeoPanelOpen((current) => !current)}
+            >
               <div>
                 <div className="font-semibold text-slate-900">Google 搜索优化</div>
-                <div className="mt-1 text-xs text-slate-600">资料完整并发布后，会自动生成 Google 可读取的页面信息。</div>
+                {googleSeoPanelOpen ? (
+                  <div className="mt-1 text-xs text-slate-600">资料完整并发布后，会自动生成 Google 可读取的页面信息。</div>
+                ) : null}
               </div>
-              <span
-                className={`shrink-0 rounded-full px-2 py-1 text-xs font-semibold ${
-                  merchantSeoReadiness.ready ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
-                }`}
-              >
-                {merchantSeoReadiness.ready
-                  ? "已满足"
-                  : `${merchantSeoReadiness.requiredCompleteCount}/${merchantSeoReadiness.requiredTotal}`}
-              </span>
-            </div>
-            <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              {merchantSeoReadiness.required.map((item) => (
-                <div
-                  key={item.key}
-                  className={`flex items-center gap-2 text-xs ${item.complete ? "text-emerald-700" : "text-slate-600"}`}
+              <span className="flex shrink-0 items-center gap-2">
+                <span
+                  className={`rounded-full px-2 py-1 text-xs font-semibold ${
+                    merchantSeoReadiness.ready ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
+                  }`}
                 >
-                  <span
-                    className={`flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-bold ${
-                      item.complete ? "bg-emerald-100 text-emerald-700" : "bg-white text-amber-700"
-                    }`}
+                  {merchantSeoReadiness.ready
+                    ? "已满足"
+                    : `${merchantSeoReadiness.requiredCompleteCount}/${merchantSeoReadiness.requiredTotal}`}
+                </span>
+                <span className="text-xs font-semibold text-slate-500">{googleSeoPanelOpen ? "收起" : "展开"}</span>
+              </span>
+            </button>
+            {googleSeoPanelOpen ? (
+              <div className="grid gap-2 border-t border-white/70 px-3 py-3 sm:grid-cols-2">
+                {merchantSeoReadiness.required.map((item) => (
+                  <div
+                    key={item.key}
+                    className={`flex items-center gap-2 text-xs ${item.complete ? "text-emerald-700" : "text-slate-600"}`}
                   >
-                    {item.complete ? "✓" : "!"}
-                  </span>
-                  <span>{item.label}</span>
-                </div>
-              ))}
-            </div>
+                    <span
+                      className={`flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-bold ${
+                        item.complete ? "bg-emerald-100 text-emerald-700" : "bg-white text-amber-700"
+                      }`}
+                    >
+                      {item.complete ? "✓" : "!"}
+                    </span>
+                    <span>{item.label}</span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
           <div
-            className={`mt-2 rounded-lg border px-3 py-3 text-sm ${
+            className={`mt-2 overflow-hidden rounded-lg border text-sm ${
               googleBusinessProfileReadiness.ready ? "border-sky-200 bg-sky-50" : "border-amber-200 bg-amber-50"
             }`}
           >
-            <div className="flex items-start justify-between gap-3">
+            <button
+              type="button"
+              className="flex w-full items-start justify-between gap-3 px-3 py-3 text-left"
+              aria-expanded={googleBusinessProfilePanelOpen}
+              onClick={() => setGoogleBusinessProfilePanelOpen((current) => !current)}
+            >
               <div>
                 <div className="font-semibold text-slate-900">Google 商家资料验证助手</div>
-                <div className="mt-1 text-xs text-slate-600">
-                  先自动整理创建 Google Business Profile 所需资料，API 权限开通后这里会继续接发起验证。
+                {googleBusinessProfilePanelOpen ? (
+                  <div className="mt-1 text-xs text-slate-600">
+                    先自动整理创建 Google Business Profile 所需资料，API 权限开通后这里会继续接发起验证。
+                  </div>
+                ) : null}
+              </div>
+              <span className="flex shrink-0 items-center gap-2">
+                <span
+                  className={`rounded-full px-2 py-1 text-xs font-semibold ${
+                    googleBusinessProfileReadiness.ready ? "bg-sky-100 text-sky-700" : "bg-amber-100 text-amber-700"
+                  }`}
+                >
+                  {googleBusinessProfileReadiness.ready
+                    ? "资料齐全"
+                    : `${googleBusinessProfileReadiness.requiredCompleteCount}/${googleBusinessProfileReadiness.requiredTotal}`}
+                </span>
+                <span className="text-xs font-semibold text-slate-500">
+                  {googleBusinessProfilePanelOpen ? "收起" : "展开"}
+                </span>
+              </span>
+            </button>
+            {googleBusinessProfilePanelOpen ? (
+              <div className="border-t border-white/70 px-3 py-3">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {googleBusinessProfileReadiness.required.map((item) => (
+                    <div
+                      key={item.key}
+                      className={`flex items-center gap-2 text-xs ${item.complete ? "text-sky-700" : "text-slate-600"}`}
+                    >
+                      <span
+                        className={`flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-bold ${
+                          item.complete ? "bg-sky-100 text-sky-700" : "bg-white text-amber-700"
+                        }`}
+                      >
+                        {item.complete ? "✓" : "!"}
+                      </span>
+                      <span>{item.label}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-3 rounded border border-white/70 bg-white/70 px-2 py-2 text-xs text-slate-600">
+                  <span className="font-semibold text-slate-800">商户网站：</span>
+                  <span className="break-all">{googleBusinessProfileWebsiteUrl}</span>
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    className="rounded border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-50"
+                    onClick={() => {
+                      void copyGoogleBusinessProfileWorksheet();
+                    }}
+                  >
+                    复制商户资料
+                  </button>
+                  <a
+                    href={googleBusinessProfileOpenUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="rounded bg-slate-950 px-3 py-2 text-xs font-semibold text-white hover:opacity-90"
+                  >
+                    打开 Google 商家资料
+                  </a>
+                  <a
+                    href={googleBusinessProfileSearchUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="rounded border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-50"
+                  >
+                    搜索现有档案
+                  </a>
+                  {googleBusinessProfileCopyMessage ? (
+                    <span className="text-xs text-sky-700">{googleBusinessProfileCopyMessage}</span>
+                  ) : null}
                 </div>
               </div>
-              <span
-                className={`shrink-0 rounded-full px-2 py-1 text-xs font-semibold ${
-                  googleBusinessProfileReadiness.ready ? "bg-sky-100 text-sky-700" : "bg-amber-100 text-amber-700"
-                }`}
-              >
-                {googleBusinessProfileReadiness.ready
-                  ? "资料齐全"
-                  : `${googleBusinessProfileReadiness.requiredCompleteCount}/${googleBusinessProfileReadiness.requiredTotal}`}
-              </span>
-            </div>
-            <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              {googleBusinessProfileReadiness.required.map((item) => (
-                <div
-                  key={item.key}
-                  className={`flex items-center gap-2 text-xs ${item.complete ? "text-sky-700" : "text-slate-600"}`}
-                >
-                  <span
-                    className={`flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-bold ${
-                      item.complete ? "bg-sky-100 text-sky-700" : "bg-white text-amber-700"
-                    }`}
-                  >
-                    {item.complete ? "✓" : "!"}
-                  </span>
-                  <span>{item.label}</span>
-                </div>
-              ))}
-            </div>
-            <div className="mt-3 rounded border border-white/70 bg-white/70 px-2 py-2 text-xs text-slate-600">
-              <span className="font-semibold text-slate-800">商户网站：</span>
-              <span className="break-all">{googleBusinessProfileWebsiteUrl}</span>
-            </div>
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                className="rounded border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-50"
-                onClick={() => {
-                  void copyGoogleBusinessProfileWorksheet();
-                }}
-              >
-                复制商户资料
-              </button>
-              <a
-                href={googleBusinessProfileOpenUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="rounded bg-slate-950 px-3 py-2 text-xs font-semibold text-white hover:opacity-90"
-              >
-                打开 Google 商家资料
-              </a>
-              <a
-                href={googleBusinessProfileSearchUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="rounded border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-50"
-              >
-                搜索现有档案
-              </a>
-              {googleBusinessProfileCopyMessage ? (
-                <span className="text-xs text-sky-700">{googleBusinessProfileCopyMessage}</span>
-              ) : null}
-            </div>
+            ) : null}
           </div>
         </div>
 
