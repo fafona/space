@@ -151,3 +151,21 @@ test("browser auth storage adapter writes a compact cookie snapshot for PWA reco
     { cookies: true },
   );
 });
+
+test("browser auth storage adapter preserves OAuth verifier fallback in cookies", () => {
+  withWindowStorageHarness(
+    ({ sessionStorage, localStorage }) => {
+      const adapter = createMirroredBrowserAuthStorageAdapter();
+      const key = "sb-demo-auth-token-code-verifier";
+      adapter.setItem(key, "oauth-verifier-value");
+      sessionStorage.removeItem(key);
+      localStorage.removeItem(key);
+
+      assert.equal(readBrowserAuthStorageCookie(key), "oauth-verifier-value");
+      assert.equal(adapter.getItem(key), "oauth-verifier-value");
+      assert.equal(sessionStorage.getItem(key), "oauth-verifier-value");
+      assert.equal(localStorage.getItem(key), "oauth-verifier-value");
+    },
+    { cookies: true },
+  );
+});

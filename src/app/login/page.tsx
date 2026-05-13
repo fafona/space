@@ -227,10 +227,21 @@ function LoginPageInner() {
     () => normalizePlatformAccountType(searchParams.get("accountType")) || "personal",
     [searchParams],
   );
+  const googleOAuthErrorCode = useMemo(
+    () => ((searchParams.get("oauth_error") ?? searchParams.get("error_code") ?? "").trim().toLowerCase()),
+    [searchParams],
+  );
+  const googleOAuthStateExpired = googleOAuthErrorCode === "bad_oauth_state";
   useEffect(() => {
     if (!requestedEntryAccountType) return;
     setEntryAccountType(requestedEntryAccountType);
   }, [requestedEntryAccountType]);
+  useEffect(() => {
+    if (!googleOAuthStateExpired) return;
+    setPendingAction(null);
+    setAuthView("signin");
+    setMsg("Google 登录已过期，请重新点击 Google 登录。");
+  }, [googleOAuthStateExpired]);
   const launchRetry = useMemo(() => (searchParams.get("launchRetry") ?? "").trim() === "1", [searchParams]);
   const [embeddedShellLogin, setEmbeddedShellLogin] = useState(false);
   const normalizedLocale = useMemo(() => locale.trim().toLowerCase(), [locale]);
@@ -974,7 +985,7 @@ function LoginPageInner() {
   }
 
   useEffect(() => {
-    if (!isGoogleOAuthReturn || loggedOut) return;
+    if (!isGoogleOAuthReturn || loggedOut || googleOAuthStateExpired) return;
     let mounted = true;
     setAuthView("signin");
     setPendingAction("google");
@@ -1062,7 +1073,15 @@ function LoginPageInner() {
     return () => {
       mounted = false;
     };
-  }, [googleOAuthAccountType, isGoogleOAuthReturn, loggedOut, redirectToAccountHome, showAutoSwitchedEntryNotice, t]);
+  }, [
+    googleOAuthAccountType,
+    googleOAuthStateExpired,
+    isGoogleOAuthReturn,
+    loggedOut,
+    redirectToAccountHome,
+    showAutoSwitchedEntryNotice,
+    t,
+  ]);
 
   async function signInViaServer(
     accountValue: string,
@@ -1305,7 +1324,7 @@ function LoginPageInner() {
       });
       if (error) throw error;
       if (!data.url) throw new Error("google_oauth_url_missing");
-      window.location.href = data.url;
+      window.location.replace(data.url);
     } catch (error) {
       setMsg(error instanceof Error ? normalizeError(error.message) : t("login.requestFailed"));
       setPendingAction(null);

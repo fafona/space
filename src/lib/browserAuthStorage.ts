@@ -36,9 +36,26 @@ function canUseDocumentCookies() {
   return typeof document !== "undefined" && typeof window !== "undefined";
 }
 
+function normalizeBrowserAuthStorageKey(key: string) {
+  return String(key ?? "").trim();
+}
+
+function isBrowserAuthTokenStorageKey(key: string) {
+  const normalized = normalizeBrowserAuthStorageKey(key);
+  return /^sb-[A-Za-z0-9_-]+-auth-token$/.test(normalized) || /auth-token$/i.test(normalized);
+}
+
+function isBrowserOAuthTransientStorageKey(key: string) {
+  const normalized = normalizeBrowserAuthStorageKey(key);
+  return (
+    /^sb-[A-Za-z0-9_-]+-auth-token-[A-Za-z0-9_-]+$/.test(normalized) ||
+    /(code[-_]?verifier|pkce|oauth[-_]?state|flow[-_]?state)/i.test(normalized)
+  );
+}
+
 function isBrowserAuthStorageKey(key: string) {
   const normalized = String(key ?? "").trim();
-  return /^sb-[A-Za-z0-9_-]+-auth-token$/.test(normalized) || /auth-token/i.test(normalized);
+  return Boolean(normalized) && (isBrowserAuthTokenStorageKey(normalized) || isBrowserOAuthTransientStorageKey(normalized));
 }
 
 function getBrowserAuthCookieName(key: string) {
@@ -72,7 +89,12 @@ function normalizeFiniteNumber(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-function compactAuthStorageValue(value: string) {
+function compactAuthStorageValue(key: string, value: string) {
+  if (isBrowserOAuthTransientStorageKey(key) && !isBrowserAuthTokenStorageKey(key)) {
+    const raw = String(value ?? "");
+    return raw.length > 0 && raw.length <= browserAuthCookieMaxValueLength ? raw : "";
+  }
+
   try {
     const parsed = JSON.parse(value) as unknown;
     if (!parsed || typeof parsed !== "object") return "";
@@ -112,7 +134,7 @@ export function readBrowserAuthStorageCookie(key: string) {
 
 export function writeBrowserAuthStorageCookie(key: string, value: string) {
   if (!canUseDocumentCookies() || !isBrowserAuthStorageKey(key)) return false;
-  const compact = compactAuthStorageValue(value);
+  const compact = compactAuthStorageValue(key, value);
   if (!compact) return false;
   const encoded = encodeURIComponent(compact);
   if (encoded.length > browserAuthCookieMaxValueLength) return false;
@@ -149,6 +171,19 @@ export function createMirroredBrowserAuthStorageAdapter() {
         } catch {
           // Ignore failed storage reads and keep trying fallbacks.
         }
+      }
+      const cookieValue = readBrowserAuthStorageCookie(key);
+      if (cookieValue !== null) {
+        for (const storage of storages) {
+          try {
+            if (storage.getItem(key) === null) {
+              storage.setItem(key, cookieValue);
+            }
+          } catch {
+            // Ignore best-effort mirroring failures.
+          }
+        }
+        return cookieValue;
       }
       return null;
     },
