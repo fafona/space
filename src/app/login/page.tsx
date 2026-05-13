@@ -68,6 +68,72 @@ type SupabaseAuthSettings = {
   external?: Record<string, unknown> | null;
 };
 
+const googleOAuthAttemptStorageKey = "faolla.googleOAuthAttempt";
+const googleOAuthAttemptMaxAgeMs = 10 * 60 * 1000;
+
+type GoogleOAuthAttempt = {
+  accountType: PlatformAccountType;
+  redirectPath: string;
+  loginFromUrl: string;
+  startedAt: number;
+  stateRetryCount: number;
+};
+
+function readGoogleOAuthAttempt(): GoogleOAuthAttempt | null {
+  if (typeof window === "undefined") return null;
+  const storages = [window.sessionStorage, window.localStorage].filter(Boolean);
+  for (const storage of storages) {
+    try {
+      const raw = storage.getItem(googleOAuthAttemptStorageKey);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw) as Partial<GoogleOAuthAttempt>;
+      const accountType = normalizePlatformAccountType(parsed.accountType);
+      const startedAt = typeof parsed.startedAt === "number" ? parsed.startedAt : 0;
+      if (!accountType || !startedAt || Date.now() - startedAt > googleOAuthAttemptMaxAgeMs) {
+        storage.removeItem(googleOAuthAttemptStorageKey);
+        continue;
+      }
+      return {
+        accountType,
+        redirectPath: typeof parsed.redirectPath === "string" ? parsed.redirectPath : "",
+        loginFromUrl: typeof parsed.loginFromUrl === "string" ? parsed.loginFromUrl : "",
+        startedAt,
+        stateRetryCount: typeof parsed.stateRetryCount === "number" ? parsed.stateRetryCount : 0,
+      };
+    } catch {
+      try {
+        storage.removeItem(googleOAuthAttemptStorageKey);
+      } catch {
+        // Ignore storage cleanup failures.
+      }
+    }
+  }
+  return null;
+}
+
+function writeGoogleOAuthAttempt(attempt: GoogleOAuthAttempt) {
+  if (typeof window === "undefined") return;
+  const raw = JSON.stringify(attempt);
+  for (const storage of [window.sessionStorage, window.localStorage]) {
+    try {
+      storage.setItem(googleOAuthAttemptStorageKey, raw);
+    } catch {
+      // Ignore unavailable browser storage backends.
+    }
+  }
+}
+
+function clearGoogleOAuthAttempt() {
+  if (typeof window === "undefined") return;
+  for (const storage of [window.sessionStorage, window.localStorage]) {
+    try {
+      storage.removeItem(googleOAuthAttemptStorageKey);
+    } catch {
+      // Ignore unavailable browser storage backends.
+    }
+  }
+}
+
 function isAndroidBrowser() {
   if (typeof navigator === "undefined") return false;
   return /android/i.test(String(navigator.userAgent ?? ""));
@@ -205,6 +271,9 @@ function LoginPageInner() {
     | "verify_signup_code"
     | null
   >(null);
+  const signInWithGoogleRef = useRef<
+    (options?: { accountType?: PlatformAccountType; retryExpiredState?: boolean }) => void | Promise<void>
+  >(() => undefined);
   const requestedRedirectPath = useMemo(() => {
     const raw = (searchParams.get("redirect") ?? "").trim();
     if (!raw.startsWith("/") || raw.startsWith("//")) return "";
@@ -238,8 +307,24 @@ function LoginPageInner() {
   }, [requestedEntryAccountType]);
   useEffect(() => {
     if (!googleOAuthStateExpired) return;
+    const storedAttempt = readGoogleOAuthAttempt();
     setPendingAction(null);
     setAuthView("signin");
+    if (storedAttempt?.accountType) {
+      setEntryAccountType(storedAttempt.accountType);
+      if (storedAttempt.stateRetryCount < 1) {
+        writeGoogleOAuthAttempt({
+          ...storedAttempt,
+          startedAt: Date.now(),
+          stateRetryCount: storedAttempt.stateRetryCount + 1,
+        });
+        setMsg("Google 登录已过期，正在重新连接 Google...");
+        const retryTimer = window.setTimeout(() => {
+          void signInWithGoogleRef.current({ accountType: storedAttempt.accountType, retryExpiredState: true });
+        }, 420);
+        return () => window.clearTimeout(retryTimer);
+      }
+    }
     setMsg("Google 登录已过期，请重新点击 Google 登录。");
   }, [googleOAuthStateExpired]);
   const launchRetry = useMemo(() => (searchParams.get("launchRetry") ?? "").trim() === "1", [searchParams]);
@@ -996,10 +1081,12 @@ function LoginPageInner() {
         const session = await readGoogleOAuthSession();
         if (!mounted) return;
         if (!session?.access_token) {
+          clearGoogleOAuthAttempt();
           setMsg("Google 登录未完成，请重新点击 Google 登录。");
           setPendingAction(null);
           return;
         }
+        clearGoogleOAuthAttempt();
 
         const response = await fetch("/api/auth/merchant-session", {
           method: "POST",
@@ -1274,9 +1361,9 @@ function LoginPageInner() {
     setSignupCode("");
   }
 
-  async function signInWithGoogle() {
-    if (pendingAction) return;
-    const accountType = activeEntryAccountType;
+  async function signInWithGoogle(options?: { accountType?: PlatformAccountType; retryExpiredState?: boolean }) {
+    if (pendingAction && !options?.retryExpiredState) return;
+    const accountType = options?.accountType ?? activeEntryAccountType;
     if (!accountType) {
       setMsg("请先选择个人入口或商户入口。");
       return;
@@ -1295,6 +1382,7 @@ function LoginPageInner() {
         }
       }
       if (nextGoogleProviderEnabled === false) {
+        clearGoogleOAuthAttempt();
         setMsg("Google 登录尚未在认证服务中启用。请先在 Supabase/Auth 中配置 Google Provider。");
         setPendingAction(null);
         return;
@@ -1315,6 +1403,14 @@ function LoginPageInner() {
         queryParams.login_hint = accountHint;
       }
 
+      writeGoogleOAuthAttempt({
+        accountType,
+        redirectPath: requestedRedirectPath,
+        loginFromUrl,
+        startedAt: Date.now(),
+        stateRetryCount: options?.retryExpiredState ? 1 : 0,
+      });
+
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
@@ -1326,10 +1422,12 @@ function LoginPageInner() {
       if (!data.url) throw new Error("google_oauth_url_missing");
       window.location.replace(data.url);
     } catch (error) {
+      clearGoogleOAuthAttempt();
       setMsg(error instanceof Error ? normalizeError(error.message) : t("login.requestFailed"));
       setPendingAction(null);
     }
   }
+  signInWithGoogleRef.current = signInWithGoogle;
 
   function submitPrimaryAuthAction() {
     if (activeSignupAccountType) {
@@ -1835,7 +1933,7 @@ function LoginPageInner() {
 
                   <button
                     className="flex w-full items-center justify-center gap-3 rounded-[20px] border border-slate-200 bg-white px-4 py-3.5 text-[15px] font-semibold text-slate-900 shadow-[0_14px_30px_rgba(15,23,42,0.08)] transition hover:bg-slate-50 disabled:opacity-50 md:rounded-[22px] md:py-4"
-                    onClick={signInWithGoogle}
+                    onClick={() => void signInWithGoogle()}
                     disabled={pendingAction !== null}
                   >
                     <span className="inline-flex h-6 w-6 items-center justify-center">
