@@ -209,22 +209,22 @@ async function loadStoredShareManifest(shareKey: string, preferredOrigin: string
   const normalizedShareKey = normalizeMerchantBusinessCardShareKey(shareKey);
   if (!normalizedShareKey) return null;
 
-  const candidates: StoredShareManifest[] = [];
-  for (const url of buildMerchantBusinessCardShareManifestPublicUrls(normalizedShareKey, preferredOrigin)) {
-    try {
-      const response = await fetch(url, {
-        cache: "no-store",
-        next: { revalidate: 0 },
-      });
-      if (!response.ok) continue;
-      const payload = normalizeStoredShareManifest(await response.json().catch(() => null), preferredOrigin);
-      if (payload) {
-        candidates.push(payload);
-      }
-    } catch {
-      continue;
-    }
-  }
+  const candidates = (
+    await Promise.all(
+      buildMerchantBusinessCardShareManifestPublicUrls(normalizedShareKey, preferredOrigin).map(async (url) => {
+        try {
+          const response = await fetch(url, {
+            cache: "no-store",
+            next: { revalidate: 0 },
+          });
+          if (!response.ok) return null;
+          return normalizeStoredShareManifest(await response.json().catch(() => null), preferredOrigin);
+        } catch {
+          return null;
+        }
+      }),
+    )
+  ).filter((payload): payload is StoredShareManifest => !!payload);
 
   if (candidates.length === 0) return null;
 

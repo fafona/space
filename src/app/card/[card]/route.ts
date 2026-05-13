@@ -2012,12 +2012,14 @@ export async function GET(
     });
   }
 
-  if (
-    await isMerchantBusinessCardShareRevoked({
+  const [revoked, payload] = await Promise.all([
+    isMerchantBusinessCardShareRevoked({
       shareKey,
       preferredOrigin: requestOrigin,
-    })
-  ) {
+    }),
+    loadMerchantBusinessCardSharePayloadByKey(shareKey, requestOrigin),
+  ]);
+  if (revoked) {
     return new NextResponse("Business card not found", {
       status: 404,
       headers: {
@@ -2027,7 +2029,6 @@ export async function GET(
     });
   }
 
-  const payload = await loadMerchantBusinessCardSharePayloadByKey(shareKey, requestOrigin);
   if (!payload) {
     return new NextResponse("Business card not found", {
       status: 404,

@@ -39,12 +39,15 @@ export async function GET(
   }
 
   const requestOrigin = resolveRequestOrigin(request);
-  if (
-    await isMerchantBusinessCardShareRevoked({
+  const payloadOrigin = resolveMerchantBusinessCardShareOrigin(requestOrigin, requestOrigin) || requestOrigin;
+  const [revoked, payload] = await Promise.all([
+    isMerchantBusinessCardShareRevoked({
       shareKey,
       preferredOrigin: requestOrigin,
-    })
-  ) {
+    }),
+    loadMerchantBusinessCardSharePayloadByKey(shareKey, payloadOrigin),
+  ]);
+  if (revoked) {
     return new NextResponse("Business card image not found", {
       status: 404,
       headers: {
@@ -53,10 +56,6 @@ export async function GET(
       },
     });
   }
-  const payload = await loadMerchantBusinessCardSharePayloadByKey(
-    shareKey,
-    resolveMerchantBusinessCardShareOrigin(requestOrigin, requestOrigin) || requestOrigin,
-  );
   const imageUrl = String(payload?.imageUrl ?? "").trim();
   if (!imageUrl) {
     return new NextResponse("Business card image not found", {

@@ -620,23 +620,22 @@ export async function isMerchantBusinessCardShareRevoked(input: {
     buildMerchantBusinessCardShareRevocationByLegacyPayloadObjectPath(input.payload ?? null, input.preferredOrigin),
   ].filter(Boolean);
 
-  for (const objectPath of Array.from(new Set(objectPaths))) {
-    for (const url of buildPublicStorageObjectUrls(objectPath, input.preferredOrigin)) {
+  const checks = Array.from(new Set(objectPaths)).flatMap((objectPath) =>
+    buildPublicStorageObjectUrls(objectPath, input.preferredOrigin).map(async (url) => {
       try {
         const response = await fetch(buildStorageNoStoreUrl(url), {
           cache: "no-store",
           next: { revalidate: 0 },
         });
-        if (response.ok) {
-          return true;
-        }
+        return response.ok;
       } catch {
-        continue;
+        return false;
       }
-    }
-  }
+    }),
+  );
 
-  return false;
+  if (checks.length === 0) return false;
+  return (await Promise.all(checks)).some(Boolean);
 }
 
 export function buildMerchantBusinessCardShareUrl(input: {
@@ -1137,24 +1136,24 @@ export async function loadMerchantBusinessCardSharePayloadByKey(
   const normalizedKey = normalizeMerchantBusinessCardShareKey(key);
   if (!normalizedKey) return null;
 
-  const candidates: MerchantBusinessCardSharePayload[] = [];
-
-  for (const url of buildMerchantBusinessCardShareManifestPublicUrls(normalizedKey, preferredOrigin)) {
-    try {
-      const response = await fetch(buildStorageNoStoreUrl(url), {
-        cache: "no-store",
-        next: { revalidate: 0 },
-      });
-      if (!response.ok) continue;
-      const json = (await response.json().catch(() => null)) as MerchantBusinessCardSharePayload | null;
-      const payload = normalizeSharePayload(json ?? {}, preferredOrigin);
-      if (payload) {
-        candidates.push(payload);
-      }
-    } catch {
-      continue;
-    }
-  }
+  const candidates = (
+    await Promise.all(
+      buildMerchantBusinessCardShareManifestPublicUrls(normalizedKey, preferredOrigin).map(async (url) => {
+        try {
+          const response = await fetch(buildStorageNoStoreUrl(url), {
+            cache: "no-store",
+            next: { revalidate: 0 },
+          });
+          if (!response.ok) return null;
+          const json = (await response.json().catch(() => null)) as MerchantBusinessCardSharePayload | null;
+          const payload = normalizeSharePayload(json ?? {}, preferredOrigin);
+          return payload;
+        } catch {
+          return null;
+        }
+      }),
+    )
+  ).filter((payload): payload is MerchantBusinessCardSharePayload => !!payload);
 
   if (candidates.length === 0) return null;
 
