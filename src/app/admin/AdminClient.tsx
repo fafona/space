@@ -15574,6 +15574,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       : "support";
   useEffect(() => {
     if (checkingAuth || !isDesktopMerchantWorkspace || merchantEditorOnly) return;
+    if (typeof window !== "undefined" && isFaollaSectionSearch(window.location.search)) return;
     const merchantWorkspaceSiteId = (
       editingSiteId ||
       merchantSiteIdOverride ||
