@@ -7671,6 +7671,8 @@ export default function AdminClient({
       if (typeof window === "undefined") return false;
       return new URLSearchParams(window.location.search).get("nativeNotification") === "1";
     };
+    const isExplicitFaollaSectionLaunch = () =>
+      typeof window !== "undefined" && isFaollaSectionSearch(window.location.search);
     const preserveNativeFaollaShell = () => {
       const faollaAppShellActive =
         typeof window !== "undefined" && isFaollaAppShellSearch(window.location.search);
@@ -8081,6 +8083,13 @@ export default function AdminClient({
           if (currentMerchantSiteId) {
             ensureScopedMerchantSite(currentMerchantSiteId, merchantEmail || null);
             void syncScopedMerchantSiteFromPublishedSnapshot(currentMerchantSiteId, merchantEmail || null);
+          }
+          if (isExplicitFaollaSectionLaunch()) {
+            setHasEditorContent(true);
+            setBackendNotice(null);
+            setMerchantDesktopSection("faolla");
+            setSupportMobileHomeTab("faolla");
+            releaseCheckingScreen({ notice: null });
           }
           const currentMerchantProfileTask = isMerchantNumericId(currentMerchantSiteId)
             ? hydrateSupportMerchantProfileRef.current(currentMerchantSiteId, {
