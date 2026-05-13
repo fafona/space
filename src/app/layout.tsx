@@ -1116,11 +1116,8 @@ function buildFaollaInlineCacheRefreshScript(buildId: string) {
   const buildId = ${serializedBuildId};
   try {
     const startupParams = new URLSearchParams(window.location.search || "");
-    const isNativeAppShell =
-      (startupParams.get("appShell") || "").trim().toLowerCase() === "faolla" ||
-      (startupParams.get("nativeStart") || "").trim() === "1" ||
-      startupParams.has("nativeBuild");
-    if (isNativeAppShell) return;
+    const isNativeBoot = (startupParams.get("nativeStart") || "").trim() === "1" || startupParams.has("nativeBuild");
+    if (isNativeBoot) return;
   } catch {
     // Native app update checks are handled after first paint by CapacitorAppBridge.
   }

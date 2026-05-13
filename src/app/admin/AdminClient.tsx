@@ -5777,6 +5777,7 @@ export default function AdminClient({
   const supportDesktopFaollaFrameRef = useRef<HTMLIFrameElement>(null);
   const supportMobileFaollaFrameRef = useRef<HTMLIFrameElement>(null);
   const supportFaollaBackendResetAtRef = useRef(0);
+  const [supportFaollaFrameLoading, setSupportFaollaFrameLoading] = useState(true);
   const supportInputRef = useRef<HTMLTextAreaElement>(null);
   const supportComposerRef = useRef<HTMLDivElement>(null);
   const supportSelfLanguageRootRef = useRef<HTMLDivElement>(null);
@@ -11370,8 +11371,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       ),
     [locale],
   );
+  useEffect(() => {
+    setSupportFaollaFrameLoading(true);
+  }, [supportMobileFaollaTargetHref]);
   const navigateSupportFaollaHome = useCallback(() => {
     setSupportFaollaEmbedHref("/");
+    setSupportFaollaFrameLoading(true);
     if (typeof window !== "undefined") {
       writeStoredFaollaEntryUrl(supportFaollaHomeTargetHref, window.location.origin);
     }
@@ -11398,6 +11403,13 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       return true;
     },
     [supportMobileFaollaTargetHref],
+  );
+  const handleSupportFaollaFrameLoad = useCallback(
+    (frame: HTMLIFrameElement | null) => {
+      if (resetSupportFaollaBackendFrame(frame)) return;
+      window.setTimeout(() => setSupportFaollaFrameLoading(false), 450);
+    },
+    [resetSupportFaollaBackendFrame],
   );
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -11480,11 +11492,16 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       <div className="pointer-events-none absolute left-4 top-[calc(var(--faolla-mobile-safe-top)+0.75rem)] z-10">
         <FaollaHomeButton className="pointer-events-auto h-11 w-11" onClick={navigateSupportFaollaHome} />
       </div>
+      {supportFaollaFrameLoading ? (
+        <div className="absolute inset-0 z-[1] flex items-center justify-center bg-[#f2f3f5] text-sm text-slate-500">
+          <div className="rounded-full border border-slate-200 bg-white/90 px-4 py-2 shadow-sm">Faolla 加载中...</div>
+        </div>
+      ) : null}
       <iframe
         ref={supportMobileFaollaFrameRef}
         title="Faolla.com"
         src={supportMobileFaollaTargetHref}
-        onLoad={(event) => resetSupportFaollaBackendFrame(event.currentTarget)}
+        onLoad={(event) => handleSupportFaollaFrameLoad(event.currentTarget)}
         className="absolute inset-0 h-full w-full border-0 bg-white"
       />
     </div>
@@ -18607,11 +18624,16 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             <div className="pointer-events-none absolute left-4 top-4 z-10">
               <FaollaHomeButton className="pointer-events-auto h-11 w-11" onClick={navigateSupportFaollaHome} />
             </div>
+            {supportFaollaFrameLoading ? (
+              <div className="absolute inset-0 z-[1] flex items-center justify-center bg-[#f2f3f5] text-sm text-slate-500">
+                <div className="rounded-full border border-slate-200 bg-white/90 px-4 py-2 shadow-sm">Faolla 加载中...</div>
+              </div>
+            ) : null}
             <iframe
               ref={supportDesktopFaollaFrameRef}
               title="Faolla"
               src={supportMobileFaollaTargetHref}
-              onLoad={(event) => resetSupportFaollaBackendFrame(event.currentTarget)}
+              onLoad={(event) => handleSupportFaollaFrameLoad(event.currentTarget)}
               className="absolute inset-0 h-full w-full border-0 bg-transparent"
             />
           </div>
