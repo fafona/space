@@ -7,6 +7,8 @@ export const FAOLLA_APP_SHELL_PARAM = "appShell";
 export const FAOLLA_APP_SHELL_VALUE = "faolla";
 export const FAOLLA_LAST_ENTRY_STORAGE_KEY = "faolla:last-entry-url";
 export const FAOLLA_APP_SHELL_LOCATION_MESSAGE = "faolla:app-shell-location";
+const FAOLLA_INLINE_BUILD_PARAM = "__faollaInlineBuild";
+const FAOLLA_INLINE_BUILD_ID = String(process.env.NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID ?? "").trim();
 
 type NormalizeFaollaEntryOptions = {
   allowCrossOrigin?: boolean;
@@ -65,12 +67,17 @@ function canonicalizeStoredFaollaEntryUrl(value: string) {
     if (url.hostname.trim().toLowerCase() === "www.faolla.com") {
       url.hostname = "faolla.com";
     }
-    url.searchParams.delete("__faollaInlineBuild");
+    url.searchParams.delete(FAOLLA_INLINE_BUILD_PARAM);
     url.searchParams.delete("__faollaWebBuild");
     return url.toString();
   } catch {
     return value;
   }
+}
+
+function applyFaollaInlineBuildMarker(url: URL) {
+  if (!FAOLLA_INLINE_BUILD_ID) return;
+  url.searchParams.set(FAOLLA_INLINE_BUILD_PARAM, FAOLLA_INLINE_BUILD_ID.slice(0, 12));
 }
 
 export function isFaollaBackendShellUrl(value: unknown, fallbackOrigin?: string | null) {
@@ -258,6 +265,7 @@ export function buildFaollaShellHref(
     const normalizedLocale = String(locale ?? "").trim();
     if (normalizedLocale) url.searchParams.set(I18N_URL_PARAM, normalizedLocale);
     url.searchParams.set(FAOLLA_APP_SHELL_PARAM, FAOLLA_APP_SHELL_VALUE);
+    applyFaollaInlineBuildMarker(url);
     return url.toString();
   } catch {
     return defaultOrigin;
@@ -273,6 +281,7 @@ export function preserveFaollaAppShellHref(sourceHref: string, locale?: string |
     const normalizedLocale = String(locale ?? "").trim();
     if (normalizedLocale) url.searchParams.set(I18N_URL_PARAM, normalizedLocale);
     url.searchParams.set(FAOLLA_APP_SHELL_PARAM, FAOLLA_APP_SHELL_VALUE);
+    applyFaollaInlineBuildMarker(url);
     return url.toString();
   } catch {
     return sourceHref;

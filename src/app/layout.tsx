@@ -1176,6 +1176,11 @@ function buildFaollaInlineCacheRefreshScript(buildId: string) {
               target.postMessage({ type: "SKIP_WAITING" });
             }
             await registration.update().catch(() => undefined);
+            const refreshedTarget = registration.waiting || registration.installing;
+            if (refreshedTarget) {
+              refreshedTarget.postMessage({ type: "CLEAR_RUNTIME_CACHES" });
+              refreshedTarget.postMessage({ type: "SKIP_WAITING" });
+            }
           }),
         );
       }
