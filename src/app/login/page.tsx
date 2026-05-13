@@ -70,6 +70,9 @@ type SupabaseAuthSettings = {
 
 const googleOAuthAttemptStorageKey = "faolla.googleOAuthAttempt";
 const googleOAuthAttemptMaxAgeMs = 10 * 60 * 1000;
+const loginEntryAccountTypeStorageKey = "faolla.loginEntryAccountType";
+const googleOAuthEntryCookieKey = "faolla-google-oauth-entry";
+const googleOAuthEntryCookieMaxAgeSeconds = 10 * 60;
 
 type GoogleOAuthAttempt = {
   accountType: PlatformAccountType;
@@ -121,6 +124,7 @@ function writeGoogleOAuthAttempt(attempt: GoogleOAuthAttempt) {
       // Ignore unavailable browser storage backends.
     }
   }
+  writeGoogleOAuthEntryCookie(attempt.accountType);
 }
 
 function clearGoogleOAuthAttempt() {
@@ -132,6 +136,75 @@ function clearGoogleOAuthAttempt() {
       // Ignore unavailable browser storage backends.
     }
   }
+  clearGoogleOAuthEntryCookie();
+}
+
+function readStoredLoginEntryAccountType(): PlatformAccountType | null {
+  if (typeof window === "undefined") return null;
+  for (const storage of [window.sessionStorage, window.localStorage]) {
+    try {
+      const accountType = normalizePlatformAccountType(storage.getItem(loginEntryAccountTypeStorageKey));
+      if (accountType) return accountType;
+    } catch {
+      // Ignore unavailable browser storage backends.
+    }
+  }
+  return null;
+}
+
+function writeStoredLoginEntryAccountType(accountType: PlatformAccountType) {
+  if (typeof window === "undefined") return;
+  for (const storage of [window.sessionStorage, window.localStorage]) {
+    try {
+      storage.setItem(loginEntryAccountTypeStorageKey, accountType);
+    } catch {
+      // Ignore unavailable browser storage backends.
+    }
+  }
+}
+
+function resolveSharedFaollaCookieDomainAttribute() {
+  if (typeof window === "undefined") return "";
+  const hostname = window.location.hostname.trim().toLowerCase();
+  return hostname === "faolla.com" || hostname.endsWith(".faolla.com") ? "; Domain=.faolla.com" : "";
+}
+
+function buildGoogleOAuthCookieAttributes(maxAgeSeconds: number) {
+  if (typeof window === "undefined") return "; Path=/; SameSite=Lax";
+  const secure = window.location.protocol === "https:" ? "; Secure" : "";
+  return `; Path=/; Max-Age=${maxAgeSeconds}; SameSite=Lax${resolveSharedFaollaCookieDomainAttribute()}${secure}`;
+}
+
+function readCookieValue(key: string) {
+  if (typeof document === "undefined") return "";
+  const prefix = `${key}=`;
+  return document.cookie
+    .split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(prefix))
+    ?.slice(prefix.length) ?? "";
+}
+
+function readGoogleOAuthEntryCookie(): PlatformAccountType | null {
+  try {
+    return normalizePlatformAccountType(decodeURIComponent(readCookieValue(googleOAuthEntryCookieKey))) || null;
+  } catch {
+    return null;
+  }
+}
+
+function writeGoogleOAuthEntryCookie(accountType: PlatformAccountType) {
+  if (typeof document === "undefined") return;
+  document.cookie = `${googleOAuthEntryCookieKey}=${encodeURIComponent(accountType)}${buildGoogleOAuthCookieAttributes(
+    googleOAuthEntryCookieMaxAgeSeconds,
+  )}`;
+}
+
+function clearGoogleOAuthEntryCookie() {
+  if (typeof document === "undefined") return;
+  document.cookie = `${googleOAuthEntryCookieKey}=; Path=/; Max-Age=0; SameSite=Lax${
+    resolveSharedFaollaCookieDomainAttribute()
+  }${typeof window !== "undefined" && window.location.protocol === "https:" ? "; Secure" : ""}`;
 }
 
 function isAndroidBrowser() {
@@ -303,30 +376,45 @@ function LoginPageInner() {
   const googleOAuthStateExpired = googleOAuthErrorCode === "bad_oauth_state";
   useEffect(() => {
     if (!requestedEntryAccountType) return;
+    writeStoredLoginEntryAccountType(requestedEntryAccountType);
     setEntryAccountType(requestedEntryAccountType);
   }, [requestedEntryAccountType]);
   useEffect(() => {
     if (!googleOAuthStateExpired) return;
     const storedAttempt = readGoogleOAuthAttempt();
+    const fallbackAccountType =
+      storedAttempt?.accountType ??
+      requestedEntryAccountType ??
+      readGoogleOAuthEntryCookie() ??
+      readStoredLoginEntryAccountType();
     setPendingAction(null);
     setAuthView("signin");
-    if (storedAttempt?.accountType) {
-      setEntryAccountType(storedAttempt.accountType);
-      if (storedAttempt.stateRetryCount < 1) {
+    if (fallbackAccountType) {
+      const retryAttempt: GoogleOAuthAttempt = storedAttempt ?? {
+        accountType: fallbackAccountType,
+        redirectPath: requestedRedirectPath,
+        loginFromUrl,
+        startedAt: Date.now(),
+        stateRetryCount: 0,
+      };
+      setEntryAccountType(fallbackAccountType);
+      writeStoredLoginEntryAccountType(fallbackAccountType);
+      if (retryAttempt.stateRetryCount < 1) {
         writeGoogleOAuthAttempt({
-          ...storedAttempt,
+          ...retryAttempt,
+          accountType: fallbackAccountType,
           startedAt: Date.now(),
-          stateRetryCount: storedAttempt.stateRetryCount + 1,
+          stateRetryCount: retryAttempt.stateRetryCount + 1,
         });
         setMsg("Google 登录已过期，正在重新连接 Google...");
         const retryTimer = window.setTimeout(() => {
-          void signInWithGoogleRef.current({ accountType: storedAttempt.accountType, retryExpiredState: true });
+          void signInWithGoogleRef.current({ accountType: fallbackAccountType, retryExpiredState: true });
         }, 420);
         return () => window.clearTimeout(retryTimer);
       }
     }
     setMsg("Google 登录已过期，请重新点击 Google 登录。");
-  }, [googleOAuthStateExpired]);
+  }, [googleOAuthStateExpired, loginFromUrl, requestedEntryAccountType, requestedRedirectPath]);
   const launchRetry = useMemo(() => (searchParams.get("launchRetry") ?? "").trim() === "1", [searchParams]);
   const [embeddedShellLogin, setEmbeddedShellLogin] = useState(false);
   const normalizedLocale = useMemo(() => locale.trim().toLowerCase(), [locale]);
@@ -1333,6 +1421,7 @@ function LoginPageInner() {
 
   function selectLoginEntry(accountType: PlatformAccountType) {
     if (pendingAction) return;
+    writeStoredLoginEntryAccountType(accountType);
     setEntryAccountType(accountType);
     setAuthView("signin");
     setMsg("");
@@ -1368,6 +1457,7 @@ function LoginPageInner() {
       setMsg("请先选择个人入口或商户入口。");
       return;
     }
+    writeStoredLoginEntryAccountType(accountType);
     setMsg("");
     setNeedConfirmEmail(false);
     setPendingAction("google");
@@ -1450,6 +1540,7 @@ function LoginPageInner() {
     if (!entryAccountType) {
       return setMsg("请先选择个人入口或商户入口。");
     }
+    writeStoredLoginEntryAccountType(entryAccountType);
 
     const validationError = validateSignInForm();
     if (validationError) return setMsg(validationError);
