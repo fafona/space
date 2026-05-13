@@ -43,13 +43,6 @@ function looksLikeUrl(value: string) {
   return /^https?:\/\//i.test(value);
 }
 
-function buildCardImageRouteUrl(origin: string, shareKey: string) {
-  const normalizedOrigin = normalizeText(origin).replace(/\/+$/g, "");
-  const normalizedKey = normalizeText(shareKey);
-  if (!normalizedOrigin || !normalizedKey) return "";
-  return `${normalizedOrigin}/card/${normalizedKey}/image`;
-}
-
 function forcePublicStorageImageUrl(value: string, origin: string) {
   const trimmed = normalizeText(value);
   if (!trimmed) return "";
@@ -2046,7 +2039,7 @@ export async function GET(
     ? normalizeMerchantBusinessCardShareImageUrl(payload.imageUrl, publicOrigin) || payload.imageUrl
     : "";
   const imageUrl = normalizedShareImageUrl ? forcePublicStorageImageUrl(normalizedShareImageUrl, publicOrigin) : "";
-  const previewImageUrl = imageUrl ? buildCardImageRouteUrl(publicOrigin, shareKey) || imageUrl : "";
+  const previewImageUrl = imageUrl;
   const detailImageUrl = payload.detailImageUrl
     ? forcePublicStorageImageUrl(
         normalizeMerchantBusinessCardShareImageUrl(payload.detailImageUrl, publicOrigin) || payload.detailImageUrl,

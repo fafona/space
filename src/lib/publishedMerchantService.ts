@@ -33,6 +33,15 @@ type SnapshotRow = {
   blocks?: unknown;
 };
 
+const SNAPSHOT_SITES_CACHE_TTL_MS = 30_000;
+let snapshotSitesCache:
+  | {
+      expiresAt: number;
+      value?: MerchantListPublishedSite[];
+      pending?: Promise<MerchantListPublishedSite[]>;
+    }
+  | null = null;
+
 export type PublishedMerchantServiceState = {
   siteId: string;
   merchantName: string;
@@ -121,7 +130,7 @@ async function loadSnapshotBlocks() {
   );
 }
 
-async function loadSnapshotSites() {
+async function loadSnapshotSitesUncached() {
   const [homeResult, blocks] = await Promise.all([
     loadPublishedPlatformHomeBlocks().catch(() => ({ blocks: null as SnapshotRow["blocks"] | null, error: "home_snapshot_load_failed" })),
     loadSnapshotBlocks(),
@@ -136,6 +145,32 @@ async function loadSnapshotSites() {
   const mergedIds = new Set(mergedCurrent.map((site) => site.id));
   const appendedStored = storedSnapshot.filter((site) => !mergedIds.has(site.id));
   return [...mergedCurrent, ...appendedStored];
+}
+
+async function loadSnapshotSites() {
+  const now = Date.now();
+  if (snapshotSitesCache && snapshotSitesCache.expiresAt > now) {
+    if (snapshotSitesCache.value) return snapshotSitesCache.value;
+    if (snapshotSitesCache.pending) return snapshotSitesCache.pending;
+  }
+
+  const pending = loadSnapshotSitesUncached();
+  snapshotSitesCache = {
+    expiresAt: now + SNAPSHOT_SITES_CACHE_TTL_MS,
+    pending,
+  };
+
+  try {
+    const value = await pending;
+    snapshotSitesCache = {
+      expiresAt: Date.now() + SNAPSHOT_SITES_CACHE_TTL_MS,
+      value,
+    };
+    return value;
+  } catch (error) {
+    snapshotSitesCache = null;
+    throw error;
+  }
 }
 
 export async function loadPublishedMerchantSnapshotSites() {

@@ -6,13 +6,6 @@ import {
   resolveMerchantBusinessCardShareOrigin,
 } from "@/lib/merchantBusinessCardShare";
 
-function readSafeContentType(value: string | null) {
-  const normalized = String(value ?? "").trim().toLowerCase();
-  if (normalized === "image/jpeg" || normalized === "image/jpg") return "image/jpeg";
-  if (normalized === "image/webp") return "image/webp";
-  return "image/png";
-}
-
 function resolveRequestOrigin(request: Request) {
   const forwardedHost = String(request.headers.get("x-forwarded-host") ?? "").trim();
   const host = forwardedHost || String(request.headers.get("host") ?? "").trim();
@@ -67,38 +60,7 @@ export async function GET(
     });
   }
 
-  try {
-    const upstream = await fetch(imageUrl, {
-      cache: "no-store",
-      next: { revalidate: 0 },
-    });
-    if (!upstream.ok) {
-      return new NextResponse("Business card image unavailable", {
-        status: 502,
-        headers: {
-          "content-type": "text/plain; charset=utf-8",
-          "cache-control": "no-store, max-age=0",
-        },
-      });
-    }
-
-    const contentType = readSafeContentType(upstream.headers.get("content-type"));
-    const bytes = await upstream.arrayBuffer();
-    return new NextResponse(bytes, {
-      status: 200,
-      headers: {
-        "content-type": contentType,
-        "content-length": String(bytes.byteLength),
-        "cache-control": "no-store, max-age=0",
-      },
-    });
-  } catch {
-    return new NextResponse("Business card image unavailable", {
-      status: 502,
-      headers: {
-        "content-type": "text/plain; charset=utf-8",
-        "cache-control": "no-store, max-age=0",
-      },
-    });
-  }
+  const response = NextResponse.redirect(imageUrl, { status: 302 });
+  response.headers.set("cache-control", "no-store, max-age=0");
+  return response;
 }
