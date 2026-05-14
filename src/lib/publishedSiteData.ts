@@ -2,7 +2,10 @@ import { createClient } from "@supabase/supabase-js";
 import type { Block, MerchantListPublishedSite } from "@/data/homeBlocks";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import type { PublishedMerchantServiceState } from "@/lib/publishedMerchantService";
-import { loadCurrentMerchantSnapshotSiteBySiteId, loadPublishedMerchantServiceStateBySiteId } from "@/lib/publishedMerchantService";
+import {
+  loadPublishedMerchantServiceStateBySiteId,
+  loadPublishedMerchantSnapshotSiteBySiteId,
+} from "@/lib/publishedMerchantService";
 
 export type PublishedPageRow = {
   blocks?: unknown;
@@ -100,24 +103,40 @@ export async function fetchPublishedSitePayloadFromSupabase(siteId: string): Pro
     },
   });
 
-  const initialQuery = await supabase
-    .from("pages")
-    .select("blocks,slug,updated_at,created_at")
-    .eq("merchant_id", normalizedSiteId)
-    .limit(20);
+  const publishedPagesTask = (async () => {
+    const initialQuery = await supabase
+      .from("pages")
+      .select("blocks,slug,updated_at,created_at")
+      .eq("merchant_id", normalizedSiteId)
+      .limit(20);
 
-  let data = initialQuery.data as PublishedPageRow[] | null;
-  let error = initialQuery.error;
+    if (!initialQuery.error || !isMissingPublishedSlugColumn(initialQuery.error.message)) {
+      return {
+        data: initialQuery.data as PublishedPageRow[] | null,
+        error: initialQuery.error,
+      };
+    }
 
-  if (error && isMissingPublishedSlugColumn(error.message)) {
     const fallbackQuery = await supabase
       .from("pages")
       .select("blocks,updated_at,created_at")
       .eq("merchant_id", normalizedSiteId)
       .limit(20);
-    data = fallbackQuery.data as PublishedPageRow[] | null;
-    error = fallbackQuery.error;
-  }
+    return {
+      data: fallbackQuery.data as PublishedPageRow[] | null,
+      error: fallbackQuery.error,
+    };
+  })();
+  const merchantProfileTask = supabase
+    .from("merchants")
+    .select("name")
+    .eq("id", normalizedSiteId)
+    .limit(1)
+    .maybeSingle();
+  const serviceStateTask = loadPublishedMerchantServiceStateBySiteId(normalizedSiteId).catch(() => null);
+  const snapshotSiteTask = loadPublishedMerchantSnapshotSiteBySiteId(normalizedSiteId).catch(() => null);
+
+  const { data, error } = await publishedPagesTask;
 
   if (error) {
     throw error;
@@ -128,14 +147,12 @@ export async function fetchPublishedSitePayloadFromSupabase(siteId: string): Pro
     return null;
   }
 
-  const { data: merchantProfile } = await supabase
-    .from("merchants")
-    .select("name")
-    .eq("id", normalizedSiteId)
-    .limit(1)
-    .maybeSingle();
-  const serviceState = await loadPublishedMerchantServiceStateBySiteId(normalizedSiteId).catch(() => null);
-  const snapshotSite = await loadCurrentMerchantSnapshotSiteBySiteId(normalizedSiteId).catch(() => null);
+  const [merchantProfileResult, serviceState, snapshotSite] = await Promise.all([
+    merchantProfileTask,
+    serviceStateTask,
+    snapshotSiteTask,
+  ]);
+  const merchantProfile = merchantProfileResult.data;
   const merchantName =
     String(snapshotSite?.merchantName ?? "").trim() ||
     String(snapshotSite?.name ?? "").trim() ||

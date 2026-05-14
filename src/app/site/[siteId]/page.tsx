@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
+import { cache } from "react";
 import ServiceMaintenancePage from "@/components/ServiceMaintenancePage";
 import { isMobileViewportRequest } from "@/lib/deviceViewport";
 import {
@@ -19,6 +20,10 @@ type SitePageProps = {
     siteId: string;
   }>;
 };
+
+const fetchPublishedSitePayloadForRequest = cache((siteId: string) =>
+  fetchPublishedSitePayloadFromSupabase(siteId),
+);
 
 function readPublicOrigin() {
   const configured = String(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "").trim();
@@ -49,7 +54,7 @@ function escapeJsonForHtml(value: unknown) {
 
 export async function generateMetadata({ params }: SitePageProps): Promise<Metadata> {
   const { siteId } = await params;
-  const publishedSite = await fetchPublishedSitePayloadFromSupabase(siteId).catch(() => null);
+  const publishedSite = await fetchPublishedSitePayloadForRequest(siteId).catch(() => null);
   const profile = buildProfileForSeo(siteId, publishedSite);
   const publicOrigin = readPublicOrigin();
   const title = buildMerchantSeoTitle(profile);
@@ -88,7 +93,7 @@ export async function generateMetadata({ params }: SitePageProps): Promise<Metad
 export default async function SitePage({ params }: SitePageProps) {
   const { siteId } = await params;
   const initialIsMobileViewport = isMobileViewportRequest(await headers());
-  const publishedSite = await fetchPublishedSitePayloadFromSupabase(siteId).catch(() => null);
+  const publishedSite = await fetchPublishedSitePayloadForRequest(siteId).catch(() => null);
   if (publishedSite?.serviceState?.maintenance) {
     return (
       <ServiceMaintenancePage
