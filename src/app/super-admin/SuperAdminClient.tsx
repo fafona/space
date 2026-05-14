@@ -166,6 +166,20 @@ function formatMerchantConfigArchiveSourceLabel(source: PlatformMerchantConfigAr
   return "更新";
 }
 
+function buildMerchantConfigHistoryEntryFromArchiveAudit(
+  audit: PlatformMerchantConfigAuditEntry,
+): MerchantConfigHistoryEntry {
+  return {
+    id: audit.id,
+    at: audit.at,
+    operator: audit.operator,
+    summary: audit.summary,
+    changes: audit.changes,
+    before: audit.before,
+    after: audit.after,
+  };
+}
+
 function formatTrustedDeviceTypeLabel(type: "desktop" | "mobile" | "tablet" | "unknown") {
   if (type === "mobile") return "手机";
   if (type === "tablet") return "平板";
@@ -2872,7 +2886,7 @@ export default function SuperAdminClient() {
     merchantRows.find((item) => item.site.id === merchantDetailSiteId) ?? filteredMerchantRows[0] ?? merchantRows[0] ?? null;
   useEffect(() => {
     if (!merchantPanelOpen) return;
-    if (userPanelMode !== "backup") return;
+    if (userPanelMode !== "history" && userPanelMode !== "backup") return;
     if (!selectedMerchantRow?.hasSite) return;
     const siteId = String(selectedMerchantRow.site.id ?? "").trim();
     if (!siteId) return;
@@ -3275,12 +3289,15 @@ export default function SuperAdminClient() {
     if (!selectedMerchantRow?.hasSite) return null;
     return ensureLocalMerchantSiteFromRow(selectedMerchantRow);
   };
-  const selectedMerchantConfigHistory = selectedMerchantSite?.configHistory ?? [];
   const selectedMerchantArchiveSiteId = String(selectedMerchantRow?.site.id ?? "").trim();
   const selectedMerchantAuditEntries =
     merchantConfigArchiveSiteId === selectedMerchantArchiveSiteId ? merchantConfigAuditEntries : [];
   const selectedMerchantBackupEntries =
     merchantConfigArchiveSiteId === selectedMerchantArchiveSiteId ? merchantConfigBackupEntries : [];
+  const selectedMerchantConfigHistory = mergeMerchantConfigHistoryEntries(
+    selectedMerchantAuditEntries.map((audit) => buildMerchantConfigHistoryEntryFromArchiveAudit(audit)),
+    selectedMerchantSite?.configHistory ?? [],
+  );
   const merchantConfigHistoryContent = (
     <div className="space-y-3 text-xs">
       <div className="rounded border bg-slate-50 px-3 py-2 text-slate-600">
@@ -6147,7 +6164,7 @@ export default function SuperAdminClient() {
       setTip(SUPER_ADMIN_MESSAGES.selectMerchantFirst);
       return;
     }
-    const targetHistory = (selectedMerchantSite.configHistory ?? []).find((item) => item.id === historyId);
+    const targetHistory = selectedMerchantConfigHistory.find((item) => item.id === historyId);
     if (!targetHistory) {
       setTip(SUPER_ADMIN_MESSAGES.configRollbackMissing);
       return;

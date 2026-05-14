@@ -4512,15 +4512,35 @@ function mergeSupportBusinessCardCandidates(
   const primaryScore = Number(Boolean(primary.shareKey)) + Number(Boolean(primary.shareImageUrl)) + Number(Boolean(primary.contactPagePublicImageUrl));
   const secondaryScore =
     Number(Boolean(secondary.shareKey)) + Number(Boolean(secondary.shareImageUrl)) + Number(Boolean(secondary.contactPagePublicImageUrl));
-  if (secondaryScore > primaryScore) {
-    return {
-      ...primary,
-      ...secondary,
-    };
-  }
+  const merged = secondaryScore > primaryScore ? { ...primary, ...secondary } : { ...secondary, ...primary };
+  const backgroundSource = normalizeSupportDetailText(secondary.backgroundImageUrl)
+    ? secondary
+    : normalizeSupportDetailText(primary.backgroundImageUrl)
+      ? primary
+      : null;
+  const contactPageImageSource = normalizeSupportDetailText(secondary.contactPageImageUrl)
+    ? secondary
+    : normalizeSupportDetailText(primary.contactPageImageUrl)
+      ? primary
+      : null;
+
   return {
-    ...secondary,
-    ...primary,
+    ...merged,
+    ...(backgroundSource
+      ? {
+          backgroundImageUrl: backgroundSource.backgroundImageUrl,
+          backgroundImageX: backgroundSource.backgroundImageX,
+          backgroundImageY: backgroundSource.backgroundImageY,
+          backgroundImageScale: backgroundSource.backgroundImageScale,
+          backgroundImageOpacity: backgroundSource.backgroundImageOpacity,
+        }
+      : {}),
+    ...(contactPageImageSource
+      ? {
+          contactPageImageUrl: contactPageImageSource.contactPageImageUrl,
+          contactPageImageHeight: contactPageImageSource.contactPageImageHeight,
+        }
+      : {}),
   };
 }
 

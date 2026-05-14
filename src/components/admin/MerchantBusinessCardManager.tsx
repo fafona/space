@@ -1059,6 +1059,18 @@ function resolveFilePickerStatus(selectedFileName: string, assetUrl: string, upl
   return normalizeText(assetUrl) ? uploadedLabel : "未选择任何文件";
 }
 
+function buildEditableBusinessCardDraftFromAsset(card: MerchantBusinessCardAsset) {
+  const draft = normalizeMerchantBusinessCardDraft(card);
+  const publicContactImageUrl = normalizeText(card.contactPagePublicImageUrl);
+  if (!publicContactImageUrl || normalizeText(draft.contactPageImageUrl)) {
+    return draft;
+  }
+  return normalizeMerchantBusinessCardDraft({
+    ...draft,
+    contactPageImageUrl: publicContactImageUrl,
+  });
+}
+
 function formatImageResultSize(bytes: number) {
   if (!Number.isFinite(bytes) || bytes <= 0) return "";
   const kb = bytes / 1024;
@@ -1422,7 +1434,7 @@ export default function MerchantBusinessCardManager({
 
   const openEditorForCard = (card: MerchantBusinessCardAsset) => {
     if (!canCreate) return;
-    const nextDraft = normalizeMerchantBusinessCardDraft(card);
+    const nextDraft = buildEditableBusinessCardDraftFromAsset(card);
     setDraft(nextDraft);
     setContactPhoneEditorValues(resolveDraftPhoneValues(nextDraft.contacts));
     setBackgroundImageFileName("");
@@ -1446,7 +1458,7 @@ export default function MerchantBusinessCardManager({
       setTip(`名片夹已达到上限（${normalizedCardLimit} 张），请先删除旧名片或到超级后台调整数量限制`);
       return;
     }
-    const nextDraft = normalizeMerchantBusinessCardDraft(card);
+    const nextDraft = buildEditableBusinessCardDraftFromAsset(card);
     setDraft(nextDraft);
     setContactPhoneEditorValues(resolveDraftPhoneValues(nextDraft.contacts));
     setBackgroundImageFileName("");
