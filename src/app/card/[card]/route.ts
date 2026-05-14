@@ -1587,9 +1587,10 @@ function buildShareCardHtml(input: {
       main {
         min-height: 100vh;
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         justify-content: center;
-        padding: 72px 24px 24px;
+        padding: 16px 24px 24px;
+        padding-top: max(16px, env(safe-area-inset-top));
       }
       .lang-switcher {
         position: fixed;
@@ -1790,7 +1791,8 @@ function buildShareCardHtml(input: {
       }
       @media (max-width: 520px) {
         main {
-          padding: 70px 12px 12px;
+          padding: 0 12px 12px;
+          padding-top: env(safe-area-inset-top);
         }
         article {
           padding: 16px;
