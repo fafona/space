@@ -49,6 +49,9 @@ test("default business card draft prefills merchant profile fields", () => {
   assert.equal(draft.showWebsiteUrl, true);
   assert.equal(draft.showQr, true);
   assert.deepEqual(draft.customTexts, []);
+  assert.equal(draft.backgroundImageX, 0);
+  assert.equal(draft.backgroundImageY, 0);
+  assert.equal(draft.backgroundImageScale, 1);
   assert.equal(draft.contacts.contactName, "felix");
   assert.equal(draft.contacts.phone, "0034633130577");
   assert.deepEqual(draft.contacts.phones, ["0034633130577"]);
@@ -208,6 +211,18 @@ test("normalizeMerchantBusinessCardDraft clamps background opacity", () => {
 
   assert.equal(draft.backgroundImageOpacity, 1);
   assert.equal(draft.backgroundColorOpacity, 0);
+});
+
+test("normalizeMerchantBusinessCardDraft clamps background image transform", () => {
+  const draft = normalizeMerchantBusinessCardDraft({
+    backgroundImageX: 9000,
+    backgroundImageY: -9000,
+    backgroundImageScale: 8,
+  });
+
+  assert.equal(draft.backgroundImageX, 5000);
+  assert.equal(draft.backgroundImageY, -5000);
+  assert.equal(draft.backgroundImageScale, 3);
 });
 
 test("normalizeMerchantBusinessCardDraft keeps gradient background colors", () => {

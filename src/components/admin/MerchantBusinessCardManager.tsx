@@ -8,6 +8,7 @@ import {
   type ChangeEvent,
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
@@ -129,6 +130,9 @@ const FONT_FAMILY_OPTIONS = [
 
 const MIN_TYPOGRAPHY_FONT_SIZE = 10;
 const MAX_TYPOGRAPHY_FONT_SIZE = 80;
+const MIN_BACKGROUND_IMAGE_SCALE = 0.25;
+const MAX_BACKGROUND_IMAGE_SCALE = 3;
+const BUSINESS_CARD_DRAFT_STORAGE_PREFIX = "merchant-space:business-card-draft:v1";
 const FONT_SIZE_OPTIONS = [12, 14, 16, 18, 20, 24, 28, 32, 36, 42, 48, 56, 64, 72, 80];
 const TYPOGRAPHY_FONT_SIZE_INPUT_KEY = "merchant-business-card-typography-font-size";
 const QR_MIN_READABLE_SIZE = 96;
@@ -209,6 +213,14 @@ function formatOpacityPercent(value: number) {
   return `${Math.round(clamp(value, 0, 1) * 100)}%`;
 }
 
+function normalizeBackgroundImageScale(value: number) {
+  return Math.round(clamp(value, MIN_BACKGROUND_IMAGE_SCALE, MAX_BACKGROUND_IMAGE_SCALE) * 100) / 100;
+}
+
+function formatScalePercent(value: number) {
+  return `${Math.round(normalizeBackgroundImageScale(value) * 100)}%`;
+}
+
 function getCardModeLabel(mode: MerchantBusinessCardMode) {
   return mode === "link" ? "链接模式" : "图片模式";
 }
@@ -235,6 +247,46 @@ function createId(prefix: string) {
     return `${prefix}-${crypto.randomUUID()}`;
   }
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function buildBusinessCardDraftStorageKey(input: {
+  merchantId?: string | null;
+  targetUrl?: string | null;
+  domainPrefix?: string | null;
+}) {
+  const identity =
+    normalizeText(input.merchantId) ||
+    normalizeText(input.targetUrl) ||
+    normalizeText(input.domainPrefix) ||
+    "default";
+  return `${BUSINESS_CARD_DRAFT_STORAGE_PREFIX}:${encodeURIComponent(identity).slice(0, 240)}`;
+}
+
+function readSavedBusinessCardDraft(storageKey: string) {
+  if (typeof window === "undefined" || !storageKey) return null;
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { draft?: unknown } | unknown;
+    const source = parsed && typeof parsed === "object" && "draft" in parsed ? (parsed as { draft?: unknown }).draft : parsed;
+    return normalizeMerchantBusinessCardDraft(source);
+  } catch {
+    return null;
+  }
+}
+
+function writeSavedBusinessCardDraft(storageKey: string, draft: MerchantBusinessCardDraft) {
+  if (typeof window === "undefined" || !storageKey) {
+    throw new Error("draft_storage_unavailable");
+  }
+  window.localStorage.setItem(
+    storageKey,
+    JSON.stringify({
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      draft: normalizeMerchantBusinessCardDraft(draft),
+    }),
+  );
 }
 
 async function renderCardNodeToImage(node: HTMLElement) {
@@ -693,14 +745,21 @@ function CardSurface({
   qrCodeUrl,
   scale,
   renderMode = "preview",
+  onBackgroundPointerDown,
+  onBackgroundPointerMove,
+  onBackgroundPointerEnd,
 }: {
   draft: MerchantBusinessCardDraft;
   websiteUrl: string;
   qrCodeUrl: string;
   scale: number;
   renderMode?: "preview" | "export";
+  onBackgroundPointerDown?: (event: ReactPointerEvent<HTMLDivElement>, scale: number) => void;
+  onBackgroundPointerMove?: (event: ReactPointerEvent<HTMLDivElement>, scale: number) => void;
+  onBackgroundPointerEnd?: (event: ReactPointerEvent<HTMLDivElement>) => void;
 }) {
   const isExport = renderMode === "export";
+  const canDragBackground = !isExport && !!normalizeText(draft.backgroundImageUrl) && !!onBackgroundPointerDown;
   const orderedContactFields = getOrderedContactFields(draft.contactFieldOrder);
   const contacts = orderedContactFields.map(({ key, label }) => {
     const value = resolveContactDisplayValue(draft.contacts, key);
@@ -730,7 +789,13 @@ function CardSurface({
           border: isExport ? "none" : "1px solid rgba(15,23,42,.12)",
           background: "transparent",
           boxShadow: isExport ? "none" : "0 24px 60px rgba(15,23,42,.18)",
+          cursor: canDragBackground ? "grab" : undefined,
+          touchAction: canDragBackground ? "none" : undefined,
         }}
+        onPointerDown={canDragBackground ? (event) => onBackgroundPointerDown(event, scale) : undefined}
+        onPointerMove={canDragBackground ? (event) => onBackgroundPointerMove?.(event, scale) : undefined}
+        onPointerUp={canDragBackground ? onBackgroundPointerEnd : undefined}
+        onPointerCancel={canDragBackground ? onBackgroundPointerEnd : undefined}
       >
         <div
           className="absolute inset-0"
@@ -744,8 +809,18 @@ function CardSurface({
           <img
             src={draft.backgroundImageUrl}
             alt={draft.name}
-            className="absolute inset-0 h-full w-full object-cover"
-            style={{ opacity: draft.backgroundImageOpacity }}
+            className="absolute h-full w-full object-cover"
+            style={{
+              left: `calc(50% + ${draft.backgroundImageX}px)`,
+              top: `calc(50% + ${draft.backgroundImageY}px)`,
+              maxWidth: "none",
+              opacity: draft.backgroundImageOpacity,
+              pointerEvents: "none",
+              transform: `translate(-50%, -50%) scale(${normalizeBackgroundImageScale(draft.backgroundImageScale)})`,
+              transformOrigin: "center",
+              userSelect: "none",
+              willChange: isExport ? undefined : "transform",
+            }}
           />
         ) : null}
         {isExport ? null : <div className="absolute inset-0 bg-white/12" />}
@@ -1029,6 +1104,7 @@ export default function MerchantBusinessCardManager({
   const [deletingCardId, setDeletingCardId] = useState<string | null>(null);
   const [tip, setTip] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isDraftSaving, setIsDraftSaving] = useState(false);
   const [qrCodeUrl, setQrCodeUrl] = useState("");
   const [numberInputDrafts, setNumberInputDrafts] = useState<Record<string, string>>({});
   const [selectedFieldKeys, setSelectedFieldKeys] = useState<string[]>(["merchantName"]);
@@ -1044,6 +1120,14 @@ export default function MerchantBusinessCardManager({
   const [contactPageImageFileDetail, setContactPageImageFileDetail] = useState("");
   const [isContactPageImageProcessing, setIsContactPageImageProcessing] = useState(false);
   const hiddenPreviewRef = useRef<HTMLDivElement | null>(null);
+  const backgroundImageDragRef = useRef<{
+    pointerId: number;
+    startClientX: number;
+    startClientY: number;
+    startX: number;
+    startY: number;
+    scale: number;
+  } | null>(null);
   const normalizedTargetUrlOverride = normalizeText(targetUrlOverride);
 
   const normalizedCards = useMemo(
@@ -1058,6 +1142,15 @@ export default function MerchantBusinessCardManager({
   const websiteUrl = useMemo(
     () => normalizedTargetUrlOverride || buildMerchantDomain(siteBaseDomain, normalizeText(profile.domainPrefix), "https"),
     [normalizedTargetUrlOverride, siteBaseDomain, profile.domainPrefix],
+  );
+  const draftStorageKey = useMemo(
+    () =>
+      buildBusinessCardDraftStorageKey({
+        merchantId: normalizedMerchantId,
+        targetUrl: websiteUrl,
+        domainPrefix: profile.domainPrefix,
+      }),
+    [normalizedMerchantId, profile.domainPrefix, websiteUrl],
   );
   const primarySelectedFieldKey = selectedFieldKeys[selectedFieldKeys.length - 1] ?? "merchantName";
   const selectedCustomTextId = useMemo(
@@ -1285,7 +1378,7 @@ export default function MerchantBusinessCardManager({
       setTip(`名片夹已达到上限（${normalizedCardLimit} 张），请先删除旧名片或到超级后台调整数量限制`);
       return;
     }
-    const nextDraft = createDefaultMerchantBusinessCardDraft(profile);
+    const nextDraft = readSavedBusinessCardDraft(draftStorageKey) ?? createDefaultMerchantBusinessCardDraft(profile);
     setDraft(nextDraft);
     setContactPhoneEditorValues(resolveDraftPhoneValues(nextDraft.contacts));
     setBackgroundImageFileName("");
@@ -1368,7 +1461,13 @@ export default function MerchantBusinessCardManager({
         setTip(`名片背景图不能超过 ${normalizedBackgroundImageLimitKb} KB`);
         return;
       }
-      applyDraft((current) => ({ ...current, backgroundImageUrl: optimized.dataUrl }));
+      applyDraft((current) => ({
+        ...current,
+        backgroundImageUrl: optimized.dataUrl,
+        backgroundImageX: 0,
+        backgroundImageY: 0,
+        backgroundImageScale: 1,
+      }));
       setBackgroundImageFileName(fileName || "已上传背景图");
       setBackgroundImageFileDetail(`${optimized.compressed ? "压缩后" : "大小"} ${formatImageResultSize(optimized.bytes)}`);
     } catch {
@@ -1385,7 +1484,60 @@ export default function MerchantBusinessCardManager({
     setBackgroundImageFileName("");
     setBackgroundImageFileDetail("");
     setIsBackgroundImageProcessing(false);
-    applyDraft((current) => ({ ...current, backgroundImageUrl: "" }));
+    applyDraft((current) => ({
+      ...current,
+      backgroundImageUrl: "",
+      backgroundImageX: 0,
+      backgroundImageY: 0,
+      backgroundImageScale: 1,
+    }));
+  };
+
+  const handleSaveDraft = async () => {
+    setIsDraftSaving(true);
+    try {
+      writeSavedBusinessCardDraft(draftStorageKey, draft);
+      setTip("名片草稿已保存");
+    } catch {
+      setTip("草稿保存失败，请重试");
+    } finally {
+      setIsDraftSaving(false);
+    }
+  };
+
+  const handleBackgroundPointerDown = (event: ReactPointerEvent<HTMLDivElement>, surfaceScale: number) => {
+    if (!normalizeText(draft.backgroundImageUrl) || event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    backgroundImageDragRef.current = {
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startX: draft.backgroundImageX,
+      startY: draft.backgroundImageY,
+      scale: Math.max(0.01, surfaceScale),
+    };
+  };
+
+  const handleBackgroundPointerMove = (event: ReactPointerEvent<HTMLDivElement>, surfaceScale: number) => {
+    const drag = backgroundImageDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    const activeScale = Math.max(0.01, drag.scale || surfaceScale);
+    const nextX = Math.round(drag.startX + (event.clientX - drag.startClientX) / activeScale);
+    const nextY = Math.round(drag.startY + (event.clientY - drag.startClientY) / activeScale);
+    applyDraft((current) => ({
+      ...current,
+      backgroundImageX: clamp(nextX, -5000, 5000),
+      backgroundImageY: clamp(nextY, -5000, 5000),
+    }));
+  };
+
+  const handleBackgroundPointerEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = backgroundImageDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    backgroundImageDragRef.current = null;
   };
 
   const handleGenerate = async () => {
@@ -1904,9 +2056,17 @@ export default function MerchantBusinessCardManager({
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
+                  className="min-w-[88px] rounded border bg-white px-4 py-2 text-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={() => void handleSaveDraft()}
+                  disabled={isGenerating || isDraftSaving}
+                >
+                  {isDraftSaving ? "保存中..." : "保存"}
+                </button>
+                <button
+                  type="button"
                   className="min-w-[118px] rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
                   onClick={() => void handleGenerate()}
-                  disabled={!websiteUrl || !qrReadyForCurrentDraft || isGenerating}
+                  disabled={!websiteUrl || !qrReadyForCurrentDraft || isGenerating || isDraftSaving}
                 >
                   {isGenerating ? (editingCardId ? "保存中..." : "生成中...") : (editingCardId ? "保存修改" : "生成")}
                 </button>
@@ -2044,6 +2204,42 @@ export default function MerchantBusinessCardManager({
                             <div className="mt-1 text-[11px] text-slate-400">默认上限 {normalizedBackgroundImageLimitKb} KB，超过上限时会自动压缩到限制内。</div>
                           </div>
                           <label className="block text-xs text-slate-600">图片透明度<div className="mt-1 flex items-center gap-3 rounded border bg-white px-3 py-2"><input type="range" min="0" max="1" step="0.01" className="min-w-0 flex-1" value={draft.backgroundImageOpacity} onChange={(event) => applyDraft((current) => ({ ...current, backgroundImageOpacity: clamp(Number(event.target.value), 0, 1) }))} /><span className="w-12 shrink-0 text-right text-xs text-slate-500">{formatOpacityPercent(draft.backgroundImageOpacity)}</span></div></label>
+                          {normalizeText(draft.backgroundImageUrl) ? (
+                            <div className="block text-xs text-slate-600">
+                              <div>图片缩放</div>
+                              <div className="mt-1 flex items-center gap-3 rounded border bg-white px-3 py-2">
+                                <input
+                                  type="range"
+                                  min={MIN_BACKGROUND_IMAGE_SCALE}
+                                  max={MAX_BACKGROUND_IMAGE_SCALE}
+                                  step="0.01"
+                                  className="min-w-0 flex-1"
+                                  value={normalizeBackgroundImageScale(draft.backgroundImageScale)}
+                                  onChange={(event) =>
+                                    applyDraft((current) => ({
+                                      ...current,
+                                      backgroundImageScale: normalizeBackgroundImageScale(Number(event.target.value)),
+                                    }))
+                                  }
+                                />
+                                <span className="w-12 shrink-0 text-right text-xs text-slate-500">{formatScalePercent(draft.backgroundImageScale)}</span>
+                                <button
+                                  type="button"
+                                  className="shrink-0 rounded border bg-white px-2 py-1 text-[11px] hover:bg-slate-50"
+                                  onClick={() =>
+                                    applyDraft((current) => ({
+                                      ...current,
+                                      backgroundImageX: 0,
+                                      backgroundImageY: 0,
+                                      backgroundImageScale: 1,
+                                    }))
+                                  }
+                                >
+                                  重置
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
                         </div>
                         <div className="space-y-3">
                           <div className="space-y-1">
@@ -2578,7 +2774,15 @@ export default function MerchantBusinessCardManager({
                   </div>
                   <div className="overflow-hidden rounded-2xl border bg-slate-900/5 p-3">
                     <div className="flex justify-center">
-                      <CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl} scale={scale} />
+                      <CardSurface
+                        draft={draft}
+                        websiteUrl={websiteUrl}
+                        qrCodeUrl={qrCodeUrl}
+                        scale={scale}
+                        onBackgroundPointerDown={handleBackgroundPointerDown}
+                        onBackgroundPointerMove={handleBackgroundPointerMove}
+                        onBackgroundPointerEnd={handleBackgroundPointerEnd}
+                      />
                     </div>
                   </div>
                   {draft.mode === "link" ? (
@@ -2652,7 +2856,15 @@ export default function MerchantBusinessCardManager({
                         />
                       </div>
                     ) : (
-                      <CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl} scale={fullScale} />
+                      <CardSurface
+                        draft={draft}
+                        websiteUrl={websiteUrl}
+                        qrCodeUrl={qrCodeUrl}
+                        scale={fullScale}
+                        onBackgroundPointerDown={handleBackgroundPointerDown}
+                        onBackgroundPointerMove={handleBackgroundPointerMove}
+                        onBackgroundPointerEnd={handleBackgroundPointerEnd}
+                      />
                     )}
                   </div>
                   <div className="flex min-h-full items-start justify-center rounded-3xl border border-white/10 bg-white/5 p-4">
@@ -2688,7 +2900,15 @@ export default function MerchantBusinessCardManager({
                       />
                     </div>
                   ) : (
-                    <CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl} scale={fullScale} />
+                    <CardSurface
+                      draft={draft}
+                      websiteUrl={websiteUrl}
+                      qrCodeUrl={qrCodeUrl}
+                      scale={fullScale}
+                      onBackgroundPointerDown={handleBackgroundPointerDown}
+                      onBackgroundPointerMove={handleBackgroundPointerMove}
+                      onBackgroundPointerEnd={handleBackgroundPointerEnd}
+                    />
                   )}
                 </div>
               )}
@@ -2713,9 +2933,17 @@ export default function MerchantBusinessCardManager({
                   </button>
                   <button
                     type="button"
+                    className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                    onClick={() => void handleSaveDraft()}
+                    disabled={isGenerating || isDraftSaving}
+                  >
+                    {isDraftSaving ? "保存中..." : "保存"}
+                  </button>
+                  <button
+                    type="button"
                     className="rounded bg-black px-3 py-2 text-sm text-white disabled:opacity-50"
                     onClick={() => void handleGenerate()}
-                    disabled={!websiteUrl || !qrReadyForCurrentDraft || isGenerating}
+                    disabled={!websiteUrl || !qrReadyForCurrentDraft || isGenerating || isDraftSaving}
                   >
                     {isGenerating ? (editingCardId ? "保存中..." : "生成中...") : (editingCardId ? "保存修改" : "生成")}
                   </button>

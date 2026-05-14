@@ -130,6 +130,9 @@ export type MerchantBusinessCardDraft = {
   contactPageImageUrl: string;
   contactPageImageHeight: number;
   backgroundImageUrl: string;
+  backgroundImageX: number;
+  backgroundImageY: number;
+  backgroundImageScale: number;
   backgroundImageOpacity: number;
   backgroundColor: string;
   backgroundColorOpacity: number;
@@ -437,6 +440,9 @@ export function createDefaultMerchantBusinessCardDraft(
     contactPageImageUrl: "",
     contactPageImageHeight: 346,
     backgroundImageUrl: "",
+    backgroundImageX: 0,
+    backgroundImageY: 0,
+    backgroundImageScale: 1,
     backgroundImageOpacity: 1,
     backgroundColor: "#f8fafc",
     backgroundColorOpacity: 1,
@@ -560,6 +566,17 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
       1200,
     ),
     backgroundImageUrl: normalizeText(source.backgroundImageUrl),
+    backgroundImageX: clampInt(source.backgroundImageX, fallback.backgroundImageX, -5000, 5000),
+    backgroundImageY: clampInt(source.backgroundImageY, fallback.backgroundImageY, -5000, 5000),
+    backgroundImageScale: Math.max(
+      0.25,
+      Math.min(
+        3,
+        typeof source.backgroundImageScale === "number" && Number.isFinite(source.backgroundImageScale)
+          ? Math.round(source.backgroundImageScale * 100) / 100
+          : fallback.backgroundImageScale,
+      ),
+    ),
     backgroundImageOpacity: clampOpacity(source.backgroundImageOpacity, fallback.backgroundImageOpacity),
     backgroundColor: normalizeText(source.backgroundColor) || fallback.backgroundColor,
     backgroundColorOpacity: clampOpacity(source.backgroundColorOpacity, fallback.backgroundColorOpacity),
