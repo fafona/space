@@ -28,6 +28,10 @@ export const revalidate = 0;
 
 const MERCHANT_ACCOUNTS_CACHE_TTL_MS = 30_000;
 const ACCOUNT_DELETE_VERIFICATION_EMAIL = "caimin6669@qq.com";
+const AUTH_USERS_LOAD_TIMEOUT_MS = 5_000;
+const SNAPSHOT_LOAD_TIMEOUT_MS = 6_000;
+const PUBLISHED_SITE_INFO_TIMEOUT_MS = 4_000;
+const PAGE_EVENTS_TIMEOUT_MS = 2_500;
 
 type MerchantRow = {
   id: string;
@@ -326,6 +330,27 @@ function wait(ms: number) {
   });
 }
 
+async function withSoftTimeout<T>(task: PromiseLike<T>, timeoutMs: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let timedOut = false;
+  const safeTask = Promise.resolve(task).catch((error) => {
+    if (timedOut) return fallback;
+    throw error;
+  });
+  const timeoutTask = new Promise<T>((resolve) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      resolve(fallback);
+    }, Math.max(500, timeoutMs));
+  });
+
+  try {
+    return await Promise.race([safeTask, timeoutTask]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function runSupabaseQueryWithRetry<T extends { error?: unknown }>(
   task: () => PromiseLike<T>,
   attempts = 3,
@@ -361,17 +386,19 @@ async function listAuthUsers(supabase: AdminListUsersClient) {
 }
 
 async function listAuthUsersBestEffort(supabase: AdminListUsersClient): Promise<AuthUsersLoadResult> {
-  try {
-    return {
-      users: await listAuthUsers(supabase),
-      errorMessage: "",
-    };
-  } catch (error) {
-    return {
-      users: [],
-      errorMessage: readErrorMessage(error) || "auth_users_load_failed",
-    };
-  }
+  return withSoftTimeout(
+    listAuthUsers(supabase)
+      .then((users) => ({
+        users,
+        errorMessage: "",
+      }))
+      .catch((error) => ({
+        users: [],
+        errorMessage: readErrorMessage(error) || "auth_users_load_failed",
+      })),
+    AUTH_USERS_LOAD_TIMEOUT_MS,
+    { users: [], errorMessage: "auth_users_timeout" },
+  );
 }
 
 function sortByCreatedAtDesc(items: MerchantAccountItem[]) {
@@ -385,7 +412,11 @@ function sortByCreatedAtDesc(items: MerchantAccountItem[]) {
 async function loadPlatformMerchantSnapshotByMerchantId(
   supabase: PlatformMerchantSnapshotStoreClient,
 ) {
-  const payload = await loadStoredPlatformMerchantSnapshot(supabase, { bypassCache: true });
+  const payload = await withSoftTimeout(
+    loadStoredPlatformMerchantSnapshot(supabase, { bypassCache: true }).catch(() => null),
+    SNAPSHOT_LOAD_TIMEOUT_MS,
+    null,
+  );
   return {
     snapshotByMerchantId: new Map((payload?.snapshot ?? []).map((site) => [site.id, site] as const)),
     configHistoryByMerchantId: payload?.merchantConfigHistoryBySiteId ?? {},
@@ -492,10 +523,6 @@ function buildMerchantVisitsByMerchantId(rows: unknown[], nowMs: number) {
     map.set(merchantId, current);
   });
   return map;
-}
-
-function isMissingRelationError(message: string) {
-  return /relation .* does not exist/i.test(message) || /table .* does not exist/i.test(message);
 }
 
 function choosePreferredMerchantAccount(current: MerchantAccountItem | undefined, candidate: MerchantAccountItem) {
@@ -682,7 +709,11 @@ export async function GET(request: Request) {
       return NextResponse.json({ items });
     }
 
-    const [{ data: merchants, error: merchantError }, authUsersResult] = await Promise.all([
+    const [
+      { data: merchants, error: merchantError },
+      authUsersResult,
+      { snapshotByMerchantId, configHistoryByMerchantId },
+    ] = await Promise.all([
       runSupabaseQueryWithRetry(() =>
         supabase
           .from("merchants")
@@ -691,6 +722,7 @@ export async function GET(request: Request) {
           .limit(500),
       ),
       listAuthUsersBestEffort(supabase),
+      loadPlatformMerchantSnapshotByMerchantId(supabase as unknown as PlatformMerchantSnapshotStoreClient),
     ]);
 
     if (merchantError) throw merchantError;
@@ -701,10 +733,6 @@ export async function GET(request: Request) {
       authUsers
         .map((user) => [normalizeEmail(user.email), user] as const)
         .filter(([email]) => Boolean(email)),
-    );
-
-    const { snapshotByMerchantId, configHistoryByMerchantId } = await loadPlatformMerchantSnapshotByMerchantId(
-      supabase as unknown as PlatformMerchantSnapshotStoreClient,
     );
 
     const merchantItems: MerchantAccountItem[] = ((merchants ?? []) as MerchantRow[]).map((merchant) => {
@@ -837,40 +865,48 @@ export async function GET(request: Request) {
           .filter((item) => isNumericMerchantId(item)),
       ),
     ];
-    let publishedSiteInfoByMerchantId = new Map<
-      string,
-      { hasPublishedSite: boolean; siteSlug: string; siteUpdatedAt: string | null; publishedBytes: number; publishedBytesKnown: boolean }
-    >();
-    if (merchantIds.length > 0) {
-      const { data: pageRows, error: pageError } = await runSupabaseQueryWithRetry(() =>
-        supabase
-          .from("pages")
-          .select("merchant_id,slug,updated_at,blocks")
-          .in("merchant_id", merchantIds)
-          .limit(Math.max(merchantIds.length * 4, 100)),
-      );
-      if (!pageError && Array.isArray(pageRows)) {
-        publishedSiteInfoByMerchantId = buildPublishedSiteInfoByMerchantId(pageRows as PageRow[]);
-      }
-    }
+    const [publishedSiteInfoResult, pageEventsResult] =
+      merchantIds.length > 0
+        ? await Promise.all([
+            withSoftTimeout(
+              runSupabaseQueryWithRetry(() =>
+                supabase
+                  .from("pages")
+                  .select("merchant_id,slug,updated_at")
+                  .in("merchant_id", merchantIds)
+                  .limit(Math.max(merchantIds.length * 2, 100)),
+              ).catch((error) => ({ data: null, error })),
+              PUBLISHED_SITE_INFO_TIMEOUT_MS,
+              { data: null, error: new Error("published_site_info_timeout") },
+            ),
+            withSoftTimeout(
+              runSupabaseQueryWithRetry(() =>
+                supabase
+                  .from("page_events")
+                  .select("*")
+                  .order("created_at", { ascending: false })
+                  .limit(1000),
+              ).catch((error) => ({ data: null, error })),
+              PAGE_EVENTS_TIMEOUT_MS,
+              { data: null, error: new Error("page_events_timeout") },
+            ),
+          ])
+        : [
+            { data: null, error: null },
+            { data: null, error: null },
+          ];
 
-    let visitsByMerchantId = new Map<string, MerchantVisitSummary>();
-    let visitsKnown = false;
-    if (merchantIds.length > 0) {
-      const { data: pageEvents, error: pageEventsError } = await runSupabaseQueryWithRetry(() =>
-        supabase
-          .from("page_events")
-          .select("*")
-          .order("created_at", { ascending: false })
-          .limit(5000),
-      );
-      if (!pageEventsError && Array.isArray(pageEvents)) {
-        visitsByMerchantId = buildMerchantVisitsByMerchantId(pageEvents, Date.now());
-        visitsKnown = true;
-      } else if (pageEventsError && isMissingRelationError(readErrorMessage(pageEventsError))) {
-        visitsKnown = false;
-      }
-    }
+    const publishedSiteInfoByMerchantId = !publishedSiteInfoResult.error && Array.isArray(publishedSiteInfoResult.data)
+      ? buildPublishedSiteInfoByMerchantId(publishedSiteInfoResult.data as PageRow[])
+      : new Map<
+          string,
+          { hasPublishedSite: boolean; siteSlug: string; siteUpdatedAt: string | null; publishedBytes: number; publishedBytesKnown: boolean }
+        >();
+    const visitsByMerchantId =
+      !pageEventsResult.error && Array.isArray(pageEventsResult.data)
+        ? buildMerchantVisitsByMerchantId(pageEventsResult.data, Date.now())
+        : new Map<string, MerchantVisitSummary>();
+    const visitsKnown = !pageEventsResult.error && Array.isArray(pageEventsResult.data);
 
     const items = sortByCreatedAtDesc(
       normalizedItems.map((item) => {

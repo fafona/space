@@ -921,7 +921,7 @@ function formatBackendAccountSourceLabel(account: Pick<BackendMerchantAccount, "
 function describeBackendMerchantAccountsError(message: string) {
   if (!message) return "";
   if (message === "merchant_account_timeout") {
-    return "后端注册账号接口超时，当前先显示本地站点用户。";
+    return "后端用户接口超时，当前先显示本地站点用户。";
   }
   if (message === "merchant_account_load_failed") {
     return "后端注册账号接口暂时不可用，当前先显示本地站点用户。";
@@ -2359,7 +2359,7 @@ export default function SuperAdminClient() {
     if (!hydrated || !authed) return;
     let cancelled = false;
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), isMobileSupportOnlyMode ? 6000 : 15_000);
+    const timeout = window.setTimeout(() => controller.abort(), isMobileSupportOnlyMode ? 6000 : 25_000);
     const loadAccounts = async () => {
       setBackendMerchantAccountsLoading(true);
       setBackendMerchantAccountsError("");
