@@ -5517,6 +5517,10 @@ export default function AdminClient({
       return initialJustSignedIn;
     }
   });
+  const [explicitFaollaSectionEntry] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return isFaollaSectionSearch(window.location.search);
+  });
   const [merchantEditorOnly] = useState<boolean>(() => {
     if (typeof window === "undefined") return false;
     try {
@@ -5657,15 +5661,14 @@ export default function AdminClient({
   const [supportFaollaEmbedHref, setSupportFaollaEmbedHref] = useState(readInitialSupportFaollaEmbedHref);
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const explicitFaollaSection = isFaollaSectionSearch(window.location.search);
-    if (!explicitFaollaSection) return;
+    if (!explicitFaollaSectionEntry) return;
     const storedHref = readStoredFaollaEntryUrl(window.location.origin) || "/";
     setSupportFaollaEmbedHref(
       resolveFaollaEntryUrlFromBrowser(window.location.search, window.location.origin) || storedHref,
     );
     setMerchantDesktopSection("faolla");
     setSupportMobileHomeTab("faolla");
-  }, []);
+  }, [explicitFaollaSectionEntry]);
   const [supportMobileBusinessSection, setSupportMobileBusinessSection] = useState<"booking" | "orders">("booking");
   const [supportSelfSectionView, setSupportSelfSectionView] = useState<SupportSelfSectionView>("home");
   const faollaAndroidAppUpdate = useFaollaAndroidAppUpdate();
@@ -7766,6 +7769,22 @@ export default function AdminClient({
       if (backgroundedAt <= 0) return true;
       return Date.now() - backgroundedAt <= 12 * 60 * 60 * 1000;
     };
+    const releaseExplicitFaollaSectionShell = () => {
+      if (!explicitFaollaSectionEntry) return false;
+      const scopedSiteId = getSiteIdFromStoreScope(storeScope).trim();
+      if (scopedSiteId) {
+        merchantIdsRef.current = mergePreferredMerchantIds([scopedSiteId], merchantIdsRef.current);
+        setMerchantSiteIdOverride((current) => current || scopedSiteId);
+      }
+      setRemoteContentVerified(false);
+      setHasEditorContent(true);
+      setSelectedId("");
+      setBackendNotice(null);
+      setMerchantDesktopSection("faolla");
+      setSupportMobileHomeTab("faolla");
+      releaseCheckingScreen({ notice: null });
+      return true;
+    };
     const getCandidateStoreScopes = () =>
       storeScope !== "default"
         ? [storeScope]
@@ -7860,6 +7879,12 @@ export default function AdminClient({
       releaseCheckingScreen({ notice: null });
       return true;
     };
+    if (releaseExplicitFaollaSectionShell()) {
+      return () => {
+        mounted = false;
+        merchantIdsRef.current = [];
+      };
+    }
     if (!isSupabaseEnabled || isSupabaseFallbackMode) {
       applyCachedEditorBlocks();
       setHasEditorContent(true);
@@ -11371,11 +11396,19 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       ),
     [locale],
   );
-  useEffect(() => {
-    setSupportFaollaFrameLoading(true);
-  }, [supportMobileFaollaTargetHref]);
   const supportMobileFaollaActive = supportMobileHomeTab === "faolla";
   const supportDesktopFaollaActive = merchantDesktopSection === "faolla";
+  const supportFaollaActive = supportMobileFaollaActive || supportDesktopFaollaActive;
+  useEffect(() => {
+    if (!supportFaollaActive) return;
+    setSupportFaollaFrameLoading(true);
+    const fallbackTimer = window.setTimeout(() => {
+      setSupportFaollaFrameLoading(false);
+    }, 3200);
+    return () => {
+      window.clearTimeout(fallbackTimer);
+    };
+  }, [supportFaollaActive, supportMobileFaollaTargetHref]);
   const navigateSupportFaollaHome = useCallback(() => {
     setSupportFaollaEmbedHref("/");
     setSupportFaollaFrameLoading(true);
@@ -13672,9 +13705,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   useEffect(() => {
     if (isPlatformEditor || supportDataActivated) return;
+    if (supportFaollaActive) return;
     if (checkingAuth) return;
     setSupportDataActivated(true);
-  }, [checkingAuth, isPlatformEditor, supportDataActivated]);
+  }, [checkingAuth, isPlatformEditor, supportDataActivated, supportFaollaActive]);
 
   useEffect(() => {
     if (isPlatformEditor || !isMobileMerchantSupportOnlyMode) return;
@@ -13687,6 +13721,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   useEffect(() => {
     if (isPlatformEditor || typeof window === "undefined" || !supportDataActivated) return;
+    if (supportFaollaActive) return;
 
     void loadSupportThread({ silent: !supportInterfaceOpen, suppressError: !supportInterfaceOpen });
     void loadSupportPeerInbox({
@@ -13726,6 +13761,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     loadSupportPeerInbox,
     loadSupportThread,
     supportDataActivated,
+    supportFaollaActive,
     supportInterfaceOpen,
   ]);
 
@@ -14248,7 +14284,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, [supportInterfaceOpen, supportSelectedContactKey, supportMobileView]);
 
   useEffect(() => {
-    if (isPlatformEditor || !supportDataActivated) return;
+    if (isPlatformEditor || supportFaollaActive || !supportDataActivated) return;
     if (!supportUnreadStateHydrated) return;
     if (!supportUnreadStateHydrated && supportEffectiveBadgeCount <= 0) return;
     if (!supportPushBadgeHydrated && supportEffectiveBadgeCount <= 0) return;
@@ -14258,6 +14294,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
   }, [
     isPlatformEditor,
+    supportFaollaActive,
     supportDataActivated,
     supportEffectiveBadgeCount,
     supportPushBadgeHydrated,
@@ -14265,7 +14302,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   ]);
 
   useEffect(() => {
-    if (isPlatformEditor || typeof window === "undefined" || !canUseFaollaNativeNotifications()) return;
+    if (isPlatformEditor || supportFaollaActive || typeof window === "undefined" || !canUseFaollaNativeNotifications()) return;
     const siteId = (
       currentSupportMerchantId ||
       supportReadMerchantId ||
@@ -14300,6 +14337,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     editingSiteId,
     isPlatformEditor,
     merchantDisplayName,
+    supportFaollaActive,
     supportDataActivated,
     supportEffectiveBadgeCount,
     supportLastReadAt,
@@ -14315,11 +14353,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   ]);
 
   useEffect(() => {
-    if (isPlatformEditor) return;
+    if (isPlatformEditor || supportFaollaActive) return;
     void syncCurrentSupportPushSubscriptionState().catch(() => {
       // Ignore push bootstrap failures during initial app load.
     });
-  }, [isPlatformEditor, syncCurrentSupportPushSubscriptionState]);
+  }, [isPlatformEditor, supportFaollaActive, syncCurrentSupportPushSubscriptionState]);
 
   useEffect(() => {
     if (isPlatformEditor || typeof window === "undefined") return () => {};
@@ -14344,23 +14382,24 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, [isPlatformEditor]);
 
   useEffect(() => {
-    if (isPlatformEditor || !supportSystemNotificationsEnabled || !canUseFaollaNativeNotifications()) return;
+    if (isPlatformEditor || supportFaollaActive || !supportSystemNotificationsEnabled || !canUseFaollaNativeNotifications()) return;
     const permission = readSupportNativeNotificationPermission();
     setSupportPushPermission(permission);
     setSupportPushSubscribed(permission !== "unsupported" && permission !== "denied");
     if (permission === "default") {
       requestFaollaNativeNotificationPermission();
     }
-  }, [isPlatformEditor, supportSystemNotificationsEnabled]);
+  }, [isPlatformEditor, supportFaollaActive, supportSystemNotificationsEnabled]);
 
   useEffect(() => {
-    if (isPlatformEditor || !supportSystemNotificationsEnabled || canUseFaollaNativeNotifications()) return;
+    if (isPlatformEditor || supportFaollaActive || !supportSystemNotificationsEnabled || canUseFaollaNativeNotifications()) return;
     void ensureSupportPushSubscription().catch(() => {
       // Ignore background subscription refresh failures.
     });
   }, [
     ensureSupportPushSubscription,
     isPlatformEditor,
+    supportFaollaActive,
     supportPushPermission,
     supportSystemNotificationsEnabled,
   ]);
@@ -14368,6 +14407,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   useEffect(() => {
     if (
       isPlatformEditor ||
+      supportFaollaActive ||
       !supportDataActivated ||
       !supportPushBadgeHydrated ||
       !supportSystemNotificationsEnabled ||
@@ -14391,6 +14431,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, [
     isPlatformEditor,
     sendSupportPushAction,
+    supportFaollaActive,
     supportDataActivated,
     supportEffectiveBadgeCount,
     supportPushEndpoint,
