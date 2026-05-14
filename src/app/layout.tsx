@@ -1137,14 +1137,7 @@ function buildFaollaInlineCacheRefreshScript(buildId: string) {
       const nativeRuntime =
         document.documentElement.dataset.capacitor === "true" ||
         Boolean(window.Capacitor && typeof window.Capacitor.isNativePlatform === "function" && window.Capacitor.isNativePlatform());
-      const appPath =
-        url.pathname === "/launch" ||
-        url.pathname === "/admin" ||
-        url.pathname === "/me" ||
-        url.pathname === "/login" ||
-        url.pathname.indexOf("/me/") === 0 ||
-        /^\\/\\d{8}(?:\\/|$)/.test(url.pathname);
-      return marker !== buildId.slice(0, 12) && (embedded || nativeRuntime || appPath);
+      return marker !== buildId.slice(0, 12) && (embedded || nativeRuntime);
     } catch {
       return false;
     }

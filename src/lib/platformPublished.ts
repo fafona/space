@@ -50,6 +50,16 @@ type PublishedMerchantProfileRow = {
   updated_at?: string | null;
 };
 
+const PUBLISHED_PLATFORM_HOME_BLOCKS_CACHE_TTL_MS = 30_000;
+const PUBLISHED_PLATFORM_HOME_BLOCKS_ERROR_CACHE_TTL_MS = 3_000;
+let publishedPlatformHomeBlocksCache:
+  | {
+      expiresAt: number;
+      value?: PublishedPlatformBlocksResult;
+      pending?: Promise<PublishedPlatformBlocksResult>;
+    }
+  | null = null;
+
 function readEnv(key: string) {
   return String(process.env[key] ?? "").trim();
 }
@@ -618,7 +628,7 @@ export function isMissingPlatformMerchantIdColumn(message: string) {
   );
 }
 
-export async function loadPublishedPlatformHomeBlocks(): Promise<PublishedPlatformBlocksResult> {
+async function loadPublishedPlatformHomeBlocksUncached(): Promise<PublishedPlatformBlocksResult> {
   const supabase = createServerSupabaseClient() as unknown as LooseSupabaseClient | null;
   if (!supabase) {
     return { blocks: null, error: "platform_published_env_missing" };
@@ -677,4 +687,32 @@ export async function loadPublishedPlatformHomeBlocks(): Promise<PublishedPlatfo
   }
 
   return { blocks: null, error: scopedMessage || "platform_published_not_found" };
+}
+
+export async function loadPublishedPlatformHomeBlocks(): Promise<PublishedPlatformBlocksResult> {
+  const now = Date.now();
+  if (publishedPlatformHomeBlocksCache && publishedPlatformHomeBlocksCache.expiresAt > now) {
+    if (publishedPlatformHomeBlocksCache.value) return publishedPlatformHomeBlocksCache.value;
+    if (publishedPlatformHomeBlocksCache.pending) return publishedPlatformHomeBlocksCache.pending;
+  }
+
+  const pending = loadPublishedPlatformHomeBlocksUncached();
+  publishedPlatformHomeBlocksCache = {
+    expiresAt: now + PUBLISHED_PLATFORM_HOME_BLOCKS_CACHE_TTL_MS,
+    pending,
+  };
+
+  try {
+    const value = await pending;
+    publishedPlatformHomeBlocksCache = {
+      expiresAt:
+        Date.now() +
+        (value.blocks ? PUBLISHED_PLATFORM_HOME_BLOCKS_CACHE_TTL_MS : PUBLISHED_PLATFORM_HOME_BLOCKS_ERROR_CACHE_TTL_MS),
+      value,
+    };
+    return value;
+  } catch (error) {
+    publishedPlatformHomeBlocksCache = null;
+    throw error;
+  }
 }
