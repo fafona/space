@@ -189,7 +189,6 @@ function shouldNoStoreAppShellPath(pathname: string) {
     pathname === "/admin" ||
     pathname === "/me" ||
     pathname === "/login" ||
-    pathname.startsWith("/_next/static/") ||
     pathname.startsWith("/me/") ||
     /^\/\d{8}(?:\/|$)/.test(pathname)
   );

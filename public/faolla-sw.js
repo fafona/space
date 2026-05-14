@@ -395,8 +395,9 @@ async function cacheStaticAsset(request) {
   const cached = await cache.match(request);
 
   if (new URL(request.url).pathname.startsWith("/_next/static/")) {
+    if (cached) return cached;
     try {
-      const response = await fetch(new Request(request, { cache: "no-store" }));
+      const response = await fetch(request);
       if (response && response.ok) {
         await cache.put(request, response.clone());
       }

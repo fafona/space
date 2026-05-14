@@ -68,6 +68,14 @@ test("middleware matcher now covers api routes for https enforcement", () => {
   assert.deepEqual(config.matcher, ["/", "/_next/static/:path*", "/((?!_next/image|favicon.ico|icon.svg|.*\\..*).*)"]);
 });
 
+test("middleware leaves hashed static assets cacheable", async () => {
+  const request = new NextRequest("https://faolla.com/_next/static/chunks/app.js");
+
+  const response = await middleware(request);
+
+  assert.equal(response.headers.get("cache-control"), null);
+});
+
 test("middleware redirects authenticated personal launch requests before page render", async () => {
   const request = new NextRequest("https://faolla.com/launch?appShell=faolla", {
     headers: {

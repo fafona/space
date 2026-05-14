@@ -15,15 +15,6 @@ const nextConfig: NextConfig = {
           { key: "Expires", value: "0" },
         ],
       },
-      {
-        source: "/_next/static/:path*",
-        headers: [
-          {
-            key: "Cache-Control",
-            value: "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",
-          },
-        ],
-      },
     ];
   },
 };
