@@ -420,30 +420,45 @@ async function convertImageBlobToPngBlob(blob: Blob) {
   return pngBlob;
 }
 
-function buildInitialImageCompressionPlan(sourceBytes: number, limitBytes: number) {
-  const ratio = clamp(limitBytes / Math.max(sourceBytes, 1), 0.05, 1);
-  if (ratio >= 0.72) {
-    return {
-      scale: 1,
-      quality: clamp(ratio * 0.96, 0.68, 0.92),
-    };
-  }
-  return {
-    scale: clamp(Math.sqrt(ratio / 0.84) * 0.99, 0.16, 1),
-    quality: 0.84,
-  };
+function uniqueDescendingNumbers(values: number[]) {
+  return Array.from(new Set(values.map((value) => Math.round(value * 1000) / 1000)))
+    .filter((value) => Number.isFinite(value) && value > 0)
+    .sort((first, second) => second - first);
 }
 
-function refineImageCompressionPlan(
-  previous: { scale: number; quality: number },
-  candidateBytes: number,
-  limitBytes: number,
-) {
-  const ratio = clamp(limitBytes / Math.max(candidateBytes, 1), 0.05, 1);
-  return {
-    scale: clamp(previous.scale * Math.sqrt(ratio) * 0.98, 0.12, 1),
-    quality: clamp(Math.min(previous.quality * ratio * 1.04, previous.quality), 0.42, 0.92),
-  };
+function buildQualityFirstImageCompressionPlans(sourceBytes: number, limitBytes: number) {
+  const estimatedScale = clamp(Math.sqrt(limitBytes / Math.max(sourceBytes, 1)) * 1.12, 0.06, 1);
+  const scales = uniqueDescendingNumbers([
+    1,
+    0.8,
+    0.64,
+    0.48,
+    0.4,
+    0.32,
+    0.24,
+    0.16,
+    0.06,
+    estimatedScale * 1.8,
+    estimatedScale * 1.5,
+    estimatedScale * 1.28,
+    estimatedScale * 1.16,
+    estimatedScale * 1.08,
+    estimatedScale,
+    estimatedScale * 0.92,
+    estimatedScale * 0.84,
+  ].map((value) => clamp(value, 0.06, 1)));
+  const highQuality = [0.96, 0.92, 0.88, 0.84, 0.78, 0.72];
+  const fallbackQuality = [0.64, 0.56, 0.48, 0.4, 0.32, 0.3];
+  const highQualityPlans = scales.flatMap((scale) =>
+    highQuality.map((quality) => ({
+      scale,
+      quality,
+    })),
+  );
+  const fallbackPlans = scales
+    .filter((scale) => scale <= Math.max(estimatedScale * 1.2, 0.32))
+    .flatMap((scale) => fallbackQuality.map((quality) => ({ scale, quality })));
+  return [...highQualityPlans, ...fallbackPlans];
 }
 
 async function renderCompressedImageCandidate(
@@ -467,10 +482,10 @@ async function renderCompressedImageCandidate(
 
   const blob = await canvasToBlob(canvas, "image/webp", quality);
   if (blob) {
-    return { blob, dataUrl: "", bytes: blob.size };
+    return { blob, dataUrl: "", bytes: blob.size, scale, quality };
   }
   const dataUrl = canvas.toDataURL("image/webp", quality);
-  return { blob: null, dataUrl, bytes: estimateDataUrlBytes(dataUrl) };
+  return { blob: null, dataUrl, bytes: estimateDataUrlBytes(dataUrl), scale, quality };
 }
 
 async function finalizeCompressedImageCandidate(candidate: {
@@ -495,20 +510,24 @@ async function compressImageFileWithinLimit(file: Blob, limitBytes: number) {
   }
 
   const image = await loadImageElementFromBlob(file);
-  let plan = buildInitialImageCompressionPlan(originalBytes || limitBytes + 1, limitBytes);
-  let bestCandidate:
+  let smallestCandidate:
     | {
         blob: Blob | null;
         dataUrl: string;
         bytes: number;
+        scale: number;
+        quality: number;
       }
     | null = null;
 
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  const plans = buildQualityFirstImageCompressionPlans(originalBytes || limitBytes + 1, limitBytes);
+  for (let attempt = 0; attempt < plans.length; attempt += 1) {
     await yieldToBrowser();
+    const plan = plans[attempt];
+    if (!plan) continue;
     const candidate = await renderCompressedImageCandidate(image, plan.scale, plan.quality);
-    if (!bestCandidate || candidate.bytes < bestCandidate.bytes) {
-      bestCandidate = candidate;
+    if (!smallestCandidate || candidate.bytes < smallestCandidate.bytes) {
+      smallestCandidate = candidate;
     }
     if (candidate.bytes <= limitBytes) {
       const finalized = await finalizeCompressedImageCandidate(candidate);
@@ -518,11 +537,10 @@ async function compressImageFileWithinLimit(file: Blob, limitBytes: number) {
         bytes: finalized.bytes,
       };
     }
-    plan = refineImageCompressionPlan(plan, candidate.bytes, limitBytes);
   }
 
-  if (bestCandidate) {
-    const finalized = await finalizeCompressedImageCandidate(bestCandidate);
+  if (smallestCandidate) {
+    const finalized = await finalizeCompressedImageCandidate(smallestCandidate);
     return {
       dataUrl: finalized.dataUrl,
       compressed: true,
@@ -549,20 +567,24 @@ async function compressImageDataUrlWithinLimit(dataUrl: string, limitBytes: numb
   }
 
   const image = await loadImageElement(dataUrl);
-  let plan = buildInitialImageCompressionPlan(originalBytes || limitBytes + 1, limitBytes);
-  let bestCandidate:
+  let smallestCandidate:
     | {
         blob: Blob | null;
         dataUrl: string;
         bytes: number;
+        scale: number;
+        quality: number;
       }
     | null = null;
 
-  for (let attempt = 0; attempt < 8; attempt += 1) {
+  const plans = buildQualityFirstImageCompressionPlans(originalBytes || limitBytes + 1, limitBytes);
+  for (let attempt = 0; attempt < plans.length; attempt += 1) {
     await yieldToBrowser();
+    const plan = plans[attempt];
+    if (!plan) continue;
     const candidate = await renderCompressedImageCandidate(image, plan.scale, plan.quality);
-    if (!bestCandidate || candidate.bytes < bestCandidate.bytes) {
-      bestCandidate = candidate;
+    if (!smallestCandidate || candidate.bytes < smallestCandidate.bytes) {
+      smallestCandidate = candidate;
     }
     if (candidate.bytes <= limitBytes) {
       const finalized = await finalizeCompressedImageCandidate(candidate);
@@ -572,15 +594,10 @@ async function compressImageDataUrlWithinLimit(dataUrl: string, limitBytes: numb
         bytes: finalized.bytes,
       };
     }
-    const nextPlan = refineImageCompressionPlan(plan, candidate.bytes, limitBytes);
-    plan = {
-      scale: Math.max(0.06, Math.min(nextPlan.scale, plan.scale * 0.92)),
-      quality: Math.max(0.3, Math.min(nextPlan.quality, plan.quality * 0.9)),
-    };
   }
 
-  if (bestCandidate) {
-    const finalized = await finalizeCompressedImageCandidate(bestCandidate);
+  if (smallestCandidate) {
+    const finalized = await finalizeCompressedImageCandidate(smallestCandidate);
     return {
       dataUrl: finalized.dataUrl,
       compressed: true,
