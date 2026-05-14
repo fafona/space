@@ -255,12 +255,16 @@ const FAOLLA_APP_SHELL_LOCATION_SCRIPT = `
   syncAppShellPaint();
   if (!isAppShell || !window.parent || window.parent === window) return;
 
+  let lastNotifiedHref = "";
   const notifyParent = () => {
     try {
+      const href = window.location.href;
+      if (href === lastNotifiedHref) return;
+      lastNotifiedHref = href;
       window.parent.postMessage(
         {
           type: "faolla:app-shell-location",
-          href: window.location.href,
+          href,
         },
         "*",
       );
