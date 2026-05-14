@@ -15,6 +15,7 @@
     "gen:china-locations": "node scripts/generate-china-location-options.mjs",
     "repair:platform-home-mojibake": "node scripts/repair-platform-home-mojibake.mjs",
     "gen:dom-i18n": "node scripts/generate-dom-translations.mjs",
+    "supabase:email-code-font": "node scripts/update-supabase-email-code-font.mjs",
     "hooks:install": "node scripts/setup-git-hooks.mjs",
     "prepare": "node scripts/setup-git-hooks.mjs",
     "dev": "npm run check:env && next dev --webpack",
