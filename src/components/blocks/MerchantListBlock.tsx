@@ -452,9 +452,7 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
   const mobileFitScreenWidth = props.mobileFitScreenWidth === true;
   const { locale } = useI18n();
   const [platformState, setPlatformState] = useState<PlatformState>(() => loadPlatformState());
-  const [faollaAppShell, setFaollaAppShell] = useState(() =>
-    typeof window !== "undefined" ? isFaollaAppShellSearch(window.location.search) : false,
-  );
+  const [faollaAppShell, setFaollaAppShell] = useState(false);
   const [searchFilter, setSearchFilter] = useState<SearchFilter>(EMPTY_SEARCH_FILTER);
   const [locationOptionsApi, setLocationOptionsApi] = useState<EuropeLocationOptionsApi | null>(null);
   const [activeTabId, setActiveTabId] = useState("tab-recommended");
@@ -468,6 +466,16 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
       }),
     [],
   );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const frame = window.requestAnimationFrame(() => {
+      setFaollaAppShell(isFaollaAppShellSearch(window.location.search));
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
