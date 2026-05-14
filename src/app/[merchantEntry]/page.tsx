@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import type { Metadata } from "next";
 import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import ServiceMaintenancePage from "@/components/ServiceMaintenancePage";
 import SitePageClient from "@/app/site/[siteId]/SitePageClient";
 import { isMobileViewportRequest } from "@/lib/deviceViewport";
@@ -222,19 +223,14 @@ export default async function MerchantEntryPage({ params, searchParams }: Mercha
   const initialIsMobileViewport = isMobileViewportRequest(requestHeaders);
   if (isMerchantNumericId(merchantEntry)) {
     if (String(readSearchParamValue(resolvedSearchParams, "section") ?? "").trim().toLowerCase() === "faolla") {
-      const { default: FaollaNumericEntryShell } = await import("./FaollaNumericEntryShell");
       const explicitEntryHref = String(readSearchParamValue(resolvedSearchParams, "faollaUrl") ?? "").trim();
       const initialSourceHref = explicitEntryHref || "/";
       const searchText = buildSearchString(resolvedSearchParams);
       const locale = readRequestedLocaleFromSearch(searchText) || DEFAULT_LOCALE;
-      return (
-        <FaollaNumericEntryShell
-          merchantEntry={merchantEntry}
-          initialFrameHref={buildFaollaShellHref(initialSourceHref, locale, readRequestOrigin(requestHeaders), {
-            preferRuntimeOrigin: true,
-          })}
-          hasExplicitEntryHref={Boolean(explicitEntryHref)}
-        />
+      redirect(
+        buildFaollaShellHref(initialSourceHref, locale, readRequestOrigin(requestHeaders), {
+          preferRuntimeOrigin: true,
+        }),
       );
     }
     const { default: MerchantNumericEntryPageClient } = await import("./MerchantNumericEntryPageClient");
