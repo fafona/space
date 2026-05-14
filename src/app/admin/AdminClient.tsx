@@ -5659,13 +5659,14 @@ export default function AdminClient({
     supportMobileHomeTabRef.current = supportMobileHomeTab;
   }, [supportMobileHomeTab]);
   const [supportFaollaEmbedHref, setSupportFaollaEmbedHref] = useState(readInitialSupportFaollaEmbedHref);
+  const [supportFaollaFrameHref, setSupportFaollaFrameHref] = useState(() => supportFaollaEmbedHref);
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!explicitFaollaSectionEntry) return;
     const storedHref = readStoredFaollaEntryUrl(window.location.origin) || "/";
-    setSupportFaollaEmbedHref(
-      resolveFaollaEntryUrlFromBrowser(window.location.search, window.location.origin) || storedHref,
-    );
+    const nextHref = resolveFaollaEntryUrlFromBrowser(window.location.search, window.location.origin) || storedHref;
+    setSupportFaollaEmbedHref(nextHref);
+    setSupportFaollaFrameHref(nextHref);
     setMerchantDesktopSection("faolla");
     setSupportMobileHomeTab("faolla");
   }, [explicitFaollaSectionEntry]);
@@ -11377,15 +11378,25 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     getSiteIdFromStoreScope(storeScope) ||
     ""
   ).trim();
-  const supportMobileFaollaHref = supportFaollaEmbedHref.trim() || "/";
-  const supportMobileFaollaTargetHref = useMemo(
+  const supportFaollaFrameSourceHref = supportFaollaFrameHref.trim() || "/";
+  const supportFaollaFrameTargetHref = useMemo(
     () =>
       buildFaollaShellHref(
-        supportMobileFaollaHref,
+        supportFaollaFrameSourceHref,
         locale,
         typeof window !== "undefined" ? window.location.origin : "https://faolla.com",
       ),
-    [locale, supportMobileFaollaHref],
+    [locale, supportFaollaFrameSourceHref],
+  );
+  const supportFaollaRestoreHref = supportFaollaEmbedHref.trim() || "/";
+  const supportFaollaRestoreTargetHref = useMemo(
+    () =>
+      buildFaollaShellHref(
+        supportFaollaRestoreHref,
+        locale,
+        typeof window !== "undefined" ? window.location.origin : "https://faolla.com",
+      ),
+    [locale, supportFaollaRestoreHref],
   );
   const supportFaollaHomeTargetHref = useMemo(
     () =>
@@ -11401,6 +11412,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const supportFaollaActive = supportMobileFaollaActive || supportDesktopFaollaActive;
   const navigateSupportFaollaHome = useCallback(() => {
     setSupportFaollaEmbedHref("/");
+    setSupportFaollaFrameHref("/");
     if (typeof window !== "undefined") {
       writeStoredFaollaEntryUrl(supportFaollaHomeTargetHref, window.location.origin);
     }
@@ -11421,12 +11433,13 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       const now = Date.now();
       if (now - supportFaollaBackendResetAtRef.current < 1200) return true;
       supportFaollaBackendResetAtRef.current = now;
-      if (frame && frame.src !== supportMobileFaollaTargetHref) {
-        frame.src = supportMobileFaollaTargetHref;
+      setSupportFaollaFrameHref(supportFaollaRestoreHref);
+      if (frame && frame.src !== supportFaollaRestoreTargetHref) {
+        frame.src = supportFaollaRestoreTargetHref;
       }
       return true;
     },
-    [supportMobileFaollaTargetHref],
+    [supportFaollaRestoreHref, supportFaollaRestoreTargetHref],
   );
   const handleSupportFaollaFrameLoad = useCallback(
     (frame: HTMLIFrameElement | null) => {
@@ -11518,7 +11531,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       <iframe
         ref={supportMobileFaollaFrameRef}
         title="Faolla.com"
-        src={supportMobileFaollaTargetHref}
+        src={supportFaollaFrameTargetHref}
         onLoad={(event) => handleSupportFaollaFrameLoad(event.currentTarget)}
         className="absolute inset-0 h-full w-full border-0 bg-white"
       />
@@ -18663,7 +18676,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               <iframe
                 ref={supportDesktopFaollaFrameRef}
                 title="Faolla"
-                src={supportMobileFaollaTargetHref}
+                src={supportFaollaFrameTargetHref}
                 onLoad={(event) => handleSupportFaollaFrameLoad(event.currentTarget)}
                 className="absolute inset-0 h-full w-full border-0 bg-transparent"
               />
