@@ -63,6 +63,10 @@ export type FaollaAndroidAppUpdateState = FaollaAndroidAppUpdateData & {
   resetDownloadState: () => void;
 };
 
+type FaollaAndroidAppUpdateOptions = {
+  enabled?: boolean;
+};
+
 const DEFAULT_STATE: FaollaAndroidAppUpdateData = {
   checking: true,
   supported: false,
@@ -80,6 +84,10 @@ const DEFAULT_STATE: FaollaAndroidAppUpdateData = {
   downloadProgress: 0,
   downloadMessage: "",
   stagedInstallSupported: false,
+};
+const DISABLED_STATE: FaollaAndroidAppUpdateData = {
+  ...DEFAULT_STATE,
+  checking: false,
 };
 
 function readInteger(value: unknown, fallback = 0) {
@@ -221,10 +229,12 @@ export function openFaollaAndroidUpdate(apkUrl: string) {
   window.location.assign(targetUrl);
 }
 
-export function useFaollaAndroidAppUpdate(): FaollaAndroidAppUpdateState {
-  const [state, setState] = useState<FaollaAndroidAppUpdateData>(DEFAULT_STATE);
+export function useFaollaAndroidAppUpdate(options?: FaollaAndroidAppUpdateOptions): FaollaAndroidAppUpdateState {
+  const enabled = options?.enabled !== false;
+  const [state, setState] = useState<FaollaAndroidAppUpdateData>(() => (enabled ? DEFAULT_STATE : DISABLED_STATE));
 
   useEffect(() => {
+    if (!enabled) return;
     const handleNativeUpdateEvent = (event: Event) => {
       const detail = (event as CustomEvent<NativeUpdateEventDetail>).detail ?? {};
       const status = readString(detail.status);
@@ -275,9 +285,10 @@ export function useFaollaAndroidAppUpdate(): FaollaAndroidAppUpdateState {
     return () => {
       window.removeEventListener("faolla-native-update", handleNativeUpdateEvent);
     };
-  }, []);
+  }, [enabled]);
 
   useEffect(() => {
+    if (!enabled) return;
     let cancelled = false;
 
     const sync = async () => {
@@ -424,7 +435,7 @@ export function useFaollaAndroidAppUpdate(): FaollaAndroidAppUpdateState {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [enabled]);
 
   const downloadUpdate = useCallback(() => {
     if (!state.updateAvailable || state.downloadStatus === "downloading" || state.downloadStatus === "installing") {

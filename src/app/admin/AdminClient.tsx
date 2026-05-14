@@ -5671,7 +5671,7 @@ export default function AdminClient({
   }, [explicitFaollaSectionEntry]);
   const [supportMobileBusinessSection, setSupportMobileBusinessSection] = useState<"booking" | "orders">("booking");
   const [supportSelfSectionView, setSupportSelfSectionView] = useState<SupportSelfSectionView>("home");
-  const faollaAndroidAppUpdate = useFaollaAndroidAppUpdate();
+  const faollaAndroidAppUpdate = useFaollaAndroidAppUpdate({ enabled: !explicitFaollaSectionEntry });
   const supportSelfSectionResetReadyRef = useRef(false);
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -6259,14 +6259,14 @@ export default function AdminClient({
   }, [isPlatformEditor, merchantSiteIdOverride, prefetchMerchantSessionIdentity, readFreshMerchantSessionIdentity, storeScope]);
 
   useEffect(() => {
-    if (isPlatformEditor || typeof window === "undefined") return;
+    if (isPlatformEditor || explicitFaollaSectionEntry || typeof window === "undefined") return;
     const timer = window.setTimeout(() => {
       void prefetchMerchantSessionIdentity();
     }, 120);
     return () => {
       window.clearTimeout(timer);
     };
-  }, [isPlatformEditor, prefetchMerchantSessionIdentity]);
+  }, [explicitFaollaSectionEntry, isPlatformEditor, prefetchMerchantSessionIdentity]);
 
   useEffect(() => {
     if (hasAddedExtraBlock) return;
