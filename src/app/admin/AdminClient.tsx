@@ -5780,7 +5780,6 @@ export default function AdminClient({
   const supportDesktopFaollaFrameRef = useRef<HTMLIFrameElement>(null);
   const supportMobileFaollaFrameRef = useRef<HTMLIFrameElement>(null);
   const supportFaollaBackendResetAtRef = useRef(0);
-  const [supportFaollaFrameLoading, setSupportFaollaFrameLoading] = useState(true);
   const supportInputRef = useRef<HTMLTextAreaElement>(null);
   const supportComposerRef = useRef<HTMLDivElement>(null);
   const supportSelfLanguageRootRef = useRef<HTMLDivElement>(null);
@@ -11400,19 +11399,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const supportMobileFaollaActive = supportMobileHomeTab === "faolla";
   const supportDesktopFaollaActive = merchantDesktopSection === "faolla";
   const supportFaollaActive = supportMobileFaollaActive || supportDesktopFaollaActive;
-  useEffect(() => {
-    if (!supportFaollaActive) return;
-    setSupportFaollaFrameLoading(true);
-    const fallbackTimer = window.setTimeout(() => {
-      setSupportFaollaFrameLoading(false);
-    }, 3200);
-    return () => {
-      window.clearTimeout(fallbackTimer);
-    };
-  }, [supportFaollaActive, supportMobileFaollaTargetHref]);
   const navigateSupportFaollaHome = useCallback(() => {
     setSupportFaollaEmbedHref("/");
-    setSupportFaollaFrameLoading(true);
     if (typeof window !== "undefined") {
       writeStoredFaollaEntryUrl(supportFaollaHomeTargetHref, window.location.origin);
     }
@@ -11442,8 +11430,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   );
   const handleSupportFaollaFrameLoad = useCallback(
     (frame: HTMLIFrameElement | null) => {
-      if (resetSupportFaollaBackendFrame(frame)) return;
-      window.setTimeout(() => setSupportFaollaFrameLoading(false), 450);
+      resetSupportFaollaBackendFrame(frame);
     },
     [resetSupportFaollaBackendFrame],
   );
@@ -11473,11 +11460,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     };
   }, [resetSupportFaollaBackendFrame]);
   const openMerchantFaollaPanel = useCallback(() => {
-    setSupportFaollaFrameLoading(true);
     setMerchantDesktopSection("faolla");
   }, []);
   const openSupportMobileHomeTab = useCallback((tab: SupportMobileHomeTab) => {
-    if (tab === "faolla") setSupportFaollaFrameLoading(true);
     setSupportMobileHomeTab(tab);
   }, []);
   const openSupportShuangkouScoreTool = useCallback(() => {
