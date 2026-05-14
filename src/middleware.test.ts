@@ -103,3 +103,28 @@ test("middleware redirects authenticated merchant launch requests before page re
   assert.equal(response.headers.get("location"), "https://faolla.com/10000003?appShell=faolla");
   assert.match(response.headers.get("cache-control") ?? "", /no-store/);
 });
+
+test("middleware redirects numeric Faolla section to the public app shell before admin rewrite", async () => {
+  const request = new NextRequest("https://faolla.com/10000000?section=faolla&faollaUrl=https%3A%2F%2Ffaolla.com%2F");
+
+  const response = await middleware(request);
+  const location = response.headers.get("location") ?? "";
+
+  assert.equal(response.status, 307);
+  assert.match(location, /^https:\/\/faolla\.com\/\?/);
+  assert.match(location, /(?:\?|&)appShell=faolla(?:&|$)/);
+  assert.match(location, /(?:\?|&)uiLocale=zh-CN(?:&|$)/);
+  assert.match(response.headers.get("cache-control") ?? "", /no-store/);
+});
+
+test("middleware rejects backend Faolla section targets", async () => {
+  const request = new NextRequest("https://faolla.com/10000000?section=faolla&faollaUrl=https%3A%2F%2Ffaolla.com%2Fadmin");
+
+  const response = await middleware(request);
+  const location = response.headers.get("location") ?? "";
+
+  assert.equal(response.status, 307);
+  assert.match(location, /^https:\/\/faolla\.com\/\?/);
+  assert.doesNotMatch(location, /\/admin/);
+  assert.match(location, /(?:\?|&)appShell=faolla(?:&|$)/);
+});

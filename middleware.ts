@@ -29,8 +29,15 @@ const INTERNAL_MERCHANT_REWRITE_PARAM = "__merchantInternalRewrite";
 const HTTPS_REDIRECT_STATUS = 308;
 const FORWARDED_PROTO_HEADER = "x-forwarded-proto";
 const FORWARDED_HOST_HEADER = "x-forwarded-host";
+const FAOLLA_SECTION_PARAM = "section";
+const FAOLLA_SECTION_VALUE = "faolla";
+const FAOLLA_URL_PARAM = "faollaUrl";
 const FAOLLA_APP_SHELL_PARAM = "appShell";
 const FAOLLA_APP_SHELL_VALUE = "faolla";
+const FAOLLA_INLINE_BUILD_PARAM = "__faollaInlineBuild";
+const FAOLLA_INLINE_BUILD_ID = String(process.env.NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID ?? "").trim();
+const I18N_URL_PARAM = "uiLocale";
+const DEFAULT_LOCALE = "zh-CN";
 const PROXY_HINT_HEADERS = [
   FORWARDED_HOST_HEADER,
   "x-forwarded-for",
@@ -194,6 +201,50 @@ function shouldNoStoreAppShellPath(pathname: string) {
   );
 }
 
+function isFaollaHostname(hostname: string) {
+  const normalized = hostname.trim().toLowerCase();
+  return normalized === "faolla.com" || normalized.endsWith(".faolla.com");
+}
+
+function isTrustedFaollaShellTarget(targetUrl: URL, requestUrl: URL) {
+  if (targetUrl.origin === requestUrl.origin) return true;
+  if (isFaollaHostname(targetUrl.hostname) && isFaollaHostname(requestUrl.hostname)) return true;
+  return normalizeRequestHostname(targetUrl.hostname) === normalizeRequestHostname(requestUrl.hostname);
+}
+
+function isBackendOrApiShellPath(pathname: string) {
+  return /^\/(?:\d{8}|admin|api|login|me|super-admin)(?:\/|$)/i.test(pathname);
+}
+
+function buildFaollaSectionRedirectUrl(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+  const segments = pathname.split("/").filter(Boolean);
+  if (segments.length !== 1 || !isMerchantNumericId(segments[0] ?? "")) return null;
+  if ((request.nextUrl.searchParams.get(FAOLLA_SECTION_PARAM) ?? "").trim().toLowerCase() !== FAOLLA_SECTION_VALUE) {
+    return null;
+  }
+
+  const rawTarget = (request.nextUrl.searchParams.get(FAOLLA_URL_PARAM) ?? "").trim() || "/";
+  let targetUrl: URL;
+  try {
+    targetUrl = new URL(rawTarget, request.nextUrl.origin);
+  } catch {
+    targetUrl = new URL("/", request.nextUrl.origin);
+  }
+
+  if (!isTrustedFaollaShellTarget(targetUrl, request.nextUrl) || isBackendOrApiShellPath(targetUrl.pathname)) {
+    targetUrl = new URL("/", request.nextUrl.origin);
+  }
+
+  const locale = (request.nextUrl.searchParams.get(I18N_URL_PARAM) ?? "").trim() || DEFAULT_LOCALE;
+  targetUrl.searchParams.set(I18N_URL_PARAM, locale);
+  targetUrl.searchParams.set(FAOLLA_APP_SHELL_PARAM, FAOLLA_APP_SHELL_VALUE);
+  if (FAOLLA_INLINE_BUILD_ID) {
+    targetUrl.searchParams.set(FAOLLA_INLINE_BUILD_PARAM, FAOLLA_INLINE_BUILD_ID.slice(0, 12));
+  }
+  return targetUrl;
+}
+
 function withAppShellNoStore(response: NextResponse, pathname: string) {
   if (!shouldNoStoreAppShellPath(pathname)) return response;
   response.headers.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
@@ -277,6 +328,11 @@ export async function middleware(request: NextRequest) {
   const launchSessionRedirectUrl = buildLaunchSessionRedirectUrl(request);
   if (launchSessionRedirectUrl) {
     return withAppShellNoStore(NextResponse.redirect(launchSessionRedirectUrl), pathname);
+  }
+
+  const faollaSectionRedirectUrl = buildFaollaSectionRedirectUrl(request);
+  if (faollaSectionRedirectUrl) {
+    return withAppShellNoStore(NextResponse.redirect(faollaSectionRedirectUrl), pathname);
   }
 
   const segments = pathname.split("/").filter(Boolean);
