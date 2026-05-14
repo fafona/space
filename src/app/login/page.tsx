@@ -1222,6 +1222,20 @@ function LoginPageInner() {
 
   useEffect(() => {
     if (!isGoogleOAuthReturn || loggedOut || googleOAuthStateExpired) return;
+    const hasReturnPayload = typeof window !== "undefined" && hasGoogleOAuthReturnPayload(window.location.href);
+    if (!hasReturnPayload) {
+      clearGoogleOAuthAttempt();
+      if (typeof window !== "undefined") {
+        window.history.replaceState(
+          window.history.state,
+          "",
+          buildCleanGoogleOAuthReturnPath(window.location.href),
+        );
+      }
+      setPendingAction(null);
+      setMsg("");
+      return;
+    }
     let mounted = true;
     setAuthView("signin");
     setPendingAction("google");
