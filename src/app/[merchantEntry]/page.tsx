@@ -15,6 +15,8 @@ import {
   type MerchantSeoProfile,
 } from "@/lib/merchantSeo";
 import { fetchPublishedSitePayloadFromSupabase } from "@/lib/publishedSiteData";
+import { buildFaollaShellHref } from "@/lib/faollaEntry";
+import { DEFAULT_LOCALE, readRequestedLocaleFromSearch } from "@/lib/i18n";
 
 type MerchantEntryPageProps = {
   params: Promise<{
@@ -192,14 +194,48 @@ function readSearchParamValue(searchParams: Record<string, string | string[] | u
   return Array.isArray(value) ? value[0] : value;
 }
 
+function buildSearchString(searchParams: Record<string, string | string[] | undefined> | undefined) {
+  const params = new URLSearchParams();
+  Object.entries(searchParams ?? {}).forEach(([key, value]) => {
+    if (typeof value === "string") {
+      params.set(key, value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((item) => params.append(key, item));
+    }
+  });
+  const text = params.toString();
+  return text ? `?${text}` : "";
+}
+
+function readRequestOrigin(headerList: Headers) {
+  const host = headerList.get("x-forwarded-host") || headerList.get("host") || "faolla.com";
+  const proto = headerList.get("x-forwarded-proto") || "https";
+  return `${proto}://${host}`;
+}
+
 export default async function MerchantEntryPage({ params, searchParams }: MerchantEntryPageProps) {
   const { merchantEntry } = await params;
   const resolvedSearchParams = await searchParams;
-  const initialIsMobileViewport = isMobileViewportRequest(await headers());
+  const requestHeaders = await headers();
+  const initialIsMobileViewport = isMobileViewportRequest(requestHeaders);
   if (isMerchantNumericId(merchantEntry)) {
     if (String(readSearchParamValue(resolvedSearchParams, "section") ?? "").trim().toLowerCase() === "faolla") {
       const { default: FaollaNumericEntryShell } = await import("./FaollaNumericEntryShell");
-      return <FaollaNumericEntryShell merchantEntry={merchantEntry} />;
+      const explicitEntryHref = String(readSearchParamValue(resolvedSearchParams, "faollaUrl") ?? "").trim();
+      const initialSourceHref = explicitEntryHref || "/";
+      const searchText = buildSearchString(resolvedSearchParams);
+      const locale = readRequestedLocaleFromSearch(searchText) || DEFAULT_LOCALE;
+      return (
+        <FaollaNumericEntryShell
+          merchantEntry={merchantEntry}
+          initialFrameHref={buildFaollaShellHref(initialSourceHref, locale, readRequestOrigin(requestHeaders), {
+            preferRuntimeOrigin: true,
+          })}
+          hasExplicitEntryHref={Boolean(explicitEntryHref)}
+        />
+      );
     }
     const { default: MerchantNumericEntryPageClient } = await import("./MerchantNumericEntryPageClient");
     return <MerchantNumericEntryPageClient />;
