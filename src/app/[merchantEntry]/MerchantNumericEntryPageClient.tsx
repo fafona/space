@@ -10,7 +10,7 @@ import {
   readMerchantSessionMerchantIds,
   readMerchantSessionPayload,
 } from "@/lib/authSessionRecovery";
-import { isFaollaAppShellSearch } from "@/lib/faollaEntry";
+import { isFaollaAppShellSearch, isFaollaSectionSearch } from "@/lib/faollaEntry";
 import { buildMerchantSiteLinker } from "@/lib/merchantSiteLinking";
 import { clearMerchantSignInBridge, hasMerchantSignInBridge } from "@/lib/merchantSignInBridge";
 import { canReachSupabaseGateway, isSupabaseEnabled } from "@/lib/supabase";
@@ -45,9 +45,21 @@ export default function MerchantNumericEntryPageClient() {
       params.get("nativeNotification") === "1"
     );
   }, [hydrated]);
+  const isExplicitFaollaSectionEntry = useMemo(() => {
+    if (!hydrated || typeof window === "undefined") return false;
+    return isFaollaSectionSearch(window.location.search);
+  }, [hydrated]);
   const skipEntrySessionCheck = useMemo(
-    () => hydrated && (justSignedIn || isNativeRecentAppShellEntry || isNativeNotificationAppShellEntry),
-    [hydrated, isNativeNotificationAppShellEntry, isNativeRecentAppShellEntry, justSignedIn],
+    () =>
+      hydrated &&
+      (justSignedIn || isExplicitFaollaSectionEntry || isNativeRecentAppShellEntry || isNativeNotificationAppShellEntry),
+    [
+      hydrated,
+      isExplicitFaollaSectionEntry,
+      isNativeNotificationAppShellEntry,
+      isNativeRecentAppShellEntry,
+      justSignedIn,
+    ],
   );
   const recentSignInBridgeActive = useMemo(
     () => hydrated && justSignedIn && hasMerchantSignInBridge(merchantEntry),
