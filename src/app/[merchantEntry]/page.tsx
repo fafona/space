@@ -20,6 +20,7 @@ type MerchantEntryPageProps = {
   params: Promise<{
     merchantEntry: string;
   }>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
 type QueryErrorLike = { message?: string } | null;
@@ -186,10 +187,20 @@ export async function generateMetadata({ params }: MerchantEntryPageProps): Prom
   };
 }
 
-export default async function MerchantEntryPage({ params }: MerchantEntryPageProps) {
+function readSearchParamValue(searchParams: Record<string, string | string[] | undefined> | undefined, key: string) {
+  const value = searchParams?.[key];
+  return Array.isArray(value) ? value[0] : value;
+}
+
+export default async function MerchantEntryPage({ params, searchParams }: MerchantEntryPageProps) {
   const { merchantEntry } = await params;
+  const resolvedSearchParams = await searchParams;
   const initialIsMobileViewport = isMobileViewportRequest(await headers());
   if (isMerchantNumericId(merchantEntry)) {
+    if (String(readSearchParamValue(resolvedSearchParams, "section") ?? "").trim().toLowerCase() === "faolla") {
+      const { default: FaollaNumericEntryShell } = await import("./FaollaNumericEntryShell");
+      return <FaollaNumericEntryShell merchantEntry={merchantEntry} />;
+    }
     const { default: MerchantNumericEntryPageClient } = await import("./MerchantNumericEntryPageClient");
     return <MerchantNumericEntryPageClient />;
   }
