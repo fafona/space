@@ -10706,7 +10706,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, [editingSiteId, isPlatformEditor]);
 
   useEffect(() => {
-    if (isPlatformEditor || !isMerchantNumericId(editingSiteId)) {
+    if (isPlatformEditor || explicitFaollaSectionEntry || !isMerchantNumericId(editingSiteId)) {
       setMerchantBookingAttentionSummary({ count: 0, latest: null });
       setMerchantBusinessAttentionHydrationState((current) => (current.booking ? current : { ...current, booking: true }));
       return;
@@ -10747,10 +10747,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       cancelled = true;
       if (timer) clearInterval(timer);
     };
-  }, [editingSiteId, isPlatformEditor, summarizeMerchantBookingAttention]);
+  }, [editingSiteId, explicitFaollaSectionEntry, isPlatformEditor, summarizeMerchantBookingAttention]);
 
   useEffect(() => {
-    if (isPlatformEditor || !isMerchantNumericId(editingSiteId)) {
+    if (isPlatformEditor || explicitFaollaSectionEntry || !isMerchantNumericId(editingSiteId)) {
       setMerchantOrderAttentionSummary({ count: 0, latest: null });
       setMerchantBusinessAttentionHydrationState((current) => (current.orders ? current : { ...current, orders: true }));
       return;
@@ -10796,7 +10796,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       cancelled = true;
       if (timer) clearInterval(timer);
     };
-  }, [editingSiteId, isPlatformEditor, summarizeMerchantOrderAttention]);
+  }, [editingSiteId, explicitFaollaSectionEntry, isPlatformEditor, summarizeMerchantOrderAttention]);
 
   useEffect(() => {
     if (isPlatformEditor || typeof window === "undefined" || typeof document === "undefined") return;
@@ -11273,7 +11273,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     supportSelfBusinessCardAvatarUrl;
   const merchantAccountSwitchCurrentKey = getAccountSwitchEntryKey("merchant", currentSupportMerchantId, currentSupportMerchantId);
   useEffect(() => {
-    if (isPlatformEditor) return;
+    if (isPlatformEditor || explicitFaollaSectionEntry) return;
     let cancelled = false;
     void recordCurrentAccountSwitchSession({
       displayName: supportSelfDisplayName,
@@ -11284,7 +11284,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     return () => {
       cancelled = true;
     };
-  }, [isPlatformEditor, supportSelfAvatarImageUrl, supportSelfDisplayName]);
+  }, [explicitFaollaSectionEntry, isPlatformEditor, supportSelfAvatarImageUrl, supportSelfDisplayName]);
   const supportSelfWebsiteHref = useMemo(() => {
     const publicBaseDomain = normalizeSupportDisplayValue(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN);
     const merchantId = normalizeSupportDisplayValue(editingSiteId);
@@ -12974,7 +12974,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   hydrateSupportMerchantProfileRef.current = hydrateSupportMerchantProfile;
 
   useEffect(() => {
-    if (isPlatformEditor || !shouldWarmCurrentMerchantProfile) return;
+    if (isPlatformEditor || explicitFaollaSectionEntry || !shouldWarmCurrentMerchantProfile) return;
     const merchantId = editingSiteId.trim();
     if (!/^\d{8}$/.test(merchantId)) return;
     const lastFetchedAt = supportPeerProfileFetchedAtRef.current[merchantId] ?? 0;
@@ -12987,6 +12987,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     editingSite?.businessCards,
     editingSiteId,
     hydrateSupportMerchantProfile,
+    explicitFaollaSectionEntry,
     isPlatformEditor,
     merchantBookingManagerOpen,
     merchantProfileDialogOpen,
@@ -13171,7 +13172,15 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       clearTimeout(merchantChatBusinessCardSyncTimerRef.current);
       merchantChatBusinessCardSyncTimerRef.current = null;
     }
-    if (isPlatformEditor || typeof window === "undefined" || !currentMerchantChatBusinessCardSyncPayload || !editingSiteId) return;
+    if (
+      isPlatformEditor ||
+      explicitFaollaSectionEntry ||
+      typeof window === "undefined" ||
+      !currentMerchantChatBusinessCardSyncPayload ||
+      !editingSiteId
+    ) {
+      return;
+    }
     if (merchantChatBusinessCardSyncPayloadRef.current === currentMerchantChatBusinessCardSyncPayload) return;
     const body = currentMerchantChatBusinessCardSyncPayload;
     merchantChatBusinessCardSyncTimerRef.current = window.setTimeout(() => {
@@ -13197,6 +13206,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, [
     currentMerchantChatBusinessCardSyncPayload,
     editingSiteId,
+    explicitFaollaSectionEntry,
     isPlatformEditor,
     requestMerchantChatBusinessCardSync,
   ]);
