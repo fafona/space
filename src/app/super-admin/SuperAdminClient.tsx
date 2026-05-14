@@ -1747,6 +1747,15 @@ type BackendMerchantAccount = {
   personalServicePaused: boolean;
 };
 
+function getBackendAccountSelectionKey(account: BackendMerchantAccount | null | undefined) {
+  return (
+    String(account?.authUserId ?? "").trim() ||
+    String(account?.accountId ?? "").trim() ||
+    String(account?.email ?? "").trim() ||
+    String(account?.loginId ?? "").trim()
+  );
+}
+
 type MerchantTableSortField =
   | "seq"
   | "user"
@@ -2706,7 +2715,7 @@ export default function SuperAdminClient() {
     [personalAccounts, userKeyword],
   );
   const selectedPersonalAccount =
-    personalAccounts.find((account) => account.accountId === selectedPersonalAccountId) ?? null;
+    personalAccounts.find((account) => getBackendAccountSelectionKey(account) === selectedPersonalAccountId) ?? null;
   const selectedPersonalServiceConfig = normalizePersonalAccountServiceConfig(
     selectedPersonalAccount?.personalServiceConfig ?? createDefaultPersonalAccountServiceConfig(),
   );
@@ -4000,7 +4009,7 @@ export default function SuperAdminClient() {
     setBackendMerchantAccounts((prev) => {
       const isSameAccount = (item: BackendMerchantAccount) =>
         item.accountType === nextItem.accountType &&
-        (item.accountId === nextItem.accountId ||
+        ((!!item.accountId && !!nextItem.accountId && item.accountId === nextItem.accountId) ||
           (!!item.authUserId && !!nextItem.authUserId && item.authUserId === nextItem.authUserId));
       let replaced = false;
       const next = prev.map((item) => {
@@ -4022,14 +4031,14 @@ export default function SuperAdminClient() {
     setPersonalConfigError("");
   }, []);
   const openPersonalDetailPanel = useCallback((account: BackendMerchantAccount) => {
-    setSelectedPersonalAccountId(account.accountId);
+    setSelectedPersonalAccountId(getBackendAccountSelectionKey(account));
     setPersonalPanelMode("detail");
     setPersonalPanelOpen(true);
     setPersonalConfigError("");
   }, []);
   const openPersonalConfigPanel = useCallback(
     (account: BackendMerchantAccount) => {
-      setSelectedPersonalAccountId(account.accountId);
+      setSelectedPersonalAccountId(getBackendAccountSelectionKey(account));
       hydratePersonalConfigDraft(account);
       setPersonalPanelMode("config");
       setPersonalPanelOpen(true);
@@ -4156,8 +4165,9 @@ export default function SuperAdminClient() {
       setBackendMerchantAccounts((prev) =>
         prev.filter((item) => {
           if (item.accountType !== target.accountType) return true;
-          if (target.authUserId && item.authUserId === target.authUserId) return false;
-          return item.accountId !== target.accountId;
+          if (target.authUserId) return item.authUserId !== target.authUserId;
+          if (target.accountId) return item.accountId !== target.accountId;
+          return true;
         }),
       );
       if (target.accountType === "merchant") {
@@ -4181,7 +4191,8 @@ export default function SuperAdminClient() {
   const togglePersonalServiceAction = useCallback(
     async (account: BackendMerchantAccount) => {
       if (!guard("user.manage", SUPER_ADMIN_MESSAGES.noUserPermission)) return;
-      setPersonalAccountActionSubmittingId(account.accountId);
+      const accountKey = getBackendAccountSelectionKey(account);
+      setPersonalAccountActionSubmittingId(accountKey);
       setPersonalConfigError("");
       try {
         const response = await requestSuperAdminWithSessionRecovery("/api/super-admin/merchant-accounts", {
@@ -4205,7 +4216,11 @@ export default function SuperAdminClient() {
           return;
         }
         replaceBackendMerchantAccount(payload.item);
-        if (selectedPersonalAccountId && selectedPersonalAccountId === payload.item.accountId && personalPanelMode === "config") {
+        if (
+          selectedPersonalAccountId &&
+          selectedPersonalAccountId === getBackendAccountSelectionKey(payload.item) &&
+          personalPanelMode === "config"
+        ) {
           hydratePersonalConfigDraft(payload.item);
         }
         setTip(
@@ -4279,7 +4294,7 @@ export default function SuperAdminClient() {
       }
       replaceBackendMerchantAccount(payload.item);
       hydratePersonalConfigDraft(payload.item);
-      setSelectedPersonalAccountId(payload.item.accountId);
+      setSelectedPersonalAccountId(getBackendAccountSelectionKey(payload.item));
       setPersonalPanelMode("detail");
       setTip(`已保存个人账号 ${payload.item.email || payload.item.username || payload.item.accountId} 的服务配置`);
     } catch (error) {
@@ -5525,8 +5540,12 @@ export default function SuperAdminClient() {
     const email = normalizeEmailValue(manualUserEmail);
     const passwordValue = manualUserPassword;
 
-    if (!/^\d{8}$/.test(accountId)) {
-      setManualUserError("ID 必须是 8 位数字");
+    if (!accountId) {
+      setManualUserError(accountType === "personal" ? "请输入个人 ID" : "请输入商户 ID");
+      return;
+    }
+    if (accountType === "merchant" && !/^\d{8}$/.test(accountId)) {
+      setManualUserError("商户 ID 必须是 8 位数字");
       return;
     }
     if (!email) {
@@ -5585,7 +5604,7 @@ export default function SuperAdminClient() {
           setSelectedPersonalAccountId("");
         } else {
           setMerchantDetailSiteId("");
-          setSelectedPersonalAccountId(createdItem.accountId);
+          setSelectedPersonalAccountId(getBackendAccountSelectionKey(createdItem));
           hydratePersonalConfigDraft(createdItem);
         }
       } else {
@@ -6045,25 +6064,36 @@ export default function SuperAdminClient() {
       before: beforeSnapshot,
       after: afterSnapshot,
     });
-    const nextSites = stateRef.current.sites.map((item) =>
-      item.id === selectedMerchantSite.id
-        ? {
-            ...item,
-            status: nextStatus,
-            serviceExpiresAt: afterSnapshot.serviceExpiresAt,
-            permissionConfig: afterSnapshot.permissionConfig,
-            merchantCardImageUrl: afterSnapshot.merchantCardImageUrl,
-            merchantCardImageOpacity: afterSnapshot.merchantCardImageOpacity,
-            sortConfig: afterSnapshot.sortConfig,
-            configHistory: appendMerchantConfigHistory(item.configHistory, historyEntry),
-            updatedAt: nextIsoNow(),
-          }
-        : item,
-    );
-    const nextStatePreviewRaw: PlatformState = {
-      ...stateRef.current,
-      sites: nextSites,
+    const buildConfigState = (baseState: PlatformState): PlatformState => {
+      const nextSites = baseState.sites.map((item) =>
+        item.id === selectedMerchantSite.id
+          ? {
+              ...item,
+              status: nextStatus,
+              serviceExpiresAt: afterSnapshot.serviceExpiresAt,
+              permissionConfig: afterSnapshot.permissionConfig,
+              merchantCardImageUrl: afterSnapshot.merchantCardImageUrl,
+              merchantCardImageOpacity: afterSnapshot.merchantCardImageOpacity,
+              sortConfig: afterSnapshot.sortConfig,
+              configHistory: appendMerchantConfigHistory(item.configHistory, historyEntry),
+              updatedAt: nextIsoNow(),
+            }
+          : item,
+      );
+      return {
+        ...baseState,
+        sites: nextSites,
+      };
     };
+    const buildAuditedConfigState = (baseState: PlatformState, detail: string) =>
+      withAudit(
+        buildConfigState(baseState),
+        "merchant_config_update",
+        "site",
+        selectedMerchantSite.id,
+        detail,
+      );
+    const nextStatePreviewRaw = buildConfigState(stateRef.current);
     const nextStatePreview = compactPlatformStateForStorage(nextStatePreviewRaw);
     const nextStateBytes = estimateUtf8Size(JSON.stringify(nextStatePreview));
     if (nextStateBytes > MAX_PLATFORM_STATE_STORAGE_BYTES) {
@@ -6071,32 +6101,44 @@ export default function SuperAdminClient() {
       return;
     }
 
-    const auditedNextState = withAudit(
-      {
-        ...nextStatePreviewRaw,
-      },
-      "merchant_config_update",
-      "site",
-      selectedMerchantSite.id,
-      "配置已更新",
-    );
+    let stateToPersist = buildAuditedConfigState(stateRef.current, "配置已更新");
+    let mergedAfterConflict = false;
     try {
-      await syncPlatformMerchantSnapshotToServer(auditedNextState);
+      await syncPlatformMerchantSnapshotToServer(stateToPersist);
     } catch (error) {
       const message = error instanceof Error ? error.message : "unknown_error";
-      setTip(
-        message === "platform_merchant_snapshot_conflict"
-          ? "检测到其他超级后台已更新配置，当前页面已同步到最新版本"
-          : `服务端配置保存失败：${message}`,
-      );
-      return;
+      if (message === "platform_merchant_snapshot_conflict") {
+        const retryPreviewRaw = buildConfigState(stateRef.current);
+        const retryPreview = compactPlatformStateForStorage(retryPreviewRaw);
+        const retryBytes = estimateUtf8Size(JSON.stringify(retryPreview));
+        if (retryBytes > MAX_PLATFORM_STATE_STORAGE_BYTES) {
+          setTip(`${SUPER_ADMIN_MESSAGES.configTooLargePrefix}（${formatBytes(retryBytes)}），请压缩图片后重试`);
+          return;
+        }
+        stateToPersist = buildAuditedConfigState(stateRef.current, "配置已更新（合并服务端最新版本）");
+        try {
+          await syncPlatformMerchantSnapshotToServer(stateToPersist);
+          mergedAfterConflict = true;
+        } catch (retryError) {
+          const retryMessage = retryError instanceof Error ? retryError.message : "unknown_error";
+          setTip(
+            retryMessage === "platform_merchant_snapshot_conflict"
+              ? "服务端配置刚刚又被更新，请重新打开配置后再保存"
+              : `服务端配置保存失败：${retryMessage}`,
+          );
+          return;
+        }
+      } else {
+        setTip(`服务端配置保存失败：${message}`);
+        return;
+      }
     }
-    const persisted = applyLocalPlatformState(auditedNextState, { allowVolatile: true });
+    const persisted = applyLocalPlatformState(stateToPersist, { allowVolatile: true });
     if (!persisted) {
       setTip("配置已保存到服务端，但本地缓存写入失败，请稍后刷新确认");
       return;
     }
-    setTip(SUPER_ADMIN_MESSAGES.configSaved);
+    setTip(mergedAfterConflict ? "检测到服务端已有更新，已合并并保存本次配置" : SUPER_ADMIN_MESSAGES.configSaved);
   }
 
   async function rollbackMerchantConfigByHistoryAction(historyId: string) {
@@ -7204,7 +7246,7 @@ export default function SuperAdminClient() {
                               <div>
                                 <div className="text-base font-semibold text-slate-900">新增账号</div>
                                 <div className="mt-1 text-xs text-slate-500">
-                                  直接创建可登录账号，跳过注册。邮箱会直接标记为已验证，登录时支持邮箱或 8 位 ID。
+                                  直接创建可登录账号，跳过注册。邮箱会直接标记为已验证，账号类型以这里的选择为准。
                                 </div>
                               </div>
                               <button
@@ -7247,11 +7289,17 @@ export default function SuperAdminClient() {
                                 <div className="text-sm text-slate-600">{manualUserAccountType === "personal" ? "个人 ID" : "商户 ID"}</div>
                                 <input
                                   className="w-full rounded border px-3 py-2 text-sm"
-                                  inputMode="numeric"
-                                  maxLength={8}
-                                  placeholder="8位数字"
+                                  inputMode={manualUserAccountType === "merchant" ? "numeric" : "text"}
+                                  maxLength={manualUserAccountType === "merchant" ? 8 : 64}
+                                  placeholder={manualUserAccountType === "merchant" ? "8位数字" : "个人账号 ID"}
                                   value={manualUserId}
-                                  onChange={(event) => setManualUserId(event.target.value.replace(/\D+/g, "").slice(0, 8))}
+                                  onChange={(event) =>
+                                    setManualUserId(
+                                      manualUserAccountType === "merchant"
+                                        ? event.target.value.replace(/\D+/g, "").slice(0, 8)
+                                        : event.target.value.trim().replace(/\s+/g, "").slice(0, 64),
+                                    )
+                                  }
                                 />
                               </label>
                               <label className="space-y-1">
@@ -7625,7 +7673,7 @@ export default function SuperAdminClient() {
                           </thead>
                           <tbody>
                             {filteredPersonalAccounts.map((account) => (
-                              <tr key={account.authUserId || account.accountId || account.email} className="border-t">
+                              <tr key={getBackendAccountSelectionKey(account)} className="border-t">
                                 <td className="px-3 py-2 text-xs">
                                   <div className="font-medium text-slate-900">{account.email || "-"}</div>
                                 </td>
@@ -7668,9 +7716,9 @@ export default function SuperAdminClient() {
                                     <button
                                       className="rounded border px-2 py-1"
                                       onClick={() => void togglePersonalServiceAction(account)}
-                                      disabled={personalAccountActionSubmittingId === account.accountId}
+                                      disabled={personalAccountActionSubmittingId === getBackendAccountSelectionKey(account)}
                                     >
-                                      {personalAccountActionSubmittingId === account.accountId
+                                      {personalAccountActionSubmittingId === getBackendAccountSelectionKey(account)
                                         ? "处理中..."
                                         : account.personalServicePaused
                                           ? "开启服务"
@@ -9511,9 +9559,9 @@ export default function SuperAdminClient() {
                                   type="button"
                                   className="rounded border px-3 py-2"
                                   onClick={() => void togglePersonalServiceAction(selectedPersonalAccount)}
-                                  disabled={personalAccountActionSubmittingId === selectedPersonalAccount.accountId}
+                                  disabled={personalAccountActionSubmittingId === getBackendAccountSelectionKey(selectedPersonalAccount)}
                                 >
-                                  {personalAccountActionSubmittingId === selectedPersonalAccount.accountId
+                                  {personalAccountActionSubmittingId === getBackendAccountSelectionKey(selectedPersonalAccount)
                                     ? "处理中..."
                                     : selectedPersonalAccount.personalServicePaused
                                       ? "开启服务"

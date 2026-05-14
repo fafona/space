@@ -951,8 +951,11 @@ export async function POST(request: Request) {
           ? payload.username.trim()
           : "";
     const password = typeof payload?.password === "string" ? payload.password : "";
-    if (!isMerchantNumericId(accountId)) {
-      return badRequestJson("invalid_account_id", "ID 必须是 8 位数字");
+    if (!accountId) {
+      return badRequestJson("invalid_account_id", accountType === "personal" ? "请输入个人 ID" : "请输入商户 ID");
+    }
+    if (accountType === "merchant" && !isMerchantNumericId(accountId)) {
+      return badRequestJson("invalid_account_id", "商户 ID 必须是 8 位数字");
     }
 
     if (!loginAccount) {
@@ -976,7 +979,9 @@ export async function POST(request: Request) {
           )
         : [];
     const [existingMerchantById, authUsersResult] = await Promise.all([
-      runSupabaseQueryWithRetry(() => supabase.from("merchants").select("id").eq("id", accountId).limit(1).maybeSingle()),
+      accountType === "merchant"
+        ? runSupabaseQueryWithRetry(() => supabase.from("merchants").select("id").eq("id", accountId).limit(1).maybeSingle())
+        : Promise.resolve({ data: null, error: null }),
       listAuthUsersBestEffort(supabase),
     ]);
     const existingMerchantByEmailResults = await Promise.all(merchantEmailLookups);
@@ -986,7 +991,7 @@ export async function POST(request: Request) {
       if (lookup.error) throw lookup.error;
     }
 
-    if (existingMerchantById.data?.id) {
+    if (accountType === "merchant" && existingMerchantById.data?.id) {
       return conflictJson("merchant_id_exists", "ID 已存在，请更换后重试");
     }
     if (existingMerchantByEmailResults.some((lookup) => lookup.data?.id)) {
@@ -1170,9 +1175,6 @@ export async function PATCH(request: Request) {
     if (!accountId && !authUserId) {
       return badRequestJson("invalid_personal_account", "请选择要操作的个人账号");
     }
-    if (accountId && !isMerchantNumericId(accountId)) {
-      return badRequestJson("invalid_account_id", "ID 必须是 8 位数字");
-    }
     if (servicePaused === undefined && !configPatch) {
       return badRequestJson("invalid_personal_service_update", "请提供要更新的个人账号服务配置");
     }
@@ -1261,8 +1263,8 @@ export async function DELETE(request: Request) {
     if (!accountId && !authUserId) {
       return badRequestJson("invalid_account", "请选择要删除的账号");
     }
-    if (accountId && !isMerchantNumericId(accountId)) {
-      return badRequestJson("invalid_account_id", "ID 必须是 8 位数字");
+    if (accountType === "merchant" && accountId && !isMerchantNumericId(accountId)) {
+      return badRequestJson("invalid_account_id", "商户 ID 必须是 8 位数字");
     }
 
     const codeError = await verifyAccountDeleteCode(code);

@@ -76,8 +76,8 @@ export async function resolvePersonalAccountSessionFromRequest(request: Request)
   user = (await loadFreshAuthUser(adminSupabase, userId)) ?? user;
 
   const identity = await resolvePlatformAccountIdentityForUser(adminSupabase, user);
-  const accountId = trimText(identity.accountId, 32);
-  if (identity.accountType !== "personal" || !/^\d{8}$/.test(accountId)) return null;
+  const accountId = trimText(identity.accountId, 128) || userId;
+  if (identity.accountType !== "personal") return null;
   const serviceConfig = readPersonalAccountServiceConfigFromMetadata(user);
 
   return {

@@ -41,6 +41,19 @@ test("platform account type hints use metadata keys instead of numeric ranges", 
   );
 });
 
+test("personal account metadata can use non-numeric ids when type is explicit", () => {
+  const user = {
+    user_metadata: {
+      account_type: "personal",
+      account_id: "personal-min",
+      personal_id: "personal-min",
+    },
+  };
+
+  assert.equal(readPlatformAccountTypeHintFromMetadata(user), "personal");
+  assert.equal(readPlatformAccountIdFromMetadata(user), "personal-min");
+});
+
 test("platform account metadata patch keeps mirrored account fields", () => {
   const patch = buildPlatformAccountMetadataPatch(
     {
@@ -56,4 +69,20 @@ test("platform account metadata patch keeps mirrored account fields", () => {
   assert.equal(patch.user_metadata?.merchant_id, "10000001");
   assert.equal(patch.user_metadata?.login_id, "10000001");
   assert.equal(patch.user_metadata?.username, "tester");
+});
+
+test("personal account metadata patch preserves non-numeric account ids", () => {
+  const patch = buildPlatformAccountMetadataPatch(
+    {
+      user_metadata: {},
+      app_metadata: {},
+    },
+    "personal",
+    "personal-min",
+  );
+
+  assert.equal(patch.user_metadata?.account_type, "personal");
+  assert.equal(patch.user_metadata?.account_id, "personal-min");
+  assert.equal(patch.user_metadata?.personal_id, "personal-min");
+  assert.equal(patch.user_metadata?.login_id, "personal-min");
 });

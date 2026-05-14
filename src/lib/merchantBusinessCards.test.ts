@@ -52,6 +52,7 @@ test("default business card draft prefills merchant profile fields", () => {
   assert.equal(draft.backgroundImageX, 0);
   assert.equal(draft.backgroundImageY, 0);
   assert.equal(draft.backgroundImageScale, 1);
+  assert.equal(draft.cornerMode, "rounded");
   assert.equal(draft.contacts.contactName, "felix");
   assert.equal(draft.contacts.phone, "0034633130577");
   assert.deepEqual(draft.contacts.phones, ["0034633130577"]);
@@ -87,6 +88,26 @@ test("normalizeMerchantBusinessCardDraft preserves link mode", () => {
   assert.equal(draft.name, "fafona card");
   assert.equal(draft.contacts.phone, "111");
   assert.deepEqual(draft.contacts.phones, ["111", "222"]);
+});
+
+test("normalizeMerchantBusinessCardDraft preserves intentionally empty business card name", () => {
+  const draft = normalizeMerchantBusinessCardDraft({
+    name: "",
+  });
+
+  assert.equal(draft.name, "");
+});
+
+test("normalizeMerchantBusinessCardDraft preserves square card frame corners", () => {
+  const draft = normalizeMerchantBusinessCardDraft({
+    cornerMode: "square",
+  });
+  const invalidDraft = normalizeMerchantBusinessCardDraft({
+    cornerMode: "soft",
+  });
+
+  assert.equal(draft.cornerMode, "square");
+  assert.equal(invalidDraft.cornerMode, "rounded");
 });
 
 test("normalizeMerchantBusinessCardDraft keeps at most two phones", () => {

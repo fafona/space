@@ -60,7 +60,7 @@ function normalizeBadgeCount(value: unknown) {
   return Math.max(0, Math.min(999, numeric));
 }
 
-function normalizePlatform(value: unknown): MerchantNativePushPlatform {
+function normalizePlatform(): MerchantNativePushPlatform {
   return "android";
 }
 
@@ -81,7 +81,7 @@ function normalizeRecord(value: unknown): MerchantNativePushTokenRecord | null {
   const nowIso = new Date().toISOString();
   return {
     token,
-    platform: normalizePlatform(source.platform),
+    platform: normalizePlatform(),
     merchantId,
     merchantName: trimText(source.merchantName) || merchantId,
     merchantEmail: normalizeEmail(source.merchantEmail),
@@ -140,7 +140,7 @@ export function upsertMerchantNativePushToken(
   const previous = payload.tokens.find((item) => item.token === token) ?? null;
   const nextRecord: MerchantNativePushTokenRecord = {
     token,
-    platform: normalizePlatform(input.platform),
+    platform: normalizePlatform(),
     merchantId,
     merchantName: trimText(input.merchantName) || previous?.merchantName || merchantId,
     merchantEmail: normalizeEmail(input.merchantEmail) || previous?.merchantEmail || "",

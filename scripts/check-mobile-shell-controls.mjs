@@ -47,7 +47,7 @@ async function waitForVisibleFlag(page) {
   );
 }
 
-async function waitForMockAvatarCount(page, expectedCount) {
+async function waitForTopMockAvatarCount(page, expectedCount) {
   await page.waitForFunction(
     (expected) => {
       const buttons = Array.from(document.querySelectorAll("button"))
@@ -94,14 +94,8 @@ function countMockAvatarButtons(buttons) {
   return buttons.filter((button) => button.text === "AB").length;
 }
 
-async function assertNoWorkspaceCtaInAccountPanel(page) {
-  const avatarButton = page
-    .locator("button")
-    .filter({ hasText: /^AB$/ })
-    .first();
-  await avatarButton.click();
-  await page.waitForTimeout(300);
-  const panelCtas = await page.locator("a, button").evaluateAll((nodes) =>
+async function assertNoWorkspaceCtaVisible(page) {
+  const visibleCtas = await page.locator("a, button").evaluateAll((nodes) =>
     nodes
       .map((node) => {
         const rect = node.getBoundingClientRect();
@@ -115,9 +109,9 @@ async function assertNoWorkspaceCtaInAccountPanel(page) {
       .map((item) => item.text),
   );
   assert(
-    !panelCtas.some((text) => text.includes("进入后台") || text.includes("进入个人中心")),
-    "Expected the public account panel not to show a workspace entry CTA.",
-    panelCtas,
+    !visibleCtas.some((text) => text.includes("进入后台") || text.includes("进入个人中心")),
+    "Expected the public Faolla shell not to show a workspace entry CTA.",
+    visibleCtas,
   );
 }
 
@@ -188,14 +182,14 @@ async function main() {
     await installSessionMocks(page);
 
     await page.goto(buildUrl("/", { appShell: "faolla" }), { waitUntil: "domcontentloaded", timeout: 60_000 });
-    await waitForMockAvatarCount(page, 1);
+    await waitForTopMockAvatarCount(page, 0);
     const appShellButtons = await readVisibleTopButtons(page);
     assert(
-      countMockAvatarButtons(appShellButtons) === 1,
-      "Expected the embedded Faolla shell home to show exactly one mocked avatar.",
+      countMockAvatarButtons(appShellButtons) === 0,
+      "Expected the embedded Faolla shell home not to show a login avatar.",
       appShellButtons,
     );
-    await assertNoWorkspaceCtaInAccountPanel(page);
+    await assertNoWorkspaceCtaVisible(page);
 
     await page.close();
     page = await browser.newPage(mobilePageOptions);
@@ -226,9 +220,9 @@ async function main() {
           baseUrl,
           checks: [
             "mobile-language-switcher",
-            "single-app-shell-avatar",
+            "no-app-shell-avatar",
             "no-extra-personal-shell-avatar",
-            "no-public-account-workspace-cta",
+            "no-public-workspace-cta",
           ],
         },
         null,

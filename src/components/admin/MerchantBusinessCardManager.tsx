@@ -136,6 +136,10 @@ const BUSINESS_CARD_DRAFT_STORAGE_PREFIX = "merchant-space:business-card-draft:v
 const FONT_SIZE_OPTIONS = [12, 14, 16, 18, 20, 24, 28, 32, 36, 42, 48, 56, 64, 72, 80];
 const TYPOGRAPHY_FONT_SIZE_INPUT_KEY = "merchant-business-card-typography-font-size";
 const QR_MIN_READABLE_SIZE = 96;
+const MIN_CARD_FRAME_WIDTH = 320;
+const MAX_CARD_FRAME_WIDTH = 1600;
+const MIN_CARD_FRAME_HEIGHT = 180;
+const MAX_CARD_FRAME_HEIGHT = 1600;
 const ALL_TYPOGRAPHY_KEYS: Array<keyof MerchantBusinessCardDraft["typography"]> = [
   "name",
   "title",
@@ -792,6 +796,7 @@ function CardSurface({
     .join("\n");
   const shouldShowQr = draft.showQr && !!qrCodeUrl;
   const exportHasBackgroundImage = isExport && !!normalizeText(draft.backgroundImageUrl);
+  const cardFrameBorderRadius = draft.cornerMode === "square" ? "0px" : "28px";
   return (
     <div style={{ width: `${draft.width * scale}px`, height: `${draft.height * scale}px` }}>
       <div
@@ -802,7 +807,7 @@ function CardSurface({
           transform: `scale(${scale})`,
           transformOrigin: "top left",
           overflow: "hidden",
-          borderRadius: "28px",
+          borderRadius: cardFrameBorderRadius,
           border: isExport ? "none" : "1px solid rgba(15,23,42,.12)",
           background: "transparent",
           boxShadow: isExport ? "none" : "0 24px 60px rgba(15,23,42,.18)",
@@ -976,16 +981,18 @@ function ContactCardSurface({
 }) {
   const rows = buildContactPreviewRows(name, contacts, contactFieldOrder);
   const invoiceRows = buildInvoicePreviewRows(invoice);
-  const displayName = normalizeText(name) || "未命名名片";
+  const displayName = normalizeText(name);
   const hasImage = Boolean(normalizeText(imageUrl));
   const domainLabel = normalizeText(targetUrl).replace(/^https?:\/\//i, "");
 
   return (
     <div className="mx-auto w-full max-w-[430px] rounded-[32px] border border-white/70 bg-white/95 p-5 shadow-[0_28px_90px_rgba(15,23,42,.12)]">
-      <div className="mb-4 text-center">
-        <div className="text-[11px] font-medium uppercase tracking-[0.24em] text-slate-400">FAOLLA CARD</div>
-        <div className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">{displayName}</div>
-      </div>
+      {displayName ? (
+        <div className="mb-4 text-center">
+          <div className="text-[11px] font-medium uppercase tracking-[0.24em] text-slate-400">FAOLLA CARD</div>
+          <div className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">{displayName}</div>
+        </div>
+      ) : null}
 
       {hasImage ? (
         <div
@@ -993,7 +1000,7 @@ function ContactCardSurface({
           style={{ height: `${imageHeight}px` }}
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={imageUrl} alt={displayName} className="block h-full w-full object-cover" />
+          <img src={imageUrl} alt={displayName || "联系卡展示图"} className="block h-full w-full object-cover" />
         </div>
       ) : null}
 
@@ -1290,7 +1297,7 @@ export default function MerchantBusinessCardManager({
       origin: resolveMerchantBusinessCardShareOrigin(undefined, websiteUrl),
       shareKey: activeLinkShareKey,
       targetUrl: websiteUrl,
-      name: normalizeText(draft.name) || "商户名片",
+      name: normalizeText(draft.name),
       contact: buildShareContactPayload({
         name: draft.name,
         title: draft.title,
@@ -1805,7 +1812,8 @@ export default function MerchantBusinessCardManager({
 
   const previewMode = previewAsset?.mode || draft.mode;
   const previewTargetUrl = normalizeText(previewAsset?.targetUrl) || websiteUrl;
-  const previewName = normalizeText(previewAsset?.name) || normalizeText(draft.name) || "名片预览";
+  const previewCardName = previewAsset ? normalizeText(previewAsset.name) : normalizeText(draft.name);
+  const previewName = previewCardName || "名片预览";
   const previewTitle = normalizeText(previewAsset?.title) || normalizeText(draft.title);
   const previewContacts = previewAsset?.contacts || draft.contacts;
   const previewContactFieldOrder = previewAsset?.contactFieldOrder || draft.contactFieldOrder;
@@ -1843,7 +1851,9 @@ export default function MerchantBusinessCardManager({
               <div className="space-y-4 p-4">
                 <button
                   type="button"
-                  className="block w-full overflow-hidden rounded-2xl border bg-transparent text-left"
+                  className={`block w-full overflow-hidden border bg-transparent text-left ${
+                    card.cornerMode === "square" ? "rounded-none" : "rounded-2xl"
+                  }`}
                   onClick={() => {
                     setPreviewAsset(card);
                     setPreviewOpen(true);
@@ -2151,45 +2161,61 @@ export default function MerchantBusinessCardManager({
                       </div>
                       <label className="block text-xs text-slate-600">职位<input className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.title} onFocus={() => setSingleSelectedField("title")} onChange={(event) => applyDraft((current) => ({ ...current, title: event.target.value }))} /></label>
                     </div>
-                    <div className="grid gap-3 md:grid-cols-3">
+                    <div className="grid gap-3 md:grid-cols-4">
+                      <label className="block text-xs text-slate-600">
+                        名片框
+                        <select
+                          className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm"
+                          value={draft.cornerMode === "square" ? "square" : "rounded"}
+                          onChange={(event) =>
+                            applyDraft((current) => ({
+                              ...current,
+                              cornerMode: event.target.value === "square" ? "square" : "rounded",
+                            }))
+                          }
+                        >
+                          <option value="rounded">圆角</option>
+                          <option value="square">方角</option>
+                        </select>
+                      </label>
                       <label className="block text-xs text-slate-600">比例<select className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.ratioMode} onChange={(event) => applyDraft((current) => ({ ...current, ratioMode: event.target.value as MerchantBusinessCardDraft["ratioMode"], ...(() => resolveRatioDimensions(event.target.value as MerchantBusinessCardDraft["ratioMode"], current.width, current.height))() }))}>{MERCHANT_BUSINESS_CARD_RATIO_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}<option value="custom">自定义</option></select></label>
                       <label className="block text-xs text-slate-600">
-                        宽度
+                        名片框宽度
                         <input
                           type="number"
                           inputMode="numeric"
                           step={1}
-                          min={320}
-                          max={1600}
+                          min={MIN_CARD_FRAME_WIDTH}
+                          max={MAX_CARD_FRAME_WIDTH}
                           className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm"
                           value={getNumberInputValue("card-width", draft.width)}
                           onChange={(event) =>
-                            handleNumberInputChange("card-width", event.target.value, draft.width, 320, 1600, (value) =>
+                            handleNumberInputChange("card-width", event.target.value, draft.width, MIN_CARD_FRAME_WIDTH, MAX_CARD_FRAME_WIDTH, (value) =>
                               handleSize(value, "width"),
                             )
                           }
-                          onBlur={() => commitNumberInput("card-width", draft.width, 320, 1600, (value) => handleSize(value, "width"))}
+                          onBlur={() => commitNumberInput("card-width", draft.width, MIN_CARD_FRAME_WIDTH, MAX_CARD_FRAME_WIDTH, (value) => handleSize(value, "width"))}
                           onKeyDown={(event) => {
                             if (event.key === "Enter") event.currentTarget.blur();
                           }}
                         />
                       </label>
                       <label className="block text-xs text-slate-600">
-                        高度
+                        名片框高度
                         <input
                           type="number"
                           inputMode="numeric"
                           step={1}
-                          min={180}
-                          max={1600}
+                          min={MIN_CARD_FRAME_HEIGHT}
+                          max={MAX_CARD_FRAME_HEIGHT}
                           className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm"
                           value={getNumberInputValue("card-height", draft.height)}
                           onChange={(event) =>
-                            handleNumberInputChange("card-height", event.target.value, draft.height, 180, 1600, (value) =>
+                            handleNumberInputChange("card-height", event.target.value, draft.height, MIN_CARD_FRAME_HEIGHT, MAX_CARD_FRAME_HEIGHT, (value) =>
                               handleSize(value, "height"),
                             )
                           }
-                          onBlur={() => commitNumberInput("card-height", draft.height, 180, 1600, (value) => handleSize(value, "height"))}
+                          onBlur={() => commitNumberInput("card-height", draft.height, MIN_CARD_FRAME_HEIGHT, MAX_CARD_FRAME_HEIGHT, (value) => handleSize(value, "height"))}
                           onKeyDown={(event) => {
                             if (event.key === "Enter") event.currentTarget.blur();
                           }}
@@ -2807,7 +2833,7 @@ export default function MerchantBusinessCardManager({
                       <div className="mb-2 text-xs font-semibold text-slate-700">联系卡预览</div>
                       <div className="flex justify-center rounded-xl border border-slate-200 bg-slate-50 p-3">
                         <ContactCardSurface
-                          name={normalizeText(draft.name) || "名片预览"}
+                          name={normalizeText(draft.name)}
                           targetUrl={websiteUrl}
                           contacts={draft.contacts}
                           invoice={draft.invoice}
@@ -2887,7 +2913,7 @@ export default function MerchantBusinessCardManager({
                   <div className="flex min-h-full items-start justify-center rounded-3xl border border-white/10 bg-white/5 p-4">
                     <div className="flex w-full max-w-[430px] flex-col gap-4">
                       <ContactCardSurface
-                        name={previewName}
+                        name={previewCardName}
                         targetUrl={previewTargetUrl}
                         contacts={previewContacts}
                         invoice={previewAsset?.invoice || draft.invoice}
@@ -2979,11 +3005,45 @@ export default function MerchantBusinessCardManager({
     ratioMode: MerchantBusinessCardDraft["ratioMode"],
     width: number,
     height: number,
+    anchor: "width" | "height" = "width",
   ) {
-    if (ratioMode === "custom") return { width, height };
+    const normalizedWidth = clamp(Math.round(width), MIN_CARD_FRAME_WIDTH, MAX_CARD_FRAME_WIDTH);
+    const normalizedHeight = clamp(Math.round(height), MIN_CARD_FRAME_HEIGHT, MAX_CARD_FRAME_HEIGHT);
+    if (ratioMode === "custom") return { width: normalizedWidth, height: normalizedHeight };
     const ratio = MERCHANT_BUSINESS_CARD_RATIO_OPTIONS.find((item) => item.id === ratioMode);
-    if (!ratio) return { width, height };
-    return { width, height: Math.max(180, Math.round((width * ratio.height) / ratio.width)) };
+    if (!ratio) return { width: normalizedWidth, height: normalizedHeight };
+
+    if (anchor === "height") {
+      let nextHeight = normalizedHeight;
+      let nextWidth = Math.round((nextHeight * ratio.width) / ratio.height);
+      if (nextWidth < MIN_CARD_FRAME_WIDTH) {
+        nextWidth = MIN_CARD_FRAME_WIDTH;
+        nextHeight = Math.round((nextWidth * ratio.height) / ratio.width);
+      }
+      if (nextWidth > MAX_CARD_FRAME_WIDTH) {
+        nextWidth = MAX_CARD_FRAME_WIDTH;
+        nextHeight = Math.round((nextWidth * ratio.height) / ratio.width);
+      }
+      return {
+        width: clamp(nextWidth, MIN_CARD_FRAME_WIDTH, MAX_CARD_FRAME_WIDTH),
+        height: clamp(nextHeight, MIN_CARD_FRAME_HEIGHT, MAX_CARD_FRAME_HEIGHT),
+      };
+    }
+
+    let nextWidth = normalizedWidth;
+    let nextHeight = Math.round((nextWidth * ratio.height) / ratio.width);
+    if (nextHeight < MIN_CARD_FRAME_HEIGHT) {
+      nextHeight = MIN_CARD_FRAME_HEIGHT;
+      nextWidth = Math.round((nextHeight * ratio.width) / ratio.height);
+    }
+    if (nextHeight > MAX_CARD_FRAME_HEIGHT) {
+      nextHeight = MAX_CARD_FRAME_HEIGHT;
+      nextWidth = Math.round((nextHeight * ratio.width) / ratio.height);
+    }
+    return {
+      width: clamp(nextWidth, MIN_CARD_FRAME_WIDTH, MAX_CARD_FRAME_WIDTH),
+      height: clamp(nextHeight, MIN_CARD_FRAME_HEIGHT, MAX_CARD_FRAME_HEIGHT),
+    };
   }
 
   function getNumberInputValue(key: string, value: number) {
@@ -3047,6 +3107,7 @@ export default function MerchantBusinessCardManager({
         current.ratioMode,
         field === "width" ? nextValue : current.width,
         field === "height" ? nextValue : current.height,
+        field,
       );
       return { ...current, width: next.width, height: next.height };
     });
@@ -3471,7 +3532,7 @@ export default function MerchantBusinessCardManager({
       nextDraft.mode === "link"
         ? await buildShareBundle({
             targetUrl: websiteUrl,
-            cardName: normalizeText(nextDraft.name) || "商户名片",
+            cardName: normalizeText(nextDraft.name),
             shareKey: resolvedShareKey,
             card: existingCard,
             renderedImageUrl: imageUrl,
@@ -3528,7 +3589,7 @@ export default function MerchantBusinessCardManager({
     try {
       const { shareUrl } = await buildShareBundle({
         targetUrl,
-        cardName: normalizeText(card.name) || "商户名片",
+        cardName: normalizeText(card.name),
         shareKey: normalizeText(card.shareKey),
         card,
         contactPageImageUrl: normalizeText(card.contactPageImageUrl),

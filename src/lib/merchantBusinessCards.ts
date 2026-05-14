@@ -123,6 +123,7 @@ export type MerchantBusinessCardContactOnlyFields = Record<
   Partial<Record<MerchantBusinessCardPrimaryContactOnlyKey, boolean>>;
 
 export type MerchantBusinessCardMode = "image" | "link";
+export type MerchantBusinessCardCornerMode = "rounded" | "square";
 
 export type MerchantBusinessCardDraft = {
   mode: MerchantBusinessCardMode;
@@ -138,6 +139,7 @@ export type MerchantBusinessCardDraft = {
   backgroundColorOpacity: number;
   width: number;
   height: number;
+  cornerMode?: MerchantBusinessCardCornerMode;
   ratioMode: MerchantBusinessCardRatioOptionId;
   title: string;
   websiteLabel: string;
@@ -448,6 +450,7 @@ export function createDefaultMerchantBusinessCardDraft(
     backgroundColorOpacity: 1,
     width: 680,
     height: 432,
+    cornerMode: "rounded",
     ratioMode: "85:54",
     title: "",
     websiteLabel: "",
@@ -557,7 +560,7 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
 
   return {
     mode: normalizeText((source as { mode?: unknown }).mode) === "link" ? "link" : "image",
-    name: normalizeText(source.name) || fallback.name,
+    name: typeof source.name === "string" ? normalizeText(source.name) : fallback.name,
     contactPageImageUrl: normalizeText((source as { contactPageImageUrl?: unknown }).contactPageImageUrl),
     contactPageImageHeight: clampInt(
       (source as { contactPageImageHeight?: unknown }).contactPageImageHeight,
@@ -582,6 +585,7 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
     backgroundColorOpacity: clampOpacity(source.backgroundColorOpacity, fallback.backgroundColorOpacity),
     width: clampInt(source.width, fallback.width, 320, 1600),
     height: clampInt(source.height, fallback.height, 180, 1600),
+    cornerMode: normalizeText((source as { cornerMode?: unknown }).cornerMode) === "square" ? "square" : fallback.cornerMode,
     ratioMode:
       ratioMode === "custom" || MERCHANT_BUSINESS_CARD_RATIO_OPTIONS.some((item) => item.id === ratioMode)
         ? ratioMode

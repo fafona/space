@@ -6,6 +6,7 @@ import {
 import {
   buildPlatformAccountMetadataPatch,
   isPersonalAccountNumericId,
+  normalizePlatformAccountId,
   normalizePlatformAccountNumericId,
   readPlatformAccountIdFromMetadata,
   readPlatformAccountTypeHintFromMetadata,
@@ -123,7 +124,8 @@ async function persistPlatformAccountMetadata(
   accountId: string,
 ) {
   const userId = trimText(user?.id);
-  const normalizedAccountId = normalizePlatformAccountNumericId(accountId);
+  const normalizedAccountId =
+    accountType === "personal" ? normalizePlatformAccountId(accountId) : normalizePlatformAccountNumericId(accountId);
   if (!userId || !normalizedAccountId) return;
 
   const patch = buildPlatformAccountMetadataPatch(user, accountType, normalizedAccountId);
@@ -161,7 +163,7 @@ export async function resolvePlatformAccountIdentityForUser(
     };
   }
 
-  let personalAccountId = normalizePlatformAccountNumericId(options.preferredAccountId) || currentAccountId;
+  let personalAccountId = normalizePlatformAccountId(options.preferredAccountId) || currentAccountId;
   if (!personalAccountId) {
     personalAccountId = supabase ? await allocateSequentialPersonalAccountId(supabase) : "";
   }

@@ -1,5 +1,3 @@
-import { runMerchantBookingAutomationForAllSites } from "./merchantBookings.server";
-
 const DEFAULT_AUTOMATION_INTERVAL_MS = 60_000;
 const STARTED_KEY = "__merchantBookingAutomationRuntimeStarted";
 const RUNNING_KEY = "__merchantBookingAutomationRuntimeRunning";
@@ -10,6 +8,8 @@ const LAST_SUCCESS_AT_KEY = "__merchantBookingAutomationRuntimeLastSuccessAt";
 const LAST_ERROR_AT_KEY = "__merchantBookingAutomationRuntimeLastErrorAt";
 const LAST_ERROR_MESSAGE_KEY = "__merchantBookingAutomationRuntimeLastErrorMessage";
 const LAST_RESULT_KEY = "__merchantBookingAutomationRuntimeLastResult";
+
+type MerchantBookingAutomationResult = unknown;
 
 function readAutomationIntervalMs() {
   const raw = Number.parseInt(String(process.env.MERCHANT_BOOKING_AUTOMATION_INTERVAL_MS ?? "").trim(), 10);
@@ -27,7 +27,7 @@ function getAutomationStore() {
     [LAST_SUCCESS_AT_KEY]?: string;
     [LAST_ERROR_AT_KEY]?: string;
     [LAST_ERROR_MESSAGE_KEY]?: string;
-    [LAST_RESULT_KEY]?: Awaited<ReturnType<typeof runMerchantBookingAutomationForAllSites>>;
+    [LAST_RESULT_KEY]?: MerchantBookingAutomationResult;
   };
 }
 
@@ -37,6 +37,11 @@ async function runAutomationTick() {
   store[RUNNING_KEY] = true;
   store[LAST_STARTED_AT_KEY] = new Date().toISOString();
   try {
+    const { runMerchantBookingAutomationForAllSites } = (await import(
+      /* webpackIgnore: true */ "./merchantBookings.server"
+    )) as {
+      runMerchantBookingAutomationForAllSites: () => Promise<MerchantBookingAutomationResult>;
+    };
     const result = await runMerchantBookingAutomationForAllSites();
     const completedAt = new Date().toISOString();
     store[LAST_RESULT_KEY] = result;

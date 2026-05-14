@@ -32,6 +32,10 @@ export function normalizePlatformAccountNumericId(value: unknown) {
   return PLATFORM_ACCOUNT_ID_REGEX.test(normalized) ? normalized : "";
 }
 
+export function normalizePlatformAccountId(value: unknown) {
+  return trimText(value).replace(/\s+/g, "");
+}
+
 export function isPersonalAccountNumericId(value: unknown) {
   const normalized = normalizePlatformAccountNumericId(value);
   if (!normalized) return false;
@@ -77,7 +81,8 @@ export function readPlatformAccountTypeHintFromMetadata(
 }
 
 export function readPlatformAccountIdFromMetadata(user: MerchantAuthUserSummary | null | undefined) {
-  return normalizePlatformAccountNumericId(
+  const accountType = readPlatformAccountTypeHintFromMetadata(user, "");
+  const rawValue =
     readMetadataString(
       user?.user_metadata,
       "account_id",
@@ -90,19 +95,21 @@ export function readPlatformAccountIdFromMetadata(user: MerchantAuthUserSummary 
       "login_id",
       "loginId",
     ) ||
-      readMetadataString(
-        user?.app_metadata,
-        "account_id",
-        "accountId",
-        "personal_id",
-        "personalId",
-        "merchant_id",
-        "merchantId",
-        "merchantID",
-        "login_id",
-        "loginId",
-      ),
-  );
+    readMetadataString(
+      user?.app_metadata,
+      "account_id",
+      "accountId",
+      "personal_id",
+      "personalId",
+      "merchant_id",
+      "merchantId",
+      "merchantID",
+      "login_id",
+      "loginId",
+    );
+  return accountType === "personal"
+    ? normalizePlatformAccountId(rawValue)
+    : normalizePlatformAccountNumericId(rawValue);
 }
 
 export function readPlatformUsernameFromMetadata(user: MerchantAuthUserSummary | null | undefined) {
@@ -117,7 +124,8 @@ export function buildPlatformAccountMetadataPatch(
   accountType: PlatformAccountType,
   accountId: string,
 ) {
-  const normalizedAccountId = normalizePlatformAccountNumericId(accountId);
+  const normalizedAccountId =
+    accountType === "personal" ? normalizePlatformAccountId(accountId) : normalizePlatformAccountNumericId(accountId);
   const userMetadata = cloneMetadata(user?.user_metadata);
   const appMetadata = cloneMetadata(user?.app_metadata);
   const nextLoginId = normalizedAccountId || trimText(userMetadata.login_id) || trimText(userMetadata.loginId);
