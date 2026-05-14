@@ -1,7 +1,9 @@
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
+  MERCHANT_BUSINESS_CARD_CONTACT_ONLY_FIELD_KEYS,
   MERCHANT_BUSINESS_CARD_PHONE_LIMIT,
   normalizeMerchantBusinessCardContactFieldOrder,
+  type MerchantBusinessCardContactOnlyFieldKey,
   type MerchantBusinessCardContactOnlyFields,
   type MerchantBusinessCardContactDisplayKey,
 } from "./merchantBusinessCards";
@@ -160,26 +162,9 @@ function normalizeContactPhoneList(value: unknown) {
 
 function normalizeContactOnlyFields(value: unknown) {
   if (!value || typeof value !== "object") return undefined;
-  const source = value as Partial<Record<MerchantBusinessCardContactDisplayKey, unknown>>;
+  const source = value as Partial<Record<MerchantBusinessCardContactOnlyFieldKey, unknown>>;
   const normalized = Object.fromEntries(
-    ([
-      "contactName",
-      "phone",
-      "email",
-      "address",
-      "wechat",
-      "whatsapp",
-      "twitter",
-      "weibo",
-      "telegram",
-      "linkedin",
-      "discord",
-      "facebook",
-      "instagram",
-      "tiktok",
-      "douyin",
-      "xiaohongshu",
-    ] as const)
+    MERCHANT_BUSINESS_CARD_CONTACT_ONLY_FIELD_KEYS
       .filter((key) => source[key] === true)
       .map((key) => [key, true]),
   ) as Partial<MerchantBusinessCardContactOnlyFields>;
@@ -802,25 +787,8 @@ export function parseMerchantBusinessCardShareParams(
             .map((item) => item.trim())
             .filter(Boolean)
             .filter(
-              (item): item is MerchantBusinessCardContactDisplayKey =>
-                [
-                  "contactName",
-                  "phone",
-                  "email",
-                  "address",
-                  "wechat",
-                  "whatsapp",
-                  "twitter",
-                  "weibo",
-                  "telegram",
-                  "linkedin",
-                  "discord",
-                  "facebook",
-                  "instagram",
-                  "tiktok",
-                  "douyin",
-                  "xiaohongshu",
-                ].includes(item as MerchantBusinessCardContactDisplayKey),
+              (item): item is MerchantBusinessCardContactOnlyFieldKey =>
+                (MERCHANT_BUSINESS_CARD_CONTACT_ONLY_FIELD_KEYS as readonly string[]).includes(item),
             ) ?? []
           ).map((key) => [key, true]),
         ) as Partial<MerchantBusinessCardContactOnlyFields>,

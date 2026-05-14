@@ -240,6 +240,7 @@ test("normalizeMerchantBusinessCardShareContact keeps useful contact fields and 
         invoiceAddress: " Sevilla, Spain ",
         douyin: " fafona_douyin ",
         contactOnlyFields: {
+          merchantName: true,
           douyin: true,
           phone: false,
         },
@@ -257,6 +258,7 @@ test("normalizeMerchantBusinessCardShareContact keeps useful contact fields and 
       invoiceAddress: "Sevilla, Spain",
       douyin: "fafona_douyin",
       contactOnlyFields: {
+        merchantName: true,
         douyin: true,
       },
       websiteUrl: "https://fafona.faolla.com/",
@@ -451,16 +453,18 @@ test("share helpers preserve contact-only flags in legacy query params", () => {
       twitter: "MinCai361325",
       instagram: "caimin00x",
       contactOnlyFields: {
+        merchantName: true,
         twitter: true,
         instagram: true,
       },
     },
   });
 
-  assert.match(shareUrl, /contactOnly=twitter%2Cinstagram/);
+  assert.match(shareUrl, /contactOnly=merchantName%2Ctwitter%2Cinstagram/);
 
   const parsed = parseMerchantBusinessCardShareParams(new URL(shareUrl).searchParams, "https://faolla.com");
   assert.deepEqual(parsed?.contact?.contactOnlyFields, {
+    merchantName: true,
     twitter: true,
     instagram: true,
   });

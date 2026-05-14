@@ -62,6 +62,7 @@ test("default business card draft prefills merchant profile fields", () => {
   });
   assert.deepEqual(draft.contactFieldOrder.slice(0, 4), ["contactName", "phone", "email", "address"]);
   assert.deepEqual(draft.textLayout.douyin, { x: 360, y: 310 });
+  assert.equal(draft.contactOnlyFields.merchantName, false);
   assert.equal(draft.contactOnlyFields.phone, false);
   assert.equal(draft.contactOnlyFields.douyin, false);
   assert.equal(draft.fieldTypography.merchantName.fontSize, 36);
@@ -138,6 +139,7 @@ test("normalizeMerchantBusinessCardDraft preserves douyin and contact-only setti
       tiktok: "fafona_tiktok",
     },
     contactOnlyFields: {
+      merchantName: true,
       phone: true,
       douyin: true,
     },
@@ -145,6 +147,7 @@ test("normalizeMerchantBusinessCardDraft preserves douyin and contact-only setti
 
   assert.equal(draft.contacts.douyin, "fafona_douyin");
   assert.equal(draft.contacts.tiktok, "fafona_tiktok");
+  assert.equal(draft.contactOnlyFields.merchantName, true);
   assert.equal(draft.contactOnlyFields.phone, true);
   assert.equal(draft.contactOnlyFields.douyin, true);
   assert.equal(draft.contactOnlyFields.tiktok, false);

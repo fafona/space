@@ -751,7 +751,7 @@ function CardSurface({
         {isExport ? null : <div className="absolute inset-0 bg-white/12" />}
         {TEXT_LAYOUT_FIELDS.filter(
           ({ key }) =>
-            key === "merchantName" ||
+            (key === "merchantName" && !draft.contactOnlyFields.merchantName && draft.name) ||
             (key === "title" && draft.title) ||
             (key === "website" && websiteText),
         ).map(({ key }) => {
@@ -1958,7 +1958,20 @@ export default function MerchantBusinessCardManager({
                       </div>
                     </div>
                     <div className="grid gap-3 md:grid-cols-2">
-                      <label className="block text-xs text-slate-600">名片名称<input className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.name} onFocus={() => setSingleSelectedField("merchantName")} onChange={(event) => applyDraft((current) => ({ ...current, name: event.target.value }))} /></label>
+                      <div className="block text-xs text-slate-600">
+                        <label className="block">
+                          名片名称
+                          <input className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.name} onFocus={() => setSingleSelectedField("merchantName")} onChange={(event) => applyDraft((current) => ({ ...current, name: event.target.value }))} />
+                        </label>
+                        <label className="mt-2 inline-flex items-center gap-1.5 whitespace-nowrap rounded border bg-slate-50 px-2.5 py-1.5 text-[11px] text-slate-700">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(draft.contactOnlyFields.merchantName)}
+                            onChange={(event) => updateContactOnlyField("merchantName", event.target.checked)}
+                          />
+                          仅联系卡展示
+                        </label>
+                      </div>
                       <label className="block text-xs text-slate-600">职位<input className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.title} onFocus={() => setSingleSelectedField("title")} onChange={(event) => applyDraft((current) => ({ ...current, title: event.target.value }))} /></label>
                     </div>
                     <div className="grid gap-3 md:grid-cols-3">
@@ -3303,9 +3316,10 @@ export default function MerchantBusinessCardManager({
     targetUrl: string;
   }) {
     const orderedKeys = normalizeMerchantBusinessCardContactFieldOrder(input.contactFieldOrder);
-    const contactOnlyFields = Object.fromEntries(
-      orderedKeys.filter((key) => input.contactOnlyFields[key]).map((key) => [key, true]),
-    ) as Partial<MerchantBusinessCardDraft["contactOnlyFields"]>;
+    const contactOnlyFields = {
+      ...(input.contactOnlyFields.merchantName ? { merchantName: true } : {}),
+      ...Object.fromEntries(orderedKeys.filter((key) => input.contactOnlyFields[key]).map((key) => [key, true])),
+    } as Partial<MerchantBusinessCardDraft["contactOnlyFields"]>;
     const extraPhoneLines = normalizePhoneList(input.contacts.phones ?? [])
       .slice(1)
       .map((value, index) => `${index === 0 ? "工作" : `工作${index + 1}`}: ${value}`);

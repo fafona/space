@@ -106,10 +106,21 @@ export const MERCHANT_BUSINESS_CARD_CONTACT_FIELD_KEYS = [
   "discord",
 ] as const satisfies readonly MerchantBusinessCardContactDisplayKey[];
 
+export type MerchantBusinessCardPrimaryContactOnlyKey = "merchantName";
+export type MerchantBusinessCardContactOnlyFieldKey =
+  | MerchantBusinessCardPrimaryContactOnlyKey
+  | MerchantBusinessCardContactDisplayKey;
+
+export const MERCHANT_BUSINESS_CARD_CONTACT_ONLY_FIELD_KEYS = [
+  "merchantName",
+  ...MERCHANT_BUSINESS_CARD_CONTACT_FIELD_KEYS,
+] as const satisfies readonly MerchantBusinessCardContactOnlyFieldKey[];
+
 export type MerchantBusinessCardContactOnlyFields = Record<
   MerchantBusinessCardContactDisplayKey,
   boolean
->;
+> &
+  Partial<Record<MerchantBusinessCardPrimaryContactOnlyKey, boolean>>;
 
 export type MerchantBusinessCardMode = "image" | "link";
 
@@ -228,6 +239,7 @@ export function normalizeMerchantBusinessCardContactFieldOrder(value: unknown): 
 
 function createDefaultContactOnlyFields(): MerchantBusinessCardContactOnlyFields {
   return {
+    merchantName: false,
     contactName: false,
     phone: false,
     email: false,
@@ -592,6 +604,10 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
     },
     contactFieldOrder,
     contactOnlyFields: {
+      merchantName: normalizeBoolean(
+        contactOnlyFieldsSource.merchantName,
+        fallback.contactOnlyFields.merchantName ?? false,
+      ),
       contactName: normalizeBoolean(contactOnlyFieldsSource.contactName, fallback.contactOnlyFields.contactName),
       phone: normalizeBoolean(contactOnlyFieldsSource.phone, fallback.contactOnlyFields.phone),
       email: normalizeBoolean(contactOnlyFieldsSource.email, fallback.contactOnlyFields.email),
