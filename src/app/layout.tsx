@@ -119,7 +119,22 @@ const FAOLLA_APP_SHELL_PREPAINT_SCRIPT = `
     const isStandalone =
       window.matchMedia?.("(display-mode: standalone)")?.matches ||
       navigator.standalone === true;
-    const isAppShell = isExplicitAppShell || isStandalone || (params.get("nativeStart") || "").trim() === "1";
+    const isEmbedded = window.parent && window.parent !== window;
+    const nativeStart = (params.get("nativeStart") || "").trim() === "1";
+    const viewportWidth =
+      Number.isFinite(window.visualViewport?.width) && window.visualViewport.width > 0
+        ? window.visualViewport.width
+        : window.innerWidth;
+    if (isExplicitAppShell && !isEmbedded && !isStandalone && !nativeStart && viewportWidth > 768) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("appShell");
+      url.searchParams.delete("__faollaInlineBuild");
+      url.searchParams.delete("__faollaWebBuild");
+      url.searchParams.delete("nativeBuild");
+      window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+      return;
+    }
+    const isAppShell = isExplicitAppShell || isStandalone || nativeStart;
     if (!isAppShell) return;
     const pathname = window.location.pathname || "/";
     const isLaunch = pathname === "/launch";
@@ -134,7 +149,6 @@ const FAOLLA_APP_SHELL_PREPAINT_SCRIPT = `
     const launchColor = "#081121";
     const contentColor = "#f2f3f5";
     const paintReadyImmediately = isPublicShellPage;
-    const isEmbedded = window.parent && window.parent !== window;
     document.documentElement.dataset.faollaAppShell = "true";
     document.documentElement.dataset.faollaLaunch = isLaunch ? "true" : "false";
     if (isEmbedded || paintReadyImmediately) {
