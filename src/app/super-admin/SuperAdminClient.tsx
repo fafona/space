@@ -2592,18 +2592,18 @@ export default function SuperAdminClient() {
         ? {
             ...applyBackendProfileSnapshot(localSite, account.profileSnapshot, account.email),
             permissionConfig:
-              localSite.permissionConfig ??
               account.profileSnapshot?.permissionConfig ??
+              localSite.permissionConfig ??
               createDefaultMerchantPermissionConfig(),
             serviceExpiresAt:
-              localSite.serviceExpiresAt ??
               account.profileSnapshot?.serviceExpiresAt ??
+              localSite.serviceExpiresAt ??
               null,
             sortConfig:
-              localSite.sortConfig ??
               account.profileSnapshot?.sortConfig ??
+              localSite.sortConfig ??
               createDefaultMerchantSortConfig(),
-            status: localSite.status ?? account.profileSnapshot?.status ?? "online",
+            status: account.profileSnapshot?.status ?? localSite.status ?? "online",
             configHistory:
               account.profileConfigHistory?.length > 0
                 ? mergeMerchantConfigHistoryEntries(account.profileConfigHistory)
@@ -3268,7 +3268,7 @@ export default function SuperAdminClient() {
   const selectedMerchantDisplaySite = selectedMerchantRow?.site ?? null;
   const selectedMerchantSite =
     selectedMerchantRow?.hasLocalSite
-      ? state.sites.find((site) => site.id === selectedMerchantRow.site.id) ?? selectedMerchantRow.site
+      ? selectedMerchantRow.site ?? state.sites.find((site) => site.id === selectedMerchantRow.site.id) ?? null
       : null;
   const ensureSelectedMerchantConfigSite = () => {
     if (selectedMerchantSite) return selectedMerchantSite;

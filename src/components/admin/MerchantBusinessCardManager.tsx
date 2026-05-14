@@ -1126,6 +1126,7 @@ export default function MerchantBusinessCardManager({
   const [previewAsset, setPreviewAsset] = useState<MerchantBusinessCardAsset | null>(null);
   const [editingCardId, setEditingCardId] = useState<string | null>(null);
   const [deletingCardId, setDeletingCardId] = useState<string | null>(null);
+  const [copyingLinkCardId, setCopyingLinkCardId] = useState<string | null>(null);
   const [tip, setTip] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [isDraftSaving, setIsDraftSaving] = useState(false);
@@ -1903,10 +1904,11 @@ export default function MerchantBusinessCardManager({
                       </button>
                       <button
                         type="button"
-                        className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800"
+                        className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:cursor-wait disabled:opacity-60"
                         onClick={() => void copyCardLink(card)}
+                        disabled={copyingLinkCardId === card.id}
                       >
-                        复制联系卡链接
+                        {copyingLinkCardId === card.id ? "生成链接中..." : "复制联系卡链接"}
                       </button>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
@@ -3581,11 +3583,25 @@ export default function MerchantBusinessCardManager({
   }
 
   async function copyCardLink(card: MerchantBusinessCardAsset) {
+    if (copyingLinkCardId === card.id) return;
     const targetUrl = normalizeText(card.targetUrl);
     if (!targetUrl) {
       setTip("当前名片没有可复制的网站链接");
       return;
     }
+    const readyShareUrl = normalizeText(card.shareKey) ? resolveCardShortLink(card) : "";
+    if (readyShareUrl) {
+      try {
+        await copyTextToClipboard(readyShareUrl);
+        setTip("联系卡链接已复制，手机打开后可保存联系人");
+      } catch {
+        setTip("浏览器阻止自动复制，请手动复制上方短链");
+      }
+      return;
+    }
+
+    setCopyingLinkCardId(card.id);
+    setTip("正在生成联系卡链接...");
     try {
       const { shareUrl } = await buildShareBundle({
         targetUrl,
@@ -3609,6 +3625,8 @@ export default function MerchantBusinessCardManager({
       setTip("联系卡链接已复制，手机打开后可保存联系人");
     } catch {
       setTip("复制失败，请重试");
+    } finally {
+      setCopyingLinkCardId((current) => (current === card.id ? null : current));
     }
   }
 

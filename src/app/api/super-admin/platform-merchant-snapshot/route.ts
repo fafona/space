@@ -80,7 +80,10 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "platform_merchant_snapshot_env_missing" }, { status: 503 });
   }
 
-  const payload = await loadStoredPlatformMerchantSnapshot(supabase as unknown as PlatformMerchantSnapshotStoreClient);
+  const payload = await loadStoredPlatformMerchantSnapshot(
+    supabase as unknown as PlatformMerchantSnapshotStoreClient,
+    { bypassCache: true },
+  );
   return NextResponse.json({
     ok: true,
     payload: payload ?? normalizePlatformMerchantSnapshotPayload({}),
@@ -112,7 +115,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "empty_snapshot" }, { status: 400 });
   }
 
-  const existingPayload = await loadStoredPlatformMerchantSnapshot(supabase as unknown as PlatformMerchantSnapshotStoreClient);
+  const existingPayload = await loadStoredPlatformMerchantSnapshot(
+    supabase as unknown as PlatformMerchantSnapshotStoreClient,
+    { bypassCache: true },
+  );
   if (existingPayload && payload.revision !== existingPayload.revision) {
     return NextResponse.json(
       {

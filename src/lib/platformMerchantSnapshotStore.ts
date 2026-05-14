@@ -42,6 +42,10 @@ export type PlatformMerchantSnapshotSaveResult = {
   payload?: PlatformMerchantSnapshotPayload;
 };
 
+export type PlatformMerchantSnapshotLoadOptions = {
+  bypassCache?: boolean;
+};
+
 const PLATFORM_MERCHANT_SNAPSHOT_CACHE_TTL_MS = 30_000;
 let platformMerchantSnapshotCache:
   | {
@@ -178,8 +182,9 @@ function mergeSnapshotPayloadHistory(
 
 export async function loadStoredPlatformMerchantSnapshot(
   supabase: PlatformMerchantSnapshotStoreClient,
+  options: PlatformMerchantSnapshotLoadOptions = {},
 ): Promise<PlatformMerchantSnapshotPayload | null> {
-  if (platformMerchantSnapshotCache && platformMerchantSnapshotCache.expiresAt > Date.now()) {
+  if (!options.bypassCache && platformMerchantSnapshotCache && platformMerchantSnapshotCache.expiresAt > Date.now()) {
     return platformMerchantSnapshotCache.value;
   }
 

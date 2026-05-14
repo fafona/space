@@ -385,7 +385,7 @@ function sortByCreatedAtDesc(items: MerchantAccountItem[]) {
 async function loadPlatformMerchantSnapshotByMerchantId(
   supabase: PlatformMerchantSnapshotStoreClient,
 ) {
-  const payload = await loadStoredPlatformMerchantSnapshot(supabase);
+  const payload = await loadStoredPlatformMerchantSnapshot(supabase, { bypassCache: true });
   return {
     snapshotByMerchantId: new Map((payload?.snapshot ?? []).map((site) => [site.id, site] as const)),
     configHistoryByMerchantId: payload?.merchantConfigHistoryBySiteId ?? {},
@@ -657,7 +657,7 @@ export async function GET(request: Request) {
   }
 
   const scope = readMerchantAccountsScope(request);
-  const cachedItems = readMerchantAccountsCache(scope);
+  const cachedItems = scope === "support" ? readMerchantAccountsCache(scope) : null;
   if (cachedItems) {
     return NextResponse.json({ items: cachedItems });
   }
@@ -889,8 +889,6 @@ export async function GET(request: Request) {
         };
       }),
     );
-
-    writeMerchantAccountsCache(scope, items);
 
     return NextResponse.json({
       items,
