@@ -121,14 +121,26 @@ const FAOLLA_APP_SHELL_PREPAINT_SCRIPT = `
       navigator.standalone === true;
     const isAppShell = isExplicitAppShell || isStandalone || (params.get("nativeStart") || "").trim() === "1";
     if (!isAppShell) return;
-    const isLaunch = (window.location.pathname || "") === "/launch";
-    const color = "#081121";
+    const pathname = window.location.pathname || "/";
+    const isLaunch = pathname === "/launch";
+    const isPublicShellPage =
+      isExplicitAppShell &&
+      !isLaunch &&
+      (
+        pathname === "/" ||
+        pathname.indexOf("/site/") === 0 ||
+        pathname.indexOf("/industry/") === 0
+      );
+    const launchColor = "#081121";
+    const contentColor = "#f2f3f5";
+    const paintReadyImmediately = isPublicShellPage;
     const isEmbedded = window.parent && window.parent !== window;
     document.documentElement.dataset.faollaAppShell = "true";
     document.documentElement.dataset.faollaLaunch = isLaunch ? "true" : "false";
-    if (isEmbedded) {
+    if (isEmbedded || paintReadyImmediately) {
       document.documentElement.dataset.faollaWebLaunchReady = "true";
     }
+    const color = paintReadyImmediately ? contentColor : launchColor;
     document.documentElement.style.backgroundColor = color;
     const paintBody = () => {
       if (document.body) document.body.style.backgroundColor = color;
@@ -1155,7 +1167,7 @@ function buildFaollaInlineCacheRefreshScript(buildId: string) {
       const nativeRuntime =
         document.documentElement.dataset.capacitor === "true" ||
         Boolean(window.Capacitor && typeof window.Capacitor.isNativePlatform === "function" && window.Capacitor.isNativePlatform());
-      return marker !== buildId.slice(0, 12) && (embedded || nativeRuntime);
+      return Boolean(marker) && marker !== buildId.slice(0, 12) && (embedded || nativeRuntime);
     } catch {
       return false;
     }
