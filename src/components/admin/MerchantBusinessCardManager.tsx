@@ -809,7 +809,7 @@ function CardSurface({
           <img
             src={draft.backgroundImageUrl}
             alt={draft.name}
-            className="absolute h-full w-full object-cover"
+            className="absolute h-full w-full object-contain"
             style={{
               left: `calc(50% + ${draft.backgroundImageX}px)`,
               top: `calc(50% + ${draft.backgroundImageY}px)`,
