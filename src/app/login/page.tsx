@@ -6,6 +6,7 @@ import { useI18n } from "@/components/I18nProvider";
 import PasswordField, { getPasswordToggleLabels } from "@/components/PasswordField";
 import {
   clearStoredBrowserSupabaseSessionTokens,
+  establishBrowserSupabaseSession,
   hasStoredBrowserSupabaseSessionTokens,
   readMerchantSessionMerchantIds,
   readMerchantSessionPayload,
@@ -32,6 +33,11 @@ import {
   isFaollaAppShellSearch,
   normalizeFaollaEntryUrl,
 } from "@/lib/faollaEntry";
+import {
+  buildCleanGoogleOAuthReturnPath,
+  hasGoogleOAuthReturnPayload,
+  readGoogleOAuthUrlTokens,
+} from "@/lib/googleOAuthCallback";
 import { buildMerchantBackendHref } from "@/lib/siteRouting";
 import {
   canReachSupabaseGateway,
@@ -1147,22 +1153,25 @@ function LoginPageInner() {
   }
 
   const readGoogleOAuthSession = useCallback(async (timeoutMs = 9000) => {
-    const clearGoogleOAuthCodeFromUrl = () => {
+    const cleanGoogleOAuthReturnUrl = () => {
       if (typeof window === "undefined") return;
-      const url = new URL(window.location.href);
-      let changed = false;
+      window.history.replaceState(
+        window.history.state,
+        "",
+        buildCleanGoogleOAuthReturnPath(window.location.href),
+      );
+    };
 
-      for (const key of ["code", "state"]) {
-        if (url.searchParams.has(key)) {
-          url.searchParams.delete(key);
-          changed = true;
-        }
+    const establishGoogleOAuthHashSession = async () => {
+      if (typeof window === "undefined") return null;
+      const tokens = readGoogleOAuthUrlTokens(window.location.href);
+      if (!tokens) return null;
+      const session = await establishBrowserSupabaseSession(tokens, Math.max(4500, timeoutMs));
+      if (session?.access_token) {
+        cleanGoogleOAuthReturnUrl();
+        return session;
       }
-
-      if (changed) {
-        const nextUrl = `${url.pathname}${url.search}${url.hash}`;
-        window.history.replaceState(window.history.state, "", nextUrl || "/login");
-      }
+      return null;
     };
 
     const exchangeGoogleOAuthCodeFromUrl = async () => {
@@ -1172,9 +1181,14 @@ function LoginPageInner() {
 
       const { data, error } = await supabase.auth.exchangeCodeForSession(code);
       if (error) throw error;
-      clearGoogleOAuthCodeFromUrl();
+      cleanGoogleOAuthReturnUrl();
       return data.session ?? null;
     };
+
+    const hasReturnPayload = typeof window !== "undefined" && hasGoogleOAuthReturnPayload(window.location.href);
+
+    const hashSession = await establishGoogleOAuthHashSession();
+    if (hashSession?.access_token) return hashSession;
 
     let exchangeError: unknown = null;
     try {
@@ -1182,6 +1196,17 @@ function LoginPageInner() {
       if (exchangedSession?.access_token) return exchangedSession;
     } catch (error) {
       exchangeError = error;
+    }
+
+    if (!hasReturnPayload) {
+      const { data } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
+      return data.session?.access_token ? data.session : null;
+    }
+
+    try {
+      await supabase.auth.initialize();
+    } catch {
+      // Continue with explicit session polling below.
     }
 
     const startedAt = Date.now();
@@ -1208,6 +1233,13 @@ function LoginPageInner() {
         if (!mounted) return;
         if (!session?.access_token) {
           clearGoogleOAuthAttempt();
+          if (typeof window !== "undefined") {
+            window.history.replaceState(
+              window.history.state,
+              "",
+              buildCleanGoogleOAuthReturnPath(window.location.href),
+            );
+          }
           setMsg("Google 登录未完成，请重新点击 Google 登录。");
           setPendingAction(null);
           return;
@@ -1545,6 +1577,7 @@ function LoginPageInner() {
         options: {
           redirectTo: callbackUrl.toString(),
           queryParams,
+          skipBrowserRedirect: true,
         },
       });
       if (error) throw error;
