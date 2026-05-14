@@ -26,7 +26,7 @@ import {
   type MerchantIndustryTabIndustry,
   type MerchantIndustryTabInput,
 } from "@/lib/merchantIndustryTabs";
-import { buildSiteHref } from "@/lib/siteRouting";
+import { buildMerchantFrontendHref } from "@/lib/siteRouting";
 import { useI18n } from "@/components/I18nProvider";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
 import { isFaollaAppShellSearch, preserveFaollaAppShellHref } from "@/lib/faollaEntry";
@@ -452,7 +452,9 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
   const mobileFitScreenWidth = props.mobileFitScreenWidth === true;
   const { locale } = useI18n();
   const [platformState, setPlatformState] = useState<PlatformState>(() => loadPlatformState());
-  const [faollaAppShell, setFaollaAppShell] = useState(false);
+  const [faollaAppShell, setFaollaAppShell] = useState(() =>
+    typeof window !== "undefined" ? isFaollaAppShellSearch(window.location.search) : false,
+  );
   const [searchFilter, setSearchFilter] = useState<SearchFilter>(EMPTY_SEARCH_FILTER);
   const [locationOptionsApi, setLocationOptionsApi] = useState<EuropeLocationOptionsApi | null>(null);
   const [activeTabId, setActiveTabId] = useState("tab-recommended");
@@ -466,16 +468,6 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
       }),
     [],
   );
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const frame = window.requestAnimationFrame(() => {
-      setFaollaAppShell(isFaollaAppShellSearch(window.location.search));
-    });
-    return () => {
-      window.cancelAnimationFrame(frame);
-    };
-  }, []);
 
   useEffect(() => {
     let active = true;
@@ -824,7 +816,10 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
                   ? Math.max(0, Math.min(1, site.merchantCardImageOpacity))
                   : 1;
               const hasMerchantCardImage = merchantCardImageUrl.length > 0;
-              const baseMerchantHref = buildSiteHref(site.id);
+              const baseMerchantHref = buildMerchantFrontendHref(
+                site.id,
+                site.domainPrefix ?? site.domainSuffix ?? site.domain,
+              );
               const merchantHref = faollaAppShell
                 ? preserveFaollaAppShellHref(
                     baseMerchantHref,
@@ -832,6 +827,10 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
                     typeof window !== "undefined" ? window.location.origin : undefined,
                   )
                 : baseMerchantHref;
+              const useNativeMerchantNavigation = faollaAppShell || /^https?:\/\//i.test(merchantHref);
+              const merchantCardClassName = `absolute block rounded-xl p-4 overflow-auto hover:brightness-[0.98] ${getBlockBorderClass(
+                styleConfig.borderStyle,
+              )}`;
               const merchantCardStyle = hasMerchantCardImage
                 ? {
                     ...getBlockBorderInlineStyle(styleConfig.borderStyle, styleConfig.borderColor),
@@ -841,21 +840,15 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
                     ...getBlockBorderInlineStyle(styleConfig.borderStyle, styleConfig.borderColor),
                     ...getColorLayerStyle(styleConfig.bgColor, styleConfig.bgOpacity),
                   };
-              return (
-                <Link
-                  key={site.id}
-                  href={merchantHref}
-                  className={`absolute block rounded-xl p-4 overflow-auto hover:brightness-[0.98] ${getBlockBorderClass(
-                    styleConfig.borderStyle,
-                  )}`}
-                  style={{
-                    left: `${layout.x}px`,
-                    top: `${layout.y}px`,
-                    width: `${layout.width}px`,
-                    height: `${layout.height}px`,
-                    ...merchantCardStyle,
-                  }}
-                >
+              const merchantCardInlineStyle = {
+                left: `${layout.x}px`,
+                top: `${layout.y}px`,
+                width: `${layout.width}px`,
+                height: `${layout.height}px`,
+                ...merchantCardStyle,
+              };
+              const merchantCardContent = (
+                <>
                   {hasMerchantCardImage ? (
                     <div
                       className="absolute inset-0 bg-cover bg-center bg-no-repeat"
@@ -885,6 +878,29 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
                       <span className="truncate">{(site.location?.country ?? "") || "-"} / {(site.location?.province ?? "") || "-"} / {(site.location?.city ?? "") || "-"}</span>
                     </div>
                   </div>
+                </>
+              );
+              if (useNativeMerchantNavigation) {
+                return (
+                  <a
+                    key={site.id}
+                    href={merchantHref}
+                    className={merchantCardClassName}
+                    style={merchantCardInlineStyle}
+                  >
+                    {merchantCardContent}
+                  </a>
+                );
+              }
+              return (
+                <Link
+                  key={site.id}
+                  href={merchantHref}
+                  prefetch={false}
+                  className={merchantCardClassName}
+                  style={merchantCardInlineStyle}
+                >
+                  {merchantCardContent}
                 </Link>
               );
             })}
