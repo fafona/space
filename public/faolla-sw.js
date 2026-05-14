@@ -239,6 +239,15 @@ function normalizeNavigationCacheKey(url) {
   return `${url.origin}${url.pathname}`;
 }
 
+function isFaollaEmbeddedHomeRequest(url) {
+  return url.pathname === "/" && url.searchParams.get("appShell") === "faolla";
+}
+
+function normalizeFaollaEmbeddedHomeCacheKey(url) {
+  const buildMarker = String(url.searchParams.get("__faollaInlineBuild") || "").trim();
+  return `${url.origin}${url.pathname}?appShell=faolla${buildMarker ? `&build=${buildMarker}` : ""}`;
+}
+
 function isMerchantBackendPath(pathname) {
   return /^\/\d{8}(?:\/|$)/.test(pathname);
 }
@@ -514,6 +523,31 @@ async function handlePublicNavigationRequest(event, request, url) {
     if (cachedResponse) return cachedResponse;
     return buildOfflineFallbackResponse(request);
   }
+}
+
+async function handleFaollaEmbeddedHomeRequest(event, request, url) {
+  const shellCache = await caches.open(FAOLLA_SHELL_CACHE);
+  const cacheKey = normalizeFaollaEmbeddedHomeCacheKey(url);
+  const cachedResponse = await caches.match(cacheKey, { cacheName: FAOLLA_PUBLIC_PAGE_CACHE });
+  const refresh = resolveNavigationResponse(event, request)
+    .then(async (response) => {
+      await persistNavigationResponse(FAOLLA_PUBLIC_PAGE_CACHE, cacheKey, response, FAOLLA_PUBLIC_PAGE_LIMIT);
+      return response;
+    })
+    .catch(() => null);
+
+  if (cachedResponse) {
+    event.waitUntil(refresh);
+    return cachedResponse;
+  }
+
+  const response = await refresh;
+  if (response) return response;
+  const fallbackResponse =
+    (await caches.match(normalizeNavigationCacheKey(url), { cacheName: FAOLLA_PUBLIC_PAGE_CACHE })) ||
+    (await shellCache.match("/"));
+  if (fallbackResponse) return fallbackResponse;
+  return buildOfflineFallbackResponse(request);
 }
 
 async function handleAppNavigationRequest(event, request, url) {
@@ -933,6 +967,10 @@ self.addEventListener("fetch", (event) => {
     }
     if (isAppNavigationPath(url.pathname)) {
       event.respondWith(handleAppNavigationRequest(event, request, url));
+      return;
+    }
+    if (isFaollaEmbeddedHomeRequest(url)) {
+      event.respondWith(handleFaollaEmbeddedHomeRequest(event, request, url));
       return;
     }
     event.respondWith(handlePublicNavigationRequest(event, request, url));
