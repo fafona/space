@@ -156,6 +156,7 @@ export default function HomePageClient({
 
   useEffect(() => {
     if (!resolvedPageId) return;
+    if (typeof window !== "undefined" && shouldSuppressStandaloneLaunchRedirect()) return;
     void import("@/lib/analytics").then(({ trackPageView }) => {
       trackPageView(`home:${resolvedPageId}`);
     });

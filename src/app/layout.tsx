@@ -1122,6 +1122,24 @@ function buildFaollaInlineCacheRefreshScript(buildId: string) {
     // Native app update checks are handled after first paint by CapacitorAppBridge.
   }
   const storageKey = "faolla:inline-cache-build:v1";
+  const markBuildSeen = () => {
+    try {
+      window.localStorage.setItem(storageKey, buildId);
+    } catch {
+      // Ignore storage failures.
+    }
+  };
+  const isEmbeddedDocument = () => {
+    try {
+      return Boolean(window.parent && window.parent !== window);
+    } catch {
+      return true;
+    }
+  };
+  if (isEmbeddedDocument()) {
+    markBuildSeen();
+    return;
+  }
   let previous = "";
   try {
     previous = window.localStorage.getItem(storageKey) || "";
@@ -1144,6 +1162,10 @@ function buildFaollaInlineCacheRefreshScript(buildId: string) {
   };
   const reloadRequired = shouldReload();
   if (previous === buildId && !reloadRequired) return;
+  if (!reloadRequired) {
+    markBuildSeen();
+    return;
+  }
 
   const clearCaches = async () => {
     try {
@@ -1183,11 +1205,7 @@ function buildFaollaInlineCacheRefreshScript(buildId: string) {
   };
 
   clearCaches().finally(() => {
-    try {
-      window.localStorage.setItem(storageKey, buildId);
-    } catch {
-      // Ignore storage failures.
-    }
+    markBuildSeen();
     if (!reloadRequired) return;
     try {
       const url = new URL(window.location.href);

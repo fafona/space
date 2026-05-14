@@ -70,11 +70,14 @@ export default function FrontendAuthEntry({
   autoOpenWorkspace = false,
   hideLogin = false,
 }: FrontendAuthEntryProps) {
-  const [resolved, setResolved] = useState(false);
+  const skipAuthResolution = hideLogin && !autoOpenWorkspace;
+  const [resolved, setResolved] = useState(() => skipAuthResolution);
   const [currentUrl] = useState(() => (typeof window !== "undefined" ? window.location.href : ""));
   const [payload, setPayload] = useState<MerchantCookieSessionPayload | null>(null);
 
   useEffect(() => {
+    if (skipAuthResolution) return;
+
     let cancelled = false;
     const retryDelays = [0, 1200, 3200, 7000];
     let retryTimer: number | null = null;
@@ -111,7 +114,7 @@ export default function FrontendAuthEntry({
       cancelled = true;
       if (retryTimer) window.clearTimeout(retryTimer);
     };
-  }, []);
+  }, [skipAuthResolution]);
 
   const loginHref = useMemo(() => buildLoginHrefFromCurrentUrl(currentUrl), [currentUrl]);
 
@@ -122,7 +125,7 @@ export default function FrontendAuthEntry({
     window.location.replace(nextHref);
   }, [autoOpenWorkspace, currentUrl, payload, resolved]);
 
-  if (!resolved) return null;
+  if (skipAuthResolution || !resolved) return null;
   if (payload?.authenticated === true) return null;
   if (hideLogin) return null;
 

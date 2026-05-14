@@ -240,12 +240,20 @@ function normalizeNavigationCacheKey(url) {
 }
 
 function isFaollaEmbeddedHomeRequest(url) {
-  return url.pathname === "/" && url.searchParams.get("appShell") === "faolla";
+  return (
+    url.pathname === "/" &&
+    String(url.searchParams.get("appShell") || "").trim().toLowerCase() === "faolla"
+  );
 }
 
 function normalizeFaollaEmbeddedHomeCacheKey(url) {
   const buildMarker = String(url.searchParams.get("__faollaInlineBuild") || "").trim();
-  return `${url.origin}${url.pathname}?appShell=faolla${buildMarker ? `&build=${buildMarker}` : ""}`;
+  const locale = String(url.searchParams.get("uiLocale") || "").trim().toLowerCase();
+  const params = new URLSearchParams();
+  params.set("appShell", "faolla");
+  if (locale) params.set("uiLocale", locale);
+  if (buildMarker) params.set("build", buildMarker);
+  return `${url.origin}${url.pathname}?${params.toString()}`;
 }
 
 function isMerchantBackendPath(pathname) {
@@ -281,12 +289,13 @@ function isAppNavigationPath(pathname) {
   );
 }
 
-function shouldPersistNavigationResponse(response) {
+function shouldPersistNavigationResponse(response, options = {}) {
   if (!response || !response.ok) return false;
   const contentType = String(response.headers.get("content-type") || "").toLowerCase();
   if (!contentType.includes("text/html")) return false;
   const cacheControl = String(response.headers.get("cache-control") || "").toLowerCase();
-  if (cacheControl.includes("no-store") || cacheControl.includes("private")) return false;
+  if (cacheControl.includes("private")) return false;
+  if (!options.allowNoStore && cacheControl.includes("no-store")) return false;
   if (response.headers.has("set-cookie")) return false;
   return true;
 }
@@ -392,8 +401,8 @@ async function trimCacheEntries(cacheName, maxEntries) {
   await Promise.all(keys.slice(0, overflow).map((key) => cache.delete(key)));
 }
 
-async function persistNavigationResponse(cacheName, cacheKey, response, maxEntries) {
-  if (!shouldPersistNavigationResponse(response)) return;
+async function persistNavigationResponse(cacheName, cacheKey, response, maxEntries, options = {}) {
+  if (!shouldPersistNavigationResponse(response, options)) return;
   const cache = await caches.open(cacheName);
   await cache.put(cacheKey, response.clone());
   await trimCacheEntries(cacheName, maxEntries);
@@ -531,7 +540,9 @@ async function handleFaollaEmbeddedHomeRequest(event, request, url) {
   const cachedResponse = await caches.match(cacheKey, { cacheName: FAOLLA_PUBLIC_PAGE_CACHE });
   const refresh = resolveNavigationResponse(event, request)
     .then(async (response) => {
-      await persistNavigationResponse(FAOLLA_PUBLIC_PAGE_CACHE, cacheKey, response, FAOLLA_PUBLIC_PAGE_LIMIT);
+      await persistNavigationResponse(FAOLLA_PUBLIC_PAGE_CACHE, cacheKey, response, FAOLLA_PUBLIC_PAGE_LIMIT, {
+        allowNoStore: true,
+      });
       return response;
     })
     .catch(() => null);
