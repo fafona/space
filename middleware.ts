@@ -216,13 +216,27 @@ function isBackendOrApiShellPath(pathname: string) {
   return /^\/(?:\d{8}|admin|api|login|me|super-admin)(?:\/|$)/i.test(pathname);
 }
 
+function isAuthenticatedOwnMerchantRequest(request: NextRequest, merchantId: string) {
+  const sessionToken = String(request.cookies.get(MERCHANT_AUTH_COOKIE)?.value ?? "").trim();
+  const refreshToken = String(request.cookies.get(MERCHANT_AUTH_REFRESH_COOKIE)?.value ?? "").trim();
+  if (!sessionToken && !refreshToken) return false;
+
+  const accountType = String(request.cookies.get(MERCHANT_AUTH_ACCOUNT_TYPE_COOKIE)?.value ?? "")
+    .trim()
+    .toLowerCase();
+  const sessionMerchantId = String(request.cookies.get(MERCHANT_AUTH_MERCHANT_ID_COOKIE)?.value ?? "").trim();
+  return accountType === "merchant" && sessionMerchantId === merchantId;
+}
+
 function buildFaollaSectionRedirectUrl(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const segments = pathname.split("/").filter(Boolean);
-  if (segments.length !== 1 || !isMerchantNumericId(segments[0] ?? "")) return null;
+  const merchantId = segments[0] ?? "";
+  if (segments.length !== 1 || !isMerchantNumericId(merchantId)) return null;
   if ((request.nextUrl.searchParams.get(FAOLLA_SECTION_PARAM) ?? "").trim().toLowerCase() !== FAOLLA_SECTION_VALUE) {
     return null;
   }
+  if (isAuthenticatedOwnMerchantRequest(request, merchantId)) return null;
 
   const rawTarget = (request.nextUrl.searchParams.get(FAOLLA_URL_PARAM) ?? "").trim() || "/";
   let targetUrl: URL;

@@ -117,6 +117,22 @@ test("middleware redirects numeric Faolla section to the public app shell before
   assert.match(response.headers.get("cache-control") ?? "", /no-store/);
 });
 
+test("middleware keeps an authenticated merchant on their backend Faolla section", async () => {
+  const request = new NextRequest("https://faolla.com/10000000?section=faolla&faollaUrl=https%3A%2F%2Ffaolla.com%2F", {
+    headers: {
+      cookie: `${MERCHANT_AUTH_REFRESH_COOKIE}=refresh-token; ${MERCHANT_AUTH_ACCOUNT_TYPE_COOKIE}=merchant; ${MERCHANT_AUTH_MERCHANT_ID_COOKIE}=10000000`,
+    },
+  });
+
+  const response = await middleware(request);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("location"), null);
+  assert.match(response.headers.get("x-middleware-rewrite") ?? "", /^https:\/\/faolla\.com\/admin\?/);
+  assert.match(response.headers.get("x-middleware-rewrite") ?? "", /(?:\?|&)scope=site-10000000(?:&|$)/);
+  assert.match(response.headers.get("x-middleware-rewrite") ?? "", /(?:\?|&)section=faolla(?:&|$)/);
+});
+
 test("middleware rejects backend Faolla section targets", async () => {
   const request = new NextRequest("https://faolla.com/10000000?section=faolla&faollaUrl=https%3A%2F%2Ffaolla.com%2Fadmin");
 
