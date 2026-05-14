@@ -259,7 +259,7 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
             <img
               src={payload.detailImageUrl}
               alt={title}
-              className={`block w-full object-cover ${payload.detailImageHeight ? "h-full" : "h-auto"}`}
+              className={`block w-full object-contain ${payload.detailImageHeight ? "h-full" : "h-auto"}`}
             />
           </div>
         ) : (

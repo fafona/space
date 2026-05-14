@@ -1000,7 +1000,7 @@ function ContactCardSurface({
           style={{ height: `${imageHeight}px` }}
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={imageUrl} alt={displayName || "联系卡展示图"} className="block h-full w-full object-cover" />
+          <img src={imageUrl} alt={displayName || "联系卡展示图"} className="block h-full w-full object-contain" />
         </div>
       ) : null}
 
@@ -1060,15 +1060,30 @@ function resolveFilePickerStatus(selectedFileName: string, assetUrl: string, upl
 }
 
 function buildEditableBusinessCardDraftFromAsset(card: MerchantBusinessCardAsset) {
-  const draft = normalizeMerchantBusinessCardDraft(card);
+  let draft = normalizeMerchantBusinessCardDraft(card);
   const publicContactImageUrl = normalizeText(card.contactPagePublicImageUrl);
-  if (!publicContactImageUrl || normalizeText(draft.contactPageImageUrl)) {
-    return draft;
+  const fallbackBackgroundImageUrl =
+    normalizeText(card.backgroundImageUrl) || normalizeText(card.imageUrl) || normalizeText(card.shareImageUrl);
+
+  if (!normalizeText(draft.backgroundImageUrl) && fallbackBackgroundImageUrl) {
+    draft = normalizeMerchantBusinessCardDraft({
+      ...draft,
+      backgroundImageUrl: fallbackBackgroundImageUrl,
+      backgroundImageX: 0,
+      backgroundImageY: 0,
+      backgroundImageScale: 1,
+      backgroundImageOpacity: 1,
+    });
   }
-  return normalizeMerchantBusinessCardDraft({
-    ...draft,
-    contactPageImageUrl: publicContactImageUrl,
-  });
+
+  if (publicContactImageUrl && !normalizeText(draft.contactPageImageUrl)) {
+    draft = normalizeMerchantBusinessCardDraft({
+      ...draft,
+      contactPageImageUrl: publicContactImageUrl,
+    });
+  }
+
+  return draft;
 }
 
 function formatImageResultSize(bytes: number) {

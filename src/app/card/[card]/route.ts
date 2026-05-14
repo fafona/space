@@ -1810,7 +1810,7 @@ function buildShareCardHtml(input: {
         ${
           contentImageUrl
             ? `<a class="card" href="${targetUrl}">
-          <img src="${contentImageUrl}" alt="${title}"${contentImageHeight ? ` style="height:${contentImageHeight}px;object-fit:cover;"` : ""} />
+          <img src="${contentImageUrl}" alt="${title}"${contentImageHeight ? ` style="height:${contentImageHeight}px;object-fit:contain;"` : ""} />
         </a>`
             : ""
         }
