@@ -8544,6 +8544,7 @@ export default function AdminClient({
     };
   }, [
     defaultEditorBlocks,
+    explicitFaollaSectionEntry,
     isMobileMerchantSupportOnlyMode,
     isPlatformEditor,
     justSignedIn,
