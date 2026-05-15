@@ -1397,7 +1397,7 @@ function LoginPageInner() {
       const rawMessage = details.description || details.code;
       const message = rawMessage.replace(/\+/g, " ").trim();
       if (/unable to exchange external code/i.test(message)) {
-        return "Google 登录失败：服务端 Google Provider 授权码兑换失败，请检查 Supabase 中 Google 的 Client Secret 配置。";
+        return "Google 登录回调被重复触发，请重新点击 Google 登录。";
       }
       return message ? `Google 登录失败：${message}` : "Google 登录失败，请重新点击 Google 登录。";
     };
@@ -1477,7 +1477,7 @@ function LoginPageInner() {
         }
         const message = error instanceof Error ? error.message : "";
         if (
-          /code verifier|bad_oauth_state|oauth state|invalid state|flow state|auth code|timeout|network|fetch|load failed/i.test(message) &&
+          /code verifier|bad_oauth_state|oauth state|invalid state|flow state|auth code|external code|Google 登录回调被重复触发|授权码兑换失败|timeout|network|fetch|load failed/i.test(message) &&
           retryGoogleOAuthOnce("Google 登录状态已过期，正在重新连接 Google...")
         ) {
           return;
