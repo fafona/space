@@ -37,6 +37,11 @@ type RefreshPayload = {
   expires_in?: unknown;
   token_type?: unknown;
   user?: unknown;
+  error?: unknown;
+  error_code?: unknown;
+  error_description?: unknown;
+  msg?: unknown;
+  message?: unknown;
 };
 
 type MerchantRefreshResult =
@@ -93,6 +98,60 @@ const merchantSessionInflight = new Map<string, Promise<AuthenticatedMerchantSes
 
 function readEnv(name: string) {
   return (process.env[name] ?? "").trim();
+}
+
+function readCookieValue(request: Request, name: string) {
+  const cookieHeader = request.headers.get("cookie") ?? "";
+  const prefix = `${name}=`;
+  for (const part of cookieHeader.split(";")) {
+    const trimmed = part.trim();
+    if (!trimmed.startsWith(prefix)) continue;
+    try {
+      return decodeURIComponent(trimmed.slice(prefix.length));
+    } catch {
+      return trimmed.slice(prefix.length);
+    }
+  }
+  return "";
+}
+
+function buildBrowserAuthStorageCookieName(storageKey: string) {
+  return `faolla-auth-storage.${String(storageKey).replace(/[^A-Za-z0-9_-]/g, "_")}`;
+}
+
+function readSupabaseStorageProjectRef() {
+  const supabaseUrl = readEnv("NEXT_PUBLIC_SUPABASE_URL");
+  try {
+    return new URL(supabaseUrl).hostname.split(".")[0]?.trim() ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function normalizeOAuthCodeVerifier(value: unknown) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) return "";
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed === "string") return parsed.trim();
+  } catch {
+    // Fall back to the raw cookie value below.
+  }
+  return raw.replace(/^"+|"+$/g, "").trim();
+}
+
+function readOAuthCodeVerifierFromRequest(request: Request) {
+  const projectRef = readSupabaseStorageProjectRef();
+  const storageKeys = [
+    projectRef ? `sb-${projectRef}-auth-token-code-verifier` : "",
+    projectRef ? `sb-${projectRef}-auth-token-code_verifier` : "",
+  ].filter(Boolean);
+  for (const storageKey of storageKeys) {
+    const cookieValue = readCookieValue(request, buildBrowserAuthStorageCookieName(storageKey));
+    const verifier = normalizeOAuthCodeVerifier(cookieValue);
+    if (verifier) return verifier;
+  }
+  return "";
 }
 
 function normalizeSessionPreferredAccountType(value: unknown): PlatformAccountType | null {
@@ -211,6 +270,56 @@ async function refreshMerchantSession(refreshToken: string): Promise<MerchantRef
       status: "ok",
       accessToken,
       refreshToken: nextRefreshToken,
+      expiresIn: typeof payload?.expires_in === "number" ? payload.expires_in : null,
+      tokenType: typeof payload?.token_type === "string" ? payload.token_type : "bearer",
+      user:
+        payload?.user && typeof payload.user === "object"
+          ? (payload.user as MerchantAuthUserSummary)
+          : null,
+    };
+  } catch (error) {
+    if (isTransientMerchantSessionError(error)) {
+      return { status: "unavailable" };
+    }
+    return { status: "invalid" };
+  }
+}
+
+async function exchangeOAuthCodeForSession(authCode: string, codeVerifier: string): Promise<MerchantRefreshResult> {
+  const supabaseUrl = readEnv("NEXT_PUBLIC_SUPABASE_URL");
+  const anonKey = readEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
+  if (!supabaseUrl || !anonKey || !authCode || !codeVerifier) return { status: "invalid" };
+
+  try {
+    const response = await fetch(`${supabaseUrl.replace(/\/+$/, "")}/auth/v1/token?grant_type=pkce`, {
+      method: "POST",
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${anonKey}`,
+        "Content-Type": "application/json",
+      },
+      cache: "no-store",
+      body: JSON.stringify({
+        auth_code: authCode,
+        code_verifier: codeVerifier,
+      }),
+    });
+
+    if (!response.ok) {
+      if (response.status >= 500 || response.status === 429) {
+        return { status: "unavailable" };
+      }
+      return { status: "invalid" };
+    }
+    const payload = (await response.json().catch(() => null)) as RefreshPayload | null;
+    const accessToken = typeof payload?.access_token === "string" ? payload.access_token.trim() : "";
+    const refreshToken = typeof payload?.refresh_token === "string" ? payload.refresh_token.trim() : "";
+    if (!accessToken || !refreshToken) return { status: "invalid" };
+
+    return {
+      status: "ok",
+      accessToken,
+      refreshToken,
       expiresIn: typeof payload?.expires_in === "number" ? payload.expires_in : null,
       tokenType: typeof payload?.token_type === "string" ? payload.token_type : "bearer",
       user:
@@ -488,14 +597,33 @@ export async function POST(request: Request) {
             accessToken?: unknown;
             refreshToken?: unknown;
             expiresIn?: unknown;
+            authCode?: unknown;
+            codeVerifier?: unknown;
             preferredAccountType?: unknown;
             authProvider?: unknown;
           }
       | null;
 
-    const accessToken = typeof payload?.accessToken === "string" ? payload.accessToken.trim() : "";
-    const refreshToken = typeof payload?.refreshToken === "string" ? payload.refreshToken.trim() : "";
-    const expiresIn = typeof payload?.expiresIn === "number" && Number.isFinite(payload.expiresIn) ? payload.expiresIn : undefined;
+    let accessToken = typeof payload?.accessToken === "string" ? payload.accessToken.trim() : "";
+    let refreshToken = typeof payload?.refreshToken === "string" ? payload.refreshToken.trim() : "";
+    let expiresIn = typeof payload?.expiresIn === "number" && Number.isFinite(payload.expiresIn) ? payload.expiresIn : undefined;
+    const authCode = typeof payload?.authCode === "string" ? payload.authCode.trim() : "";
+    const providedCodeVerifier = normalizeOAuthCodeVerifier(payload?.codeVerifier);
+
+    if (!accessToken && authCode) {
+      const exchanged = await exchangeOAuthCodeForSession(
+        authCode,
+        providedCodeVerifier || readOAuthCodeVerifierFromRequest(request),
+      );
+      if (exchanged.status === "unavailable") {
+        return noStoreJson({ ok: false, error: "merchant_session_google_code_unavailable" }, { status: 503 });
+      }
+      if (exchanged.status === "ok") {
+        accessToken = exchanged.accessToken;
+        refreshToken = exchanged.refreshToken;
+        expiresIn = exchanged.expiresIn ?? expiresIn;
+      }
+    }
 
     if (!accessToken) {
       const response = noStoreJson({ ok: false, error: "merchant_session_missing_access_token" }, { status: 400 });

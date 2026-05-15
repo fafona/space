@@ -1244,6 +1244,17 @@ function LoginPageInner() {
     setAuthView("signin");
     setPendingAction("google");
     setMsg("正在使用 Google 登录...");
+    type GoogleMerchantSessionPayload = {
+      error?: unknown;
+      message?: unknown;
+      user?: LoginAuthUser | null;
+      accountType?: unknown;
+      requestedAccountType?: unknown;
+      entrySwitched?: unknown;
+      accountId?: unknown;
+      merchantId?: unknown;
+      merchantIds?: unknown;
+    };
     const retryGoogleOAuthOnce = (message: string) => {
       if (typeof window === "undefined") return false;
       const storedAttempt = readGoogleOAuthAttempt();
@@ -1269,12 +1280,79 @@ function LoginPageInner() {
       }, 420);
       return true;
     };
+    const completeGoogleOAuthSignIn = async (payload: GoogleMerchantSessionPayload | null) => {
+      const merchantIds = readMerchantSessionMerchantIds(payload);
+      const accountType = normalizePlatformAccountType(payload?.accountType) || googleOAuthAccountType;
+      const requestedAccountType =
+        normalizePlatformAccountType(payload?.requestedAccountType) || googleOAuthAccountType;
+      const entrySwitched =
+        payload?.entrySwitched === true || Boolean(requestedAccountType && requestedAccountType !== accountType);
+      if (entrySwitched) {
+        await showAutoSwitchedEntryNotice(
+          accountType,
+          requestedAccountType,
+          typeof payload?.message === "string" ? payload.message : "",
+        );
+        if (!mounted) return;
+      }
+      await redirectToAccountHome(payload?.user ?? null, {
+        accountType,
+        accountId: normalizePlatformAccountId(payload?.accountId),
+        merchantId: pickPrimaryMerchantId(
+          typeof payload?.merchantId === "string" ? payload.merchantId.trim() : "",
+          merchantIds,
+        ),
+        merchantIds,
+      }, {
+        withSignInBridge: false,
+      });
+    };
+    const syncGoogleOAuthCodeViaServer = async () => {
+      if (typeof window === "undefined") return null;
+      const authCode = readGoogleOAuthUrlCode(window.location.href);
+      if (!authCode) return null;
+      const response = await fetch("/api/auth/merchant-session", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        cache: "no-store",
+        body: JSON.stringify({
+          authCode,
+          authProvider: "google",
+          preferredAccountType: googleOAuthAccountType,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as GoogleMerchantSessionPayload | null;
+      if (!response.ok) {
+        const message =
+          typeof payload?.message === "string"
+            ? payload.message
+            : typeof payload?.error === "string"
+              ? payload.error
+              : t("login.backendUnavailable");
+        throw new Error(message);
+      }
+      window.history.replaceState(
+        window.history.state,
+        "",
+        buildCleanGoogleOAuthReturnPath(window.location.href),
+      );
+      return payload;
+    };
 
     void (async () => {
       try {
         const session = await readGoogleOAuthSession();
         if (!mounted) return;
         if (!session?.access_token) {
+          const serverPayload = await syncGoogleOAuthCodeViaServer().catch(() => null);
+          if (serverPayload) {
+            clearGoogleOAuthAttempt();
+            await completeGoogleOAuthSignIn(serverPayload);
+            return;
+          }
           if (retryGoogleOAuthOnce("Google 登录未完成，正在重新连接 Google...")) {
             return;
           }
@@ -1307,19 +1385,7 @@ function LoginPageInner() {
             preferredAccountType: googleOAuthAccountType,
           }),
         });
-        const payload = (await response.json().catch(() => null)) as
-          | {
-              error?: unknown;
-              message?: unknown;
-              user?: LoginAuthUser | null;
-              accountType?: unknown;
-              requestedAccountType?: unknown;
-              entrySwitched?: unknown;
-              accountId?: unknown;
-              merchantId?: unknown;
-              merchantIds?: unknown;
-            }
-          | null;
+        const payload = (await response.json().catch(() => null)) as GoogleMerchantSessionPayload | null;
         if (!response.ok) {
           const message =
             typeof payload?.message === "string"
@@ -1329,33 +1395,15 @@ function LoginPageInner() {
                 : t("login.backendUnavailable");
           throw new Error(message);
         }
-        const merchantIds = readMerchantSessionMerchantIds(payload);
-        const accountType = normalizePlatformAccountType(payload?.accountType) || googleOAuthAccountType;
-        const requestedAccountType =
-          normalizePlatformAccountType(payload?.requestedAccountType) || googleOAuthAccountType;
-        const entrySwitched =
-          payload?.entrySwitched === true || Boolean(requestedAccountType && requestedAccountType !== accountType);
-        if (entrySwitched) {
-          await showAutoSwitchedEntryNotice(
-            accountType,
-            requestedAccountType,
-            typeof payload?.message === "string" ? payload.message : "",
-          );
-          if (!mounted) return;
-        }
-        await redirectToAccountHome(payload?.user ?? null, {
-          accountType,
-          accountId: normalizePlatformAccountId(payload?.accountId),
-          merchantId: pickPrimaryMerchantId(
-            typeof payload?.merchantId === "string" ? payload.merchantId.trim() : "",
-            merchantIds,
-          ),
-          merchantIds,
-        }, {
-          withSignInBridge: false,
-        });
+        await completeGoogleOAuthSignIn(payload);
       } catch (error) {
         if (!mounted) return;
+        const serverPayload = await syncGoogleOAuthCodeViaServer().catch(() => null);
+        if (serverPayload) {
+          clearGoogleOAuthAttempt();
+          await completeGoogleOAuthSignIn(serverPayload);
+          return;
+        }
         const message = error instanceof Error ? error.message : "";
         if (
           /code verifier|bad_oauth_state|oauth state|invalid state|flow state|auth code|timeout|network|fetch|load failed/i.test(message) &&
