@@ -241,7 +241,12 @@ import {
   isMerchantOrderNewForMerchant,
   type MerchantOrderRecord,
 } from "@/lib/merchantOrders";
-import type { MerchantCouponRecord } from "@/lib/merchantCoupons";
+import {
+  getMerchantCouponDiscountLabel,
+  getVisibleMerchantCoupons,
+  normalizeMerchantCouponRecords,
+  type MerchantCouponRecord,
+} from "@/lib/merchantCoupons";
 import { broadcastPublishSync } from "@/lib/publishSync";
 import {
   BUTTON_BLOCK_MIN_HEIGHT,
@@ -329,6 +334,11 @@ function readSameOriginFrameHref(frame: HTMLIFrameElement | null) {
 const MerchantBusinessCardManager = dynamic(() => import("@/components/admin/MerchantBusinessCardManager"), {
   ssr: false,
   loading: () => <DeferredAdminPanelLoading label="名片夹加载中..." />,
+});
+
+const MerchantCouponManager = dynamic(() => import("@/components/admin/MerchantCouponManager"), {
+  ssr: false,
+  loading: () => <DeferredAdminPanelLoading label="优惠券加载中..." />,
 });
 
 const MerchantBookingManagerDialog = dynamic(() => import("@/components/admin/MerchantBookingManagerDialog"), {
@@ -1397,7 +1407,17 @@ const GALLERY_FRAME_WIDTH_LABELS: Record<CustomGalleryFrameWidth, string> = {
   "2/3": "2/3",
 };
 type ViewportKey = "desktop" | "mobile";
-type MerchantDesktopSection = "editor" | "profile" | "cards" | "booking" | "orders" | "analytics" | "business" | "support" | "faolla";
+type MerchantDesktopSection =
+  | "editor"
+  | "profile"
+  | "cards"
+  | "coupons"
+  | "booking"
+  | "orders"
+  | "analytics"
+  | "business"
+  | "support"
+  | "faolla";
 type ProductSettingsSectionKey = "basic" | "typography" | "tags" | "card" | "detail";
 type ProductTypographyRole = "code" | "name" | "description" | "price";
 const MOBILE_SIZE_SCALE = 0.82;
@@ -5641,6 +5661,7 @@ export default function AdminClient({
   const [merchantSiteIdOverride, setMerchantSiteIdOverride] = useState("");
   const [merchantBookingManagerOpen, setMerchantBookingManagerOpen] = useState(false);
   const [merchantOrderManagerOpen, setMerchantOrderManagerOpen] = useState(false);
+  const [merchantCouponRecords, setMerchantCouponRecords] = useState<MerchantCouponRecord[]>([]);
   const [merchantBookingWorkbenchOpen, setMerchantBookingWorkbenchOpen] = useState(false);
   const [merchantOrderWorkbenchOpen, setMerchantOrderWorkbenchOpen] = useState(false);
   const [merchantBookingAttentionSummary, setMerchantBookingAttentionSummary] = useState<MerchantBusinessAttentionSummary>({
@@ -13547,6 +13568,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setMerchantDesktopSection("cards");
   }
 
+  function openMerchantCouponsPanel() {
+    if (!canUseCouponModule) {
+      showTip("当前商户未开通优惠券模块");
+      return;
+    }
+    setMerchantDesktopSection("coupons");
+  }
+
   async function openMerchantBookingPanel() {
     const resolvedSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
     if (!resolvedSiteId) {
@@ -15584,6 +15613,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const canUseGalleryBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowGalleryBlock);
   const canUseMusicBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowMusicBlock);
   const canUseProductBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowProductBlock);
+  const canUseCouponModule = !isPlatformEditor && Boolean(merchantPermissionConfig?.allowCouponModule);
   const canUseCouponBlock =
     isPlatformEditor ||
     Boolean(merchantPermissionConfig?.allowCouponModule && merchantPermissionConfig?.allowCouponBlock);
@@ -15607,6 +15637,30 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     (!canUseCouponBlock && newBlockType === "coupon") ||
     ((!canUseBookingBlock || isBookingBlockAddLocked) && newBlockType === "booking");
   const showAddBlockGuide = !isPlatformEditor && !hasAddedExtraBlock && blocks.length === 1 && blocks[0]?.type === "nav";
+  useEffect(() => {
+    if (checkingAuth || isPlatformEditor || !canUseCouponModule || !editingSiteId) {
+      setMerchantCouponRecords([]);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/coupons?siteId=${encodeURIComponent(editingSiteId)}`, {
+      credentials: "same-origin",
+      cache: "no-store",
+    })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => {
+        if (cancelled) return;
+        setMerchantCouponRecords(normalizeMerchantCouponRecords(payload?.coupons));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setMerchantCouponRecords([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [canUseCouponModule, checkingAuth, editingSiteId, isPlatformEditor]);
   const merchantPublishSizeLimitBytes = !isPlatformEditor
     ? Math.max(1, Math.round(merchantPermissionConfig?.publishSizeLimitMb ?? 1)) * 1024 * 1024
     : null;
@@ -18076,6 +18130,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     merchantDesktopSection === "editor" ||
     merchantDesktopSection === "business" ||
     merchantDesktopSection === "cards" ||
+    merchantDesktopSection === "coupons" ||
     merchantDesktopSection === "analytics";
   const merchantBookingManagerDialogCommonProps =
     !isPlatformEditor && canUseBookingBlock
@@ -18112,6 +18167,15 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               setMerchantDesktopSection("editor");
             }
           },
+        }
+      : null;
+  const merchantVisibleCouponRecords = getVisibleMerchantCoupons(merchantCouponRecords);
+  const merchantCouponManagerCommonProps =
+    canUseCouponModule
+      ? {
+          siteId: editingSiteId || "",
+          siteName: effectiveMerchantDisplayName || merchantDisplayName,
+          onCouponsChange: setMerchantCouponRecords,
         }
       : null;
   const merchantAnalyticsSuccessRate7d = formatSuccessRate(
@@ -18335,11 +18399,54 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const merchantBusinessCardCount = normalizeMerchantBusinessCards(
     effectiveEditingSite?.businessCards ?? editingSite?.businessCards ?? [],
   ).length;
+  const merchantCouponCount = merchantCouponRecords.filter((coupon) => coupon.status !== "archived").length;
+  const merchantVisibleCouponCount = merchantVisibleCouponRecords.length;
   const merchantBusinessCenterContent = (
     <div className="min-h-[calc(100vh-14rem)] px-1 py-1">
       <div className="mx-auto max-w-5xl space-y-5">
         <section className="rounded-2xl border border-slate-200 bg-white px-6 py-6 shadow-sm">
-          <div className="text-lg font-semibold text-slate-950">经营中心</div>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="text-lg font-semibold text-slate-950">经营中心</div>
+              <div className="mt-1 text-sm text-slate-500">集中管理网站内容之外的经营数据，网站区块会从这里读取真实内容。</div>
+            </div>
+          </div>
+          <div className="mt-5 grid gap-4 md:grid-cols-3">
+            <button
+              type="button"
+              className="rounded-2xl border border-cyan-200 bg-cyan-50 px-4 py-4 text-left transition hover:border-cyan-300 hover:bg-cyan-100"
+              onClick={openMerchantCardsPanel}
+            >
+              <div className="text-sm font-semibold text-cyan-900">名片夹</div>
+              <div className="mt-2 text-2xl font-semibold text-cyan-900">{merchantBusinessCardCount} 张</div>
+              <div className="mt-2 text-xs leading-5 text-cyan-700">管理图片名片和联系卡短链。</div>
+            </button>
+            {canUseCouponModule ? (
+              <button
+                type="button"
+                className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-4 text-left transition hover:border-rose-300 hover:bg-rose-100"
+                onClick={openMerchantCouponsPanel}
+              >
+                <div className="text-sm font-semibold text-rose-900">优惠券</div>
+                <div className="mt-2 text-2xl font-semibold text-rose-900">{merchantVisibleCouponCount} 张展示中</div>
+                <div className="mt-2 text-xs leading-5 text-rose-700">创建优惠码、设置数量和有效期，供网站优惠券区块展示。</div>
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-left transition hover:border-emerald-300 hover:bg-emerald-100"
+              onClick={openMerchantAnalyticsPanel}
+            >
+              <div className="text-sm font-semibold text-emerald-900">数据统计</div>
+              <div className="mt-2 text-2xl font-semibold text-emerald-900">概览</div>
+              <div className="mt-2 text-xs leading-5 text-emerald-700">查看访问、发布和联系方式点击。</div>
+            </button>
+          </div>
+          {canUseCouponModule ? (
+            <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+              当前有 {merchantCouponCount} 张未删除优惠券，其中 {merchantVisibleCouponCount} 张会被网站优惠券区块读取。
+            </div>
+          ) : null}
         </section>
       </div>
     </div>
@@ -18688,6 +18795,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             merchantBusinessCenterContent
           ) : merchantDesktopSection === "cards" && merchantBusinessCardManagerCommonProps ? (
             <MerchantBusinessCardManager {...merchantBusinessCardManagerCommonProps} folderViewMode="page" />
+          ) : merchantDesktopSection === "coupons" && merchantCouponManagerCommonProps ? (
+            <MerchantCouponManager {...merchantCouponManagerCommonProps} />
           ) : merchantDesktopSection === "booking" && merchantBookingManagerDialogCommonProps ? (
             <MerchantBookingManagerDialog
               {...merchantBookingManagerDialogCommonProps}
@@ -18917,6 +19026,20 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         ) : null}
                       </button>
                     ) : null}
+                    {canUseCouponModule ? (
+                      <button
+                        type="button"
+                        className={getMerchantDesktopMenuButtonClassName(merchantDesktopSection === "coupons")}
+                        onClick={openMerchantCouponsPanel}
+                      >
+                        <span>优惠券</span>
+                        {merchantVisibleCouponCount > 0 ? (
+                          <span className="ml-2 inline-flex min-w-[1.5rem] items-center justify-center rounded-full bg-rose-500 px-2 py-0.5 text-xs font-semibold leading-none text-white">
+                            {merchantVisibleCouponCount > 99 ? "99+" : merchantVisibleCouponCount}
+                          </span>
+                        ) : null}
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       className={getMerchantDesktopMenuButtonClassName(
@@ -19042,6 +19165,19 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     {"订单管理"}
                   </button>
                 ) : null}
+                {canUseCouponModule ? (
+                  <button
+                    className={
+                      isMobileMerchantEditorShell
+                        ? merchantMobileToolbarButtonClassName
+                        : "px-3 py-2 rounded border bg-white hover:bg-gray-50 disabled:opacity-50"
+                    }
+                    onClick={openMerchantCouponsPanel}
+                    disabled={!editingSiteId}
+                  >
+                    {"优惠券"}
+                  </button>
+                ) : null}
                 {!isPlatformEditor ? (
                   <button
                     className={supportButtonClassName}
@@ -19122,6 +19258,22 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                           {merchantBusinessCardCount} 张
                         </span>
                       </button>
+                      {canUseCouponModule ? (
+                        <button
+                          type="button"
+                          className={`flex min-h-10 w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-sm font-semibold transition ${
+                            merchantDesktopSection === "coupons"
+                              ? "border-rose-200 bg-rose-50 text-rose-800"
+                              : "border-slate-200 bg-white text-slate-800 hover:border-rose-200 hover:bg-rose-50"
+                          }`}
+                          onClick={openMerchantCouponsPanel}
+                        >
+                          <span>优惠券</span>
+                          <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-bold text-rose-700 ring-1 ring-rose-100">
+                            {merchantVisibleCouponCount} 张
+                          </span>
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         className={`flex min-h-10 w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-sm font-semibold transition ${
@@ -19731,6 +19883,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                               previewViewport={previewViewport}
                               runtimeSiteId={editingSiteId || ""}
                               runtimeSiteName={merchantDisplayName}
+                              merchantCouponRecords={merchantCouponRecords}
+                              onOpenMerchantCoupons={openMerchantCouponsPanel}
                               europeLocationOptionsApi={europeLocationOptionsApi}
                             />
                           </div>
@@ -19796,6 +19950,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       previewViewport={previewViewport}
                       runtimeSiteId={editingSiteId || ""}
                       runtimeSiteName={merchantDisplayName}
+                      merchantCouponRecords={merchantCouponRecords}
+                      onOpenMerchantCoupons={openMerchantCouponsPanel}
                       europeLocationOptionsApi={europeLocationOptionsApi}
                     />
                   </div>
@@ -20567,6 +20723,8 @@ function InlineEditorBlock({
   previewViewport,
   runtimeSiteId = "",
   runtimeSiteName = "",
+  merchantCouponRecords = [],
+  onOpenMerchantCoupons,
   europeLocationOptionsApi,
 }: {
   block: Block;
@@ -20602,6 +20760,8 @@ function InlineEditorBlock({
   previewViewport: "desktop" | "mobile";
   runtimeSiteId?: string;
   runtimeSiteName?: string;
+  merchantCouponRecords?: MerchantCouponRecord[];
+  onOpenMerchantCoupons?: () => void;
   europeLocationOptionsApi?: EuropeLocationOptionsApi | null;
 }) {
   const { locale } = useI18n();
@@ -28371,6 +28531,24 @@ type GalleryEditorImage = {
         updatedAt: "2026-05-15T00:00:00.000Z",
       },
     ];
+    const visibleMerchantCoupons = getVisibleMerchantCoupons(merchantCouponRecords);
+    const editorPreviewCoupons = visibleMerchantCoupons.length > 0 ? visibleMerchantCoupons : previewCoupons;
+    const couponSelectionCoupons = merchantCouponRecords.filter((coupon) => coupon.status !== "archived");
+    const selectedCouponIds = Array.isArray(block.props.couponSelectedIds)
+      ? block.props.couponSelectedIds.map((item) => String(item).trim()).filter(Boolean)
+      : [];
+    const selectedCouponIdSet = new Set(selectedCouponIds);
+    const couponAutoSelectAll = selectedCouponIds.length === 0;
+    const couponSelectionIds = couponSelectionCoupons.map((coupon) => coupon.id);
+    const toggleCouponSelection = (couponId: string, checked: boolean) => {
+      const nextSet = new Set(couponAutoSelectAll ? couponSelectionIds : selectedCouponIds);
+      if (checked) {
+        nextSet.add(couponId);
+      } else {
+        nextSet.delete(couponId);
+      }
+      onChange({ couponSelectedIds: Array.from(nextSet) });
+    };
     return (
       <section
         data-block-id={block.id}
@@ -28485,10 +28663,77 @@ type GalleryEditorImage = {
               <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-500">
                 优惠券内容来自经营中心，区块只控制展示样式和点击动作。
               </div>
-              <CouponBlock {...block.props} previewCoupons={previewCoupons} interactive={false} />
+              <div className="rounded-xl border border-slate-200 bg-white px-4 py-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-900">优惠券内容</div>
+                    <div className="mt-1 text-xs leading-5 text-slate-500">
+                      在经营中心创建和修改优惠券；这里选择当前区块展示哪些优惠券。
+                    </div>
+                  </div>
+                  {onOpenMerchantCoupons ? (
+                    <button
+                      type="button"
+                      className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                      onClick={onOpenMerchantCoupons}
+                    >
+                      管理优惠券
+                    </button>
+                  ) : null}
+                </div>
+                <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                  <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={couponAutoSelectAll}
+                      onChange={(event) => {
+                        if (event.target.checked) {
+                          onChange({ couponSelectedIds: [] });
+                        } else if (couponSelectionIds.length > 0) {
+                          onChange({ couponSelectedIds: couponSelectionIds });
+                        }
+                      }}
+                    />
+                    自动展示全部可用优惠券
+                  </label>
+                </div>
+                {couponSelectionCoupons.length > 0 ? (
+                  <div className="mt-3 grid gap-2">
+                    {couponSelectionCoupons.map((coupon) => (
+                      <label
+                        key={coupon.id}
+                        className="flex items-start gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+                      >
+                        <input
+                          className="mt-1"
+                          type="checkbox"
+                          checked={couponAutoSelectAll || selectedCouponIdSet.has(coupon.id)}
+                          onChange={(event) => toggleCouponSelection(coupon.id, event.target.checked)}
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="flex flex-wrap items-center gap-2">
+                            <span className="font-semibold text-slate-900">{coupon.title}</span>
+                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">
+                              {coupon.status === "active" ? "启用" : "暂停"}
+                            </span>
+                          </span>
+                          <span className="mt-1 block text-xs text-slate-500">
+                            {coupon.code} · {getMerchantCouponDiscountLabel(coupon)}
+                          </span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="mt-3 rounded-lg border border-dashed border-slate-300 px-3 py-4 text-sm text-slate-500">
+                    经营中心还没有优惠券。创建后这里会显示可选择的优惠券。
+                  </div>
+                )}
+              </div>
+              <CouponBlock {...block.props} previewCoupons={editorPreviewCoupons} interactive={false} />
             </div>,
           ) : (
-            <CouponBlock {...block.props} previewCoupons={previewCoupons} interactive={false} />
+            <CouponBlock {...block.props} previewCoupons={editorPreviewCoupons} interactive={false} />
           )}
           {resizeHandles}
         </div>
@@ -31503,6 +31748,7 @@ const MemoizedInlineEditorBlock = memo(InlineEditorBlock, (previousProps, nextPr
     previousProps.previewViewport === nextProps.previewViewport &&
     previousProps.runtimeSiteId === nextProps.runtimeSiteId &&
     previousProps.runtimeSiteName === nextProps.runtimeSiteName &&
+    previousProps.merchantCouponRecords === nextProps.merchantCouponRecords &&
     previousProps.europeLocationOptionsApi === nextProps.europeLocationOptionsApi
   );
 });
