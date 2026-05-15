@@ -20,6 +20,22 @@ function readParamsFromUrlPart(value: string) {
   return new URLSearchParams(trimmed);
 }
 
+function readGoogleOAuthParam(href: string, ...keys: string[]) {
+  try {
+    const url = new URL(href, "https://faolla.com");
+    const candidates = [url.searchParams, readParamsFromUrlPart(url.hash)];
+    for (const params of candidates) {
+      for (const key of keys) {
+        const value = (params.get(key) ?? "").trim();
+        if (value) return value;
+      }
+    }
+  } catch {
+    return "";
+  }
+  return "";
+}
+
 function readPositiveNumber(value: string | null) {
   const parsed = Number(value ?? "");
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
@@ -47,12 +63,16 @@ export function readGoogleOAuthUrlTokens(href: string): GoogleOAuthUrlTokens | n
   return null;
 }
 
+export function readGoogleOAuthUrlCode(href: string) {
+  return readGoogleOAuthParam(href, "code");
+}
+
+export function readGoogleOAuthUrlError(href: string) {
+  return readGoogleOAuthParam(href, "oauth_error", "error_code", "error", "error_description");
+}
+
 export function hasGoogleOAuthCode(href: string) {
-  try {
-    return Boolean((new URL(href, "https://faolla.com").searchParams.get("code") ?? "").trim());
-  } catch {
-    return false;
-  }
+  return Boolean(readGoogleOAuthUrlCode(href));
 }
 
 export function hasGoogleOAuthReturnPayload(href: string) {
@@ -64,6 +84,8 @@ export function hasGoogleOAuthReturnPayload(href: string) {
       Boolean((url.searchParams.get("state") ?? "").trim()) ||
       Boolean((url.searchParams.get("error") ?? url.searchParams.get("error_code") ?? "").trim()) ||
       Boolean((url.searchParams.get("oauth_error") ?? "").trim()) ||
+      Boolean((hashParams.get("code") ?? "").trim()) ||
+      Boolean((hashParams.get("state") ?? "").trim()) ||
       Boolean((hashParams.get("access_token") ?? "").trim()) ||
       Boolean((hashParams.get("refresh_token") ?? "").trim()) ||
       Boolean((hashParams.get("error") ?? hashParams.get("error_code") ?? "").trim())

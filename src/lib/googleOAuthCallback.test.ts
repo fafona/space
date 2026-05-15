@@ -5,6 +5,8 @@ import {
   hasGoogleOAuthCode,
   hasGoogleOAuthReturnPayload,
   readGoogleOAuthUrlTokens,
+  readGoogleOAuthUrlCode,
+  readGoogleOAuthUrlError,
 } from "./googleOAuthCallback";
 
 test("reads Google OAuth implicit tokens from hash or search", () => {
@@ -30,7 +32,11 @@ test("reads Google OAuth implicit tokens from hash or search", () => {
 
 test("detects Google OAuth callback payload without treating an empty marker as payload", () => {
   assert.equal(hasGoogleOAuthCode("https://faolla.com/login?oauth=google&code=abc&state=xyz"), true);
+  assert.equal(hasGoogleOAuthCode("https://faolla.com/login?oauth=google#code=abc&state=xyz"), true);
+  assert.equal(readGoogleOAuthUrlCode("https://faolla.com/login?oauth=google#code=abc&state=xyz"), "abc");
+  assert.equal(readGoogleOAuthUrlError("https://faolla.com/login?oauth=google#error=access_denied"), "access_denied");
   assert.equal(hasGoogleOAuthReturnPayload("https://faolla.com/login?oauth=google&code=abc&state=xyz"), true);
+  assert.equal(hasGoogleOAuthReturnPayload("https://faolla.com/login?oauth=google#code=abc&state=xyz"), true);
   assert.equal(hasGoogleOAuthReturnPayload("https://faolla.com/login?oauth=google#error=access_denied"), true);
   assert.equal(hasGoogleOAuthReturnPayload("https://faolla.com/login?oauth=google"), false);
 });

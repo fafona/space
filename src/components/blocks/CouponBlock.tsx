@@ -48,13 +48,11 @@ export default function CouponBlock({
   ...backgroundProps
 }: CouponBlockRuntimeProps) {
   const [loadedCoupons, setLoadedCoupons] = useState<MerchantCouponRecord[]>([]);
-  const [loading, setLoading] = useState(false);
   const [copiedCode, setCopiedCode] = useState("");
 
   useEffect(() => {
     if (previewCoupons || !runtimeSiteId) return;
     let cancelled = false;
-    setLoading(true);
     fetch(`/api/coupons?scope=public&siteId=${encodeURIComponent(runtimeSiteId)}`, {
       credentials: "same-origin",
       cache: "no-store",
@@ -66,9 +64,6 @@ export default function CouponBlock({
       })
       .catch(() => {
         if (!cancelled) setLoadedCoupons([]);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
       });
     return () => {
       cancelled = true;
@@ -172,7 +167,7 @@ export default function CouponBlock({
           </div>
           {coupons.length === 0 ? (
             <div className="mt-5 rounded-lg border border-dashed border-slate-300 bg-white/70 px-4 py-6 text-center text-sm text-slate-500">
-              {loading ? "优惠券加载中..." : couponEmptyText}
+              {couponEmptyText}
             </div>
           ) : null}
         </div>

@@ -36,6 +36,7 @@ import {
 import {
   buildCleanGoogleOAuthReturnPath,
   hasGoogleOAuthReturnPayload,
+  readGoogleOAuthUrlCode,
   readGoogleOAuthUrlTokens,
 } from "@/lib/googleOAuthCallback";
 import { buildMerchantBackendHref } from "@/lib/siteRouting";
@@ -1129,7 +1130,7 @@ function LoginPageInner() {
     return new Set(["qq.com", "vip.qq.com", "foxmail.com", "hotmail.com", "outlook.com", "live.com"]).has(domain);
   }
 
-  async function withTimeout<T>(task: Promise<T>, timeoutMs = 15000): Promise<T> {
+  const withTimeout = useCallback(async <T,>(task: Promise<T>, timeoutMs = 15000): Promise<T> => {
     let timer: ReturnType<typeof setTimeout> | null = null;
     let timedOut = false;
     const safeTask = task.catch((error) => {
@@ -1150,7 +1151,7 @@ function LoginPageInner() {
     } finally {
       if (timer) clearTimeout(timer);
     }
-  }
+  }, [t]);
 
   const readGoogleOAuthSession = useCallback(async (timeoutMs = 9000) => {
     const cleanGoogleOAuthReturnUrl = () => {
@@ -1176,10 +1177,13 @@ function LoginPageInner() {
 
     const exchangeGoogleOAuthCodeFromUrl = async () => {
       if (typeof window === "undefined") return null;
-      const code = new URL(window.location.href).searchParams.get("code")?.trim();
+      const code = readGoogleOAuthUrlCode(window.location.href);
       if (!code) return null;
 
-      const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+      const { data, error } = await withTimeout(
+        supabase.auth.exchangeCodeForSession(code),
+        Math.max(4500, timeoutMs),
+      );
       if (error) throw error;
       cleanGoogleOAuthReturnUrl();
       return data.session ?? null;
@@ -1218,7 +1222,7 @@ function LoginPageInner() {
     }
     if (exchangeError) throw exchangeError;
     return null;
-  }, []);
+  }, [withTimeout]);
 
   useEffect(() => {
     if (!isGoogleOAuthReturn || loggedOut || googleOAuthStateExpired) return;
@@ -1240,12 +1244,40 @@ function LoginPageInner() {
     setAuthView("signin");
     setPendingAction("google");
     setMsg("正在使用 Google 登录...");
+    const retryGoogleOAuthOnce = (message: string) => {
+      if (typeof window === "undefined") return false;
+      const storedAttempt = readGoogleOAuthAttempt();
+      const fallbackAccountType =
+        storedAttempt?.accountType ??
+        googleOAuthAccountType ??
+        readGoogleOAuthEntryCookie() ??
+        readStoredLoginEntryAccountType();
+      if (!fallbackAccountType || (storedAttempt?.stateRetryCount ?? 0) >= 1) return false;
+      writeGoogleOAuthAttempt({
+        accountType: fallbackAccountType,
+        redirectPath: storedAttempt?.redirectPath ?? requestedRedirectPath,
+        loginFromUrl: storedAttempt?.loginFromUrl ?? loginFromUrl,
+        startedAt: Date.now(),
+        stateRetryCount: (storedAttempt?.stateRetryCount ?? 0) + 1,
+      });
+      setEntryAccountType(fallbackAccountType);
+      setAuthView("signin");
+      setPendingAction("google");
+      setMsg(message);
+      window.setTimeout(() => {
+        void signInWithGoogleRef.current({ accountType: fallbackAccountType, retryExpiredState: true });
+      }, 420);
+      return true;
+    };
 
     void (async () => {
       try {
         const session = await readGoogleOAuthSession();
         if (!mounted) return;
         if (!session?.access_token) {
+          if (retryGoogleOAuthOnce("Google 登录未完成，正在重新连接 Google...")) {
+            return;
+          }
           clearGoogleOAuthAttempt();
           if (typeof window !== "undefined") {
             window.history.replaceState(
@@ -1324,6 +1356,13 @@ function LoginPageInner() {
         });
       } catch (error) {
         if (!mounted) return;
+        const message = error instanceof Error ? error.message : "";
+        if (
+          /code verifier|bad_oauth_state|oauth state|invalid state|flow state|auth code|timeout|network|fetch|load failed/i.test(message) &&
+          retryGoogleOAuthOnce("Google 登录状态已过期，正在重新连接 Google...")
+        ) {
+          return;
+        }
         setMsg(error instanceof Error ? error.message : t("login.requestFailed"));
         setPendingAction(null);
       }
@@ -1337,8 +1376,10 @@ function LoginPageInner() {
     googleOAuthStateExpired,
     isGoogleOAuthReturn,
     loggedOut,
+    loginFromUrl,
     readGoogleOAuthSession,
     redirectToAccountHome,
+    requestedRedirectPath,
     showAutoSwitchedEntryNotice,
     t,
   ]);
