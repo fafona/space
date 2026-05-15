@@ -19026,20 +19026,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         ) : null}
                       </button>
                     ) : null}
-                    {canUseCouponModule ? (
-                      <button
-                        type="button"
-                        className={getMerchantDesktopMenuButtonClassName(merchantDesktopSection === "coupons")}
-                        onClick={openMerchantCouponsPanel}
-                      >
-                        <span>优惠券</span>
-                        {merchantVisibleCouponCount > 0 ? (
-                          <span className="ml-2 inline-flex min-w-[1.5rem] items-center justify-center rounded-full bg-rose-500 px-2 py-0.5 text-xs font-semibold leading-none text-white">
-                            {merchantVisibleCouponCount > 99 ? "99+" : merchantVisibleCouponCount}
-                          </span>
-                        ) : null}
-                      </button>
-                    ) : null}
                     <button
                       type="button"
                       className={getMerchantDesktopMenuButtonClassName(
