@@ -1597,24 +1597,24 @@ function buildShareCardHtml(input: {
         top: 16px;
         right: 16px;
         z-index: 20;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 42px;
-        height: 42px;
-        border-radius: 999px;
-        border: 1px solid rgba(15,23,42,.12);
-        background: rgba(255,255,255,.94);
-        box-shadow: 0 18px 40px rgba(15,23,42,.12);
-        backdrop-filter: blur(10px);
+        display: block;
+        width: 35px;
+        height: 24px;
+        min-height: 24px;
+        border-radius: 3px;
+        border: 1px solid rgba(203,213,225,.8);
+        background: transparent;
+        padding: 0;
+        box-shadow: none;
         overflow: hidden;
         cursor: pointer;
       }
       .lang-switcher img {
-        width: 20px;
-        height: 15px;
-        border-radius: 3px;
-        border: 1px solid rgba(15,23,42,.08);
+        display: block;
+        width: 100%;
+        height: 100%;
+        border-radius: 0;
+        border: 0;
         object-fit: cover;
       }
       .lang-switcher-sr {
@@ -1788,8 +1788,9 @@ function buildShareCardHtml(input: {
         .lang-switcher {
           top: max(12px, calc(env(safe-area-inset-top) + 12px));
           right: max(12px, calc(env(safe-area-inset-right) + 12px));
-          width: 42px;
-          height: 42px;
+          width: 35px;
+          height: 24px;
+          min-height: 24px;
           z-index: 100;
         }
       }
