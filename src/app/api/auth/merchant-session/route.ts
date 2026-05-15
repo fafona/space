@@ -622,6 +622,15 @@ export async function POST(request: Request) {
         accessToken = exchanged.accessToken;
         refreshToken = exchanged.refreshToken;
         expiresIn = exchanged.expiresIn ?? expiresIn;
+      } else {
+        return noStoreJson(
+          {
+            ok: false,
+            error: "merchant_session_google_code_invalid",
+            message: "Google 登录授权已失效，请重新点击 Google 登录。",
+          },
+          { status: 401 },
+        );
       }
     }
 

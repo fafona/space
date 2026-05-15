@@ -37,6 +37,7 @@ import {
   buildCleanGoogleOAuthReturnPath,
   hasGoogleOAuthReturnPayload,
   readGoogleOAuthUrlCode,
+  readGoogleOAuthUrlErrorDetails,
   readGoogleOAuthUrlTokens,
 } from "@/lib/googleOAuthCallback";
 import { buildMerchantBackendHref } from "@/lib/siteRouting";
@@ -1389,9 +1390,21 @@ function LoginPageInner() {
       );
       return payload;
     };
+    const readGoogleOAuthReturnErrorMessage = () => {
+      if (typeof window === "undefined") return "";
+      const details = readGoogleOAuthUrlErrorDetails(window.location.href);
+      if (!details) return "";
+      const rawMessage = details.description || details.code;
+      const message = rawMessage.replace(/\+/g, " ").trim();
+      return message ? `Google 登录失败：${message}` : "Google 登录失败，请重新点击 Google 登录。";
+    };
 
     void (async () => {
       try {
+        const googleReturnErrorMessage = readGoogleOAuthReturnErrorMessage();
+        if (googleReturnErrorMessage) {
+          throw new Error(googleReturnErrorMessage);
+        }
         const firstServerPayload = await syncGoogleOAuthCodeViaServer().catch(() => null);
         if (!mounted) return;
         if (firstServerPayload) {

@@ -7,6 +7,7 @@ import {
   readGoogleOAuthUrlTokens,
   readGoogleOAuthUrlCode,
   readGoogleOAuthUrlError,
+  readGoogleOAuthUrlErrorDetails,
 } from "./googleOAuthCallback";
 
 test("reads Google OAuth implicit tokens from hash or search", () => {
@@ -35,6 +36,15 @@ test("detects Google OAuth callback payload without treating an empty marker as 
   assert.equal(hasGoogleOAuthCode("https://faolla.com/login?oauth=google#code=abc&state=xyz"), true);
   assert.equal(readGoogleOAuthUrlCode("https://faolla.com/login?oauth=google#code=abc&state=xyz"), "abc");
   assert.equal(readGoogleOAuthUrlError("https://faolla.com/login?oauth=google#error=access_denied"), "access_denied");
+  assert.deepEqual(
+    readGoogleOAuthUrlErrorDetails(
+      "https://faolla.com/login?oauth=google&error=server_error&error_code=unexpected_failure&error_description=Unable+to+exchange+external+code",
+    ),
+    {
+      code: "unexpected_failure",
+      description: "Unable to exchange external code",
+    },
+  );
   assert.equal(hasGoogleOAuthReturnPayload("https://faolla.com/login?oauth=google&code=abc&state=xyz"), true);
   assert.equal(hasGoogleOAuthReturnPayload("https://faolla.com/login?oauth=google#code=abc&state=xyz"), true);
   assert.equal(hasGoogleOAuthReturnPayload("https://faolla.com/login?oauth=google#error=access_denied"), true);

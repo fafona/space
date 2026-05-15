@@ -5,6 +5,11 @@ export type GoogleOAuthUrlTokens = {
   token_type?: string;
 };
 
+export type GoogleOAuthUrlErrorDetails = {
+  code: string;
+  description: string;
+};
+
 const GOOGLE_OAUTH_TRANSIENT_SEARCH_PARAMS = [
   "code",
   "state",
@@ -69,6 +74,31 @@ export function readGoogleOAuthUrlCode(href: string) {
 
 export function readGoogleOAuthUrlError(href: string) {
   return readGoogleOAuthParam(href, "oauth_error", "error_code", "error", "error_description");
+}
+
+export function readGoogleOAuthUrlErrorDetails(href: string): GoogleOAuthUrlErrorDetails | null {
+  try {
+    const url = new URL(href, "https://faolla.com");
+    const candidates = [url.searchParams, readParamsFromUrlPart(url.hash)];
+    for (const params of candidates) {
+      const code = (
+        params.get("oauth_error") ??
+        params.get("error_code") ??
+        params.get("error") ??
+        ""
+      ).trim();
+      const description = (params.get("error_description") ?? "").trim();
+      if (code || description) {
+        return {
+          code: code || description,
+          description,
+        };
+      }
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 export function hasGoogleOAuthCode(href: string) {

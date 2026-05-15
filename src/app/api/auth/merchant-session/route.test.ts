@@ -351,3 +351,51 @@ test("merchant-session POST exchanges Google OAuth code before browser session s
     process.env.SUPABASE_SERVICE_ROLE_KEY = previousServiceRoleKey;
   }
 });
+
+test("merchant-session POST reports invalid Google OAuth code explicitly", async () => {
+  const originalFetch = globalThis.fetch;
+  const previousUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const previousAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  process.env.NEXT_PUBLIC_SUPABASE_URL = "https://unit-test-oauth-invalid.supabase.co";
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
+
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const requestUrl = new URL(url);
+    if (requestUrl.pathname === "/auth/v1/token") {
+      return new Response(JSON.stringify({ error: "invalid_grant" }), {
+        status: 400,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    }
+    return new Response("not found", { status: 404 });
+  }) as typeof fetch;
+
+  try {
+    const response = await POST(
+      new Request("https://faolla.com/api/auth/merchant-session", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://faolla.com",
+        },
+        body: JSON.stringify({
+          authCode: "expired-google-auth-code",
+          codeVerifier: "browser-code-verifier",
+          preferredAccountType: "merchant",
+        }),
+      }),
+    );
+
+    assert.equal(response.status, 401);
+    const body = await response.json();
+    assert.equal(body.error, "merchant_session_google_code_invalid");
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env.NEXT_PUBLIC_SUPABASE_URL = previousUrl;
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = previousAnonKey;
+  }
+});
