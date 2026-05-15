@@ -1786,7 +1786,11 @@ function buildShareCardHtml(input: {
       }
       @media (max-width: 767px) {
         .lang-switcher {
-          display: none;
+          top: max(12px, calc(env(safe-area-inset-top) + 12px));
+          right: max(12px, calc(env(safe-area-inset-right) + 12px));
+          width: 42px;
+          height: 42px;
+          z-index: 100;
         }
       }
       @media (max-width: 520px) {
