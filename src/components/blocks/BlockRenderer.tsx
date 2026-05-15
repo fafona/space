@@ -20,6 +20,7 @@ const ChartBlock = dynamic(() => import("./ChartBlock"), { ssr: false, loading: 
 const MusicBlock = dynamic(() => import("./MusicBlock"), { ssr: false, loading: () => null });
 const ContactBlock = dynamic(() => import("./ContactBlock"), { ssr: false, loading: () => null });
 const ProductBlock = dynamic(() => import("./ProductBlock"), { ssr: false, loading: () => null });
+const CouponBlock = dynamic(() => import("./CouponBlock"), { ssr: false, loading: () => null });
 const BookingBlock = dynamic(() => import("./BookingBlock"), { ssr: false, loading: () => null });
 
 class BlockRuntimeBoundary extends Component<{ blockId: string; children: ReactNode }, { hasError: boolean }> {
@@ -128,6 +129,9 @@ export default function BlockRenderer({
                 runtimeOrderManagementEnabled={productCartEnabled}
               />
             );
+            break;
+          case "coupon":
+            content = <CouponBlock {...b.props} runtimeSiteId={bookingSiteId} />;
             break;
           case "booking":
             content = (

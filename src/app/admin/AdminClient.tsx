@@ -24,6 +24,8 @@ import {
   type BackgroundEditableProps,
   type Block,
   type CommonProps,
+  type CouponActionMode,
+  type CouponDisplayMode,
   type ImageFillMode,
   type MerchantCardTextLayoutConfig,
   type MerchantCardTextRole,
@@ -239,6 +241,7 @@ import {
   isMerchantOrderNewForMerchant,
   type MerchantOrderRecord,
 } from "@/lib/merchantOrders";
+import type { MerchantCouponRecord } from "@/lib/merchantCoupons";
 import { broadcastPublishSync } from "@/lib/publishSync";
 import {
   BUTTON_BLOCK_MIN_HEIGHT,
@@ -267,6 +270,7 @@ import {
 } from "@/lib/accountSwitching";
 import BlockRenderer from "@/components/blocks/BlockRenderer";
 import BookingBlock from "@/components/blocks/BookingBlock";
+import CouponBlock from "@/components/blocks/CouponBlock";
 import { useI18n } from "@/components/I18nProvider";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import NoMercyFlagIcon from "@/components/NoMercyFlagIcon";
@@ -636,6 +640,7 @@ const BLOCK_TYPE_LABELS: Record<Block["type"], string> = {
   "search-bar": "搜索",
   "merchant-list": "商户列表",
   product: "产品",
+  coupon: "优惠券",
   booking: "预约",
   contact: "联系方式",
 };
@@ -9561,6 +9566,23 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       };
     }
 
+    if (type === "coupon") {
+      return {
+        id,
+        type,
+        props: {
+          heading: "优惠券",
+          text: "展示当前可领取优惠券，引导客户复制优惠码或下单使用。",
+          couponDisplayMode: "cards",
+          couponActionMode: "copy",
+          couponShowRemaining: true,
+          couponShowExpiresAt: true,
+          couponSelectedIds: [],
+          couponEmptyText: "暂无可领取优惠券",
+        },
+      };
+    }
+
     if (type === "booking") {
       return {
         id,
@@ -9634,6 +9656,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
     if (!isPlatformEditor && newBlockType === "product" && !canUseProductBlock) {
       showTip("当前权限未开通产品区块");
+      return;
+    }
+    if (!isPlatformEditor && newBlockType === "coupon" && !canUseCouponBlock) {
+      showTip("当前权限未开通优惠券区块");
       return;
     }
     if (!isPlatformEditor && newBlockType === "booking" && !canUseBookingBlock) {
@@ -15558,6 +15584,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const canUseGalleryBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowGalleryBlock);
   const canUseMusicBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowMusicBlock);
   const canUseProductBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowProductBlock);
+  const canUseCouponBlock =
+    isPlatformEditor ||
+    Boolean(merchantPermissionConfig?.allowCouponModule && merchantPermissionConfig?.allowCouponBlock);
   const canUseOrderManagement =
     !isPlatformEditor &&
     Boolean(merchantPermissionConfig?.allowProductBlock) &&
@@ -15575,6 +15604,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     (!canUseGalleryBlock && newBlockType === "gallery") ||
     (!canUseMusicBlock && newBlockType === "music") ||
     (!canUseProductBlock && newBlockType === "product") ||
+    (!canUseCouponBlock && newBlockType === "coupon") ||
     ((!canUseBookingBlock || isBookingBlockAddLocked) && newBlockType === "booking");
   const showAddBlockGuide = !isPlatformEditor && !hasAddedExtraBlock && blocks.length === 1 && blocks[0]?.type === "nav";
   const merchantPublishSizeLimitBytes = !isPlatformEditor
@@ -19452,6 +19482,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         <option value="nav">{"导航"}</option>
                         <option value="music" disabled={!canUseMusicBlock}>{"音乐"}{!canUseMusicBlock ? "（未开通）" : ""}</option>
                         <option value="product" disabled={!canUseProductBlock}>{"产品"}{!canUseProductBlock ? "（未开通）" : ""}</option>
+                        <option value="coupon" disabled={!canUseCouponBlock}>{"优惠券"}{!canUseCouponBlock ? "（未开通）" : ""}</option>
                         <option value="booking" disabled={!canUseBookingBlock || isBookingBlockAddLocked}>
                           {"预约"}
                           {!canUseBookingBlock ? "（未开通）" : isBookingBlockAddLocked ? "（已存在）" : ""}
@@ -21626,6 +21657,7 @@ type GalleryEditorImage = {
         block.type === "merchant-list" ||
         block.type === "search-bar" ||
         block.type === "product" ||
+        block.type === "coupon" ||
         block.type === "booking")
     ) {
       return { text: html };
@@ -21643,6 +21675,7 @@ type GalleryEditorImage = {
         block.type === "merchant-list" ||
         block.type === "search-bar" ||
         block.type === "product" ||
+        block.type === "coupon" ||
         block.type === "booking")
     ) {
       return { heading: html };
@@ -22964,7 +22997,7 @@ type GalleryEditorImage = {
       ? "min(400px, calc(100vw - 2rem))"
       : block.type === "merchant-list" || block.type === "search-bar"
         ? "min(980px, calc(100vw - 2rem))"
-        : block.type === "product" || block.type === "booking"
+        : block.type === "product" || block.type === "coupon" || block.type === "booking"
           ? "min(760px, calc(100vw - 2rem))"
           : "min(760px, calc(100vw - 2rem))";
   const selectedEditorPreferredWidth =
@@ -22972,7 +23005,7 @@ type GalleryEditorImage = {
       ? "min(400px, calc(100vw - 2rem))"
       : block.type === "merchant-list" || block.type === "search-bar"
         ? "min(980px, calc(100vw - 2rem))"
-        : block.type === "product" || block.type === "booking"
+        : block.type === "product" || block.type === "coupon" || block.type === "booking"
           ? "min(820px, calc(100vw - 2rem))"
           : undefined;
   const blockWidth = draftResize?.width ?? normalizeBlockWidth(block.props.blockWidth, block.type);
@@ -28299,6 +28332,163 @@ type GalleryEditorImage = {
               ) : null}
               {renderProductPreviewWithFilters()}
             </>
+          )}
+          {resizeHandles}
+        </div>
+      </section>
+    );
+  }
+
+  if (block.type === "coupon") {
+    const couponDisplayMode = block.props.couponDisplayMode === "list" ? "list" : "cards";
+    const couponActionMode: CouponActionMode =
+      block.props.couponActionMode === "order" || block.props.couponActionMode === "none"
+        ? block.props.couponActionMode
+        : "copy";
+    const previewCoupons: MerchantCouponRecord[] = [
+      {
+        id: "preview-coupon-1",
+        siteId: runtimeSiteId || "preview",
+        title: "新客户优惠",
+        code: "WELCOME5",
+        description: "首次下单可使用。",
+        discountType: "threshold_amount_off",
+        discountValue: 5,
+        minimumAmount: 30,
+        maxDiscountAmount: 0,
+        totalQuantity: 100,
+        claimedCount: 0,
+        usedCount: 12,
+        perCustomerLimit: 1,
+        startsAt: null,
+        expiresAt: "2026-12-31T23:59:59.000Z",
+        status: "active",
+        showOnWebsite: true,
+        showOnContactCard: false,
+        applicableProductIds: [],
+        applicableTags: [],
+        createdAt: "2026-05-15T00:00:00.000Z",
+        updatedAt: "2026-05-15T00:00:00.000Z",
+      },
+    ];
+    return (
+      <section
+        data-block-id={block.id}
+        data-jump-target={publicBlockId}
+        data-block-public-id={publicBlockId}
+        className={`${shellClass} pointer-events-none`}
+        style={offsetStyle}
+      >
+        <EditorBlockHeader
+          blockId={publicBlockId}
+          draggingBlockId={draggingBlockId}
+          isSelected={isSelected}
+          onDragHandleMouseDown={onDragHandleMouseDown}
+          onNudge={onNudge}
+          onOpenLayerSettings={openLayerSettings}
+          onEditTypography={editTypography}
+          onInsertImage={insertImage}
+          onEditImageSettings={editImageSettings}
+          onEditBorderStyle={editBorderSettings}
+          isMobileViewport={previewViewport === "mobile"}
+          mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
+          onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
+          onDelete={onDelete}
+        />
+        <div
+          ref={resizeTargetRef}
+          data-block-visual-boundary
+          className={`${cardClass} relative`}
+          onClick={onSelect}
+          style={{ ...blockBackgroundStyle, ...blockSizeStyle, ...previewBorderInlineStyle }}
+        >
+          {imageDialog}
+          {imageSettingsDialog}
+          {borderSettingsDialog}
+          {layerSettingsDialog}
+          {typographyDialog}
+          {isSelected ? renderSelectedEditor(
+            <div className="grid gap-4">
+              <div className="grid gap-3 md:grid-cols-2">
+                <label className="space-y-1 text-sm">
+                  <span className="block text-gray-600">标题</span>
+                  <RichTextEditor
+                    field="heading"
+                    className="border p-2 rounded w-full text-xl font-bold"
+                    value={block.props.heading ?? ""}
+                    onChange={handleRichFieldChange}
+                    onActivate={registerActiveEditor}
+                    onSelectionChange={updateSelectionRange}
+                  />
+                </label>
+                <label className="space-y-1 text-sm">
+                  <span className="block text-gray-600">展示样式</span>
+                  <select
+                    className="w-full rounded border px-3 py-2"
+                    value={couponDisplayMode}
+                    onChange={(event) => onChange({ couponDisplayMode: event.target.value as CouponDisplayMode })}
+                  >
+                    <option value="cards">卡片</option>
+                    <option value="list">列表</option>
+                  </select>
+                </label>
+              </div>
+              <label className="space-y-1 text-sm">
+                <span className="block text-gray-600">说明</span>
+                <RichTextEditor
+                  field="text"
+                  className="border p-2 rounded w-full min-h-[88px] text-gray-700"
+                  value={block.props.text ?? ""}
+                  onChange={handleRichFieldChange}
+                  onActivate={registerActiveEditor}
+                  onSelectionChange={updateSelectionRange}
+                />
+              </label>
+              <div className="grid gap-3 md:grid-cols-3">
+                <label className="space-y-1 text-sm">
+                  <span className="block text-gray-600">按钮动作</span>
+                  <select
+                    className="w-full rounded border px-3 py-2"
+                    value={couponActionMode}
+                    onChange={(event) => onChange({ couponActionMode: event.target.value as CouponActionMode })}
+                  >
+                    <option value="copy">复制优惠码</option>
+                    <option value="order">立即使用</option>
+                    <option value="none">只展示</option>
+                  </select>
+                </label>
+                <label className="flex items-center gap-2 rounded border px-3 py-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={block.props.couponShowRemaining !== false}
+                    onChange={(event) => onChange({ couponShowRemaining: event.target.checked })}
+                  />
+                  显示剩余数量
+                </label>
+                <label className="flex items-center gap-2 rounded border px-3 py-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={block.props.couponShowExpiresAt !== false}
+                    onChange={(event) => onChange({ couponShowExpiresAt: event.target.checked })}
+                  />
+                  显示有效期
+                </label>
+              </div>
+              <label className="space-y-1 text-sm">
+                <span className="block text-gray-600">空状态文案</span>
+                <input
+                  className="w-full rounded border px-3 py-2"
+                  value={block.props.couponEmptyText ?? ""}
+                  onChange={(event) => onChange({ couponEmptyText: event.target.value })}
+                />
+              </label>
+              <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                优惠券内容来自经营中心，区块只控制展示样式和点击动作。
+              </div>
+              <CouponBlock {...block.props} previewCoupons={previewCoupons} interactive={false} />
+            </div>,
+          ) : (
+            <CouponBlock {...block.props} previewCoupons={previewCoupons} interactive={false} />
           )}
           {resizeHandles}
         </div>

@@ -105,6 +105,8 @@ export type MerchantServicePermissionConfig = {
   allowMusicBlock: boolean;
   allowProductBlock: boolean;
   allowOrderManagement: boolean;
+  allowCouponModule: boolean;
+  allowCouponBlock: boolean;
   allowBookingBlock: boolean;
   publishSizeLimitMb: number;
 };
@@ -426,6 +428,8 @@ export function createDefaultMerchantPermissionConfig(): MerchantServicePermissi
     allowMusicBlock: false,
     allowProductBlock: false,
     allowOrderManagement: false,
+    allowCouponModule: false,
+    allowCouponBlock: false,
     allowBookingBlock: false,
     publishSizeLimitMb: 5,
   };
@@ -452,6 +456,10 @@ export function normalizeMerchantPermissionConfig(value: unknown): MerchantServi
     typeof source.allowOrderManagement === "boolean"
       ? source.allowOrderManagement
       : fallback.allowOrderManagement;
+  const allowCouponModule =
+    typeof source.allowCouponModule === "boolean" ? source.allowCouponModule : fallback.allowCouponModule;
+  const allowCouponBlockRaw =
+    typeof source.allowCouponBlock === "boolean" ? source.allowCouponBlock : fallback.allowCouponBlock;
   return {
     planLimit: normalizeInt(source.planLimit, fallback.planLimit, 1, 200),
     pageLimit: normalizeInt(source.pageLimit, fallback.pageLimit, 1, 500),
@@ -506,6 +514,8 @@ export function normalizeMerchantPermissionConfig(value: unknown): MerchantServi
     allowMusicBlock: typeof source.allowMusicBlock === "boolean" ? source.allowMusicBlock : fallback.allowMusicBlock,
     allowProductBlock,
     allowOrderManagement: allowProductBlock && allowOrderManagementRaw,
+    allowCouponModule,
+    allowCouponBlock: allowCouponModule && allowCouponBlockRaw,
     allowBookingBlock: typeof source.allowBookingBlock === "boolean" ? source.allowBookingBlock : fallback.allowBookingBlock,
     publishSizeLimitMb: normalizeInt(source.publishSizeLimitMb, fallback.publishSizeLimitMb, 1, 100),
   };

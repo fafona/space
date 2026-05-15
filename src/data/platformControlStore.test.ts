@@ -40,6 +40,8 @@ test("merchant permission config includes default business card background image
   assert.equal(permission.galleryBlockImageLimitKb, 300);
   assert.equal(permission.allowBookingEmailPrefill, false);
   assert.equal(permission.allowOrderManagement, false);
+  assert.equal(permission.allowCouponModule, false);
+  assert.equal(permission.allowCouponBlock, false);
 });
 
 test("merchant permission config keeps order management disabled for legacy product-only configs", () => {
@@ -48,6 +50,21 @@ test("merchant permission config keeps order management disabled for legacy prod
   });
   assert.equal(permission.allowProductBlock, true);
   assert.equal(permission.allowOrderManagement, false);
+});
+
+test("merchant permission config keeps coupon block disabled without coupon module", () => {
+  const permission = normalizeMerchantPermissionConfig({
+    allowCouponBlock: true,
+  });
+  assert.equal(permission.allowCouponModule, false);
+  assert.equal(permission.allowCouponBlock, false);
+
+  const enabled = normalizeMerchantPermissionConfig({
+    allowCouponModule: true,
+    allowCouponBlock: true,
+  });
+  assert.equal(enabled.allowCouponModule, true);
+  assert.equal(enabled.allowCouponBlock, true);
 });
 
 test("merchant config history keeps full entries and persists details outside main state payload", () => {

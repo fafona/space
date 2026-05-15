@@ -358,6 +358,19 @@ type ProductProps = BackgroundEditableProps &
     productDescriptionTypography?: TypographyEditableProps;
     productPriceTypography?: TypographyEditableProps;
   };
+export type CouponDisplayMode = "cards" | "list";
+export type CouponActionMode = "copy" | "order" | "none";
+export type CouponProps = BackgroundEditableProps &
+  TypographyEditableProps & {
+    heading?: string;
+    text?: string;
+    couponDisplayMode?: CouponDisplayMode;
+    couponActionMode?: CouponActionMode;
+    couponShowRemaining?: boolean;
+    couponShowExpiresAt?: boolean;
+    couponSelectedIds?: string[];
+    couponEmptyText?: string;
+  };
 export type BookingProps = BackgroundEditableProps &
   TypographyEditableProps & {
     heading?: string;
@@ -420,6 +433,7 @@ export type Block =
   | { id: string; type: "merchant-list"; props: MerchantListProps }
   | { id: string; type: "contact"; props: ContactProps }
   | { id: string; type: "product"; props: ProductProps }
+  | { id: string; type: "coupon"; props: CouponProps }
   | { id: string; type: "booking"; props: BookingProps }
   | { id: string; type: "music"; props: MusicProps };
 

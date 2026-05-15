@@ -51,6 +51,25 @@ test("getMerchantPublishPermissionViolation blocks disallowed booking blocks", (
   assert.equal(violation?.code, "booking_block_not_allowed");
 });
 
+test("getMerchantPublishPermissionViolation blocks disallowed coupon blocks", () => {
+  const permission = {
+    ...createDefaultMerchantPermissionConfig(),
+    planLimit: 3,
+  };
+  const blocks = buildPersistedBlocksFromPlanConfig(
+    createPlanConfig([
+      [
+        { id: "nav-1", type: "nav", props: {} as never } as Block,
+        { id: "coupon-1", type: "coupon", props: {} as never } as Block,
+      ],
+    ]),
+  );
+
+  const violation = getMerchantPublishPermissionViolation(permission, blocks);
+
+  assert.equal(violation?.code, "coupon_block_not_allowed");
+});
+
 test("getMerchantPublishPermissionViolation allows duplicated extra plans inside the plan limit guard", () => {
   const permission = {
     ...createDefaultMerchantPermissionConfig(),

@@ -1586,6 +1586,8 @@ function describePermissionValue(
     key === "allowMusicBlock" ||
     key === "allowProductBlock" ||
     key === "allowOrderManagement" ||
+    key === "allowCouponModule" ||
+    key === "allowCouponBlock" ||
     key === "allowBookingBlock"
   ) {
     return value === true ? "是" : "否";
@@ -1635,6 +1637,8 @@ function buildMerchantConfigDiffLines(current: MerchantConfigSnapshot, target: M
     { key: "allowMusicBlock", label: "可音乐区块" },
     { key: "allowProductBlock", label: "可产品区块" },
     { key: "allowOrderManagement", label: "可订单管理" },
+    { key: "allowCouponModule", label: "可优惠券模块" },
+    { key: "allowCouponBlock", label: "可优惠券区块" },
     { key: "allowBookingBlock", label: "可预约区块" },
   ];
   permissionFields.forEach(({ key, label }) => {
@@ -1886,6 +1890,8 @@ export default function SuperAdminClient() {
   const [configAllowMusicBlock, setConfigAllowMusicBlock] = useState(false);
   const [configAllowProductBlock, setConfigAllowProductBlock] = useState(false);
   const [configAllowOrderManagement, setConfigAllowOrderManagement] = useState(false);
+  const [configAllowCouponModule, setConfigAllowCouponModule] = useState(false);
+  const [configAllowCouponBlock, setConfigAllowCouponBlock] = useState(false);
   const [configAllowBookingBlock, setConfigAllowBookingBlock] = useState(false);
   const [configMerchantCardImage, setConfigMerchantCardImage] = useState("");
   const [configMerchantCardImageOpacity, setConfigMerchantCardImageOpacity] = useState(1);
@@ -3964,6 +3970,8 @@ export default function SuperAdminClient() {
     setConfigAllowMusicBlock(permission.allowMusicBlock);
     setConfigAllowProductBlock(permission.allowProductBlock);
     setConfigAllowOrderManagement(permission.allowProductBlock && permission.allowOrderManagement);
+    setConfigAllowCouponModule(permission.allowCouponModule);
+    setConfigAllowCouponBlock(permission.allowCouponModule && permission.allowCouponBlock);
     setConfigAllowBookingBlock(permission.allowBookingBlock);
     setConfigMerchantCardImage((site.merchantCardImageUrl ?? "").trim());
     setConfigMerchantCardImageOpacity(normalizeUnitInterval(site.merchantCardImageOpacity, 1));
@@ -6000,6 +6008,16 @@ export default function SuperAdminClient() {
         )}`,
       );
     }
+    if (prevPermission.allowCouponModule !== configAllowCouponModule) {
+      pendingChanges.push(`优惠券模块：${formatBool(prevPermission.allowCouponModule)} -> ${formatBool(configAllowCouponModule)}`);
+    }
+    if (prevPermission.allowCouponBlock !== (configAllowCouponModule && configAllowCouponBlock)) {
+      pendingChanges.push(
+        `优惠券区块：${formatBool(prevPermission.allowCouponBlock)} -> ${formatBool(
+          configAllowCouponModule && configAllowCouponBlock,
+        )}`,
+      );
+    }
     if (prevPermission.allowBookingBlock !== configAllowBookingBlock) {
       pendingChanges.push(`预约区块：${formatBool(prevPermission.allowBookingBlock)} -> ${formatBool(configAllowBookingBlock)}`);
     }
@@ -6065,6 +6083,8 @@ export default function SuperAdminClient() {
         allowMusicBlock: configAllowMusicBlock,
         allowProductBlock: configAllowProductBlock,
         allowOrderManagement: configAllowProductBlock && configAllowOrderManagement,
+        allowCouponModule: configAllowCouponModule,
+        allowCouponBlock: configAllowCouponModule && configAllowCouponBlock,
         allowBookingBlock: configAllowBookingBlock,
       },
       merchantCardImageUrl: nextMerchantCardImage,
@@ -8687,6 +8707,29 @@ export default function SuperAdminClient() {
                                   disabled={!configAllowProductBlock}
                                 />
                                 订单管理
+                              </label>
+                              <label className="flex items-center gap-2 rounded border px-2 py-1.5">
+                                <input
+                                  type="checkbox"
+                                  checked={configAllowCouponModule}
+                                  onChange={(e) => {
+                                    const nextChecked = e.target.checked;
+                                    setConfigAllowCouponModule(nextChecked);
+                                    if (!nextChecked) {
+                                      setConfigAllowCouponBlock(false);
+                                    }
+                                  }}
+                                />
+                                优惠券模块
+                              </label>
+                              <label className={`flex items-center gap-2 rounded border px-2 py-1.5 ${configAllowCouponModule ? "" : "opacity-50"}`}>
+                                <input
+                                  type="checkbox"
+                                  checked={configAllowCouponModule && configAllowCouponBlock}
+                                  onChange={(e) => setConfigAllowCouponBlock(e.target.checked)}
+                                  disabled={!configAllowCouponModule}
+                                />
+                                优惠券区块
                               </label>
                               <label className="flex items-center gap-2 rounded border px-2 py-1.5">
                                 <input

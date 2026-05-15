@@ -65,6 +65,9 @@ function getDisallowedBlockViolation(
   if (block.type === "product" && !permissionConfig.allowProductBlock) {
     return { code: "product_block_not_allowed", message: "当前权限未开通产品区块" };
   }
+  if (block.type === "coupon" && !permissionConfig.allowCouponBlock) {
+    return { code: "coupon_block_not_allowed", message: "当前权限未开通优惠券区块" };
+  }
   if (block.type === "booking" && !permissionConfig.allowBookingBlock) {
     return { code: "booking_block_not_allowed", message: "当前权限未开通预约区块" };
   }
