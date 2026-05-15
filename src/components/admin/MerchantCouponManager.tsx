@@ -97,6 +97,32 @@ function fromDateTimeTextValue(value: string) {
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
+function toDateTimePickerValue(value: string) {
+  const raw = value.trim();
+  if (!raw) return "";
+  const match = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{1,2}))?$/);
+  if (match) {
+    const year = match[1];
+    const month = String(Number(match[2])).padStart(2, "0");
+    const day = String(Number(match[3])).padStart(2, "0");
+    const hour = String(Number(match[4] ?? "0")).padStart(2, "0");
+    const minute = String(Number(match[5] ?? "0")).padStart(2, "0");
+    return `${year}-${month}-${day}T${hour}:${minute}`;
+  }
+  const date = new Date(raw);
+  if (!Number.isFinite(date.getTime())) return "";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hour = String(date.getHours()).padStart(2, "0");
+  const minute = String(date.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hour}:${minute}`;
+}
+
+function toDateTimeTextFromPickerValue(value: string) {
+  return value.trim().replace("T", " ");
+}
+
 function formatDateTime(value: string | null | undefined) {
   if (!value) return "未设置";
   const date = new Date(value);
@@ -151,6 +177,46 @@ function buildFormFromCoupon(coupon: MerchantCouponRecord): CouponFormState {
 function getRemainingCount(coupon: MerchantCouponRecord) {
   if (coupon.totalQuantity <= 0) return "不限";
   return String(Math.max(0, coupon.totalQuantity - coupon.usedCount));
+}
+
+function CouponDateTimeField({
+  label,
+  value,
+  placeholder,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  placeholder: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="space-y-1 text-sm">
+      <span className="block text-slate-600">{label}</span>
+      <span className="relative block">
+        <input
+          type="text"
+          inputMode="numeric"
+          data-no-translate="1"
+          translate="no"
+          className="w-full rounded-lg border border-slate-300 px-3 py-2 pr-20 outline-none focus:border-slate-500"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={placeholder}
+        />
+        <span className="pointer-events-none absolute inset-y-0 right-2 flex items-center rounded-md px-2 text-xs font-semibold text-slate-600">
+          选择
+        </span>
+        <input
+          type="datetime-local"
+          aria-label={`${label}选择器`}
+          className="absolute inset-y-0 right-0 h-full w-16 cursor-pointer opacity-0"
+          value={toDateTimePickerValue(value)}
+          onChange={(event) => onChange(toDateTimeTextFromPickerValue(event.target.value))}
+        />
+      </span>
+    </label>
+  );
 }
 
 export default function MerchantCouponManager({
@@ -530,32 +596,18 @@ export default function MerchantCouponManager({
             </div>
 
             <div className="grid gap-3 md:grid-cols-2">
-              <label className="space-y-1 text-sm">
-                <span className="block text-slate-600">开始时间</span>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  data-no-translate="1"
-                  translate="no"
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                  value={form.startsAt}
-                  onChange={handleInputChange("startsAt")}
-                  placeholder="例如：2026-05-16 18:30"
-                />
-              </label>
-              <label className="space-y-1 text-sm">
-                <span className="block text-slate-600">结束时间</span>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  data-no-translate="1"
-                  translate="no"
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                  value={form.expiresAt}
-                  onChange={handleInputChange("expiresAt")}
-                  placeholder="例如：2026-12-31 23:59"
-                />
-              </label>
+              <CouponDateTimeField
+                label="开始时间"
+                value={form.startsAt}
+                onChange={(value) => updateField("startsAt", value)}
+                placeholder="例如：2026-05-16 18:30"
+              />
+              <CouponDateTimeField
+                label="结束时间"
+                value={form.expiresAt}
+                onChange={(value) => updateField("expiresAt", value)}
+                placeholder="例如：2026-12-31 23:59"
+              />
             </div>
 
             <div className="grid gap-3 md:grid-cols-3">
