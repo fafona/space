@@ -69,18 +69,31 @@ const STATUS_CLASS_NAMES: Record<MerchantCouponStatus, string> = {
   archived: "border-slate-200 bg-slate-100 text-slate-500",
 };
 
-function toDatetimeLocalValue(value: string | null | undefined) {
+function toDateTimeTextValue(value: string | null | undefined) {
   if (!value) return "";
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return "";
-  const offsetMs = date.getTimezoneOffset() * 60_000;
-  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hour = String(date.getHours()).padStart(2, "0");
+  const minute = String(date.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day} ${hour}:${minute}`;
 }
 
-function fromDatetimeLocalValue(value: string) {
+function fromDateTimeTextValue(value: string) {
   const raw = value.trim();
   if (!raw) return null;
-  const date = new Date(raw);
+  const match = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{1,2}))?$/);
+  const date = match
+    ? new Date(
+        Number(match[1]),
+        Number(match[2]) - 1,
+        Number(match[3]),
+        Number(match[4] ?? "0"),
+        Number(match[5] ?? "0"),
+      )
+    : new Date(raw);
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
@@ -126,8 +139,8 @@ function buildFormFromCoupon(coupon: MerchantCouponRecord): CouponFormState {
     maxDiscountAmount: coupon.maxDiscountAmount > 0 ? String(coupon.maxDiscountAmount) : "",
     totalQuantity: coupon.totalQuantity > 0 ? String(coupon.totalQuantity) : "",
     perCustomerLimit: coupon.perCustomerLimit > 0 ? String(coupon.perCustomerLimit) : "1",
-    startsAt: toDatetimeLocalValue(coupon.startsAt),
-    expiresAt: toDatetimeLocalValue(coupon.expiresAt),
+    startsAt: toDateTimeTextValue(coupon.startsAt),
+    expiresAt: toDateTimeTextValue(coupon.expiresAt),
     status: coupon.status,
     showOnWebsite: coupon.showOnWebsite,
     showOnContactCard: coupon.showOnContactCard,
@@ -225,8 +238,8 @@ export default function MerchantCouponManager({
       maxDiscountAmount: toNumberValue(form.maxDiscountAmount),
       totalQuantity: toIntValue(form.totalQuantity),
       perCustomerLimit: Math.max(1, toIntValue(form.perCustomerLimit) || 1),
-      startsAt: fromDatetimeLocalValue(form.startsAt),
-      expiresAt: fromDatetimeLocalValue(form.expiresAt),
+      startsAt: fromDateTimeTextValue(form.startsAt),
+      expiresAt: fromDateTimeTextValue(form.expiresAt),
       status: form.status === "archived" ? "paused" : form.status,
       showOnWebsite: form.showOnWebsite,
       showOnContactCard: form.showOnContactCard,
@@ -520,19 +533,27 @@ export default function MerchantCouponManager({
               <label className="space-y-1 text-sm">
                 <span className="block text-slate-600">开始时间</span>
                 <input
-                  type="datetime-local"
+                  type="text"
+                  inputMode="numeric"
+                  data-no-translate="1"
+                  translate="no"
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
                   value={form.startsAt}
                   onChange={handleInputChange("startsAt")}
+                  placeholder="例如：2026-05-16 18:30"
                 />
               </label>
               <label className="space-y-1 text-sm">
                 <span className="block text-slate-600">结束时间</span>
                 <input
-                  type="datetime-local"
+                  type="text"
+                  inputMode="numeric"
+                  data-no-translate="1"
+                  translate="no"
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
                   value={form.expiresAt}
                   onChange={handleInputChange("expiresAt")}
+                  placeholder="例如：2026-12-31 23:59"
                 />
               </label>
             </div>
