@@ -2215,7 +2215,8 @@ export async function GET(
       },
     );
   }
-  const contactCoupons = serviceState?.siteId ? await loadContactCardCoupons(serviceState.siteId) : [];
+  const contactCouponSiteId = normalizeText(payload.ownerMerchantId) || serviceState?.siteId || "";
+  const contactCoupons = contactCouponSiteId ? await loadContactCardCoupons(contactCouponSiteId) : [];
 
   return new NextResponse(
     buildShareCardHtml({

@@ -346,6 +346,7 @@ test("loadMerchantBusinessCardSharePayloadByKey prefers the newest manifest acro
         name: "fafona",
         imageUrl: "https://faolla.com/storage/v1/object/public/page-assets/card.png",
         targetUrl: "https://fafona.faolla.com",
+        ownerMerchantId: "10000000",
         updatedAt: "2026-03-30T15:05:00.000Z",
         contact: {
           displayName: "Felix",
@@ -379,6 +380,7 @@ test("loadMerchantBusinessCardSharePayloadByKey prefers the newest manifest acro
     assert.equal(payload?.contact?.douyin, "new-douyin");
     assert.equal(payload?.contact?.telegram, "new-telegram");
     assert.equal(payload?.updatedAt, "2026-03-30T15:05:00.000Z");
+    assert.equal(payload?.ownerMerchantId, "10000000");
   } finally {
     globalThis.fetch = originalFetch;
   }

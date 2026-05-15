@@ -31,6 +31,7 @@ export type MerchantBusinessCardSharePayload = {
   detailImageHeight?: number;
   updatedAt?: string;
   targetUrl: string;
+  ownerMerchantId?: string;
   imageWidth?: number;
   imageHeight?: number;
   contact?: MerchantBusinessCardShareContact;
@@ -152,6 +153,11 @@ function normalizeUpdatedAt(value: unknown) {
   if (!normalized) return "";
   const timestamp = Date.parse(normalized);
   return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : "";
+}
+
+function normalizeOwnerMerchantId(value: unknown) {
+  const normalized = normalizeText(value);
+  return /^\d{8}$/.test(normalized) ? normalized : "";
 }
 
 function normalizeContactPhoneList(value: unknown) {
@@ -317,6 +323,7 @@ function normalizeSharePayload(
     detailImageHeight?: number | null;
     updatedAt?: string | null;
     targetUrl?: string | null;
+    ownerMerchantId?: string | null;
     imageWidth?: number | null;
     imageHeight?: number | null;
     contact?: MerchantBusinessCardShareContact | null;
@@ -338,6 +345,7 @@ function normalizeSharePayload(
     ...(detailImageUrl && detailImageHeight ? { detailImageHeight } : {}),
     ...(updatedAt ? { updatedAt } : {}),
     targetUrl,
+    ...(normalizeOwnerMerchantId(input.ownerMerchantId) ? { ownerMerchantId: normalizeOwnerMerchantId(input.ownerMerchantId) } : {}),
     ...(imageUrl && imageWidth ? { imageWidth } : {}),
     ...(imageUrl && imageHeight ? { imageHeight } : {}),
     ...(normalizeMerchantBusinessCardShareContact(input.contact, targetUrl)
@@ -353,6 +361,7 @@ export function normalizeMerchantBusinessCardSharePayload(
     detailImageUrl?: string | null;
     detailImageHeight?: number | null;
     targetUrl?: string | null;
+    ownerMerchantId?: string | null;
     imageWidth?: number | null;
     imageHeight?: number | null;
     contact?: MerchantBusinessCardShareContact | null;
