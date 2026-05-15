@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
   getMerchantCouponDiscountLabel,
   normalizeMerchantCouponRecords,
@@ -179,6 +179,43 @@ function getRemainingCount(coupon: MerchantCouponRecord) {
   return String(Math.max(0, coupon.totalQuantity - coupon.usedCount));
 }
 
+function CouponCalendarIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+      <path
+        d="M6 2.75v2.5M14 2.75v2.5M3.75 7.25h12.5M5.5 4.5h9a1.75 1.75 0 0 1 1.75 1.75v8.25A1.75 1.75 0 0 1 14.5 16.25h-9A1.75 1.75 0 0 1 3.75 14.5V6.25A1.75 1.75 0 0 1 5.5 4.5Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function openNativeDateTimePicker(input: HTMLInputElement | null) {
+  if (!input) return;
+  const pickerInput = input as HTMLInputElement & { showPicker?: () => void };
+  try {
+    pickerInput.focus({ preventScroll: true });
+  } catch {
+    pickerInput.focus();
+  }
+  if (typeof pickerInput.showPicker === "function") {
+    try {
+      pickerInput.showPicker();
+      return;
+    } catch {
+      // Fall back to the native click path when showPicker is blocked.
+    }
+  }
+  try {
+    pickerInput.click();
+  } catch {
+    // Some embedded browsers do not expose a picker for datetime-local.
+  }
+}
+
 function CouponDateTimeField({
   label,
   value,
@@ -190,6 +227,8 @@ function CouponDateTimeField({
   placeholder: string;
   onChange: (value: string) => void;
 }) {
+  const pickerInputRef = useRef<HTMLInputElement>(null);
+
   return (
     <label className="space-y-1 text-sm">
       <span className="block text-slate-600">{label}</span>
@@ -199,18 +238,25 @@ function CouponDateTimeField({
           inputMode="numeric"
           data-no-translate="1"
           translate="no"
-          className="w-full rounded-lg border border-slate-300 px-3 py-2 pr-20 outline-none focus:border-slate-500"
+          className="w-full rounded-lg border border-slate-300 px-3 py-2 pr-12 outline-none focus:border-slate-500"
           value={value}
           onChange={(event) => onChange(event.target.value)}
           placeholder={placeholder}
         />
-        <span className="pointer-events-none absolute inset-y-0 right-2 flex items-center rounded-md px-2 text-xs font-semibold text-slate-600">
-          选择
-        </span>
-        <input
-          type="datetime-local"
+        <button
+          type="button"
+          className="absolute inset-y-0 right-2 inline-flex w-9 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
           aria-label={`${label}选择器`}
-          className="absolute inset-y-0 right-0 h-full w-16 cursor-pointer opacity-0"
+          onClick={() => openNativeDateTimePicker(pickerInputRef.current)}
+        >
+          <CouponCalendarIcon />
+        </button>
+        <input
+          ref={pickerInputRef}
+          type="datetime-local"
+          tabIndex={-1}
+          aria-hidden="true"
+          className="pointer-events-none absolute right-2 top-1/2 h-8 w-8 -translate-y-1/2 opacity-0"
           value={toDateTimePickerValue(value)}
           onChange={(event) => onChange(toDateTimeTextFromPickerValue(event.target.value))}
         />
