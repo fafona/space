@@ -50,7 +50,15 @@ jobs:
           chmod 700 ~/.ssh
           printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -p "${SSH_PORT:-22}" -H "$SSH_HOST" >> ~/.ssh/known_hosts
+          for attempt in 1 2 3 4 5; do
+            if ssh-keyscan -p "${SSH_PORT:-22}" -H "$SSH_HOST" >> ~/.ssh/known_hosts; then
+              break
+            fi
+            if [ "$attempt" = "5" ]; then
+              exit 1
+            fi
+            sleep 5
+          done
 
       - name: Deploy To Server
         env:
@@ -77,6 +85,14 @@ jobs:
           NEXT_PUBLIC_SUPABASE_URL_B64="$(printf '%s' "${NEXT_PUBLIC_SUPABASE_URL:-}" | base64 -w0)"
           NEXT_PUBLIC_SUPABASE_ANON_KEY_B64="$(printf '%s' "${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}" | base64 -w0)"
           SUPABASE_SERVICE_ROLE_KEY_B64="$(printf '%s' "${SUPABASE_SERVICE_ROLE_KEY:-}" | base64 -w0)"
-          ssh -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
-            "APP_DIR='$APP_DIR' APP_NAME='${APP_NAME:-merchant-space}' APP_PORT='${APP_PORT:-3000}' APP_BRANCH='$APP_BRANCH' NEXT_PUBLIC_SUPABASE_URL_B64='$NEXT_PUBLIC_SUPABASE_URL_B64' NEXT_PUBLIC_SUPABASE_ANON_KEY_B64='$NEXT_PUBLIC_SUPABASE_ANON_KEY_B64' SUPABASE_SERVICE_ROLE_KEY_B64='$SUPABASE_SERVICE_ROLE_KEY_B64' WEB_PUSH_PUBLIC_KEY='${WEB_PUSH_PUBLIC_KEY:-}' WEB_PUSH_PRIVATE_KEY='${WEB_PUSH_PRIVATE_KEY:-}' WEB_PUSH_SUBJECT='${WEB_PUSH_SUBJECT:-}' SUPER_ADMIN_ACCOUNT='${SUPER_ADMIN_ACCOUNT:-}' SUPER_ADMIN_PASSWORD='${SUPER_ADMIN_PASSWORD:-}' SUPER_ADMIN_VERIFICATION_EMAIL='${SUPER_ADMIN_VERIFICATION_EMAIL:-}' SUPER_ADMIN_VERIFICATION_SECRET='${SUPER_ADMIN_VERIFICATION_SECRET:-}' bash -s" \
-            < scripts/deploy.production.sh
+          for attempt in 1 2 3 4 5; do
+            if ssh -o ConnectTimeout=20 -o ConnectionAttempts=3 -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
+              "APP_DIR='$APP_DIR' APP_NAME='${APP_NAME:-merchant-space}' APP_PORT='${APP_PORT:-3000}' APP_BRANCH='$APP_BRANCH' NEXT_PUBLIC_SUPABASE_URL_B64='$NEXT_PUBLIC_SUPABASE_URL_B64' NEXT_PUBLIC_SUPABASE_ANON_KEY_B64='$NEXT_PUBLIC_SUPABASE_ANON_KEY_B64' SUPABASE_SERVICE_ROLE_KEY_B64='$SUPABASE_SERVICE_ROLE_KEY_B64' WEB_PUSH_PUBLIC_KEY='${WEB_PUSH_PUBLIC_KEY:-}' WEB_PUSH_PRIVATE_KEY='${WEB_PUSH_PRIVATE_KEY:-}' WEB_PUSH_SUBJECT='${WEB_PUSH_SUBJECT:-}' SUPER_ADMIN_ACCOUNT='${SUPER_ADMIN_ACCOUNT:-}' SUPER_ADMIN_PASSWORD='${SUPER_ADMIN_PASSWORD:-}' SUPER_ADMIN_VERIFICATION_EMAIL='${SUPER_ADMIN_VERIFICATION_EMAIL:-}' SUPER_ADMIN_VERIFICATION_SECRET='${SUPER_ADMIN_VERIFICATION_SECRET:-}' bash -s" \
+              < scripts/deploy.production.sh; then
+              break
+            fi
+            if [ "$attempt" = "5" ]; then
+              exit 1
+            fi
+            sleep 10
+          done
