@@ -24,6 +24,7 @@ import {
 import { listMerchantCoupons } from "@/lib/merchantCoupons.server";
 import {
   loadCurrentMerchantSnapshotSiteBySiteId,
+  loadPublishedMerchantSnapshotSites,
   loadPublishedMerchantServiceStateByTargetUrl,
 } from "@/lib/publishedMerchantService";
 import { OFFICIAL_SERVICE_CONTACT, describeMerchantMaintenanceMessage, type MerchantServiceRestrictionReason } from "@/lib/merchantServiceStatus";
@@ -1279,6 +1280,17 @@ async function loadContactCardCoupons(siteId: string) {
   return getContactCardVisibleMerchantCoupons(coupons);
 }
 
+async function resolveContactCardOwnerMerchantId(shareKey: string) {
+  const normalizedShareKey = normalizeMerchantBusinessCardShareKey(shareKey);
+  if (!normalizedShareKey) return "";
+  const snapshot = await loadPublishedMerchantSnapshotSites().catch(() => []);
+  const ownerSite = snapshot.find((site) =>
+    Array.isArray(site.businessCards) &&
+    site.businessCards.some((card) => normalizeMerchantBusinessCardShareKey(card.shareKey) === normalizedShareKey),
+  );
+  return normalizeText(ownerSite?.id);
+}
+
 function buildOrderedContactSummaryHtml(input: {
   name: string;
   contact?: MerchantBusinessCardShareContact;
@@ -2215,7 +2227,11 @@ export async function GET(
       },
     );
   }
-  const contactCouponSiteId = normalizeText(payload.ownerMerchantId) || serviceState?.siteId || "";
+  const contactCouponSiteId =
+    normalizeText(payload.ownerMerchantId) ||
+    (await resolveContactCardOwnerMerchantId(shareKey)) ||
+    serviceState?.siteId ||
+    "";
   const contactCoupons = contactCouponSiteId ? await loadContactCardCoupons(contactCouponSiteId) : [];
 
   return new NextResponse(
