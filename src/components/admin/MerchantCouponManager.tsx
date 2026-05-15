@@ -694,6 +694,9 @@ export default function MerchantCouponManager({
                 onChange={handleInputChange("applicableTags")}
                 placeholder="可选，一行一个或用逗号分隔"
               />
+              <span className="block text-xs text-slate-500">
+                预留给后续按产品、场景或客户标签筛选；当前不影响网站区块或联系卡展示。
+              </span>
             </label>
 
             <div className="flex flex-wrap gap-2">

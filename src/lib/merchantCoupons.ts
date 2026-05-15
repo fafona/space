@@ -215,6 +215,17 @@ export function getVisibleMerchantCoupons(coupons: MerchantCouponRecord[], nowIn
     });
 }
 
+export function getContactCardVisibleMerchantCoupons(coupons: MerchantCouponRecord[], nowInput: Date | string = new Date()) {
+  return normalizeMerchantCouponRecords(coupons)
+    .filter((coupon) => coupon.showOnContactCard && isMerchantCouponCurrentlyUsable(coupon, nowInput))
+    .sort((left, right) => {
+      const leftExpiry = left.expiresAt ? Date.parse(left.expiresAt) : Number.MAX_SAFE_INTEGER;
+      const rightExpiry = right.expiresAt ? Date.parse(right.expiresAt) : Number.MAX_SAFE_INTEGER;
+      if (leftExpiry !== rightExpiry) return leftExpiry - rightExpiry;
+      return left.title.localeCompare(right.title, "zh-CN");
+    });
+}
+
 function inactiveReason(coupon: MerchantCouponRecord, nowInput: Date | string): MerchantCouponDiscountResult["reason"] {
   const now = nowInput instanceof Date ? nowInput.getTime() : new Date(nowInput).getTime();
   if (coupon.status !== "active") return "inactive";

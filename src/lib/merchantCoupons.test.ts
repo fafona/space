@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildMerchantCouponCode,
   calculateMerchantCouponDiscount,
+  getContactCardVisibleMerchantCoupons,
   createMerchantCoupon,
   getVisibleMerchantCoupons,
   normalizeMerchantCouponRecord,
@@ -79,5 +80,37 @@ test("getVisibleMerchantCoupons hides paused, expired, hidden, and exhausted cou
   assert.deepEqual(
     getVisibleMerchantCoupons(rows.filter(Boolean) as NonNullable<(typeof rows)[number]>[], now).map((item) => item.id),
     [visible.id],
+  );
+});
+
+test("getContactCardVisibleMerchantCoupons uses contact card visibility flag", () => {
+  const now = "2026-05-15T00:00:00.000Z";
+  const contactCard = createMerchantCoupon({
+    siteId: "10000000",
+    title: "联系卡",
+    discountValue: 2,
+    showOnWebsite: false,
+    showOnContactCard: true,
+    expiresAt: "2026-05-16T00:00:00.000Z",
+  });
+  const websiteOnly = createMerchantCoupon({
+    siteId: "10000000",
+    title: "网站",
+    discountValue: 2,
+    showOnWebsite: true,
+    showOnContactCard: false,
+    expiresAt: "2026-05-16T00:00:00.000Z",
+  });
+  const expired = createMerchantCoupon({
+    siteId: "10000000",
+    title: "过期",
+    discountValue: 2,
+    showOnContactCard: true,
+    expiresAt: "2026-05-14T00:00:00.000Z",
+  });
+
+  assert.deepEqual(
+    getContactCardVisibleMerchantCoupons([websiteOnly, contactCard, expired], now).map((item) => item.id),
+    [contactCard.id],
   );
 });

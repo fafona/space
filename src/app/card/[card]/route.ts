@@ -16,7 +16,16 @@ import {
   type MerchantBusinessCardContactDisplayKey,
 } from "@/lib/merchantBusinessCards";
 import { DEFAULT_LOCALE, I18N_STORAGE_KEY, LANGUAGE_OPTIONS } from "@/lib/i18n";
-import { loadPublishedMerchantServiceStateByTargetUrl } from "@/lib/publishedMerchantService";
+import {
+  getContactCardVisibleMerchantCoupons,
+  getMerchantCouponDiscountLabel,
+  type MerchantCouponRecord,
+} from "@/lib/merchantCoupons";
+import { listMerchantCoupons } from "@/lib/merchantCoupons.server";
+import {
+  loadCurrentMerchantSnapshotSiteBySiteId,
+  loadPublishedMerchantServiceStateByTargetUrl,
+} from "@/lib/publishedMerchantService";
 import { OFFICIAL_SERVICE_CONTACT, describeMerchantMaintenanceMessage, type MerchantServiceRestrictionReason } from "@/lib/merchantServiceStatus";
 
 function escapeHtml(value: string) {
@@ -1219,6 +1228,57 @@ function buildContactSummaryHtml(input: {
   return buildOrderedContactSummaryHtml(input) || buildContactSummaryHtmlLegacy(input);
 }
 
+function formatCouponDate(value: string | null | undefined) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function buildContactCouponsHtml(coupons: MerchantCouponRecord[]) {
+  if (coupons.length === 0) return "";
+  return `
+    <section class="coupon-section">
+      <div class="coupon-title">优惠券</div>
+      <div class="coupon-list">
+        ${coupons
+          .map((coupon) => {
+            const remaining = coupon.totalQuantity > 0 ? Math.max(0, coupon.totalQuantity - coupon.usedCount) : null;
+            const expiresLabel = formatCouponDate(coupon.expiresAt);
+            return `
+              <article class="coupon-item">
+                <div class="coupon-copy">
+                  <div class="coupon-discount">${escapeHtml(getMerchantCouponDiscountLabel(coupon))}</div>
+                  <div class="coupon-name">${escapeHtml(coupon.title)}</div>
+                  ${coupon.description ? `<div class="coupon-description">${escapeHtml(coupon.description)}</div>` : ""}
+                  <div class="coupon-meta">
+                    ${coupon.minimumAmount > 0 ? `<span>门槛 ${escapeHtml(coupon.minimumAmount.toFixed(2))}</span>` : ""}
+                    ${remaining !== null ? `<span>剩余 ${escapeHtml(String(remaining))}</span>` : ""}
+                    ${expiresLabel ? `<span>至 ${escapeHtml(expiresLabel)}</span>` : ""}
+                  </div>
+                </div>
+                <button class="coupon-button" type="button" data-copy-value="${escapeHtml(coupon.code)}" data-copy-label="优惠码">
+                  复制优惠码
+                </button>
+              </article>
+            `;
+          })
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
+async function loadContactCardCoupons(siteId: string) {
+  const site = await loadCurrentMerchantSnapshotSiteBySiteId(siteId).catch(() => null);
+  if (!site?.permissionConfig?.allowCouponModule) return [];
+  const coupons = await listMerchantCoupons(siteId).catch(() => []);
+  return getContactCardVisibleMerchantCoupons(coupons);
+}
+
 function buildOrderedContactSummaryHtml(input: {
   name: string;
   contact?: MerchantBusinessCardShareContact;
@@ -1539,6 +1599,7 @@ function buildShareCardHtml(input: {
   targetUrl: string;
   shareUrl: string;
   contactUrl?: string;
+  couponsHtml?: string;
 }) {
   const title = escapeHtml(input.title);
   const description = escapeHtml(input.description);
@@ -1677,6 +1738,74 @@ function buildShareCardHtml(input: {
         margin-top: 16px;
         padding: 18px;
         line-height: 1.7;
+      }
+      .coupon-section {
+        margin-top: 16px;
+        border-radius: 18px;
+        border: 1px solid rgba(15,23,42,.1);
+        background: rgba(248,250,252,.9);
+        padding: 14px;
+      }
+      .coupon-title {
+        font-size: 15px;
+        font-weight: 800;
+        color: #0f172a;
+      }
+      .coupon-list {
+        display: grid;
+        gap: 10px;
+        margin-top: 10px;
+      }
+      .coupon-item {
+        display: grid;
+        gap: 12px;
+        border-radius: 16px;
+        border: 1px solid rgba(15,23,42,.08);
+        background: rgba(255,255,255,.94);
+        padding: 14px;
+      }
+      .coupon-copy {
+        min-width: 0;
+      }
+      .coupon-discount {
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: .12em;
+        color: #f43f5e;
+        text-transform: uppercase;
+      }
+      .coupon-name {
+        margin-top: 6px;
+        font-size: 16px;
+        font-weight: 800;
+        color: #0f172a;
+      }
+      .coupon-description {
+        margin-top: 4px;
+        font-size: 13px;
+        color: #64748b;
+      }
+      .coupon-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 8px;
+        font-size: 12px;
+        color: #64748b;
+      }
+      .coupon-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 40px;
+        border-radius: 12px;
+        border: 0;
+        background: #0f172a;
+        color: #fff;
+        font: inherit;
+        font-size: 14px;
+        font-weight: 700;
+        cursor: pointer;
       }
       .summary-row + .summary-row {
         margin-top: 12px;
@@ -1822,6 +1951,7 @@ function buildShareCardHtml(input: {
             : ""
         }
         <div class="summary">${input.summaryHtml}</div>
+        ${input.couponsHtml || ""}
         <div class="actions">
           ${
             input.contactUrl
@@ -2085,6 +2215,7 @@ export async function GET(
       },
     );
   }
+  const contactCoupons = serviceState?.siteId ? await loadContactCardCoupons(serviceState.siteId) : [];
 
   return new NextResponse(
     buildShareCardHtml({
@@ -2103,6 +2234,7 @@ export async function GET(
       targetUrl: payload.targetUrl,
       shareUrl,
       contactUrl,
+      couponsHtml: buildContactCouponsHtml(contactCoupons),
     }),
     {
       status: 200,
