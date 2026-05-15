@@ -133,11 +133,11 @@ function normalizeOAuthCodeVerifier(value: unknown) {
   if (!raw) return "";
   try {
     const parsed = JSON.parse(raw) as unknown;
-    if (typeof parsed === "string") return parsed.trim();
+    if (typeof parsed === "string") return normalizeOAuthCodeVerifier(parsed);
   } catch {
     // Fall back to the raw cookie value below.
   }
-  return raw.replace(/^"+|"+$/g, "").trim();
+  return raw.replace(/^"+|"+$/g, "").split("/")[0]?.trim() ?? "";
 }
 
 function readOAuthCodeVerifierFromRequest(request: Request) {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { GET } from "@/app/api/auth/merchant-session/route";
+import { GET, POST } from "@/app/api/auth/merchant-session/route";
 
 test("merchant-session GET falls back to an older duplicate cookie when the newest token is stale", async () => {
   const originalFetch = globalThis.fetch;
@@ -251,6 +251,99 @@ test("merchant-session account switch GET returns refreshed tokens", async () =>
       user_metadata: {},
       app_metadata: {},
     });
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env.NEXT_PUBLIC_SUPABASE_URL = previousUrl;
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = previousAnonKey;
+    process.env.SUPABASE_SERVICE_ROLE_KEY = previousServiceRoleKey;
+  }
+});
+
+test("merchant-session POST exchanges Google OAuth code before browser session sync", async () => {
+  const originalFetch = globalThis.fetch;
+  const previousUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const previousAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const previousServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  let exchangedBody: Record<string, unknown> | null = null;
+
+  process.env.NEXT_PUBLIC_SUPABASE_URL = "https://unit-test-oauth.supabase.co";
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
+  delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  const googleUser = {
+    id: "33333333-3333-4333-8333-333333333333",
+    email: "google-owner@example.com",
+    user_metadata: {
+      platform_account_type: "merchant",
+      platform_account_id: "12345678",
+      merchant_id: "12345678",
+    },
+    app_metadata: {},
+  };
+
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const requestUrl = new URL(url);
+
+    if (requestUrl.pathname === "/auth/v1/token") {
+      exchangedBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      assert.equal(requestUrl.searchParams.get("grant_type"), "pkce");
+      return new Response(
+        JSON.stringify({
+          access_token: "oauth-access-token",
+          refresh_token: "oauth-refresh-token",
+          expires_in: 3600,
+          token_type: "bearer",
+          user: googleUser,
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        },
+      );
+    }
+
+    if (requestUrl.pathname === "/auth/v1/user") {
+      return new Response(JSON.stringify(googleUser), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    }
+
+    return new Response("not found", { status: 404 });
+  }) as typeof fetch;
+
+  try {
+    const response = await POST(
+      new Request("https://faolla.com/api/auth/merchant-session", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://faolla.com",
+        },
+        body: JSON.stringify({
+          authCode: "google-auth-code",
+          codeVerifier: "browser-code-verifier/PASSWORD_RECOVERY",
+          authProvider: "google",
+          preferredAccountType: "merchant",
+        }),
+      }),
+    );
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(exchangedBody, {
+      auth_code: "google-auth-code",
+      code_verifier: "browser-code-verifier",
+    });
+    const body = await response.json();
+    assert.equal(body.authenticated, true);
+    assert.equal(body.accountType, "merchant");
+    assert.equal(body.merchantId, "12345678");
+    assert.equal(body.user.email, "google-owner@example.com");
   } finally {
     globalThis.fetch = originalFetch;
     process.env.NEXT_PUBLIC_SUPABASE_URL = previousUrl;

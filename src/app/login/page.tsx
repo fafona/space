@@ -43,6 +43,7 @@ import { buildMerchantBackendHref } from "@/lib/siteRouting";
 import {
   canReachSupabaseGateway,
   getResolvedSupabaseUrl,
+  legacySupabaseAuthStorageKey,
   resolvedSupabaseAnonKey,
   supabase,
 } from "@/lib/supabase";
@@ -68,6 +69,52 @@ type ServerSignInResult = {
 };
 
 type AuthView = "signin" | "signup_personal" | "signup_merchant";
+
+function normalizeGoogleOAuthCodeVerifier(value: unknown) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) return "";
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed === "string") {
+      return normalizeGoogleOAuthCodeVerifier(parsed);
+    }
+  } catch {
+    // Fall back to the raw storage value below.
+  }
+  return raw.replace(/^"+|"+$/g, "").split("/")[0]?.trim() ?? "";
+}
+
+function readGoogleOAuthCodeVerifierFromBrowser() {
+  if (typeof window === "undefined") return "";
+  const storageKeys = [
+    legacySupabaseAuthStorageKey ? `${legacySupabaseAuthStorageKey}-code-verifier` : "",
+    legacySupabaseAuthStorageKey ? `${legacySupabaseAuthStorageKey}-code_verifier` : "",
+  ].filter(Boolean);
+  const storages = [window.sessionStorage, window.localStorage];
+  for (const key of storageKeys) {
+    for (const storage of storages) {
+      try {
+        const verifier = normalizeGoogleOAuthCodeVerifier(storage.getItem(key));
+        if (verifier) return verifier;
+      } catch {
+        // Try the next storage backend.
+      }
+    }
+  }
+  for (const storage of storages) {
+    try {
+      for (let index = 0; index < storage.length; index += 1) {
+        const key = storage.key(index) ?? "";
+        if (!/code[-_]?verifier/i.test(key)) continue;
+        const verifier = normalizeGoogleOAuthCodeVerifier(storage.getItem(key));
+        if (verifier) return verifier;
+      }
+    } catch {
+      // Ignore unavailable storage enumeration.
+    }
+  }
+  return "";
+}
 type LoginEntryAccountType = PlatformAccountType | null;
 
 type SupabaseAuthSettings = {
@@ -1320,6 +1367,7 @@ function LoginPageInner() {
         cache: "no-store",
         body: JSON.stringify({
           authCode,
+          codeVerifier: readGoogleOAuthCodeVerifierFromBrowser() || undefined,
           authProvider: "google",
           preferredAccountType: googleOAuthAccountType,
         }),
@@ -1344,6 +1392,13 @@ function LoginPageInner() {
 
     void (async () => {
       try {
+        const firstServerPayload = await syncGoogleOAuthCodeViaServer().catch(() => null);
+        if (!mounted) return;
+        if (firstServerPayload) {
+          clearGoogleOAuthAttempt();
+          await completeGoogleOAuthSignIn(firstServerPayload);
+          return;
+        }
         const session = await readGoogleOAuthSession();
         if (!mounted) return;
         if (!session?.access_token) {
