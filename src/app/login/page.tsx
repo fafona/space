@@ -1303,6 +1303,11 @@ function LoginPageInner() {
       merchantId?: unknown;
       merchantIds?: unknown;
     };
+    type GoogleOAuthSessionForSync = {
+      access_token: string;
+      refresh_token?: string | null;
+      expires_in?: number | null;
+    };
     const retryGoogleOAuthOnce = (message: string) => {
       if (typeof window === "undefined") return false;
       const storedAttempt = readGoogleOAuthAttempt();
@@ -1355,6 +1360,34 @@ function LoginPageInner() {
         withSignInBridge: false,
       });
     };
+    const syncGoogleOAuthSessionViaServer = async (session: GoogleOAuthSessionForSync) => {
+      const response = await fetch("/api/auth/merchant-session", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        cache: "no-store",
+        body: JSON.stringify({
+          accessToken: session.access_token,
+          refreshToken: session.refresh_token,
+          expiresIn: session.expires_in,
+          authProvider: "google",
+          preferredAccountType: googleOAuthAccountType,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as GoogleMerchantSessionPayload | null;
+      if (!response.ok) {
+        const message =
+          typeof payload?.message === "string"
+            ? payload.message
+            : typeof payload?.error === "string"
+              ? payload.error
+              : t("login.backendUnavailable");
+        throw new Error(message);
+      }
+      return payload;
+    };
     const syncGoogleOAuthCodeViaServer = async () => {
       if (typeof window === "undefined") return null;
       const authCode = readGoogleOAuthUrlCode(window.location.href);
@@ -1401,11 +1434,23 @@ function LoginPageInner() {
       }
       return message ? `Google 登录失败：${message}` : "Google 登录失败，请重新点击 Google 登录。";
     };
+    const isDuplicateGoogleOAuthCallbackMessage = (message: string) =>
+      /Google 登录回调被重复触发|unable to exchange external code/i.test(message);
 
     void (async () => {
       try {
         const googleReturnErrorMessage = readGoogleOAuthReturnErrorMessage();
         if (googleReturnErrorMessage) {
+          if (isDuplicateGoogleOAuthCallbackMessage(googleReturnErrorMessage)) {
+            const existingSession = await readGoogleOAuthSession(3500).catch(() => null);
+            if (!mounted) return;
+            if (existingSession?.access_token) {
+              clearGoogleOAuthAttempt();
+              const payload = await syncGoogleOAuthSessionViaServer(existingSession);
+              await completeGoogleOAuthSignIn(payload);
+              return;
+            }
+          }
           throw new Error(googleReturnErrorMessage);
         }
         const firstServerPayload = await syncGoogleOAuthCodeViaServer().catch(() => null);
@@ -1441,31 +1486,7 @@ function LoginPageInner() {
         }
         clearGoogleOAuthAttempt();
 
-        const response = await fetch("/api/auth/merchant-session", {
-          method: "POST",
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          cache: "no-store",
-          body: JSON.stringify({
-            accessToken: session.access_token,
-            refreshToken: session.refresh_token,
-            expiresIn: session.expires_in,
-            authProvider: "google",
-            preferredAccountType: googleOAuthAccountType,
-          }),
-        });
-        const payload = (await response.json().catch(() => null)) as GoogleMerchantSessionPayload | null;
-        if (!response.ok) {
-          const message =
-            typeof payload?.message === "string"
-              ? payload.message
-              : typeof payload?.error === "string"
-                ? payload.error
-                : t("login.backendUnavailable");
-          throw new Error(message);
-        }
+        const payload = await syncGoogleOAuthSessionViaServer(session);
         await completeGoogleOAuthSignIn(payload);
       } catch (error) {
         if (!mounted) return;
