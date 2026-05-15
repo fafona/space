@@ -1396,6 +1396,9 @@ function LoginPageInner() {
       if (!details) return "";
       const rawMessage = details.description || details.code;
       const message = rawMessage.replace(/\+/g, " ").trim();
+      if (/unable to exchange external code/i.test(message)) {
+        return "Google 登录失败：服务端 Google Provider 授权码兑换失败，请检查 Supabase 中 Google 的 Client Secret 配置。";
+      }
       return message ? `Google 登录失败：${message}` : "Google 登录失败，请重新点击 Google 登录。";
     };
 
