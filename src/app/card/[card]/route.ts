@@ -1624,7 +1624,6 @@ function buildShareCardHtml(input: {
   const contentImageUrl = input.contentImageUrl ? escapeHtml(input.contentImageUrl) : "";
   const introVideoUrl = input.introVideoUrl ? escapeHtml(input.introVideoUrl) : "";
   const introPosterUrl = input.introPosterUrl ? escapeHtml(input.introPosterUrl) : "";
-  const introVideoMuted = input.introVideoMuted !== false;
   const contentImageHeight = input.contentImageHeight ?? 0;
   const targetUrl = escapeHtml(input.targetUrl);
   const shareUrl = escapeHtml(input.shareUrl);
@@ -1754,41 +1753,8 @@ function buildShareCardHtml(input: {
         background: #000;
         object-fit: cover;
       }
-      .intro-card.has-intro-poster .intro-video {
-        opacity: 0;
-      }
-      .intro-overlay.is-playing .intro-video {
-        opacity: 1;
-      }
       .intro-overlay.is-playing .intro-poster {
         opacity: 0;
-      }
-      .intro-play {
-        position: absolute;
-        left: 50%;
-        top: 50%;
-        z-index: 3;
-        display: none;
-        width: 72px;
-        height: 72px;
-        transform: translate(-50%, -50%);
-        align-items: center;
-        justify-content: center;
-        border: 1px solid rgba(255,255,255,.32);
-        border-radius: 999px;
-        background: rgba(15,23,42,.62);
-        color: #fff;
-        font: inherit;
-        font-size: 28px;
-        line-height: 1;
-        cursor: pointer;
-        backdrop-filter: blur(12px);
-      }
-      .intro-overlay.needs-gesture .intro-play {
-        display: inline-flex;
-      }
-      .intro-overlay.is-playing .intro-play {
-        display: none;
       }
       .intro-skip {
         position: absolute;
@@ -2061,7 +2027,6 @@ function buildShareCardHtml(input: {
       <div class="intro-card${introPosterUrl ? " has-intro-poster" : ""}">
         ${introPosterUrl ? `<img class="intro-poster" src="${introPosterUrl}" alt="" aria-hidden="true" />` : ""}
         <video class="intro-video" src="${introVideoUrl}"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay muted playsinline webkit-playsinline x5-playsinline x5-video-player-type="h5-page" x5-video-player-fullscreen="true" x5-video-orientation="portrait" preload="auto"></video>
-        <button class="intro-play" type="button" data-intro-play aria-label="播放开场视频"><span aria-hidden="true">&#9658;</span></button>
         <button class="intro-skip" type="button" data-intro-skip>跳过</button>
       </div>
     </div>
@@ -2101,11 +2066,8 @@ function buildShareCardHtml(input: {
       const overlay = document.querySelector("[data-intro-overlay]");
       if (!overlay) return;
       const video = overlay.querySelector("video");
-      const playButton = overlay.querySelector("[data-intro-play]");
-      const preferMuted = ${introVideoMuted ? "true" : "false"};
       let closed = false;
       let started = false;
-      let hasGesture = false;
       const closeIntro = () => {
         closed = true;
         overlay.classList.add("is-hidden");
@@ -2129,23 +2091,9 @@ function buildShareCardHtml(input: {
         video.setAttribute("x5-video-player-fullscreen", "true");
         video.setAttribute("x5-video-orientation", "portrait");
       };
-      const applySoundPreference = () => {
-        if (preferMuted || !hasGesture) return;
-        try {
-          video.muted = false;
-          video.defaultMuted = false;
-          video.removeAttribute("muted");
-        } catch {}
-      };
       const markPlaying = () => {
         started = true;
         overlay.classList.add("is-playing");
-        overlay.classList.remove("needs-gesture");
-        applySoundPreference();
-      };
-      const showGestureFallback = () => {
-        if (closed || started) return;
-        overlay.classList.add("needs-gesture");
       };
       const playIntro = () => {
         if (closed) return Promise.resolve(false);
@@ -2158,7 +2106,6 @@ function buildShareCardHtml(input: {
               return true;
             })
             .catch(() => {
-              showGestureFallback();
               return false;
             });
         }
@@ -2166,26 +2113,12 @@ function buildShareCardHtml(input: {
           markPlaying();
           return Promise.resolve(true);
         }
-        showGestureFallback();
         return Promise.resolve(false);
-      };
-      const handleGesturePlay = () => {
-        hasGesture = true;
-        void playIntro();
       };
       forceMutedAutoplay();
       video.addEventListener("playing", markPlaying);
       video.addEventListener("timeupdate", () => {
         if (video.currentTime > 0.05) markPlaying();
-      });
-      overlay.addEventListener("pointerdown", handleGesturePlay, { passive: true });
-      overlay.addEventListener("touchstart", handleGesturePlay, { passive: true });
-      overlay.addEventListener("click", handleGesturePlay);
-      playButton?.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        hasGesture = true;
-        void playIntro();
       });
       overlay.querySelector("[data-intro-skip]")?.addEventListener("click", (event) => {
         event.preventDefault();
@@ -2215,8 +2148,6 @@ function buildShareCardHtml(input: {
         if (closed || started) return;
         if (!video.paused || video.currentTime > 0.05) {
           markPlaying();
-        } else {
-          showGestureFallback();
         }
       }, 1400);
     })();</script>`
