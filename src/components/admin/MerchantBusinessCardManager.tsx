@@ -979,7 +979,6 @@ function ContactCardSurface({
   invoice,
   contactFieldOrder,
   introVideoUrl,
-  introVideoMuted = true,
   imageUrl,
   imageHeight,
 }: {
@@ -989,7 +988,6 @@ function ContactCardSurface({
   invoice: MerchantBusinessCardDraft["invoice"];
   contactFieldOrder: MerchantBusinessCardDraft["contactFieldOrder"];
   introVideoUrl?: string;
-  introVideoMuted?: boolean;
   imageUrl?: string;
   imageHeight: number;
 }) {
@@ -1014,7 +1012,11 @@ function ContactCardSurface({
           <video
             src={introVideoUrl}
             controls
-            muted={introVideoMuted}
+            autoPlay
+            loop
+            muted
+            poster={hasImage ? imageUrl : undefined}
+            preload="auto"
             playsInline
             className="block aspect-video w-full bg-black object-contain"
           />
@@ -2512,7 +2514,10 @@ export default function MerchantBusinessCardManager({
                             className="mt-3 block aspect-video w-full rounded-xl border bg-black object-contain"
                             src={draft.contactIntroVideoUrl}
                             controls
-                            muted={draft.contactIntroVideoMuted}
+                            autoPlay
+                            loop
+                            muted
+                            preload="auto"
                             playsInline
                           />
                         ) : null}
@@ -3065,7 +3070,6 @@ export default function MerchantBusinessCardManager({
                           invoice={draft.invoice}
                           contactFieldOrder={draft.contactFieldOrder}
                           introVideoUrl={normalizeText(draft.contactIntroVideoUrl) || undefined}
-                          introVideoMuted={draft.contactIntroVideoMuted}
                           imageUrl={normalizeText(draft.contactPageImageUrl) || undefined}
                           imageHeight={draft.contactPageImageHeight}
                         />
@@ -3147,7 +3151,6 @@ export default function MerchantBusinessCardManager({
                         invoice={previewAsset?.invoice || draft.invoice}
                         contactFieldOrder={previewContactFieldOrder}
                         introVideoUrl={previewIntroVideoUrl || undefined}
-                        introVideoMuted={previewAsset?.contactIntroVideoMuted ?? draft.contactIntroVideoMuted}
                         imageUrl={previewContactImageUrl}
                         imageHeight={previewContactImageHeight}
                       />

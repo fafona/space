@@ -8,6 +8,7 @@ import {
   loadMerchantBusinessCardSharePayloadByKey,
   normalizeMerchantBusinessCardShareImageUrl,
   normalizeMerchantBusinessCardShareKey,
+  normalizeMerchantBusinessCardShareVideoUrl,
   resolveMerchantBusinessCardShareOrigin,
   type MerchantBusinessCardShareContact,
 } from "@/lib/merchantBusinessCardShare";
@@ -1606,6 +1607,7 @@ function buildShareCardHtml(input: {
   contentImageUrl?: string;
   contentImageHeight?: number;
   introVideoUrl?: string;
+  introPosterUrl?: string;
   introVideoMuted?: boolean;
   summaryHtml: string;
   imageWidth?: number;
@@ -1621,6 +1623,7 @@ function buildShareCardHtml(input: {
   const previewImageUrl = input.previewImageUrl ? escapeHtml(input.previewImageUrl) : "";
   const contentImageUrl = input.contentImageUrl ? escapeHtml(input.contentImageUrl) : "";
   const introVideoUrl = input.introVideoUrl ? escapeHtml(input.introVideoUrl) : "";
+  const introPosterUrl = input.introPosterUrl ? escapeHtml(input.introPosterUrl) : "";
   const introVideoMuted = input.introVideoMuted !== false;
   const contentImageHeight = input.contentImageHeight ?? 0;
   const targetUrl = escapeHtml(input.targetUrl);
@@ -1724,7 +1727,24 @@ function buildShareCardHtml(input: {
         overflow: hidden;
         background: #000;
       }
+      .intro-poster {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        display: none;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        background: #000;
+        transition: opacity .18s ease;
+      }
+      .intro-card.has-intro-poster .intro-poster {
+        display: block;
+      }
       .intro-video {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
         display: block;
         width: 100vw;
         height: 100vh;
@@ -1733,6 +1753,15 @@ function buildShareCardHtml(input: {
         border-radius: 0;
         background: #000;
         object-fit: cover;
+      }
+      .intro-card.has-intro-poster .intro-video {
+        opacity: 0;
+      }
+      .intro-overlay.is-playing .intro-video {
+        opacity: 1;
+      }
+      .intro-overlay.is-playing .intro-poster {
+        opacity: 0;
       }
       .intro-skip {
         position: absolute;
@@ -2002,8 +2031,9 @@ function buildShareCardHtml(input: {
     ${
       introVideoUrl
         ? `<div class="intro-overlay" data-intro-overlay data-no-translate="1">
-      <div class="intro-card">
-        <video class="intro-video" src="${introVideoUrl}" autoplay muted playsinline webkit-playsinline preload="auto"></video>
+      <div class="intro-card${introPosterUrl ? " has-intro-poster" : ""}">
+        ${introPosterUrl ? `<img class="intro-poster" src="${introPosterUrl}" alt="" aria-hidden="true" />` : ""}
+        <video class="intro-video" src="${introVideoUrl}"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay muted playsinline webkit-playsinline x5-playsinline x5-video-player-type="h5-page" x5-video-player-fullscreen="true" x5-video-orientation="portrait" preload="auto"></video>
         <button class="intro-skip" type="button" data-intro-skip>跳过</button>
       </div>
     </div>
@@ -2059,6 +2089,13 @@ function buildShareCardHtml(input: {
         video.setAttribute("muted", "");
         video.setAttribute("playsinline", "");
         video.setAttribute("webkit-playsinline", "");
+        video.setAttribute("x5-playsinline", "");
+        video.setAttribute("x5-video-player-type", "h5-page");
+        video.setAttribute("x5-video-player-fullscreen", "true");
+        video.setAttribute("x5-video-orientation", "portrait");
+      };
+      const markPlaying = () => {
+        overlay.classList.add("is-playing");
       };
       const playIntro = () => {
         const result = video.play?.();
@@ -2082,6 +2119,10 @@ function buildShareCardHtml(input: {
           } catch {}
         }, { once: true });
       }
+      video.addEventListener("playing", markPlaying);
+      video.addEventListener("timeupdate", () => {
+        if (video.currentTime > 0.05) markPlaying();
+      });
       overlay.querySelector("[data-intro-skip]")?.addEventListener("click", closeIntro);
       video.addEventListener("ended", closeIntro, { once: true });
       video.addEventListener("error", closeIntro, { once: true });
@@ -2314,6 +2355,9 @@ export async function GET(
         publicOrigin,
       )
     : "";
+  const introVideoUrl = payload.introVideoUrl
+    ? normalizeMerchantBusinessCardShareVideoUrl(payload.introVideoUrl, publicOrigin) || payload.introVideoUrl
+    : "";
   const contactUrl =
     buildMerchantBusinessCardContactDownloadUrl({
       origin: publicOrigin,
@@ -2361,7 +2405,8 @@ export async function GET(
       previewImageUrl: previewImageUrl || undefined,
       contentImageUrl: detailImageUrl || undefined,
       contentImageHeight: payload.detailImageHeight,
-      introVideoUrl: payload.introVideoUrl,
+      introVideoUrl: introVideoUrl || undefined,
+      introPosterUrl: detailImageUrl || previewImageUrl || undefined,
       introVideoMuted: payload.introVideoMuted,
       summaryHtml: buildContactSummaryHtml({
         name: payload.name,
