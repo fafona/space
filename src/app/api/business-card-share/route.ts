@@ -14,6 +14,7 @@ import {
   normalizeMerchantBusinessCardShareImageUrl,
   normalizeMerchantBusinessCardShareKey,
   normalizeMerchantBusinessCardShareTargetUrl,
+  normalizeMerchantBusinessCardShareVideoUrl,
   type MerchantBusinessCardShareContact,
   type MerchantBusinessCardSharePayload,
 } from "@/lib/merchantBusinessCardShare";
@@ -64,6 +65,7 @@ type BusinessCardShareRequestBody = {
   imageUrl?: unknown;
   detailImageUrl?: unknown;
   detailImageHeight?: unknown;
+  introVideoUrl?: unknown;
   targetUrl?: unknown;
   imageWidth?: unknown;
   imageHeight?: unknown;
@@ -341,6 +343,7 @@ function buildSnapshotCardSharePayload(card: MerchantBusinessCardAsset, preferre
       detailImageUrl: normalizeText(card.contactPagePublicImageUrl) || normalizeText(card.contactPageImageUrl),
       detailImageHeight:
         typeof card.contactPageImageHeight === "number" ? Math.round(card.contactPageImageHeight) : undefined,
+      introVideoUrl: normalizeText(card.contactIntroVideoUrl),
       targetUrl: normalizeText(card.targetUrl),
       imageWidth: typeof card.width === "number" ? Math.round(card.width) : undefined,
       imageHeight: typeof card.height === "number" ? Math.round(card.height) : undefined,
@@ -531,6 +534,10 @@ export async function POST(request: Request) {
     normalizeText(body?.detailImageUrl),
     shareOrigin || request.url,
   );
+  const introVideoUrl = normalizeMerchantBusinessCardShareVideoUrl(
+    normalizeText(body?.introVideoUrl),
+    shareOrigin || request.url,
+  );
   const detailImageHeight = normalizeImageDimension(body?.detailImageHeight);
   const imageWidth = normalizeImageDimension(body?.imageWidth);
   const imageHeight = normalizeImageDimension(body?.imageHeight);
@@ -574,6 +581,7 @@ export async function POST(request: Request) {
     imageUrl,
     ...(detailImageUrl ? { detailImageUrl } : {}),
     ...(detailImageUrl && detailImageHeight ? { detailImageHeight } : {}),
+    ...(introVideoUrl ? { introVideoUrl } : {}),
     updatedAt: new Date().toISOString(),
     targetUrl,
     ...(imageWidth ? { imageWidth } : {}),

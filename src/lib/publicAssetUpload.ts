@@ -6,11 +6,12 @@ export type PublicAssetUploadUsage =
   | "business-card-background"
   | "business-card-contact"
   | "business-card-export"
+  | "business-card-intro-video"
   | "audio"
   | "generic-image";
 
 function parseDataUrlMeta(dataUrl: string) {
-  const matched = dataUrl.match(/^data:((?:image|audio)\/[a-zA-Z0-9.+-]+);base64,/i);
+  const matched = dataUrl.match(/^data:((?:image|audio|video)\/[a-zA-Z0-9.+-]+);base64,/i);
   if (!matched) return null;
   return { mime: matched[1].toLowerCase() };
 }

@@ -1605,6 +1605,7 @@ function buildShareCardHtml(input: {
   previewImageUrl?: string;
   contentImageUrl?: string;
   contentImageHeight?: number;
+  introVideoUrl?: string;
   summaryHtml: string;
   imageWidth?: number;
   imageHeight?: number;
@@ -1618,6 +1619,7 @@ function buildShareCardHtml(input: {
   const merchantName = escapeHtml(input.merchantName);
   const previewImageUrl = input.previewImageUrl ? escapeHtml(input.previewImageUrl) : "";
   const contentImageUrl = input.contentImageUrl ? escapeHtml(input.contentImageUrl) : "";
+  const introVideoUrl = input.introVideoUrl ? escapeHtml(input.introVideoUrl) : "";
   const contentImageHeight = input.contentImageHeight ?? 0;
   const targetUrl = escapeHtml(input.targetUrl);
   const shareUrl = escapeHtml(input.shareUrl);
@@ -1700,6 +1702,47 @@ function buildShareCardHtml(input: {
         clip: rect(0, 0, 0, 0);
         white-space: nowrap;
         border: 0;
+      }
+      .intro-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 180;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        background: rgba(2,6,23,.96);
+      }
+      .intro-overlay.is-hidden {
+        display: none;
+      }
+      .intro-card {
+        width: min(100%, 760px);
+        display: grid;
+        gap: 12px;
+      }
+      .intro-video {
+        display: block;
+        width: 100%;
+        max-height: min(72vh, 620px);
+        border-radius: 22px;
+        background: #000;
+        object-fit: contain;
+        box-shadow: 0 28px 90px rgba(0,0,0,.38);
+      }
+      .intro-actions {
+        display: flex;
+        justify-content: flex-end;
+      }
+      .intro-skip {
+        border: 1px solid rgba(255,255,255,.32);
+        border-radius: 999px;
+        background: rgba(15,23,42,.72);
+        color: #fff;
+        padding: 9px 15px;
+        font: inherit;
+        font-size: 14px;
+        cursor: pointer;
       }
       #contact-card-language {
         position: absolute;
@@ -1951,6 +1994,17 @@ function buildShareCardHtml(input: {
   </head>
   <body>
     ${languageSwitcherHtml}
+    ${
+      introVideoUrl
+        ? `<div class="intro-overlay" data-intro-overlay data-no-translate="1">
+      <div class="intro-card">
+        <video class="intro-video" src="${introVideoUrl}" autoplay muted playsinline controls preload="auto"></video>
+        <div class="intro-actions"><button class="intro-skip" type="button" data-intro-skip>跳过</button></div>
+      </div>
+    </div>
+    <noscript><style>.intro-overlay{display:none}</style></noscript>`
+        : ""
+    }
     <main>
       <article>
         <div class="brandline" data-no-translate="1">FAOLLA CARD</div>
@@ -1978,6 +2032,33 @@ function buildShareCardHtml(input: {
       </article>
     </main>
     <script>${inlineI18nScript}</script>
+    ${
+      introVideoUrl
+        ? `<script>(() => {
+      const overlay = document.querySelector("[data-intro-overlay]");
+      if (!overlay) return;
+      const video = overlay.querySelector("video");
+      const closeIntro = () => {
+        overlay.classList.add("is-hidden");
+        try { video && video.pause(); } catch {}
+      };
+      overlay.querySelector("[data-intro-skip]")?.addEventListener("click", closeIntro);
+      if (!video) {
+        closeIntro();
+        return;
+      }
+      video.addEventListener("ended", closeIntro, { once: true });
+      video.addEventListener("error", closeIntro, { once: true });
+      window.setTimeout(() => {
+        if (!video || video.readyState < 2) closeIntro();
+      }, 5000);
+      const playResult = video.play?.();
+      if (playResult && typeof playResult.catch === "function") {
+        playResult.catch(closeIntro);
+      }
+    })();</script>`
+        : ""
+    }
   </body>
 </html>`;
 }
@@ -2242,6 +2323,7 @@ export async function GET(
       previewImageUrl: previewImageUrl || undefined,
       contentImageUrl: detailImageUrl || undefined,
       contentImageHeight: payload.detailImageHeight,
+      introVideoUrl: payload.introVideoUrl,
       summaryHtml: buildContactSummaryHtml({
         name: payload.name,
         contact: payload.contact,

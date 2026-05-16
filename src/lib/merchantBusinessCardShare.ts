@@ -29,6 +29,7 @@ export type MerchantBusinessCardSharePayload = {
   imageUrl?: string;
   detailImageUrl?: string;
   detailImageHeight?: number;
+  introVideoUrl?: string;
   updatedAt?: string;
   targetUrl: string;
   ownerMerchantId?: string;
@@ -303,6 +304,12 @@ export function normalizeMerchantBusinessCardShareImageUrl(value: string | null 
   return normalizeMerchantBusinessCardShareTargetUrl(rewritten);
 }
 
+export function normalizeMerchantBusinessCardShareVideoUrl(value: string | null | undefined, preferredOrigin?: string | null) {
+  const forcedPublicUrl = rewriteStorageUrlToOrigin(normalizeText(value), preferredOrigin ?? "");
+  const rewritten = forcedPublicUrl || normalizePublicAssetUrl(normalizeText(value), preferredOrigin ?? undefined);
+  return normalizeMerchantBusinessCardShareTargetUrl(rewritten);
+}
+
 export function normalizeMerchantBusinessCardShareKey(value: string | null | undefined) {
   const normalized = normalizeText(value).toLowerCase();
   if (!/^[a-z0-9][a-z0-9_-]{5,63}$/i.test(normalized)) return "";
@@ -321,6 +328,7 @@ function normalizeSharePayload(
     imageUrl?: string | null;
     detailImageUrl?: string | null;
     detailImageHeight?: number | null;
+    introVideoUrl?: string | null;
     updatedAt?: string | null;
     targetUrl?: string | null;
     ownerMerchantId?: string | null;
@@ -333,6 +341,7 @@ function normalizeSharePayload(
   const targetUrl = normalizeMerchantBusinessCardShareTargetUrl(input.targetUrl);
   const imageUrl = normalizeMerchantBusinessCardShareImageUrl(input.imageUrl, preferredOrigin);
   const detailImageUrl = normalizeMerchantBusinessCardShareImageUrl(input.detailImageUrl, preferredOrigin);
+  const introVideoUrl = normalizeMerchantBusinessCardShareVideoUrl(input.introVideoUrl, preferredOrigin);
   const detailImageHeight = clampImageDimension(input.detailImageHeight);
   if (!targetUrl) return null;
   const updatedAt = normalizeUpdatedAt(input.updatedAt);
@@ -343,6 +352,7 @@ function normalizeSharePayload(
     ...(imageUrl ? { imageUrl } : {}),
     ...(detailImageUrl ? { detailImageUrl } : {}),
     ...(detailImageUrl && detailImageHeight ? { detailImageHeight } : {}),
+    ...(introVideoUrl ? { introVideoUrl } : {}),
     ...(updatedAt ? { updatedAt } : {}),
     targetUrl,
     ...(normalizeOwnerMerchantId(input.ownerMerchantId) ? { ownerMerchantId: normalizeOwnerMerchantId(input.ownerMerchantId) } : {}),
@@ -360,6 +370,7 @@ export function normalizeMerchantBusinessCardSharePayload(
     imageUrl?: string | null;
     detailImageUrl?: string | null;
     detailImageHeight?: number | null;
+    introVideoUrl?: string | null;
     targetUrl?: string | null;
     ownerMerchantId?: string | null;
     imageWidth?: number | null;
@@ -520,6 +531,7 @@ export function buildMerchantBusinessCardShareLegacyFingerprint(
         imageUrl?: string | null;
         detailImageUrl?: string | null;
         detailImageHeight?: number | null;
+        introVideoUrl?: string | null;
         targetUrl?: string | null;
         imageWidth?: number | null;
         imageHeight?: number | null;
@@ -572,6 +584,7 @@ export function buildMerchantBusinessCardShareLegacyFingerprint(
     contact.xiaohongshu ?? "",
     contact.websiteUrl ?? "",
     contact.note ?? "",
+    ...(payload.introVideoUrl ? [`introVideo:${payload.introVideoUrl}`] : []),
   ].join("\u001f");
   return `legacy-${buildStableHexHash(fingerprintSource)}`;
 }
@@ -589,6 +602,7 @@ export function buildMerchantBusinessCardShareRevocationByLegacyPayloadObjectPat
         imageUrl?: string | null;
         detailImageUrl?: string | null;
         detailImageHeight?: number | null;
+        introVideoUrl?: string | null;
         targetUrl?: string | null;
         imageWidth?: number | null;
         imageHeight?: number | null;
@@ -639,6 +653,7 @@ export function buildMerchantBusinessCardShareUrl(input: {
   imageUrl?: string | null;
   detailImageUrl?: string | null;
   detailImageHeight?: number | null;
+  introVideoUrl?: string | null;
   targetUrl: string;
   contact?: MerchantBusinessCardShareContact | null;
 }) {
@@ -659,6 +674,7 @@ export function buildMerchantBusinessCardShareUrl(input: {
       imageUrl: input.imageUrl,
       detailImageUrl: input.detailImageUrl,
       detailImageHeight: input.detailImageHeight,
+      introVideoUrl: input.introVideoUrl,
       targetUrl: input.targetUrl,
       contact: input.contact,
     },
@@ -674,6 +690,9 @@ export function buildMerchantBusinessCardShareUrl(input: {
   }
   if (payload.detailImageHeight) {
     shareUrl.searchParams.set("detailImageHeight", String(payload.detailImageHeight));
+  }
+  if (payload.introVideoUrl) {
+    shareUrl.searchParams.set("introVideo", payload.introVideoUrl);
   }
   shareUrl.searchParams.set("target", payload.targetUrl);
   if (payload.name) {
@@ -773,6 +792,7 @@ export function parseMerchantBusinessCardShareParams(
       imageUrl: readSearchParam(searchParams, "image"),
       detailImageUrl: readSearchParam(searchParams, "detailImage"),
       detailImageHeight: Number(readSearchParam(searchParams, "detailImageHeight")),
+      introVideoUrl: readSearchParam(searchParams, "introVideo"),
       updatedAt: readSearchParam(searchParams, "updatedAt"),
       targetUrl: readSearchParam(searchParams, "target"),
       imageWidth: Number(readSearchParam(searchParams, "imageWidth")),

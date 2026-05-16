@@ -33,6 +33,7 @@ type AssetUsage =
   | "business-card-background"
   | "business-card-contact"
   | "business-card-export"
+  | "business-card-intro-video"
   | "support-image"
   | "support-file"
   | "audio"
@@ -63,6 +64,10 @@ function parseDataUrlMeta(dataUrl: string) {
     if (mime === "audio/aac") return "aac";
     if (mime === "audio/webm") return "webm";
     if (mime === "audio/mp4") return "m4a";
+    if (mime === "video/mp4") return "mp4";
+    if (mime === "video/webm") return "webm";
+    if (mime === "video/ogg") return "ogv";
+    if (mime === "video/quicktime") return "mov";
     if (mime === "application/pdf") return "pdf";
     if (mime === "text/plain") return "txt";
     if (mime === "text/csv") return "csv";
@@ -119,6 +124,7 @@ function normalizeAssetUsage(value: unknown, folder: string, mime: string): Asse
     normalized === "business-card-background" ||
     normalized === "business-card-contact" ||
     normalized === "business-card-export" ||
+    normalized === "business-card-intro-video" ||
     normalized === "support-image" ||
     normalized === "support-file" ||
     normalized === "audio"
@@ -144,6 +150,8 @@ function getAssetUploadLimitBytes(input: {
       return Math.max(50, Math.round(permissionConfig.businessCardContactImageLimitKb)) * 1024;
     case "business-card-export":
       return Math.max(50, Math.round(permissionConfig.businessCardExportImageLimitKb)) * 1024;
+    case "business-card-intro-video":
+      return 10 * 1024 * 1024;
     case "support-image":
       return 512 * 1024;
     case "support-file":
@@ -263,7 +271,7 @@ export async function POST(request: Request) {
       {
         ok: false,
         code: "unsupported_asset",
-        message: "Only supported image, audio, and common document data URLs can be uploaded.",
+        message: "Only supported image, audio, video, and common document data URLs can be uploaded.",
       },
       { status: 400 },
     );

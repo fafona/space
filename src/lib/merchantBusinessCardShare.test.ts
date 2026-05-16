@@ -86,6 +86,7 @@ test("buildMerchantBusinessCardShareUrl falls back to legacy encoded params when
     name: "fafona",
     imageUrl: "https://faolla.com/storage/v1/object/public/page-assets/card.png",
     detailImageUrl: "https://faolla.com/storage/v1/object/public/page-assets/contact.png",
+    introVideoUrl: "https://faolla.com/storage/v1/object/public/page-assets/intro.mp4",
     targetUrl: "https://fafona.faolla.com",
     contact: {
       displayName: "Felix",
@@ -96,7 +97,7 @@ test("buildMerchantBusinessCardShareUrl falls back to legacy encoded params when
 
   assert.equal(
     shareUrl,
-    "https://faolla.com/share/business-card?image=https%3A%2F%2Ffaolla.com%2Fstorage%2Fv1%2Fobject%2Fpublic%2Fpage-assets%2Fcard.png&detailImage=https%3A%2F%2Ffaolla.com%2Fstorage%2Fv1%2Fobject%2Fpublic%2Fpage-assets%2Fcontact.png&target=https%3A%2F%2Ffafona.faolla.com%2F&name=fafona&contactName=Felix&phone=633130577&email=caimin00x%40gmail.com&website=https%3A%2F%2Ffafona.faolla.com%2F",
+    "https://faolla.com/share/business-card?image=https%3A%2F%2Ffaolla.com%2Fstorage%2Fv1%2Fobject%2Fpublic%2Fpage-assets%2Fcard.png&detailImage=https%3A%2F%2Ffaolla.com%2Fstorage%2Fv1%2Fobject%2Fpublic%2Fpage-assets%2Fcontact.png&introVideo=https%3A%2F%2Ffaolla.com%2Fstorage%2Fv1%2Fobject%2Fpublic%2Fpage-assets%2Fintro.mp4&target=https%3A%2F%2Ffafona.faolla.com%2F&name=fafona&contactName=Felix&phone=633130577&email=caimin00x%40gmail.com&website=https%3A%2F%2Ffafona.faolla.com%2F",
   );
 });
 

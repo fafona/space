@@ -128,6 +128,7 @@ export type MerchantBusinessCardCornerMode = "rounded" | "square";
 export type MerchantBusinessCardDraft = {
   mode: MerchantBusinessCardMode;
   name: string;
+  contactIntroVideoUrl: string;
   contactPageImageUrl: string;
   contactPageImageHeight: number;
   backgroundImageUrl: string;
@@ -439,6 +440,7 @@ export function createDefaultMerchantBusinessCardDraft(
   return {
     mode: "image",
     name: normalizeText(profile.merchantName) || "未命名名片",
+    contactIntroVideoUrl: "",
     contactPageImageUrl: "",
     contactPageImageHeight: 346,
     backgroundImageUrl: "",
@@ -561,6 +563,7 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
   return {
     mode: normalizeText((source as { mode?: unknown }).mode) === "link" ? "link" : "image",
     name: typeof source.name === "string" ? normalizeText(source.name) : fallback.name,
+    contactIntroVideoUrl: normalizeText((source as { contactIntroVideoUrl?: unknown }).contactIntroVideoUrl),
     contactPageImageUrl: normalizeText((source as { contactPageImageUrl?: unknown }).contactPageImageUrl),
     contactPageImageHeight: clampInt(
       (source as { contactPageImageHeight?: unknown }).contactPageImageHeight,

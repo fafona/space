@@ -42,7 +42,7 @@ import {
   resolveMerchantBusinessCardShareOrigin,
   type MerchantBusinessCardShareContact,
 } from "@/lib/merchantBusinessCardShare";
-import { uploadImageDataUrlToPublicStorage } from "@/lib/publicAssetUpload";
+import { uploadDataUrlToPublicStorage, uploadImageDataUrlToPublicStorage } from "@/lib/publicAssetUpload";
 import { buildMerchantDomain } from "@/lib/siteRouting";
 
 type MerchantBusinessCardManagerProps = {
@@ -140,6 +140,8 @@ const MIN_CARD_FRAME_WIDTH = 320;
 const MAX_CARD_FRAME_WIDTH = 1600;
 const MIN_CARD_FRAME_HEIGHT = 180;
 const MAX_CARD_FRAME_HEIGHT = 1600;
+const CONTACT_INTRO_VIDEO_LIMIT_BYTES = 10 * 1024 * 1024;
+const CONTACT_INTRO_VIDEO_ACCEPT = "video/mp4,video/webm,video/ogg,video/quicktime";
 const ALL_TYPOGRAPHY_KEYS: Array<keyof MerchantBusinessCardDraft["typography"]> = [
   "name",
   "title",
@@ -968,6 +970,7 @@ function ContactCardSurface({
   contacts,
   invoice,
   contactFieldOrder,
+  introVideoUrl,
   imageUrl,
   imageHeight,
 }: {
@@ -976,6 +979,7 @@ function ContactCardSurface({
   contacts: MerchantBusinessCardDraft["contacts"];
   invoice: MerchantBusinessCardDraft["invoice"];
   contactFieldOrder: MerchantBusinessCardDraft["contactFieldOrder"];
+  introVideoUrl?: string;
   imageUrl?: string;
   imageHeight: number;
 }) {
@@ -983,6 +987,7 @@ function ContactCardSurface({
   const invoiceRows = buildInvoicePreviewRows(invoice);
   const displayName = normalizeText(name);
   const hasImage = Boolean(normalizeText(imageUrl));
+  const hasIntroVideo = Boolean(normalizeText(introVideoUrl));
   const domainLabel = normalizeText(targetUrl).replace(/^https?:\/\//i, "");
 
   return (
@@ -991,6 +996,12 @@ function ContactCardSurface({
         <div className="mb-4 text-center">
           <div className="text-[11px] font-medium uppercase tracking-[0.24em] text-slate-400">FAOLLA CARD</div>
           <div className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">{displayName}</div>
+        </div>
+      ) : null}
+
+      {hasIntroVideo ? (
+        <div className="mb-5 overflow-hidden rounded-[28px] border border-slate-200 bg-black shadow-[0_16px_42px_rgba(15,23,42,.08)]">
+          <video src={introVideoUrl} controls muted playsInline className="block aspect-video w-full bg-black object-contain" />
         </div>
       ) : null}
 
@@ -1099,12 +1110,14 @@ function ImageFilePicker({
   label,
   statusText,
   detailText,
+  accept = "image/*",
   disabled = false,
   onChange,
 }: {
   label: string;
   statusText: string;
   detailText?: string;
+  accept?: string;
   disabled?: boolean;
   onChange: (event: ChangeEvent<HTMLInputElement>) => void;
 }) {
@@ -1117,7 +1130,7 @@ function ImageFilePicker({
             disabled ? "cursor-wait opacity-80" : "cursor-pointer hover:bg-sky-100"
           }`}
         >
-          <input type="file" accept="image/*" className="sr-only" onChange={onChange} disabled={disabled} />
+          <input type="file" accept={accept} className="sr-only" onChange={onChange} disabled={disabled} />
           <span className="shrink-0 rounded border border-sky-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700">
             选择文件
           </span>
@@ -1171,6 +1184,9 @@ export default function MerchantBusinessCardManager({
   const [contactPageImageFileName, setContactPageImageFileName] = useState("");
   const [contactPageImageFileDetail, setContactPageImageFileDetail] = useState("");
   const [isContactPageImageProcessing, setIsContactPageImageProcessing] = useState(false);
+  const [contactIntroVideoFileName, setContactIntroVideoFileName] = useState("");
+  const [contactIntroVideoFileDetail, setContactIntroVideoFileDetail] = useState("");
+  const [isContactIntroVideoProcessing, setIsContactIntroVideoProcessing] = useState(false);
   const hiddenPreviewRef = useRef<HTMLDivElement | null>(null);
   const backgroundImageDragRef = useRef<{
     pointerId: number;
@@ -1439,6 +1455,9 @@ export default function MerchantBusinessCardManager({
     setContactPageImageFileName("");
     setContactPageImageFileDetail("");
     setIsContactPageImageProcessing(false);
+    setContactIntroVideoFileName("");
+    setContactIntroVideoFileDetail("");
+    setIsContactIntroVideoProcessing(false);
     setDraftShareCode(createMerchantBusinessCardShareKeyCode());
     setSelectedFieldKeys(["merchantName"]);
     setEditingCardId(null);
@@ -1458,6 +1477,9 @@ export default function MerchantBusinessCardManager({
     setContactPageImageFileName("");
     setContactPageImageFileDetail("");
     setIsContactPageImageProcessing(false);
+    setContactIntroVideoFileName("");
+    setContactIntroVideoFileDetail("");
+    setIsContactIntroVideoProcessing(false);
     setDraftShareCode(createMerchantBusinessCardShareKeyCode());
     setSelectedFieldKeys(["merchantName"]);
     setEditingCardId(card.id);
@@ -1482,6 +1504,9 @@ export default function MerchantBusinessCardManager({
     setContactPageImageFileName("");
     setContactPageImageFileDetail("");
     setIsContactPageImageProcessing(false);
+    setContactIntroVideoFileName("");
+    setContactIntroVideoFileDetail("");
+    setIsContactIntroVideoProcessing(false);
     setDraftShareCode(createMerchantBusinessCardShareKeyCode());
     setSelectedFieldKeys(["merchantName"]);
     setEditingCardId(null);
@@ -1655,6 +1680,68 @@ export default function MerchantBusinessCardManager({
     }
   };
 
+  const handleContactIntroVideoUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const previousFileName = contactIntroVideoFileName;
+    const previousFileDetail = contactIntroVideoFileDetail;
+    try {
+      const fileName = normalizeText(file.name);
+      const fileType = normalizeText(file.type).toLowerCase();
+      const looksLikeVideoFile = /\.(mp4|webm|ogv|ogg|mov)$/i.test(fileName);
+      if (!fileType.startsWith("video/") && !looksLikeVideoFile) {
+        setTip("请选择视频文件");
+        return;
+      }
+      if (file.size > CONTACT_INTRO_VIDEO_LIMIT_BYTES) {
+        setTip(`联系卡开场视频不能超过 ${Math.round(CONTACT_INTRO_VIDEO_LIMIT_BYTES / 1024 / 1024)} MB`);
+        return;
+      }
+      setContactIntroVideoFileName(fileName || "开场视频");
+      setContactIntroVideoFileDetail("上传中...");
+      setIsContactIntroVideoProcessing(true);
+      let dataUrl = await readImageFileAsDataUrl(file);
+      if (!/^data:video\//i.test(dataUrl) && looksLikeVideoFile) {
+        const base64 = dataUrl.split(",")[1] ?? "";
+        const inferredMime = /\.webm$/i.test(fileName)
+          ? "video/webm"
+          : /\.(ogv|ogg)$/i.test(fileName)
+            ? "video/ogg"
+            : /\.mov$/i.test(fileName)
+              ? "video/quicktime"
+              : "video/mp4";
+        dataUrl = `data:${inferredMime};base64,${base64}`;
+      }
+      const uploadedUrl = await uploadDataUrlToPublicStorage(dataUrl, {
+        merchantHint: sanitizeShareAssetHint(
+          `${normalizeText(profile.domainPrefix) || normalizeText(draft.name) || normalizeText(profile.merchantName)}-intro-video`,
+        ),
+        folder: "merchant-assets",
+        usage: "business-card-intro-video",
+      });
+      if (!uploadedUrl) {
+        throw new Error("video_upload_failed");
+      }
+      applyDraft((current) => ({ ...current, contactIntroVideoUrl: uploadedUrl }));
+      setContactIntroVideoFileName(fileName || "已上传开场视频");
+      setContactIntroVideoFileDetail(`大小 ${formatImageResultSize(file.size)}`);
+    } catch {
+      setContactIntroVideoFileName(previousFileName);
+      setContactIntroVideoFileDetail(previousFileDetail);
+      setTip("开场视频上传失败，请重试");
+    } finally {
+      setIsContactIntroVideoProcessing(false);
+      event.target.value = "";
+    }
+  };
+
+  const handleClearContactIntroVideo = () => {
+    setContactIntroVideoFileName("");
+    setContactIntroVideoFileDetail("");
+    setIsContactIntroVideoProcessing(false);
+    applyDraft((current) => ({ ...current, contactIntroVideoUrl: "" }));
+  };
+
   const updateDraftPhones = (nextPhones: string[]) => {
     const cappedPhoneInputs = nextPhones.slice(0, MERCHANT_BUSINESS_CARD_PHONE_LIMIT);
     setContactPhoneEditorValues(cappedPhoneInputs.length > 0 ? cappedPhoneInputs : [""]);
@@ -1711,6 +1798,7 @@ export default function MerchantBusinessCardManager({
       imageUrl: normalizeText(card.shareImageUrl),
       detailImageUrl: normalizeText(card.contactPagePublicImageUrl),
       detailImageHeight: card.contactPageImageHeight,
+      introVideoUrl: normalizeText(card.contactIntroVideoUrl),
       targetUrl,
       imageWidth: card.width,
       imageHeight: card.height,
@@ -1850,6 +1938,7 @@ export default function MerchantBusinessCardManager({
     normalizeText(previewAsset?.contactPageImageUrl) ||
     normalizeText(draft.contactPageImageUrl);
   const previewContactImageHeight = previewAsset?.contactPageImageHeight || draft.contactPageImageHeight;
+  const previewIntroVideoUrl = normalizeText(previewAsset?.contactIntroVideoUrl) || normalizeText(draft.contactIntroVideoUrl);
   const showPreviewGenerateButton = !previewAsset;
   const backgroundImagePickerStatus = resolveFilePickerStatus(
     backgroundImageFileName,
@@ -1864,6 +1953,12 @@ export default function MerchantBusinessCardManager({
     "已上传联系卡图片，可重新选择",
   );
   const contactPageImagePickerDetail = isContactPageImageProcessing ? "压缩中..." : contactPageImageFileDetail;
+  const contactIntroVideoPickerStatus = resolveFilePickerStatus(
+    contactIntroVideoFileName,
+    normalizeText(draft.contactIntroVideoUrl),
+    "已上传开场视频，可重新选择",
+  );
+  const contactIntroVideoPickerDetail = isContactIntroVideoProcessing ? "上传中..." : contactIntroVideoFileDetail;
   const folderGridContent =
     normalizedCards.length > 0 ? (
       <div className="space-y-4">
@@ -2326,6 +2421,42 @@ export default function MerchantBusinessCardManager({
                         </div>
                       </div>
                     </div>
+                    {draft.mode === "link" ? (
+                      <div className="rounded-xl border bg-white px-3 py-3">
+                        <div className="text-xs font-semibold text-slate-700">联系卡开场视频</div>
+                        <div className="mt-1 text-xs leading-5 text-slate-500">
+                          上传后，用户打开联系卡会先静音播放视频；视频播完、跳过或加载失败都会进入联系卡内容。
+                        </div>
+                        <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_120px]">
+                          <ImageFilePicker
+                            label="上传视频"
+                            statusText={contactIntroVideoPickerStatus}
+                            detailText={contactIntroVideoPickerDetail}
+                            accept={CONTACT_INTRO_VIDEO_ACCEPT}
+                            disabled={isContactIntroVideoProcessing}
+                            onChange={(event) => void handleContactIntroVideoUpload(event)}
+                          />
+                          <button
+                            type="button"
+                            className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                            onClick={handleClearContactIntroVideo}
+                            disabled={isContactIntroVideoProcessing || !normalizeText(draft.contactIntroVideoUrl)}
+                          >
+                            清除
+                          </button>
+                        </div>
+                        <div className="mt-1 text-[11px] text-slate-400">默认上限 10 MB，建议 3-8 秒，竖屏或横屏视频都可使用。</div>
+                        {normalizeText(draft.contactIntroVideoUrl) ? (
+                          <video
+                            className="mt-3 block aspect-video w-full rounded-xl border bg-black object-contain"
+                            src={draft.contactIntroVideoUrl}
+                            controls
+                            muted
+                            playsInline
+                          />
+                        ) : null}
+                      </div>
+                    ) : null}
                     {draft.mode === "link" ? (
                       <div className="rounded-xl border bg-white px-3 py-3">
                         <div className="text-xs font-semibold text-slate-700">联系卡中间展示图</div>
@@ -2867,6 +2998,7 @@ export default function MerchantBusinessCardManager({
                           contacts={draft.contacts}
                           invoice={draft.invoice}
                           contactFieldOrder={draft.contactFieldOrder}
+                          introVideoUrl={normalizeText(draft.contactIntroVideoUrl) || undefined}
                           imageUrl={normalizeText(draft.contactPageImageUrl) || undefined}
                           imageHeight={draft.contactPageImageHeight}
                         />
@@ -2947,6 +3079,7 @@ export default function MerchantBusinessCardManager({
                         contacts={previewContacts}
                         invoice={previewAsset?.invoice || draft.invoice}
                         contactFieldOrder={previewContactFieldOrder}
+                        introVideoUrl={previewIntroVideoUrl || undefined}
                         imageUrl={previewContactImageUrl}
                         imageHeight={previewContactImageHeight}
                       />
@@ -3384,6 +3517,7 @@ export default function MerchantBusinessCardManager({
     renderedImageUrl?: string;
     contactPageImageUrl?: string;
     contactPageImageHeight?: number;
+    introVideoUrl?: string;
     imageWidth?: number;
     imageHeight?: number;
     contact?: MerchantBusinessCardShareContact;
@@ -3409,6 +3543,7 @@ export default function MerchantBusinessCardManager({
       imageUrl: shareImageUrl,
       detailImageUrl,
       detailImageHeight: input.contactPageImageHeight,
+      introVideoUrl: normalizeText(input.introVideoUrl),
       targetUrl,
       name: input.cardName,
       contact: input.contact,
@@ -3449,6 +3584,7 @@ export default function MerchantBusinessCardManager({
               typeof input.contactPageImageHeight === "number"
                 ? Math.round(input.contactPageImageHeight)
                 : undefined,
+            introVideoUrl: normalizeText(input.introVideoUrl) || undefined,
             targetUrl,
             imageWidth: typeof input.imageWidth === "number" ? Math.round(input.imageWidth) : undefined,
             imageHeight: typeof input.imageHeight === "number" ? Math.round(input.imageHeight) : undefined,
@@ -3567,6 +3703,7 @@ export default function MerchantBusinessCardManager({
             renderedImageUrl: imageUrl,
             contactPageImageUrl: normalizeText(nextDraft.contactPageImageUrl),
             contactPageImageHeight: nextDraft.contactPageImageHeight,
+            introVideoUrl: normalizeText(nextDraft.contactIntroVideoUrl),
             imageWidth: nextDraft.width,
             imageHeight: nextDraft.height,
             contact: shareContactPayload,
@@ -3636,6 +3773,7 @@ export default function MerchantBusinessCardManager({
         shareKey: normalizeText(card.shareKey),
         card,
         contactPageImageUrl: normalizeText(card.contactPageImageUrl),
+        introVideoUrl: normalizeText(card.contactIntroVideoUrl),
         imageWidth: card.width,
         imageHeight: card.height,
         contact: buildShareContactPayload({
