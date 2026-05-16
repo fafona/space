@@ -14,6 +14,7 @@ import {
 } from "@/lib/merchantBusinessCardShare";
 import {
   normalizeMerchantBusinessCardContactFieldOrder,
+  type MerchantBusinessCardAsset,
   type MerchantBusinessCardContactDisplayKey,
 } from "@/lib/merchantBusinessCards";
 import { DEFAULT_LOCALE, I18N_STORAGE_KEY, LANGUAGE_OPTIONS } from "@/lib/i18n";
@@ -1281,15 +1282,19 @@ async function loadContactCardCoupons(siteId: string) {
   return getContactCardVisibleMerchantCoupons(coupons);
 }
 
-async function resolveContactCardOwnerMerchantId(shareKey: string) {
+async function resolveContactCardSnapshotMatch(shareKey: string) {
   const normalizedShareKey = normalizeMerchantBusinessCardShareKey(shareKey);
-  if (!normalizedShareKey) return "";
+  if (!normalizedShareKey) return null;
   const snapshot = await loadPublishedMerchantSnapshotSites().catch(() => []);
   const ownerSite = snapshot.find((site) =>
     Array.isArray(site.businessCards) &&
     site.businessCards.some((card) => normalizeMerchantBusinessCardShareKey(card.shareKey) === normalizedShareKey),
   );
-  return normalizeText(ownerSite?.id);
+  if (!ownerSite || !Array.isArray(ownerSite.businessCards)) return null;
+  const card = ownerSite.businessCards.find(
+    (item) => normalizeMerchantBusinessCardShareKey(item.shareKey) === normalizedShareKey,
+  ) as MerchantBusinessCardAsset | undefined;
+  return card ? { siteId: normalizeText(ownerSite.id), card } : null;
 }
 
 function buildOrderedContactSummaryHtml(input: {
@@ -2359,6 +2364,8 @@ export async function GET(
   const title = buildMerchantBusinessCardShareTitle(payload.name);
   const description = buildMerchantBusinessCardShareDescription(payload.name, payload.targetUrl);
   const publicOrigin = resolveMerchantBusinessCardShareOrigin(request.url, payload.targetUrl) || requestOrigin;
+  const snapshotMatch = await resolveContactCardSnapshotMatch(shareKey).catch(() => null);
+  const snapshotCard = snapshotMatch?.card ?? null;
   const normalizedShareImageUrl = payload.imageUrl
     ? normalizeMerchantBusinessCardShareImageUrl(payload.imageUrl, publicOrigin) || payload.imageUrl
     : "";
@@ -2370,8 +2377,9 @@ export async function GET(
         publicOrigin,
       )
     : "";
-  const introVideoUrl = payload.introVideoUrl
-    ? normalizeMerchantBusinessCardShareVideoUrl(payload.introVideoUrl, publicOrigin) || payload.introVideoUrl
+  const introVideoSource = normalizeText(payload.introVideoUrl) || normalizeText(snapshotCard?.contactIntroVideoUrl);
+  const introVideoUrl = introVideoSource
+    ? normalizeMerchantBusinessCardShareVideoUrl(introVideoSource, publicOrigin) || introVideoSource
     : "";
   const contactUrl =
     buildMerchantBusinessCardContactDownloadUrl({
@@ -2407,7 +2415,7 @@ export async function GET(
   }
   const contactCouponSiteId =
     normalizeText(payload.ownerMerchantId) ||
-    (await resolveContactCardOwnerMerchantId(shareKey)) ||
+    normalizeText(snapshotMatch?.siteId) ||
     serviceState?.siteId ||
     "";
   const contactCoupons = contactCouponSiteId ? await loadContactCardCoupons(contactCouponSiteId) : [];
@@ -2422,7 +2430,7 @@ export async function GET(
       contentImageHeight: payload.detailImageHeight,
       introVideoUrl: introVideoUrl || undefined,
       introPosterUrl: detailImageUrl || previewImageUrl || undefined,
-      introVideoMuted: payload.introVideoMuted,
+      introVideoMuted: payload.introVideoMuted ?? snapshotCard?.contactIntroVideoMuted,
       summaryHtml: buildContactSummaryHtml({
         name: payload.name,
         contact: payload.contact,

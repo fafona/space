@@ -1655,9 +1655,10 @@ export default function MerchantBusinessCardManager({
     setIsDraftSaving(true);
     try {
       writeSavedBusinessCardDraft(draftStorageKey, draft);
-      setTip("名片草稿已保存");
+      const savedExistingCard = editingCardId ? await saveCurrentDraftSettingsToExistingCard() : null;
+      setTip(savedExistingCard ? "名片设置已保存并同步联系卡" : "名片草稿已保存");
     } catch {
-      setTip("草稿保存失败，请重试");
+      setTip(editingCardId ? "名片设置同步失败，请点保存修改重试" : "草稿保存失败，请重试");
     } finally {
       setIsDraftSaving(false);
     }
@@ -3850,6 +3851,78 @@ export default function MerchantBusinessCardManager({
       : [asset, ...normalizedCards];
     await Promise.resolve(onCardsChange(normalizeMerchantBusinessCardChatDisplaySelection(nextCards)));
     setEditingCardId(asset.id);
+    return asset;
+  }
+
+  async function saveCurrentDraftSettingsToExistingCard() {
+    if (!editingCardId || !websiteUrl) return null;
+    const existingCard = normalizedCards.find((card) => card.id === editingCardId) ?? null;
+    if (!existingCard) return null;
+
+    const nextDraft = normalizeMerchantBusinessCardDraft(draft);
+    const resolvedShareKey =
+      nextDraft.mode === "link"
+        ? normalizeText(existingCard.shareKey) ||
+          createMerchantBusinessCardShareKey({
+            contactName: nextDraft.contacts.contactName,
+            name: nextDraft.name,
+            targetUrl: websiteUrl,
+            code: draftShareCode,
+          })
+        : "";
+    const shareContactPayload =
+      nextDraft.mode === "link"
+        ? buildShareContactPayload({
+            name: nextDraft.name,
+            title: nextDraft.title,
+            contacts: nextDraft.contacts,
+            invoice: nextDraft.invoice,
+            contactFieldOrder: nextDraft.contactFieldOrder,
+            contactOnlyFields: nextDraft.contactOnlyFields,
+            targetUrl: websiteUrl,
+          })
+        : undefined;
+    const shareBundle =
+      nextDraft.mode === "link"
+        ? await buildShareBundle({
+            targetUrl: websiteUrl,
+            cardName: normalizeText(nextDraft.name),
+            shareKey: resolvedShareKey,
+            allowLegacyFallback: false,
+            card: existingCard,
+            contactPageImageUrl: normalizeText(nextDraft.contactPageImageUrl),
+            contactPageImageHeight: nextDraft.contactPageImageHeight,
+            introVideoUrl: normalizeText(nextDraft.contactIntroVideoUrl),
+            introVideoMuted: nextDraft.contactIntroVideoMuted,
+            imageWidth: nextDraft.width,
+            imageHeight: nextDraft.height,
+            contact: shareContactPayload,
+          })
+        : null;
+    if (nextDraft.mode === "link" && !normalizeText(shareBundle?.shareKey)) {
+      throw new Error("share_link_unavailable");
+    }
+
+    const asset: MerchantBusinessCardAsset = {
+      ...existingCard,
+      ...nextDraft,
+      id: existingCard.id,
+      createdAt: existingCard.createdAt,
+      imageUrl: existingCard.imageUrl,
+      ...(nextDraft.mode === "link" && (shareBundle?.shareImageUrl || existingCard.shareImageUrl)
+        ? { shareImageUrl: shareBundle?.shareImageUrl || existingCard.shareImageUrl }
+        : {}),
+      ...(nextDraft.mode === "link" && (shareBundle?.detailImageUrl || existingCard.contactPagePublicImageUrl)
+        ? { contactPagePublicImageUrl: shareBundle?.detailImageUrl || existingCard.contactPagePublicImageUrl }
+        : {}),
+      ...(nextDraft.mode === "link" && normalizeText(shareBundle?.shareKey) ? { shareKey: normalizeText(shareBundle?.shareKey) } : {}),
+      targetUrl: websiteUrl,
+      ...(existingCard.showInChat ? { showInChat: true } : {}),
+      ...(existingCard.chatDisplayDisabled ? { chatDisplayDisabled: true } : {}),
+    };
+    const nextCards = normalizedCards.map((card) => (card.id === existingCard.id ? asset : card));
+    await Promise.resolve(onCardsChange(normalizeMerchantBusinessCardChatDisplaySelection(nextCards)));
+    setPreviewAsset((current) => (current?.id === asset.id ? asset : current));
     return asset;
   }
 
