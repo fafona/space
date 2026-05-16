@@ -73,6 +73,7 @@ test("default business card draft prefills merchant profile fields", () => {
   assert.equal(draft.fieldTypography.merchantName.fontSize, 36);
   assert.equal(draft.fieldTypography.contactName.fontSize, 14);
   assert.equal(draft.websiteLabel, "");
+  assert.equal(draft.contactIntroVideoMuted, true);
 });
 
 test("normalizeMerchantBusinessCardDraft preserves link mode", () => {
@@ -109,6 +110,16 @@ test("normalizeMerchantBusinessCardDraft preserves square card frame corners", (
 
   assert.equal(draft.cornerMode, "square");
   assert.equal(invalidDraft.cornerMode, "rounded");
+});
+
+test("normalizeMerchantBusinessCardDraft preserves intro video muted setting", () => {
+  const draft = normalizeMerchantBusinessCardDraft({
+    contactIntroVideoUrl: "https://faolla.com/storage/v1/object/public/page-assets/intro.mp4",
+    contactIntroVideoMuted: false,
+  });
+
+  assert.equal(draft.contactIntroVideoUrl, "https://faolla.com/storage/v1/object/public/page-assets/intro.mp4");
+  assert.equal(draft.contactIntroVideoMuted, false);
 });
 
 test("normalizeMerchantBusinessCardDraft keeps at most two phones", () => {
@@ -326,6 +337,7 @@ test("normalizeMerchantBusinessCards keeps only valid generated card assets", ()
       createdAt: "2026-03-17T09:00:00.000Z",
       name: "fafona card",
       contactIntroVideoUrl: "https://faolla.com/storage/v1/object/public/page-assets/intro.mp4",
+      contactIntroVideoMuted: false,
       imageUrl: "data:image/png;base64,abc",
       shareImageUrl: "https://faolla.com/storage/v1/object/public/page-assets/card.png",
       shareKey: "card-share-abc123",
@@ -446,6 +458,7 @@ test("normalizeMerchantBusinessCards keeps only valid generated card assets", ()
   assert.equal(cards[0]?.shareImageUrl, "https://faolla.com/storage/v1/object/public/page-assets/card.png");
   assert.equal(cards[0]?.shareKey, "card-share-abc123");
   assert.equal(cards[0]?.contactIntroVideoUrl, "https://faolla.com/storage/v1/object/public/page-assets/intro.mp4");
+  assert.equal(cards[0]?.contactIntroVideoMuted, false);
   assert.equal(cards[0]?.backgroundColorOpacity, 0.72);
   assert.equal(cards[0]?.customTexts.length, 1);
   assert.equal(cards[0]?.customTexts[0]?.text, "VIP only");

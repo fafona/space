@@ -1606,6 +1606,7 @@ function buildShareCardHtml(input: {
   contentImageUrl?: string;
   contentImageHeight?: number;
   introVideoUrl?: string;
+  introVideoMuted?: boolean;
   summaryHtml: string;
   imageWidth?: number;
   imageHeight?: number;
@@ -1620,6 +1621,7 @@ function buildShareCardHtml(input: {
   const previewImageUrl = input.previewImageUrl ? escapeHtml(input.previewImageUrl) : "";
   const contentImageUrl = input.contentImageUrl ? escapeHtml(input.contentImageUrl) : "";
   const introVideoUrl = input.introVideoUrl ? escapeHtml(input.introVideoUrl) : "";
+  const introVideoMuted = input.introVideoMuted !== false;
   const contentImageHeight = input.contentImageHeight ?? 0;
   const targetUrl = escapeHtml(input.targetUrl);
   const shareUrl = escapeHtml(input.shareUrl);
@@ -1730,10 +1732,19 @@ function buildShareCardHtml(input: {
         object-fit: contain;
         box-shadow: 0 28px 90px rgba(0,0,0,.38);
       }
+      .intro-status {
+        min-height: 20px;
+        color: rgba(255,255,255,.78);
+        font-size: 14px;
+        text-align: center;
+      }
       .intro-actions {
         display: flex;
         justify-content: flex-end;
+        gap: 10px;
+        flex-wrap: wrap;
       }
+      .intro-play,
       .intro-skip {
         border: 1px solid rgba(255,255,255,.32);
         border-radius: 999px;
@@ -1743,6 +1754,10 @@ function buildShareCardHtml(input: {
         font: inherit;
         font-size: 14px;
         cursor: pointer;
+      }
+      .intro-play {
+        background: #fff;
+        color: #0f172a;
       }
       #contact-card-language {
         position: absolute;
@@ -1998,8 +2013,12 @@ function buildShareCardHtml(input: {
       introVideoUrl
         ? `<div class="intro-overlay" data-intro-overlay data-no-translate="1">
       <div class="intro-card">
-        <video class="intro-video" src="${introVideoUrl}" autoplay muted playsinline controls preload="auto"></video>
-        <div class="intro-actions"><button class="intro-skip" type="button" data-intro-skip>跳过</button></div>
+        <video class="intro-video" src="${introVideoUrl}" ${introVideoMuted ? "autoplay muted" : ""} playsinline controls preload="auto"></video>
+        <div class="intro-status" data-intro-status>视频加载中...</div>
+        <div class="intro-actions">
+          <button class="intro-play" type="button" data-intro-play hidden>播放开场视频</button>
+          <button class="intro-skip" type="button" data-intro-skip>跳过</button>
+        </div>
       </div>
     </div>
     <noscript><style>.intro-overlay{display:none}</style></noscript>`
@@ -2038,23 +2057,55 @@ function buildShareCardHtml(input: {
       const overlay = document.querySelector("[data-intro-overlay]");
       if (!overlay) return;
       const video = overlay.querySelector("video");
+      const status = overlay.querySelector("[data-intro-status]");
+      const playButton = overlay.querySelector("[data-intro-play]");
+      const shouldMute = ${introVideoMuted ? "true" : "false"};
       const closeIntro = () => {
         overlay.classList.add("is-hidden");
         try { video && video.pause(); } catch {}
+      };
+      const showManualPlay = () => {
+        if (status) status.textContent = "点击播放开场视频，或跳过进入联系卡";
+        if (playButton) playButton.hidden = false;
+      };
+      const hideManualPlay = () => {
+        if (status) status.textContent = "";
+        if (playButton) playButton.hidden = true;
+      };
+      const playIntro = () => {
+        if (!video) return;
+        if (shouldMute) {
+          video.muted = true;
+          video.defaultMuted = true;
+        }
+        const playResult = video.play?.();
+        if (playResult && typeof playResult.catch === "function") {
+          playResult.catch(showManualPlay);
+        }
       };
       overlay.querySelector("[data-intro-skip]")?.addEventListener("click", closeIntro);
       if (!video) {
         closeIntro();
         return;
       }
+      if (shouldMute) {
+        video.muted = true;
+        video.defaultMuted = true;
+      }
+      playButton?.addEventListener("click", () => {
+        hideManualPlay();
+        playIntro();
+      });
+      video.addEventListener("playing", hideManualPlay);
       video.addEventListener("ended", closeIntro, { once: true });
       video.addEventListener("error", closeIntro, { once: true });
       window.setTimeout(() => {
-        if (!video || video.readyState < 2) closeIntro();
-      }, 5000);
-      const playResult = video.play?.();
-      if (playResult && typeof playResult.catch === "function") {
-        playResult.catch(closeIntro);
+        if (video && video.readyState < 2 && status) status.textContent = "视频加载中，可点击跳过";
+      }, 6000);
+      if (shouldMute) {
+        playIntro();
+      } else {
+        showManualPlay();
       }
     })();</script>`
         : ""
@@ -2324,6 +2375,7 @@ export async function GET(
       contentImageUrl: detailImageUrl || undefined,
       contentImageHeight: payload.detailImageHeight,
       introVideoUrl: payload.introVideoUrl,
+      introVideoMuted: payload.introVideoMuted,
       summaryHtml: buildContactSummaryHtml({
         name: payload.name,
         contact: payload.contact,

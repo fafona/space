@@ -101,6 +101,21 @@ test("buildMerchantBusinessCardShareUrl falls back to legacy encoded params when
   );
 });
 
+test("share helpers preserve non-muted intro video setting", () => {
+  const shareUrl = buildMerchantBusinessCardShareUrl({
+    origin: "https://faolla.com",
+    name: "fafona",
+    imageUrl: "https://faolla.com/storage/v1/object/public/page-assets/card.png",
+    introVideoUrl: "https://faolla.com/storage/v1/object/public/page-assets/intro.mp4",
+    introVideoMuted: false,
+    targetUrl: "https://fafona.faolla.com",
+  });
+
+  assert.match(shareUrl, /introMuted=0/);
+  const parsed = parseMerchantBusinessCardShareParams(new URL(shareUrl).searchParams, "https://faolla.com");
+  assert.equal(parsed?.introVideoMuted, false);
+});
+
 test("resolveMerchantBusinessCardShareOrigin prefers target root domain over localhost", () => {
   assert.equal(
     resolveMerchantBusinessCardShareOrigin("http://localhost:3000", "https://fafona.faolla.com"),

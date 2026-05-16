@@ -30,6 +30,7 @@ export type MerchantBusinessCardSharePayload = {
   detailImageUrl?: string;
   detailImageHeight?: number;
   introVideoUrl?: string;
+  introVideoMuted?: boolean;
   updatedAt?: string;
   targetUrl: string;
   ownerMerchantId?: string;
@@ -69,6 +70,16 @@ export type MerchantBusinessCardShareContact = {
 
 function normalizeText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeOptionalBoolean(value: unknown, fallback: boolean) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["0", "false", "no", "off"].includes(normalized)) return false;
+    if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  }
+  return fallback;
 }
 
 function normalizeMerchantBusinessCardShareKeySlug(value: unknown) {
@@ -329,6 +340,7 @@ function normalizeSharePayload(
     detailImageUrl?: string | null;
     detailImageHeight?: number | null;
     introVideoUrl?: string | null;
+    introVideoMuted?: boolean | string | null;
     updatedAt?: string | null;
     targetUrl?: string | null;
     ownerMerchantId?: string | null;
@@ -342,6 +354,7 @@ function normalizeSharePayload(
   const imageUrl = normalizeMerchantBusinessCardShareImageUrl(input.imageUrl, preferredOrigin);
   const detailImageUrl = normalizeMerchantBusinessCardShareImageUrl(input.detailImageUrl, preferredOrigin);
   const introVideoUrl = normalizeMerchantBusinessCardShareVideoUrl(input.introVideoUrl, preferredOrigin);
+  const introVideoMuted = introVideoUrl ? normalizeOptionalBoolean(input.introVideoMuted, true) : undefined;
   const detailImageHeight = clampImageDimension(input.detailImageHeight);
   if (!targetUrl) return null;
   const updatedAt = normalizeUpdatedAt(input.updatedAt);
@@ -352,7 +365,7 @@ function normalizeSharePayload(
     ...(imageUrl ? { imageUrl } : {}),
     ...(detailImageUrl ? { detailImageUrl } : {}),
     ...(detailImageUrl && detailImageHeight ? { detailImageHeight } : {}),
-    ...(introVideoUrl ? { introVideoUrl } : {}),
+    ...(introVideoUrl ? { introVideoUrl, introVideoMuted } : {}),
     ...(updatedAt ? { updatedAt } : {}),
     targetUrl,
     ...(normalizeOwnerMerchantId(input.ownerMerchantId) ? { ownerMerchantId: normalizeOwnerMerchantId(input.ownerMerchantId) } : {}),
@@ -371,6 +384,7 @@ export function normalizeMerchantBusinessCardSharePayload(
     detailImageUrl?: string | null;
     detailImageHeight?: number | null;
     introVideoUrl?: string | null;
+    introVideoMuted?: boolean | string | null;
     targetUrl?: string | null;
     ownerMerchantId?: string | null;
     imageWidth?: number | null;
@@ -532,6 +546,7 @@ export function buildMerchantBusinessCardShareLegacyFingerprint(
         detailImageUrl?: string | null;
         detailImageHeight?: number | null;
         introVideoUrl?: string | null;
+        introVideoMuted?: boolean | string | null;
         targetUrl?: string | null;
         imageWidth?: number | null;
         imageHeight?: number | null;
@@ -585,6 +600,7 @@ export function buildMerchantBusinessCardShareLegacyFingerprint(
     contact.websiteUrl ?? "",
     contact.note ?? "",
     ...(payload.introVideoUrl ? [`introVideo:${payload.introVideoUrl}`] : []),
+    ...(payload.introVideoUrl && payload.introVideoMuted === false ? ["introMuted:false"] : []),
   ].join("\u001f");
   return `legacy-${buildStableHexHash(fingerprintSource)}`;
 }
@@ -603,6 +619,7 @@ export function buildMerchantBusinessCardShareRevocationByLegacyPayloadObjectPat
         detailImageUrl?: string | null;
         detailImageHeight?: number | null;
         introVideoUrl?: string | null;
+        introVideoMuted?: boolean | string | null;
         targetUrl?: string | null;
         imageWidth?: number | null;
         imageHeight?: number | null;
@@ -654,6 +671,7 @@ export function buildMerchantBusinessCardShareUrl(input: {
   detailImageUrl?: string | null;
   detailImageHeight?: number | null;
   introVideoUrl?: string | null;
+  introVideoMuted?: boolean | string | null;
   targetUrl: string;
   contact?: MerchantBusinessCardShareContact | null;
 }) {
@@ -675,6 +693,7 @@ export function buildMerchantBusinessCardShareUrl(input: {
       detailImageUrl: input.detailImageUrl,
       detailImageHeight: input.detailImageHeight,
       introVideoUrl: input.introVideoUrl,
+      introVideoMuted: input.introVideoMuted,
       targetUrl: input.targetUrl,
       contact: input.contact,
     },
@@ -693,6 +712,9 @@ export function buildMerchantBusinessCardShareUrl(input: {
   }
   if (payload.introVideoUrl) {
     shareUrl.searchParams.set("introVideo", payload.introVideoUrl);
+    if (payload.introVideoMuted === false) {
+      shareUrl.searchParams.set("introMuted", "0");
+    }
   }
   shareUrl.searchParams.set("target", payload.targetUrl);
   if (payload.name) {
@@ -793,6 +815,7 @@ export function parseMerchantBusinessCardShareParams(
       detailImageUrl: readSearchParam(searchParams, "detailImage"),
       detailImageHeight: Number(readSearchParam(searchParams, "detailImageHeight")),
       introVideoUrl: readSearchParam(searchParams, "introVideo"),
+      introVideoMuted: readSearchParam(searchParams, "introMuted"),
       updatedAt: readSearchParam(searchParams, "updatedAt"),
       targetUrl: readSearchParam(searchParams, "target"),
       imageWidth: Number(readSearchParam(searchParams, "imageWidth")),

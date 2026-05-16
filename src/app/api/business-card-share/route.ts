@@ -66,6 +66,7 @@ type BusinessCardShareRequestBody = {
   detailImageUrl?: unknown;
   detailImageHeight?: unknown;
   introVideoUrl?: unknown;
+  introVideoMuted?: unknown;
   targetUrl?: unknown;
   imageWidth?: unknown;
   imageHeight?: unknown;
@@ -122,6 +123,16 @@ type ShareActorContext =
 
 function normalizeText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeOptionalBoolean(value: unknown, fallback: boolean) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["0", "false", "no", "off"].includes(normalized)) return false;
+    if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  }
+  return fallback;
 }
 
 function normalizeMerchantId(value: unknown) {
@@ -344,6 +355,7 @@ function buildSnapshotCardSharePayload(card: MerchantBusinessCardAsset, preferre
       detailImageHeight:
         typeof card.contactPageImageHeight === "number" ? Math.round(card.contactPageImageHeight) : undefined,
       introVideoUrl: normalizeText(card.contactIntroVideoUrl),
+      introVideoMuted: card.contactIntroVideoMuted,
       targetUrl: normalizeText(card.targetUrl),
       imageWidth: typeof card.width === "number" ? Math.round(card.width) : undefined,
       imageHeight: typeof card.height === "number" ? Math.round(card.height) : undefined,
@@ -538,6 +550,7 @@ export async function POST(request: Request) {
     normalizeText(body?.introVideoUrl),
     shareOrigin || request.url,
   );
+  const introVideoMuted = introVideoUrl ? normalizeOptionalBoolean(body?.introVideoMuted, true) : undefined;
   const detailImageHeight = normalizeImageDimension(body?.detailImageHeight);
   const imageWidth = normalizeImageDimension(body?.imageWidth);
   const imageHeight = normalizeImageDimension(body?.imageHeight);
@@ -581,7 +594,7 @@ export async function POST(request: Request) {
     imageUrl,
     ...(detailImageUrl ? { detailImageUrl } : {}),
     ...(detailImageUrl && detailImageHeight ? { detailImageHeight } : {}),
-    ...(introVideoUrl ? { introVideoUrl } : {}),
+    ...(introVideoUrl ? { introVideoUrl, introVideoMuted } : {}),
     updatedAt: new Date().toISOString(),
     targetUrl,
     ...(imageWidth ? { imageWidth } : {}),
