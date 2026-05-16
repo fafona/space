@@ -1709,55 +1709,45 @@ function buildShareCardHtml(input: {
         position: fixed;
         inset: 0;
         z-index: 180;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 20px;
-        background: rgba(2,6,23,.96);
+        display: block;
+        padding: 0;
+        background: #000;
       }
       .intro-overlay.is-hidden {
         display: none;
       }
       .intro-card {
-        width: min(100%, 760px);
-        display: grid;
-        gap: 12px;
+        position: relative;
+        width: 100vw;
+        height: 100vh;
+        height: 100dvh;
+        overflow: hidden;
+        background: #000;
       }
       .intro-video {
         display: block;
-        width: 100%;
-        max-height: min(72vh, 620px);
-        border-radius: 22px;
+        width: 100vw;
+        height: 100vh;
+        height: 100dvh;
+        border: 0;
+        border-radius: 0;
         background: #000;
-        object-fit: contain;
-        box-shadow: 0 28px 90px rgba(0,0,0,.38);
+        object-fit: cover;
       }
-      .intro-status {
-        min-height: 20px;
-        color: rgba(255,255,255,.78);
-        font-size: 14px;
-        text-align: center;
-      }
-      .intro-actions {
-        display: flex;
-        justify-content: flex-end;
-        gap: 10px;
-        flex-wrap: wrap;
-      }
-      .intro-play,
       .intro-skip {
+        position: absolute;
+        top: max(14px, calc(env(safe-area-inset-top) + 14px));
+        right: max(14px, calc(env(safe-area-inset-right) + 14px));
+        z-index: 2;
         border: 1px solid rgba(255,255,255,.32);
         border-radius: 999px;
-        background: rgba(15,23,42,.72);
+        background: rgba(15,23,42,.62);
         color: #fff;
-        padding: 9px 15px;
+        padding: 9px 14px;
+        backdrop-filter: blur(12px);
         font: inherit;
         font-size: 14px;
         cursor: pointer;
-      }
-      .intro-play {
-        background: #fff;
-        color: #0f172a;
       }
       #contact-card-language {
         position: absolute;
@@ -2013,12 +2003,8 @@ function buildShareCardHtml(input: {
       introVideoUrl
         ? `<div class="intro-overlay" data-intro-overlay data-no-translate="1">
       <div class="intro-card">
-        <video class="intro-video" src="${introVideoUrl}" ${introVideoMuted ? "autoplay muted" : ""} playsinline controls preload="auto"></video>
-        <div class="intro-status" data-intro-status>视频加载中...</div>
-        <div class="intro-actions">
-          <button class="intro-play" type="button" data-intro-play hidden>播放开场视频</button>
-          <button class="intro-skip" type="button" data-intro-skip>跳过</button>
-        </div>
+        <video class="intro-video" src="${introVideoUrl}" autoplay muted playsinline webkit-playsinline preload="auto"></video>
+        <button class="intro-skip" type="button" data-intro-skip>跳过</button>
       </div>
     </div>
     <noscript><style>.intro-overlay{display:none}</style></noscript>`
@@ -2057,56 +2043,57 @@ function buildShareCardHtml(input: {
       const overlay = document.querySelector("[data-intro-overlay]");
       if (!overlay) return;
       const video = overlay.querySelector("video");
-      const status = overlay.querySelector("[data-intro-status]");
-      const playButton = overlay.querySelector("[data-intro-play]");
-      const shouldMute = ${introVideoMuted ? "true" : "false"};
+      const preferMuted = ${introVideoMuted ? "true" : "false"};
       const closeIntro = () => {
         overlay.classList.add("is-hidden");
         try { video && video.pause(); } catch {}
       };
-      const showManualPlay = () => {
-        if (status) status.textContent = "点击播放开场视频，或跳过进入联系卡";
-        if (playButton) playButton.hidden = false;
-      };
-      const hideManualPlay = () => {
-        if (status) status.textContent = "";
-        if (playButton) playButton.hidden = true;
-      };
-      const playIntro = () => {
-        if (!video) return;
-        if (shouldMute) {
-          video.muted = true;
-          video.defaultMuted = true;
-        }
-        const playResult = video.play?.();
-        if (playResult && typeof playResult.catch === "function") {
-          playResult.catch(showManualPlay);
-        }
-      };
-      overlay.querySelector("[data-intro-skip]")?.addEventListener("click", closeIntro);
       if (!video) {
         closeIntro();
         return;
       }
-      if (shouldMute) {
+      const forceMutedAutoplay = () => {
+        video.autoplay = true;
         video.muted = true;
         video.defaultMuted = true;
+        video.setAttribute("muted", "");
+        video.setAttribute("playsinline", "");
+        video.setAttribute("webkit-playsinline", "");
+      };
+      const playIntro = () => {
+        const result = video.play?.();
+        if (result && typeof result.catch === "function") {
+          result.catch(() => {
+            forceMutedAutoplay();
+            window.setTimeout(() => {
+              try { video.play?.().catch?.(() => {}); } catch {}
+            }, 120);
+          });
+        }
+      };
+      forceMutedAutoplay();
+      try { video.load(); } catch {}
+      if (!preferMuted) {
+        video.addEventListener("playing", () => {
+          try {
+            video.muted = false;
+            video.defaultMuted = false;
+            video.removeAttribute("muted");
+          } catch {}
+        }, { once: true });
       }
-      playButton?.addEventListener("click", () => {
-        hideManualPlay();
-        playIntro();
-      });
-      video.addEventListener("playing", hideManualPlay);
+      overlay.querySelector("[data-intro-skip]")?.addEventListener("click", closeIntro);
       video.addEventListener("ended", closeIntro, { once: true });
       video.addEventListener("error", closeIntro, { once: true });
+      video.addEventListener("canplay", playIntro, { once: true });
+      window.addEventListener("pageshow", playIntro, { once: true });
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden && video.paused) playIntro();
+      });
       window.setTimeout(() => {
-        if (video && video.readyState < 2 && status) status.textContent = "视频加载中，可点击跳过";
-      }, 6000);
-      if (shouldMute) {
-        playIntro();
-      } else {
-        showManualPlay();
-      }
+        if (video.paused) playIntro();
+      }, 600);
+      playIntro();
     })();</script>`
         : ""
     }
