@@ -247,6 +247,7 @@ function compactSnapshotChatBusinessCard(
     contactPageImageUrl: "",
     contactPagePublicImageUrl: contactPagePublicImageUrl || undefined,
     backgroundImageUrl: "",
+    backgroundImageSnapshotOnly: false,
   };
 }
 

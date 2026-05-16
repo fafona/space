@@ -4554,6 +4554,7 @@ function mergeSupportBusinessCardCandidates(
     ...(backgroundSource
       ? {
           backgroundImageUrl: backgroundSource.backgroundImageUrl,
+          backgroundImageSnapshotOnly: backgroundSource.backgroundImageSnapshotOnly,
           backgroundImageX: backgroundSource.backgroundImageX,
           backgroundImageY: backgroundSource.backgroundImageY,
           backgroundImageScale: backgroundSource.backgroundImageScale,

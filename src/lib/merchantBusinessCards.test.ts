@@ -52,6 +52,7 @@ test("default business card draft prefills merchant profile fields", () => {
   assert.equal(draft.backgroundImageX, 0);
   assert.equal(draft.backgroundImageY, 0);
   assert.equal(draft.backgroundImageScale, 1);
+  assert.equal(draft.backgroundImageSnapshotOnly, false);
   assert.equal(draft.cornerMode, "rounded");
   assert.equal(draft.contacts.contactName, "felix");
   assert.equal(draft.contacts.phone, "0034633130577");
@@ -246,6 +247,16 @@ test("normalizeMerchantBusinessCardDraft clamps background image transform", () 
   assert.equal(draft.backgroundImageScale, 3);
 });
 
+test("normalizeMerchantBusinessCardDraft preserves snapshot-only background flag", () => {
+  const draft = normalizeMerchantBusinessCardDraft({
+    backgroundImageUrl: "data:image/png;base64,snapshot",
+    backgroundImageSnapshotOnly: true,
+  });
+
+  assert.equal(draft.backgroundImageUrl, "data:image/png;base64,snapshot");
+  assert.equal(draft.backgroundImageSnapshotOnly, true);
+});
+
 test("normalizeMerchantBusinessCardDraft keeps gradient background colors", () => {
   const draft = normalizeMerchantBusinessCardDraft({
     backgroundColor: "linear-gradient(135deg, #082f49 0%, #0f172a 55%, #164e63 100%)",
@@ -325,6 +336,7 @@ test("normalizeMerchantBusinessCards keeps only valid generated card assets", ()
       backgroundColor: "#ffffff",
       backgroundColorOpacity: 0.72,
       backgroundImageUrl: "",
+      backgroundImageSnapshotOnly: true,
       backgroundImageOpacity: 0.45,
       title: "Manager",
       websiteLabel: "Visit site",
@@ -430,6 +442,7 @@ test("normalizeMerchantBusinessCards keeps only valid generated card assets", ()
   assert.equal(cards[0]?.id, "card-1");
   assert.equal(cards[0]?.name, "fafona card");
   assert.equal(cards[0]?.backgroundImageOpacity, 0.45);
+  assert.equal(cards[0]?.backgroundImageSnapshotOnly, true);
   assert.equal(cards[0]?.shareImageUrl, "https://faolla.com/storage/v1/object/public/page-assets/card.png");
   assert.equal(cards[0]?.shareKey, "card-share-abc123");
   assert.equal(cards[0]?.contactIntroVideoUrl, "https://faolla.com/storage/v1/object/public/page-assets/intro.mp4");

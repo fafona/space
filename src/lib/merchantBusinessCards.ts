@@ -132,6 +132,7 @@ export type MerchantBusinessCardDraft = {
   contactPageImageUrl: string;
   contactPageImageHeight: number;
   backgroundImageUrl: string;
+  backgroundImageSnapshotOnly: boolean;
   backgroundImageX: number;
   backgroundImageY: number;
   backgroundImageScale: number;
@@ -444,6 +445,7 @@ export function createDefaultMerchantBusinessCardDraft(
     contactPageImageUrl: "",
     contactPageImageHeight: 346,
     backgroundImageUrl: "",
+    backgroundImageSnapshotOnly: false,
     backgroundImageX: 0,
     backgroundImageY: 0,
     backgroundImageScale: 1,
@@ -572,6 +574,10 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
       1200,
     ),
     backgroundImageUrl: normalizeText(source.backgroundImageUrl),
+    backgroundImageSnapshotOnly: normalizeBoolean(
+      (source as { backgroundImageSnapshotOnly?: unknown }).backgroundImageSnapshotOnly,
+      fallback.backgroundImageSnapshotOnly,
+    ),
     backgroundImageX: clampInt(source.backgroundImageX, fallback.backgroundImageX, -5000, 5000),
     backgroundImageY: clampInt(source.backgroundImageY, fallback.backgroundImageY, -5000, 5000),
     backgroundImageScale: Math.max(

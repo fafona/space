@@ -798,6 +798,9 @@ function CardSurface({
     .join("\n");
   const shouldShowQr = draft.showQr && !!qrCodeUrl;
   const exportHasBackgroundImage = isExport && !!normalizeText(draft.backgroundImageUrl);
+  const isSnapshotBackgroundOnly =
+    Boolean(draft.backgroundImageSnapshotOnly) && !!normalizeText(draft.backgroundImageUrl);
+  const shouldRenderEditableLayers = !isSnapshotBackgroundOnly;
   const cardFrameBorderRadius = draft.cornerMode === "square" ? "0px" : "28px";
   return (
     <div style={{ width: `${draft.width * scale}px`, height: `${draft.height * scale}px` }}>
@@ -848,80 +851,84 @@ function CardSurface({
           />
         ) : null}
         {isExport ? null : <div className="absolute inset-0 bg-white/12" />}
-        {TEXT_LAYOUT_FIELDS.filter(
-          ({ key }) =>
-            (key === "merchantName" && !draft.contactOnlyFields.merchantName && draft.name) ||
-            (key === "title" && draft.title) ||
-            (key === "website" && websiteText),
-        ).map(({ key }) => {
-          const value =
-            key === "merchantName"
-              ? draft.name
-              : key === "title"
-                ? draft.title
-                : websiteText;
-          return (
-            <div
-              key={key}
-              style={{
-                position: "absolute",
-                left: `${draft.textLayout[key].x}px`,
-                top: `${draft.textLayout[key].y}px`,
-                maxWidth: `${Math.max(160, draft.width - draft.textLayout[key].x - 36)}px`,
-                ...typographyStyle(draft.fieldTypography[key]),
-              }}
-            >
-              {value}
-            </div>
-          );
-        })}
-        {contacts.map(({ key, label, value }) => (
-          <div
-            key={key}
-            style={{
-              position: "absolute",
-              left: `${draft.textLayout[key].x}px`,
-              top: `${draft.textLayout[key].y}px`,
-              maxWidth: `${Math.max(160, draft.width - draft.textLayout[key].x - 36)}px`,
-              ...typographyStyle(draft.fieldTypography[key]),
-            }}
-          >
-            {key === "contactName" ? value : `${label}: ${value}`}
-          </div>
-        ))}
-        {draft.customTexts
-          .filter((item) => normalizeText(item.text))
-          .map((item) => (
-            <div
-              key={item.id}
-              style={{
-                position: "absolute",
-                left: `${item.x}px`,
-                top: `${item.y}px`,
-                maxWidth: `${Math.max(160, draft.width - item.x - 36)}px`,
-                ...typographyStyle(item.typography),
-              }}
-            >
-              {item.text}
-            </div>
-          ))}
-        {shouldShowQr ? (
-          <div
-            style={{
-              position: "absolute",
-              left: `${draft.qr.x}px`,
-              top: `${draft.qr.y}px`,
-              width: `${draft.qr.size}px`,
-              height: `${draft.qr.size}px`,
-              padding: "10px",
-              borderRadius: "18px",
-              background: "#fff",
-              boxShadow: "0 16px 36px rgba(15,23,42,.18)",
-            }}
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={qrCodeUrl} alt="商户网站二维码" className="h-full w-full object-contain" />
-          </div>
+        {shouldRenderEditableLayers ? (
+          <>
+            {TEXT_LAYOUT_FIELDS.filter(
+              ({ key }) =>
+                (key === "merchantName" && !draft.contactOnlyFields.merchantName && draft.name) ||
+                (key === "title" && draft.title) ||
+                (key === "website" && websiteText),
+            ).map(({ key }) => {
+              const value =
+                key === "merchantName"
+                  ? draft.name
+                  : key === "title"
+                    ? draft.title
+                    : websiteText;
+              return (
+                <div
+                  key={key}
+                  style={{
+                    position: "absolute",
+                    left: `${draft.textLayout[key].x}px`,
+                    top: `${draft.textLayout[key].y}px`,
+                    maxWidth: `${Math.max(160, draft.width - draft.textLayout[key].x - 36)}px`,
+                    ...typographyStyle(draft.fieldTypography[key]),
+                  }}
+                >
+                  {value}
+                </div>
+              );
+            })}
+            {contacts.map(({ key, label, value }) => (
+              <div
+                key={key}
+                style={{
+                  position: "absolute",
+                  left: `${draft.textLayout[key].x}px`,
+                  top: `${draft.textLayout[key].y}px`,
+                  maxWidth: `${Math.max(160, draft.width - draft.textLayout[key].x - 36)}px`,
+                  ...typographyStyle(draft.fieldTypography[key]),
+                }}
+              >
+                {key === "contactName" ? value : `${label}: ${value}`}
+              </div>
+            ))}
+            {draft.customTexts
+              .filter((item) => normalizeText(item.text))
+              .map((item) => (
+                <div
+                  key={item.id}
+                  style={{
+                    position: "absolute",
+                    left: `${item.x}px`,
+                    top: `${item.y}px`,
+                    maxWidth: `${Math.max(160, draft.width - item.x - 36)}px`,
+                    ...typographyStyle(item.typography),
+                  }}
+                >
+                  {item.text}
+                </div>
+              ))}
+            {shouldShowQr ? (
+              <div
+                style={{
+                  position: "absolute",
+                  left: `${draft.qr.x}px`,
+                  top: `${draft.qr.y}px`,
+                  width: `${draft.qr.size}px`,
+                  height: `${draft.qr.size}px`,
+                  padding: "10px",
+                  borderRadius: "18px",
+                  background: "#fff",
+                  boxShadow: "0 16px 36px rgba(15,23,42,.18)",
+                }}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={qrCodeUrl} alt="商户网站二维码" className="h-full w-full object-contain" />
+              </div>
+            ) : null}
+          </>
         ) : null}
       </div>
     </div>
@@ -1070,20 +1077,36 @@ function resolveFilePickerStatus(selectedFileName: string, assetUrl: string, upl
   return normalizeText(assetUrl) ? uploadedLabel : "未选择任何文件";
 }
 
+function isSameAssetUrl(left: string, right: string) {
+  const normalizedLeft = normalizeText(left);
+  const normalizedRight = normalizeText(right);
+  return Boolean(normalizedLeft && normalizedRight && normalizedLeft === normalizedRight);
+}
+
 function buildEditableBusinessCardDraftFromAsset(card: MerchantBusinessCardAsset) {
   let draft = normalizeMerchantBusinessCardDraft(card);
   const publicContactImageUrl = normalizeText(card.contactPagePublicImageUrl);
-  const fallbackBackgroundImageUrl =
-    normalizeText(card.backgroundImageUrl) || normalizeText(card.imageUrl) || normalizeText(card.shareImageUrl);
+  const renderedImageUrl = normalizeText(card.imageUrl);
+  const renderedShareImageUrl = normalizeText(card.shareImageUrl);
+  const fallbackSnapshotImageUrl = renderedImageUrl || renderedShareImageUrl;
+  const backgroundIsRenderedSnapshot =
+    isSameAssetUrl(draft.backgroundImageUrl, renderedImageUrl) ||
+    isSameAssetUrl(draft.backgroundImageUrl, renderedShareImageUrl);
 
-  if (!normalizeText(draft.backgroundImageUrl) && fallbackBackgroundImageUrl) {
+  if (!normalizeText(draft.backgroundImageUrl) && fallbackSnapshotImageUrl) {
     draft = normalizeMerchantBusinessCardDraft({
       ...draft,
-      backgroundImageUrl: fallbackBackgroundImageUrl,
+      backgroundImageUrl: fallbackSnapshotImageUrl,
+      backgroundImageSnapshotOnly: true,
       backgroundImageX: 0,
       backgroundImageY: 0,
       backgroundImageScale: 1,
       backgroundImageOpacity: 1,
+    });
+  } else if (backgroundIsRenderedSnapshot && !draft.backgroundImageSnapshotOnly) {
+    draft = normalizeMerchantBusinessCardDraft({
+      ...draft,
+      backgroundImageSnapshotOnly: true,
     });
   }
 
@@ -1541,6 +1564,7 @@ export default function MerchantBusinessCardManager({
       applyDraft((current) => ({
         ...current,
         backgroundImageUrl: optimized.dataUrl,
+        backgroundImageSnapshotOnly: false,
         backgroundImageX: 0,
         backgroundImageY: 0,
         backgroundImageScale: 1,
@@ -1564,6 +1588,7 @@ export default function MerchantBusinessCardManager({
     applyDraft((current) => ({
       ...current,
       backgroundImageUrl: "",
+      backgroundImageSnapshotOnly: false,
       backgroundImageX: 0,
       backgroundImageY: 0,
       backgroundImageScale: 1,
@@ -2988,6 +3013,11 @@ export default function MerchantBusinessCardManager({
                       />
                     </div>
                   </div>
+                  {draft.backgroundImageSnapshotOnly ? (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+                      当前使用旧名片成品图作为预览底图，文字和二维码不会重复叠加。需要重新排版时，请清除或重新上传背景图。
+                    </div>
+                  ) : null}
                   {draft.mode === "link" ? (
                     <div className="overflow-hidden rounded-2xl border bg-white p-3">
                       <div className="mb-2 text-xs font-semibold text-slate-700">联系卡预览</div>
