@@ -1762,6 +1762,30 @@ function buildShareCardHtml(input: {
       .intro-overlay.is-playing .intro-poster {
         opacity: 0;
       }
+      .intro-retry {
+        position: absolute;
+        left: 50%;
+        bottom: max(42px, calc(env(safe-area-inset-bottom) + 42px));
+        z-index: 4;
+        display: none;
+        transform: translateX(-50%);
+        border: 1px solid rgba(255,255,255,.4);
+        border-radius: 999px;
+        background: rgba(255,255,255,.94);
+        color: #0f172a;
+        padding: 12px 18px;
+        box-shadow: 0 14px 36px rgba(0,0,0,.24);
+        font: inherit;
+        font-size: 15px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .intro-overlay.is-blocked .intro-retry {
+        display: inline-flex;
+      }
+      .intro-overlay.is-playing .intro-retry {
+        display: none;
+      }
       .intro-skip {
         position: absolute;
         top: max(14px, calc(env(safe-area-inset-top) + 14px));
@@ -2033,6 +2057,7 @@ function buildShareCardHtml(input: {
       <div class="intro-card${introPosterUrl ? " has-intro-poster" : ""}">
         ${introPosterUrl ? `<img class="intro-poster" src="${introPosterUrl}" alt="" aria-hidden="true" />` : ""}
         <video class="intro-video" src="${introVideoUrl}"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay${introVideoMuted ? " muted" : ""} playsinline webkit-playsinline x5-playsinline x5-video-player-type="h5-page" x5-video-player-fullscreen="true" x5-video-orientation="portrait" preload="auto"></video>
+        <button class="intro-retry" type="button" data-intro-play>播放开场视频</button>
         <button class="intro-skip" type="button" data-intro-skip>跳过</button>
       </div>
     </div>
@@ -2072,6 +2097,7 @@ function buildShareCardHtml(input: {
       const overlay = document.querySelector("[data-intro-overlay]");
       if (!overlay) return;
       const video = overlay.querySelector("video");
+      const playButton = overlay.querySelector("[data-intro-play]");
       let closed = false;
       let started = false;
       const closeIntro = () => {
@@ -2104,8 +2130,12 @@ function buildShareCardHtml(input: {
           video.removeAttribute("muted");
         }
       };
+      const showRetry = () => {
+        if (!closed && !started) overlay.classList.add("is-blocked");
+      };
       const markPlaying = () => {
         started = true;
+        overlay.classList.remove("is-blocked");
         overlay.classList.add("is-playing");
       };
       const playIntro = () => {
@@ -2119,6 +2149,7 @@ function buildShareCardHtml(input: {
               return true;
             })
             .catch(() => {
+              showRetry();
               return false;
             });
         }
@@ -2137,6 +2168,14 @@ function buildShareCardHtml(input: {
         event.preventDefault();
         event.stopPropagation();
         closeIntro();
+      });
+      playButton?.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        overlay.classList.remove("is-blocked");
+        void playIntro().then((ok) => {
+          if (!ok) showRetry();
+        });
       });
       video.addEventListener("ended", closeIntro, { once: true });
       video.addEventListener("error", closeIntro, { once: true });
@@ -2161,6 +2200,8 @@ function buildShareCardHtml(input: {
         if (closed || started) return;
         if (!video.paused || video.currentTime > 0.05) {
           markPlaying();
+        } else {
+          showRetry();
         }
       }, 1400);
     })();</script>`
