@@ -2084,7 +2084,7 @@ function buildShareCardHtml(input: {
         return;
       }
       const introMuted = ${introVideoMuted ? "true" : "false"};
-      const prepareAutoplay = () => {
+      const prepareAutoplay = (forceMuted = false) => {
         video.autoplay = true;
         video.setAttribute("autoplay", "");
         video.setAttribute("preload", "auto");
@@ -2094,7 +2094,7 @@ function buildShareCardHtml(input: {
         video.setAttribute("x5-video-player-type", "h5-page");
         video.setAttribute("x5-video-player-fullscreen", "true");
         video.setAttribute("x5-video-orientation", "portrait");
-        if (introMuted) {
+        if (introMuted || forceMuted) {
           video.muted = true;
           video.defaultMuted = true;
           video.setAttribute("muted", "");
@@ -2108,9 +2108,10 @@ function buildShareCardHtml(input: {
         started = true;
         overlay.classList.add("is-playing");
       };
-      const playIntro = () => {
+      const playIntro = (options = {}) => {
         if (closed) return Promise.resolve(false);
-        prepareAutoplay();
+        const forceMuted = Boolean(options.forceMuted);
+        prepareAutoplay(forceMuted);
         const result = video.play?.();
         if (result && typeof result.then === "function") {
           return result
@@ -2119,6 +2120,9 @@ function buildShareCardHtml(input: {
               return true;
             })
             .catch(() => {
+              if (!introMuted && !forceMuted) {
+                return playIntro({ forceMuted: true });
+              }
               return false;
             });
         }
