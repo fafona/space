@@ -1763,11 +1763,38 @@ function buildShareCardHtml(input: {
       .intro-overlay.is-playing .intro-poster {
         opacity: 0;
       }
+      .intro-play {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        z-index: 3;
+        display: none;
+        width: 72px;
+        height: 72px;
+        transform: translate(-50%, -50%);
+        align-items: center;
+        justify-content: center;
+        border: 1px solid rgba(255,255,255,.32);
+        border-radius: 999px;
+        background: rgba(15,23,42,.62);
+        color: #fff;
+        font: inherit;
+        font-size: 28px;
+        line-height: 1;
+        cursor: pointer;
+        backdrop-filter: blur(12px);
+      }
+      .intro-overlay.needs-gesture .intro-play {
+        display: inline-flex;
+      }
+      .intro-overlay.is-playing .intro-play {
+        display: none;
+      }
       .intro-skip {
         position: absolute;
         top: max(14px, calc(env(safe-area-inset-top) + 14px));
         right: max(14px, calc(env(safe-area-inset-right) + 14px));
-        z-index: 2;
+        z-index: 4;
         border: 1px solid rgba(255,255,255,.32);
         border-radius: 999px;
         background: rgba(15,23,42,.62);
@@ -2034,6 +2061,7 @@ function buildShareCardHtml(input: {
       <div class="intro-card${introPosterUrl ? " has-intro-poster" : ""}">
         ${introPosterUrl ? `<img class="intro-poster" src="${introPosterUrl}" alt="" aria-hidden="true" />` : ""}
         <video class="intro-video" src="${introVideoUrl}"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay muted playsinline webkit-playsinline x5-playsinline x5-video-player-type="h5-page" x5-video-player-fullscreen="true" x5-video-orientation="portrait" preload="auto"></video>
+        <button class="intro-play" type="button" data-intro-play aria-label="播放开场视频"><span aria-hidden="true">&#9658;</span></button>
         <button class="intro-skip" type="button" data-intro-skip>跳过</button>
       </div>
     </div>
@@ -2073,8 +2101,13 @@ function buildShareCardHtml(input: {
       const overlay = document.querySelector("[data-intro-overlay]");
       if (!overlay) return;
       const video = overlay.querySelector("video");
+      const playButton = overlay.querySelector("[data-intro-play]");
       const preferMuted = ${introVideoMuted ? "true" : "false"};
+      let closed = false;
+      let started = false;
+      let hasGesture = false;
       const closeIntro = () => {
+        closed = true;
         overlay.classList.add("is-hidden");
         try { video && video.pause(); } catch {}
       };
@@ -2087,6 +2120,8 @@ function buildShareCardHtml(input: {
         video.muted = true;
         video.defaultMuted = true;
         video.setAttribute("muted", "");
+        video.setAttribute("autoplay", "");
+        video.setAttribute("preload", "auto");
         video.setAttribute("playsinline", "");
         video.setAttribute("webkit-playsinline", "");
         video.setAttribute("x5-playsinline", "");
@@ -2094,47 +2129,96 @@ function buildShareCardHtml(input: {
         video.setAttribute("x5-video-player-fullscreen", "true");
         video.setAttribute("x5-video-orientation", "portrait");
       };
+      const applySoundPreference = () => {
+        if (preferMuted || !hasGesture) return;
+        try {
+          video.muted = false;
+          video.defaultMuted = false;
+          video.removeAttribute("muted");
+        } catch {}
+      };
       const markPlaying = () => {
+        started = true;
         overlay.classList.add("is-playing");
+        overlay.classList.remove("needs-gesture");
+        applySoundPreference();
+      };
+      const showGestureFallback = () => {
+        if (closed || started) return;
+        overlay.classList.add("needs-gesture");
       };
       const playIntro = () => {
+        if (closed) return Promise.resolve(false);
+        forceMutedAutoplay();
         const result = video.play?.();
-        if (result && typeof result.catch === "function") {
-          result.catch(() => {
-            forceMutedAutoplay();
-            window.setTimeout(() => {
-              try { video.play?.().catch?.(() => {}); } catch {}
-            }, 120);
-          });
+        if (result && typeof result.then === "function") {
+          return result
+            .then(() => {
+              markPlaying();
+              return true;
+            })
+            .catch(() => {
+              showGestureFallback();
+              return false;
+            });
         }
+        if (!video.paused || video.currentTime > 0.05) {
+          markPlaying();
+          return Promise.resolve(true);
+        }
+        showGestureFallback();
+        return Promise.resolve(false);
+      };
+      const handleGesturePlay = () => {
+        hasGesture = true;
+        void playIntro();
       };
       forceMutedAutoplay();
-      try { video.load(); } catch {}
-      if (!preferMuted) {
-        video.addEventListener("playing", () => {
-          try {
-            video.muted = false;
-            video.defaultMuted = false;
-            video.removeAttribute("muted");
-          } catch {}
-        }, { once: true });
-      }
       video.addEventListener("playing", markPlaying);
       video.addEventListener("timeupdate", () => {
         if (video.currentTime > 0.05) markPlaying();
       });
-      overlay.querySelector("[data-intro-skip]")?.addEventListener("click", closeIntro);
+      overlay.addEventListener("pointerdown", handleGesturePlay, { passive: true });
+      overlay.addEventListener("touchstart", handleGesturePlay, { passive: true });
+      overlay.addEventListener("click", handleGesturePlay);
+      playButton?.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        hasGesture = true;
+        void playIntro();
+      });
+      overlay.querySelector("[data-intro-skip]")?.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        closeIntro();
+      });
       video.addEventListener("ended", closeIntro, { once: true });
       video.addEventListener("error", closeIntro, { once: true });
-      video.addEventListener("canplay", playIntro, { once: true });
-      window.addEventListener("pageshow", playIntro, { once: true });
+      video.addEventListener("loadeddata", () => {
+        if (!video.paused || video.currentTime > 0.05) {
+          markPlaying();
+        } else {
+          void playIntro();
+        }
+      }, { once: true });
+      video.addEventListener("canplay", () => void playIntro(), { once: true });
+      window.addEventListener("pageshow", () => void playIntro(), { once: true });
       document.addEventListener("visibilitychange", () => {
-        if (!document.hidden && video.paused) playIntro();
+        if (!document.hidden && video.paused) void playIntro();
+      });
+      [0, 120, 600, 1200, 2200].forEach((delay) => {
+        window.setTimeout(() => {
+          if (!closed && !started) void playIntro();
+        }, delay);
       });
       window.setTimeout(() => {
-        if (video.paused) playIntro();
-      }, 600);
-      playIntro();
+        if (closed || started) return;
+        if (!video.paused || video.currentTime > 0.05) {
+          markPlaying();
+        } else {
+          showGestureFallback();
+        }
+      }, 1400);
     })();</script>`
         : ""
     }

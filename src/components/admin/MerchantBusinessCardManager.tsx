@@ -972,6 +972,56 @@ function buildInvoicePreviewRows(invoice: MerchantBusinessCardDraft["invoice"]) 
   return rows;
 }
 
+function AutoPlayingVideoPreview({
+  src,
+  poster,
+  className,
+  controls = true,
+  loop = true,
+}: {
+  src: string;
+  poster?: string;
+  className: string;
+  controls?: boolean;
+  loop?: boolean;
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !normalizeText(src)) return;
+    video.muted = true;
+    video.defaultMuted = true;
+    video.setAttribute("muted", "");
+    video.setAttribute("playsinline", "");
+    video.setAttribute("webkit-playsinline", "");
+    try {
+      video.load();
+    } catch {}
+    const timer = window.setTimeout(() => {
+      try {
+        void video.play?.().catch(() => undefined);
+      } catch {}
+    }, 60);
+    return () => window.clearTimeout(timer);
+  }, [src]);
+
+  return (
+    <video
+      ref={videoRef}
+      className={className}
+      src={src}
+      controls={controls}
+      autoPlay
+      loop={loop}
+      muted
+      poster={normalizeText(poster) || undefined}
+      preload="auto"
+      playsInline
+    />
+  );
+}
+
 function ContactCardSurface({
   name,
   targetUrl,
@@ -995,7 +1045,8 @@ function ContactCardSurface({
   const invoiceRows = buildInvoicePreviewRows(invoice);
   const displayName = normalizeText(name);
   const hasImage = Boolean(normalizeText(imageUrl));
-  const hasIntroVideo = Boolean(normalizeText(introVideoUrl));
+  const normalizedIntroVideoUrl = normalizeText(introVideoUrl);
+  const hasIntroVideo = Boolean(normalizedIntroVideoUrl);
   const domainLabel = normalizeText(targetUrl).replace(/^https?:\/\//i, "");
 
   return (
@@ -1009,15 +1060,9 @@ function ContactCardSurface({
 
       {hasIntroVideo ? (
         <div className="mb-5 overflow-hidden rounded-[28px] border border-slate-200 bg-black shadow-[0_16px_42px_rgba(15,23,42,.08)]">
-          <video
-            src={introVideoUrl}
-            controls
-            autoPlay
-            loop
-            muted
+          <AutoPlayingVideoPreview
+            src={normalizedIntroVideoUrl}
             poster={hasImage ? imageUrl : undefined}
-            preload="auto"
-            playsInline
             className="block aspect-video w-full bg-black object-contain"
           />
         </div>
@@ -2510,15 +2555,9 @@ export default function MerchantBusinessCardManager({
                         </label>
                         <div className="mt-1 text-[11px] text-slate-400">默认上限 10 MB，建议 3-8 秒，竖屏或横屏视频都可使用。</div>
                         {normalizeText(draft.contactIntroVideoUrl) ? (
-                          <video
+                          <AutoPlayingVideoPreview
                             className="mt-3 block aspect-video w-full rounded-xl border bg-black object-contain"
                             src={draft.contactIntroVideoUrl}
-                            controls
-                            autoPlay
-                            loop
-                            muted
-                            preload="auto"
-                            playsInline
                           />
                         ) : null}
                       </div>
