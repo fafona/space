@@ -131,6 +131,62 @@ async function uploadDataUrlViaServerApi(
   return null;
 }
 
+async function uploadFileViaServerApi(
+  file: File,
+  merchantHint: string,
+  folder: string,
+  usage: PublicAssetUploadUsage,
+): Promise<string | null> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const timeoutMs =
+        usage === "business-card-intro-video" ? (attempt === 0 ? 180_000 : 240_000) : attempt === 0 ? 15_000 : 20_000;
+      const formData = new FormData();
+      formData.set("file", file, file.name || "upload");
+      formData.set("merchantHint", merchantHint);
+      formData.set("folder", folder);
+      formData.set("usage", usage);
+      const response = await fetchWithTimeout(
+        "/api/assets/upload",
+        {
+          method: "POST",
+          credentials: "same-origin",
+          body: formData,
+        },
+        timeoutMs,
+      );
+      if (response.ok) {
+        const payload = (await response.json().catch(() => null)) as { url?: unknown } | null;
+        return typeof payload?.url === "string" && payload.url.trim() ? payload.url.trim() : null;
+      }
+      if (attempt === 0 && (response.status === 401 || response.status === 503)) {
+        await delay(500);
+        continue;
+      }
+      if (usage === "business-card-intro-video") {
+        const detail = await readUploadErrorMessage(response);
+        throw new PublicAssetUploadError(detail.message, {
+          status: response.status,
+          code: detail.code,
+        });
+      }
+    } catch (error) {
+      if (error instanceof PublicAssetUploadError) {
+        throw error;
+      }
+      if (attempt === 0) {
+        await delay(500);
+        continue;
+      }
+      if (usage === "business-card-intro-video") {
+        throw new PublicAssetUploadError("开场视频上传或转码超时，请换用更短的视频后再上传。");
+      }
+      return null;
+    }
+  }
+  return null;
+}
+
 export async function uploadDataUrlToPublicStorage(
   dataUrl: string,
   options?: {
@@ -148,6 +204,26 @@ export async function uploadDataUrlToPublicStorage(
     options?.usage ??
     (folder === "merchant-audio" || meta.mime.startsWith("audio/") ? "audio" : "generic-image");
   return uploadDataUrlViaServerApi(dataUrl, merchantHint, folder, usage);
+}
+
+export async function uploadFileToPublicStorage(
+  file: File,
+  options?: {
+    merchantHint?: string;
+    folder?: "merchant-assets" | "merchant-audio";
+    usage?: PublicAssetUploadUsage;
+  },
+): Promise<string | null> {
+  const folder = String(options?.folder ?? "merchant-assets").trim();
+  if (!file || file.size <= 0 || !FOLDER_CANDIDATES.has(folder)) return null;
+
+  const merchantHint = sanitizeMerchantHint(options?.merchantHint ?? "public");
+  const usage =
+    options?.usage ??
+    (folder === "merchant-audio" || String(file.type ?? "").toLowerCase().startsWith("audio/")
+      ? "audio"
+      : "generic-image");
+  return uploadFileViaServerApi(file, merchantHint, folder, usage);
 }
 
 export async function uploadImageDataUrlToPublicStorage(

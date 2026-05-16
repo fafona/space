@@ -26,6 +26,8 @@ export const runtime = "nodejs";
 
 const BUCKET_CANDIDATES = ["page-assets", "assets", "uploads", "public"] as const;
 const FOLDER_CANDIDATES = new Set(["merchant-assets", "merchant-audio", "merchant-files"]);
+const BUSINESS_CARD_INTRO_VIDEO_OUTPUT_LIMIT_BYTES = 10 * 1024 * 1024;
+const BUSINESS_CARD_INTRO_VIDEO_SOURCE_LIMIT_BYTES = 80 * 1024 * 1024;
 
 type AssetUploadRequestBody = {
   dataUrl?: string;
@@ -101,6 +103,31 @@ function parseDataUrlMeta(dataUrl: string) {
   return { mime, extension };
 }
 
+function inferVideoMimeFromFileName(fileName: string) {
+  if (/\.mp4$/i.test(fileName)) return "video/mp4";
+  if (/\.m4v$/i.test(fileName)) return "video/x-m4v";
+  if (/\.webm$/i.test(fileName)) return "video/webm";
+  if (/\.(ogv|ogg)$/i.test(fileName)) return "video/ogg";
+  if (/\.mov$/i.test(fileName)) return "video/quicktime";
+  if (/\.mkv$/i.test(fileName)) return "video/x-matroska";
+  if (/\.avi$/i.test(fileName)) return "video/x-msvideo";
+  if (/\.3gp$/i.test(fileName)) return "video/3gpp";
+  if (/\.3g2$/i.test(fileName)) return "video/3gpp2";
+  if (/\.(mpg|mpeg)$/i.test(fileName)) return "video/mpeg";
+  return "";
+}
+
+function parseBlobUploadMeta(blob: Blob, fileName: string) {
+  const rawMime = String(blob.type || "").toLowerCase();
+  const inferredVideoMime = inferVideoMimeFromFileName(fileName);
+  const mime =
+    inferredVideoMime && (!rawMime || rawMime === "application/octet-stream")
+      ? inferredVideoMime
+      : rawMime || inferredVideoMime || "application/octet-stream";
+  const extension = parseDataUrlMeta(`data:${mime};base64,`)?.extension || fileName.split(".").pop()?.replace(/[^a-z0-9]+/gi, "") || "bin";
+  return { mime, extension };
+}
+
 function dataUrlToBlob(dataUrl: string, mime: string) {
   const base64 = dataUrl.split(",")[1] ?? "";
   const bytes = Buffer.from(base64, "base64");
@@ -162,51 +189,70 @@ async function runFfmpeg(args: string[], timeoutMs = 180_000) {
 async function transcodeBusinessCardIntroVideo(input: {
   blob: Blob;
   extension: string;
+  targetBytes: number;
 }) {
   const workspace = await mkdtemp(path.join(tmpdir(), "faolla-intro-video-"));
   const extension = input.extension.replace(/[^a-z0-9]+/gi, "") || "video";
   const inputPath = path.join(workspace, `source.${extension}`);
-  const outputPath = path.join(workspace, "intro.mp4");
+  const profiles = [
+    { width: 720, crf: 26, audio: "96k" },
+    { width: 720, crf: 30, audio: "80k" },
+    { width: 540, crf: 32, audio: "64k" },
+    { width: 480, crf: 34, audio: "64k" },
+  ];
   try {
     const buffer = Buffer.from(await input.blob.arrayBuffer());
     await writeFile(inputPath, buffer);
-    await runFfmpeg([
-      "-y",
-      "-i",
-      inputPath,
-      "-map",
-      "0:v:0",
-      "-map",
-      "0:a?",
-      "-vf",
-      "scale=720:-2:force_original_aspect_ratio=decrease",
-      "-c:v",
-      "libx264",
-      "-preset",
-      "veryfast",
-      "-crf",
-      "26",
-      "-pix_fmt",
-      "yuv420p",
-      "-profile:v",
-      "main",
-      "-c:a",
-      "aac",
-      "-b:a",
-      "96k",
-      "-ac",
-      "2",
-      "-ar",
-      "44100",
-      "-movflags",
-      "+faststart",
-      outputPath,
-    ]);
-    const outputBuffer = await readFile(outputPath);
-    if (outputBuffer.byteLength <= 0) {
-      throw new Error("empty_transcoded_video");
+    let smallestOutput: Buffer | null = null;
+    for (const [index, profile] of profiles.entries()) {
+      const outputPath = path.join(workspace, `intro-${index}.mp4`);
+      await runFfmpeg([
+        "-y",
+        "-i",
+        inputPath,
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a?",
+        "-vf",
+        `scale=${profile.width}:-2:force_original_aspect_ratio=decrease`,
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        `${profile.crf}`,
+        "-pix_fmt",
+        "yuv420p",
+        "-profile:v",
+        "main",
+        "-c:a",
+        "aac",
+        "-b:a",
+        profile.audio,
+        "-ac",
+        "2",
+        "-ar",
+        "44100",
+        "-movflags",
+        "+faststart",
+        outputPath,
+      ]);
+      const outputBuffer = await readFile(outputPath);
+      if (outputBuffer.byteLength <= 0) {
+        throw new Error("empty_transcoded_video");
+      }
+      if (!smallestOutput || outputBuffer.byteLength < smallestOutput.byteLength) {
+        smallestOutput = outputBuffer;
+      }
+      if (outputBuffer.byteLength <= input.targetBytes) {
+        return new Blob([new Uint8Array(outputBuffer)], { type: "video/mp4" });
+      }
     }
-    return new Blob([new Uint8Array(outputBuffer)], { type: "video/mp4" });
+    if (smallestOutput) {
+      return new Blob([new Uint8Array(smallestOutput)], { type: "video/mp4" });
+    }
+    throw new Error("empty_transcoded_video");
   } finally {
     await rm(workspace, { recursive: true, force: true }).catch(() => undefined);
   }
@@ -269,7 +315,7 @@ function getAssetUploadLimitBytes(input: {
     case "business-card-export":
       return Math.max(50, Math.round(permissionConfig.businessCardExportImageLimitKb)) * 1024;
     case "business-card-intro-video":
-      return 10 * 1024 * 1024;
+      return BUSINESS_CARD_INTRO_VIDEO_OUTPUT_LIMIT_BYTES;
     case "support-image":
       return 512 * 1024;
     case "support-file":
@@ -356,23 +402,70 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: AssetUploadRequestBody;
-  try {
-    body = (await request.json()) as AssetUploadRequestBody;
-  } catch {
-    return NextResponse.json(
-      {
-        ok: false,
-        code: "invalid_json",
-        message: "Request body must be valid JSON.",
-      },
-      { status: 400 },
-    );
+  let body: AssetUploadRequestBody | null = null;
+  let originalBlob: Blob | null = null;
+  let meta: { mime: string; extension: string } | null = null;
+  let folder = "";
+  let merchantHint = "public";
+  let usageInput: unknown = undefined;
+  const contentType = request.headers.get("content-type") ?? "";
+
+  if (contentType.toLowerCase().includes("multipart/form-data")) {
+    let formData: FormData;
+    try {
+      formData = await request.formData();
+    } catch {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "invalid_form_data",
+          message: "Request body must be valid multipart form data.",
+        },
+        { status: 400 },
+      );
+    }
+    const filePart = formData.get("file");
+    if (!(filePart instanceof Blob) || filePart.size <= 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "invalid_payload",
+          message: "A supported upload payload is required.",
+        },
+        { status: 400 },
+      );
+    }
+    const fileName = String((filePart as { name?: unknown }).name ?? "");
+    originalBlob = filePart;
+    meta = parseBlobUploadMeta(filePart, fileName);
+    folder = String(formData.get("folder") ?? "").trim();
+    merchantHint = sanitizeMerchantHint(String(formData.get("merchantHint") ?? "public"));
+    usageInput = formData.get("usage");
+  } else {
+    try {
+      body = (await request.json()) as AssetUploadRequestBody;
+    } catch {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "invalid_json",
+          message: "Request body must be valid JSON.",
+        },
+        { status: 400 },
+      );
+    }
+
+    const dataUrl = String(body.dataUrl ?? "").trim();
+    meta = parseDataUrlMeta(dataUrl);
+    if (meta) {
+      originalBlob = dataUrlToBlob(dataUrl, meta.mime);
+    }
+    folder = String(body.folder ?? "").trim();
+    merchantHint = sanitizeMerchantHint(String(body.merchantHint ?? "public"));
+    usageInput = body.usage;
   }
 
-  const dataUrl = String(body.dataUrl ?? "").trim();
-  const folder = String(body.folder ?? "").trim();
-  if (!dataUrl || !FOLDER_CANDIDATES.has(folder)) {
+  if (!originalBlob || !FOLDER_CANDIDATES.has(folder)) {
     return NextResponse.json(
       {
         ok: false,
@@ -383,7 +476,6 @@ export async function POST(request: Request) {
     );
   }
 
-  const meta = parseDataUrlMeta(dataUrl);
   if (!meta) {
     return NextResponse.json(
       {
@@ -395,8 +487,6 @@ export async function POST(request: Request) {
     );
   }
 
-  const originalBlob = dataUrlToBlob(dataUrl, meta.mime);
-  const merchantHint = sanitizeMerchantHint(String(body.merchantHint ?? "public"));
   const supabase = createClient(supabaseUrl, serviceRoleKey, {
     auth: {
       persistSession: false,
@@ -417,17 +507,18 @@ export async function POST(request: Request) {
     );
   }
 
-  const usage = normalizeAssetUsage(body.usage, folder, meta.mime);
+  const usage = normalizeAssetUsage(usageInput, folder, meta.mime);
   const limitBytes = getAssetUploadLimitBytes({
     usage,
     permissionConfig: actor.permissionConfig,
   });
-  if (originalBlob.size > limitBytes) {
+  const originalLimitBytes = usage === "business-card-intro-video" ? BUSINESS_CARD_INTRO_VIDEO_SOURCE_LIMIT_BYTES : limitBytes;
+  if (originalBlob.size > originalLimitBytes) {
     return NextResponse.json(
       {
         ok: false,
         code: "asset_size_limit_exceeded",
-        message: `Asset exceeds the allowed size limit (${Math.round(limitBytes / 1024)}KB).`,
+        message: `Asset exceeds the allowed size limit (${Math.round(originalLimitBytes / 1024)}KB).`,
       },
       { status: 413 },
     );
@@ -452,6 +543,7 @@ export async function POST(request: Request) {
       uploadBlob = await transcodeBusinessCardIntroVideo({
         blob: originalBlob,
         extension: meta.extension,
+        targetBytes: limitBytes,
       });
       uploadMime = "video/mp4";
       uploadExtension = "mp4";

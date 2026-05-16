@@ -42,7 +42,7 @@ import {
   resolveMerchantBusinessCardShareOrigin,
   type MerchantBusinessCardShareContact,
 } from "@/lib/merchantBusinessCardShare";
-import { uploadDataUrlToPublicStorage, uploadImageDataUrlToPublicStorage } from "@/lib/publicAssetUpload";
+import { uploadFileToPublicStorage, uploadImageDataUrlToPublicStorage } from "@/lib/publicAssetUpload";
 import { buildMerchantDomain } from "@/lib/siteRouting";
 
 type MerchantBusinessCardManagerProps = {
@@ -140,7 +140,8 @@ const MIN_CARD_FRAME_WIDTH = 320;
 const MAX_CARD_FRAME_WIDTH = 1600;
 const MIN_CARD_FRAME_HEIGHT = 180;
 const MAX_CARD_FRAME_HEIGHT = 1600;
-const CONTACT_INTRO_VIDEO_LIMIT_BYTES = 10 * 1024 * 1024;
+const CONTACT_INTRO_VIDEO_SOURCE_LIMIT_BYTES = 80 * 1024 * 1024;
+const CONTACT_INTRO_VIDEO_OUTPUT_LIMIT_BYTES = 10 * 1024 * 1024;
 const CONTACT_INTRO_VIDEO_ACCEPT =
   "video/mp4,video/x-m4v,video/webm,video/ogg,video/quicktime,video/x-matroska,video/x-msvideo,video/3gpp,video/3gpp2,video/mpeg,.mp4,.m4v,.mov,.webm,.ogv,.ogg,.mkv,.avi,.3gp,.3g2,.mpg,.mpeg";
 const ALL_TYPOGRAPHY_KEYS: Array<keyof MerchantBusinessCardDraft["typography"]> = [
@@ -1786,38 +1787,14 @@ export default function MerchantBusinessCardManager({
         setTip("请选择视频文件");
         return;
       }
-      if (file.size > CONTACT_INTRO_VIDEO_LIMIT_BYTES) {
-        setTip(`联系卡开场视频不能超过 ${Math.round(CONTACT_INTRO_VIDEO_LIMIT_BYTES / 1024 / 1024)} MB`);
+      if (file.size > CONTACT_INTRO_VIDEO_SOURCE_LIMIT_BYTES) {
+        setTip(`联系卡开场视频原文件不能超过 ${Math.round(CONTACT_INTRO_VIDEO_SOURCE_LIMIT_BYTES / 1024 / 1024)} MB`);
         return;
       }
       setContactIntroVideoFileName(fileName || "开场视频");
-      setContactIntroVideoFileDetail("上传中...");
+      setContactIntroVideoFileDetail("上传并压缩转换中...");
       setIsContactIntroVideoProcessing(true);
-      let dataUrl = await readImageFileAsDataUrl(file);
-      if (!/^data:video\//i.test(dataUrl) && looksLikeVideoFile) {
-        const base64 = dataUrl.split(",")[1] ?? "";
-        const inferredMime = /\.webm$/i.test(fileName)
-          ? "video/webm"
-          : /\.(ogv|ogg)$/i.test(fileName)
-            ? "video/ogg"
-            : /\.mov$/i.test(fileName)
-              ? "video/quicktime"
-              : /\.m4v$/i.test(fileName)
-                ? "video/x-m4v"
-                : /\.mkv$/i.test(fileName)
-                  ? "video/x-matroska"
-                  : /\.avi$/i.test(fileName)
-                    ? "video/x-msvideo"
-                    : /\.3gp$/i.test(fileName)
-                      ? "video/3gpp"
-                      : /\.3g2$/i.test(fileName)
-                        ? "video/3gpp2"
-                        : /\.(mpg|mpeg)$/i.test(fileName)
-                          ? "video/mpeg"
-                          : "video/mp4";
-        dataUrl = `data:${inferredMime};base64,${base64}`;
-      }
-      const uploadedUrl = await uploadDataUrlToPublicStorage(dataUrl, {
+      const uploadedUrl = await uploadFileToPublicStorage(file, {
         merchantHint: sanitizeShareAssetHint(
           `${normalizeText(profile.domainPrefix) || normalizeText(draft.name) || normalizeText(profile.merchantName)}-intro-video`,
         ),
@@ -1829,7 +1806,7 @@ export default function MerchantBusinessCardManager({
       }
       applyDraft((current) => ({ ...current, contactIntroVideoUrl: uploadedUrl }));
       setContactIntroVideoFileName(fileName || "已上传开场视频");
-      setContactIntroVideoFileDetail(`大小 ${formatImageResultSize(file.size)}`);
+      setContactIntroVideoFileDetail(`原始 ${formatImageResultSize(file.size)}，已转为快速播放 MP4`);
     } catch (error) {
       setContactIntroVideoFileName(previousFileName);
       setContactIntroVideoFileDetail(previousFileDetail);
@@ -2565,7 +2542,9 @@ export default function MerchantBusinessCardManager({
                           />
                           <span>静音播放（建议开启，手机端更容易自动播放）</span>
                         </label>
-                        <div className="mt-1 text-[11px] text-slate-400">默认上限 10 MB，建议 3-8 秒，竖屏或横屏视频都可使用。</div>
+                        <div className="mt-1 text-[11px] text-slate-400">
+                          原文件上限 {Math.round(CONTACT_INTRO_VIDEO_SOURCE_LIMIT_BYTES / 1024 / 1024)} MB，上传后会自动压缩转换为适合网页快速播放的 MP4，成品上限 {Math.round(CONTACT_INTRO_VIDEO_OUTPUT_LIMIT_BYTES / 1024 / 1024)} MB。
+                        </div>
                         {normalizeText(draft.contactIntroVideoUrl) ? (
                           <AutoPlayingVideoPreview
                             className="mt-3 block aspect-video w-full rounded-xl border bg-black object-contain"
