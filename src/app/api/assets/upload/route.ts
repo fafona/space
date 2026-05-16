@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { spawn } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import ffmpegPath from "ffmpeg-static";
 import { createDefaultMerchantPermissionConfig } from "@/data/platformControlStore";
 import { type MerchantAuthUserSummary } from "@/lib/merchantAuthIdentity";
 import { readMerchantAuthCookie, readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
@@ -16,6 +21,8 @@ import {
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 import { createServerSupabaseAuthClient, createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
+
+export const runtime = "nodejs";
 
 const BUCKET_CANDIDATES = ["page-assets", "assets", "uploads", "public"] as const;
 const FOLDER_CANDIDATES = new Set(["merchant-assets", "merchant-audio", "merchant-files"]);
@@ -91,7 +98,96 @@ function parseDataUrlMeta(dataUrl: string) {
 function dataUrlToBlob(dataUrl: string, mime: string) {
   const base64 = dataUrl.split(",")[1] ?? "";
   const bytes = Buffer.from(base64, "base64");
-  return new Blob([bytes], { type: mime });
+  return new Blob([new Uint8Array(bytes)], { type: mime });
+}
+
+function runFfmpeg(args: string[], timeoutMs = 45_000) {
+  const binaryPath = typeof ffmpegPath === "string" ? ffmpegPath : "";
+  if (!binaryPath) {
+    return Promise.reject(new Error("ffmpeg_unavailable"));
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    const child = spawn(binaryPath, args, {
+      windowsHide: true,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error("ffmpeg_timeout"));
+    }, timeoutMs);
+
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+      if (stderr.length > 4000) stderr = stderr.slice(-4000);
+    });
+    child.on("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timeout);
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(stderr || `ffmpeg_exit_${code ?? "unknown"}`));
+    });
+  });
+}
+
+async function transcodeBusinessCardIntroVideo(input: {
+  blob: Blob;
+  extension: string;
+}) {
+  const workspace = await mkdtemp(path.join(tmpdir(), "faolla-intro-video-"));
+  const extension = input.extension.replace(/[^a-z0-9]+/gi, "") || "video";
+  const inputPath = path.join(workspace, `source.${extension}`);
+  const outputPath = path.join(workspace, "intro.mp4");
+  try {
+    const buffer = Buffer.from(await input.blob.arrayBuffer());
+    await writeFile(inputPath, buffer);
+    await runFfmpeg([
+      "-y",
+      "-i",
+      inputPath,
+      "-map",
+      "0:v:0",
+      "-map",
+      "0:a?",
+      "-vf",
+      "scale=720:-2:force_original_aspect_ratio=decrease",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-crf",
+      "26",
+      "-pix_fmt",
+      "yuv420p",
+      "-profile:v",
+      "main",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "96k",
+      "-ac",
+      "2",
+      "-ar",
+      "44100",
+      "-movflags",
+      "+faststart",
+      outputPath,
+    ]);
+    const outputBuffer = await readFile(outputPath);
+    if (outputBuffer.byteLength <= 0) {
+      throw new Error("empty_transcoded_video");
+    }
+    return new Blob([new Uint8Array(outputBuffer)], { type: "video/mp4" });
+  } finally {
+    await rm(workspace, { recursive: true, force: true }).catch(() => undefined);
+  }
 }
 
 function sanitizeMerchantHint(input: string) {
@@ -277,7 +373,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const blob = dataUrlToBlob(dataUrl, meta.mime);
+  const originalBlob = dataUrlToBlob(dataUrl, meta.mime);
   const merchantHint = sanitizeMerchantHint(String(body.merchantHint ?? "public"));
   const supabase = createClient(supabaseUrl, serviceRoleKey, {
     auth: {
@@ -304,7 +400,7 @@ export async function POST(request: Request) {
     usage,
     permissionConfig: actor.permissionConfig,
   });
-  if (blob.size > limitBytes) {
+  if (originalBlob.size > limitBytes) {
     return NextResponse.json(
       {
         ok: false,
@@ -315,15 +411,60 @@ export async function POST(request: Request) {
     );
   }
 
+  let uploadBlob = originalBlob;
+  let uploadMime = meta.mime;
+  let uploadExtension = meta.extension;
+  if (usage === "business-card-intro-video") {
+    if (!meta.mime.startsWith("video/")) {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "unsupported_intro_video",
+          message: "Business card intro video must be a supported video file.",
+        },
+        { status: 400 },
+      );
+    }
+
+    try {
+      uploadBlob = await transcodeBusinessCardIntroVideo({
+        blob: originalBlob,
+        extension: meta.extension,
+      });
+      uploadMime = "video/mp4";
+      uploadExtension = "mp4";
+    } catch {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "intro_video_transcode_failed",
+          message: "视频无法转成网页可播放格式，请换用 MP4/H.264 视频后再上传。",
+        },
+        { status: 422 },
+      );
+    }
+
+    if (uploadBlob.size > limitBytes) {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "asset_size_limit_exceeded",
+          message: `转码后视频超过上限（${Math.round(limitBytes / 1024)}KB），请缩短视频或降低清晰度后再上传。`,
+        },
+        { status: 413 },
+      );
+    }
+  }
+
   const now = new Date();
   const yyyy = `${now.getFullYear()}`;
   const mm = `${now.getMonth() + 1}`.padStart(2, "0");
   const uploadErrors: string[] = [];
 
   for (const bucket of BUCKET_CANDIDATES) {
-    const objectPath = `${folder}/${actor.effectiveMerchantHint}/${yyyy}/${mm}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${meta.extension}`;
-    const uploaded = await supabase.storage.from(bucket).upload(objectPath, blob, {
-      contentType: meta.mime,
+    const objectPath = `${folder}/${actor.effectiveMerchantHint}/${yyyy}/${mm}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${uploadExtension}`;
+    const uploaded = await supabase.storage.from(bucket).upload(objectPath, uploadBlob, {
+      contentType: uploadMime,
       upsert: false,
     });
     if (uploaded.error) {

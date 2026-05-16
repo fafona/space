@@ -52,6 +52,8 @@ async function uploadDataUrlViaServerApi(
 ): Promise<string | null> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
+      const timeoutMs =
+        usage === "business-card-intro-video" ? (attempt === 0 ? 60_000 : 90_000) : attempt === 0 ? 15_000 : 20_000;
       const response = await fetchWithTimeout(
         "/api/assets/upload",
         {
@@ -67,7 +69,7 @@ async function uploadDataUrlViaServerApi(
             usage,
           }),
         },
-        attempt === 0 ? 15_000 : 20_000,
+        timeoutMs,
       );
       if (response.ok) {
         const payload = (await response.json().catch(() => null)) as { url?: unknown } | null;
