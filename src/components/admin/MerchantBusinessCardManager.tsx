@@ -141,7 +141,8 @@ const MAX_CARD_FRAME_WIDTH = 1600;
 const MIN_CARD_FRAME_HEIGHT = 180;
 const MAX_CARD_FRAME_HEIGHT = 1600;
 const CONTACT_INTRO_VIDEO_LIMIT_BYTES = 10 * 1024 * 1024;
-const CONTACT_INTRO_VIDEO_ACCEPT = "video/mp4,video/webm,video/ogg,video/quicktime";
+const CONTACT_INTRO_VIDEO_ACCEPT =
+  "video/mp4,video/x-m4v,video/webm,video/ogg,video/quicktime,video/x-matroska,video/x-msvideo,video/3gpp,video/3gpp2,video/mpeg,.mp4,.m4v,.mov,.webm,.ogv,.ogg,.mkv,.avi,.3gp,.3g2,.mpg,.mpeg";
 const ALL_TYPOGRAPHY_KEYS: Array<keyof MerchantBusinessCardDraft["typography"]> = [
   "name",
   "title",
@@ -1721,7 +1722,7 @@ export default function MerchantBusinessCardManager({
     try {
       const fileName = normalizeText(file.name);
       const fileType = normalizeText(file.type).toLowerCase();
-      const looksLikeVideoFile = /\.(mp4|webm|ogv|ogg|mov)$/i.test(fileName);
+      const looksLikeVideoFile = /\.(mp4|m4v|webm|ogv|ogg|mov|mkv|avi|3gp|3g2|mpg|mpeg)$/i.test(fileName);
       if (!fileType.startsWith("video/") && !looksLikeVideoFile) {
         setTip("请选择视频文件");
         return;
@@ -1742,7 +1743,19 @@ export default function MerchantBusinessCardManager({
             ? "video/ogg"
             : /\.mov$/i.test(fileName)
               ? "video/quicktime"
-              : "video/mp4";
+              : /\.m4v$/i.test(fileName)
+                ? "video/x-m4v"
+                : /\.mkv$/i.test(fileName)
+                  ? "video/x-matroska"
+                  : /\.avi$/i.test(fileName)
+                    ? "video/x-msvideo"
+                    : /\.3gp$/i.test(fileName)
+                      ? "video/3gpp"
+                      : /\.3g2$/i.test(fileName)
+                        ? "video/3gpp2"
+                        : /\.(mpg|mpeg)$/i.test(fileName)
+                          ? "video/mpeg"
+                          : "video/mp4";
         dataUrl = `data:${inferredMime};base64,${base64}`;
       }
       const uploadedUrl = await uploadDataUrlToPublicStorage(dataUrl, {

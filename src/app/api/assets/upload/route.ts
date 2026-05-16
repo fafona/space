@@ -72,9 +72,15 @@ function parseDataUrlMeta(dataUrl: string) {
     if (mime === "audio/webm") return "webm";
     if (mime === "audio/mp4") return "m4a";
     if (mime === "video/mp4") return "mp4";
+    if (mime === "video/x-m4v") return "m4v";
     if (mime === "video/webm") return "webm";
     if (mime === "video/ogg") return "ogv";
     if (mime === "video/quicktime") return "mov";
+    if (mime === "video/x-matroska") return "mkv";
+    if (mime === "video/x-msvideo") return "avi";
+    if (mime === "video/3gpp") return "3gp";
+    if (mime === "video/3gpp2") return "3g2";
+    if (mime === "video/mpeg") return "mpg";
     if (mime === "application/pdf") return "pdf";
     if (mime === "text/plain") return "txt";
     if (mime === "text/csv") return "csv";
@@ -134,7 +140,8 @@ function runFfmpegBinary(binaryPath: string, args: string[], timeoutMs: number) 
 
 function isFfmpegBinaryUnavailable(error: unknown) {
   const code = (error as NodeJS.ErrnoException | null)?.code;
-  return code === "ENOENT" || code === "EACCES";
+  const message = error instanceof Error ? error.message : "";
+  return code === "ENOENT" || code === "EACCES" || message.includes("ENOENT") || message.includes("EACCES");
 }
 
 async function runFfmpeg(args: string[], timeoutMs = 180_000) {
@@ -451,20 +458,26 @@ export async function POST(request: Request) {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "";
       console.error("[asset-upload] intro video transcode failed", errorMessage);
-      const message =
-        errorMessage === "ffmpeg_timeout"
-          ? "视频转码超时，请换用更短的视频后再上传。"
-          : errorMessage === "ffmpeg_unavailable"
-            ? "服务器视频转码组件不可用，请稍后再试。"
-            : "视频无法转成网页可播放格式，请换用 MP4/H.264 视频后再上传。";
-      return NextResponse.json(
-        {
-          ok: false,
-          code: "intro_video_transcode_failed",
-          message,
-        },
-        { status: 422 },
-      );
+      if (meta.mime === "video/mp4") {
+        uploadBlob = originalBlob;
+        uploadMime = "video/mp4";
+        uploadExtension = "mp4";
+      } else {
+        const message =
+          errorMessage === "ffmpeg_timeout"
+            ? "视频转码超时，请换用更短的视频后再上传。"
+            : errorMessage === "ffmpeg_unavailable" || isFfmpegBinaryUnavailable(error)
+              ? "服务器视频转码组件不可用，请稍后再试。"
+              : "视频无法转成网页可播放格式，请换用 MP4/H.264 视频后再上传。";
+        return NextResponse.json(
+          {
+            ok: false,
+            code: "intro_video_transcode_failed",
+            message,
+          },
+          { status: 422 },
+        );
+      }
     }
 
     if (uploadBlob.size > limitBytes) {
@@ -472,7 +485,7 @@ export async function POST(request: Request) {
         {
           ok: false,
           code: "asset_size_limit_exceeded",
-          message: `转码后视频超过上限（${Math.round(limitBytes / 1024)}KB），请缩短视频或降低清晰度后再上传。`,
+          message: `视频超过上限（${Math.round(limitBytes / 1024)}KB），请缩短视频或降低清晰度后再上传。`,
         },
         { status: 413 },
       );
