@@ -3623,6 +3623,7 @@ export default function MerchantBusinessCardManager({
     targetUrl: string;
     cardName: string;
     shareKey?: string;
+    allowLegacyFallback?: boolean;
     card?: MerchantBusinessCardAsset | null;
     renderedImageUrl?: string;
     contactPageImageUrl?: string;
@@ -3637,6 +3638,7 @@ export default function MerchantBusinessCardManager({
     if (!targetUrl) {
       throw new Error("missing_target");
     }
+    const allowLegacyFallback = input.allowLegacyFallback !== false;
     const shareImageUrl = await resolveShareImageUrl({
       card: input.card,
       renderedImageUrl: input.renderedImageUrl,
@@ -3661,7 +3663,7 @@ export default function MerchantBusinessCardManager({
       contact: input.contact,
     });
     if (!shareImageUrl) {
-      if (fallbackShareUrl) {
+      if (allowLegacyFallback && fallbackShareUrl) {
         return {
           shareUrl: fallbackShareUrl,
           shareImageUrl: "",
@@ -3736,7 +3738,7 @@ export default function MerchantBusinessCardManager({
       break;
     }
     if (!shareUrl || !shareKey) {
-      if (fallbackShareUrl) {
+      if (allowLegacyFallback && fallbackShareUrl) {
         return {
           shareUrl: fallbackShareUrl,
           shareImageUrl,
@@ -3880,12 +3882,13 @@ export default function MerchantBusinessCardManager({
     }
 
     setCopyingLinkCardId(card.id);
-    setTip("正在生成联系卡链接...");
+    setTip(readyShareUrl ? "正在同步联系卡内容..." : "正在生成联系卡链接...");
     try {
-      const { shareUrl } = await buildShareBundle({
+      const { shareUrl, shareKey } = await buildShareBundle({
         targetUrl,
         cardName: normalizeText(card.name),
         shareKey: normalizeText(card.shareKey),
+        allowLegacyFallback: false,
         card,
         contactPageImageUrl: normalizeText(card.contactPageImageUrl),
         introVideoUrl: normalizeText(card.contactIntroVideoUrl),
@@ -3902,10 +3905,27 @@ export default function MerchantBusinessCardManager({
           targetUrl,
         }),
       });
-      await copyTextToClipboard(shareUrl);
+      const linkToCopy =
+        readyShareUrl ||
+        (normalizeText(shareKey)
+          ? buildMerchantBusinessCardShareUrl({
+              shareKey,
+              targetUrl,
+            })
+          : shareUrl);
+      await copyTextToClipboard(linkToCopy);
       setTip("联系卡链接已复制，手机打开后可保存联系人");
     } catch {
-      setTip("复制失败，请重试");
+      if (readyShareUrl) {
+        try {
+          await copyTextToClipboard(readyShareUrl);
+          setTip("短链已复制；联系卡内容同步失败，请稍后再试");
+        } catch {
+          setTip("浏览器阻止自动复制，请手动复制上方短链");
+        }
+      } else {
+        setTip("短链生成失败，请重试");
+      }
     } finally {
       setCopyingLinkCardId((current) => (current === card.id ? null : current));
     }
