@@ -1577,6 +1577,7 @@ function describePermissionValue(
 ) {
   if (
     key === "allowBusinessCardLinkMode" ||
+    key === "allowBusinessCardIntroVideo" ||
     key === "allowBookingEmailPrefill" ||
     key === "allowBookingAutoEmail" ||
     key === "allowInsertBackground" ||
@@ -1622,6 +1623,8 @@ function buildMerchantConfigDiffLines(current: MerchantConfigSnapshot, target: M
     { key: "pageLimit", label: "页面上限" },
     { key: "businessCardLimit", label: "名片夹上限" },
     { key: "allowBusinessCardLinkMode", label: "可链接模式名片" },
+    { key: "allowBusinessCardIntroVideo", label: "可开场视频" },
+    { key: "businessCardIntroVideoLimitMb", label: "开场视频成品上限(MB)" },
     { key: "allowBookingEmailPrefill", label: "邮件自动带入预约信息" },
     { key: "allowBookingAutoEmail", label: "可自动发预约邮件" },
     { key: "businessCardBackgroundImageLimitKb", label: "名片背景图上限(KB)" },
@@ -1875,6 +1878,8 @@ export default function SuperAdminClient() {
   const [configPageLimit, setConfigPageLimit] = useState("3");
   const [configBusinessCardLimit, setConfigBusinessCardLimit] = useState("1");
   const [configAllowBusinessCardLinkMode, setConfigAllowBusinessCardLinkMode] = useState(false);
+  const [configAllowBusinessCardIntroVideo, setConfigAllowBusinessCardIntroVideo] = useState(true);
+  const [configBusinessCardIntroVideoLimitMb, setConfigBusinessCardIntroVideoLimitMb] = useState("3");
   const [configAllowBookingEmailPrefill, setConfigAllowBookingEmailPrefill] = useState(false);
   const [configAllowBookingAutoEmail, setConfigAllowBookingAutoEmail] = useState(false);
   const [configBusinessCardBackgroundImageLimitKb, setConfigBusinessCardBackgroundImageLimitKb] = useState("200");
@@ -3955,6 +3960,8 @@ export default function SuperAdminClient() {
     setConfigPageLimit(`${permission.pageLimit}`);
     setConfigBusinessCardLimit(`${permission.businessCardLimit}`);
     setConfigAllowBusinessCardLinkMode(permission.allowBusinessCardLinkMode);
+    setConfigAllowBusinessCardIntroVideo(permission.allowBusinessCardIntroVideo !== false);
+    setConfigBusinessCardIntroVideoLimitMb(`${permission.businessCardIntroVideoLimitMb || 3}`);
     setConfigAllowBookingEmailPrefill(permission.allowBookingEmailPrefill);
     setConfigAllowBookingAutoEmail(permission.allowBookingBlock && permission.allowBookingAutoEmail);
     setConfigBusinessCardBackgroundImageLimitKb(`${permission.businessCardBackgroundImageLimitKb}`);
@@ -5876,6 +5883,10 @@ export default function SuperAdminClient() {
     const planLimit = Math.max(1, Math.min(200, Math.round(Number(configPlanLimit) || 1)));
     const pageLimit = Math.max(1, Math.min(500, Math.round(Number(configPageLimit) || 1)));
     const businessCardLimit = Math.max(1, Math.min(100, Math.round(Number(configBusinessCardLimit) || 1)));
+    const businessCardIntroVideoLimitMb = Math.max(
+      1,
+      Math.min(80, Math.round(Number(configBusinessCardIntroVideoLimitMb) || 3)),
+    );
     const businessCardBackgroundImageLimitKb = Math.max(
       50,
       Math.min(5000, Math.round(Number(configBusinessCardBackgroundImageLimitKb) || 200)),
@@ -5945,6 +5956,16 @@ export default function SuperAdminClient() {
     if (prevPermission.allowBusinessCardLinkMode !== configAllowBusinessCardLinkMode) {
       pendingChanges.push(
         `链接模式名片：${formatBool(prevPermission.allowBusinessCardLinkMode)} -> ${formatBool(configAllowBusinessCardLinkMode)}`,
+      );
+    }
+    if (prevPermission.allowBusinessCardIntroVideo !== configAllowBusinessCardIntroVideo) {
+      pendingChanges.push(
+        `联系卡开场视频：${formatBool(prevPermission.allowBusinessCardIntroVideo)} -> ${formatBool(configAllowBusinessCardIntroVideo)}`,
+      );
+    }
+    if (prevPermission.businessCardIntroVideoLimitMb !== businessCardIntroVideoLimitMb) {
+      pendingChanges.push(
+        `开场视频成品上限：${prevPermission.businessCardIntroVideoLimitMb}MB -> ${businessCardIntroVideoLimitMb}MB`,
       );
     }
     if (prevPermission.allowBookingEmailPrefill !== configAllowBookingEmailPrefill) {
@@ -6068,6 +6089,8 @@ export default function SuperAdminClient() {
         pageLimit,
         businessCardLimit,
         allowBusinessCardLinkMode: configAllowBusinessCardLinkMode,
+        allowBusinessCardIntroVideo: configAllowBusinessCardIntroVideo,
+        businessCardIntroVideoLimitMb,
         allowBookingEmailPrefill: configAllowBookingEmailPrefill,
         allowBookingAutoEmail: configAllowBookingBlock && configAllowBookingAutoEmail,
         businessCardBackgroundImageLimitKb,
@@ -8604,6 +8627,22 @@ export default function SuperAdminClient() {
                                     onChange={(e) => setConfigAllowBusinessCardLinkMode(e.target.checked)}
                                   />
                                   链接模式名片
+                                </label>
+                                <label className="flex items-center gap-2 rounded border bg-white px-3 py-2">
+                                  <input
+                                    type="checkbox"
+                                    checked={configAllowBusinessCardIntroVideo}
+                                    onChange={(e) => setConfigAllowBusinessCardIntroVideo(e.target.checked)}
+                                  />
+                                  开场视频
+                                </label>
+                                <label className="space-y-1">
+                                  <div className="text-slate-500">开场视频成品上限(MB)</div>
+                                  <input
+                                    className="w-full rounded border bg-white px-2 py-1.5"
+                                    value={configBusinessCardIntroVideoLimitMb}
+                                    onChange={(e) => setConfigBusinessCardIntroVideoLimitMb(e.target.value)}
+                                  />
                                 </label>
                                 <label className="flex items-center gap-2 rounded border bg-white px-3 py-2">
                                   <input

@@ -26,7 +26,6 @@ export const runtime = "nodejs";
 
 const BUCKET_CANDIDATES = ["page-assets", "assets", "uploads", "public"] as const;
 const FOLDER_CANDIDATES = new Set(["merchant-assets", "merchant-audio", "merchant-files"]);
-const BUSINESS_CARD_INTRO_VIDEO_OUTPUT_LIMIT_BYTES = 10 * 1024 * 1024;
 const BUSINESS_CARD_INTRO_VIDEO_SOURCE_LIMIT_BYTES = 80 * 1024 * 1024;
 
 type AssetUploadRequestBody = {
@@ -315,7 +314,10 @@ function getAssetUploadLimitBytes(input: {
     case "business-card-export":
       return Math.max(50, Math.round(permissionConfig.businessCardExportImageLimitKb)) * 1024;
     case "business-card-intro-video":
-      return BUSINESS_CARD_INTRO_VIDEO_OUTPUT_LIMIT_BYTES;
+      return Math.max(
+        1,
+        Math.round(permissionConfig.businessCardIntroVideoLimitMb || createDefaultMerchantPermissionConfig().businessCardIntroVideoLimitMb),
+      ) * 1024 * 1024;
     case "support-image":
       return 512 * 1024;
     case "support-file":
@@ -508,6 +510,16 @@ export async function POST(request: Request) {
   }
 
   const usage = normalizeAssetUsage(usageInput, folder, meta.mime);
+  if (usage === "business-card-intro-video" && actor.permissionConfig.allowBusinessCardIntroVideo === false) {
+    return NextResponse.json(
+      {
+        ok: false,
+        code: "business_card_intro_video_not_allowed",
+        message: "当前账号未开启联系卡开场视频权限。",
+      },
+      { status: 403 },
+    );
+  }
   const limitBytes = getAssetUploadLimitBytes({
     usage,
     permissionConfig: actor.permissionConfig,

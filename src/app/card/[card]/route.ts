@@ -1294,7 +1294,13 @@ async function resolveContactCardSnapshotMatch(shareKey: string) {
   const card = ownerSite.businessCards.find(
     (item) => normalizeMerchantBusinessCardShareKey(item.shareKey) === normalizedShareKey,
   ) as MerchantBusinessCardAsset | undefined;
-  return card ? { siteId: normalizeText(ownerSite.id), card } : null;
+  return card
+    ? {
+        siteId: normalizeText(ownerSite.id),
+        card,
+        allowIntroVideo: ownerSite.permissionConfig?.allowBusinessCardIntroVideo !== false,
+      }
+    : null;
 }
 
 function buildOrderedContactSummaryHtml(input: {
@@ -2406,7 +2412,10 @@ export async function GET(
         publicOrigin,
       )
     : "";
-  const introVideoSource = normalizeText(payload.introVideoUrl) || normalizeText(snapshotCard?.contactIntroVideoUrl);
+  const introVideoSource =
+    snapshotMatch?.allowIntroVideo === false
+      ? ""
+      : normalizeText(payload.introVideoUrl) || normalizeText(snapshotCard?.contactIntroVideoUrl);
   const introVideoUrl = introVideoSource
     ? normalizeMerchantBusinessCardShareVideoUrl(introVideoSource, publicOrigin) || introVideoSource
     : "";

@@ -16,6 +16,10 @@ function estimateUtf8Bytes(value: string) {
   return new TextEncoder().encode(value).length;
 }
 
+function normalizeText(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
 function normalizeBlocks(value: unknown): Block[] {
   return Array.isArray(value) ? (value as Block[]) : [];
 }
@@ -158,6 +162,16 @@ export function getMerchantBusinessCardPermissionViolation(
       return {
         code: "business_card_link_mode_not_allowed",
         message: "当前权限未开通链接模式名片",
+      };
+    }
+  }
+
+  if (permissionConfig.allowBusinessCardIntroVideo === false) {
+    const introVideoCard = cardsInput.find((card) => normalizeText(card.contactIntroVideoUrl));
+    if (introVideoCard) {
+      return {
+        code: "business_card_intro_video_not_allowed",
+        message: "当前权限未开通联系卡开场视频",
       };
     }
   }

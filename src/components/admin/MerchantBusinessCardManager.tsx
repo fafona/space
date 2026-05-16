@@ -54,9 +54,11 @@ type MerchantBusinessCardManagerProps = {
   folderViewMode?: "overlay" | "page";
   cardLimit?: number;
   allowLinkMode?: boolean;
+  allowIntroVideo?: boolean;
   backgroundImageLimitKb?: number;
   contactPageImageLimitKb?: number;
   exportImageLimitKb?: number;
+  introVideoLimitMb?: number;
   onCardsChange: (cards: MerchantBusinessCardAsset[]) => void | Promise<void>;
 };
 
@@ -141,7 +143,7 @@ const MAX_CARD_FRAME_WIDTH = 1600;
 const MIN_CARD_FRAME_HEIGHT = 180;
 const MAX_CARD_FRAME_HEIGHT = 1600;
 const CONTACT_INTRO_VIDEO_SOURCE_LIMIT_BYTES = 80 * 1024 * 1024;
-const CONTACT_INTRO_VIDEO_OUTPUT_LIMIT_BYTES = 10 * 1024 * 1024;
+const DEFAULT_CONTACT_INTRO_VIDEO_OUTPUT_LIMIT_MB = 3;
 const CONTACT_INTRO_VIDEO_ACCEPT =
   "video/mp4,video/x-m4v,video/webm,video/ogg,video/quicktime,video/x-matroska,video/x-msvideo,video/3gpp,video/3gpp2,video/mpeg,.mp4,.m4v,.mov,.webm,.ogv,.ogg,.mkv,.avi,.3gp,.3g2,.mpg,.mpeg";
 const ALL_TYPOGRAPHY_KEYS: Array<keyof MerchantBusinessCardDraft["typography"]> = [
@@ -1242,9 +1244,11 @@ export default function MerchantBusinessCardManager({
   folderViewMode = "overlay",
   cardLimit = 1,
   allowLinkMode = true,
+  allowIntroVideo = true,
   backgroundImageLimitKb = 200,
   contactPageImageLimitKb = 200,
   exportImageLimitKb = 400,
+  introVideoLimitMb = DEFAULT_CONTACT_INTRO_VIDEO_OUTPUT_LIMIT_MB,
   onCardsChange,
 }: MerchantBusinessCardManagerProps) {
   const isPageFolderView = folderViewMode === "page";
@@ -1409,6 +1413,18 @@ export default function MerchantBusinessCardManager({
     () => Math.max(50, Math.min(5000, Math.round(Number(exportImageLimitKb) || 400))),
     [exportImageLimitKb],
   );
+  const normalizedIntroVideoLimitMb = useMemo(
+    () =>
+      Math.max(
+        1,
+        Math.min(
+          Math.round(CONTACT_INTRO_VIDEO_SOURCE_LIMIT_BYTES / 1024 / 1024),
+          Math.round(Number(introVideoLimitMb) || DEFAULT_CONTACT_INTRO_VIDEO_OUTPUT_LIMIT_MB),
+        ),
+      ),
+    [introVideoLimitMb],
+  );
+  const canUseIntroVideo = allowIntroVideo !== false;
   const editingCard = useMemo(
     () => (editingCardId ? normalizedCards.find((card) => card.id === editingCardId) ?? null : null),
     [editingCardId, normalizedCards],
@@ -1777,6 +1793,11 @@ export default function MerchantBusinessCardManager({
   const handleContactIntroVideoUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    if (!canUseIntroVideo) {
+      setTip("当前账号未开启联系卡开场视频权限");
+      event.target.value = "";
+      return;
+    }
     const previousFileName = contactIntroVideoFileName;
     const previousFileDetail = contactIntroVideoFileDetail;
     try {
@@ -2022,7 +2043,9 @@ export default function MerchantBusinessCardManager({
     normalizeText(previewAsset?.contactPageImageUrl) ||
     normalizeText(draft.contactPageImageUrl);
   const previewContactImageHeight = previewAsset?.contactPageImageHeight || draft.contactPageImageHeight;
-  const previewIntroVideoUrl = normalizeText(previewAsset?.contactIntroVideoUrl) || normalizeText(draft.contactIntroVideoUrl);
+  const previewIntroVideoUrl = canUseIntroVideo
+    ? normalizeText(previewAsset?.contactIntroVideoUrl) || normalizeText(draft.contactIntroVideoUrl)
+    : "";
   const showPreviewGenerateButton = !previewAsset;
   const backgroundImagePickerStatus = resolveFilePickerStatus(
     backgroundImageFileName,
@@ -2506,6 +2529,7 @@ export default function MerchantBusinessCardManager({
                       </div>
                     </div>
                     {draft.mode === "link" ? (
+                      canUseIntroVideo ? (
                       <div className="rounded-xl border bg-white px-3 py-3">
                         <div className="text-xs font-semibold text-slate-700">联系卡开场视频</div>
                         <div className="mt-1 text-xs leading-5 text-slate-500">
@@ -2543,7 +2567,7 @@ export default function MerchantBusinessCardManager({
                           <span>静音播放（建议开启，手机端更容易自动播放）</span>
                         </label>
                         <div className="mt-1 text-[11px] text-slate-400">
-                          原文件上限 {Math.round(CONTACT_INTRO_VIDEO_SOURCE_LIMIT_BYTES / 1024 / 1024)} MB，上传后会自动压缩转换为适合网页快速播放的 MP4，成品上限 {Math.round(CONTACT_INTRO_VIDEO_OUTPUT_LIMIT_BYTES / 1024 / 1024)} MB。
+                          原文件上限 {Math.round(CONTACT_INTRO_VIDEO_SOURCE_LIMIT_BYTES / 1024 / 1024)} MB，上传后会自动压缩转换为适合网页快速播放的 MP4，成品上限 {normalizedIntroVideoLimitMb} MB。
                         </div>
                         {normalizeText(draft.contactIntroVideoUrl) ? (
                           <AutoPlayingVideoPreview
@@ -2553,6 +2577,11 @@ export default function MerchantBusinessCardManager({
                           />
                         ) : null}
                       </div>
+                      ) : (
+                        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-xs leading-5 text-amber-800">
+                          当前账号未开启联系卡开场视频权限，超级后台开启后可上传开场视频。
+                        </div>
+                      )
                     ) : null}
                     {draft.mode === "link" ? (
                       <div className="rounded-xl border bg-white px-3 py-3">
@@ -3100,7 +3129,7 @@ export default function MerchantBusinessCardManager({
                           contacts={draft.contacts}
                           invoice={draft.invoice}
                           contactFieldOrder={draft.contactFieldOrder}
-                          introVideoUrl={normalizeText(draft.contactIntroVideoUrl) || undefined}
+                          introVideoUrl={canUseIntroVideo ? normalizeText(draft.contactIntroVideoUrl) || undefined : undefined}
                           introVideoMuted={draft.contactIntroVideoMuted}
                           imageUrl={normalizeText(draft.contactPageImageUrl) || undefined}
                           imageHeight={draft.contactPageImageHeight}
@@ -3645,12 +3674,13 @@ export default function MerchantBusinessCardManager({
       cardName: input.cardName,
       targetUrl,
     });
+    const introVideoUrl = canUseIntroVideo ? normalizeText(input.introVideoUrl) : "";
     const fallbackShareUrl = buildMerchantBusinessCardShareUrl({
       origin: resolveMerchantBusinessCardShareOrigin(undefined, targetUrl),
       imageUrl: shareImageUrl,
       detailImageUrl,
       detailImageHeight: input.contactPageImageHeight,
-      introVideoUrl: normalizeText(input.introVideoUrl),
+      introVideoUrl,
       introVideoMuted: input.introVideoMuted,
       targetUrl,
       name: input.cardName,
@@ -3692,7 +3722,7 @@ export default function MerchantBusinessCardManager({
               typeof input.contactPageImageHeight === "number"
                 ? Math.round(input.contactPageImageHeight)
                 : undefined,
-            introVideoUrl: normalizeText(input.introVideoUrl) || undefined,
+            introVideoUrl: introVideoUrl || undefined,
             introVideoMuted: input.introVideoMuted,
             targetUrl,
             imageWidth: typeof input.imageWidth === "number" ? Math.round(input.imageWidth) : undefined,
@@ -3936,7 +3966,7 @@ export default function MerchantBusinessCardManager({
       return;
     }
     const readyShareUrl = normalizeText(card.shareKey) ? resolveCardShortLink(card) : "";
-    const shouldRefreshExistingShare = Boolean(readyShareUrl && normalizeText(card.contactIntroVideoUrl));
+    const shouldRefreshExistingShare = Boolean(readyShareUrl && canUseIntroVideo && normalizeText(card.contactIntroVideoUrl));
     if (readyShareUrl && !shouldRefreshExistingShare) {
       try {
         await copyTextToClipboard(readyShareUrl);

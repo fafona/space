@@ -52,6 +52,8 @@ type MerchantProfileDialogProps = {
   initialBusinessCards?: MerchantBusinessCardAsset[] | null;
   businessCardLimit?: number;
   allowBusinessCardLinkMode?: boolean;
+  allowBusinessCardIntroVideo?: boolean;
+  businessCardIntroVideoLimitMb?: number;
   businessCardBackgroundImageLimitKb?: number;
   businessCardContactImageLimitKb?: number;
   businessCardExportImageLimitKb?: number;
@@ -253,6 +255,8 @@ export default function MerchantProfileDialog({
   initialBusinessCards,
   businessCardLimit = 1,
   allowBusinessCardLinkMode = true,
+  allowBusinessCardIntroVideo = true,
+  businessCardIntroVideoLimitMb = 3,
   businessCardBackgroundImageLimitKb = 200,
   businessCardContactImageLimitKb = 200,
   businessCardExportImageLimitKb = 400,
@@ -1235,9 +1239,11 @@ export default function MerchantProfileDialog({
             cards={businessCards}
             cardLimit={businessCardLimit}
             allowLinkMode={allowBusinessCardLinkMode}
+            allowIntroVideo={allowBusinessCardIntroVideo}
             backgroundImageLimitKb={businessCardBackgroundImageLimitKb}
             contactPageImageLimitKb={businessCardContactImageLimitKb}
             exportImageLimitKb={businessCardExportImageLimitKb}
+            introVideoLimitMb={businessCardIntroVideoLimitMb}
             onCardsChange={(cards) => {
               setBusinessCards(cards);
               onCardsChange?.(cards);

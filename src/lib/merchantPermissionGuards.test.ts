@@ -212,3 +212,28 @@ test("getMerchantBusinessCardPermissionViolation blocks over-limit or link-mode 
   assert.equal(limitViolation?.code, "business_card_limit_exceeded");
   assert.equal(linkViolation?.code, "business_card_link_mode_not_allowed");
 });
+
+test("getMerchantBusinessCardPermissionViolation blocks intro videos when disabled", () => {
+  const cards = normalizeMerchantBusinessCards([
+    {
+      id: "card-video",
+      createdAt: "2026-05-16T00:00:00.000Z",
+      mode: "link",
+      name: "fafona",
+      imageUrl: "https://example.com/card.webp",
+      targetUrl: "https://example.com",
+      contactIntroVideoUrl: "https://example.com/intro.mp4",
+    },
+  ]);
+
+  const violation = getMerchantBusinessCardPermissionViolation(
+    {
+      ...createDefaultMerchantPermissionConfig(),
+      allowBusinessCardLinkMode: true,
+      allowBusinessCardIntroVideo: false,
+    },
+    cards,
+  );
+
+  assert.equal(violation?.code, "business_card_intro_video_not_allowed");
+});

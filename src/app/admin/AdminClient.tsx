@@ -16212,6 +16212,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           effectiveEditingSite?.permissionConfig?.allowBusinessCardLinkMode ??
           editingSite?.permissionConfig?.allowBusinessCardLinkMode ??
           createDefaultMerchantPermissionConfig().allowBusinessCardLinkMode,
+        allowBusinessCardIntroVideo:
+          effectiveEditingSite?.permissionConfig?.allowBusinessCardIntroVideo ??
+          editingSite?.permissionConfig?.allowBusinessCardIntroVideo ??
+          createDefaultMerchantPermissionConfig().allowBusinessCardIntroVideo,
+        businessCardIntroVideoLimitMb:
+          effectiveEditingSite?.permissionConfig?.businessCardIntroVideoLimitMb ??
+          editingSite?.permissionConfig?.businessCardIntroVideoLimitMb ??
+          createDefaultMerchantPermissionConfig().businessCardIntroVideoLimitMb,
         businessCardBackgroundImageLimitKb:
           effectiveEditingSite?.permissionConfig?.businessCardBackgroundImageLimitKb ??
           editingSite?.permissionConfig?.businessCardBackgroundImageLimitKb ??
@@ -16349,9 +16357,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         cards: supportSelfBusinessCards,
         cardLimit: merchantProfileDialogCommonProps.businessCardLimit,
         allowLinkMode: merchantProfileDialogCommonProps.allowBusinessCardLinkMode,
+        allowIntroVideo: merchantProfileDialogCommonProps.allowBusinessCardIntroVideo,
         backgroundImageLimitKb: merchantProfileDialogCommonProps.businessCardBackgroundImageLimitKb,
         contactPageImageLimitKb: merchantProfileDialogCommonProps.businessCardContactImageLimitKb,
         exportImageLimitKb: merchantProfileDialogCommonProps.businessCardExportImageLimitKb,
+        introVideoLimitMb: merchantProfileDialogCommonProps.businessCardIntroVideoLimitMb,
         onCardsChange: merchantProfileDialogCommonProps.onCardsChange,
       }
     : null;
