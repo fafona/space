@@ -1629,6 +1629,7 @@ function buildShareCardHtml(input: {
   const contentImageUrl = input.contentImageUrl ? escapeHtml(input.contentImageUrl) : "";
   const introVideoUrl = input.introVideoUrl ? escapeHtml(input.introVideoUrl) : "";
   const introPosterUrl = input.introPosterUrl ? escapeHtml(input.introPosterUrl) : "";
+  const introVideoMuted = input.introVideoMuted !== false;
   const contentImageHeight = input.contentImageHeight ?? 0;
   const targetUrl = escapeHtml(input.targetUrl);
   const shareUrl = escapeHtml(input.shareUrl);
@@ -2031,7 +2032,7 @@ function buildShareCardHtml(input: {
         ? `<div class="intro-overlay" data-intro-overlay data-no-translate="1">
       <div class="intro-card${introPosterUrl ? " has-intro-poster" : ""}">
         ${introPosterUrl ? `<img class="intro-poster" src="${introPosterUrl}" alt="" aria-hidden="true" />` : ""}
-        <video class="intro-video" src="${introVideoUrl}"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay muted playsinline webkit-playsinline x5-playsinline x5-video-player-type="h5-page" x5-video-player-fullscreen="true" x5-video-orientation="portrait" preload="auto"></video>
+        <video class="intro-video" src="${introVideoUrl}"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay${introVideoMuted ? " muted" : ""} playsinline webkit-playsinline x5-playsinline x5-video-player-type="h5-page" x5-video-player-fullscreen="true" x5-video-orientation="portrait" preload="auto"></video>
         <button class="intro-skip" type="button" data-intro-skip>跳过</button>
       </div>
     </div>
@@ -2082,11 +2083,9 @@ function buildShareCardHtml(input: {
         closeIntro();
         return;
       }
-      const forceMutedAutoplay = () => {
+      const introMuted = ${introVideoMuted ? "true" : "false"};
+      const prepareAutoplay = () => {
         video.autoplay = true;
-        video.muted = true;
-        video.defaultMuted = true;
-        video.setAttribute("muted", "");
         video.setAttribute("autoplay", "");
         video.setAttribute("preload", "auto");
         video.setAttribute("playsinline", "");
@@ -2095,6 +2094,15 @@ function buildShareCardHtml(input: {
         video.setAttribute("x5-video-player-type", "h5-page");
         video.setAttribute("x5-video-player-fullscreen", "true");
         video.setAttribute("x5-video-orientation", "portrait");
+        if (introMuted) {
+          video.muted = true;
+          video.defaultMuted = true;
+          video.setAttribute("muted", "");
+        } else {
+          video.muted = false;
+          video.defaultMuted = false;
+          video.removeAttribute("muted");
+        }
       };
       const markPlaying = () => {
         started = true;
@@ -2102,7 +2110,7 @@ function buildShareCardHtml(input: {
       };
       const playIntro = () => {
         if (closed) return Promise.resolve(false);
-        forceMutedAutoplay();
+        prepareAutoplay();
         const result = video.play?.();
         if (result && typeof result.then === "function") {
           return result
@@ -2120,7 +2128,7 @@ function buildShareCardHtml(input: {
         }
         return Promise.resolve(false);
       };
-      forceMutedAutoplay();
+      prepareAutoplay();
       video.addEventListener("playing", markPlaying);
       video.addEventListener("timeupdate", () => {
         if (video.currentTime > 0.05) markPlaying();

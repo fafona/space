@@ -978,21 +978,29 @@ function AutoPlayingVideoPreview({
   className,
   controls = true,
   loop = true,
+  muted = true,
 }: {
   src: string;
   poster?: string;
   className: string;
   controls?: boolean;
   loop?: boolean;
+  muted?: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !normalizeText(src)) return;
-    video.muted = true;
-    video.defaultMuted = true;
-    video.setAttribute("muted", "");
+    if (muted) {
+      video.muted = true;
+      video.defaultMuted = true;
+      video.setAttribute("muted", "");
+    } else {
+      video.muted = false;
+      video.defaultMuted = false;
+      video.removeAttribute("muted");
+    }
     video.setAttribute("playsinline", "");
     video.setAttribute("webkit-playsinline", "");
     try {
@@ -1004,7 +1012,7 @@ function AutoPlayingVideoPreview({
       } catch {}
     }, 60);
     return () => window.clearTimeout(timer);
-  }, [src]);
+  }, [muted, src]);
 
   return (
     <video
@@ -1014,7 +1022,7 @@ function AutoPlayingVideoPreview({
       controls={controls}
       autoPlay
       loop={loop}
-      muted
+      muted={muted}
       poster={normalizeText(poster) || undefined}
       preload="auto"
       playsInline
@@ -1029,6 +1037,7 @@ function ContactCardSurface({
   invoice,
   contactFieldOrder,
   introVideoUrl,
+  introVideoMuted = true,
   imageUrl,
   imageHeight,
 }: {
@@ -1038,6 +1047,7 @@ function ContactCardSurface({
   invoice: MerchantBusinessCardDraft["invoice"];
   contactFieldOrder: MerchantBusinessCardDraft["contactFieldOrder"];
   introVideoUrl?: string;
+  introVideoMuted?: boolean;
   imageUrl?: string;
   imageHeight: number;
 }) {
@@ -1064,6 +1074,7 @@ function ContactCardSurface({
             src={normalizedIntroVideoUrl}
             poster={hasImage ? imageUrl : undefined}
             className="block aspect-video w-full bg-black object-contain"
+            muted={introVideoMuted}
           />
         </div>
       ) : null}
@@ -2559,6 +2570,7 @@ export default function MerchantBusinessCardManager({
                           <AutoPlayingVideoPreview
                             className="mt-3 block aspect-video w-full rounded-xl border bg-black object-contain"
                             src={draft.contactIntroVideoUrl}
+                            muted={draft.contactIntroVideoMuted}
                           />
                         ) : null}
                       </div>
@@ -3110,6 +3122,7 @@ export default function MerchantBusinessCardManager({
                           invoice={draft.invoice}
                           contactFieldOrder={draft.contactFieldOrder}
                           introVideoUrl={normalizeText(draft.contactIntroVideoUrl) || undefined}
+                          introVideoMuted={draft.contactIntroVideoMuted}
                           imageUrl={normalizeText(draft.contactPageImageUrl) || undefined}
                           imageHeight={draft.contactPageImageHeight}
                         />
@@ -3191,6 +3204,7 @@ export default function MerchantBusinessCardManager({
                         invoice={previewAsset?.invoice || draft.invoice}
                         contactFieldOrder={previewContactFieldOrder}
                         introVideoUrl={previewIntroVideoUrl || undefined}
+                        introVideoMuted={previewAsset?.contactIntroVideoMuted ?? draft.contactIntroVideoMuted}
                         imageUrl={previewContactImageUrl}
                         imageHeight={previewContactImageHeight}
                       />
