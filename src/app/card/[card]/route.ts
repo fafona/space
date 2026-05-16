@@ -2074,6 +2074,7 @@ function buildShareCardHtml(input: {
       const video = overlay.querySelector("video");
       let closed = false;
       let started = false;
+      let mutedFallbackActive = false;
       const closeIntro = () => {
         closed = true;
         overlay.classList.add("is-hidden");
@@ -2104,6 +2105,13 @@ function buildShareCardHtml(input: {
           video.removeAttribute("muted");
         }
       };
+      const restoreSound = () => {
+        if (closed || introMuted || !mutedFallbackActive) return;
+        video.muted = false;
+        video.defaultMuted = false;
+        video.removeAttribute("muted");
+        try { void video.play?.().catch(() => undefined); } catch {}
+      };
       const markPlaying = () => {
         started = true;
         overlay.classList.add("is-playing");
@@ -2121,7 +2129,11 @@ function buildShareCardHtml(input: {
             })
             .catch(() => {
               if (!introMuted && !forceMuted) {
-                return playIntro({ forceMuted: true });
+                mutedFallbackActive = true;
+                return playIntro({ forceMuted: true }).then((ok) => {
+                  if (ok) window.setTimeout(restoreSound, 120);
+                  return ok;
+                });
               }
               return false;
             });
@@ -2155,6 +2167,9 @@ function buildShareCardHtml(input: {
       window.addEventListener("pageshow", () => void playIntro(), { once: true });
       document.addEventListener("WeixinJSBridgeReady", () => void playIntro(), false);
       document.addEventListener("YixinJSBridgeReady", () => void playIntro(), false);
+      document.addEventListener("pointerdown", restoreSound, { passive: true });
+      document.addEventListener("touchend", restoreSound, { passive: true });
+      document.addEventListener("keydown", restoreSound);
       document.addEventListener("visibilitychange", () => {
         if (!document.hidden && video.paused) void playIntro();
       });
