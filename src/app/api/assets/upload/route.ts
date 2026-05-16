@@ -101,12 +101,7 @@ function dataUrlToBlob(dataUrl: string, mime: string) {
   return new Blob([new Uint8Array(bytes)], { type: mime });
 }
 
-function runFfmpeg(args: string[], timeoutMs = 45_000) {
-  const binaryPath = typeof ffmpegPath === "string" ? ffmpegPath : "";
-  if (!binaryPath) {
-    return Promise.reject(new Error("ffmpeg_unavailable"));
-  }
-
+function runFfmpegBinary(binaryPath: string, args: string[], timeoutMs: number) {
   return new Promise<void>((resolve, reject) => {
     const child = spawn(binaryPath, args, {
       windowsHide: true,
@@ -135,6 +130,26 @@ function runFfmpeg(args: string[], timeoutMs = 45_000) {
       reject(new Error(stderr || `ffmpeg_exit_${code ?? "unknown"}`));
     });
   });
+}
+
+function isFfmpegBinaryUnavailable(error: unknown) {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return code === "ENOENT" || code === "EACCES";
+}
+
+async function runFfmpeg(args: string[], timeoutMs = 180_000) {
+  const binaryCandidates = [typeof ffmpegPath === "string" ? ffmpegPath : "", "ffmpeg"].filter(Boolean);
+  let lastError: unknown = null;
+  for (const binaryPath of binaryCandidates) {
+    try {
+      await runFfmpegBinary(binaryPath, args, timeoutMs);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!isFfmpegBinaryUnavailable(error)) break;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("ffmpeg_unavailable");
 }
 
 async function transcodeBusinessCardIntroVideo(input: {
@@ -433,12 +448,20 @@ export async function POST(request: Request) {
       });
       uploadMime = "video/mp4";
       uploadExtension = "mp4";
-    } catch {
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "";
+      console.error("[asset-upload] intro video transcode failed", errorMessage);
+      const message =
+        errorMessage === "ffmpeg_timeout"
+          ? "视频转码超时，请换用更短的视频后再上传。"
+          : errorMessage === "ffmpeg_unavailable"
+            ? "服务器视频转码组件不可用，请稍后再试。"
+            : "视频无法转成网页可播放格式，请换用 MP4/H.264 视频后再上传。";
       return NextResponse.json(
         {
           ok: false,
           code: "intro_video_transcode_failed",
-          message: "视频无法转成网页可播放格式，请换用 MP4/H.264 视频后再上传。",
+          message,
         },
         { status: 422 },
       );

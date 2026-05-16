@@ -1758,10 +1758,11 @@ export default function MerchantBusinessCardManager({
       applyDraft((current) => ({ ...current, contactIntroVideoUrl: uploadedUrl }));
       setContactIntroVideoFileName(fileName || "已上传开场视频");
       setContactIntroVideoFileDetail(`大小 ${formatImageResultSize(file.size)}`);
-    } catch {
+    } catch (error) {
       setContactIntroVideoFileName(previousFileName);
       setContactIntroVideoFileDetail(previousFileDetail);
-      setTip("开场视频上传失败，请重试");
+      const message = error instanceof Error ? normalizeText(error.message) : "";
+      setTip(message || "开场视频上传失败，请重试");
     } finally {
       setIsContactIntroVideoProcessing(false);
       event.target.value = "";
