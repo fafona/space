@@ -78,6 +78,16 @@ write_env_value "NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID" "$FAOLLA_WEB_BUILD_ID"
 write_env_value "FAOLLA_WEB_RELEASED_AT" "$FAOLLA_WEB_RELEASED_AT"
 
 npm ci
+
+if [ -f "$APP_DIR/node_modules/ffmpeg-static/ffmpeg" ]; then
+  chmod +x "$APP_DIR/node_modules/ffmpeg-static/ffmpeg" || true
+  write_env_value "FFMPEG_PATH" "$APP_DIR/node_modules/ffmpeg-static/ffmpeg"
+elif command -v ffmpeg >/dev/null 2>&1; then
+  write_env_value "FFMPEG_PATH" "$(command -v ffmpeg)"
+else
+  echo "[deploy] warning: ffmpeg binary not found; intro video uploads will not transcode"
+fi
+
 npm run build
 
 if pm2 describe "$APP_NAME" >/dev/null 2>&1; then

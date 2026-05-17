@@ -171,7 +171,18 @@ function isFfmpegBinaryUnavailable(error: unknown) {
 }
 
 async function runFfmpeg(args: string[], timeoutMs = 180_000) {
-  const binaryCandidates = [typeof ffmpegPath === "string" ? ffmpegPath : "", "ffmpeg"].filter(Boolean);
+  const binaryCandidates = Array.from(
+    new Set(
+      [
+        process.env.FFMPEG_PATH,
+        typeof ffmpegPath === "string" ? ffmpegPath : "",
+        path.join(process.cwd(), "node_modules", "ffmpeg-static", process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg"),
+        "ffmpeg",
+      ]
+        .map((candidate) => candidate?.trim())
+        .filter((candidate): candidate is string => Boolean(candidate)),
+    ),
+  );
   let lastError: unknown = null;
   for (const binaryPath of binaryCandidates) {
     try {
