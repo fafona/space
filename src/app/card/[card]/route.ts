@@ -2152,8 +2152,10 @@ function buildShareCardHtml(input: {
         if (result && typeof result.then === "function") {
           return result
             .then(() => {
-              markPlaying();
-              return true;
+              window.setTimeout(() => {
+                if (!closed && !started && video.currentTime > 0.05) markPlaying();
+              }, 180);
+              return !video.paused || video.currentTime > 0.05;
             })
             .catch(() => {
               if (!introMuted && !forceMuted) {
@@ -2235,9 +2237,9 @@ function buildShareCardHtml(input: {
           if (!closed && !started) playThroughBridge();
         }, delay);
       });
-      [800, 1800].forEach((delay) => {
+      [1600, 3200].forEach((delay) => {
         window.setTimeout(() => {
-          if (!closed && !started && !introMuted) void playThroughBridge({ forceMuted: true, reload: delay > 800 });
+          if (!closed && !started && !introMuted) void playThroughBridge({ forceMuted: true, reload: delay > 1600 });
         }, delay);
       });
       window.setTimeout(() => {
