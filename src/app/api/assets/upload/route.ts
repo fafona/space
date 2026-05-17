@@ -205,10 +205,10 @@ async function transcodeBusinessCardIntroVideo(input: {
   const extension = input.extension.replace(/[^a-z0-9]+/gi, "") || "video";
   const inputPath = path.join(workspace, `source.${extension}`);
   const profiles = [
-    { width: 720, crf: 26, audio: "96k" },
-    { width: 720, crf: 30, audio: "80k" },
-    { width: 540, crf: 32, audio: "64k" },
-    { width: 480, crf: 34, audio: "64k" },
+    { width: 540, crf: 26, audio: "96k" },
+    { width: 540, crf: 30, audio: "80k" },
+    { width: 480, crf: 32, audio: "64k" },
+    { width: 360, crf: 34, audio: "64k" },
   ];
   try {
     const buffer = Buffer.from(await input.blob.arrayBuffer());
@@ -227,7 +227,7 @@ async function transcodeBusinessCardIntroVideo(input: {
           "-map",
           "0:a?",
           "-vf",
-          `scale=${profile.width}:-2:force_original_aspect_ratio=decrease,crop=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1`,
+          `fps=24,scale=${profile.width}:-2:force_original_aspect_ratio=decrease,crop=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1`,
           "-c:v",
           "libx264",
           "-preset",
@@ -239,7 +239,7 @@ async function transcodeBusinessCardIntroVideo(input: {
           "-profile:v",
           "baseline",
           "-level:v",
-          "3.1",
+          "3.0",
           "-tag:v",
           "avc1",
           "-c:a",
