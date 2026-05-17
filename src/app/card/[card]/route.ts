@@ -2043,7 +2043,7 @@ function buildShareCardHtml(input: {
         ? `<div class="intro-overlay" data-intro-overlay data-no-translate="1">
       <div class="intro-card${introPosterUrl ? " has-intro-poster" : ""}">
         ${introPosterUrl ? `<img class="intro-poster" src="${introPosterUrl}" alt="" aria-hidden="true" />` : ""}
-        <video class="intro-video"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay="autoplay" muted="muted" playsinline="playsinline" webkit-playsinline="webkit-playsinline" x5-playsinline="true" x5-video-player-type="h5" x5-video-player-fullscreen="true" x5-video-orientation="portrait" preload="auto" data-intro-muted="${introVideoMuted ? "1" : "0"}" disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"><source src="${introVideoUrl}" type="video/mp4" /></video>
+        <video class="intro-video"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay="autoplay"${introVideoMuted ? ` muted="muted"` : ""} playsinline="playsinline" webkit-playsinline="webkit-playsinline" x5-playsinline="true" x5-video-player-type="h5" x5-video-player-fullscreen="true" x5-video-orientation="portrait" preload="auto" data-intro-muted="${introVideoMuted ? "1" : "0"}" disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"><source src="${introVideoUrl}" type="video/mp4" /></video>
         <button class="intro-skip" type="button" data-intro-skip>跳过</button>
       </div>
     </div>
@@ -2096,8 +2096,6 @@ function buildShareCardHtml(input: {
         return;
       }
       const introMuted = ${introVideoMuted ? "true" : "false"};
-      const userAgent = navigator.userAgent || "";
-      const needsMutedAutoplay = !introMuted && /Android|MicroMessenger|MQQBrowser|UCBrowser|MiuiBrowser|HuaweiBrowser|HeyTapBrowser|Quark|VivoBrowser|SamsungBrowser/i.test(userAgent);
       const prepareAutoplay = (forceMuted = false) => {
         video.autoplay = true;
         video.controls = false;
@@ -2109,7 +2107,7 @@ function buildShareCardHtml(input: {
         video.setAttribute("x5-video-player-type", "h5");
         video.setAttribute("x5-video-player-fullscreen", "true");
         video.setAttribute("x5-video-orientation", "portrait");
-        const shouldMute = introMuted || forceMuted || needsMutedAutoplay;
+        const shouldMute = introMuted || forceMuted;
         mutedFallbackActive = !introMuted && shouldMute;
         if (shouldMute) {
           video.muted = true;
@@ -2145,7 +2143,7 @@ function buildShareCardHtml(input: {
               return true;
             })
             .catch(() => {
-              if (!introMuted && !forceMuted && !needsMutedAutoplay) {
+              if (!introMuted && !forceMuted) {
                 mutedFallbackActive = true;
                 return playIntro({ forceMuted: true }).then((ok) => {
                   return ok;
@@ -2213,6 +2211,11 @@ function buildShareCardHtml(input: {
       [0, 120, 600, 1200, 2200].forEach((delay) => {
         window.setTimeout(() => {
           if (!closed && !started) playThroughBridge();
+        }, delay);
+      });
+      [800, 1800].forEach((delay) => {
+        window.setTimeout(() => {
+          if (!closed && !started && !introMuted) void playIntro({ forceMuted: true });
         }, delay);
       });
       window.setTimeout(() => {
