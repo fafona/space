@@ -4387,6 +4387,8 @@ function buildSupportMerchantCardShareInput(card: MerchantBusinessCardAsset | nu
     detailImageUrl:
       normalizeSupportDetailText(card.contactPagePublicImageUrl) || normalizeSupportDetailText(card.contactPageImageUrl),
     detailImageHeight: card.contactPageImageHeight,
+    introVideoUrl: normalizeSupportDetailText(card.contactIntroVideoUrl),
+    introVideoMuted: card.contactIntroVideoMuted,
     targetUrl,
     contact: buildSupportMerchantCardShareContact(card),
   };
@@ -4548,6 +4550,11 @@ function mergeSupportBusinessCardCandidates(
     : normalizeSupportDetailText(primary.contactPageImageUrl)
       ? primary
       : null;
+  const introVideoSource = normalizeSupportDetailText(secondary.contactIntroVideoUrl)
+    ? secondary
+    : normalizeSupportDetailText(primary.contactIntroVideoUrl)
+      ? primary
+      : null;
 
   return {
     ...merged,
@@ -4565,6 +4572,12 @@ function mergeSupportBusinessCardCandidates(
       ? {
           contactPageImageUrl: contactPageImageSource.contactPageImageUrl,
           contactPageImageHeight: contactPageImageSource.contactPageImageHeight,
+        }
+      : {}),
+    ...(introVideoSource
+      ? {
+          contactIntroVideoUrl: introVideoSource.contactIntroVideoUrl,
+          contactIntroVideoMuted: introVideoSource.contactIntroVideoMuted,
         }
       : {}),
   };

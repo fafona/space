@@ -63,6 +63,8 @@ function buildChatCardLink(card: MerchantBusinessCardAsset | null) {
     imageUrl: normalizeText(card.shareImageUrl) || normalizeText(card.imageUrl),
     detailImageUrl: normalizeText(card.contactPagePublicImageUrl) || normalizeText(card.contactPageImageUrl),
     detailImageHeight: card.contactPageImageHeight,
+    introVideoUrl: normalizeText(card.contactIntroVideoUrl),
+    introVideoMuted: card.contactIntroVideoMuted,
     targetUrl,
     contact: buildCardShareContact(card),
   });

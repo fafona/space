@@ -1406,6 +1406,8 @@ function buildConversationMerchantCardShareInput(card: MerchantBusinessCardAsset
       normalizeConversationDetailText(card.contactPagePublicImageUrl) ||
       normalizeConversationDetailText(card.contactPageImageUrl),
     detailImageHeight: card.contactPageImageHeight,
+    introVideoUrl: normalizeConversationDetailText(card.contactIntroVideoUrl),
+    introVideoMuted: card.contactIntroVideoMuted,
     targetUrl,
     contact: buildConversationMerchantCardShareContact(card),
   };

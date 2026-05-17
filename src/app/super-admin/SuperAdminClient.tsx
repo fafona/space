@@ -408,6 +408,8 @@ function buildSupportMerchantCardLink(card: MerchantBusinessCardAsset | null) {
     detailImageUrl:
       normalizeSupportDetailText(card.contactPagePublicImageUrl) || normalizeSupportDetailText(card.contactPageImageUrl),
     detailImageHeight: card.contactPageImageHeight,
+    introVideoUrl: normalizeSupportDetailText(card.contactIntroVideoUrl),
+    introVideoMuted: card.contactIntroVideoMuted,
     targetUrl,
     contact: {
       displayName: normalizeSupportDetailText(card.contacts.contactName) || normalizeSupportDetailText(card.name),

@@ -116,6 +116,36 @@ function readGoogleOAuthCodeVerifierFromBrowser() {
   }
   return "";
 }
+
+function isWeChatEmbeddedBrowser() {
+  if (typeof navigator === "undefined") return false;
+  return /MicroMessenger/i.test(navigator.userAgent || "");
+}
+
+async function writeTextToClipboard(text: string) {
+  if (!text) return false;
+  try {
+    await navigator.clipboard?.writeText(text);
+    return true;
+  } catch {
+    // Fall back to a temporary textarea for older in-app browsers.
+  }
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "true");
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    textarea.style.top = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand("copy");
+    document.body.removeChild(textarea);
+    return copied;
+  } catch {
+    return false;
+  }
+}
 type LoginEntryAccountType = PlatformAccountType | null;
 
 type SupabaseAuthSettings = {
@@ -369,6 +399,7 @@ function LoginPageInner() {
   const accountInputRef = useRef<HTMLInputElement>(null);
   const passwordInputRef = useRef<HTMLInputElement>(null);
   const isAndroid = useMemo(() => isAndroidBrowser(), []);
+  const isWeChatBrowser = useMemo(() => isWeChatEmbeddedBrowser(), []);
   const [androidKeyboardInset, setAndroidKeyboardInset] = useState(0);
   const [msg, setMsg] = useState<string>("");
   const [gatewayReachable, setGatewayReachable] = useState<boolean | null>(null);
@@ -808,6 +839,18 @@ function LoginPageInner() {
     authView === "signup_personal" ? "personal" : authView === "signup_merchant" ? "merchant" : null;
   const activeEntryAccountType = activeSignupAccountType ?? entryAccountType;
   const shouldShowEntrySelection = !isGoogleOAuthReturn && !entryAccountType;
+  const googleWeChatNoticeTitle = normalizedLocale.startsWith("zh")
+    ? "微信内无法直接使用 Google 登录"
+    : "Google sign-in is blocked inside WeChat";
+  const googleWeChatBlockedMessage = normalizedLocale.startsWith("zh")
+    ? "Google 不允许在微信内置浏览器中登录。请点右上角“...”，选择“在浏览器打开”，或复制登录链接到 Safari/Chrome 后登录。"
+    : "Google blocks sign-in inside the WeChat in-app browser. Open this page in Safari/Chrome, or copy the login link to an external browser.";
+  const googleWeChatCopySuccessMessage = normalizedLocale.startsWith("zh")
+    ? "登录链接已复制。请粘贴到 Safari/Chrome 打开后再点 Google 登录。"
+    : "Login link copied. Paste it into Safari/Chrome, then use Google sign-in there.";
+  const googleWeChatCopyFailedMessage = normalizedLocale.startsWith("zh")
+    ? "复制失败。请点右上角“...”，选择“在浏览器打开”。"
+    : "Copy failed. Use the top-right menu and open this page in an external browser.";
   const entryTitle = normalizedLocale.startsWith("zh") ? "请选择登录入口" : "Choose Sign-In Entry";
   const personalEntryDescription = normalizedLocale.startsWith("zh")
     ? "用于消费、收藏商户、会话、小工具和游戏大厅。"
@@ -841,6 +884,20 @@ function LoginPageInner() {
     },
     [buildAutoSwitchedEntryMessage],
   );
+  async function copyGoogleExternalBrowserLoginLink() {
+    const accountType = activeEntryAccountType;
+    if (!accountType) {
+      setMsg(normalizedLocale.startsWith("zh") ? "请先选择个人入口或商户入口。" : "Choose personal or merchant entry first.");
+      return;
+    }
+    if (typeof window === "undefined") return;
+    const externalLoginUrl = new URL("/login", window.location.origin);
+    externalLoginUrl.searchParams.set("accountType", accountType);
+    if (requestedRedirectPath) externalLoginUrl.searchParams.set("redirect", requestedRedirectPath);
+    if (loginFromUrl) externalLoginUrl.searchParams.set("loginFrom", loginFromUrl);
+    const copied = await writeTextToClipboard(externalLoginUrl.toString());
+    setMsg(copied ? googleWeChatCopySuccessMessage : googleWeChatCopyFailedMessage);
+  }
   const signUpSubmitLabel = useMemo(() => {
     if (normalizedLocale.startsWith("zh-tw")) return "註冊";
     if (normalizedLocale.startsWith("ja")) return "登録";
@@ -1723,6 +1780,11 @@ function LoginPageInner() {
       setMsg("请先选择个人入口或商户入口。");
       return;
     }
+    if (isWeChatBrowser) {
+      setMsg(googleWeChatBlockedMessage);
+      setPendingAction(null);
+      return;
+    }
     writeStoredLoginEntryAccountType(accountType);
     setMsg("");
     setNeedConfirmEmail(false);
@@ -2283,15 +2345,28 @@ function LoginPageInner() {
                           : t("login.signIn")}
                   </button>
 
+                  {isWeChatBrowser ? (
+                    <div className="space-y-3 rounded-[20px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900 md:rounded-[22px]">
+                      <div className="font-semibold text-amber-950">{googleWeChatNoticeTitle}</div>
+                      <div>{googleWeChatBlockedMessage}</div>
+                    </div>
+                  ) : null}
+
                   <button
                     className="flex w-full items-center justify-center gap-3 rounded-[20px] border border-slate-200 bg-white px-4 py-3.5 text-[15px] font-semibold text-slate-900 shadow-[0_14px_30px_rgba(15,23,42,0.08)] transition hover:bg-slate-50 disabled:opacity-50 md:rounded-[22px] md:py-4"
-                    onClick={() => void signInWithGoogle()}
+                    onClick={() => (isWeChatBrowser ? void copyGoogleExternalBrowserLoginLink() : void signInWithGoogle())}
                     disabled={pendingAction !== null}
                   >
                     <span className="inline-flex h-6 w-6 items-center justify-center">
                       <GoogleLogoIcon />
                     </span>
-                    {pendingAction === "google" ? "正在连接 Google..." : "使用 Google 登录"}
+                    {isWeChatBrowser
+                      ? normalizedLocale.startsWith("zh")
+                        ? "复制 Google 登录链接"
+                        : "Copy Google login link"
+                      : pendingAction === "google"
+                        ? "正在连接 Google..."
+                        : "使用 Google 登录"}
                   </button>
 
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-2">

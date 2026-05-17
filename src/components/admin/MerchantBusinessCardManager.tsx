@@ -243,6 +243,8 @@ function resolveCardShortLink(card: MerchantBusinessCardAsset | null | undefined
     imageUrl: normalizeText(card.shareImageUrl) || normalizeText(card.imageUrl),
     detailImageUrl: normalizeText(card.contactPagePublicImageUrl) || normalizeText(card.contactPageImageUrl),
     detailImageHeight: card.contactPageImageHeight,
+    introVideoUrl: normalizeText(card.contactIntroVideoUrl),
+    introVideoMuted: card.contactIntroVideoMuted,
     targetUrl: normalizeText(card.targetUrl),
   });
 }
@@ -1449,6 +1451,8 @@ export default function MerchantBusinessCardManager({
       shareKey: activeLinkShareKey,
       targetUrl: websiteUrl,
       name: normalizeText(draft.name),
+      introVideoUrl: canUseIntroVideo ? normalizeText(draft.contactIntroVideoUrl) : "",
+      introVideoMuted: draft.contactIntroVideoMuted,
       contact: buildShareContactPayload({
         name: draft.name,
         title: draft.title,
@@ -1459,7 +1463,20 @@ export default function MerchantBusinessCardManager({
         targetUrl: websiteUrl,
       }),
     });
-  }, [activeLinkShareKey, draft.contactFieldOrder, draft.contactOnlyFields, draft.contacts, draft.invoice, draft.mode, draft.name, draft.title, websiteUrl]);
+  }, [
+    activeLinkShareKey,
+    canUseIntroVideo,
+    draft.contactFieldOrder,
+    draft.contactIntroVideoMuted,
+    draft.contactIntroVideoUrl,
+    draft.contactOnlyFields,
+    draft.contacts,
+    draft.invoice,
+    draft.mode,
+    draft.name,
+    draft.title,
+    websiteUrl,
+  ]);
   const qrTargetUrl = draft.mode === "link" ? draftLinkUrl || websiteUrl : websiteUrl;
 
   useEffect(() => {
@@ -1680,6 +1697,10 @@ export default function MerchantBusinessCardManager({
   };
 
   const handleSaveDraft = async () => {
+    if (isContactIntroVideoProcessing) {
+      setTip("开场视频还在上传转换中，请完成后再保存");
+      return;
+    }
     setIsDraftSaving(true);
     try {
       writeSavedBusinessCardDraft(draftStorageKey, draft);
@@ -1729,6 +1750,10 @@ export default function MerchantBusinessCardManager({
 
   const handleGenerate = async () => {
     if (!websiteUrl || !qrReadyForCurrentDraft) return;
+    if (isContactIntroVideoProcessing) {
+      setTip("开场视频还在上传转换中，请完成后再保存");
+      return;
+    }
     setIsGenerating(true);
     try {
       const asset = await saveCurrentDraftToFolder();
@@ -2316,7 +2341,7 @@ export default function MerchantBusinessCardManager({
                   type="button"
                   className="min-w-[88px] rounded border bg-white px-4 py-2 text-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                   onClick={() => void handleSaveDraft()}
-                  disabled={isGenerating || isDraftSaving}
+                  disabled={isGenerating || isDraftSaving || isContactIntroVideoProcessing}
                 >
                   {isDraftSaving ? "保存中..." : "保存"}
                 </button>
@@ -2324,7 +2349,7 @@ export default function MerchantBusinessCardManager({
                   type="button"
                   className="min-w-[118px] rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
                   onClick={() => void handleGenerate()}
-                  disabled={!websiteUrl || !qrReadyForCurrentDraft || isGenerating || isDraftSaving}
+                  disabled={!websiteUrl || !qrReadyForCurrentDraft || isGenerating || isDraftSaving || isContactIntroVideoProcessing}
                 >
                   {isGenerating ? (editingCardId ? "保存中..." : "生成中...") : (editingCardId ? "保存修改" : "生成")}
                 </button>
@@ -3273,7 +3298,7 @@ export default function MerchantBusinessCardManager({
                     type="button"
                     className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
                     onClick={() => void handleSaveDraft()}
-                    disabled={isGenerating || isDraftSaving}
+                    disabled={isGenerating || isDraftSaving || isContactIntroVideoProcessing}
                   >
                     {isDraftSaving ? "保存中..." : "保存"}
                   </button>
@@ -3281,7 +3306,7 @@ export default function MerchantBusinessCardManager({
                     type="button"
                     className="rounded bg-black px-3 py-2 text-sm text-white disabled:opacity-50"
                     onClick={() => void handleGenerate()}
-                    disabled={!websiteUrl || !qrReadyForCurrentDraft || isGenerating || isDraftSaving}
+                    disabled={!websiteUrl || !qrReadyForCurrentDraft || isGenerating || isDraftSaving || isContactIntroVideoProcessing}
                   >
                     {isGenerating ? (editingCardId ? "保存中..." : "生成中...") : (editingCardId ? "保存修改" : "生成")}
                   </button>
