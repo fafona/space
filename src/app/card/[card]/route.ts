@@ -2043,7 +2043,7 @@ function buildShareCardHtml(input: {
         ? `<div class="intro-overlay" data-intro-overlay data-no-translate="1">
       <div class="intro-card${introPosterUrl ? " has-intro-poster" : ""}">
         ${introPosterUrl ? `<img class="intro-poster" src="${introPosterUrl}" alt="" aria-hidden="true" />` : ""}
-        <video class="intro-video" src="${introVideoUrl}"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay="autoplay"${introVideoMuted ? ` muted="muted"` : ""} playsinline="playsinline" webkit-playsinline="webkit-playsinline" x5-playsinline="true" x5-video-player-type="h5-page" x5-video-player-fullscreen="true" x5-video-orientation="portrait" preload="auto" data-intro-muted="${introVideoMuted ? "1" : "0"}" disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"><source src="${introVideoUrl}" type="video/mp4" /></video>
+        <video class="intro-video" src="${introVideoUrl}"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay="autoplay"${introVideoMuted ? ` muted="muted"` : ""} playsinline="playsinline" webkit-playsinline="webkit-playsinline" x5-playsinline="true" x5-video-player-type="h5-page" x5-video-player-fullscreen="true" x5-video-orientation="portrait" preload="auto" data-intro-muted="${introVideoMuted ? "1" : "0"}" data-intro-src="${introVideoUrl}" disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"><source src="${introVideoUrl}" type="video/mp4" /></video>
         <button class="intro-skip" type="button" data-intro-skip>跳过</button>
       </div>
     </div>
@@ -2096,6 +2096,17 @@ function buildShareCardHtml(input: {
         return;
       }
       const introMuted = ${introVideoMuted ? "true" : "false"};
+      const introSrc = video.getAttribute("data-intro-src") || video.currentSrc || video.src || "";
+      const reloadIntroSource = () => {
+        if (!introSrc) return;
+        try {
+          video.pause?.();
+          video.setAttribute("src", introSrc);
+          const sources = Array.from(video.querySelectorAll("source"));
+          sources.forEach((source) => source.setAttribute("src", introSrc));
+          video.load?.();
+        } catch {}
+      };
       const prepareAutoplay = (forceMuted = false) => {
         video.autoplay = true;
         video.controls = false;
@@ -2134,7 +2145,9 @@ function buildShareCardHtml(input: {
       const playIntro = (options = {}) => {
         if (closed) return Promise.resolve(false);
         const forceMuted = Boolean(options.forceMuted);
+        const forceReload = Boolean(options.reload);
         prepareAutoplay(forceMuted);
+        if (forceReload) reloadIntroSource();
         const result = video.play?.();
         if (result && typeof result.then === "function") {
           return result
@@ -2158,15 +2171,24 @@ function buildShareCardHtml(input: {
         }
         return Promise.resolve(false);
       };
-      const playThroughBridge = () => {
+      const playThroughBridge = (options = {}) => {
         const bridge = window.WeixinJSBridge || window.YixinJSBridge;
+        const forceMuted = Boolean(options.forceMuted);
         if (bridge && typeof bridge.invoke === "function") {
           try {
-            bridge.invoke("getNetworkType", {}, () => void playIntro());
+            bridge.invoke("getNetworkType", {}, () => {
+              void playIntro(options).then((ok) => {
+                if (!ok && !introMuted && !forceMuted && !closed && !started) {
+                  window.setTimeout(() => {
+                    if (!closed && !started) void playThroughBridge({ forceMuted: true, reload: true });
+                  }, 80);
+                }
+              });
+            });
             return;
           } catch {}
         }
-        void playIntro();
+        void playIntro(options);
       };
       prepareAutoplay();
       try { video.load?.(); } catch {}
@@ -2215,7 +2237,7 @@ function buildShareCardHtml(input: {
       });
       [800, 1800].forEach((delay) => {
         window.setTimeout(() => {
-          if (!closed && !started && !introMuted) void playIntro({ forceMuted: true });
+          if (!closed && !started && !introMuted) void playThroughBridge({ forceMuted: true, reload: delay > 800 });
         }, delay);
       });
       window.setTimeout(() => {
