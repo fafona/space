@@ -1764,6 +1764,11 @@ function buildShareCardHtml(input: {
         border-radius: 0;
         background: #000;
         object-fit: cover;
+        opacity: 0;
+        transition: opacity .12s ease;
+      }
+      .intro-overlay.is-playing .intro-video {
+        opacity: 1;
       }
       .intro-overlay.is-playing .intro-poster {
         opacity: 0;
@@ -2038,7 +2043,7 @@ function buildShareCardHtml(input: {
         ? `<div class="intro-overlay" data-intro-overlay data-no-translate="1">
       <div class="intro-card${introPosterUrl ? " has-intro-poster" : ""}">
         ${introPosterUrl ? `<img class="intro-poster" src="${introPosterUrl}" alt="" aria-hidden="true" />` : ""}
-        <video class="intro-video" src="${introVideoUrl}"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay${introVideoMuted ? " muted" : ""} playsinline webkit-playsinline x5-playsinline x5-video-player-type="h5-page" x5-video-player-fullscreen="true" x5-video-orientation="portrait" preload="auto"></video>
+        <video class="intro-video" src="${introVideoUrl}"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay muted playsinline webkit-playsinline x5-playsinline x5-video-player-type="h5-page" x5-video-player-fullscreen="true" x5-video-orientation="portrait" preload="auto" data-intro-muted="${introVideoMuted ? "1" : "0"}" disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"></video>
         <button class="intro-skip" type="button" data-intro-skip>跳过</button>
       </div>
     </div>
@@ -2091,6 +2096,8 @@ function buildShareCardHtml(input: {
         return;
       }
       const introMuted = ${introVideoMuted ? "true" : "false"};
+      const userAgent = navigator.userAgent || "";
+      const needsMutedAutoplay = !introMuted && /Android|MicroMessenger|MQQBrowser|UCBrowser|MiuiBrowser|HuaweiBrowser|HeyTapBrowser|Quark|VivoBrowser|SamsungBrowser/i.test(userAgent);
       const prepareAutoplay = (forceMuted = false) => {
         video.autoplay = true;
         video.setAttribute("autoplay", "");
@@ -2101,7 +2108,9 @@ function buildShareCardHtml(input: {
         video.setAttribute("x5-video-player-type", "h5-page");
         video.setAttribute("x5-video-player-fullscreen", "true");
         video.setAttribute("x5-video-orientation", "portrait");
-        if (introMuted || forceMuted) {
+        const shouldMute = introMuted || forceMuted || needsMutedAutoplay;
+        mutedFallbackActive = !introMuted && shouldMute;
+        if (shouldMute) {
           video.muted = true;
           video.defaultMuted = true;
           video.setAttribute("muted", "");
@@ -2111,7 +2120,8 @@ function buildShareCardHtml(input: {
           video.removeAttribute("muted");
         }
       };
-      const restoreSound = () => {
+      const restoreSound = (event) => {
+        if (event && event.isTrusted === false) return;
         if (closed || introMuted || !mutedFallbackActive) return;
         video.muted = false;
         video.defaultMuted = false;
@@ -2134,10 +2144,9 @@ function buildShareCardHtml(input: {
               return true;
             })
             .catch(() => {
-              if (!introMuted && !forceMuted) {
+              if (!introMuted && !forceMuted && !needsMutedAutoplay) {
                 mutedFallbackActive = true;
                 return playIntro({ forceMuted: true }).then((ok) => {
-                  if (ok) window.setTimeout(restoreSound, 120);
                   return ok;
                 });
               }
@@ -2150,7 +2159,18 @@ function buildShareCardHtml(input: {
         }
         return Promise.resolve(false);
       };
+      const playThroughBridge = () => {
+        const bridge = window.WeixinJSBridge || window.YixinJSBridge;
+        if (bridge && typeof bridge.invoke === "function") {
+          try {
+            bridge.invoke("getNetworkType", {}, () => void playIntro());
+            return;
+          } catch {}
+        }
+        void playIntro();
+      };
       prepareAutoplay();
+      try { video.load?.(); } catch {}
       video.addEventListener("playing", markPlaying);
       video.addEventListener("timeupdate", () => {
         if (video.currentTime > 0.05) markPlaying();
@@ -2169,19 +2189,29 @@ function buildShareCardHtml(input: {
           void playIntro();
         }
       }, { once: true });
-      video.addEventListener("canplay", () => void playIntro(), { once: true });
-      window.addEventListener("pageshow", () => void playIntro(), { once: true });
-      document.addEventListener("WeixinJSBridgeReady", () => void playIntro(), false);
-      document.addEventListener("YixinJSBridgeReady", () => void playIntro(), false);
-      document.addEventListener("pointerdown", restoreSound, { passive: true });
+      video.addEventListener("canplay", () => playThroughBridge(), { once: true });
+      window.addEventListener("pageshow", () => playThroughBridge(), { once: true });
+      document.addEventListener("WeixinJSBridgeReady", playThroughBridge, false);
+      document.addEventListener("YixinJSBridgeReady", playThroughBridge, false);
+      document.addEventListener("pointerdown", (event) => {
+        restoreSound(event);
+        if (!closed && !started) void playIntro();
+      }, { passive: true });
+      document.addEventListener("touchstart", (event) => {
+        restoreSound(event);
+        if (!closed && !started) void playIntro();
+      }, { passive: true });
       document.addEventListener("touchend", restoreSound, { passive: true });
-      document.addEventListener("keydown", restoreSound);
+      document.addEventListener("keydown", (event) => {
+        restoreSound(event);
+        if (!closed && !started) void playIntro();
+      });
       document.addEventListener("visibilitychange", () => {
         if (!document.hidden && video.paused) void playIntro();
       });
       [0, 120, 600, 1200, 2200].forEach((delay) => {
         window.setTimeout(() => {
-          if (!closed && !started) void playIntro();
+          if (!closed && !started) playThroughBridge();
         }, delay);
       });
       window.setTimeout(() => {

@@ -224,7 +224,11 @@ async function transcodeBusinessCardIntroVideo(input: {
         "-pix_fmt",
         "yuv420p",
         "-profile:v",
-        "main",
+        "baseline",
+        "-level:v",
+        "3.1",
+        "-tag:v",
+        "avc1",
         "-c:a",
         "aac",
         "-b:a",
@@ -562,26 +566,20 @@ export async function POST(request: Request) {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "";
       console.error("[asset-upload] intro video transcode failed", errorMessage);
-      if (meta.mime === "video/mp4") {
-        uploadBlob = originalBlob;
-        uploadMime = "video/mp4";
-        uploadExtension = "mp4";
-      } else {
-        const message =
-          errorMessage === "ffmpeg_timeout"
-            ? "视频转码超时，请换用更短的视频后再上传。"
-            : errorMessage === "ffmpeg_unavailable" || isFfmpegBinaryUnavailable(error)
-              ? "服务器视频转码组件不可用，请稍后再试。"
-              : "视频无法转成网页可播放格式，请换用 MP4/H.264 视频后再上传。";
-        return NextResponse.json(
-          {
-            ok: false,
-            code: "intro_video_transcode_failed",
-            message,
-          },
-          { status: 422 },
-        );
-      }
+      const message =
+        errorMessage === "ffmpeg_timeout"
+          ? "视频转码超时，请换用更短的视频后再上传。"
+          : errorMessage === "ffmpeg_unavailable" || isFfmpegBinaryUnavailable(error)
+            ? "服务器视频转码组件不可用，请稍后再试。"
+            : "视频无法转成安卓和网页稳定播放的 MP4/H.264 格式，请换用更短的视频后再上传。";
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "intro_video_transcode_failed",
+          message,
+        },
+        { status: 422 },
+      );
     }
 
     if (uploadBlob.size > limitBytes) {
