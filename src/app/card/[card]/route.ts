@@ -1747,6 +1747,7 @@ function buildShareCardHtml(input: {
         height: 100%;
         object-fit: cover;
         background: #000;
+        pointer-events: none;
         transition: opacity .18s ease;
       }
       .intro-card.has-intro-poster .intro-poster {
@@ -1764,8 +1765,7 @@ function buildShareCardHtml(input: {
         border-radius: 0;
         background: #000;
         object-fit: cover;
-        opacity: 0;
-        transition: opacity .12s ease;
+        opacity: 1;
       }
       .intro-overlay.is-playing .intro-video {
         opacity: 1;
@@ -2043,7 +2043,7 @@ function buildShareCardHtml(input: {
         ? `<div class="intro-overlay" data-intro-overlay data-no-translate="1">
       <div class="intro-card${introPosterUrl ? " has-intro-poster" : ""}">
         ${introPosterUrl ? `<img class="intro-poster" src="${introPosterUrl}" alt="" aria-hidden="true" />` : ""}
-        <video class="intro-video" src="${introVideoUrl}"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay muted playsinline webkit-playsinline x5-playsinline x5-video-player-type="h5-page" x5-video-player-fullscreen="true" x5-video-orientation="portrait" preload="auto" data-intro-muted="${introVideoMuted ? "1" : "0"}" disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"></video>
+        <video class="intro-video"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay="autoplay" muted="muted" playsinline="playsinline" webkit-playsinline="webkit-playsinline" x5-playsinline="true" x5-video-player-type="h5" x5-video-player-fullscreen="true" x5-video-orientation="portrait" preload="auto" data-intro-muted="${introVideoMuted ? "1" : "0"}" disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"><source src="${introVideoUrl}" type="video/mp4" /></video>
         <button class="intro-skip" type="button" data-intro-skip>跳过</button>
       </div>
     </div>
@@ -2100,12 +2100,13 @@ function buildShareCardHtml(input: {
       const needsMutedAutoplay = !introMuted && /Android|MicroMessenger|MQQBrowser|UCBrowser|MiuiBrowser|HuaweiBrowser|HeyTapBrowser|Quark|VivoBrowser|SamsungBrowser/i.test(userAgent);
       const prepareAutoplay = (forceMuted = false) => {
         video.autoplay = true;
+        video.controls = false;
         video.setAttribute("autoplay", "");
         video.setAttribute("preload", "auto");
-        video.setAttribute("playsinline", "");
-        video.setAttribute("webkit-playsinline", "");
-        video.setAttribute("x5-playsinline", "");
-        video.setAttribute("x5-video-player-type", "h5-page");
+        video.setAttribute("playsinline", "playsinline");
+        video.setAttribute("webkit-playsinline", "webkit-playsinline");
+        video.setAttribute("x5-playsinline", "true");
+        video.setAttribute("x5-video-player-type", "h5");
         video.setAttribute("x5-video-player-fullscreen", "true");
         video.setAttribute("x5-video-orientation", "portrait");
         const shouldMute = introMuted || forceMuted || needsMutedAutoplay;
