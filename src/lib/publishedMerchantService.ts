@@ -186,6 +186,10 @@ async function loadCurrentSnapshotSites() {
   return payload?.snapshot ?? [];
 }
 
+export async function loadCurrentMerchantSnapshotSites() {
+  return loadCurrentSnapshotSites();
+}
+
 function buildPublishedMerchantServiceState(site: MerchantListPublishedSite): PublishedMerchantServiceState {
   const state = getMerchantServiceState(site.status, site.serviceExpiresAt);
   return {
