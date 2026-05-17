@@ -214,47 +214,54 @@ async function transcodeBusinessCardIntroVideo(input: {
     const buffer = Buffer.from(await input.blob.arrayBuffer());
     await writeFile(inputPath, buffer);
     let smallestOutput: Buffer | null = null;
+    let lastTranscodeError: unknown = null;
     for (const [index, profile] of profiles.entries()) {
       const outputPath = path.join(workspace, `intro-${index}.mp4`);
-      await runFfmpeg([
-        "-y",
-        "-i",
-        inputPath,
-        "-map",
-        "0:v:0",
-        "-map",
-        "0:a?",
-        "-vf",
-        `scale=${profile.width}:-2:force_original_aspect_ratio=decrease`,
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-crf",
-        `${profile.crf}`,
-        "-pix_fmt",
-        "yuv420p",
-        "-profile:v",
-        "baseline",
-        "-level:v",
-        "3.1",
-        "-tag:v",
-        "avc1",
-        "-c:a",
-        "aac",
-        "-b:a",
-        profile.audio,
-        "-ac",
-        "2",
-        "-ar",
-        "44100",
-        "-movflags",
-        "+faststart",
-        outputPath,
-      ]);
+      try {
+        await runFfmpeg([
+          "-y",
+          "-i",
+          inputPath,
+          "-map",
+          "0:v:0",
+          "-map",
+          "0:a?",
+          "-vf",
+          `scale=${profile.width}:-2:force_original_aspect_ratio=decrease,crop=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1`,
+          "-c:v",
+          "libx264",
+          "-preset",
+          "veryfast",
+          "-crf",
+          `${profile.crf}`,
+          "-pix_fmt",
+          "yuv420p",
+          "-profile:v",
+          "baseline",
+          "-level:v",
+          "3.1",
+          "-tag:v",
+          "avc1",
+          "-c:a",
+          "aac",
+          "-b:a",
+          profile.audio,
+          "-ac",
+          "2",
+          "-ar",
+          "44100",
+          "-movflags",
+          "+faststart",
+          outputPath,
+        ]);
+      } catch (error) {
+        lastTranscodeError = error;
+        continue;
+      }
       const outputBuffer = await readFile(outputPath);
       if (outputBuffer.byteLength <= 0) {
-        throw new Error("empty_transcoded_video");
+        lastTranscodeError = new Error("empty_transcoded_video");
+        continue;
       }
       if (!smallestOutput || outputBuffer.byteLength < smallestOutput.byteLength) {
         smallestOutput = outputBuffer;
@@ -266,7 +273,7 @@ async function transcodeBusinessCardIntroVideo(input: {
     if (smallestOutput) {
       return new Blob([new Uint8Array(smallestOutput)], { type: "video/mp4" });
     }
-    throw new Error("empty_transcoded_video");
+    throw lastTranscodeError instanceof Error ? lastTranscodeError : new Error("empty_transcoded_video");
   } finally {
     await rm(workspace, { recursive: true, force: true }).catch(() => undefined);
   }
