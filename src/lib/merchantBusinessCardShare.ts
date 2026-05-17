@@ -30,6 +30,7 @@ export type MerchantBusinessCardSharePayload = {
   detailImageUrl?: string;
   detailImageHeight?: number;
   introVideoUrl?: string;
+  introPosterUrl?: string;
   introVideoMuted?: boolean;
   updatedAt?: string;
   targetUrl: string;
@@ -340,6 +341,7 @@ function normalizeSharePayload(
     detailImageUrl?: string | null;
     detailImageHeight?: number | null;
     introVideoUrl?: string | null;
+    introPosterUrl?: string | null;
     introVideoMuted?: boolean | string | null;
     updatedAt?: string | null;
     targetUrl?: string | null;
@@ -354,6 +356,10 @@ function normalizeSharePayload(
   const imageUrl = normalizeMerchantBusinessCardShareImageUrl(input.imageUrl, preferredOrigin);
   const detailImageUrl = normalizeMerchantBusinessCardShareImageUrl(input.detailImageUrl, preferredOrigin);
   const introVideoUrl = normalizeMerchantBusinessCardShareVideoUrl(input.introVideoUrl, preferredOrigin);
+  const introPosterUrl =
+    introVideoUrl && input.introPosterUrl
+      ? normalizeMerchantBusinessCardShareImageUrl(input.introPosterUrl, preferredOrigin)
+      : "";
   const introVideoMuted = introVideoUrl ? normalizeOptionalBoolean(input.introVideoMuted, true) : undefined;
   const detailImageHeight = clampImageDimension(input.detailImageHeight);
   if (!targetUrl) return null;
@@ -365,7 +371,7 @@ function normalizeSharePayload(
     ...(imageUrl ? { imageUrl } : {}),
     ...(detailImageUrl ? { detailImageUrl } : {}),
     ...(detailImageUrl && detailImageHeight ? { detailImageHeight } : {}),
-    ...(introVideoUrl ? { introVideoUrl, introVideoMuted } : {}),
+    ...(introVideoUrl ? { introVideoUrl, ...(introPosterUrl ? { introPosterUrl } : {}), introVideoMuted } : {}),
     ...(updatedAt ? { updatedAt } : {}),
     targetUrl,
     ...(normalizeOwnerMerchantId(input.ownerMerchantId) ? { ownerMerchantId: normalizeOwnerMerchantId(input.ownerMerchantId) } : {}),
@@ -384,6 +390,7 @@ export function normalizeMerchantBusinessCardSharePayload(
     detailImageUrl?: string | null;
     detailImageHeight?: number | null;
     introVideoUrl?: string | null;
+    introPosterUrl?: string | null;
     introVideoMuted?: boolean | string | null;
     targetUrl?: string | null;
     ownerMerchantId?: string | null;
@@ -546,6 +553,7 @@ export function buildMerchantBusinessCardShareLegacyFingerprint(
         detailImageUrl?: string | null;
         detailImageHeight?: number | null;
         introVideoUrl?: string | null;
+        introPosterUrl?: string | null;
         introVideoMuted?: boolean | string | null;
         targetUrl?: string | null;
         imageWidth?: number | null;
@@ -600,6 +608,7 @@ export function buildMerchantBusinessCardShareLegacyFingerprint(
     contact.websiteUrl ?? "",
     contact.note ?? "",
     ...(payload.introVideoUrl ? [`introVideo:${payload.introVideoUrl}`] : []),
+    ...(payload.introVideoUrl && payload.introPosterUrl ? [`introPoster:${payload.introPosterUrl}`] : []),
     ...(payload.introVideoUrl && payload.introVideoMuted === false ? ["introMuted:false"] : []),
   ].join("\u001f");
   return `legacy-${buildStableHexHash(fingerprintSource)}`;
@@ -619,6 +628,7 @@ export function buildMerchantBusinessCardShareRevocationByLegacyPayloadObjectPat
         detailImageUrl?: string | null;
         detailImageHeight?: number | null;
         introVideoUrl?: string | null;
+        introPosterUrl?: string | null;
         introVideoMuted?: boolean | string | null;
         targetUrl?: string | null;
         imageWidth?: number | null;
@@ -671,6 +681,7 @@ export function buildMerchantBusinessCardShareUrl(input: {
   detailImageUrl?: string | null;
   detailImageHeight?: number | null;
   introVideoUrl?: string | null;
+  introPosterUrl?: string | null;
   introVideoMuted?: boolean | string | null;
   targetUrl: string;
   contact?: MerchantBusinessCardShareContact | null;
@@ -693,6 +704,7 @@ export function buildMerchantBusinessCardShareUrl(input: {
       detailImageUrl: input.detailImageUrl,
       detailImageHeight: input.detailImageHeight,
       introVideoUrl: input.introVideoUrl,
+      introPosterUrl: input.introPosterUrl,
       introVideoMuted: input.introVideoMuted,
       targetUrl: input.targetUrl,
       contact: input.contact,
@@ -712,6 +724,9 @@ export function buildMerchantBusinessCardShareUrl(input: {
   }
   if (payload.introVideoUrl) {
     shareUrl.searchParams.set("introVideo", payload.introVideoUrl);
+    if (payload.introPosterUrl) {
+      shareUrl.searchParams.set("introPoster", payload.introPosterUrl);
+    }
     if (payload.introVideoMuted === false) {
       shareUrl.searchParams.set("introMuted", "0");
     }
@@ -815,6 +830,7 @@ export function parseMerchantBusinessCardShareParams(
       detailImageUrl: readSearchParam(searchParams, "detailImage"),
       detailImageHeight: Number(readSearchParam(searchParams, "detailImageHeight")),
       introVideoUrl: readSearchParam(searchParams, "introVideo"),
+      introPosterUrl: readSearchParam(searchParams, "introPoster"),
       introVideoMuted: readSearchParam(searchParams, "introMuted"),
       updatedAt: readSearchParam(searchParams, "updatedAt"),
       targetUrl: readSearchParam(searchParams, "target"),

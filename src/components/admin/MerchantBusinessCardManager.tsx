@@ -42,7 +42,10 @@ import {
   resolveMerchantBusinessCardShareOrigin,
   type MerchantBusinessCardShareContact,
 } from "@/lib/merchantBusinessCardShare";
-import { uploadFileToPublicStorage, uploadImageDataUrlToPublicStorage } from "@/lib/publicAssetUpload";
+import {
+  uploadFileToPublicStorageWithMetadata,
+  uploadImageDataUrlToPublicStorage,
+} from "@/lib/publicAssetUpload";
 import { buildMerchantDomain } from "@/lib/siteRouting";
 
 type MerchantBusinessCardManagerProps = {
@@ -244,6 +247,7 @@ function resolveCardShortLink(card: MerchantBusinessCardAsset | null | undefined
     detailImageUrl: normalizeText(card.contactPagePublicImageUrl) || normalizeText(card.contactPageImageUrl),
     detailImageHeight: card.contactPageImageHeight,
     introVideoUrl: normalizeText(card.contactIntroVideoUrl),
+    introPosterUrl: normalizeText(card.contactIntroVideoPosterUrl),
     introVideoMuted: card.contactIntroVideoMuted,
     targetUrl: normalizeText(card.targetUrl),
   });
@@ -1042,6 +1046,7 @@ function ContactCardSurface({
   invoice,
   contactFieldOrder,
   introVideoUrl,
+  introVideoPosterUrl,
   introVideoMuted = true,
   imageUrl,
   imageHeight,
@@ -1052,6 +1057,7 @@ function ContactCardSurface({
   invoice: MerchantBusinessCardDraft["invoice"];
   contactFieldOrder: MerchantBusinessCardDraft["contactFieldOrder"];
   introVideoUrl?: string;
+  introVideoPosterUrl?: string;
   introVideoMuted?: boolean;
   imageUrl?: string;
   imageHeight: number;
@@ -1061,6 +1067,7 @@ function ContactCardSurface({
   const displayName = normalizeText(name);
   const hasImage = Boolean(normalizeText(imageUrl));
   const normalizedIntroVideoUrl = normalizeText(introVideoUrl);
+  const normalizedIntroVideoPosterUrl = normalizeText(introVideoPosterUrl);
   const hasIntroVideo = Boolean(normalizedIntroVideoUrl);
   const domainLabel = normalizeText(targetUrl).replace(/^https?:\/\//i, "");
 
@@ -1077,7 +1084,7 @@ function ContactCardSurface({
         <div className="mb-5 overflow-hidden rounded-[28px] border border-slate-200 bg-black shadow-[0_16px_42px_rgba(15,23,42,.08)]">
           <AutoPlayingVideoPreview
             src={normalizedIntroVideoUrl}
-            poster={hasImage ? imageUrl : undefined}
+            poster={normalizedIntroVideoPosterUrl || undefined}
             className="block aspect-video w-full bg-black object-contain"
             muted={introVideoMuted}
           />
@@ -1452,6 +1459,7 @@ export default function MerchantBusinessCardManager({
       targetUrl: websiteUrl,
       name: normalizeText(draft.name),
       introVideoUrl: canUseIntroVideo ? normalizeText(draft.contactIntroVideoUrl) : "",
+      introPosterUrl: canUseIntroVideo ? normalizeText(draft.contactIntroVideoPosterUrl) : "",
       introVideoMuted: draft.contactIntroVideoMuted,
       contact: buildShareContactPayload({
         name: draft.name,
@@ -1467,6 +1475,7 @@ export default function MerchantBusinessCardManager({
     activeLinkShareKey,
     canUseIntroVideo,
     draft.contactFieldOrder,
+    draft.contactIntroVideoPosterUrl,
     draft.contactIntroVideoMuted,
     draft.contactIntroVideoUrl,
     draft.contactOnlyFields,
@@ -1840,17 +1849,22 @@ export default function MerchantBusinessCardManager({
       setContactIntroVideoFileName(fileName || "开场视频");
       setContactIntroVideoFileDetail("上传并压缩转换中...");
       setIsContactIntroVideoProcessing(true);
-      const uploadedUrl = await uploadFileToPublicStorage(file, {
+      const uploadedAsset = await uploadFileToPublicStorageWithMetadata(file, {
         merchantHint: sanitizeShareAssetHint(
           `${normalizeText(profile.domainPrefix) || normalizeText(draft.name) || normalizeText(profile.merchantName)}-intro-video`,
         ),
         folder: "merchant-assets",
         usage: "business-card-intro-video",
       });
+      const uploadedUrl = normalizeText(uploadedAsset?.url);
       if (!uploadedUrl) {
         throw new Error("video_upload_failed");
       }
-      applyDraft((current) => ({ ...current, contactIntroVideoUrl: uploadedUrl }));
+      applyDraft((current) => ({
+        ...current,
+        contactIntroVideoUrl: uploadedUrl,
+        contactIntroVideoPosterUrl: normalizeText(uploadedAsset?.posterUrl),
+      }));
       setContactIntroVideoFileName(fileName || "已上传开场视频");
       setContactIntroVideoFileDetail(`原始 ${formatImageResultSize(file.size)}，已转为快速播放 MP4`);
     } catch (error) {
@@ -1868,7 +1882,7 @@ export default function MerchantBusinessCardManager({
     setContactIntroVideoFileName("");
     setContactIntroVideoFileDetail("");
     setIsContactIntroVideoProcessing(false);
-    applyDraft((current) => ({ ...current, contactIntroVideoUrl: "" }));
+    applyDraft((current) => ({ ...current, contactIntroVideoUrl: "", contactIntroVideoPosterUrl: "" }));
   };
 
   const updateDraftPhones = (nextPhones: string[]) => {
@@ -1928,6 +1942,7 @@ export default function MerchantBusinessCardManager({
       detailImageUrl: normalizeText(card.contactPagePublicImageUrl),
       detailImageHeight: card.contactPageImageHeight,
       introVideoUrl: normalizeText(card.contactIntroVideoUrl),
+      introPosterUrl: normalizeText(card.contactIntroVideoPosterUrl),
       introVideoMuted: card.contactIntroVideoMuted,
       targetUrl,
       imageWidth: card.width,
@@ -2070,6 +2085,9 @@ export default function MerchantBusinessCardManager({
   const previewContactImageHeight = previewAsset?.contactPageImageHeight || draft.contactPageImageHeight;
   const previewIntroVideoUrl = canUseIntroVideo
     ? normalizeText(previewAsset?.contactIntroVideoUrl) || normalizeText(draft.contactIntroVideoUrl)
+    : "";
+  const previewIntroVideoPosterUrl = canUseIntroVideo
+    ? normalizeText(previewAsset?.contactIntroVideoPosterUrl) || normalizeText(draft.contactIntroVideoPosterUrl)
     : "";
   const showPreviewGenerateButton = !previewAsset;
   const backgroundImagePickerStatus = resolveFilePickerStatus(
@@ -2598,6 +2616,7 @@ export default function MerchantBusinessCardManager({
                           <AutoPlayingVideoPreview
                             className="mt-3 block aspect-video w-full rounded-xl border bg-black object-contain"
                             src={draft.contactIntroVideoUrl}
+                            poster={normalizeText(draft.contactIntroVideoPosterUrl) || undefined}
                             muted={draft.contactIntroVideoMuted}
                           />
                         ) : null}
@@ -3155,6 +3174,9 @@ export default function MerchantBusinessCardManager({
                           invoice={draft.invoice}
                           contactFieldOrder={draft.contactFieldOrder}
                           introVideoUrl={canUseIntroVideo ? normalizeText(draft.contactIntroVideoUrl) || undefined : undefined}
+                          introVideoPosterUrl={
+                            canUseIntroVideo ? normalizeText(draft.contactIntroVideoPosterUrl) || undefined : undefined
+                          }
                           introVideoMuted={draft.contactIntroVideoMuted}
                           imageUrl={normalizeText(draft.contactPageImageUrl) || undefined}
                           imageHeight={draft.contactPageImageHeight}
@@ -3237,6 +3259,7 @@ export default function MerchantBusinessCardManager({
                         invoice={previewAsset?.invoice || draft.invoice}
                         contactFieldOrder={previewContactFieldOrder}
                         introVideoUrl={previewIntroVideoUrl || undefined}
+                        introVideoPosterUrl={previewIntroVideoPosterUrl || undefined}
                         introVideoMuted={previewAsset?.contactIntroVideoMuted ?? draft.contactIntroVideoMuted}
                         imageUrl={previewContactImageUrl}
                         imageHeight={previewContactImageHeight}
@@ -3677,6 +3700,7 @@ export default function MerchantBusinessCardManager({
     contactPageImageUrl?: string;
     contactPageImageHeight?: number;
     introVideoUrl?: string;
+    introVideoPosterUrl?: string;
     introVideoMuted?: boolean;
     imageWidth?: number;
     imageHeight?: number;
@@ -3700,12 +3724,14 @@ export default function MerchantBusinessCardManager({
       targetUrl,
     });
     const introVideoUrl = canUseIntroVideo ? normalizeText(input.introVideoUrl) : "";
+    const introPosterUrl = introVideoUrl && canUseIntroVideo ? normalizeText(input.introVideoPosterUrl) : "";
     const fallbackShareUrl = buildMerchantBusinessCardShareUrl({
       origin: resolveMerchantBusinessCardShareOrigin(undefined, targetUrl),
       imageUrl: shareImageUrl,
       detailImageUrl,
       detailImageHeight: input.contactPageImageHeight,
       introVideoUrl,
+      introPosterUrl,
       introVideoMuted: input.introVideoMuted,
       targetUrl,
       name: input.cardName,
@@ -3748,6 +3774,7 @@ export default function MerchantBusinessCardManager({
                 ? Math.round(input.contactPageImageHeight)
                 : undefined,
             introVideoUrl: introVideoUrl || undefined,
+            introPosterUrl: introPosterUrl || undefined,
             introVideoMuted: input.introVideoMuted,
             targetUrl,
             imageWidth: typeof input.imageWidth === "number" ? Math.round(input.imageWidth) : undefined,
@@ -3868,6 +3895,7 @@ export default function MerchantBusinessCardManager({
             contactPageImageUrl: normalizeText(nextDraft.contactPageImageUrl),
             contactPageImageHeight: nextDraft.contactPageImageHeight,
             introVideoUrl: normalizeText(nextDraft.contactIntroVideoUrl),
+            introVideoPosterUrl: normalizeText(nextDraft.contactIntroVideoPosterUrl),
             introVideoMuted: nextDraft.contactIntroVideoMuted,
             imageWidth: nextDraft.width,
             imageHeight: nextDraft.height,
@@ -3941,6 +3969,7 @@ export default function MerchantBusinessCardManager({
             contactPageImageUrl: normalizeText(nextDraft.contactPageImageUrl),
             contactPageImageHeight: nextDraft.contactPageImageHeight,
             introVideoUrl: normalizeText(nextDraft.contactIntroVideoUrl),
+            introVideoPosterUrl: normalizeText(nextDraft.contactIntroVideoPosterUrl),
             introVideoMuted: nextDraft.contactIntroVideoMuted,
             imageWidth: nextDraft.width,
             imageHeight: nextDraft.height,
@@ -4013,6 +4042,7 @@ export default function MerchantBusinessCardManager({
         card,
         contactPageImageUrl: normalizeText(card.contactPageImageUrl),
         introVideoUrl: normalizeText(card.contactIntroVideoUrl),
+        introVideoPosterUrl: normalizeText(card.contactIntroVideoPosterUrl),
         introVideoMuted: card.contactIntroVideoMuted,
         imageWidth: card.width,
         imageHeight: card.height,

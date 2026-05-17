@@ -1407,6 +1407,7 @@ function buildConversationMerchantCardShareInput(card: MerchantBusinessCardAsset
       normalizeConversationDetailText(card.contactPageImageUrl),
     detailImageHeight: card.contactPageImageHeight,
     introVideoUrl: normalizeConversationDetailText(card.contactIntroVideoUrl),
+    introPosterUrl: normalizeConversationDetailText(card.contactIntroVideoPosterUrl),
     introVideoMuted: card.contactIntroVideoMuted,
     targetUrl,
     contact: buildConversationMerchantCardShareContact(card),

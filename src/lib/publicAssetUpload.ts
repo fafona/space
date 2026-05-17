@@ -22,6 +22,14 @@ export type PublicAssetUploadUsage =
   | "audio"
   | "generic-image";
 
+export type PublicAssetUploadResult = {
+  url: string;
+  posterUrl?: string;
+  bucket?: string;
+  objectPath?: string;
+  posterObjectPath?: string;
+};
+
 function parseDataUrlMeta(dataUrl: string) {
   const matched = dataUrl.match(/^data:((?:image|audio|video)\/[a-zA-Z0-9.+-]+);base64,/i);
   if (!matched) return null;
@@ -77,7 +85,7 @@ async function uploadDataUrlViaServerApi(
   merchantHint: string,
   folder: string,
   usage: PublicAssetUploadUsage,
-): Promise<string | null> {
+): Promise<PublicAssetUploadResult | null> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       const timeoutMs =
@@ -100,8 +108,29 @@ async function uploadDataUrlViaServerApi(
         timeoutMs,
       );
       if (response.ok) {
-        const payload = (await response.json().catch(() => null)) as { url?: unknown } | null;
-        return typeof payload?.url === "string" && payload.url.trim() ? payload.url.trim() : null;
+        const payload = (await response.json().catch(() => null)) as {
+          url?: unknown;
+          posterUrl?: unknown;
+          bucket?: unknown;
+          objectPath?: unknown;
+          posterObjectPath?: unknown;
+        } | null;
+        const url = typeof payload?.url === "string" ? payload.url.trim() : "";
+        return url
+          ? {
+              url,
+              ...(typeof payload?.posterUrl === "string" && payload.posterUrl.trim()
+                ? { posterUrl: payload.posterUrl.trim() }
+                : {}),
+              ...(typeof payload?.bucket === "string" && payload.bucket.trim() ? { bucket: payload.bucket.trim() } : {}),
+              ...(typeof payload?.objectPath === "string" && payload.objectPath.trim()
+                ? { objectPath: payload.objectPath.trim() }
+                : {}),
+              ...(typeof payload?.posterObjectPath === "string" && payload.posterObjectPath.trim()
+                ? { posterObjectPath: payload.posterObjectPath.trim() }
+                : {}),
+            }
+          : null;
       }
       if (attempt === 0 && (response.status === 401 || response.status === 503)) {
         await delay(500);
@@ -136,7 +165,7 @@ async function uploadFileViaServerApi(
   merchantHint: string,
   folder: string,
   usage: PublicAssetUploadUsage,
-): Promise<string | null> {
+): Promise<PublicAssetUploadResult | null> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       const timeoutMs =
@@ -156,8 +185,29 @@ async function uploadFileViaServerApi(
         timeoutMs,
       );
       if (response.ok) {
-        const payload = (await response.json().catch(() => null)) as { url?: unknown } | null;
-        return typeof payload?.url === "string" && payload.url.trim() ? payload.url.trim() : null;
+        const payload = (await response.json().catch(() => null)) as {
+          url?: unknown;
+          posterUrl?: unknown;
+          bucket?: unknown;
+          objectPath?: unknown;
+          posterObjectPath?: unknown;
+        } | null;
+        const url = typeof payload?.url === "string" ? payload.url.trim() : "";
+        return url
+          ? {
+              url,
+              ...(typeof payload?.posterUrl === "string" && payload.posterUrl.trim()
+                ? { posterUrl: payload.posterUrl.trim() }
+                : {}),
+              ...(typeof payload?.bucket === "string" && payload.bucket.trim() ? { bucket: payload.bucket.trim() } : {}),
+              ...(typeof payload?.objectPath === "string" && payload.objectPath.trim()
+                ? { objectPath: payload.objectPath.trim() }
+                : {}),
+              ...(typeof payload?.posterObjectPath === "string" && payload.posterObjectPath.trim()
+                ? { posterObjectPath: payload.posterObjectPath.trim() }
+                : {}),
+            }
+          : null;
       }
       if (attempt === 0 && (response.status === 401 || response.status === 503)) {
         await delay(500);
@@ -203,7 +253,7 @@ export async function uploadDataUrlToPublicStorage(
   const usage =
     options?.usage ??
     (folder === "merchant-audio" || meta.mime.startsWith("audio/") ? "audio" : "generic-image");
-  return uploadDataUrlViaServerApi(dataUrl, merchantHint, folder, usage);
+  return (await uploadDataUrlViaServerApi(dataUrl, merchantHint, folder, usage))?.url ?? null;
 }
 
 export async function uploadFileToPublicStorage(
@@ -214,6 +264,26 @@ export async function uploadFileToPublicStorage(
     usage?: PublicAssetUploadUsage;
   },
 ): Promise<string | null> {
+  const folder = String(options?.folder ?? "merchant-assets").trim();
+  if (!file || file.size <= 0 || !FOLDER_CANDIDATES.has(folder)) return null;
+
+  const merchantHint = sanitizeMerchantHint(options?.merchantHint ?? "public");
+  const usage =
+    options?.usage ??
+    (folder === "merchant-audio" || String(file.type ?? "").toLowerCase().startsWith("audio/")
+      ? "audio"
+      : "generic-image");
+  return (await uploadFileViaServerApi(file, merchantHint, folder, usage))?.url ?? null;
+}
+
+export async function uploadFileToPublicStorageWithMetadata(
+  file: File,
+  options?: {
+    merchantHint?: string;
+    folder?: "merchant-assets" | "merchant-audio";
+    usage?: PublicAssetUploadUsage;
+  },
+): Promise<PublicAssetUploadResult | null> {
   const folder = String(options?.folder ?? "merchant-assets").trim();
   if (!file || file.size <= 0 || !FOLDER_CANDIDATES.has(folder)) return null;
 

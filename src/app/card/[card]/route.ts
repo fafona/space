@@ -70,6 +70,21 @@ function forcePublicStorageImageUrl(value: string, origin: string) {
   return trimmed;
 }
 
+function deriveIntroPosterUrlFromVideoUrl(value: string) {
+  const trimmed = normalizeText(value);
+  if (!trimmed) return "";
+  try {
+    const parsed = new URL(trimmed);
+    if (!/\.mp4$/i.test(parsed.pathname)) return "";
+    parsed.pathname = parsed.pathname.replace(/\.mp4$/i, "-poster.jpg");
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return /\.mp4$/i.test(trimmed) ? trimmed.replace(/\.mp4$/i, "-poster.jpg") : "";
+  }
+}
+
 function buildPhoneHref(rawPhone?: string) {
   const text = normalizeText(rawPhone);
   if (!text) return "";
@@ -1362,6 +1377,7 @@ function buildSharePayloadFromSnapshotMatch(
       detailImageHeight:
         typeof card.contactPageImageHeight === "number" ? Math.round(card.contactPageImageHeight) : undefined,
       introVideoUrl: match.allowIntroVideo ? normalizeText(card.contactIntroVideoUrl) : "",
+      introPosterUrl: match.allowIntroVideo ? normalizeText(card.contactIntroVideoPosterUrl) : "",
       introVideoMuted: card.contactIntroVideoMuted,
       targetUrl,
       ownerMerchantId: match.siteId,
@@ -1730,8 +1746,7 @@ function buildShareCardHtml(input: {
   const previewImageUrl = input.previewImageUrl ? escapeHtml(input.previewImageUrl) : "";
   const contentImageUrl = input.contentImageUrl ? escapeHtml(input.contentImageUrl) : "";
   const introVideoUrl = input.introVideoUrl ? escapeHtml(input.introVideoUrl) : "";
-  // Android WebViews can show the poster as a static contact card before playback starts.
-  const introPosterUrl = "";
+  const introPosterUrl = input.introPosterUrl ? escapeHtml(input.introPosterUrl) : "";
   const introVideoMuted = input.introVideoMuted !== false;
   const contentImageHeight = input.contentImageHeight ?? 0;
   const targetUrl = escapeHtml(input.targetUrl);
@@ -2576,6 +2591,19 @@ export async function GET(
   const introVideoUrl = introVideoSource
     ? normalizeMerchantBusinessCardShareVideoUrl(introVideoSource, publicOrigin) || introVideoSource
     : "";
+  const introPosterSource =
+    snapshotMatch?.allowIntroVideo === false
+      ? ""
+      : normalizeText(payload.introPosterUrl) ||
+        normalizeText(snapshotCard?.contactIntroVideoPosterUrl) ||
+        deriveIntroPosterUrlFromVideoUrl(introVideoUrl);
+  const introPosterUrl =
+    introVideoUrl && introPosterSource
+      ? forcePublicStorageImageUrl(
+          normalizeMerchantBusinessCardShareImageUrl(introPosterSource, publicOrigin) || introPosterSource,
+          publicOrigin,
+        )
+      : "";
   const contactUrl =
     buildMerchantBusinessCardContactDownloadUrl({
       origin: publicOrigin,
@@ -2624,7 +2652,7 @@ export async function GET(
       contentImageUrl: detailImageUrl || undefined,
       contentImageHeight: payload.detailImageHeight,
       introVideoUrl: introVideoUrl || undefined,
-      introPosterUrl: detailImageUrl || previewImageUrl || undefined,
+      introPosterUrl: introPosterUrl || undefined,
       introVideoMuted: payload.introVideoMuted ?? snapshotCard?.contactIntroVideoMuted,
       summaryHtml: buildContactSummaryHtml({
         name: payload.name,

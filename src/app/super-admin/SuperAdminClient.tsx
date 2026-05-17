@@ -409,6 +409,7 @@ function buildSupportMerchantCardLink(card: MerchantBusinessCardAsset | null) {
       normalizeSupportDetailText(card.contactPagePublicImageUrl) || normalizeSupportDetailText(card.contactPageImageUrl),
     detailImageHeight: card.contactPageImageHeight,
     introVideoUrl: normalizeSupportDetailText(card.contactIntroVideoUrl),
+    introPosterUrl: normalizeSupportDetailText(card.contactIntroVideoPosterUrl),
     introVideoMuted: card.contactIntroVideoMuted,
     targetUrl,
     contact: {

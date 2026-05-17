@@ -4388,6 +4388,7 @@ function buildSupportMerchantCardShareInput(card: MerchantBusinessCardAsset | nu
       normalizeSupportDetailText(card.contactPagePublicImageUrl) || normalizeSupportDetailText(card.contactPageImageUrl),
     detailImageHeight: card.contactPageImageHeight,
     introVideoUrl: normalizeSupportDetailText(card.contactIntroVideoUrl),
+    introPosterUrl: normalizeSupportDetailText(card.contactIntroVideoPosterUrl),
     introVideoMuted: card.contactIntroVideoMuted,
     targetUrl,
     contact: buildSupportMerchantCardShareContact(card),
@@ -4577,6 +4578,7 @@ function mergeSupportBusinessCardCandidates(
     ...(introVideoSource
       ? {
           contactIntroVideoUrl: introVideoSource.contactIntroVideoUrl,
+          contactIntroVideoPosterUrl: introVideoSource.contactIntroVideoPosterUrl,
           contactIntroVideoMuted: introVideoSource.contactIntroVideoMuted,
         }
       : {}),

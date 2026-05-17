@@ -279,6 +279,42 @@ async function transcodeBusinessCardIntroVideo(input: {
   }
 }
 
+async function extractBusinessCardIntroVideoPoster(input: {
+  blob: Blob;
+  extension: string;
+}) {
+  const workspace = await mkdtemp(path.join(tmpdir(), "faolla-intro-poster-"));
+  const extension = input.extension.replace(/[^a-z0-9]+/gi, "") || "video";
+  const inputPath = path.join(workspace, `source.${extension}`);
+  const outputPath = path.join(workspace, "poster.jpg");
+  try {
+    const buffer = Buffer.from(await input.blob.arrayBuffer());
+    await writeFile(inputPath, buffer);
+    await runFfmpeg(
+      [
+        "-y",
+        "-i",
+        inputPath,
+        "-frames:v",
+        "1",
+        "-vf",
+        "scale=720:-2:force_original_aspect_ratio=decrease,crop=trunc(iw/2)*2:trunc(ih/2)*2",
+        "-q:v",
+        "3",
+        outputPath,
+      ],
+      60_000,
+    );
+    const outputBuffer = await readFile(outputPath);
+    if (outputBuffer.byteLength <= 0) {
+      throw new Error("empty_intro_video_poster");
+    }
+    return new Blob([new Uint8Array(outputBuffer)], { type: "image/jpeg" });
+  } finally {
+    await rm(workspace, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
 function sanitizeMerchantHint(input: string) {
   const normalized = String(input ?? "")
     .trim()
@@ -561,6 +597,7 @@ export async function POST(request: Request) {
   let uploadBlob = originalBlob;
   let uploadMime = meta.mime;
   let uploadExtension = meta.extension;
+  let introVideoPosterBlob: Blob | null = null;
   if (usage === "business-card-intro-video") {
     if (!meta.mime.startsWith("video/")) {
       return NextResponse.json(
@@ -581,6 +618,10 @@ export async function POST(request: Request) {
       });
       uploadMime = "video/mp4";
       uploadExtension = "mp4";
+      introVideoPosterBlob = await extractBusinessCardIntroVideoPoster({
+        blob: uploadBlob,
+        extension: uploadExtension,
+      });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "";
       console.error("[asset-upload] intro video transcode failed", errorMessage);
@@ -618,7 +659,8 @@ export async function POST(request: Request) {
   const uploadErrors: string[] = [];
 
   for (const bucket of BUCKET_CANDIDATES) {
-    const objectPath = `${folder}/${actor.effectiveMerchantHint}/${yyyy}/${mm}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${uploadExtension}`;
+    const objectBasePath = `${folder}/${actor.effectiveMerchantHint}/${yyyy}/${mm}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const objectPath = `${objectBasePath}.${uploadExtension}`;
     const uploaded = await supabase.storage.from(bucket).upload(objectPath, uploadBlob, {
       contentType: uploadMime,
       upsert: false,
@@ -627,6 +669,27 @@ export async function POST(request: Request) {
       uploadErrors.push(`${bucket}: ${uploaded.error.message}`);
       continue;
     }
+    let posterObjectPath = "";
+    let posterPublicUrl = "";
+    if (introVideoPosterBlob) {
+      posterObjectPath = `${objectBasePath}-poster.jpg`;
+      const uploadedPoster = await supabase.storage.from(bucket).upload(posterObjectPath, introVideoPosterBlob, {
+        contentType: "image/jpeg",
+        upsert: false,
+      });
+      if (uploadedPoster.error) {
+        await supabase.storage.from(bucket).remove([objectPath]).catch(() => undefined);
+        uploadErrors.push(`${bucket}: poster ${uploadedPoster.error.message}`);
+        continue;
+      }
+      const { data: posterData } = supabase.storage.from(bucket).getPublicUrl(posterObjectPath);
+      posterPublicUrl = posterData?.publicUrl ? normalizeStoragePublicUrl(posterData.publicUrl) : "";
+      if (!posterPublicUrl) {
+        await supabase.storage.from(bucket).remove([objectPath, posterObjectPath]).catch(() => undefined);
+        uploadErrors.push(`${bucket}: failed to resolve poster public url`);
+        continue;
+      }
+    }
     const { data } = supabase.storage.from(bucket).getPublicUrl(objectPath);
     if (data?.publicUrl) {
       return NextResponse.json({
@@ -634,6 +697,7 @@ export async function POST(request: Request) {
         bucket,
         objectPath,
         url: normalizeStoragePublicUrl(data.publicUrl),
+        ...(posterPublicUrl ? { posterUrl: posterPublicUrl, posterObjectPath } : {}),
       });
     }
     uploadErrors.push(`${bucket}: failed to resolve public url`);

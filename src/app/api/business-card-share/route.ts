@@ -66,6 +66,7 @@ type BusinessCardShareRequestBody = {
   detailImageUrl?: unknown;
   detailImageHeight?: unknown;
   introVideoUrl?: unknown;
+  introPosterUrl?: unknown;
   introVideoMuted?: unknown;
   targetUrl?: unknown;
   imageWidth?: unknown;
@@ -355,6 +356,7 @@ function buildSnapshotCardSharePayload(card: MerchantBusinessCardAsset, preferre
       detailImageHeight:
         typeof card.contactPageImageHeight === "number" ? Math.round(card.contactPageImageHeight) : undefined,
       introVideoUrl: normalizeText(card.contactIntroVideoUrl),
+      introPosterUrl: normalizeText(card.contactIntroVideoPosterUrl),
       introVideoMuted: card.contactIntroVideoMuted,
       targetUrl: normalizeText(card.targetUrl),
       imageWidth: typeof card.width === "number" ? Math.round(card.width) : undefined,
@@ -550,6 +552,10 @@ export async function POST(request: Request) {
     normalizeText(body?.introVideoUrl),
     shareOrigin || request.url,
   );
+  const introPosterUrl =
+    introVideoUrl && body?.introPosterUrl
+      ? normalizeMerchantBusinessCardShareImageUrl(normalizeText(body.introPosterUrl), shareOrigin || request.url)
+      : "";
   const introVideoMuted = introVideoUrl ? normalizeOptionalBoolean(body?.introVideoMuted, true) : undefined;
   const detailImageHeight = normalizeImageDimension(body?.detailImageHeight);
   const imageWidth = normalizeImageDimension(body?.imageWidth);
@@ -594,7 +600,7 @@ export async function POST(request: Request) {
     imageUrl,
     ...(detailImageUrl ? { detailImageUrl } : {}),
     ...(detailImageUrl && detailImageHeight ? { detailImageHeight } : {}),
-    ...(introVideoUrl ? { introVideoUrl, introVideoMuted } : {}),
+    ...(introVideoUrl ? { introVideoUrl, ...(introPosterUrl ? { introPosterUrl } : {}), introVideoMuted } : {}),
     updatedAt: new Date().toISOString(),
     targetUrl,
     ...(imageWidth ? { imageWidth } : {}),
