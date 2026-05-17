@@ -1282,25 +1282,40 @@ async function loadContactCardCoupons(siteId: string) {
   return getContactCardVisibleMerchantCoupons(coupons);
 }
 
-async function resolveContactCardSnapshotMatch(shareKey: string) {
+function resolveContactCardSnapshotMatchFromSite(
+  site: Awaited<ReturnType<typeof loadCurrentMerchantSnapshotSiteBySiteId>>,
+  shareKey: string,
+) {
+  const normalizedShareKey = normalizeMerchantBusinessCardShareKey(shareKey);
+  if (!normalizedShareKey || !site || !Array.isArray(site.businessCards)) return null;
+  const card = site.businessCards.find(
+    (item) => normalizeMerchantBusinessCardShareKey(item.shareKey) === normalizedShareKey,
+  ) as MerchantBusinessCardAsset | undefined;
+  return card
+    ? {
+        siteId: normalizeText(site.id),
+        card,
+        allowIntroVideo: site.permissionConfig?.allowBusinessCardIntroVideo !== false,
+      }
+    : null;
+}
+
+async function resolveContactCardSnapshotMatch(shareKey: string, ownerMerchantId?: string | null) {
   const normalizedShareKey = normalizeMerchantBusinessCardShareKey(shareKey);
   if (!normalizedShareKey) return null;
+  const ownerSiteId = normalizeText(ownerMerchantId);
+  if (ownerSiteId) {
+    const currentSite = await loadCurrentMerchantSnapshotSiteBySiteId(ownerSiteId).catch(() => null);
+    const currentMatch = resolveContactCardSnapshotMatchFromSite(currentSite, normalizedShareKey);
+    if (currentMatch) return currentMatch;
+  }
   const snapshot = await loadPublishedMerchantSnapshotSites().catch(() => []);
   const ownerSite = snapshot.find((site) =>
     Array.isArray(site.businessCards) &&
     site.businessCards.some((card) => normalizeMerchantBusinessCardShareKey(card.shareKey) === normalizedShareKey),
   );
   if (!ownerSite || !Array.isArray(ownerSite.businessCards)) return null;
-  const card = ownerSite.businessCards.find(
-    (item) => normalizeMerchantBusinessCardShareKey(item.shareKey) === normalizedShareKey,
-  ) as MerchantBusinessCardAsset | undefined;
-  return card
-    ? {
-        siteId: normalizeText(ownerSite.id),
-        card,
-        allowIntroVideo: ownerSite.permissionConfig?.allowBusinessCardIntroVideo !== false,
-      }
-    : null;
+  return resolveContactCardSnapshotMatchFromSite(ownerSite, normalizedShareKey);
 }
 
 function buildOrderedContactSummaryHtml(input: {
@@ -2457,7 +2472,7 @@ export async function GET(
   const title = buildMerchantBusinessCardShareTitle(payload.name);
   const description = buildMerchantBusinessCardShareDescription(payload.name, payload.targetUrl);
   const publicOrigin = resolveMerchantBusinessCardShareOrigin(request.url, payload.targetUrl) || requestOrigin;
-  const snapshotMatch = await resolveContactCardSnapshotMatch(shareKey).catch(() => null);
+  const snapshotMatch = await resolveContactCardSnapshotMatch(shareKey, payload.ownerMerchantId).catch(() => null);
   const snapshotCard = snapshotMatch?.card ?? null;
   const normalizedShareImageUrl = payload.imageUrl
     ? normalizeMerchantBusinessCardShareImageUrl(payload.imageUrl, publicOrigin) || payload.imageUrl
