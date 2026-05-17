@@ -1649,7 +1649,8 @@ function buildShareCardHtml(input: {
   const previewImageUrl = input.previewImageUrl ? escapeHtml(input.previewImageUrl) : "";
   const contentImageUrl = input.contentImageUrl ? escapeHtml(input.contentImageUrl) : "";
   const introVideoUrl = input.introVideoUrl ? escapeHtml(input.introVideoUrl) : "";
-  const introPosterUrl = input.introPosterUrl ? escapeHtml(input.introPosterUrl) : "";
+  // Android WebViews can show the poster as a static contact card before playback starts.
+  const introPosterUrl = "";
   const introVideoMuted = input.introVideoMuted !== false;
   const contentImageHeight = input.contentImageHeight ?? 0;
   const targetUrl = escapeHtml(input.targetUrl);
