@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   buildMerchantBusinessCardContactDownloadUrl,
+  buildMerchantBusinessCardShareManifestObjectPath,
   buildMerchantBusinessCardShareDescription,
   buildMerchantBusinessCardShareTitle,
   buildMerchantBusinessCardShareUrl,
@@ -26,6 +27,7 @@ import {
   type MerchantCouponRecord,
 } from "@/lib/merchantCoupons";
 import { listMerchantCoupons } from "@/lib/merchantCoupons.server";
+import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import {
   loadCurrentMerchantSnapshotSites,
   loadCurrentMerchantSnapshotSiteBySiteId,
@@ -52,6 +54,34 @@ function serializeInlineScriptValue(value: unknown) {
 
 function normalizeText(value: string | null | undefined) {
   return String(value ?? "").trim();
+}
+
+const BUSINESS_CARD_SHARE_MANIFEST_BUCKETS = ["page-assets", "assets", "uploads", "public"] as const;
+
+type StorageOperationError = {
+  message?: string | null;
+} | null;
+
+type PublicStorageBucketClient = {
+  upload: (
+    objectPath: string,
+    body: Blob,
+    options: {
+      contentType: string;
+      cacheControl: string;
+      upsert: boolean;
+    },
+  ) => Promise<{ error: StorageOperationError }>;
+};
+
+type PublicStorageClient = {
+  storage: {
+    from: (bucket: string) => PublicStorageBucketClient;
+  };
+};
+
+function createJsonBlob(value: unknown) {
+  return new Blob([JSON.stringify(value)], { type: "application/json; charset=utf-8" });
 }
 
 function looksLikeUrl(value: string) {
@@ -1505,6 +1535,45 @@ function buildSharePayloadFromSnapshotMatch(
   );
 }
 
+async function repairShareManifestFromSnapshot(input: {
+  shareKey: string;
+  snapshotMatch: ContactCardSnapshotMatch | null;
+  payload: MerchantBusinessCardSharePayload | null;
+  preferredOrigin: string;
+}) {
+  const shareKey = normalizeMerchantBusinessCardShareKey(input.shareKey);
+  const objectPath = buildMerchantBusinessCardShareManifestObjectPath(shareKey);
+  if (!shareKey || !objectPath || !input.snapshotMatch || !input.payload) return false;
+  const normalizedPayload = normalizeMerchantBusinessCardSharePayload(
+    {
+      ...input.payload,
+      ownerMerchantId: input.snapshotMatch.siteId,
+    },
+    input.preferredOrigin,
+  );
+  if (!normalizedPayload?.targetUrl) return false;
+  const supabase = createServerSupabaseServiceClient() as unknown as PublicStorageClient | null;
+  if (!supabase) return false;
+
+  const payloadToStore = {
+    ...normalizedPayload,
+    updatedAt: new Date().toISOString(),
+  } satisfies MerchantBusinessCardSharePayload;
+  const blob = createJsonBlob(payloadToStore);
+  let repaired = false;
+  for (const bucket of BUSINESS_CARD_SHARE_MANIFEST_BUCKETS) {
+    const uploaded = await supabase.storage.from(bucket).upload(objectPath, blob, {
+      contentType: "application/json; charset=utf-8",
+      cacheControl: "31536000",
+      upsert: true,
+    });
+    if (!uploaded.error) {
+      repaired = true;
+    }
+  }
+  return repaired;
+}
+
 function buildOrderedContactSummaryHtml(input: {
   name: string;
   contact?: MerchantBusinessCardShareContact;
@@ -2743,7 +2812,8 @@ export async function GET(
   }
 
   const snapshotMatch = await resolveContactCardSnapshotMatch(shareKey, storedPayload?.ownerMerchantId).catch(() => null);
-  const payload = storedPayload ?? buildSharePayloadFromSnapshotMatch(snapshotMatch, requestOrigin);
+  const snapshotPayload = buildSharePayloadFromSnapshotMatch(snapshotMatch, requestOrigin);
+  const payload = storedPayload ?? snapshotPayload;
 
   if (!payload) {
     return new NextResponse("Business card not found", {
@@ -2753,6 +2823,14 @@ export async function GET(
         "cache-control": "no-store, max-age=0",
       },
     });
+  }
+  if (!storedPayload && snapshotPayload) {
+    await repairShareManifestFromSnapshot({
+      shareKey,
+      snapshotMatch,
+      payload: snapshotPayload,
+      preferredOrigin: requestOrigin,
+    }).catch(() => false);
   }
 
   const title = buildMerchantBusinessCardShareTitle(payload.name);

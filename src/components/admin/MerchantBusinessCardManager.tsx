@@ -222,6 +222,36 @@ async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, tim
   }
 }
 
+function isShortBusinessCardShareLink(value: string) {
+  const normalized = normalizeText(value);
+  if (!normalized) return false;
+  const baseOrigin = typeof window !== "undefined" ? window.location.origin : "https://faolla.com";
+  try {
+    const url = new URL(normalized, baseOrigin);
+    return /^\/card\/[a-z0-9][a-z0-9_-]{5,63}\/?$/i.test(url.pathname) && !url.search;
+  } catch {
+    return false;
+  }
+}
+
+async function verifyShortBusinessCardShareLink(value: string, timeoutMs = 8_000) {
+  if (!isShortBusinessCardShareLink(value)) return false;
+  try {
+    const response = await fetchWithTimeout(
+      value,
+      {
+        method: "GET",
+        cache: "no-store",
+        credentials: "same-origin",
+      },
+      timeoutMs,
+    );
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 function formatOpacityPercent(value: number) {
   return `${Math.round(clamp(value, 0, 1) * 100)}%`;
 }
@@ -3792,7 +3822,14 @@ export default function MerchantBusinessCardManager({
         shareKey = typeof payload?.shareKey === "string" ? payload.shareKey.trim() : "";
         lastErrorCode = typeof payload?.error === "string" ? payload.error.trim() : "";
         if (response.ok && shareUrl && shareKey) {
-          break;
+          if (await verifyShortBusinessCardShareLink(shareUrl, attempt === 0 ? 8_000 : 12_000)) {
+            break;
+          }
+          lastErrorCode = "share_link_not_ready";
+          if (attempt === 0) {
+            await delay(600);
+            continue;
+          }
         }
         if (attempt === 0 && (response.status === 401 || response.status === 503 || lastErrorCode === "unauthorized")) {
           await delay(500);
@@ -3827,6 +3864,8 @@ export default function MerchantBusinessCardManager({
           ? "share_auth_unavailable"
           : lastErrorCode === "share_request_timeout"
             ? "share_request_timeout"
+            : lastErrorCode === "share_link_not_ready"
+              ? "share_link_not_ready"
             : "share_link_unavailable",
       );
     }
@@ -4022,17 +4061,26 @@ export default function MerchantBusinessCardManager({
     const readyShareUrl = normalizeText(card.shareKey) ? resolveCardShortLink(card) : "";
     const shouldRefreshExistingShare = Boolean(readyShareUrl && canUseIntroVideo && normalizeText(card.contactIntroVideoUrl));
     if (readyShareUrl && !shouldRefreshExistingShare) {
-      try {
-        await copyTextToClipboard(readyShareUrl);
-        setTip("联系卡链接已复制，手机打开后可保存联系人");
-      } catch {
-        setTip("浏览器阻止自动复制，请手动复制上方短链");
+      if (!(await verifyShortBusinessCardShareLink(readyShareUrl))) {
+        setTip("联系卡短链未就绪，正在重新同步...");
+      } else {
+        try {
+          await copyTextToClipboard(readyShareUrl);
+          setTip("联系卡链接已复制，手机打开后可保存联系人");
+        } catch {
+          setTip("浏览器阻止自动复制，请手动复制上方短链");
+        }
+        return;
       }
-      return;
+    }
+
+    if (readyShareUrl && shouldRefreshExistingShare) {
+      setTip("正在同步联系卡内容...");
+    } else if (!readyShareUrl) {
+      setTip("正在生成联系卡链接...");
     }
 
     setCopyingLinkCardId(card.id);
-    setTip(readyShareUrl ? "正在同步联系卡内容..." : "正在生成联系卡链接...");
     try {
       const { shareUrl, shareKey } = await buildShareBundle({
         targetUrl,
@@ -4057,26 +4105,24 @@ export default function MerchantBusinessCardManager({
         }),
       });
       const linkToCopy =
-        readyShareUrl ||
-        (normalizeText(shareKey)
+        normalizeText(shareKey)
           ? buildMerchantBusinessCardShareUrl({
               shareKey,
               targetUrl,
             })
-          : shareUrl);
-      await copyTextToClipboard(linkToCopy);
-      setTip("联系卡链接已复制，手机打开后可保存联系人");
-    } catch {
-      if (readyShareUrl) {
-        try {
-          await copyTextToClipboard(readyShareUrl);
-          setTip("短链已复制；联系卡内容同步失败，请稍后再试");
-        } catch {
-          setTip("浏览器阻止自动复制，请手动复制上方短链");
-        }
-      } else {
-        setTip("短链生成失败，请重试");
+          : shareUrl;
+      if (!(await verifyShortBusinessCardShareLink(linkToCopy))) {
+        throw new Error("share_link_not_ready");
       }
+      try {
+        await copyTextToClipboard(linkToCopy);
+        setTip("联系卡链接已复制，手机打开后可保存联系人");
+      } catch {
+        setTip("浏览器阻止自动复制，请手动复制上方短链");
+      }
+      return;
+    } catch {
+      setTip("短链生成失败，请重试");
     } finally {
       setCopyingLinkCardId((current) => (current === card.id ? null : current));
     }

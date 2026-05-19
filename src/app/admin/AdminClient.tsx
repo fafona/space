@@ -4617,6 +4617,26 @@ function buildSupportMerchantCardLink(card: MerchantBusinessCardAsset | null) {
   return buildMerchantBusinessCardShareUrl(input);
 }
 
+async function verifySupportShortMerchantCardLink(value: string, timeoutMs = 8_000) {
+  const normalized = normalizeSupportDetailText(value);
+  if (!isSupportShortMerchantCardLink(normalized)) return false;
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), Math.max(500, timeoutMs));
+  try {
+    const response = await fetch(normalized, {
+      method: "GET",
+      cache: "no-store",
+      credentials: "same-origin",
+      signal: controller.signal,
+    });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
 function buildSupportFallbackMerchantCardHref(input: {
   merchantId?: string | null;
   merchantName?: string | null;
@@ -13075,7 +13095,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     async (card: MerchantBusinessCardAsset) => {
       const shareInput = buildSupportMerchantCardShareInput(card);
       const cachedBundle = supportSelfCardShareBundleRef.current[card.id];
-      if (normalizeSupportDetailText(cachedBundle?.imageUrl) && (card.mode !== "link" || normalizeSupportDetailText(cachedBundle?.shareUrl))) {
+      const cachedShareUrl = normalizeSupportDetailText(cachedBundle?.shareUrl);
+      if (
+        normalizeSupportDetailText(cachedBundle?.imageUrl) &&
+        (card.mode !== "link" || (cachedShareUrl && (await verifySupportShortMerchantCardLink(cachedShareUrl))))
+      ) {
         return cachedBundle;
       }
 
@@ -13147,6 +13171,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               typeof shareInput.detailImageHeight === "number"
                 ? Math.round(shareInput.detailImageHeight)
                 : undefined,
+            introVideoUrl: shareInput.introVideoUrl || undefined,
+            introPosterUrl: shareInput.introPosterUrl || undefined,
+            introVideoMuted: shareInput.introVideoMuted,
             targetUrl: shareInput.targetUrl,
             contact: shareInput.contact,
           }),
@@ -13158,7 +13185,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             }
           | null;
         const shareUrlRaw = typeof payload?.shareUrl === "string" ? payload.shareUrl.trim() : "";
-        const shareUrl = isSupportShortMerchantCardLink(shareUrlRaw) ? shareUrlRaw : "";
+        const shareUrl =
+          isSupportShortMerchantCardLink(shareUrlRaw) && (await verifySupportShortMerchantCardLink(shareUrlRaw))
+            ? shareUrlRaw
+            : "";
         const shareKey = typeof payload?.shareKey === "string" ? payload.shareKey.trim() : "";
         const nextBundle = {
           shareUrl,
@@ -13194,8 +13224,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     let cancelled = false;
     void (async () => {
       const builtHref = buildSupportMerchantCardLink(activeCard);
-      const fallbackHref = normalizeSupportDisplayValue(builtHref);
-      if (isSupportShortMerchantCardLink(fallbackHref)) {
+      const fallbackHref =
+        isSupportShortMerchantCardLink(builtHref) && (await verifySupportShortMerchantCardLink(builtHref))
+          ? normalizeSupportDisplayValue(builtHref)
+          : "";
+      if (!cancelled && fallbackHref) {
         setSupportSelfResolvedCardHref(fallbackHref);
         setSupportSelfResolvedCardId(activeCard.id);
       }
@@ -14738,12 +14771,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   card: MerchantBusinessCardAsset;
   shareUrl?: string;
 }) {
-  const fallbackShareUrl = buildSupportMerchantCardLink(input.card);
   const shareUrl = isSupportShortMerchantCardLink(input.shareUrl ?? "")
     ? normalizeSupportDisplayValue(input.shareUrl)
-    : isSupportShortMerchantCardLink(fallbackShareUrl)
-      ? normalizeSupportDisplayValue(fallbackShareUrl)
-      : "";
+    : "";
   return shareUrl ? ["联系卡", shareUrl].join("\n") : "";
 }
 

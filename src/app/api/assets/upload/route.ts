@@ -286,30 +286,38 @@ async function extractBusinessCardIntroVideoPoster(input: {
   const workspace = await mkdtemp(path.join(tmpdir(), "faolla-intro-poster-"));
   const extension = input.extension.replace(/[^a-z0-9]+/gi, "") || "video";
   const inputPath = path.join(workspace, `source.${extension}`);
-  const outputPath = path.join(workspace, "poster.jpg");
+  const baseFilter = "scale=720:-2:force_original_aspect_ratio=decrease,crop=trunc(iw/2)*2:trunc(ih/2)*2";
+  const representativeFilter = `thumbnail=72,${baseFilter}`;
+  const posterAttempts = [
+    {
+      outputPath: path.join(workspace, "poster-representative-025.jpg"),
+      args: ["-y", "-ss", "0.25", "-i", inputPath, "-frames:v", "1", "-vf", representativeFilter, "-q:v", "3"],
+    },
+    {
+      outputPath: path.join(workspace, "poster-representative-080.jpg"),
+      args: ["-y", "-ss", "0.8", "-i", inputPath, "-frames:v", "1", "-vf", representativeFilter, "-q:v", "3"],
+    },
+    {
+      outputPath: path.join(workspace, "poster-first.jpg"),
+      args: ["-y", "-i", inputPath, "-frames:v", "1", "-vf", baseFilter, "-q:v", "3"],
+    },
+  ];
   try {
     const buffer = Buffer.from(await input.blob.arrayBuffer());
     await writeFile(inputPath, buffer);
-    await runFfmpeg(
-      [
-        "-y",
-        "-i",
-        inputPath,
-        "-frames:v",
-        "1",
-        "-vf",
-        "scale=720:-2:force_original_aspect_ratio=decrease,crop=trunc(iw/2)*2:trunc(ih/2)*2",
-        "-q:v",
-        "3",
-        outputPath,
-      ],
-      60_000,
-    );
-    const outputBuffer = await readFile(outputPath);
-    if (outputBuffer.byteLength <= 0) {
-      throw new Error("empty_intro_video_poster");
+    let lastError: unknown = null;
+    for (const attempt of posterAttempts) {
+      try {
+        await runFfmpeg([...attempt.args, attempt.outputPath], 60_000);
+        const outputBuffer = await readFile(attempt.outputPath);
+        if (outputBuffer.byteLength > 0) {
+          return new Blob([new Uint8Array(outputBuffer)], { type: "image/jpeg" });
+        }
+      } catch (error) {
+        lastError = error;
+      }
     }
-    return new Blob([new Uint8Array(outputBuffer)], { type: "image/jpeg" });
+    throw lastError instanceof Error ? lastError : new Error("empty_intro_video_poster");
   } finally {
     await rm(workspace, { recursive: true, force: true }).catch(() => undefined);
   }
