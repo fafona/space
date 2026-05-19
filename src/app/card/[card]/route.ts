@@ -466,6 +466,51 @@ function buildInlineI18nScript() {
     const CACHE_PREFIX = "merchant-space:dom-i18n-cache:v3:";
     const DEFAULT_LOCALE = ${serializeInlineScriptValue(DEFAULT_LOCALE)};
     const LANGUAGE_OPTIONS = ${serializeInlineScriptValue(languageOptions)};
+    const INTRO_UNMUTE_TEXT = {
+      "zh-CN": "点按屏幕取消静音",
+      "zh-TW": "點按螢幕取消靜音",
+      "ja-JP": "画面をタップしてミュート解除",
+      "ko-KR": "화면을 탭해 음소거 해제",
+      "en-GB": "Tap screen to unmute",
+      "es-ES": "Toca la pantalla para activar el sonido",
+      "de-DE": "Tippe auf den Bildschirm, um den Ton einzuschalten",
+      "fr-FR": "Touchez l'ecran pour activer le son",
+      "tr-TR": "Sesi acmak icin ekrana dokunun",
+      "it-IT": "Tocca lo schermo per attivare l'audio",
+      "pl-PL": "Dotknij ekranu, aby wlaczyc dzwiek",
+      "uk-UA": "Торкніться екрана, щоб увімкнути звук",
+      "nl-NL": "Tik op het scherm om het geluid aan te zetten",
+      "ro-RO": "Atinge ecranul pentru a activa sunetul",
+      "pt-PT": "Toque no ecra para ativar o som",
+      "ru-RU": "Коснитесь экрана, чтобы включить звук",
+      "el-GR": "Πατήστε την οθόνη για άρση σίγασης",
+      "cs-CZ": "Klepnete na obrazovku pro zapnuti zvuku",
+      "sv-SE": "Tryck pa skarmen for att sla pa ljudet",
+      "hu-HU": "Erintse meg a kepernyot a hang bekapcsolasahoz",
+      "be-BY": "Дакраніцеся да экрана, каб уключыць гук",
+      "bg-BG": "Докоснете екрана, за да включите звука",
+      "sr-RS": "Dodirnite ekran da ukljucite zvuk",
+      "da-DK": "Tryk pa skaermen for at sla lyden til",
+      "fi-FI": "Napauta nayttoa poistaaksesi mykistyksen",
+      "sk-SK": "Klepnutim na obrazovku zapnete zvuk",
+      "no-NO": "Trykk pa skjermen for a sla pa lyden",
+      "hr-HR": "Dodirnite zaslon za ukljucivanje zvuka",
+      "bs-BA": "Dodirnite ekran da ukljucite zvuk",
+      "sq-AL": "Prekni ekranin per te aktivizuar zerin",
+      "lt-LT": "Palieskite ekrana, kad ijungtumete garsa",
+      "sl-SI": "Dotaknite se zaslona za vklop zvoka",
+      "lv-LV": "Pieskarieties ekranam, lai ieslegtu skanu",
+      "et-EE": "Heli sisselulitamiseks puudutage ekraani",
+      "mk-MK": "Допрете го екранот за да го вклучите звукот",
+      "ca-ES": "Toca la pantalla per activar el so",
+      "eu-ES": "Ukitu pantaila soinua aktibatzeko",
+      "gl-ES": "Toca a pantalla para activar o son",
+      "cy-GB": "Tapiwch y sgrin i droi'r sain ymlaen",
+      "is-IS": "Pikkadu a skjainn til ad kveikja a hljodi",
+      "ga-IE": "Tapail an scailean chun an fhuaim a chur ar siol",
+      "mt-MT": "Tektek l-iskrin biex tixghel il-hoss",
+      "lb-LU": "Tippt op den Ecran fir den Toun unzeschalten"
+    };
     const TRANSLATABLE_ATTRS = ["placeholder", "title", "aria-label"];
     const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT"]);
     const localeCacheStore = new Map();
@@ -481,6 +526,45 @@ function buildInlineI18nScript() {
       const language = normalized.toLowerCase().split("-")[0] || "";
       const matched = LANGUAGE_OPTIONS.find((item) => item.code.toLowerCase().startsWith(language + "-"));
       return matched ? matched.code : DEFAULT_LOCALE;
+    }
+
+    function readRequestedLocaleFromSearch(search) {
+      try {
+        const params = new URLSearchParams(String(search || "").replace(/^\\?/, ""));
+        const requested = params.get("uiLocale") || params.get("locale") || params.get("lang") || "";
+        return requested ? resolveLocale(requested) : "";
+      } catch {
+        return "";
+      }
+    }
+
+    function readStoredLocaleCookie() {
+      try {
+        const match = String(document.cookie || "").match(/(?:^|;\\s*)merchant-space-locale-v1=([^;]+)/);
+        return match?.[1] ? resolveLocale(decodeURIComponent(match[1])) : "";
+      } catch {
+        return "";
+      }
+    }
+
+    function detectInitialLocale() {
+      const requested = readRequestedLocaleFromSearch(window.location.search);
+      if (requested) return requested;
+      try {
+        const stored = window.localStorage.getItem(STORAGE_KEY);
+        if (stored) return resolveLocale(stored);
+      } catch {}
+      const cookieLocale = readStoredLocaleCookie();
+      if (cookieLocale) return cookieLocale;
+      const navigatorLanguages =
+        Array.isArray(window.navigator.languages) && window.navigator.languages.length > 0
+          ? window.navigator.languages
+          : [window.navigator.language];
+      for (const item of navigatorLanguages) {
+        const resolved = resolveLocale(item);
+        if (resolved) return resolved;
+      }
+      return DEFAULT_LOCALE;
     }
 
     function toApiTarget(locale) {
@@ -783,12 +867,21 @@ function buildInlineI18nScript() {
       if (selectEl && selectEl.value !== normalized) selectEl.value = normalized;
     }
 
+    function updateIntroUnmutePrompt(locale) {
+      const normalized = resolveLocale(locale);
+      const language = normalized.toLowerCase().split("-")[0] || "";
+      const fallback = INTRO_UNMUTE_TEXT[normalized] || INTRO_UNMUTE_TEXT[LANGUAGE_OPTIONS.find((item) => item.code.toLowerCase().startsWith(language + "-"))?.code || ""] || INTRO_UNMUTE_TEXT["en-GB"];
+      const prompt = document.querySelector("[data-intro-unmute-tip]");
+      if (prompt) prompt.textContent = fallback;
+    }
+
     async function applyLocale(locale) {
       const normalized = resolveLocale(locale);
       const previousLocale = document.documentElement.getAttribute("data-ui-locale") || "zh-CN";
       document.documentElement.lang = normalized;
       document.documentElement.setAttribute("data-ui-locale", normalized);
       updateLanguageUi(normalized);
+      updateIntroUnmutePrompt(normalized);
       try {
         window.localStorage.setItem(STORAGE_KEY, normalized);
       } catch {}
@@ -1012,10 +1105,7 @@ function buildInlineI18nScript() {
       });
     });
 
-    let initialLocale = DEFAULT_LOCALE;
-    try {
-      initialLocale = resolveLocale(window.localStorage.getItem(STORAGE_KEY));
-    } catch {}
+    const initialLocale = detectInitialLocale();
     void applyLocale(initialLocale);
   })();`.replace(/<\/script/gi, "<\\/script");
 }
