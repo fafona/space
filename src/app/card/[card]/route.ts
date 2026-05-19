@@ -1743,6 +1743,7 @@ function buildShareCardHtml(input: {
   const title = escapeHtml(input.title);
   const description = escapeHtml(input.description);
   const merchantName = escapeHtml(input.merchantName);
+  const introBrandLabel = merchantName || title;
   const previewImageUrl = input.previewImageUrl ? escapeHtml(input.previewImageUrl) : "";
   const contentImageUrl = input.contentImageUrl ? escapeHtml(input.contentImageUrl) : "";
   const introVideoUrl = input.introVideoUrl ? escapeHtml(input.introVideoUrl) : "";
@@ -1850,15 +1851,58 @@ function buildShareCardHtml(input: {
         overflow: hidden;
         background: #000;
       }
-      .intro-poster {
+      .intro-brand {
         position: absolute;
         inset: 0;
         z-index: 0;
+        pointer-events: none;
+        color: rgba(255,255,255,.88);
+        font-weight: 800;
+        letter-spacing: .08em;
+        text-shadow: 0 2px 12px rgba(0,0,0,.52);
+      }
+      .intro-brand-label {
+        position: absolute;
+        max-width: min(78vw, 520px);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: clamp(16px, 3.8vw, 28px);
+      }
+      .intro-brand-label.top {
+        top: max(56px, calc(env(safe-area-inset-top) + 56px));
+        left: 50%;
+        transform: translateX(-50%);
+      }
+      .intro-brand-label.bottom {
+        bottom: max(34px, calc(env(safe-area-inset-bottom) + 34px));
+        left: 50%;
+        transform: translateX(-50%);
+      }
+      .intro-brand-label.left,
+      .intro-brand-label.right {
+        top: 50%;
+        max-width: min(70vh, 420px);
+        writing-mode: vertical-rl;
+        text-orientation: mixed;
+      }
+      .intro-brand-label.left {
+        left: max(18px, calc(env(safe-area-inset-left) + 18px));
+        transform: translateY(-50%) rotate(180deg);
+      }
+      .intro-brand-label.right {
+        right: max(18px, calc(env(safe-area-inset-right) + 18px));
+        transform: translateY(-50%);
+      }
+      .intro-poster {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
         display: none;
         width: 100%;
         height: 100%;
-        object-fit: cover;
-        background: #000;
+        object-fit: contain;
+        background: transparent;
         pointer-events: none;
         transition: opacity .18s ease;
       }
@@ -1868,16 +1912,19 @@ function buildShareCardHtml(input: {
       .intro-video {
         position: absolute;
         inset: 0;
-        z-index: 1;
+        z-index: 2;
         display: block;
         width: 100vw;
         height: 100vh;
         height: 100dvh;
         border: 0;
         border-radius: 0;
-        background: #000;
-        object-fit: cover;
+        background: transparent;
+        object-fit: contain;
         opacity: 1;
+      }
+      .intro-card.has-intro-poster .intro-video {
+        opacity: 0;
       }
       .intro-overlay.is-playing .intro-video {
         opacity: 1;
@@ -2177,6 +2224,16 @@ function buildShareCardHtml(input: {
       introVideoUrl
         ? `<div class="intro-overlay" data-intro-overlay data-no-translate="1">
       <div class="intro-card${introPosterUrl ? " has-intro-poster" : ""}">
+        ${
+          introBrandLabel
+            ? `<div class="intro-brand" aria-hidden="true" data-no-translate="1">
+          <div class="intro-brand-label top">${introBrandLabel}</div>
+          <div class="intro-brand-label bottom">${introBrandLabel}</div>
+          <div class="intro-brand-label left">${introBrandLabel}</div>
+          <div class="intro-brand-label right">${introBrandLabel}</div>
+        </div>`
+            : ""
+        }
         ${introPosterUrl ? `<img class="intro-poster" src="${introPosterUrl}" alt="" aria-hidden="true" />` : ""}
         <video class="intro-video" src="${introVideoUrl}"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay="autoplay"${introVideoMuted ? ` muted="muted"` : ""} playsinline="playsinline" webkit-playsinline="webkit-playsinline" x5-playsinline="true" x5-video-player-type="h5-page" x5-video-player-fullscreen="true" x5-video-orientation="portrait" preload="auto" data-intro-muted="${introVideoMuted ? "1" : "0"}" data-intro-src="${introVideoUrl}" disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"><source src="${introVideoUrl}" type="video/mp4" /></video>
         <div class="intro-unmute-tip" data-intro-unmute-tip>点按屏幕取消静音</div>
