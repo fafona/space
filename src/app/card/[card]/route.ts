@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   buildMerchantBusinessCardContactDownloadUrl,
   buildMerchantBusinessCardShareManifestObjectPath,
+  buildMerchantBusinessCardShareManifestPublicUrls,
   buildMerchantBusinessCardShareDescription,
   buildMerchantBusinessCardShareTitle,
   buildMerchantBusinessCardShareUrl,
@@ -1630,6 +1631,25 @@ async function repairShareManifestFromSnapshot(input: {
   return repaired;
 }
 
+async function hasExistingShareManifestObject(shareKey: string, preferredOrigin: string) {
+  const urls = buildMerchantBusinessCardShareManifestPublicUrls(shareKey, preferredOrigin);
+  const results = await Promise.all(
+    urls.map(async (url) => {
+      try {
+        const response = await fetch(url, {
+          method: "HEAD",
+          cache: "no-store",
+          next: { revalidate: 0 },
+        });
+        return response.ok;
+      } catch {
+        return false;
+      }
+    }),
+  );
+  return results.some(Boolean);
+}
+
 function buildOrderedContactSummaryHtml(input: {
   name: string;
   contact?: MerchantBusinessCardShareContact;
@@ -2880,7 +2900,7 @@ export async function GET(
       },
     });
   }
-  if (!storedPayload && snapshotPayload) {
+  if (!storedPayload && snapshotPayload && !(await hasExistingShareManifestObject(shareKey, requestOrigin))) {
     await repairShareManifestFromSnapshot({
       shareKey,
       snapshotMatch,
