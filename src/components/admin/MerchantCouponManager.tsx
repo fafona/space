@@ -30,6 +30,7 @@ import {
 type MerchantCouponManagerProps = {
   siteId: string;
   siteName?: string;
+  publicSiteUrl?: string;
   pricePrefix?: string;
   onCouponsChange?: (coupons: MerchantCouponRecord[]) => void;
   onClose?: () => void;
@@ -421,12 +422,29 @@ function buildRecordDefaultMetaText(coupon: MerchantCouponRecord, pricePrefix: s
     .join("  ");
 }
 
-function buildShareableCouponText(coupon: MerchantCouponRecord, pricePrefix: string, siteName?: string) {
+function buildCouponClaimUrl(publicSiteUrl: string | undefined, siteId: string, coupon: MerchantCouponRecord) {
+  if (typeof window === "undefined") return "";
+  const fallbackPath = siteId ? `/site/${encodeURIComponent(siteId)}` : window.location.pathname;
+  try {
+    const url = new URL(publicSiteUrl?.trim() || fallbackPath, window.location.origin);
+    url.searchParams.set("claimCoupon", coupon.id);
+    if (coupon.code) {
+      url.searchParams.set("claimCode", coupon.code);
+    }
+    url.hash = `coupon-${coupon.id}`;
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function buildShareableCouponText(coupon: MerchantCouponRecord, pricePrefix: string, siteName?: string, claimUrl?: string) {
   const lines = [
     siteName ? `【${siteName}】优惠券` : "优惠券",
     getMerchantCouponDisplayTitle(coupon),
     `优惠内容：${getMerchantCouponDiscountLabel(coupon, pricePrefix)}`,
     `优惠码：${coupon.code}`,
+    claimUrl ? `领取链接：${claimUrl}` : "",
     getMerchantCouponDisplayDescription(coupon) ? `说明：${getMerchantCouponDisplayDescription(coupon)}` : "",
     `使用场景：${formatUsageScenarios(coupon.usageScenarios)}`,
     coupon.expiresAt ? `有效期至：${formatDateTime(coupon.expiresAt)}` : "",
@@ -822,6 +840,7 @@ function CouponDateTimeField({
 export default function MerchantCouponManager({
   siteId,
   siteName,
+  publicSiteUrl,
   pricePrefix = "",
   onCouponsChange,
   onClose,
@@ -1223,7 +1242,8 @@ export default function MerchantCouponManager({
 
   async function copyCoupon(coupon: MerchantCouponRecord) {
     try {
-      await writeClipboardText(buildShareableCouponText(coupon, pricePrefix, siteName));
+      const claimUrl = buildCouponClaimUrl(publicSiteUrl, siteId, coupon);
+      await writeClipboardText(buildShareableCouponText(coupon, pricePrefix, siteName, claimUrl));
       setTip("优惠券已复制，可粘贴到其他应用发送");
     } catch {
       setTip("复制失败，请手动复制");

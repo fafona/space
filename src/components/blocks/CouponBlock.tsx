@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { CouponProps } from "@/data/homeBlocks";
 import {
   getMerchantCouponDisplayDescription,
@@ -162,6 +162,21 @@ export default function CouponBlock({
   const [claimingCouponId, setClaimingCouponId] = useState("");
   const [claimErrorCouponId, setClaimErrorCouponId] = useState("");
   const [claimCodeByCouponId, setClaimCodeByCouponId] = useState<Record<string, string>>({});
+  const [shareClaimCouponId, setShareClaimCouponId] = useState("");
+  const autoClaimedCouponIdRef = useRef("");
+  const claimCouponRef = useRef<(coupon: MerchantCouponRecord) => Promise<void>>(async () => undefined);
+  const effectiveCouponActionMode = shareClaimCouponId ? "claim" : couponActionMode;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const couponId = normalizeText(params.get("claimCoupon") || params.get("couponId"));
+    const claimCode = normalizeText(params.get("claimCode"));
+    setShareClaimCouponId(couponId);
+    if (couponId && claimCode) {
+      setClaimCodeByCouponId((current) => (current[couponId] === claimCode ? current : { ...current, [couponId]: claimCode }));
+    }
+  }, []);
 
   useEffect(() => {
     setClaimedCounts(readClaimCounts(runtimeSiteId));
@@ -219,7 +234,7 @@ export default function CouponBlock({
   };
 
   const copyCouponCode = async (code: string) => {
-    if (!interactive || couponActionMode !== "copy") return;
+    if (!interactive || effectiveCouponActionMode !== "copy") return;
     try {
       await navigator.clipboard?.writeText(code);
       setCopiedCode(code);
@@ -239,7 +254,7 @@ export default function CouponBlock({
   };
 
   const claimCoupon = async (coupon: MerchantCouponRecord) => {
-    if (!interactive || couponActionMode !== "claim") return;
+    if (!interactive || effectiveCouponActionMode !== "claim") return;
     setClaimErrorCouponId("");
     const claimCode = (claimCodeByCouponId[coupon.id] ?? "").trim();
     if (merchantCouponRequiresClaimCode(coupon) && !claimCode) {
@@ -304,6 +319,23 @@ export default function CouponBlock({
     }
   };
 
+  useEffect(() => {
+    claimCouponRef.current = claimCoupon;
+  });
+
+  useEffect(() => {
+    if (!interactive || previewCoupons || !shareClaimCouponId || autoClaimedCouponIdRef.current === shareClaimCouponId) return;
+    const targetCoupon = coupons.find((coupon) => coupon.id === shareClaimCouponId);
+    if (!targetCoupon) return;
+    autoClaimedCouponIdRef.current = shareClaimCouponId;
+    if (typeof window !== "undefined") {
+      window.setTimeout(() => {
+        document.getElementById(`coupon-${shareClaimCouponId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 50);
+    }
+    void claimCouponRef.current(targetCoupon);
+  }, [coupons, interactive, previewCoupons, shareClaimCouponId]);
+
   const isList = couponDisplayMode === "list";
 
   return (
@@ -344,9 +376,9 @@ export default function CouponBlock({
                 imageOpacity: coupon.backgroundImageOpacity,
               });
               const actionLabel =
-                couponActionMode === "none"
+                effectiveCouponActionMode === "none"
                   ? coupon.code
-                  : couponActionMode === "claim"
+                  : effectiveCouponActionMode === "claim"
                     ? exhausted
                       ? "已领完"
                       : claiming
@@ -358,11 +390,12 @@ export default function CouponBlock({
                             : "立即领取"
                     : copied
                       ? "已复制"
-                      : couponActionMode === "order"
+                      : effectiveCouponActionMode === "order"
                         ? "立即使用"
                         : "复制优惠码";
               return (
                 <article
+                  id={`coupon-${coupon.id}`}
                   key={coupon.id}
                   className={`overflow-hidden rounded-lg border border-slate-200 bg-white/90 shadow-sm ${
                     isList ? "grid gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center" : "p-4"
@@ -407,24 +440,24 @@ export default function CouponBlock({
                   <button
                     type="button"
                     className={`mt-4 inline-flex h-10 w-full items-center justify-center rounded-lg border px-4 text-sm font-semibold transition ${
-                      copied || (couponActionMode === "claim" && claimed)
+                      copied || (effectiveCouponActionMode === "claim" && claimed)
                         ? "border-emerald-200 bg-emerald-50 text-emerald-700"
                         : exhausted
                           ? "border-slate-200 bg-slate-100 text-slate-400"
                         : "border-slate-950 bg-slate-950 text-white hover:bg-slate-800"
                     } ${isList ? "sm:mt-0 sm:w-auto" : ""}`}
                     onClick={() => {
-                      if (couponActionMode === "claim") {
+                      if (effectiveCouponActionMode === "claim") {
                         void claimCoupon(coupon);
                       } else {
                         void copyCouponCode(coupon.code);
                       }
                     }}
-                    disabled={!interactive || couponActionMode === "none" || exhausted || claiming}
+                    disabled={!interactive || effectiveCouponActionMode === "none" || exhausted || claiming}
                   >
                     {actionLabel}
                   </button>
-                  {couponActionMode === "claim" && requiresClaimCode ? (
+                  {effectiveCouponActionMode === "claim" && requiresClaimCode ? (
                     <input
                       className="mt-3 w-full rounded-lg border border-slate-300 bg-white/90 px-3 py-2 text-sm outline-none focus:border-slate-500"
                       value={claimCodeByCouponId[coupon.id] ?? ""}
@@ -432,7 +465,7 @@ export default function CouponBlock({
                       placeholder="输入指定优惠码"
                     />
                   ) : null}
-                  {couponActionMode === "claim" && claimFailed ? (
+                  {effectiveCouponActionMode === "claim" && claimFailed ? (
                     <div className="mt-2 text-xs text-rose-600">暂不符合领取条件或优惠码不正确</div>
                   ) : null}
                 </article>

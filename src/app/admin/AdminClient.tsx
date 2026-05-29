@@ -17221,6 +17221,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               <MerchantCouponManager
                 siteId={editingSiteId || ""}
                 siteName={effectiveMerchantDisplayName || merchantDisplayName}
+                publicSiteUrl={supportSelfWebsiteHref}
                 onCouponsChange={setMerchantCouponRecords}
                 listOnly
                 className="faolla-mobile-coupon-list"
@@ -18269,6 +18270,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       ? {
           siteId: editingSiteId || "",
           siteName: effectiveMerchantDisplayName || merchantDisplayName,
+          publicSiteUrl: supportSelfWebsiteHref,
           onCouponsChange: setMerchantCouponRecords,
         }
       : null;
