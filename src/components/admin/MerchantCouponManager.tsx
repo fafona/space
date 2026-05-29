@@ -1302,48 +1302,42 @@ export default function MerchantCouponManager({
                   const config = DISPLAY_FIELD_CONFIG[field];
                   const selected = selectedDisplayFields.includes(field);
                   return (
-                    <div key={field} className={`rounded-lg border bg-white px-3 py-3 ${selected ? "border-slate-900" : "border-slate-200"}`}>
-                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                        <label className="flex items-center gap-2 text-sm font-semibold text-slate-800">
-                          <input
-                            type="checkbox"
-                            checked={selected}
-                            onChange={(event) => toggleDisplayFieldSelection(field, event.target.checked)}
-                          />
-                          {config.label}
-                        </label>
-                        <div className="flex gap-1">
-                          <button
-                            type="button"
-                            className="rounded border bg-white px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-40"
-                            onClick={() => moveDisplayField(field, -1)}
-                            disabled={index === 0}
-                          >
-                            上移
-                          </button>
-                          <button
-                            type="button"
-                            className="rounded border bg-white px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-40"
-                            onClick={() => moveDisplayField(field, 1)}
-                            disabled={index === form.displayFieldOrder.length - 1}
-                          >
-                            下移
-                          </button>
-                        </div>
-                      </div>
-                      {config.multiline ? (
-                        <textarea
-                          className="min-h-[60px] w-full resize-y rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
-                          value={form[config.valueKey]}
-                          onChange={(event) => updateDisplayText(field, event.target.value)}
-                        />
-                      ) : (
+                    <div
+                      key={field}
+                      className={`grid grid-cols-[104px_minmax(0,1fr)_auto] items-center gap-2 rounded-lg border bg-white px-3 py-2 ${selected ? "border-slate-900" : "border-slate-200"}`}
+                    >
+                      <label className="flex min-w-0 items-center gap-2 text-sm font-semibold text-slate-800">
                         <input
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
-                          value={form[config.valueKey]}
-                          onChange={(event) => updateDisplayText(field, event.target.value)}
+                          type="checkbox"
+                          className="shrink-0"
+                          checked={selected}
+                          onChange={(event) => toggleDisplayFieldSelection(field, event.target.checked)}
                         />
-                      )}
+                        <span className="truncate">{config.label}</span>
+                      </label>
+                      <input
+                        className="min-w-0 rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+                        value={form[config.valueKey]}
+                        onChange={(event) => updateDisplayText(field, event.target.value)}
+                      />
+                      <div className="flex shrink-0 gap-1">
+                        <button
+                          type="button"
+                          className="rounded border bg-white px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-40"
+                          onClick={() => moveDisplayField(field, -1)}
+                          disabled={index === 0}
+                        >
+                          上移
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded border bg-white px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-40"
+                          onClick={() => moveDisplayField(field, 1)}
+                          disabled={index === form.displayFieldOrder.length - 1}
+                        >
+                          下移
+                        </button>
+                      </div>
                     </div>
                   );
                 })}
