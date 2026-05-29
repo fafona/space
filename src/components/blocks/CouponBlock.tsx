@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import type { CouponProps } from "@/data/homeBlocks";
 import {
   getMerchantCouponDisplayDescription,
+  getMerchantCouponDisplayBoxColor,
   getMerchantCouponDisplayBoxStyle,
   getMerchantCouponDisplayButtonText,
   getMerchantCouponDisplayFieldOrder,
@@ -103,36 +104,23 @@ function colorWithAlpha(color: string, alpha: number) {
   return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
 }
 
-function buildCouponBoxStyle(coupon: MerchantCouponRecord, role: MerchantCouponDisplayField, boxStyle: MerchantCouponDisplayBoxStyle): CSSProperties {
-  const color =
-    role === "discount"
-      ? coupon.discountTextColor
-      : role === "title"
-        ? coupon.titleTextColor
-        : role === "description"
-          ? coupon.descriptionTextColor
-          : role === "button"
-            ? coupon.buttonTextColor
-            : coupon.metaTextColor;
-  const resolvedColor = color || "#020617";
+function buildCouponBoxStyle(boxColor: string, boxStyle: MerchantCouponDisplayBoxStyle): CSSProperties {
+  const resolvedColor = boxColor || "#020617";
   if (boxStyle === "solid") {
     return {
       backgroundColor: resolvedColor,
       borderColor: resolvedColor,
-      color: "#ffffff",
     };
   }
   if (boxStyle === "outline") {
     return {
       borderColor: resolvedColor,
-      color: resolvedColor,
     };
   }
   if (boxStyle === "soft") {
     return {
       backgroundColor: colorWithAlpha(resolvedColor, 0.12),
       borderColor: colorWithAlpha(resolvedColor, 0.22) || resolvedColor,
-      color: resolvedColor,
     };
   }
   return {};
@@ -168,7 +156,12 @@ function buildCouponDisplayItems(
   };
   return getMerchantCouponDisplayFieldOrder(coupon)
     .filter((field) => !isMerchantCouponDisplayFieldHidden(coupon, field))
-    .map((field) => ({ field, text: itemText[field], boxStyle: getMerchantCouponDisplayBoxStyle(coupon, field) }))
+    .map((field) => ({
+      field,
+      text: itemText[field],
+      boxStyle: getMerchantCouponDisplayBoxStyle(coupon, field),
+      boxColor: getMerchantCouponDisplayBoxColor(coupon, field),
+    }))
     .filter((item) => item.text.trim());
 }
 
@@ -473,7 +466,7 @@ export default function CouponBlock({
                             : "inline-block max-w-full rounded-md border px-2 py-1";
                       const framedStyle = {
                         ...buildCouponTextStyle(coupon, item.field),
-                        ...buildCouponBoxStyle(coupon, item.field, item.boxStyle),
+                        ...buildCouponBoxStyle(item.boxColor, item.boxStyle),
                       };
                       if (item.field === "button") {
                         const buttonText = copied || claimed || exhausted || claiming || claimFailed ? actionLabel : item.text;

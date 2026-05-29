@@ -124,6 +124,7 @@ test("createMerchantCoupon normalizes display text and typography", () => {
     displayDescription: "展示说明",
     displayDiscountText: "今日专享",
     displayMetaText: "到店可用",
+    displayBoxColors: { discount: "#112233", button: "#000000" },
     displayFieldOrder: ["meta", "title"],
     displayHiddenFields: ["description"],
     contentFontFamily: "Georgia, serif;",
@@ -142,6 +143,8 @@ test("createMerchantCoupon normalizes display text and typography", () => {
   assert.equal(isMerchantCouponDisplayFieldHidden(coupon, "title"), false);
   assert.equal(coupon.contentFontFamily, "Georgia, serif");
   assert.equal(coupon.discountTextColor, "#ff3366");
+  assert.equal(coupon.displayBoxColors.discount, "#112233");
+  assert.equal(coupon.displayBoxColors.button, "#000000");
   assert.equal(coupon.discountFontSize, 72);
   assert.equal(coupon.titleTextColor, "");
   assert.equal(coupon.titleFontSize, 8);

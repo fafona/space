@@ -82,6 +82,7 @@ export type MerchantCouponInput = {
   displayFieldOrder?: MerchantCouponDisplayField[];
   displayHiddenFields?: MerchantCouponDisplayField[];
   displayBoxStyles?: Partial<Record<MerchantCouponDisplayField, MerchantCouponDisplayBoxStyle>>;
+  displayBoxColors?: Partial<Record<MerchantCouponDisplayField, string>>;
   contentFontFamily?: string;
   discountTextColor?: string;
   discountFontSize?: number;
@@ -251,6 +252,19 @@ function normalizeCouponDisplayBoxStyles(value: unknown): Record<MerchantCouponD
   };
 }
 
+function normalizeCouponDisplayBoxColors(value: unknown, fallback: Partial<Record<MerchantCouponDisplayField, unknown>> = {}) {
+  const raw = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const resolve = (field: MerchantCouponDisplayField, defaultColor: string) =>
+    normalizeColorValue(raw[field]) || normalizeColorValue(fallback[field]) || defaultColor;
+  return {
+    discount: resolve("discount", "#f43f5e"),
+    title: resolve("title", "#020617"),
+    description: resolve("description", "#64748b"),
+    meta: resolve("meta", "#64748b"),
+    button: resolve("button", "#020617"),
+  };
+}
+
 function normalizeCouponBehaviorTriggers(value: unknown): MerchantCouponBehaviorTrigger[] {
   if (!Array.isArray(value)) return [];
   const triggers = value.filter((item): item is MerchantCouponBehaviorTrigger =>
@@ -356,6 +370,13 @@ export function normalizeMerchantCouponRecord(input: MerchantCouponInput | null 
     displayFieldOrder: normalizeCouponDisplayFieldOrder(input?.displayFieldOrder),
     displayHiddenFields: normalizeCouponDisplayFields(input?.displayHiddenFields, []),
     displayBoxStyles: normalizeCouponDisplayBoxStyles(input?.displayBoxStyles),
+    displayBoxColors: normalizeCouponDisplayBoxColors(input?.displayBoxColors, {
+      discount: input?.discountTextColor,
+      title: input?.titleTextColor,
+      description: input?.descriptionTextColor,
+      meta: input?.metaTextColor,
+      button: input?.buttonTextColor,
+    }),
     contentFontFamily: normalizeFontFamilyValue(input?.contentFontFamily),
     discountTextColor: normalizeColorValue(input?.discountTextColor),
     discountFontSize: normalizeFontSizeValue(input?.discountFontSize),
@@ -365,7 +386,10 @@ export function normalizeMerchantCouponRecord(input: MerchantCouponInput | null 
     descriptionFontSize: normalizeFontSizeValue(input?.descriptionFontSize),
     metaTextColor: normalizeColorValue(input?.metaTextColor),
     metaFontSize: normalizeFontSizeValue(input?.metaFontSize),
-    buttonTextColor: normalizeColorValue(input?.buttonTextColor) || "#020617",
+    buttonTextColor:
+      input?.displayBoxColors === undefined && normalizeColorValue(input?.buttonTextColor)
+        ? "#ffffff"
+        : normalizeColorValue(input?.buttonTextColor) || "#ffffff",
     buttonFontSize: normalizeFontSizeValue(input?.buttonFontSize),
     claimRequiresMember: input?.claimRequiresMember === true,
     claimOldUserOnly: input?.claimOldUserOnly === true,
@@ -657,6 +681,16 @@ export function isMerchantCouponDisplayFieldHidden(coupon: MerchantCouponRecord,
 
 export function getMerchantCouponDisplayBoxStyle(coupon: MerchantCouponRecord, field: MerchantCouponDisplayField) {
   return normalizeCouponDisplayBoxStyles(coupon.displayBoxStyles)[field];
+}
+
+export function getMerchantCouponDisplayBoxColor(coupon: MerchantCouponRecord, field: MerchantCouponDisplayField) {
+  return normalizeCouponDisplayBoxColors(coupon.displayBoxColors, {
+    discount: coupon.discountTextColor,
+    title: coupon.titleTextColor,
+    description: coupon.descriptionTextColor,
+    meta: coupon.metaTextColor,
+    button: coupon.buttonTextColor,
+  })[field];
 }
 
 export function merchantCouponRequiresPersonalClaim(coupon: MerchantCouponRecord) {
