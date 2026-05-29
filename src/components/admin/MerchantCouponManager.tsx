@@ -258,6 +258,10 @@ const DISCOUNT_VALUE_REQUIRED_TYPES: MerchantCouponDiscountType[] = [
   "stored_value",
 ];
 
+const COUPON_DISCOUNT_TYPE_LABELS = Object.fromEntries(
+  COUPON_DISCOUNT_TYPE_OPTIONS.map((option) => [option.value, option.label]),
+) as Record<MerchantCouponDiscountType, string>;
+
 const DISPLAY_FIELD_CONFIG: Record<
   MerchantCouponDisplayField,
   {
@@ -1904,6 +1908,7 @@ export default function MerchantCouponManager({
               displayCoupons.map((coupon) => {
                 const selected = coupon.id === form.id;
                 const visualData = buildCouponVisualDataFromRecord(coupon, pricePrefix);
+                const totalQuantityLabel = coupon.totalQuantity > 0 ? String(coupon.totalQuantity) : "不限";
                 return (
                   <article
                     key={coupon.id}
@@ -1924,6 +1929,32 @@ export default function MerchantCouponManager({
                     >
                       <CouponVisualCard data={visualData} className="min-h-[188px]" />
                     </button>
+                      <div className="grid gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 sm:grid-cols-5">
+                        <div className="min-w-0">
+                          <span className="block text-[11px] text-slate-400">优惠类型</span>
+                          <span className="mt-0.5 block truncate font-semibold text-slate-800">
+                            {COUPON_DISCOUNT_TYPE_LABELS[coupon.discountType]}
+                          </span>
+                        </div>
+                        <div className="min-w-0">
+                          <span className="block text-[11px] text-slate-400">状态</span>
+                          <span className={`mt-0.5 inline-flex rounded-full border px-2 py-0.5 font-semibold ${STATUS_CLASS_NAMES[coupon.status]}`}>
+                            {STATUS_LABELS[coupon.status]}
+                          </span>
+                        </div>
+                        <div className="min-w-0">
+                          <span className="block text-[11px] text-slate-400">总数量</span>
+                          <span className="mt-0.5 block truncate font-semibold text-slate-800">{totalQuantityLabel}</span>
+                        </div>
+                        <div className="min-w-0">
+                          <span className="block text-[11px] text-slate-400">领取数量</span>
+                          <span className="mt-0.5 block truncate font-semibold text-slate-800">{coupon.claimedCount}</span>
+                        </div>
+                        <div className="min-w-0">
+                          <span className="block text-[11px] text-slate-400">使用数量</span>
+                          <span className="mt-0.5 block truncate font-semibold text-slate-800">{coupon.usedCount}</span>
+                        </div>
+                      </div>
                       <div className="flex shrink-0 flex-wrap justify-end gap-2">
                         <button
                           type="button"
