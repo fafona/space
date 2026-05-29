@@ -453,6 +453,7 @@ export default function MerchantCouponManager({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploadingBackground, setUploadingBackground] = useState(false);
+  const [formOpen, setFormOpen] = useState(false);
   const [error, setError] = useState("");
   const [tip, setTip] = useState("");
   const backgroundFileInputRef = useRef<HTMLInputElement>(null);
@@ -472,6 +473,10 @@ export default function MerchantCouponManager({
   );
   const activeCouponCount = useMemo(
     () => coupons.filter((coupon) => coupon.status !== "archived").length,
+    [coupons],
+  );
+  const displayCoupons = useMemo(
+    () => coupons.filter((coupon) => coupon.status !== "archived"),
     [coupons],
   );
 
@@ -635,6 +640,7 @@ export default function MerchantCouponManager({
         setForm(buildFormFromCoupon(payload.coupon));
       }
       await loadCoupons();
+      setFormOpen(false);
       setTip(editing ? "优惠券已更新" : "优惠券已创建");
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "优惠券保存失败");
@@ -692,6 +698,7 @@ export default function MerchantCouponManager({
       }
       if (form.id === coupon.id) {
         setForm(EMPTY_FORM);
+        setFormOpen(false);
       }
       await loadCoupons();
       setTip("优惠券已删除");
@@ -745,6 +752,7 @@ export default function MerchantCouponManager({
                 setForm(EMPTY_FORM);
                 setError("");
                 setTip("");
+                setFormOpen(true);
               }}
             >
               新建优惠券
@@ -774,18 +782,37 @@ export default function MerchantCouponManager({
         {tip ? <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{tip}</div> : null}
       </section>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(360px,0.9fr)_minmax(0,1.1fr)]">
-        <section className="rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
+      {formOpen ? (
+        <div className="fixed inset-0 z-[80] flex items-start justify-center overflow-y-auto bg-slate-950/45 px-4 py-6">
+          <button
+            type="button"
+            aria-label="关闭优惠券编辑"
+            className="fixed inset-0 cursor-default"
+            onClick={() => {
+              if (!saving && !uploadingBackground) setFormOpen(false);
+            }}
+          />
+          <section className="relative z-10 w-full max-w-5xl rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-2xl">
           <div className="flex items-center justify-between gap-3">
             <div>
               <div className="text-base font-semibold text-slate-900">{formTitle}</div>
               <div className="mt-1 text-xs text-slate-500">{discountHelper}</div>
             </div>
-            {selectedCoupon ? (
-              <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${STATUS_CLASS_NAMES[selectedCoupon.status]}`}>
-                {STATUS_LABELS[selectedCoupon.status]}
-              </span>
-            ) : null}
+            <div className="flex shrink-0 items-center gap-2">
+              {selectedCoupon ? (
+                <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${STATUS_CLASS_NAMES[selectedCoupon.status]}`}>
+                  {STATUS_LABELS[selectedCoupon.status]}
+                </span>
+              ) : null}
+              <button
+                type="button"
+                className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                onClick={() => setFormOpen(false)}
+                disabled={saving || uploadingBackground}
+              >
+                关闭
+              </button>
+            </div>
           </div>
 
           <div className="mt-5 grid gap-4">
@@ -1158,25 +1185,26 @@ export default function MerchantCouponManager({
               >
                 {saving ? "保存中..." : form.id ? "保存修改" : "创建优惠券"}
               </button>
-              {form.id ? (
-                <button
-                  type="button"
-                  className="rounded-lg border bg-white px-4 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
-                  onClick={() => {
-                    setForm(EMPTY_FORM);
-                    setError("");
-                    setTip("");
-                  }}
-                  disabled={saving}
-                >
-                  取消编辑
-                </button>
-              ) : null}
+              <button
+                type="button"
+                className="rounded-lg border bg-white px-4 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                onClick={() => {
+                  setFormOpen(false);
+                  setForm(EMPTY_FORM);
+                  setError("");
+                  setTip("");
+                }}
+                disabled={saving || uploadingBackground}
+              >
+                取消
+              </button>
             </div>
           </div>
-        </section>
+          </section>
+        </div>
+      ) : null}
 
-        <section className="rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
+      <section className="rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
           <div className="flex items-center justify-between gap-3">
             <div>
               <div className="text-base font-semibold text-slate-900">优惠券列表</div>
@@ -1187,14 +1215,13 @@ export default function MerchantCouponManager({
           <div className="mt-4 space-y-3">
             {loading ? (
               <div className="rounded-xl border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-500">正在加载优惠券...</div>
-            ) : coupons.length === 0 ? (
+            ) : displayCoupons.length === 0 ? (
               <div className="rounded-xl border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-500">
                 还没有优惠券。先创建一张，并保持“网站区块展示”开启。
               </div>
             ) : (
-              coupons.map((coupon) => {
+              displayCoupons.map((coupon) => {
                 const selected = coupon.id === form.id;
-                const archived = coupon.status === "archived";
                 const displayWarning = getCouponDisplayWarning(coupon);
                 const websiteUsable = coupon.showOnWebsite && isMerchantCouponCurrentlyUsable(coupon);
                 const contactCardUsable = coupon.showOnContactCard && isMerchantCouponCurrentlyUsable(coupon);
@@ -1203,10 +1230,19 @@ export default function MerchantCouponManager({
                     key={coupon.id}
                     className={`rounded-2xl border px-4 py-4 transition ${
                       selected ? "border-slate-900 bg-slate-50" : "border-slate-200 bg-white hover:border-slate-300"
-                    } ${archived ? "opacity-70" : ""}`}
+                    }`}
                   >
                     <div className="flex flex-wrap items-start justify-between gap-3">
-                      <button type="button" className="min-w-0 flex-1 text-left" onClick={() => setForm(buildFormFromCoupon(coupon))}>
+                      <button
+                        type="button"
+                        className="min-w-0 flex-1 text-left"
+                        onClick={() => {
+                          setForm(buildFormFromCoupon(coupon));
+                          setError("");
+                          setTip("");
+                          setFormOpen(true);
+                        }}
+                      >
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="truncate text-base font-semibold text-slate-950">{coupon.title}</span>
                           <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASS_NAMES[coupon.status]}`}>
@@ -1249,41 +1285,30 @@ export default function MerchantCouponManager({
                         >
                           复制码
                         </button>
-                        {archived ? (
+                        <>
                           <button
                             type="button"
                             className="rounded border bg-white px-3 py-1.5 text-xs hover:bg-slate-50 disabled:opacity-50"
-                            onClick={() => void patchCoupon(coupon, { status: "active", showOnWebsite: true }, "优惠券已恢复")}
+                            onClick={() =>
+                              void patchCoupon(
+                                coupon,
+                                { status: coupon.status === "active" ? "paused" : "active" },
+                                coupon.status === "active" ? "优惠券已暂停" : "优惠券已启用",
+                              )
+                            }
                             disabled={saving}
                           >
-                            恢复
+                            {coupon.status === "active" ? "暂停" : "启用"}
                           </button>
-                        ) : (
-                          <>
-                            <button
-                              type="button"
-                              className="rounded border bg-white px-3 py-1.5 text-xs hover:bg-slate-50 disabled:opacity-50"
-                              onClick={() =>
-                                void patchCoupon(
-                                  coupon,
-                                  { status: coupon.status === "active" ? "paused" : "active" },
-                                  coupon.status === "active" ? "优惠券已暂停" : "优惠券已启用",
-                                )
-                              }
-                              disabled={saving}
-                            >
-                              {coupon.status === "active" ? "暂停" : "启用"}
-                            </button>
-                            <button
-                              type="button"
-                              className="rounded border border-rose-200 bg-white px-3 py-1.5 text-xs text-rose-600 hover:bg-rose-50 disabled:opacity-50"
-                              onClick={() => void archiveCoupon(coupon)}
-                              disabled={saving}
-                            >
-                              删除
-                            </button>
-                          </>
-                        )}
+                          <button
+                            type="button"
+                            className="rounded border border-rose-200 bg-white px-3 py-1.5 text-xs text-rose-600 hover:bg-rose-50 disabled:opacity-50"
+                            onClick={() => void archiveCoupon(coupon)}
+                            disabled={saving}
+                          >
+                            删除
+                          </button>
+                        </>
                       </div>
                     </div>
                   </article>
@@ -1291,8 +1316,7 @@ export default function MerchantCouponManager({
               })
             )}
           </div>
-        </section>
-      </div>
+      </section>
     </div>
   );
 }

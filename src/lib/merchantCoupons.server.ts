@@ -79,15 +79,22 @@ export async function updateMerchantCouponRecord(input: {
 }
 
 export async function archiveMerchantCouponRecord(input: { siteId: string; couponId: string }) {
-  return updateMerchantCouponRecord({
-    siteId: input.siteId,
-    couponId: input.couponId,
-    patch: {
-      status: "archived",
-      showOnWebsite: false,
-      showOnContactCard: false,
-    },
+  const supabase = requireCouponsStoreClient();
+  const siteId = trimText(input.siteId);
+  const couponId = trimText(input.couponId);
+  if (!siteId || !couponId) throw new Error("coupon_not_found");
+  const stored = await loadStoredMerchantCoupons(supabase, siteId);
+  const coupons = normalizeMerchantCouponRecords(stored?.coupons ?? []);
+  const deletedCoupon = coupons.find((coupon) => coupon.id === couponId);
+  if (!deletedCoupon) throw new Error("coupon_not_found");
+  const updatedCoupons = coupons.filter((coupon) => coupon.id !== couponId);
+  const saved = await saveStoredMerchantCoupons(supabase, {
+    siteId,
+    coupons: updatedCoupons,
+    updatedAt: new Date().toISOString(),
   });
+  if (saved.error) throw new Error(saved.error);
+  return deletedCoupon;
 }
 
 export async function claimMerchantCouponRecord(input: { siteId: string; couponId: string }) {
