@@ -2017,6 +2017,11 @@ function buildShareCardHtml(input: {
     <link rel="canonical" href="${shareUrl}" />
     <meta name="google" content="notranslate" />
     <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
       body {
         margin: 0;
         font-family: "Segoe UI", Arial, sans-serif;
@@ -2256,11 +2261,14 @@ function buildShareCardHtml(input: {
         line-height: 1.7;
       }
       .coupon-section {
+        width: 100%;
+        max-width: 100%;
         margin-top: 16px;
         border-radius: 18px;
         border: 1px solid rgba(15,23,42,.1);
         background: rgba(248,250,252,.9);
         padding: 14px;
+        overflow: hidden;
       }
       .coupon-title {
         font-size: 15px;
@@ -2271,17 +2279,23 @@ function buildShareCardHtml(input: {
         display: grid;
         gap: 10px;
         margin-top: 10px;
+        width: 100%;
+        max-width: 100%;
       }
       .coupon-item {
         display: grid;
         gap: 12px;
+        width: 100%;
+        max-width: 100%;
         border-radius: 16px;
         border: 1px solid rgba(15,23,42,.08);
         background: rgba(255,255,255,.94);
         padding: 14px;
+        overflow: hidden;
       }
       .coupon-copy {
         min-width: 0;
+        max-width: 100%;
       }
       .coupon-discount {
         font-size: 12px;
@@ -2289,17 +2303,20 @@ function buildShareCardHtml(input: {
         letter-spacing: .12em;
         color: #f43f5e;
         text-transform: uppercase;
+        overflow-wrap: anywhere;
       }
       .coupon-name {
         margin-top: 6px;
         font-size: 16px;
         font-weight: 800;
         color: #0f172a;
+        overflow-wrap: anywhere;
       }
       .coupon-description {
         margin-top: 4px;
         font-size: 13px;
         color: #64748b;
+        overflow-wrap: anywhere;
       }
       .coupon-meta {
         display: flex;
@@ -2308,11 +2325,21 @@ function buildShareCardHtml(input: {
         margin-top: 8px;
         font-size: 12px;
         color: #64748b;
+        min-width: 0;
+        max-width: 100%;
+        overflow-wrap: anywhere;
+      }
+      .coupon-meta span {
+        min-width: 0;
+        max-width: 100%;
+        overflow-wrap: anywhere;
       }
       .coupon-button {
         display: inline-flex;
         align-items: center;
         justify-content: center;
+        width: 100%;
+        max-width: 100%;
         min-height: 40px;
         border-radius: 12px;
         border: 0;
@@ -2322,6 +2349,9 @@ function buildShareCardHtml(input: {
         font-size: 14px;
         font-weight: 700;
         cursor: pointer;
+        text-align: center;
+        overflow-wrap: anywhere;
+        white-space: normal;
       }
       .summary-row + .summary-row {
         margin-top: 12px;
