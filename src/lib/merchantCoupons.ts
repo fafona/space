@@ -200,8 +200,28 @@ export function isMerchantCouponCurrentlyUsable(coupon: MerchantCouponRecord, no
   if (coupon.status !== "active") return false;
   if (coupon.startsAt && Date.parse(coupon.startsAt) > now) return false;
   if (coupon.expiresAt && Date.parse(coupon.expiresAt) < now) return false;
-  if (coupon.totalQuantity > 0 && coupon.usedCount >= coupon.totalQuantity) return false;
+  if (getMerchantCouponRemainingCount(coupon) === 0) return false;
   return true;
+}
+
+export function getMerchantCouponRemainingCount(coupon: MerchantCouponRecord) {
+  if (coupon.totalQuantity <= 0) return null;
+  return Math.max(0, coupon.totalQuantity - Math.max(coupon.claimedCount, coupon.usedCount));
+}
+
+export function claimMerchantCoupon(coupon: MerchantCouponRecord, nowInput: Date | string = new Date()) {
+  if (!isMerchantCouponCurrentlyUsable(coupon, nowInput)) {
+    throw new Error("coupon_not_claimable");
+  }
+  const now = nowInput instanceof Date ? nowInput.toISOString() : normalizeIsoDateValue(nowInput) ?? new Date().toISOString();
+  return updateMerchantCoupon(
+    coupon,
+    {
+      claimedCount: coupon.claimedCount + 1,
+    },
+    [coupon.code],
+    now,
+  );
 }
 
 export function getVisibleMerchantCoupons(coupons: MerchantCouponRecord[], nowInput: Date | string = new Date()) {
@@ -231,7 +251,7 @@ function inactiveReason(coupon: MerchantCouponRecord, nowInput: Date | string): 
   if (coupon.status !== "active") return "inactive";
   if (coupon.startsAt && Date.parse(coupon.startsAt) > now) return "not_started";
   if (coupon.expiresAt && Date.parse(coupon.expiresAt) < now) return "expired";
-  if (coupon.totalQuantity > 0 && coupon.usedCount >= coupon.totalQuantity) return "out_of_stock";
+  if (getMerchantCouponRemainingCount(coupon) === 0) return "out_of_stock";
   return "ok";
 }
 

@@ -2,7 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
+  getContactCardVisibleMerchantCoupons,
+  getMerchantCouponRemainingCount,
   getMerchantCouponDiscountLabel,
+  getVisibleMerchantCoupons,
+  isMerchantCouponCurrentlyUsable,
   normalizeMerchantCouponRecords,
   type MerchantCouponDiscountType,
   type MerchantCouponInput,
@@ -97,6 +101,11 @@ function fromDateTimeTextValue(value: string) {
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
+function isInvalidDateTimeTextValue(value: string) {
+  const raw = value.trim();
+  return Boolean(raw) && !fromDateTimeTextValue(raw);
+}
+
 function toDateTimePickerValue(value: string) {
   const raw = value.trim();
   if (!raw) return "";
@@ -146,6 +155,10 @@ function toIntValue(value: string) {
   return Number.isFinite(next) ? Math.max(0, Math.round(next)) : 0;
 }
 
+function normalizeCodeInput(value: string) {
+  return value.replace(/\s+/g, "").toUpperCase();
+}
+
 function splitTags(value: string) {
   return value
     .split(/[,，\n]/)
@@ -175,8 +188,38 @@ function buildFormFromCoupon(coupon: MerchantCouponRecord): CouponFormState {
 }
 
 function getRemainingCount(coupon: MerchantCouponRecord) {
-  if (coupon.totalQuantity <= 0) return "不限";
-  return String(Math.max(0, coupon.totalQuantity - coupon.usedCount));
+  const remaining = getMerchantCouponRemainingCount(coupon);
+  return remaining === null ? "不限" : String(remaining);
+}
+
+function getCouponDisplayWarning(coupon: MerchantCouponRecord) {
+  if (coupon.status === "archived") return "已删除";
+  if (coupon.status !== "active") return "已暂停";
+  const now = Date.now();
+  if (coupon.startsAt && Date.parse(coupon.startsAt) > now) return "未开始";
+  if (coupon.expiresAt && Date.parse(coupon.expiresAt) < now) return "已过期";
+  if (getMerchantCouponRemainingCount(coupon) === 0) return "已用完";
+  if (!coupon.showOnWebsite && !coupon.showOnContactCard) return "未展示";
+  return "";
+}
+
+function validateCouponForm(form: CouponFormState, selectedCoupon: MerchantCouponRecord | null) {
+  const discountValue = toNumberValue(form.discountValue);
+  const minimumAmount = toNumberValue(form.minimumAmount);
+  const totalQuantity = toIntValue(form.totalQuantity);
+  const startsAt = fromDateTimeTextValue(form.startsAt);
+  const expiresAt = fromDateTimeTextValue(form.expiresAt);
+
+  if (discountValue <= 0) return "请填写大于 0 的优惠值";
+  if (form.discountType === "percent_off" && discountValue > 100) return "折扣百分比不能超过 100";
+  if (form.discountType === "threshold_amount_off" && minimumAmount <= 0) return "满减券需要填写大于 0 的门槛金额";
+  if (isInvalidDateTimeTextValue(form.startsAt)) return "开始时间格式不正确，请使用 2026-05-16 18:30";
+  if (isInvalidDateTimeTextValue(form.expiresAt)) return "结束时间格式不正确，请使用 2026-12-31 23:59";
+  if (startsAt && expiresAt && Date.parse(startsAt) > Date.parse(expiresAt)) return "结束时间不能早于开始时间";
+  if (selectedCoupon && totalQuantity > 0 && totalQuantity < selectedCoupon.usedCount) {
+    return `总数量不能小于已用数量 ${selectedCoupon.usedCount}`;
+  }
+  return "";
 }
 
 function CouponCalendarIcon() {
@@ -286,7 +329,15 @@ export default function MerchantCouponManager({
   );
 
   const activeVisibleCount = useMemo(
-    () => coupons.filter((coupon) => coupon.status === "active" && coupon.showOnWebsite).length,
+    () => getVisibleMerchantCoupons(coupons).length,
+    [coupons],
+  );
+  const contactCardVisibleCount = useMemo(
+    () => getContactCardVisibleMerchantCoupons(coupons).length,
+    [coupons],
+  );
+  const activeCouponCount = useMemo(
+    () => coupons.filter((coupon) => coupon.status !== "archived").length,
     [coupons],
   );
 
@@ -361,6 +412,12 @@ export default function MerchantCouponManager({
 
   async function saveCoupon() {
     if (!siteId || saving) return;
+    const validationError = validateCouponForm(form, selectedCoupon);
+    if (validationError) {
+      setError(validationError);
+      setTip("");
+      return;
+    }
     setSaving(true);
     setError("");
     setTip("");
@@ -426,6 +483,9 @@ export default function MerchantCouponManager({
 
   async function archiveCoupon(coupon: MerchantCouponRecord) {
     if (!siteId || saving) return;
+    if (typeof window !== "undefined" && !window.confirm(`确定删除优惠券「${coupon.title}」吗？删除后不会再展示给客户。`)) {
+      return;
+    }
     setSaving(true);
     setError("");
     setTip("");
@@ -508,16 +568,16 @@ export default function MerchantCouponManager({
         </div>
         <div className="mt-4 grid gap-3 sm:grid-cols-3">
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-            <div className="text-xs text-slate-500">优惠券总数</div>
-            <div className="mt-1 text-xl font-semibold text-slate-900">{coupons.length}</div>
+            <div className="text-xs text-slate-500">未删除优惠券</div>
+            <div className="mt-1 text-xl font-semibold text-slate-900">{activeCouponCount}</div>
           </div>
           <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-            <div className="text-xs text-emerald-700">网站展示中</div>
+            <div className="text-xs text-emerald-700">网站可展示</div>
             <div className="mt-1 text-xl font-semibold text-emerald-700">{activeVisibleCount}</div>
           </div>
-          <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-            <div className="text-xs text-slate-500">当前状态</div>
-            <div className="mt-1 text-xl font-semibold text-slate-900">{loading ? "加载中" : siteId ? "可编辑" : "未就绪"}</div>
+          <div className="rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-3">
+            <div className="text-xs text-cyan-700">联系卡可展示</div>
+            <div className="mt-1 text-xl font-semibold text-cyan-700">{contactCardVisibleCount}</div>
           </div>
         </div>
         {error ? <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-600">{error}</div> : null}
@@ -553,7 +613,7 @@ export default function MerchantCouponManager({
               <input
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 uppercase outline-none focus:border-slate-500"
                 value={form.code}
-                onChange={handleInputChange("code")}
+                onChange={(event) => updateField("code", normalizeCodeInput(event.target.value))}
                 placeholder="留空会自动生成"
               />
             </label>
@@ -603,6 +663,13 @@ export default function MerchantCouponManager({
                   disabled={form.discountType === "amount_off"}
                 />
               </label>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <div className="text-sm font-semibold text-slate-900">领取规则</div>
+              <div className="mt-1 text-xs leading-5 text-slate-500">
+                总数量、每人限制、开始/结束时间会控制网站区块“立即领取”的可领取状态。
+              </div>
             </div>
 
             <div className="grid gap-3 md:grid-cols-3">
@@ -745,6 +812,9 @@ export default function MerchantCouponManager({
               coupons.map((coupon) => {
                 const selected = coupon.id === form.id;
                 const archived = coupon.status === "archived";
+                const displayWarning = getCouponDisplayWarning(coupon);
+                const websiteUsable = coupon.showOnWebsite && isMerchantCouponCurrentlyUsable(coupon);
+                const contactCardUsable = coupon.showOnContactCard && isMerchantCouponCurrentlyUsable(coupon);
                 return (
                   <article
                     key={coupon.id}
@@ -759,9 +829,19 @@ export default function MerchantCouponManager({
                           <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASS_NAMES[coupon.status]}`}>
                             {STATUS_LABELS[coupon.status]}
                           </span>
-                          {coupon.showOnWebsite && coupon.status === "active" ? (
+                          {websiteUsable ? (
                             <span className="rounded-full border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-[11px] font-semibold text-cyan-700">
                               网站展示
+                            </span>
+                          ) : null}
+                          {contactCardUsable ? (
+                            <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">
+                              联系卡展示
+                            </span>
+                          ) : null}
+                          {displayWarning ? (
+                            <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-500">
+                              {displayWarning}
                             </span>
                           ) : null}
                         </div>
@@ -771,6 +851,7 @@ export default function MerchantCouponManager({
                         <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
                           <span>优惠码：{coupon.code}</span>
                           <span>剩余：{getRemainingCount(coupon)}</span>
+                          <span>已领：{coupon.claimedCount}</span>
                           <span>已用：{coupon.usedCount}</span>
                           <span>有效期：{formatDateTime(coupon.expiresAt)}</span>
                         </div>

@@ -28544,7 +28544,7 @@ type GalleryEditorImage = {
   if (block.type === "coupon") {
     const couponDisplayMode = block.props.couponDisplayMode === "list" ? "list" : "cards";
     const couponActionMode: CouponActionMode =
-      block.props.couponActionMode === "order" || block.props.couponActionMode === "none"
+      block.props.couponActionMode === "claim" || block.props.couponActionMode === "order" || block.props.couponActionMode === "none"
         ? block.props.couponActionMode
         : "copy";
     const previewCoupons: MerchantCouponRecord[] = [
@@ -28673,6 +28673,7 @@ type GalleryEditorImage = {
                     onChange={(event) => onChange({ couponActionMode: event.target.value as CouponActionMode })}
                   >
                     <option value="copy">复制优惠码</option>
+                    <option value="claim">立即领取</option>
                     <option value="order">立即使用</option>
                     <option value="none">只展示</option>
                   </select>

@@ -3,8 +3,10 @@ import test from "node:test";
 import {
   buildMerchantCouponCode,
   calculateMerchantCouponDiscount,
+  claimMerchantCoupon,
   getContactCardVisibleMerchantCoupons,
   createMerchantCoupon,
+  getMerchantCouponRemainingCount,
   getVisibleMerchantCoupons,
   normalizeMerchantCouponRecord,
 } from "@/lib/merchantCoupons";
@@ -81,6 +83,26 @@ test("getVisibleMerchantCoupons hides paused, expired, hidden, and exhausted cou
     getVisibleMerchantCoupons(rows.filter(Boolean) as NonNullable<(typeof rows)[number]>[], now).map((item) => item.id),
     [visible.id],
   );
+});
+
+test("coupon remaining and claim count use claimed inventory", () => {
+  const coupon = normalizeMerchantCouponRecord({
+    ...createMerchantCoupon({
+      siteId: "10000000",
+      title: "限量",
+      discountValue: 1,
+      totalQuantity: 2,
+    }),
+    claimedCount: 1,
+  });
+  assert.ok(coupon);
+  assert.equal(getMerchantCouponRemainingCount(coupon), 1);
+
+  const claimed = claimMerchantCoupon(coupon, "2026-05-15T00:00:00.000Z");
+  assert.equal(claimed.claimedCount, 2);
+  assert.equal(getMerchantCouponRemainingCount(claimed), 0);
+  assert.deepEqual(getVisibleMerchantCoupons([claimed], "2026-05-15T00:00:00.000Z"), []);
+  assert.throws(() => claimMerchantCoupon(claimed, "2026-05-15T00:00:00.000Z"), /coupon_not_claimable/);
 });
 
 test("getContactCardVisibleMerchantCoupons uses contact card visibility flag", () => {

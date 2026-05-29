@@ -359,7 +359,7 @@ type ProductProps = BackgroundEditableProps &
     productPriceTypography?: TypographyEditableProps;
   };
 export type CouponDisplayMode = "cards" | "list";
-export type CouponActionMode = "copy" | "order" | "none";
+export type CouponActionMode = "copy" | "claim" | "order" | "none";
 export type CouponProps = BackgroundEditableProps &
   TypographyEditableProps & {
     heading?: string;

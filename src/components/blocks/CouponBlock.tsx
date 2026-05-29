@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { CouponProps } from "@/data/homeBlocks";
 import {
+  getMerchantCouponRemainingCount,
   getMerchantCouponDiscountLabel,
   normalizeMerchantCouponRecords,
   type MerchantCouponRecord,
@@ -32,6 +33,35 @@ function normalizeText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function buildClaimStorageKey(siteId: string) {
+  return `faolla:coupon-claims:${siteId || "preview"}`;
+}
+
+function readClaimCounts(siteId: string) {
+  if (typeof window === "undefined") return {} as Record<string, number>;
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(buildClaimStorageKey(siteId)) || "{}") as Record<string, unknown>;
+    const entries: Array<[string, number]> = Object.entries(parsed)
+      .map(([key, value]): [string, number] => [
+        key,
+        typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0,
+      ])
+      .filter(([, value]) => value > 0);
+    return Object.fromEntries(entries);
+  } catch {
+    return {};
+  }
+}
+
+function writeClaimCounts(siteId: string, counts: Record<string, number>) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(buildClaimStorageKey(siteId), JSON.stringify(counts));
+  } catch {
+    // Private browsing or storage restrictions should not break coupon display.
+  }
+}
+
 export default function CouponBlock({
   heading = "优惠券",
   text = "领取后可在下单时使用。",
@@ -49,6 +79,14 @@ export default function CouponBlock({
 }: CouponBlockRuntimeProps) {
   const [loadedCoupons, setLoadedCoupons] = useState<MerchantCouponRecord[]>([]);
   const [copiedCode, setCopiedCode] = useState("");
+  const [claimedCounts, setClaimedCounts] = useState<Record<string, number>>({});
+  const [claimingCouponId, setClaimingCouponId] = useState("");
+  const [claimErrorCouponId, setClaimErrorCouponId] = useState("");
+
+  useEffect(() => {
+    setClaimedCounts(readClaimCounts(runtimeSiteId));
+    setClaimErrorCouponId("");
+  }, [runtimeSiteId]);
 
   useEffect(() => {
     if (previewCoupons || !runtimeSiteId) return;
@@ -111,6 +149,65 @@ export default function CouponBlock({
     }
   };
 
+  const markCouponClaimed = (couponId: string, limit: number) => {
+    setClaimedCounts((current) => {
+      const nextCount = Math.min(Math.max(1, limit || 1), (current[couponId] ?? 0) + 1);
+      const next = { ...current, [couponId]: nextCount };
+      writeClaimCounts(runtimeSiteId, next);
+      return next;
+    });
+  };
+
+  const claimCoupon = async (coupon: MerchantCouponRecord) => {
+    if (!interactive || couponActionMode !== "claim") return;
+    setClaimErrorCouponId("");
+    const localClaimCount = claimedCounts[coupon.id] ?? 0;
+    const perCustomerLimit = Math.max(1, coupon.perCustomerLimit || 1);
+    if (localClaimCount >= perCustomerLimit) {
+      setCopiedCode(coupon.code);
+      try {
+        await navigator.clipboard?.writeText(coupon.code);
+      } catch {
+        // The claimed state is still useful even when clipboard access is blocked.
+      }
+      window.setTimeout(() => setCopiedCode((current) => (current === coupon.code ? "" : current)), 1200);
+      return;
+    }
+    if (!runtimeSiteId || previewCoupons) {
+      markCouponClaimed(coupon.id, perCustomerLimit);
+      setCopiedCode(coupon.code);
+      window.setTimeout(() => setCopiedCode((current) => (current === coupon.code ? "" : current)), 1200);
+      return;
+    }
+    setClaimingCouponId(coupon.id);
+    try {
+      const response = await fetch("/api/coupons/claim", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ siteId: runtimeSiteId, couponId: coupon.id }),
+      });
+      const payload = (await response.json().catch(() => null)) as { coupon?: unknown } | null;
+      if (!response.ok) throw new Error("claim_failed");
+      const [claimedCoupon] = normalizeMerchantCouponRecords(payload?.coupon ? [payload.coupon] : []);
+      if (claimedCoupon) {
+        setLoadedCoupons((current) => current.map((item) => (item.id === claimedCoupon.id ? claimedCoupon : item)));
+      }
+      markCouponClaimed(coupon.id, perCustomerLimit);
+      setCopiedCode(coupon.code);
+      try {
+        await navigator.clipboard?.writeText(coupon.code);
+      } catch {
+        // Claiming succeeds even if the browser does not allow copying.
+      }
+      window.setTimeout(() => setCopiedCode((current) => (current === coupon.code ? "" : current)), 1200);
+    } catch {
+      setClaimErrorCouponId(coupon.id);
+    } finally {
+      setClaimingCouponId("");
+    }
+  };
+
   const isList = couponDisplayMode === "list";
 
   return (
@@ -127,9 +224,31 @@ export default function CouponBlock({
           {text ? <p className="mt-2 text-sm leading-6 text-slate-600">{text}</p> : null}
           <div className={isList ? "mt-5 grid gap-3" : "mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3"}>
             {coupons.map((coupon) => {
-              const remaining = coupon.totalQuantity > 0 ? Math.max(0, coupon.totalQuantity - coupon.usedCount) : null;
+              const remaining = getMerchantCouponRemainingCount(coupon);
               const expiresLabel = formatDate(coupon.expiresAt);
               const copied = copiedCode === coupon.code;
+              const claimed = (claimedCounts[coupon.id] ?? 0) > 0;
+              const exhausted = remaining === 0;
+              const claiming = claimingCouponId === coupon.id;
+              const claimFailed = claimErrorCouponId === coupon.id;
+              const actionLabel =
+                couponActionMode === "none"
+                  ? coupon.code
+                  : couponActionMode === "claim"
+                    ? exhausted
+                      ? "已领完"
+                      : claiming
+                        ? "领取中..."
+                        : claimFailed
+                          ? "重试领取"
+                          : copied || claimed
+                            ? "已领取"
+                            : "立即领取"
+                    : copied
+                      ? "已复制"
+                      : couponActionMode === "order"
+                        ? "立即使用"
+                        : "复制优惠码";
               return (
                 <article
                   key={coupon.id}
@@ -152,14 +271,22 @@ export default function CouponBlock({
                   <button
                     type="button"
                     className={`mt-4 inline-flex h-10 w-full items-center justify-center rounded-lg border px-4 text-sm font-semibold transition ${
-                      copied
+                      copied || (couponActionMode === "claim" && claimed)
                         ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                        : exhausted
+                          ? "border-slate-200 bg-slate-100 text-slate-400"
                         : "border-slate-950 bg-slate-950 text-white hover:bg-slate-800"
                     } ${isList ? "sm:mt-0 sm:w-auto" : ""}`}
-                    onClick={() => void copyCouponCode(coupon.code)}
-                    disabled={!interactive || couponActionMode === "none"}
+                    onClick={() => {
+                      if (couponActionMode === "claim") {
+                        void claimCoupon(coupon);
+                      } else {
+                        void copyCouponCode(coupon.code);
+                      }
+                    }}
+                    disabled={!interactive || couponActionMode === "none" || exhausted || claiming}
                   >
-                    {couponActionMode === "none" ? coupon.code : copied ? "已复制" : couponActionMode === "order" ? "立即使用" : "复制优惠码"}
+                    {actionLabel}
                   </button>
                 </article>
               );

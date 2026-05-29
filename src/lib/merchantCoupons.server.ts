@@ -1,5 +1,6 @@
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import {
+  claimMerchantCoupon,
   createMerchantCoupon,
   normalizeMerchantCouponRecords,
   updateMerchantCoupon,
@@ -87,4 +88,25 @@ export async function archiveMerchantCouponRecord(input: { siteId: string; coupo
       showOnContactCard: false,
     },
   });
+}
+
+export async function claimMerchantCouponRecord(input: { siteId: string; couponId: string }) {
+  const supabase = requireCouponsStoreClient();
+  const siteId = trimText(input.siteId);
+  const couponId = trimText(input.couponId);
+  if (!siteId || !couponId) throw new Error("coupon_not_found");
+  const stored = await loadStoredMerchantCoupons(supabase, siteId);
+  const coupons = normalizeMerchantCouponRecords(stored?.coupons ?? []);
+  const index = coupons.findIndex((coupon) => coupon.id === couponId);
+  if (index < 0) throw new Error("coupon_not_found");
+  const next = claimMerchantCoupon(coupons[index]);
+  const updatedCoupons = [...coupons];
+  updatedCoupons[index] = next;
+  const saved = await saveStoredMerchantCoupons(supabase, {
+    siteId,
+    coupons: updatedCoupons,
+    updatedAt: next.updatedAt,
+  });
+  if (saved.error) throw new Error(saved.error);
+  return next;
 }
