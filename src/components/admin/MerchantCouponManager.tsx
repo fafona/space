@@ -13,7 +13,6 @@ import {
   getMerchantCouponDisplayFieldOrder,
   getMerchantCouponDisplayMetaText,
   getMerchantCouponDisplayTitle,
-  getMerchantCouponRemainingCount,
   getMerchantCouponDiscountLabel,
   getVisibleMerchantCoupons,
   isMerchantCouponDisplayFieldHidden,
@@ -112,8 +111,8 @@ const EMPTY_FORM: CouponFormState = {
   discountValue: "5",
   minimumAmount: "30",
   maxDiscountAmount: "",
-  totalQuantity: "100",
-  perCustomerLimit: "1",
+  totalQuantity: "",
+  perCustomerLimit: "",
   startsAt: "",
   expiresAt: "",
   status: "active",
@@ -391,11 +390,9 @@ function formatUsageScenarios(value: MerchantCouponUsageScenario[]) {
 }
 
 function buildRecordDefaultMetaText(coupon: MerchantCouponRecord, pricePrefix: string) {
-  const remaining = getMerchantCouponRemainingCount(coupon);
   return [
     coupon.minimumAmount > 0 ? `门槛 ${pricePrefix}${coupon.minimumAmount.toFixed(2)}` : "",
     formatUsageScenarios(coupon.usageScenarios),
-    remaining !== null ? `剩余 ${remaining}` : "",
     coupon.expiresAt ? `至 ${formatDateTime(coupon.expiresAt)}` : "",
   ]
     .filter(Boolean)
@@ -410,16 +407,11 @@ function buildFormGeneratedDiscountText(form: CouponFormState, pricePrefix: stri
   return `减 ${pricePrefix}${discountValue.toFixed(2)}`;
 }
 
-function buildFormDefaultMetaText(form: CouponFormState, selectedCoupon: MerchantCouponRecord | null, pricePrefix: string) {
+function buildFormDefaultMetaText(form: CouponFormState, pricePrefix: string) {
   const minimumAmount = toNumberValue(form.minimumAmount);
-  const remaining =
-    toIntValue(form.totalQuantity) > 0
-      ? Math.max(0, toIntValue(form.totalQuantity) - Math.max(selectedCoupon?.claimedCount ?? 0, selectedCoupon?.usedCount ?? 0))
-      : null;
   return [
     minimumAmount > 0 ? `门槛 ${pricePrefix}${minimumAmount.toFixed(2)}` : "",
     formatUsageScenarios(form.usageScenarios),
-    remaining !== null ? `剩余 ${remaining}` : "",
     fromDateTimeTextValue(form.expiresAt) ? `至 ${formatDateTime(fromDateTimeTextValue(form.expiresAt))}` : "",
   ]
     .filter(Boolean)
@@ -438,7 +430,7 @@ function buildNewCouponForm(pricePrefix: string): CouponFormState {
     displayDescription: "展示给客户看的使用说明",
   };
   next.displayDiscountText = buildFormGeneratedDiscountText(next, pricePrefix);
-  next.displayMetaText = buildFormDefaultMetaText(next, null, pricePrefix);
+  next.displayMetaText = buildFormDefaultMetaText(next, pricePrefix);
   return next;
 }
 
@@ -452,9 +444,9 @@ function buildFormFromCoupon(coupon: MerchantCouponRecord, pricePrefix: string):
     discountType: coupon.discountType,
     discountValue: coupon.discountValue > 0 ? String(coupon.discountValue) : "",
     minimumAmount: coupon.minimumAmount > 0 ? String(coupon.minimumAmount) : "",
-    maxDiscountAmount: coupon.maxDiscountAmount > 0 ? String(coupon.maxDiscountAmount) : "",
-    totalQuantity: coupon.totalQuantity > 0 ? String(coupon.totalQuantity) : "",
-    perCustomerLimit: coupon.perCustomerLimit > 0 ? String(coupon.perCustomerLimit) : "1",
+    maxDiscountAmount: "",
+    totalQuantity: "",
+    perCustomerLimit: "",
     startsAt: toDateTimeTextValue(coupon.startsAt),
     expiresAt: toDateTimeTextValue(coupon.expiresAt),
     status: coupon.status,
@@ -513,11 +505,9 @@ function buildFormFromCoupon(coupon: MerchantCouponRecord, pricePrefix: string):
 
 function buildCouponVisualDataFromRecord(coupon: MerchantCouponRecord, pricePrefix: string): CouponVisualCardData {
   const customMeta = getMerchantCouponDisplayMetaText(coupon);
-  const remaining = getMerchantCouponRemainingCount(coupon);
   const defaultMetaText = [
     coupon.minimumAmount > 0 ? `门槛 ${pricePrefix}${coupon.minimumAmount.toFixed(2)}` : "",
     formatUsageScenarios(coupon.usageScenarios),
-    remaining !== null ? `剩余 ${remaining}` : "",
     coupon.expiresAt ? `至 ${formatDateTime(coupon.expiresAt)}` : "",
   ]
     .filter(Boolean)
@@ -548,10 +538,9 @@ function buildCouponVisualDataFromRecord(coupon: MerchantCouponRecord, pricePref
   };
 }
 
-function validateCouponForm(form: CouponFormState, selectedCoupon: MerchantCouponRecord | null) {
+function validateCouponForm(form: CouponFormState) {
   const discountValue = toNumberValue(form.discountValue);
   const minimumAmount = toNumberValue(form.minimumAmount);
-  const totalQuantity = toIntValue(form.totalQuantity);
   const startsAt = fromDateTimeTextValue(form.startsAt);
   const expiresAt = fromDateTimeTextValue(form.expiresAt);
 
@@ -562,9 +551,6 @@ function validateCouponForm(form: CouponFormState, selectedCoupon: MerchantCoupo
   if (isInvalidDateTimeTextValue(form.startsAt)) return "开始时间格式不正确，请使用 2026-05-16 18:30";
   if (isInvalidDateTimeTextValue(form.expiresAt)) return "结束时间格式不正确，请使用 2026-12-31 23:59";
   if (startsAt && expiresAt && Date.parse(startsAt) > Date.parse(expiresAt)) return "结束时间不能早于开始时间";
-  if (selectedCoupon && totalQuantity > 0 && totalQuantity < selectedCoupon.usedCount) {
-    return `总数量不能小于已用数量 ${selectedCoupon.usedCount}`;
-  }
   return "";
 }
 
@@ -973,9 +959,9 @@ export default function MerchantCouponManager({
       discountType: form.discountType,
       discountValue: toNumberValue(form.discountValue),
       minimumAmount: toNumberValue(form.minimumAmount),
-      maxDiscountAmount: toNumberValue(form.maxDiscountAmount),
-      totalQuantity: toIntValue(form.totalQuantity),
-      perCustomerLimit: Math.max(1, toIntValue(form.perCustomerLimit) || 1),
+      maxDiscountAmount: 0,
+      totalQuantity: 0,
+      perCustomerLimit: 0,
       startsAt: fromDateTimeTextValue(form.startsAt),
       expiresAt: fromDateTimeTextValue(form.expiresAt),
       status: form.status === "archived" ? "paused" : form.status,
@@ -1064,7 +1050,7 @@ export default function MerchantCouponManager({
 
   async function saveCoupon() {
     if (!siteId || saving) return;
-    const validationError = validateCouponForm(form, selectedCoupon);
+    const validationError = validateCouponForm(form);
     if (validationError) {
       setError(validationError);
       setTip("");
@@ -1511,42 +1497,7 @@ export default function MerchantCouponManager({
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4">
               <div className="text-sm font-semibold text-slate-900">领取规则</div>
               <div className="mt-1 text-xs leading-5 text-slate-500">
-                总数量、每人限制、有效期和身份限制会控制网站区块“立即领取”的可领取状态。
-              </div>
-              <div className="mt-3 grid gap-3 md:grid-cols-3">
-              <label className="space-y-1 text-sm">
-                <span className="block text-slate-600">总数量</span>
-                <input
-                  type="number"
-                  min={0}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                  value={form.totalQuantity}
-                  onChange={handleInputChange("totalQuantity")}
-                  placeholder="0 表示不限"
-                />
-              </label>
-              <label className="space-y-1 text-sm">
-                <span className="block text-slate-600">每人限制</span>
-                <input
-                  type="number"
-                  min={1}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                  value={form.perCustomerLimit}
-                  onChange={handleInputChange("perCustomerLimit")}
-                />
-              </label>
-              <label className="space-y-1 text-sm">
-                <span className="block text-slate-600">最大优惠</span>
-                <input
-                  type="number"
-                  min={0}
-                  step={0.01}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                  value={form.maxDiscountAmount}
-                  onChange={handleInputChange("maxDiscountAmount")}
-                  placeholder="比例折扣可用"
-                />
-              </label>
+                有效期、身份限制、领取次数、库存和任务要求会控制网站区块“立即领取”的可领取状态。
               </div>
 
               <div className="mt-3 grid gap-3 md:grid-cols-2">
