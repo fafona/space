@@ -117,6 +117,15 @@ function isMissingMerchantIdColumn(message: string) {
   );
 }
 
+function isDuplicatePagesSlugError(message: string) {
+  return /duplicate key value violates unique constraint/i.test(message) && /pages_merchant_slug_unique_idx/i.test(message);
+}
+
+function isInternalPagesSlug(value: unknown) {
+  const slug = typeof value === "string" ? value.trim() : "";
+  return slug.startsWith("__");
+}
+
 function toErrorMessage(input: unknown) {
   if (!input || typeof input !== "object") return "未知错误";
   const record = input as { message?: unknown };
@@ -381,35 +390,80 @@ async function saveBlocksToPagesTable(
       return { message: toErrorMessage(initWithoutSlug.error) };
     }
 
-    for (const merchantId of merchantIds) {
-      const byMerchant = await supabase
+    const updateMerchantPageById = async (rowId: string | number) => {
+      if (state.pagesSlugColumnSupported !== false) {
+        const byIdWithSlug = await supabase
+          .from("pages")
+          .update({ ...sanitizedPayload, slug: normalizedMerchantSlug })
+          .eq("id", rowId);
+        if (!byIdWithSlug.error) {
+          state.pagesSlugColumnSupported = true;
+          return null;
+        }
+        const byIdWithSlugMessage = toErrorMessage(byIdWithSlug.error);
+        if (!isMissingSlugColumn(byIdWithSlugMessage)) {
+          return { message: byIdWithSlugMessage };
+        }
+        state.pagesSlugColumnSupported = false;
+      }
+
+      const byId = await supabase.from("pages").update(sanitizedPayload).eq("id", rowId);
+      if (!byId.error) return null;
+      return { message: toErrorMessage(byId.error) };
+    };
+
+    const queryMerchantPublicPageBySlug = async (merchantId: string) => {
+      if (state.pagesSlugColumnSupported === false || state.pagesMerchantIdColumnSupported === false) return null;
+      const byMerchantSlug = await supabase
         .from("pages")
         .select("id")
         .eq("merchant_id", merchantId)
+        .eq("slug", normalizedMerchantSlug)
         .limit(1)
         .maybeSingle();
-      if (byMerchant.error) continue;
-      const byMerchantRecord = (byMerchant.data ?? null) as { id?: string | number | null } | null;
-      if (byMerchantRecord?.id !== undefined && byMerchantRecord?.id !== null) {
-        if (state.pagesSlugColumnSupported !== false) {
-          const byIdWithSlug = await supabase
-            .from("pages")
-            .update({ ...sanitizedPayload, slug: normalizedMerchantSlug })
-            .eq("id", byMerchantRecord.id);
-          if (!byIdWithSlug.error) {
-            state.pagesSlugColumnSupported = true;
-            return null;
-          }
-          const byIdWithSlugMessage = toErrorMessage(byIdWithSlug.error);
-          if (!isMissingSlugColumn(byIdWithSlugMessage)) {
-            return { message: byIdWithSlugMessage };
-          }
-          state.pagesSlugColumnSupported = false;
-        }
+      if (!byMerchantSlug.error) {
+        state.pagesSlugColumnSupported = true;
+        state.pagesMerchantIdColumnSupported = true;
+        return (byMerchantSlug.data ?? null) as { id?: string | number | null } | null;
+      }
+      const message = toErrorMessage(byMerchantSlug.error);
+      if (isMissingSlugColumn(message)) {
+        state.pagesSlugColumnSupported = false;
+        return null;
+      }
+      if (isMissingMerchantIdColumn(message)) {
+        state.pagesMerchantIdColumnSupported = false;
+        return null;
+      }
+      return null;
+    };
 
-        const byId = await supabase.from("pages").update(sanitizedPayload).eq("id", byMerchantRecord.id);
-        if (!byId.error) return null;
-        return { message: toErrorMessage(byId.error) };
+    const queryLegacyMerchantPublicPage = async (merchantId: string) => {
+      if (state.pagesMerchantIdColumnSupported === false) return null;
+      const columns = state.pagesSlugColumnSupported === false ? "id" : "id,slug";
+      const byMerchant = await supabase.from("pages").select(columns).eq("merchant_id", merchantId).limit(20);
+      if (byMerchant.error) {
+        const message = toErrorMessage(byMerchant.error);
+        if (isMissingSlugColumn(message)) state.pagesSlugColumnSupported = false;
+        if (isMissingMerchantIdColumn(message)) state.pagesMerchantIdColumnSupported = false;
+        return null;
+      }
+      const rows = Array.isArray(byMerchant.data)
+        ? (byMerchant.data as Array<{ id?: string | number | null; slug?: unknown }>)
+        : [];
+      return (
+        rows.find((row) => row.slug === normalizedMerchantSlug) ??
+        rows.find((row) => !row.slug || row.slug === "home") ??
+        rows.find((row) => !isInternalPagesSlug(row.slug)) ??
+        null
+      );
+    };
+
+    for (const merchantId of merchantIds) {
+      const byMerchantRecord =
+        (await queryMerchantPublicPageBySlug(merchantId)) ?? (await queryLegacyMerchantPublicPage(merchantId));
+      if (byMerchantRecord?.id !== undefined && byMerchantRecord?.id !== null) {
+        return updateMerchantPageById(byMerchantRecord.id);
       }
     }
 
@@ -422,6 +476,12 @@ async function saveBlocksToPagesTable(
       });
       if (!withSlug.error) return null;
       const withSlugMessage = toErrorMessage(withSlug.error);
+      if (isDuplicatePagesSlugError(withSlugMessage)) {
+        const existingAfterConflict = await queryMerchantPublicPageBySlug(merchantId);
+        if (existingAfterConflict?.id !== undefined && existingAfterConflict?.id !== null) {
+          return updateMerchantPageById(existingAfterConflict.id);
+        }
+      }
       initErrors.push(`pages 初始化（含 slug）失败(${merchantId}): ${withSlugMessage}`);
 
       if (isMissingSlugColumn(withSlugMessage)) {
