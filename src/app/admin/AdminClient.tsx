@@ -4995,7 +4995,7 @@ type SupportContactRow = {
 };
 
 type SupportMobileHomeTab = "conversations" | "business" | "faolla" | "self";
-type SupportSelfSectionView = "home" | "profile" | "cards" | "tools" | "games" | "qr" | FaollaMobileSettingsView;
+type SupportSelfSectionView = "home" | "profile" | "cards" | "coupons" | "tools" | "games" | "qr" | FaollaMobileSettingsView;
 type SupportNotificationPreferences = {
   systemNotificationsEnabled: boolean;
   messageSoundEnabled: boolean;
@@ -5777,6 +5777,7 @@ export default function AdminClient({
       targetSection === "home" ||
       targetSection === "profile" ||
       targetSection === "cards" ||
+      targetSection === "coupons" ||
       targetSection === "tools" ||
       targetSection === "games" ||
       targetSection === "qr"
@@ -16839,6 +16840,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   ? "我的资料"
                   : supportSelfSectionView === "cards"
                     ? "名片夹"
+                  : supportSelfSectionView === "coupons"
+                    ? "优惠券"
                   : supportSelfSectionView === "tools"
                     ? "小工具"
                   : supportSelfSectionView === "games"
@@ -16852,6 +16855,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   ? "手机端与电脑端共用同一份商户资料。"
                   : supportSelfSectionView === "cards"
                     ? "这里统一管理聊天展示名片与复制能力。"
+                  : supportSelfSectionView === "coupons"
+                    ? "查看优惠券列表，复制券、启停和删除与网页端一致。"
                   : supportSelfSectionView === "tools"
                     ? "商家后台里的常用计分工具。"
                   : supportSelfSectionView === "games"
@@ -16908,6 +16913,20 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       </svg>
                     ),
                     onClick: () => setSupportSelfSectionView("cards" as const),
+                  },
+                  {
+                    key: "coupons",
+                    label: "优惠券",
+                    summary: canUseCouponModule
+                      ? `${merchantCouponRecords.filter((coupon) => coupon.status !== "archived").length} 张，${getVisibleMerchantCoupons(merchantCouponRecords).length} 张展示中`
+                      : "当前商户未开通优惠券模块",
+                    icon: (
+                      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+                        <path d="M4.8 8.2V6.7A1.7 1.7 0 0 1 6.5 5h11A1.7 1.7 0 0 1 19.2 6.7v1.5a2.2 2.2 0 0 0 0 4.4v4.7a1.7 1.7 0 0 1-1.7 1.7h-11a1.7 1.7 0 0 1-1.7-1.7v-4.7a2.2 2.2 0 0 0 0-4.4Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+                        <path d="M9 8.5h6M9 12h6M9 15.5h3.8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                      </svg>
+                    ),
+                    onClick: () => setSupportSelfSectionView("coupons" as const),
                   },
                   {
                     key: "tools",
@@ -17195,6 +17214,25 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 )}
               </div>
             </section>
+          </div>
+        ) : supportSelfSectionView === "coupons" ? (
+          <div className="space-y-4">
+            {canUseCouponModule ? (
+              <MerchantCouponManager
+                siteId={editingSiteId || ""}
+                siteName={effectiveMerchantDisplayName || merchantDisplayName}
+                onCouponsChange={setMerchantCouponRecords}
+                listOnly
+                className="faolla-mobile-coupon-list"
+              />
+            ) : (
+              <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+                <div className="px-5 py-6">
+                  <div className="text-sm font-semibold text-slate-900">优惠券模块未开通</div>
+                  <div className="mt-1 text-xs leading-5 text-slate-500">开通后，手机端这里会显示与网页端一致的优惠券列表。</div>
+                </div>
+              </section>
+            )}
           </div>
         ) : supportSelfSectionView === "tools" ? (
           <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">

@@ -34,6 +34,7 @@ type MerchantCouponManagerProps = {
   onCouponsChange?: (coupons: MerchantCouponRecord[]) => void;
   onClose?: () => void;
   className?: string;
+  listOnly?: boolean;
 };
 
 type CouponFormState = {
@@ -825,6 +826,7 @@ export default function MerchantCouponManager({
   onCouponsChange,
   onClose,
   className = "",
+  listOnly = false,
 }: MerchantCouponManagerProps) {
   const [coupons, setCoupons] = useState<MerchantCouponRecord[]>([]);
   const [form, setForm] = useState<CouponFormState>(EMPTY_FORM);
@@ -1253,9 +1255,12 @@ export default function MerchantCouponManager({
             form.discountType === "ticket_voucher"
           ? "券面数值（可选）"
           : "优惠金额";
+  const canEditCoupons = !listOnly;
+  const rootClassName = listOnly ? `space-y-4 ${className}` : `min-h-[calc(100vh-14rem)] space-y-4 ${className}`;
 
   return (
-    <div className={`min-h-[calc(100vh-14rem)] space-y-4 ${className}`}>
+    <div className={rootClassName}>
+      {!listOnly ? (
       <section className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -1310,8 +1315,9 @@ export default function MerchantCouponManager({
         {error ? <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-600">{error}</div> : null}
         {tip ? <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{tip}</div> : null}
       </section>
+      ) : null}
 
-      {formOpen ? (
+      {!listOnly && formOpen ? (
         <div className="fixed inset-0 z-[80] flex items-start justify-center overflow-y-auto bg-slate-950/45 px-4 py-6">
           <button
             type="button"
@@ -1925,7 +1931,19 @@ export default function MerchantCouponManager({
               <div className="text-base font-semibold text-slate-900">优惠券列表</div>
               <div className="mt-1 text-xs text-slate-500">启用、未过期、且勾选网站展示的优惠券会显示到优惠券区块。</div>
             </div>
+            {listOnly ? (
+              <button
+                type="button"
+                className="shrink-0 rounded border bg-white px-3 py-2 text-xs hover:bg-slate-50 disabled:opacity-50"
+                onClick={() => void loadCoupons()}
+                disabled={loading || !siteId}
+              >
+                {loading ? "刷新中" : "刷新"}
+              </button>
+            ) : null}
           </div>
+          {listOnly && error ? <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-600">{error}</div> : null}
+          {listOnly && tip ? <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{tip}</div> : null}
 
           <div className="mt-4 grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
             {loading ? (
@@ -1948,8 +1966,9 @@ export default function MerchantCouponManager({
                   >
                     <button
                       type="button"
-                      className="block w-full rounded-lg text-left transition hover:ring-1 hover:ring-slate-300"
+                      className={`block w-full rounded-lg text-left transition ${canEditCoupons ? "hover:ring-1 hover:ring-slate-300" : ""}`}
                       onClick={() => {
+                        if (!canEditCoupons) return;
                         setForm(buildFormFromCoupon(coupon, pricePrefix));
                         setSelectedDisplayFields(["discount"]);
                         setError("");
