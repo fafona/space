@@ -47,6 +47,40 @@ test("createMerchantCoupon normalizes threshold and percent coupons", () => {
   assert.equal(percent.discountValue, 100);
 });
 
+test("createMerchantCoupon supports voucher coupon types", () => {
+  const storedValue = createMerchantCoupon({
+    siteId: "10000000",
+    title: "储值券",
+    discountType: "stored_value",
+    discountValue: 20,
+  });
+  assert.equal(storedValue.discountType, "stored_value");
+  assert.equal(getMerchantCouponDiscountLabel(storedValue, "$"), "储值 $20.00");
+  assert.deepEqual(calculateMerchantCouponDiscount(storedValue, 50), {
+    ok: true,
+    discountAmount: 20,
+    payableAmount: 30,
+    reason: "ok",
+  });
+
+  const product = createMerchantCoupon({
+    siteId: "10000000",
+    title: "商品券",
+    discountType: "product_voucher",
+  });
+  assert.equal(product.discountType, "product_voucher");
+  assert.equal(getMerchantCouponDiscountLabel(product), "商品券");
+  assert.deepEqual(calculateMerchantCouponDiscount(product, 50), {
+    ok: false,
+    discountAmount: 0,
+    payableAmount: 50,
+    reason: "invalid_coupon",
+  });
+
+  assert.equal(getMerchantCouponDiscountLabel(createMerchantCoupon({ siteId: "10000000", title: "兑换", discountType: "exchange_voucher" })), "兑换券");
+  assert.equal(getMerchantCouponDiscountLabel(createMerchantCoupon({ siteId: "10000000", title: "门票", discountType: "ticket_voucher" })), "门票券");
+});
+
 test("createMerchantCoupon normalizes background image settings", () => {
   const coupon = createMerchantCoupon({
     siteId: "10000000",

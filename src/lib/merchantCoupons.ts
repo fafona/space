@@ -1,4 +1,12 @@
-export const MERCHANT_COUPON_DISCOUNT_TYPES = ["amount_off", "percent_off", "threshold_amount_off"] as const;
+export const MERCHANT_COUPON_DISCOUNT_TYPES = [
+  "amount_off",
+  "percent_off",
+  "threshold_amount_off",
+  "product_voucher",
+  "stored_value",
+  "exchange_voucher",
+  "ticket_voucher",
+] as const;
 export const MERCHANT_COUPON_STATUSES = ["active", "paused", "archived"] as const;
 export const MERCHANT_COUPON_USAGE_SCENARIOS = ["order_cart", "checkout_qr", "checkout_barcode"] as const;
 export const MERCHANT_COUPON_DISPLAY_FIELDS = ["discount", "title", "description", "meta"] as const;
@@ -561,7 +569,11 @@ export function calculateMerchantCouponDiscount(
     if (coupon.maxDiscountAmount > 0) {
       discountAmount = Math.min(discountAmount, coupon.maxDiscountAmount);
     }
-  } else {
+  } else if (
+    coupon.discountType === "amount_off" ||
+    coupon.discountType === "threshold_amount_off" ||
+    coupon.discountType === "stored_value"
+  ) {
     discountAmount = coupon.discountValue;
   }
 
@@ -581,7 +593,11 @@ export function getMerchantCouponDiscountLabel(coupon: MerchantCouponRecord, pri
     const percent = Number.isInteger(coupon.discountValue) ? coupon.discountValue.toFixed(0) : coupon.discountValue.toFixed(1);
     return `${percent}% OFF`;
   }
+  if (coupon.discountType === "product_voucher") return "商品券";
+  if (coupon.discountType === "exchange_voucher") return "兑换券";
+  if (coupon.discountType === "ticket_voucher") return "门票券";
   const amount = `${pricePrefix}${coupon.discountValue.toFixed(2)}`;
+  if (coupon.discountType === "stored_value") return `储值 ${amount}`;
   if (coupon.discountType === "threshold_amount_off" && coupon.minimumAmount > 0) {
     return `满 ${pricePrefix}${coupon.minimumAmount.toFixed(2)} 减 ${amount}`;
   }

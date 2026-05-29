@@ -241,6 +241,23 @@ const TASK_REQUIREMENT_OPTIONS: Array<{ value: MerchantCouponTaskRequirement; la
   { value: "share_instagram", label: "分享instagram领取" },
 ];
 
+const COUPON_DISCOUNT_TYPE_OPTIONS: Array<{ value: MerchantCouponDiscountType; label: string }> = [
+  { value: "threshold_amount_off", label: "满减" },
+  { value: "amount_off", label: "立减" },
+  { value: "percent_off", label: "折扣比例" },
+  { value: "product_voucher", label: "商品券" },
+  { value: "stored_value", label: "储值券" },
+  { value: "exchange_voucher", label: "兑换券" },
+  { value: "ticket_voucher", label: "门票券" },
+];
+
+const DISCOUNT_VALUE_REQUIRED_TYPES: MerchantCouponDiscountType[] = [
+  "threshold_amount_off",
+  "amount_off",
+  "percent_off",
+  "stored_value",
+];
+
 const DISPLAY_FIELD_CONFIG: Record<
   MerchantCouponDisplayField,
   {
@@ -404,6 +421,10 @@ function buildFormGeneratedDiscountText(form: CouponFormState, pricePrefix: stri
   const minimumAmount = toNumberValue(form.minimumAmount);
   if (form.discountType === "percent_off") return `${discountValue || 0}% OFF`;
   if (form.discountType === "threshold_amount_off") return `满 ${pricePrefix}${minimumAmount.toFixed(2)} 减 ${pricePrefix}${discountValue.toFixed(2)}`;
+  if (form.discountType === "product_voucher") return "商品券";
+  if (form.discountType === "stored_value") return `储值 ${pricePrefix}${discountValue.toFixed(2)}`;
+  if (form.discountType === "exchange_voucher") return "兑换券";
+  if (form.discountType === "ticket_voucher") return "门票券";
   return `减 ${pricePrefix}${discountValue.toFixed(2)}`;
 }
 
@@ -544,7 +565,7 @@ function validateCouponForm(form: CouponFormState) {
   const startsAt = fromDateTimeTextValue(form.startsAt);
   const expiresAt = fromDateTimeTextValue(form.expiresAt);
 
-  if (discountValue <= 0) return "请填写大于 0 的优惠值";
+  if (DISCOUNT_VALUE_REQUIRED_TYPES.includes(form.discountType) && discountValue <= 0) return "请填写大于 0 的优惠值";
   if (normalizeFormUsageScenarios(form.usageScenarios).length === 0) return "请至少选择一个使用场景";
   if (form.discountType === "percent_off" && discountValue > 100) return "折扣百分比不能超过 100";
   if (form.discountType === "threshold_amount_off" && minimumAmount <= 0) return "满减券需要填写大于 0 的门槛金额";
@@ -872,6 +893,18 @@ export default function MerchantCouponManager({
     setForm((current) => ({ ...current, [key]: value }));
   }
 
+  function updateDiscountType(value: MerchantCouponDiscountType) {
+    setForm((current) => {
+      const previousGeneratedText = buildFormGeneratedDiscountText(current, pricePrefix);
+      const next = { ...current, discountType: value };
+      const shouldRefreshDisplayText = !current.displayDiscountText.trim() || current.displayDiscountText.trim() === previousGeneratedText;
+      return {
+        ...next,
+        displayDiscountText: shouldRefreshDisplayText ? buildFormGeneratedDiscountText(next, pricePrefix) : current.displayDiscountText,
+      };
+    });
+  }
+
   function handleInputChange<K extends keyof CouponFormState>(key: K) {
     return (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
       updateField(key, event.target.value as CouponFormState[K]);
@@ -1167,7 +1200,25 @@ export default function MerchantCouponManager({
       ? "折扣值填百分比，例如 10 表示 10% off。"
       : form.discountType === "threshold_amount_off"
         ? "门槛金额和优惠金额都会展示在网站优惠券区块中。"
-        : "立减金额不要求订单达到门槛。";
+        : form.discountType === "stored_value"
+          ? "储值券按储值金额抵扣订单；也可以用于结算二维码/条码核销。"
+          : form.discountType === "product_voucher"
+            ? "商品券用于指定商品权益或核销，不会自动抵扣购物车金额。"
+            : form.discountType === "exchange_voucher"
+              ? "兑换券用于兑换权益或服务，不会自动抵扣购物车金额。"
+              : form.discountType === "ticket_voucher"
+                ? "门票券用于入场或活动核销，不会自动抵扣购物车金额。"
+                : "立减金额不要求订单达到门槛。";
+  const discountValueLabel =
+    form.discountType === "percent_off"
+      ? "折扣百分比"
+      : form.discountType === "stored_value"
+        ? "储值金额"
+        : form.discountType === "product_voucher" ||
+            form.discountType === "exchange_voucher" ||
+            form.discountType === "ticket_voucher"
+          ? "券面数值（可选）"
+          : "优惠金额";
 
   return (
     <div className={`min-h-[calc(100vh-14rem)] space-y-4 ${className}`}>
@@ -1436,15 +1487,17 @@ export default function MerchantCouponManager({
                 <select
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
                   value={form.discountType}
-                  onChange={(event) => updateField("discountType", event.target.value as MerchantCouponDiscountType)}
+                  onChange={(event) => updateDiscountType(event.target.value as MerchantCouponDiscountType)}
                 >
-                  <option value="threshold_amount_off">满减</option>
-                  <option value="amount_off">立减</option>
-                  <option value="percent_off">折扣比例</option>
+                  {COUPON_DISCOUNT_TYPE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
                 </select>
               </label>
               <label className="space-y-1 text-sm">
-                <span className="block text-slate-600">{form.discountType === "percent_off" ? "折扣百分比" : "优惠金额"}</span>
+                <span className="block text-slate-600">{discountValueLabel}</span>
                 <input
                   type="number"
                   min={0}
