@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import type { CouponProps } from "@/data/homeBlocks";
 import {
   getMerchantCouponDisplayDescription,
+  getMerchantCouponDisplayBoxStyle,
+  getMerchantCouponDisplayButtonText,
   getMerchantCouponDisplayFieldOrder,
   getMerchantCouponDisplayMetaText,
   getMerchantCouponDisplayTitle,
@@ -13,6 +15,7 @@ import {
   merchantCouponRequiresClaimCode,
   merchantCouponRequiresPersonalClaim,
   normalizeMerchantCouponRecords,
+  type MerchantCouponDisplayBoxStyle,
   type MerchantCouponDisplayField,
   type MerchantCouponRecord,
   type MerchantCouponUsageScenario,
@@ -65,7 +68,9 @@ function buildCouponTextStyle(
         ? coupon.titleTextColor
         : role === "description"
           ? coupon.descriptionTextColor
-          : coupon.metaTextColor;
+          : role === "button"
+            ? coupon.buttonTextColor
+            : coupon.metaTextColor;
   const fontSize =
     role === "discount"
       ? coupon.discountFontSize
@@ -73,10 +78,64 @@ function buildCouponTextStyle(
         ? coupon.titleFontSize
         : role === "description"
           ? coupon.descriptionFontSize
-          : coupon.metaFontSize;
+          : role === "button"
+            ? coupon.buttonFontSize
+            : coupon.metaFontSize;
   if (color) style.color = color;
   if (fontSize > 0) style.fontSize = `${fontSize}px`;
   return style;
+}
+
+function colorWithAlpha(color: string, alpha: number) {
+  const raw = color.trim();
+  const match = raw.match(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/);
+  if (!match) return "";
+  const hex =
+    match[1].length === 3
+      ? match[1]
+          .split("")
+          .map((item) => `${item}${item}`)
+          .join("")
+      : match[1];
+  const red = Number.parseInt(hex.slice(0, 2), 16);
+  const green = Number.parseInt(hex.slice(2, 4), 16);
+  const blue = Number.parseInt(hex.slice(4, 6), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
+
+function buildCouponBoxStyle(coupon: MerchantCouponRecord, role: MerchantCouponDisplayField, boxStyle: MerchantCouponDisplayBoxStyle): CSSProperties {
+  const color =
+    role === "discount"
+      ? coupon.discountTextColor
+      : role === "title"
+        ? coupon.titleTextColor
+        : role === "description"
+          ? coupon.descriptionTextColor
+          : role === "button"
+            ? coupon.buttonTextColor
+            : coupon.metaTextColor;
+  const resolvedColor = color || "#020617";
+  if (boxStyle === "solid") {
+    return {
+      backgroundColor: resolvedColor,
+      borderColor: resolvedColor,
+      color: "#ffffff",
+    };
+  }
+  if (boxStyle === "outline") {
+    return {
+      borderColor: resolvedColor,
+      color: resolvedColor,
+    };
+  }
+  if (boxStyle === "soft") {
+    return {
+      backgroundColor: colorWithAlpha(resolvedColor, 0.12),
+      borderColor: colorWithAlpha(resolvedColor, 0.22) || resolvedColor,
+      color: resolvedColor,
+    };
+  }
+  return {};
 }
 
 function buildCouponDisplayItems(
@@ -105,10 +164,11 @@ function buildCouponDisplayItems(
     title: displayTitle,
     description: displayDescription,
     meta: displayMetaText || defaultMetaText,
+    button: getMerchantCouponDisplayButtonText(coupon),
   };
   return getMerchantCouponDisplayFieldOrder(coupon)
     .filter((field) => !isMerchantCouponDisplayFieldHidden(coupon, field))
-    .map((field) => ({ field, text: itemText[field] }))
+    .map((field) => ({ field, text: itemText[field], boxStyle: getMerchantCouponDisplayBoxStyle(coupon, field) }))
     .filter((item) => item.text.trim());
 }
 
@@ -405,23 +465,54 @@ export default function CouponBlock({
                   <div className="min-w-0">
                     {displayItems.map((item, index) => {
                       const marginClass = index === 0 ? "" : item.field === "meta" ? "mt-3" : "mt-2";
+                      const frameClass =
+                        item.boxStyle === "none"
+                          ? ""
+                          : item.field === "button"
+                            ? "border px-4 py-2"
+                            : "inline-block max-w-full rounded-md border px-2 py-1";
+                      const framedStyle = {
+                        ...buildCouponTextStyle(coupon, item.field),
+                        ...buildCouponBoxStyle(coupon, item.field, item.boxStyle),
+                      };
+                      if (item.field === "button") {
+                        const buttonText = copied || claimed || exhausted || claiming || claimFailed ? actionLabel : item.text;
+                        return (
+                          <button
+                            key={item.field}
+                            type="button"
+                            className={`${marginClass} inline-flex h-10 w-full items-center justify-center rounded-lg text-sm font-semibold transition disabled:opacity-50 ${frameClass}`}
+                            style={framedStyle}
+                            onClick={() => {
+                              if (effectiveCouponActionMode === "claim") {
+                                void claimCoupon(coupon);
+                              } else {
+                                void copyCouponCode(coupon.code);
+                              }
+                            }}
+                            disabled={!interactive || effectiveCouponActionMode === "none" || exhausted || claiming}
+                          >
+                            {buttonText}
+                          </button>
+                        );
+                      }
                       if (item.field === "title") {
                         return (
-                          <h3 key={item.field} className={`${marginClass} truncate text-base font-bold text-slate-950`} style={buildCouponTextStyle(coupon, item.field)}>
+                          <h3 key={item.field} className={`${marginClass} truncate text-base font-bold text-slate-950 ${frameClass}`} style={framedStyle}>
                             {item.text}
                           </h3>
                         );
                       }
                       if (item.field === "description") {
                         return (
-                          <p key={item.field} className={`${marginClass} line-clamp-2 text-sm text-slate-500`} style={buildCouponTextStyle(coupon, item.field)}>
+                          <p key={item.field} className={`${marginClass} line-clamp-2 text-sm text-slate-500 ${frameClass}`} style={framedStyle}>
                             {item.text}
                           </p>
                         );
                       }
                       if (item.field === "meta") {
                         return (
-                          <div key={item.field} className={`${marginClass} text-xs text-slate-500`} style={buildCouponTextStyle(coupon, item.field)}>
+                          <div key={item.field} className={`${marginClass} text-xs text-slate-500 ${frameClass}`} style={framedStyle}>
                             {item.text}
                           </div>
                         );
@@ -429,34 +520,36 @@ export default function CouponBlock({
                       return (
                         <div
                           key={item.field}
-                          className={`${marginClass} text-xs font-semibold uppercase tracking-[0.18em] text-rose-500`}
-                          style={buildCouponTextStyle(coupon, item.field)}
+                          className={`${marginClass} text-xs font-semibold uppercase tracking-[0.18em] text-rose-500 ${frameClass}`}
+                          style={framedStyle}
                         >
                           {item.text}
                         </div>
                       );
                     })}
                   </div>
-                  <button
-                    type="button"
-                    className={`mt-4 inline-flex h-10 w-full items-center justify-center rounded-lg border px-4 text-sm font-semibold transition ${
-                      copied || (effectiveCouponActionMode === "claim" && claimed)
-                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                        : exhausted
-                          ? "border-slate-200 bg-slate-100 text-slate-400"
-                        : "border-slate-950 bg-slate-950 text-white hover:bg-slate-800"
-                    } ${isList ? "sm:mt-0 sm:w-auto" : ""}`}
-                    onClick={() => {
-                      if (effectiveCouponActionMode === "claim") {
-                        void claimCoupon(coupon);
-                      } else {
-                        void copyCouponCode(coupon.code);
-                      }
-                    }}
-                    disabled={!interactive || effectiveCouponActionMode === "none" || exhausted || claiming}
-                  >
-                    {actionLabel}
-                  </button>
+                  {displayItems.some((item) => item.field === "button") ? null : (
+                    <button
+                      type="button"
+                      className={`mt-4 inline-flex h-10 w-full items-center justify-center rounded-lg border px-4 text-sm font-semibold transition ${
+                        copied || (effectiveCouponActionMode === "claim" && claimed)
+                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                          : exhausted
+                            ? "border-slate-200 bg-slate-100 text-slate-400"
+                            : "border-slate-950 bg-slate-950 text-white hover:bg-slate-800"
+                      } ${isList ? "sm:mt-0 sm:w-auto" : ""}`}
+                      onClick={() => {
+                        if (effectiveCouponActionMode === "claim") {
+                          void claimCoupon(coupon);
+                        } else {
+                          void copyCouponCode(coupon.code);
+                        }
+                      }}
+                      disabled={!interactive || effectiveCouponActionMode === "none" || exhausted || claiming}
+                    >
+                      {actionLabel}
+                    </button>
+                  )}
                   {effectiveCouponActionMode === "claim" && requiresClaimCode ? (
                     <input
                       className="mt-3 w-full rounded-lg border border-slate-300 bg-white/90 px-3 py-2 text-sm outline-none focus:border-slate-500"

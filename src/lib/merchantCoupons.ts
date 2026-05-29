@@ -9,7 +9,8 @@ export const MERCHANT_COUPON_DISCOUNT_TYPES = [
 ] as const;
 export const MERCHANT_COUPON_STATUSES = ["active", "paused", "archived"] as const;
 export const MERCHANT_COUPON_USAGE_SCENARIOS = ["order_cart", "checkout_qr", "checkout_barcode"] as const;
-export const MERCHANT_COUPON_DISPLAY_FIELDS = ["discount", "title", "description", "meta"] as const;
+export const MERCHANT_COUPON_DISPLAY_FIELDS = ["discount", "title", "description", "meta", "button"] as const;
+export const MERCHANT_COUPON_DISPLAY_BOX_STYLES = ["none", "soft", "outline", "solid"] as const;
 export const MERCHANT_COUPON_BEHAVIOR_TRIGGERS = [
   "favorite_site",
   "first_order",
@@ -37,6 +38,7 @@ export type MerchantCouponDiscountType = (typeof MERCHANT_COUPON_DISCOUNT_TYPES)
 export type MerchantCouponStatus = (typeof MERCHANT_COUPON_STATUSES)[number];
 export type MerchantCouponUsageScenario = (typeof MERCHANT_COUPON_USAGE_SCENARIOS)[number];
 export type MerchantCouponDisplayField = (typeof MERCHANT_COUPON_DISPLAY_FIELDS)[number];
+export type MerchantCouponDisplayBoxStyle = (typeof MERCHANT_COUPON_DISPLAY_BOX_STYLES)[number];
 export type MerchantCouponBehaviorTrigger = (typeof MERCHANT_COUPON_BEHAVIOR_TRIGGERS)[number];
 export type MerchantCouponTaskRequirement = (typeof MERCHANT_COUPON_TASK_REQUIREMENTS)[number];
 
@@ -76,8 +78,10 @@ export type MerchantCouponInput = {
   displayDescription?: string;
   displayDiscountText?: string;
   displayMetaText?: string;
+  displayButtonText?: string;
   displayFieldOrder?: MerchantCouponDisplayField[];
   displayHiddenFields?: MerchantCouponDisplayField[];
+  displayBoxStyles?: Partial<Record<MerchantCouponDisplayField, MerchantCouponDisplayBoxStyle>>;
   contentFontFamily?: string;
   discountTextColor?: string;
   discountFontSize?: number;
@@ -87,6 +91,8 @@ export type MerchantCouponInput = {
   descriptionFontSize?: number;
   metaTextColor?: string;
   metaFontSize?: number;
+  buttonTextColor?: string;
+  buttonFontSize?: number;
   claimRequiresMember?: boolean;
   claimOldUserOnly?: boolean;
   claimMinRegisteredDays?: number;
@@ -228,6 +234,23 @@ function normalizeCouponDisplayFieldOrder(value: unknown) {
   return next;
 }
 
+function normalizeCouponDisplayBoxStyle(value: unknown, fallback: MerchantCouponDisplayBoxStyle = "none") {
+  return MERCHANT_COUPON_DISPLAY_BOX_STYLES.includes(value as MerchantCouponDisplayBoxStyle)
+    ? (value as MerchantCouponDisplayBoxStyle)
+    : fallback;
+}
+
+function normalizeCouponDisplayBoxStyles(value: unknown): Record<MerchantCouponDisplayField, MerchantCouponDisplayBoxStyle> {
+  const raw = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  return {
+    discount: normalizeCouponDisplayBoxStyle(raw.discount, "none"),
+    title: normalizeCouponDisplayBoxStyle(raw.title, "none"),
+    description: normalizeCouponDisplayBoxStyle(raw.description, "none"),
+    meta: normalizeCouponDisplayBoxStyle(raw.meta, "none"),
+    button: normalizeCouponDisplayBoxStyle(raw.button, "solid"),
+  };
+}
+
 function normalizeCouponBehaviorTriggers(value: unknown): MerchantCouponBehaviorTrigger[] {
   if (!Array.isArray(value)) return [];
   const triggers = value.filter((item): item is MerchantCouponBehaviorTrigger =>
@@ -329,8 +352,10 @@ export function normalizeMerchantCouponRecord(input: MerchantCouponInput | null 
     displayDescription: trimText(input?.displayDescription),
     displayDiscountText: trimText(input?.displayDiscountText),
     displayMetaText: trimText(input?.displayMetaText),
+    displayButtonText: trimText(input?.displayButtonText) || "立即领取",
     displayFieldOrder: normalizeCouponDisplayFieldOrder(input?.displayFieldOrder),
     displayHiddenFields: normalizeCouponDisplayFields(input?.displayHiddenFields, []),
+    displayBoxStyles: normalizeCouponDisplayBoxStyles(input?.displayBoxStyles),
     contentFontFamily: normalizeFontFamilyValue(input?.contentFontFamily),
     discountTextColor: normalizeColorValue(input?.discountTextColor),
     discountFontSize: normalizeFontSizeValue(input?.discountFontSize),
@@ -340,6 +365,8 @@ export function normalizeMerchantCouponRecord(input: MerchantCouponInput | null 
     descriptionFontSize: normalizeFontSizeValue(input?.descriptionFontSize),
     metaTextColor: normalizeColorValue(input?.metaTextColor),
     metaFontSize: normalizeFontSizeValue(input?.metaFontSize),
+    buttonTextColor: normalizeColorValue(input?.buttonTextColor) || "#020617",
+    buttonFontSize: normalizeFontSizeValue(input?.buttonFontSize),
     claimRequiresMember: input?.claimRequiresMember === true,
     claimOldUserOnly: input?.claimOldUserOnly === true,
     claimMinRegisteredDays: normalizePositiveInt(input?.claimMinRegisteredDays),
@@ -616,12 +643,20 @@ export function getMerchantCouponDisplayMetaText(coupon: MerchantCouponRecord) {
   return trimText(coupon.displayMetaText);
 }
 
+export function getMerchantCouponDisplayButtonText(coupon: MerchantCouponRecord) {
+  return trimText(coupon.displayButtonText) || "立即领取";
+}
+
 export function getMerchantCouponDisplayFieldOrder(coupon: MerchantCouponRecord) {
   return normalizeCouponDisplayFieldOrder(coupon.displayFieldOrder);
 }
 
 export function isMerchantCouponDisplayFieldHidden(coupon: MerchantCouponRecord, field: MerchantCouponDisplayField) {
   return normalizeCouponDisplayFields(coupon.displayHiddenFields, []).includes(field);
+}
+
+export function getMerchantCouponDisplayBoxStyle(coupon: MerchantCouponRecord, field: MerchantCouponDisplayField) {
+  return normalizeCouponDisplayBoxStyles(coupon.displayBoxStyles)[field];
 }
 
 export function merchantCouponRequiresPersonalClaim(coupon: MerchantCouponRecord) {

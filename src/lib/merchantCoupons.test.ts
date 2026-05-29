@@ -137,7 +137,7 @@ test("createMerchantCoupon normalizes display text and typography", () => {
   assert.equal(getMerchantCouponDisplayDescription(coupon), "展示说明");
   assert.equal(getMerchantCouponDisplayMetaText(coupon), "到店可用");
   assert.equal(getMerchantCouponDiscountLabel(coupon), "今日专享");
-  assert.deepEqual(getMerchantCouponDisplayFieldOrder(coupon), ["meta", "title", "discount", "description"]);
+  assert.deepEqual(getMerchantCouponDisplayFieldOrder(coupon), ["meta", "title", "discount", "description", "button"]);
   assert.equal(isMerchantCouponDisplayFieldHidden(coupon, "description"), true);
   assert.equal(isMerchantCouponDisplayFieldHidden(coupon, "title"), false);
   assert.equal(coupon.contentFontFamily, "Georgia, serif");

@@ -5,10 +5,13 @@ import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
   MERCHANT_COUPON_BEHAVIOR_TRIGGERS,
+  MERCHANT_COUPON_DISPLAY_BOX_STYLES,
   MERCHANT_COUPON_DISPLAY_FIELDS,
   MERCHANT_COUPON_TASK_REQUIREMENTS,
   MERCHANT_COUPON_USAGE_SCENARIOS,
   getContactCardVisibleMerchantCoupons,
+  getMerchantCouponDisplayBoxStyle,
+  getMerchantCouponDisplayButtonText,
   getMerchantCouponDisplayDescription,
   getMerchantCouponDisplayFieldOrder,
   getMerchantCouponDisplayMetaText,
@@ -18,6 +21,7 @@ import {
   isMerchantCouponDisplayFieldHidden,
   normalizeMerchantCouponRecords,
   type MerchantCouponBehaviorTrigger,
+  type MerchantCouponDisplayBoxStyle,
   type MerchantCouponDisplayField,
   type MerchantCouponDiscountType,
   type MerchantCouponInput,
@@ -61,8 +65,10 @@ type CouponFormState = {
   displayDescription: string;
   displayDiscountText: string;
   displayMetaText: string;
+  displayButtonText: string;
   displayFieldOrder: MerchantCouponDisplayField[];
   displayHiddenFields: MerchantCouponDisplayField[];
+  displayBoxStyles: Record<MerchantCouponDisplayField, MerchantCouponDisplayBoxStyle>;
   contentFontFamily: string;
   discountTextColor: string;
   discountFontSize: string;
@@ -72,6 +78,8 @@ type CouponFormState = {
   descriptionFontSize: string;
   metaTextColor: string;
   metaFontSize: string;
+  buttonTextColor: string;
+  buttonFontSize: string;
   claimRequiresMember: boolean;
   claimOldUserOnly: boolean;
   claimMinRegisteredDays: string;
@@ -127,8 +135,16 @@ const EMPTY_FORM: CouponFormState = {
   displayDescription: "",
   displayDiscountText: "",
   displayMetaText: "",
+  displayButtonText: "立即领取",
   displayFieldOrder: [...MERCHANT_COUPON_DISPLAY_FIELDS],
   displayHiddenFields: [],
+  displayBoxStyles: {
+    discount: "none",
+    title: "none",
+    description: "none",
+    meta: "none",
+    button: "solid",
+  },
   contentFontFamily: "",
   discountTextColor: "#f43f5e",
   discountFontSize: "12",
@@ -138,6 +154,8 @@ const EMPTY_FORM: CouponFormState = {
   descriptionFontSize: "14",
   metaTextColor: "#64748b",
   metaFontSize: "12",
+  buttonTextColor: "#020617",
+  buttonFontSize: "14",
   claimRequiresMember: false,
   claimOldUserOnly: false,
   claimMinRegisteredDays: "",
@@ -264,13 +282,24 @@ const COUPON_DISCOUNT_TYPE_LABELS = Object.fromEntries(
   COUPON_DISCOUNT_TYPE_OPTIONS.map((option) => [option.value, option.label]),
 ) as Record<MerchantCouponDiscountType, string>;
 
+const DISPLAY_BOX_STYLE_LABELS: Record<MerchantCouponDisplayBoxStyle, string> = {
+  none: "无框",
+  soft: "浅底",
+  outline: "描边",
+  solid: "实底",
+};
+const DISPLAY_BOX_STYLE_OPTIONS = MERCHANT_COUPON_DISPLAY_BOX_STYLES.map((value) => ({
+  value,
+  label: DISPLAY_BOX_STYLE_LABELS[value],
+}));
+
 const DISPLAY_FIELD_CONFIG: Record<
   MerchantCouponDisplayField,
   {
     label: string;
-    valueKey: "displayDiscountText" | "displayTitle" | "displayDescription" | "displayMetaText";
-    colorKey: "discountTextColor" | "titleTextColor" | "descriptionTextColor" | "metaTextColor";
-    sizeKey: "discountFontSize" | "titleFontSize" | "descriptionFontSize" | "metaFontSize";
+    valueKey: "displayDiscountText" | "displayTitle" | "displayDescription" | "displayMetaText" | "displayButtonText";
+    colorKey: "discountTextColor" | "titleTextColor" | "descriptionTextColor" | "metaTextColor" | "buttonTextColor";
+    sizeKey: "discountFontSize" | "titleFontSize" | "descriptionFontSize" | "metaFontSize" | "buttonFontSize";
     multiline?: boolean;
   }
 > = {
@@ -299,6 +328,12 @@ const DISPLAY_FIELD_CONFIG: Record<
     colorKey: "metaTextColor",
     sizeKey: "metaFontSize",
     multiline: true,
+  },
+  button: {
+    label: "按钮",
+    valueKey: "displayButtonText",
+    colorKey: "buttonTextColor",
+    sizeKey: "buttonFontSize",
   },
 };
 
@@ -480,6 +515,7 @@ function buildNewCouponForm(pricePrefix: string): CouponFormState {
     ...EMPTY_FORM,
     displayFieldOrder: [...MERCHANT_COUPON_DISPLAY_FIELDS],
     displayHiddenFields: [],
+    displayBoxStyles: { ...EMPTY_FORM.displayBoxStyles },
     usageScenarios: [...EMPTY_FORM.usageScenarios],
     claimBehaviorTriggers: [...EMPTY_FORM.claimBehaviorTriggers],
     claimTaskRequirements: [...EMPTY_FORM.claimTaskRequirements],
@@ -516,8 +552,16 @@ function buildFormFromCoupon(coupon: MerchantCouponRecord, pricePrefix: string):
     displayDescription: hiddenFields.includes("description") ? "" : getMerchantCouponDisplayDescription(coupon),
     displayDiscountText: hiddenFields.includes("discount") ? "" : getMerchantCouponDiscountLabel(coupon, pricePrefix),
     displayMetaText: hiddenFields.includes("meta") ? "" : getMerchantCouponDisplayMetaText(coupon) || buildRecordDefaultMetaText(coupon, pricePrefix),
+    displayButtonText: hiddenFields.includes("button") ? "" : getMerchantCouponDisplayButtonText(coupon),
     displayFieldOrder: getMerchantCouponDisplayFieldOrder(coupon),
     displayHiddenFields: hiddenFields,
+    displayBoxStyles: {
+      discount: getMerchantCouponDisplayBoxStyle(coupon, "discount"),
+      title: getMerchantCouponDisplayBoxStyle(coupon, "title"),
+      description: getMerchantCouponDisplayBoxStyle(coupon, "description"),
+      meta: getMerchantCouponDisplayBoxStyle(coupon, "meta"),
+      button: getMerchantCouponDisplayBoxStyle(coupon, "button"),
+    },
     contentFontFamily: coupon.contentFontFamily,
     discountTextColor: coupon.discountTextColor || "#f43f5e",
     discountFontSize: coupon.discountFontSize > 0 ? String(coupon.discountFontSize) : "12",
@@ -527,6 +571,8 @@ function buildFormFromCoupon(coupon: MerchantCouponRecord, pricePrefix: string):
     descriptionFontSize: coupon.descriptionFontSize > 0 ? String(coupon.descriptionFontSize) : "14",
     metaTextColor: coupon.metaTextColor || "#64748b",
     metaFontSize: coupon.metaFontSize > 0 ? String(coupon.metaFontSize) : "12",
+    buttonTextColor: coupon.buttonTextColor || "#020617",
+    buttonFontSize: coupon.buttonFontSize > 0 ? String(coupon.buttonFontSize) : "14",
     claimRequiresMember: coupon.claimRequiresMember,
     claimOldUserOnly: coupon.claimOldUserOnly,
     claimMinRegisteredDays: coupon.claimMinRegisteredDays > 0 ? String(coupon.claimMinRegisteredDays) : "",
@@ -574,10 +620,11 @@ function buildCouponVisualDataFromRecord(coupon: MerchantCouponRecord, pricePref
     title: getMerchantCouponDisplayTitle(coupon),
     description: getMerchantCouponDisplayDescription(coupon),
     meta: customMeta || defaultMetaText,
+    button: getMerchantCouponDisplayButtonText(coupon),
   };
   const displayItems = getMerchantCouponDisplayFieldOrder(coupon)
     .filter((field) => !isMerchantCouponDisplayFieldHidden(coupon, field))
-    .map((field) => ({ field, text: itemText[field] }))
+    .map((field) => ({ field, text: itemText[field], boxStyle: getMerchantCouponDisplayBoxStyle(coupon, field) }))
     .filter((item) => item.text.trim());
   return {
     displayItems,
@@ -592,6 +639,8 @@ function buildCouponVisualDataFromRecord(coupon: MerchantCouponRecord, pricePref
     descriptionFontSize: coupon.descriptionFontSize,
     metaTextColor: coupon.metaTextColor,
     metaFontSize: coupon.metaFontSize,
+    buttonTextColor: coupon.buttonTextColor,
+    buttonFontSize: coupon.buttonFontSize,
   };
 }
 
@@ -642,6 +691,7 @@ type CouponVisualCardData = {
   displayItems: Array<{
     field: MerchantCouponDisplayField;
     text: string;
+    boxStyle: MerchantCouponDisplayBoxStyle;
   }>;
   backgroundImageUrl: string;
   backgroundImageOpacity: number;
@@ -654,30 +704,76 @@ type CouponVisualCardData = {
   descriptionFontSize: number;
   metaTextColor: string;
   metaFontSize: number;
+  buttonTextColor: string;
+  buttonFontSize: number;
 };
 
-function buildTextStyle(data: CouponVisualCardData, role: "discount" | "title" | "description" | "meta"): CSSProperties {
+function getVisualTextColor(data: CouponVisualCardData, role: MerchantCouponDisplayField) {
+  if (role === "discount") return data.discountTextColor;
+  if (role === "title") return data.titleTextColor;
+  if (role === "description") return data.descriptionTextColor;
+  if (role === "button") return data.buttonTextColor;
+  return data.metaTextColor;
+}
+
+function getVisualFontSize(data: CouponVisualCardData, role: MerchantCouponDisplayField) {
+  if (role === "discount") return data.discountFontSize;
+  if (role === "title") return data.titleFontSize;
+  if (role === "description") return data.descriptionFontSize;
+  if (role === "button") return data.buttonFontSize;
+  return data.metaFontSize;
+}
+
+function colorWithAlpha(color: string, alpha: number) {
+  const raw = color.trim();
+  const match = raw.match(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/);
+  if (!match) return "";
+  const hex =
+    match[1].length === 3
+      ? match[1]
+          .split("")
+          .map((item) => `${item}${item}`)
+          .join("")
+      : match[1];
+  const red = Number.parseInt(hex.slice(0, 2), 16);
+  const green = Number.parseInt(hex.slice(2, 4), 16);
+  const blue = Number.parseInt(hex.slice(4, 6), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
+
+function buildTextStyle(data: CouponVisualCardData, role: MerchantCouponDisplayField): CSSProperties {
   const style: CSSProperties = {};
   if (data.contentFontFamily) style.fontFamily = data.contentFontFamily;
-  const color =
-    role === "discount"
-      ? data.discountTextColor
-      : role === "title"
-        ? data.titleTextColor
-        : role === "description"
-          ? data.descriptionTextColor
-          : data.metaTextColor;
-  const fontSize =
-    role === "discount"
-      ? data.discountFontSize
-      : role === "title"
-        ? data.titleFontSize
-        : role === "description"
-          ? data.descriptionFontSize
-          : data.metaFontSize;
+  const color = getVisualTextColor(data, role);
+  const fontSize = getVisualFontSize(data, role);
   if (color) style.color = color;
   if (fontSize > 0) style.fontSize = `${fontSize}px`;
   return style;
+}
+
+function buildBoxStyle(data: CouponVisualCardData, role: MerchantCouponDisplayField, boxStyle: MerchantCouponDisplayBoxStyle): CSSProperties {
+  const color = getVisualTextColor(data, role) || "#020617";
+  if (boxStyle === "solid") {
+    return {
+      backgroundColor: color,
+      borderColor: color,
+      color: "#ffffff",
+    };
+  }
+  if (boxStyle === "outline") {
+    return {
+      borderColor: color,
+      color,
+    };
+  }
+  if (boxStyle === "soft") {
+    return {
+      backgroundColor: colorWithAlpha(color, 0.12),
+      borderColor: colorWithAlpha(color, 0.22) || color,
+      color,
+    };
+  }
+  return {};
 }
 
 function CouponVisualCard({
@@ -708,23 +804,41 @@ function CouponVisualCard({
       <div className="min-w-0">
         {data.displayItems.map((item, index) => {
           const marginClass = index === 0 ? "" : item.field === "meta" ? "mt-3" : "mt-2";
+          const frameClass =
+            item.boxStyle === "none"
+              ? ""
+              : item.field === "button"
+                ? "border px-4 py-2"
+                : "inline-block max-w-full rounded-md border px-2 py-1";
+          const framedStyle = { ...buildTextStyle(data, item.field), ...buildBoxStyle(data, item.field, item.boxStyle) };
+          if (item.field === "button") {
+            return (
+              <div
+                key={item.field}
+                className={`${marginClass} inline-flex h-10 w-full items-center justify-center rounded-lg text-sm font-semibold ${frameClass}`}
+                style={framedStyle}
+              >
+                {item.text}
+              </div>
+            );
+          }
           if (item.field === "title") {
             return (
-              <div key={item.field} className={`${marginClass} truncate text-base font-bold text-slate-950`} style={buildTextStyle(data, item.field)}>
+              <div key={item.field} className={`${marginClass} truncate text-base font-bold text-slate-950 ${frameClass}`} style={framedStyle}>
                 {item.text}
               </div>
             );
           }
           if (item.field === "description") {
             return (
-              <div key={item.field} className={`${marginClass} line-clamp-2 text-sm text-slate-500`} style={buildTextStyle(data, item.field)}>
+              <div key={item.field} className={`${marginClass} line-clamp-2 text-sm text-slate-500 ${frameClass}`} style={framedStyle}>
                 {item.text}
               </div>
             );
           }
           if (item.field === "meta") {
             return (
-              <div key={item.field} className={`${marginClass} text-xs text-slate-500`} style={buildTextStyle(data, item.field)}>
+              <div key={item.field} className={`${marginClass} text-xs text-slate-500 ${frameClass}`} style={framedStyle}>
                 {item.text}
               </div>
             );
@@ -732,21 +846,23 @@ function CouponVisualCard({
           return (
             <div
               key={item.field}
-              className={`${marginClass} text-xs font-semibold uppercase tracking-[0.18em] text-rose-500`}
-              style={buildTextStyle(data, item.field)}
+              className={`${marginClass} text-xs font-semibold uppercase tracking-[0.18em] text-rose-500 ${frameClass}`}
+              style={framedStyle}
             >
               {item.text}
             </div>
           );
         })}
       </div>
-      <div
-        className={`inline-flex h-10 w-full items-center justify-center rounded-lg border border-slate-950 bg-slate-950 px-4 text-sm font-semibold text-white ${
-          isList ? "sm:w-auto" : "mt-4"
-        }`}
-      >
-        {actionLabel}
-      </div>
+      {data.displayItems.some((item) => item.field === "button") ? null : (
+        <div
+          className={`inline-flex h-10 w-full items-center justify-center rounded-lg border border-slate-950 bg-slate-950 px-4 text-sm font-semibold text-white ${
+            isList ? "sm:w-auto" : "mt-4"
+          }`}
+        >
+          {actionLabel}
+        </div>
+      )}
     </div>
   );
 }
@@ -885,10 +1001,11 @@ export default function MerchantCouponManager({
       title: form.displayTitle.trim(),
       description: form.displayDescription.trim(),
       meta: form.displayMetaText.trim(),
+      button: form.displayButtonText.trim(),
     };
     const displayItems = form.displayFieldOrder
       .filter((field) => !form.displayHiddenFields.includes(field))
-      .map((field) => ({ field, text: itemText[field] }))
+      .map((field) => ({ field, text: itemText[field], boxStyle: form.displayBoxStyles[field] }))
       .filter((item) => item.text);
     return {
       displayItems,
@@ -903,6 +1020,8 @@ export default function MerchantCouponManager({
       descriptionFontSize: normalizeFontSizeInput(form.descriptionFontSize),
       metaTextColor: form.metaTextColor.trim(),
       metaFontSize: normalizeFontSizeInput(form.metaFontSize),
+      buttonTextColor: form.buttonTextColor.trim(),
+      buttonFontSize: normalizeFontSizeInput(form.buttonFontSize),
     };
   }, [form]);
 
@@ -974,6 +1093,13 @@ export default function MerchantCouponManager({
       displayHiddenFields: value.trim()
         ? current.displayHiddenFields.filter((item) => item !== field)
         : Array.from(new Set([...current.displayHiddenFields, field])),
+    }));
+  }
+
+  function updateDisplayBoxStyle(field: MerchantCouponDisplayField, value: MerchantCouponDisplayBoxStyle) {
+    setForm((current) => ({
+      ...current,
+      displayBoxStyles: { ...current.displayBoxStyles, [field]: value },
     }));
   }
 
@@ -1062,8 +1188,10 @@ export default function MerchantCouponManager({
       displayDescription: form.displayDescription.trim(),
       displayDiscountText: form.displayDiscountText.trim(),
       displayMetaText: form.displayMetaText.trim(),
+      displayButtonText: form.displayButtonText.trim(),
       displayFieldOrder: form.displayFieldOrder,
       displayHiddenFields: hiddenFields,
+      displayBoxStyles: form.displayBoxStyles,
       contentFontFamily: form.contentFontFamily.trim(),
       discountTextColor: form.discountTextColor.trim(),
       discountFontSize: normalizeFontSizeInput(form.discountFontSize),
@@ -1073,6 +1201,8 @@ export default function MerchantCouponManager({
       descriptionFontSize: normalizeFontSizeInput(form.descriptionFontSize),
       metaTextColor: form.metaTextColor.trim(),
       metaFontSize: normalizeFontSizeInput(form.metaFontSize),
+      buttonTextColor: form.buttonTextColor.trim(),
+      buttonFontSize: normalizeFontSizeInput(form.buttonFontSize),
       claimRequiresMember: form.claimRequiresMember,
       claimOldUserOnly: form.claimOldUserOnly,
       claimMinRegisteredDays: toIntValue(form.claimMinRegisteredDays),
@@ -1401,7 +1531,7 @@ export default function MerchantCouponManager({
                   return (
                     <div
                       key={field}
-                      className={`grid grid-cols-[104px_minmax(0,1fr)_auto] items-center gap-2 rounded-lg border bg-white px-3 py-2 ${selected ? "border-slate-900" : "border-slate-200"}`}
+                      className={`grid grid-cols-[104px_minmax(0,1fr)_116px_auto] items-center gap-2 rounded-lg border bg-white px-3 py-2 ${selected ? "border-slate-900" : "border-slate-200"}`}
                     >
                       <label className="flex min-w-0 items-center gap-2 text-sm font-semibold text-slate-800">
                         <input
@@ -1417,6 +1547,18 @@ export default function MerchantCouponManager({
                         value={form[config.valueKey]}
                         onChange={(event) => updateDisplayText(field, event.target.value)}
                       />
+                      <select
+                        className="h-10 rounded-lg border border-slate-300 bg-white px-2 text-sm outline-none focus:border-slate-500"
+                        value={form.displayBoxStyles[field]}
+                        onChange={(event) => updateDisplayBoxStyle(field, event.target.value as MerchantCouponDisplayBoxStyle)}
+                        aria-label={`${config.label}底框样式`}
+                      >
+                        {DISPLAY_BOX_STYLE_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
                       <div className="flex shrink-0 gap-1">
                         <button
                           type="button"
