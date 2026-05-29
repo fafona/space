@@ -28,6 +28,19 @@ export type MerchantCouponInput = {
   backgroundImageUrl?: string;
   backgroundImageOpacity?: number;
   usageScenarios?: MerchantCouponUsageScenario[];
+  displayTitle?: string;
+  displayDescription?: string;
+  displayDiscountText?: string;
+  displayMetaText?: string;
+  contentFontFamily?: string;
+  discountTextColor?: string;
+  discountFontSize?: number;
+  titleTextColor?: string;
+  titleFontSize?: number;
+  descriptionTextColor?: string;
+  descriptionFontSize?: number;
+  metaTextColor?: string;
+  metaFontSize?: number;
   applicableProductIds?: string[];
   applicableTags?: string[];
   createdAt?: string;
@@ -68,6 +81,21 @@ function normalizeOpacityValue(value: unknown, fallback = 0.35) {
   const next = typeof value === "number" ? value : Number.parseFloat(String(value ?? ""));
   if (!Number.isFinite(next)) return fallback;
   return Math.max(0, Math.min(1, Number(next.toFixed(2))));
+}
+
+function normalizeFontSizeValue(value: unknown) {
+  const next = typeof value === "number" ? value : Number.parseFloat(String(value ?? ""));
+  if (!Number.isFinite(next) || next <= 0) return 0;
+  return Math.max(8, Math.min(72, Math.round(next)));
+}
+
+function normalizeColorValue(value: unknown) {
+  const raw = trimText(value);
+  return /^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?([0-9a-fA-F]{2})?$/.test(raw) ? raw : "";
+}
+
+function normalizeFontFamilyValue(value: unknown) {
+  return trimText(value).replace(/[;{}<>]/g, "").slice(0, 120);
 }
 
 function normalizeIsoDateValue(value: unknown) {
@@ -160,6 +188,19 @@ export function normalizeMerchantCouponRecord(input: MerchantCouponInput | null 
     backgroundImageUrl: trimText(input?.backgroundImageUrl),
     backgroundImageOpacity: normalizeOpacityValue(input?.backgroundImageOpacity),
     usageScenarios: normalizeCouponUsageScenarios(input?.usageScenarios),
+    displayTitle: trimText(input?.displayTitle),
+    displayDescription: trimText(input?.displayDescription),
+    displayDiscountText: trimText(input?.displayDiscountText),
+    displayMetaText: trimText(input?.displayMetaText),
+    contentFontFamily: normalizeFontFamilyValue(input?.contentFontFamily),
+    discountTextColor: normalizeColorValue(input?.discountTextColor),
+    discountFontSize: normalizeFontSizeValue(input?.discountFontSize),
+    titleTextColor: normalizeColorValue(input?.titleTextColor),
+    titleFontSize: normalizeFontSizeValue(input?.titleFontSize),
+    descriptionTextColor: normalizeColorValue(input?.descriptionTextColor),
+    descriptionFontSize: normalizeFontSizeValue(input?.descriptionFontSize),
+    metaTextColor: normalizeColorValue(input?.metaTextColor),
+    metaFontSize: normalizeFontSizeValue(input?.metaFontSize),
     applicableProductIds: normalizeStringArray(input?.applicableProductIds),
     applicableTags: normalizeStringArray(input?.applicableTags),
     createdAt: normalizeIsoDateValue(input?.createdAt) ?? now,
@@ -346,6 +387,8 @@ export function calculateMerchantCouponDiscount(
 }
 
 export function getMerchantCouponDiscountLabel(coupon: MerchantCouponRecord, pricePrefix = "") {
+  const customText = trimText(coupon.displayDiscountText);
+  if (customText) return customText;
   if (coupon.discountType === "percent_off") {
     const percent = Number.isInteger(coupon.discountValue) ? coupon.discountValue.toFixed(0) : coupon.discountValue.toFixed(1);
     return `${percent}% OFF`;
@@ -355,4 +398,16 @@ export function getMerchantCouponDiscountLabel(coupon: MerchantCouponRecord, pri
     return `满 ${pricePrefix}${coupon.minimumAmount.toFixed(2)} 减 ${amount}`;
   }
   return `减 ${amount}`;
+}
+
+export function getMerchantCouponDisplayTitle(coupon: MerchantCouponRecord) {
+  return trimText(coupon.displayTitle) || coupon.title;
+}
+
+export function getMerchantCouponDisplayDescription(coupon: MerchantCouponRecord) {
+  return trimText(coupon.displayDescription) || coupon.description;
+}
+
+export function getMerchantCouponDisplayMetaText(coupon: MerchantCouponRecord) {
+  return trimText(coupon.displayMetaText);
 }

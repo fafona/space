@@ -24,6 +24,9 @@ import { DEFAULT_LOCALE, I18N_STORAGE_KEY, LANGUAGE_OPTIONS } from "@/lib/i18n";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
   getContactCardVisibleMerchantCoupons,
+  getMerchantCouponDisplayDescription,
+  getMerchantCouponDisplayMetaText,
+  getMerchantCouponDisplayTitle,
   getMerchantCouponRemainingCount,
   getMerchantCouponDiscountLabel,
   type MerchantCouponRecord,
@@ -1392,6 +1395,30 @@ function formatContactCouponUsageScenarios(coupon: MerchantCouponRecord) {
   return coupon.usageScenarios.map((item) => CONTACT_COUPON_USAGE_LABELS[item]).filter(Boolean).join(" / ");
 }
 
+function buildContactCouponTextStyle(coupon: MerchantCouponRecord, role: "discount" | "title" | "description" | "meta") {
+  const declarations: string[] = [];
+  if (coupon.contentFontFamily) declarations.push(`font-family:${escapeHtml(coupon.contentFontFamily)}`);
+  const color =
+    role === "discount"
+      ? coupon.discountTextColor
+      : role === "title"
+        ? coupon.titleTextColor
+        : role === "description"
+          ? coupon.descriptionTextColor
+          : coupon.metaTextColor;
+  const fontSize =
+    role === "discount"
+      ? coupon.discountFontSize
+      : role === "title"
+        ? coupon.titleFontSize
+        : role === "description"
+          ? coupon.descriptionFontSize
+          : coupon.metaFontSize;
+  if (color) declarations.push(`color:${escapeHtml(color)}`);
+  if (fontSize > 0) declarations.push(`font-size:${Math.round(fontSize)}px`);
+  return declarations.length > 0 ? ` style="${declarations.join(";")}"` : "";
+}
+
 function buildContactCouponsHtml(coupons: MerchantCouponRecord[]) {
   if (coupons.length === 0) return "";
   return `
@@ -1403,6 +1430,9 @@ function buildContactCouponsHtml(coupons: MerchantCouponRecord[]) {
             const remaining = getMerchantCouponRemainingCount(coupon);
             const expiresLabel = formatCouponDate(coupon.expiresAt);
             const usageLabel = formatContactCouponUsageScenarios(coupon);
+            const displayTitle = getMerchantCouponDisplayTitle(coupon);
+            const displayDescription = getMerchantCouponDisplayDescription(coupon);
+            const displayMetaText = getMerchantCouponDisplayMetaText(coupon);
             const backgroundImageUrl = normalizePublicAssetUrl(coupon.backgroundImageUrl);
             const backgroundOpacity = Math.max(0, Math.min(1, coupon.backgroundImageOpacity));
             const backgroundStyle = backgroundImageUrl
@@ -1413,14 +1443,18 @@ function buildContactCouponsHtml(coupons: MerchantCouponRecord[]) {
             return `
               <article class="coupon-item"${backgroundStyle}>
                 <div class="coupon-copy">
-                  <div class="coupon-discount">${escapeHtml(getMerchantCouponDiscountLabel(coupon))}</div>
-                  <div class="coupon-name">${escapeHtml(coupon.title)}</div>
-                  ${coupon.description ? `<div class="coupon-description">${escapeHtml(coupon.description)}</div>` : ""}
-                  <div class="coupon-meta">
-                    ${coupon.minimumAmount > 0 ? `<span>门槛 ${escapeHtml(coupon.minimumAmount.toFixed(2))}</span>` : ""}
+                  <div class="coupon-discount"${buildContactCouponTextStyle(coupon, "discount")}>${escapeHtml(getMerchantCouponDiscountLabel(coupon))}</div>
+                  <div class="coupon-name"${buildContactCouponTextStyle(coupon, "title")}>${escapeHtml(displayTitle)}</div>
+                  ${displayDescription ? `<div class="coupon-description"${buildContactCouponTextStyle(coupon, "description")}>${escapeHtml(displayDescription)}</div>` : ""}
+                  <div class="coupon-meta"${buildContactCouponTextStyle(coupon, "meta")}>
+                    ${
+                      displayMetaText
+                        ? `<span>${escapeHtml(displayMetaText)}</span>`
+                        : `${coupon.minimumAmount > 0 ? `<span>门槛 ${escapeHtml(coupon.minimumAmount.toFixed(2))}</span>` : ""}
                     ${usageLabel ? `<span>${escapeHtml(usageLabel)}</span>` : ""}
                     ${remaining !== null ? `<span>剩余 ${escapeHtml(String(remaining))}</span>` : ""}
-                    ${expiresLabel ? `<span>至 ${escapeHtml(expiresLabel)}</span>` : ""}
+                    ${expiresLabel ? `<span>至 ${escapeHtml(expiresLabel)}</span>` : ""}`
+                    }
                   </div>
                 </div>
                 <button class="coupon-button" type="button" data-copy-value="${escapeHtml(coupon.code)}" data-copy-label="优惠码">

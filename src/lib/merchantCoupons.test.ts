@@ -5,8 +5,12 @@ import {
   buildMerchantCouponSettlementCode,
   calculateMerchantCouponDiscount,
   claimMerchantCoupon,
+  getMerchantCouponDisplayDescription,
+  getMerchantCouponDisplayMetaText,
+  getMerchantCouponDisplayTitle,
   getContactCardVisibleMerchantCoupons,
   createMerchantCoupon,
+  getMerchantCouponDiscountLabel,
   getMerchantCouponRemainingCount,
   getVisibleMerchantCoupons,
   merchantCouponSupportsUsageScenario,
@@ -69,6 +73,34 @@ test("createMerchantCoupon normalizes usage scenarios", () => {
   assert.equal(merchantCouponSupportsUsageScenario(checkoutCoupon, "checkout_qr"), true);
   assert.equal(merchantCouponSupportsUsageScenario(checkoutCoupon, "order_cart"), false);
   assert.match(buildMerchantCouponSettlementCode(checkoutCoupon, "checkout_qr", 3), /^QR000000/);
+});
+
+test("createMerchantCoupon normalizes display text and typography", () => {
+  const coupon = createMerchantCoupon({
+    siteId: "10000000",
+    title: "默认标题",
+    description: "默认说明",
+    discountValue: 5,
+    displayTitle: "  展示标题  ",
+    displayDescription: "展示说明",
+    displayDiscountText: "今日专享",
+    displayMetaText: "到店可用",
+    contentFontFamily: "Georgia, serif;",
+    discountTextColor: "#ff3366",
+    discountFontSize: 88,
+    titleTextColor: "red",
+    titleFontSize: 6,
+  });
+
+  assert.equal(getMerchantCouponDisplayTitle(coupon), "展示标题");
+  assert.equal(getMerchantCouponDisplayDescription(coupon), "展示说明");
+  assert.equal(getMerchantCouponDisplayMetaText(coupon), "到店可用");
+  assert.equal(getMerchantCouponDiscountLabel(coupon), "今日专享");
+  assert.equal(coupon.contentFontFamily, "Georgia, serif");
+  assert.equal(coupon.discountTextColor, "#ff3366");
+  assert.equal(coupon.discountFontSize, 72);
+  assert.equal(coupon.titleTextColor, "");
+  assert.equal(coupon.titleFontSize, 8);
 });
 
 test("calculateMerchantCouponDiscount applies caps and minimums", () => {

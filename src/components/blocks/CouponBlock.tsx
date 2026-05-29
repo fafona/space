@@ -1,8 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import type { CouponProps } from "@/data/homeBlocks";
 import {
+  getMerchantCouponDisplayDescription,
+  getMerchantCouponDisplayMetaText,
+  getMerchantCouponDisplayTitle,
   getMerchantCouponRemainingCount,
   getMerchantCouponDiscountLabel,
   normalizeMerchantCouponRecords,
@@ -42,6 +45,33 @@ const COUPON_USAGE_SCENARIO_LABELS: Record<MerchantCouponUsageScenario, string> 
 
 function formatCouponUsageScenarios(coupon: MerchantCouponRecord) {
   return coupon.usageScenarios.map((item) => COUPON_USAGE_SCENARIO_LABELS[item]).filter(Boolean).join(" / ");
+}
+
+function buildCouponTextStyle(
+  coupon: MerchantCouponRecord,
+  role: "discount" | "title" | "description" | "meta",
+): CSSProperties {
+  const style: CSSProperties = {};
+  if (coupon.contentFontFamily) style.fontFamily = coupon.contentFontFamily;
+  const color =
+    role === "discount"
+      ? coupon.discountTextColor
+      : role === "title"
+        ? coupon.titleTextColor
+        : role === "description"
+          ? coupon.descriptionTextColor
+          : coupon.metaTextColor;
+  const fontSize =
+    role === "discount"
+      ? coupon.discountFontSize
+      : role === "title"
+        ? coupon.titleFontSize
+        : role === "description"
+          ? coupon.descriptionFontSize
+          : coupon.metaFontSize;
+  if (color) style.color = color;
+  if (fontSize > 0) style.fontSize = `${fontSize}px`;
+  return style;
 }
 
 function buildClaimStorageKey(siteId: string) {
@@ -243,6 +273,9 @@ export default function CouponBlock({
               const claiming = claimingCouponId === coupon.id;
               const claimFailed = claimErrorCouponId === coupon.id;
               const usageScenarioLabel = formatCouponUsageScenarios(coupon);
+              const displayTitle = getMerchantCouponDisplayTitle(coupon);
+              const displayDescription = getMerchantCouponDisplayDescription(coupon);
+              const displayMetaText = getMerchantCouponDisplayMetaText(coupon);
               const couponBackgroundStyle = getBackgroundStyle({
                 imageUrl: coupon.backgroundImageUrl,
                 fillMode: "cover",
@@ -276,16 +309,28 @@ export default function CouponBlock({
                   style={couponBackgroundStyle}
                 >
                   <div className="min-w-0">
-                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-500">
+                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-500" style={buildCouponTextStyle(coupon, "discount")}>
                       {getMerchantCouponDiscountLabel(coupon, runtimePricePrefix)}
                     </div>
-                    <h3 className="mt-2 truncate text-base font-bold text-slate-950">{coupon.title}</h3>
-                    {coupon.description ? <p className="mt-1 line-clamp-2 text-sm text-slate-500">{coupon.description}</p> : null}
-                    <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-500">
-                      {coupon.minimumAmount > 0 ? <span>门槛 {runtimePricePrefix}{coupon.minimumAmount.toFixed(2)}</span> : null}
-                      {usageScenarioLabel ? <span>{usageScenarioLabel}</span> : null}
-                      {couponShowRemaining && remaining !== null ? <span>剩余 {remaining}</span> : null}
-                      {couponShowExpiresAt && expiresLabel ? <span>至 {expiresLabel}</span> : null}
+                    <h3 className="mt-2 truncate text-base font-bold text-slate-950" style={buildCouponTextStyle(coupon, "title")}>
+                      {displayTitle}
+                    </h3>
+                    {displayDescription ? (
+                      <p className="mt-1 line-clamp-2 text-sm text-slate-500" style={buildCouponTextStyle(coupon, "description")}>
+                        {displayDescription}
+                      </p>
+                    ) : null}
+                    <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-500" style={buildCouponTextStyle(coupon, "meta")}>
+                      {displayMetaText ? (
+                        <span>{displayMetaText}</span>
+                      ) : (
+                        <>
+                          {coupon.minimumAmount > 0 ? <span>门槛 {runtimePricePrefix}{coupon.minimumAmount.toFixed(2)}</span> : null}
+                          {usageScenarioLabel ? <span>{usageScenarioLabel}</span> : null}
+                          {couponShowRemaining && remaining !== null ? <span>剩余 {remaining}</span> : null}
+                          {couponShowExpiresAt && expiresLabel ? <span>至 {expiresLabel}</span> : null}
+                        </>
+                      )}
                     </div>
                   </div>
                   <button

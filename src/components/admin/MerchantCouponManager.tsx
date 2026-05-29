@@ -45,6 +45,19 @@ type CouponFormState = {
   backgroundImageUrl: string;
   backgroundImageOpacity: string;
   usageScenarios: MerchantCouponUsageScenario[];
+  displayTitle: string;
+  displayDescription: string;
+  displayDiscountText: string;
+  displayMetaText: string;
+  contentFontFamily: string;
+  discountTextColor: string;
+  discountFontSize: string;
+  titleTextColor: string;
+  titleFontSize: string;
+  descriptionTextColor: string;
+  descriptionFontSize: string;
+  metaTextColor: string;
+  metaFontSize: string;
   applicableTags: string;
 };
 
@@ -67,6 +80,19 @@ const EMPTY_FORM: CouponFormState = {
   backgroundImageUrl: "",
   backgroundImageOpacity: "0.35",
   usageScenarios: ["order_cart"],
+  displayTitle: "",
+  displayDescription: "",
+  displayDiscountText: "",
+  displayMetaText: "",
+  contentFontFamily: "",
+  discountTextColor: "#f43f5e",
+  discountFontSize: "12",
+  titleTextColor: "#020617",
+  titleFontSize: "16",
+  descriptionTextColor: "#64748b",
+  descriptionFontSize: "14",
+  metaTextColor: "#64748b",
+  metaFontSize: "12",
   applicableTags: "",
 };
 
@@ -109,6 +135,38 @@ const USAGE_SCENARIO_LABELS: Record<MerchantCouponUsageScenario, string> = {
   checkout_qr: "二维码",
   checkout_barcode: "条码",
 };
+
+const COUPON_FONT_OPTIONS = [
+  { value: "", label: "默认字体" },
+  { value: "Inter, system-ui, sans-serif", label: "系统无衬线" },
+  { value: "Microsoft YaHei, PingFang SC, sans-serif", label: "中文清晰" },
+  { value: "Georgia, Times New Roman, serif", label: "经典衬线" },
+  { value: "Arial Rounded MT Bold, Microsoft YaHei, sans-serif", label: "圆润标题" },
+  { value: "Courier New, monospace", label: "等宽代码" },
+];
+
+const TEXT_STYLE_FIELDS = [
+  {
+    colorKey: "discountTextColor",
+    sizeKey: "discountFontSize",
+    label: "折扣文案",
+  },
+  {
+    colorKey: "titleTextColor",
+    sizeKey: "titleFontSize",
+    label: "标题",
+  },
+  {
+    colorKey: "descriptionTextColor",
+    sizeKey: "descriptionFontSize",
+    label: "说明",
+  },
+  {
+    colorKey: "metaTextColor",
+    sizeKey: "metaFontSize",
+    label: "辅助信息",
+  },
+] as const;
 
 function toDateTimeTextValue(value: string | null | undefined) {
   if (!value) return "";
@@ -233,6 +291,19 @@ function buildFormFromCoupon(coupon: MerchantCouponRecord): CouponFormState {
     backgroundImageUrl: coupon.backgroundImageUrl,
     backgroundImageOpacity: String(coupon.backgroundImageOpacity),
     usageScenarios: normalizeFormUsageScenarios(coupon.usageScenarios),
+    displayTitle: coupon.displayTitle,
+    displayDescription: coupon.displayDescription,
+    displayDiscountText: coupon.displayDiscountText,
+    displayMetaText: coupon.displayMetaText,
+    contentFontFamily: coupon.contentFontFamily,
+    discountTextColor: coupon.discountTextColor || "#f43f5e",
+    discountFontSize: coupon.discountFontSize > 0 ? String(coupon.discountFontSize) : "12",
+    titleTextColor: coupon.titleTextColor || "#020617",
+    titleFontSize: coupon.titleFontSize > 0 ? String(coupon.titleFontSize) : "16",
+    descriptionTextColor: coupon.descriptionTextColor || "#64748b",
+    descriptionFontSize: coupon.descriptionFontSize > 0 ? String(coupon.descriptionFontSize) : "14",
+    metaTextColor: coupon.metaTextColor || "#64748b",
+    metaFontSize: coupon.metaFontSize > 0 ? String(coupon.metaFontSize) : "12",
     applicableTags: coupon.applicableTags.join("\n"),
   };
 }
@@ -275,6 +346,12 @@ function validateCouponForm(form: CouponFormState, selectedCoupon: MerchantCoupo
 
 function formatOpacityPercent(value: string) {
   return `${Math.round(Math.max(0, Math.min(1, toNumberValue(value))) * 100)}%`;
+}
+
+function normalizeFontSizeInput(value: string) {
+  const next = Number.parseFloat(value);
+  if (!Number.isFinite(next) || next <= 0) return 0;
+  return Math.max(8, Math.min(72, Math.round(next)));
 }
 
 function CouponCalendarIcon() {
@@ -476,6 +553,19 @@ export default function MerchantCouponManager({
       backgroundImageUrl: normalizePublicAssetUrl(form.backgroundImageUrl),
       backgroundImageOpacity: Math.max(0, Math.min(1, toNumberValue(form.backgroundImageOpacity))),
       usageScenarios: normalizeFormUsageScenarios(form.usageScenarios),
+      displayTitle: form.displayTitle.trim(),
+      displayDescription: form.displayDescription.trim(),
+      displayDiscountText: form.displayDiscountText.trim(),
+      displayMetaText: form.displayMetaText.trim(),
+      contentFontFamily: form.contentFontFamily.trim(),
+      discountTextColor: form.discountTextColor.trim(),
+      discountFontSize: normalizeFontSizeInput(form.discountFontSize),
+      titleTextColor: form.titleTextColor.trim(),
+      titleFontSize: normalizeFontSizeInput(form.titleFontSize),
+      descriptionTextColor: form.descriptionTextColor.trim(),
+      descriptionFontSize: normalizeFontSizeInput(form.descriptionFontSize),
+      metaTextColor: form.metaTextColor.trim(),
+      metaFontSize: normalizeFontSizeInput(form.metaFontSize),
       applicableTags: splitTags(form.applicableTags),
     };
   }
@@ -726,6 +816,98 @@ export default function MerchantCouponManager({
                 placeholder="展示给客户看的使用说明"
               />
             </label>
+
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4">
+              <div className="text-sm font-semibold text-slate-900">卡片展示文案</div>
+              <div className="mt-1 text-xs leading-5 text-slate-500">
+                可覆盖优惠券卡片里看到的标题、折扣行、说明和辅助信息；留空时使用优惠券规则自动生成。
+              </div>
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <label className="space-y-1 text-sm">
+                  <span className="block text-slate-600">展示标题</span>
+                  <input
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                    value={form.displayTitle}
+                    onChange={handleInputChange("displayTitle")}
+                    placeholder={form.title || "默认使用优惠券名称"}
+                  />
+                </label>
+                <label className="space-y-1 text-sm">
+                  <span className="block text-slate-600">折扣文案</span>
+                  <input
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                    value={form.displayDiscountText}
+                    onChange={handleInputChange("displayDiscountText")}
+                    placeholder="例如：今日专享 5€ OFF"
+                  />
+                </label>
+                <label className="space-y-1 text-sm">
+                  <span className="block text-slate-600">展示说明</span>
+                  <textarea
+                    className="min-h-[72px] w-full resize-y rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                    value={form.displayDescription}
+                    onChange={handleInputChange("displayDescription")}
+                    placeholder="默认使用上方说明"
+                  />
+                </label>
+                <label className="space-y-1 text-sm">
+                  <span className="block text-slate-600">辅助信息</span>
+                  <textarea
+                    className="min-h-[72px] w-full resize-y rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                    value={form.displayMetaText}
+                    onChange={handleInputChange("displayMetaText")}
+                    placeholder="留空自动显示门槛、场景、剩余和有效期"
+                  />
+                </label>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4">
+              <div className="text-sm font-semibold text-slate-900">卡片文字样式</div>
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <label className="space-y-1 text-sm md:col-span-2">
+                  <span className="block text-slate-600">字体</span>
+                  <select
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                    value={form.contentFontFamily}
+                    onChange={handleInputChange("contentFontFamily")}
+                  >
+                    {COUPON_FONT_OPTIONS.map((option) => (
+                      <option key={option.value || "default"} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {TEXT_STYLE_FIELDS.map((field) => (
+                  <div key={field.colorKey} className="rounded-lg border border-slate-200 bg-white px-3 py-3">
+                    <div className="text-xs font-semibold text-slate-700">{field.label}</div>
+                    <div className="mt-2 grid grid-cols-[minmax(0,1fr)_92px] gap-2">
+                      <label className="space-y-1 text-xs text-slate-500">
+                        <span className="block">颜色</span>
+                        <input
+                          type="color"
+                          className="h-10 w-full rounded border border-slate-300 bg-white px-1"
+                          value={form[field.colorKey]}
+                          onChange={(event) => updateField(field.colorKey, event.target.value)}
+                        />
+                      </label>
+                      <label className="space-y-1 text-xs text-slate-500">
+                        <span className="block">字号</span>
+                        <input
+                          type="number"
+                          min={8}
+                          max={72}
+                          className="h-10 w-full rounded border border-slate-300 px-2 outline-none focus:border-slate-500"
+                          value={form[field.sizeKey]}
+                          onChange={(event) => updateField(field.sizeKey, event.target.value)}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
 
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
