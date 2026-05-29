@@ -683,7 +683,7 @@ function buildTextStyle(data: CouponVisualCardData, role: "discount" | "title" |
 function CouponVisualCard({
   data,
   className = "",
-  actionLabel = "复制优惠码",
+  actionLabel = "立即领取",
   layout = "card",
 }: {
   data: CouponVisualCardData;
