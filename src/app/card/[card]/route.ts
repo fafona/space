@@ -21,6 +21,7 @@ import {
   type MerchantBusinessCardContactDisplayKey,
 } from "@/lib/merchantBusinessCards";
 import { DEFAULT_LOCALE, I18N_STORAGE_KEY, LANGUAGE_OPTIONS } from "@/lib/i18n";
+import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
   getContactCardVisibleMerchantCoupons,
   getMerchantCouponRemainingCount,
@@ -1402,7 +1403,7 @@ function buildContactCouponsHtml(coupons: MerchantCouponRecord[]) {
             const remaining = getMerchantCouponRemainingCount(coupon);
             const expiresLabel = formatCouponDate(coupon.expiresAt);
             const usageLabel = formatContactCouponUsageScenarios(coupon);
-            const backgroundImageUrl = coupon.backgroundImageUrl.trim();
+            const backgroundImageUrl = normalizePublicAssetUrl(coupon.backgroundImageUrl);
             const backgroundOpacity = Math.max(0, Math.min(1, coupon.backgroundImageOpacity));
             const backgroundStyle = backgroundImageUrl
               ? ` style="background-image: linear-gradient(rgba(255,255,255,${escapeHtml((1 - backgroundOpacity).toFixed(3))}), rgba(255,255,255,${escapeHtml(

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
   MERCHANT_COUPON_USAGE_SCENARIOS,
   getContactCardVisibleMerchantCoupons,
@@ -472,7 +473,7 @@ export default function MerchantCouponManager({
       status: form.status === "archived" ? "paused" : form.status,
       showOnWebsite: form.showOnWebsite,
       showOnContactCard: form.showOnContactCard,
-      backgroundImageUrl: form.backgroundImageUrl.trim(),
+      backgroundImageUrl: normalizePublicAssetUrl(form.backgroundImageUrl),
       backgroundImageOpacity: Math.max(0, Math.min(1, toNumberValue(form.backgroundImageOpacity))),
       usageScenarios: normalizeFormUsageScenarios(form.usageScenarios),
       applicableTags: splitTags(form.applicableTags),
@@ -499,7 +500,7 @@ export default function MerchantCouponManager({
       if (!response.ok || !payload?.url) {
         throw new Error(payload?.message || payload?.error || "背景图上传失败");
       }
-      updateField("backgroundImageUrl", payload.url);
+      updateField("backgroundImageUrl", normalizePublicAssetUrl(payload.url));
       setTip("优惠券背景图已上传");
     } catch (uploadError) {
       setError(uploadError instanceof Error ? uploadError.message : "背景图上传失败");
@@ -773,12 +774,12 @@ export default function MerchantCouponManager({
                 <div
                   className="min-h-24 rounded-lg border border-slate-200 bg-white bg-cover bg-center"
                   style={{
-                    backgroundImage: form.backgroundImageUrl
+                    backgroundImage: normalizePublicAssetUrl(form.backgroundImageUrl)
                       ? `linear-gradient(rgba(255,255,255,${(1 - Math.max(0, Math.min(1, toNumberValue(form.backgroundImageOpacity)))).toFixed(
                           3,
                         )}), rgba(255,255,255,${(1 - Math.max(0, Math.min(1, toNumberValue(form.backgroundImageOpacity)))).toFixed(
                           3,
-                        )})), url("${form.backgroundImageUrl}")`
+                        )})), url("${normalizePublicAssetUrl(form.backgroundImageUrl)}")`
                       : undefined,
                   }}
                   aria-label="优惠券背景预览"
