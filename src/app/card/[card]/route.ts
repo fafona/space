@@ -23,8 +23,10 @@ import {
 import { DEFAULT_LOCALE, I18N_STORAGE_KEY, LANGUAGE_OPTIONS } from "@/lib/i18n";
 import {
   getContactCardVisibleMerchantCoupons,
+  getMerchantCouponRemainingCount,
   getMerchantCouponDiscountLabel,
   type MerchantCouponRecord,
+  type MerchantCouponUsageScenario,
 } from "@/lib/merchantCoupons";
 import { listMerchantCoupons } from "@/lib/merchantCoupons.server";
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
@@ -1379,6 +1381,16 @@ function formatCouponDate(value: string | null | undefined) {
   return `${year}-${month}-${day}`;
 }
 
+const CONTACT_COUPON_USAGE_LABELS: Record<MerchantCouponUsageScenario, string> = {
+  order_cart: "订单",
+  checkout_qr: "二维码",
+  checkout_barcode: "条码",
+};
+
+function formatContactCouponUsageScenarios(coupon: MerchantCouponRecord) {
+  return coupon.usageScenarios.map((item) => CONTACT_COUPON_USAGE_LABELS[item]).filter(Boolean).join(" / ");
+}
+
 function buildContactCouponsHtml(coupons: MerchantCouponRecord[]) {
   if (coupons.length === 0) return "";
   return `
@@ -1387,16 +1399,25 @@ function buildContactCouponsHtml(coupons: MerchantCouponRecord[]) {
       <div class="coupon-list">
         ${coupons
           .map((coupon) => {
-            const remaining = coupon.totalQuantity > 0 ? Math.max(0, coupon.totalQuantity - coupon.usedCount) : null;
+            const remaining = getMerchantCouponRemainingCount(coupon);
             const expiresLabel = formatCouponDate(coupon.expiresAt);
+            const usageLabel = formatContactCouponUsageScenarios(coupon);
+            const backgroundImageUrl = coupon.backgroundImageUrl.trim();
+            const backgroundOpacity = Math.max(0, Math.min(1, coupon.backgroundImageOpacity));
+            const backgroundStyle = backgroundImageUrl
+              ? ` style="background-image: linear-gradient(rgba(255,255,255,${escapeHtml((1 - backgroundOpacity).toFixed(3))}), rgba(255,255,255,${escapeHtml(
+                  (1 - backgroundOpacity).toFixed(3),
+                )})), url('${escapeHtml(backgroundImageUrl)}'); background-size: cover; background-position: center;"`
+              : "";
             return `
-              <article class="coupon-item">
+              <article class="coupon-item"${backgroundStyle}>
                 <div class="coupon-copy">
                   <div class="coupon-discount">${escapeHtml(getMerchantCouponDiscountLabel(coupon))}</div>
                   <div class="coupon-name">${escapeHtml(coupon.title)}</div>
                   ${coupon.description ? `<div class="coupon-description">${escapeHtml(coupon.description)}</div>` : ""}
                   <div class="coupon-meta">
                     ${coupon.minimumAmount > 0 ? `<span>门槛 ${escapeHtml(coupon.minimumAmount.toFixed(2))}</span>` : ""}
+                    ${usageLabel ? `<span>${escapeHtml(usageLabel)}</span>` : ""}
                     ${remaining !== null ? `<span>剩余 ${escapeHtml(String(remaining))}</span>` : ""}
                     ${expiresLabel ? `<span>至 ${escapeHtml(expiresLabel)}</span>` : ""}
                   </div>

@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildMerchantCouponCode,
+  buildMerchantCouponSettlementCode,
   calculateMerchantCouponDiscount,
   claimMerchantCoupon,
   getContactCardVisibleMerchantCoupons,
   createMerchantCoupon,
   getMerchantCouponRemainingCount,
   getVisibleMerchantCoupons,
+  merchantCouponSupportsUsageScenario,
   normalizeMerchantCouponRecord,
 } from "@/lib/merchantCoupons";
 
@@ -36,6 +38,39 @@ test("createMerchantCoupon normalizes threshold and percent coupons", () => {
   assert.equal(percent.discountValue, 100);
 });
 
+test("createMerchantCoupon normalizes background image settings", () => {
+  const coupon = createMerchantCoupon({
+    siteId: "10000000",
+    title: "背景券",
+    discountValue: 5,
+    backgroundImageUrl: " https://example.com/coupon.webp ",
+    backgroundImageOpacity: 1.8,
+  });
+
+  assert.equal(coupon.backgroundImageUrl, "https://example.com/coupon.webp");
+  assert.equal(coupon.backgroundImageOpacity, 1);
+});
+
+test("createMerchantCoupon normalizes usage scenarios", () => {
+  const defaultCoupon = createMerchantCoupon({
+    siteId: "10000000",
+    title: "默认场景",
+    discountValue: 5,
+  });
+  assert.deepEqual(defaultCoupon.usageScenarios, ["order_cart"]);
+
+  const checkoutCoupon = createMerchantCoupon({
+    siteId: "10000000",
+    title: "结算场景",
+    discountValue: 5,
+    usageScenarios: ["checkout_qr", "checkout_qr", "checkout_barcode"],
+  });
+  assert.deepEqual(checkoutCoupon.usageScenarios, ["checkout_qr", "checkout_barcode"]);
+  assert.equal(merchantCouponSupportsUsageScenario(checkoutCoupon, "checkout_qr"), true);
+  assert.equal(merchantCouponSupportsUsageScenario(checkoutCoupon, "order_cart"), false);
+  assert.match(buildMerchantCouponSettlementCode(checkoutCoupon, "checkout_qr", 3), /^QR000000/);
+});
+
 test("calculateMerchantCouponDiscount applies caps and minimums", () => {
   const coupon = createMerchantCoupon({
     siteId: "10000000",
@@ -57,6 +92,12 @@ test("calculateMerchantCouponDiscount applies caps and minimums", () => {
     discountAmount: 8,
     payableAmount: 92,
     reason: "ok",
+  });
+  assert.deepEqual(calculateMerchantCouponDiscount(coupon, 100, "2026-05-15T00:00:00.000Z", "checkout_qr"), {
+    ok: false,
+    discountAmount: 0,
+    payableAmount: 100,
+    reason: "invalid_coupon",
   });
 });
 

@@ -7,6 +7,7 @@ import {
   getMerchantCouponDiscountLabel,
   normalizeMerchantCouponRecords,
   type MerchantCouponRecord,
+  type MerchantCouponUsageScenario,
 } from "@/lib/merchantCoupons";
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
@@ -31,6 +32,16 @@ function formatDate(value: string | null | undefined) {
 
 function normalizeText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+const COUPON_USAGE_SCENARIO_LABELS: Record<MerchantCouponUsageScenario, string> = {
+  order_cart: "订单",
+  checkout_qr: "二维码",
+  checkout_barcode: "条码",
+};
+
+function formatCouponUsageScenarios(coupon: MerchantCouponRecord) {
+  return coupon.usageScenarios.map((item) => COUPON_USAGE_SCENARIO_LABELS[item]).filter(Boolean).join(" / ");
 }
 
 function buildClaimStorageKey(siteId: string) {
@@ -231,6 +242,13 @@ export default function CouponBlock({
               const exhausted = remaining === 0;
               const claiming = claimingCouponId === coupon.id;
               const claimFailed = claimErrorCouponId === coupon.id;
+              const usageScenarioLabel = formatCouponUsageScenarios(coupon);
+              const couponBackgroundStyle = getBackgroundStyle({
+                imageUrl: coupon.backgroundImageUrl,
+                fillMode: "cover",
+                position: "center",
+                imageOpacity: coupon.backgroundImageOpacity,
+              });
               const actionLabel =
                 couponActionMode === "none"
                   ? coupon.code
@@ -255,6 +273,7 @@ export default function CouponBlock({
                   className={`overflow-hidden rounded-lg border border-slate-200 bg-white/90 shadow-sm ${
                     isList ? "grid gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center" : "p-4"
                   }`}
+                  style={couponBackgroundStyle}
                 >
                   <div className="min-w-0">
                     <div className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-500">
@@ -264,6 +283,7 @@ export default function CouponBlock({
                     {coupon.description ? <p className="mt-1 line-clamp-2 text-sm text-slate-500">{coupon.description}</p> : null}
                     <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-500">
                       {coupon.minimumAmount > 0 ? <span>门槛 {runtimePricePrefix}{coupon.minimumAmount.toFixed(2)}</span> : null}
+                      {usageScenarioLabel ? <span>{usageScenarioLabel}</span> : null}
                       {couponShowRemaining && remaining !== null ? <span>剩余 {remaining}</span> : null}
                       {couponShowExpiresAt && expiresLabel ? <span>至 {expiresLabel}</span> : null}
                     </div>

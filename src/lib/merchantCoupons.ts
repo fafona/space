@@ -1,8 +1,10 @@
 export const MERCHANT_COUPON_DISCOUNT_TYPES = ["amount_off", "percent_off", "threshold_amount_off"] as const;
 export const MERCHANT_COUPON_STATUSES = ["active", "paused", "archived"] as const;
+export const MERCHANT_COUPON_USAGE_SCENARIOS = ["order_cart", "checkout_qr", "checkout_barcode"] as const;
 
 export type MerchantCouponDiscountType = (typeof MERCHANT_COUPON_DISCOUNT_TYPES)[number];
 export type MerchantCouponStatus = (typeof MERCHANT_COUPON_STATUSES)[number];
+export type MerchantCouponUsageScenario = (typeof MERCHANT_COUPON_USAGE_SCENARIOS)[number];
 
 export type MerchantCouponInput = {
   id?: string;
@@ -23,6 +25,9 @@ export type MerchantCouponInput = {
   status?: MerchantCouponStatus;
   showOnWebsite?: boolean;
   showOnContactCard?: boolean;
+  backgroundImageUrl?: string;
+  backgroundImageOpacity?: number;
+  usageScenarios?: MerchantCouponUsageScenario[];
   applicableProductIds?: string[];
   applicableTags?: string[];
   createdAt?: string;
@@ -59,6 +64,12 @@ function normalizePositiveInt(value: unknown, fallback = 0) {
   return Math.max(0, Math.round(next));
 }
 
+function normalizeOpacityValue(value: unknown, fallback = 0.35) {
+  const next = typeof value === "number" ? value : Number.parseFloat(String(value ?? ""));
+  if (!Number.isFinite(next)) return fallback;
+  return Math.max(0, Math.min(1, Number(next.toFixed(2))));
+}
+
 function normalizeIsoDateValue(value: unknown) {
   const raw = trimText(value);
   if (!raw) return null;
@@ -81,6 +92,14 @@ function normalizeCouponStatus(value: unknown): MerchantCouponStatus {
   return MERCHANT_COUPON_STATUSES.includes(value as MerchantCouponStatus)
     ? (value as MerchantCouponStatus)
     : "active";
+}
+
+function normalizeCouponUsageScenarios(value: unknown): MerchantCouponUsageScenario[] {
+  if (!Array.isArray(value)) return ["order_cart"];
+  const scenarios = value.filter((item): item is MerchantCouponUsageScenario =>
+    MERCHANT_COUPON_USAGE_SCENARIOS.includes(item as MerchantCouponUsageScenario),
+  );
+  return Array.from(new Set(scenarios)).length > 0 ? Array.from(new Set(scenarios)) : ["order_cart"];
 }
 
 function normalizeCouponCode(value: unknown) {
@@ -138,6 +157,9 @@ export function normalizeMerchantCouponRecord(input: MerchantCouponInput | null 
     status: normalizeCouponStatus(input?.status),
     showOnWebsite: input?.showOnWebsite !== false,
     showOnContactCard: input?.showOnContactCard === true,
+    backgroundImageUrl: trimText(input?.backgroundImageUrl),
+    backgroundImageOpacity: normalizeOpacityValue(input?.backgroundImageOpacity),
+    usageScenarios: normalizeCouponUsageScenarios(input?.usageScenarios),
     applicableProductIds: normalizeStringArray(input?.applicableProductIds),
     applicableTags: normalizeStringArray(input?.applicableTags),
     createdAt: normalizeIsoDateValue(input?.createdAt) ?? now,
@@ -209,6 +231,25 @@ export function getMerchantCouponRemainingCount(coupon: MerchantCouponRecord) {
   return Math.max(0, coupon.totalQuantity - Math.max(coupon.claimedCount, coupon.usedCount));
 }
 
+export function merchantCouponSupportsUsageScenario(
+  coupon: MerchantCouponRecord,
+  scenario: MerchantCouponUsageScenario,
+) {
+  return normalizeCouponUsageScenarios(coupon.usageScenarios).includes(scenario);
+}
+
+export function buildMerchantCouponSettlementCode(
+  coupon: MerchantCouponRecord,
+  scenario: Exclude<MerchantCouponUsageScenario, "order_cart">,
+  sequenceInput = Math.max(1, coupon.claimedCount, coupon.usedCount),
+) {
+  const prefix = scenario === "checkout_qr" ? "QR" : "BAR";
+  const sitePart = coupon.siteId.replace(/[^a-z0-9]/gi, "").slice(-6).toUpperCase() || "SITE";
+  const couponPart = coupon.id.replace(/[^a-z0-9]/gi, "").slice(-8).toUpperCase() || coupon.code.slice(0, 8) || "COUPON";
+  const sequence = Math.max(1, Math.round(sequenceInput));
+  return `${prefix}${sitePart}${couponPart}${String(sequence).padStart(4, "0")}`;
+}
+
 export function claimMerchantCoupon(coupon: MerchantCouponRecord, nowInput: Date | string = new Date()) {
   if (!isMerchantCouponCurrentlyUsable(coupon, nowInput)) {
     throw new Error("coupon_not_claimable");
@@ -259,6 +300,7 @@ export function calculateMerchantCouponDiscount(
   couponInput: MerchantCouponRecord | null | undefined,
   subtotalInput: number,
   nowInput: Date | string = new Date(),
+  scenario: MerchantCouponUsageScenario = "order_cart",
 ): MerchantCouponDiscountResult {
   const subtotal = normalizeMoneyValue(subtotalInput);
   const fallback = {
@@ -271,6 +313,9 @@ export function calculateMerchantCouponDiscount(
   }
   const coupon = normalizeMerchantCouponRecord(couponInput);
   if (!coupon) {
+    return { ...fallback, reason: "invalid_coupon" };
+  }
+  if (!merchantCouponSupportsUsageScenario(coupon, scenario)) {
     return { ...fallback, reason: "invalid_coupon" };
   }
   const reason = inactiveReason(coupon, nowInput);

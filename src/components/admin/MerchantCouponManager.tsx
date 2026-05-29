@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
+  MERCHANT_COUPON_USAGE_SCENARIOS,
   getContactCardVisibleMerchantCoupons,
   getMerchantCouponRemainingCount,
   getMerchantCouponDiscountLabel,
@@ -12,6 +13,7 @@ import {
   type MerchantCouponInput,
   type MerchantCouponRecord,
   type MerchantCouponStatus,
+  type MerchantCouponUsageScenario,
 } from "@/lib/merchantCoupons";
 
 type MerchantCouponManagerProps = {
@@ -39,6 +41,9 @@ type CouponFormState = {
   status: MerchantCouponStatus;
   showOnWebsite: boolean;
   showOnContactCard: boolean;
+  backgroundImageUrl: string;
+  backgroundImageOpacity: string;
+  usageScenarios: MerchantCouponUsageScenario[];
   applicableTags: string;
 };
 
@@ -58,6 +63,9 @@ const EMPTY_FORM: CouponFormState = {
   status: "active",
   showOnWebsite: true,
   showOnContactCard: false,
+  backgroundImageUrl: "",
+  backgroundImageOpacity: "0.35",
+  usageScenarios: ["order_cart"],
   applicableTags: "",
 };
 
@@ -71,6 +79,34 @@ const STATUS_CLASS_NAMES: Record<MerchantCouponStatus, string> = {
   active: "border-emerald-200 bg-emerald-50 text-emerald-700",
   paused: "border-amber-200 bg-amber-50 text-amber-700",
   archived: "border-slate-200 bg-slate-100 text-slate-500",
+};
+
+const USAGE_SCENARIO_OPTIONS: Array<{
+  value: MerchantCouponUsageScenario;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "order_cart",
+    label: "订单（购物车中扣除）",
+    description: "用于顾客下单时从购物车金额中抵扣。",
+  },
+  {
+    value: "checkout_qr",
+    label: "结算二维码",
+    description: "领取后可生成唯一二维码核销码。",
+  },
+  {
+    value: "checkout_barcode",
+    label: "结算条码",
+    description: "领取后可生成唯一一维码核销码。",
+  },
+];
+
+const USAGE_SCENARIO_LABELS: Record<MerchantCouponUsageScenario, string> = {
+  order_cart: "订单",
+  checkout_qr: "二维码",
+  checkout_barcode: "条码",
 };
 
 function toDateTimeTextValue(value: string | null | undefined) {
@@ -166,6 +202,16 @@ function splitTags(value: string) {
     .filter(Boolean);
 }
 
+function normalizeFormUsageScenarios(value: MerchantCouponUsageScenario[]) {
+  const selected = value.filter((item) => MERCHANT_COUPON_USAGE_SCENARIOS.includes(item));
+  return Array.from(new Set(selected));
+}
+
+function formatUsageScenarios(value: MerchantCouponUsageScenario[]) {
+  const selected = normalizeFormUsageScenarios(value);
+  return selected.map((item) => USAGE_SCENARIO_LABELS[item]).join(" / ") || "未设置";
+}
+
 function buildFormFromCoupon(coupon: MerchantCouponRecord): CouponFormState {
   return {
     id: coupon.id,
@@ -183,6 +229,9 @@ function buildFormFromCoupon(coupon: MerchantCouponRecord): CouponFormState {
     status: coupon.status,
     showOnWebsite: coupon.showOnWebsite,
     showOnContactCard: coupon.showOnContactCard,
+    backgroundImageUrl: coupon.backgroundImageUrl,
+    backgroundImageOpacity: String(coupon.backgroundImageOpacity),
+    usageScenarios: normalizeFormUsageScenarios(coupon.usageScenarios),
     applicableTags: coupon.applicableTags.join("\n"),
   };
 }
@@ -211,6 +260,7 @@ function validateCouponForm(form: CouponFormState, selectedCoupon: MerchantCoupo
   const expiresAt = fromDateTimeTextValue(form.expiresAt);
 
   if (discountValue <= 0) return "请填写大于 0 的优惠值";
+  if (normalizeFormUsageScenarios(form.usageScenarios).length === 0) return "请至少选择一个使用场景";
   if (form.discountType === "percent_off" && discountValue > 100) return "折扣百分比不能超过 100";
   if (form.discountType === "threshold_amount_off" && minimumAmount <= 0) return "满减券需要填写大于 0 的门槛金额";
   if (isInvalidDateTimeTextValue(form.startsAt)) return "开始时间格式不正确，请使用 2026-05-16 18:30";
@@ -220,6 +270,10 @@ function validateCouponForm(form: CouponFormState, selectedCoupon: MerchantCoupo
     return `总数量不能小于已用数量 ${selectedCoupon.usedCount}`;
   }
   return "";
+}
+
+function formatOpacityPercent(value: string) {
+  return `${Math.round(Math.max(0, Math.min(1, toNumberValue(value))) * 100)}%`;
 }
 
 function CouponCalendarIcon() {
@@ -320,8 +374,10 @@ export default function MerchantCouponManager({
   const [form, setForm] = useState<CouponFormState>(EMPTY_FORM);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [uploadingBackground, setUploadingBackground] = useState(false);
   const [error, setError] = useState("");
   const [tip, setTip] = useState("");
+  const backgroundFileInputRef = useRef<HTMLInputElement>(null);
 
   const selectedCoupon = useMemo(
     () => coupons.find((coupon) => coupon.id === form.id) ?? null,
@@ -389,6 +445,16 @@ export default function MerchantCouponManager({
     };
   }
 
+  function toggleUsageScenario(scenario: MerchantCouponUsageScenario, checked: boolean) {
+    setForm((current) => {
+      const currentScenarios = normalizeFormUsageScenarios(current.usageScenarios);
+      const nextScenarios = checked
+        ? Array.from(new Set([...currentScenarios, scenario]))
+        : currentScenarios.filter((item) => item !== scenario);
+      return { ...current, usageScenarios: nextScenarios };
+    });
+  }
+
   function buildPayload(): MerchantCouponInput {
     return {
       siteId,
@@ -406,8 +472,41 @@ export default function MerchantCouponManager({
       status: form.status === "archived" ? "paused" : form.status,
       showOnWebsite: form.showOnWebsite,
       showOnContactCard: form.showOnContactCard,
+      backgroundImageUrl: form.backgroundImageUrl.trim(),
+      backgroundImageOpacity: Math.max(0, Math.min(1, toNumberValue(form.backgroundImageOpacity))),
+      usageScenarios: normalizeFormUsageScenarios(form.usageScenarios),
       applicableTags: splitTags(form.applicableTags),
     };
+  }
+
+  async function uploadCouponBackground(file: File | null | undefined) {
+    if (!file || uploadingBackground) return;
+    setUploadingBackground(true);
+    setError("");
+    setTip("");
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("folder", "merchant-assets");
+      formData.append("merchantHint", siteId || "coupon");
+      formData.append("usage", "generic-image");
+      const response = await fetch("/api/assets/upload", {
+        method: "POST",
+        credentials: "same-origin",
+        body: formData,
+      });
+      const payload = (await response.json().catch(() => null)) as { url?: string; message?: string; error?: string } | null;
+      if (!response.ok || !payload?.url) {
+        throw new Error(payload?.message || payload?.error || "背景图上传失败");
+      }
+      updateField("backgroundImageUrl", payload.url);
+      setTip("优惠券背景图已上传");
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : "背景图上传失败");
+    } finally {
+      if (backgroundFileInputRef.current) backgroundFileInputRef.current.value = "";
+      setUploadingBackground(false);
+    }
   }
 
   async function saveCoupon() {
@@ -627,6 +726,81 @@ export default function MerchantCouponManager({
               />
             </label>
 
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold text-slate-900">卡片背景图</div>
+                  <div className="mt-1 text-xs leading-5 text-slate-500">
+                    可选。设置后，该优惠券在网站优惠券区块中会使用这张图作为卡片背景。
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="rounded border bg-white px-3 py-2 text-xs hover:bg-slate-50 disabled:opacity-50"
+                    onClick={() => backgroundFileInputRef.current?.click()}
+                    disabled={uploadingBackground || !siteId}
+                  >
+                    {uploadingBackground ? "上传中..." : "上传图片"}
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded border bg-white px-3 py-2 text-xs hover:bg-slate-50 disabled:opacity-50"
+                    onClick={() => updateField("backgroundImageUrl", "")}
+                    disabled={!form.backgroundImageUrl || uploadingBackground}
+                  >
+                    清除
+                  </button>
+                </div>
+              </div>
+              <input
+                ref={backgroundFileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(event) => void uploadCouponBackground(event.target.files?.[0])}
+              />
+              <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_160px]">
+                <label className="space-y-1 text-sm">
+                  <span className="block text-slate-600">图片地址</span>
+                  <input
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                    value={form.backgroundImageUrl}
+                    onChange={handleInputChange("backgroundImageUrl")}
+                    placeholder="可粘贴 https 图片地址，或上传图片"
+                  />
+                </label>
+                <div
+                  className="min-h-24 rounded-lg border border-slate-200 bg-white bg-cover bg-center"
+                  style={{
+                    backgroundImage: form.backgroundImageUrl
+                      ? `linear-gradient(rgba(255,255,255,${(1 - Math.max(0, Math.min(1, toNumberValue(form.backgroundImageOpacity)))).toFixed(
+                          3,
+                        )}), rgba(255,255,255,${(1 - Math.max(0, Math.min(1, toNumberValue(form.backgroundImageOpacity)))).toFixed(
+                          3,
+                        )})), url("${form.backgroundImageUrl}")`
+                      : undefined,
+                  }}
+                  aria-label="优惠券背景预览"
+                />
+              </div>
+              <label className="mt-3 block text-sm">
+                <span className="block text-slate-600">背景图透明度</span>
+                <span className="mt-1 flex items-center gap-3 rounded-lg border border-slate-300 bg-white px-3 py-2">
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    className="min-w-0 flex-1"
+                    value={form.backgroundImageOpacity}
+                    onChange={handleInputChange("backgroundImageOpacity")}
+                  />
+                  <span className="w-12 shrink-0 text-right text-xs text-slate-500">{formatOpacityPercent(form.backgroundImageOpacity)}</span>
+                </span>
+              </label>
+            </div>
+
             <div className="grid gap-3 md:grid-cols-3">
               <label className="space-y-1 text-sm">
                 <span className="block text-slate-600">优惠类型</span>
@@ -663,6 +837,32 @@ export default function MerchantCouponManager({
                   disabled={form.discountType === "amount_off"}
                 />
               </label>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4">
+              <div className="text-sm font-semibold text-slate-900">使用场景</div>
+              <div className="mt-1 text-xs leading-5 text-slate-500">
+                订单场景用于购物车抵扣；结算二维码/条码会按领取关系生成唯一核销码。
+              </div>
+              <div className="mt-3 grid gap-2 md:grid-cols-3">
+                {USAGE_SCENARIO_OPTIONS.map((option) => (
+                  <label
+                    key={option.value}
+                    className="flex min-h-20 items-start gap-2 rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm"
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-1"
+                      checked={form.usageScenarios.includes(option.value)}
+                      onChange={(event) => toggleUsageScenario(option.value, event.target.checked)}
+                    />
+                    <span>
+                      <span className="block font-medium text-slate-800">{option.label}</span>
+                      <span className="mt-1 block text-xs leading-5 text-slate-500">{option.description}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
             </div>
 
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
@@ -853,6 +1053,7 @@ export default function MerchantCouponManager({
                           <span>剩余：{getRemainingCount(coupon)}</span>
                           <span>已领：{coupon.claimedCount}</span>
                           <span>已用：{coupon.usedCount}</span>
+                          <span>场景：{formatUsageScenarios(coupon.usageScenarios)}</span>
                           <span>有效期：{formatDateTime(coupon.expiresAt)}</span>
                         </div>
                       </button>

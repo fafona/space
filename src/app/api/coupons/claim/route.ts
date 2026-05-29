@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
+import { buildMerchantCouponSettlementCode, merchantCouponSupportsUsageScenario } from "@/lib/merchantCoupons";
 import { claimMerchantCouponRecord } from "@/lib/merchantCoupons.server";
 import { loadCurrentMerchantSnapshotSiteBySiteId } from "@/lib/publishedMerchantService";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
@@ -31,7 +32,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "coupon_block_disabled" }, { status: 403 });
     }
     const coupon = await claimMerchantCouponRecord({ siteId, couponId });
-    return NextResponse.json({ ok: true, coupon });
+    return NextResponse.json({
+      ok: true,
+      coupon,
+      settlementCodes: {
+        checkoutQr: merchantCouponSupportsUsageScenario(coupon, "checkout_qr")
+          ? buildMerchantCouponSettlementCode(coupon, "checkout_qr", coupon.claimedCount)
+          : null,
+        checkoutBarcode: merchantCouponSupportsUsageScenario(coupon, "checkout_barcode")
+          ? buildMerchantCouponSettlementCode(coupon, "checkout_barcode", coupon.claimedCount)
+          : null,
+      },
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown_error";
     const status = message === "coupon_not_claimable" ? 409 : 400;
