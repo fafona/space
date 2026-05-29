@@ -1,14 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent } from "react";
+import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
   MERCHANT_COUPON_USAGE_SCENARIOS,
   getContactCardVisibleMerchantCoupons,
+  getMerchantCouponDisplayDescription,
+  getMerchantCouponDisplayMetaText,
+  getMerchantCouponDisplayTitle,
   getMerchantCouponRemainingCount,
   getMerchantCouponDiscountLabel,
   getVisibleMerchantCoupons,
-  isMerchantCouponCurrentlyUsable,
   normalizeMerchantCouponRecords,
   type MerchantCouponDiscountType,
   type MerchantCouponInput,
@@ -308,20 +311,33 @@ function buildFormFromCoupon(coupon: MerchantCouponRecord): CouponFormState {
   };
 }
 
-function getRemainingCount(coupon: MerchantCouponRecord) {
+function buildCouponVisualDataFromRecord(coupon: MerchantCouponRecord, pricePrefix: string): CouponVisualCardData {
+  const customMeta = getMerchantCouponDisplayMetaText(coupon);
   const remaining = getMerchantCouponRemainingCount(coupon);
-  return remaining === null ? "不限" : String(remaining);
-}
-
-function getCouponDisplayWarning(coupon: MerchantCouponRecord) {
-  if (coupon.status === "archived") return "已删除";
-  if (coupon.status !== "active") return "已暂停";
-  const now = Date.now();
-  if (coupon.startsAt && Date.parse(coupon.startsAt) > now) return "未开始";
-  if (coupon.expiresAt && Date.parse(coupon.expiresAt) < now) return "已过期";
-  if (getMerchantCouponRemainingCount(coupon) === 0) return "已用完";
-  if (!coupon.showOnWebsite && !coupon.showOnContactCard) return "未展示";
-  return "";
+  const metaItems = [
+    coupon.minimumAmount > 0 ? `门槛 ${pricePrefix}${coupon.minimumAmount.toFixed(2)}` : "",
+    formatUsageScenarios(coupon.usageScenarios),
+    remaining !== null ? `剩余 ${remaining}` : "",
+    coupon.expiresAt ? `至 ${formatDateTime(coupon.expiresAt)}` : "",
+  ].filter(Boolean);
+  return {
+    title: getMerchantCouponDisplayTitle(coupon),
+    discountText: getMerchantCouponDiscountLabel(coupon, pricePrefix),
+    description: getMerchantCouponDisplayDescription(coupon),
+    metaText: customMeta,
+    metaItems,
+    backgroundImageUrl: coupon.backgroundImageUrl,
+    backgroundImageOpacity: coupon.backgroundImageOpacity,
+    contentFontFamily: coupon.contentFontFamily,
+    discountTextColor: coupon.discountTextColor,
+    discountFontSize: coupon.discountFontSize,
+    titleTextColor: coupon.titleTextColor,
+    titleFontSize: coupon.titleFontSize,
+    descriptionTextColor: coupon.descriptionTextColor,
+    descriptionFontSize: coupon.descriptionFontSize,
+    metaTextColor: coupon.metaTextColor,
+    metaFontSize: coupon.metaFontSize,
+  };
 }
 
 function validateCouponForm(form: CouponFormState, selectedCoupon: MerchantCouponRecord | null) {
@@ -352,6 +368,92 @@ function normalizeFontSizeInput(value: string) {
   const next = Number.parseFloat(value);
   if (!Number.isFinite(next) || next <= 0) return 0;
   return Math.max(8, Math.min(72, Math.round(next)));
+}
+
+type CouponVisualCardData = {
+  title: string;
+  discountText: string;
+  description: string;
+  metaText: string;
+  metaItems: string[];
+  backgroundImageUrl: string;
+  backgroundImageOpacity: number;
+  contentFontFamily: string;
+  discountTextColor: string;
+  discountFontSize: number;
+  titleTextColor: string;
+  titleFontSize: number;
+  descriptionTextColor: string;
+  descriptionFontSize: number;
+  metaTextColor: string;
+  metaFontSize: number;
+};
+
+function buildTextStyle(data: CouponVisualCardData, role: "discount" | "title" | "description" | "meta"): CSSProperties {
+  const style: CSSProperties = {};
+  if (data.contentFontFamily) style.fontFamily = data.contentFontFamily;
+  const color =
+    role === "discount"
+      ? data.discountTextColor
+      : role === "title"
+        ? data.titleTextColor
+        : role === "description"
+          ? data.descriptionTextColor
+          : data.metaTextColor;
+  const fontSize =
+    role === "discount"
+      ? data.discountFontSize
+      : role === "title"
+        ? data.titleFontSize
+        : role === "description"
+          ? data.descriptionFontSize
+          : data.metaFontSize;
+  if (color) style.color = color;
+  if (fontSize > 0) style.fontSize = `${fontSize}px`;
+  return style;
+}
+
+function CouponVisualCard({
+  data,
+  className = "",
+  actionLabel = "复制优惠码",
+}: {
+  data: CouponVisualCardData;
+  className?: string;
+  actionLabel?: string;
+}) {
+  const cardStyle = getBackgroundStyle({
+    imageUrl: data.backgroundImageUrl,
+    fillMode: "cover",
+    position: "center",
+    imageOpacity: data.backgroundImageOpacity,
+  });
+  return (
+    <div
+      className={`grid gap-3 overflow-hidden rounded-lg border border-slate-200 bg-white/90 p-4 shadow-sm sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center ${className}`}
+      style={cardStyle}
+    >
+      <div className="min-w-0">
+        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-500" style={buildTextStyle(data, "discount")}>
+          {data.discountText}
+        </div>
+        <div className="mt-2 truncate text-base font-bold text-slate-950" style={buildTextStyle(data, "title")}>
+          {data.title}
+        </div>
+        {data.description ? (
+          <div className="mt-1 line-clamp-2 text-sm text-slate-500" style={buildTextStyle(data, "description")}>
+            {data.description}
+          </div>
+        ) : null}
+        <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-500" style={buildTextStyle(data, "meta")}>
+          {data.metaText ? <span>{data.metaText}</span> : data.metaItems.map((item) => <span key={item}>{item}</span>)}
+        </div>
+      </div>
+      <div className="inline-flex h-10 w-full items-center justify-center rounded-lg border border-slate-950 bg-slate-950 px-4 text-sm font-semibold text-white sm:w-auto">
+        {actionLabel}
+      </div>
+    </div>
+  );
 }
 
 function CouponCalendarIcon() {
@@ -479,6 +581,44 @@ export default function MerchantCouponManager({
     () => coupons.filter((coupon) => coupon.status !== "archived"),
     [coupons],
   );
+  const formPreviewData = useMemo<CouponVisualCardData>(() => {
+    const discountValue = toNumberValue(form.discountValue);
+    const minimumAmount = toNumberValue(form.minimumAmount);
+    const remaining =
+      toIntValue(form.totalQuantity) > 0
+        ? Math.max(0, toIntValue(form.totalQuantity) - Math.max(selectedCoupon?.claimedCount ?? 0, selectedCoupon?.usedCount ?? 0))
+        : null;
+    const generatedDiscountText =
+      form.discountType === "percent_off"
+        ? `${discountValue || 0}% OFF`
+        : form.discountType === "threshold_amount_off"
+          ? `满 ${pricePrefix}${minimumAmount.toFixed(2)} 减 ${pricePrefix}${discountValue.toFixed(2)}`
+          : `减 ${pricePrefix}${discountValue.toFixed(2)}`;
+    const metaItems = [
+      minimumAmount > 0 ? `门槛 ${pricePrefix}${minimumAmount.toFixed(2)}` : "",
+      formatUsageScenarios(form.usageScenarios),
+      remaining !== null ? `剩余 ${remaining}` : "",
+      fromDateTimeTextValue(form.expiresAt) ? `至 ${formatDateTime(fromDateTimeTextValue(form.expiresAt))}` : "",
+    ].filter(Boolean);
+    return {
+      title: form.displayTitle.trim() || form.title.trim() || "优惠券",
+      discountText: form.displayDiscountText.trim() || generatedDiscountText,
+      description: form.displayDescription.trim() || form.description.trim(),
+      metaText: form.displayMetaText.trim(),
+      metaItems,
+      backgroundImageUrl: normalizePublicAssetUrl(form.backgroundImageUrl),
+      backgroundImageOpacity: Math.max(0, Math.min(1, toNumberValue(form.backgroundImageOpacity))),
+      contentFontFamily: form.contentFontFamily.trim(),
+      discountTextColor: form.discountTextColor.trim(),
+      discountFontSize: normalizeFontSizeInput(form.discountFontSize),
+      titleTextColor: form.titleTextColor.trim(),
+      titleFontSize: normalizeFontSizeInput(form.titleFontSize),
+      descriptionTextColor: form.descriptionTextColor.trim(),
+      descriptionFontSize: normalizeFontSizeInput(form.descriptionFontSize),
+      metaTextColor: form.metaTextColor.trim(),
+      metaFontSize: normalizeFontSizeInput(form.metaFontSize),
+    };
+  }, [form, pricePrefix, selectedCoupon?.claimedCount, selectedCoupon?.usedCount]);
 
   const notifyCouponsChange = useCallback(
     (nextCoupons: MerchantCouponRecord[]) => {
@@ -792,7 +932,7 @@ export default function MerchantCouponManager({
               if (!saving && !uploadingBackground) setFormOpen(false);
             }}
           />
-          <section className="relative z-10 w-full max-w-5xl rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-2xl">
+          <section className="relative z-10 w-full max-w-7xl rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-2xl">
           <div className="flex items-center justify-between gap-3">
             <div>
               <div className="text-base font-semibold text-slate-900">{formTitle}</div>
@@ -815,7 +955,9 @@ export default function MerchantCouponManager({
             </div>
           </div>
 
-          <div className="mt-5 grid gap-4">
+          <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+            <div className="grid gap-3">
+            <div className="grid gap-3 md:grid-cols-2">
             <label className="space-y-1 text-sm">
               <span className="block text-slate-600">优惠券名称</span>
               <input
@@ -834,6 +976,7 @@ export default function MerchantCouponManager({
                 placeholder="留空会自动生成"
               />
             </label>
+            </div>
             <label className="space-y-1 text-sm">
               <span className="block text-slate-600">说明</span>
               <textarea
@@ -1200,6 +1343,14 @@ export default function MerchantCouponManager({
               </button>
             </div>
           </div>
+          <aside className="lg:sticky lg:top-6 self-start rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+            <div className="text-sm font-semibold text-slate-900">实时预览</div>
+            <div className="mt-1 text-xs text-slate-500">这里显示客户在优惠券区块里看到的卡片效果。</div>
+            <div className="mt-3">
+              <CouponVisualCard data={formPreviewData} />
+            </div>
+          </aside>
+          </div>
           </section>
         </div>
       ) : null}
@@ -1222,61 +1373,27 @@ export default function MerchantCouponManager({
             ) : (
               displayCoupons.map((coupon) => {
                 const selected = coupon.id === form.id;
-                const displayWarning = getCouponDisplayWarning(coupon);
-                const websiteUsable = coupon.showOnWebsite && isMerchantCouponCurrentlyUsable(coupon);
-                const contactCardUsable = coupon.showOnContactCard && isMerchantCouponCurrentlyUsable(coupon);
+                const visualData = buildCouponVisualDataFromRecord(coupon, pricePrefix);
                 return (
                   <article
                     key={coupon.id}
-                    className={`rounded-2xl border px-4 py-4 transition ${
-                      selected ? "border-slate-900 bg-slate-50" : "border-slate-200 bg-white hover:border-slate-300"
+                    className={`grid gap-2 transition lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start ${
+                      selected ? "rounded-lg ring-2 ring-slate-950 ring-offset-2" : ""
                     }`}
                   >
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <button
-                        type="button"
-                        className="min-w-0 flex-1 text-left"
-                        onClick={() => {
-                          setForm(buildFormFromCoupon(coupon));
-                          setError("");
-                          setTip("");
-                          setFormOpen(true);
-                        }}
-                      >
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="truncate text-base font-semibold text-slate-950">{coupon.title}</span>
-                          <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASS_NAMES[coupon.status]}`}>
-                            {STATUS_LABELS[coupon.status]}
-                          </span>
-                          {websiteUsable ? (
-                            <span className="rounded-full border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-[11px] font-semibold text-cyan-700">
-                              网站展示
-                            </span>
-                          ) : null}
-                          {contactCardUsable ? (
-                            <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">
-                              联系卡展示
-                            </span>
-                          ) : null}
-                          {displayWarning ? (
-                            <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-500">
-                              {displayWarning}
-                            </span>
-                          ) : null}
-                        </div>
-                        <div className="mt-2 text-xs font-semibold uppercase tracking-[0.18em] text-rose-500">
-                          {getMerchantCouponDiscountLabel(coupon, pricePrefix)}
-                        </div>
-                        <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
-                          <span>优惠码：{coupon.code}</span>
-                          <span>剩余：{getRemainingCount(coupon)}</span>
-                          <span>已领：{coupon.claimedCount}</span>
-                          <span>已用：{coupon.usedCount}</span>
-                          <span>场景：{formatUsageScenarios(coupon.usageScenarios)}</span>
-                          <span>有效期：{formatDateTime(coupon.expiresAt)}</span>
-                        </div>
-                      </button>
-                      <div className="flex shrink-0 flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="block w-full rounded-lg text-left transition hover:ring-1 hover:ring-slate-300"
+                      onClick={() => {
+                        setForm(buildFormFromCoupon(coupon));
+                        setError("");
+                        setTip("");
+                        setFormOpen(true);
+                      }}
+                    >
+                      <CouponVisualCard data={visualData} className="min-h-[104px]" />
+                    </button>
+                      <div className="flex shrink-0 flex-wrap gap-2 lg:pt-2">
                         <button
                           type="button"
                           className="rounded border bg-white px-3 py-1.5 text-xs hover:bg-slate-50 disabled:opacity-50"
@@ -1310,7 +1427,6 @@ export default function MerchantCouponManager({
                           </button>
                         </>
                       </div>
-                    </div>
                   </article>
                 );
               })
