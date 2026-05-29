@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent } from "react";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
+import { loadEuropeLocationOptionsApi, type EuropeLocationOptionsApi } from "@/lib/europeLocationOptionsLoader";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
   MERCHANT_COUPON_BEHAVIOR_TRIGGERS,
@@ -41,6 +42,8 @@ type MerchantCouponManagerProps = {
   className?: string;
   listOnly?: boolean;
 };
+
+type LocationRuleField = "claimAllowedCountries" | "claimAllowedProvinces" | "claimAllowedCities";
 
 type CouponFormState = {
   id: string;
@@ -435,6 +438,28 @@ function splitRuleList(value: string) {
     .split(/[,，\n]/)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function normalizeLocationOptionText(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function filterLocationOptions(options: Array<{ value: string; label: string }>, query: string, limit = 40) {
+  const normalizedQuery = normalizeLocationOptionText(query);
+  if (!normalizedQuery) return options.slice(0, limit);
+  const starts: Array<{ value: string; label: string }> = [];
+  const includes: Array<{ value: string; label: string }> = [];
+  for (const option of options) {
+    const value = normalizeLocationOptionText(option.value);
+    const label = normalizeLocationOptionText(option.label);
+    if (value.startsWith(normalizedQuery) || label.startsWith(normalizedQuery)) {
+      starts.push(option);
+    } else if (value.includes(normalizedQuery) || label.includes(normalizedQuery)) {
+      includes.push(option);
+    }
+    if (starts.length + includes.length >= limit * 3) break;
+  }
+  return [...starts, ...includes].slice(0, limit);
 }
 
 function normalizeFormUsageScenarios(value: MerchantCouponUsageScenario[]) {
@@ -972,6 +997,10 @@ export default function MerchantCouponManager({
   const [error, setError] = useState("");
   const [tip, setTip] = useState("");
   const [selectedDisplayFields, setSelectedDisplayFields] = useState<MerchantCouponDisplayField[]>(["discount"]);
+  const [locationOptionsApi, setLocationOptionsApi] = useState<EuropeLocationOptionsApi | null>(null);
+  const [countryRuleInput, setCountryRuleInput] = useState("");
+  const [provinceRuleInput, setProvinceRuleInput] = useState("");
+  const [cityRuleInput, setCityRuleInput] = useState("");
   const backgroundFileInputRef = useRef<HTMLInputElement>(null);
 
   const selectedCoupon = useMemo(
@@ -1063,8 +1092,162 @@ export default function MerchantCouponManager({
     void loadCoupons();
   }, [loadCoupons]);
 
+  useEffect(() => {
+    let active = true;
+    loadEuropeLocationOptionsApi()
+      .then((api) => {
+        if (active) setLocationOptionsApi(api);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const locationCountryOptions = useMemo(() => locationOptionsApi?.getEuropeCountryOptions() ?? [], [locationOptionsApi]);
+  const selectedLocationCountryCodes = useMemo(() => {
+    const selected = new Set(splitRuleList(form.claimAllowedCountries).map(normalizeLocationOptionText));
+    if (selected.size === 0) return [] as string[];
+    return locationCountryOptions
+      .filter((country) => selected.has(normalizeLocationOptionText(country.name)) || selected.has(normalizeLocationOptionText(country.code)))
+      .map((country) => country.code);
+  }, [form.claimAllowedCountries, locationCountryOptions]);
+  const countryRuleOptions = useMemo(
+    () =>
+      filterLocationOptions(
+        locationCountryOptions.map((country) => ({ value: country.name, label: `${country.name} / ${country.code}` })),
+        countryRuleInput,
+      ),
+    [countryRuleInput, locationCountryOptions],
+  );
+  const allProvinceRuleOptions = useMemo(() => {
+    if (!locationOptionsApi) return [] as Array<{ value: string; label: string; countryCode: string; provinceCode: string }>;
+    const countryCodes = selectedLocationCountryCodes.length > 0 ? selectedLocationCountryCodes : locationCountryOptions.map((country) => country.code);
+    const countryNameByCode = new Map(locationCountryOptions.map((country) => [country.code, country.name]));
+    const options: Array<{ value: string; label: string; countryCode: string; provinceCode: string }> = [];
+    countryCodes.forEach((countryCode) => {
+      locationOptionsApi.getEuropeProvinceOptions(countryCode).forEach((province) => {
+        options.push({
+          value: province.name,
+          label: `${province.name} / ${countryNameByCode.get(countryCode) ?? countryCode}`,
+          countryCode,
+          provinceCode: province.code,
+        });
+      });
+    });
+    return options;
+  }, [locationCountryOptions, locationOptionsApi, selectedLocationCountryCodes]);
+  const provinceRuleOptions = useMemo(
+    () => filterLocationOptions(allProvinceRuleOptions, provinceRuleInput),
+    [allProvinceRuleOptions, provinceRuleInput],
+  );
+  const cityRuleOptions = useMemo(() => {
+    if (!locationOptionsApi) return [] as Array<{ value: string; label: string }>;
+    const selectedProvinceNames = new Set(splitRuleList(form.claimAllowedProvinces).map(normalizeLocationOptionText));
+    const normalizedQuery = normalizeLocationOptionText(cityRuleInput);
+    const options: Array<{ value: string; label: string }> = [];
+    const countryCodes = selectedLocationCountryCodes.length > 0 ? selectedLocationCountryCodes : locationCountryOptions.map((country) => country.code);
+    const countryNameByCode = new Map(locationCountryOptions.map((country) => [country.code, country.name]));
+    for (const countryCode of countryCodes) {
+      const provinces = locationOptionsApi.getEuropeProvinceOptions(countryCode);
+      for (const province of provinces) {
+        if (
+          selectedProvinceNames.size > 0 &&
+          !selectedProvinceNames.has(normalizeLocationOptionText(province.name)) &&
+          !selectedProvinceNames.has(normalizeLocationOptionText(province.code))
+        ) {
+          continue;
+        }
+        const cities = locationOptionsApi.getEuropeCityOptions(countryCode, province.code);
+        for (const city of cities) {
+          const cityValue = normalizeLocationOptionText(city);
+          const label = `${city} / ${province.name} / ${countryNameByCode.get(countryCode) ?? countryCode}`;
+          const labelValue = normalizeLocationOptionText(label);
+          if (normalizedQuery && !cityValue.includes(normalizedQuery) && !labelValue.includes(normalizedQuery)) continue;
+          options.push({ value: city, label });
+          if (options.length >= 40) return options;
+        }
+      }
+    }
+    return options.slice(0, 40);
+  }, [cityRuleInput, form.claimAllowedProvinces, locationCountryOptions, locationOptionsApi, selectedLocationCountryCodes]);
+
   function updateField<K extends keyof CouponFormState>(key: K, value: CouponFormState[K]) {
     setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function addRuleListItem(field: LocationRuleField, value: string) {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    setForm((current) => {
+      const currentItems = splitRuleList(current[field]);
+      const exists = currentItems.some((item) => normalizeLocationOptionText(item) === normalizeLocationOptionText(trimmed));
+      if (exists) return current;
+      return { ...current, [field]: [...currentItems, trimmed].join("\n") };
+    });
+  }
+
+  function renderLocationRulePicker(input: {
+    label: string;
+    field: LocationRuleField;
+    placeholder: string;
+    inputValue: string;
+    onInputChange: (value: string) => void;
+    options: Array<{ value: string; label: string }>;
+    datalistId: string;
+  }) {
+    const addCurrentInput = () => {
+      addRuleListItem(input.field, input.inputValue);
+      input.onInputChange("");
+    };
+    return (
+      <label className="space-y-1 text-sm">
+        <span className="block text-slate-600">{input.label}</span>
+        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+          <input
+            className="min-w-0 rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+            value={input.inputValue}
+            list={input.datalistId}
+            onChange={(event) => {
+              const nextValue = event.target.value;
+              input.onInputChange(nextValue);
+              const matched = input.options.find((option) => normalizeLocationOptionText(option.value) === normalizeLocationOptionText(nextValue));
+              if (matched) {
+                addRuleListItem(input.field, matched.value);
+                input.onInputChange("");
+              }
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter") return;
+              event.preventDefault();
+              addCurrentInput();
+            }}
+            placeholder="输入搜索或直接填写"
+          />
+          <button
+            type="button"
+            className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+            onClick={addCurrentInput}
+            disabled={!input.inputValue.trim()}
+          >
+            添加
+          </button>
+        </div>
+        <datalist id={input.datalistId}>
+          {input.options.map((option, index) => (
+            <option key={`${option.value}-${option.label}-${index}`} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </datalist>
+        <textarea
+          className="min-h-[60px] w-full resize-y rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+          value={form[input.field]}
+          onChange={handleInputChange(input.field)}
+          placeholder={input.placeholder}
+        />
+      </label>
+    );
   }
 
   function updateDiscountType(value: MerchantCouponDiscountType) {
@@ -1867,9 +2050,6 @@ export default function MerchantCouponManager({
               <div className="mt-3 grid gap-3 md:grid-cols-2">
                 {[
                   ["指定用户 ID", "claimAllowedAccountIds", "一行一个用户 ID"],
-                  ["指定国家", "claimAllowedCountries", "一行一个国家"],
-                  ["指定省", "claimAllowedProvinces", "一行一个省"],
-                  ["指定市", "claimAllowedCities", "一行一个城市"],
                   ["指定优惠码", "claimAllowedCodes", "用户领取时需输入，二维码/条形码会带该码"],
                 ].map(([label, key, placeholder]) => (
                   <label key={key} className="space-y-1 text-sm">
@@ -1882,6 +2062,33 @@ export default function MerchantCouponManager({
                     />
                   </label>
                 ))}
+                {renderLocationRulePicker({
+                  label: "指定国家",
+                  field: "claimAllowedCountries",
+                  placeholder: "一行一个国家",
+                  inputValue: countryRuleInput,
+                  onInputChange: setCountryRuleInput,
+                  options: countryRuleOptions,
+                  datalistId: "coupon-country-rule-options",
+                })}
+                {renderLocationRulePicker({
+                  label: "指定省",
+                  field: "claimAllowedProvinces",
+                  placeholder: "一行一个省",
+                  inputValue: provinceRuleInput,
+                  onInputChange: setProvinceRuleInput,
+                  options: provinceRuleOptions,
+                  datalistId: "coupon-province-rule-options",
+                })}
+                {renderLocationRulePicker({
+                  label: "指定市",
+                  field: "claimAllowedCities",
+                  placeholder: "一行一个城市",
+                  inputValue: cityRuleInput,
+                  onInputChange: setCityRuleInput,
+                  options: cityRuleOptions,
+                  datalistId: "coupon-city-rule-options",
+                })}
               </div>
 
               <div className="mt-4 border-t border-slate-200 pt-3">
