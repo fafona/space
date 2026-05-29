@@ -4,19 +4,27 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
+  MERCHANT_COUPON_BEHAVIOR_TRIGGERS,
+  MERCHANT_COUPON_DISPLAY_FIELDS,
+  MERCHANT_COUPON_TASK_REQUIREMENTS,
   MERCHANT_COUPON_USAGE_SCENARIOS,
   getContactCardVisibleMerchantCoupons,
   getMerchantCouponDisplayDescription,
+  getMerchantCouponDisplayFieldOrder,
   getMerchantCouponDisplayMetaText,
   getMerchantCouponDisplayTitle,
   getMerchantCouponRemainingCount,
   getMerchantCouponDiscountLabel,
   getVisibleMerchantCoupons,
+  isMerchantCouponDisplayFieldHidden,
   normalizeMerchantCouponRecords,
+  type MerchantCouponBehaviorTrigger,
+  type MerchantCouponDisplayField,
   type MerchantCouponDiscountType,
   type MerchantCouponInput,
   type MerchantCouponRecord,
   type MerchantCouponStatus,
+  type MerchantCouponTaskRequirement,
   type MerchantCouponUsageScenario,
 } from "@/lib/merchantCoupons";
 
@@ -52,6 +60,8 @@ type CouponFormState = {
   displayDescription: string;
   displayDiscountText: string;
   displayMetaText: string;
+  displayFieldOrder: MerchantCouponDisplayField[];
+  displayHiddenFields: MerchantCouponDisplayField[];
   contentFontFamily: string;
   discountTextColor: string;
   discountFontSize: string;
@@ -61,6 +71,35 @@ type CouponFormState = {
   descriptionFontSize: string;
   metaTextColor: string;
   metaFontSize: string;
+  claimRequiresMember: boolean;
+  claimOldUserOnly: boolean;
+  claimMinRegisteredDays: string;
+  claimMinSpendAmount: string;
+  claimMinOrderCount: string;
+  claimAllowedAccountIds: string;
+  claimAllowedCountries: string;
+  claimAllowedProvinces: string;
+  claimAllowedCities: string;
+  claimAllowedCodes: string;
+  claimPerUserTotalLimit: string;
+  claimPerUserDailyLimit: string;
+  claimPerUserWeeklyLimit: string;
+  claimPerUserMonthlyLimit: string;
+  claimDateTimeWindows: string;
+  claimDailyTimeWindows: string;
+  claimValidHoursAfterClaim: string;
+  claimValidDaysAfterClaim: string;
+  claimMonthlyStockLimit: string;
+  claimWeeklyStockLimit: string;
+  claimDailyStockLimit: string;
+  claimHourlyStockLimit: string;
+  claimBehaviorTriggers: MerchantCouponBehaviorTrigger[];
+  claimTriggerAmount: string;
+  claimTriggerCount: string;
+  claimTriggerDate: string;
+  claimTaskRequirements: MerchantCouponTaskRequirement[];
+  claimTaskPageUrl: string;
+  claimTaskInviteCount: string;
   applicableTags: string;
 };
 
@@ -87,6 +126,8 @@ const EMPTY_FORM: CouponFormState = {
   displayDescription: "",
   displayDiscountText: "",
   displayMetaText: "",
+  displayFieldOrder: [...MERCHANT_COUPON_DISPLAY_FIELDS],
+  displayHiddenFields: [],
   contentFontFamily: "",
   discountTextColor: "#f43f5e",
   discountFontSize: "12",
@@ -96,6 +137,35 @@ const EMPTY_FORM: CouponFormState = {
   descriptionFontSize: "14",
   metaTextColor: "#64748b",
   metaFontSize: "12",
+  claimRequiresMember: false,
+  claimOldUserOnly: false,
+  claimMinRegisteredDays: "",
+  claimMinSpendAmount: "",
+  claimMinOrderCount: "",
+  claimAllowedAccountIds: "",
+  claimAllowedCountries: "",
+  claimAllowedProvinces: "",
+  claimAllowedCities: "",
+  claimAllowedCodes: "",
+  claimPerUserTotalLimit: "",
+  claimPerUserDailyLimit: "",
+  claimPerUserWeeklyLimit: "",
+  claimPerUserMonthlyLimit: "",
+  claimDateTimeWindows: "",
+  claimDailyTimeWindows: "",
+  claimValidHoursAfterClaim: "",
+  claimValidDaysAfterClaim: "",
+  claimMonthlyStockLimit: "",
+  claimWeeklyStockLimit: "",
+  claimDailyStockLimit: "",
+  claimHourlyStockLimit: "",
+  claimBehaviorTriggers: [],
+  claimTriggerAmount: "",
+  claimTriggerCount: "",
+  claimTriggerDate: "",
+  claimTaskRequirements: [],
+  claimTaskPageUrl: "",
+  claimTaskInviteCount: "",
   applicableTags: "",
 };
 
@@ -148,28 +218,67 @@ const COUPON_FONT_OPTIONS = [
   { value: "Courier New, monospace", label: "等宽代码" },
 ];
 
-const TEXT_STYLE_FIELDS = [
+const BEHAVIOR_TRIGGER_OPTIONS: Array<{ value: MerchantCouponBehaviorTrigger; label: string }> = [
+  { value: "favorite_site", label: "收藏送券" },
+  { value: "first_order", label: "首单送券" },
+  { value: "purchase", label: "消费送券" },
+  { value: "amount_reached", label: "满额送券" },
+  { value: "count_reached", label: "满次送券" },
+  { value: "check_in", label: "签到送券" },
+  { value: "review", label: "评价送券" },
+  { value: "share", label: "分享送券" },
+  { value: "favorite_birthday", label: "收藏用户生日送券" },
+  { value: "specific_date", label: "指定日期送券" },
+];
+
+const TASK_REQUIREMENT_OPTIONS: Array<{ value: MerchantCouponTaskRequirement; label: string }> = [
+  { value: "browse_page", label: "浏览指定页面" },
+  { value: "questionnaire", label: "完成问卷" },
+  { value: "contact_card_added", label: "通过联系卡添加通讯录" },
+  { value: "watch_ad", label: "观看广告" },
+  { value: "invite_people", label: "邀请X人领取" },
+  { value: "share_moments", label: "分享朋友圈领取" },
+  { value: "share_tiktok", label: "分享tiktok领取" },
+  { value: "share_instagram", label: "分享instagram领取" },
+];
+
+const DISPLAY_FIELD_CONFIG: Record<
+  MerchantCouponDisplayField,
   {
+    label: string;
+    valueKey: "displayDiscountText" | "displayTitle" | "displayDescription" | "displayMetaText";
+    colorKey: "discountTextColor" | "titleTextColor" | "descriptionTextColor" | "metaTextColor";
+    sizeKey: "discountFontSize" | "titleFontSize" | "descriptionFontSize" | "metaFontSize";
+    multiline?: boolean;
+  }
+> = {
+  discount: {
+    label: "折扣文案",
+    valueKey: "displayDiscountText",
     colorKey: "discountTextColor",
     sizeKey: "discountFontSize",
-    label: "折扣文案",
   },
-  {
+  title: {
+    label: "标题",
+    valueKey: "displayTitle",
     colorKey: "titleTextColor",
     sizeKey: "titleFontSize",
-    label: "标题",
   },
-  {
+  description: {
+    label: "说明",
+    valueKey: "displayDescription",
     colorKey: "descriptionTextColor",
     sizeKey: "descriptionFontSize",
-    label: "说明",
+    multiline: true,
   },
-  {
+  meta: {
+    label: "辅助信息",
+    valueKey: "displayMetaText",
     colorKey: "metaTextColor",
     sizeKey: "metaFontSize",
-    label: "辅助信息",
+    multiline: true,
   },
-] as const;
+};
 
 function toDateTimeTextValue(value: string | null | undefined) {
   if (!value) return "";
@@ -264,6 +373,13 @@ function splitTags(value: string) {
     .filter(Boolean);
 }
 
+function splitRuleList(value: string) {
+  return value
+    .split(/[,，\n]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function normalizeFormUsageScenarios(value: MerchantCouponUsageScenario[]) {
   const selected = value.filter((item) => MERCHANT_COUPON_USAGE_SCENARIOS.includes(item));
   return Array.from(new Set(selected));
@@ -274,7 +390,60 @@ function formatUsageScenarios(value: MerchantCouponUsageScenario[]) {
   return selected.map((item) => USAGE_SCENARIO_LABELS[item]).join(" / ") || "未设置";
 }
 
-function buildFormFromCoupon(coupon: MerchantCouponRecord): CouponFormState {
+function buildRecordDefaultMetaText(coupon: MerchantCouponRecord, pricePrefix: string) {
+  const remaining = getMerchantCouponRemainingCount(coupon);
+  return [
+    coupon.minimumAmount > 0 ? `门槛 ${pricePrefix}${coupon.minimumAmount.toFixed(2)}` : "",
+    formatUsageScenarios(coupon.usageScenarios),
+    remaining !== null ? `剩余 ${remaining}` : "",
+    coupon.expiresAt ? `至 ${formatDateTime(coupon.expiresAt)}` : "",
+  ]
+    .filter(Boolean)
+    .join("  ");
+}
+
+function buildFormGeneratedDiscountText(form: CouponFormState, pricePrefix: string) {
+  const discountValue = toNumberValue(form.discountValue);
+  const minimumAmount = toNumberValue(form.minimumAmount);
+  if (form.discountType === "percent_off") return `${discountValue || 0}% OFF`;
+  if (form.discountType === "threshold_amount_off") return `满 ${pricePrefix}${minimumAmount.toFixed(2)} 减 ${pricePrefix}${discountValue.toFixed(2)}`;
+  return `减 ${pricePrefix}${discountValue.toFixed(2)}`;
+}
+
+function buildFormDefaultMetaText(form: CouponFormState, selectedCoupon: MerchantCouponRecord | null, pricePrefix: string) {
+  const minimumAmount = toNumberValue(form.minimumAmount);
+  const remaining =
+    toIntValue(form.totalQuantity) > 0
+      ? Math.max(0, toIntValue(form.totalQuantity) - Math.max(selectedCoupon?.claimedCount ?? 0, selectedCoupon?.usedCount ?? 0))
+      : null;
+  return [
+    minimumAmount > 0 ? `门槛 ${pricePrefix}${minimumAmount.toFixed(2)}` : "",
+    formatUsageScenarios(form.usageScenarios),
+    remaining !== null ? `剩余 ${remaining}` : "",
+    fromDateTimeTextValue(form.expiresAt) ? `至 ${formatDateTime(fromDateTimeTextValue(form.expiresAt))}` : "",
+  ]
+    .filter(Boolean)
+    .join("  ");
+}
+
+function buildNewCouponForm(pricePrefix: string): CouponFormState {
+  const next = {
+    ...EMPTY_FORM,
+    displayFieldOrder: [...MERCHANT_COUPON_DISPLAY_FIELDS],
+    displayHiddenFields: [],
+    usageScenarios: [...EMPTY_FORM.usageScenarios],
+    claimBehaviorTriggers: [...EMPTY_FORM.claimBehaviorTriggers],
+    claimTaskRequirements: [...EMPTY_FORM.claimTaskRequirements],
+    displayTitle: EMPTY_FORM.title || "优惠券",
+    displayDescription: "展示给客户看的使用说明",
+  };
+  next.displayDiscountText = buildFormGeneratedDiscountText(next, pricePrefix);
+  next.displayMetaText = buildFormDefaultMetaText(next, null, pricePrefix);
+  return next;
+}
+
+function buildFormFromCoupon(coupon: MerchantCouponRecord, pricePrefix: string): CouponFormState {
+  const hiddenFields = MERCHANT_COUPON_DISPLAY_FIELDS.filter((field) => isMerchantCouponDisplayFieldHidden(coupon, field));
   return {
     id: coupon.id,
     title: coupon.title,
@@ -294,10 +463,12 @@ function buildFormFromCoupon(coupon: MerchantCouponRecord): CouponFormState {
     backgroundImageUrl: coupon.backgroundImageUrl,
     backgroundImageOpacity: String(coupon.backgroundImageOpacity),
     usageScenarios: normalizeFormUsageScenarios(coupon.usageScenarios),
-    displayTitle: coupon.displayTitle,
-    displayDescription: coupon.displayDescription,
-    displayDiscountText: coupon.displayDiscountText,
-    displayMetaText: coupon.displayMetaText,
+    displayTitle: hiddenFields.includes("title") ? "" : getMerchantCouponDisplayTitle(coupon),
+    displayDescription: hiddenFields.includes("description") ? "" : getMerchantCouponDisplayDescription(coupon),
+    displayDiscountText: hiddenFields.includes("discount") ? "" : getMerchantCouponDiscountLabel(coupon, pricePrefix),
+    displayMetaText: hiddenFields.includes("meta") ? "" : getMerchantCouponDisplayMetaText(coupon) || buildRecordDefaultMetaText(coupon, pricePrefix),
+    displayFieldOrder: getMerchantCouponDisplayFieldOrder(coupon),
+    displayHiddenFields: hiddenFields,
     contentFontFamily: coupon.contentFontFamily,
     discountTextColor: coupon.discountTextColor || "#f43f5e",
     discountFontSize: coupon.discountFontSize > 0 ? String(coupon.discountFontSize) : "12",
@@ -307,6 +478,35 @@ function buildFormFromCoupon(coupon: MerchantCouponRecord): CouponFormState {
     descriptionFontSize: coupon.descriptionFontSize > 0 ? String(coupon.descriptionFontSize) : "14",
     metaTextColor: coupon.metaTextColor || "#64748b",
     metaFontSize: coupon.metaFontSize > 0 ? String(coupon.metaFontSize) : "12",
+    claimRequiresMember: coupon.claimRequiresMember,
+    claimOldUserOnly: coupon.claimOldUserOnly,
+    claimMinRegisteredDays: coupon.claimMinRegisteredDays > 0 ? String(coupon.claimMinRegisteredDays) : "",
+    claimMinSpendAmount: coupon.claimMinSpendAmount > 0 ? String(coupon.claimMinSpendAmount) : "",
+    claimMinOrderCount: coupon.claimMinOrderCount > 0 ? String(coupon.claimMinOrderCount) : "",
+    claimAllowedAccountIds: coupon.claimAllowedAccountIds.join("\n"),
+    claimAllowedCountries: coupon.claimAllowedCountries.join("\n"),
+    claimAllowedProvinces: coupon.claimAllowedProvinces.join("\n"),
+    claimAllowedCities: coupon.claimAllowedCities.join("\n"),
+    claimAllowedCodes: coupon.claimAllowedCodes.join("\n"),
+    claimPerUserTotalLimit: coupon.claimPerUserTotalLimit > 0 ? String(coupon.claimPerUserTotalLimit) : "",
+    claimPerUserDailyLimit: coupon.claimPerUserDailyLimit > 0 ? String(coupon.claimPerUserDailyLimit) : "",
+    claimPerUserWeeklyLimit: coupon.claimPerUserWeeklyLimit > 0 ? String(coupon.claimPerUserWeeklyLimit) : "",
+    claimPerUserMonthlyLimit: coupon.claimPerUserMonthlyLimit > 0 ? String(coupon.claimPerUserMonthlyLimit) : "",
+    claimDateTimeWindows: coupon.claimDateTimeWindows.join("\n"),
+    claimDailyTimeWindows: coupon.claimDailyTimeWindows.join("\n"),
+    claimValidHoursAfterClaim: coupon.claimValidHoursAfterClaim > 0 ? String(coupon.claimValidHoursAfterClaim) : "",
+    claimValidDaysAfterClaim: coupon.claimValidDaysAfterClaim > 0 ? String(coupon.claimValidDaysAfterClaim) : "",
+    claimMonthlyStockLimit: coupon.claimMonthlyStockLimit > 0 ? String(coupon.claimMonthlyStockLimit) : "",
+    claimWeeklyStockLimit: coupon.claimWeeklyStockLimit > 0 ? String(coupon.claimWeeklyStockLimit) : "",
+    claimDailyStockLimit: coupon.claimDailyStockLimit > 0 ? String(coupon.claimDailyStockLimit) : "",
+    claimHourlyStockLimit: coupon.claimHourlyStockLimit > 0 ? String(coupon.claimHourlyStockLimit) : "",
+    claimBehaviorTriggers: coupon.claimBehaviorTriggers.filter((item) => MERCHANT_COUPON_BEHAVIOR_TRIGGERS.includes(item)),
+    claimTriggerAmount: coupon.claimTriggerAmount > 0 ? String(coupon.claimTriggerAmount) : "",
+    claimTriggerCount: coupon.claimTriggerCount > 0 ? String(coupon.claimTriggerCount) : "",
+    claimTriggerDate: toDateTimeTextValue(coupon.claimTriggerDate),
+    claimTaskRequirements: coupon.claimTaskRequirements.filter((item) => MERCHANT_COUPON_TASK_REQUIREMENTS.includes(item)),
+    claimTaskPageUrl: coupon.claimTaskPageUrl,
+    claimTaskInviteCount: coupon.claimTaskInviteCount > 0 ? String(coupon.claimTaskInviteCount) : "",
     applicableTags: coupon.applicableTags.join("\n"),
   };
 }
@@ -314,18 +514,26 @@ function buildFormFromCoupon(coupon: MerchantCouponRecord): CouponFormState {
 function buildCouponVisualDataFromRecord(coupon: MerchantCouponRecord, pricePrefix: string): CouponVisualCardData {
   const customMeta = getMerchantCouponDisplayMetaText(coupon);
   const remaining = getMerchantCouponRemainingCount(coupon);
-  const metaItems = [
+  const defaultMetaText = [
     coupon.minimumAmount > 0 ? `门槛 ${pricePrefix}${coupon.minimumAmount.toFixed(2)}` : "",
     formatUsageScenarios(coupon.usageScenarios),
     remaining !== null ? `剩余 ${remaining}` : "",
     coupon.expiresAt ? `至 ${formatDateTime(coupon.expiresAt)}` : "",
-  ].filter(Boolean);
-  return {
+  ]
+    .filter(Boolean)
+    .join("  ");
+  const itemText: Record<MerchantCouponDisplayField, string> = {
+    discount: getMerchantCouponDiscountLabel(coupon, pricePrefix),
     title: getMerchantCouponDisplayTitle(coupon),
-    discountText: getMerchantCouponDiscountLabel(coupon, pricePrefix),
     description: getMerchantCouponDisplayDescription(coupon),
-    metaText: customMeta,
-    metaItems,
+    meta: customMeta || defaultMetaText,
+  };
+  const displayItems = getMerchantCouponDisplayFieldOrder(coupon)
+    .filter((field) => !isMerchantCouponDisplayFieldHidden(coupon, field))
+    .map((field) => ({ field, text: itemText[field] }))
+    .filter((item) => item.text.trim());
+  return {
+    displayItems,
     backgroundImageUrl: coupon.backgroundImageUrl,
     backgroundImageOpacity: coupon.backgroundImageOpacity,
     contentFontFamily: coupon.contentFontFamily,
@@ -371,11 +579,10 @@ function normalizeFontSizeInput(value: string) {
 }
 
 type CouponVisualCardData = {
-  title: string;
-  discountText: string;
-  description: string;
-  metaText: string;
-  metaItems: string[];
+  displayItems: Array<{
+    field: MerchantCouponDisplayField;
+    text: string;
+  }>;
   backgroundImageUrl: string;
   backgroundImageOpacity: number;
   contentFontFamily: string;
@@ -417,11 +624,14 @@ function CouponVisualCard({
   data,
   className = "",
   actionLabel = "复制优惠码",
+  layout = "card",
 }: {
   data: CouponVisualCardData;
   className?: string;
   actionLabel?: string;
+  layout?: "card" | "list";
 }) {
+  const isList = layout === "list";
   const cardStyle = getBackgroundStyle({
     imageUrl: data.backgroundImageUrl,
     fillMode: "cover",
@@ -430,26 +640,51 @@ function CouponVisualCard({
   });
   return (
     <div
-      className={`grid gap-3 overflow-hidden rounded-lg border border-slate-200 bg-white/90 p-4 shadow-sm sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center ${className}`}
+      className={`overflow-hidden rounded-lg border border-slate-200 bg-white/90 p-4 shadow-sm ${
+        isList ? "grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center" : ""
+      } ${className}`}
       style={cardStyle}
     >
       <div className="min-w-0">
-        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-500" style={buildTextStyle(data, "discount")}>
-          {data.discountText}
-        </div>
-        <div className="mt-2 truncate text-base font-bold text-slate-950" style={buildTextStyle(data, "title")}>
-          {data.title}
-        </div>
-        {data.description ? (
-          <div className="mt-1 line-clamp-2 text-sm text-slate-500" style={buildTextStyle(data, "description")}>
-            {data.description}
-          </div>
-        ) : null}
-        <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-500" style={buildTextStyle(data, "meta")}>
-          {data.metaText ? <span>{data.metaText}</span> : data.metaItems.map((item) => <span key={item}>{item}</span>)}
-        </div>
+        {data.displayItems.map((item, index) => {
+          const marginClass = index === 0 ? "" : item.field === "meta" ? "mt-3" : "mt-2";
+          if (item.field === "title") {
+            return (
+              <div key={item.field} className={`${marginClass} truncate text-base font-bold text-slate-950`} style={buildTextStyle(data, item.field)}>
+                {item.text}
+              </div>
+            );
+          }
+          if (item.field === "description") {
+            return (
+              <div key={item.field} className={`${marginClass} line-clamp-2 text-sm text-slate-500`} style={buildTextStyle(data, item.field)}>
+                {item.text}
+              </div>
+            );
+          }
+          if (item.field === "meta") {
+            return (
+              <div key={item.field} className={`${marginClass} text-xs text-slate-500`} style={buildTextStyle(data, item.field)}>
+                {item.text}
+              </div>
+            );
+          }
+          return (
+            <div
+              key={item.field}
+              className={`${marginClass} text-xs font-semibold uppercase tracking-[0.18em] text-rose-500`}
+              style={buildTextStyle(data, item.field)}
+            >
+              {item.text}
+            </div>
+          );
+        })}
       </div>
-      <div className="inline-flex h-10 w-full items-center justify-center rounded-lg border border-slate-950 bg-slate-950 px-4 text-sm font-semibold text-white sm:w-auto">
+      <div
+        className={`inline-flex h-10 w-full items-center justify-center rounded-lg border border-slate-950 bg-slate-950 px-4 text-sm font-semibold text-white ${
+          isList ? "sm:w-auto" : "mt-4"
+        }`}
+      >
         {actionLabel}
       </div>
     </div>
@@ -558,6 +793,7 @@ export default function MerchantCouponManager({
   const [formOpen, setFormOpen] = useState(false);
   const [error, setError] = useState("");
   const [tip, setTip] = useState("");
+  const [selectedDisplayFields, setSelectedDisplayFields] = useState<MerchantCouponDisplayField[]>(["discount"]);
   const backgroundFileInputRef = useRef<HTMLInputElement>(null);
 
   const selectedCoupon = useMemo(
@@ -582,30 +818,18 @@ export default function MerchantCouponManager({
     [coupons],
   );
   const formPreviewData = useMemo<CouponVisualCardData>(() => {
-    const discountValue = toNumberValue(form.discountValue);
-    const minimumAmount = toNumberValue(form.minimumAmount);
-    const remaining =
-      toIntValue(form.totalQuantity) > 0
-        ? Math.max(0, toIntValue(form.totalQuantity) - Math.max(selectedCoupon?.claimedCount ?? 0, selectedCoupon?.usedCount ?? 0))
-        : null;
-    const generatedDiscountText =
-      form.discountType === "percent_off"
-        ? `${discountValue || 0}% OFF`
-        : form.discountType === "threshold_amount_off"
-          ? `满 ${pricePrefix}${minimumAmount.toFixed(2)} 减 ${pricePrefix}${discountValue.toFixed(2)}`
-          : `减 ${pricePrefix}${discountValue.toFixed(2)}`;
-    const metaItems = [
-      minimumAmount > 0 ? `门槛 ${pricePrefix}${minimumAmount.toFixed(2)}` : "",
-      formatUsageScenarios(form.usageScenarios),
-      remaining !== null ? `剩余 ${remaining}` : "",
-      fromDateTimeTextValue(form.expiresAt) ? `至 ${formatDateTime(fromDateTimeTextValue(form.expiresAt))}` : "",
-    ].filter(Boolean);
+    const itemText: Record<MerchantCouponDisplayField, string> = {
+      discount: form.displayDiscountText.trim(),
+      title: form.displayTitle.trim(),
+      description: form.displayDescription.trim(),
+      meta: form.displayMetaText.trim(),
+    };
+    const displayItems = form.displayFieldOrder
+      .filter((field) => !form.displayHiddenFields.includes(field))
+      .map((field) => ({ field, text: itemText[field] }))
+      .filter((item) => item.text);
     return {
-      title: form.displayTitle.trim() || form.title.trim() || "优惠券",
-      discountText: form.displayDiscountText.trim() || generatedDiscountText,
-      description: form.displayDescription.trim() || form.description.trim(),
-      metaText: form.displayMetaText.trim(),
-      metaItems,
+      displayItems,
       backgroundImageUrl: normalizePublicAssetUrl(form.backgroundImageUrl),
       backgroundImageOpacity: Math.max(0, Math.min(1, toNumberValue(form.backgroundImageOpacity))),
       contentFontFamily: form.contentFontFamily.trim(),
@@ -618,7 +842,7 @@ export default function MerchantCouponManager({
       metaTextColor: form.metaTextColor.trim(),
       metaFontSize: normalizeFontSizeInput(form.metaFontSize),
     };
-  }, [form, pricePrefix, selectedCoupon?.claimedCount, selectedCoupon?.usedCount]);
+  }, [form]);
 
   const notifyCouponsChange = useCallback(
     (nextCoupons: MerchantCouponRecord[]) => {
@@ -668,6 +892,46 @@ export default function MerchantCouponManager({
     };
   }
 
+  function updateDisplayText(field: MerchantCouponDisplayField, value: string) {
+    const config = DISPLAY_FIELD_CONFIG[field];
+    setForm((current) => ({
+      ...current,
+      [config.valueKey]: value,
+      displayHiddenFields: value.trim()
+        ? current.displayHiddenFields.filter((item) => item !== field)
+        : Array.from(new Set([...current.displayHiddenFields, field])),
+    }));
+  }
+
+  function toggleDisplayFieldSelection(field: MerchantCouponDisplayField, checked: boolean) {
+    setSelectedDisplayFields((current) => {
+      const next = checked ? Array.from(new Set([...current, field])) : current.filter((item) => item !== field);
+      return next.length > 0 ? next : [field];
+    });
+  }
+
+  function moveDisplayField(field: MerchantCouponDisplayField, direction: -1 | 1) {
+    setForm((current) => {
+      const order = [...current.displayFieldOrder];
+      const index = order.indexOf(field);
+      const nextIndex = index + direction;
+      if (index < 0 || nextIndex < 0 || nextIndex >= order.length) return current;
+      [order[index], order[nextIndex]] = [order[nextIndex], order[index]];
+      return { ...current, displayFieldOrder: order };
+    });
+  }
+
+  function applySelectedTextStyle(kind: "color" | "size", value: string) {
+    setForm((current) => {
+      const patch: Partial<CouponFormState> = {};
+      selectedDisplayFields.forEach((field) => {
+        const config = DISPLAY_FIELD_CONFIG[field];
+        patch[kind === "color" ? config.colorKey : config.sizeKey] = value;
+      });
+      return { ...current, ...patch };
+    });
+  }
+
   function toggleUsageScenario(scenario: MerchantCouponUsageScenario, checked: boolean) {
     setForm((current) => {
       const currentScenarios = normalizeFormUsageScenarios(current.usageScenarios);
@@ -678,12 +942,34 @@ export default function MerchantCouponManager({
     });
   }
 
+  function toggleBehaviorTrigger(trigger: MerchantCouponBehaviorTrigger, checked: boolean) {
+    setForm((current) => ({
+      ...current,
+      claimBehaviorTriggers: checked
+        ? Array.from(new Set([...current.claimBehaviorTriggers, trigger]))
+        : current.claimBehaviorTriggers.filter((item) => item !== trigger),
+    }));
+  }
+
+  function toggleTaskRequirement(task: MerchantCouponTaskRequirement, checked: boolean) {
+    setForm((current) => ({
+      ...current,
+      claimTaskRequirements: checked
+        ? Array.from(new Set([...current.claimTaskRequirements, task]))
+        : current.claimTaskRequirements.filter((item) => item !== task),
+    }));
+  }
+
   function buildPayload(): MerchantCouponInput {
+    const hiddenFields = MERCHANT_COUPON_DISPLAY_FIELDS.filter((field) => {
+      const valueKey = DISPLAY_FIELD_CONFIG[field].valueKey;
+      return !form[valueKey].trim();
+    });
     return {
       siteId,
       title: form.title.trim() || "优惠券",
       code: form.code.trim(),
-      description: form.description.trim(),
+      description: form.displayDescription.trim(),
       discountType: form.discountType,
       discountValue: toNumberValue(form.discountValue),
       minimumAmount: toNumberValue(form.minimumAmount),
@@ -702,6 +988,8 @@ export default function MerchantCouponManager({
       displayDescription: form.displayDescription.trim(),
       displayDiscountText: form.displayDiscountText.trim(),
       displayMetaText: form.displayMetaText.trim(),
+      displayFieldOrder: form.displayFieldOrder,
+      displayHiddenFields: hiddenFields,
       contentFontFamily: form.contentFontFamily.trim(),
       discountTextColor: form.discountTextColor.trim(),
       discountFontSize: normalizeFontSizeInput(form.discountFontSize),
@@ -711,6 +999,35 @@ export default function MerchantCouponManager({
       descriptionFontSize: normalizeFontSizeInput(form.descriptionFontSize),
       metaTextColor: form.metaTextColor.trim(),
       metaFontSize: normalizeFontSizeInput(form.metaFontSize),
+      claimRequiresMember: form.claimRequiresMember,
+      claimOldUserOnly: form.claimOldUserOnly,
+      claimMinRegisteredDays: toIntValue(form.claimMinRegisteredDays),
+      claimMinSpendAmount: toNumberValue(form.claimMinSpendAmount),
+      claimMinOrderCount: toIntValue(form.claimMinOrderCount),
+      claimAllowedAccountIds: splitRuleList(form.claimAllowedAccountIds),
+      claimAllowedCountries: splitRuleList(form.claimAllowedCountries),
+      claimAllowedProvinces: splitRuleList(form.claimAllowedProvinces),
+      claimAllowedCities: splitRuleList(form.claimAllowedCities),
+      claimAllowedCodes: splitRuleList(form.claimAllowedCodes),
+      claimPerUserTotalLimit: toIntValue(form.claimPerUserTotalLimit),
+      claimPerUserDailyLimit: toIntValue(form.claimPerUserDailyLimit),
+      claimPerUserWeeklyLimit: toIntValue(form.claimPerUserWeeklyLimit),
+      claimPerUserMonthlyLimit: toIntValue(form.claimPerUserMonthlyLimit),
+      claimDateTimeWindows: splitRuleList(form.claimDateTimeWindows),
+      claimDailyTimeWindows: splitRuleList(form.claimDailyTimeWindows),
+      claimValidHoursAfterClaim: toIntValue(form.claimValidHoursAfterClaim),
+      claimValidDaysAfterClaim: toIntValue(form.claimValidDaysAfterClaim),
+      claimMonthlyStockLimit: toIntValue(form.claimMonthlyStockLimit),
+      claimWeeklyStockLimit: toIntValue(form.claimWeeklyStockLimit),
+      claimDailyStockLimit: toIntValue(form.claimDailyStockLimit),
+      claimHourlyStockLimit: toIntValue(form.claimHourlyStockLimit),
+      claimBehaviorTriggers: form.claimBehaviorTriggers,
+      claimTriggerAmount: toNumberValue(form.claimTriggerAmount),
+      claimTriggerCount: toIntValue(form.claimTriggerCount),
+      claimTriggerDate: fromDateTimeTextValue(form.claimTriggerDate),
+      claimTaskRequirements: form.claimTaskRequirements,
+      claimTaskPageUrl: form.claimTaskPageUrl.trim(),
+      claimTaskInviteCount: toIntValue(form.claimTaskInviteCount),
       applicableTags: splitTags(form.applicableTags),
     };
   }
@@ -777,7 +1094,7 @@ export default function MerchantCouponManager({
         throw new Error(payload?.message || payload?.error || "优惠券保存失败");
       }
       if (payload?.coupon?.id) {
-        setForm(buildFormFromCoupon(payload.coupon));
+        setForm(buildFormFromCoupon(payload.coupon, pricePrefix));
       }
       await loadCoupons();
       setFormOpen(false);
@@ -806,7 +1123,7 @@ export default function MerchantCouponManager({
         throw new Error(payload?.message || payload?.error || "优惠券更新失败");
       }
       if (payload?.coupon?.id === form.id) {
-        setForm(buildFormFromCoupon(payload.coupon));
+        setForm(buildFormFromCoupon(payload.coupon, pricePrefix));
       }
       await loadCoupons();
       setTip(successMessage);
@@ -837,7 +1154,7 @@ export default function MerchantCouponManager({
         throw new Error(payload?.message || payload?.error || "优惠券删除失败");
       }
       if (form.id === coupon.id) {
-        setForm(EMPTY_FORM);
+        setForm(buildNewCouponForm(pricePrefix));
         setFormOpen(false);
       }
       await loadCoupons();
@@ -889,7 +1206,8 @@ export default function MerchantCouponManager({
               type="button"
               className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
               onClick={() => {
-                setForm(EMPTY_FORM);
+                setForm(buildNewCouponForm(pricePrefix));
+                setSelectedDisplayFields(["discount"]);
                 setError("");
                 setTip("");
                 setFormOpen(true);
@@ -977,117 +1295,118 @@ export default function MerchantCouponManager({
               />
             </label>
             </div>
-            <label className="space-y-1 text-sm">
-              <span className="block text-slate-600">说明</span>
-              <textarea
-                className="min-h-[86px] w-full resize-y rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                value={form.description}
-                onChange={handleInputChange("description")}
-                placeholder="展示给客户看的使用说明"
-              />
-            </label>
-
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4">
               <div className="text-sm font-semibold text-slate-900">卡片展示文案</div>
-              <div className="mt-1 text-xs leading-5 text-slate-500">
-                可覆盖优惠券卡片里看到的标题、折扣行、说明和辅助信息；留空时使用优惠券规则自动生成。
-              </div>
-              <div className="mt-3 grid gap-3 md:grid-cols-2">
-                <label className="space-y-1 text-sm">
-                  <span className="block text-slate-600">展示标题</span>
-                  <input
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                    value={form.displayTitle}
-                    onChange={handleInputChange("displayTitle")}
-                    placeholder={form.title || "默认使用优惠券名称"}
-                  />
-                </label>
-                <label className="space-y-1 text-sm">
-                  <span className="block text-slate-600">折扣文案</span>
-                  <input
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                    value={form.displayDiscountText}
-                    onChange={handleInputChange("displayDiscountText")}
-                    placeholder="例如：今日专享 5€ OFF"
-                  />
-                </label>
-                <label className="space-y-1 text-sm">
-                  <span className="block text-slate-600">展示说明</span>
-                  <textarea
-                    className="min-h-[72px] w-full resize-y rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                    value={form.displayDescription}
-                    onChange={handleInputChange("displayDescription")}
-                    placeholder="默认使用上方说明"
-                  />
-                </label>
-                <label className="space-y-1 text-sm">
-                  <span className="block text-slate-600">辅助信息</span>
-                  <textarea
-                    className="min-h-[72px] w-full resize-y rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                    value={form.displayMetaText}
-                    onChange={handleInputChange("displayMetaText")}
-                    placeholder="留空自动显示门槛、场景、剩余和有效期"
-                  />
-                </label>
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4">
-              <div className="text-sm font-semibold text-slate-900">卡片文字样式</div>
-              <div className="mt-3 grid gap-3 md:grid-cols-2">
-                <label className="space-y-1 text-sm md:col-span-2">
-                  <span className="block text-slate-600">字体</span>
-                  <select
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                    value={form.contentFontFamily}
-                    onChange={handleInputChange("contentFontFamily")}
-                  >
-                    {COUPON_FONT_OPTIONS.map((option) => (
-                      <option key={option.value || "default"} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                {TEXT_STYLE_FIELDS.map((field) => (
-                  <div key={field.colorKey} className="rounded-lg border border-slate-200 bg-white px-3 py-3">
-                    <div className="text-xs font-semibold text-slate-700">{field.label}</div>
-                    <div className="mt-2 grid grid-cols-[minmax(0,1fr)_92px] gap-2">
-                      <label className="space-y-1 text-xs text-slate-500">
-                        <span className="block">颜色</span>
-                        <input
-                          type="color"
-                          className="h-10 w-full rounded border border-slate-300 bg-white px-1"
-                          value={form[field.colorKey]}
-                          onChange={(event) => updateField(field.colorKey, event.target.value)}
+              <div className="mt-3 grid gap-2">
+                {form.displayFieldOrder.map((field, index) => {
+                  const config = DISPLAY_FIELD_CONFIG[field];
+                  const selected = selectedDisplayFields.includes(field);
+                  return (
+                    <div key={field} className={`rounded-lg border bg-white px-3 py-3 ${selected ? "border-slate-900" : "border-slate-200"}`}>
+                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                        <label className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+                          <input
+                            type="checkbox"
+                            checked={selected}
+                            onChange={(event) => toggleDisplayFieldSelection(field, event.target.checked)}
+                          />
+                          {config.label}
+                        </label>
+                        <div className="flex gap-1">
+                          <button
+                            type="button"
+                            className="rounded border bg-white px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-40"
+                            onClick={() => moveDisplayField(field, -1)}
+                            disabled={index === 0}
+                          >
+                            上移
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded border bg-white px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-40"
+                            onClick={() => moveDisplayField(field, 1)}
+                            disabled={index === form.displayFieldOrder.length - 1}
+                          >
+                            下移
+                          </button>
+                        </div>
+                      </div>
+                      {config.multiline ? (
+                        <textarea
+                          className="min-h-[60px] w-full resize-y rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+                          value={form[config.valueKey]}
+                          onChange={(event) => updateDisplayText(field, event.target.value)}
                         />
-                      </label>
-                      <label className="space-y-1 text-xs text-slate-500">
-                        <span className="block">字号</span>
+                      ) : (
                         <input
-                          type="number"
-                          min={8}
-                          max={72}
-                          className="h-10 w-full rounded border border-slate-300 px-2 outline-none focus:border-slate-500"
-                          value={form[field.sizeKey]}
-                          onChange={(event) => updateField(field.sizeKey, event.target.value)}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+                          value={form[config.valueKey]}
+                          onChange={(event) => updateDisplayText(field, event.target.value)}
                         />
-                      </label>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
+              </div>
+              <div className="mt-4 rounded-lg border border-slate-200 bg-white px-3 py-3">
+                <div className="text-sm font-semibold text-slate-900">选中文案样式</div>
+                <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_140px_120px]">
+                  <label className="space-y-1 text-sm">
+                    <span className="block text-slate-600">字体</span>
+                    <select
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                      value={form.contentFontFamily}
+                      onChange={handleInputChange("contentFontFamily")}
+                    >
+                      {COUPON_FONT_OPTIONS.map((option) => (
+                        <option key={option.value || "default"} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="space-y-1 text-sm">
+                    <span className="block text-slate-600">颜色</span>
+                    <input
+                      type="color"
+                      className="h-10 w-full rounded border border-slate-300 bg-white px-1"
+                      value={form[DISPLAY_FIELD_CONFIG[selectedDisplayFields[0] ?? "discount"].colorKey]}
+                      onChange={(event) => applySelectedTextStyle("color", event.target.value)}
+                    />
+                  </label>
+                  <label className="space-y-1 text-sm">
+                    <span className="block text-slate-600">字号</span>
+                    <input
+                      type="number"
+                      min={8}
+                      max={72}
+                      className="h-10 w-full rounded border border-slate-300 px-2 outline-none focus:border-slate-500"
+                      value={form[DISPLAY_FIELD_CONFIG[selectedDisplayFields[0] ?? "discount"].sizeKey]}
+                      onChange={(event) => applySelectedTextStyle("size", event.target.value)}
+                    />
+                  </label>
+                </div>
               </div>
             </div>
 
-            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <div className="text-sm font-semibold text-slate-900">卡片背景图</div>
-                  <div className="mt-1 text-xs leading-5 text-slate-500">
-                    可选。设置后，该优惠券在网站优惠券区块中会使用这张图作为卡片背景。
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-2">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <div className="text-sm font-semibold text-slate-900">卡片背景图</div>
+              <div className="mt-2 grid gap-3 md:grid-cols-[160px_minmax(0,1fr)] md:items-center">
+                <div
+                  className="h-24 rounded-lg border border-slate-200 bg-white bg-cover bg-center"
+                  style={{
+                    backgroundImage: normalizePublicAssetUrl(form.backgroundImageUrl)
+                      ? `linear-gradient(rgba(255,255,255,${(1 - Math.max(0, Math.min(1, toNumberValue(form.backgroundImageOpacity)))).toFixed(
+                          3,
+                        )}), rgba(255,255,255,${(1 - Math.max(0, Math.min(1, toNumberValue(form.backgroundImageOpacity)))).toFixed(
+                          3,
+                        )})), url("${normalizePublicAssetUrl(form.backgroundImageUrl)}")`
+                      : undefined,
+                  }}
+                  aria-label="优惠券背景预览"
+                />
+                <div className="grid gap-2">
+                  <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
                     className="rounded border bg-white px-3 py-2 text-xs hover:bg-slate-50 disabled:opacity-50"
@@ -1104,6 +1423,22 @@ export default function MerchantCouponManager({
                   >
                     清除
                   </button>
+                  </div>
+                  <label className="block text-sm">
+                    <span className="flex items-center gap-3 rounded-lg border border-slate-300 bg-white px-3 py-2">
+                      <span className="shrink-0 text-xs text-slate-600">透明度</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.01}
+                        className="min-w-0 flex-1"
+                        value={form.backgroundImageOpacity}
+                        onChange={handleInputChange("backgroundImageOpacity")}
+                      />
+                      <span className="w-12 shrink-0 text-right text-xs text-slate-500">{formatOpacityPercent(form.backgroundImageOpacity)}</span>
+                    </span>
+                  </label>
                 </div>
               </div>
               <input
@@ -1113,45 +1448,6 @@ export default function MerchantCouponManager({
                 className="hidden"
                 onChange={(event) => void uploadCouponBackground(event.target.files?.[0])}
               />
-              <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_160px]">
-                <label className="space-y-1 text-sm">
-                  <span className="block text-slate-600">图片地址</span>
-                  <input
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                    value={form.backgroundImageUrl}
-                    onChange={handleInputChange("backgroundImageUrl")}
-                    placeholder="可粘贴 https 图片地址，或上传图片"
-                  />
-                </label>
-                <div
-                  className="min-h-24 rounded-lg border border-slate-200 bg-white bg-cover bg-center"
-                  style={{
-                    backgroundImage: normalizePublicAssetUrl(form.backgroundImageUrl)
-                      ? `linear-gradient(rgba(255,255,255,${(1 - Math.max(0, Math.min(1, toNumberValue(form.backgroundImageOpacity)))).toFixed(
-                          3,
-                        )}), rgba(255,255,255,${(1 - Math.max(0, Math.min(1, toNumberValue(form.backgroundImageOpacity)))).toFixed(
-                          3,
-                        )})), url("${normalizePublicAssetUrl(form.backgroundImageUrl)}")`
-                      : undefined,
-                  }}
-                  aria-label="优惠券背景预览"
-                />
-              </div>
-              <label className="mt-3 block text-sm">
-                <span className="block text-slate-600">背景图透明度</span>
-                <span className="mt-1 flex items-center gap-3 rounded-lg border border-slate-300 bg-white px-3 py-2">
-                  <input
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    className="min-w-0 flex-1"
-                    value={form.backgroundImageOpacity}
-                    onChange={handleInputChange("backgroundImageOpacity")}
-                  />
-                  <span className="w-12 shrink-0 text-right text-xs text-slate-500">{formatOpacityPercent(form.backgroundImageOpacity)}</span>
-                </span>
-              </label>
             </div>
 
             <div className="grid gap-3 md:grid-cols-3">
@@ -1218,14 +1514,12 @@ export default function MerchantCouponManager({
               </div>
             </div>
 
-            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4">
               <div className="text-sm font-semibold text-slate-900">领取规则</div>
               <div className="mt-1 text-xs leading-5 text-slate-500">
-                总数量、每人限制、开始/结束时间会控制网站区块“立即领取”的可领取状态。
+                总数量、每人限制、有效期和身份限制会控制网站区块“立即领取”的可领取状态。
               </div>
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-3">
+              <div className="mt-3 grid gap-3 md:grid-cols-3">
               <label className="space-y-1 text-sm">
                 <span className="block text-slate-600">总数量</span>
                 <input
@@ -1259,9 +1553,9 @@ export default function MerchantCouponManager({
                   placeholder="比例折扣可用"
                 />
               </label>
-            </div>
+              </div>
 
-            <div className="grid gap-3 md:grid-cols-2">
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
               <CouponDateTimeField
                 label="开始时间"
                 value={form.startsAt}
@@ -1274,9 +1568,9 @@ export default function MerchantCouponManager({
                 onChange={(value) => updateField("expiresAt", value)}
                 placeholder="例如：2026-12-31 23:59"
               />
-            </div>
+              </div>
 
-            <div className="grid gap-3 md:grid-cols-3">
+              <div className="mt-3 grid gap-3 md:grid-cols-3">
               <label className="space-y-1 text-sm">
                 <span className="block text-slate-600">状态</span>
                 <select
@@ -1304,9 +1598,246 @@ export default function MerchantCouponManager({
                 />
                 联系卡展示
               </label>
-            </div>
+              </div>
 
-            <label className="space-y-1 text-sm">
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <label className="flex items-start gap-2 rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={form.claimRequiresMember}
+                    onChange={(event) => updateField("claimRequiresMember", event.target.checked)}
+                  />
+                  <span>
+                    <span className="block font-medium text-slate-800">会员领取</span>
+                    <span className="mt-1 block text-xs leading-5 text-slate-500">未登录用户点击领取会跳转登录；领取后自动收藏该站点。</span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-2 rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={form.claimOldUserOnly}
+                    onChange={(event) => updateField("claimOldUserOnly", event.target.checked)}
+                  />
+                  <span>
+                    <span className="block font-medium text-slate-800">老用户专享</span>
+                    <span className="mt-1 block text-xs leading-5 text-slate-500">可按注册天数、累计消费、下单次数设置门槛。</span>
+                  </span>
+                </label>
+              </div>
+
+              <div className="mt-3 grid gap-3 md:grid-cols-3">
+                <label className="space-y-1 text-sm">
+                  <span className="block text-slate-600">注册超过天数</span>
+                  <input
+                    type="number"
+                    min={0}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                    value={form.claimMinRegisteredDays}
+                    onChange={handleInputChange("claimMinRegisteredDays")}
+                    placeholder="0 表示不限制"
+                  />
+                </label>
+                <label className="space-y-1 text-sm">
+                  <span className="block text-slate-600">消费超过金额</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                    value={form.claimMinSpendAmount}
+                    onChange={handleInputChange("claimMinSpendAmount")}
+                    placeholder="0 表示不限制"
+                  />
+                </label>
+                <label className="space-y-1 text-sm">
+                  <span className="block text-slate-600">下单超过次数</span>
+                  <input
+                    type="number"
+                    min={0}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                    value={form.claimMinOrderCount}
+                    onChange={handleInputChange("claimMinOrderCount")}
+                    placeholder="0 表示不限制"
+                  />
+                </label>
+              </div>
+
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                {[
+                  ["指定用户 ID", "claimAllowedAccountIds", "一行一个用户 ID"],
+                  ["指定国家", "claimAllowedCountries", "一行一个国家"],
+                  ["指定省", "claimAllowedProvinces", "一行一个省"],
+                  ["指定市", "claimAllowedCities", "一行一个城市"],
+                  ["指定优惠码", "claimAllowedCodes", "用户领取时需输入，二维码/条形码会带该码"],
+                ].map(([label, key, placeholder]) => (
+                  <label key={key} className="space-y-1 text-sm">
+                    <span className="block text-slate-600">{label}</span>
+                    <textarea
+                      className="min-h-[60px] w-full resize-y rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                      value={form[key as keyof CouponFormState] as string}
+                      onChange={handleInputChange(key as keyof CouponFormState)}
+                      placeholder={placeholder}
+                    />
+                  </label>
+                ))}
+              </div>
+
+              <div className="mt-4 border-t border-slate-200 pt-3">
+                <div className="text-sm font-semibold text-slate-900">领取次数限制</div>
+                <div className="mt-2 grid gap-3 md:grid-cols-4">
+                  {[
+                    ["每人领取总数", "claimPerUserTotalLimit"],
+                    ["每日领取数", "claimPerUserDailyLimit"],
+                    ["每周领取数", "claimPerUserWeeklyLimit"],
+                    ["每月领取数", "claimPerUserMonthlyLimit"],
+                  ].map(([label, key]) => (
+                    <label key={key} className="space-y-1 text-sm">
+                      <span className="block text-slate-600">{label}</span>
+                      <input
+                        type="number"
+                        min={0}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                        value={form[key as "claimPerUserTotalLimit" | "claimPerUserDailyLimit" | "claimPerUserWeeklyLimit" | "claimPerUserMonthlyLimit"]}
+                        onChange={handleInputChange(key as "claimPerUserTotalLimit" | "claimPerUserDailyLimit" | "claimPerUserWeeklyLimit" | "claimPerUserMonthlyLimit")}
+                        placeholder="0 不限制"
+                      />
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mt-4 border-t border-slate-200 pt-3">
+                <div className="text-sm font-semibold text-slate-900">领取时间限制</div>
+                <div className="mt-2 grid gap-3 md:grid-cols-2">
+                  <label className="space-y-1 text-sm">
+                    <span className="block text-slate-600">日期时间段</span>
+                    <textarea
+                      className="min-h-[68px] w-full resize-y rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                      value={form.claimDateTimeWindows}
+                      onChange={handleInputChange("claimDateTimeWindows")}
+                      placeholder="2026-06-01 09:00 ~ 2026-06-10 22:00，一行一段"
+                    />
+                  </label>
+                  <label className="space-y-1 text-sm">
+                    <span className="block text-slate-600">每日时间段</span>
+                    <textarea
+                      className="min-h-[68px] w-full resize-y rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                      value={form.claimDailyTimeWindows}
+                      onChange={handleInputChange("claimDailyTimeWindows")}
+                      placeholder="09:00 ~ 12:00，一行一段"
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <div className="mt-4 border-t border-slate-200 pt-3">
+                <div className="text-sm font-semibold text-slate-900">生效时间限制</div>
+                <div className="mt-2 grid gap-3 md:grid-cols-2">
+                  <label className="space-y-1 text-sm">
+                    <span className="block text-slate-600">领取后多少小时内有效</span>
+                    <input
+                      type="number"
+                      min={0}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                      value={form.claimValidHoursAfterClaim}
+                      onChange={handleInputChange("claimValidHoursAfterClaim")}
+                      placeholder="0 不限制"
+                    />
+                  </label>
+                  <label className="space-y-1 text-sm">
+                    <span className="block text-slate-600">领取后多少天内有效</span>
+                    <input
+                      type="number"
+                      min={0}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                      value={form.claimValidDaysAfterClaim}
+                      onChange={handleInputChange("claimValidDaysAfterClaim")}
+                      placeholder="0 不限制"
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <div className="mt-4 border-t border-slate-200 pt-3">
+                <div className="text-sm font-semibold text-slate-900">库存限制</div>
+                <div className="mt-2 grid gap-3 md:grid-cols-4">
+                  {[
+                    ["每月库存", "claimMonthlyStockLimit"],
+                    ["每周库存", "claimWeeklyStockLimit"],
+                    ["每日库存", "claimDailyStockLimit"],
+                    ["每小时库存", "claimHourlyStockLimit"],
+                  ].map(([label, key]) => (
+                    <label key={key} className="space-y-1 text-sm">
+                      <span className="block text-slate-600">{label}</span>
+                      <input
+                        type="number"
+                        min={0}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                        value={form[key as "claimMonthlyStockLimit" | "claimWeeklyStockLimit" | "claimDailyStockLimit" | "claimHourlyStockLimit"]}
+                        onChange={handleInputChange(key as "claimMonthlyStockLimit" | "claimWeeklyStockLimit" | "claimDailyStockLimit" | "claimHourlyStockLimit")}
+                        placeholder="0 不限制"
+                      />
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mt-4 border-t border-slate-200 pt-3">
+                <div className="text-sm font-semibold text-slate-900">行为触发领取</div>
+                <div className="mt-2 grid gap-2 md:grid-cols-3">
+                  {BEHAVIOR_TRIGGER_OPTIONS.map((option) => (
+                    <label key={option.value} className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={form.claimBehaviorTriggers.includes(option.value)}
+                        onChange={(event) => toggleBehaviorTrigger(option.value, event.target.checked)}
+                      />
+                      {option.label}
+                    </label>
+                  ))}
+                </div>
+                <div className="mt-2 grid gap-3 md:grid-cols-3">
+                  <label className="space-y-1 text-sm">
+                    <span className="block text-slate-600">满额金额</span>
+                    <input type="number" min={0} step={0.01} className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500" value={form.claimTriggerAmount} onChange={handleInputChange("claimTriggerAmount")} />
+                  </label>
+                  <label className="space-y-1 text-sm">
+                    <span className="block text-slate-600">满次次数</span>
+                    <input type="number" min={0} className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500" value={form.claimTriggerCount} onChange={handleInputChange("claimTriggerCount")} />
+                  </label>
+                  <CouponDateTimeField label="指定日期" value={form.claimTriggerDate} onChange={(value) => updateField("claimTriggerDate", value)} placeholder="2026-06-01 00:00" />
+                </div>
+              </div>
+
+              <div className="mt-4 border-t border-slate-200 pt-3">
+                <div className="text-sm font-semibold text-slate-900">任务领取</div>
+                <div className="mt-2 grid gap-2 md:grid-cols-3">
+                  {TASK_REQUIREMENT_OPTIONS.map((option) => (
+                    <label key={option.value} className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={form.claimTaskRequirements.includes(option.value)}
+                        onChange={(event) => toggleTaskRequirement(option.value, event.target.checked)}
+                      />
+                      {option.label}
+                    </label>
+                  ))}
+                </div>
+                <div className="mt-2 grid gap-3 md:grid-cols-2">
+                  <label className="space-y-1 text-sm">
+                    <span className="block text-slate-600">指定页面</span>
+                    <input className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500" value={form.claimTaskPageUrl} onChange={handleInputChange("claimTaskPageUrl")} placeholder="页面路径或完整 URL" />
+                  </label>
+                  <label className="space-y-1 text-sm">
+                    <span className="block text-slate-600">邀请人数</span>
+                    <input type="number" min={0} className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500" value={form.claimTaskInviteCount} onChange={handleInputChange("claimTaskInviteCount")} />
+                  </label>
+                </div>
+              </div>
+
+              <label className="mt-3 block space-y-1 text-sm">
               <span className="block text-slate-600">适用标签</span>
               <textarea
                 className="min-h-[70px] w-full resize-y rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
@@ -1317,7 +1848,8 @@ export default function MerchantCouponManager({
               <span className="block text-xs text-slate-500">
                 预留给后续按产品、场景或客户标签筛选；当前不影响网站区块或联系卡展示。
               </span>
-            </label>
+              </label>
+            </div>
 
             <div className="flex flex-wrap gap-2">
               <button
@@ -1333,7 +1865,7 @@ export default function MerchantCouponManager({
                 className="rounded-lg border bg-white px-4 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
                 onClick={() => {
                   setFormOpen(false);
-                  setForm(EMPTY_FORM);
+                  setForm(buildNewCouponForm(pricePrefix));
                   setError("");
                   setTip("");
                 }}
@@ -1363,11 +1895,11 @@ export default function MerchantCouponManager({
             </div>
           </div>
 
-          <div className="mt-4 space-y-3">
+          <div className="mt-4 grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
             {loading ? (
-              <div className="rounded-xl border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-500">正在加载优惠券...</div>
+              <div className="col-span-full rounded-xl border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-500">正在加载优惠券...</div>
             ) : displayCoupons.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-500">
+              <div className="col-span-full rounded-xl border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-500">
                 还没有优惠券。先创建一张，并保持“网站区块展示”开启。
               </div>
             ) : (
@@ -1377,7 +1909,7 @@ export default function MerchantCouponManager({
                 return (
                   <article
                     key={coupon.id}
-                    className={`grid gap-2 transition lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start ${
+                    className={`flex min-w-0 flex-col gap-2 transition ${
                       selected ? "rounded-lg ring-2 ring-slate-950 ring-offset-2" : ""
                     }`}
                   >
@@ -1385,15 +1917,16 @@ export default function MerchantCouponManager({
                       type="button"
                       className="block w-full rounded-lg text-left transition hover:ring-1 hover:ring-slate-300"
                       onClick={() => {
-                        setForm(buildFormFromCoupon(coupon));
+                        setForm(buildFormFromCoupon(coupon, pricePrefix));
+                        setSelectedDisplayFields(["discount"]);
                         setError("");
                         setTip("");
                         setFormOpen(true);
                       }}
                     >
-                      <CouponVisualCard data={visualData} className="min-h-[104px]" />
+                      <CouponVisualCard data={visualData} className="min-h-[188px]" />
                     </button>
-                      <div className="flex shrink-0 flex-wrap gap-2 lg:pt-2">
+                      <div className="flex shrink-0 flex-wrap justify-end gap-2">
                         <button
                           type="button"
                           className="rounded border bg-white px-3 py-1.5 text-xs hover:bg-slate-50 disabled:opacity-50"

@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildMerchantCouponCode,
+  buildMerchantCouponClaimValidUntil,
   buildMerchantCouponSettlementCode,
   calculateMerchantCouponDiscount,
   claimMerchantCoupon,
   getMerchantCouponDisplayDescription,
+  getMerchantCouponDisplayFieldOrder,
   getMerchantCouponDisplayMetaText,
   getMerchantCouponDisplayTitle,
   getContactCardVisibleMerchantCoupons,
@@ -13,6 +15,9 @@ import {
   getMerchantCouponDiscountLabel,
   getMerchantCouponRemainingCount,
   getVisibleMerchantCoupons,
+  isMerchantCouponDisplayFieldHidden,
+  merchantCouponRequiresClaimCode,
+  merchantCouponRequiresPersonalClaim,
   merchantCouponSupportsUsageScenario,
   normalizeMerchantCouponRecord,
 } from "@/lib/merchantCoupons";
@@ -85,6 +90,8 @@ test("createMerchantCoupon normalizes display text and typography", () => {
     displayDescription: "展示说明",
     displayDiscountText: "今日专享",
     displayMetaText: "到店可用",
+    displayFieldOrder: ["meta", "title"],
+    displayHiddenFields: ["description"],
     contentFontFamily: "Georgia, serif;",
     discountTextColor: "#ff3366",
     discountFontSize: 88,
@@ -96,6 +103,9 @@ test("createMerchantCoupon normalizes display text and typography", () => {
   assert.equal(getMerchantCouponDisplayDescription(coupon), "展示说明");
   assert.equal(getMerchantCouponDisplayMetaText(coupon), "到店可用");
   assert.equal(getMerchantCouponDiscountLabel(coupon), "今日专享");
+  assert.deepEqual(getMerchantCouponDisplayFieldOrder(coupon), ["meta", "title", "discount", "description"]);
+  assert.equal(isMerchantCouponDisplayFieldHidden(coupon, "description"), true);
+  assert.equal(isMerchantCouponDisplayFieldHidden(coupon, "title"), false);
   assert.equal(coupon.contentFontFamily, "Georgia, serif");
   assert.equal(coupon.discountTextColor, "#ff3366");
   assert.equal(coupon.discountFontSize, 72);
@@ -176,6 +186,52 @@ test("coupon remaining and claim count use claimed inventory", () => {
   assert.equal(getMerchantCouponRemainingCount(claimed), 0);
   assert.deepEqual(getVisibleMerchantCoupons([claimed], "2026-05-15T00:00:00.000Z"), []);
   assert.throws(() => claimMerchantCoupon(claimed, "2026-05-15T00:00:00.000Z"), /coupon_not_claimable/);
+});
+
+test("claim rules normalize limits, windows, triggers, tasks, and claim events", () => {
+  const coupon = createMerchantCoupon({
+    siteId: "10000000",
+    title: "rule coupon",
+    discountValue: 1,
+    claimAllowedCodes: [" abc123 "],
+    claimPerUserTotalLimit: 3,
+    claimPerUserDailyLimit: 1,
+    claimDateTimeWindows: ["2026-06-01 09:00 ~ 2026-06-10 22:00"],
+    claimDailyTimeWindows: ["09:00 ~ 12:00"],
+    claimValidHoursAfterClaim: 24,
+    claimMonthlyStockLimit: 30,
+    claimWeeklyStockLimit: 10,
+    claimDailyStockLimit: 5,
+    claimHourlyStockLimit: 2,
+    claimBehaviorTriggers: ["favorite_site", "favorite_site", "bad"] as never,
+    claimTriggerAmount: 100,
+    claimTaskRequirements: ["browse_page", "bad"] as never,
+    claimTaskPageUrl: " /promo ",
+    claimTaskInviteCount: 2,
+  });
+
+  assert.equal(merchantCouponRequiresClaimCode(coupon), true);
+  assert.equal(merchantCouponRequiresPersonalClaim(coupon), true);
+  assert.deepEqual(coupon.claimAllowedCodes, ["ABC123"]);
+  assert.equal(coupon.claimPerUserTotalLimit, 3);
+  assert.equal(coupon.claimPerUserDailyLimit, 1);
+  assert.deepEqual(coupon.claimBehaviorTriggers, ["favorite_site"]);
+  assert.deepEqual(coupon.claimTaskRequirements, ["browse_page"]);
+  assert.equal(coupon.claimTaskPageUrl, "/promo");
+
+  const claimed = claimMerchantCoupon(coupon, "2026-06-01T10:00:00.000Z", {
+    accountId: "acct_1",
+    userId: "user_1",
+    email: "USER@EXAMPLE.COM",
+    code: "abc123",
+  });
+  assert.equal(claimed.claimEvents.length, 1);
+  assert.equal(claimed.claimEvents[0].accountId, "acct_1");
+  assert.equal(claimed.claimEvents[0].email, "user@example.com");
+  assert.equal(claimed.claimEvents[0].code, "ABC123");
+  assert.equal(claimed.claimEvents[0].validUntil, "2026-06-02T10:00:00.000Z");
+  assert.equal(buildMerchantCouponClaimValidUntil(claimed, "2026-06-01T10:00:00.000Z"), "2026-06-02T10:00:00.000Z");
+  assert.match(buildMerchantCouponSettlementCode(claimed, "checkout_barcode", 1, "abc123"), /^BAR000000ABC1230001$/);
 });
 
 test("getContactCardVisibleMerchantCoupons uses contact card visibility flag", () => {

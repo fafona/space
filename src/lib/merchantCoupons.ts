@@ -1,10 +1,46 @@
 export const MERCHANT_COUPON_DISCOUNT_TYPES = ["amount_off", "percent_off", "threshold_amount_off"] as const;
 export const MERCHANT_COUPON_STATUSES = ["active", "paused", "archived"] as const;
 export const MERCHANT_COUPON_USAGE_SCENARIOS = ["order_cart", "checkout_qr", "checkout_barcode"] as const;
+export const MERCHANT_COUPON_DISPLAY_FIELDS = ["discount", "title", "description", "meta"] as const;
+export const MERCHANT_COUPON_BEHAVIOR_TRIGGERS = [
+  "favorite_site",
+  "first_order",
+  "purchase",
+  "amount_reached",
+  "count_reached",
+  "check_in",
+  "review",
+  "share",
+  "favorite_birthday",
+  "specific_date",
+] as const;
+export const MERCHANT_COUPON_TASK_REQUIREMENTS = [
+  "browse_page",
+  "questionnaire",
+  "contact_card_added",
+  "watch_ad",
+  "invite_people",
+  "share_moments",
+  "share_tiktok",
+  "share_instagram",
+] as const;
 
 export type MerchantCouponDiscountType = (typeof MERCHANT_COUPON_DISCOUNT_TYPES)[number];
 export type MerchantCouponStatus = (typeof MERCHANT_COUPON_STATUSES)[number];
 export type MerchantCouponUsageScenario = (typeof MERCHANT_COUPON_USAGE_SCENARIOS)[number];
+export type MerchantCouponDisplayField = (typeof MERCHANT_COUPON_DISPLAY_FIELDS)[number];
+export type MerchantCouponBehaviorTrigger = (typeof MERCHANT_COUPON_BEHAVIOR_TRIGGERS)[number];
+export type MerchantCouponTaskRequirement = (typeof MERCHANT_COUPON_TASK_REQUIREMENTS)[number];
+
+export type MerchantCouponClaimEvent = {
+  id: string;
+  at: string;
+  accountId: string;
+  userId: string;
+  email: string;
+  code: string;
+  validUntil: string | null;
+};
 
 export type MerchantCouponInput = {
   id?: string;
@@ -32,6 +68,8 @@ export type MerchantCouponInput = {
   displayDescription?: string;
   displayDiscountText?: string;
   displayMetaText?: string;
+  displayFieldOrder?: MerchantCouponDisplayField[];
+  displayHiddenFields?: MerchantCouponDisplayField[];
   contentFontFamily?: string;
   discountTextColor?: string;
   discountFontSize?: number;
@@ -41,6 +79,36 @@ export type MerchantCouponInput = {
   descriptionFontSize?: number;
   metaTextColor?: string;
   metaFontSize?: number;
+  claimRequiresMember?: boolean;
+  claimOldUserOnly?: boolean;
+  claimMinRegisteredDays?: number;
+  claimMinSpendAmount?: number;
+  claimMinOrderCount?: number;
+  claimAllowedAccountIds?: string[];
+  claimAllowedCountries?: string[];
+  claimAllowedProvinces?: string[];
+  claimAllowedCities?: string[];
+  claimAllowedCodes?: string[];
+  claimPerUserTotalLimit?: number;
+  claimPerUserDailyLimit?: number;
+  claimPerUserWeeklyLimit?: number;
+  claimPerUserMonthlyLimit?: number;
+  claimDateTimeWindows?: string[];
+  claimDailyTimeWindows?: string[];
+  claimValidHoursAfterClaim?: number;
+  claimValidDaysAfterClaim?: number;
+  claimMonthlyStockLimit?: number;
+  claimWeeklyStockLimit?: number;
+  claimDailyStockLimit?: number;
+  claimHourlyStockLimit?: number;
+  claimBehaviorTriggers?: MerchantCouponBehaviorTrigger[];
+  claimTriggerAmount?: number;
+  claimTriggerCount?: number;
+  claimTriggerDate?: string | null;
+  claimTaskRequirements?: MerchantCouponTaskRequirement[];
+  claimTaskPageUrl?: string;
+  claimTaskInviteCount?: number;
+  claimEvents?: MerchantCouponClaimEvent[];
   applicableProductIds?: string[];
   applicableTags?: string[];
   createdAt?: string;
@@ -110,6 +178,10 @@ function normalizeStringArray(value: unknown) {
   return value.map((item) => trimText(item)).filter(Boolean);
 }
 
+function normalizeUpperStringArray(value: unknown) {
+  return normalizeStringArray(value).map((item) => item.toUpperCase());
+}
+
 function normalizeCouponDiscountType(value: unknown): MerchantCouponDiscountType {
   return MERCHANT_COUPON_DISCOUNT_TYPES.includes(value as MerchantCouponDiscountType)
     ? (value as MerchantCouponDiscountType)
@@ -128,6 +200,63 @@ function normalizeCouponUsageScenarios(value: unknown): MerchantCouponUsageScena
     MERCHANT_COUPON_USAGE_SCENARIOS.includes(item as MerchantCouponUsageScenario),
   );
   return Array.from(new Set(scenarios)).length > 0 ? Array.from(new Set(scenarios)) : ["order_cart"];
+}
+
+function normalizeCouponDisplayFields(value: unknown, fallback: MerchantCouponDisplayField[] = [...MERCHANT_COUPON_DISPLAY_FIELDS]) {
+  if (!Array.isArray(value)) return fallback;
+  const fields = value.filter((item): item is MerchantCouponDisplayField =>
+    MERCHANT_COUPON_DISPLAY_FIELDS.includes(item as MerchantCouponDisplayField),
+  );
+  const uniqueFields = Array.from(new Set(fields));
+  return uniqueFields.length > 0 ? uniqueFields : fallback;
+}
+
+function normalizeCouponDisplayFieldOrder(value: unknown) {
+  const fields = normalizeCouponDisplayFields(value);
+  const next = [...fields];
+  MERCHANT_COUPON_DISPLAY_FIELDS.forEach((field) => {
+    if (!next.includes(field)) next.push(field);
+  });
+  return next;
+}
+
+function normalizeCouponBehaviorTriggers(value: unknown): MerchantCouponBehaviorTrigger[] {
+  if (!Array.isArray(value)) return [];
+  const triggers = value.filter((item): item is MerchantCouponBehaviorTrigger =>
+    MERCHANT_COUPON_BEHAVIOR_TRIGGERS.includes(item as MerchantCouponBehaviorTrigger),
+  );
+  return Array.from(new Set(triggers));
+}
+
+function normalizeCouponTaskRequirements(value: unknown): MerchantCouponTaskRequirement[] {
+  if (!Array.isArray(value)) return [];
+  const tasks = value.filter((item): item is MerchantCouponTaskRequirement =>
+    MERCHANT_COUPON_TASK_REQUIREMENTS.includes(item as MerchantCouponTaskRequirement),
+  );
+  return Array.from(new Set(tasks));
+}
+
+function normalizeCouponClaimEvents(value: unknown): MerchantCouponClaimEvent[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const raw = item as Record<string, unknown>;
+      const at = normalizeIsoDateValue(raw.at);
+      if (!at) return null;
+      return {
+        id: trimText(raw.id) || `CE${Date.parse(at).toString(36).toUpperCase()}`,
+        at,
+        accountId: trimText(raw.accountId),
+        userId: trimText(raw.userId),
+        email: trimText(raw.email).toLowerCase(),
+        code: normalizeMerchantCouponClaimCode(raw.code),
+        validUntil: normalizeIsoDateValue(raw.validUntil),
+      };
+    })
+    .filter((item): item is MerchantCouponClaimEvent => Boolean(item))
+    .sort((left, right) => Date.parse(right.at) - Date.parse(left.at))
+    .slice(0, 5000);
 }
 
 function normalizeCouponCode(value: unknown) {
@@ -192,6 +321,8 @@ export function normalizeMerchantCouponRecord(input: MerchantCouponInput | null 
     displayDescription: trimText(input?.displayDescription),
     displayDiscountText: trimText(input?.displayDiscountText),
     displayMetaText: trimText(input?.displayMetaText),
+    displayFieldOrder: normalizeCouponDisplayFieldOrder(input?.displayFieldOrder),
+    displayHiddenFields: normalizeCouponDisplayFields(input?.displayHiddenFields, []),
     contentFontFamily: normalizeFontFamilyValue(input?.contentFontFamily),
     discountTextColor: normalizeColorValue(input?.discountTextColor),
     discountFontSize: normalizeFontSizeValue(input?.discountFontSize),
@@ -201,6 +332,36 @@ export function normalizeMerchantCouponRecord(input: MerchantCouponInput | null 
     descriptionFontSize: normalizeFontSizeValue(input?.descriptionFontSize),
     metaTextColor: normalizeColorValue(input?.metaTextColor),
     metaFontSize: normalizeFontSizeValue(input?.metaFontSize),
+    claimRequiresMember: input?.claimRequiresMember === true,
+    claimOldUserOnly: input?.claimOldUserOnly === true,
+    claimMinRegisteredDays: normalizePositiveInt(input?.claimMinRegisteredDays),
+    claimMinSpendAmount: normalizeMoneyValue(input?.claimMinSpendAmount),
+    claimMinOrderCount: normalizePositiveInt(input?.claimMinOrderCount),
+    claimAllowedAccountIds: normalizeStringArray(input?.claimAllowedAccountIds),
+    claimAllowedCountries: normalizeStringArray(input?.claimAllowedCountries),
+    claimAllowedProvinces: normalizeStringArray(input?.claimAllowedProvinces),
+    claimAllowedCities: normalizeStringArray(input?.claimAllowedCities),
+    claimAllowedCodes: normalizeUpperStringArray(input?.claimAllowedCodes),
+    claimPerUserTotalLimit: normalizePositiveInt(input?.claimPerUserTotalLimit),
+    claimPerUserDailyLimit: normalizePositiveInt(input?.claimPerUserDailyLimit),
+    claimPerUserWeeklyLimit: normalizePositiveInt(input?.claimPerUserWeeklyLimit),
+    claimPerUserMonthlyLimit: normalizePositiveInt(input?.claimPerUserMonthlyLimit),
+    claimDateTimeWindows: normalizeStringArray(input?.claimDateTimeWindows),
+    claimDailyTimeWindows: normalizeStringArray(input?.claimDailyTimeWindows),
+    claimValidHoursAfterClaim: normalizePositiveInt(input?.claimValidHoursAfterClaim),
+    claimValidDaysAfterClaim: normalizePositiveInt(input?.claimValidDaysAfterClaim),
+    claimMonthlyStockLimit: normalizePositiveInt(input?.claimMonthlyStockLimit),
+    claimWeeklyStockLimit: normalizePositiveInt(input?.claimWeeklyStockLimit),
+    claimDailyStockLimit: normalizePositiveInt(input?.claimDailyStockLimit),
+    claimHourlyStockLimit: normalizePositiveInt(input?.claimHourlyStockLimit),
+    claimBehaviorTriggers: normalizeCouponBehaviorTriggers(input?.claimBehaviorTriggers),
+    claimTriggerAmount: normalizeMoneyValue(input?.claimTriggerAmount),
+    claimTriggerCount: normalizePositiveInt(input?.claimTriggerCount),
+    claimTriggerDate: normalizeIsoDateValue(input?.claimTriggerDate),
+    claimTaskRequirements: normalizeCouponTaskRequirements(input?.claimTaskRequirements),
+    claimTaskPageUrl: trimText(input?.claimTaskPageUrl).slice(0, 1200),
+    claimTaskInviteCount: normalizePositiveInt(input?.claimTaskInviteCount),
+    claimEvents: normalizeCouponClaimEvents(input?.claimEvents),
     applicableProductIds: normalizeStringArray(input?.applicableProductIds),
     applicableTags: normalizeStringArray(input?.applicableTags),
     createdAt: normalizeIsoDateValue(input?.createdAt) ?? now,
@@ -283,23 +444,50 @@ export function buildMerchantCouponSettlementCode(
   coupon: MerchantCouponRecord,
   scenario: Exclude<MerchantCouponUsageScenario, "order_cart">,
   sequenceInput = Math.max(1, coupon.claimedCount, coupon.usedCount),
+  codeOverride = "",
 ) {
   const prefix = scenario === "checkout_qr" ? "QR" : "BAR";
   const sitePart = coupon.siteId.replace(/[^a-z0-9]/gi, "").slice(-6).toUpperCase() || "SITE";
-  const couponPart = coupon.id.replace(/[^a-z0-9]/gi, "").slice(-8).toUpperCase() || coupon.code.slice(0, 8) || "COUPON";
+  const overridePart = trimText(codeOverride).replace(/[^a-z0-9]/gi, "").slice(0, 16).toUpperCase();
+  const couponPart = overridePart || coupon.id.replace(/[^a-z0-9]/gi, "").slice(-8).toUpperCase() || coupon.code.slice(0, 8) || "COUPON";
   const sequence = Math.max(1, Math.round(sequenceInput));
   return `${prefix}${sitePart}${couponPart}${String(sequence).padStart(4, "0")}`;
 }
 
-export function claimMerchantCoupon(coupon: MerchantCouponRecord, nowInput: Date | string = new Date()) {
+export function buildMerchantCouponClaimValidUntil(coupon: MerchantCouponRecord, claimedAtInput: Date | string = new Date()) {
+  const claimedAt = claimedAtInput instanceof Date ? claimedAtInput.getTime() : Date.parse(claimedAtInput);
+  if (!Number.isFinite(claimedAt)) return null;
+  const candidates = [
+    coupon.claimValidHoursAfterClaim > 0 ? claimedAt + coupon.claimValidHoursAfterClaim * 3_600_000 : null,
+    coupon.claimValidDaysAfterClaim > 0 ? claimedAt + coupon.claimValidDaysAfterClaim * 86_400_000 : null,
+  ].filter((item): item is number => typeof item === "number" && Number.isFinite(item));
+  if (candidates.length === 0) return null;
+  return new Date(Math.min(...candidates)).toISOString();
+}
+
+export function claimMerchantCoupon(
+  coupon: MerchantCouponRecord,
+  nowInput: Date | string = new Date(),
+  claimEvent: Partial<MerchantCouponClaimEvent> = {},
+) {
   if (!isMerchantCouponCurrentlyUsable(coupon, nowInput)) {
     throw new Error("coupon_not_claimable");
   }
   const now = nowInput instanceof Date ? nowInput.toISOString() : normalizeIsoDateValue(nowInput) ?? new Date().toISOString();
+  const event: MerchantCouponClaimEvent = {
+    id: trimText(claimEvent.id) || `CE${Date.parse(now).toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+    at: now,
+    accountId: trimText(claimEvent.accountId),
+    userId: trimText(claimEvent.userId),
+    email: trimText(claimEvent.email).toLowerCase(),
+    code: normalizeMerchantCouponClaimCode(claimEvent.code),
+    validUntil: normalizeIsoDateValue(claimEvent.validUntil) ?? buildMerchantCouponClaimValidUntil(coupon, now),
+  };
   return updateMerchantCoupon(
     coupon,
     {
       claimedCount: coupon.claimedCount + 1,
+      claimEvents: [event, ...coupon.claimEvents].slice(0, 5000),
     },
     [coupon.code],
     now,
@@ -410,4 +598,40 @@ export function getMerchantCouponDisplayDescription(coupon: MerchantCouponRecord
 
 export function getMerchantCouponDisplayMetaText(coupon: MerchantCouponRecord) {
   return trimText(coupon.displayMetaText);
+}
+
+export function getMerchantCouponDisplayFieldOrder(coupon: MerchantCouponRecord) {
+  return normalizeCouponDisplayFieldOrder(coupon.displayFieldOrder);
+}
+
+export function isMerchantCouponDisplayFieldHidden(coupon: MerchantCouponRecord, field: MerchantCouponDisplayField) {
+  return normalizeCouponDisplayFields(coupon.displayHiddenFields, []).includes(field);
+}
+
+export function merchantCouponRequiresPersonalClaim(coupon: MerchantCouponRecord) {
+  return Boolean(
+    coupon.claimRequiresMember ||
+      coupon.claimOldUserOnly ||
+      coupon.claimMinRegisteredDays > 0 ||
+      coupon.claimMinSpendAmount > 0 ||
+      coupon.claimMinOrderCount > 0 ||
+      coupon.claimAllowedAccountIds.length > 0 ||
+      coupon.claimAllowedCountries.length > 0 ||
+      coupon.claimAllowedProvinces.length > 0 ||
+      coupon.claimAllowedCities.length > 0 ||
+      coupon.claimPerUserTotalLimit > 0 ||
+      coupon.claimPerUserDailyLimit > 0 ||
+      coupon.claimPerUserWeeklyLimit > 0 ||
+      coupon.claimPerUserMonthlyLimit > 0 ||
+      coupon.claimBehaviorTriggers.length > 0 ||
+      coupon.claimTaskRequirements.length > 0,
+  );
+}
+
+export function merchantCouponRequiresClaimCode(coupon: MerchantCouponRecord) {
+  return coupon.claimAllowedCodes.length > 0;
+}
+
+export function normalizeMerchantCouponClaimCode(value: unknown) {
+  return trimText(value).replace(/\s+/g, "").toUpperCase();
 }

@@ -4,11 +4,16 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import type { CouponProps } from "@/data/homeBlocks";
 import {
   getMerchantCouponDisplayDescription,
+  getMerchantCouponDisplayFieldOrder,
   getMerchantCouponDisplayMetaText,
   getMerchantCouponDisplayTitle,
   getMerchantCouponRemainingCount,
   getMerchantCouponDiscountLabel,
+  isMerchantCouponDisplayFieldHidden,
+  merchantCouponRequiresClaimCode,
+  merchantCouponRequiresPersonalClaim,
   normalizeMerchantCouponRecords,
+  type MerchantCouponDisplayField,
   type MerchantCouponRecord,
   type MerchantCouponUsageScenario,
 } from "@/lib/merchantCoupons";
@@ -49,7 +54,7 @@ function formatCouponUsageScenarios(coupon: MerchantCouponRecord) {
 
 function buildCouponTextStyle(
   coupon: MerchantCouponRecord,
-  role: "discount" | "title" | "description" | "meta",
+  role: MerchantCouponDisplayField,
 ): CSSProperties {
   const style: CSSProperties = {};
   if (coupon.contentFontFamily) style.fontFamily = coupon.contentFontFamily;
@@ -72,6 +77,39 @@ function buildCouponTextStyle(
   if (color) style.color = color;
   if (fontSize > 0) style.fontSize = `${fontSize}px`;
   return style;
+}
+
+function buildCouponDisplayItems(
+  coupon: MerchantCouponRecord,
+  input: {
+    pricePrefix: string;
+    usageScenarioLabel: string;
+    remaining: number | null;
+    expiresLabel: string;
+    showRemaining: boolean;
+    showExpiresAt: boolean;
+  },
+) {
+  const displayTitle = getMerchantCouponDisplayTitle(coupon);
+  const displayDescription = getMerchantCouponDisplayDescription(coupon);
+  const displayMetaText = getMerchantCouponDisplayMetaText(coupon);
+  const metaItems = [
+    coupon.minimumAmount > 0 ? `门槛 ${input.pricePrefix}${coupon.minimumAmount.toFixed(2)}` : "",
+    input.usageScenarioLabel,
+    input.showRemaining && input.remaining !== null ? `剩余 ${input.remaining}` : "",
+    input.showExpiresAt && input.expiresLabel ? `至 ${input.expiresLabel}` : "",
+  ].filter(Boolean);
+  const defaultMetaText = metaItems.join("  ");
+  const itemText: Record<MerchantCouponDisplayField, string> = {
+    discount: getMerchantCouponDiscountLabel(coupon, input.pricePrefix),
+    title: displayTitle,
+    description: displayDescription,
+    meta: displayMetaText || defaultMetaText,
+  };
+  return getMerchantCouponDisplayFieldOrder(coupon)
+    .filter((field) => !isMerchantCouponDisplayFieldHidden(coupon, field))
+    .map((field) => ({ field, text: itemText[field] }))
+    .filter((item) => item.text.trim());
 }
 
 function buildClaimStorageKey(siteId: string) {
@@ -123,6 +161,7 @@ export default function CouponBlock({
   const [claimedCounts, setClaimedCounts] = useState<Record<string, number>>({});
   const [claimingCouponId, setClaimingCouponId] = useState("");
   const [claimErrorCouponId, setClaimErrorCouponId] = useState("");
+  const [claimCodeByCouponId, setClaimCodeByCouponId] = useState<Record<string, string>>({});
 
   useEffect(() => {
     setClaimedCounts(readClaimCounts(runtimeSiteId));
@@ -202,6 +241,11 @@ export default function CouponBlock({
   const claimCoupon = async (coupon: MerchantCouponRecord) => {
     if (!interactive || couponActionMode !== "claim") return;
     setClaimErrorCouponId("");
+    const claimCode = (claimCodeByCouponId[coupon.id] ?? "").trim();
+    if (merchantCouponRequiresClaimCode(coupon) && !claimCode) {
+      setClaimErrorCouponId(coupon.id);
+      return;
+    }
     const localClaimCount = claimedCounts[coupon.id] ?? 0;
     const perCustomerLimit = Math.max(1, coupon.perCustomerLimit || 1);
     if (localClaimCount >= perCustomerLimit) {
@@ -226,7 +270,13 @@ export default function CouponBlock({
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ siteId: runtimeSiteId, couponId: coupon.id }),
+        body: JSON.stringify({
+          siteId: runtimeSiteId,
+          couponId: coupon.id,
+          claimCode,
+          siteName: heading,
+          pageUrl: typeof window === "undefined" ? "" : window.location.href,
+        }),
       });
       const payload = (await response.json().catch(() => null)) as { coupon?: unknown } | null;
       if (!response.ok) throw new Error("claim_failed");
@@ -243,6 +293,11 @@ export default function CouponBlock({
       }
       window.setTimeout(() => setCopiedCode((current) => (current === coupon.code ? "" : current)), 1200);
     } catch {
+      if (typeof window !== "undefined" && merchantCouponRequiresPersonalClaim(coupon)) {
+        const redirect = encodeURIComponent(`${window.location.pathname}${window.location.search}${window.location.hash}`);
+        window.location.assign(`/login?accountType=personal&redirect=${redirect}`);
+        return;
+      }
       setClaimErrorCouponId(coupon.id);
     } finally {
       setClaimingCouponId("");
@@ -272,10 +327,16 @@ export default function CouponBlock({
               const exhausted = remaining === 0;
               const claiming = claimingCouponId === coupon.id;
               const claimFailed = claimErrorCouponId === coupon.id;
+              const requiresClaimCode = merchantCouponRequiresClaimCode(coupon);
               const usageScenarioLabel = formatCouponUsageScenarios(coupon);
-              const displayTitle = getMerchantCouponDisplayTitle(coupon);
-              const displayDescription = getMerchantCouponDisplayDescription(coupon);
-              const displayMetaText = getMerchantCouponDisplayMetaText(coupon);
+              const displayItems = buildCouponDisplayItems(coupon, {
+                pricePrefix: runtimePricePrefix,
+                usageScenarioLabel,
+                remaining,
+                expiresLabel,
+                showRemaining: couponShowRemaining,
+                showExpiresAt: couponShowExpiresAt,
+              });
               const couponBackgroundStyle = getBackgroundStyle({
                 imageUrl: coupon.backgroundImageUrl,
                 fillMode: "cover",
@@ -309,29 +370,39 @@ export default function CouponBlock({
                   style={couponBackgroundStyle}
                 >
                   <div className="min-w-0">
-                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-500" style={buildCouponTextStyle(coupon, "discount")}>
-                      {getMerchantCouponDiscountLabel(coupon, runtimePricePrefix)}
-                    </div>
-                    <h3 className="mt-2 truncate text-base font-bold text-slate-950" style={buildCouponTextStyle(coupon, "title")}>
-                      {displayTitle}
-                    </h3>
-                    {displayDescription ? (
-                      <p className="mt-1 line-clamp-2 text-sm text-slate-500" style={buildCouponTextStyle(coupon, "description")}>
-                        {displayDescription}
-                      </p>
-                    ) : null}
-                    <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-500" style={buildCouponTextStyle(coupon, "meta")}>
-                      {displayMetaText ? (
-                        <span>{displayMetaText}</span>
-                      ) : (
-                        <>
-                          {coupon.minimumAmount > 0 ? <span>门槛 {runtimePricePrefix}{coupon.minimumAmount.toFixed(2)}</span> : null}
-                          {usageScenarioLabel ? <span>{usageScenarioLabel}</span> : null}
-                          {couponShowRemaining && remaining !== null ? <span>剩余 {remaining}</span> : null}
-                          {couponShowExpiresAt && expiresLabel ? <span>至 {expiresLabel}</span> : null}
-                        </>
-                      )}
-                    </div>
+                    {displayItems.map((item, index) => {
+                      const marginClass = index === 0 ? "" : item.field === "meta" ? "mt-3" : "mt-2";
+                      if (item.field === "title") {
+                        return (
+                          <h3 key={item.field} className={`${marginClass} truncate text-base font-bold text-slate-950`} style={buildCouponTextStyle(coupon, item.field)}>
+                            {item.text}
+                          </h3>
+                        );
+                      }
+                      if (item.field === "description") {
+                        return (
+                          <p key={item.field} className={`${marginClass} line-clamp-2 text-sm text-slate-500`} style={buildCouponTextStyle(coupon, item.field)}>
+                            {item.text}
+                          </p>
+                        );
+                      }
+                      if (item.field === "meta") {
+                        return (
+                          <div key={item.field} className={`${marginClass} text-xs text-slate-500`} style={buildCouponTextStyle(coupon, item.field)}>
+                            {item.text}
+                          </div>
+                        );
+                      }
+                      return (
+                        <div
+                          key={item.field}
+                          className={`${marginClass} text-xs font-semibold uppercase tracking-[0.18em] text-rose-500`}
+                          style={buildCouponTextStyle(coupon, item.field)}
+                        >
+                          {item.text}
+                        </div>
+                      );
+                    })}
                   </div>
                   <button
                     type="button"
@@ -353,6 +424,17 @@ export default function CouponBlock({
                   >
                     {actionLabel}
                   </button>
+                  {couponActionMode === "claim" && requiresClaimCode ? (
+                    <input
+                      className="mt-3 w-full rounded-lg border border-slate-300 bg-white/90 px-3 py-2 text-sm outline-none focus:border-slate-500"
+                      value={claimCodeByCouponId[coupon.id] ?? ""}
+                      onChange={(event) => setClaimCodeByCouponId((current) => ({ ...current, [coupon.id]: event.target.value }))}
+                      placeholder="输入指定优惠码"
+                    />
+                  ) : null}
+                  {couponActionMode === "claim" && claimFailed ? (
+                    <div className="mt-2 text-xs text-rose-600">暂不符合领取条件或优惠码不正确</div>
+                  ) : null}
                 </article>
               );
             })}

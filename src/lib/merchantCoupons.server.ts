@@ -4,7 +4,9 @@ import {
   createMerchantCoupon,
   normalizeMerchantCouponRecords,
   updateMerchantCoupon,
+  type MerchantCouponClaimEvent,
   type MerchantCouponInput,
+  type MerchantCouponRecord,
 } from "@/lib/merchantCoupons";
 import { loadStoredMerchantCoupons, saveStoredMerchantCoupons } from "@/lib/merchantCouponsStore";
 
@@ -97,7 +99,11 @@ export async function archiveMerchantCouponRecord(input: { siteId: string; coupo
   return deletedCoupon;
 }
 
-export async function claimMerchantCouponRecord(input: { siteId: string; couponId: string }) {
+export async function claimMerchantCouponRecord(input: {
+  siteId: string;
+  couponId: string;
+  beforeClaim?: (coupon: MerchantCouponRecord) => Promise<Partial<MerchantCouponClaimEvent> | void> | Partial<MerchantCouponClaimEvent> | void;
+}) {
   const supabase = requireCouponsStoreClient();
   const siteId = trimText(input.siteId);
   const couponId = trimText(input.couponId);
@@ -106,7 +112,8 @@ export async function claimMerchantCouponRecord(input: { siteId: string; couponI
   const coupons = normalizeMerchantCouponRecords(stored?.coupons ?? []);
   const index = coupons.findIndex((coupon) => coupon.id === couponId);
   if (index < 0) throw new Error("coupon_not_found");
-  const next = claimMerchantCoupon(coupons[index]);
+  const claimEvent = await input.beforeClaim?.(coupons[index]);
+  const next = claimMerchantCoupon(coupons[index], new Date(), claimEvent ?? undefined);
   const updatedCoupons = [...coupons];
   updatedCoupons[index] = next;
   const saved = await saveStoredMerchantCoupons(supabase, {
