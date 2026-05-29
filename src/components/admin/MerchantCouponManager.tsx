@@ -420,6 +420,19 @@ function buildRecordDefaultMetaText(coupon: MerchantCouponRecord, pricePrefix: s
     .join("  ");
 }
 
+function buildShareableCouponText(coupon: MerchantCouponRecord, pricePrefix: string, siteName?: string) {
+  const lines = [
+    siteName ? `【${siteName}】优惠券` : "优惠券",
+    getMerchantCouponDisplayTitle(coupon),
+    `优惠内容：${getMerchantCouponDiscountLabel(coupon, pricePrefix)}`,
+    `优惠码：${coupon.code}`,
+    getMerchantCouponDisplayDescription(coupon) ? `说明：${getMerchantCouponDisplayDescription(coupon)}` : "",
+    `使用场景：${formatUsageScenarios(coupon.usageScenarios)}`,
+    coupon.expiresAt ? `有效期至：${formatDateTime(coupon.expiresAt)}` : "",
+  ];
+  return lines.filter((line) => line.trim()).join("\n");
+}
+
 function buildFormGeneratedDiscountText(form: CouponFormState, pricePrefix: string) {
   const discountValue = toNumberValue(form.discountValue);
   const minimumAmount = toNumberValue(form.minimumAmount);
@@ -561,6 +574,23 @@ function buildCouponVisualDataFromRecord(coupon: MerchantCouponRecord, pricePref
     metaTextColor: coupon.metaTextColor,
     metaFontSize: coupon.metaFontSize,
   };
+}
+
+async function writeClipboardText(text: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const ok = document.execCommand("copy");
+  textarea.remove();
+  if (!ok) throw new Error("copy_failed");
 }
 
 function validateCouponForm(form: CouponFormState) {
@@ -1189,10 +1219,10 @@ export default function MerchantCouponManager({
     }
   }
 
-  async function copyCode(coupon: MerchantCouponRecord) {
+  async function copyCoupon(coupon: MerchantCouponRecord) {
     try {
-      await navigator.clipboard?.writeText(coupon.code);
-      setTip("优惠码已复制");
+      await writeClipboardText(buildShareableCouponText(coupon, pricePrefix, siteName));
+      setTip("优惠券已复制，可粘贴到其他应用发送");
     } catch {
       setTip("复制失败，请手动复制");
     }
@@ -1959,10 +1989,10 @@ export default function MerchantCouponManager({
                         <button
                           type="button"
                           className="rounded border bg-white px-3 py-1.5 text-xs hover:bg-slate-50 disabled:opacity-50"
-                          onClick={() => void copyCode(coupon)}
+                          onClick={() => void copyCoupon(coupon)}
                           disabled={saving}
                         >
-                          复制码
+                          复制券
                         </button>
                         <>
                           <button
