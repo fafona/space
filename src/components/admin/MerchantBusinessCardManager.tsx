@@ -1825,6 +1825,8 @@ export default function MerchantBusinessCardManager({
         setTip("登录状态还没准备好，请刷新后台后再试一次");
       } else if (error instanceof Error && error.message === "share_request_timeout") {
         setTip("生成超时，请稍后重试");
+      } else if (error instanceof Error && error.message === "business_card_preview_unavailable") {
+        setTip("名片预览还没准备好，请关闭后重新打开再试");
       } else {
         setTip("名片生成失败，请重试");
       }
@@ -3916,8 +3918,7 @@ export default function MerchantBusinessCardManager({
   }
 
   async function saveCurrentDraftToFolder() {
-    const node = hiddenPreviewRef.current;
-    if (!node || !websiteUrl || !qrReadyForCurrentDraft) return null;
+    if (!websiteUrl || !qrReadyForCurrentDraft) return null;
     if (!editingCardId && normalizedCards.length >= normalizedCardLimit) {
       throw new Error("business_card_limit_reached");
     }
@@ -3931,6 +3932,10 @@ export default function MerchantBusinessCardManager({
     const imageUrl =
       reusableSnapshotImageUrl ||
       (await (async () => {
+        const node = hiddenPreviewRef.current;
+        if (!node) {
+          throw new Error("business_card_preview_unavailable");
+        }
         const exportedImage = await compressImageDataUrlWithinLimit(
           await renderCardNodeToImage(node),
           normalizedExportImageLimitKb * 1024,
