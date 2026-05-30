@@ -25,11 +25,18 @@ import { DEFAULT_LOCALE, I18N_STORAGE_KEY, LANGUAGE_OPTIONS } from "@/lib/i18n";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
   getContactCardVisibleMerchantCoupons,
+  getMerchantCouponDisplayBoxColor,
+  getMerchantCouponDisplayBoxStyle,
+  getMerchantCouponDisplayButtonText,
   getMerchantCouponDisplayDescription,
+  getMerchantCouponDisplayFieldOrder,
   getMerchantCouponDisplayMetaText,
   getMerchantCouponDisplayTitle,
   getMerchantCouponRemainingCount,
   getMerchantCouponDiscountLabel,
+  isMerchantCouponDisplayFieldHidden,
+  type MerchantCouponDisplayBoxStyle,
+  type MerchantCouponDisplayField,
   type MerchantCouponRecord,
   type MerchantCouponUsageScenario,
 } from "@/lib/merchantCoupons";
@@ -1396,7 +1403,7 @@ function formatContactCouponUsageScenarios(coupon: MerchantCouponRecord) {
   return coupon.usageScenarios.map((item) => CONTACT_COUPON_USAGE_LABELS[item]).filter(Boolean).join(" / ");
 }
 
-function buildContactCouponTextStyle(coupon: MerchantCouponRecord, role: "discount" | "title" | "description" | "meta") {
+function buildContactCouponTextStyle(coupon: MerchantCouponRecord, role: MerchantCouponDisplayField) {
   const declarations: string[] = [];
   if (coupon.contentFontFamily) declarations.push(`font-family:${escapeHtml(coupon.contentFontFamily)}`);
   const color =
@@ -1406,6 +1413,8 @@ function buildContactCouponTextStyle(coupon: MerchantCouponRecord, role: "discou
         ? coupon.titleTextColor
         : role === "description"
           ? coupon.descriptionTextColor
+          : role === "button"
+            ? coupon.buttonTextColor
           : coupon.metaTextColor;
   const fontSize =
     role === "discount"
@@ -1414,10 +1423,127 @@ function buildContactCouponTextStyle(coupon: MerchantCouponRecord, role: "discou
         ? coupon.titleFontSize
         : role === "description"
           ? coupon.descriptionFontSize
+          : role === "button"
+            ? coupon.buttonFontSize
           : coupon.metaFontSize;
   if (color) declarations.push(`color:${escapeHtml(color)}`);
   if (fontSize > 0) declarations.push(`font-size:${Math.round(fontSize)}px`);
+  return declarations;
+}
+
+function colorWithAlpha(color: string, alpha: number) {
+  const raw = color.trim();
+  const match = raw.match(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/);
+  if (!match) return "";
+  const hex =
+    match[1].length === 3
+      ? match[1]
+          .split("")
+          .map((item) => `${item}${item}`)
+          .join("")
+      : match[1];
+  const red = Number.parseInt(hex.slice(0, 2), 16);
+  const green = Number.parseInt(hex.slice(2, 4), 16);
+  const blue = Number.parseInt(hex.slice(4, 6), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
+
+function buildContactCouponBoxStyle(boxColor: string, boxStyle: MerchantCouponDisplayBoxStyle) {
+  const color = boxColor || "#020617";
+  if (boxStyle === "solid") return [`background-color:${escapeHtml(color)}`, `border-color:${escapeHtml(color)}`];
+  if (boxStyle === "outline") return [`border-color:${escapeHtml(color)}`];
+  if (boxStyle === "soft") {
+    const backgroundColor = colorWithAlpha(color, 0.12);
+    const borderColor = colorWithAlpha(color, 0.22) || color;
+    return [`background-color:${escapeHtml(backgroundColor)}`, `border-color:${escapeHtml(borderColor)}`];
+  }
+  return [];
+}
+
+function buildContactCouponItemStyle(
+  coupon: MerchantCouponRecord,
+  field: MerchantCouponDisplayField,
+  boxColor: string,
+  boxStyle: MerchantCouponDisplayBoxStyle,
+) {
+  const declarations = [...buildContactCouponTextStyle(coupon, field), ...buildContactCouponBoxStyle(boxColor, boxStyle)];
   return declarations.length > 0 ? ` style="${declarations.join(";")}"` : "";
+}
+
+function buildContactCouponDefaultMetaText(input: {
+  coupon: MerchantCouponRecord;
+  usageLabel: string;
+  remaining: number | null;
+  expiresLabel: string;
+}) {
+  const { coupon, usageLabel, remaining, expiresLabel } = input;
+  return [
+    coupon.discountType === "product_voucher" && coupon.productBarcode ? `条码 ${coupon.productBarcode}` : "",
+    coupon.discountType === "product_voucher" && coupon.productQuantity > 0 ? `数量 ${coupon.productQuantity}` : "",
+    coupon.discountType === "product_voucher" && coupon.productAmount > 0 ? `商品金额 ${coupon.productAmount.toFixed(2)}` : "",
+    coupon.discountType === "exchange_voucher" && coupon.exchangeQuantity > 0 ? `数量 ${coupon.exchangeQuantity}` : "",
+    coupon.discountType === "ticket_voucher" && coupon.ticketDurationMinutes > 0 ? `时长 ${coupon.ticketDurationMinutes} min` : "",
+    coupon.minimumAmount > 0 ? `门槛 ${coupon.minimumAmount.toFixed(2)}` : "",
+    usageLabel,
+    remaining !== null ? `剩余 ${remaining}` : "",
+    expiresLabel ? `至 ${expiresLabel}` : "",
+  ]
+    .filter(Boolean)
+    .join("  ");
+}
+
+function buildContactCouponDisplayItems(input: {
+  coupon: MerchantCouponRecord;
+  usageLabel: string;
+  remaining: number | null;
+  expiresLabel: string;
+}) {
+  const { coupon } = input;
+  const displayMetaText = getMerchantCouponDisplayMetaText(coupon);
+  const itemText: Record<MerchantCouponDisplayField, string> = {
+    discount: getMerchantCouponDiscountLabel(coupon),
+    title: getMerchantCouponDisplayTitle(coupon),
+    description: getMerchantCouponDisplayDescription(coupon),
+    meta: displayMetaText || buildContactCouponDefaultMetaText(input),
+    button: getMerchantCouponDisplayButtonText(coupon),
+  };
+  return getMerchantCouponDisplayFieldOrder(coupon)
+    .filter((field) => !isMerchantCouponDisplayFieldHidden(coupon, field))
+    .map((field) => ({
+      field,
+      text: itemText[field],
+      boxStyle: getMerchantCouponDisplayBoxStyle(coupon, field),
+      boxColor: getMerchantCouponDisplayBoxColor(coupon, field),
+    }))
+    .filter((item) => item.text.trim());
+}
+
+function buildContactCouponDisplayItemHtml(input: {
+  coupon: MerchantCouponRecord;
+  field: MerchantCouponDisplayField;
+  text: string;
+  boxStyle: MerchantCouponDisplayBoxStyle;
+  boxColor: string;
+  index: number;
+}) {
+  const { coupon, field, text, boxStyle, boxColor, index } = input;
+  const marginClass = index === 0 ? "" : field === "meta" ? " coupon-display-spaced-large" : " coupon-display-spaced";
+  const frameClass = boxStyle === "none" ? "" : field === "button" ? " coupon-frame-button" : " coupon-frame-text";
+  const style = buildContactCouponItemStyle(coupon, field, boxColor, boxStyle);
+  const escapedText = escapeHtml(text);
+  if (field === "button") {
+    return `<button class="coupon-display-item coupon-display-button${marginClass}${frameClass}" type="button" data-copy-value="${escapeHtml(coupon.code)}" data-copy-label="优惠券"${style}>${escapedText}</button>`;
+  }
+  if (field === "title") {
+    return `<div class="coupon-display-item coupon-display-title${marginClass}${frameClass}"${style}>${escapedText}</div>`;
+  }
+  if (field === "description") {
+    return `<div class="coupon-display-item coupon-display-description${marginClass}${frameClass}"${style}>${escapedText}</div>`;
+  }
+  if (field === "meta") {
+    return `<div class="coupon-display-item coupon-display-meta${marginClass}${frameClass}"${style}>${escapedText}</div>`;
+  }
+  return `<div class="coupon-display-item coupon-display-discount${marginClass}${frameClass}"${style}>${escapedText}</div>`;
 }
 
 function buildContactCouponsHtml(coupons: MerchantCouponRecord[]) {
@@ -1431,9 +1557,8 @@ function buildContactCouponsHtml(coupons: MerchantCouponRecord[]) {
             const remaining = getMerchantCouponRemainingCount(coupon);
             const expiresLabel = formatCouponDate(coupon.expiresAt);
             const usageLabel = formatContactCouponUsageScenarios(coupon);
-            const displayTitle = getMerchantCouponDisplayTitle(coupon);
-            const displayDescription = getMerchantCouponDisplayDescription(coupon);
-            const displayMetaText = getMerchantCouponDisplayMetaText(coupon);
+            const displayItems = buildContactCouponDisplayItems({ coupon, usageLabel, remaining, expiresLabel });
+            const hasButtonItem = displayItems.some((item) => item.field === "button");
             const backgroundImageUrl = normalizePublicAssetUrl(coupon.backgroundImageUrl);
             const backgroundOpacity = Math.max(0, Math.min(1, coupon.backgroundImageOpacity));
             const backgroundStyle = backgroundImageUrl
@@ -1444,23 +1569,15 @@ function buildContactCouponsHtml(coupons: MerchantCouponRecord[]) {
             return `
               <article class="coupon-item"${backgroundStyle}>
                 <div class="coupon-copy">
-                  <div class="coupon-discount"${buildContactCouponTextStyle(coupon, "discount")}>${escapeHtml(getMerchantCouponDiscountLabel(coupon))}</div>
-                  <div class="coupon-name"${buildContactCouponTextStyle(coupon, "title")}>${escapeHtml(displayTitle)}</div>
-                  ${displayDescription ? `<div class="coupon-description"${buildContactCouponTextStyle(coupon, "description")}>${escapeHtml(displayDescription)}</div>` : ""}
-                  <div class="coupon-meta"${buildContactCouponTextStyle(coupon, "meta")}>
-                    ${
-                      displayMetaText
-                        ? `<span>${escapeHtml(displayMetaText)}</span>`
-                        : `${coupon.minimumAmount > 0 ? `<span>门槛 ${escapeHtml(coupon.minimumAmount.toFixed(2))}</span>` : ""}
-                    ${usageLabel ? `<span>${escapeHtml(usageLabel)}</span>` : ""}
-                    ${remaining !== null ? `<span>剩余 ${escapeHtml(String(remaining))}</span>` : ""}
-                    ${expiresLabel ? `<span>至 ${escapeHtml(expiresLabel)}</span>` : ""}`
-                    }
-                  </div>
+                  ${displayItems.map((item, index) => buildContactCouponDisplayItemHtml({ coupon, ...item, index })).join("")}
                 </div>
-                <button class="coupon-button" type="button" data-copy-value="${escapeHtml(coupon.code)}" data-copy-label="优惠码">
-                  复制优惠码
-                </button>
+                ${
+                  hasButtonItem
+                    ? ""
+                    : `<button class="coupon-button" type="button" data-copy-value="${escapeHtml(coupon.code)}" data-copy-label="优惠券">${escapeHtml(
+                        getMerchantCouponDisplayButtonText(coupon),
+                      )}</button>`
+                }
               </article>
             `;
           })
@@ -2297,6 +2414,28 @@ function buildShareCardHtml(input: {
         min-width: 0;
         max-width: 100%;
       }
+      .coupon-display-item {
+        min-width: 0;
+        max-width: 100%;
+        overflow-wrap: anywhere;
+      }
+      .coupon-display-spaced {
+        margin-top: 8px;
+      }
+      .coupon-display-spaced-large {
+        margin-top: 12px;
+      }
+      .coupon-frame-text {
+        display: inline-block;
+        border: 1px solid rgba(15,23,42,.18);
+        border-radius: 8px;
+        padding: 4px 8px;
+      }
+      .coupon-frame-button {
+        border: 1px solid rgba(15,23,42,.18);
+        padding: 8px 16px;
+      }
+      .coupon-display-discount,
       .coupon-discount {
         font-size: 12px;
         font-weight: 800;
@@ -2305,6 +2444,7 @@ function buildShareCardHtml(input: {
         text-transform: uppercase;
         overflow-wrap: anywhere;
       }
+      .coupon-display-title,
       .coupon-name {
         margin-top: 6px;
         font-size: 16px;
@@ -2312,12 +2452,20 @@ function buildShareCardHtml(input: {
         color: #0f172a;
         overflow-wrap: anywhere;
       }
+      .coupon-display-title:first-child {
+        margin-top: 0;
+      }
+      .coupon-display-description,
       .coupon-description {
         margin-top: 4px;
         font-size: 13px;
         color: #64748b;
         overflow-wrap: anywhere;
       }
+      .coupon-display-description:first-child {
+        margin-top: 0;
+      }
+      .coupon-display-meta,
       .coupon-meta {
         display: flex;
         flex-wrap: wrap;
@@ -2334,6 +2482,7 @@ function buildShareCardHtml(input: {
         max-width: 100%;
         overflow-wrap: anywhere;
       }
+      .coupon-display-button,
       .coupon-button {
         display: inline-flex;
         align-items: center;
