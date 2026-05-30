@@ -49,7 +49,21 @@ export type MerchantCouponClaimEvent = {
   userId: string;
   email: string;
   code: string;
+  customerName: string;
+  settlementType: "qr" | "barcode";
+  settlementCode: string;
   validUntil: string | null;
+};
+
+export type MerchantCouponRedeemEvent = {
+  id: string;
+  at: string;
+  claimEventId: string;
+  settlementCode: string;
+  accountId: string;
+  userId: string;
+  operatorId: string;
+  note: string;
 };
 
 export type MerchantCouponInput = {
@@ -132,6 +146,7 @@ export type MerchantCouponInput = {
   claimTaskPageUrl?: string;
   claimTaskInviteCount?: number;
   claimEvents?: MerchantCouponClaimEvent[];
+  redeemEvents?: MerchantCouponRedeemEvent[];
   applicableProductIds?: string[];
   applicableTags?: string[];
   createdAt?: string;
@@ -304,10 +319,37 @@ function normalizeCouponClaimEvents(value: unknown): MerchantCouponClaimEvent[] 
         userId: trimText(raw.userId),
         email: trimText(raw.email).toLowerCase(),
         code: normalizeMerchantCouponClaimCode(raw.code),
+        customerName: trimText(raw.customerName),
+        settlementType: raw.settlementType === "barcode" ? "barcode" : "qr",
+        settlementCode: trimText(raw.settlementCode),
         validUntil: normalizeIsoDateValue(raw.validUntil),
       };
     })
     .filter((item): item is MerchantCouponClaimEvent => Boolean(item))
+    .sort((left, right) => Date.parse(right.at) - Date.parse(left.at))
+    .slice(0, 5000);
+}
+
+function normalizeCouponRedeemEvents(value: unknown): MerchantCouponRedeemEvent[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const raw = item as Record<string, unknown>;
+      const at = normalizeIsoDateValue(raw.at);
+      if (!at) return null;
+      return {
+        id: trimText(raw.id) || `RE${Date.parse(at).toString(36).toUpperCase()}`,
+        at,
+        claimEventId: trimText(raw.claimEventId),
+        settlementCode: trimText(raw.settlementCode),
+        accountId: trimText(raw.accountId),
+        userId: trimText(raw.userId),
+        operatorId: trimText(raw.operatorId),
+        note: trimText(raw.note).slice(0, 500),
+      };
+    })
+    .filter((item): item is MerchantCouponRedeemEvent => Boolean(item))
     .sort((left, right) => Date.parse(right.at) - Date.parse(left.at))
     .slice(0, 5000);
 }
@@ -437,6 +479,7 @@ export function normalizeMerchantCouponRecord(input: MerchantCouponInput | null 
     claimTaskPageUrl: trimText(input?.claimTaskPageUrl).slice(0, 1200),
     claimTaskInviteCount: normalizePositiveInt(input?.claimTaskInviteCount),
     claimEvents: normalizeCouponClaimEvents(input?.claimEvents),
+    redeemEvents: normalizeCouponRedeemEvents(input?.redeemEvents),
     applicableProductIds: normalizeStringArray(input?.applicableProductIds),
     applicableTags: normalizeStringArray(input?.applicableTags),
     createdAt: normalizeIsoDateValue(input?.createdAt) ?? now,
@@ -556,6 +599,9 @@ export function claimMerchantCoupon(
     userId: trimText(claimEvent.userId),
     email: trimText(claimEvent.email).toLowerCase(),
     code: normalizeMerchantCouponClaimCode(claimEvent.code),
+    customerName: trimText(claimEvent.customerName),
+    settlementType: claimEvent.settlementType === "barcode" ? "barcode" : "qr",
+    settlementCode: trimText(claimEvent.settlementCode),
     validUntil: normalizeIsoDateValue(claimEvent.validUntil) ?? buildMerchantCouponClaimValidUntil(coupon, now),
   };
   return updateMerchantCoupon(
@@ -563,6 +609,44 @@ export function claimMerchantCoupon(
     {
       claimedCount: coupon.claimedCount + 1,
       claimEvents: [event, ...coupon.claimEvents].slice(0, 5000),
+    },
+    [coupon.code],
+    now,
+  );
+}
+
+export function redeemMerchantCoupon(
+  coupon: MerchantCouponRecord,
+  input: {
+    settlementCode: string;
+    operatorId?: string;
+    note?: string;
+    now?: Date | string;
+  },
+) {
+  const settlementCode = trimText(input.settlementCode);
+  if (!settlementCode) throw new Error("invalid_settlement_code");
+  const claimEvent = coupon.claimEvents.find((event) => event.settlementCode === settlementCode);
+  if (!claimEvent) throw new Error("coupon_claim_not_found");
+  if (coupon.redeemEvents.some((event) => event.settlementCode === settlementCode || event.claimEventId === claimEvent.id)) {
+    throw new Error("coupon_already_redeemed");
+  }
+  const now = input.now instanceof Date ? input.now.toISOString() : normalizeIsoDateValue(input.now) ?? new Date().toISOString();
+  const redeemEvent: MerchantCouponRedeemEvent = {
+    id: `RE${Date.parse(now).toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+    at: now,
+    claimEventId: claimEvent.id,
+    settlementCode,
+    accountId: claimEvent.accountId,
+    userId: claimEvent.userId,
+    operatorId: trimText(input.operatorId),
+    note: trimText(input.note).slice(0, 500),
+  };
+  return updateMerchantCoupon(
+    coupon,
+    {
+      usedCount: coupon.usedCount + 1,
+      redeemEvents: [redeemEvent, ...coupon.redeemEvents].slice(0, 5000),
     },
     [coupon.code],
     now,

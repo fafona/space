@@ -1206,6 +1206,51 @@ export default function MerchantCouponManager({
         }),
     [couponStatusFilter, coupons],
   );
+  const claimRecordRows = useMemo(
+    () =>
+      coupons
+        .flatMap((coupon) =>
+          coupon.claimEvents.map((event) => ({
+            coupon,
+            event,
+          })),
+        )
+        .sort((left, right) => Date.parse(right.event.at) - Date.parse(left.event.at))
+        .slice(0, 50),
+    [coupons],
+  );
+  const redeemRecordRows = useMemo(
+    () =>
+      coupons
+        .flatMap((coupon) =>
+          coupon.redeemEvents.map((event) => ({
+            coupon,
+            event,
+          })),
+        )
+        .sort((left, right) => Date.parse(right.event.at) - Date.parse(left.event.at))
+        .slice(0, 50),
+    [coupons],
+  );
+  const dailyStatsRows = useMemo(() => {
+    const stats = new Map<string, { date: string; claimed: number; redeemed: number }>();
+    const ensure = (date: string) => {
+      const current = stats.get(date) ?? { date, claimed: 0, redeemed: 0 };
+      stats.set(date, current);
+      return current;
+    };
+    coupons.forEach((coupon) => {
+      coupon.claimEvents.forEach((event) => {
+        const date = event.at.slice(0, 10);
+        if (date) ensure(date).claimed += 1;
+      });
+      coupon.redeemEvents.forEach((event) => {
+        const date = event.at.slice(0, 10);
+        if (date) ensure(date).redeemed += 1;
+      });
+    });
+    return Array.from(stats.values()).sort((left, right) => right.date.localeCompare(left.date)).slice(0, 30);
+  }, [coupons]);
   const formPreviewData = useMemo<CouponVisualCardData>(() => {
     const itemText: Record<MerchantCouponDisplayField, string> = {
       discount: form.displayDiscountText.trim(),
@@ -2934,6 +2979,65 @@ export default function MerchantCouponManager({
               })
             )}
           </div>
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-3">
+        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
+          <div className="text-sm font-semibold text-slate-900">领取记录</div>
+          <div className="mt-3 max-h-72 space-y-2 overflow-auto text-xs">
+            {claimRecordRows.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-slate-200 px-3 py-4 text-center text-slate-500">暂无领取记录</div>
+            ) : (
+              claimRecordRows.map(({ coupon, event }) => (
+                <div key={`${coupon.id}-${event.id}`} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate font-semibold text-slate-800">{coupon.title}</span>
+                    <span className="shrink-0 text-slate-400">{formatDateTime(event.at)}</span>
+                  </div>
+                  <div className="mt-1 break-all text-slate-500">{event.customerName || event.email || event.accountId || "访客"}</div>
+                  <div className="mt-1 break-all font-mono text-slate-700">{event.settlementCode || "-"}</div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
+          <div className="text-sm font-semibold text-slate-900">核销记录</div>
+          <div className="mt-3 max-h-72 space-y-2 overflow-auto text-xs">
+            {redeemRecordRows.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-slate-200 px-3 py-4 text-center text-slate-500">暂无核销记录</div>
+            ) : (
+              redeemRecordRows.map(({ coupon, event }) => (
+                <div key={`${coupon.id}-${event.id}`} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate font-semibold text-slate-800">{coupon.title}</span>
+                    <span className="shrink-0 text-slate-400">{formatDateTime(event.at)}</span>
+                  </div>
+                  <div className="mt-1 break-all font-mono text-slate-700">{event.settlementCode}</div>
+                  <div className="mt-1 break-all text-slate-500">{event.operatorId || "-"}</div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
+          <div className="text-sm font-semibold text-slate-900">日报统计</div>
+          <div className="mt-3 max-h-72 space-y-2 overflow-auto text-xs">
+            {dailyStatsRows.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-slate-200 px-3 py-4 text-center text-slate-500">暂无统计</div>
+            ) : (
+              dailyStatsRows.map((row) => (
+                <div key={row.date} className="grid grid-cols-3 gap-2 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                  <div className="font-semibold text-slate-800">{row.date}</div>
+                  <div className="text-slate-600">领取 {row.claimed}</div>
+                  <div className="text-slate-600">核销 {row.redeemed}</div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
       </section>
     </div>
   );

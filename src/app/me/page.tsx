@@ -88,6 +88,7 @@ import { MOBILE_SWIPE_BACK_EVENT } from "@/lib/mobileSwipeBack";
 import { useFaollaAndroidAppUpdate } from "@/lib/useFaollaAndroidAppUpdate";
 import { useMobilePortraitOrientationLock } from "@/lib/useMobilePortraitOrientationLock";
 import type { MerchantOrderRecord } from "@/lib/merchantOrders";
+import type { PersonalClaimedCoupon } from "@/lib/personalCoupons";
 
 const MerchantBusinessCardManager = dynamic(() => import("@/components/admin/MerchantBusinessCardManager"), {
   ssr: false,
@@ -132,13 +133,13 @@ type MeSessionPayload = {
   } | null;
 };
 
-type DesktopSection = "conversations" | "bookings" | "orders" | "favorites" | "cards" | "faolla" | "profile";
+type DesktopSection = "conversations" | "bookings" | "orders" | "favorites" | "cards" | "coupons" | "faolla" | "profile";
 type MobileTab = "conversations" | "consumption" | "faolla" | "self";
 type ConsumptionSection = "bookings" | "orders";
 type PersonalBookingFilter = "all" | "active" | "confirmed" | "cancelled";
 type PersonalOrderFilter = "all" | "pending" | "confirmed" | "cancelled";
 type MobileConversationView = "list" | "thread";
-type MobileSelfSection = "home" | "profile" | "favorites" | "cards" | "tools" | "games" | "qr" | FaollaMobileSettingsView;
+type MobileSelfSection = "home" | "profile" | "favorites" | "cards" | "coupons" | "tools" | "games" | "qr" | FaollaMobileSettingsView;
 
 type MenuItem = {
   key: DesktopSection;
@@ -263,6 +264,13 @@ type PersonalOrdersResponsePayload = {
   message?: unknown;
   orders?: MerchantOrderRecord[];
   merchantContacts?: Record<string, PersonalMerchantContact>;
+};
+
+type PersonalCouponsResponsePayload = {
+  ok?: unknown;
+  error?: unknown;
+  message?: unknown;
+  coupons?: PersonalClaimedCoupon[];
 };
 
 type PersonalMerchantContact = {
@@ -1541,7 +1549,7 @@ function Icon({
   name,
   className = "h-5 w-5",
 }: {
-  name: "chat" | "shop" | "shield" | "user" | "calendar" | "order" | "star" | "card";
+  name: "chat" | "shop" | "shield" | "user" | "calendar" | "order" | "star" | "card" | "coupon";
   className?: string;
 }) {
   return (
@@ -1604,6 +1612,18 @@ function Icon({
         <>
           <rect x="4" y="6" width="16" height="12" rx="2.5" stroke="currentColor" strokeWidth="1.8" />
           <path d="M7.5 10h5M7.5 14h8.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        </>
+      ) : null}
+      {name === "coupon" ? (
+        <>
+          <path
+            d="M5 7.5A2.5 2.5 0 0 1 7.5 5h9A2.5 2.5 0 0 1 19 7.5v1.2a2.3 2.3 0 0 0 0 4.6v1.2a2.5 2.5 0 0 1-2.5 2.5h-9A2.5 2.5 0 0 1 5 14.5v-1.2a2.3 2.3 0 0 0 0-4.6V7.5Z"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <path d="M10 8.5h4M10 12h4M10 15.5h4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
         </>
       ) : null}
     </svg>
@@ -2279,6 +2299,7 @@ export default function MePage() {
       targetSection === "profile" ||
       targetSection === "favorites" ||
       targetSection === "cards" ||
+      targetSection === "coupons" ||
       targetSection === "tools" ||
       targetSection === "games" ||
       targetSection === "qr"
@@ -2320,6 +2341,9 @@ export default function MePage() {
   const [personalProfileDraft, setPersonalProfileDraft] = useState<PersonalProfileDraft>(EMPTY_PERSONAL_PROFILE);
   const [personalBusinessCards, setPersonalBusinessCards] = useState<MerchantBusinessCardAsset[]>([]);
   const [personalFavoriteSites, setPersonalFavoriteSites] = useState<PersonalFavoriteSite[]>([]);
+  const [personalCoupons, setPersonalCoupons] = useState<PersonalClaimedCoupon[]>([]);
+  const [personalCouponsLoading, setPersonalCouponsLoading] = useState(false);
+  const [personalCouponsLoadError, setPersonalCouponsLoadError] = useState("");
   const [personalFavoritePublishedSites, setPersonalFavoritePublishedSites] = useState<PersonalFavoritePublishedSite[]>([]);
   const [personalProfileSaving, setPersonalProfileSaving] = useState(false);
   const [personalAvatarUploading, setPersonalAvatarUploading] = useState(false);
@@ -2688,6 +2712,32 @@ export default function MePage() {
     },
     [accountId],
   );
+
+  const loadPersonalCoupons = useCallback(async () => {
+    if (!accountId) {
+      setPersonalCoupons([]);
+      return;
+    }
+    setPersonalCouponsLoading(true);
+    setPersonalCouponsLoadError("");
+    try {
+      const payload = await fetchPersonalConsumptionPayload<PersonalCouponsResponsePayload>(
+        "/api/personal-coupons",
+        "优惠券加载失败，请稍后重试",
+      );
+      setPersonalCoupons(Array.isArray(payload.coupons) ? payload.coupons : []);
+    } catch (error) {
+      setPersonalCoupons([]);
+      setPersonalCouponsLoadError(error instanceof Error ? error.message : "优惠券加载失败，请稍后重试");
+    } finally {
+      setPersonalCouponsLoading(false);
+    }
+  }, [accountId]);
+
+  useEffect(() => {
+    if (payload?.authenticated !== true || payload.accountType !== "personal") return;
+    void loadPersonalCoupons();
+  }, [loadPersonalCoupons, payload?.accountType, payload?.authenticated]);
   const personalBusinessCardProfile = useMemo(
     () =>
       ({
@@ -3473,6 +3523,7 @@ export default function MePage() {
       { key: "orders", label: "订单", description: "查看你在商户网站提交的订单。" },
       { key: "favorites", label: "收藏", description: "保存常用商户、页面和产品。" },
       { key: "cards", label: "名片夹", description: "管理个人名片、短链和聊天发送用名片。" },
+      { key: "coupons", label: "优惠券", description: "查看已领取优惠券和核销码。" },
       { key: "faolla", label: "Faolla", description: "Faolla" },
     ],
     [],
@@ -6157,6 +6208,74 @@ export default function MePage() {
     );
   }
 
+  function renderPersonalCoupons(compact = false) {
+    const content =
+      personalCoupons.length === 0 ? (
+        <EmptyFeatureCard icon={<Icon name="coupon" />} title="我的优惠券" description="领取后的优惠券会显示在这里。" />
+      ) : (
+        <div className={compact ? "space-y-3" : "grid gap-3 md:grid-cols-2 xl:grid-cols-3"}>
+          {personalCoupons.map((coupon) => (
+            <article key={coupon.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold text-slate-900">{coupon.couponTitle}</div>
+                  <div className="mt-1 text-xs text-slate-500">{coupon.siteName}</div>
+                </div>
+                <span className="shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                  已领取
+                </span>
+              </div>
+              <div className="mt-3 text-sm font-semibold text-rose-600">{coupon.discountLabel || "优惠券"}</div>
+              {coupon.couponDescription ? <p className="mt-2 line-clamp-2 text-xs leading-5 text-slate-500">{coupon.couponDescription}</p> : null}
+              <div className="mt-3 rounded-xl bg-slate-50 px-3 py-2">
+                <div className="text-[11px] text-slate-400">{coupon.settlementType === "barcode" ? "核销条形码" : "核销二维码"}</div>
+                <div className="mt-1 break-all font-mono text-xs font-semibold text-slate-800">{coupon.settlementCode}</div>
+              </div>
+              <div className="mt-3 grid gap-1 text-xs text-slate-500">
+                <div>领取时间: {formatPersonalRecordDateTime(coupon.claimedAt)}</div>
+                <div>有效期: {coupon.validUntil ? formatPersonalRecordDateTime(coupon.validUntil) : "长期有效"}</div>
+              </div>
+              <Link
+                className="mt-4 inline-flex h-9 w-full items-center justify-center rounded-xl bg-slate-950 px-3 text-sm font-semibold text-white hover:bg-slate-800"
+                href={`/coupon/claim/${encodeURIComponent(coupon.claimEventId)}?siteId=${encodeURIComponent(coupon.siteId)}&couponId=${encodeURIComponent(coupon.couponId)}`}
+              >
+                查看核销码
+              </Link>
+            </article>
+          ))}
+        </div>
+      );
+
+    return (
+      <div className={compact ? "space-y-3" : "space-y-4"}>
+        {!compact ? (
+          <div className="flex items-center justify-between rounded-[24px] border border-slate-200 bg-white px-5 py-4 shadow-[0_12px_32px_rgba(15,23,42,0.05)]">
+            <div>
+              <div className="text-lg font-semibold text-slate-950">我的优惠券</div>
+              <div className="mt-1 text-sm text-slate-500">已领取 {personalCoupons.length} 张优惠券。</div>
+            </div>
+            <button
+              type="button"
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              onClick={() => void loadPersonalCoupons()}
+              disabled={personalCouponsLoading}
+            >
+              {personalCouponsLoading ? "刷新中..." : "刷新"}
+            </button>
+          </div>
+        ) : null}
+        {personalCouponsLoadError ? (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{personalCouponsLoadError}</div>
+        ) : null}
+        {personalCouponsLoading && personalCoupons.length === 0 ? (
+          <div className="rounded-2xl border border-slate-200 bg-white px-5 py-8 text-center text-sm text-slate-500">优惠券加载中...</div>
+        ) : (
+          content
+        )}
+      </div>
+    );
+  }
+
   function renderSectionContent(section: DesktopSection) {
     if (section === "conversations") {
       return renderDesktopSupportSurface();
@@ -6187,6 +6306,9 @@ export default function MePage() {
     }
     if (section === "favorites") {
       return renderPersonalFavorites(false);
+    }
+    if (section === "coupons") {
+      return renderPersonalCoupons(false);
     }
     if (section === "cards" && personalBusinessCardManagerCommonProps) {
       return <MerchantBusinessCardManager {...personalBusinessCardManagerCommonProps} folderViewMode="page" />;
@@ -6488,6 +6610,12 @@ export default function MePage() {
           label: "名片夹",
           summary: mobileSelfCardsSummary,
           icon: <Icon name="card" />,
+        },
+        {
+          key: "coupons",
+          label: "优惠券",
+          summary: personalCoupons.length ? `已领取 ${personalCoupons.length} 张` : "查看已领取优惠券",
+          icon: <Icon name="coupon" />,
         },
         {
           key: "tools",
@@ -6810,6 +6938,8 @@ export default function MePage() {
                 title="名片夹"
                 description="手机端名片夹稍后接入，当前可在桌面端管理名片，并在聊天里直接发送已生成名片。"
               />
+            ) : mobileSelfSection === "coupons" ? (
+              renderPersonalCoupons(true)
             ) : mobileSelfSection === "tools" ? (
               renderMobileToolsContent()
             ) : mobileSelfSection === "games" ? (

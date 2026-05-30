@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import {
+  buildMerchantCouponClaimValidUntil,
   buildMerchantCouponSettlementCode,
   merchantCouponRequiresClaimCode,
   merchantCouponRequiresPersonalClaim,
@@ -11,6 +12,7 @@ import {
 } from "@/lib/merchantCoupons";
 import { claimMerchantCouponRecord } from "@/lib/merchantCoupons.server";
 import { listMerchantOrders } from "@/lib/merchantOrders.server";
+import { buildPersonalClaimedCoupon, writePersonalClaimedCouponToUserMetadata, type PersonalClaimedCoupon } from "@/lib/personalCoupons";
 import { readPersonalCustomerProfileFromSession } from "@/lib/personalCustomerProfile";
 import { resolvePersonalAccountSessionFromRequest, type PersonalAccountSession } from "@/lib/personalAccountSession.server";
 import { loadCurrentMerchantSnapshotSiteBySiteId } from "@/lib/publishedMerchantService";
@@ -198,7 +200,10 @@ async function assertCouponClaimIdentityAllowed(coupon: MerchantCouponRecord, re
   return session;
 }
 
-async function addFavoriteSite(session: PersonalAccountSession | null, input: { siteId: string; siteName: string; pageUrl: string }) {
+async function addFavoriteSite(
+  session: PersonalAccountSession | null,
+  input: { siteId: string; siteName: string; pageUrl: string; claimedCoupon?: PersonalClaimedCoupon | null },
+) {
   if (!session) return;
   const userMetadata = session.user.user_metadata && typeof session.user.user_metadata === "object" ? { ...session.user.user_metadata } : {};
   const personalProfile =
@@ -229,7 +234,10 @@ async function addFavoriteSite(session: PersonalAccountSession | null, input: { 
   ].slice(0, 200);
   personalProfile.favoriteSites = nextSites;
   userMetadata.personal_profile = personalProfile;
-  await session.adminSupabase.auth.admin.updateUserById(session.userId, { user_metadata: userMetadata }).catch(() => null);
+  const metadataWithCoupon = input.claimedCoupon
+    ? writePersonalClaimedCouponToUserMetadata(userMetadata, input.claimedCoupon)
+    : userMetadata;
+  await session.adminSupabase.auth.admin.updateUserById(session.userId, { user_metadata: metadataWithCoupon }).catch(() => null);
 }
 
 async function isCouponWebsiteBlockEnabled(siteId: string) {
@@ -253,31 +261,66 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "coupon_block_disabled" }, { status: 403 });
     }
     let claimSession: PersonalAccountSession | null = null;
+    let claimEventId = "";
+    let settlementType: "qr" | "barcode" = "qr";
+    let settlementCode = "";
+    let claimValidUntil: string | null = null;
     const now = new Date();
     const coupon = await claimMerchantCouponRecord({
       siteId,
       couponId,
       beforeClaim: async (current) => {
         claimSession = await assertCouponClaimIdentityAllowed(current, request, claimCode, now);
+        claimEventId = `CE${now.getTime().toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+        settlementType = merchantCouponSupportsUsageScenario(current, "checkout_barcode") && !merchantCouponSupportsUsageScenario(current, "checkout_qr") ? "barcode" : "qr";
+        settlementCode = buildMerchantCouponSettlementCode(
+          current,
+          settlementType === "barcode" ? "checkout_barcode" : "checkout_qr",
+          current.claimedCount + 1,
+          claimCode,
+        );
+        claimValidUntil = buildMerchantCouponClaimValidUntil(current, now);
+        const profile = claimSession
+          ? readPersonalCustomerProfileFromSession({
+              authenticated: true,
+              accountType: "personal",
+              accountId: claimSession.accountId,
+              user: claimSession.user,
+            })
+          : null;
         return {
+          id: claimEventId,
           accountId: claimSession?.accountId ?? "",
           userId: claimSession?.userId ?? "",
           email: claimSession?.email ?? "",
           code: claimCode,
+          customerName: profile?.name ?? "",
+          settlementType,
+          settlementCode,
+          validUntil: claimValidUntil,
         };
       },
     });
-    await addFavoriteSite(claimSession, { siteId, siteName: trimText(body?.siteName), pageUrl: trimText(body?.pageUrl, 1200) });
+    const claimEvent = coupon.claimEvents.find((event) => event.id === claimEventId) ?? coupon.claimEvents[0] ?? null;
+    const claimedCoupon =
+      claimSession && claimEvent
+        ? buildPersonalClaimedCoupon({
+            coupon,
+            claimEvent,
+            siteName: trimText(body?.siteName),
+            pageUrl: trimText(body?.pageUrl, 1200),
+          })
+        : null;
+    await addFavoriteSite(claimSession, { siteId, siteName: trimText(body?.siteName), pageUrl: trimText(body?.pageUrl, 1200), claimedCoupon });
     return NextResponse.json({
       ok: true,
       coupon,
+      claimEventId,
+      claimResultUrl: `/coupon/claim/${encodeURIComponent(claimEventId)}?siteId=${encodeURIComponent(siteId)}&couponId=${encodeURIComponent(couponId)}`,
+      savedToAccount: Boolean(claimedCoupon),
       settlementCodes: {
-        checkoutQr: merchantCouponSupportsUsageScenario(coupon, "checkout_qr")
-          ? buildMerchantCouponSettlementCode(coupon, "checkout_qr", coupon.claimedCount, claimCode)
-          : null,
-        checkoutBarcode: merchantCouponSupportsUsageScenario(coupon, "checkout_barcode")
-          ? buildMerchantCouponSettlementCode(coupon, "checkout_barcode", coupon.claimedCount, claimCode)
-          : null,
+        checkoutQr: claimEvent?.settlementType === "qr" ? claimEvent.settlementCode : null,
+        checkoutBarcode: claimEvent?.settlementType === "barcode" ? claimEvent.settlementCode : null,
       },
     });
   } catch (error) {

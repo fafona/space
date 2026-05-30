@@ -346,13 +346,21 @@ export default function CouponBlock({
           pageUrl: typeof window === "undefined" ? "" : window.location.href,
         }),
       });
-      const payload = (await response.json().catch(() => null)) as { coupon?: unknown } | null;
+      const payload = (await response.json().catch(() => null)) as {
+        coupon?: unknown;
+        claimResultUrl?: unknown;
+        savedToAccount?: unknown;
+      } | null;
       if (!response.ok) throw new Error("claim_failed");
       const [claimedCoupon] = normalizeMerchantCouponRecords(payload?.coupon ? [payload.coupon] : []);
       if (claimedCoupon) {
         setLoadedCoupons((current) => current.map((item) => (item.id === claimedCoupon.id ? claimedCoupon : item)));
       }
       markCouponClaimed(coupon.id, perCustomerLimit);
+      if (typeof window !== "undefined" && payload?.savedToAccount !== true && typeof payload?.claimResultUrl === "string" && payload.claimResultUrl) {
+        window.location.assign(payload.claimResultUrl);
+        return;
+      }
       setCopiedCode(coupon.code);
       try {
         await navigator.clipboard?.writeText(coupon.code);

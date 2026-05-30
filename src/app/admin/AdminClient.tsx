@@ -28696,6 +28696,7 @@ type GalleryEditorImage = {
         claimTaskPageUrl: "",
         claimTaskInviteCount: 0,
         claimEvents: [],
+        redeemEvents: [],
         applicableProductIds: [],
         applicableTags: [],
         createdAt: "2026-05-15T00:00:00.000Z",

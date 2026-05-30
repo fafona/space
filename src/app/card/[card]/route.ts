@@ -1139,6 +1139,52 @@ function buildInlineI18nScript() {
       });
     });
 
+    const claimButtons = Array.from(document.querySelectorAll("[data-claim-coupon-id]"));
+    claimButtons.forEach((button) => {
+      button.addEventListener("click", async (event) => {
+        event.preventDefault();
+        const target = event.currentTarget;
+        if (!(target instanceof HTMLElement)) return;
+        const couponId = String(target.dataset.claimCouponId || "").trim();
+        const siteId = String(target.dataset.claimSiteId || "").trim();
+        if (!couponId || !siteId) return;
+        target.setAttribute("disabled", "disabled");
+        try {
+          const response = await fetch("/api/coupons/claim", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              siteId,
+              couponId,
+              siteName: document.title || "",
+              pageUrl: window.location.href,
+            }),
+          });
+          const payload = await response.json().catch(() => null);
+          if (!response.ok) throw new Error(payload && payload.message ? payload.message : "claim_failed");
+          if (payload && payload.savedToAccount === true) {
+            showWechatToast("\u5df2\u9886\u53d6\uff0c\u5df2\u653e\u5165\u6211\u7684\u4f18\u60e0\u5238");
+            target.textContent = "\u5df2\u9886\u53d6";
+            return;
+          }
+          if (payload && typeof payload.claimResultUrl === "string" && payload.claimResultUrl) {
+            window.location.assign(payload.claimResultUrl);
+            return;
+          }
+          showWechatToast("\u5df2\u9886\u53d6");
+        } catch (claimError) {
+          target.removeAttribute("disabled");
+          if (String(claimError && claimError.message ? claimError.message : "").includes("coupon_login_required")) {
+            const redirect = encodeURIComponent(window.location.pathname + window.location.search + window.location.hash);
+            window.location.assign("/login?accountType=personal&redirect=" + redirect);
+            return;
+          }
+          showWechatToast("\u6682\u65f6\u65e0\u6cd5\u9886\u53d6\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5");
+        }
+      });
+    });
+
     const openTargetButtons = Array.from(document.querySelectorAll("[data-open-target-url]"));
     openTargetButtons.forEach((button) => {
       button.addEventListener("click", (event) => {
@@ -1532,7 +1578,7 @@ function buildContactCouponDisplayItemHtml(input: {
   const style = buildContactCouponItemStyle(coupon, field, boxColor, boxStyle);
   const escapedText = escapeHtml(text);
   if (field === "button") {
-    return `<button class="coupon-display-item coupon-display-button${marginClass}${frameClass}" type="button" data-copy-value="${escapeHtml(coupon.code)}" data-copy-label="优惠券"${style}>${escapedText}</button>`;
+    return `<button class="coupon-display-item coupon-display-button${marginClass}${frameClass}" type="button" data-claim-coupon-id="${escapeHtml(coupon.id)}" data-claim-site-id="${escapeHtml(coupon.siteId)}"${style}>${escapedText}</button>`;
   }
   if (field === "title") {
     return `<div class="coupon-display-item coupon-display-title${marginClass}${frameClass}"${style}>${escapedText}</div>`;
@@ -1574,7 +1620,7 @@ function buildContactCouponsHtml(coupons: MerchantCouponRecord[]) {
                 ${
                   hasButtonItem
                     ? ""
-                    : `<button class="coupon-button" type="button" data-copy-value="${escapeHtml(coupon.code)}" data-copy-label="优惠券">${escapeHtml(
+                    : `<button class="coupon-button" type="button" data-claim-coupon-id="${escapeHtml(coupon.id)}" data-claim-site-id="${escapeHtml(coupon.siteId)}">${escapeHtml(
                         getMerchantCouponDisplayButtonText(coupon),
                       )}</button>`
                 }

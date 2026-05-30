@@ -3,6 +3,7 @@ import {
   claimMerchantCoupon,
   createMerchantCoupon,
   normalizeMerchantCouponRecords,
+  redeemMerchantCoupon,
   updateMerchantCoupon,
   type MerchantCouponClaimEvent,
   type MerchantCouponInput,
@@ -114,6 +115,36 @@ export async function claimMerchantCouponRecord(input: {
   if (index < 0) throw new Error("coupon_not_found");
   const claimEvent = await input.beforeClaim?.(coupons[index]);
   const next = claimMerchantCoupon(coupons[index], new Date(), claimEvent ?? undefined);
+  const updatedCoupons = [...coupons];
+  updatedCoupons[index] = next;
+  const saved = await saveStoredMerchantCoupons(supabase, {
+    siteId,
+    coupons: updatedCoupons,
+    updatedAt: next.updatedAt,
+  });
+  if (saved.error) throw new Error(saved.error);
+  return next;
+}
+
+export async function redeemMerchantCouponRecord(input: {
+  siteId: string;
+  settlementCode: string;
+  operatorId?: string;
+  note?: string;
+}) {
+  const supabase = requireCouponsStoreClient();
+  const siteId = trimText(input.siteId);
+  const settlementCode = trimText(input.settlementCode);
+  if (!siteId || !settlementCode) throw new Error("coupon_not_found");
+  const stored = await loadStoredMerchantCoupons(supabase, siteId);
+  const coupons = normalizeMerchantCouponRecords(stored?.coupons ?? []);
+  const index = coupons.findIndex((coupon) => coupon.claimEvents.some((event) => event.settlementCode === settlementCode));
+  if (index < 0) throw new Error("coupon_claim_not_found");
+  const next = redeemMerchantCoupon(coupons[index], {
+    settlementCode,
+    operatorId: input.operatorId,
+    note: input.note,
+  });
   const updatedCoupons = [...coupons];
   updatedCoupons[index] = next;
   const saved = await saveStoredMerchantCoupons(supabase, {
