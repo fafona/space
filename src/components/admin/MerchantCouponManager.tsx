@@ -55,6 +55,14 @@ type CouponFormState = {
   discountType: MerchantCouponDiscountType;
   discountValue: string;
   minimumAmount: string;
+  productName: string;
+  productBarcode: string;
+  productQuantity: string;
+  productAmount: string;
+  exchangeItem: string;
+  exchangeQuantity: string;
+  ticketVenue: string;
+  ticketDurationMinutes: string;
   maxDiscountAmount: string;
   totalQuantity: string;
   perCustomerLimit: string;
@@ -126,6 +134,14 @@ const EMPTY_FORM: CouponFormState = {
   discountType: "threshold_amount_off",
   discountValue: "5",
   minimumAmount: "30",
+  productName: "",
+  productBarcode: "",
+  productQuantity: "",
+  productAmount: "",
+  exchangeItem: "",
+  exchangeQuantity: "",
+  ticketVenue: "",
+  ticketDurationMinutes: "",
   maxDiscountAmount: "",
   totalQuantity: "",
   perCustomerLimit: "",
@@ -492,6 +508,11 @@ function formatUsageScenarios(value: MerchantCouponUsageScenario[]) {
 
 function buildRecordDefaultMetaText(coupon: MerchantCouponRecord, pricePrefix: string) {
   return [
+    coupon.discountType === "product_voucher" && coupon.productBarcode ? `条码 ${coupon.productBarcode}` : "",
+    coupon.discountType === "product_voucher" && coupon.productQuantity > 0 ? `数量 ${coupon.productQuantity}` : "",
+    coupon.discountType === "product_voucher" && coupon.productAmount > 0 ? `商品金额 ${pricePrefix}${coupon.productAmount.toFixed(2)}` : "",
+    coupon.discountType === "exchange_voucher" && coupon.exchangeQuantity > 0 ? `数量 ${coupon.exchangeQuantity}` : "",
+    coupon.discountType === "ticket_voucher" && coupon.ticketDurationMinutes > 0 ? `时长 ${coupon.ticketDurationMinutes} min` : "",
     coupon.minimumAmount > 0 ? `门槛 ${pricePrefix}${coupon.minimumAmount.toFixed(2)}` : "",
     formatUsageScenarios(coupon.usageScenarios),
     coupon.expiresAt ? `至 ${formatDateTime(coupon.expiresAt)}` : "",
@@ -534,16 +555,21 @@ function buildFormGeneratedDiscountText(form: CouponFormState, pricePrefix: stri
   const minimumAmount = toNumberValue(form.minimumAmount);
   if (form.discountType === "percent_off") return `${discountValue || 0}% OFF`;
   if (form.discountType === "threshold_amount_off") return `满 ${pricePrefix}${minimumAmount.toFixed(2)} 减 ${pricePrefix}${discountValue.toFixed(2)}`;
-  if (form.discountType === "product_voucher") return "商品券";
+  if (form.discountType === "product_voucher") return form.productName.trim() ? `商品券：${form.productName.trim()}` : "商品券";
   if (form.discountType === "stored_value") return `储值 ${pricePrefix}${discountValue.toFixed(2)}`;
-  if (form.discountType === "exchange_voucher") return "兑换券";
-  if (form.discountType === "ticket_voucher") return "门票券";
+  if (form.discountType === "exchange_voucher") return form.exchangeItem.trim() ? `兑换券：${form.exchangeItem.trim()}` : "兑换券";
+  if (form.discountType === "ticket_voucher") return form.ticketVenue.trim() ? `门票券：${form.ticketVenue.trim()}` : "门票券";
   return `减 ${pricePrefix}${discountValue.toFixed(2)}`;
 }
 
 function buildFormDefaultMetaText(form: CouponFormState, pricePrefix: string) {
   const minimumAmount = toNumberValue(form.minimumAmount);
   return [
+    form.discountType === "product_voucher" && form.productBarcode.trim() ? `条码 ${form.productBarcode.trim()}` : "",
+    form.discountType === "product_voucher" && toIntValue(form.productQuantity) > 0 ? `数量 ${toIntValue(form.productQuantity)}` : "",
+    form.discountType === "product_voucher" && toNumberValue(form.productAmount) > 0 ? `商品金额 ${pricePrefix}${toNumberValue(form.productAmount).toFixed(2)}` : "",
+    form.discountType === "exchange_voucher" && toIntValue(form.exchangeQuantity) > 0 ? `数量 ${toIntValue(form.exchangeQuantity)}` : "",
+    form.discountType === "ticket_voucher" && toIntValue(form.ticketDurationMinutes) > 0 ? `时长 ${toIntValue(form.ticketDurationMinutes)} min` : "",
     minimumAmount > 0 ? `门槛 ${pricePrefix}${minimumAmount.toFixed(2)}` : "",
     formatUsageScenarios(form.usageScenarios),
     fromDateTimeTextValue(form.expiresAt) ? `至 ${formatDateTime(fromDateTimeTextValue(form.expiresAt))}` : "",
@@ -580,6 +606,14 @@ function buildFormFromCoupon(coupon: MerchantCouponRecord, pricePrefix: string):
     discountType: coupon.discountType,
     discountValue: coupon.discountValue > 0 ? String(coupon.discountValue) : "",
     minimumAmount: coupon.minimumAmount > 0 ? String(coupon.minimumAmount) : "",
+    productName: coupon.productName,
+    productBarcode: coupon.productBarcode,
+    productQuantity: coupon.productQuantity > 0 ? String(coupon.productQuantity) : "",
+    productAmount: coupon.productAmount > 0 ? String(coupon.productAmount) : "",
+    exchangeItem: coupon.exchangeItem,
+    exchangeQuantity: coupon.exchangeQuantity > 0 ? String(coupon.exchangeQuantity) : "",
+    ticketVenue: coupon.ticketVenue,
+    ticketDurationMinutes: coupon.ticketDurationMinutes > 0 ? String(coupon.ticketDurationMinutes) : "",
     maxDiscountAmount: "",
     totalQuantity: "",
     perCustomerLimit: "",
@@ -659,6 +693,11 @@ function buildFormFromCoupon(coupon: MerchantCouponRecord, pricePrefix: string):
 function buildCouponVisualDataFromRecord(coupon: MerchantCouponRecord, pricePrefix: string): CouponVisualCardData {
   const customMeta = getMerchantCouponDisplayMetaText(coupon);
   const defaultMetaText = [
+    coupon.discountType === "product_voucher" && coupon.productBarcode ? `条码 ${coupon.productBarcode}` : "",
+    coupon.discountType === "product_voucher" && coupon.productQuantity > 0 ? `数量 ${coupon.productQuantity}` : "",
+    coupon.discountType === "product_voucher" && coupon.productAmount > 0 ? `商品金额 ${pricePrefix}${coupon.productAmount.toFixed(2)}` : "",
+    coupon.discountType === "exchange_voucher" && coupon.exchangeQuantity > 0 ? `数量 ${coupon.exchangeQuantity}` : "",
+    coupon.discountType === "ticket_voucher" && coupon.ticketDurationMinutes > 0 ? `时长 ${coupon.ticketDurationMinutes} min` : "",
     coupon.minimumAmount > 0 ? `门槛 ${pricePrefix}${coupon.minimumAmount.toFixed(2)}` : "",
     formatUsageScenarios(coupon.usageScenarios),
     coupon.expiresAt ? `至 ${formatDateTime(coupon.expiresAt)}` : "",
@@ -726,6 +765,7 @@ function validateCouponForm(form: CouponFormState) {
   if (normalizeFormUsageScenarios(form.usageScenarios).length === 0) return "请至少选择一个使用场景";
   if (form.discountType === "percent_off" && discountValue > 100) return "折扣百分比不能超过 100";
   if (form.discountType === "threshold_amount_off" && minimumAmount <= 0) return "满减券需要填写大于 0 的门槛金额";
+  if (form.discountType === "product_voucher" && toIntValue(form.productQuantity) < 0) return "商品数量不能小于 0";
   if (isInvalidDateTimeTextValue(form.startsAt)) return "开始时间格式不正确，请使用 2026-05-16 18:30";
   if (isInvalidDateTimeTextValue(form.expiresAt)) return "结束时间格式不正确，请使用 2026-12-31 23:59";
   if (startsAt && expiresAt && Date.parse(startsAt) > Date.parse(expiresAt)) return "结束时间不能早于开始时间";
@@ -1620,6 +1660,14 @@ export default function MerchantCouponManager({
       discountType: form.discountType,
       discountValue: toNumberValue(form.discountValue),
       minimumAmount: toNumberValue(form.minimumAmount),
+      productName: form.productName.trim(),
+      productBarcode: form.productBarcode.trim(),
+      productQuantity: toIntValue(form.productQuantity),
+      productAmount: toNumberValue(form.productAmount),
+      exchangeItem: form.exchangeItem.trim(),
+      exchangeQuantity: toIntValue(form.exchangeQuantity),
+      ticketVenue: form.ticketVenue.trim(),
+      ticketDurationMinutes: toIntValue(form.ticketDurationMinutes),
       maxDiscountAmount: 0,
       totalQuantity: 0,
       perCustomerLimit: 0,
@@ -2107,54 +2155,52 @@ export default function MerchantCouponManager({
                         <span className="mt-1 block text-xs leading-5 text-slate-500">未登录用户点击领取会跳转登录；领取后自动收藏该站点。</span>
                       </span>
                     </label>
-                    <label className="flex items-start gap-2 rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm">
-                      <input
-                        type="checkbox"
-                        className="mt-1"
-                        checked={form.claimOldUserOnly}
-                        onChange={(event) => updateField("claimOldUserOnly", event.target.checked)}
-                      />
-                      <span>
-                        <span className="block font-medium text-slate-800">老用户专享</span>
-                        <span className="mt-1 block text-xs leading-5 text-slate-500">可按注册天数、累计消费、下单次数设置门槛。</span>
-                      </span>
-                    </label>
-                  </div>
-                  <div className="mt-3 grid gap-3 md:grid-cols-3">
-                    <label className="space-y-1 text-sm">
-                      <span className="block text-slate-600">注册超过天数</span>
-                      <input
-                        type="number"
-                        min={0}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                        value={form.claimMinRegisteredDays}
-                        onChange={handleInputChange("claimMinRegisteredDays")}
-                        placeholder="0 表示不限制"
-                      />
-                    </label>
-                    <label className="space-y-1 text-sm">
-                      <span className="block text-slate-600">消费超过金额</span>
-                      <input
-                        type="number"
-                        min={0}
-                        step={0.01}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                        value={form.claimMinSpendAmount}
-                        onChange={handleInputChange("claimMinSpendAmount")}
-                        placeholder="0 表示不限制"
-                      />
-                    </label>
-                    <label className="space-y-1 text-sm">
-                      <span className="block text-slate-600">下单超过次数</span>
-                      <input
-                        type="number"
-                        min={0}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                        value={form.claimMinOrderCount}
-                        onChange={handleInputChange("claimMinOrderCount")}
-                        placeholder="0 表示不限制"
-                      />
-                    </label>
+                    <div className="rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm">
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={form.claimOldUserOnly}
+                          onChange={(event) => updateField("claimOldUserOnly", event.target.checked)}
+                        />
+                        <span className="font-medium text-slate-800">老用户专享</span>
+                      </label>
+                      <div className="mt-3 grid gap-3 lg:grid-cols-3">
+                        <label className="space-y-1">
+                          <span className="block text-slate-600">注册超过天数</span>
+                          <input
+                            type="number"
+                            min={0}
+                            className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                            value={form.claimMinRegisteredDays}
+                            onChange={handleInputChange("claimMinRegisteredDays")}
+                            placeholder="0 表示不限制"
+                          />
+                        </label>
+                        <label className="space-y-1">
+                          <span className="block text-slate-600">消费超过金额</span>
+                          <input
+                            type="number"
+                            min={0}
+                            step={0.01}
+                            className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                            value={form.claimMinSpendAmount}
+                            onChange={handleInputChange("claimMinSpendAmount")}
+                            placeholder="0 表示不限制"
+                          />
+                        </label>
+                        <label className="space-y-1">
+                          <span className="block text-slate-600">下单超过次数</span>
+                          <input
+                            type="number"
+                            min={0}
+                            className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                            value={form.claimMinOrderCount}
+                            onChange={handleInputChange("claimMinOrderCount")}
+                            placeholder="0 表示不限制"
+                          />
+                        </label>
+                      </div>
+                    </div>
                   </div>
                   <div className="mt-3 grid gap-3 md:grid-cols-2">
                     {[
@@ -2249,7 +2295,17 @@ export default function MerchantCouponManager({
                   </div>
                 </div>
 
-                <div className="grid gap-3 md:grid-cols-3">
+                <div
+                  className={`grid gap-3 ${
+                    form.discountType === "product_voucher"
+                      ? "md:grid-cols-2 xl:grid-cols-5"
+                      : form.discountType === "stored_value" || form.discountType === "exchange_voucher"
+                        ? "md:grid-cols-2"
+                        : form.discountType === "ticket_voucher"
+                          ? "md:grid-cols-2"
+                        : "md:grid-cols-3"
+                  }`}
+                >
                   <label className="space-y-1 text-sm">
                     <span className="block text-slate-600">优惠类型</span>
                     <select
@@ -2264,29 +2320,135 @@ export default function MerchantCouponManager({
                       ))}
                     </select>
                   </label>
-                  <label className="space-y-1 text-sm">
-                    <span className="block text-slate-600">{discountValueLabel}</span>
-                    <input
-                      type="number"
-                      min={0}
-                      step={form.discountType === "percent_off" ? 1 : 0.01}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                      value={form.discountValue}
-                      onChange={handleInputChange("discountValue")}
-                    />
-                  </label>
-                  <label className="space-y-1 text-sm">
-                    <span className="block text-slate-600">门槛金额</span>
-                    <input
-                      type="number"
-                      min={0}
-                      step={0.01}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                      value={form.minimumAmount}
-                      onChange={handleInputChange("minimumAmount")}
-                      disabled={form.discountType === "amount_off"}
-                    />
-                  </label>
+                  {form.discountType === "product_voucher" ? (
+                    <>
+                      <label className="space-y-1 text-sm">
+                        <span className="block text-slate-600">商品名称</span>
+                        <input
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                          value={form.productName}
+                          onChange={handleInputChange("productName")}
+                          placeholder="例如：指定商品"
+                        />
+                      </label>
+                      <label className="space-y-1 text-sm">
+                        <span className="block text-slate-600">商品条码</span>
+                        <input
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                          value={form.productBarcode}
+                          onChange={handleInputChange("productBarcode")}
+                          placeholder="可选"
+                        />
+                      </label>
+                      <label className="space-y-1 text-sm">
+                        <span className="block text-slate-600">商品数量</span>
+                        <input
+                          type="number"
+                          min={0}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                          value={form.productQuantity}
+                          onChange={handleInputChange("productQuantity")}
+                          placeholder="可选"
+                        />
+                      </label>
+                      <label className="space-y-1 text-sm">
+                        <span className="block text-slate-600">商品金额</span>
+                        <input
+                          type="number"
+                          min={0}
+                          step={0.01}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                          value={form.productAmount}
+                          onChange={handleInputChange("productAmount")}
+                          placeholder="可选"
+                        />
+                      </label>
+                    </>
+                  ) : form.discountType === "stored_value" ? (
+                    <label className="space-y-1 text-sm">
+                      <span className="block text-slate-600">储值金额</span>
+                      <input
+                        type="number"
+                        min={0}
+                        step={0.01}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                        value={form.discountValue}
+                        onChange={handleInputChange("discountValue")}
+                      />
+                    </label>
+                  ) : form.discountType === "exchange_voucher" ? (
+                    <>
+                      <label className="space-y-1 text-sm">
+                        <span className="block text-slate-600">兑换项目</span>
+                        <input
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                          value={form.exchangeItem}
+                          onChange={handleInputChange("exchangeItem")}
+                          placeholder="填写项目内容"
+                        />
+                      </label>
+                      <label className="space-y-1 text-sm">
+                        <span className="block text-slate-600">项目数量</span>
+                        <input
+                          type="number"
+                          min={0}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                          value={form.exchangeQuantity}
+                          onChange={handleInputChange("exchangeQuantity")}
+                          placeholder="可选"
+                        />
+                      </label>
+                    </>
+                  ) : form.discountType === "ticket_voucher" ? (
+                    <>
+                      <label className="space-y-1 text-sm">
+                        <span className="block text-slate-600">场地</span>
+                        <input
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                          value={form.ticketVenue}
+                          onChange={handleInputChange("ticketVenue")}
+                          placeholder="填写场地名称"
+                        />
+                      </label>
+                      <label className="space-y-1 text-sm">
+                        <span className="block text-slate-600">时长（min）</span>
+                        <input
+                          type="number"
+                          min={0}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                          value={form.ticketDurationMinutes}
+                          onChange={handleInputChange("ticketDurationMinutes")}
+                          placeholder="单位：min"
+                        />
+                      </label>
+                    </>
+                  ) : (
+                    <>
+                      <label className="space-y-1 text-sm">
+                        <span className="block text-slate-600">{discountValueLabel}</span>
+                        <input
+                          type="number"
+                          min={0}
+                          step={form.discountType === "percent_off" ? 1 : 0.01}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                          value={form.discountValue}
+                          onChange={handleInputChange("discountValue")}
+                        />
+                      </label>
+                      <label className="space-y-1 text-sm">
+                        <span className="block text-slate-600">门槛金额</span>
+                        <input
+                          type="number"
+                          min={0}
+                          step={0.01}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                          value={form.minimumAmount}
+                          onChange={handleInputChange("minimumAmount")}
+                          disabled={form.discountType === "amount_off"}
+                        />
+                      </label>
+                    </>
+                  )}
                 </div>
               </CouponFormSection>
 

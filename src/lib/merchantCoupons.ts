@@ -61,6 +61,14 @@ export type MerchantCouponInput = {
   discountType?: MerchantCouponDiscountType;
   discountValue?: number;
   minimumAmount?: number;
+  productName?: string;
+  productBarcode?: string;
+  productQuantity?: number;
+  productAmount?: number;
+  exchangeItem?: string;
+  exchangeQuantity?: number;
+  ticketVenue?: string;
+  ticketDurationMinutes?: number;
   maxDiscountAmount?: number;
   totalQuantity?: number;
   claimedCount?: number;
@@ -349,6 +357,14 @@ export function normalizeMerchantCouponRecord(input: MerchantCouponInput | null 
     discountType,
     discountValue,
     minimumAmount,
+    productName: trimText(input?.productName),
+    productBarcode: trimText(input?.productBarcode),
+    productQuantity: normalizePositiveInt(input?.productQuantity),
+    productAmount: normalizeMoneyValue(input?.productAmount),
+    exchangeItem: trimText(input?.exchangeItem),
+    exchangeQuantity: normalizePositiveInt(input?.exchangeQuantity),
+    ticketVenue: trimText(input?.ticketVenue),
+    ticketDurationMinutes: normalizePositiveInt(input?.ticketDurationMinutes),
     maxDiscountAmount: normalizeMoneyValue(input?.maxDiscountAmount),
     totalQuantity: normalizePositiveInt(input?.totalQuantity),
     claimedCount: normalizePositiveInt(input?.claimedCount),
@@ -644,9 +660,9 @@ export function getMerchantCouponDiscountLabel(coupon: MerchantCouponRecord, pri
     const percent = Number.isInteger(coupon.discountValue) ? coupon.discountValue.toFixed(0) : coupon.discountValue.toFixed(1);
     return `${percent}% OFF`;
   }
-  if (coupon.discountType === "product_voucher") return "商品券";
-  if (coupon.discountType === "exchange_voucher") return "兑换券";
-  if (coupon.discountType === "ticket_voucher") return "门票券";
+  if (coupon.discountType === "product_voucher") return coupon.productName ? `商品券：${coupon.productName}` : "商品券";
+  if (coupon.discountType === "exchange_voucher") return coupon.exchangeItem ? `兑换券：${coupon.exchangeItem}` : "兑换券";
+  if (coupon.discountType === "ticket_voucher") return coupon.ticketVenue ? `门票券：${coupon.ticketVenue}` : "门票券";
   const amount = `${pricePrefix}${coupon.discountValue.toFixed(2)}`;
   if (coupon.discountType === "stored_value") return `储值 ${amount}`;
   if (coupon.discountType === "threshold_amount_off" && coupon.minimumAmount > 0) {
