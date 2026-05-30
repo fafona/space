@@ -155,6 +155,15 @@ function getInitialVisiblePageId(
     | undefined,
 ) {
   const pages = Array.isArray(plan?.pages) ? plan.pages : [];
+  if (typeof window !== "undefined") {
+    try {
+      const params = new URLSearchParams(window.location.search || "");
+      const requestedPageId = (params.get("couponPageId") || params.get("pageId") || params.get("page") || "").trim();
+      if (requestedPageId && pages.some((page) => page.id === requestedPageId)) return requestedPageId;
+    } catch {
+      // Fall back to the first public page when the URL cannot be parsed.
+    }
+  }
   const firstPage = pages.find((page) => page.id === "page-1") ?? pages[0];
   return firstPage?.id ?? "page-1";
 }

@@ -37,6 +37,7 @@ type MerchantCouponManagerProps = {
   siteId: string;
   siteName?: string;
   publicSiteUrl?: string;
+  couponPageId?: string;
   pricePrefix?: string;
   onCouponsChange?: (coupons: MerchantCouponRecord[]) => void;
   onClose?: () => void;
@@ -200,17 +201,30 @@ const EMPTY_FORM: CouponFormState = {
   applicableTags: "",
 };
 
-const STATUS_LABELS: Record<MerchantCouponStatus, string> = {
-  active: "启用",
-  paused: "暂停",
-  archived: "已删除",
+type CouponLifecycleStatus = "running" | "ended" | "paused" | "not_started";
+type CouponLifecycleStatusFilter = "all" | CouponLifecycleStatus;
+
+const COUPON_LIFECYCLE_STATUS_LABELS: Record<CouponLifecycleStatus, string> = {
+  running: "进行中",
+  ended: "已结束",
+  paused: "已暂停",
+  not_started: "未开始",
 };
 
-const STATUS_CLASS_NAMES: Record<MerchantCouponStatus, string> = {
-  active: "border-emerald-200 bg-emerald-50 text-emerald-700",
+const COUPON_LIFECYCLE_STATUS_CLASS_NAMES: Record<CouponLifecycleStatus, string> = {
+  running: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  ended: "border-slate-200 bg-slate-100 text-slate-500",
   paused: "border-amber-200 bg-amber-50 text-amber-700",
-  archived: "border-slate-200 bg-slate-100 text-slate-500",
+  not_started: "border-cyan-200 bg-cyan-50 text-cyan-700",
 };
+
+const COUPON_LIFECYCLE_STATUS_FILTER_OPTIONS: Array<{ value: CouponLifecycleStatusFilter; label: string }> = [
+  { value: "all", label: "全部状态" },
+  { value: "running", label: "进行中" },
+  { value: "not_started", label: "未开始" },
+  { value: "ended", label: "已结束" },
+  { value: "paused", label: "已暂停" },
+];
 
 const USAGE_SCENARIO_OPTIONS: Array<{
   value: MerchantCouponUsageScenario;
@@ -421,6 +435,14 @@ function formatDateTime(value: string | null | undefined) {
   });
 }
 
+function getCouponLifecycleStatus(coupon: MerchantCouponRecord, nowInput: Date | string = new Date()): CouponLifecycleStatus {
+  if (coupon.status !== "active") return "paused";
+  const now = nowInput instanceof Date ? nowInput.getTime() : new Date(nowInput).getTime();
+  if (coupon.startsAt && Date.parse(coupon.startsAt) > now) return "not_started";
+  if (coupon.expiresAt && Date.parse(coupon.expiresAt) < now) return "ended";
+  return "running";
+}
+
 function toNumberValue(value: string) {
   const next = Number.parseFloat(value);
   return Number.isFinite(next) ? Math.max(0, next) : 0;
@@ -487,15 +509,16 @@ function buildRecordDefaultMetaText(coupon: MerchantCouponRecord, pricePrefix: s
     .join("  ");
 }
 
-function buildCouponClaimUrl(publicSiteUrl: string | undefined, siteId: string, coupon: MerchantCouponRecord) {
+function buildCouponClaimUrl(publicSiteUrl: string | undefined, siteId: string, coupon: MerchantCouponRecord, couponPageId?: string) {
   if (typeof window === "undefined") return "";
   const fallbackPath = siteId ? `/site/${encodeURIComponent(siteId)}` : window.location.pathname;
   try {
     const url = new URL(publicSiteUrl?.trim() || fallbackPath, window.location.origin);
-    url.searchParams.set("claimCoupon", coupon.id);
-    if (coupon.code) {
-      url.searchParams.set("claimCode", coupon.code);
+    const targetPageId = couponPageId?.trim();
+    if (targetPageId) {
+      url.searchParams.set("couponPageId", targetPageId);
     }
+    url.searchParams.set("claimCoupon", coupon.id);
     url.hash = `coupon-${coupon.id}`;
     return url.toString();
   } catch {
@@ -508,10 +531,8 @@ function buildShareableCouponText(coupon: MerchantCouponRecord, pricePrefix: str
     siteName ? `【${siteName}】优惠券` : "优惠券",
     getMerchantCouponDisplayTitle(coupon),
     `优惠内容：${getMerchantCouponDiscountLabel(coupon, pricePrefix)}`,
-    `优惠码：${coupon.code}`,
     claimUrl ? `领取链接：${claimUrl}` : "",
     getMerchantCouponDisplayDescription(coupon) ? `说明：${getMerchantCouponDisplayDescription(coupon)}` : "",
-    `使用场景：${formatUsageScenarios(coupon.usageScenarios)}`,
     coupon.expiresAt ? `有效期至：${formatDateTime(coupon.expiresAt)}` : "",
   ];
   return lines.filter((line) => line.trim()).join("\n");
@@ -1007,6 +1028,7 @@ export default function MerchantCouponManager({
   siteId,
   siteName,
   publicSiteUrl,
+  couponPageId,
   pricePrefix = "",
   onCouponsChange,
   onClose,
@@ -1021,6 +1043,7 @@ export default function MerchantCouponManager({
   const [formOpen, setFormOpen] = useState(false);
   const [error, setError] = useState("");
   const [tip, setTip] = useState("");
+  const [couponStatusFilter, setCouponStatusFilter] = useState<CouponLifecycleStatusFilter>("all");
   const [selectedDisplayFields, setSelectedDisplayFields] = useState<MerchantCouponDisplayField[]>(["discount"]);
   const [locationOptionsApi, setLocationOptionsApi] = useState<EuropeLocationOptionsApi | null>(null);
   const [countryRuleInput, setCountryRuleInput] = useState("");
@@ -1050,8 +1073,19 @@ export default function MerchantCouponManager({
     [coupons],
   );
   const displayCoupons = useMemo(
-    () => coupons.filter((coupon) => coupon.status !== "archived"),
-    [coupons],
+    () =>
+      coupons
+        .filter((coupon) => coupon.status !== "archived")
+        .filter((coupon) => couponStatusFilter === "all" || getCouponLifecycleStatus(coupon) === couponStatusFilter)
+        .sort((left, right) => {
+          const leftCreatedAt = Date.parse(left.createdAt);
+          const rightCreatedAt = Date.parse(right.createdAt);
+          const leftTime = Number.isFinite(leftCreatedAt) ? leftCreatedAt : 0;
+          const rightTime = Number.isFinite(rightCreatedAt) ? rightCreatedAt : 0;
+          if (leftTime !== rightTime) return rightTime - leftTime;
+          return left.title.localeCompare(right.title, "zh-CN");
+        }),
+    [couponStatusFilter, coupons],
   );
   const formPreviewData = useMemo<CouponVisualCardData>(() => {
     const itemText: Record<MerchantCouponDisplayField, string> = {
@@ -1622,7 +1656,7 @@ export default function MerchantCouponManager({
 
   async function copyCoupon(coupon: MerchantCouponRecord) {
     try {
-      const claimUrl = buildCouponClaimUrl(publicSiteUrl, siteId, coupon);
+      const claimUrl = buildCouponClaimUrl(publicSiteUrl, siteId, coupon, couponPageId);
       await writeClipboardText(buildShareableCouponText(coupon, pricePrefix, siteName, claimUrl));
       setTip("优惠券已复制，可粘贴到其他应用发送");
     } catch {
@@ -1735,8 +1769,8 @@ export default function MerchantCouponManager({
             </div>
             <div className="flex shrink-0 items-center gap-2">
               {selectedCoupon ? (
-                <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${STATUS_CLASS_NAMES[selectedCoupon.status]}`}>
-                  {STATUS_LABELS[selectedCoupon.status]}
+                <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${COUPON_LIFECYCLE_STATUS_CLASS_NAMES[getCouponLifecycleStatus(selectedCoupon)]}`}>
+                  {COUPON_LIFECYCLE_STATUS_LABELS[getCouponLifecycleStatus(selectedCoupon)]}
                 </span>
               ) : null}
               <button
@@ -2411,12 +2445,28 @@ export default function MerchantCouponManager({
       ) : null}
 
       <section className="rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <div className="text-base font-semibold text-slate-900">优惠券列表</div>
               <div className="mt-1 text-xs text-slate-500">启用、未过期、且勾选网站展示的优惠券会显示到优惠券区块。</div>
             </div>
-            {listOnly ? (
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              <label className="sr-only" htmlFor="coupon-status-filter">
+                按状态筛选
+              </label>
+              <select
+                id="coupon-status-filter"
+                className="rounded border border-slate-300 bg-white px-3 py-2 text-xs outline-none hover:bg-slate-50 focus:border-slate-500"
+                value={couponStatusFilter}
+                onChange={(event) => setCouponStatusFilter(event.target.value as CouponLifecycleStatusFilter)}
+              >
+                {COUPON_LIFECYCLE_STATUS_FILTER_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              {listOnly ? (
               <button
                 type="button"
                 className="shrink-0 rounded border bg-white px-3 py-2 text-xs hover:bg-slate-50 disabled:opacity-50"
@@ -2425,7 +2475,8 @@ export default function MerchantCouponManager({
               >
                 {loading ? "刷新中" : "刷新"}
               </button>
-            ) : null}
+              ) : null}
+            </div>
           </div>
           {listOnly && error ? <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-600">{error}</div> : null}
           {listOnly && tip ? <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{tip}</div> : null}
@@ -2435,13 +2486,18 @@ export default function MerchantCouponManager({
               <div className="col-span-full rounded-xl border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-500">正在加载优惠券...</div>
             ) : displayCoupons.length === 0 ? (
               <div className="col-span-full rounded-xl border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-500">
-                还没有优惠券。先创建一张，并保持“网站区块展示”开启。
+                {couponStatusFilter === "all" ? "还没有优惠券。先创建一张，并保持“网站区块展示”开启。" : "当前状态下没有优惠券。"}
               </div>
             ) : (
               displayCoupons.map((coupon) => {
                 const selected = coupon.id === form.id;
                 const visualData = buildCouponVisualDataFromRecord(coupon, pricePrefix);
                 const totalQuantityLabel = coupon.totalQuantity > 0 ? String(coupon.totalQuantity) : "不限";
+                const lifecycleStatus = getCouponLifecycleStatus(coupon);
+                const displayScopes = [
+                  coupon.showOnWebsite ? "网站" : "",
+                  coupon.showOnContactCard ? "联系卡" : "",
+                ].filter(Boolean);
                 return (
                   <article
                     key={coupon.id}
@@ -2463,7 +2519,7 @@ export default function MerchantCouponManager({
                     >
                       <CouponVisualCard data={visualData} className="min-h-[188px]" />
                     </button>
-                      <div className="grid gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 sm:grid-cols-5">
+                      <div className="grid gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 sm:grid-cols-6">
                         <div className="min-w-0">
                           <span className="block text-[11px] text-slate-400">优惠类型</span>
                           <span className="mt-0.5 block truncate font-semibold text-slate-800">
@@ -2472,8 +2528,8 @@ export default function MerchantCouponManager({
                         </div>
                         <div className="min-w-0">
                           <span className="block text-[11px] text-slate-400">状态</span>
-                          <span className={`mt-0.5 inline-flex rounded-full border px-2 py-0.5 font-semibold ${STATUS_CLASS_NAMES[coupon.status]}`}>
-                            {STATUS_LABELS[coupon.status]}
+                          <span className={`mt-0.5 inline-flex rounded-full border px-2 py-0.5 font-semibold ${COUPON_LIFECYCLE_STATUS_CLASS_NAMES[lifecycleStatus]}`}>
+                            {COUPON_LIFECYCLE_STATUS_LABELS[lifecycleStatus]}
                           </span>
                         </div>
                         <div className="min-w-0">
@@ -2487,6 +2543,20 @@ export default function MerchantCouponManager({
                         <div className="min-w-0">
                           <span className="block text-[11px] text-slate-400">使用数量</span>
                           <span className="mt-0.5 block truncate font-semibold text-slate-800">{coupon.usedCount}</span>
+                        </div>
+                        <div className="min-w-0">
+                          <span className="block text-[11px] text-slate-400">展示范围</span>
+                          <span className="mt-0.5 flex flex-wrap gap-1">
+                            {displayScopes.length > 0 ? (
+                              displayScopes.map((scope) => (
+                                <span key={scope} className="inline-flex rounded-full border border-cyan-200 bg-cyan-50 px-2 py-0.5 font-semibold text-cyan-700">
+                                  {scope}
+                                </span>
+                              ))
+                            ) : (
+                              <span className="font-semibold text-slate-500">未展示</span>
+                            )}
+                          </span>
                         </div>
                       </div>
                       <div className="flex shrink-0 flex-wrap justify-end gap-2">

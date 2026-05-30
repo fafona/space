@@ -4716,6 +4716,16 @@ function formatSupportUrlLabel(value: string | null | undefined) {
   }
 }
 
+function findFirstCouponPageIdInPlanConfig(planConfig: PagePlanConfig | null | undefined) {
+  const activePlan = planConfig?.plans.find((plan) => plan.id === planConfig.activePlanId) ?? planConfig?.plans[0];
+  const pages = activePlan?.pages?.length
+    ? activePlan.pages
+    : activePlan
+      ? [{ id: activePlan.activePageId, blocks: getBlocksForPage(activePlan, activePlan.activePageId) }]
+      : [];
+  return pages.find((page) => page.blocks.some((block) => block.type === "coupon"))?.id ?? "";
+}
+
 function isSupportIpOrLocalHost(value: string) {
   return (
     /^https?:\/\/(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?(?:\/|$)/i.test(value) ||
@@ -15620,6 +15630,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     ? editingPlan.pages
     : [{ id: "page-1", name: "页面1", blocks: editingPlan?.blocks ?? defaultEditorBlocks }];
   const editingPageIndex = Math.max(0, editingPages.findIndex((page) => page.id === editingPageId));
+  const merchantCouponPageId =
+    findFirstCouponPageIdInPlanConfig(planConfig) ||
+    findFirstCouponPageIdInPlanConfig(viewportStatesRef.current.desktop.planConfig) ||
+    findFirstCouponPageIdInPlanConfig(viewportStatesRef.current.mobile.planConfig);
   const editorAvailablePagesKey = editingPages
     .map((page) => `${page.id}:${toPlainText(page.name, page.id)}`)
     .join("||");
@@ -17222,6 +17236,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 siteId={editingSiteId || ""}
                 siteName={effectiveMerchantDisplayName || merchantDisplayName}
                 publicSiteUrl={supportSelfWebsiteHref}
+                couponPageId={merchantCouponPageId}
                 onCouponsChange={setMerchantCouponRecords}
                 listOnly
                 className="faolla-mobile-coupon-list"
@@ -18271,6 +18286,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           siteId: editingSiteId || "",
           siteName: effectiveMerchantDisplayName || merchantDisplayName,
           publicSiteUrl: supportSelfWebsiteHref,
+          couponPageId: merchantCouponPageId,
           onCouponsChange: setMerchantCouponRecords,
         }
       : null;
