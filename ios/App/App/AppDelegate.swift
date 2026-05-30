@@ -1,6 +1,7 @@
 import UIKit
 import Capacitor
 import WebKit
+import Photos
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate, WKScriptMessageHandler {
@@ -155,13 +156,20 @@ class AppDelegate: UIResponder, UIApplicationDelegate, WKScriptMessageHandler {
         (() => {
           if (window.__faollaIosLaunchBridgeInstalled) return;
           window.__faollaIosLaunchBridgeInstalled = true;
-          const post = (action) => {
+          const post = (action, payload) => {
             try {
               window.webkit &&
                 window.webkit.messageHandlers &&
                 window.webkit.messageHandlers.faollaNativeUpdates &&
-                window.webkit.messageHandlers.faollaNativeUpdates.postMessage({ action });
+                window.webkit.messageHandlers.faollaNativeUpdates.postMessage(Object.assign({ action }, payload || {}));
             } catch (_) {}
+          };
+          const galleryCallbacks = {};
+          window.__faollaNativeResolveGallerySave = (requestId, ok, message) => {
+            const callback = galleryCallbacks[requestId];
+            if (!callback) return;
+            delete galleryCallbacks[requestId];
+            callback({ ok: ok === true, message: typeof message === "string" ? message : "" });
           };
           const previous = window.FaollaNativeUpdates || {};
           window.FaollaNativeUpdates = Object.assign({}, previous, {
@@ -176,7 +184,17 @@ class AppDelegate: UIResponder, UIApplicationDelegate, WKScriptMessageHandler {
                 if (previous && typeof previous.showLaunchCover === "function") previous.showLaunchCover();
               } catch (_) {}
               post("showLaunchCover");
-            }
+            },
+            saveImageToGallery: (payload) => new Promise((resolve) => {
+              const requestId = `gallery-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+              galleryCallbacks[requestId] = resolve;
+              post("saveImageToGallery", { requestId, payload });
+              setTimeout(() => {
+                if (!galleryCallbacks[requestId]) return;
+                delete galleryCallbacks[requestId];
+                resolve({ ok: false, message: "gallery_save_timeout" });
+              }, 12000);
+            })
           });
         })();
         """
@@ -187,6 +205,71 @@ class AppDelegate: UIResponder, UIApplicationDelegate, WKScriptMessageHandler {
         )
         webView.evaluateJavaScript(source, completionHandler: nil)
         launchBridgeInstalled = true
+    }
+
+    private func resolveGallerySaveRequest(_ requestId: String, ok: Bool, message: String) {
+        guard let bridgeViewController = window?.rootViewController as? CAPBridgeViewController,
+              let webView = bridgeViewController.webView else {
+            return
+        }
+        let args: String
+        if let data = try? JSONSerialization.data(withJSONObject: [requestId, ok, message], options: []),
+           let encoded = String(data: data, encoding: .utf8) {
+            args = encoded
+        } else {
+            args = "[\"\",false,\"gallery_save_failed\"]"
+        }
+        DispatchQueue.main.async {
+            webView.evaluateJavaScript(
+                "window.__faollaNativeResolveGallerySave && window.__faollaNativeResolveGallerySave.apply(window, \(args));",
+                completionHandler: nil
+            )
+        }
+    }
+
+    private func saveImageToGallery(payloadJson: String, requestId: String) {
+        guard let payloadData = payloadJson.data(using: .utf8),
+              let payload = try? JSONSerialization.jsonObject(with: payloadData) as? [String: Any],
+              let rawDataUrl = payload["dataUrl"] as? String else {
+            resolveGallerySaveRequest(requestId, ok: false, message: "图片数据为空")
+            return
+        }
+        let base64 = rawDataUrl.split(separator: ",", maxSplits: 1).last.map(String.init) ?? rawDataUrl
+        guard let imageData = Data(base64Encoded: base64),
+              let image = UIImage(data: imageData) else {
+            resolveGallerySaveRequest(requestId, ok: false, message: "图片数据为空")
+            return
+        }
+
+        let saveChanges = {
+            PHPhotoLibrary.shared().performChanges({
+                PHAssetChangeRequest.creationRequestForAsset(from: image)
+            }) { success, error in
+                self.resolveGallerySaveRequest(
+                    requestId,
+                    ok: success,
+                    message: success ? "已保存至相册" : (error?.localizedDescription ?? "相册保存失败")
+                )
+            }
+        }
+
+        if #available(iOS 14, *) {
+            PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+                if status == .authorized || status == .limited {
+                    saveChanges()
+                } else {
+                    self.resolveGallerySaveRequest(requestId, ok: false, message: "没有相册写入权限")
+                }
+            }
+        } else {
+            PHPhotoLibrary.requestAuthorization { status in
+                if status == .authorized {
+                    saveChanges()
+                } else {
+                    self.resolveGallerySaveRequest(requestId, ok: false, message: "没有相册写入权限")
+                }
+            }
+        }
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -201,6 +284,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate, WKScriptMessageHandler {
                 self.hideNativeLaunchCover()
             } else if action == "showLaunchCover" {
                 self.showNativeLaunchCover()
+            } else if action == "saveImageToGallery" {
+                let requestId = body["requestId"] as? String ?? ""
+                let payload = body["payload"] as? String ?? ""
+                self.saveImageToGallery(payloadJson: payload, requestId: requestId)
             }
         }
     }

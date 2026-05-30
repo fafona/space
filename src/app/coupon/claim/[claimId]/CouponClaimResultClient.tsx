@@ -15,6 +15,18 @@ type CouponClaimResultClientProps = {
   validUntilLabel: string;
 };
 
+type NativeGallerySaveResult = boolean | string | { ok?: unknown; success?: unknown; message?: unknown } | Promise<unknown>;
+
+type NativeGalleryBridge = {
+  saveImageToGallery?: (payloadJson: string) => NativeGallerySaveResult;
+  saveImageToAlbum?: (payloadJson: string) => NativeGallerySaveResult;
+  saveImage?: (payloadJson: string) => NativeGallerySaveResult;
+};
+
+type NativeGalleryWindow = Window & {
+  FaollaNativeUpdates?: NativeGalleryBridge;
+};
+
 function buildFileName(parts: string[]) {
   return `${parts
     .map((part) => part.trim().replace(/[\\/:*?"<>|]+/g, "-"))
@@ -50,6 +62,59 @@ function downloadDataUrl(dataUrl: string, fileName: string) {
   link.remove();
 }
 
+function parseNativeGallerySaveResult(result: unknown) {
+  if (result === true || result === undefined || result === null) return { ok: true, message: "" };
+  if (typeof result === "string") {
+    const normalized = result.trim();
+    if (!normalized) return { ok: true, message: "" };
+    if (normalized === "true" || normalized === "ok" || normalized === "success") return { ok: true, message: "" };
+    try {
+      const parsed = JSON.parse(normalized) as { ok?: unknown; success?: unknown; message?: unknown };
+      return {
+        ok: parsed.ok === true || parsed.success === true,
+        message: typeof parsed.message === "string" ? parsed.message : "",
+      };
+    } catch {
+      return { ok: false, message: normalized };
+    }
+  }
+  if (typeof result === "object") {
+    const parsed = result as { ok?: unknown; success?: unknown; message?: unknown };
+    return {
+      ok: parsed.ok === true || parsed.success === true,
+      message: typeof parsed.message === "string" ? parsed.message : "",
+    };
+  }
+  return { ok: false, message: "" };
+}
+
+async function saveImageToNativeGallery(dataUrl: string, fileName: string) {
+  const bridge = typeof window !== "undefined" ? (window as NativeGalleryWindow).FaollaNativeUpdates : undefined;
+  const save =
+    typeof bridge?.saveImageToGallery === "function"
+      ? bridge.saveImageToGallery.bind(bridge)
+      : typeof bridge?.saveImageToAlbum === "function"
+        ? bridge.saveImageToAlbum.bind(bridge)
+        : typeof bridge?.saveImage === "function"
+          ? bridge.saveImage.bind(bridge)
+          : null;
+
+  if (!save) return { attempted: false, ok: false, message: "" };
+
+  const result = await Promise.resolve(
+    save(
+      JSON.stringify({
+        dataUrl,
+        fileName,
+        mimeType: "image/png",
+        album: "Faolla",
+      }),
+    ),
+  );
+  const parsed = parseNativeGallerySaveResult(result);
+  return { attempted: true, ...parsed };
+}
+
 export default function CouponClaimResultClient({
   merchantName,
   title,
@@ -63,26 +128,44 @@ export default function CouponClaimResultClient({
 }: CouponClaimResultClientProps) {
   const captureRef = useRef<HTMLElement | null>(null);
   const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState("");
+  const [saveMessage, setSaveMessage] = useState("");
+  const [saveMessageTone, setSaveMessageTone] = useState<"ok" | "error">("ok");
+
+  const showSaveMessage = (message: string, tone: "ok" | "error" = "ok") => {
+    setSaveMessage(message);
+    setSaveMessageTone(tone);
+  };
 
   const saveCouponPage = async () => {
     const node = captureRef.current;
     if (!node || saving) return;
     setSaving(true);
-    setSaveError("");
+    setSaveMessage("");
     try {
       await waitForImages(node);
       if (typeof document.fonts?.ready?.then === "function") {
         await document.fonts.ready.catch(() => undefined);
       }
+      const fileName = buildFileName([merchantName, title, "优惠券"]);
       const dataUrl = await toPng(node, {
         pixelRatio: 2,
         cacheBust: true,
         backgroundColor: "#ffffff",
       });
-      downloadDataUrl(dataUrl, buildFileName([merchantName, title, "优惠券"]));
+      const nativeResult = await saveImageToNativeGallery(dataUrl, fileName);
+      if (nativeResult.attempted && nativeResult.ok) {
+        showSaveMessage("已保存至相册");
+        return;
+      }
+      if (nativeResult.attempted && !nativeResult.ok) {
+        showSaveMessage(nativeResult.message || "相册保存失败，已改为下载图片。", "error");
+      }
+      downloadDataUrl(dataUrl, fileName);
+      if (!nativeResult.attempted) {
+        showSaveMessage("当前浏览器不支持直接写入相册，已下载图片。");
+      }
     } catch {
-      setSaveError("保存失败，请稍后重试。");
+      showSaveMessage("保存失败，请稍后重试。", "error");
     } finally {
       setSaving(false);
     }
@@ -126,9 +209,13 @@ export default function CouponClaimResultClient({
           onClick={() => void saveCouponPage()}
           disabled={saving}
         >
-          {saving ? "正在生成图片" : "保存至相册"}
+          {saving ? "正在保存" : "保存至相册"}
         </button>
-        {saveError ? <div className="mt-2 text-center text-xs text-rose-600">{saveError}</div> : null}
+        {saveMessage ? (
+          <div className={`mt-2 text-center text-xs ${saveMessageTone === "ok" ? "text-emerald-700" : "text-rose-600"}`}>
+            {saveMessage}
+          </div>
+        ) : null}
       </div>
     </main>
   );

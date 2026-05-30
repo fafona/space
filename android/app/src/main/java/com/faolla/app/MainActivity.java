@@ -7,6 +7,7 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.ActivityNotFoundException;
+import android.content.ContentValues;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -26,6 +27,8 @@ import android.os.Looper;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.provider.Settings;
+import android.provider.MediaStore;
+import android.util.Base64;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -48,6 +51,7 @@ import androidx.core.splashscreen.SplashScreen;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 import com.getcapacitor.BridgeActivity;
+import java.io.OutputStream;
 import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
@@ -1234,6 +1238,66 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
+    private String saveImageDataUrlToGallery(String payloadJson) {
+        try {
+            JSONObject payload = new JSONObject(payloadJson == null ? "{}" : payloadJson);
+            String dataUrl = payload.optString("dataUrl", "").trim();
+            String mimeType = payload.optString("mimeType", "image/png").trim();
+            String fileName = payload.optString("fileName", "faolla-coupon.png").trim();
+            if (fileName.isEmpty()) {
+                fileName = "faolla-coupon.png";
+            }
+            if (!fileName.toLowerCase().endsWith(".png")) {
+                fileName = fileName + ".png";
+            }
+
+            int commaIndex = dataUrl.indexOf(',');
+            String base64 = commaIndex >= 0 ? dataUrl.substring(commaIndex + 1) : dataUrl;
+            if (base64.trim().isEmpty()) {
+                return "{\"ok\":false,\"message\":\"图片数据为空\"}";
+            }
+            byte[] imageBytes = Base64.decode(base64, Base64.DEFAULT);
+            if (imageBytes.length == 0) {
+                return "{\"ok\":false,\"message\":\"图片数据为空\"}";
+            }
+
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.Images.Media.DISPLAY_NAME, fileName);
+            values.put(MediaStore.Images.Media.MIME_TYPE, mimeType.isEmpty() ? "image/png" : mimeType);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                values.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Faolla");
+                values.put(MediaStore.Images.Media.IS_PENDING, 1);
+            }
+
+            Uri imageUri = getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+            if (imageUri == null) {
+                return "{\"ok\":false,\"message\":\"相册写入失败\"}";
+            }
+
+            try (OutputStream outputStream = getContentResolver().openOutputStream(imageUri)) {
+                if (outputStream == null) {
+                    getContentResolver().delete(imageUri, null, null);
+                    return "{\"ok\":false,\"message\":\"相册写入失败\"}";
+                }
+                outputStream.write(imageBytes);
+            } catch (Exception writeError) {
+                getContentResolver().delete(imageUri, null, null);
+                return "{\"ok\":false,\"message\":\"相册写入失败\"}";
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ContentValues completeValues = new ContentValues();
+                completeValues.put(MediaStore.Images.Media.IS_PENDING, 0);
+                getContentResolver().update(imageUri, completeValues, null, null);
+            } else {
+                sendBroadcast(new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, imageUri));
+            }
+            return "{\"ok\":true,\"message\":\"已保存至相册\"}";
+        } catch (Exception error) {
+            return "{\"ok\":false,\"message\":\"相册保存失败\"}";
+        }
+    }
+
     private class FaollaUpdateBridge {
         @JavascriptInterface
         public void hideLaunchCover() {
@@ -1270,6 +1334,11 @@ public class MainActivity extends BridgeActivity {
         @JavascriptInterface
         public void configureNotificationSync(String payloadJson) {
             runOnUiThread(() -> MainActivity.this.configureNativeNotificationSync(payloadJson));
+        }
+
+        @JavascriptInterface
+        public String saveImageToGallery(String payloadJson) {
+            return MainActivity.this.saveImageDataUrlToGallery(payloadJson);
         }
 
         @JavascriptInterface
