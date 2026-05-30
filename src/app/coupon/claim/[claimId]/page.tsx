@@ -7,6 +7,7 @@ import {
   type MerchantCouponClaimEvent,
 } from "@/lib/merchantCoupons";
 import { listMerchantCoupons } from "@/lib/merchantCoupons.server";
+import { loadCurrentMerchantSnapshotSiteBySiteId } from "@/lib/publishedMerchantService";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -76,11 +77,13 @@ export default async function CouponClaimResultPage({
     claimEvent.settlementType === "barcode"
       ? buildBarcodeSvg(claimEvent.settlementCode)
       : await QRCode.toDataURL(claimEvent.settlementCode, { margin: 1, width: 260, errorCorrectionLevel: "M" });
+  const site = await loadCurrentMerchantSnapshotSiteBySiteId(siteId).catch(() => null);
+  const merchantName = trimText(site?.merchantName) || trimText(site?.name) || siteId;
 
   return (
     <main className="min-h-screen bg-slate-100 px-4 py-8 text-slate-950">
       <section className="mx-auto max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="text-sm font-semibold text-emerald-700">领取成功</div>
+        <div className="text-sm font-semibold text-slate-500">{merchantName}</div>
         <h1 className="mt-2 text-2xl font-bold">{title}</h1>
         <div className="mt-2 text-base font-semibold text-rose-600">{discount}</div>
         {description ? <p className="mt-3 text-sm leading-6 text-slate-600">{description}</p> : null}
@@ -92,9 +95,13 @@ export default async function CouponClaimResultPage({
           <div className="mt-3 break-all rounded-lg bg-white px-3 py-2 font-mono text-xs text-slate-600">{claimEvent.settlementCode}</div>
         </div>
 
-        <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800">
-          请截图保存本页。到店或结算时向商家出示上方核销码。
-        </div>
+        <a
+          className="mt-5 inline-flex h-11 w-full items-center justify-center rounded-xl bg-slate-950 px-4 text-sm font-semibold text-white hover:bg-slate-800"
+          href={codeImage}
+          download={`${merchantName}-${title}-核销码.${claimEvent.settlementType === "barcode" ? "svg" : "png"}`}
+        >
+          保存至相册
+        </a>
 
         <dl className="mt-5 grid gap-2 text-sm">
           <div className="flex justify-between gap-4">

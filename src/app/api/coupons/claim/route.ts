@@ -271,6 +271,9 @@ export async function POST(request: Request) {
       couponId,
       beforeClaim: async (current) => {
         claimSession = await assertCouponClaimIdentityAllowed(current, request, claimCode, now);
+        if (!claimSession) {
+          claimSession = await resolvePersonalAccountSessionFromRequest(request).catch(() => null);
+        }
         claimEventId = `CE${now.getTime().toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
         settlementType = merchantCouponSupportsUsageScenario(current, "checkout_barcode") && !merchantCouponSupportsUsageScenario(current, "checkout_qr") ? "barcode" : "qr";
         settlementCode = buildMerchantCouponSettlementCode(
