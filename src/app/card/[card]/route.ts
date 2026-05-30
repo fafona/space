@@ -1148,7 +1148,9 @@ function buildInlineI18nScript() {
         const couponId = String(target.dataset.claimCouponId || "").trim();
         const siteId = String(target.dataset.claimSiteId || "").trim();
         if (!couponId || !siteId) return;
+        const originalText = target.textContent || "";
         target.setAttribute("disabled", "disabled");
+        target.textContent = "\u6b63\u5728\u9886\u53d6...";
         try {
           const response = await fetch("/api/coupons/claim", {
             method: "POST",
@@ -1175,6 +1177,7 @@ function buildInlineI18nScript() {
           showWechatToast("\u5df2\u9886\u53d6");
         } catch (claimError) {
           target.removeAttribute("disabled");
+          target.textContent = originalText;
           if (String(claimError && claimError.message ? claimError.message : "").includes("coupon_login_required")) {
             const redirect = encodeURIComponent(window.location.pathname + window.location.search + window.location.hash);
             window.location.assign("/login?accountType=personal&redirect=" + redirect);

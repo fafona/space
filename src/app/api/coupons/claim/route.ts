@@ -17,6 +17,7 @@ import { readPersonalCustomerProfileFromSession } from "@/lib/personalCustomerPr
 import { resolvePersonalAccountSessionFromRequest, type PersonalAccountSession } from "@/lib/personalAccountSession.server";
 import { loadCurrentMerchantSnapshotSiteBySiteId } from "@/lib/publishedMerchantService";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
+import { readMerchantAuthAccountTypeCookie } from "@/lib/merchantAuthSession";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -40,6 +41,18 @@ function readProfileText(profile: Record<string, unknown>, ...keys: string[]) {
     if (typeof value === "string" && value.trim()) return value.trim();
   }
   return "";
+}
+
+function shouldTryOptionalPersonalSession(request: Request) {
+  return readMerchantAuthAccountTypeCookie(request) !== "merchant";
+}
+
+function toClaimResponseCoupon(coupon: MerchantCouponRecord): MerchantCouponRecord {
+  return {
+    ...coupon,
+    claimEvents: [],
+    redeemEvents: [],
+  };
 }
 
 function parseDateTimeWindow(value: string) {
@@ -271,7 +284,7 @@ export async function POST(request: Request) {
       couponId,
       beforeClaim: async (current) => {
         claimSession = await assertCouponClaimIdentityAllowed(current, request, claimCode, now);
-        if (!claimSession) {
+        if (!claimSession && shouldTryOptionalPersonalSession(request)) {
           claimSession = await resolvePersonalAccountSessionFromRequest(request).catch(() => null);
         }
         claimEventId = `CE${now.getTime().toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
@@ -317,7 +330,7 @@ export async function POST(request: Request) {
     await addFavoriteSite(claimSession, { siteId, siteName: trimText(body?.siteName), pageUrl: trimText(body?.pageUrl, 1200), claimedCoupon });
     return NextResponse.json({
       ok: true,
-      coupon,
+      coupon: toClaimResponseCoupon(coupon),
       claimEventId,
       claimResultUrl: `/coupon/claim/${encodeURIComponent(claimEventId)}?siteId=${encodeURIComponent(siteId)}&couponId=${encodeURIComponent(couponId)}`,
       savedToAccount: Boolean(claimedCoupon),
