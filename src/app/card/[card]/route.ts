@@ -2742,6 +2742,7 @@ function buildShareCardHtml(input: {
       let closed = false;
       let started = false;
       let mutedFallbackActive = false;
+      let errorRetryCount = 0;
       const showUnmutePrompt = () => {
         if (closed || introMuted) return;
         overlay.classList.add("show-unmute-tip");
@@ -2811,6 +2812,7 @@ function buildShareCardHtml(input: {
       };
       const markPlaying = () => {
         started = true;
+        errorRetryCount = 0;
         overlay.classList.add("is-playing");
       };
       const playIntro = (options = {}) => {
@@ -2874,8 +2876,30 @@ function buildShareCardHtml(input: {
         event.stopPropagation();
         closeIntro();
       });
-      video.addEventListener("ended", closeIntro, { once: true });
-      video.addEventListener("error", closeIntro, { once: true });
+      video.addEventListener("ended", () => {
+        const duration = Number(video.duration) || 0;
+        const currentTime = Number(video.currentTime) || 0;
+        if (duration > 0 && currentTime >= Math.max(0.1, duration - 0.35)) {
+          closeIntro();
+          return;
+        }
+        started = false;
+        overlay.classList.remove("is-playing");
+        window.setTimeout(() => {
+          if (!closed) void playThroughBridge({ forceMuted: true, reload: true });
+        }, 120);
+      });
+      video.addEventListener("error", () => {
+        if (closed) return;
+        started = false;
+        overlay.classList.remove("is-playing");
+        if (errorRetryCount < 3) {
+          errorRetryCount += 1;
+          window.setTimeout(() => {
+            if (!closed) void playThroughBridge({ forceMuted: true, reload: true });
+          }, 240 * errorRetryCount);
+        }
+      });
       video.addEventListener("loadeddata", () => {
         if (!video.paused || video.currentTime > 0.05) {
           markPlaying();
