@@ -13,6 +13,10 @@ export async function GET() {
       return NextResponse.json({
         ok: true,
         blocks,
+      }, {
+        headers: {
+          "Cache-Control": "public, s-maxage=30, stale-while-revalidate=120",
+        },
       });
     }
     return NextResponse.json({ error: error || "platform_published_not_found" }, { status: 404 });

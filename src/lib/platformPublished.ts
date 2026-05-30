@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { unstable_cache } from "next/cache";
 import type { Block, MerchantListPublishedSite } from "@/data/homeBlocks";
 import {
   createDefaultMerchantPermissionConfig,
@@ -235,6 +236,27 @@ export function mergePublishedMerchantSnapshots(
   });
 }
 
+function toPublicMerchantListSnapshotSite(site: MerchantListPublishedSite): MerchantListPublishedSite {
+  return {
+    id: site.id,
+    merchantName: site.merchantName,
+    domainPrefix: site.domainPrefix,
+    domainSuffix: site.domainSuffix,
+    name: site.name,
+    domain: site.domain,
+    category: site.category,
+    industry: site.industry,
+    location: site.location,
+    merchantCardImageUrl: site.merchantCardImageUrl,
+    merchantCardImageOpacity: site.merchantCardImageOpacity,
+    chatAvatarImageUrl: site.chatAvatarImageUrl,
+    status: site.status,
+    serviceExpiresAt: site.serviceExpiresAt,
+    sortConfig: site.sortConfig,
+    createdAt: site.createdAt,
+  };
+}
+
 export function buildPublishedMerchantSnapshotFromRows(
   pageRows: PublishedMerchantPageRow[],
   merchantRows: PublishedMerchantProfileRow[],
@@ -444,10 +466,7 @@ export function injectPublishedMerchantSnapshotIntoBlocks(
   defaultSortRule: MerchantSortRule = "created_desc",
   options?: { forceReplace?: boolean },
 ): Block[] {
-  const publicSnapshot = snapshot.map((site) => ({
-    ...site,
-    businessCards: undefined,
-  }));
+  const publicSnapshot = snapshot.map(toPublicMerchantListSnapshotSite);
   return blocks.map((block) => {
     const nextProps = { ...(block.props ?? {}) } as Record<string, unknown>;
     let changed = false;
@@ -689,6 +708,12 @@ async function loadPublishedPlatformHomeBlocksUncached(): Promise<PublishedPlatf
   return { blocks: null, error: scopedMessage || "platform_published_not_found" };
 }
 
+const loadPublishedPlatformHomeBlocksFromNextCache = unstable_cache(
+  loadPublishedPlatformHomeBlocksUncached,
+  ["published-platform-home-blocks-v1"],
+  { revalidate: Math.ceil(PUBLISHED_PLATFORM_HOME_BLOCKS_CACHE_TTL_MS / 1000) },
+);
+
 export async function loadPublishedPlatformHomeBlocks(): Promise<PublishedPlatformBlocksResult> {
   const now = Date.now();
   if (publishedPlatformHomeBlocksCache && publishedPlatformHomeBlocksCache.expiresAt > now) {
@@ -696,7 +721,7 @@ export async function loadPublishedPlatformHomeBlocks(): Promise<PublishedPlatfo
     if (publishedPlatformHomeBlocksCache.pending) return publishedPlatformHomeBlocksCache.pending;
   }
 
-  const pending = loadPublishedPlatformHomeBlocksUncached();
+  const pending = loadPublishedPlatformHomeBlocksFromNextCache();
   publishedPlatformHomeBlocksCache = {
     expiresAt: now + PUBLISHED_PLATFORM_HOME_BLOCKS_CACHE_TTL_MS,
     pending,

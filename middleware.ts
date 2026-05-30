@@ -191,13 +191,23 @@ function pickResolvedSiteRow(rows: SiteResolveRow[]) {
 
 function shouldNoStoreAppShellPath(pathname: string) {
   return (
-    pathname === "/" ||
     pathname === "/launch" ||
     pathname === "/admin" ||
     pathname === "/me" ||
     pathname === "/login" ||
     pathname.startsWith("/me/") ||
     /^\/\d{8}(?:\/|$)/.test(pathname)
+  );
+}
+
+function shouldNoStoreRootRequest(request: NextRequest) {
+  if (request.nextUrl.pathname !== "/") return false;
+  const params = request.nextUrl.searchParams;
+  return (
+    params.get("appShell") === "faolla" ||
+    params.get("nativeStart") === "1" ||
+    params.has("nativeBuild") ||
+    params.has("__faollaInlineBuild")
   );
 }
 
@@ -259,8 +269,8 @@ function buildFaollaSectionRedirectUrl(request: NextRequest) {
   return targetUrl;
 }
 
-function withAppShellNoStore(response: NextResponse, pathname: string) {
-  if (!shouldNoStoreAppShellPath(pathname)) return response;
+function withAppShellNoStore(response: NextResponse, request: NextRequest) {
+  if (!shouldNoStoreAppShellPath(request.nextUrl.pathname) && !shouldNoStoreRootRequest(request)) return response;
   response.headers.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
   response.headers.set("Pragma", "no-cache");
   response.headers.set("Expires", "0");
@@ -341,12 +351,12 @@ export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const launchSessionRedirectUrl = buildLaunchSessionRedirectUrl(request);
   if (launchSessionRedirectUrl) {
-    return withAppShellNoStore(NextResponse.redirect(launchSessionRedirectUrl), pathname);
+    return withAppShellNoStore(NextResponse.redirect(launchSessionRedirectUrl), request);
   }
 
   const faollaSectionRedirectUrl = buildFaollaSectionRedirectUrl(request);
   if (faollaSectionRedirectUrl) {
-    return withAppShellNoStore(NextResponse.redirect(faollaSectionRedirectUrl), pathname);
+    return withAppShellNoStore(NextResponse.redirect(faollaSectionRedirectUrl), request);
   }
 
   const segments = pathname.split("/").filter(Boolean);
@@ -356,10 +366,10 @@ export async function middleware(request: NextRequest) {
     rewriteUrl.pathname = "/admin";
     rewriteUrl.searchParams.set("scope", `site-${segments[0]}`);
     rewriteUrl.searchParams.set(INTERNAL_MERCHANT_REWRITE_PARAM, "1");
-    return withAppShellNoStore(NextResponse.rewrite(rewriteUrl), pathname);
+    return withAppShellNoStore(NextResponse.rewrite(rewriteUrl), request);
   }
 
-  if (pathname !== "/" && segments.length !== 1) return withAppShellNoStore(NextResponse.next(), pathname);
+  if (pathname !== "/" && segments.length !== 1) return withAppShellNoStore(NextResponse.next(), request);
 
   const rewriteToPublishedSite = async (prefix: string) => {
     const resolvedSiteId = await resolveSiteIdByPrefix(prefix, request);
@@ -371,21 +381,21 @@ export async function middleware(request: NextRequest) {
 
   if (segments.length === 1) {
     const firstSegment = normalizeDomainPrefix(segments[0] ?? "");
-    if (!firstSegment || RESERVED_PATH_SEGMENTS.has(firstSegment)) return withAppShellNoStore(NextResponse.next(), pathname);
-    return withAppShellNoStore((await rewriteToPublishedSite(firstSegment)) ?? NextResponse.next(), pathname);
+    if (!firstSegment || RESERVED_PATH_SEGMENTS.has(firstSegment)) return withAppShellNoStore(NextResponse.next(), request);
+    return withAppShellNoStore((await rewriteToPublishedSite(firstSegment)) ?? NextResponse.next(), request);
   }
 
   const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? "";
   const baseDomain = process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "";
   const domainPrefix = extractMerchantPrefixFromHost(host, baseDomain) || getFallbackPrefixFromHost(host);
-  if (!domainPrefix) return withAppShellNoStore(NextResponse.next(), pathname);
+  if (!domainPrefix) return withAppShellNoStore(NextResponse.next(), request);
 
   const resolvedPrefixRewrite = await rewriteToPublishedSite(domainPrefix);
-  if (resolvedPrefixRewrite) return withAppShellNoStore(resolvedPrefixRewrite, pathname);
+  if (resolvedPrefixRewrite) return withAppShellNoStore(resolvedPrefixRewrite, request);
 
   const rewriteUrl = request.nextUrl.clone();
   rewriteUrl.pathname = `/${encodeURIComponent(domainPrefix)}`;
-  return withAppShellNoStore(NextResponse.rewrite(rewriteUrl), pathname);
+  return withAppShellNoStore(NextResponse.rewrite(rewriteUrl), request);
 }
 
 export const config = {

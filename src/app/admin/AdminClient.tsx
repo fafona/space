@@ -831,6 +831,10 @@ const PAGE_BACKGROUND_IMAGE_COMPRESSION_OPTIONS = {
   desktop: { label: "PC背景", maxSide: 2200, quality: 0.8 },
   mobile: { label: "手机背景", maxSide: 1400, quality: 0.76 },
 } as const;
+const PAGE_BACKGROUND_IMAGE_LIMIT_BYTES = {
+  desktop: 480 * 1024,
+  mobile: 220 * 1024,
+} as const;
 type ThemePresetKey = "none" | "cartoon" | "retro" | "minimal" | "future" | "luxury" | "magazine" | "commerce" | "cinema";
 type ThemeTone = {
   bgColor?: string;
@@ -2518,6 +2522,29 @@ async function fileToOptimizedImageDataUrl(
     throw new Error("图片自动压缩后仍超过当前处理上限");
   }
   return candidate;
+}
+
+async function fileToLimitedOptimizedImageDataUrl(
+  file: File,
+  options: { maxSide: number; quality: number },
+  limitBytes: number,
+): Promise<string> {
+  if (!file.type.startsWith("image/")) {
+    throw new Error("请选择图片文件");
+  }
+  if (file.size > MAX_IMAGE_FILE_BYTES) {
+    throw new Error("图片文件过大，请选择 10MB 以内图片");
+  }
+
+  const originalDataUrl = await fileToDataUrl(file);
+  const compressedDataUrl = await compressImageDataUrl(originalDataUrl, options);
+  if (compressedDataUrl && estimateDataUrlBytes(compressedDataUrl) <= limitBytes) {
+    return compressedDataUrl;
+  }
+
+  const compressed = await compressImageFileWithinLimit(file, limitBytes, options);
+  if (compressed.bytes <= limitBytes) return compressed.dataUrl;
+  throw new Error(`图片已自动压缩，但仍超过当前上传上限 ${Math.ceil(limitBytes / 1024)}KB`);
 }
 
 async function fileToAudioDataUrl(file: File): Promise<string> {
@@ -6807,11 +6834,14 @@ export default function AdminClient({
           ? Math.max(50, Math.round(merchantPermissionConfig?.galleryBlockImageLimitKb ?? 300))
           : null;
     if (options?.purpose === "page-background") {
+      const viewport = options.viewport === "mobile" ? "mobile" : "desktop";
       const backgroundOptions =
-        options.viewport === "mobile"
-          ? PAGE_BACKGROUND_IMAGE_COMPRESSION_OPTIONS.mobile
-          : PAGE_BACKGROUND_IMAGE_COMPRESSION_OPTIONS.desktop;
-      dataUrl = await fileToOptimizedImageDataUrl(file, backgroundOptions);
+        viewport === "mobile" ? PAGE_BACKGROUND_IMAGE_COMPRESSION_OPTIONS.mobile : PAGE_BACKGROUND_IMAGE_COMPRESSION_OPTIONS.desktop;
+      dataUrl = await fileToLimitedOptimizedImageDataUrl(
+        file,
+        backgroundOptions,
+        PAGE_BACKGROUND_IMAGE_LIMIT_BYTES[viewport],
+      );
     } else if (limitKb) {
       const limitBytes = limitKb * 1024;
       const compressed = await compressImageFileWithinLimit(file, limitBytes, imageCompressionOptions);
