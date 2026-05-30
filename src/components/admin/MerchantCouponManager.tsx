@@ -203,6 +203,10 @@ const EMPTY_FORM: CouponFormState = {
 
 type CouponLifecycleStatus = "running" | "ended" | "paused" | "not_started";
 type CouponLifecycleStatusFilter = "all" | CouponLifecycleStatus;
+type CouponSettingSummaryGroup = {
+  title: string;
+  items: Array<{ label: string; value: string }>;
+};
 
 const COUPON_LIFECYCLE_STATUS_LABELS: Record<CouponLifecycleStatus, string> = {
   running: "进行中",
@@ -435,12 +439,21 @@ function formatDateTime(value: string | null | undefined) {
   });
 }
 
-function getCouponLifecycleStatus(coupon: MerchantCouponRecord, nowInput: Date | string = new Date()): CouponLifecycleStatus {
-  if (coupon.status !== "active") return "paused";
+function getCouponLifecycleStatusFromValues(
+  status: MerchantCouponStatus,
+  startsAt: string | null | undefined,
+  expiresAt: string | null | undefined,
+  nowInput: Date | string = new Date(),
+): CouponLifecycleStatus {
+  if (status !== "active") return "paused";
   const now = nowInput instanceof Date ? nowInput.getTime() : new Date(nowInput).getTime();
-  if (coupon.startsAt && Date.parse(coupon.startsAt) > now) return "not_started";
-  if (coupon.expiresAt && Date.parse(coupon.expiresAt) < now) return "ended";
+  if (startsAt && Date.parse(startsAt) > now) return "not_started";
+  if (expiresAt && Date.parse(expiresAt) < now) return "ended";
   return "running";
+}
+
+function getCouponLifecycleStatus(coupon: MerchantCouponRecord, nowInput: Date | string = new Date()): CouponLifecycleStatus {
+  return getCouponLifecycleStatusFromValues(coupon.status, coupon.startsAt, coupon.expiresAt, nowInput);
 }
 
 function toNumberValue(value: string) {
@@ -1116,6 +1129,88 @@ export default function MerchantCouponManager({
       buttonFontSize: normalizeFontSizeInput(form.buttonFontSize),
     };
   }, [form]);
+  const formSettingSummary = useMemo<CouponSettingSummaryGroup[]>(() => {
+    const startsAt = fromDateTimeTextValue(form.startsAt);
+    const expiresAt = fromDateTimeTextValue(form.expiresAt);
+    const lifecycleStatus = getCouponLifecycleStatusFromValues(form.status, startsAt, expiresAt);
+    const displayScopes = [
+      form.showOnWebsite ? "网站" : "",
+      form.showOnContactCard ? "联系卡" : "",
+    ].filter(Boolean);
+    const claimTargets = [
+      form.claimRequiresMember ? "会员领取" : "",
+      form.claimOldUserOnly ? "老用户专享" : "",
+      splitRuleList(form.claimAllowedAccountIds).length > 0 ? "指定用户" : "",
+      splitRuleList(form.claimAllowedCountries).length > 0 ||
+      splitRuleList(form.claimAllowedProvinces).length > 0 ||
+      splitRuleList(form.claimAllowedCities).length > 0
+        ? "指定地区"
+        : "",
+      splitRuleList(form.claimAllowedCodes).length > 0 ? "指定优惠码" : "",
+    ].filter(Boolean);
+    const stockLimits = [
+      form.claimMonthlyStockLimit.trim() ? `月 ${form.claimMonthlyStockLimit}` : "",
+      form.claimWeeklyStockLimit.trim() ? `周 ${form.claimWeeklyStockLimit}` : "",
+      form.claimDailyStockLimit.trim() ? `日 ${form.claimDailyStockLimit}` : "",
+      form.claimHourlyStockLimit.trim() ? `时 ${form.claimHourlyStockLimit}` : "",
+    ].filter(Boolean);
+    const claimLimits = [
+      form.claimPerUserTotalLimit.trim() ? `每人 ${form.claimPerUserTotalLimit}` : "",
+      form.claimPerUserDailyLimit.trim() ? `每日 ${form.claimPerUserDailyLimit}` : "",
+      form.claimPerUserWeeklyLimit.trim() ? `每周 ${form.claimPerUserWeeklyLimit}` : "",
+      form.claimPerUserMonthlyLimit.trim() ? `每月 ${form.claimPerUserMonthlyLimit}` : "",
+    ].filter(Boolean);
+    const triggerLabels = form.claimBehaviorTriggers
+      .map((value) => BEHAVIOR_TRIGGER_OPTIONS.find((option) => option.value === value)?.label ?? "")
+      .filter(Boolean);
+    const taskLabels = form.claimTaskRequirements
+      .map((value) => TASK_REQUIREMENT_OPTIONS.find((option) => option.value === value)?.label ?? "")
+      .filter(Boolean);
+    return [
+      {
+        title: "基础设置",
+        items: [
+          { label: "名称", value: form.title.trim() || "未命名" },
+          { label: "类型", value: COUPON_DISCOUNT_TYPE_LABELS[form.discountType] },
+          { label: "优惠内容", value: buildFormGeneratedDiscountText(form, pricePrefix) },
+          { label: "状态", value: COUPON_LIFECYCLE_STATUS_LABELS[lifecycleStatus] },
+          {
+            label: "有效期",
+            value: startsAt || expiresAt ? `${startsAt ? formatDateTime(startsAt) : "不限"} 至 ${expiresAt ? formatDateTime(expiresAt) : "不限"}` : "永久有效",
+          },
+        ],
+      },
+      {
+        title: "展示设置",
+        items: [
+          { label: "展示范围", value: displayScopes.join(" / ") || "未展示" },
+          { label: "使用场景", value: normalizeFormUsageScenarios(form.usageScenarios).map((item) => USAGE_SCENARIO_LABELS[item]).join(" / ") || "未设置" },
+          { label: "背景图", value: form.backgroundImageUrl.trim() ? `已设置，透明度 ${formatOpacityPercent(form.backgroundImageOpacity)}` : "未设置" },
+          { label: "文案项", value: form.displayFieldOrder.filter((field) => !form.displayHiddenFields.includes(field)).map((field) => DISPLAY_FIELD_CONFIG[field].label).join(" / ") || "未设置" },
+        ],
+      },
+      {
+        title: "领取规则",
+        items: [
+          { label: "领取对象", value: claimTargets.join(" / ") || "不限" },
+          { label: "库存限制", value: stockLimits.join(" / ") || "不限" },
+          { label: "领取次数", value: claimLimits.join(" / ") || "不限" },
+          { label: "领取时间", value: splitRuleList(form.claimDateTimeWindows).length || splitRuleList(form.claimDailyTimeWindows).length ? "已设置" : "不限" },
+          {
+            label: "生效时间",
+            value:
+              form.claimValidHoursAfterClaim.trim() || form.claimValidDaysAfterClaim.trim()
+                ? [form.claimValidHoursAfterClaim.trim() ? `${form.claimValidHoursAfterClaim} 小时` : "", form.claimValidDaysAfterClaim.trim() ? `${form.claimValidDaysAfterClaim} 天` : ""]
+                    .filter(Boolean)
+                    .join(" / ")
+                : "不限",
+          },
+          { label: "行为触发", value: triggerLabels.join(" / ") || "未设置" },
+          { label: "任务领取", value: taskLabels.join(" / ") || "未设置" },
+        ],
+      },
+    ];
+  }, [form, pricePrefix]);
 
   const notifyCouponsChange = useCallback(
     (nextCoupons: MerchantCouponRecord[]) => {
@@ -2437,6 +2532,24 @@ export default function MerchantCouponManager({
             <div className="mt-1 text-xs text-slate-500">这里显示客户在优惠券区块里看到的卡片效果。</div>
             <div className="mt-3">
               <CouponVisualCard data={formPreviewData} />
+            </div>
+            <div className="mt-4 rounded-lg border border-slate-200 bg-white px-3 py-3">
+              <div className="text-sm font-semibold text-slate-900">当前设置</div>
+              <div className="mt-3 grid gap-3">
+                {formSettingSummary.map((group) => (
+                  <div key={group.title} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                    <div className="text-xs font-semibold text-slate-800">{group.title}</div>
+                    <dl className="mt-2 grid gap-1.5 text-xs">
+                      {group.items.map((item) => (
+                        <div key={`${group.title}-${item.label}`} className="grid grid-cols-[72px_minmax(0,1fr)] gap-2">
+                          <dt className="text-slate-400">{item.label}</dt>
+                          <dd className="min-w-0 break-words font-medium text-slate-700">{item.value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </div>
+                ))}
+              </div>
             </div>
           </aside>
           </div>
