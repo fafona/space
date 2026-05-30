@@ -152,7 +152,7 @@ const EMPTY_FORM: CouponFormState = {
   showOnContactCard: false,
   backgroundImageUrl: "",
   backgroundImageOpacity: "0.35",
-  usageScenarios: ["order_cart"],
+  usageScenarios: ["order_cart", "checkout_qr"],
   displayTitle: "",
   displayDescription: "",
   displayDiscountText: "",
@@ -501,6 +501,12 @@ function normalizeFormUsageScenarios(value: MerchantCouponUsageScenario[]) {
   return Array.from(new Set(selected));
 }
 
+function normalizeFormUsageScenariosWithDefaultCheckout(value: MerchantCouponUsageScenario[]): MerchantCouponUsageScenario[] {
+  const selected = normalizeFormUsageScenarios(value);
+  if (selected.includes("checkout_qr") || selected.includes("checkout_barcode")) return selected;
+  return [...selected, "checkout_qr"];
+}
+
 function formatUsageScenarios(value: MerchantCouponUsageScenario[]) {
   const selected = normalizeFormUsageScenarios(value);
   return selected.map((item) => USAGE_SCENARIO_LABELS[item]).join(" / ") || "未设置";
@@ -615,7 +621,7 @@ function buildFormFromCoupon(coupon: MerchantCouponRecord, pricePrefix: string):
     ticketVenue: coupon.ticketVenue,
     ticketDurationMinutes: coupon.ticketDurationMinutes > 0 ? String(coupon.ticketDurationMinutes) : "",
     maxDiscountAmount: "",
-    totalQuantity: "",
+    totalQuantity: coupon.totalQuantity > 0 ? String(coupon.totalQuantity) : "",
     perCustomerLimit: "",
     startsAt: toDateTimeTextValue(coupon.startsAt),
     expiresAt: toDateTimeTextValue(coupon.expiresAt),
@@ -624,7 +630,7 @@ function buildFormFromCoupon(coupon: MerchantCouponRecord, pricePrefix: string):
     showOnContactCard: coupon.showOnContactCard,
     backgroundImageUrl: coupon.backgroundImageUrl,
     backgroundImageOpacity: String(coupon.backgroundImageOpacity),
-    usageScenarios: normalizeFormUsageScenarios(coupon.usageScenarios),
+    usageScenarios: normalizeFormUsageScenariosWithDefaultCheckout(coupon.usageScenarios),
     displayTitle: hiddenFields.includes("title") ? "" : getMerchantCouponDisplayTitle(coupon),
     displayDescription: hiddenFields.includes("description") ? "" : getMerchantCouponDisplayDescription(coupon),
     displayDiscountText: hiddenFields.includes("discount") ? "" : getMerchantCouponDiscountLabel(coupon, pricePrefix),
@@ -1669,7 +1675,7 @@ export default function MerchantCouponManager({
       ticketVenue: form.ticketVenue.trim(),
       ticketDurationMinutes: toIntValue(form.ticketDurationMinutes),
       maxDiscountAmount: 0,
-      totalQuantity: 0,
+      totalQuantity: toIntValue(form.totalQuantity),
       perCustomerLimit: 0,
       startsAt: fromDateTimeTextValue(form.startsAt),
       expiresAt: fromDateTimeTextValue(form.expiresAt),
@@ -2249,8 +2255,9 @@ export default function MerchantCouponManager({
 
                 <div className="rounded-lg border border-slate-200 bg-white px-3 py-3">
                   <div className="text-sm font-semibold text-slate-900">库存</div>
-                  <div className="mt-2 grid gap-3 md:grid-cols-4">
+                  <div className="mt-2 grid gap-3 md:grid-cols-5">
                     {[
+                      ["总库存", "totalQuantity"],
                       ["每月库存", "claimMonthlyStockLimit"],
                       ["每周库存", "claimWeeklyStockLimit"],
                       ["每日库存", "claimDailyStockLimit"],
@@ -2262,8 +2269,8 @@ export default function MerchantCouponManager({
                           type="number"
                           min={0}
                           className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                          value={form[key as "claimMonthlyStockLimit" | "claimWeeklyStockLimit" | "claimDailyStockLimit" | "claimHourlyStockLimit"]}
-                          onChange={handleInputChange(key as "claimMonthlyStockLimit" | "claimWeeklyStockLimit" | "claimDailyStockLimit" | "claimHourlyStockLimit")}
+                          value={form[key as "totalQuantity" | "claimMonthlyStockLimit" | "claimWeeklyStockLimit" | "claimDailyStockLimit" | "claimHourlyStockLimit"]}
+                          onChange={handleInputChange(key as "totalQuantity" | "claimMonthlyStockLimit" | "claimWeeklyStockLimit" | "claimDailyStockLimit" | "claimHourlyStockLimit")}
                           placeholder="0 不限制"
                         />
                       </label>
