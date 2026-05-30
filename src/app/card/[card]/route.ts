@@ -2698,7 +2698,7 @@ function buildShareCardHtml(input: {
             : ""
         }
         ${introPosterUrl ? `<img class="intro-poster" src="${introPosterUrl}" alt="" aria-hidden="true" />` : ""}
-        <video class="intro-video" src="${introVideoUrl}"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay="autoplay"${introVideoMuted ? ` muted="muted"` : ""} playsinline="playsinline" webkit-playsinline="webkit-playsinline" x5-playsinline="true" x5-video-player-type="h5-page" x5-video-player-fullscreen="false" x5-video-orientation="portrait" preload="auto" data-intro-muted="${introVideoMuted ? "1" : "0"}" data-intro-src="${introVideoUrl}" disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"><source src="${introVideoUrl}" type="video/mp4" /></video>
+        <video class="intro-video" src="${introVideoUrl}"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay="autoplay"${introVideoMuted ? ` muted="muted"` : ""} playsinline="playsinline" webkit-playsinline="webkit-playsinline" x5-playsinline="true" x5-video-player-type="h5-page" x5-video-player-fullscreen="true" x5-video-orientation="portrait" preload="auto" data-intro-muted="${introVideoMuted ? "1" : "0"}" data-intro-src="${introVideoUrl}" disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"><source src="${introVideoUrl}" type="video/mp4" /></video>
         <div class="intro-unmute-tip" data-intro-unmute-tip>点按屏幕取消静音</div>
         <button class="intro-skip" type="button" data-intro-skip>跳过</button>
       </div>
@@ -2762,8 +2762,6 @@ function buildShareCardHtml(input: {
       }
       const introMuted = ${introVideoMuted ? "true" : "false"};
       const introSrc = video.getAttribute("data-intro-src") || video.currentSrc || video.src || "";
-      let playbackAttempt = 0;
-      let firstFrameRetryCount = 0;
       const reloadIntroSource = () => {
         if (!introSrc) return;
         try {
@@ -2783,7 +2781,7 @@ function buildShareCardHtml(input: {
         video.setAttribute("webkit-playsinline", "webkit-playsinline");
         video.setAttribute("x5-playsinline", "true");
         video.setAttribute("x5-video-player-type", "h5-page");
-        video.setAttribute("x5-video-player-fullscreen", "false");
+        video.setAttribute("x5-video-player-fullscreen", "true");
         video.setAttribute("x5-video-orientation", "portrait");
         const shouldMute = introMuted || forceMuted;
         mutedFallbackActive = !introMuted && shouldMute;
@@ -2812,31 +2810,10 @@ function buildShareCardHtml(input: {
         mutedFallbackActive = false;
         try { void video.play?.().catch(() => undefined); } catch {}
       };
-      const markProgress = () => {
+      const markPlaying = () => {
         started = true;
-        firstFrameRetryCount = 0;
         errorRetryCount = 0;
         overlay.classList.add("is-playing");
-      };
-      const watchFirstFrame = () => {
-        const attempt = ++playbackAttempt;
-        const startTime = Number(video.currentTime) || 0;
-        overlay.classList.add("is-playing");
-        window.setTimeout(() => {
-          if (closed || started || attempt !== playbackAttempt) return;
-          const currentTime = Number(video.currentTime) || 0;
-          if (currentTime > Math.max(0.08, startTime + 0.04)) {
-            markProgress();
-            return;
-          }
-          if (firstFrameRetryCount >= 3) {
-            if (!introMuted) showUnmutePrompt();
-            return;
-          }
-          firstFrameRetryCount += 1;
-          overlay.classList.remove("is-playing");
-          void playThroughBridge({ forceMuted: true, reload: firstFrameRetryCount > 1 });
-        }, 900);
       };
       const playIntro = (options = {}) => {
         if (closed) return Promise.resolve(false);
@@ -2848,9 +2825,8 @@ function buildShareCardHtml(input: {
         if (result && typeof result.then === "function") {
           return result
             .then(() => {
-              watchFirstFrame();
               window.setTimeout(() => {
-                if (!closed && !started && video.currentTime > 0.05) markProgress();
+                if (!closed && !started && video.currentTime > 0.05) markPlaying();
               }, 180);
               return !video.paused || video.currentTime > 0.05;
             })
@@ -2865,11 +2841,7 @@ function buildShareCardHtml(input: {
             });
         }
         if (!video.paused || video.currentTime > 0.05) {
-          if (video.currentTime > 0.05) {
-            markProgress();
-          } else {
-            watchFirstFrame();
-          }
+          markPlaying();
           return Promise.resolve(true);
         }
         return Promise.resolve(false);
@@ -2895,9 +2867,9 @@ function buildShareCardHtml(input: {
       };
       prepareAutoplay();
       try { video.load?.(); } catch {}
-      video.addEventListener("playing", watchFirstFrame);
+      video.addEventListener("playing", markPlaying);
       video.addEventListener("timeupdate", () => {
-        if (video.currentTime > 0.05) markProgress();
+        if (video.currentTime > 0.05) markPlaying();
       });
       overlay.querySelector("[data-intro-skip]")?.addEventListener("click", (event) => {
         event.preventDefault();
@@ -2929,10 +2901,8 @@ function buildShareCardHtml(input: {
         }
       });
       video.addEventListener("loadeddata", () => {
-        if (video.currentTime > 0.05) {
-          markProgress();
-        } else if (!video.paused) {
-          watchFirstFrame();
+        if (!video.paused || video.currentTime > 0.05) {
+          markPlaying();
         } else {
           void playIntro();
         }
@@ -2970,8 +2940,7 @@ function buildShareCardHtml(input: {
       window.setTimeout(() => {
         if (closed || started) return;
         if (!video.paused || video.currentTime > 0.05) {
-          if (video.currentTime > 0.05) markProgress();
-          else watchFirstFrame();
+          markPlaying();
         }
       }, 1400);
     })();</script>`
