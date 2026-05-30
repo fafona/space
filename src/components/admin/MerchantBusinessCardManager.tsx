@@ -46,6 +46,7 @@ import {
   uploadFileToPublicStorageWithMetadata,
   uploadImageDataUrlToPublicStorage,
 } from "@/lib/publicAssetUpload";
+import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import { buildMerchantDomain } from "@/lib/siteRouting";
 
 type MerchantBusinessCardManagerProps = {
@@ -876,6 +877,8 @@ function CardSurface({
           <img
             src={draft.backgroundImageUrl}
             alt={draft.name}
+            crossOrigin="anonymous"
+            referrerPolicy="no-referrer"
             className="absolute h-full w-full object-contain"
             style={{
               left: `calc(50% + ${draft.backgroundImageX}px)`,
@@ -1194,9 +1197,16 @@ function isSameAssetUrl(left: string, right: string) {
 
 function buildEditableBusinessCardDraftFromAsset(card: MerchantBusinessCardAsset) {
   let draft = normalizeMerchantBusinessCardDraft(card);
-  const publicContactImageUrl = normalizeText(card.contactPagePublicImageUrl);
-  const renderedImageUrl = normalizeText(card.imageUrl);
-  const renderedShareImageUrl = normalizeText(card.shareImageUrl);
+  const normalizedBackgroundImageUrl = normalizePublicAssetUrl(normalizeText(draft.backgroundImageUrl));
+  if (normalizedBackgroundImageUrl && normalizedBackgroundImageUrl !== normalizeText(draft.backgroundImageUrl)) {
+    draft = normalizeMerchantBusinessCardDraft({
+      ...draft,
+      backgroundImageUrl: normalizedBackgroundImageUrl,
+    });
+  }
+  const publicContactImageUrl = normalizePublicAssetUrl(normalizeText(card.contactPagePublicImageUrl));
+  const renderedImageUrl = normalizePublicAssetUrl(normalizeText(card.imageUrl));
+  const renderedShareImageUrl = normalizePublicAssetUrl(normalizeText(card.shareImageUrl));
   const fallbackSnapshotImageUrl = renderedImageUrl || renderedShareImageUrl;
   const backgroundIsRenderedSnapshot =
     isSameAssetUrl(draft.backgroundImageUrl, renderedImageUrl) ||
