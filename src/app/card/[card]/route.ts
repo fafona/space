@@ -2761,6 +2761,8 @@ function buildShareCardHtml(input: {
         return;
       }
       const introMuted = ${introVideoMuted ? "true" : "false"};
+      const isWeChat = /MicroMessenger/i.test(navigator.userAgent || "");
+      const getBridge = () => window.WeixinJSBridge || window.YixinJSBridge;
       const introSrc = video.getAttribute("data-intro-src") || video.currentSrc || video.src || "";
       const reloadIntroSource = () => {
         if (!introSrc) return;
@@ -2784,7 +2786,7 @@ function buildShareCardHtml(input: {
         video.setAttribute("x5-video-player-fullscreen", "true");
         video.setAttribute("x5-video-orientation", "portrait");
         const shouldMute = introMuted || forceMuted;
-        mutedFallbackActive = !introMuted && shouldMute;
+        mutedFallbackActive = !introMuted && shouldMute && !isWeChat;
         if (mutedFallbackActive) {
           showUnmutePrompt();
         } else {
@@ -2831,6 +2833,9 @@ function buildShareCardHtml(input: {
               return !video.paused || video.currentTime > 0.05;
             })
             .catch(() => {
+              if (isWeChat && !forceMuted) {
+                return false;
+              }
               if (!introMuted && !forceMuted) {
                 mutedFallbackActive = true;
                 return playIntro({ forceMuted: true }).then((ok) => {
@@ -2847,13 +2852,14 @@ function buildShareCardHtml(input: {
         return Promise.resolve(false);
       };
       const playThroughBridge = (options = {}) => {
-        const bridge = window.WeixinJSBridge || window.YixinJSBridge;
+        const bridge = getBridge();
         const forceMuted = Boolean(options.forceMuted);
+        const nextOptions = isWeChat ? { ...options, forceMuted: false } : options;
         if (bridge && typeof bridge.invoke === "function") {
           try {
             bridge.invoke("getNetworkType", {}, () => {
-              void playIntro(options).then((ok) => {
-                if (!ok && !introMuted && !forceMuted && !closed && !started) {
+              void playIntro(nextOptions).then((ok) => {
+                if (!isWeChat && !ok && !introMuted && !forceMuted && !closed && !started) {
                   window.setTimeout(() => {
                     if (!closed && !started) void playThroughBridge({ forceMuted: true, reload: true });
                   }, 80);
@@ -2863,6 +2869,7 @@ function buildShareCardHtml(input: {
             return;
           } catch {}
         }
+        if (isWeChat) return;
         void playIntro(options);
       };
       prepareAutoplay();
@@ -2886,7 +2893,7 @@ function buildShareCardHtml(input: {
         started = false;
         overlay.classList.remove("is-playing");
         window.setTimeout(() => {
-          if (!closed) void playThroughBridge({ forceMuted: true, reload: true });
+          if (!closed) void playThroughBridge(isWeChat ? { reload: true } : { forceMuted: true, reload: true });
         }, 120);
       });
       video.addEventListener("error", () => {
@@ -2896,7 +2903,7 @@ function buildShareCardHtml(input: {
         if (errorRetryCount < 3) {
           errorRetryCount += 1;
           window.setTimeout(() => {
-            if (!closed) void playThroughBridge({ forceMuted: true, reload: true });
+            if (!closed) void playThroughBridge(isWeChat ? { reload: true } : { forceMuted: true, reload: true });
           }, 240 * errorRetryCount);
         }
       });
@@ -2904,7 +2911,8 @@ function buildShareCardHtml(input: {
         if (!video.paused || video.currentTime > 0.05) {
           markPlaying();
         } else {
-          void playIntro();
+          if (isWeChat) playThroughBridge();
+          else void playIntro();
         }
       }, { once: true });
       video.addEventListener("canplay", () => playThroughBridge(), { once: true });
@@ -2925,7 +2933,10 @@ function buildShareCardHtml(input: {
         if (!closed && !started) void playIntro();
       });
       document.addEventListener("visibilitychange", () => {
-        if (!document.hidden && video.paused) void playIntro();
+        if (!document.hidden && video.paused) {
+          if (isWeChat) playThroughBridge();
+          else void playIntro();
+        }
       });
       [0, 120, 600, 1200, 2200].forEach((delay) => {
         window.setTimeout(() => {
@@ -2934,7 +2945,7 @@ function buildShareCardHtml(input: {
       });
       [1600, 3200].forEach((delay) => {
         window.setTimeout(() => {
-          if (!closed && !started && !introMuted) void playThroughBridge({ forceMuted: true, reload: delay > 1600 });
+          if (!isWeChat && !closed && !started && !introMuted) void playThroughBridge({ forceMuted: true, reload: delay > 1600 });
         }, delay);
       });
       window.setTimeout(() => {
