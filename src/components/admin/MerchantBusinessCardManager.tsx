@@ -3894,6 +3894,27 @@ export default function MerchantBusinessCardManager({
     };
   }
 
+  function buildExistingShareBundle(card: MerchantBusinessCardAsset | null | undefined) {
+    const shareKey = normalizeText(card?.shareKey);
+    if (!shareKey) return null;
+    return {
+      shareUrl: resolveCardShortLink(card),
+      shareImageUrl: normalizePublicAssetUrl(normalizeText(card?.shareImageUrl) || normalizeText(card?.imageUrl)),
+      detailImageUrl: normalizePublicAssetUrl(normalizeText(card?.contactPagePublicImageUrl) || normalizeText(card?.contactPageImageUrl)),
+      shareKey,
+    };
+  }
+
+  async function buildShareBundleWithExistingFallback(input: Parameters<typeof buildShareBundle>[0]) {
+    try {
+      return await buildShareBundle(input);
+    } catch (error) {
+      const existingBundle = buildExistingShareBundle(input.card);
+      if (existingBundle) return existingBundle;
+      throw error;
+    }
+  }
+
   async function saveCurrentDraftToFolder() {
     const node = hiddenPreviewRef.current;
     if (!node || !websiteUrl || !qrReadyForCurrentDraft) return null;
@@ -3901,16 +3922,24 @@ export default function MerchantBusinessCardManager({
       throw new Error("business_card_limit_reached");
     }
 
-    const exportedImage = await compressImageDataUrlWithinLimit(
-      await renderCardNodeToImage(node),
-      normalizedExportImageLimitKb * 1024,
-    );
-    if (exportedImage.bytes > normalizedExportImageLimitKb * 1024) {
-      throw new Error("export_image_limit_exceeded");
-    }
-    const imageUrl = exportedImage.dataUrl;
     const nextDraft = normalizeMerchantBusinessCardDraft(draft);
     const existingCard = editingCardId ? normalizedCards.find((card) => card.id === editingCardId) ?? null : null;
+    const reusableSnapshotImageUrl =
+      existingCard && nextDraft.backgroundImageSnapshotOnly
+        ? normalizePublicAssetUrl(normalizeText(existingCard.imageUrl) || normalizeText(existingCard.shareImageUrl))
+        : "";
+    const imageUrl =
+      reusableSnapshotImageUrl ||
+      (await (async () => {
+        const exportedImage = await compressImageDataUrlWithinLimit(
+          await renderCardNodeToImage(node),
+          normalizedExportImageLimitKb * 1024,
+        );
+        if (exportedImage.bytes > normalizedExportImageLimitKb * 1024) {
+          throw new Error("export_image_limit_exceeded");
+        }
+        return exportedImage.dataUrl;
+      })());
     const resolvedShareKey =
       nextDraft.mode === "link"
         ? normalizeText(existingCard?.shareKey) ||
@@ -3935,7 +3964,7 @@ export default function MerchantBusinessCardManager({
         : undefined;
     const shareBundle =
       nextDraft.mode === "link"
-        ? await buildShareBundle({
+        ? await buildShareBundleWithExistingFallback({
             targetUrl: websiteUrl,
             cardName: normalizeText(nextDraft.name),
             shareKey: resolvedShareKey,
@@ -4009,7 +4038,7 @@ export default function MerchantBusinessCardManager({
         : undefined;
     const shareBundle =
       nextDraft.mode === "link"
-        ? await buildShareBundle({
+        ? await buildShareBundleWithExistingFallback({
             targetUrl: websiteUrl,
             cardName: normalizeText(nextDraft.name),
             shareKey: resolvedShareKey,
