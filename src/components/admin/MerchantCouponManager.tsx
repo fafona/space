@@ -230,28 +230,6 @@ const COUPON_LIFECYCLE_STATUS_FILTER_OPTIONS: Array<{ value: CouponLifecycleStat
   { value: "paused", label: "已暂停" },
 ];
 
-const USAGE_SCENARIO_OPTIONS: Array<{
-  value: MerchantCouponUsageScenario;
-  label: string;
-  description: string;
-}> = [
-  {
-    value: "order_cart",
-    label: "订单（购物车中扣除）",
-    description: "用于顾客下单时从购物车金额中抵扣。",
-  },
-  {
-    value: "checkout_qr",
-    label: "结算二维码",
-    description: "领取后可生成唯一二维码核销码。",
-  },
-  {
-    value: "checkout_barcode",
-    label: "结算条码",
-    description: "领取后可生成唯一一维码核销码。",
-  },
-];
-
 const USAGE_SCENARIO_LABELS: Record<MerchantCouponUsageScenario, string> = {
   order_cart: "订单",
   checkout_qr: "二维码",
@@ -1028,12 +1006,94 @@ function CouponDateTimeField({
   );
 }
 
+function CouponNativePickerField({
+  label,
+  value,
+  pickerType,
+  placeholder,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  pickerType: "datetime-local" | "time";
+  placeholder: string;
+  onChange: (value: string) => void;
+}) {
+  const pickerInputRef = useRef<HTMLInputElement>(null);
+  const displayValue = pickerType === "datetime-local" ? toDateTimeTextFromPickerValue(value) : value;
+
+  return (
+    <label className="space-y-1 text-xs text-slate-600">
+      <span className="block">{label}</span>
+      <span className="relative block">
+        <input
+          type="text"
+          readOnly
+          data-no-translate="1"
+          translate="no"
+          className="h-10 w-full cursor-pointer rounded-lg border border-slate-300 bg-white px-2 pr-9 text-sm outline-none focus:border-slate-500"
+          value={displayValue}
+          placeholder={placeholder}
+          onClick={() => openNativeDateTimePicker(pickerInputRef.current)}
+        />
+        <button
+          type="button"
+          className="absolute inset-y-0 right-1 inline-flex w-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
+          aria-label={`${label}选择器`}
+          onClick={() => openNativeDateTimePicker(pickerInputRef.current)}
+        >
+          <CouponCalendarIcon />
+        </button>
+        <input
+          ref={pickerInputRef}
+          type={pickerType}
+          tabIndex={-1}
+          aria-hidden="true"
+          className="pointer-events-none absolute right-1 top-1/2 h-8 w-8 -translate-y-1/2 opacity-0"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      </span>
+    </label>
+  );
+}
+
 function CouponFormSection({ title, children, defaultOpen = true }: { title: string; children: ReactNode; defaultOpen?: boolean }) {
   return (
     <details open={defaultOpen} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4">
       <summary className="cursor-pointer select-none text-sm font-semibold text-slate-900">{title}</summary>
       <div className="mt-3 grid gap-3">{children}</div>
     </details>
+  );
+}
+
+function CouponStatusSwitch({
+  checked,
+  onChange,
+  disabled = false,
+  className = "",
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  disabled?: boolean;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      className={`inline-flex items-center gap-2 rounded-full border px-2 py-1 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+        checked ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"
+      } ${className}`}
+      onClick={() => onChange(!checked)}
+      disabled={disabled}
+    >
+      <span className={`relative h-5 w-9 rounded-full transition ${checked ? "bg-emerald-500" : "bg-amber-400"}`}>
+        <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition ${checked ? "left-4" : "left-0.5"}`} />
+      </span>
+      {checked ? "启用" : "暂停"}
+    </button>
   );
 }
 
@@ -1520,6 +1580,15 @@ export default function MerchantCouponManager({
     });
   }
 
+  function setCheckoutUsageScenario(scenario: Extract<MerchantCouponUsageScenario, "checkout_qr" | "checkout_barcode">) {
+    setForm((current) => {
+      const currentScenarios = normalizeFormUsageScenarios(current.usageScenarios).filter(
+        (item) => item !== "checkout_qr" && item !== "checkout_barcode",
+      );
+      return { ...current, usageScenarios: [...currentScenarios, scenario] };
+    });
+  }
+
   function toggleBehaviorTrigger(trigger: MerchantCouponBehaviorTrigger, checked: boolean) {
     setForm((current) => ({
       ...current,
@@ -1882,7 +1951,7 @@ export default function MerchantCouponManager({
           <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
             <div className="grid gap-3">
               <CouponFormSection title="基础设置">
-                <div className="grid gap-3 md:grid-cols-2">
+                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_140px_220px_220px] md:items-end">
                   <label className="space-y-1 text-sm">
                     <span className="block text-slate-600">优惠券名称</span>
                     <input
@@ -1892,56 +1961,39 @@ export default function MerchantCouponManager({
                       placeholder="例如：新客户优惠"
                     />
                   </label>
-                  <label className="space-y-1 text-sm">
+                  <div className="space-y-1 text-sm">
                     <span className="block text-slate-600">状态</span>
-                    <select
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                      value={form.status}
-                      onChange={(event) => updateField("status", event.target.value as MerchantCouponStatus)}
-                    >
-                      <option value="active">启用</option>
-                      <option value="paused">暂停</option>
-                    </select>
-                  </label>
-                </div>
-
-                <div className="grid gap-3 md:grid-cols-3">
-                  <label className="space-y-1 text-sm">
-                    <span className="block text-slate-600">优惠类型</span>
-                    <select
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                      value={form.discountType}
-                      onChange={(event) => updateDiscountType(event.target.value as MerchantCouponDiscountType)}
-                    >
-                      {COUPON_DISCOUNT_TYPE_OPTIONS.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
+                    <CouponStatusSwitch checked={form.status === "active"} onChange={(checked) => updateField("status", checked ? "active" : "paused")} />
+                  </div>
+                  <div className="space-y-1 text-sm">
+                    <span className="block text-slate-600">结算码</span>
+                    <div className="grid grid-cols-2 gap-2">
+                      {[
+                        ["checkout_qr", "二维码"],
+                        ["checkout_barcode", "条形码"],
+                      ].map(([value, label]) => (
+                        <button
+                          key={value}
+                          type="button"
+                          className={`rounded-lg border px-3 py-2 text-sm font-semibold transition ${
+                            form.usageScenarios.includes(value as MerchantCouponUsageScenario)
+                              ? "border-slate-900 bg-slate-900 text-white"
+                              : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                          }`}
+                          onClick={() => setCheckoutUsageScenario(value as Extract<MerchantCouponUsageScenario, "checkout_qr" | "checkout_barcode">)}
+                        >
+                          {label}
+                        </button>
                       ))}
-                    </select>
-                  </label>
-                  <label className="space-y-1 text-sm">
-                    <span className="block text-slate-600">{discountValueLabel}</span>
+                    </div>
+                  </div>
+                  <label className="flex min-h-[42px] items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
                     <input
-                      type="number"
-                      min={0}
-                      step={form.discountType === "percent_off" ? 1 : 0.01}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                      value={form.discountValue}
-                      onChange={handleInputChange("discountValue")}
+                      type="checkbox"
+                      checked={form.usageScenarios.includes("order_cart")}
+                      onChange={(event) => toggleUsageScenario("order_cart", event.target.checked)}
                     />
-                  </label>
-                  <label className="space-y-1 text-sm">
-                    <span className="block text-slate-600">门槛金额</span>
-                    <input
-                      type="number"
-                      min={0}
-                      step={0.01}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                      value={form.minimumAmount}
-                      onChange={handleInputChange("minimumAmount")}
-                      disabled={form.discountType === "amount_off"}
-                    />
+                    订单（购物车中扣除）
                   </label>
                 </div>
 
@@ -2004,29 +2056,6 @@ export default function MerchantCouponManager({
                     className="hidden"
                     onChange={(event) => void uploadCouponBackground(event.target.files?.[0])}
                   />
-                </div>
-
-                <div className="rounded-lg border border-slate-200 bg-white px-3 py-3">
-                  <div className="text-sm font-semibold text-slate-900">使用场景</div>
-                  <div className="mt-2 grid gap-2 md:grid-cols-3">
-                    {USAGE_SCENARIO_OPTIONS.map((option) => (
-                      <label
-                        key={option.value}
-                        className="flex min-h-20 items-start gap-2 rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm"
-                      >
-                        <input
-                          type="checkbox"
-                          className="mt-1"
-                          checked={form.usageScenarios.includes(option.value)}
-                          onChange={(event) => toggleUsageScenario(option.value, event.target.checked)}
-                        />
-                        <span>
-                          <span className="block font-medium text-slate-800">{option.label}</span>
-                          <span className="mt-1 block text-xs leading-5 text-slate-500">{option.description}</span>
-                        </span>
-                      </label>
-                    ))}
-                  </div>
                 </div>
 
                 <div className="grid gap-3 md:grid-cols-2">
@@ -2219,6 +2248,46 @@ export default function MerchantCouponManager({
                     ))}
                   </div>
                 </div>
+
+                <div className="grid gap-3 md:grid-cols-3">
+                  <label className="space-y-1 text-sm">
+                    <span className="block text-slate-600">优惠类型</span>
+                    <select
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                      value={form.discountType}
+                      onChange={(event) => updateDiscountType(event.target.value as MerchantCouponDiscountType)}
+                    >
+                      {COUPON_DISCOUNT_TYPE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="space-y-1 text-sm">
+                    <span className="block text-slate-600">{discountValueLabel}</span>
+                    <input
+                      type="number"
+                      min={0}
+                      step={form.discountType === "percent_off" ? 1 : 0.01}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                      value={form.discountValue}
+                      onChange={handleInputChange("discountValue")}
+                    />
+                  </label>
+                  <label className="space-y-1 text-sm">
+                    <span className="block text-slate-600">门槛金额</span>
+                    <input
+                      type="number"
+                      min={0}
+                      step={0.01}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                      value={form.minimumAmount}
+                      onChange={handleInputChange("minimumAmount")}
+                      disabled={form.discountType === "amount_off"}
+                    />
+                  </label>
+                </div>
               </CouponFormSection>
 
               <CouponFormSection title="展示文案">
@@ -2342,24 +2411,20 @@ export default function MerchantCouponManager({
                       />
                     </label>
                     <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
-                      <label className="space-y-1 text-xs text-slate-600">
-                        <span className="block">开始</span>
-                        <input
-                          type="datetime-local"
-                          className="h-10 w-full rounded-lg border border-slate-300 px-2 text-sm outline-none focus:border-slate-500"
-                          value={claimDateWindowStart}
-                          onChange={(event) => setClaimDateWindowStart(event.target.value)}
-                        />
-                      </label>
-                      <label className="space-y-1 text-xs text-slate-600">
-                        <span className="block">结束</span>
-                        <input
-                          type="datetime-local"
-                          className="h-10 w-full rounded-lg border border-slate-300 px-2 text-sm outline-none focus:border-slate-500"
-                          value={claimDateWindowEnd}
-                          onChange={(event) => setClaimDateWindowEnd(event.target.value)}
-                        />
-                      </label>
+                      <CouponNativePickerField
+                        label="开始"
+                        pickerType="datetime-local"
+                        value={claimDateWindowStart}
+                        onChange={setClaimDateWindowStart}
+                        placeholder="选择开始时间"
+                      />
+                      <CouponNativePickerField
+                        label="结束"
+                        pickerType="datetime-local"
+                        value={claimDateWindowEnd}
+                        onChange={setClaimDateWindowEnd}
+                        placeholder="选择结束时间"
+                      />
                       <button
                         type="button"
                         className="h-10 rounded border bg-white px-3 text-sm hover:bg-slate-50 disabled:opacity-40"
@@ -2381,24 +2446,20 @@ export default function MerchantCouponManager({
                       />
                     </label>
                     <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
-                      <label className="space-y-1 text-xs text-slate-600">
-                        <span className="block">开始</span>
-                        <input
-                          type="time"
-                          className="h-10 w-full rounded-lg border border-slate-300 px-2 text-sm outline-none focus:border-slate-500"
-                          value={claimDailyWindowStart}
-                          onChange={(event) => setClaimDailyWindowStart(event.target.value)}
-                        />
-                      </label>
-                      <label className="space-y-1 text-xs text-slate-600">
-                        <span className="block">结束</span>
-                        <input
-                          type="time"
-                          className="h-10 w-full rounded-lg border border-slate-300 px-2 text-sm outline-none focus:border-slate-500"
-                          value={claimDailyWindowEnd}
-                          onChange={(event) => setClaimDailyWindowEnd(event.target.value)}
-                        />
-                      </label>
+                      <CouponNativePickerField
+                        label="开始"
+                        pickerType="time"
+                        value={claimDailyWindowStart}
+                        onChange={setClaimDailyWindowStart}
+                        placeholder="选择开始"
+                      />
+                      <CouponNativePickerField
+                        label="结束"
+                        pickerType="time"
+                        value={claimDailyWindowEnd}
+                        onChange={setClaimDailyWindowEnd}
+                        placeholder="选择结束"
+                      />
                       <button
                         type="button"
                         className="h-10 rounded border bg-white px-3 text-sm hover:bg-slate-50 disabled:opacity-40"
@@ -2682,20 +2743,13 @@ export default function MerchantCouponManager({
                           复制券
                         </button>
                         <>
-                          <button
-                            type="button"
-                            className="rounded border bg-white px-3 py-1.5 text-xs hover:bg-slate-50 disabled:opacity-50"
-                            onClick={() =>
-                              void patchCoupon(
-                                coupon,
-                                { status: coupon.status === "active" ? "paused" : "active" },
-                                coupon.status === "active" ? "优惠券已暂停" : "优惠券已启用",
-                              )
+                          <CouponStatusSwitch
+                            checked={coupon.status === "active"}
+                            onChange={(checked) =>
+                              void patchCoupon(coupon, { status: checked ? "active" : "paused" }, checked ? "优惠券已启用" : "优惠券已暂停")
                             }
                             disabled={saving}
-                          >
-                            {coupon.status === "active" ? "暂停" : "启用"}
-                          </button>
+                          />
                           <button
                             type="button"
                             className="rounded border border-rose-200 bg-white px-3 py-1.5 text-xs text-rose-600 hover:bg-rose-50 disabled:opacity-50"
