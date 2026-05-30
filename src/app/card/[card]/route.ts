@@ -2148,7 +2148,8 @@ function buildShareCardHtml(input: {
   const previewImageUrl = input.previewImageUrl ? escapeHtml(input.previewImageUrl) : "";
   const contentImageUrl = input.contentImageUrl ? escapeHtml(input.contentImageUrl) : "";
   const introVideoUrl = input.introVideoUrl ? escapeHtml(input.introVideoUrl) : "";
-  const introPosterUrl = input.introPosterUrl ? escapeHtml(input.introPosterUrl) : "";
+  // Android WeChat/X5 can keep the poster painted as a static first frame and never advance the video.
+  const introPosterUrl = "";
   const introVideoMuted = input.introVideoMuted !== false;
   const contentImageHeight = input.contentImageHeight ?? 0;
   const targetUrl = escapeHtml(input.targetUrl);
