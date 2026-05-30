@@ -76,6 +76,19 @@ test("middleware leaves hashed static assets cacheable", async () => {
   assert.equal(response.headers.get("cache-control"), null);
 });
 
+test("middleware redirects bad OAuth state before homepage render", async () => {
+  const request = new NextRequest("https://faolla.com/?error_code=bad_oauth_state&appShell=faolla&loginFrom=checkout");
+
+  const response = await middleware(request);
+
+  assert.equal(response.status, 307);
+  assert.equal(
+    response.headers.get("location"),
+    "https://faolla.com/login?oauth_error=bad_oauth_state&appShell=faolla&loginFrom=checkout",
+  );
+  assert.match(response.headers.get("cache-control") ?? "", /no-store/);
+});
+
 test("middleware redirects authenticated personal launch requests before page render", async () => {
   const request = new NextRequest("https://faolla.com/launch?appShell=faolla", {
     headers: {

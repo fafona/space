@@ -269,6 +269,22 @@ function buildFaollaSectionRedirectUrl(request: NextRequest) {
   return targetUrl;
 }
 
+function buildBadOauthStateRedirectUrl(request: NextRequest) {
+  if (request.nextUrl.pathname !== "/") return null;
+  if ((request.nextUrl.searchParams.get("error_code") ?? "").trim().toLowerCase() !== "bad_oauth_state") {
+    return null;
+  }
+  const redirectUrl = request.nextUrl.clone();
+  redirectUrl.pathname = "/login";
+  redirectUrl.search = "";
+  redirectUrl.searchParams.set("oauth_error", "bad_oauth_state");
+  const appShell = (request.nextUrl.searchParams.get("appShell") ?? "").trim();
+  const loginFrom = (request.nextUrl.searchParams.get("loginFrom") ?? "").trim();
+  if (appShell) redirectUrl.searchParams.set("appShell", appShell);
+  if (loginFrom) redirectUrl.searchParams.set("loginFrom", loginFrom);
+  return redirectUrl;
+}
+
 function withAppShellNoStore(response: NextResponse, request: NextRequest) {
   if (!shouldNoStoreAppShellPath(request.nextUrl.pathname) && !shouldNoStoreRootRequest(request)) return response;
   response.headers.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
@@ -349,6 +365,11 @@ export async function middleware(request: NextRequest) {
   }
 
   const pathname = request.nextUrl.pathname;
+  const badOauthStateRedirectUrl = buildBadOauthStateRedirectUrl(request);
+  if (badOauthStateRedirectUrl) {
+    return withAppShellNoStore(NextResponse.redirect(badOauthStateRedirectUrl), request);
+  }
+
   const launchSessionRedirectUrl = buildLaunchSessionRedirectUrl(request);
   if (launchSessionRedirectUrl) {
     return withAppShellNoStore(NextResponse.redirect(launchSessionRedirectUrl), request);
