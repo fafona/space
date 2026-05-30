@@ -1,7 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { toPng } from "html-to-image";
+import { useState } from "react";
 
 type CouponClaimResultClientProps = {
   merchantName: string;
@@ -34,25 +33,6 @@ function buildFileName(parts: string[]) {
     .join("-") || "coupon"}.png`;
 }
 
-async function waitForImages(node: HTMLElement) {
-  const images = Array.from(node.querySelectorAll("img"));
-  await Promise.all(
-    images.map(
-      (image) =>
-        new Promise<void>((resolve) => {
-          if (image.complete) {
-            resolve();
-            return;
-          }
-          const done = () => resolve();
-          image.addEventListener("load", done, { once: true });
-          image.addEventListener("error", done, { once: true });
-          window.setTimeout(done, 2200);
-        }),
-    ),
-  );
-}
-
 function downloadDataUrl(dataUrl: string, fileName: string) {
   const link = document.createElement("a");
   link.href = dataUrl;
@@ -60,6 +40,192 @@ function downloadDataUrl(dataUrl: string, fileName: string) {
   document.body.appendChild(link);
   link.click();
   link.remove();
+}
+
+function loadCanvasImage(src: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("image_load_failed"));
+    image.src = src;
+  });
+}
+
+function fillRoundedRect(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+  fillStyle: string,
+  strokeStyle?: string,
+) {
+  context.beginPath();
+  context.moveTo(x + radius, y);
+  context.lineTo(x + width - radius, y);
+  context.quadraticCurveTo(x + width, y, x + width, y + radius);
+  context.lineTo(x + width, y + height - radius);
+  context.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+  context.lineTo(x + radius, y + height);
+  context.quadraticCurveTo(x, y + height, x, y + height - radius);
+  context.lineTo(x, y + radius);
+  context.quadraticCurveTo(x, y, x + radius, y);
+  context.closePath();
+  context.fillStyle = fillStyle;
+  context.fill();
+  if (strokeStyle) {
+    context.strokeStyle = strokeStyle;
+    context.lineWidth = 1;
+    context.stroke();
+  }
+}
+
+function wrapCanvasText(context: CanvasRenderingContext2D, text: string, maxWidth: number) {
+  const source = text.trim();
+  if (!source) return [];
+  const lines: string[] = [];
+  let current = "";
+  Array.from(source).forEach((char) => {
+    const next = `${current}${char}`;
+    if (current && context.measureText(next).width > maxWidth) {
+      lines.push(current);
+      current = char.trimStart();
+      return;
+    }
+    current = next;
+  });
+  if (current) lines.push(current);
+  return lines;
+}
+
+function drawWrappedCanvasText(
+  context: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  maxWidth: number,
+  lineHeight: number,
+  maxLines = 8,
+) {
+  const lines = wrapCanvasText(context, text, maxWidth).slice(0, maxLines);
+  lines.forEach((line, index) => {
+    context.fillText(index === maxLines - 1 && wrapCanvasText(context, text, maxWidth).length > maxLines ? `${line}...` : line, x, y + index * lineHeight);
+  });
+  return y + lines.length * lineHeight;
+}
+
+async function renderCouponPageImage(input: CouponClaimResultClientProps) {
+  const pixelRatio = 2;
+  const width = 450;
+  const side = 16;
+  const cardX = side;
+  const cardY = side;
+  const cardWidth = width - side * 2;
+  const contentX = cardX + 20;
+  const contentWidth = cardWidth - 40;
+  const fontFamily = 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  const measureCanvas = document.createElement("canvas");
+  const measureContext = measureCanvas.getContext("2d");
+  if (!measureContext) throw new Error("canvas_context_unavailable");
+  measureContext.font = `14px ${fontFamily}`;
+  const descriptionLines = wrapCanvasText(measureContext, input.description, contentWidth).slice(0, 5);
+  const codeBoxHeight = input.settlementType === "barcode" ? 230 : 390;
+  const descriptionHeight = descriptionLines.length ? descriptionLines.length * 22 + 12 : 0;
+  const cardHeight = 52 + 44 + 28 + descriptionHeight + codeBoxHeight + 96;
+  const height = cardHeight + side * 2;
+  const canvas = document.createElement("canvas");
+  canvas.width = width * pixelRatio;
+  canvas.height = height * pixelRatio;
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${height}px`;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("canvas_context_unavailable");
+  context.scale(pixelRatio, pixelRatio);
+  context.textBaseline = "top";
+  context.fillStyle = "#f1f5f9";
+  context.fillRect(0, 0, width, height);
+  fillRoundedRect(context, cardX, cardY, cardWidth, cardHeight, 18, "#ffffff", "#e2e8f0");
+
+  let y = cardY + 24;
+  context.font = `700 18px ${fontFamily}`;
+  context.fillStyle = "#0f172a";
+  context.textAlign = "center";
+  context.fillText(input.merchantName, width / 2, y);
+
+  y += 42;
+  context.textAlign = "left";
+  context.font = `700 26px ${fontFamily}`;
+  context.fillStyle = "#020617";
+  context.fillText(input.title, contentX, y);
+
+  y += 42;
+  context.font = `700 16px ${fontFamily}`;
+  context.fillStyle = "#e11d48";
+  context.fillText(input.discount, contentX, y);
+
+  y += 28;
+  if (descriptionLines.length) {
+    context.font = `14px ${fontFamily}`;
+    context.fillStyle = "#475569";
+    descriptionLines.forEach((line, index) => {
+      context.fillText(line, contentX, y + index * 22);
+    });
+    y += descriptionLines.length * 22 + 12;
+  }
+
+  fillRoundedRect(context, contentX, y, contentWidth, codeBoxHeight, 18, "#f8fafc", "#e2e8f0");
+  context.font = `700 15px ${fontFamily}`;
+  context.fillStyle = "#334155";
+  context.textAlign = "center";
+  context.fillText(input.settlementType === "barcode" ? "核销条形码" : "核销二维码", width / 2, y + 18);
+
+  const codeImage = await loadCanvasImage(input.codeImage);
+  let codeTextY = y + 351;
+  if (input.settlementType === "barcode") {
+    const imageWidth = Math.min(contentWidth - 48, 320);
+    const imageHeight = Math.max(96, Math.min(128, (codeImage.height / codeImage.width) * imageWidth || 128));
+    context.drawImage(codeImage, contentX + (contentWidth - imageWidth) / 2, y + 54, imageWidth, imageHeight);
+    const valueBoxY = y + 54 + imageHeight + 16;
+    fillRoundedRect(context, contentX + 16, valueBoxY, contentWidth - 32, 34, 10, "#ffffff");
+    codeTextY = valueBoxY + 10;
+  } else {
+    const imageSize = 280;
+    fillRoundedRect(context, contentX + (contentWidth - imageSize) / 2, y + 50, imageSize, imageSize, 14, "#ffffff");
+    context.drawImage(codeImage, contentX + (contentWidth - 244) / 2, y + 68, 244, 244);
+    fillRoundedRect(context, contentX + 16, y + 342, contentWidth - 32, 34, 10, "#ffffff");
+  }
+  context.font = `12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace`;
+  context.fillStyle = "#334155";
+  context.textAlign = "left";
+  drawWrappedCanvasText(
+    context,
+    input.settlementCode,
+    contentX + 30,
+    codeTextY,
+    contentWidth - 60,
+    14,
+    2,
+  );
+
+  y += codeBoxHeight + 24;
+  context.textAlign = "left";
+  context.font = `14px ${fontFamily}`;
+  context.fillStyle = "#64748b";
+  context.fillText("领取时间", contentX, y);
+  context.fillStyle = "#020617";
+  context.textAlign = "right";
+  context.fillText(input.claimedAtLabel, contentX + contentWidth, y);
+
+  y += 32;
+  context.textAlign = "left";
+  context.fillStyle = "#64748b";
+  context.fillText("有效期", contentX, y);
+  context.fillStyle = "#020617";
+  context.textAlign = "right";
+  context.fillText(input.validUntilLabel, contentX + contentWidth, y);
+
+  return canvas.toDataURL("image/png");
 }
 
 function parseNativeGallerySaveResult(result: unknown) {
@@ -126,7 +292,6 @@ export default function CouponClaimResultClient({
   claimedAtLabel,
   validUntilLabel,
 }: CouponClaimResultClientProps) {
-  const captureRef = useRef<HTMLElement | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
   const [saveMessageTone, setSaveMessageTone] = useState<"ok" | "error">("ok");
@@ -137,20 +302,24 @@ export default function CouponClaimResultClient({
   };
 
   const saveCouponPage = async () => {
-    const node = captureRef.current;
-    if (!node || saving) return;
+    if (saving) return;
     setSaving(true);
     setSaveMessage("");
     try {
-      await waitForImages(node);
       if (typeof document.fonts?.ready?.then === "function") {
         await document.fonts.ready.catch(() => undefined);
       }
       const fileName = buildFileName([merchantName, title, "优惠券"]);
-      const dataUrl = await toPng(node, {
-        pixelRatio: 2,
-        cacheBust: true,
-        backgroundColor: "#ffffff",
+      const dataUrl = await renderCouponPageImage({
+        merchantName,
+        title,
+        description,
+        discount,
+        codeImage,
+        settlementType,
+        settlementCode,
+        claimedAtLabel,
+        validUntilLabel,
       });
       const nativeResult = await saveImageToNativeGallery(dataUrl, fileName);
       if (nativeResult.attempted && nativeResult.ok) {
@@ -174,7 +343,6 @@ export default function CouponClaimResultClient({
   return (
     <main className="min-h-screen bg-slate-100 px-4 py-8 text-slate-950">
       <section
-        ref={captureRef}
         className="mx-auto max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
         data-faolla-coupon-capture="true"
       >
