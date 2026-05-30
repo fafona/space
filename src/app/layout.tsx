@@ -1,4 +1,3 @@
-import { cookies, headers } from "next/headers";
 import type { Viewport } from "next";
 import Script from "next/script";
 import ClientDomTranslator from "@/components/ClientDomTranslator";
@@ -10,7 +9,7 @@ import PwaBootstrapLoader from "@/components/PwaBootstrapLoader";
 import UnhandledRejectionGuard from "@/components/UnhandledRejectionGuard";
 import "./globals.css";
 import { resolveFaollaWebBuildId } from "@/lib/faollaWebBuild";
-import { DEFAULT_LOCALE, I18N_COOKIE_KEY, readPreferredLocaleFromAcceptLanguage, resolveSupportedLocale } from "@/lib/i18n";
+import { DEFAULT_LOCALE } from "@/lib/i18n";
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -1255,11 +1254,7 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const cookieStore = await cookies();
-  const headerStore = await headers();
-  const cookieLocale = cookieStore.get(I18N_COOKIE_KEY)?.value ?? "";
-  const acceptLanguageLocale = readPreferredLocaleFromAcceptLanguage(headerStore.get("accept-language"));
-  const initialLocale = resolveSupportedLocale(cookieLocale || acceptLanguageLocale || DEFAULT_LOCALE);
+  const initialLocale = DEFAULT_LOCALE;
   const faollaInlineCacheRefreshScript = buildFaollaInlineCacheRefreshScript(resolveFaollaWebBuildId());
 
   return (
