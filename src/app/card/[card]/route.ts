@@ -2888,7 +2888,7 @@ function buildShareCardHtml(input: {
       const playIntro = (options = {}) => {
         if (closed) return Promise.resolve(false);
         const forceMuted = isWechat ? false : Boolean(options.forceMuted);
-        const forceReload = Boolean(options.reload);
+        const forceReload = !isWechat && Boolean(options.reload);
         debug("play-start", { forceMuted, forceReload });
         prepareAutoplay(forceMuted);
         if (forceReload) reloadIntroSource();
@@ -2944,7 +2944,11 @@ function buildShareCardHtml(input: {
         void playIntro(nextOptions);
       };
       prepareAutoplay();
-      try { video.load?.(); debug("load-called"); } catch (error) { debug("load-error", { message: error?.message || String(error || "") }); }
+      if (!isWechat) {
+        try { video.load?.(); debug("load-called"); } catch (error) { debug("load-error", { message: error?.message || String(error || "") }); }
+      } else {
+        debug("skip-load-wechat");
+      }
       ["loadstart", "loadedmetadata", "loadeddata", "canplay", "playing", "timeupdate", "pause", "waiting", "stalled", "suspend", "ended", "error"].forEach((name) => {
         video.addEventListener(name, () => debug("event:" + name));
       });
@@ -2967,14 +2971,16 @@ function buildShareCardHtml(input: {
       }, { once: true });
       video.addEventListener("error", () => {
         if (isWechat) {
-          window.setTimeout(() => {
-            if (!closed && !progressed) playThroughBridge({ reload: true });
-          }, 250);
+          debug("wechat-error-no-reload");
         }
         else closeIntro();
       }, { once: true });
-      video.addEventListener("loadeddata", () => playThroughBridge(), { once: true });
-      video.addEventListener("canplay", () => playThroughBridge(), { once: true });
+      video.addEventListener("loadeddata", () => {
+        if (!isWechat) playThroughBridge();
+      }, { once: true });
+      video.addEventListener("canplay", () => {
+        if (!isWechat) playThroughBridge();
+      }, { once: true });
       window.addEventListener("pageshow", () => playThroughBridge(), { once: true });
       document.addEventListener("WeixinJSBridgeReady", () => playThroughBridge(), false);
       document.addEventListener("YixinJSBridgeReady", () => playThroughBridge(), false);
@@ -2982,11 +2988,14 @@ function buildShareCardHtml(input: {
         if (!document.hidden && video.paused) playThroughBridge();
       });
       if (isWechat) {
-        [0, 300, 1200, 2600].forEach((delay) => {
+        [80, 600, 1400].forEach((delay) => {
           window.setTimeout(() => {
             if (!closed && !progressed) playThroughBridge();
           }, delay);
         });
+        document.addEventListener("touchstart", () => {
+          if (!closed && !progressed) playThroughBridge();
+        }, { passive: true, once: true });
       } else {
         [0, 120, 600, 1200].forEach((delay) => {
           window.setTimeout(() => {
