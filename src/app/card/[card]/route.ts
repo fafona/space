@@ -555,6 +555,36 @@ function buildInlineI18nScript() {
       "mt-MT": "Tektek l-iskrin biex tixghel il-hoss",
       "lb-LU": "Tippt op den Ecran fir den Toun unzeschalten"
     };
+    const INTRO_SKIP_TEXT = {
+      "zh-CN": "跳过",
+      "zh-TW": "跳過",
+      "ja-JP": "スキップ",
+      "ko-KR": "건너뛰기",
+      "en-GB": "Skip",
+      "es-ES": "Saltar",
+      "de-DE": "Überspringen",
+      "fr-FR": "Passer",
+      "tr-TR": "Atla",
+      "it-IT": "Salta",
+      "pl-PL": "Pomiń",
+      "pt-PT": "Saltar",
+      "ru-RU": "Пропустить"
+    };
+    const INTRO_SOUND_TEXT = {
+      "zh-CN": "开启声音",
+      "zh-TW": "開啟聲音",
+      "ja-JP": "音声をオン",
+      "ko-KR": "소리 켜기",
+      "en-GB": "Turn on sound",
+      "es-ES": "Activar sonido",
+      "de-DE": "Ton einschalten",
+      "fr-FR": "Activer le son",
+      "tr-TR": "Sesi aç",
+      "it-IT": "Attiva audio",
+      "pl-PL": "Włącz dźwięk",
+      "pt-PT": "Ativar som",
+      "ru-RU": "Включить звук"
+    };
     const TRANSLATABLE_ATTRS = ["placeholder", "title", "aria-label"];
     const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT"]);
     const localeCacheStore = new Map();
@@ -911,12 +941,20 @@ function buildInlineI18nScript() {
       if (selectEl && selectEl.value !== normalized) selectEl.value = normalized;
     }
 
-    function updateIntroUnmutePrompt(locale) {
+    function resolveIntroText(map, locale, fallbackLocale) {
       const normalized = resolveLocale(locale);
       const language = normalized.toLowerCase().split("-")[0] || "";
-      const fallback = INTRO_UNMUTE_TEXT[normalized] || INTRO_UNMUTE_TEXT[LANGUAGE_OPTIONS.find((item) => item.code.toLowerCase().startsWith(language + "-"))?.code || ""] || INTRO_UNMUTE_TEXT["en-GB"];
+      return map[normalized] || map[LANGUAGE_OPTIONS.find((item) => item.code.toLowerCase().startsWith(language + "-"))?.code || ""] || map[fallbackLocale] || map["en-GB"];
+    }
+
+    function updateIntroControls(locale) {
+      const normalized = resolveLocale(locale);
       const prompt = document.querySelector("[data-intro-unmute-tip]");
-      if (prompt) prompt.textContent = fallback;
+      if (prompt) prompt.textContent = resolveIntroText(INTRO_UNMUTE_TEXT, normalized, "en-GB");
+      const skip = document.querySelector("[data-intro-skip]");
+      if (skip) skip.textContent = resolveIntroText(INTRO_SKIP_TEXT, normalized, "en-GB");
+      const sound = document.querySelector("[data-intro-unmute]");
+      if (sound) sound.textContent = resolveIntroText(INTRO_SOUND_TEXT, normalized, "en-GB");
     }
 
     async function applyLocale(locale) {
@@ -925,7 +963,7 @@ function buildInlineI18nScript() {
       document.documentElement.lang = normalized;
       document.documentElement.setAttribute("data-ui-locale", normalized);
       updateLanguageUi(normalized);
-      updateIntroUnmutePrompt(normalized);
+      updateIntroControls(normalized);
       try {
         window.localStorage.setItem(STORAGE_KEY, normalized);
       } catch {}
@@ -2282,7 +2320,7 @@ function buildShareCardHtml(input: {
         border: 0;
         border-radius: 0;
         background: #000;
-        object-fit: cover;
+        object-fit: contain;
       }
       .intro-card.has-intro-poster .intro-video {
         opacity: 0;
@@ -2330,6 +2368,32 @@ function buildShareCardHtml(input: {
       }
       .intro-overlay.show-unmute-tip .intro-unmute-tip {
         display: block;
+      }
+      .intro-unmute-button {
+        position: absolute;
+        left: 50%;
+        bottom: max(28px, calc(env(safe-area-inset-bottom) + 28px));
+        z-index: 4;
+        transform: translateX(-50%);
+        display: none;
+        max-width: min(86vw, 360px);
+        border-radius: 999px;
+        border: 1px solid rgba(255,255,255,.34);
+        background: rgba(15,23,42,.72);
+        color: #fff;
+        padding: 10px 18px;
+        font: inherit;
+        font-size: 14px;
+        line-height: 1.45;
+        text-align: center;
+        backdrop-filter: blur(14px);
+        cursor: pointer;
+        box-shadow: 0 12px 40px rgba(0,0,0,.24);
+      }
+      .intro-overlay.show-unmute-action .intro-unmute-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
       }
       #contact-card-language {
         position: absolute;
@@ -2644,6 +2708,7 @@ function buildShareCardHtml(input: {
       <div class="intro-card${introPosterUrl ? " has-intro-poster" : ""}">
         ${introPosterUrl ? `<img class="intro-poster" src="${introPosterUrl}" alt="" aria-hidden="true" />` : ""}
         <video class="intro-video" src="${introVideoUrl}"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay${introVideoMuted ? " muted" : ""} playsinline webkit-playsinline x5-playsinline x5-video-player-type="h5-page" x5-video-player-fullscreen="true" x5-video-orientation="portrait" preload="auto" data-intro-src="${introVideoUrl}"><source src="${introVideoUrl}" type="video/mp4" /></video>
+        <button class="intro-unmute-button" type="button" data-intro-unmute>开启声音</button>
         <button class="intro-skip" type="button" data-intro-skip>跳过</button>
       </div>
     </div>
@@ -2683,12 +2748,14 @@ function buildShareCardHtml(input: {
       const overlay = document.querySelector("[data-intro-overlay]");
       if (!overlay) return;
       const video = overlay.querySelector("video");
+      const unmuteButton = overlay.querySelector("[data-intro-unmute]");
       const introMuted = ${introVideoMuted ? "true" : "false"};
       const introSrc = video?.getAttribute("data-intro-src") || video?.currentSrc || video?.src || "";
       let closed = false;
       let progressed = false;
       const closeIntro = () => {
         closed = true;
+        overlay.classList.remove("show-unmute-action");
         overlay.classList.add("is-hidden");
         try { video && video.pause(); } catch {}
       };
@@ -2704,6 +2771,13 @@ function buildShareCardHtml(input: {
           Array.from(video.querySelectorAll("source")).forEach((source) => source.setAttribute("src", introSrc));
           video.load?.();
         } catch {}
+      };
+      const showUnmuteAction = () => {
+        if (closed || introMuted) return;
+        overlay.classList.add("show-unmute-action");
+      };
+      const hideUnmuteAction = () => {
+        overlay.classList.remove("show-unmute-action");
       };
       const prepareAutoplay = (forceMuted = false) => {
         video.autoplay = true;
@@ -2721,8 +2795,25 @@ function buildShareCardHtml(input: {
         video.defaultMuted = shouldMute;
         if (shouldMute) {
           video.setAttribute("muted", "");
+          if (forceMuted && !introMuted) showUnmuteAction();
         } else {
           video.removeAttribute("muted");
+          hideUnmuteAction();
+        }
+      };
+      const restoreSound = (event) => {
+        if (event && event.isTrusted === false) return;
+        if (closed || introMuted) return;
+        try {
+          video.muted = false;
+          video.defaultMuted = false;
+          video.removeAttribute("muted");
+          hideUnmuteAction();
+          void video.play?.().catch?.(() => {
+            showUnmuteAction();
+          });
+        } catch {
+          showUnmuteAction();
         }
       };
       const markPlaying = () => {
@@ -2775,6 +2866,12 @@ function buildShareCardHtml(input: {
         if (video.currentTime > 0.05) markPlaying();
       });
       overlay.querySelector("[data-intro-skip]")?.addEventListener("click", closeIntro);
+      unmuteButton?.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        restoreSound(event);
+      });
+      video.addEventListener("click", restoreSound);
       video.addEventListener("ended", closeIntro, { once: true });
       video.addEventListener("error", closeIntro, { once: true });
       video.addEventListener("loadeddata", () => playThroughBridge(), { once: true });
