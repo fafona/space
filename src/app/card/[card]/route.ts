@@ -2185,8 +2185,7 @@ function buildShareCardHtml(input: {
   const previewImageUrl = input.previewImageUrl ? escapeHtml(input.previewImageUrl) : "";
   const contentImageUrl = input.contentImageUrl ? escapeHtml(input.contentImageUrl) : "";
   const introVideoUrl = input.introVideoUrl ? escapeHtml(input.introVideoUrl) : "";
-  // Android WeChat/X5 can keep the poster painted as a static first frame and never advance the video.
-  const introPosterUrl = "";
+  const introPosterUrl = input.introPosterUrl ? escapeHtml(input.introPosterUrl) : contentImageUrl || previewImageUrl;
   const introVideoMuted = input.introVideoMuted !== false;
   const contentImageHeight = input.contentImageHeight ?? 0;
   const targetUrl = escapeHtml(input.targetUrl);
@@ -2302,7 +2301,7 @@ function buildShareCardHtml(input: {
         display: none;
         width: 100%;
         height: 100%;
-        object-fit: cover;
+        object-fit: contain;
         background: #000;
         transition: opacity .18s ease;
       }
@@ -2325,11 +2324,15 @@ function buildShareCardHtml(input: {
       .intro-card.has-intro-poster .intro-video {
         opacity: 0;
       }
-      .intro-overlay.is-playing .intro-video {
+      .intro-overlay.has-video-progress .intro-video,
+      .intro-overlay.needs-manual-play .intro-video {
         opacity: 1;
       }
-      .intro-overlay.is-playing .intro-poster {
+      .intro-overlay.has-video-progress .intro-poster {
         opacity: 0;
+      }
+      .intro-overlay.needs-manual-play .intro-poster {
+        opacity: .38;
       }
       .intro-skip {
         position: absolute;
@@ -2705,9 +2708,9 @@ function buildShareCardHtml(input: {
     ${
       introVideoUrl
         ? `<div class="intro-overlay" data-intro-overlay data-no-translate="1">
-      <div class="intro-card${introPosterUrl ? " has-intro-poster" : ""}">
-        ${introPosterUrl ? `<img class="intro-poster" src="${introPosterUrl}" alt="" aria-hidden="true" />` : ""}
-        <video class="intro-video" src="${introVideoUrl}"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay${introVideoMuted ? " muted" : ""} playsinline webkit-playsinline x5-playsinline x5-video-player-type="h5-page" x5-video-player-fullscreen="true" x5-video-orientation="portrait" preload="auto" data-intro-src="${introVideoUrl}"><source src="${introVideoUrl}" type="video/mp4" /></video>
+            <div class="intro-card${introPosterUrl ? " has-intro-poster" : ""}">
+              ${introPosterUrl ? `<img class="intro-poster" src="${introPosterUrl}" alt="" aria-hidden="true" />` : ""}
+              <video class="intro-video" src="${introVideoUrl}" autoplay${introVideoMuted ? " muted" : ""} playsinline webkit-playsinline x5-playsinline x5-video-player-type="h5-page" x5-video-player-fullscreen="true" x5-video-orientation="portrait" preload="auto" data-intro-src="${introVideoUrl}"><source src="${introVideoUrl}" type="video/mp4" /></video>
         <button class="intro-unmute-button" type="button" data-intro-unmute>开启声音</button>
         <button class="intro-skip" type="button" data-intro-skip>跳过</button>
       </div>
@@ -2820,7 +2823,8 @@ function buildShareCardHtml(input: {
       const markPlaying = () => {
         if (closed) return;
         progressed = true;
-        overlay.classList.add("is-playing");
+        overlay.classList.add("is-playing", "has-video-progress");
+        overlay.classList.remove("needs-manual-play");
       };
       const playIntro = (options = {}) => {
         if (closed) return Promise.resolve(false);
@@ -2833,14 +2837,12 @@ function buildShareCardHtml(input: {
           return result
             .then(() => {
               if (video.currentTime > 0.05) markPlaying();
-              else if (!video.paused) overlay.classList.add("is-playing");
               return !video.paused || video.currentTime > 0.05;
             })
             .catch(() => false);
         }
         if (!video.paused || video.currentTime > 0.05) {
           if (video.currentTime > 0.05) markPlaying();
-          else overlay.classList.add("is-playing");
           return Promise.resolve(true);
         }
         return Promise.resolve(false);
@@ -2862,7 +2864,6 @@ function buildShareCardHtml(input: {
         try { video.load?.(); } catch {}
       }
       video.addEventListener("playing", () => {
-        overlay.classList.add("is-playing");
         if (video.currentTime > 0.05) markPlaying();
       });
       video.addEventListener("timeupdate", () => {
@@ -2892,7 +2893,7 @@ function buildShareCardHtml(input: {
         window.setTimeout(() => {
           if (closed || progressed) return;
           video.controls = true;
-          overlay.classList.add("is-playing");
+          overlay.classList.add("needs-manual-play");
         }, 8000);
       } else {
         [0, 120, 600, 1200].forEach((delay) => {
