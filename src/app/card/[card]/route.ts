@@ -2708,8 +2708,7 @@ function buildShareCardHtml(input: {
       introVideoUrl
         ? `<div class="intro-overlay" data-intro-overlay data-no-translate="1">
             <div class="intro-card${introPosterUrl ? " has-intro-poster" : ""}">
-              ${introPosterUrl ? `<img class="intro-poster" src="${introPosterUrl}" alt="" aria-hidden="true" />` : ""}
-              <video class="intro-video" src="${introVideoUrl}"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay="autoplay"${introVideoMuted ? ` muted="muted"` : ""} playsinline="playsinline" webkit-playsinline="webkit-playsinline" x5-playsinline="true" x5-video-player-type="h5-page" x5-video-player-fullscreen="true" x5-video-orientation="portrait" preload="auto" data-intro-src="${introVideoUrl}" disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"><source src="${introVideoUrl}" type="video/mp4" /></video>
+              <video class="intro-video" src="${introVideoUrl}"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay="autoplay"${introVideoMuted ? ` muted="muted"` : ""} playsinline="playsinline" webkit-playsinline="webkit-playsinline" x5-playsinline="true" x5-video-player-type="h5-page" x5-video-player-fullscreen="false" x5-video-orientation="portrait" preload="auto" data-intro-src="${introVideoUrl}" disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"><source src="${introVideoUrl}" type="video/mp4" /></video>
         <button class="intro-unmute-button" type="button" data-intro-unmute>开启声音</button>
         <button class="intro-skip" type="button" data-intro-skip>跳过</button>
       </div>
@@ -2792,7 +2791,7 @@ function buildShareCardHtml(input: {
         video.setAttribute("webkit-playsinline", "");
         video.setAttribute("x5-playsinline", "");
         video.setAttribute("x5-video-player-type", "h5-page");
-        video.setAttribute("x5-video-player-fullscreen", "true");
+        video.setAttribute("x5-video-player-fullscreen", "false");
         video.setAttribute("x5-video-orientation", "portrait");
         const shouldMute = introMuted || (!isWechat && forceMuted);
         video.muted = shouldMute;
