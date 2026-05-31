@@ -2324,15 +2324,14 @@ function buildShareCardHtml(input: {
       .intro-card.has-intro-poster .intro-video {
         opacity: 0;
       }
-      .intro-overlay.has-video-progress .intro-video,
-      .intro-overlay.needs-manual-play .intro-video {
+      .intro-overlay.has-video-progress .intro-video {
         opacity: 1;
       }
       .intro-overlay.has-video-progress .intro-poster {
         opacity: 0;
       }
       .intro-overlay.needs-manual-play .intro-poster {
-        opacity: .38;
+        opacity: 1;
       }
       .intro-skip {
         position: absolute;
@@ -2822,9 +2821,17 @@ function buildShareCardHtml(input: {
       };
       const markPlaying = () => {
         if (closed) return;
+        const revealAt = isWechat ? 0.35 : 0.05;
+        if (video.currentTime <= revealAt) return;
         progressed = true;
         overlay.classList.add("is-playing", "has-video-progress");
         overlay.classList.remove("needs-manual-play");
+      };
+      const keepIntroFallback = () => {
+        if (closed || progressed) return;
+        try { video.controls = false; } catch {}
+        overlay.classList.remove("is-hidden", "is-playing", "has-video-progress");
+        overlay.classList.add("needs-manual-play");
       };
       const playIntro = (options = {}) => {
         if (closed) return Promise.resolve(false);
@@ -2836,13 +2843,13 @@ function buildShareCardHtml(input: {
         if (result && typeof result.then === "function") {
           return result
             .then(() => {
-              if (video.currentTime > 0.05) markPlaying();
+              markPlaying();
               return !video.paused || video.currentTime > 0.05;
             })
             .catch(() => false);
         }
         if (!video.paused || video.currentTime > 0.05) {
-          if (video.currentTime > 0.05) markPlaying();
+          markPlaying();
           return Promise.resolve(true);
         }
         return Promise.resolve(false);
@@ -2864,10 +2871,10 @@ function buildShareCardHtml(input: {
         try { video.load?.(); } catch {}
       }
       video.addEventListener("playing", () => {
-        if (video.currentTime > 0.05) markPlaying();
+        markPlaying();
       });
       video.addEventListener("timeupdate", () => {
-        if (video.currentTime > 0.05) markPlaying();
+        markPlaying();
       });
       overlay.querySelector("[data-intro-skip]")?.addEventListener("click", closeIntro);
       unmuteButton?.addEventListener("click", (event) => {
@@ -2876,8 +2883,14 @@ function buildShareCardHtml(input: {
         restoreSound(event);
       });
       video.addEventListener("click", restoreSound);
-      video.addEventListener("ended", closeIntro, { once: true });
-      video.addEventListener("error", closeIntro, { once: true });
+      video.addEventListener("ended", () => {
+        if (isWechat && !progressed) keepIntroFallback();
+        else closeIntro();
+      }, { once: true });
+      video.addEventListener("error", () => {
+        if (isWechat) keepIntroFallback();
+        else closeIntro();
+      }, { once: true });
       video.addEventListener("loadeddata", () => playThroughBridge(), { once: true });
       video.addEventListener("canplay", () => playThroughBridge(), { once: true });
       window.addEventListener("pageshow", () => playThroughBridge(), { once: true });
@@ -2892,8 +2905,7 @@ function buildShareCardHtml(input: {
         }, 1200);
         window.setTimeout(() => {
           if (closed || progressed) return;
-          video.controls = true;
-          overlay.classList.add("needs-manual-play");
+          keepIntroFallback();
         }, 8000);
       } else {
         [0, 120, 600, 1200].forEach((delay) => {
