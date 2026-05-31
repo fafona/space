@@ -2751,6 +2751,7 @@ function buildShareCardHtml(input: {
       const unmuteButton = overlay.querySelector("[data-intro-unmute]");
       const introMuted = ${introVideoMuted ? "true" : "false"};
       const introSrc = video?.getAttribute("data-intro-src") || video?.currentSrc || video?.src || "";
+      const isWechat = /micromessenger/i.test(String(window.navigator?.userAgent || ""));
       let closed = false;
       let progressed = false;
       const closeIntro = () => {
@@ -2857,7 +2858,9 @@ function buildShareCardHtml(input: {
         void playIntro(options);
       };
       prepareAutoplay();
-      try { video.load?.(); } catch {}
+      if (!isWechat) {
+        try { video.load?.(); } catch {}
+      }
       video.addEventListener("playing", () => {
         overlay.classList.add("is-playing");
         if (video.currentTime > 0.05) markPlaying();
@@ -2882,23 +2885,34 @@ function buildShareCardHtml(input: {
       document.addEventListener("visibilitychange", () => {
         if (!document.hidden && video.paused) playThroughBridge();
       });
-      [0, 120, 600, 1200].forEach((delay) => {
+      if (isWechat) {
         window.setTimeout(() => {
           if (!closed && !progressed) playThroughBridge();
-        }, delay);
-      });
-      window.setTimeout(() => {
-        if (!closed && !progressed && !introMuted) playThroughBridge({ forceMuted: true, reload: true });
-      }, 1800);
-      window.setTimeout(() => {
-        if (closed || progressed) return;
-        if (video.currentTime > 0.05) {
-          markPlaying();
-          return;
-        }
-        closeIntro();
-      }, 3600);
-      playThroughBridge();
+        }, 1200);
+        window.setTimeout(() => {
+          if (closed || progressed) return;
+          video.controls = true;
+          overlay.classList.add("is-playing");
+        }, 8000);
+      } else {
+        [0, 120, 600, 1200].forEach((delay) => {
+          window.setTimeout(() => {
+            if (!closed && !progressed) playThroughBridge();
+          }, delay);
+        });
+        window.setTimeout(() => {
+          if (!closed && !progressed && !introMuted) playThroughBridge({ forceMuted: true, reload: true });
+        }, 1800);
+        window.setTimeout(() => {
+          if (closed || progressed) return;
+          if (video.currentTime > 0.05) {
+            markPlaying();
+            return;
+          }
+          closeIntro();
+        }, 3600);
+        playThroughBridge();
+      }
     })();</script>`
         : ""
     }
