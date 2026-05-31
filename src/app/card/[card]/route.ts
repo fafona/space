@@ -2794,7 +2794,7 @@ function buildShareCardHtml(input: {
           visibility: document.visibilityState,
           ...extra,
         };
-        debugPanel.textContent = (debugPanel.textContent + "\n" + JSON.stringify(snapshot)).slice(-5000);
+        debugPanel.textContent = [debugPanel.textContent, JSON.stringify(snapshot)].join(String.fromCharCode(10)).slice(-5000);
       };
       const closeIntro = () => {
         debug("close");
