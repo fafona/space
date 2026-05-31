@@ -2144,7 +2144,6 @@ function buildShareCardHtml(input: {
   const title = escapeHtml(input.title);
   const description = escapeHtml(input.description);
   const merchantName = escapeHtml(input.merchantName);
-  const introBrandLabel = merchantName || title;
   const previewImageUrl = input.previewImageUrl ? escapeHtml(input.previewImageUrl) : "";
   const contentImageUrl = input.contentImageUrl ? escapeHtml(input.contentImageUrl) : "";
   const introVideoUrl = input.introVideoUrl ? escapeHtml(input.introVideoUrl) : "";
@@ -2258,59 +2257,15 @@ function buildShareCardHtml(input: {
         overflow: hidden;
         background: #000;
       }
-      .intro-brand {
-        position: absolute;
-        inset: 0;
-        z-index: 0;
-        pointer-events: none;
-        color: rgba(255,255,255,.88);
-        font-weight: 800;
-        letter-spacing: .08em;
-        text-shadow: 0 2px 12px rgba(0,0,0,.52);
-      }
-      .intro-brand-label {
-        position: absolute;
-        max-width: min(78vw, 520px);
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        font-size: clamp(16px, 3.8vw, 28px);
-      }
-      .intro-brand-label.top {
-        top: max(56px, calc(env(safe-area-inset-top) + 56px));
-        left: 50%;
-        transform: translateX(-50%);
-      }
-      .intro-brand-label.bottom {
-        bottom: max(34px, calc(env(safe-area-inset-bottom) + 34px));
-        left: 50%;
-        transform: translateX(-50%);
-      }
-      .intro-brand-label.left,
-      .intro-brand-label.right {
-        top: 50%;
-        max-width: min(70vh, 420px);
-        writing-mode: vertical-rl;
-        text-orientation: mixed;
-      }
-      .intro-brand-label.left {
-        left: max(18px, calc(env(safe-area-inset-left) + 18px));
-        transform: translateY(-50%) rotate(180deg);
-      }
-      .intro-brand-label.right {
-        right: max(18px, calc(env(safe-area-inset-right) + 18px));
-        transform: translateY(-50%);
-      }
       .intro-poster {
         position: absolute;
         inset: 0;
-        z-index: 1;
+        z-index: 0;
         display: none;
         width: 100%;
         height: 100%;
-        object-fit: contain;
-        background: transparent;
-        pointer-events: none;
+        object-fit: cover;
+        background: #000;
         transition: opacity .18s ease;
       }
       .intro-card.has-intro-poster .intro-poster {
@@ -2319,16 +2274,15 @@ function buildShareCardHtml(input: {
       .intro-video {
         position: absolute;
         inset: 0;
-        z-index: 2;
+        z-index: 1;
         display: block;
         width: 100vw;
         height: 100vh;
         height: 100dvh;
         border: 0;
         border-radius: 0;
-        background: transparent;
-        object-fit: contain;
-        opacity: 1;
+        background: #000;
+        object-fit: cover;
       }
       .intro-card.has-intro-poster .intro-video {
         opacity: 0;
@@ -2688,19 +2642,8 @@ function buildShareCardHtml(input: {
       introVideoUrl
         ? `<div class="intro-overlay" data-intro-overlay data-no-translate="1">
       <div class="intro-card${introPosterUrl ? " has-intro-poster" : ""}">
-        ${
-          introBrandLabel
-            ? `<div class="intro-brand" aria-hidden="true" data-no-translate="1">
-          <div class="intro-brand-label top">${introBrandLabel}</div>
-          <div class="intro-brand-label bottom">${introBrandLabel}</div>
-          <div class="intro-brand-label left">${introBrandLabel}</div>
-          <div class="intro-brand-label right">${introBrandLabel}</div>
-        </div>`
-            : ""
-        }
         ${introPosterUrl ? `<img class="intro-poster" src="${introPosterUrl}" alt="" aria-hidden="true" />` : ""}
-        <video class="intro-video" src="${introVideoUrl}"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay="autoplay" muted="muted" playsinline="playsinline" webkit-playsinline="webkit-playsinline" x5-playsinline="true" x5-video-player-type="h5-page" x5-video-player-fullscreen="true" x5-video-orientation="portrait" preload="auto" data-intro-muted="${introVideoMuted ? "1" : "0"}" data-intro-src="${introVideoUrl}" disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"><source src="${introVideoUrl}" type="video/mp4" /></video>
-        <div class="intro-unmute-tip" data-intro-unmute-tip>点按屏幕取消静音</div>
+        <video class="intro-video" src="${introVideoUrl}"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay muted playsinline webkit-playsinline x5-playsinline x5-video-player-type="h5-page" x5-video-player-fullscreen="true" x5-video-orientation="portrait" preload="auto"></video>
         <button class="intro-skip" type="button" data-intro-skip>跳过</button>
       </div>
     </div>
@@ -2740,20 +2683,8 @@ function buildShareCardHtml(input: {
       const overlay = document.querySelector("[data-intro-overlay]");
       if (!overlay) return;
       const video = overlay.querySelector("video");
-      let closed = false;
-      let started = false;
-      let mutedFallbackActive = false;
-      let errorRetryCount = 0;
-      const showUnmutePrompt = () => {
-        if (closed || introMuted || isWeChat) return;
-        overlay.classList.add("show-unmute-tip");
-      };
-      const hideUnmutePrompt = () => {
-        overlay.classList.remove("show-unmute-tip");
-      };
+      const preferMuted = ${introVideoMuted ? "true" : "false"};
       const closeIntro = () => {
-        closed = true;
-        hideUnmutePrompt();
         overlay.classList.add("is-hidden");
         try { video && video.pause(); } catch {}
       };
@@ -2761,204 +2692,59 @@ function buildShareCardHtml(input: {
         closeIntro();
         return;
       }
-      const introMuted = ${introVideoMuted ? "true" : "false"};
-      const isWeChat = /MicroMessenger/i.test(navigator.userAgent || "");
-      const getBridge = () => window.WeixinJSBridge || window.YixinJSBridge;
-      const introSrc = video.getAttribute("data-intro-src") || video.currentSrc || video.src || "";
-      const reloadIntroSource = () => {
-        if (!introSrc) return;
-        try {
-          video.pause?.();
-          video.setAttribute("src", introSrc);
-          const sources = Array.from(video.querySelectorAll("source"));
-          sources.forEach((source) => source.setAttribute("src", introSrc));
-          video.load?.();
-        } catch {}
-      };
-      const prepareAutoplay = (forceMuted = false) => {
+      const forceMutedAutoplay = () => {
         video.autoplay = true;
-        video.controls = false;
-        video.setAttribute("autoplay", "");
-        video.setAttribute("preload", "auto");
-        video.setAttribute("playsinline", "playsinline");
-        video.setAttribute("webkit-playsinline", "webkit-playsinline");
-        video.setAttribute("x5-playsinline", "true");
+        video.muted = true;
+        video.defaultMuted = true;
+        video.setAttribute("muted", "");
+        video.setAttribute("playsinline", "");
+        video.setAttribute("webkit-playsinline", "");
+        video.setAttribute("x5-playsinline", "");
         video.setAttribute("x5-video-player-type", "h5-page");
         video.setAttribute("x5-video-player-fullscreen", "true");
         video.setAttribute("x5-video-orientation", "portrait");
-        const shouldMute = introMuted || forceMuted || (isWeChat && !started);
-        mutedFallbackActive = !introMuted && shouldMute;
-        if (mutedFallbackActive) {
-          showUnmutePrompt();
-        } else {
-          hideUnmutePrompt();
-        }
-        if (shouldMute) {
-          video.muted = true;
-          video.defaultMuted = true;
-          video.setAttribute("muted", "");
-        } else {
-          video.muted = false;
-          video.defaultMuted = false;
-          video.removeAttribute("muted");
-        }
-      };
-      const restoreSound = (event) => {
-        if (event && event.isTrusted === false) return;
-        if (mutedFallbackActive) hideUnmutePrompt();
-        if (closed || introMuted || !mutedFallbackActive) return;
-        video.muted = false;
-        video.defaultMuted = false;
-        video.removeAttribute("muted");
-        mutedFallbackActive = false;
-        try { void video.play?.().catch(() => undefined); } catch {}
       };
       const markPlaying = () => {
-        started = true;
-        errorRetryCount = 0;
         overlay.classList.add("is-playing");
-        if (isWeChat && !introMuted && video.muted) {
-          window.setTimeout(restoreSound, 260);
-          window.setTimeout(() => playThroughBridge({ forceMuted: false }), 720);
-        }
       };
-      const playIntro = (options = {}) => {
-        if (closed) return Promise.resolve(false);
-        const forceMuted = Boolean(options.forceMuted);
-        const forceReload = Boolean(options.reload);
-        prepareAutoplay(forceMuted);
-        if (forceReload) reloadIntroSource();
+      const playIntro = () => {
         const result = video.play?.();
-        if (result && typeof result.then === "function") {
-          return result
-            .then(() => {
-              window.setTimeout(() => {
-                if (!closed && !started && video.currentTime > 0.05) markPlaying();
-              }, 180);
-              return !video.paused || video.currentTime > 0.05;
-            })
-            .catch(() => {
-              if (!introMuted && !forceMuted) {
-                mutedFallbackActive = true;
-                return playIntro({ forceMuted: true }).then((ok) => {
-                  if (ok && isWeChat) {
-                    window.setTimeout(restoreSound, 260);
-                    window.setTimeout(() => playThroughBridge({ forceMuted: false }), 720);
-                  }
-                  return ok;
-                });
-              }
-              return false;
-            });
+        if (result && typeof result.catch === "function") {
+          result.catch(() => {
+            forceMutedAutoplay();
+            window.setTimeout(() => {
+              try { video.play?.().catch?.(() => {}); } catch {}
+            }, 120);
+          });
         }
-        if (!video.paused || video.currentTime > 0.05) {
-          markPlaying();
-          return Promise.resolve(true);
-        }
-        return Promise.resolve(false);
       };
-      const playThroughBridge = (options = {}) => {
-        const bridge = getBridge();
-        const forceMuted = Boolean(options.forceMuted);
-        const nextOptions = isWeChat ? { ...options, forceMuted: false } : options;
-        if (bridge && typeof bridge.invoke === "function") {
+      forceMutedAutoplay();
+      try { video.load(); } catch {}
+      if (!preferMuted) {
+        video.addEventListener("playing", () => {
           try {
-            bridge.invoke("getNetworkType", {}, () => {
-              void playIntro(nextOptions).then((ok) => {
-                if (!isWeChat && !ok && !introMuted && !forceMuted && !closed && !started) {
-                  window.setTimeout(() => {
-                    if (!closed && !started) void playThroughBridge({ forceMuted: true, reload: true });
-                  }, 80);
-                }
-              });
-            });
-            return;
+            video.muted = false;
+            video.defaultMuted = false;
+            video.removeAttribute("muted");
           } catch {}
-        }
-        void playIntro(options);
-      };
-      prepareAutoplay();
-      try { video.load?.(); } catch {}
+        }, { once: true });
+      }
       video.addEventListener("playing", markPlaying);
       video.addEventListener("timeupdate", () => {
         if (video.currentTime > 0.05) markPlaying();
       });
-      overlay.querySelector("[data-intro-skip]")?.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        closeIntro();
-      });
-      video.addEventListener("ended", () => {
-        const duration = Number(video.duration) || 0;
-        const currentTime = Number(video.currentTime) || 0;
-        if (duration > 0 && currentTime >= Math.max(0.1, duration - 0.35)) {
-          closeIntro();
-          return;
-        }
-        started = false;
-        overlay.classList.remove("is-playing");
-        window.setTimeout(() => {
-          if (!closed) void playThroughBridge(isWeChat ? { reload: true } : { forceMuted: true, reload: true });
-        }, 120);
-      });
-      video.addEventListener("error", () => {
-        if (closed) return;
-        started = false;
-        overlay.classList.remove("is-playing");
-        if (errorRetryCount < 3) {
-          errorRetryCount += 1;
-          window.setTimeout(() => {
-            if (!closed) void playThroughBridge(isWeChat ? { reload: true } : { forceMuted: true, reload: true });
-          }, 240 * errorRetryCount);
-        }
-      });
-      video.addEventListener("loadeddata", () => {
-        if (!video.paused || video.currentTime > 0.05) {
-          markPlaying();
-        } else {
-          if (isWeChat) playThroughBridge();
-          else void playIntro();
-        }
-      }, { once: true });
-      video.addEventListener("canplay", () => playThroughBridge(), { once: true });
-      window.addEventListener("pageshow", () => playThroughBridge(), { once: true });
-      document.addEventListener("WeixinJSBridgeReady", playThroughBridge, false);
-      document.addEventListener("YixinJSBridgeReady", playThroughBridge, false);
-      document.addEventListener("pointerdown", (event) => {
-        restoreSound(event);
-        if (!closed && !started) void playIntro();
-      }, { passive: true });
-      document.addEventListener("touchstart", (event) => {
-        restoreSound(event);
-        if (!closed && !started) void playIntro();
-      }, { passive: true });
-      document.addEventListener("touchend", restoreSound, { passive: true });
-      document.addEventListener("keydown", (event) => {
-        restoreSound(event);
-        if (!closed && !started) void playIntro();
-      });
+      overlay.querySelector("[data-intro-skip]")?.addEventListener("click", closeIntro);
+      video.addEventListener("ended", closeIntro, { once: true });
+      video.addEventListener("error", closeIntro, { once: true });
+      video.addEventListener("canplay", playIntro, { once: true });
+      window.addEventListener("pageshow", playIntro, { once: true });
       document.addEventListener("visibilitychange", () => {
-        if (!document.hidden && video.paused) {
-          if (isWeChat) playThroughBridge();
-          else void playIntro();
-        }
-      });
-      [0, 120, 600, 1200, 2200].forEach((delay) => {
-        window.setTimeout(() => {
-          if (!closed && !started) playThroughBridge();
-        }, delay);
-      });
-      [1600, 3200].forEach((delay) => {
-        window.setTimeout(() => {
-          if (!closed && !started && !introMuted) void playThroughBridge({ forceMuted: true, reload: delay > 1600 });
-        }, delay);
+        if (!document.hidden && video.paused) playIntro();
       });
       window.setTimeout(() => {
-        if (closed || started) return;
-        if (!video.paused || video.currentTime > 0.05) {
-          markPlaying();
-        }
-      }, 1400);
+        if (video.paused) playIntro();
+      }, 600);
+      playIntro();
     })();</script>`
         : ""
     }
