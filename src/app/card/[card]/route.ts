@@ -2326,6 +2326,7 @@ function buildShareCardHtml(input: {
       .intro-overlay.has-video-progress .intro-video {
         opacity: 1;
       }
+      .intro-overlay.is-playing .intro-poster,
       .intro-overlay.has-video-progress .intro-poster {
         opacity: 0;
       }
@@ -2775,7 +2776,7 @@ function buildShareCardHtml(input: {
         } catch {}
       };
       const showUnmuteAction = () => {
-        if (closed || introMuted) return;
+        if (closed || introMuted || isWechat) return;
         overlay.classList.add("show-unmute-action");
       };
       const hideUnmuteAction = () => {
@@ -2792,7 +2793,7 @@ function buildShareCardHtml(input: {
         video.setAttribute("x5-video-player-type", "h5-page");
         video.setAttribute("x5-video-player-fullscreen", "false");
         video.setAttribute("x5-video-orientation", "portrait");
-        const shouldMute = introMuted || forceMuted;
+        const shouldMute = introMuted || (!isWechat && forceMuted);
         video.muted = shouldMute;
         video.defaultMuted = shouldMute;
         if (shouldMute) {
@@ -2826,15 +2827,20 @@ function buildShareCardHtml(input: {
         overlay.classList.add("is-playing", "has-video-progress");
         overlay.classList.remove("needs-manual-play");
       };
+      const revealVideo = () => {
+        if (closed) return;
+        overlay.classList.add("is-playing");
+        overlay.classList.remove("needs-manual-play");
+      };
       const keepIntroFallback = () => {
         if (closed || progressed) return;
-        try { video.controls = true; } catch {}
+        try { video.controls = !isWechat; } catch {}
         overlay.classList.remove("is-hidden", "is-playing", "has-video-progress");
         overlay.classList.add("needs-manual-play");
       };
       const playIntro = (options = {}) => {
         if (closed) return Promise.resolve(false);
-        const forceMuted = Boolean(options.forceMuted);
+        const forceMuted = isWechat ? false : Boolean(options.forceMuted);
         const forceReload = Boolean(options.reload);
         prepareAutoplay(forceMuted);
         if (forceReload) reloadIntroSource();
@@ -2842,10 +2848,17 @@ function buildShareCardHtml(input: {
         if (result && typeof result.then === "function") {
           return result
             .then(() => {
+              if (isWechat && !video.paused) revealVideo();
               markPlaying();
               return !video.paused || video.currentTime > 0.05;
             })
-            .catch(() => false);
+            .catch(() => {
+              if (isWechat) return false;
+              if (!introMuted && !forceMuted) {
+                return playIntro({ forceMuted: true, reload: true });
+              }
+              return false;
+            });
         }
         if (!video.paused || video.currentTime > 0.05) {
           markPlaying();
@@ -2855,21 +2868,23 @@ function buildShareCardHtml(input: {
       };
       const playThroughBridge = (options = {}) => {
         const bridge = window.WeixinJSBridge || window.YixinJSBridge;
+        const nextOptions = isWechat ? { ...options, forceMuted: false } : options;
         if (bridge && typeof bridge.invoke === "function") {
           try {
             bridge.invoke("getNetworkType", {}, () => {
-              void playIntro(options);
+              void playIntro(nextOptions);
             });
             return;
           } catch {}
         }
-        void playIntro(options);
+        void playIntro(nextOptions);
       };
       prepareAutoplay();
       if (!isWechat) {
         try { video.load?.(); } catch {}
       }
       video.addEventListener("playing", () => {
+        if (isWechat) revealVideo();
         markPlaying();
       });
       video.addEventListener("timeupdate", () => {
@@ -2904,7 +2919,7 @@ function buildShareCardHtml(input: {
         }, 1200);
         window.setTimeout(() => {
           if (closed || progressed) return;
-          keepIntroFallback();
+          playThroughBridge({ forceMuted: false });
         }, 8000);
       } else {
         [0, 120, 600, 1200].forEach((delay) => {
