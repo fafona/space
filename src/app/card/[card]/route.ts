@@ -2699,7 +2699,7 @@ function buildShareCardHtml(input: {
             : ""
         }
         ${introPosterUrl ? `<img class="intro-poster" src="${introPosterUrl}" alt="" aria-hidden="true" />` : ""}
-        <video class="intro-video" src="${introVideoUrl}"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay="autoplay"${introVideoMuted ? ` muted="muted"` : ""} playsinline="playsinline" webkit-playsinline="webkit-playsinline" x5-playsinline="true" x5-video-player-type="h5-page" x5-video-player-fullscreen="true" x5-video-orientation="portrait" preload="auto" data-intro-muted="${introVideoMuted ? "1" : "0"}" data-intro-src="${introVideoUrl}" disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"><source src="${introVideoUrl}" type="video/mp4" /></video>
+        <video class="intro-video" src="${introVideoUrl}"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay="autoplay" muted="muted" playsinline="playsinline" webkit-playsinline="webkit-playsinline" x5-playsinline="true" x5-video-player-type="h5-page" x5-video-player-fullscreen="true" x5-video-orientation="portrait" preload="auto" data-intro-muted="${introVideoMuted ? "1" : "0"}" data-intro-src="${introVideoUrl}" disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"><source src="${introVideoUrl}" type="video/mp4" /></video>
         <div class="intro-unmute-tip" data-intro-unmute-tip>点按屏幕取消静音</div>
         <button class="intro-skip" type="button" data-intro-skip>跳过</button>
       </div>
@@ -2786,7 +2786,7 @@ function buildShareCardHtml(input: {
         video.setAttribute("x5-video-player-type", "h5-page");
         video.setAttribute("x5-video-player-fullscreen", "true");
         video.setAttribute("x5-video-orientation", "portrait");
-        const shouldMute = introMuted || forceMuted;
+        const shouldMute = introMuted || forceMuted || (isWeChat && !started);
         mutedFallbackActive = !introMuted && shouldMute;
         if (mutedFallbackActive) {
           showUnmutePrompt();
@@ -2817,6 +2817,10 @@ function buildShareCardHtml(input: {
         started = true;
         errorRetryCount = 0;
         overlay.classList.add("is-playing");
+        if (isWeChat && !introMuted && video.muted) {
+          window.setTimeout(restoreSound, 260);
+          window.setTimeout(() => playThroughBridge({ forceMuted: false }), 720);
+        }
       };
       const playIntro = (options = {}) => {
         if (closed) return Promise.resolve(false);
