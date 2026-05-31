@@ -235,11 +235,25 @@ function isShortBusinessCardShareLink(value: string) {
   }
 }
 
+function resolveSameOriginBusinessCardShareCheckUrl(value: string) {
+  const normalized = normalizeText(value);
+  if (!normalized) return "";
+  const baseOrigin = typeof window !== "undefined" ? window.location.origin : "https://faolla.com";
+  try {
+    const url = new URL(normalized, baseOrigin);
+    if (!/^\/card\/[a-z0-9][a-z0-9_-]{5,63}\/?$/i.test(url.pathname) || url.search) return "";
+    return new URL(url.pathname, `${baseOrigin}/`).toString();
+  } catch {
+    return "";
+  }
+}
+
 async function verifyShortBusinessCardShareLink(value: string, timeoutMs = 8_000) {
   if (!isShortBusinessCardShareLink(value)) return false;
+  const checkUrl = resolveSameOriginBusinessCardShareCheckUrl(value) || value;
   try {
     const response = await fetchWithTimeout(
-      value,
+      checkUrl,
       {
         method: "GET",
         cache: "no-store",
@@ -3842,6 +3856,7 @@ export default function MerchantBusinessCardManager({
             await delay(600);
             continue;
           }
+          break;
         }
         if (attempt === 0 && (response.status === 401 || response.status === 503 || lastErrorCode === "unauthorized")) {
           await delay(500);
@@ -4155,12 +4170,10 @@ export default function MerchantBusinessCardManager({
               targetUrl,
             })
           : shareUrl;
-      if (!(await verifyShortBusinessCardShareLink(linkToCopy))) {
-        throw new Error("share_link_not_ready");
-      }
+      const linkVerified = await verifyShortBusinessCardShareLink(linkToCopy);
       try {
         await copyTextToClipboard(linkToCopy);
-        setTip("联系卡链接已复制，手机打开后可保存联系人");
+        setTip(linkVerified ? "联系卡链接已复制，手机打开后可保存联系人" : "联系卡链接已复制，短链可能仍在同步，请稍后打开");
       } catch {
         setTip("浏览器阻止自动复制，请手动复制上方短链");
       }
