@@ -2870,7 +2870,6 @@ function buildShareCardHtml(input: {
             return;
           } catch {}
         }
-        if (isWeChat) return;
         void playIntro(options);
       };
       prepareAutoplay();
