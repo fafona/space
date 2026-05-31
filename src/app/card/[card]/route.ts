@@ -2178,6 +2178,7 @@ function buildShareCardHtml(input: {
   shareUrl: string;
   contactUrl?: string;
   couponsHtml?: string;
+  introDebug?: boolean;
 }) {
   const title = escapeHtml(input.title);
   const description = escapeHtml(input.description);
@@ -2190,6 +2191,7 @@ function buildShareCardHtml(input: {
   const contentImageHeight = input.contentImageHeight ?? 0;
   const targetUrl = escapeHtml(input.targetUrl);
   const shareUrl = escapeHtml(input.shareUrl);
+  const introDebug = Boolean(input.introDebug);
   const inlineI18nScript = buildInlineI18nScript();
   const languageSwitcherHtml = buildLanguageSwitcherHtml();
 
@@ -2396,6 +2398,22 @@ function buildShareCardHtml(input: {
         display: inline-flex;
         align-items: center;
         justify-content: center;
+      }
+      .intro-debug-panel {
+        position: absolute;
+        left: max(10px, env(safe-area-inset-left));
+        right: max(10px, env(safe-area-inset-right));
+        bottom: max(10px, env(safe-area-inset-bottom));
+        z-index: 6;
+        max-height: 36vh;
+        overflow: auto;
+        border-radius: 12px;
+        background: rgba(15,23,42,.86);
+        color: #dbeafe;
+        padding: 10px;
+        font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        white-space: pre-wrap;
+        word-break: break-word;
       }
       #contact-card-language {
         position: absolute;
@@ -2711,6 +2729,7 @@ function buildShareCardHtml(input: {
               <video class="intro-video" src="${introVideoUrl}"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay="autoplay"${introVideoMuted ? ` muted="muted"` : ""} playsinline="playsinline" webkit-playsinline="webkit-playsinline" x5-playsinline="true" x5-video-player-type="h5-page" x5-video-player-fullscreen="false" x5-video-orientation="portrait" preload="auto" data-intro-src="${introVideoUrl}" disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"><source src="${introVideoUrl}" type="video/mp4" /></video>
         <button class="intro-unmute-button" type="button" data-intro-unmute>开启声音</button>
         <button class="intro-skip" type="button" data-intro-skip>跳过</button>
+        ${introDebug ? `<pre class="intro-debug-panel" data-intro-debug>intro debug boot</pre>` : ""}
       </div>
     </div>
     <noscript><style>.intro-overlay{display:none}</style></noscript>`
@@ -2750,25 +2769,50 @@ function buildShareCardHtml(input: {
       if (!overlay) return;
       const video = overlay.querySelector("video");
       const unmuteButton = overlay.querySelector("[data-intro-unmute]");
+      const debugPanel = overlay.querySelector("[data-intro-debug]");
       const introMuted = ${introVideoMuted ? "true" : "false"};
       const introSrc = video?.getAttribute("data-intro-src") || video?.currentSrc || video?.src || "";
       const isWechat = /micromessenger/i.test(String(window.navigator?.userAgent || ""));
       let closed = false;
       let progressed = false;
       const getBridge = () => window.WeixinJSBridge || window.YixinJSBridge;
+      const debug = (label, extra = {}) => {
+        if (!debugPanel) return;
+        const snapshot = {
+          label,
+          t: Math.round(performance.now()),
+          readyState: video?.readyState,
+          networkState: video?.networkState,
+          paused: video?.paused,
+          currentTime: video?.currentTime,
+          duration: video?.duration,
+          muted: video?.muted,
+          defaultMuted: video?.defaultMuted,
+          controls: video?.controls,
+          error: video?.error ? { code: video.error.code, message: video.error.message || "" } : null,
+          bridge: Boolean(getBridge()),
+          visibility: document.visibilityState,
+          ...extra,
+        };
+        debugPanel.textContent = (debugPanel.textContent + "\n" + JSON.stringify(snapshot)).slice(-5000);
+      };
       const closeIntro = () => {
+        debug("close");
         closed = true;
         overlay.classList.remove("show-unmute-action");
         overlay.classList.add("is-hidden");
         try { video && video.pause(); } catch {}
       };
       if (!video) {
+        debug("no-video");
         closeIntro();
         return;
       }
+      debug("init", { ua: String(window.navigator?.userAgent || ""), src: introSrc, introMuted, isWechat });
       const reloadIntroSource = () => {
         if (!introSrc) return;
         try {
+          debug("reload-source");
           video.pause?.();
           video.setAttribute("src", introSrc);
           Array.from(video.querySelectorAll("source")).forEach((source) => source.setAttribute("src", introSrc));
@@ -2794,6 +2838,7 @@ function buildShareCardHtml(input: {
         video.setAttribute("x5-video-player-fullscreen", "false");
         video.setAttribute("x5-video-orientation", "portrait");
         const shouldMute = introMuted || (!isWechat && forceMuted);
+        debug("prepare", { forceMuted, shouldMute });
         video.muted = shouldMute;
         video.defaultMuted = shouldMute;
         if (shouldMute) {
@@ -2822,6 +2867,7 @@ function buildShareCardHtml(input: {
       const markPlaying = () => {
         if (closed) return;
         const revealAt = isWechat ? 0.35 : 0.05;
+        debug("mark-check", { revealAt });
         if (video.currentTime <= revealAt) return;
         progressed = true;
         overlay.classList.add("is-playing", "has-video-progress");
@@ -2834,6 +2880,7 @@ function buildShareCardHtml(input: {
       };
       const keepIntroFallback = () => {
         if (closed || progressed) return;
+        debug("fallback");
         try { video.controls = false; } catch {}
         overlay.classList.remove("is-hidden", "is-playing", "has-video-progress");
         overlay.classList.add("needs-manual-play");
@@ -2842,16 +2889,19 @@ function buildShareCardHtml(input: {
         if (closed) return Promise.resolve(false);
         const forceMuted = isWechat ? false : Boolean(options.forceMuted);
         const forceReload = Boolean(options.reload);
+        debug("play-start", { forceMuted, forceReload });
         prepareAutoplay(forceMuted);
         if (forceReload) reloadIntroSource();
         const result = video.play?.();
         if (result && typeof result.then === "function") {
           return result
             .then(() => {
+              debug("play-ok");
               markPlaying();
               return !video.paused || video.currentTime > 0.05;
             })
-            .catch(() => {
+            .catch((error) => {
+              debug("play-fail", { name: error?.name || "", message: error?.message || String(error || "") });
               if (isWechat) return false;
               if (!introMuted && !forceMuted) {
                 return playIntro({ forceMuted: true, reload: true });
@@ -2860,19 +2910,24 @@ function buildShareCardHtml(input: {
             });
         }
         if (!video.paused || video.currentTime > 0.05) {
+          debug("play-sync-ok");
           markPlaying();
           return Promise.resolve(true);
         }
+        debug("play-no-promise");
         return Promise.resolve(false);
       };
       const playThroughBridge = (options = {}) => {
         const bridge = getBridge();
         const forceMuted = Boolean(options.forceMuted);
         const nextOptions = isWechat ? { ...options, forceMuted: false } : options;
+        debug("bridge-start", { hasBridge: Boolean(bridge), forceMuted });
         if (bridge && typeof bridge.invoke === "function") {
           try {
             bridge.invoke("getNetworkType", {}, () => {
+              debug("bridge-callback");
               void playIntro(nextOptions).then((ok) => {
+                debug("bridge-play-result", { ok });
                 if (!isWechat && !ok && !introMuted && !forceMuted && !closed && !progressed) {
                   window.setTimeout(() => {
                     if (!closed && !progressed) void playThroughBridge({ forceMuted: true, reload: true });
@@ -2881,13 +2936,18 @@ function buildShareCardHtml(input: {
               });
             });
             return;
-          } catch {}
+          } catch (error) {
+            debug("bridge-error", { message: error?.message || String(error || "") });
+          }
         }
-        if (isWechat) return;
+        if (isWechat) debug("bridge-missing-direct-play");
         void playIntro(nextOptions);
       };
       prepareAutoplay();
-      try { video.load?.(); } catch {}
+      try { video.load?.(); debug("load-called"); } catch (error) { debug("load-error", { message: error?.message || String(error || "") }); }
+      ["loadstart", "loadedmetadata", "loadeddata", "canplay", "playing", "timeupdate", "pause", "waiting", "stalled", "suspend", "ended", "error"].forEach((name) => {
+        video.addEventListener(name, () => debug("event:" + name));
+      });
       video.addEventListener("playing", () => {
         markPlaying();
       });
@@ -3114,6 +3174,7 @@ export async function GET(
   const { card } = await params;
   const shareKey = normalizeMerchantBusinessCardShareKey(card);
   const requestUrl = new URL(request.url);
+  const introDebug = requestUrl.searchParams.get("introDebug") === "1";
   const requestOrigin = requestUrl.origin;
   if (!shareKey) {
     return new NextResponse("Invalid business card link", {
@@ -3259,6 +3320,7 @@ export async function GET(
       shareUrl,
       contactUrl,
       couponsHtml: buildContactCouponsHtml(contactCoupons),
+      introDebug,
     }),
     {
       status: 200,
