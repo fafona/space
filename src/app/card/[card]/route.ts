@@ -2180,12 +2180,17 @@ function buildShareCardHtml(input: {
   couponsHtml?: string;
   introDebug?: boolean;
 }) {
+  const versionIntroVideoUrl = (value: string) => {
+    if (!value || !/\.mp4(?:$|\?)/i.test(value)) return value;
+    const separator = value.includes("?") ? "&" : "?";
+    return `${value}${separator}iv=wechat-safe-20260601`;
+  };
   const title = escapeHtml(input.title);
   const description = escapeHtml(input.description);
   const merchantName = escapeHtml(input.merchantName);
   const previewImageUrl = input.previewImageUrl ? escapeHtml(input.previewImageUrl) : "";
   const contentImageUrl = input.contentImageUrl ? escapeHtml(input.contentImageUrl) : "";
-  const introVideoUrl = input.introVideoUrl ? escapeHtml(input.introVideoUrl) : "";
+  const introVideoUrl = input.introVideoUrl ? escapeHtml(versionIntroVideoUrl(input.introVideoUrl)) : "";
   const introPosterUrl = input.introPosterUrl ? escapeHtml(input.introPosterUrl) : contentImageUrl || previewImageUrl;
   const introVideoMuted = input.introVideoMuted !== false;
   const contentImageHeight = input.contentImageHeight ?? 0;
