@@ -15,9 +15,11 @@ import {
 } from "@/lib/merchantMemberships";
 import {
   applyMerchantMembershipAccountOperation,
+  applyMerchantMembershipPointDeduction,
   joinMerchantMembership,
   leaveMerchantMembership,
   listMerchantMemberships,
+  quoteMerchantMembershipPointDeduction,
   updateMerchantMembershipAllergens,
 } from "@/lib/merchantMemberships.server";
 import type { MerchantOrderRecord } from "@/lib/merchantOrders";
@@ -274,6 +276,9 @@ export async function PATCH(request: Request) {
       rechargePlanId?: unknown;
       redemptionItemId?: unknown;
       redemptionQuantity?: unknown;
+      orderAmount?: unknown;
+      orderId?: unknown;
+      requestedPoints?: unknown;
     } | null;
     const siteId = trimText(body?.siteId, 64);
     if (!isMerchantNumericId(siteId)) {
@@ -309,6 +314,34 @@ export async function PATCH(request: Request) {
         redemptionQuantity: body?.redemptionQuantity,
       });
       return NextResponse.json({ ok: true, membership });
+    }
+    if (trimText(body?.action, 80) === "point_deduction_quote") {
+      const merchantSession = await resolveMerchantSessionFromRequest(request, { hintedMerchantId: siteId });
+      if (!merchantSession || merchantSession.merchantId !== siteId) {
+        return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+      }
+      const quote = await quoteMerchantMembershipPointDeduction({
+        siteId,
+        membershipId: trimText(body?.membershipId, 160),
+        orderAmount: body?.orderAmount,
+        requestedPoints: body?.requestedPoints,
+      });
+      return NextResponse.json({ ok: true, quote });
+    }
+    if (trimText(body?.action, 80) === "point_deduction_apply") {
+      const merchantSession = await resolveMerchantSessionFromRequest(request, { hintedMerchantId: siteId });
+      if (!merchantSession || merchantSession.merchantId !== siteId) {
+        return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+      }
+      const result = await applyMerchantMembershipPointDeduction({
+        siteId,
+        membershipId: trimText(body?.membershipId, 160),
+        orderAmount: body?.orderAmount,
+        requestedPoints: body?.requestedPoints,
+        orderId: body?.orderId,
+        operatorId: merchantSession.merchantId,
+      });
+      return NextResponse.json({ ok: true, ...result });
     }
     const session = await resolvePersonalAccountSessionFromRequest(request);
     if (!session) {

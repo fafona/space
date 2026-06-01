@@ -12,6 +12,7 @@ import {
   type MerchantOrderRecord,
   type MerchantOrderStatus,
 } from "@/lib/merchantOrders";
+import { awardMerchantMembershipPointsForOrder } from "@/lib/merchantMemberships.server";
 import {
   listStoredMerchantOrdersByCustomer,
   loadStoredMerchantOrders,
@@ -177,6 +178,9 @@ export async function updateMerchantOrderBySite(input: {
   if (saved.error) {
     throw new Error(saved.error);
   }
+  if (next.status === "completed" && current.status !== "completed") {
+    await awardMerchantMembershipPointsForOrder(next).catch(() => null);
+  }
   return next;
 }
 
@@ -222,5 +226,10 @@ export async function updateMerchantOrdersBatchBySite(input: {
   if (saved.error) {
     throw new Error(saved.error);
   }
+  await Promise.all(
+    updatedOrders
+      .filter((order) => order.status === "completed")
+      .map((order) => awardMerchantMembershipPointsForOrder(order).catch(() => null)),
+  );
   return updatedOrders;
 }
