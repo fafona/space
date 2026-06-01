@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
+import { toPersonalMembershipCard } from "@/lib/merchantMemberships";
 import { joinMerchantMembership, leaveMerchantMembership, listMerchantMemberships } from "@/lib/merchantMemberships.server";
 import {
   resolvePersonalAccountSessionFromFrontendAuthProofPayload,
@@ -65,7 +66,7 @@ export async function POST(request: Request) {
     const membership = await joinMerchantMembership({ siteId, siteName, session, profile: body?.profile });
     return NextResponse.json({
       ok: true,
-      membership,
+      membership: toPersonalMembershipCard(membership),
     });
   } catch (error) {
     return NextResponse.json(
@@ -95,7 +96,7 @@ export async function PATCH(request: Request) {
     const membership = await leaveMerchantMembership({ siteId, session });
     return NextResponse.json({
       ok: true,
-      membership,
+      membership: toPersonalMembershipCard(membership),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown_error";

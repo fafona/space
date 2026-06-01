@@ -111,6 +111,8 @@ const MOBILE_FAOLLA_FRAME_STYLE: CSSProperties = {
   touchAction: "pan-y",
 };
 
+const MEMBERSHIP_CHANGED_MESSAGE = "faolla:membership-changed";
+
 function readSameOriginFrameHref(frame: HTMLIFrameElement | null) {
   try {
     return frame?.contentWindow?.location.href ?? "";
@@ -2807,6 +2809,25 @@ export default function MePage() {
       setPersonalMembershipsLoading(false);
     }
   }, [accountId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const refreshMemberships = () => {
+      void loadPersonalMemberships();
+    };
+    const handleMessage = (event: MessageEvent) => {
+      if (!isTrustedFrontendAuthBridgeOrigin(event.origin)) return;
+      const message = readRecord(event.data);
+      if (message?.type !== MEMBERSHIP_CHANGED_MESSAGE) return;
+      refreshMemberships();
+    };
+    window.addEventListener(MEMBERSHIP_CHANGED_MESSAGE, refreshMemberships);
+    window.addEventListener("message", handleMessage);
+    return () => {
+      window.removeEventListener(MEMBERSHIP_CHANGED_MESSAGE, refreshMemberships);
+      window.removeEventListener("message", handleMessage);
+    };
+  }, [loadPersonalMemberships]);
 
   useEffect(() => {
     if (payload?.authenticated !== true || payload.accountType !== "personal") return;

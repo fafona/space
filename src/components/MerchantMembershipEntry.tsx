@@ -27,6 +27,8 @@ type MembershipMutationPayload = {
   message?: unknown;
 };
 
+const MEMBERSHIP_CHANGED_MESSAGE = "faolla:membership-changed";
+
 const EMPTY_MEMBER_PROFILE: MerchantMembershipProfileDraft = {
   name: "",
   phone: "",
@@ -42,12 +44,6 @@ const EMPTY_MEMBER_PROFILE: MerchantMembershipProfileDraft = {
 
 function trimText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
-}
-
-function buildPersonalLoginHref() {
-  if (typeof window === "undefined") return "/login?accountType=personal";
-  const loginFrom = window.location.href;
-  return `/login?accountType=personal&loginFrom=${encodeURIComponent(loginFrom)}`;
 }
 
 function readPayloadMessage(value: unknown, fallback: string) {
@@ -96,8 +92,29 @@ function readProfileFromAuthPayload(payload: MerchantCookieSessionPayload | null
 }
 
 async function resolveDeferredFrontendAuthPayload(timeoutMs: number) {
+  const { requestParentFrontendAuthPayload } = await import("@/lib/frontendAuthBridge");
+  const parentPayload = await requestParentFrontendAuthPayload(Math.max(800, Math.min(1800, timeoutMs))).catch(() => null);
+  if (parentPayload?.authenticated === true && parentPayload.accountType === "personal") return parentPayload;
+
   const { resolveFrontendAuthPayload } = await import("@/lib/authSessionRecovery");
   return resolveFrontendAuthPayload(timeoutMs);
+}
+
+function notifyMembershipChanged(membership: PersonalMembershipCard) {
+  if (typeof window === "undefined") return;
+  const detail = { membership };
+  try {
+    window.dispatchEvent(new CustomEvent(MEMBERSHIP_CHANGED_MESSAGE, { detail }));
+  } catch {
+    // Ignore event dispatch failures in older embedded browsers.
+  }
+  try {
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({ type: MEMBERSHIP_CHANGED_MESSAGE, ...detail }, "*");
+    }
+  } catch {
+    // The parent notification is a refresh hint only.
+  }
 }
 
 export default function MerchantMembershipEntry({ siteId, siteName = "", className = "" }: MerchantMembershipEntryProps) {
@@ -186,7 +203,7 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
   function openJoinDialog() {
     if (!joinable || busy || active) return;
     if (authenticated === false) {
-      window.location.assign(buildPersonalLoginHref());
+      setMessage("请先登录个人账号后再加入会员");
       return;
     }
     setMessage("");
@@ -199,6 +216,16 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
     setBusy(true);
     setMessage("");
     try {
+      const latestAuthPayload = await resolveDeferredFrontendAuthPayload(2600).catch(() => null);
+      const latestFrontendAuthProof =
+        (latestAuthPayload?.accountType === "personal" ? trimText(latestAuthPayload.frontendAuthProof, 5000) : "") ||
+        frontendAuthProof;
+      if (latestAuthPayload?.authenticated === true && latestAuthPayload.accountType === "personal") {
+        const nextProfile = readProfileFromAuthPayload(latestAuthPayload);
+        setAuthenticated(true);
+        setFrontendAuthProof(latestFrontendAuthProof);
+        setPersonalProfile(nextProfile);
+      }
       const response = await fetch("/api/memberships", {
         method: "POST",
         cache: "no-store",
@@ -211,11 +238,11 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
           siteId: normalizedSiteId,
           siteName,
           profile: profileDraft,
-          frontendAuthProof,
+          frontendAuthProof: latestFrontendAuthProof,
         }),
       });
       if (response.status === 401) {
-        window.location.assign(buildPersonalLoginHref());
+        throw new Error("当前登录态未同步，请关闭弹窗后刷新 Faolla 再试");
         return;
       }
       const payload = (await response.json().catch(() => null)) as MembershipMutationPayload | null;
@@ -226,6 +253,7 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
       setPersonalProfile(profileDraft);
       setDialogOpen(false);
       setMessage("已加入会员");
+      notifyMembershipChanged(payload.membership);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "加入会员失败，请稍后重试");
     } finally {
