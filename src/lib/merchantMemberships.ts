@@ -1,5 +1,60 @@
 export type MerchantMembershipStatus = "active" | "left";
 
+export const MERCHANT_MEMBER_LEGAL_ALLERGENS = [
+  "含麸质谷物",
+  "甲壳类",
+  "蛋类",
+  "鱼类",
+  "花生",
+  "大豆",
+  "乳制品",
+  "坚果",
+  "芹菜",
+  "芥末",
+  "芝麻",
+  "二氧化硫和亚硫酸盐",
+  "羽扇豆",
+  "软体动物",
+] as const;
+
+export type MerchantMemberLegalAllergen = (typeof MERCHANT_MEMBER_LEGAL_ALLERGENS)[number];
+
+export type MerchantMemberCouponSummary = {
+  couponId: string;
+  title: string;
+  discountLabel: string;
+  count: number;
+};
+
+export type MerchantMemberCouponHistoryItem = {
+  id: string;
+  couponId: string;
+  title: string;
+  discountLabel: string;
+  claimedAt: string;
+  validUntil: string | null;
+  redeemedAt: string | null;
+  settlementType: "qr" | "barcode";
+  settlementCode: string;
+  status: "available" | "used" | "expired" | "inactive";
+};
+
+export type MerchantMembershipInsight = {
+  pointBalance: number;
+  balanceAmount: number;
+  availableCouponCount: number;
+  availableCoupons: MerchantMemberCouponSummary[];
+  couponHistory: MerchantMemberCouponHistoryItem[];
+  totalSpendAmount: number;
+  totalOrderCount: number;
+  consumptionFrequencyPerMonth: number;
+  averageOrderAmount: number;
+  recentPurchaseAt: string | null;
+  firstPurchaseAt: string | null;
+  yearlySpendAmount: number;
+  productPreferences: string[];
+};
+
 export type MerchantMembershipProfileDraft = {
   nickname: string;
   name: string;
@@ -19,6 +74,7 @@ export type MerchantMembershipProfileDraft = {
   taxProvince: string;
   taxCity: string;
   taxAddress: string;
+  allergens: string[];
 };
 
 export type MerchantMembershipRecord = {
@@ -47,6 +103,7 @@ export type MerchantMembershipRecord = {
   taxProvince: string;
   taxCity: string;
   taxAddress: string;
+  allergens: string[];
   status: MerchantMembershipStatus;
   joinedAt: string;
   leftAt: string | null;
@@ -66,6 +123,7 @@ export type PersonalMembershipCard = {
 
 export type MerchantMembershipListItem = MerchantMembershipRecord & {
   profileVisible: boolean;
+  insight?: MerchantMembershipInsight;
 };
 
 const MAX_PERSONAL_MEMBERSHIPS = 500;
@@ -99,6 +157,16 @@ function normalizeBoolean(value: unknown, fallback = false) {
     if (["0", "false", "no", "off"].includes(normalized)) return false;
   }
   return fallback;
+}
+
+function normalizeStringArray(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => trimText(item, 120)).filter(Boolean);
+}
+
+export function normalizeMerchantMemberAllergens(value: unknown) {
+  const allowed = new Set<string>(MERCHANT_MEMBER_LEGAL_ALLERGENS);
+  return Array.from(new Set(normalizeStringArray(value).filter((item) => allowed.has(item))));
 }
 
 export function buildMerchantMemberNo(siteId: string, serial: number) {
@@ -146,6 +214,7 @@ export function normalizeMerchantMembershipProfileDraft(
     taxProvince: trimText(record.taxProvince, 80) || trimText(record.tax_province, 80) || trimText(fallback.taxProvince, 80),
     taxCity: trimText(record.taxCity, 80) || trimText(record.tax_city, 80) || trimText(fallback.taxCity, 80),
     taxAddress: trimText(record.taxAddress, 240) || trimText(record.tax_address, 240) || trimText(fallback.taxAddress, 240),
+    allergens: normalizeMerchantMemberAllergens(record.allergens ?? fallback.allergens),
   };
 }
 
@@ -187,6 +256,7 @@ export function normalizeMerchantMembershipRecord(value: unknown): MerchantMembe
     taxProvince: trimText(record.taxProvince, 80) || trimText(record.tax_province, 80),
     taxCity: trimText(record.taxCity, 80) || trimText(record.tax_city, 80),
     taxAddress: trimText(record.taxAddress, 240) || trimText(record.tax_address, 240),
+    allergens: normalizeMerchantMemberAllergens(record.allergens),
     status,
     joinedAt,
     leftAt: status === "left" ? normalizeIsoDateValue(record.leftAt, new Date().toISOString()) : null,
@@ -296,6 +366,7 @@ export function toMerchantMembershipListItem(record: MerchantMembershipRecord): 
     taxProvince: "",
     taxCity: "",
     taxAddress: "",
+    allergens: [],
     profileVisible: false,
   };
 }

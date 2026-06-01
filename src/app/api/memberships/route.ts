@@ -1,7 +1,26 @@
 import { NextResponse } from "next/server";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
-import { toPersonalMembershipCard } from "@/lib/merchantMemberships";
-import { joinMerchantMembership, leaveMerchantMembership, listMerchantMemberships } from "@/lib/merchantMemberships.server";
+import {
+  getMerchantCouponDiscountLabel,
+  getMerchantCouponDisplayTitle,
+  type MerchantCouponClaimEvent,
+  type MerchantCouponRecord,
+} from "@/lib/merchantCoupons";
+import { listMerchantCoupons } from "@/lib/merchantCoupons.server";
+import {
+  toPersonalMembershipCard,
+  type MerchantMemberCouponHistoryItem,
+  type MerchantMembershipInsight,
+  type MerchantMembershipListItem,
+} from "@/lib/merchantMemberships";
+import {
+  joinMerchantMembership,
+  leaveMerchantMembership,
+  listMerchantMemberships,
+  updateMerchantMembershipAllergens,
+} from "@/lib/merchantMemberships.server";
+import type { MerchantOrderRecord } from "@/lib/merchantOrders";
+import { listMerchantOrders } from "@/lib/merchantOrders.server";
 import {
   resolvePersonalAccountSessionFromFrontendAuthProofPayload,
   resolvePersonalAccountSessionFromRequest,
@@ -16,6 +35,157 @@ export const revalidate = 0;
 
 function trimText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+function normalizeEmail(value: unknown) {
+  return trimText(value, 320).toLowerCase();
+}
+
+function matchesMemberIdentity(
+  membership: Pick<MerchantMembershipListItem, "accountId" | "userId" | "email">,
+  input: { accountId?: string | null; userId?: string | null; email?: string | null },
+) {
+  const accountId = trimText(input.accountId, 128);
+  const userId = trimText(input.userId, 128);
+  const email = normalizeEmail(input.email);
+  if (membership.accountId && accountId && membership.accountId === accountId) return true;
+  if (membership.userId && userId && membership.userId === userId) return true;
+  return Boolean(membership.email && email && normalizeEmail(membership.email) === email);
+}
+
+function getOrderActivityAt(order: MerchantOrderRecord) {
+  return trimText(order.completedAt) || trimText(order.confirmedAt) || trimText(order.createdAt);
+}
+
+function isTimestampInCurrentYear(value: string, now: Date) {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return false;
+  return new Date(timestamp).getFullYear() === now.getFullYear();
+}
+
+function getCouponRedeemAt(coupon: MerchantCouponRecord, claimEvent: MerchantCouponClaimEvent) {
+  return (
+    coupon.redeemEvents.find(
+      (event) =>
+        (claimEvent.id && event.claimEventId === claimEvent.id) ||
+        (claimEvent.settlementCode && event.settlementCode === claimEvent.settlementCode),
+    )?.at ?? null
+  );
+}
+
+function getClaimStatus(coupon: MerchantCouponRecord, claimEvent: MerchantCouponClaimEvent, nowMs: number): MerchantMemberCouponHistoryItem["status"] {
+  if (getCouponRedeemAt(coupon, claimEvent)) return "used";
+  if (coupon.status !== "active") return "inactive";
+  if (coupon.startsAt && Date.parse(coupon.startsAt) > nowMs) return "inactive";
+  if (coupon.expiresAt && Date.parse(coupon.expiresAt) < nowMs) return "expired";
+  if (claimEvent.validUntil && Date.parse(claimEvent.validUntil) < nowMs) return "expired";
+  return "available";
+}
+
+function buildMembershipInsight(
+  membership: MerchantMembershipListItem,
+  orders: MerchantOrderRecord[],
+  coupons: MerchantCouponRecord[],
+): MerchantMembershipInsight {
+  const now = new Date();
+  const nowMs = now.getTime();
+  const memberOrders = orders
+    .filter((order) =>
+      matchesMemberIdentity(membership, {
+        accountId: order.customerAccountId,
+        userId: order.customerUserId,
+        email: order.customerLoginEmail || order.customer.email,
+      }),
+    )
+    .filter((order) => order.status !== "cancelled");
+  const totalSpendAmount = memberOrders.reduce((sum, order) => sum + order.totalAmount, 0);
+  const totalOrderCount = memberOrders.length;
+  const orderedActivityTimes = memberOrders
+    .map(getOrderActivityAt)
+    .map((value) => Date.parse(value))
+    .filter(Number.isFinite)
+    .sort((left, right) => left - right);
+  const firstPurchaseAt = orderedActivityTimes[0] ? new Date(orderedActivityTimes[0]).toISOString() : null;
+  const recentPurchaseAt = orderedActivityTimes.at(-1) ? new Date(orderedActivityTimes.at(-1) ?? 0).toISOString() : null;
+  const activeMonths =
+    firstPurchaseAt && totalOrderCount > 0 ? Math.max(1, (nowMs - Date.parse(firstPurchaseAt)) / (30.4375 * 24 * 60 * 60 * 1000)) : 0;
+  const productMap = new Map<string, { quantity: number; amount: number }>();
+  memberOrders.forEach((order) => {
+    order.items.forEach((item) => {
+      const name = trimText(item.name || item.code || item.productId, 120);
+      if (!name) return;
+      const current = productMap.get(name) ?? { quantity: 0, amount: 0 };
+      current.quantity += item.quantity;
+      current.amount += item.subtotal;
+      productMap.set(name, current);
+    });
+  });
+
+  const couponHistory = coupons
+    .flatMap((coupon) =>
+      coupon.claimEvents
+        .filter((claimEvent) =>
+          matchesMemberIdentity(membership, {
+            accountId: claimEvent.accountId,
+            userId: claimEvent.userId,
+            email: claimEvent.email,
+          }),
+        )
+        .map((claimEvent) => {
+          const redeemedAt = getCouponRedeemAt(coupon, claimEvent);
+          return {
+            id: claimEvent.id,
+            couponId: coupon.id,
+            title: getMerchantCouponDisplayTitle(coupon),
+            discountLabel: getMerchantCouponDiscountLabel(coupon),
+            claimedAt: claimEvent.at,
+            validUntil: claimEvent.validUntil,
+            redeemedAt,
+            settlementType: claimEvent.settlementType,
+            settlementCode: claimEvent.settlementCode,
+            status: getClaimStatus(coupon, claimEvent, nowMs),
+          } satisfies MerchantMemberCouponHistoryItem;
+        }),
+    )
+    .sort((left, right) => Date.parse(right.claimedAt) - Date.parse(left.claimedAt));
+
+  const availableCouponMap = new Map<string, MerchantMembershipInsight["availableCoupons"][number]>();
+  couponHistory
+    .filter((item) => item.status === "available")
+    .forEach((item) => {
+      const current = availableCouponMap.get(item.couponId) ?? {
+        couponId: item.couponId,
+        title: item.title,
+        discountLabel: item.discountLabel,
+        count: 0,
+      };
+      current.count += 1;
+      availableCouponMap.set(item.couponId, current);
+    });
+
+  return {
+    pointBalance: 0,
+    balanceAmount: 0,
+    availableCouponCount: couponHistory.filter((item) => item.status === "available").length,
+    availableCoupons: Array.from(availableCouponMap.values()).sort((left, right) => right.count - left.count),
+    couponHistory,
+    totalSpendAmount: Number(totalSpendAmount.toFixed(2)),
+    totalOrderCount,
+    consumptionFrequencyPerMonth: activeMonths > 0 ? Number((totalOrderCount / activeMonths).toFixed(2)) : 0,
+    averageOrderAmount: totalOrderCount > 0 ? Number((totalSpendAmount / totalOrderCount).toFixed(2)) : 0,
+    recentPurchaseAt,
+    firstPurchaseAt,
+    yearlySpendAmount: Number(
+      memberOrders
+        .filter((order) => isTimestampInCurrentYear(getOrderActivityAt(order), now))
+        .reduce((sum, order) => sum + order.totalAmount, 0)
+        .toFixed(2),
+    ),
+    productPreferences: Array.from(productMap.entries())
+      .sort((left, right) => right[1].quantity - left[1].quantity || right[1].amount - left[1].amount)
+      .slice(0, 5)
+      .map(([name, summary]) => `${name}（${summary.quantity}）`),
+  };
 }
 
 async function resolveSiteName(siteId: string, fallback: string) {
@@ -33,10 +203,17 @@ export async function GET(request: Request) {
   if (!session || session.merchantId !== siteId) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  const memberships = await listMerchantMemberships(siteId);
+  const [memberships, orders, coupons] = await Promise.all([
+    listMerchantMemberships(siteId),
+    listMerchantOrders(siteId).catch(() => []),
+    listMerchantCoupons(siteId).catch(() => []),
+  ]);
   return NextResponse.json({
     ok: true,
-    memberships,
+    memberships: memberships.map((membership) => ({
+      ...membership,
+      insight: buildMembershipInsight(membership, orders, coupons),
+    })),
   });
 }
 
@@ -84,14 +261,31 @@ export async function PATCH(request: Request) {
     return getTrustedMutationRequestErrorResponse();
   }
   try {
-    const session = await resolvePersonalAccountSessionFromRequest(request);
-    if (!session) {
-      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-    }
-    const body = (await request.json().catch(() => null)) as { siteId?: unknown } | null;
+    const body = (await request.json().catch(() => null)) as {
+      action?: unknown;
+      siteId?: unknown;
+      membershipId?: unknown;
+      allergens?: unknown;
+    } | null;
     const siteId = trimText(body?.siteId, 64);
     if (!isMerchantNumericId(siteId)) {
       return NextResponse.json({ error: "invalid_site_id" }, { status: 400 });
+    }
+    if (trimText(body?.action, 80) === "update_allergens") {
+      const merchantSession = await resolveMerchantSessionFromRequest(request, { hintedMerchantId: siteId });
+      if (!merchantSession || merchantSession.merchantId !== siteId) {
+        return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+      }
+      const membership = await updateMerchantMembershipAllergens({
+        siteId,
+        membershipId: trimText(body?.membershipId, 160),
+        allergens: body?.allergens,
+      });
+      return NextResponse.json({ ok: true, membership });
+    }
+    const session = await resolvePersonalAccountSessionFromRequest(request);
+    if (!session) {
+      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
     const membership = await leaveMerchantMembership({ siteId, session });
     return NextResponse.json({

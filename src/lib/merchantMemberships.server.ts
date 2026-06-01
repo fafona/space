@@ -2,6 +2,7 @@ import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import {
   buildMerchantMemberNo,
   buildMerchantMembershipQrValue,
+  normalizeMerchantMemberAllergens,
   normalizeMerchantMembershipRecords,
   normalizeMerchantMembershipProfileDraft,
   toMerchantMembershipListItem,
@@ -74,6 +75,7 @@ export function readPersonalMembershipProfileFromSession(session: PersonalAccoun
     taxProvince: trimText(profile.taxProvince, 80) || trimText(profile.invoiceProvince, 80),
     taxCity: trimText(profile.taxCity, 80) || trimText(profile.invoiceCity, 80),
     taxAddress: trimText(profile.taxAddress, 240) || trimText(profile.invoiceAddress, 240),
+    allergens: [],
   });
 }
 
@@ -102,6 +104,36 @@ export async function listMerchantMemberships(siteId: string): Promise<MerchantM
   const supabase = requireMembershipsStoreClient();
   const stored = await loadStoredMerchantMemberships(supabase, siteId);
   return normalizeMerchantMembershipRecords(stored?.memberships ?? []).map(toMerchantMembershipListItem);
+}
+
+export async function updateMerchantMembershipAllergens(input: {
+  siteId: string;
+  membershipId: string;
+  allergens: unknown;
+}): Promise<MerchantMembershipListItem> {
+  const supabase = requireMembershipsStoreClient();
+  const siteId = trimText(input.siteId, 64);
+  const membershipId = trimText(input.membershipId, 160);
+  if (!siteId || !membershipId) throw new Error("membership_not_found");
+  const stored = await loadStoredMerchantMemberships(supabase, siteId);
+  const current = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
+  const index = current.findIndex((membership) => membership.id === membershipId);
+  if (index < 0) throw new Error("membership_not_found");
+  const now = new Date().toISOString();
+  const nextMembership = {
+    ...current[index],
+    allergens: normalizeMerchantMemberAllergens(input.allergens),
+    updatedAt: now,
+  };
+  const nextMemberships = [...current];
+  nextMemberships[index] = nextMembership;
+  const saved = await saveStoredMerchantMemberships(supabase, {
+    siteId,
+    memberships: nextMemberships,
+    updatedAt: now,
+  });
+  if (saved.error) throw new Error(saved.error);
+  return toMerchantMembershipListItem(nextMembership);
 }
 
 export async function joinMerchantMembership(input: {
@@ -145,6 +177,7 @@ export async function joinMerchantMembership(input: {
     taxProvince: profile.taxProvince,
     taxCity: profile.taxCity,
     taxAddress: profile.taxAddress,
+    allergens: profile.allergens,
     status: "active" as const,
     leftAt: null,
     updatedAt: now,

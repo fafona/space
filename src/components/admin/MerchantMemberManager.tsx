@@ -1,7 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { MerchantMembershipListItem } from "@/lib/merchantMemberships";
+import {
+  MERCHANT_MEMBER_LEGAL_ALLERGENS,
+  type MerchantMembershipInsight,
+  type MerchantMembershipListItem,
+} from "@/lib/merchantMemberships";
 
 type MerchantMemberManagerProps = {
   siteId: string;
@@ -15,7 +19,29 @@ type MembershipsPayload = {
   message?: unknown;
 };
 
+type MembershipPatchPayload = {
+  ok?: unknown;
+  membership?: MerchantMembershipListItem;
+  message?: unknown;
+};
+
 type MemberStatusFilter = "all" | "active" | "left";
+
+const EMPTY_MEMBER_INSIGHT: MerchantMembershipInsight = {
+  pointBalance: 0,
+  balanceAmount: 0,
+  availableCouponCount: 0,
+  availableCoupons: [],
+  couponHistory: [],
+  totalSpendAmount: 0,
+  totalOrderCount: 0,
+  consumptionFrequencyPerMonth: 0,
+  averageOrderAmount: 0,
+  recentPurchaseAt: null,
+  firstPurchaseAt: null,
+  yearlySpendAmount: 0,
+  productPreferences: [],
+};
 
 function trimText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
@@ -34,8 +60,26 @@ function formatDateTime(value: string | null | undefined) {
   }).format(new Date(timestamp));
 }
 
+function formatMoney(value: number | null | undefined) {
+  const normalized = Number(value ?? 0);
+  return Number.isFinite(normalized) ? normalized.toFixed(2) : "0.00";
+}
+
+function formatFrequency(value: number | null | undefined) {
+  const normalized = Number(value ?? 0);
+  if (!Number.isFinite(normalized) || normalized <= 0) return "-";
+  return `${normalized.toFixed(normalized >= 10 ? 1 : 2)} 单/月`;
+}
+
+function couponClaimStatusLabel(status: MerchantMembershipInsight["couponHistory"][number]["status"]) {
+  if (status === "used") return "已使用";
+  if (status === "expired") return "已过期";
+  if (status === "inactive") return "未生效";
+  return "有效未使用";
+}
+
 function statusLabel(status: MerchantMembershipListItem["status"]) {
-  return status === "left" ? "已退会" : "会员中";
+  return status === "left" ? "已退会" : "正常";
 }
 
 function statusBadgeClass(status: MerchantMembershipListItem["status"]) {
@@ -125,6 +169,9 @@ export default function MerchantMemberManager({ siteId, siteName = "", className
   const [keyword, setKeyword] = useState("");
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [couponHistoryOpen, setCouponHistoryOpen] = useState(false);
+  const [allergenSaving, setAllergenSaving] = useState(false);
+  const [allergenError, setAllergenError] = useState("");
   const normalizedSiteId = siteId.trim();
 
   const stats = useMemo(() => {
@@ -147,12 +194,9 @@ export default function MerchantMemberManager({ siteId, siteName = "", className
   }, [keyword, memberships, statusFilter]);
 
   const selectedMembership = useMemo(() => {
-    return (
-      filteredMemberships.find((membership) => membership.id === selectedMembershipId) ??
-      filteredMemberships[0] ??
-      null
-    );
-  }, [filteredMemberships, selectedMembershipId]);
+    return memberships.find((membership) => membership.id === selectedMembershipId) ?? null;
+  }, [memberships, selectedMembershipId]);
+  const selectedInsight = selectedMembership?.insight ?? EMPTY_MEMBER_INSIGHT;
 
   const loadMemberships = useCallback(async () => {
     if (!/^\d{8}$/.test(normalizedSiteId)) {
@@ -180,7 +224,7 @@ export default function MerchantMemberManager({ siteId, siteName = "", className
       setMemberships(nextMemberships);
       setSelectedMembershipId((current) => {
         if (current && nextMemberships.some((membership) => membership.id === current)) return current;
-        return nextMemberships[0]?.id ?? "";
+        return "";
       });
     } catch (error) {
       setMemberships([]);
@@ -196,10 +240,63 @@ export default function MerchantMemberManager({ siteId, siteName = "", className
   }, [loadMemberships]);
 
   useEffect(() => {
-    if (!selectedMembership && filteredMemberships[0]) {
-      setSelectedMembershipId(filteredMemberships[0].id);
+    setCouponHistoryOpen(false);
+    setAllergenError("");
+  }, [selectedMembershipId]);
+
+  async function toggleMemberAllergen(allergen: string) {
+    if (!selectedMembership || !selectedMembership.profileVisible || allergenSaving) return;
+    const currentAllergens = Array.isArray(selectedMembership.allergens) ? selectedMembership.allergens : [];
+    const currentSet = new Set(currentAllergens);
+    if (currentSet.has(allergen)) currentSet.delete(allergen);
+    else currentSet.add(allergen);
+    const nextAllergens = Array.from(currentSet);
+    const previousMemberships = memberships;
+    setAllergenSaving(true);
+    setAllergenError("");
+    setMemberships((current) =>
+      current.map((membership) =>
+        membership.id === selectedMembership.id ? { ...membership, allergens: nextAllergens } : membership,
+      ),
+    );
+    try {
+      const response = await fetch("/api/memberships", {
+        method: "PATCH",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          accept: "application/json",
+        },
+        body: JSON.stringify({
+          action: "update_allergens",
+          siteId: normalizedSiteId,
+          membershipId: selectedMembership.id,
+          allergens: nextAllergens,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as MembershipPatchPayload | null;
+      if (!response.ok || payload?.ok !== true || !payload.membership) {
+        throw new Error(readPayloadMessage(payload?.message, "过敏信息保存失败，请稍后重试"));
+      }
+      setMemberships((current) =>
+        current.map((membership) =>
+          membership.id === selectedMembership.id
+            ? {
+                ...membership,
+                ...payload.membership,
+                insight: membership.insight,
+              }
+            : membership,
+        ),
+      );
+    } catch (error) {
+      setMemberships(previousMemberships);
+      setAllergenError(error instanceof Error ? error.message : "过敏信息保存失败，请稍后重试");
+    } finally {
+      setAllergenSaving(false);
     }
-  }, [filteredMemberships, selectedMembership]);
+  }
 
   return (
     <section className={`space-y-4 ${className}`}>
@@ -227,7 +324,7 @@ export default function MerchantMemberManager({ siteId, siteName = "", className
             <div className="mt-1 text-2xl font-semibold text-slate-950">{stats.total}</div>
           </div>
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-            <div className="text-xs text-emerald-700">会员中</div>
+            <div className="text-xs text-emerald-700">正常</div>
             <div className="mt-1 text-2xl font-semibold text-emerald-700">{stats.active}</div>
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
@@ -264,7 +361,7 @@ export default function MerchantMemberManager({ siteId, siteName = "", className
           <div className="flex flex-wrap gap-2 rounded-full border border-slate-200 bg-slate-50 p-1">
             {[
               { key: "all", label: "全部" },
-              { key: "active", label: "会员中" },
+              { key: "active", label: "正常" },
               { key: "left", label: "已退会" },
             ].map((item) => (
               <button
@@ -281,7 +378,7 @@ export default function MerchantMemberManager({ siteId, siteName = "", className
           </div>
         </div>
 
-        <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_420px]">
+        <div className="mt-4">
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
             <div className="overflow-x-auto">
               <table className="min-w-[1060px] w-full text-left text-sm">
@@ -365,94 +462,242 @@ export default function MerchantMemberManager({ siteId, siteName = "", className
               </table>
             </div>
           </div>
-
-          <aside className="rounded-2xl border border-slate-200 bg-white p-4">
-            {selectedMembership ? (
-              <div className="space-y-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-slate-900 text-sm font-semibold text-white">
-                        {selectedMembership.profileVisible && selectedMembership.avatarUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={selectedMembership.avatarUrl}
-                            alt={getMemberDisplayName(selectedMembership)}
-                            className="h-full w-full object-cover"
-                          />
-                        ) : (
-                          getAvatarInitial(selectedMembership)
-                        )}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="truncate text-base font-semibold text-slate-950">
-                          {getMemberDisplayName(selectedMembership)}
-                        </div>
-                        <div className="mt-1 font-mono text-xs text-slate-500">{selectedMembership.memberNo}</div>
-                      </div>
-                    </div>
-                  </div>
-                  <span className={`shrink-0 rounded border px-2 py-0.5 text-xs ${statusBadgeClass(selectedMembership.status)}`}>
-                    {statusLabel(selectedMembership.status)}
-                  </span>
-                </div>
-
-                <div className="grid gap-2 text-sm md:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
-                  <ProfileField label="加入时间" value={formatDateTime(selectedMembership.joinedAt)} />
-                  <ProfileField label="退会时间" value={selectedMembership.leftAt ? formatDateTime(selectedMembership.leftAt) : "-"} />
-                </div>
-
-                {selectedMembership.profileVisible ? (
-                  <>
-                    <div>
-                      <div className="mb-2 text-sm font-semibold text-slate-900">会员资料</div>
-                      <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
-                        <ProfileField label="昵称" value={selectedMembership.nickname} />
-                        <ProfileField label="姓名" value={selectedMembership.name} />
-                        <ProfileField label="个人用户 ID" value={selectedMembership.accountId} />
-                        <ProfileField label="手机" value={selectedMembership.phone} />
-                        <ProfileField label="邮箱" value={selectedMembership.email} />
-                        <ProfileField label="生日" value={formatBirthday(selectedMembership)} />
-                        <ProfileField label="性别" value={genderLabel(selectedMembership.gender)} />
-                        <ProfileField
-                          label="地区"
-                          value={joinLocation(selectedMembership.country, selectedMembership.province, selectedMembership.city)}
-                        />
-                        <ProfileField label="地址" value={selectedMembership.address} className="md:col-span-2 xl:col-span-1 2xl:col-span-2" />
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="mb-2 text-sm font-semibold text-slate-900">税务信息</div>
-                      <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
-                        <ProfileField label="税务名称" value={selectedMembership.taxName} />
-                        <ProfileField label="税号" value={selectedMembership.taxNumber} />
-                        <ProfileField
-                          label="税务地区"
-                          value={joinLocation(
-                            selectedMembership.taxCountry,
-                            selectedMembership.taxProvince,
-                            selectedMembership.taxCity,
-                          )}
-                        />
-                        <ProfileField label="税务详细地址" value={selectedMembership.taxAddress} />
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-sm text-slate-500">
-                    此会员已退会。按规则保留会员记录，但不再展示个人资料。
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="flex min-h-[220px] items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 text-center text-sm text-slate-500">
-                请选择左侧会员查看详情。
-              </div>
-            )}
-          </aside>
         </div>
       </div>
+
+      {selectedMembership ? (
+        <div className="fixed inset-0 z-[120]">
+          <button
+            type="button"
+            aria-label="关闭会员详情"
+            className="absolute inset-0 cursor-default bg-slate-950/45"
+            onClick={() => setSelectedMembershipId("")}
+          />
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-4">
+            <div className="pointer-events-auto max-h-[90vh] w-full max-w-4xl overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-2xl">
+              <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
+                <div>
+                  <div className="text-lg font-semibold text-slate-950">会员详情</div>
+                  <div className="mt-1 text-xs text-slate-500">会员卡号：{selectedMembership.memberNo}</div>
+                </div>
+                <button
+                  type="button"
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                  onClick={() => setSelectedMembershipId("")}
+                >
+                  关闭
+                </button>
+              </div>
+              <div className="max-h-[calc(90vh-82px)] overflow-y-auto p-5">
+                <div className="space-y-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-slate-900 text-sm font-semibold text-white">
+                          {selectedMembership.profileVisible && selectedMembership.avatarUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={selectedMembership.avatarUrl}
+                              alt={getMemberDisplayName(selectedMembership)}
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            getAvatarInitial(selectedMembership)
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="truncate text-base font-semibold text-slate-950">
+                            {getMemberDisplayName(selectedMembership)}
+                          </div>
+                          <div className="mt-1 font-mono text-xs text-slate-500">{selectedMembership.memberNo}</div>
+                        </div>
+                      </div>
+                    </div>
+                    <span className={`shrink-0 rounded border px-2 py-0.5 text-xs ${statusBadgeClass(selectedMembership.status)}`}>
+                      {statusLabel(selectedMembership.status)}
+                    </span>
+                  </div>
+
+                  <div className="grid gap-2 text-sm sm:grid-cols-2">
+                    <ProfileField label="加入时间" value={formatDateTime(selectedMembership.joinedAt)} />
+                    <ProfileField label="退会时间" value={selectedMembership.leftAt ? formatDateTime(selectedMembership.leftAt) : "-"} />
+                  </div>
+
+                  {selectedMembership.profileVisible ? (
+                    <>
+                      <div>
+                        <div className="mb-2 text-sm font-semibold text-slate-900">会员数据</div>
+                        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                          <ProfileField label="积分" value={selectedInsight.pointBalance} />
+                          <ProfileField label="余额" value={formatMoney(selectedInsight.balanceAmount)} />
+                          <ProfileField label="累计消费金额" value={formatMoney(selectedInsight.totalSpendAmount)} />
+                          <ProfileField label="累计订单数" value={selectedInsight.totalOrderCount} />
+                          <ProfileField label="消费频率" value={formatFrequency(selectedInsight.consumptionFrequencyPerMonth)} />
+                          <ProfileField label="平均客单价" value={formatMoney(selectedInsight.averageOrderAmount)} />
+                          <ProfileField label="最近消费时间" value={formatDateTime(selectedInsight.recentPurchaseAt)} />
+                          <ProfileField label="首次消费时间" value={formatDateTime(selectedInsight.firstPurchaseAt)} />
+                          <ProfileField label="年消费额" value={formatMoney(selectedInsight.yearlySpendAmount)} />
+                          <ProfileField
+                            label="产品偏好"
+                            value={selectedInsight.productPreferences.length > 0 ? selectedInsight.productPreferences.join("、") : "-"}
+                            className="sm:col-span-2 lg:col-span-3"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <div className="text-sm font-semibold text-slate-900">优惠券</div>
+                            <div className="mt-1 text-xs text-slate-500">
+                              有效未使用：{selectedInsight.availableCouponCount} 张
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                            onClick={() => setCouponHistoryOpen((current) => !current)}
+                          >
+                            {couponHistoryOpen ? "收起历史" : "历史领取"}
+                          </button>
+                        </div>
+                        <div className="mt-3 space-y-2">
+                          {selectedInsight.availableCoupons.length > 0 ? (
+                            selectedInsight.availableCoupons.map((coupon) => (
+                              <div
+                                key={coupon.couponId}
+                                className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-white px-3 py-2 text-sm"
+                              >
+                                <div className="min-w-0">
+                                  <div className="truncate font-semibold text-slate-900">{coupon.title}</div>
+                                  <div className="mt-0.5 text-xs text-slate-500">{coupon.discountLabel}</div>
+                                </div>
+                                <div className="shrink-0 font-semibold text-slate-900">x {coupon.count}</div>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="rounded-xl bg-white px-3 py-2 text-sm text-slate-500">暂无有效未使用优惠券。</div>
+                          )}
+                        </div>
+                        {couponHistoryOpen ? (
+                          <div className="mt-3 overflow-hidden rounded-xl border border-slate-200 bg-white">
+                            <div className="max-h-72 overflow-auto">
+                              <table className="min-w-[720px] w-full text-left text-xs">
+                                <thead className="bg-slate-50 text-slate-500">
+                                  <tr>
+                                    <th className="px-3 py-2">优惠券</th>
+                                    <th className="px-3 py-2">领取时间</th>
+                                    <th className="px-3 py-2">有效期</th>
+                                    <th className="px-3 py-2">核销码</th>
+                                    <th className="px-3 py-2">状态</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {selectedInsight.couponHistory.length > 0 ? (
+                                    selectedInsight.couponHistory.map((item) => (
+                                      <tr key={item.id} className="border-t">
+                                        <td className="px-3 py-2">
+                                          <div className="font-semibold text-slate-900">{item.title}</div>
+                                          <div className="text-slate-500">{item.discountLabel}</div>
+                                        </td>
+                                        <td className="px-3 py-2 text-slate-600">{formatDateTime(item.claimedAt)}</td>
+                                        <td className="px-3 py-2 text-slate-600">{formatDateTime(item.validUntil)}</td>
+                                        <td className="px-3 py-2 font-mono text-slate-600">{item.settlementCode || "-"}</td>
+                                        <td className="px-3 py-2 text-slate-700">{couponClaimStatusLabel(item.status)}</td>
+                                      </tr>
+                                    ))
+                                  ) : (
+                                    <tr>
+                                      <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                                        暂无领取记录。
+                                      </td>
+                                    </tr>
+                                  )}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div>
+                        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                          <div className="text-sm font-semibold text-slate-900">过敏信息</div>
+                          {allergenSaving ? <span className="text-xs text-slate-500">保存中...</span> : null}
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {MERCHANT_MEMBER_LEGAL_ALLERGENS.map((allergen) => {
+                            const active = selectedMembership.allergens.includes(allergen);
+                            return (
+                              <button
+                                key={allergen}
+                                type="button"
+                                className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                                  active
+                                    ? "border-slate-950 bg-slate-950 text-white"
+                                    : "border-slate-200 bg-white text-slate-600 hover:border-slate-400"
+                                }`}
+                                onClick={() => void toggleMemberAllergen(allergen)}
+                                disabled={allergenSaving}
+                              >
+                                {allergen}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        {allergenError ? (
+                          <div className="mt-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                            {allergenError}
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div>
+                        <div className="mb-2 text-sm font-semibold text-slate-900">会员资料</div>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <ProfileField label="昵称" value={selectedMembership.nickname} />
+                          <ProfileField label="姓名" value={selectedMembership.name} />
+                          <ProfileField label="个人用户 ID" value={selectedMembership.accountId} />
+                          <ProfileField label="手机" value={selectedMembership.phone} />
+                          <ProfileField label="邮箱" value={selectedMembership.email} />
+                          <ProfileField label="生日" value={formatBirthday(selectedMembership)} />
+                          <ProfileField label="性别" value={genderLabel(selectedMembership.gender)} />
+                          <ProfileField
+                            label="地区"
+                            value={joinLocation(selectedMembership.country, selectedMembership.province, selectedMembership.city)}
+                          />
+                          <ProfileField label="地址" value={selectedMembership.address} className="sm:col-span-2" />
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="mb-2 text-sm font-semibold text-slate-900">税务信息</div>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <ProfileField label="税务名称" value={selectedMembership.taxName} />
+                          <ProfileField label="税号" value={selectedMembership.taxNumber} />
+                          <ProfileField
+                            label="税务地区"
+                            value={joinLocation(
+                              selectedMembership.taxCountry,
+                              selectedMembership.taxProvince,
+                              selectedMembership.taxCity,
+                            )}
+                          />
+                          <ProfileField label="税务详细地址" value={selectedMembership.taxAddress} />
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-sm text-slate-500">
+                      此会员已退会。按规则保留会员记录，但不再展示个人资料。
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

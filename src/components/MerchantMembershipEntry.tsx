@@ -50,6 +50,7 @@ const EMPTY_MEMBER_PROFILE: MerchantMembershipProfileDraft = {
   taxProvince: "",
   taxCity: "",
   taxAddress: "",
+  allergens: [],
 };
 
 function trimText(value: unknown, maxLength = 4096) {
