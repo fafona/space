@@ -341,6 +341,11 @@ const MerchantCouponManager = dynamic(() => import("@/components/admin/MerchantC
   loading: () => <DeferredAdminPanelLoading label="优惠券加载中..." />,
 });
 
+const MerchantMemberManager = dynamic(() => import("@/components/admin/MerchantMemberManager"), {
+  ssr: false,
+  loading: () => <DeferredAdminPanelLoading label="会员管理加载中..." />,
+});
+
 const MerchantBookingManagerDialog = dynamic(() => import("@/components/admin/MerchantBookingManagerDialog"), {
   ssr: false,
   loading: () => <DeferredAdminPanelLoading label="预约管理加载中..." />,
@@ -1420,6 +1425,7 @@ type MerchantDesktopSection =
   | "orders"
   | "analytics"
   | "business"
+  | "members"
   | "support"
   | "faolla";
 type ProductSettingsSectionKey = "basic" | "typography" | "tags" | "card" | "detail";
@@ -13666,6 +13672,16 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setMerchantDesktopSection("coupons");
   }
 
+  async function openMerchantMembersPanel() {
+    const resolvedSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
+    if (!resolvedSiteId) {
+      showTip("当前商户还没准备好会员资料，请稍后重试");
+      return;
+    }
+    setMerchantSiteIdOverride(resolvedSiteId);
+    setMerchantDesktopSection("members");
+  }
+
   async function openMerchantBookingPanel() {
     const resolvedSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
     if (!resolvedSiteId) {
@@ -18939,6 +18955,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             <MerchantBusinessCardManager {...merchantBusinessCardManagerCommonProps} folderViewMode="page" />
           ) : merchantDesktopSection === "coupons" && merchantCouponManagerCommonProps ? (
             <MerchantCouponManager {...merchantCouponManagerCommonProps} />
+          ) : merchantDesktopSection === "members" ? (
+            <MerchantMemberManager
+              siteId={editingSiteId || ""}
+              siteName={effectiveMerchantDisplayName || merchantDisplayName}
+              className="min-h-[calc(100vh-14rem)] py-6"
+            />
           ) : merchantDesktopSection === "booking" && merchantBookingManagerDialogCommonProps ? (
             <MerchantBookingManagerDialog
               {...merchantBookingManagerDialogCommonProps}
@@ -19189,6 +19211,15 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     </button>
                     <button
                       type="button"
+                      className={getMerchantDesktopMenuButtonClassName(merchantDesktopSection === "members")}
+                      onClick={() => {
+                        void openMerchantMembersPanel();
+                      }}
+                    >
+                      会员管理
+                    </button>
+                    <button
+                      type="button"
                       className={getMerchantDesktopMenuButtonClassName(merchantDesktopSection === "faolla")}
                       onClick={openMerchantFaollaPanel}
                     >
@@ -19419,6 +19450,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       <div className="text-base font-semibold text-slate-900">
                         {merchantDesktopSection === "profile"
                           ? "商户信息"
+                        : merchantDesktopSection === "members"
+                            ? "会员管理"
                         : merchantDesktopSection === "faolla"
                             ? "Faolla"
                             : "会话"}
@@ -19426,6 +19459,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       <div className="mt-1 text-sm text-slate-500">
                         {merchantDesktopSection === "profile"
                           ? "这里集中维护商户资料、域名前缀和地址联系人。"
+                        : merchantDesktopSection === "members"
+                            ? "查看已加入会员的个人用户资料，退会会员只保留会员记录。"
                         : merchantDesktopSection === "faolla"
                             ? "打开 Faolla 总站或登录前访问的前台页面。"
                             : "这里集中处理官方客服和商户聊天消息。"}

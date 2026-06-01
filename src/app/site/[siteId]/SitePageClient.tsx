@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import FaollaPullRefreshIndicator from "@/components/FaollaPullRefreshIndicator";
 import FrontendAuthEntry from "@/components/FrontendAuthEntry";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
+import MerchantMembershipEntry from "@/components/MerchantMembershipEntry";
 import ServiceMaintenancePage from "@/components/ServiceMaintenancePage";
 import BlockRenderer from "@/components/blocks/BlockRenderer";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
@@ -520,6 +521,7 @@ export function SitePageClient({
   }, 0);
   const backgroundExtendPadding = Math.max(0, maxBlockOffsetY) + 160;
   const showMerchantLoginButton = Boolean(siteId && siteId !== "site-main" && !faollaAppShell);
+  const showMembershipEntry = Boolean(siteId && siteId !== "site-main");
   const authEntryClassName = faollaAppShell
     ? "fixed right-16 top-[calc(env(safe-area-inset-top)+0.75rem)] z-[2147483000] md:right-16 md:top-5"
     : "fixed right-16 top-3 z-[20000] md:right-20 md:top-5";
@@ -536,13 +538,21 @@ export function SitePageClient({
         refreshing={faollaRefreshing}
       />
       <div style={faollaPullContentStyle}>
-        {showMerchantLoginButton ? (
-          <div className={authEntryClassName}>
-            <FrontendAuthEntry
-              currentMerchantId={site?.id ?? siteId}
-              merchantName={effectiveMerchantName}
-              merchantAvatarUrl={site?.chatAvatarImageUrl ?? site?.merchantCardImageUrl ?? ""}
-            />
+        {showMembershipEntry || showMerchantLoginButton ? (
+          <div className={`${authEntryClassName} flex items-start gap-2`}>
+            {showMembershipEntry ? (
+              <MerchantMembershipEntry
+                siteId={site?.id ?? siteId}
+                siteName={effectiveMerchantName}
+              />
+            ) : null}
+            {showMerchantLoginButton ? (
+              <FrontendAuthEntry
+                currentMerchantId={site?.id ?? siteId}
+                merchantName={effectiveMerchantName}
+                merchantAvatarUrl={site?.chatAvatarImageUrl ?? site?.merchantCardImageUrl ?? ""}
+              />
+            ) : null}
           </div>
         ) : null}
         <BlockRenderer

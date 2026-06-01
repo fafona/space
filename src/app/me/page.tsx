@@ -89,6 +89,7 @@ import { useFaollaAndroidAppUpdate } from "@/lib/useFaollaAndroidAppUpdate";
 import { useMobilePortraitOrientationLock } from "@/lib/useMobilePortraitOrientationLock";
 import type { MerchantOrderRecord } from "@/lib/merchantOrders";
 import type { PersonalClaimedCoupon } from "@/lib/personalCoupons";
+import type { PersonalMembershipCard } from "@/lib/merchantMemberships";
 
 const MerchantBusinessCardManager = dynamic(() => import("@/components/admin/MerchantBusinessCardManager"), {
   ssr: false,
@@ -133,13 +134,13 @@ type MeSessionPayload = {
   } | null;
 };
 
-type DesktopSection = "conversations" | "bookings" | "orders" | "favorites" | "cards" | "coupons" | "faolla" | "profile";
+type DesktopSection = "conversations" | "bookings" | "orders" | "memberships" | "favorites" | "cards" | "coupons" | "faolla" | "profile";
 type MobileTab = "conversations" | "consumption" | "faolla" | "self";
 type ConsumptionSection = "bookings" | "orders";
 type PersonalBookingFilter = "all" | "active" | "confirmed" | "cancelled";
 type PersonalOrderFilter = "all" | "pending" | "confirmed" | "cancelled";
 type MobileConversationView = "list" | "thread";
-type MobileSelfSection = "home" | "profile" | "favorites" | "cards" | "coupons" | "tools" | "games" | "qr" | FaollaMobileSettingsView;
+type MobileSelfSection = "home" | "profile" | "memberships" | "favorites" | "cards" | "coupons" | "tools" | "games" | "qr" | FaollaMobileSettingsView;
 
 type MenuItem = {
   key: DesktopSection;
@@ -271,6 +272,20 @@ type PersonalCouponsResponsePayload = {
   error?: unknown;
   message?: unknown;
   coupons?: PersonalClaimedCoupon[];
+};
+
+type PersonalMembershipsResponsePayload = {
+  ok?: unknown;
+  error?: unknown;
+  message?: unknown;
+  memberships?: PersonalMembershipCard[];
+};
+
+type MembershipMutationResponsePayload = {
+  ok?: unknown;
+  error?: unknown;
+  message?: unknown;
+  membership?: PersonalMembershipCard | null;
 };
 
 type PersonalMerchantContact = {
@@ -2297,6 +2312,7 @@ export default function MePage() {
     if (
       targetSection === "home" ||
       targetSection === "profile" ||
+      targetSection === "memberships" ||
       targetSection === "favorites" ||
       targetSection === "cards" ||
       targetSection === "coupons" ||
@@ -2344,6 +2360,9 @@ export default function MePage() {
   const [personalCoupons, setPersonalCoupons] = useState<PersonalClaimedCoupon[]>([]);
   const [personalCouponsLoading, setPersonalCouponsLoading] = useState(false);
   const [personalCouponsLoadError, setPersonalCouponsLoadError] = useState("");
+  const [personalMemberships, setPersonalMemberships] = useState<PersonalMembershipCard[]>([]);
+  const [personalMembershipsLoading, setPersonalMembershipsLoading] = useState(false);
+  const [personalMembershipsLoadError, setPersonalMembershipsLoadError] = useState("");
   const [personalFavoritePublishedSites, setPersonalFavoritePublishedSites] = useState<PersonalFavoritePublishedSite[]>([]);
   const [personalProfileSaving, setPersonalProfileSaving] = useState(false);
   const [personalAvatarUploading, setPersonalAvatarUploading] = useState(false);
@@ -2734,10 +2753,67 @@ export default function MePage() {
     }
   }, [accountId]);
 
+  const loadPersonalMemberships = useCallback(async () => {
+    if (!accountId) {
+      setPersonalMemberships([]);
+      return;
+    }
+    setPersonalMembershipsLoading(true);
+    setPersonalMembershipsLoadError("");
+    try {
+      const payload = await fetchPersonalConsumptionPayload<PersonalMembershipsResponsePayload>(
+        "/api/personal-memberships",
+        "会员卡加载失败，请稍后重试",
+      );
+      setPersonalMemberships(Array.isArray(payload.memberships) ? payload.memberships : []);
+    } catch (error) {
+      setPersonalMemberships([]);
+      setPersonalMembershipsLoadError(error instanceof Error ? error.message : "会员卡加载失败，请稍后重试");
+    } finally {
+      setPersonalMembershipsLoading(false);
+    }
+  }, [accountId]);
+
   useEffect(() => {
     if (payload?.authenticated !== true || payload.accountType !== "personal") return;
     void loadPersonalCoupons();
-  }, [loadPersonalCoupons, payload?.accountType, payload?.authenticated]);
+    void loadPersonalMemberships();
+  }, [loadPersonalCoupons, loadPersonalMemberships, payload?.accountType, payload?.authenticated]);
+
+  const leavePersonalMembership = useCallback(
+    async (membership: PersonalMembershipCard) => {
+      if (!membership.siteId || personalActionBusyKey) return;
+      const busyKey = `membership:${membership.siteId}`;
+      setPersonalActionBusyKey(busyKey);
+      setPersonalMembershipsLoadError("");
+      try {
+        const response = await fetch("/api/memberships", {
+          method: "PATCH",
+          cache: "no-store",
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            accept: "application/json",
+          },
+          body: JSON.stringify({
+            siteId: membership.siteId,
+          }),
+        });
+        const payload = (await response.json().catch(() => null)) as MembershipMutationResponsePayload | null;
+        if (!response.ok || payload?.ok !== true || !payload.membership) {
+          throw new Error(readPayloadMessage(payload?.message || payload?.error, "退出会员失败，请稍后重试"));
+        }
+        setPersonalMemberships((current) =>
+          current.map((item) => (item.id === membership.id ? { ...item, ...payload.membership } : item)),
+        );
+      } catch (error) {
+        setPersonalMembershipsLoadError(error instanceof Error ? error.message : "退出会员失败，请稍后重试");
+      } finally {
+        setPersonalActionBusyKey((current) => (current === busyKey ? "" : current));
+      }
+    },
+    [personalActionBusyKey],
+  );
   const personalBusinessCardProfile = useMemo(
     () =>
       ({
@@ -3521,6 +3597,7 @@ export default function MePage() {
       { key: "conversations", label: "会话", description: "查看和商户、Faolla 的对话。" },
       { key: "bookings", label: "预约", description: "查看你提交给商户的预约记录。" },
       { key: "orders", label: "订单", description: "查看你在商户网站提交的订单。" },
+      { key: "memberships", label: "会员卡", description: "查看已加入商户的会员卡，并可退出会员。" },
       { key: "favorites", label: "收藏", description: "保存常用商户、页面和产品。" },
       { key: "cards", label: "名片夹", description: "管理个人名片、短链和聊天发送用名片。" },
       { key: "coupons", label: "优惠券", description: "查看已领取优惠券和核销码。" },
@@ -6276,6 +6353,105 @@ export default function MePage() {
     );
   }
 
+  function renderPersonalMemberships(compact = false) {
+    const activeCount = personalMemberships.filter((membership) => membership.status === "active").length;
+    const content =
+      personalMemberships.length === 0 ? (
+        <EmptyFeatureCard icon={<Icon name="card" />} title="我的会员卡" description="加入商户会员后，会员卡会显示在这里。" />
+      ) : (
+        <div className={compact ? "space-y-3" : "grid gap-3 md:grid-cols-2 xl:grid-cols-3"}>
+          {personalMemberships.map((membership) => {
+            const leaving = personalActionBusyKey === `membership:${membership.siteId}`;
+            const active = membership.status === "active";
+            return (
+              <article
+                key={membership.id}
+                className={`overflow-hidden rounded-2xl border shadow-sm ${
+                  active ? "border-slate-200 bg-white" : "border-slate-200 bg-slate-50"
+                }`}
+              >
+                <div className="bg-slate-950 px-4 py-4 text-white">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="truncate text-base font-semibold">{membership.siteName || membership.siteId}</div>
+                      <div className="mt-1 text-xs text-white/60">会员卡</div>
+                    </div>
+                    <span
+                      className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${
+                        active ? "bg-emerald-400/15 text-emerald-100 ring-1 ring-emerald-200/35" : "bg-white/10 text-white/70"
+                      }`}
+                    >
+                      {active ? "会员中" : "已退会"}
+                    </span>
+                  </div>
+                  <div className="mt-5 font-mono text-lg font-semibold tracking-[0.18em]">{membership.memberNo}</div>
+                </div>
+                <div className="space-y-2 px-4 py-4 text-sm text-slate-600">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-slate-400">加入时间</span>
+                    <span className="font-medium text-slate-800">{formatPersonalRecordDateTime(membership.joinedAt)}</span>
+                  </div>
+                  {membership.leftAt ? (
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-slate-400">退会时间</span>
+                      <span className="font-medium text-slate-800">{formatPersonalRecordDateTime(membership.leftAt)}</span>
+                    </div>
+                  ) : null}
+                  <div className="grid grid-cols-2 gap-2 pt-2">
+                    <Link
+                      className="inline-flex h-9 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                      href={buildMerchantFrontendHref(membership.siteId)}
+                    >
+                      商户首页
+                    </Link>
+                    <button
+                      type="button"
+                      className="inline-flex h-9 items-center justify-center rounded-xl border border-rose-200 bg-white px-3 text-sm font-semibold text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      onClick={() => {
+                        void leavePersonalMembership(membership);
+                      }}
+                      disabled={!active || leaving || Boolean(personalActionBusyKey && !leaving)}
+                    >
+                      {leaving ? "处理中..." : active ? "退出会员" : "已退会"}
+                    </button>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      );
+
+    return (
+      <div className={compact ? "space-y-3" : "space-y-4"}>
+        {!compact ? (
+          <div className="flex items-center justify-between rounded-[24px] border border-slate-200 bg-white px-5 py-4 shadow-[0_12px_32px_rgba(15,23,42,0.05)]">
+            <div>
+              <div className="text-lg font-semibold text-slate-950">我的会员卡</div>
+              <div className="mt-1 text-sm text-slate-500">当前 {activeCount} 张会员卡有效。</div>
+            </div>
+            <button
+              type="button"
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              onClick={() => void loadPersonalMemberships()}
+              disabled={personalMembershipsLoading}
+            >
+              {personalMembershipsLoading ? "刷新中..." : "刷新"}
+            </button>
+          </div>
+        ) : null}
+        {personalMembershipsLoadError ? (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{personalMembershipsLoadError}</div>
+        ) : null}
+        {personalMembershipsLoading && personalMemberships.length === 0 ? (
+          <div className="rounded-2xl border border-slate-200 bg-white px-5 py-8 text-center text-sm text-slate-500">会员卡加载中...</div>
+        ) : (
+          content
+        )}
+      </div>
+    );
+  }
+
   function renderSectionContent(section: DesktopSection) {
     if (section === "conversations") {
       return renderDesktopSupportSurface();
@@ -6303,6 +6479,9 @@ export default function MePage() {
     }
     if (section === "orders") {
       return renderPersonalOrderCards(false);
+    }
+    if (section === "memberships") {
+      return renderPersonalMemberships(false);
     }
     if (section === "favorites") {
       return renderPersonalFavorites(false);
@@ -6600,6 +6779,12 @@ export default function MePage() {
           icon: <Icon name="user" />,
         },
         {
+          key: "memberships",
+          label: "我的会员卡",
+          summary: personalMemberships.length ? `已加入 ${personalMemberships.filter((item) => item.status === "active").length} 家商户` : "查看商户会员卡",
+          icon: <Icon name="card" />,
+        },
+        {
           key: "favorites",
           label: "收藏",
           summary: personalFavoriteSites.length ? `已收藏 ${personalFavoriteSites.length} 个商户网站` : "保存常用商户网站",
@@ -6803,6 +6988,8 @@ export default function MePage() {
                   <div className="truncate text-[16px] font-semibold text-slate-900">
                     {mobileSelfSection === "profile"
                       ? "我的资料"
+                      : mobileSelfSection === "memberships"
+                        ? "我的会员卡"
                       : mobileSelfSection === "favorites"
                         ? "收藏"
                         : mobileSelfSection === "cards"
@@ -6819,6 +7006,8 @@ export default function MePage() {
                     <div className="mt-1 truncate text-xs text-slate-500">
                       {mobileSelfSection === "favorites"
                         ? "保存常用商户网站。"
+                        : mobileSelfSection === "memberships"
+                          ? "查看已加入商户的会员卡。"
                         : mobileSelfSection === "cards"
                            ? "桌面端已接入完整名片夹，当前可在聊天里直接发送已生成名片。"
                            : mobileSelfSection === "tools"
@@ -6930,6 +7119,8 @@ export default function MePage() {
                   void savePersonalProfile();
                 }}
               />
+            ) : mobileSelfSection === "memberships" ? (
+              renderPersonalMemberships(true)
             ) : mobileSelfSection === "favorites" ? (
               renderPersonalFavorites(true)
             ) : mobileSelfSection === "cards" ? (
