@@ -15,6 +15,9 @@ export type MerchantMembershipProfileDraft = {
   address: string;
   taxName: string;
   taxNumber: string;
+  taxCountry: string;
+  taxProvince: string;
+  taxCity: string;
   taxAddress: string;
 };
 
@@ -40,6 +43,9 @@ export type MerchantMembershipRecord = {
   address: string;
   taxName: string;
   taxNumber: string;
+  taxCountry: string;
+  taxProvince: string;
+  taxCity: string;
   taxAddress: string;
   status: MerchantMembershipStatus;
   joinedAt: string;
@@ -136,6 +142,9 @@ export function normalizeMerchantMembershipProfileDraft(
     address: trimText(record.address, 240) || trimText(fallback.address, 240),
     taxName: trimText(record.taxName, 160) || trimText(record.tax_name, 160) || trimText(fallback.taxName, 160),
     taxNumber: trimText(record.taxNumber, 120) || trimText(record.tax_number, 120) || trimText(fallback.taxNumber, 120),
+    taxCountry: trimText(record.taxCountry, 80) || trimText(record.tax_country, 80) || trimText(fallback.taxCountry, 80),
+    taxProvince: trimText(record.taxProvince, 80) || trimText(record.tax_province, 80) || trimText(fallback.taxProvince, 80),
+    taxCity: trimText(record.taxCity, 80) || trimText(record.tax_city, 80) || trimText(fallback.taxCity, 80),
     taxAddress: trimText(record.taxAddress, 240) || trimText(record.tax_address, 240) || trimText(fallback.taxAddress, 240),
   };
 }
@@ -174,6 +183,9 @@ export function normalizeMerchantMembershipRecord(value: unknown): MerchantMembe
     address: trimText(record.address, 240),
     taxName: trimText(record.taxName, 160) || trimText(record.tax_name, 160),
     taxNumber: trimText(record.taxNumber, 120) || trimText(record.tax_number, 120),
+    taxCountry: trimText(record.taxCountry, 80) || trimText(record.tax_country, 80),
+    taxProvince: trimText(record.taxProvince, 80) || trimText(record.tax_province, 80),
+    taxCity: trimText(record.taxCity, 80) || trimText(record.tax_city, 80),
     taxAddress: trimText(record.taxAddress, 240) || trimText(record.tax_address, 240),
     status,
     joinedAt,
@@ -280,6 +292,9 @@ export function toMerchantMembershipListItem(record: MerchantMembershipRecord): 
     address: "",
     taxName: "",
     taxNumber: "",
+    taxCountry: "",
+    taxProvince: "",
+    taxCity: "",
     taxAddress: "",
     profileVisible: false,
   };

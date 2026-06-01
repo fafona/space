@@ -28,6 +28,8 @@ type MembershipMutationPayload = {
 };
 
 const MEMBERSHIP_CHANGED_MESSAGE = "faolla:membership-changed";
+const MONTH_OPTIONS = Array.from({ length: 12 }, (_, index) => String(index + 1).padStart(2, "0"));
+const DAY_OPTIONS = Array.from({ length: 31 }, (_, index) => String(index + 1).padStart(2, "0"));
 
 const EMPTY_MEMBER_PROFILE: MerchantMembershipProfileDraft = {
   nickname: "",
@@ -44,6 +46,9 @@ const EMPTY_MEMBER_PROFILE: MerchantMembershipProfileDraft = {
   address: "",
   taxName: "",
   taxNumber: "",
+  taxCountry: "",
+  taxProvince: "",
+  taxCity: "",
   taxAddress: "",
 };
 
@@ -97,6 +102,25 @@ function extractMonthDay(value: string) {
   return normalizeMonthDay(normalized);
 }
 
+function normalizeFullDate(value: string) {
+  const normalized = value.trim().replace(/\//g, "-");
+  const match = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (!match) return "";
+  const year = Number.parseInt(match[1] ?? "", 10);
+  const month = Number.parseInt(match[2] ?? "", 10);
+  const day = Number.parseInt(match[3] ?? "", 10);
+  if (!Number.isFinite(year) || year < 1900 || year > 9999) return "";
+  if (!Number.isFinite(month) || month < 1 || month > 12) return "";
+  if (!Number.isFinite(day) || day < 1 || day > 31) return "";
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function readMonthDayParts(value: string) {
+  const normalized = normalizeMonthDay(value) || "06-15";
+  const [month = "06", day = "15"] = normalized.split("-");
+  return { month, day };
+}
+
 function normalizeProfileDraftForSubmit(draft: MerchantMembershipProfileDraft): MerchantMembershipProfileDraft {
   return normalizeMerchantMembershipProfileDraft({
     ...draft,
@@ -107,6 +131,9 @@ function normalizeProfileDraftForSubmit(draft: MerchantMembershipProfileDraft): 
     birthday: draft.birthdayMonthDayOnly ? normalizeMonthDay(draft.birthday) : trimText(draft.birthday, 32),
     taxName: trimText(draft.taxName, 160),
     taxNumber: trimText(draft.taxNumber, 120),
+    taxCountry: trimText(draft.taxCountry, 80),
+    taxProvince: trimText(draft.taxProvince, 80),
+    taxCity: trimText(draft.taxCity, 80),
     taxAddress: trimText(draft.taxAddress, 240),
   });
 }
@@ -148,6 +175,15 @@ function readProfileFromAuthPayload(payload: MerchantCookieSessionPayload | null
     taxNumber:
       readStringFromRecord(profile, "taxNumber", "invoiceTaxNumber") ||
       readStringFromRecord(metadata, "taxNumber", "invoiceTaxNumber"),
+    taxCountry:
+      readStringFromRecord(profile, "taxCountry", "invoiceCountry") ||
+      readStringFromRecord(metadata, "taxCountry", "invoiceCountry"),
+    taxProvince:
+      readStringFromRecord(profile, "taxProvince", "invoiceProvince") ||
+      readStringFromRecord(metadata, "taxProvince", "invoiceProvince"),
+    taxCity:
+      readStringFromRecord(profile, "taxCity", "invoiceCity") ||
+      readStringFromRecord(metadata, "taxCity", "invoiceCity"),
     taxAddress:
       readStringFromRecord(profile, "taxAddress", "invoiceAddress") ||
       readStringFromRecord(metadata, "taxAddress", "invoiceAddress"),
@@ -186,6 +222,7 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
   const [membership, setMembership] = useState<PersonalMembershipCard | null>(null);
   const [personalProfile, setPersonalProfile] = useState<MerchantMembershipProfileDraft>(EMPTY_MEMBER_PROFILE);
   const [profileDraft, setProfileDraft] = useState<MerchantMembershipProfileDraft>(EMPTY_MEMBER_PROFILE);
+  const [birthdayFullBackup, setBirthdayFullBackup] = useState("");
   const [frontendAuthProof, setFrontendAuthProof] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -213,6 +250,7 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
       setMembership(current);
       setPersonalProfile(profile);
       setProfileDraft(profile);
+      setBirthdayFullBackup(profile.birthdayMonthDayOnly ? "" : normalizeFullDate(profile.birthday));
       setResolved(true);
       return true;
     };
@@ -243,6 +281,7 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
         setMembership(current);
         setPersonalProfile(profile);
         setProfileDraft(profile);
+        setBirthdayFullBackup(profile.birthdayMonthDayOnly ? "" : normalizeFullDate(profile.birthday));
         setResolved(true);
       })
       .catch(() => {
@@ -263,6 +302,16 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
     };
   }
 
+  function setBirthdayMonthDay(part: "month" | "day", value: string) {
+    setProfileDraft((current) => {
+      const currentParts = readMonthDayParts(current.birthday);
+      return {
+        ...current,
+        birthday: `${part === "month" ? value : currentParts.month}-${part === "day" ? value : currentParts.day}`,
+      };
+    });
+  }
+
   function openJoinDialog() {
     if (!joinable || busy || active) return;
     if (authenticated === false) {
@@ -271,6 +320,7 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
     }
     setMessage("");
     setProfileDraft(personalProfile);
+    setBirthdayFullBackup(personalProfile.birthdayMonthDayOnly ? "" : normalizeFullDate(personalProfile.birthday));
     setDialogOpen(true);
   }
 
@@ -437,25 +487,58 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
                         checked={profileDraft.birthdayMonthDayOnly}
                         onChange={(event) => {
                           const checked = event.target.checked;
+                          const backup = normalizeFullDate(profileDraft.birthday) || birthdayFullBackup;
+                          if (checked && backup) setBirthdayFullBackup(backup);
                           setProfileDraft((current) => ({
                             ...current,
                             birthdayMonthDayOnly: checked,
-                            birthday: checked ? extractMonthDay(current.birthday) : "",
+                            birthday: checked ? extractMonthDay(current.birthday) || "06-15" : backup,
                           }));
                         }}
                       />
                       仅月日
                     </label>
                   </div>
-                  <input
-                    type={profileDraft.birthdayMonthDayOnly ? "text" : "date"}
-                    className="mt-1 h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-slate-900"
-                    value={profileDraft.birthdayMonthDayOnly ? profileDraft.birthday.replace(/\//g, "-") : profileDraft.birthday.replace(/\//g, "-")}
-                    onChange={handleInputChange("birthday")}
-                    placeholder={profileDraft.birthdayMonthDayOnly ? "例如: 03-18" : undefined}
-                    pattern={profileDraft.birthdayMonthDayOnly ? "\\d{1,2}[-/]\\d{1,2}" : undefined}
-                    required
-                  />
+                  {profileDraft.birthdayMonthDayOnly ? (
+                    <div className="mt-1 grid grid-cols-2 gap-2">
+                      <select
+                        className="h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-slate-900"
+                        value={readMonthDayParts(profileDraft.birthday).month}
+                        onChange={(event) => setBirthdayMonthDay("month", event.target.value)}
+                        required
+                      >
+                        {MONTH_OPTIONS.map((month) => (
+                          <option key={month} value={month}>
+                            {Number(month)}月
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        className="h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-slate-900"
+                        value={readMonthDayParts(profileDraft.birthday).day}
+                        onChange={(event) => setBirthdayMonthDay("day", event.target.value)}
+                        required
+                      >
+                        {DAY_OPTIONS.map((day) => (
+                          <option key={day} value={day}>
+                            {Number(day)}日
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : (
+                    <input
+                      type="date"
+                      className="mt-1 h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-slate-900"
+                      value={normalizeFullDate(profileDraft.birthday)}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setBirthdayFullBackup(value);
+                        updateProfileDraft("birthday", value);
+                      }}
+                      required
+                    />
+                  )}
                 </div>
                 <label className="block text-sm font-medium text-slate-700">
                   性别
@@ -526,7 +609,34 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
                       />
                     </label>
                     <label className="block text-sm font-medium text-slate-700 sm:col-span-2">
-                      税务地址
+                      税务国家
+                      <input
+                        className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-900"
+                        value={profileDraft.taxCountry}
+                        onChange={handleInputChange("taxCountry")}
+                        autoComplete="country-name"
+                      />
+                    </label>
+                    <label className="block text-sm font-medium text-slate-700">
+                      税务省
+                      <input
+                        className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-900"
+                        value={profileDraft.taxProvince}
+                        onChange={handleInputChange("taxProvince")}
+                        autoComplete="address-level1"
+                      />
+                    </label>
+                    <label className="block text-sm font-medium text-slate-700">
+                      税务市
+                      <input
+                        className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-900"
+                        value={profileDraft.taxCity}
+                        onChange={handleInputChange("taxCity")}
+                        autoComplete="address-level2"
+                      />
+                    </label>
+                    <label className="block text-sm font-medium text-slate-700 sm:col-span-2">
+                      税务详细地址
                       <textarea
                         className="mt-1 min-h-16 w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900"
                         value={profileDraft.taxAddress}

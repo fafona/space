@@ -45,13 +45,28 @@ async function loadFreshAuthUser(
   userId: string,
 ): Promise<MerchantAuthUserSummary | null> {
   const getUserById = (adminSupabase as PersonalAccountServiceSupabaseClient).auth.admin.getUserById;
-  if (typeof getUserById !== "function") return null;
+  if (typeof getUserById === "function") {
+    try {
+      const { data, error } = await getUserById(userId);
+      if (!error && data?.user) return data.user;
+    } catch {
+      // Fall through to paged lookup below.
+    }
+  }
+
   try {
-    const { data, error } = await getUserById(userId);
-    return error || !data?.user ? null : data.user;
+    for (let page = 1; page <= 20; page += 1) {
+      const { data, error } = await adminSupabase.auth.admin.listUsers({ page, perPage: 200 });
+      if (error) return null;
+      const users = data?.users ?? [];
+      const matched = users.find((user) => trimText(user.id, 128) === userId);
+      if (matched) return matched;
+      if (users.length < 200) break;
+    }
   } catch {
     return null;
   }
+  return null;
 }
 
 export async function resolvePersonalAccountSessionFromRequest(request: Request): Promise<PersonalAccountSession | null> {

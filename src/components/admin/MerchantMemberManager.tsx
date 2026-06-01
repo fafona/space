@@ -46,6 +46,10 @@ function joinLocation(membership: MerchantMembershipListItem) {
   return [membership.country, membership.province, membership.city].filter(Boolean).join(" / ") || "-";
 }
 
+function joinTaxLocation(membership: MerchantMembershipListItem) {
+  return [membership.taxCountry, membership.taxProvince, membership.taxCity].filter(Boolean).join(" / ") || "-";
+}
+
 function formatBirthday(membership: MerchantMembershipListItem) {
   if (!membership.birthday) return "-";
   return membership.birthdayMonthDayOnly ? `${membership.birthday}（仅月日）` : membership.birthday;
@@ -234,8 +238,12 @@ export default function MerchantMemberManager({ siteId, siteName = "", className
                       <div className="mt-1 truncate font-semibold text-slate-800">{membership.taxNumber || "-"}</div>
                     </div>
                     <div className="rounded-xl bg-slate-50 px-3 py-2">
-                      <div className="text-xs text-slate-400">税务地址</div>
-                      <div className="mt-1 truncate font-semibold text-slate-800">{membership.taxAddress || "-"}</div>
+                      <div className="text-xs text-slate-400">税务地区</div>
+                      <div className="mt-1 truncate font-semibold text-slate-800">{joinTaxLocation(membership)}</div>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 px-3 py-2 md:col-span-3">
+                      <div className="text-xs text-slate-400">税务详细地址</div>
+                      <div className="mt-1 break-words font-semibold text-slate-800">{membership.taxAddress || "-"}</div>
                     </div>
                   </div>
                 ) : (

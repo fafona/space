@@ -70,6 +70,9 @@ export function readPersonalMembershipProfileFromSession(session: PersonalAccoun
     address: trimText(profile.address, 240),
     taxName: trimText(profile.taxName, 160) || trimText(profile.invoiceName, 160),
     taxNumber: trimText(profile.taxNumber, 120) || trimText(profile.invoiceTaxNumber, 120),
+    taxCountry: trimText(profile.taxCountry, 80) || trimText(profile.invoiceCountry, 80),
+    taxProvince: trimText(profile.taxProvince, 80) || trimText(profile.invoiceProvince, 80),
+    taxCity: trimText(profile.taxCity, 80) || trimText(profile.invoiceCity, 80),
     taxAddress: trimText(profile.taxAddress, 240) || trimText(profile.invoiceAddress, 240),
   });
 }
@@ -138,6 +141,9 @@ export async function joinMerchantMembership(input: {
     address: profile.address,
     taxName: profile.taxName,
     taxNumber: profile.taxNumber,
+    taxCountry: profile.taxCountry,
+    taxProvince: profile.taxProvince,
+    taxCity: profile.taxCity,
     taxAddress: profile.taxAddress,
     status: "active" as const,
     leftAt: null,
