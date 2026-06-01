@@ -3,9 +3,11 @@
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import {
   normalizeMerchantMembershipProfileDraft,
+  readPersonalMembershipCardsFromUserMetadata,
   type MerchantMembershipProfileDraft,
   type PersonalMembershipCard,
 } from "@/lib/merchantMemberships";
+import type { MerchantCookieSessionPayload } from "@/lib/authSessionRecovery";
 
 type MerchantMembershipEntryProps = {
   siteId: string;
@@ -53,12 +55,58 @@ function readPayloadMessage(value: unknown, fallback: string) {
   return message || fallback;
 }
 
+function readRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function readStringFromRecord(record: Record<string, unknown> | null | undefined, ...keys: string[]) {
+  for (const key of keys) {
+    const value = record?.[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
+function readProfileFromAuthPayload(payload: MerchantCookieSessionPayload | null | undefined) {
+  const user = payload?.user ?? null;
+  const metadata = readRecord(user?.user_metadata);
+  const appMetadata = readRecord(user?.app_metadata);
+  const profile = readRecord(metadata?.personal_profile);
+  const email = trimText(user?.email, 320).toLowerCase();
+  return normalizeMerchantMembershipProfileDraft(profile, {
+    name:
+      readStringFromRecord(profile, "displayName", "display_name", "name", "username") ||
+      readStringFromRecord(metadata, "displayName", "display_name", "name", "username") ||
+      readStringFromRecord(appMetadata, "displayName", "display_name", "name", "username") ||
+      (email.includes("@") ? email.split("@")[0] ?? "" : ""),
+    phone:
+      readStringFromRecord(profile, "phone", "contact_phone", "contactPhone") ||
+      readStringFromRecord(metadata, "phone", "contact_phone", "contactPhone"),
+    email: readStringFromRecord(profile, "email", "contact_email", "contactEmail") || readStringFromRecord(metadata, "email") || email,
+    avatarUrl:
+      readStringFromRecord(profile, "avatarUrl", "avatar_url") ||
+      readStringFromRecord(metadata, "avatarUrl", "avatar_url", "personalAvatarUrl", "chatAvatarImageUrl"),
+    birthday: readStringFromRecord(profile, "birthday", "birthdate") || readStringFromRecord(metadata, "birthday", "birthdate"),
+    gender: readStringFromRecord(profile, "gender") || readStringFromRecord(metadata, "gender"),
+    country: readStringFromRecord(profile, "country") || readStringFromRecord(metadata, "country"),
+    province: readStringFromRecord(profile, "province", "state") || readStringFromRecord(metadata, "province", "state"),
+    city: readStringFromRecord(profile, "city") || readStringFromRecord(metadata, "city"),
+    address: readStringFromRecord(profile, "address", "contactAddress") || readStringFromRecord(metadata, "address", "contactAddress"),
+  });
+}
+
+async function resolveDeferredFrontendAuthPayload(timeoutMs: number) {
+  const { resolveFrontendAuthPayload } = await import("@/lib/authSessionRecovery");
+  return resolveFrontendAuthPayload(timeoutMs);
+}
+
 export default function MerchantMembershipEntry({ siteId, siteName = "", className = "" }: MerchantMembershipEntryProps) {
   const [resolved, setResolved] = useState(false);
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [membership, setMembership] = useState<PersonalMembershipCard | null>(null);
   const [personalProfile, setPersonalProfile] = useState<MerchantMembershipProfileDraft>(EMPTY_MEMBER_PROFILE);
   const [profileDraft, setProfileDraft] = useState<MerchantMembershipProfileDraft>(EMPTY_MEMBER_PROFILE);
+  const [frontendAuthProof, setFrontendAuthProof] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -75,15 +123,33 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
   useEffect(() => {
     if (!joinable) return;
     let cancelled = false;
-    void fetch(`/api/personal-memberships?siteId=${encodeURIComponent(normalizedSiteId)}`, {
-      method: "GET",
-      cache: "no-store",
-      credentials: "same-origin",
-      headers: {
-        accept: "application/json",
-      },
-    })
-      .then(async (response) => {
+    const applyAuthPayload = (payload: MerchantCookieSessionPayload | null | undefined) => {
+      if (payload?.authenticated !== true || payload.accountType !== "personal") return false;
+      const memberships = readPersonalMembershipCardsFromUserMetadata(payload.user?.user_metadata ?? {});
+      const current = memberships.find((item) => item.siteId === normalizedSiteId) ?? null;
+      const profile = readProfileFromAuthPayload(payload);
+      setAuthenticated(true);
+      setFrontendAuthProof(trimText(payload.frontendAuthProof, 5000));
+      setMembership(current);
+      setPersonalProfile(profile);
+      setProfileDraft(profile);
+      setResolved(true);
+      return true;
+    };
+
+    void resolveDeferredFrontendAuthPayload(4200)
+      .then(async (authPayload) => {
+        if (cancelled) return;
+        if (applyAuthPayload(authPayload)) return;
+
+        const response = await fetch(`/api/personal-memberships?siteId=${encodeURIComponent(normalizedSiteId)}`, {
+          method: "GET",
+          cache: "no-store",
+          credentials: "same-origin",
+          headers: {
+            accept: "application/json",
+          },
+        });
         if (cancelled) return;
         if (response.status === 401) {
           setAuthenticated(false);
@@ -145,6 +211,7 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
           siteId: normalizedSiteId,
           siteName,
           profile: profileDraft,
+          frontendAuthProof,
         }),
       });
       if (response.status === 401) {

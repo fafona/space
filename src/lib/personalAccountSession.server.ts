@@ -10,6 +10,7 @@ import {
   type PlatformIdentitySupabaseClient,
 } from "@/lib/platformAccountIdentity";
 import { createServerSupabaseAuthClient, createServerSupabaseServiceClient } from "@/lib/superAdminServer";
+import type { FrontendAuthProofPayload } from "@/lib/frontendAuthProof.server";
 
 export type PersonalAccountSession = {
   adminSupabase: PlatformIdentitySupabaseClient;
@@ -86,6 +87,37 @@ export async function resolvePersonalAccountSessionFromRequest(request: Request)
     accountId,
     userId,
     email: trimText(user.email, 320).toLowerCase(),
+    serviceConfig,
+    servicePaused: serviceConfig.servicePaused,
+    permissionConfig: buildPersonalAccountPermissionConfig(serviceConfig),
+  };
+}
+
+export async function resolvePersonalAccountSessionFromFrontendAuthProofPayload(
+  payload: FrontendAuthProofPayload | null | undefined,
+): Promise<PersonalAccountSession | null> {
+  if (!payload || payload.accountType !== "personal") return null;
+  const adminSupabase = createServerSupabaseServiceClient() as unknown as PlatformIdentitySupabaseClient | null;
+  if (!adminSupabase) return null;
+
+  const userId = trimText(payload.userId, 128);
+  if (!userId) return null;
+  const user = await loadFreshAuthUser(adminSupabase, userId);
+  if (!user) return null;
+
+  const identity = await resolvePlatformAccountIdentityForUser(adminSupabase, user);
+  const accountId = trimText(identity.accountId, 128) || userId;
+  if (identity.accountType !== "personal") return null;
+  const proofAccountId = trimText(payload.accountId, 128);
+  if (proofAccountId && accountId && proofAccountId !== accountId) return null;
+
+  const serviceConfig = readPersonalAccountServiceConfigFromMetadata(user);
+  return {
+    adminSupabase,
+    user,
+    accountId,
+    userId,
+    email: trimText(user.email, 320).toLowerCase() || trimText(payload.email, 320).toLowerCase(),
     serviceConfig,
     servicePaused: serviceConfig.servicePaused,
     permissionConfig: buildPersonalAccountPermissionConfig(serviceConfig),

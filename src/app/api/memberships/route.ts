@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { joinMerchantMembership, leaveMerchantMembership, listMerchantMemberships } from "@/lib/merchantMemberships.server";
-import { resolvePersonalAccountSessionFromRequest } from "@/lib/personalAccountSession.server";
+import {
+  resolvePersonalAccountSessionFromFrontendAuthProofPayload,
+  resolvePersonalAccountSessionFromRequest,
+} from "@/lib/personalAccountSession.server";
 import { loadCurrentMerchantSnapshotSiteBySiteId } from "@/lib/publishedMerchantService";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
+import { verifyFrontendAuthProof } from "@/lib/frontendAuthProof.server";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -40,11 +44,19 @@ export async function POST(request: Request) {
     return getTrustedMutationRequestErrorResponse();
   }
   try {
-    const session = await resolvePersonalAccountSessionFromRequest(request);
+    const body = (await request.json().catch(() => null)) as {
+      siteId?: unknown;
+      siteName?: unknown;
+      profile?: unknown;
+      frontendAuthProof?: unknown;
+    } | null;
+    const directSession = await resolvePersonalAccountSessionFromRequest(request);
+    const session =
+      directSession ??
+      (await resolvePersonalAccountSessionFromFrontendAuthProofPayload(verifyFrontendAuthProof(body?.frontendAuthProof)));
     if (!session) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
-    const body = (await request.json().catch(() => null)) as { siteId?: unknown; siteName?: unknown; profile?: unknown } | null;
     const siteId = trimText(body?.siteId, 64);
     if (!isMerchantNumericId(siteId)) {
       return NextResponse.json({ error: "invalid_site_id" }, { status: 400 });
