@@ -2947,7 +2947,9 @@ function buildShareCardHtml(input: {
       if (!isWechat) {
         try { video.load?.(); debug("load-called"); } catch (error) { debug("load-error", { message: error?.message || String(error || "") }); }
       } else {
-        debug("skip-load-wechat");
+        window.setTimeout(() => {
+          try { video.load?.(); debug("wechat-load-called"); } catch (error) { debug("wechat-load-error", { message: error?.message || String(error || "") }); }
+        }, 30);
       }
       ["loadstart", "loadedmetadata", "loadeddata", "canplay", "playing", "timeupdate", "pause", "waiting", "stalled", "suspend", "ended", "error"].forEach((name) => {
         video.addEventListener(name, () => debug("event:" + name));
