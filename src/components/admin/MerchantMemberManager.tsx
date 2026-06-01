@@ -46,6 +46,11 @@ function joinLocation(membership: MerchantMembershipListItem) {
   return [membership.country, membership.province, membership.city].filter(Boolean).join(" / ") || "-";
 }
 
+function formatBirthday(membership: MerchantMembershipListItem) {
+  if (!membership.birthday) return "-";
+  return membership.birthdayMonthDayOnly ? `${membership.birthday}（仅月日）` : membership.birthday;
+}
+
 function readPayloadMessage(value: unknown, fallback: string) {
   return trimText(value) || fallback;
 }
@@ -167,7 +172,9 @@ export default function MerchantMemberManager({ siteId, siteName = "", className
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <div className="truncate text-base font-semibold text-slate-950">
-                        {membership.profileVisible ? membership.name || membership.accountId || membership.memberNo : "已退会会员"}
+                        {membership.profileVisible
+                          ? membership.nickname || membership.name || membership.accountId || membership.memberNo
+                          : "已退会会员"}
                       </div>
                       <span
                         className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
@@ -187,6 +194,10 @@ export default function MerchantMemberManager({ siteId, siteName = "", className
                 {membership.profileVisible ? (
                   <div className="mt-4 grid gap-2 text-sm text-slate-600 md:grid-cols-3">
                     <div className="rounded-xl bg-slate-50 px-3 py-2">
+                      <div className="text-xs text-slate-400">姓名</div>
+                      <div className="mt-1 truncate font-semibold text-slate-800">{membership.name || "-"}</div>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 px-3 py-2">
                       <div className="text-xs text-slate-400">个人用户 ID</div>
                       <div className="mt-1 truncate font-semibold text-slate-800">{membership.accountId || "-"}</div>
                     </div>
@@ -200,7 +211,7 @@ export default function MerchantMemberManager({ siteId, siteName = "", className
                     </div>
                     <div className="rounded-xl bg-slate-50 px-3 py-2">
                       <div className="text-xs text-slate-400">生日</div>
-                      <div className="mt-1 truncate font-semibold text-slate-800">{membership.birthday || "-"}</div>
+                      <div className="mt-1 truncate font-semibold text-slate-800">{formatBirthday(membership)}</div>
                     </div>
                     <div className="rounded-xl bg-slate-50 px-3 py-2">
                       <div className="text-xs text-slate-400">性别</div>
@@ -213,6 +224,18 @@ export default function MerchantMemberManager({ siteId, siteName = "", className
                     <div className="rounded-xl bg-slate-50 px-3 py-2 md:col-span-3">
                       <div className="text-xs text-slate-400">地址</div>
                       <div className="mt-1 break-words font-semibold text-slate-800">{membership.address || "-"}</div>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 px-3 py-2">
+                      <div className="text-xs text-slate-400">税务名称</div>
+                      <div className="mt-1 truncate font-semibold text-slate-800">{membership.taxName || "-"}</div>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 px-3 py-2">
+                      <div className="text-xs text-slate-400">税号</div>
+                      <div className="mt-1 truncate font-semibold text-slate-800">{membership.taxNumber || "-"}</div>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 px-3 py-2">
+                      <div className="text-xs text-slate-400">税务地址</div>
+                      <div className="mt-1 truncate font-semibold text-slate-800">{membership.taxAddress || "-"}</div>
                     </div>
                   </div>
                 ) : (

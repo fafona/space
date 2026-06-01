@@ -1,16 +1,21 @@
 export type MerchantMembershipStatus = "active" | "left";
 
 export type MerchantMembershipProfileDraft = {
+  nickname: string;
   name: string;
   phone: string;
   email: string;
   avatarUrl: string;
   birthday: string;
+  birthdayMonthDayOnly: boolean;
   gender: string;
   country: string;
   province: string;
   city: string;
   address: string;
+  taxName: string;
+  taxNumber: string;
+  taxAddress: string;
 };
 
 export type MerchantMembershipRecord = {
@@ -22,15 +27,20 @@ export type MerchantMembershipRecord = {
   accountId: string;
   userId: string;
   email: string;
+  nickname: string;
   name: string;
   phone: string;
   avatarUrl: string;
   birthday: string;
+  birthdayMonthDayOnly: boolean;
   gender: string;
   country: string;
   province: string;
   city: string;
   address: string;
+  taxName: string;
+  taxNumber: string;
+  taxAddress: string;
   status: MerchantMembershipStatus;
   joinedAt: string;
   leftAt: string | null;
@@ -75,6 +85,16 @@ function normalizePositiveInteger(value: unknown) {
   return Math.floor(numberValue);
 }
 
+function normalizeBoolean(value: unknown, fallback = false) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["1", "true", "yes", "on"].includes(normalized)) return true;
+    if (["0", "false", "no", "off"].includes(normalized)) return false;
+  }
+  return fallback;
+}
+
 export function buildMerchantMemberNo(siteId: string, serial: number) {
   const normalizedSiteId = trimText(siteId);
   const normalizedSerial = Math.max(1, Math.floor(Number(serial) || 1));
@@ -97,16 +117,26 @@ export function normalizeMerchantMembershipProfileDraft(
 ): MerchantMembershipProfileDraft {
   const record = readRecord(value) ?? {};
   return {
+    nickname:
+      trimText(record.nickname, 120) ||
+      trimText(record.displayName, 120) ||
+      trimText(record.display_name, 120) ||
+      trimText(fallback.nickname, 120) ||
+      trimText(fallback.name, 120),
     name: trimText(record.name, 120) || trimText(record.displayName, 120) || trimText(fallback.name, 120),
     phone: trimText(record.phone, 80) || trimText(fallback.phone, 80),
     email: (trimText(record.email, 320) || trimText(fallback.email, 320)).toLowerCase(),
     avatarUrl: trimText(record.avatarUrl, 1200) || trimText(record.avatar_url, 1200) || trimText(fallback.avatarUrl, 1200),
     birthday: trimText(record.birthday, 32) || trimText(fallback.birthday, 32),
+    birthdayMonthDayOnly: normalizeBoolean(record.birthdayMonthDayOnly ?? record.birthday_month_day_only, fallback.birthdayMonthDayOnly === true),
     gender: trimText(record.gender, 32) || trimText(fallback.gender, 32),
     country: trimText(record.country, 80) || trimText(fallback.country, 80),
     province: trimText(record.province, 80) || trimText(fallback.province, 80),
     city: trimText(record.city, 80) || trimText(fallback.city, 80),
     address: trimText(record.address, 240) || trimText(fallback.address, 240),
+    taxName: trimText(record.taxName, 160) || trimText(record.tax_name, 160) || trimText(fallback.taxName, 160),
+    taxNumber: trimText(record.taxNumber, 120) || trimText(record.tax_number, 120) || trimText(fallback.taxNumber, 120),
+    taxAddress: trimText(record.taxAddress, 240) || trimText(record.tax_address, 240) || trimText(fallback.taxAddress, 240),
   };
 }
 
@@ -131,15 +161,20 @@ export function normalizeMerchantMembershipRecord(value: unknown): MerchantMembe
     accountId,
     userId,
     email: trimText(record.email, 320).toLowerCase(),
+    nickname: trimText(record.nickname, 120) || trimText(record.name, 120),
     name: trimText(record.name, 120),
     phone: trimText(record.phone, 80),
     avatarUrl: trimText(record.avatarUrl, 1200),
     birthday: trimText(record.birthday, 32),
+    birthdayMonthDayOnly: normalizeBoolean(record.birthdayMonthDayOnly ?? record.birthday_month_day_only),
     gender: trimText(record.gender, 32),
     country: trimText(record.country, 80),
     province: trimText(record.province, 80),
     city: trimText(record.city, 80),
     address: trimText(record.address, 240),
+    taxName: trimText(record.taxName, 160) || trimText(record.tax_name, 160),
+    taxNumber: trimText(record.taxNumber, 120) || trimText(record.tax_number, 120),
+    taxAddress: trimText(record.taxAddress, 240) || trimText(record.tax_address, 240),
     status,
     joinedAt,
     leftAt: status === "left" ? normalizeIsoDateValue(record.leftAt, new Date().toISOString()) : null,
@@ -231,10 +266,21 @@ export function toMerchantMembershipListItem(record: MerchantMembershipRecord): 
   }
   return {
     ...record,
+    nickname: "",
     email: "",
     name: "已退会会员",
     phone: "",
     avatarUrl: "",
+    birthday: "",
+    birthdayMonthDayOnly: false,
+    gender: "",
+    country: "",
+    province: "",
+    city: "",
+    address: "",
+    taxName: "",
+    taxNumber: "",
+    taxAddress: "",
     profileVisible: false,
   };
 }

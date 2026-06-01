@@ -48,16 +48,29 @@ export function readPersonalMembershipProfileFromSession(session: PersonalAccoun
     user: session.user,
   });
   return normalizeMerchantMembershipProfileDraft(profile, {
+    nickname:
+      trimText(profile.nickname, 120) ||
+      trimText(profile.displayName, 120) ||
+      trimText(profile.display_name, 120) ||
+      customerProfile.name,
     name: customerProfile.name,
     phone: customerProfile.phone,
     email: session.email || customerProfile.email || customerProfile.loginEmail,
     avatarUrl: readProfileAvatarUrl(session),
     birthday: trimText(profile.birthday, 32),
+    birthdayMonthDayOnly:
+      profile.birthdayMonthDayOnly === true ||
+      profile.birthday_month_day_only === true ||
+      profile.birthdayMonthDayOnly === "true" ||
+      profile.birthday_month_day_only === "true",
     gender: trimText(profile.gender, 32),
     country: trimText(profile.country, 80),
     province: trimText(profile.province, 80),
     city: trimText(profile.city, 80),
     address: trimText(profile.address, 240),
+    taxName: trimText(profile.taxName, 160) || trimText(profile.invoiceName, 160),
+    taxNumber: trimText(profile.taxNumber, 120) || trimText(profile.invoiceTaxNumber, 120),
+    taxAddress: trimText(profile.taxAddress, 240) || trimText(profile.invoiceAddress, 240),
   });
 }
 
@@ -112,15 +125,20 @@ export async function joinMerchantMembership(input: {
     accountId: input.session.accountId,
     userId: input.session.userId,
     email: profile.email || input.session.email,
+    nickname: profile.nickname,
     name: profile.name,
     phone: profile.phone,
     avatarUrl: profile.avatarUrl,
     birthday: profile.birthday,
+    birthdayMonthDayOnly: profile.birthdayMonthDayOnly,
     gender: profile.gender,
     country: profile.country,
     province: profile.province,
     city: profile.city,
     address: profile.address,
+    taxName: profile.taxName,
+    taxNumber: profile.taxNumber,
+    taxAddress: profile.taxAddress,
     status: "active" as const,
     leftAt: null,
     updatedAt: now,

@@ -127,6 +127,9 @@ type MeSessionPayload = {
   accountId?: unknown;
   merchantId?: unknown;
   merchantIds?: unknown;
+  accessToken?: unknown;
+  refreshToken?: unknown;
+  frontendAuthProof?: unknown;
   personalServiceConfig?: unknown;
   personalServicePaused?: unknown;
   user?: {
@@ -2666,8 +2669,11 @@ export default function MePage() {
     [frontendAuthBridgeProfile, payload],
   );
   useEffect(() => {
-    return installFrontendAuthBridgeResponder(() => frontendAuthBridgePayload);
-  }, [frontendAuthBridgePayload]);
+    return installFrontendAuthBridgeResponder(async () => {
+      const freshPayload = await ensurePersonalSessionReady().catch(() => null);
+      return mergePersonalProfileIntoPayload(freshPayload ?? frontendAuthBridgePayload, frontendAuthBridgeProfile);
+    });
+  }, [ensurePersonalSessionReady, frontendAuthBridgePayload, frontendAuthBridgeProfile]);
   const personalServiceConfig = useMemo(
     () =>
       normalizePersonalAccountServiceConfig(

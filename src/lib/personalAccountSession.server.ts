@@ -105,7 +105,10 @@ export async function resolvePersonalAccountSessionFromFrontendAuthProofPayload(
   const user = await loadFreshAuthUser(adminSupabase, userId);
   if (!user) return null;
 
-  const identity = await resolvePlatformAccountIdentityForUser(adminSupabase, user);
+  const identity = await resolvePlatformAccountIdentityForUser(adminSupabase, user, {
+    preferredAccountType: "personal",
+    preferredAccountId: payload.accountId,
+  });
   const accountId = trimText(identity.accountId, 128) || userId;
   if (identity.accountType !== "personal") return null;
   const proofAccountId = trimText(payload.accountId, 128);

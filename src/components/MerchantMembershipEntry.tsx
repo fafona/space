@@ -30,16 +30,21 @@ type MembershipMutationPayload = {
 const MEMBERSHIP_CHANGED_MESSAGE = "faolla:membership-changed";
 
 const EMPTY_MEMBER_PROFILE: MerchantMembershipProfileDraft = {
+  nickname: "",
   name: "",
   phone: "",
   email: "",
   avatarUrl: "",
   birthday: "",
+  birthdayMonthDayOnly: false,
   gender: "",
   country: "",
   province: "",
   city: "",
   address: "",
+  taxName: "",
+  taxNumber: "",
+  taxAddress: "",
 };
 
 function trimText(value: unknown, maxLength = 4096) {
@@ -63,6 +68,49 @@ function readStringFromRecord(record: Record<string, unknown> | null | undefined
   return "";
 }
 
+function readBooleanFromRecord(record: Record<string, unknown> | null | undefined, ...keys: string[]) {
+  for (const key of keys) {
+    const value = record?.[key];
+    if (typeof value === "boolean") return value;
+    if (typeof value === "string") {
+      const normalized = value.trim().toLowerCase();
+      if (["1", "true", "yes", "on"].includes(normalized)) return true;
+      if (["0", "false", "no", "off"].includes(normalized)) return false;
+    }
+  }
+  return false;
+}
+
+function normalizeMonthDay(value: string) {
+  const match = value.trim().match(/^(\d{1,2})[/-](\d{1,2})$/);
+  if (!match) return "";
+  const month = Number.parseInt(match[1] ?? "", 10);
+  const day = Number.parseInt(match[2] ?? "", 10);
+  if (!Number.isFinite(month) || !Number.isFinite(day) || month < 1 || month > 12 || day < 1 || day > 31) return "";
+  return `${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function extractMonthDay(value: string) {
+  const normalized = value.trim().replace(/\//g, "-");
+  const dateMatch = normalized.match(/^\d{4}-(\d{1,2})-(\d{1,2})$/);
+  if (dateMatch) return normalizeMonthDay(`${dateMatch[1]}-${dateMatch[2]}`);
+  return normalizeMonthDay(normalized);
+}
+
+function normalizeProfileDraftForSubmit(draft: MerchantMembershipProfileDraft): MerchantMembershipProfileDraft {
+  return normalizeMerchantMembershipProfileDraft({
+    ...draft,
+    nickname: trimText(draft.nickname, 120),
+    name: trimText(draft.name, 120),
+    phone: trimText(draft.phone, 80),
+    email: trimText(draft.email, 320).toLowerCase(),
+    birthday: draft.birthdayMonthDayOnly ? normalizeMonthDay(draft.birthday) : trimText(draft.birthday, 32),
+    taxName: trimText(draft.taxName, 160),
+    taxNumber: trimText(draft.taxNumber, 120),
+    taxAddress: trimText(draft.taxAddress, 240),
+  });
+}
+
 function readProfileFromAuthPayload(payload: MerchantCookieSessionPayload | null | undefined) {
   const user = payload?.user ?? null;
   const metadata = readRecord(user?.user_metadata);
@@ -70,10 +118,15 @@ function readProfileFromAuthPayload(payload: MerchantCookieSessionPayload | null
   const profile = readRecord(metadata?.personal_profile);
   const email = trimText(user?.email, 320).toLowerCase();
   return normalizeMerchantMembershipProfileDraft(profile, {
+    nickname:
+      readStringFromRecord(profile, "nickname", "displayName", "display_name", "name", "username") ||
+      readStringFromRecord(metadata, "nickname", "displayName", "display_name", "name", "username") ||
+      readStringFromRecord(appMetadata, "nickname", "displayName", "display_name", "name", "username") ||
+      (email.includes("@") ? email.split("@")[0] ?? "" : ""),
     name:
-      readStringFromRecord(profile, "displayName", "display_name", "name", "username") ||
-      readStringFromRecord(metadata, "displayName", "display_name", "name", "username") ||
-      readStringFromRecord(appMetadata, "displayName", "display_name", "name", "username") ||
+      readStringFromRecord(profile, "name", "displayName", "display_name", "username") ||
+      readStringFromRecord(metadata, "name", "displayName", "display_name", "username") ||
+      readStringFromRecord(appMetadata, "name", "displayName", "display_name", "username") ||
       (email.includes("@") ? email.split("@")[0] ?? "" : ""),
     phone:
       readStringFromRecord(profile, "phone", "contact_phone", "contactPhone") ||
@@ -83,11 +136,21 @@ function readProfileFromAuthPayload(payload: MerchantCookieSessionPayload | null
       readStringFromRecord(profile, "avatarUrl", "avatar_url") ||
       readStringFromRecord(metadata, "avatarUrl", "avatar_url", "personalAvatarUrl", "chatAvatarImageUrl"),
     birthday: readStringFromRecord(profile, "birthday", "birthdate") || readStringFromRecord(metadata, "birthday", "birthdate"),
+    birthdayMonthDayOnly:
+      readBooleanFromRecord(profile, "birthdayMonthDayOnly", "birthday_month_day_only") ||
+      readBooleanFromRecord(metadata, "birthdayMonthDayOnly", "birthday_month_day_only"),
     gender: readStringFromRecord(profile, "gender") || readStringFromRecord(metadata, "gender"),
     country: readStringFromRecord(profile, "country") || readStringFromRecord(metadata, "country"),
     province: readStringFromRecord(profile, "province", "state") || readStringFromRecord(metadata, "province", "state"),
     city: readStringFromRecord(profile, "city") || readStringFromRecord(metadata, "city"),
     address: readStringFromRecord(profile, "address", "contactAddress") || readStringFromRecord(metadata, "address", "contactAddress"),
+    taxName: readStringFromRecord(profile, "taxName", "invoiceName") || readStringFromRecord(metadata, "taxName", "invoiceName"),
+    taxNumber:
+      readStringFromRecord(profile, "taxNumber", "invoiceTaxNumber") ||
+      readStringFromRecord(metadata, "taxNumber", "invoiceTaxNumber"),
+    taxAddress:
+      readStringFromRecord(profile, "taxAddress", "invoiceAddress") ||
+      readStringFromRecord(metadata, "taxAddress", "invoiceAddress"),
   });
 }
 
@@ -216,6 +279,19 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
     setBusy(true);
     setMessage("");
     try {
+      const submitProfile = normalizeProfileDraftForSubmit(profileDraft);
+      if (!submitProfile.nickname) {
+        throw new Error("请填写昵称");
+      }
+      if (!submitProfile.phone) {
+        throw new Error("请填写手机");
+      }
+      if (!submitProfile.email) {
+        throw new Error("请填写邮箱");
+      }
+      if (!submitProfile.birthday || (submitProfile.birthdayMonthDayOnly && !normalizeMonthDay(submitProfile.birthday))) {
+        throw new Error(submitProfile.birthdayMonthDayOnly ? "请填写生日月日" : "请填写生日");
+      }
       const latestAuthPayload = await resolveDeferredFrontendAuthPayload(2600).catch(() => null);
       const latestFrontendAuthProof =
         (latestAuthPayload?.accountType === "personal" ? trimText(latestAuthPayload.frontendAuthProof, 5000) : "") ||
@@ -237,20 +313,20 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
         body: JSON.stringify({
           siteId: normalizedSiteId,
           siteName,
-          profile: profileDraft,
+          profile: submitProfile,
           frontendAuthProof: latestFrontendAuthProof,
         }),
       });
       if (response.status === 401) {
         throw new Error("当前登录态未同步，请关闭弹窗后刷新 Faolla 再试");
-        return;
       }
       const payload = (await response.json().catch(() => null)) as MembershipMutationPayload | null;
       if (!response.ok || payload?.ok !== true || !payload.membership) {
         throw new Error(readPayloadMessage(payload?.message, "加入会员失败，请稍后重试"));
       }
       setMembership(payload.membership);
-      setPersonalProfile(profileDraft);
+      setPersonalProfile(submitProfile);
+      setProfileDraft(submitProfile);
       setDialogOpen(false);
       setMessage("已加入会员");
       notifyMembershipChanged(payload.membership);
@@ -310,6 +386,16 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
             <div className="max-h-[72vh] overflow-y-auto px-5 py-4">
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="block text-sm font-medium text-slate-700">
+                  昵称 <span className="text-rose-500">*</span>
+                  <input
+                    className="mt-1 h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-slate-900"
+                    value={profileDraft.nickname}
+                    onChange={handleInputChange("nickname")}
+                    autoComplete="nickname"
+                    required
+                  />
+                </label>
+                <label className="block text-sm font-medium text-slate-700">
                   姓名
                   <input
                     className="mt-1 h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-slate-900"
@@ -319,32 +405,58 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
                   />
                 </label>
                 <label className="block text-sm font-medium text-slate-700">
-                  手机
+                  手机 <span className="text-rose-500">*</span>
                   <input
                     className="mt-1 h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-slate-900"
                     value={profileDraft.phone}
                     onChange={handleInputChange("phone")}
                     autoComplete="tel"
+                    required
                   />
                 </label>
                 <label className="block text-sm font-medium text-slate-700">
-                  邮箱
+                  邮箱 <span className="text-rose-500">*</span>
                   <input
+                    type="email"
                     className="mt-1 h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-slate-900"
                     value={profileDraft.email}
                     onChange={handleInputChange("email")}
                     autoComplete="email"
+                    required
                   />
                 </label>
-                <label className="block text-sm font-medium text-slate-700">
-                  生日
+                <div className="block text-sm font-medium text-slate-700">
+                  <div className="flex items-center justify-between gap-2">
+                    <span>
+                      生日 <span className="text-rose-500">*</span>
+                    </span>
+                    <label className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500">
+                      <input
+                        type="checkbox"
+                        className="h-3.5 w-3.5 accent-slate-950"
+                        checked={profileDraft.birthdayMonthDayOnly}
+                        onChange={(event) => {
+                          const checked = event.target.checked;
+                          setProfileDraft((current) => ({
+                            ...current,
+                            birthdayMonthDayOnly: checked,
+                            birthday: checked ? extractMonthDay(current.birthday) : "",
+                          }));
+                        }}
+                      />
+                      仅月日
+                    </label>
+                  </div>
                   <input
-                    type="date"
+                    type={profileDraft.birthdayMonthDayOnly ? "text" : "date"}
                     className="mt-1 h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-slate-900"
-                    value={profileDraft.birthday}
+                    value={profileDraft.birthdayMonthDayOnly ? profileDraft.birthday.replace(/\//g, "-") : profileDraft.birthday.replace(/\//g, "-")}
                     onChange={handleInputChange("birthday")}
+                    placeholder={profileDraft.birthdayMonthDayOnly ? "例如: 03-18" : undefined}
+                    pattern={profileDraft.birthdayMonthDayOnly ? "\\d{1,2}[-/]\\d{1,2}" : undefined}
+                    required
                   />
-                </label>
+                </div>
                 <label className="block text-sm font-medium text-slate-700">
                   性别
                   <select
@@ -394,6 +506,35 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
                     autoComplete="street-address"
                   />
                 </label>
+                <div className="sm:col-span-2 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                  <div className="text-sm font-semibold text-slate-900">税务信息</div>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <label className="block text-sm font-medium text-slate-700">
+                      税务名称
+                      <input
+                        className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-900"
+                        value={profileDraft.taxName}
+                        onChange={handleInputChange("taxName")}
+                      />
+                    </label>
+                    <label className="block text-sm font-medium text-slate-700">
+                      税号
+                      <input
+                        className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-900"
+                        value={profileDraft.taxNumber}
+                        onChange={handleInputChange("taxNumber")}
+                      />
+                    </label>
+                    <label className="block text-sm font-medium text-slate-700 sm:col-span-2">
+                      税务地址
+                      <textarea
+                        className="mt-1 min-h-16 w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900"
+                        value={profileDraft.taxAddress}
+                        onChange={handleInputChange("taxAddress")}
+                      />
+                    </label>
+                  </div>
+                </div>
               </div>
               {message ? (
                 <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{message}</div>
