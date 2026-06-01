@@ -1,10 +1,13 @@
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import {
   buildMerchantMemberNo,
+  buildMerchantMembershipQrValue,
   normalizeMerchantMembershipRecords,
+  normalizeMerchantMembershipProfileDraft,
   toMerchantMembershipListItem,
   toPersonalMembershipCard,
   writePersonalMembershipCardToUserMetadata,
+  type MerchantMembershipProfileDraft,
   type MerchantMembershipListItem,
   type MerchantMembershipRecord,
   type PersonalMembershipCard,
@@ -35,12 +38,36 @@ function readProfileAvatarUrl(session: PersonalAccountSession) {
   return trimText(profile.avatarUrl) || trimText(profile.avatar_url) || trimText(metadata?.avatarUrl) || trimText(metadata?.avatar_url);
 }
 
+export function readPersonalMembershipProfileFromSession(session: PersonalAccountSession): MerchantMembershipProfileDraft {
+  const metadata = readRecord(session.user.user_metadata);
+  const profile = readRecord(metadata?.personal_profile) ?? {};
+  const customerProfile = readPersonalCustomerProfileFromSession({
+    authenticated: true,
+    accountType: "personal",
+    accountId: session.accountId,
+    user: session.user,
+  });
+  return normalizeMerchantMembershipProfileDraft(profile, {
+    name: customerProfile.name,
+    phone: customerProfile.phone,
+    email: session.email || customerProfile.email || customerProfile.loginEmail,
+    avatarUrl: readProfileAvatarUrl(session),
+    birthday: trimText(profile.birthday, 32),
+    gender: trimText(profile.gender, 32),
+    country: trimText(profile.country, 80),
+    province: trimText(profile.province, 80),
+    city: trimText(profile.city, 80),
+    address: trimText(profile.address, 240),
+  });
+}
+
 async function writePersonalMembershipToMetadata(session: PersonalAccountSession, membership: PersonalMembershipRecordLike) {
   const card = {
     id: membership.id,
     siteId: membership.siteId,
     siteName: membership.siteName,
     memberNo: membership.memberNo,
+    qrValue: buildMerchantMembershipQrValue(membership.siteId, membership.memberNo),
     status: membership.status,
     joinedAt: membership.joinedAt,
     leftAt: membership.leftAt,
@@ -65,6 +92,7 @@ export async function joinMerchantMembership(input: {
   siteId: string;
   siteName: string;
   session: PersonalAccountSession;
+  profile?: unknown;
 }): Promise<MerchantMembershipRecord> {
   const supabase = requireMembershipsStoreClient();
   const siteId = trimText(input.siteId, 64);
@@ -72,12 +100,7 @@ export async function joinMerchantMembership(input: {
   const siteName = trimText(input.siteName, 120) || siteId;
   const stored = await loadStoredMerchantMemberships(supabase, siteId);
   const current = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
-  const profile = readPersonalCustomerProfileFromSession({
-    authenticated: true,
-    accountType: "personal",
-    accountId: input.session.accountId,
-    user: input.session.user,
-  });
+  const profile = normalizeMerchantMembershipProfileDraft(input.profile, readPersonalMembershipProfileFromSession(input.session));
   const existingIndex = current.findIndex(
     (membership) =>
       (membership.accountId && membership.accountId === input.session.accountId) ||
@@ -88,10 +111,16 @@ export async function joinMerchantMembership(input: {
     siteName,
     accountId: input.session.accountId,
     userId: input.session.userId,
-    email: input.session.email || profile.email || profile.loginEmail,
+    email: profile.email || input.session.email,
     name: profile.name,
     phone: profile.phone,
-    avatarUrl: readProfileAvatarUrl(input.session),
+    avatarUrl: profile.avatarUrl,
+    birthday: profile.birthday,
+    gender: profile.gender,
+    country: profile.country,
+    province: profile.province,
+    city: profile.city,
+    address: profile.address,
     status: "active" as const,
     leftAt: null,
     updatedAt: now,

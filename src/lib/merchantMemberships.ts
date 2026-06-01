@@ -1,5 +1,18 @@
 export type MerchantMembershipStatus = "active" | "left";
 
+export type MerchantMembershipProfileDraft = {
+  name: string;
+  phone: string;
+  email: string;
+  avatarUrl: string;
+  birthday: string;
+  gender: string;
+  country: string;
+  province: string;
+  city: string;
+  address: string;
+};
+
 export type MerchantMembershipRecord = {
   id: string;
   siteId: string;
@@ -12,6 +25,12 @@ export type MerchantMembershipRecord = {
   name: string;
   phone: string;
   avatarUrl: string;
+  birthday: string;
+  gender: string;
+  country: string;
+  province: string;
+  city: string;
+  address: string;
   status: MerchantMembershipStatus;
   joinedAt: string;
   leftAt: string | null;
@@ -23,6 +42,7 @@ export type PersonalMembershipCard = {
   siteId: string;
   siteName: string;
   memberNo: string;
+  qrValue: string;
   status: MerchantMembershipStatus;
   joinedAt: string;
   leftAt: string | null;
@@ -61,8 +81,33 @@ export function buildMerchantMemberNo(siteId: string, serial: number) {
   return `${normalizedSiteId}${String(normalizedSerial).padStart(6, "0")}`;
 }
 
+export function buildMerchantMembershipQrValue(siteId: string, memberNo: string) {
+  const normalizedSiteId = trimText(siteId, 64);
+  const normalizedMemberNo = trimText(memberNo, 80);
+  return `FAOLLA_MEMBER:${normalizedSiteId}:${normalizedMemberNo}`;
+}
+
 export function normalizeMerchantMembershipStatus(value: unknown): MerchantMembershipStatus {
   return value === "left" ? "left" : "active";
+}
+
+export function normalizeMerchantMembershipProfileDraft(
+  value: unknown,
+  fallback: Partial<MerchantMembershipProfileDraft> = {},
+): MerchantMembershipProfileDraft {
+  const record = readRecord(value) ?? {};
+  return {
+    name: trimText(record.name, 120) || trimText(record.displayName, 120) || trimText(fallback.name, 120),
+    phone: trimText(record.phone, 80) || trimText(fallback.phone, 80),
+    email: (trimText(record.email, 320) || trimText(fallback.email, 320)).toLowerCase(),
+    avatarUrl: trimText(record.avatarUrl, 1200) || trimText(record.avatar_url, 1200) || trimText(fallback.avatarUrl, 1200),
+    birthday: trimText(record.birthday, 32) || trimText(fallback.birthday, 32),
+    gender: trimText(record.gender, 32) || trimText(fallback.gender, 32),
+    country: trimText(record.country, 80) || trimText(fallback.country, 80),
+    province: trimText(record.province, 80) || trimText(fallback.province, 80),
+    city: trimText(record.city, 80) || trimText(fallback.city, 80),
+    address: trimText(record.address, 240) || trimText(fallback.address, 240),
+  };
 }
 
 export function normalizeMerchantMembershipRecord(value: unknown): MerchantMembershipRecord | null {
@@ -89,6 +134,12 @@ export function normalizeMerchantMembershipRecord(value: unknown): MerchantMembe
     name: trimText(record.name, 120),
     phone: trimText(record.phone, 80),
     avatarUrl: trimText(record.avatarUrl, 1200),
+    birthday: trimText(record.birthday, 32),
+    gender: trimText(record.gender, 32),
+    country: trimText(record.country, 80),
+    province: trimText(record.province, 80),
+    city: trimText(record.city, 80),
+    address: trimText(record.address, 240),
     status,
     joinedAt,
     leftAt: status === "left" ? normalizeIsoDateValue(record.leftAt, new Date().toISOString()) : null,
@@ -116,6 +167,7 @@ export function toPersonalMembershipCard(record: MerchantMembershipRecord): Pers
     siteId: record.siteId,
     siteName: record.siteName,
     memberNo: record.memberNo,
+    qrValue: buildMerchantMembershipQrValue(record.siteId, record.memberNo),
     status: record.status,
     joinedAt: record.joinedAt,
     leftAt: record.leftAt,
@@ -129,11 +181,13 @@ export function normalizePersonalMembershipCard(value: unknown): PersonalMembers
   const memberNo = trimText(record.memberNo, 64);
   const joinedAt = normalizeIsoDateValue(record.joinedAt);
   if (!siteId || !memberNo || !joinedAt) return null;
+  const qrValue = trimText(record.qrValue, 200) || buildMerchantMembershipQrValue(siteId, memberNo);
   return {
     id: trimText(record.id, 160) || `${siteId}:${memberNo}`,
     siteId,
     siteName: trimText(record.siteName, 120) || siteId,
     memberNo,
+    qrValue,
     status: normalizeMerchantMembershipStatus(record.status),
     joinedAt,
     leftAt: normalizeMerchantMembershipStatus(record.status) === "left" ? normalizeIsoDateValue(record.leftAt, new Date().toISOString()) : null,

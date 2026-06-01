@@ -44,13 +44,13 @@ export async function POST(request: Request) {
     if (!session) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
-    const body = (await request.json().catch(() => null)) as { siteId?: unknown; siteName?: unknown } | null;
+    const body = (await request.json().catch(() => null)) as { siteId?: unknown; siteName?: unknown; profile?: unknown } | null;
     const siteId = trimText(body?.siteId, 64);
     if (!isMerchantNumericId(siteId)) {
       return NextResponse.json({ error: "invalid_site_id" }, { status: 400 });
     }
     const siteName = await resolveSiteName(siteId, trimText(body?.siteName, 120));
-    const membership = await joinMerchantMembership({ siteId, siteName, session });
+    const membership = await joinMerchantMembership({ siteId, siteName, session, profile: body?.profile });
     return NextResponse.json({
       ok: true,
       membership,

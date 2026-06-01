@@ -2254,6 +2254,40 @@ function MerchantAvatarBadge() {
   );
 }
 
+function PersonalMembershipQrImage({ value, inactive = false }: { value: string; inactive?: boolean }) {
+  const [qrDataUrl, setQrDataUrl] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!value) {
+      setQrDataUrl("");
+      return;
+    }
+    void import("qrcode")
+      .then((QRCode) => QRCode.default.toDataURL(value, { width: 220, margin: 1, errorCorrectionLevel: "M" }))
+      .then((dataUrl) => {
+        if (!cancelled) setQrDataUrl(dataUrl);
+      })
+      .catch(() => {
+        if (!cancelled) setQrDataUrl("");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [value]);
+
+  return (
+    <div className={`rounded-2xl border border-slate-200 bg-white p-2 ${inactive ? "opacity-45 grayscale" : ""}`}>
+      {qrDataUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={qrDataUrl} alt="会员二维码" className="h-24 w-24 object-contain" />
+      ) : (
+        <div className="flex h-24 w-24 items-center justify-center text-center text-xs text-slate-400">二维码生成中...</div>
+      )}
+    </div>
+  );
+}
+
 export default function MePage() {
   const { locale, setLocale } = useI18n();
   useMobilePortraitOrientationLock();
@@ -6387,6 +6421,13 @@ export default function MePage() {
                   <div className="mt-5 font-mono text-lg font-semibold tracking-[0.18em]">{membership.memberNo}</div>
                 </div>
                 <div className="space-y-2 px-4 py-4 text-sm text-slate-600">
+                  <div className="flex items-center justify-between gap-3 rounded-2xl bg-slate-50 p-3">
+                    <div className="min-w-0">
+                      <div className="text-xs text-slate-400">会员二维码</div>
+                      <div className="mt-2 break-all font-mono text-xs font-semibold text-slate-700">{membership.qrValue}</div>
+                    </div>
+                    <PersonalMembershipQrImage value={membership.qrValue || membership.memberNo} inactive={!active} />
+                  </div>
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-slate-400">加入时间</span>
                     <span className="font-medium text-slate-800">{formatPersonalRecordDateTime(membership.joinedAt)}</span>
