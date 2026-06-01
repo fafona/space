@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from "react";
 import {
   normalizeMerchantMembershipProfileDraft,
   readPersonalMembershipCardsFromUserMetadata,
@@ -54,6 +54,26 @@ const EMPTY_MEMBER_PROFILE: MerchantMembershipProfileDraft = {
 
 function trimText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+function buildPersonalLoginHref() {
+  if (typeof window === "undefined") return "/login?accountType=personal";
+  const loginFrom = window.location.href;
+  return `/login?accountType=personal&loginFrom=${encodeURIComponent(loginFrom)}`;
+}
+
+function redirectToPersonalLogin() {
+  if (typeof window === "undefined") return;
+  const href = buildPersonalLoginHref();
+  try {
+    if (window.top && window.top !== window) {
+      window.top.location.assign(href);
+      return;
+    }
+  } catch {
+    // Cross-origin frames fall back to navigating the current frame.
+  }
+  window.location.assign(href);
 }
 
 function readPayloadMessage(value: unknown, fallback: string) {
@@ -119,6 +139,15 @@ function readMonthDayParts(value: string) {
   const normalized = normalizeMonthDay(value) || "06-15";
   const [month = "06", day = "15"] = normalized.split("-");
   return { month, day };
+}
+
+function escapeCssUrl(value: string) {
+  return value.replace(/["\\\n\r]/g, (match) => encodeURIComponent(match));
+}
+
+function readAvatarInitial(profile: MerchantMembershipProfileDraft) {
+  const label = profile.nickname || profile.name || profile.email || "会";
+  return label.trim().slice(0, 1).toUpperCase() || "会";
 }
 
 function normalizeProfileDraftForSubmit(draft: MerchantMembershipProfileDraft): MerchantMembershipProfileDraft {
@@ -192,7 +221,7 @@ function readProfileFromAuthPayload(payload: MerchantCookieSessionPayload | null
 
 async function resolveDeferredFrontendAuthPayload(timeoutMs: number) {
   const { requestParentFrontendAuthPayload } = await import("@/lib/frontendAuthBridge");
-  const parentPayload = await requestParentFrontendAuthPayload(Math.max(800, Math.min(1800, timeoutMs))).catch(() => null);
+  const parentPayload = await requestParentFrontendAuthPayload(Math.max(800, Math.min(6200, timeoutMs))).catch(() => null);
   if (parentPayload?.authenticated === true && parentPayload.accountType === "personal") return parentPayload;
 
   const { resolveFrontendAuthPayload } = await import("@/lib/authSessionRecovery");
@@ -230,17 +259,16 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
   const normalizedSiteId = siteId.trim();
   const joinable = /^\d{8}$/.test(normalizedSiteId);
   const active = membership?.status === "active";
+  const memberAvatarUrl = trimText(personalProfile.avatarUrl, 1200);
+  const memberAvatarInitial = useMemo(() => readAvatarInitial(personalProfile), [personalProfile]);
   const buttonLabel = useMemo(() => {
     if (busy) return "处理中...";
-    if (active) return "已是会员";
     if (membership?.status === "left") return "重新加入会员";
     return "加入会员";
-  }, [active, busy, membership?.status]);
+  }, [busy, membership?.status]);
 
-  useEffect(() => {
-    if (!joinable) return;
-    let cancelled = false;
-    const applyAuthPayload = (payload: MerchantCookieSessionPayload | null | undefined) => {
+  const applyAuthPayload = useCallback(
+    (payload: MerchantCookieSessionPayload | null | undefined) => {
       if (payload?.authenticated !== true || payload.accountType !== "personal") return false;
       const memberships = readPersonalMembershipCardsFromUserMetadata(payload.user?.user_metadata ?? {});
       const current = memberships.find((item) => item.siteId === normalizedSiteId) ?? null;
@@ -253,7 +281,13 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
       setBirthdayFullBackup(profile.birthdayMonthDayOnly ? "" : normalizeFullDate(profile.birthday));
       setResolved(true);
       return true;
-    };
+    },
+    [normalizedSiteId],
+  );
+
+  useEffect(() => {
+    if (!joinable) return;
+    let cancelled = false;
 
     void resolveDeferredFrontendAuthPayload(4200)
       .then(async (authPayload) => {
@@ -290,7 +324,7 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
     return () => {
       cancelled = true;
     };
-  }, [joinable, normalizedSiteId]);
+  }, [applyAuthPayload, joinable, normalizedSiteId]);
 
   function updateProfileDraft(field: keyof MerchantMembershipProfileDraft, value: string) {
     setProfileDraft((current) => ({ ...current, [field]: value }));
@@ -312,10 +346,20 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
     });
   }
 
-  function openJoinDialog() {
+  async function openJoinDialog() {
     if (!joinable || busy || active) return;
     if (authenticated === false) {
-      setMessage("请先登录个人账号后再加入会员");
+      setMessage("正在确认登录状态...");
+      const latestAuthPayload = await resolveDeferredFrontendAuthPayload(6200).catch(() => null);
+      if (applyAuthPayload(latestAuthPayload)) {
+        const profile = readProfileFromAuthPayload(latestAuthPayload);
+        setMessage("");
+        setProfileDraft(profile);
+        setBirthdayFullBackup(profile.birthdayMonthDayOnly ? "" : normalizeFullDate(profile.birthday));
+        setDialogOpen(true);
+        return;
+      }
+      redirectToPersonalLogin();
       return;
     }
     setMessage("");
@@ -393,17 +437,28 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
     <div className={className}>
       <button
         type="button"
-        className={`inline-flex items-center rounded-full border px-4 py-2 text-sm font-semibold shadow-[0_12px_30px_rgba(15,23,42,0.12)] backdrop-blur transition disabled:cursor-default ${
+        className={`inline-flex items-center justify-center overflow-hidden rounded-full border text-sm font-semibold shadow-[0_12px_30px_rgba(15,23,42,0.12)] backdrop-blur transition disabled:cursor-default ${
           active
-            ? "border-emerald-200 bg-emerald-50/95 text-emerald-700"
-            : "border-slate-200/80 bg-white/90 text-slate-900 hover:bg-white"
+            ? "h-12 w-12 border-white/80 bg-white/95 p-1 text-slate-900"
+            : "border-slate-200/80 bg-white/90 px-4 py-2 text-slate-900 hover:bg-white"
         }`}
+        aria-label={active ? "会员头像" : buttonLabel}
+        title={active ? "已是会员" : undefined}
         onClick={() => {
-          openJoinDialog();
+          void openJoinDialog();
         }}
         disabled={busy || active}
       >
-        {buttonLabel}
+        {active ? (
+          <span
+            className="flex h-full w-full items-center justify-center rounded-full bg-slate-950 bg-cover bg-center text-sm font-semibold text-white"
+            style={memberAvatarUrl ? { backgroundImage: `url(\"${escapeCssUrl(memberAvatarUrl)}\")` } : undefined}
+          >
+            {memberAvatarUrl ? <span className="sr-only">{memberAvatarInitial}</span> : memberAvatarInitial}
+          </span>
+        ) : (
+          buttonLabel
+        )}
       </button>
       {message && !active ? (
         <div className="mt-2 max-w-[220px] rounded-xl bg-slate-950/85 px-3 py-2 text-xs font-medium text-white shadow-lg">
