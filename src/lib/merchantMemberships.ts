@@ -18,6 +18,17 @@ export const MERCHANT_MEMBER_LEGAL_ALLERGENS = [
 ] as const;
 
 export type MerchantMemberLegalAllergen = (typeof MERCHANT_MEMBER_LEGAL_ALLERGENS)[number];
+export type MerchantMemberAccountTransactionType = "redeem" | "recharge";
+
+export type MerchantMemberAccountTransaction = {
+  id: string;
+  type: MerchantMemberAccountTransactionType;
+  at: string;
+  pointDelta: number;
+  balanceDelta: number;
+  note: string;
+  operatorId: string;
+};
 
 export type MerchantMemberCouponSummary = {
   couponId: string;
@@ -104,6 +115,9 @@ export type MerchantMembershipRecord = {
   taxCity: string;
   taxAddress: string;
   allergens: string[];
+  pointBalance: number;
+  balanceAmount: number;
+  transactions: MerchantMemberAccountTransaction[];
   status: MerchantMembershipStatus;
   joinedAt: string;
   leftAt: string | null;
@@ -149,6 +163,18 @@ function normalizePositiveInteger(value: unknown) {
   return Math.floor(numberValue);
 }
 
+function normalizeIntegerValue(value: unknown, fallback = 0) {
+  const numberValue = typeof value === "number" ? value : Number(trimText(value));
+  if (!Number.isFinite(numberValue)) return fallback;
+  return Math.round(numberValue);
+}
+
+function normalizeMoneyValue(value: unknown, fallback = 0) {
+  const numberValue = typeof value === "number" ? value : Number.parseFloat(String(value ?? ""));
+  if (!Number.isFinite(numberValue)) return fallback;
+  return Number(numberValue.toFixed(2));
+}
+
 function normalizeBoolean(value: unknown, fallback = false) {
   if (typeof value === "boolean") return value;
   if (typeof value === "string") {
@@ -167,6 +193,30 @@ function normalizeStringArray(value: unknown) {
 export function normalizeMerchantMemberAllergens(value: unknown) {
   const allowed = new Set<string>(MERCHANT_MEMBER_LEGAL_ALLERGENS);
   return Array.from(new Set(normalizeStringArray(value).filter((item) => allowed.has(item))));
+}
+
+export function normalizeMerchantMemberAccountTransactions(value: unknown): MerchantMemberAccountTransaction[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      const record = readRecord(item);
+      if (!record) return null;
+      const at = normalizeIsoDateValue(record.at);
+      if (!at) return null;
+      const type: MerchantMemberAccountTransactionType = record.type === "recharge" ? "recharge" : "redeem";
+      return {
+        id: trimText(record.id, 120) || `MT${Date.parse(at).toString(36).toUpperCase()}`,
+        type,
+        at,
+        pointDelta: normalizeIntegerValue(record.pointDelta),
+        balanceDelta: normalizeMoneyValue(record.balanceDelta),
+        note: trimText(record.note, 500),
+        operatorId: trimText(record.operatorId, 120),
+      };
+    })
+    .filter((item): item is MerchantMemberAccountTransaction => Boolean(item))
+    .sort((left, right) => Date.parse(right.at) - Date.parse(left.at))
+    .slice(0, 500);
 }
 
 export function buildMerchantMemberNo(siteId: string, serial: number) {
@@ -257,6 +307,9 @@ export function normalizeMerchantMembershipRecord(value: unknown): MerchantMembe
     taxCity: trimText(record.taxCity, 80) || trimText(record.tax_city, 80),
     taxAddress: trimText(record.taxAddress, 240) || trimText(record.tax_address, 240),
     allergens: normalizeMerchantMemberAllergens(record.allergens),
+    pointBalance: Math.max(0, normalizeIntegerValue(record.pointBalance)),
+    balanceAmount: Math.max(0, normalizeMoneyValue(record.balanceAmount)),
+    transactions: normalizeMerchantMemberAccountTransactions(record.transactions),
     status,
     joinedAt,
     leftAt: status === "left" ? normalizeIsoDateValue(record.leftAt, new Date().toISOString()) : null,
@@ -367,6 +420,9 @@ export function toMerchantMembershipListItem(record: MerchantMembershipRecord): 
     taxCity: "",
     taxAddress: "",
     allergens: [],
+    pointBalance: 0,
+    balanceAmount: 0,
+    transactions: [],
     profileVisible: false,
   };
 }

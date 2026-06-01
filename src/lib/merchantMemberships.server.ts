@@ -8,6 +8,7 @@ import {
   toMerchantMembershipListItem,
   toPersonalMembershipCard,
   writePersonalMembershipCardToUserMetadata,
+  type MerchantMemberAccountTransactionType,
   type MerchantMembershipProfileDraft,
   type MerchantMembershipListItem,
   type MerchantMembershipRecord,
@@ -27,6 +28,18 @@ function requireMembershipsStoreClient() {
 
 function trimText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+function normalizePositiveInteger(value: unknown) {
+  const numberValue = typeof value === "number" ? value : Number(trimText(value));
+  if (!Number.isFinite(numberValue) || numberValue <= 0) return 0;
+  return Math.round(numberValue);
+}
+
+function normalizePositiveMoney(value: unknown) {
+  const numberValue = typeof value === "number" ? value : Number.parseFloat(String(value ?? ""));
+  if (!Number.isFinite(numberValue) || numberValue <= 0) return 0;
+  return Number(numberValue.toFixed(2));
 }
 
 function readRecord(value: unknown): Record<string, unknown> | null {
@@ -136,6 +149,64 @@ export async function updateMerchantMembershipAllergens(input: {
   return toMerchantMembershipListItem(nextMembership);
 }
 
+export async function applyMerchantMembershipAccountOperation(input: {
+  siteId: string;
+  membershipId: string;
+  type: MerchantMemberAccountTransactionType;
+  points?: unknown;
+  balanceAmount?: unknown;
+  note?: unknown;
+  operatorId?: unknown;
+}): Promise<MerchantMembershipListItem> {
+  const supabase = requireMembershipsStoreClient();
+  const siteId = trimText(input.siteId, 64);
+  const membershipId = trimText(input.membershipId, 160);
+  if (!siteId || !membershipId) throw new Error("membership_not_found");
+  const stored = await loadStoredMerchantMemberships(supabase, siteId);
+  const current = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
+  const index = current.findIndex((membership) => membership.id === membershipId);
+  if (index < 0) throw new Error("membership_not_found");
+  if (current[index].status !== "active") throw new Error("membership_not_active");
+  const type: MerchantMemberAccountTransactionType = input.type === "recharge" ? "recharge" : "redeem";
+  const rawPoints = normalizePositiveInteger(input.points);
+  const rawBalance = normalizePositiveMoney(input.balanceAmount);
+  if (rawPoints <= 0 && rawBalance <= 0) throw new Error("membership_operation_empty");
+  const pointDelta = type === "recharge" ? rawPoints : -rawPoints;
+  const balanceDelta = type === "recharge" ? rawBalance : -rawBalance;
+  const currentMembership = current[index];
+  const nextPointBalance = currentMembership.pointBalance + pointDelta;
+  const nextBalanceAmount = Number((currentMembership.balanceAmount + balanceDelta).toFixed(2));
+  if (nextPointBalance < 0 || nextBalanceAmount < 0) throw new Error("membership_balance_insufficient");
+  const now = new Date().toISOString();
+  const nextMembership = {
+    ...currentMembership,
+    pointBalance: nextPointBalance,
+    balanceAmount: nextBalanceAmount,
+    transactions: [
+      {
+        id: `MT${Date.parse(now).toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+        type,
+        at: now,
+        pointDelta,
+        balanceDelta,
+        note: trimText(input.note, 500),
+        operatorId: trimText(input.operatorId, 120),
+      },
+      ...currentMembership.transactions,
+    ].slice(0, 500),
+    updatedAt: now,
+  };
+  const nextMemberships = [...current];
+  nextMemberships[index] = nextMembership;
+  const saved = await saveStoredMerchantMemberships(supabase, {
+    siteId,
+    memberships: nextMemberships,
+    updatedAt: now,
+  });
+  if (saved.error) throw new Error(saved.error);
+  return toMerchantMembershipListItem(nextMembership);
+}
+
 export async function joinMerchantMembership(input: {
   siteId: string;
   siteName: string;
@@ -197,6 +268,9 @@ export async function joinMerchantMembership(input: {
             memberNo: buildMerchantMemberNo(siteId, serial),
             serial,
             joinedAt: now,
+            pointBalance: 0,
+            balanceAmount: 0,
+            transactions: [],
             ...baseProfile,
           } satisfies MerchantMembershipRecord;
         })();

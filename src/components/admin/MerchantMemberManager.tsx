@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   MERCHANT_MEMBER_LEGAL_ALLERGENS,
+  type MerchantMemberAccountTransaction,
+  type MerchantMemberAccountTransactionType,
   type MerchantMembershipInsight,
   type MerchantMembershipListItem,
 } from "@/lib/merchantMemberships";
@@ -26,6 +28,10 @@ type MembershipPatchPayload = {
 };
 
 type MemberStatusFilter = "all" | "active" | "left";
+type MemberOperationDialogState = {
+  membershipId: string;
+  type: MerchantMemberAccountTransactionType;
+} | null;
 
 const EMPTY_MEMBER_INSIGHT: MerchantMembershipInsight = {
   pointBalance: 0,
@@ -76,6 +82,29 @@ function couponClaimStatusLabel(status: MerchantMembershipInsight["couponHistory
   if (status === "expired") return "已过期";
   if (status === "inactive") return "未生效";
   return "有效未使用";
+}
+
+function accountTransactionTypeLabel(type: MerchantMemberAccountTransactionType) {
+  return type === "recharge" ? "充值" : "兑换";
+}
+
+function formatSignedNumber(value: number) {
+  const normalized = Number(value);
+  if (!Number.isFinite(normalized) || normalized === 0) return "0";
+  return `${normalized > 0 ? "+" : ""}${Math.round(normalized)}`;
+}
+
+function formatSignedMoney(value: number) {
+  const normalized = Number(value);
+  if (!Number.isFinite(normalized) || normalized === 0) return "0.00";
+  return `${normalized > 0 ? "+" : ""}${normalized.toFixed(2)}`;
+}
+
+function formatAccountTransactionChange(transaction: MerchantMemberAccountTransaction) {
+  const parts = [];
+  if (transaction.pointDelta !== 0) parts.push(`积分 ${formatSignedNumber(transaction.pointDelta)}`);
+  if (transaction.balanceDelta !== 0) parts.push(`余额 ${formatSignedMoney(transaction.balanceDelta)}`);
+  return parts.join(" / ") || "-";
 }
 
 function statusLabel(status: MerchantMembershipListItem["status"]) {
@@ -172,6 +201,12 @@ export default function MerchantMemberManager({ siteId, siteName = "", className
   const [couponHistoryOpen, setCouponHistoryOpen] = useState(false);
   const [allergenSaving, setAllergenSaving] = useState(false);
   const [allergenError, setAllergenError] = useState("");
+  const [operationDialog, setOperationDialog] = useState<MemberOperationDialogState>(null);
+  const [operationPoints, setOperationPoints] = useState("");
+  const [operationBalance, setOperationBalance] = useState("");
+  const [operationNote, setOperationNote] = useState("");
+  const [operationSaving, setOperationSaving] = useState(false);
+  const [operationError, setOperationError] = useState("");
   const normalizedSiteId = siteId.trim();
 
   const stats = useMemo(() => {
@@ -197,6 +232,10 @@ export default function MerchantMemberManager({ siteId, siteName = "", className
     return memberships.find((membership) => membership.id === selectedMembershipId) ?? null;
   }, [memberships, selectedMembershipId]);
   const selectedInsight = selectedMembership?.insight ?? EMPTY_MEMBER_INSIGHT;
+  const operationMembership = useMemo(() => {
+    return operationDialog ? memberships.find((membership) => membership.id === operationDialog.membershipId) ?? null : null;
+  }, [memberships, operationDialog]);
+  const operationInsight = operationMembership?.insight ?? EMPTY_MEMBER_INSIGHT;
 
   const loadMemberships = useCallback(async () => {
     if (!/^\d{8}$/.test(normalizedSiteId)) {
@@ -295,6 +334,93 @@ export default function MerchantMemberManager({ siteId, siteName = "", className
       setAllergenError(error instanceof Error ? error.message : "过敏信息保存失败，请稍后重试");
     } finally {
       setAllergenSaving(false);
+    }
+  }
+
+  function openMemberOperation(membership: MerchantMembershipListItem, type: MerchantMemberAccountTransactionType) {
+    if (!membership.profileVisible || membership.status !== "active") return;
+    setOperationDialog({ membershipId: membership.id, type });
+    setOperationPoints("");
+    setOperationBalance("");
+    setOperationNote("");
+    setOperationError("");
+  }
+
+  function closeMemberOperation() {
+    if (operationSaving) return;
+    setOperationDialog(null);
+    setOperationError("");
+  }
+
+  function readOperationErrorMessage(value: unknown, fallback: string) {
+    const message = trimText(value);
+    if (message === "membership_balance_insufficient") return "积分或余额不足，不能兑换。";
+    if (message === "membership_operation_empty") return "请填写积分或金额。";
+    if (message === "membership_not_active") return "该会员不是正常状态，不能操作。";
+    return message || fallback;
+  }
+
+  async function submitMemberOperation() {
+    if (!operationDialog || !operationMembership || operationSaving) return;
+    const points = Number.parseInt(operationPoints, 10) || 0;
+    const balanceAmount = Number.parseFloat(operationBalance) || 0;
+    if (points <= 0 && balanceAmount <= 0) {
+      setOperationError("请填写积分或金额。");
+      return;
+    }
+    if (operationDialog.type === "redeem") {
+      const insight = operationMembership.insight ?? EMPTY_MEMBER_INSIGHT;
+      if (points > insight.pointBalance || balanceAmount > insight.balanceAmount) {
+        setOperationError("积分或余额不足，不能兑换。");
+        return;
+      }
+    }
+    setOperationSaving(true);
+    setOperationError("");
+    try {
+      const response = await fetch("/api/memberships", {
+        method: "PATCH",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          accept: "application/json",
+        },
+        body: JSON.stringify({
+          action: "member_operation",
+          type: operationDialog.type,
+          siteId: normalizedSiteId,
+          membershipId: operationMembership.id,
+          points,
+          balanceAmount,
+          note: operationNote,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as MembershipPatchPayload | null;
+      if (!response.ok || payload?.ok !== true || !payload.membership) {
+        throw new Error(readOperationErrorMessage(payload?.message, "会员账户操作失败，请稍后重试"));
+      }
+      setMemberships((current) =>
+        current.map((membership) => {
+          if (membership.id !== operationMembership.id || !payload.membership) return membership;
+          const currentInsight = membership.insight ?? EMPTY_MEMBER_INSIGHT;
+          return {
+            ...membership,
+            ...payload.membership,
+            insight: {
+              ...currentInsight,
+              pointBalance: payload.membership.pointBalance,
+              balanceAmount: payload.membership.balanceAmount,
+            },
+          };
+        }),
+      );
+      setOperationDialog(null);
+      setOperationError("");
+    } catch (error) {
+      setOperationError(error instanceof Error ? error.message : "会员账户操作失败，请稍后重试");
+    } finally {
+      setOperationSaving(false);
     }
   }
 
@@ -446,13 +572,31 @@ export default function MerchantMemberManager({ siteId, siteName = "", className
                             </span>
                           </td>
                           <td className="px-3 py-2">
-                            <button
-                              type="button"
-                              className="rounded border bg-white px-2 py-1 text-xs hover:bg-slate-50"
-                              onClick={() => setSelectedMembershipId(membership.id)}
-                            >
-                              详情
-                            </button>
+                            <div className="flex flex-wrap gap-1.5">
+                              <button
+                                type="button"
+                                className="rounded border bg-white px-2 py-1 text-xs hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                                onClick={() => openMemberOperation(membership, "redeem")}
+                                disabled={!membership.profileVisible || membership.status !== "active"}
+                              >
+                                兑换
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded border bg-white px-2 py-1 text-xs hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                                onClick={() => openMemberOperation(membership, "recharge")}
+                                disabled={!membership.profileVisible || membership.status !== "active"}
+                              >
+                                充值
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded border bg-white px-2 py-1 text-xs hover:bg-slate-50"
+                                onClick={() => setSelectedMembershipId(membership.id)}
+                              >
+                                详情
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -542,6 +686,47 @@ export default function MerchantMemberManager({ siteId, siteName = "", className
                             value={selectedInsight.productPreferences.length > 0 ? selectedInsight.productPreferences.join("、") : "-"}
                             className="sm:col-span-2 lg:col-span-3"
                           />
+                        </div>
+                      </div>
+
+                      <div className="rounded-2xl border border-slate-200 bg-white p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="text-sm font-semibold text-slate-900">账户记录</div>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                              onClick={() => openMemberOperation(selectedMembership, "redeem")}
+                            >
+                              兑换
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                              onClick={() => openMemberOperation(selectedMembership, "recharge")}
+                            >
+                              充值
+                            </button>
+                          </div>
+                        </div>
+                        <div className="mt-3 space-y-2">
+                          {selectedMembership.transactions.length > 0 ? (
+                            selectedMembership.transactions.slice(0, 8).map((transaction) => (
+                              <div
+                                key={transaction.id}
+                                className="grid gap-2 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600 sm:grid-cols-[110px_1fr_150px]"
+                              >
+                                <div className="font-semibold text-slate-900">{accountTransactionTypeLabel(transaction.type)}</div>
+                                <div>
+                                  <div className="font-semibold text-slate-800">{formatAccountTransactionChange(transaction)}</div>
+                                  <div className="mt-0.5 text-slate-500">{transaction.note || "-"}</div>
+                                </div>
+                                <div className="text-slate-500 sm:text-right">{formatDateTime(transaction.at)}</div>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-500">暂无账户操作记录。</div>
+                          )}
                         </div>
                       </div>
 
@@ -695,6 +880,111 @@ export default function MerchantMemberManager({ siteId, siteName = "", className
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {operationDialog && operationMembership ? (
+        <div className="fixed inset-0 z-[130]">
+          <button
+            type="button"
+            aria-label="关闭会员账户操作"
+            className="absolute inset-0 cursor-default bg-slate-950/45"
+            onClick={closeMemberOperation}
+          />
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-4">
+            <form
+              className="pointer-events-auto w-full max-w-lg overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-2xl"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void submitMemberOperation();
+              }}
+            >
+              <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
+                <div>
+                  <div className="text-lg font-semibold text-slate-950">
+                    会员{accountTransactionTypeLabel(operationDialog.type)}
+                  </div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    {getMemberDisplayName(operationMembership)} · {operationMembership.memberNo}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  onClick={closeMemberOperation}
+                  disabled={operationSaving}
+                >
+                  关闭
+                </button>
+              </div>
+              <div className="space-y-4 px-5 py-4">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <ProfileField label="当前积分" value={operationInsight.pointBalance} />
+                  <ProfileField label="当前余额" value={formatMoney(operationInsight.balanceAmount)} />
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="block text-sm font-medium text-slate-700">
+                    {operationDialog.type === "recharge" ? "增加积分" : "扣减积分"}
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      className="mt-1 h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-slate-900"
+                      value={operationPoints}
+                      onChange={(event) => setOperationPoints(event.target.value)}
+                      placeholder="0"
+                      disabled={operationSaving}
+                    />
+                  </label>
+                  <label className="block text-sm font-medium text-slate-700">
+                    {operationDialog.type === "recharge" ? "充值金额" : "扣减余额"}
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      className="mt-1 h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-slate-900"
+                      value={operationBalance}
+                      onChange={(event) => setOperationBalance(event.target.value)}
+                      placeholder="0.00"
+                      disabled={operationSaving}
+                    />
+                  </label>
+                </div>
+                <label className="block text-sm font-medium text-slate-700">
+                  备注
+                  <textarea
+                    className="mt-1 min-h-20 w-full resize-y rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-900"
+                    value={operationNote}
+                    onChange={(event) => setOperationNote(event.target.value)}
+                    placeholder={operationDialog.type === "recharge" ? "例如：线下充值" : "例如：兑换礼品"}
+                    disabled={operationSaving}
+                  />
+                </label>
+                {operationError ? (
+                  <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                    {operationError}
+                  </div>
+                ) : null}
+              </div>
+              <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-4">
+                <button
+                  type="button"
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  onClick={closeMemberOperation}
+                  disabled={operationSaving}
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={operationSaving}
+                >
+                  {operationSaving ? "保存中..." : "确认"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       ) : null}

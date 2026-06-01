@@ -14,6 +14,7 @@ import {
   type MerchantMembershipListItem,
 } from "@/lib/merchantMemberships";
 import {
+  applyMerchantMembershipAccountOperation,
   joinMerchantMembership,
   leaveMerchantMembership,
   listMerchantMemberships,
@@ -164,8 +165,8 @@ function buildMembershipInsight(
     });
 
   return {
-    pointBalance: 0,
-    balanceAmount: 0,
+    pointBalance: membership.pointBalance,
+    balanceAmount: membership.balanceAmount,
     availableCouponCount: couponHistory.filter((item) => item.status === "available").length,
     availableCoupons: Array.from(availableCouponMap.values()).sort((left, right) => right.count - left.count),
     couponHistory,
@@ -263,9 +264,13 @@ export async function PATCH(request: Request) {
   try {
     const body = (await request.json().catch(() => null)) as {
       action?: unknown;
+      type?: unknown;
       siteId?: unknown;
       membershipId?: unknown;
       allergens?: unknown;
+      points?: unknown;
+      balanceAmount?: unknown;
+      note?: unknown;
     } | null;
     const siteId = trimText(body?.siteId, 64);
     if (!isMerchantNumericId(siteId)) {
@@ -280,6 +285,22 @@ export async function PATCH(request: Request) {
         siteId,
         membershipId: trimText(body?.membershipId, 160),
         allergens: body?.allergens,
+      });
+      return NextResponse.json({ ok: true, membership });
+    }
+    if (trimText(body?.action, 80) === "member_operation") {
+      const merchantSession = await resolveMerchantSessionFromRequest(request, { hintedMerchantId: siteId });
+      if (!merchantSession || merchantSession.merchantId !== siteId) {
+        return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+      }
+      const membership = await applyMerchantMembershipAccountOperation({
+        siteId,
+        membershipId: trimText(body?.membershipId, 160),
+        type: trimText(body?.type, 80) === "recharge" ? "recharge" : "redeem",
+        points: body?.points,
+        balanceAmount: body?.balanceAmount,
+        note: body?.note,
+        operatorId: merchantSession.merchantId,
       });
       return NextResponse.json({ ok: true, membership });
     }
