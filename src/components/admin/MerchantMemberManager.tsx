@@ -8,6 +8,11 @@ import {
   type MerchantMembershipInsight,
   type MerchantMembershipListItem,
 } from "@/lib/merchantMemberships";
+import type {
+  MerchantMemberRechargePlan,
+  MerchantMemberRedemptionItem,
+  MerchantMembershipSettings,
+} from "@/lib/merchantMembershipSettings";
 
 type MerchantMemberManagerProps = {
   siteId: string;
@@ -18,6 +23,12 @@ type MerchantMemberManagerProps = {
 type MembershipsPayload = {
   ok?: unknown;
   memberships?: MerchantMembershipListItem[];
+  message?: unknown;
+};
+
+type MembershipSettingsPayload = {
+  ok?: unknown;
+  settings?: MerchantMembershipSettings;
   message?: unknown;
 };
 
@@ -205,8 +216,13 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
   const [operationPoints, setOperationPoints] = useState("");
   const [operationBalance, setOperationBalance] = useState("");
   const [operationNote, setOperationNote] = useState("");
+  const [operationRechargePlanId, setOperationRechargePlanId] = useState("");
+  const [operationRedemptionItemId, setOperationRedemptionItemId] = useState("");
+  const [operationRedemptionQuantity, setOperationRedemptionQuantity] = useState("1");
   const [operationSaving, setOperationSaving] = useState(false);
   const [operationError, setOperationError] = useState("");
+  const [memberSettings, setMemberSettings] = useState<MerchantMembershipSettings | null>(null);
+  const [memberSettingsError, setMemberSettingsError] = useState("");
   const normalizedSiteId = siteId.trim();
 
   const filteredMemberships = useMemo(() => {
@@ -226,6 +242,22 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     return operationDialog ? memberships.find((membership) => membership.id === operationDialog.membershipId) ?? null : null;
   }, [memberships, operationDialog]);
   const operationInsight = operationMembership?.insight ?? EMPTY_MEMBER_INSIGHT;
+  const enabledRechargePlans = useMemo(
+    () => (memberSettings?.rechargePlans ?? []).filter((plan) => plan.enabled),
+    [memberSettings],
+  );
+  const enabledRedemptionItems = useMemo(
+    () => (memberSettings?.redemptionItems ?? []).filter((item) => item.enabled),
+    [memberSettings],
+  );
+  const selectedRechargePlan = useMemo(
+    () => enabledRechargePlans.find((plan) => plan.id === operationRechargePlanId) ?? null,
+    [enabledRechargePlans, operationRechargePlanId],
+  );
+  const selectedRedemptionItem = useMemo(
+    () => enabledRedemptionItems.find((item) => item.id === operationRedemptionItemId) ?? null,
+    [enabledRedemptionItems, operationRedemptionItemId],
+  );
 
   const loadMemberships = useCallback(async () => {
     if (!/^\d{8}$/.test(normalizedSiteId)) {
@@ -264,9 +296,40 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     }
   }, [normalizedSiteId]);
 
+  const loadMemberSettings = useCallback(async () => {
+    if (!/^\d{8}$/.test(normalizedSiteId)) {
+      setMemberSettings(null);
+      setMemberSettingsError("");
+      return;
+    }
+    setMemberSettingsError("");
+    try {
+      const response = await fetch(`/api/membership-settings?siteId=${encodeURIComponent(normalizedSiteId)}`, {
+        method: "GET",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: {
+          accept: "application/json",
+        },
+      });
+      const payload = (await response.json().catch(() => null)) as MembershipSettingsPayload | null;
+      if (!response.ok || payload?.ok !== true || !payload.settings) {
+        throw new Error(readPayloadMessage(payload?.message, "会员配置加载失败，充值和兑换将暂时使用手动输入。"));
+      }
+      setMemberSettings(payload.settings);
+    } catch (error) {
+      setMemberSettings(null);
+      setMemberSettingsError(error instanceof Error ? error.message : "会员配置加载失败，充值和兑换将暂时使用手动输入。");
+    }
+  }, [normalizedSiteId]);
+
   useEffect(() => {
     void loadMemberships();
   }, [loadMemberships]);
+
+  useEffect(() => {
+    void loadMemberSettings();
+  }, [loadMemberSettings]);
 
   useEffect(() => {
     setCouponHistoryOpen(false);
@@ -329,11 +392,18 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
 
   function openMemberOperation(membership: MerchantMembershipListItem, type: MerchantMemberAccountTransactionType) {
     if (!membership.profileVisible || membership.status !== "active") return;
+    const defaultRechargePlan = type === "recharge" ? enabledRechargePlans[0] ?? null : null;
+    const defaultRedemptionItem = type === "redeem" ? enabledRedemptionItems[0] ?? null : null;
     setOperationDialog({ membershipId: membership.id, type });
     setOperationPoints("");
     setOperationBalance("");
     setOperationNote("");
+    setOperationRechargePlanId("");
+    setOperationRedemptionItemId("");
+    setOperationRedemptionQuantity("1");
     setOperationError("");
+    if (defaultRechargePlan) applyRechargePlanSelection(defaultRechargePlan);
+    if (defaultRedemptionItem) applyRedemptionItemSelection(defaultRedemptionItem, "1");
   }
 
   function closeMemberOperation() {
@@ -350,10 +420,39 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     return message || fallback;
   }
 
+  function applyRechargePlanSelection(plan: MerchantMemberRechargePlan | null) {
+    setOperationRechargePlanId(plan?.id ?? "");
+    if (!plan) return;
+    setOperationPoints(String(plan.giftPoints || 0));
+    setOperationBalance(formatMoney((plan.rechargeAmount || 0) + (plan.giftAmount || 0)));
+    setOperationNote((current) => current || `充值方案：${plan.title}`);
+  }
+
+  function applyRedemptionItemSelection(item: MerchantMemberRedemptionItem | null, quantityValue = operationRedemptionQuantity) {
+    const quantity = Math.max(1, Number.parseInt(quantityValue, 10) || 1);
+    setOperationRedemptionItemId(item?.id ?? "");
+    setOperationRedemptionQuantity(String(quantity));
+    if (!item) return;
+    setOperationPoints(String((item.pointsCost || 0) * quantity));
+    setOperationBalance("");
+    setOperationNote((current) => current || `兑换项目：${item.name} x ${quantity}`);
+  }
+
   async function submitMemberOperation() {
     if (!operationDialog || !operationMembership || operationSaving) return;
-    const points = Number.parseInt(operationPoints, 10) || 0;
-    const balanceAmount = Number.parseFloat(operationBalance) || 0;
+    const redemptionQuantity = Math.max(1, Number.parseInt(operationRedemptionQuantity, 10) || 1);
+    const points =
+      operationDialog.type === "recharge" && selectedRechargePlan
+        ? selectedRechargePlan.giftPoints
+        : operationDialog.type === "redeem" && selectedRedemptionItem
+          ? selectedRedemptionItem.pointsCost * redemptionQuantity
+          : Number.parseInt(operationPoints, 10) || 0;
+    const balanceAmount =
+      operationDialog.type === "recharge" && selectedRechargePlan
+        ? (selectedRechargePlan.rechargeAmount || 0) + (selectedRechargePlan.giftAmount || 0)
+        : operationDialog.type === "redeem" && selectedRedemptionItem
+          ? 0
+          : Number.parseFloat(operationBalance) || 0;
     if (points <= 0 && balanceAmount <= 0) {
       setOperationError("请填写积分或金额。");
       return;
@@ -384,6 +483,9 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
           points,
           balanceAmount,
           note: operationNote,
+          rechargePlanId: selectedRechargePlan?.id ?? "",
+          redemptionItemId: selectedRedemptionItem?.id ?? "",
+          redemptionQuantity,
         }),
       });
       const payload = (await response.json().catch(() => null)) as MembershipPatchPayload | null;
@@ -419,21 +521,25 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
       {loadError ? (
         <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{loadError}</div>
       ) : null}
+      {memberSettingsError ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+          {memberSettingsError}
+        </div>
+      ) : null}
 
       <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-[0_12px_32px_rgba(15,23,42,0.05)]">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold text-slate-950">会员列表</h2>
-            <p className="mt-1 text-sm text-slate-500">会员卡号按“商户 ID + 6 位流水号”生成。</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <div className="rounded border bg-slate-50 px-3 py-2 text-sm text-slate-700">
-              当前显示：{filteredMemberships.length}
-            </div>
             <button
               type="button"
               className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              onClick={() => void loadMemberships()}
+              onClick={() => {
+                void loadMemberships();
+                void loadMemberSettings();
+              }}
               disabled={loading}
             >
               {loading ? "刷新中..." : "刷新"}
@@ -887,6 +993,72 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                   <ProfileField label="当前积分" value={operationInsight.pointBalance} />
                   <ProfileField label="当前余额" value={formatMoney(operationInsight.balanceAmount)} />
                 </div>
+                {operationDialog.type === "recharge" && enabledRechargePlans.length > 0 ? (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
+                    <div className="text-sm font-semibold text-slate-800">充值方案</div>
+                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                      {enabledRechargePlans.map((plan) => (
+                        <button
+                          key={plan.id}
+                          type="button"
+                          className={`rounded-xl border px-3 py-2 text-left text-sm transition ${
+                            operationRechargePlanId === plan.id
+                              ? "border-slate-950 bg-white shadow-sm"
+                              : "border-slate-200 bg-white hover:border-slate-300"
+                          }`}
+                          onClick={() => applyRechargePlanSelection(plan)}
+                          disabled={operationSaving}
+                        >
+                          <div className="font-semibold text-slate-950">{plan.title}</div>
+                          <div className="mt-1 text-xs text-slate-500">
+                            充 {formatMoney(plan.rechargeAmount)} / 赠 {formatMoney(plan.giftAmount)} / 积分 {plan.giftPoints}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                {operationDialog.type === "redeem" && enabledRedemptionItems.length > 0 ? (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
+                    <div className="text-sm font-semibold text-slate-800">兑换项目</div>
+                    <div className="mt-2 grid gap-3 sm:grid-cols-[1fr_110px]">
+                      <select
+                        className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-900"
+                        value={operationRedemptionItemId}
+                        onChange={(event) => {
+                          const nextItem = enabledRedemptionItems.find((item) => item.id === event.target.value) ?? null;
+                          applyRedemptionItemSelection(nextItem);
+                        }}
+                        disabled={operationSaving}
+                      >
+                        {enabledRedemptionItems.map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.name}（{item.pointsCost} 积分）
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-900"
+                        value={operationRedemptionQuantity}
+                        onChange={(event) => {
+                          const nextQuantity = event.target.value;
+                          setOperationRedemptionQuantity(nextQuantity);
+                          applyRedemptionItemSelection(selectedRedemptionItem, nextQuantity);
+                        }}
+                        disabled={operationSaving}
+                      />
+                    </div>
+                    {selectedRedemptionItem ? (
+                      <div className="mt-2 text-xs text-slate-500">
+                        库存 {selectedRedemptionItem.stock || 0}，本次扣减{" "}
+                        {selectedRedemptionItem.pointsCost * (Number.parseInt(operationRedemptionQuantity, 10) || 1)} 积分。
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className="block text-sm font-medium text-slate-700">
                     {operationDialog.type === "recharge" ? "增加积分" : "扣减积分"}
@@ -898,7 +1070,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                       value={operationPoints}
                       onChange={(event) => setOperationPoints(event.target.value)}
                       placeholder="0"
-                      disabled={operationSaving}
+                      disabled={operationSaving || Boolean(selectedRechargePlan) || Boolean(selectedRedemptionItem)}
                     />
                   </label>
                   <label className="block text-sm font-medium text-slate-700">
@@ -911,7 +1083,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                       value={operationBalance}
                       onChange={(event) => setOperationBalance(event.target.value)}
                       placeholder="0.00"
-                      disabled={operationSaving}
+                      disabled={operationSaving || Boolean(selectedRechargePlan) || Boolean(selectedRedemptionItem)}
                     />
                   </label>
                 </div>

@@ -247,6 +247,7 @@ import {
   normalizeMerchantCouponRecords,
   type MerchantCouponRecord,
 } from "@/lib/merchantCoupons";
+import type { MerchantMemberSettingsView } from "@/lib/merchantMembershipSettings";
 import { broadcastPublishSync } from "@/lib/publishSync";
 import {
   BUTTON_BLOCK_MIN_HEIGHT,
@@ -344,6 +345,11 @@ const MerchantCouponManager = dynamic(() => import("@/components/admin/MerchantC
 const MerchantMemberManager = dynamic(() => import("@/components/admin/MerchantMemberManager"), {
   ssr: false,
   loading: () => <DeferredAdminPanelLoading label="会员管理加载中..." />,
+});
+
+const MerchantMembershipSettingsPanel = dynamic(() => import("@/components/admin/MerchantMembershipSettingsPanel"), {
+  ssr: false,
+  loading: () => <DeferredAdminPanelLoading label="会员配置加载中..." />,
 });
 
 const MerchantBookingManagerDialog = dynamic(() => import("@/components/admin/MerchantBookingManagerDialog"), {
@@ -1415,7 +1421,12 @@ const GALLERY_FRAME_WIDTH_LABELS: Record<CustomGalleryFrameWidth, string> = {
   "1/3": "1/3",
   "2/3": "2/3",
 };
-const MERCHANT_MEMBER_CONTEXT_MENU_ITEMS = ["充值方案", "兑换项目", "等级&权益", "积分规则"] as const;
+const MERCHANT_MEMBER_CONTEXT_MENU_ITEMS: Array<{ label: string; view: Exclude<MerchantMemberSettingsView, "list"> }> = [
+  { label: "充值方案", view: "rechargePlans" },
+  { label: "兑换项目", view: "redemptionItems" },
+  { label: "等级&权益", view: "levels" },
+  { label: "积分规则", view: "pointsRules" },
+];
 type ViewportKey = "desktop" | "mobile";
 type MerchantDesktopSection =
   | "editor"
@@ -5730,6 +5741,7 @@ export default function AdminClient({
   const [accountSwitchBusyKey, setAccountSwitchBusyKey] = useState("");
   const [accountSwitchError, setAccountSwitchError] = useState("");
   const [merchantDesktopSection, setMerchantDesktopSection] = useState<MerchantDesktopSection>("editor");
+  const [merchantMemberSettingsView, setMerchantMemberSettingsView] = useState<MerchantMemberSettingsView>("list");
   const merchantDesktopDefaultSectionSiteRef = useRef("");
   const [merchantAnalyticsLocalData, setMerchantAnalyticsLocalData] = useState<MerchantAnalyticsLocalData | null>(null);
   const [merchantAnalyticsRemoteSummary, setMerchantAnalyticsRemoteSummary] = useState<RemoteAnalyticsSummary | null>(null);
@@ -13680,6 +13692,18 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       return;
     }
     setMerchantSiteIdOverride(resolvedSiteId);
+    setMerchantMemberSettingsView("list");
+    setMerchantDesktopSection("members");
+  }
+
+  async function openMerchantMemberSettingsPanel(view: Exclude<MerchantMemberSettingsView, "list">) {
+    const resolvedSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
+    if (!resolvedSiteId) {
+      showTip("当前商户还没准备好会员资料，请稍后重试");
+      return;
+    }
+    setMerchantSiteIdOverride(resolvedSiteId);
+    setMerchantMemberSettingsView(view);
     setMerchantDesktopSection("members");
   }
 
@@ -18957,11 +18981,19 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           ) : merchantDesktopSection === "coupons" && merchantCouponManagerCommonProps ? (
             <MerchantCouponManager {...merchantCouponManagerCommonProps} />
           ) : merchantDesktopSection === "members" ? (
-            <MerchantMemberManager
-              siteId={editingSiteId || ""}
-              siteName={effectiveMerchantDisplayName || merchantDisplayName}
-              className="min-h-[calc(100vh-14rem)] py-6"
-            />
+            merchantMemberSettingsView === "list" ? (
+              <MerchantMemberManager
+                siteId={editingSiteId || ""}
+                siteName={effectiveMerchantDisplayName || merchantDisplayName}
+                className="min-h-[calc(100vh-14rem)] py-6"
+              />
+            ) : (
+              <MerchantMembershipSettingsPanel
+                siteId={editingSiteId || ""}
+                view={merchantMemberSettingsView}
+                className="min-h-[calc(100vh-14rem)]"
+              />
+            )
           ) : merchantDesktopSection === "booking" && merchantBookingManagerDialogCommonProps ? (
             <MerchantBookingManagerDialog
               {...merchantBookingManagerDialogCommonProps}
@@ -19450,14 +19482,18 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     <>
                       <div className="text-base font-semibold text-slate-900">会员管理</div>
                       <div className="mt-3 grid gap-2">
-                        {MERCHANT_MEMBER_CONTEXT_MENU_ITEMS.map((label) => (
+                        {MERCHANT_MEMBER_CONTEXT_MENU_ITEMS.map((item) => (
                           <button
-                            key={label}
+                            key={item.view}
                             type="button"
-                            className="flex min-h-10 w-full items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-sm font-semibold text-slate-800 transition hover:border-slate-300 hover:bg-slate-50"
-                            onClick={() => showTip(`${label}配置页待接入`)}
+                            className={`flex min-h-10 w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-sm font-semibold transition ${
+                              merchantMemberSettingsView === item.view
+                                ? "border-slate-950 bg-slate-950 text-white"
+                                : "border-slate-200 bg-white text-slate-800 hover:border-slate-300 hover:bg-slate-50"
+                            }`}
+                            onClick={() => void openMerchantMemberSettingsPanel(item.view)}
                           >
-                            {label}
+                            {item.label}
                           </button>
                         ))}
                       </div>

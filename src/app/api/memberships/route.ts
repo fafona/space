@@ -271,6 +271,9 @@ export async function PATCH(request: Request) {
       points?: unknown;
       balanceAmount?: unknown;
       note?: unknown;
+      rechargePlanId?: unknown;
+      redemptionItemId?: unknown;
+      redemptionQuantity?: unknown;
     } | null;
     const siteId = trimText(body?.siteId, 64);
     if (!isMerchantNumericId(siteId)) {
@@ -301,6 +304,9 @@ export async function PATCH(request: Request) {
         balanceAmount: body?.balanceAmount,
         note: body?.note,
         operatorId: merchantSession.merchantId,
+        rechargePlanId: body?.rechargePlanId,
+        redemptionItemId: body?.redemptionItemId,
+        redemptionQuantity: body?.redemptionQuantity,
       });
       return NextResponse.json({ ok: true, membership });
     }

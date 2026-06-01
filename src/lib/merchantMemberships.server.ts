@@ -14,6 +14,7 @@ import {
   type MerchantMembershipRecord,
   type PersonalMembershipCard,
 } from "@/lib/merchantMemberships";
+import { getMerchantMembershipSettings } from "@/lib/merchantMembershipSettings.server";
 import { loadStoredMerchantMemberships, saveStoredMerchantMemberships } from "@/lib/merchantMembershipsStore";
 import { readPersonalCustomerProfileFromSession } from "@/lib/personalCustomerProfile";
 import type { PersonalAccountSession } from "@/lib/personalAccountSession.server";
@@ -157,6 +158,9 @@ export async function applyMerchantMembershipAccountOperation(input: {
   balanceAmount?: unknown;
   note?: unknown;
   operatorId?: unknown;
+  rechargePlanId?: unknown;
+  redemptionItemId?: unknown;
+  redemptionQuantity?: unknown;
 }): Promise<MerchantMembershipListItem> {
   const supabase = requireMembershipsStoreClient();
   const siteId = trimText(input.siteId, 64);
@@ -168,8 +172,26 @@ export async function applyMerchantMembershipAccountOperation(input: {
   if (index < 0) throw new Error("membership_not_found");
   if (current[index].status !== "active") throw new Error("membership_not_active");
   const type: MerchantMemberAccountTransactionType = input.type === "recharge" ? "recharge" : "redeem";
-  const rawPoints = normalizePositiveInteger(input.points);
-  const rawBalance = normalizePositiveMoney(input.balanceAmount);
+  const settings = await getMerchantMembershipSettings(siteId).catch(() => null);
+  const rechargePlanId = trimText(input.rechargePlanId, 120);
+  const rechargePlan =
+    type === "recharge" && rechargePlanId
+      ? settings?.rechargePlans.find((plan) => plan.enabled && plan.id === rechargePlanId)
+      : null;
+  const redemptionItemId = trimText(input.redemptionItemId, 120);
+  const redemptionItem =
+    type === "redeem" && redemptionItemId
+      ? settings?.redemptionItems.find((item) => item.enabled && item.id === redemptionItemId)
+      : null;
+  const redemptionQuantity = Math.max(1, normalizePositiveInteger(input.redemptionQuantity) || 1);
+  const rawPoints = redemptionItem
+    ? redemptionItem.pointsCost * redemptionQuantity
+    : rechargePlan
+      ? rechargePlan.giftPoints
+      : normalizePositiveInteger(input.points);
+  const rawBalance = rechargePlan
+    ? Number((rechargePlan.rechargeAmount + rechargePlan.giftAmount).toFixed(2))
+    : normalizePositiveMoney(input.balanceAmount);
   if (rawPoints <= 0 && rawBalance <= 0) throw new Error("membership_operation_empty");
   const pointDelta = type === "recharge" ? rawPoints : -rawPoints;
   const balanceDelta = type === "recharge" ? rawBalance : -rawBalance;
@@ -189,7 +211,13 @@ export async function applyMerchantMembershipAccountOperation(input: {
         at: now,
         pointDelta,
         balanceDelta,
-        note: trimText(input.note, 500),
+        note:
+          trimText(input.note, 500) ||
+          (rechargePlan
+            ? `充值方案：${rechargePlan.title}`
+            : redemptionItem
+              ? `兑换项目：${redemptionItem.name} x ${redemptionQuantity}`
+              : ""),
         operatorId: trimText(input.operatorId, 120),
       },
       ...currentMembership.transactions,
