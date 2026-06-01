@@ -191,7 +191,7 @@ function ProfileField({
   );
 }
 
-export default function MerchantMemberManager({ siteId, siteName = "", className = "" }: MerchantMemberManagerProps) {
+export default function MerchantMemberManager({ siteId, className = "" }: MerchantMemberManagerProps) {
   const [memberships, setMemberships] = useState<MerchantMembershipListItem[]>([]);
   const [selectedMembershipId, setSelectedMembershipId] = useState("");
   const [statusFilter, setStatusFilter] = useState<MemberStatusFilter>("all");
@@ -208,16 +208,6 @@ export default function MerchantMemberManager({ siteId, siteName = "", className
   const [operationSaving, setOperationSaving] = useState(false);
   const [operationError, setOperationError] = useState("");
   const normalizedSiteId = siteId.trim();
-
-  const stats = useMemo(() => {
-    const active = memberships.filter((membership) => membership.status === "active").length;
-    const left = memberships.filter((membership) => membership.status === "left").length;
-    return {
-      active,
-      left,
-      total: memberships.length,
-    };
-  }, [memberships]);
 
   const filteredMemberships = useMemo(() => {
     const normalizedKeyword = keyword.trim().toLowerCase();
@@ -426,40 +416,6 @@ export default function MerchantMemberManager({ siteId, siteName = "", className
 
   return (
     <section className={`space-y-4 ${className}`}>
-      <div className="rounded-[24px] border border-slate-200 bg-white px-5 py-4 shadow-[0_12px_32px_rgba(15,23,42,0.05)]">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-semibold text-slate-950">会员管理</h1>
-            <p className="mt-1 text-sm text-slate-500">
-              {siteName || normalizedSiteId} · 加入会员的个人用户会在这里保留记录，退会后资料自动隐藏。
-            </p>
-          </div>
-          <button
-            type="button"
-            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            onClick={() => void loadMemberships()}
-            disabled={loading}
-          >
-            {loading ? "刷新中..." : "刷新"}
-          </button>
-        </div>
-
-        <div className="mt-4 grid gap-3 md:grid-cols-3">
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-            <div className="text-xs text-slate-500">全部会员</div>
-            <div className="mt-1 text-2xl font-semibold text-slate-950">{stats.total}</div>
-          </div>
-          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-            <div className="text-xs text-emerald-700">正常</div>
-            <div className="mt-1 text-2xl font-semibold text-emerald-700">{stats.active}</div>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-            <div className="text-xs text-slate-500">已退会</div>
-            <div className="mt-1 text-2xl font-semibold text-slate-700">{stats.left}</div>
-          </div>
-        </div>
-      </div>
-
       {loadError ? (
         <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{loadError}</div>
       ) : null}
@@ -474,6 +430,14 @@ export default function MerchantMemberManager({ siteId, siteName = "", className
             <div className="rounded border bg-slate-50 px-3 py-2 text-sm text-slate-700">
               当前显示：{filteredMemberships.length}
             </div>
+            <button
+              type="button"
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              onClick={() => void loadMemberships()}
+              disabled={loading}
+            >
+              {loading ? "刷新中..." : "刷新"}
+            </button>
           </div>
         </div>
 

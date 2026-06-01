@@ -1415,6 +1415,7 @@ const GALLERY_FRAME_WIDTH_LABELS: Record<CustomGalleryFrameWidth, string> = {
   "1/3": "1/3",
   "2/3": "2/3",
 };
+const MERCHANT_MEMBER_CONTEXT_MENU_ITEMS = ["充值方案", "兑换项目", "等级&权益", "积分规则"] as const;
 type ViewportKey = "desktop" | "mobile";
 type MerchantDesktopSection =
   | "editor"
@@ -19445,13 +19446,27 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         数据统计
                       </button>
                     </div>
+                  ) : merchantDesktopSection === "members" ? (
+                    <>
+                      <div className="text-base font-semibold text-slate-900">会员管理</div>
+                      <div className="mt-3 grid gap-2">
+                        {MERCHANT_MEMBER_CONTEXT_MENU_ITEMS.map((label) => (
+                          <button
+                            key={label}
+                            type="button"
+                            className="flex min-h-10 w-full items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-sm font-semibold text-slate-800 transition hover:border-slate-300 hover:bg-slate-50"
+                            onClick={() => showTip(`${label}配置页待接入`)}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </>
                   ) : (
                     <>
                       <div className="text-base font-semibold text-slate-900">
                         {merchantDesktopSection === "profile"
                           ? "商户信息"
-                        : merchantDesktopSection === "members"
-                            ? "会员管理"
                         : merchantDesktopSection === "faolla"
                             ? "Faolla"
                             : "会话"}
@@ -19459,8 +19474,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       <div className="mt-1 text-sm text-slate-500">
                         {merchantDesktopSection === "profile"
                           ? "这里集中维护商户资料、域名前缀和地址联系人。"
-                        : merchantDesktopSection === "members"
-                            ? "查看已加入会员的个人用户资料，退会会员只保留会员记录。"
                         : merchantDesktopSection === "faolla"
                             ? "打开 Faolla 总站或登录前访问的前台页面。"
                             : "这里集中处理官方客服和商户聊天消息。"}
