@@ -26,6 +26,7 @@ type MembershipSettingsPayload = {
 
 const VIEW_TITLES: Record<Exclude<MerchantMemberSettingsView, "list">, string> = {
   rechargePlans: "充值方案",
+  redemptionCategories: "项目分类",
   redemptionItems: "兑换项目",
   levels: "等级&权益",
   pointsRules: "积分规则",
@@ -536,19 +537,8 @@ export default function MerchantMembershipSettingsPanel({
     setError("");
   }
 
-  const renderRedemptionItems = () => {
+  const renderRedemptionCategories = () => {
     const categoryRows = activeSettings.redemptionCategories.filter((category) => category.id);
-    const redemptionKeywordText = redemptionKeyword.trim().toLowerCase();
-    const filteredItems = activeSettings.redemptionItems.filter((item) => {
-      const matchesCategory = !redemptionCategoryFilter || item.categoryId === redemptionCategoryFilter;
-      const matchesKeyword =
-        !redemptionKeywordText ||
-        item.code.toLowerCase().includes(redemptionKeywordText) ||
-        item.name.toLowerCase().includes(redemptionKeywordText) ||
-        item.description.toLowerCase().includes(redemptionKeywordText);
-      return matchesCategory && matchesKeyword;
-    });
-    const itemCategoryCount = new Set(activeSettings.redemptionItems.map((item) => item.categoryId).filter(Boolean)).size;
     return (
       <div className="space-y-4">
         <SectionCard
@@ -650,6 +640,60 @@ export default function MerchantMembershipSettingsPanel({
           </div>
         </SectionCard>
 
+        {categoryDialog ? (
+          <DialogShell
+            title={categoryDialog.mode === "create" ? "新增商品分类" : "编辑商品分类"}
+            onClose={() => setCategoryDialog(null)}
+            onConfirm={saveCategoryDialog}
+          >
+            <div className="grid gap-3 md:grid-cols-2">
+              <Field label="分类名称" className="md:col-span-2">
+                <input
+                  className={inputClassName()}
+                  value={categoryDialog.draft.name}
+                  onChange={(event) => patchCategoryDraft({ name: event.target.value })}
+                />
+              </Field>
+              <Field label="排序">
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  className={inputClassName()}
+                  value={toNumberInputValue(categoryDialog.draft.sort)}
+                  onChange={(event) => patchCategoryDraft({ sort: parseInteger(event.target.value) })}
+                />
+              </Field>
+              <label className="mt-6 flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={categoryDialog.draft.enabled}
+                  onChange={(event) => patchCategoryDraft({ enabled: event.target.checked })}
+                />
+                启用分类
+              </label>
+            </div>
+          </DialogShell>
+        ) : null}
+      </div>
+    );
+  };
+
+  const renderRedemptionItems = () => {
+    const categoryRows = activeSettings.redemptionCategories.filter((category) => category.id);
+    const redemptionKeywordText = redemptionKeyword.trim().toLowerCase();
+    const filteredItems = activeSettings.redemptionItems.filter((item) => {
+      const matchesCategory = !redemptionCategoryFilter || item.categoryId === redemptionCategoryFilter;
+      const matchesKeyword =
+        !redemptionKeywordText ||
+        item.code.toLowerCase().includes(redemptionKeywordText) ||
+        item.name.toLowerCase().includes(redemptionKeywordText) ||
+        item.description.toLowerCase().includes(redemptionKeywordText);
+      return matchesCategory && matchesKeyword;
+    });
+    const itemCategoryCount = new Set(activeSettings.redemptionItems.map((item) => item.categoryId).filter(Boolean)).size;
+    return (
+      <div className="space-y-4">
         <SectionCard
           title="兑换项目"
           action={
@@ -773,42 +817,6 @@ export default function MerchantMembershipSettingsPanel({
             </table>
           </div>
         </SectionCard>
-
-        {categoryDialog ? (
-          <DialogShell
-            title={categoryDialog.mode === "create" ? "新增商品分类" : "编辑商品分类"}
-            onClose={() => setCategoryDialog(null)}
-            onConfirm={saveCategoryDialog}
-          >
-            <div className="grid gap-3 md:grid-cols-2">
-              <Field label="分类名称" className="md:col-span-2">
-                <input
-                  className={inputClassName()}
-                  value={categoryDialog.draft.name}
-                  onChange={(event) => patchCategoryDraft({ name: event.target.value })}
-                />
-              </Field>
-              <Field label="排序">
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  className={inputClassName()}
-                  value={toNumberInputValue(categoryDialog.draft.sort)}
-                  onChange={(event) => patchCategoryDraft({ sort: parseInteger(event.target.value) })}
-                />
-              </Field>
-              <label className="mt-6 flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700">
-                <input
-                  type="checkbox"
-                  checked={categoryDialog.draft.enabled}
-                  onChange={(event) => patchCategoryDraft({ enabled: event.target.checked })}
-                />
-                启用分类
-              </label>
-            </div>
-          </DialogShell>
-        ) : null}
 
         {itemDialog ? (
           <DialogShell
@@ -1431,6 +1439,8 @@ export default function MerchantMembershipSettingsPanel({
 
       {view === "rechargePlans"
         ? renderRechargePlans()
+        : view === "redemptionCategories"
+          ? renderRedemptionCategories()
         : view === "redemptionItems"
           ? renderRedemptionItems()
           : view === "levels"

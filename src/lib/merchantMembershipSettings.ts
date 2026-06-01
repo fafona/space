@@ -1,4 +1,10 @@
-export type MerchantMemberSettingsView = "list" | "rechargePlans" | "redemptionItems" | "levels" | "pointsRules";
+export type MerchantMemberSettingsView =
+  | "list"
+  | "rechargePlans"
+  | "redemptionCategories"
+  | "redemptionItems"
+  | "levels"
+  | "pointsRules";
 
 export const MERCHANT_MEMBER_HOLIDAY_OPTIONS = [
   "元旦",

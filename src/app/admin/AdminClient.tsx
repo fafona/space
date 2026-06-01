@@ -1423,6 +1423,7 @@ const GALLERY_FRAME_WIDTH_LABELS: Record<CustomGalleryFrameWidth, string> = {
 };
 const MERCHANT_MEMBER_CONTEXT_MENU_ITEMS: Array<{ label: string; view: Exclude<MerchantMemberSettingsView, "list"> }> = [
   { label: "充值方案", view: "rechargePlans" },
+  { label: "项目分类", view: "redemptionCategories" },
   { label: "兑换项目", view: "redemptionItems" },
   { label: "等级&权益", view: "levels" },
   { label: "积分规则", view: "pointsRules" },
