@@ -62,12 +62,19 @@ export type MerchantMemberRedemptionItem = {
   id: string;
   categoryId: string;
   code: string;
+  barcode: string;
   name: string;
+  imageUrl: string;
+  iconName: string;
   description: string;
   enabled: boolean;
   pointsCost: number;
   referenceAmount: number;
+  memberPrice: number;
+  taxRate: number;
   stock: number;
+  pointProduct: boolean;
+  recommended: boolean;
   sort: number;
 };
 
@@ -433,12 +440,19 @@ function normalizeRedemptionItems(value: unknown): MerchantMemberRedemptionItem[
         id: normalizeId(record.id, "item", index),
         categoryId: trimText(record.categoryId, 120),
         code: trimText(record.code, 120),
+        barcode: trimText(record.barcode ?? record.barCode ?? record.goodsBarcode, 120),
+        imageUrl: trimText(record.imageUrl ?? record.image ?? record.goodsImage, 1000),
+        iconName: trimText(record.iconName ?? record.icon ?? record.goodsIcon, 80),
         name: trimText(record.name ?? record.title, 160) || `兑换项目 ${index + 1}`,
         description: trimText(record.description, 500),
         enabled: normalizeBoolean(record.enabled, true),
         pointsCost: normalizeInteger(record.pointsCost ?? record.points),
         referenceAmount: normalizeMoney(record.referenceAmount ?? record.price),
+        memberPrice: normalizeMoney(record.memberPrice ?? record.vipPrice ?? record.uprice),
+        taxRate: normalizeMoney(record.taxRate ?? record.tax),
         stock: normalizeInteger(record.stock),
+        pointProduct: normalizeBoolean(record.pointProduct ?? record.isPointProduct, true),
+        recommended: normalizeBoolean(record.recommended ?? record.isRecommended ?? record.recommend),
         sort: normalizeSort(record.sort, index),
       };
     })

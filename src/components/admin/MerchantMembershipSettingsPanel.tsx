@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "react";
+import Image from "next/image";
 import {
   buildMerchantMemberHolidayPresets,
   createEmptyMerchantMembershipSettings,
@@ -12,6 +13,7 @@ import {
   type MerchantMemberSettingsView,
   type MerchantMembershipSettings,
 } from "@/lib/merchantMembershipSettings";
+import { uploadFileToPublicStorage } from "@/lib/publicAssetUpload";
 
 type MerchantMembershipSettingsPanelProps = {
   siteId: string;
@@ -32,6 +34,33 @@ const VIEW_TITLES: Record<Exclude<MerchantMemberSettingsView, "list">, string> =
   levels: "等级&权益",
   pointsRules: "积分规则",
 };
+
+const REDEMPTION_ITEM_ICON_OPTIONS = [
+  ["none", "无"],
+  ["tag", "标签"],
+  ["category", "分类"],
+  ["box", "商品"],
+  ["gift", "礼品"],
+  ["hot", "热卖"],
+  ["star", "新品"],
+  ["like", "推荐"],
+  ["cluster", "落客"],
+  ["package", "套餐"],
+  ["check", "必选"],
+  ["badge", "纪念品"],
+  ["figure", "手办"],
+  ["toy", "玩具"],
+  ["pen", "文具"],
+  ["spark", "精选"],
+  ["ticket", "门票"],
+  ["door", "入场"],
+  ["coffee", "咖啡"],
+  ["drink", "饮料"],
+  ["food", "餐饮"],
+  ["light", "轻食"],
+  ["pizza", "披萨"],
+  ["dessert", "甜品"],
+] as const;
 
 function trimText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
@@ -158,6 +187,45 @@ function SummaryPill({ label, value, tone = "slate" }: { label: string; value: R
   );
 }
 
+function RedemptionIconGlyph({ name }: { name: string }) {
+  const label = REDEMPTION_ITEM_ICON_OPTIONS.find(([value]) => value === name)?.[1] ?? "无";
+  if (!name || name === "none") {
+    return (
+      <span className="grid h-5 w-5 place-items-center text-xs font-semibold leading-none text-teal-700">
+        无
+      </span>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5 text-teal-700">
+      <title>{label}</title>
+      {name === "tag" ? (
+        <path d="M4 12V5h7l9 9-6 6-10-8Z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      ) : name === "category" ? (
+        <path d="M6 6h5v5H6V6Zm7 0h5v5h-5V6ZM6 13h5v5H6v-5Zm7 0h5v5h-5v-5Z" fill="none" stroke="currentColor" strokeWidth="1.8" />
+      ) : name === "box" || name === "package" ? (
+        <path d="m4 8 8-4 8 4v9l-8 4-8-4V8Zm0 0 8 4 8-4M12 12v9" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      ) : name === "gift" ? (
+        <path d="M4 10h16v10H4V10Zm8 0v10M4 14h16M8 10c-2 0-3-1-3-2s1-2 2.4-2C9 6 10 8 12 10c2-2 3-4 4.6-4C18 6 19 7 19 8s-1 2-3 2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      ) : name === "hot" ? (
+        <path d="M13 3c1 4-4 5-1 9 1-2 4-2 5 1 1.5 4-1.4 8-5 8s-6-2.5-6-6c0-3 2-5 4-7 1.2-1.2 2-2.5 3-5Z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      ) : name === "star" || name === "spark" ? (
+        <path d="m12 3 2.6 5.7 6.2.7-4.6 4.2 1.2 6.1L12 16.6l-5.4 3.1 1.2-6.1-4.6-4.2 6.2-.7L12 3Z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      ) : name === "like" ? (
+        <path d="M7 11v9H4v-9h3Zm0 0 4-7c1.2.4 1.8 1.5 1.4 3l-.5 2H19c1 0 1.8.9 1.6 2l-1.2 6.8c-.2 1.2-1.2 2.2-2.5 2.2H7" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      ) : name === "ticket" ? (
+        <path d="M4 8h16v4a2 2 0 0 0 0 4v4H4v-4a2 2 0 0 0 0-4V8Zm8 1v10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      ) : name === "coffee" || name === "drink" ? (
+        <path d="M7 8h9v8a4 4 0 0 1-4 4h-1a4 4 0 0 1-4-4V8Zm9 2h2a2 2 0 0 1 0 4h-2M6 4h12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      ) : name === "food" ? (
+        <path d="M7 3v18M4 3v6a3 3 0 0 0 6 0V3M17 3v18M17 3c2 2 3 4 3 7 0 2-1 3-3 3" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      ) : (
+        <path d="M12 4v16M4 12h16M6.5 6.5l11 11M17.5 6.5l-11 11" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      )}
+    </svg>
+  );
+}
+
 function DialogShell({
   title,
   children,
@@ -229,6 +297,7 @@ export default function MerchantMembershipSettingsPanel({
     mode: "create" | "edit";
     draft: MerchantMemberRedemptionItem;
   } | null>(null);
+  const [itemImageUploading, setItemImageUploading] = useState(false);
   const currentYear = new Date().getFullYear();
   const [holidayPresetYear, setHolidayPresetYear] = useState(currentYear);
   const [holidayDraft, setHolidayDraft] = useState({ date: "", name: "", multiplier: "1" });
@@ -538,12 +607,19 @@ export default function MerchantMembershipSettingsPanel({
         id: createMerchantMemberSettingsId("item"),
         categoryId: activeSettings.redemptionCategories[0]?.id ?? "",
         code: "",
+        barcode: "",
         name: "",
+        imageUrl: "",
+        iconName: "none",
         description: "",
         enabled: true,
         pointsCost: 0,
         referenceAmount: 0,
+        memberPrice: 0,
+        taxRate: 10,
         stock: 0,
+        pointProduct: true,
+        recommended: false,
         sort: activeSettings.redemptionItems.length,
       },
     });
@@ -558,7 +634,10 @@ export default function MerchantMembershipSettingsPanel({
     const draft = {
       ...itemDialog.draft,
       code: trimText(itemDialog.draft.code, 120),
+      barcode: trimText(itemDialog.draft.barcode, 120),
       name: trimText(itemDialog.draft.name, 160),
+      imageUrl: trimText(itemDialog.draft.imageUrl, 1000),
+      iconName: trimText(itemDialog.draft.iconName, 80) || "none",
       description: trimText(itemDialog.draft.description, 500),
     };
     if (!draft.code || !draft.name) {
@@ -581,6 +660,31 @@ export default function MerchantMembershipSettingsPanel({
     }));
     setItemDialog(null);
     setError("");
+  }
+
+  async function handleItemImageUpload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || itemImageUploading) return;
+    if (!file.type.toLowerCase().startsWith("image/")) {
+      setError("仅支持上传图片文件");
+      return;
+    }
+    setItemImageUploading(true);
+    setError("");
+    try {
+      const uploadedUrl = await uploadFileToPublicStorage(file, {
+        merchantHint: normalizedSiteId || "membership",
+        folder: "merchant-assets",
+        usage: "generic-image",
+      });
+      if (!uploadedUrl) throw new Error("商品图片上传失败，请稍后重试");
+      patchItemDraft({ imageUrl: uploadedUrl });
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : "商品图片上传失败，请稍后重试");
+    } finally {
+      setItemImageUploading(false);
+    }
   }
 
   const renderRedemptionCategories = () => {
@@ -870,77 +974,165 @@ export default function MerchantMembershipSettingsPanel({
             onClose={() => setItemDialog(null)}
             onConfirm={saveItemDialog}
           >
-            <div className="grid gap-3 md:grid-cols-2">
-              <Field label="编号">
-                <input
-                  className={inputClassName()}
-                  value={itemDialog.draft.code}
-                  onChange={(event) => patchItemDraft({ code: event.target.value })}
-                />
-              </Field>
-              <Field label="名称">
-                <input
-                  className={inputClassName()}
-                  value={itemDialog.draft.name}
-                  onChange={(event) => patchItemDraft({ name: event.target.value })}
-                />
-              </Field>
-              <Field label="所需积分">
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  className={inputClassName()}
-                  value={toNumberInputValue(itemDialog.draft.pointsCost)}
-                  onChange={(event) => patchItemDraft({ pointsCost: parseInteger(event.target.value) })}
-                />
-              </Field>
-              <Field label="参考金额">
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  className={inputClassName()}
-                  value={toNumberInputValue(itemDialog.draft.referenceAmount)}
-                  onChange={(event) => patchItemDraft({ referenceAmount: parseMoney(event.target.value) })}
-                />
-              </Field>
-              <Field label="库存">
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  className={inputClassName()}
-                  value={toNumberInputValue(itemDialog.draft.stock)}
-                  onChange={(event) => patchItemDraft({ stock: parseInteger(event.target.value) })}
-                  placeholder="0 表示不限库存"
-                />
-              </Field>
-              <Field label="分类">
-                <select
-                  className={inputClassName()}
-                  value={itemDialog.draft.categoryId}
-                  onChange={(event) => patchItemDraft({ categoryId: event.target.value })}
-                >
-                  <option value="">未分类</option>
-                  {categoryRows.map((category) => (
-                    <option key={category.id} value={category.id}>
-                      {category.name}
-                    </option>
+            <div className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-[108px_minmax(0,1fr)]">
+                <label className="group relative grid h-[108px] cursor-pointer place-items-center overflow-hidden rounded-lg border border-teal-100 bg-teal-50 text-sm font-semibold text-teal-800 transition hover:border-teal-300">
+                  {itemDialog.draft.imageUrl ? (
+                    <Image
+                      src={itemDialog.draft.imageUrl}
+                      alt={itemDialog.draft.name || "商品图片"}
+                      fill
+                      unoptimized
+                      sizes="108px"
+                      className="object-cover"
+                    />
+                  ) : (
+                    <span className="grid place-items-center gap-2">
+                      <span className="text-2xl leading-none">⇧</span>
+                      <span>{itemImageUploading ? "上传中..." : "上传图片"}</span>
+                    </span>
+                  )}
+                  <input type="file" accept="image/*" className="sr-only" disabled={itemImageUploading} onChange={handleItemImageUpload} />
+                </label>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <Field label="商品编号">
+                    <input
+                      className={inputClassName()}
+                      value={itemDialog.draft.code}
+                      onChange={(event) => patchItemDraft({ code: event.target.value })}
+                    />
+                  </Field>
+                  <Field label="条码">
+                    <input
+                      className={inputClassName()}
+                      value={itemDialog.draft.barcode}
+                      onChange={(event) => patchItemDraft({ barcode: event.target.value })}
+                    />
+                  </Field>
+                  <Field label="商品名称" className="md:col-span-2">
+                    <input
+                      className={inputClassName()}
+                      value={itemDialog.draft.name}
+                      onChange={(event) => patchItemDraft({ name: event.target.value })}
+                    />
+                  </Field>
+                </div>
+              </div>
+
+              <div>
+                <div className="mb-2 text-sm font-medium text-slate-700">商品图标</div>
+                <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
+                  {REDEMPTION_ITEM_ICON_OPTIONS.map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={[
+                        "flex min-h-[58px] flex-col items-center justify-center gap-1 rounded-lg border px-2 text-xs font-semibold transition",
+                        itemDialog.draft.iconName === value
+                          ? "border-teal-600 bg-teal-50 text-teal-800 shadow-[0_0_0_1px_rgba(13,148,136,0.25)]"
+                          : "border-slate-200 bg-slate-50 text-slate-700 hover:border-teal-200 hover:bg-teal-50",
+                      ].join(" ")}
+                      onClick={() => patchItemDraft({ iconName: value })}
+                    >
+                      <RedemptionIconGlyph name={value} />
+                      <span>{label}</span>
+                    </button>
                   ))}
-                </select>
-              </Field>
-              <label className="flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 md:col-span-2">
-                <input
-                  type="checkbox"
-                  checked={itemDialog.draft.enabled}
-                  onChange={(event) => patchItemDraft({ enabled: event.target.checked })}
-                />
-                启用项目
-              </label>
-              <Field label="说明" className="md:col-span-2">
+                </div>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <Field label="分类">
+                  <select
+                    className={inputClassName()}
+                    value={itemDialog.draft.categoryId}
+                    onChange={(event) => patchItemDraft({ categoryId: event.target.value })}
+                  >
+                    <option value="">未分类</option>
+                    {categoryRows.map((category) => (
+                      <option key={category.id} value={category.id}>
+                        {category.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="价格">
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    className={inputClassName()}
+                    value={toNumberInputValue(itemDialog.draft.referenceAmount)}
+                    onChange={(event) => patchItemDraft({ referenceAmount: parseMoney(event.target.value) })}
+                  />
+                </Field>
+                <Field label="会员价">
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    className={inputClassName()}
+                    value={toNumberInputValue(itemDialog.draft.memberPrice)}
+                    onChange={(event) => patchItemDraft({ memberPrice: parseMoney(event.target.value) })}
+                    placeholder="留空则使用普通价格"
+                  />
+                </Field>
+                <Field label="库存">
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    className={inputClassName()}
+                    value={toNumberInputValue(itemDialog.draft.stock)}
+                    onChange={(event) => patchItemDraft({ stock: parseInteger(event.target.value) })}
+                    placeholder="留空表示不限库存"
+                  />
+                </Field>
+                <Field label="税率">
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    className={inputClassName()}
+                    value={toNumberInputValue(itemDialog.draft.taxRate)}
+                    onChange={(event) => patchItemDraft({ taxRate: parseMoney(event.target.value) })}
+                  />
+                </Field>
+                <Field label="兑换积分">
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    className={inputClassName()}
+                    value={toNumberInputValue(itemDialog.draft.pointsCost)}
+                    onChange={(event) => patchItemDraft({ pointsCost: parseInteger(event.target.value) })}
+                  />
+                </Field>
+              </div>
+
+              <div>
+                <div className="mb-2 text-sm font-medium text-slate-700">商品标记</div>
+                <div className="flex flex-wrap gap-3">
+                  {[
+                    ["pointProduct", "积分商品"],
+                    ["recommended", "推荐商品"],
+                    ["enabled", "启用项目"],
+                  ].map(([key, label]) => (
+                    <label key={key} className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(itemDialog.draft[key as keyof MerchantMemberRedemptionItem])}
+                        onChange={(event) => patchItemDraft({ [key]: event.target.checked } as Partial<MerchantMemberRedemptionItem>)}
+                      />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <Field label="说明">
                 <textarea
-                  className={textareaClassName()}
+                  className={textareaClassName("min-h-[80px]")}
                   value={itemDialog.draft.description}
                   onChange={(event) => patchItemDraft({ description: event.target.value })}
                 />
