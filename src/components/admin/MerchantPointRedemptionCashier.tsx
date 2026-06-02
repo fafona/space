@@ -36,7 +36,22 @@ type MembershipPatchPayload = {
 type CartLine = {
   itemId: string;
   quantity: number;
+  nickname: string;
 };
+
+type HeldSale = {
+  id: string;
+  title: string;
+  createdAt: string;
+  selectedMemberId: string;
+  memberKeyword: string;
+  itemKeyword: string;
+  categoryId: string;
+  cart: CartLine[];
+  note: string;
+};
+
+type ProductViewMode = "image" | "text";
 
 const EMPTY_MEMBER_INSIGHT: MerchantMembershipInsight = {
   pointBalance: 0,
@@ -62,12 +77,37 @@ function readPayloadMessage(value: unknown, fallback: string) {
   return trimText(value, 1000) || fallback;
 }
 
+function formatDateYmd(date = new Date()) {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())}`;
+}
+
+function formatDateTime(date = new Date()) {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(
+    date.getMinutes(),
+  )}`;
+}
+
+function formatPoints(value: unknown) {
+  const numberValue = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numberValue)) return "0";
+  return String(Math.round(numberValue));
+}
+
+function formatMoney(value: unknown) {
+  const numberValue = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numberValue)) return "0.00";
+  return numberValue.toFixed(2);
+}
+
 function getMemberDisplayName(membership: MerchantMembershipListItem) {
   if (!membership.profileVisible) return "已退会会员";
   return membership.nickname || membership.name || membership.email || membership.accountId || membership.memberNo;
 }
 
-function getAvatarInitial(membership: MerchantMembershipListItem) {
+function getAvatarInitial(membership: MerchantMembershipListItem | null) {
+  if (!membership) return "散";
   return getMemberDisplayName(membership).slice(0, 1).toUpperCase() || "会";
 }
 
@@ -87,6 +127,11 @@ function buildMemberSearchText(membership: MerchantMembershipListItem) {
     .toLowerCase();
 }
 
+function categoryName(categories: MerchantMemberRedemptionCategory[], categoryId: string) {
+  if (!categoryId) return "全部";
+  return categories.find((category) => category.id === categoryId)?.name || "未分类";
+}
+
 function getRedemptionPointCostForMember(
   item: MerchantMemberRedemptionItem,
   membership: MerchantMembershipListItem | null,
@@ -104,14 +149,27 @@ function getRedemptionPointCostForMember(
   return Math.max(0, Math.ceil(item.pointsCost * rate));
 }
 
-function inputClassName(extra = "") {
-  return `h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-900 ${extra}`;
+function productInitial(item: MerchantMemberRedemptionItem) {
+  return trimText(item.name, 2) || trimText(item.code, 2) || "兑";
 }
 
-function buttonClassName(active = false) {
-  return `rounded-xl border px-3 py-2 text-sm font-semibold transition ${
-    active ? "border-slate-950 bg-slate-950 text-white" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
-  }`;
+function stockLabel(item: MerchantMemberRedemptionItem) {
+  return item.stock > 0 ? `库存 ${item.stock}` : "不限库存";
+}
+
+function operationErrorMessage(message: unknown, fallback: string) {
+  const text = trimText(message, 1000);
+  if (text === "membership_balance_insufficient") return "会员积分不足，不能兑换。";
+  if (text === "membership_redemption_stock_insufficient") return "兑换项目库存不足。";
+  if (text === "membership_operation_empty") return "请选择兑换项目。";
+  if (text === "membership_not_active") return "该会员不是正常状态，不能兑换。";
+  if (text === "membership_redemption_item_not_found") return "兑换项目不存在或已停用。";
+  if (text === "membership_settings_unavailable") return "会员兑换配置不可用。";
+  return text || fallback;
+}
+
+function storageKey(siteId: string) {
+  return `faolla.memberPointRedemption.heldSales.${siteId}`;
 }
 
 export default function MerchantPointRedemptionCashier({
@@ -128,6 +186,10 @@ export default function MerchantPointRedemptionCashier({
   const [categoryId, setCategoryId] = useState("");
   const [cart, setCart] = useState<CartLine[]>([]);
   const [note, setNote] = useState("");
+  const [viewMode, setViewMode] = useState<ProductViewMode>("image");
+  const [heldSales, setHeldSales] = useState<HeldSale[]>([]);
+  const [heldOpen, setHeldOpen] = useState(false);
+  const [memberPickerOpen, setMemberPickerOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -137,6 +199,7 @@ export default function MerchantPointRedemptionCashier({
     () => (settings?.redemptionCategories ?? []).filter((category) => category.enabled),
     [settings],
   );
+
   const enabledItems = useMemo(
     () =>
       (settings?.redemptionItems ?? [])
@@ -144,33 +207,37 @@ export default function MerchantPointRedemptionCashier({
         .sort((left, right) => left.sort - right.sort || left.name.localeCompare(right.name)),
     [settings],
   );
+
   const activeMembers = useMemo(
     () => memberships.filter((membership) => membership.profileVisible && membership.status === "active"),
     [memberships],
   );
+
   const filteredMembers = useMemo(() => {
     const keyword = memberKeyword.trim().toLowerCase();
-    if (!keyword) return activeMembers.slice(0, 20);
-    return activeMembers.filter((membership) => buildMemberSearchText(membership).includes(keyword)).slice(0, 40);
+    if (!keyword) return activeMembers.slice(0, 12);
+    return activeMembers.filter((membership) => buildMemberSearchText(membership).includes(keyword)).slice(0, 20);
   }, [activeMembers, memberKeyword]);
+
   const selectedMember = useMemo(
     () => activeMembers.find((membership) => membership.id === selectedMemberId) ?? null,
     [activeMembers, selectedMemberId],
   );
+
   const selectedInsight = selectedMember?.insight ?? EMPTY_MEMBER_INSIGHT;
-  const cartQuantityByItemId = useMemo(() => {
-    const quantities = new Map<string, number>();
-    cart.forEach((line) => quantities.set(line.itemId, (quantities.get(line.itemId) ?? 0) + line.quantity));
-    return quantities;
-  }, [cart]);
+
   const filteredItems = useMemo(() => {
     const keyword = itemKeyword.trim().toLowerCase();
     return enabledItems.filter((item) => {
       if (categoryId && item.categoryId !== categoryId) return false;
       if (!keyword) return true;
-      return [item.code, item.name, item.description].join(" ").toLowerCase().includes(keyword);
+      return [item.code, item.name, item.description, categoryName(enabledCategories, item.categoryId)]
+        .join(" ")
+        .toLowerCase()
+        .includes(keyword);
     });
-  }, [categoryId, enabledItems, itemKeyword]);
+  }, [categoryId, enabledCategories, enabledItems, itemKeyword]);
+
   const cartRows = useMemo(() => {
     return cart
       .map((line) => {
@@ -180,21 +247,37 @@ export default function MerchantPointRedemptionCashier({
         return {
           item,
           quantity: line.quantity,
+          nickname: line.nickname,
           unitPoints,
           subtotalPoints: unitPoints * line.quantity,
         };
       })
-      .filter((row): row is { item: MerchantMemberRedemptionItem; quantity: number; unitPoints: number; subtotalPoints: number } =>
-        Boolean(row),
+      .filter(
+        (row): row is {
+          item: MerchantMemberRedemptionItem;
+          quantity: number;
+          nickname: string;
+          unitPoints: number;
+          subtotalPoints: number;
+        } => Boolean(row),
       );
   }, [cart, enabledItems, selectedMember, settings]);
-  const totalPoints = cartRows.reduce((sum, row) => sum + row.subtotalPoints, 0);
-  const canCheckout = Boolean(selectedMember) && cartRows.length > 0 && totalPoints > 0 && totalPoints <= selectedInsight.pointBalance && !saving;
 
-  const categoryName = useCallback(
-    (id: string) => enabledCategories.find((category) => category.id === id)?.name || "未分类",
-    [enabledCategories],
-  );
+  const cartQuantityByItemId = useMemo(() => {
+    const quantities = new Map<string, number>();
+    cart.forEach((line) => quantities.set(line.itemId, (quantities.get(line.itemId) ?? 0) + line.quantity));
+    return quantities;
+  }, [cart]);
+
+  const totalPoints = cartRows.reduce((sum, row) => sum + row.subtotalPoints, 0);
+  const totalReferenceAmount = cartRows.reduce((sum, row) => sum + row.item.referenceAmount * row.quantity, 0);
+  const totalQuantity = cartRows.reduce((sum, row) => sum + row.quantity, 0);
+  const canCheckout =
+    Boolean(selectedMember) &&
+    cartRows.length > 0 &&
+    totalPoints > 0 &&
+    totalPoints <= selectedInsight.pointBalance &&
+    !saving;
 
   const loadData = useCallback(async () => {
     if (!/^\d{8}$/.test(normalizedSiteId)) {
@@ -219,24 +302,17 @@ export default function MerchantPointRedemptionCashier({
         }),
       ]);
       const membersPayload = (await membersResponse.json().catch(() => null)) as MembershipsPayload | null;
-      if (!membersResponse.ok || membersPayload?.ok !== true) {
-        throw new Error(readPayloadMessage(membersPayload?.message, "会员列表加载失败，请稍后重试"));
-      }
       const settingsPayload = (await settingsResponse.json().catch(() => null)) as MembershipSettingsPayload | null;
-      if (!settingsResponse.ok || settingsPayload?.ok !== true || !settingsPayload.settings) {
+      if (!membersResponse.ok || !membersPayload?.ok) {
+        throw new Error(readPayloadMessage(membersPayload?.message, "会员列表加载失败"));
+      }
+      if (!settingsResponse.ok || !settingsPayload?.ok || !settingsPayload.settings) {
         throw new Error(readPayloadMessage(settingsPayload?.message, "兑换项目加载失败，请先检查会员配置"));
       }
-      const nextMemberships = Array.isArray(membersPayload.memberships) ? membersPayload.memberships : [];
-      setMemberships(nextMemberships);
+      setMemberships(Array.isArray(membersPayload.memberships) ? membersPayload.memberships : []);
       setSettings(settingsPayload.settings);
-      setSelectedMemberId((current) => {
-        if (current && nextMemberships.some((membership) => membership.id === current && membership.status === "active")) return current;
-        return nextMemberships.find((membership) => membership.profileVisible && membership.status === "active")?.id ?? "";
-      });
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "积分兑换数据加载失败，请稍后重试");
-      setMemberships([]);
-      setSettings(null);
     } finally {
       setLoading(false);
     }
@@ -246,49 +322,161 @@ export default function MerchantPointRedemptionCashier({
     void loadData();
   }, [loadData]);
 
-  function addItemToCart(item: MerchantMemberRedemptionItem) {
+  useEffect(() => {
+    if (!normalizedSiteId || typeof window === "undefined") return;
+    const raw = window.localStorage.getItem(storageKey(normalizedSiteId));
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) setHeldSales(parsed.slice(0, 20) as HeldSale[]);
+    } catch {
+      setHeldSales([]);
+    }
+  }, [normalizedSiteId]);
+
+  useEffect(() => {
+    if (!normalizedSiteId || typeof window === "undefined") return;
+    window.localStorage.setItem(storageKey(normalizedSiteId), JSON.stringify(heldSales.slice(0, 20)));
+  }, [heldSales, normalizedSiteId]);
+
+  useEffect(() => {
+    if (!selectedMemberId) return;
+    if (!activeMembers.some((membership) => membership.id === selectedMemberId)) {
+      setSelectedMemberId("");
+    }
+  }, [activeMembers, selectedMemberId]);
+
+  function selectMember(membership: MerchantMembershipListItem) {
+    setSelectedMemberId(membership.id);
+    setMemberKeyword(
+      [getMemberDisplayName(membership), membership.phone, membership.memberNo].filter(Boolean).join(" / "),
+    );
+    setMemberPickerOpen(false);
     setNotice("");
     setError("");
+  }
+
+  function lookupMember() {
+    const exact =
+      filteredMembers.find((membership) => {
+        const keyword = memberKeyword.trim().toLowerCase();
+        return (
+          keyword &&
+          [membership.memberNo, membership.phone, membership.email, membership.accountId]
+            .filter(Boolean)
+            .some((value) => String(value).toLowerCase() === keyword)
+        );
+      }) ?? filteredMembers[0];
+    if (exact) {
+      selectMember(exact);
+      return;
+    }
+    setMemberPickerOpen(true);
+    setError("没有找到匹配的会员。");
+  }
+
+  function clearMember() {
+    setSelectedMemberId("");
+    setMemberKeyword("");
+    setMemberPickerOpen(false);
+  }
+
+  function addToCart(item: MerchantMemberRedemptionItem) {
+    setError("");
+    setNotice("");
     setCart((current) => {
-      const currentQuantity = current.find((line) => line.itemId === item.id)?.quantity ?? 0;
-      if (item.stock > 0 && currentQuantity >= item.stock) {
-        setError(`${item.name} 库存不足。`);
+      const existingQuantity = current
+        .filter((line) => line.itemId === item.id)
+        .reduce((sum, line) => sum + line.quantity, 0);
+      if (item.stock > 0 && existingQuantity + 1 > item.stock) {
+        setError("兑换项目库存不足。");
         return current;
       }
-      if (currentQuantity > 0) {
-        return current.map((line) => (line.itemId === item.id ? { ...line, quantity: line.quantity + 1 } : line));
+      const index = current.findIndex((line) => line.itemId === item.id);
+      if (index < 0) {
+        return [...current, { itemId: item.id, quantity: 1, nickname: "" }];
       }
-      return [...current, { itemId: item.id, quantity: 1 }];
+      return current.map((line, lineIndex) =>
+        lineIndex === index ? { ...line, quantity: line.quantity + 1 } : line,
+      );
     });
   }
 
-  function updateCartQuantity(item: MerchantMemberRedemptionItem, quantity: number) {
-    const nextQuantity = Math.max(1, Math.round(quantity || 1));
+  function changeQuantity(index: number, nextQuantity: number) {
+    setCart((current) => {
+      const line = current[index];
+      if (!line) return current;
+      const item = enabledItems.find((entry) => entry.id === line.itemId);
+      const quantity = Math.max(0, Math.floor(nextQuantity));
+      if (quantity <= 0) return current.filter((_, lineIndex) => lineIndex !== index);
+      if (item?.stock && item.stock > 0 && quantity > item.stock) {
+        setError("兑换项目库存不足。");
+        return current;
+      }
+      return current.map((entry, lineIndex) => (lineIndex === index ? { ...entry, quantity } : entry));
+    });
+  }
+
+  function changeNickname(index: number, nickname: string) {
     setCart((current) =>
-      current.map((line) =>
-        line.itemId === item.id ? { ...line, quantity: item.stock > 0 ? Math.min(nextQuantity, item.stock) : nextQuantity } : line,
-      ),
+      current.map((line, lineIndex) => (lineIndex === index ? { ...line, nickname: nickname.slice(0, 80) } : line)),
     );
   }
 
-  function removeCartItem(itemId: string) {
-    setCart((current) => current.filter((line) => line.itemId !== itemId));
+  function removeCartItem(index: number) {
+    setCart((current) => current.filter((_, lineIndex) => lineIndex !== index));
   }
 
-  function readOperationErrorMessage(value: unknown, fallback: string) {
-    const message = trimText(value);
-    if (message === "membership_balance_insufficient") return "会员积分不足，不能兑换。";
-    if (message === "membership_redemption_stock_insufficient") return "兑换项目库存不足。";
-    if (message === "membership_operation_empty") return "请选择兑换项目。";
-    if (message === "membership_not_active") return "该会员不是正常状态，不能兑换。";
-    if (message === "membership_redemption_item_not_found") return "兑换项目不存在或已停用。";
-    if (message === "membership_settings_unavailable") return "会员兑换配置不可用。";
-    return message || fallback;
+  function clearSale() {
+    setCart([]);
+    setNote("");
+    setNotice("");
+    setError("");
+  }
+
+  function holdCurrentSale() {
+    if (!cart.length) {
+      setError("当前没有可挂起的兑换。");
+      return;
+    }
+    const memberName = selectedMember ? getMemberDisplayName(selectedMember) : "散客";
+    const sale: HeldSale = {
+      id: `held-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      title: `${memberName} / ${totalQuantity} 项 / ${totalPoints} 积分`,
+      createdAt: formatDateTime(),
+      selectedMemberId,
+      memberKeyword,
+      itemKeyword,
+      categoryId,
+      cart,
+      note,
+    };
+    setHeldSales((current) => [sale, ...current].slice(0, 20));
+    clearSale();
+    setNotice("已挂单。");
+  }
+
+  function restoreHeldSale(sale: HeldSale) {
+    setSelectedMemberId(sale.selectedMemberId);
+    setMemberKeyword(sale.memberKeyword);
+    setItemKeyword(sale.itemKeyword);
+    setCategoryId(sale.categoryId);
+    setCart(sale.cart);
+    setNote(sale.note);
+    setHeldSales((current) => current.filter((item) => item.id !== sale.id));
+    setHeldOpen(false);
+    setNotice("已提单。");
   }
 
   async function submitCheckout() {
-    if (!selectedMember || saving) return;
-    if (cartRows.length === 0) {
+    setError("");
+    setNotice("");
+    if (!selectedMember) {
+      setError("请先选择会员。");
+      setMemberPickerOpen(true);
+      return;
+    }
+    if (!cartRows.length) {
       setError("请先选择兑换项目。");
       return;
     }
@@ -297,48 +485,33 @@ export default function MerchantPointRedemptionCashier({
       return;
     }
     setSaving(true);
-    setError("");
-    setNotice("");
     try {
       const response = await fetch("/api/memberships", {
         method: "PATCH",
-        cache: "no-store",
         credentials: "same-origin",
-        headers: {
-          "Content-Type": "application/json",
-          accept: "application/json",
-        },
+        headers: { "content-type": "application/json", accept: "application/json" },
         body: JSON.stringify({
-          action: "member_redemption_checkout",
           siteId: normalizedSiteId,
+          action: "member_redemption_checkout",
           membershipId: selectedMember.id,
-          redemptionItems: cartRows.map((row) => ({ redemptionItemId: row.item.id, quantity: row.quantity })),
-          note,
+          redemptionItems: cartRows.map((row) => ({
+            redemptionItemId: row.item.id,
+            quantity: row.quantity,
+          })),
+          note: note.trim(),
         }),
       });
       const payload = (await response.json().catch(() => null)) as MembershipPatchPayload | null;
-      if (!response.ok || payload?.ok !== true || !payload.membership) {
-        throw new Error(readOperationErrorMessage(payload?.message, "积分兑换失败，请稍后重试"));
+      if (!response.ok || !payload?.ok || !payload.membership) {
+        throw new Error(operationErrorMessage(payload?.message, "积分兑换失败，请稍后重试"));
       }
       setMemberships((current) =>
-        current.map((membership) => {
-          if (membership.id !== selectedMember.id || !payload.membership) return membership;
-          const currentInsight = membership.insight ?? EMPTY_MEMBER_INSIGHT;
-          return {
-            ...membership,
-            ...payload.membership,
-            insight: {
-              ...currentInsight,
-              pointBalance: payload.membership.pointBalance,
-              balanceAmount: payload.membership.balanceAmount,
-            },
-          };
-        }),
+        current.map((membership) => (membership.id === payload.membership?.id ? payload.membership : membership)),
       );
       setCart([]);
       setNote("");
-      setNotice(`兑换完成，已扣减 ${totalPoints} 积分。`);
-      void loadData();
+      setNotice(`兑换完成，已扣减 ${formatPoints(totalPoints)} 积分。`);
+      await loadData();
     } catch (checkoutError) {
       setError(checkoutError instanceof Error ? checkoutError.message : "积分兑换失败，请稍后重试");
     } finally {
@@ -347,267 +520,372 @@ export default function MerchantPointRedemptionCashier({
   }
 
   return (
-    <section className={`space-y-4 py-6 ${className}`}>
-      <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-[0_12px_32px_rgba(15,23,42,0.05)]">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="text-xl font-semibold text-slate-950">积分兑换</h2>
-            <p className="mt-1 text-sm text-slate-500">
-              {siteName || normalizedSiteId} · 选择会员和兑换项目后，直接扣减会员积分并同步库存。
-            </p>
+    <section className={`min-h-[calc(100vh-120px)] bg-slate-50 p-0 text-slate-950 ${className}`}>
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-2xl font-bold tracking-normal text-slate-950">积分兑换工作台</h2>
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-500">
+            <span>{formatDateYmd()}</span>
+            <span>{siteName || normalizedSiteId}</span>
+            {loading ? <span>正在刷新...</span> : null}
           </div>
-          <button
-            type="button"
-            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            onClick={() => void loadData()}
-            disabled={loading || saving}
-          >
-            {loading ? "刷新中..." : "刷新"}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" className="h-10 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold" onClick={loadData}>
+            刷新
           </button>
         </div>
-        {error ? <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div> : null}
-        {notice ? <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{notice}</div> : null}
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.05fr)_minmax(360px,0.95fr)]">
-        <div className="space-y-4">
-          <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_32px_rgba(15,23,42,0.05)]">
-            <div className="flex items-center justify-between gap-3">
-              <h3 className="text-base font-semibold text-slate-950">会员</h3>
-              <div className="text-xs text-slate-500">可兑换会员 {activeMembers.length}</div>
-            </div>
-            <input
-              className={`mt-3 ${inputClassName()}`}
-              value={memberKeyword}
-              onChange={(event) => setMemberKeyword(event.target.value)}
-              placeholder="会员手机号 / 会员卡号 / 昵称 / 邮箱"
-            />
-            <div className="mt-3 grid max-h-72 gap-2 overflow-y-auto pr-1">
-              {filteredMembers.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-slate-200 px-3 py-6 text-center text-sm text-slate-500">
-                  没有匹配的正常会员。
+      {error ? (
+        <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+          {error}
+        </div>
+      ) : null}
+      {notice ? (
+        <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">
+          {notice}
+        </div>
+      ) : null}
+
+      <div className="grid min-h-[720px] grid-cols-[minmax(620px,1fr)_500px] gap-4">
+        <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 p-4">
+            <div className="min-w-[240px]">
+              <div className="flex items-center gap-3">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-base font-bold text-white">
+                  {getAvatarInitial(selectedMember)}
                 </div>
-              ) : (
-                filteredMembers.map((membership) => {
-                  const selected = selectedMember?.id === membership.id;
-                  const insight = membership.insight ?? EMPTY_MEMBER_INSIGHT;
-                  const displayName = getMemberDisplayName(membership);
-                  return (
-                    <button
-                      key={membership.id}
-                      type="button"
-                      className={`flex items-center gap-3 rounded-2xl border px-3 py-2 text-left transition ${
-                        selected ? "border-slate-950 bg-slate-50" : "border-slate-200 bg-white hover:border-slate-300"
-                      }`}
-                      onClick={() => {
-                        setSelectedMemberId(membership.id);
-                        setNotice("");
-                        setError("");
-                      }}
-                    >
-                      <span
-                        className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-950 bg-cover bg-center text-sm font-semibold text-white"
-                        style={membership.avatarUrl ? { backgroundImage: `url(${membership.avatarUrl})` } : undefined}
-                        aria-label={displayName}
+                <div>
+                  <div className="text-sm text-slate-500">{selectedMember ? "当前会员" : "散客"}</div>
+                  <div className="text-base font-bold text-slate-950">
+                    {selectedMember ? getMemberDisplayName(selectedMember) : "请先选择会员"}
+                  </div>
+                  {selectedMember ? (
+                    <div className="mt-1 flex flex-wrap gap-2 text-xs text-slate-500">
+                      <span>卡号：{selectedMember.memberNo}</span>
+                      <span>积分：{formatPoints(selectedInsight.pointBalance)}</span>
+                      <span>余额：€{formatMoney(selectedInsight.balanceAmount)}</span>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+            <div className="flex flex-1 flex-wrap items-start justify-end gap-2">
+              <div className="relative min-w-[260px] flex-1">
+                <input
+                  value={memberKeyword}
+                  onChange={(event) => {
+                    setMemberKeyword(event.target.value);
+                    setMemberPickerOpen(true);
+                  }}
+                  onFocus={() => setMemberPickerOpen(true)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") lookupMember();
+                  }}
+                  className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-teal-700"
+                  placeholder="会员手机号 / 卡号 / 昵称 / 邮箱"
+                />
+                {memberPickerOpen && filteredMembers.length ? (
+                  <div className="absolute left-0 top-12 z-20 max-h-80 w-full overflow-auto rounded-xl border border-slate-200 bg-white p-1 shadow-xl">
+                    {filteredMembers.map((membership) => (
+                      <button
+                        key={membership.id}
+                        type="button"
+                        className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => selectMember(membership)}
                       >
-                        {membership.avatarUrl ? null : getAvatarInitial(membership)}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-semibold text-slate-950">{displayName}</span>
-                        <span className="block truncate font-mono text-xs text-slate-500">{membership.memberNo}</span>
-                      </span>
-                      <span className="text-right">
-                        <span className="block text-xs text-slate-400">积分</span>
-                        <span className="block text-sm font-semibold text-slate-950">{insight.pointBalance}</span>
-                      </span>
-                    </button>
-                  );
-                })
-              )}
+                        <span>
+                          <span className="block font-semibold text-slate-950">{getMemberDisplayName(membership)}</span>
+                          <span className="block text-xs text-slate-500">
+                            {membership.phone || "-"} / {membership.memberNo}
+                          </span>
+                        </span>
+                        <span className="text-xs font-semibold text-teal-700">{formatPoints(membership.pointBalance)} 积分</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+              <button type="button" className="h-11 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold" onClick={lookupMember}>
+                选择会员
+              </button>
+              {selectedMember ? (
+                <button type="button" className="h-11 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold" onClick={clearMember}>
+                  清除
+                </button>
+              ) : null}
             </div>
           </div>
 
-          <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_32px_rgba(15,23,42,0.05)]">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <h3 className="text-base font-semibold text-slate-950">当前兑换</h3>
-                {selectedMember ? (
-                  <div className="mt-1 text-sm text-slate-500">
-                    {getMemberDisplayName(selectedMember)} · 可用积分 {selectedInsight.pointBalance}
-                  </div>
+          <div className="p-4">
+            <div className="overflow-hidden rounded-xl border border-slate-200">
+              <div className="grid grid-cols-[110px_minmax(220px,1fr)_120px_150px_120px_150px_72px] bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
+                <span>编号</span>
+                <span>产品/项目</span>
+                <span className="text-right">单价</span>
+                <span className="text-center">数量</span>
+                <span className="text-right">小计</span>
+                <span>备注</span>
+                <span className="text-right">操作</span>
+              </div>
+              <div className="min-h-[370px]">
+                {cartRows.length ? (
+                  cartRows.map((row, index) => (
+                    <div
+                      key={`${row.item.id}-${index}`}
+                      className="grid grid-cols-[110px_minmax(220px,1fr)_120px_150px_120px_150px_72px] items-center gap-0 border-t border-slate-100 px-4 py-3 text-sm"
+                    >
+                      <span className="truncate font-mono text-xs text-slate-500">{row.item.code || row.item.id}</span>
+                      <span>
+                        <strong className="block text-slate-950">{row.item.name}</strong>
+                        <span className="mt-0.5 block text-xs text-slate-500">
+                          {categoryName(enabledCategories, row.item.categoryId)} / {stockLabel(row.item)}
+                        </span>
+                      </span>
+                      <span className="text-right font-semibold">{formatPoints(row.unitPoints)}</span>
+                      <span className="flex items-center justify-center gap-1">
+                        <button
+                          type="button"
+                          className="h-8 w-8 rounded-lg border border-slate-200 bg-white text-base font-bold"
+                          onClick={() => changeQuantity(index, row.quantity - 1)}
+                        >
+                          -
+                        </button>
+                        <input
+                          type="number"
+                          min={1}
+                          value={row.quantity}
+                          onChange={(event) => changeQuantity(index, Number(event.target.value))}
+                          className="h-8 w-14 rounded-lg border border-slate-200 text-center text-sm outline-none focus:border-teal-700"
+                        />
+                        <button
+                          type="button"
+                          className="h-8 w-8 rounded-lg border border-slate-200 bg-white text-base font-bold"
+                          onClick={() => changeQuantity(index, row.quantity + 1)}
+                        >
+                          +
+                        </button>
+                      </span>
+                      <span className="text-right font-semibold">{formatPoints(row.subtotalPoints)}</span>
+                      <input
+                        value={row.nickname}
+                        onChange={(event) => changeNickname(index, event.target.value)}
+                        className="h-9 rounded-lg border border-slate-200 px-2 text-sm outline-none focus:border-teal-700"
+                        placeholder="备注"
+                      />
+                      <span className="text-right">
+                        <button
+                          type="button"
+                          className="rounded-lg border border-rose-200 px-3 py-1.5 text-sm font-semibold text-rose-600"
+                          onClick={() => removeCartItem(index)}
+                        >
+                          删除
+                        </button>
+                      </span>
+                    </div>
+                  ))
                 ) : (
-                  <div className="mt-1 text-sm text-slate-500">请先选择会员。</div>
+                  <div className="flex min-h-[370px] flex-col items-center justify-center text-sm text-slate-500">
+                    <div className="mb-4 h-20 w-20 rounded-3xl bg-slate-100" />
+                    <div>请从右侧选择兑换项目</div>
+                  </div>
                 )}
               </div>
-              <button
-                type="button"
-                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                onClick={() => setCart([])}
-                disabled={cartRows.length === 0 || saving}
-              >
-                清空
-              </button>
             </div>
-            <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-slate-50 text-xs text-slate-500">
-                  <tr>
-                    <th className="px-3 py-2">项目</th>
-                    <th className="px-3 py-2">单价</th>
-                    <th className="px-3 py-2">数量</th>
-                    <th className="px-3 py-2">小计</th>
-                    <th className="px-3 py-2"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {cartRows.length === 0 ? (
-                    <tr>
-                      <td colSpan={5} className="px-3 py-8 text-center text-sm text-slate-500">
-                        从右侧选择兑换项目。
-                      </td>
-                    </tr>
-                  ) : (
-                    cartRows.map((row) => (
-                      <tr key={row.item.id} className="border-t border-slate-100">
-                        <td className="px-3 py-2">
-                          <div className="font-semibold text-slate-950">{row.item.name}</div>
-                          <div className="font-mono text-xs text-slate-500">{row.item.code || "-"}</div>
-                        </td>
-                        <td className="px-3 py-2 font-semibold text-slate-700">{row.unitPoints}</td>
-                        <td className="px-3 py-2">
-                          <input
-                            type="number"
-                            min="1"
-                            step="1"
-                            className="h-9 w-20 rounded-lg border border-slate-200 px-2 text-sm outline-none focus:border-slate-900"
-                            value={row.quantity}
-                            onChange={(event) => updateCartQuantity(row.item, Number.parseInt(event.target.value, 10) || 1)}
-                            disabled={saving}
-                          />
-                        </td>
-                        <td className="px-3 py-2 font-semibold text-slate-950">{row.subtotalPoints}</td>
-                        <td className="px-3 py-2 text-right">
+
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+              <div className="relative flex items-center gap-2">
+                <button type="button" className="h-10 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold" onClick={holdCurrentSale}>
+                  挂单
+                </button>
+                <button
+                  type="button"
+                  className="h-10 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold"
+                  onClick={() => setHeldOpen((open) => !open)}
+                >
+                  提单
+                  {heldSales.length ? (
+                    <span className="ml-2 rounded-full bg-teal-50 px-2 py-0.5 text-xs font-bold text-teal-700">
+                      {heldSales.length}
+                    </span>
+                  ) : null}
+                </button>
+                {heldOpen ? (
+                  <div className="absolute bottom-12 left-0 z-20 w-96 rounded-2xl border border-slate-200 bg-white p-3 shadow-xl">
+                    <div className="mb-2 text-sm font-bold text-slate-950">挂单列表</div>
+                    {heldSales.length ? (
+                      <div className="grid max-h-72 gap-2 overflow-auto">
+                        {heldSales.map((sale) => (
                           <button
+                            key={sale.id}
                             type="button"
-                            className="rounded-lg border border-rose-200 bg-white px-2 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-50"
-                            onClick={() => removeCartItem(row.item.id)}
-                            disabled={saving}
+                            className="rounded-xl border border-slate-100 px-3 py-2 text-left text-sm hover:bg-slate-50"
+                            onClick={() => restoreHeldSale(sale)}
                           >
-                            删除
+                            <strong className="block text-slate-950">{sale.title}</strong>
+                            <span className="mt-0.5 block text-xs text-slate-500">{sale.createdAt}</span>
                           </button>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-sm text-slate-500">暂无挂单。</div>
+                    )}
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="ml-auto flex flex-wrap items-end justify-end gap-8">
+                <div className="text-center">
+                  <div className="text-xs text-slate-500">项目</div>
+                  <div className="text-xl font-bold text-slate-950">{totalQuantity}</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-xs text-slate-500">参考金额</div>
+                  <div className="text-xl font-bold text-slate-950">€{formatMoney(totalReferenceAmount)}</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-xs text-slate-500">会员积分</div>
+                  <div className="text-xl font-bold text-slate-950">{formatPoints(selectedInsight.pointBalance)}</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-xs text-slate-500">合计积分</div>
+                  <div className="text-4xl font-bold text-teal-700">{formatPoints(totalPoints)}</div>
+                </div>
+                <button
+                  type="button"
+                  className="h-12 rounded-xl bg-teal-700 px-7 text-base font-bold text-white shadow-sm transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+                  disabled={!canCheckout}
+                  onClick={submitCheckout}
+                >
+                  {saving ? "结算中" : "结账"}
+                </button>
+              </div>
             </div>
-            <label className="mt-4 block text-sm font-medium text-slate-700">
-              备注
-              <textarea
-                className="mt-1 min-h-20 w-full resize-y rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-900"
+
+            <div className="mt-4">
+              <input
                 value={note}
                 onChange={(event) => setNote(event.target.value)}
-                placeholder="例如：前台积分兑换"
-                disabled={saving}
+                className="h-11 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-teal-700"
+                placeholder="兑换备注，例如：前台积分兑换"
               />
-            </label>
-            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm font-semibold text-slate-600">应扣积分</span>
-                <span className="text-3xl font-semibold text-slate-950">{totalPoints}</span>
-              </div>
-              <div className="mt-2 flex items-center justify-between gap-3 text-sm">
-                <span className="text-slate-500">兑换后剩余</span>
-                <span className={totalPoints > selectedInsight.pointBalance ? "font-semibold text-rose-600" : "font-semibold text-slate-800"}>
-                  {selectedMember ? selectedInsight.pointBalance - totalPoints : "-"}
-                </span>
-              </div>
-              <button
-                type="button"
-                className="mt-4 h-12 w-full rounded-xl bg-slate-950 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-                onClick={() => void submitCheckout()}
-                disabled={!canCheckout}
-              >
-                {saving ? "兑换中..." : "确认兑换"}
-              </button>
             </div>
           </div>
-        </div>
+        </section>
 
-        <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_32px_rgba(15,23,42,0.05)]">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h3 className="text-base font-semibold text-slate-950">兑换项目</h3>
-              <div className="mt-1 text-sm text-slate-500">读取会员管理里的已启用兑换项目。</div>
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <input
+                value={itemKeyword}
+                onChange={(event) => setItemKeyword(event.target.value)}
+                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 pl-9 text-sm outline-none transition focus:border-teal-700"
+                placeholder="商品编号 / 门票码 / 订单码 / 名称"
+              />
+              <span className="pointer-events-none absolute left-3 top-2.5 text-sm text-slate-400">⌕</span>
             </div>
-            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700">
-              {enabledItems.length} 项
-            </div>
+            <button
+              type="button"
+              className={`h-11 w-11 rounded-xl border text-sm font-bold ${
+                viewMode === "image" ? "border-teal-200 bg-teal-50 text-teal-700" : "border-slate-200 bg-white text-slate-600"
+              }`}
+              onClick={() => setViewMode("image")}
+              title="图片模式"
+            >
+              图
+            </button>
+            <button
+              type="button"
+              className={`h-11 w-11 rounded-xl border text-sm font-bold ${
+                viewMode === "text" ? "border-teal-200 bg-teal-50 text-teal-700" : "border-slate-200 bg-white text-slate-600"
+              }`}
+              onClick={() => setViewMode("text")}
+              title="列表模式"
+            >
+              列
+            </button>
           </div>
-          <input
-            className={`mt-4 ${inputClassName()}`}
-            value={itemKeyword}
-            onChange={(event) => setItemKeyword(event.target.value)}
-            placeholder="项目编号 / 名称 / 描述"
-          />
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button type="button" className={buttonClassName(!categoryId)} onClick={() => setCategoryId("")}>
+
+          <div className="mt-3 flex gap-2 overflow-x-auto pb-2">
+            <button
+              type="button"
+              className={`shrink-0 rounded-xl border px-4 py-2 text-sm font-semibold ${
+                !categoryId ? "border-teal-300 bg-teal-50 text-teal-800" : "border-slate-200 bg-white text-slate-700"
+              }`}
+              onClick={() => setCategoryId("")}
+            >
               全部
             </button>
-            {enabledCategories.map((category: MerchantMemberRedemptionCategory) => (
+            {enabledCategories.map((category) => (
               <button
                 key={category.id}
                 type="button"
-                className={buttonClassName(categoryId === category.id)}
+                className={`shrink-0 rounded-xl border px-4 py-2 text-sm font-semibold ${
+                  categoryId === category.id
+                    ? "border-teal-300 bg-teal-50 text-teal-800"
+                    : "border-slate-200 bg-white text-slate-700"
+                }`}
                 onClick={() => setCategoryId(category.id)}
               >
                 {category.name}
               </button>
             ))}
           </div>
-          <div className="mt-4 grid max-h-[calc(100vh-18rem)] gap-3 overflow-y-auto pr-1 md:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
-            {filteredItems.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-slate-200 px-3 py-8 text-center text-sm text-slate-500 md:col-span-2 xl:col-span-1 2xl:col-span-2">
-                还没有匹配的兑换项目。
-              </div>
-            ) : (
+
+          <div className={viewMode === "image" ? "mt-4 grid grid-cols-3 gap-3" : "mt-4 grid gap-2"}>
+            {filteredItems.length ? (
               filteredItems.map((item) => {
-                const cartQuantity = cartQuantityByItemId.get(item.id) ?? 0;
-                const stockLeft = item.stock > 0 ? Math.max(0, item.stock - cartQuantity) : null;
                 const unitPoints = getRedemptionPointCostForMember(item, selectedMember, settings);
-                const disabled = saving || (item.stock > 0 && stockLeft === 0);
+                const inCartQuantity = cartQuantityByItemId.get(item.id) ?? 0;
+                const outOfStock = item.stock > 0 && inCartQuantity >= item.stock;
+                if (viewMode === "text") {
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className="grid grid-cols-[110px_minmax(0,1fr)_90px_90px] items-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-sm transition hover:border-teal-200 hover:bg-teal-50 disabled:opacity-50"
+                      disabled={outOfStock}
+                      onClick={() => addToCart(item)}
+                    >
+                      <span className="truncate font-mono text-xs text-slate-500">{item.code || item.id}</span>
+                      <strong className="truncate text-slate-950">{item.name}</strong>
+                      <span className="text-right font-bold text-teal-700">{formatPoints(unitPoints)}</span>
+                      <span className="text-right text-xs text-slate-500">{stockLabel(item)}</span>
+                    </button>
+                  );
+                }
                 return (
                   <button
                     key={item.id}
                     type="button"
-                    className="rounded-2xl border border-slate-200 bg-white p-3 text-left transition hover:border-slate-300 hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
-                    onClick={() => addItemToCart(item)}
-                    disabled={disabled}
+                    className="group min-h-44 rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-sm transition hover:border-teal-200 hover:bg-teal-50 disabled:opacity-50"
+                    disabled={outOfStock}
+                    onClick={() => addToCart(item)}
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-semibold text-slate-950">{item.name}</div>
-                        <div className="mt-1 font-mono text-xs text-slate-500">{item.code || "-"}</div>
-                      </div>
-                      <div className="shrink-0 rounded-xl bg-slate-950 px-2 py-1 text-xs font-semibold text-white">
-                        {unitPoints} 积分
-                      </div>
+                    <div className="flex h-24 items-center justify-center rounded-xl bg-gradient-to-br from-teal-50 via-slate-100 to-slate-200 text-3xl font-bold text-teal-800">
+                      {productInitial(item)}
                     </div>
-                    <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                      <span className="rounded-full bg-slate-100 px-2 py-1">{categoryName(item.categoryId)}</span>
-                      <span className="rounded-full bg-slate-100 px-2 py-1">库存 {stockLeft === null ? "不限" : stockLeft}</span>
-                      {unitPoints !== item.pointsCost ? (
-                        <span className="rounded-full bg-emerald-50 px-2 py-1 text-emerald-700">原 {item.pointsCost}</span>
-                      ) : null}
+                    <div className="mt-3 flex items-start justify-between gap-2">
+                      <strong className="line-clamp-2 text-sm text-slate-950">{item.name}</strong>
+                      <span className="shrink-0 text-base font-bold text-teal-700">{formatPoints(unitPoints)}</span>
                     </div>
-                    {item.description ? <div className="mt-3 line-clamp-2 text-xs leading-5 text-slate-500">{item.description}</div> : null}
+                    <div className="mt-1 truncate text-xs text-slate-500">{item.code || categoryName(enabledCategories, item.categoryId)}</div>
+                    <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
+                      <span>{stockLabel(item)}</span>
+                      {inCartQuantity ? <span>已选 {inCartQuantity}</span> : null}
+                    </div>
                   </button>
                 );
               })
+            ) : (
+              <div className="col-span-3 rounded-2xl border border-dashed border-slate-200 px-4 py-12 text-center text-sm text-slate-500">
+                暂无匹配项目。请在会员管理的兑换项目中添加并启用。
+              </div>
             )}
           </div>
-        </div>
+        </section>
       </div>
     </section>
   );
