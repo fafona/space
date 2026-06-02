@@ -67,6 +67,7 @@ type HeldSale = {
 };
 
 type ProductViewMode = "image" | "text";
+type RecordsTimeFilter = "today" | "yesterday" | "week" | "month" | "all";
 
 function flagImageUrl(countryCode: string) {
   return `https://flagcdn.com/${countryCode.toLowerCase()}.svg`;
@@ -124,6 +125,33 @@ function parsePositiveInteger(value: unknown) {
   const numberValue = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(numberValue)) return 0;
   return Math.max(0, Math.floor(numberValue));
+}
+
+function startOfLocalDay(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function isSameLocalDay(left: Date, right: Date) {
+  return startOfLocalDay(left).getTime() === startOfLocalDay(right).getTime();
+}
+
+function isInRecordsTimeFilter(dateValue: string, filter: RecordsTimeFilter) {
+  if (filter === "all") return true;
+  const date = new Date(dateValue);
+  if (Number.isNaN(date.getTime())) return false;
+  const now = new Date();
+  const today = startOfLocalDay(now);
+  if (filter === "today") return isSameLocalDay(date, today);
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (filter === "yesterday") return isSameLocalDay(date, yesterday);
+  if (filter === "week") {
+    const weekStart = new Date(today);
+    weekStart.setDate(today.getDate() - 6);
+    return date >= weekStart && date <= now;
+  }
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  return date >= monthStart && date <= now;
 }
 
 function getMemberDisplayName(membership: MerchantMembershipListItem) {
@@ -336,6 +364,10 @@ export default function MerchantPointRedemptionCashier({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
+  const [recordsKeyword, setRecordsKeyword] = useState("");
+  const [recordsTimeFilter, setRecordsTimeFilter] = useState<RecordsTimeFilter>("today");
+  const [recordsPage, setRecordsPage] = useState(1);
+  const [selectedRecordId, setSelectedRecordId] = useState("");
   const languageRootRef = useRef<HTMLDivElement | null>(null);
   const languageMenuRef = useRef<HTMLDivElement | null>(null);
   const resolvedLocale = useMemo(() => resolveSupportedLocale(locale), [locale]);
@@ -492,6 +524,15 @@ export default function MerchantPointRedemptionCashier({
     totalPoints <= selectedInsight.pointBalance &&
     !saving;
 
+  const transactionRecordTypeLabel = view === "rechargeRecords" ? "充值" : "兑换";
+  const recordsTimeOptions: Array<{ value: RecordsTimeFilter; label: string }> = [
+    { value: "today", label: "今天" },
+    { value: "yesterday", label: "昨天" },
+    { value: "week", label: "近7天" },
+    { value: "month", label: "本月" },
+    { value: "all", label: "全部" },
+  ];
+
   const transactionRecords = useMemo(() => {
     const transactionType = view === "rechargeRecords" ? "recharge" : "redeem";
     return memberships
@@ -506,11 +547,35 @@ export default function MerchantPointRedemptionCashier({
             points: Math.abs(transaction.pointDelta),
             balanceAmount: Math.abs(transaction.balanceDelta),
             note: transaction.note || "-",
+            rawPointDelta: transaction.pointDelta,
+            rawBalanceDelta: transaction.balanceDelta,
+            type: transaction.type,
           })),
       )
       .sort((left, right) => Date.parse(right.at) - Date.parse(left.at))
       .slice(0, 200);
   }, [memberships, view]);
+
+  const filteredTransactionRecords = useMemo(() => {
+    const keyword = recordsKeyword.trim().toLowerCase();
+    return transactionRecords.filter((record) => {
+      if (!isInRecordsTimeFilter(record.at, recordsTimeFilter)) return false;
+      if (!keyword) return true;
+      return [record.id, record.memberName, record.memberNo, record.note, record.points, record.balanceAmount]
+        .join(" ")
+        .toLowerCase()
+        .includes(keyword);
+    });
+  }, [recordsKeyword, recordsTimeFilter, transactionRecords]);
+
+  const recordsPageSize = 30;
+  const recordsTotalPages = Math.max(1, Math.ceil(filteredTransactionRecords.length / recordsPageSize));
+  const normalizedRecordsPage = Math.min(recordsPage, recordsTotalPages);
+  const pagedTransactionRecords = filteredTransactionRecords.slice(
+    (normalizedRecordsPage - 1) * recordsPageSize,
+    normalizedRecordsPage * recordsPageSize,
+  );
+  const selectedRecord = transactionRecords.find((record) => record.id === selectedRecordId) ?? null;
 
   const loadData = useCallback(async () => {
     if (!/^\d{8}$/.test(normalizedSiteId)) {
@@ -1738,18 +1803,98 @@ export default function MerchantPointRedemptionCashier({
         }
 
         .merchant-pos-cashier .records-panel {
+          min-height: calc(100vh - 190px);
           padding: 18px;
         }
 
-        .merchant-pos-cashier .records-table {
-          overflow: hidden;
+        .merchant-pos-cashier .record-filter-grid {
+          display: grid;
+          grid-template-columns: minmax(260px, 1.35fr) minmax(280px, 1.35fr) auto;
+          gap: 12px;
+          align-items: end;
+          margin-bottom: 16px;
+        }
+
+        .merchant-pos-cashier .record-filter-field {
+          display: grid;
+          min-width: 0;
+          gap: 6px;
+        }
+
+        .merchant-pos-cashier .record-filter-field label {
+          color: var(--pos-muted);
+          font-size: 12px;
+          font-weight: 760;
+        }
+
+        .merchant-pos-cashier .record-search {
+          position: relative;
+        }
+
+        .merchant-pos-cashier .record-search svg {
+          position: absolute;
+          left: 11px;
+          top: 11px;
+          width: 16px;
+          height: 16px;
+          color: var(--pos-muted);
+        }
+
+        .merchant-pos-cashier .record-search input {
+          width: 100%;
+          height: 40px;
           border: 1px solid var(--pos-line);
           border-radius: 8px;
+          padding: 0 12px 0 34px;
+          outline: none;
+        }
+
+        .merchant-pos-cashier .record-search input:focus {
+          border-color: var(--pos-primary);
+          box-shadow: var(--pos-focus-inset);
+        }
+
+        .merchant-pos-cashier .record-time-row {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .merchant-pos-cashier .record-time-chip {
+          min-height: 32px;
+          padding: 0 12px;
+          border: 1px solid var(--pos-line);
+          border-radius: 999px;
+          background: var(--pos-surface);
+          color: var(--pos-text);
+          font-size: 13px;
+          font-weight: 740;
+        }
+
+        .merchant-pos-cashier .record-time-chip:hover,
+        .merchant-pos-cashier .record-time-chip.active {
+          border-color: var(--pos-primary);
+          background: var(--pos-primary-soft);
+          color: var(--pos-primary-dark);
+        }
+
+        .merchant-pos-cashier .record-filter-actions {
+          display: flex;
+          justify-content: flex-end;
+        }
+
+        .merchant-pos-cashier .records-table {
+          max-height: 620px;
+          overflow: auto;
+          border: 1px solid var(--pos-line);
+          border-radius: 8px;
+          background: var(--pos-surface);
         }
 
         .merchant-pos-cashier .records-row {
           display: grid;
-          grid-template-columns: 170px minmax(150px, 1fr) 110px minmax(240px, 1.4fr);
+          grid-template-columns: 70px minmax(150px, 1fr) minmax(150px, 1fr) 110px 100px minmax(150px, 1fr) minmax(240px, 1.35fr) 100px;
           gap: 12px;
           align-items: center;
           min-height: 48px;
@@ -1772,6 +1917,80 @@ export default function MerchantPointRedemptionCashier({
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
+        }
+
+        .merchant-pos-cashier .records-row .record-amount,
+        .merchant-pos-cashier .records-row .record-points {
+          text-align: right;
+          font-variant-numeric: tabular-nums;
+        }
+
+        .merchant-pos-cashier .record-status-tag {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: max-content;
+          min-height: 24px;
+          padding: 0 8px;
+          border: 1px solid rgba(14, 118, 102, 0.28);
+          border-radius: 999px;
+          background: var(--pos-primary-soft);
+          color: var(--pos-primary-dark);
+          font-size: 12px;
+          font-weight: 800;
+        }
+
+        .merchant-pos-cashier .record-row-actions {
+          display: flex;
+          justify-content: flex-end;
+        }
+
+        .merchant-pos-cashier .record-row-actions .pos-button {
+          min-height: 28px;
+          padding: 0 9px;
+          font-size: 12px;
+        }
+
+        .merchant-pos-cashier .record-pagination {
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 10px;
+          padding-top: 14px;
+          color: var(--pos-muted);
+          font-size: 13px;
+          font-weight: 720;
+        }
+
+        .merchant-pos-cashier .record-pagination .pos-button {
+          min-height: 30px;
+          padding: 0 10px;
+          font-size: 12px;
+        }
+
+        .merchant-pos-cashier .record-detail-grid {
+          display: grid;
+          grid-template-columns: 120px minmax(0, 1fr);
+          gap: 10px 14px;
+          padding: 2px 0;
+        }
+
+        .merchant-pos-cashier .record-detail-grid span {
+          color: var(--pos-muted);
+          font-weight: 760;
+        }
+
+        .merchant-pos-cashier .record-detail-grid strong {
+          min-width: 0;
+          overflow-wrap: anywhere;
+        }
+
+        .merchant-pos-cashier .record-empty-row {
+          display: grid;
+          place-items: center;
+          min-height: 180px;
+          color: var(--pos-muted);
+          font-weight: 720;
         }
 
         .merchant-pos-cashier .product-view-toggle {
@@ -1991,6 +2210,15 @@ export default function MerchantPointRedemptionCashier({
           .merchant-pos-cashier .catalog-panel {
             min-height: auto;
           }
+
+          .merchant-pos-cashier .record-filter-grid {
+            grid-template-columns: 1fr;
+          }
+
+          .merchant-pos-cashier .records-row {
+            grid-template-columns: 60px 140px 170px 100px 90px 150px 220px 86px;
+            min-width: 980px;
+          }
         }
       `}</style>
 
@@ -2064,34 +2292,166 @@ export default function MerchantPointRedemptionCashier({
       {notice ? <div className="pos-alert notice">{notice}</div> : null}
 
       {view === "records" || view === "rechargeRecords" ? (
-        <section className="panel records-panel">
-          <div className="records-table">
-            <div className="records-row header">
-              <span>时间</span>
-              <span>会员</span>
-              <span>{view === "rechargeRecords" ? "余额/积分" : "积分"}</span>
-              <span>记录</span>
-            </div>
-            {transactionRecords.length ? (
-              transactionRecords.map((record) => (
-                <div key={record.id} className="records-row">
-                  <span>{record.at ? formatDateTime(new Date(record.at)) : "-"}</span>
-                  <strong>
-                    {record.memberName} / {record.memberNo}
-                  </strong>
-                  <span>
-                    {view === "rechargeRecords"
-                      ? `€${formatMoney(record.balanceAmount)} / ${formatPoints(record.points)}`
-                      : formatPoints(record.points)}
-                  </span>
-                  <span>{record.note}</span>
+        <>
+          <section className="panel records-panel">
+            <div className="record-filter-grid">
+              <div className="record-filter-field">
+                <label>搜索</label>
+                <div className="record-search">
+                  <IconSearch />
+                  <input
+                    value={recordsKeyword}
+                    onChange={(event) => {
+                      setRecordsKeyword(event.target.value);
+                      setRecordsPage(1);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") setRecordsPage(1);
+                    }}
+                    placeholder="会员 / 卡号 / 记录 / 编号"
+                  />
                 </div>
-              ))
-            ) : (
-              <div className="catalog-empty">暂无{view === "rechargeRecords" ? "充值" : "兑换"}记录。</div>
-            )}
-          </div>
-        </section>
+              </div>
+              <div className="record-filter-field">
+                <label>时间</label>
+                <div className="record-time-row">
+                  {recordsTimeOptions.map((item) => (
+                    <button
+                      key={item.value}
+                      type="button"
+                      className={`record-time-chip${recordsTimeFilter === item.value ? " active" : ""}`}
+                      onClick={() => {
+                        setRecordsTimeFilter(item.value);
+                        setRecordsPage(1);
+                      }}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="record-filter-actions">
+                <button
+                  type="button"
+                  className="pos-button"
+                  onClick={() => {
+                    setRecordsKeyword("");
+                    setRecordsTimeFilter("today");
+                    setRecordsPage(1);
+                  }}
+                >
+                  重置
+                </button>
+              </div>
+            </div>
+
+            <div className="records-table" aria-busy={loading}>
+              <div className="records-row header">
+                <span>序号</span>
+                <span>编号</span>
+                <span>会员</span>
+                <span className="record-amount">余额</span>
+                <span className="record-points">积分</span>
+                <span>时间</span>
+                <span>记录</span>
+                <span>操作</span>
+              </div>
+              {pagedTransactionRecords.length ? (
+                pagedTransactionRecords.map((record, index) => (
+                  <div key={record.id} className="records-row">
+                    <span>{(normalizedRecordsPage - 1) * recordsPageSize + index + 1}</span>
+                    <strong>{record.id.split(":").pop()}</strong>
+                    <span>
+                      {record.memberName} / {record.memberNo}
+                    </span>
+                    <span className="record-amount">
+                      {view === "rechargeRecords" ? `€${formatMoney(record.balanceAmount)}` : "-"}
+                    </span>
+                    <span className="record-points">{formatPoints(record.points)}</span>
+                    <span>{record.at ? formatDateTime(new Date(record.at)) : "-"}</span>
+                    <span>
+                      <span className="record-status-tag">{transactionRecordTypeLabel}</span>
+                      {" "}
+                      {record.note}
+                    </span>
+                    <span className="record-row-actions">
+                      <button type="button" className="pos-button" onClick={() => setSelectedRecordId(record.id)}>
+                        查看
+                      </button>
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <div className="record-empty-row">暂无{transactionRecordTypeLabel}记录。</div>
+              )}
+            </div>
+
+            <div className="record-pagination">
+              <span>
+                共 {filteredTransactionRecords.length} 条，第 {normalizedRecordsPage} / {recordsTotalPages} 页
+              </span>
+              <button
+                type="button"
+                className="pos-button"
+                disabled={normalizedRecordsPage <= 1}
+                onClick={() => setRecordsPage((current) => Math.max(1, current - 1))}
+              >
+                上一页
+              </button>
+              <button
+                type="button"
+                className="pos-button"
+                disabled={normalizedRecordsPage >= recordsTotalPages}
+                onClick={() => setRecordsPage((current) => Math.min(recordsTotalPages, current + 1))}
+              >
+                下一页
+              </button>
+            </div>
+          </section>
+
+          {selectedRecord ? (
+            <div className="modal-backdrop" role="presentation">
+              <section className="pos-modal" role="dialog" aria-modal="true" aria-label={`${transactionRecordTypeLabel}详情`}>
+                <div className="pos-modal-header">
+                  <h3>{transactionRecordTypeLabel}详情</h3>
+                  <button type="button" className="link-button" onClick={() => setSelectedRecordId("")}>
+                    关闭
+                  </button>
+                </div>
+                <div className="pos-modal-body">
+                  <div className="record-detail-grid">
+                    <span>编号</span>
+                    <strong>{selectedRecord.id.split(":").pop()}</strong>
+                    <span>时间</span>
+                    <strong>{selectedRecord.at ? formatDateTime(new Date(selectedRecord.at)) : "-"}</strong>
+                    <span>会员</span>
+                    <strong>
+                      {selectedRecord.memberName} / {selectedRecord.memberNo}
+                    </strong>
+                    <span>类型</span>
+                    <strong>{transactionRecordTypeLabel}</strong>
+                    <span>余额变动</span>
+                    <strong>
+                      {selectedRecord.rawBalanceDelta >= 0 ? "+" : "-"}€{formatMoney(selectedRecord.balanceAmount)}
+                    </strong>
+                    <span>积分变动</span>
+                    <strong>
+                      {selectedRecord.rawPointDelta >= 0 ? "+" : "-"}
+                      {formatPoints(selectedRecord.points)}
+                    </strong>
+                    <span>记录</span>
+                    <strong>{selectedRecord.note}</strong>
+                  </div>
+                </div>
+                <div className="pos-modal-footer">
+                  <button type="button" className="pos-button primary" onClick={() => setSelectedRecordId("")}>
+                    确定
+                  </button>
+                </div>
+              </section>
+            </div>
+          ) : null}
+        </>
       ) : (
       <section className="cashier-workbench">
         <section className="panel sale-panel">
