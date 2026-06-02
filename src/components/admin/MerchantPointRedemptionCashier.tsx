@@ -1,6 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  getMerchantCouponDiscountLabel,
+  getMerchantCouponDisplayTitle,
+  type MerchantCouponRecord,
+} from "@/lib/merchantCoupons";
 import type { MerchantMembershipInsight, MerchantMembershipListItem } from "@/lib/merchantMemberships";
 import type {
   MerchantMemberRedemptionCategory,
@@ -13,6 +18,7 @@ type MerchantPointRedemptionCashierProps = {
   siteId: string;
   siteName?: string;
   className?: string;
+  view?: "cashier" | "records";
 };
 
 type MembershipsPayload = {
@@ -27,6 +33,11 @@ type MembershipSettingsPayload = {
   message?: unknown;
 };
 
+type CouponsPayload = {
+  ok?: unknown;
+  coupons?: MerchantCouponRecord[];
+};
+
 type MembershipPatchPayload = {
   ok?: unknown;
   membership?: MerchantMembershipListItem;
@@ -35,8 +46,10 @@ type MembershipPatchPayload = {
 
 type CartLine = {
   itemId: string;
+  customName?: string;
+  customCode?: string;
+  customPoints?: number;
   quantity: number;
-  nickname: string;
 };
 
 type HeldSale = {
@@ -99,6 +112,12 @@ function formatMoney(value: unknown) {
   const numberValue = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(numberValue)) return "0.00";
   return numberValue.toFixed(2);
+}
+
+function parsePositiveInteger(value: unknown) {
+  const numberValue = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numberValue)) return 0;
+  return Math.max(0, Math.floor(numberValue));
 }
 
 function getMemberDisplayName(membership: MerchantMembershipListItem) {
@@ -166,6 +185,13 @@ function operationErrorMessage(message: unknown, fallback: string) {
   if (text === "membership_redemption_item_not_found") return "兑换项目不存在或已停用。";
   if (text === "membership_settings_unavailable") return "会员兑换配置不可用。";
   return text || fallback;
+}
+
+function couponStatusLabel(status: MerchantMembershipInsight["couponHistory"][number]["status"]) {
+  if (status === "available") return "可用";
+  if (status === "used") return "已核销";
+  if (status === "expired") return "已过期";
+  return "不可用";
 }
 
 function storageKey(siteId: string) {
@@ -243,15 +269,6 @@ function IconBean() {
   );
 }
 
-function IconLink() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M10 13a5 5 0 0 0 7.1.1l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1" />
-      <path d="M14 11a5 5 0 0 0-7.1-.1l-2 2a5 5 0 0 0 7.1 7.1l1.1-1.1" />
-    </svg>
-  );
-}
-
 function IconDoorOpen() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -283,12 +300,13 @@ function CategoryIcon({ name }: { name: string }) {
 
 export default function MerchantPointRedemptionCashier({
   siteId,
-  siteName = "",
   className = "",
+  view = "cashier",
 }: MerchantPointRedemptionCashierProps) {
   const normalizedSiteId = siteId.trim();
   const [memberships, setMemberships] = useState<MerchantMembershipListItem[]>([]);
   const [settings, setSettings] = useState<MerchantMembershipSettings | null>(null);
+  const [coupons, setCoupons] = useState<MerchantCouponRecord[]>([]);
   const [selectedMemberId, setSelectedMemberId] = useState("");
   const [memberKeyword, setMemberKeyword] = useState("");
   const [itemKeyword, setItemKeyword] = useState("");
@@ -299,6 +317,12 @@ export default function MerchantPointRedemptionCashier({
   const [heldSales, setHeldSales] = useState<HeldSale[]>([]);
   const [heldOpen, setHeldOpen] = useState(false);
   const [memberPickerOpen, setMemberPickerOpen] = useState(false);
+  const [rechargeDialogOpen, setRechargeDialogOpen] = useState(false);
+  const [selectedRechargePlanId, setSelectedRechargePlanId] = useState("");
+  const [quickRedeemDialogOpen, setQuickRedeemDialogOpen] = useState(false);
+  const [quickRedeemName, setQuickRedeemName] = useState("");
+  const [quickRedeemPoints, setQuickRedeemPoints] = useState("");
+  const [checkoutConfirmOpen, setCheckoutConfirmOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -314,6 +338,14 @@ export default function MerchantPointRedemptionCashier({
       (settings?.redemptionItems ?? [])
         .filter((item) => item.enabled)
         .sort((left, right) => left.sort - right.sort || left.name.localeCompare(right.name)),
+    [settings],
+  );
+
+  const enabledRechargePlans = useMemo(
+    () =>
+      (settings?.rechargePlans ?? [])
+        .filter((plan) => plan.enabled)
+        .sort((left, right) => left.sort - right.sort || left.title.localeCompare(right.title)),
     [settings],
   );
 
@@ -335,6 +367,51 @@ export default function MerchantPointRedemptionCashier({
 
   const selectedInsight = selectedMember?.insight ?? EMPTY_MEMBER_INSIGHT;
 
+  const couponSearchResults = useMemo(() => {
+    const keyword = itemKeyword.trim().toLowerCase();
+    if (!keyword) return [];
+    const merchantCouponRows = coupons.map((coupon) => ({
+      key: `coupon:${coupon.id}`,
+      title: getMerchantCouponDisplayTitle(coupon),
+      subtitle: getMerchantCouponDiscountLabel(coupon),
+      code: [
+        coupon.code,
+        coupon.productBarcode,
+        coupon.productName,
+        coupon.exchangeItem,
+        coupon.ticketVenue,
+        coupon.discountType,
+      ]
+        .filter(Boolean)
+        .join(" / "),
+      status: coupon.status === "active" ? "可发放" : coupon.status === "paused" ? "已暂停" : "已归档",
+    }));
+    const availableRows = selectedMember
+      ? selectedInsight.availableCoupons.map((coupon) => ({
+      key: `available:${coupon.couponId}`,
+      title: coupon.title,
+      subtitle: `${coupon.discountLabel}${coupon.count > 1 ? ` x${coupon.count}` : ""}`,
+      code: coupon.couponId,
+      status: "可用",
+    }))
+      : [];
+    const historyRows = selectedMember
+      ? selectedInsight.couponHistory.map((coupon) => ({
+      key: `history:${coupon.id}`,
+      title: coupon.title,
+      subtitle: coupon.discountLabel,
+      code: coupon.settlementCode || coupon.couponId,
+      status: couponStatusLabel(coupon.status),
+    }))
+      : [];
+    const unique = new Map<string, (typeof merchantCouponRows)[number]>();
+    [...merchantCouponRows, ...availableRows, ...historyRows].forEach((coupon) => {
+      const searchText = [coupon.title, coupon.subtitle, coupon.code, coupon.status].join(" ").toLowerCase();
+      if (searchText.includes(keyword)) unique.set(coupon.key, coupon);
+    });
+    return Array.from(unique.values()).slice(0, 8);
+  }, [coupons, itemKeyword, selectedInsight.availableCoupons, selectedInsight.couponHistory, selectedMember]);
+
   const filteredItems = useMemo(() => {
     const keyword = itemKeyword.trim().toLowerCase();
     return enabledItems.filter((item) => {
@@ -351,21 +428,33 @@ export default function MerchantPointRedemptionCashier({
     return cart
       .map((line) => {
         const item = enabledItems.find((entry) => entry.id === line.itemId);
-        if (!item) return null;
-        const unitPoints = getRedemptionPointCostForMember(item, selectedMember, settings);
+        const unitPoints = item
+          ? getRedemptionPointCostForMember(item, selectedMember, settings)
+          : parsePositiveInteger(line.customPoints);
+        if (!item && (!line.customName || unitPoints <= 0)) return null;
         return {
           item,
+          itemId: line.itemId,
+          code: item?.code || line.customCode || line.itemId,
+          name: item?.name || line.customName || "快捷兑换",
+          categoryId: item?.categoryId || "",
+          stock: item?.stock ?? 0,
+          custom: !item,
           quantity: line.quantity,
-          nickname: line.nickname,
           unitPoints,
           subtotalPoints: unitPoints * line.quantity,
         };
       })
       .filter(
         (row): row is {
-          item: MerchantMemberRedemptionItem;
+          item: MerchantMemberRedemptionItem | undefined;
+          itemId: string;
+          code: string;
+          name: string;
+          categoryId: string;
+          stock: number;
+          custom: boolean;
           quantity: number;
-          nickname: string;
           unitPoints: number;
           subtotalPoints: number;
         } => Boolean(row),
@@ -379,7 +468,6 @@ export default function MerchantPointRedemptionCashier({
   }, [cart]);
 
   const totalPoints = cartRows.reduce((sum, row) => sum + row.subtotalPoints, 0);
-  const totalReferenceAmount = cartRows.reduce((sum, row) => sum + row.item.referenceAmount * row.quantity, 0);
   const totalQuantity = cartRows.reduce((sum, row) => sum + row.quantity, 0);
   const canCheckout =
     Boolean(selectedMember) &&
@@ -387,6 +475,24 @@ export default function MerchantPointRedemptionCashier({
     totalPoints > 0 &&
     totalPoints <= selectedInsight.pointBalance &&
     !saving;
+
+  const redemptionRecords = useMemo(() => {
+    return memberships
+      .flatMap((membership) =>
+        membership.transactions
+          .filter((transaction) => transaction.type === "redeem")
+          .map((transaction) => ({
+            id: `${membership.id}:${transaction.id}`,
+            at: transaction.at,
+            memberName: getMemberDisplayName(membership),
+            memberNo: membership.memberNo,
+            points: Math.abs(transaction.pointDelta),
+            note: transaction.note || "-",
+          })),
+      )
+      .sort((left, right) => Date.parse(right.at) - Date.parse(left.at))
+      .slice(0, 200);
+  }, [memberships]);
 
   const loadData = useCallback(async () => {
     if (!/^\d{8}$/.test(normalizedSiteId)) {
@@ -396,7 +502,7 @@ export default function MerchantPointRedemptionCashier({
     setLoading(true);
     setError("");
     try {
-      const [membersResponse, settingsResponse] = await Promise.all([
+      const [membersResponse, settingsResponse, couponsResponse] = await Promise.all([
         fetch(`/api/memberships?siteId=${encodeURIComponent(normalizedSiteId)}`, {
           method: "GET",
           cache: "no-store",
@@ -409,9 +515,18 @@ export default function MerchantPointRedemptionCashier({
           credentials: "same-origin",
           headers: { accept: "application/json" },
         }),
+        fetch(`/api/coupons?siteId=${encodeURIComponent(normalizedSiteId)}`, {
+          method: "GET",
+          cache: "no-store",
+          credentials: "same-origin",
+          headers: { accept: "application/json" },
+        }).catch(() => null),
       ]);
       const membersPayload = (await membersResponse.json().catch(() => null)) as MembershipsPayload | null;
       const settingsPayload = (await settingsResponse.json().catch(() => null)) as MembershipSettingsPayload | null;
+      const couponsPayload = couponsResponse
+        ? ((await couponsResponse.json().catch(() => null)) as CouponsPayload | null)
+        : null;
       if (!membersResponse.ok || !membersPayload?.ok) {
         throw new Error(readPayloadMessage(membersPayload?.message, "会员列表加载失败"));
       }
@@ -420,6 +535,7 @@ export default function MerchantPointRedemptionCashier({
       }
       setMemberships(Array.isArray(membersPayload.memberships) ? membersPayload.memberships : []);
       setSettings(settingsPayload.settings);
+      setCoupons(couponsResponse?.ok && Array.isArray(couponsPayload?.coupons) ? couponsPayload.coupons : []);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "积分兑换数据加载失败，请稍后重试");
     } finally {
@@ -503,7 +619,7 @@ export default function MerchantPointRedemptionCashier({
       }
       const index = current.findIndex((line) => line.itemId === item.id);
       if (index < 0) {
-        return [...current, { itemId: item.id, quantity: 1, nickname: "" }];
+        return [...current, { itemId: item.id, quantity: 1 }];
       }
       return current.map((line, lineIndex) =>
         lineIndex === index ? { ...line, quantity: line.quantity + 1 } : line,
@@ -526,14 +642,89 @@ export default function MerchantPointRedemptionCashier({
     });
   }
 
-  function changeNickname(index: number, nickname: string) {
-    setCart((current) =>
-      current.map((line, lineIndex) => (lineIndex === index ? { ...line, nickname: nickname.slice(0, 80) } : line)),
-    );
-  }
-
   function removeCartItem(index: number) {
     setCart((current) => current.filter((_, lineIndex) => lineIndex !== index));
+  }
+
+  function openRechargeDialog() {
+    setError("");
+    setNotice("");
+    if (!selectedMember) {
+      setError("请先选择会员。");
+      setMemberPickerOpen(true);
+      return;
+    }
+    setSelectedRechargePlanId((current) => current || enabledRechargePlans[0]?.id || "");
+    setRechargeDialogOpen(true);
+  }
+
+  async function submitRechargePlan() {
+    if (!selectedMember) {
+      setError("请先选择会员。");
+      setRechargeDialogOpen(false);
+      return;
+    }
+    const plan = enabledRechargePlans.find((entry) => entry.id === selectedRechargePlanId);
+    if (!plan) {
+      setError("请选择充值方案。");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/memberships", {
+        method: "PATCH",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({
+          siteId: normalizedSiteId,
+          action: "member_operation",
+          type: "recharge",
+          membershipId: selectedMember.id,
+          rechargePlanId: plan.id,
+          note: `积分兑换充值：${plan.title}`,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as MembershipPatchPayload | null;
+      if (!response.ok || !payload?.ok || !payload.membership) {
+        throw new Error(operationErrorMessage(payload?.message, "充值失败，请稍后重试"));
+      }
+      setMemberships((current) =>
+        current.map((membership) => (membership.id === payload.membership?.id ? payload.membership : membership)),
+      );
+      setRechargeDialogOpen(false);
+      setNotice(`充值完成，余额增加 €${formatMoney(plan.rechargeAmount + plan.giftAmount)}，积分增加 ${formatPoints(plan.giftPoints)}。`);
+      await loadData();
+    } catch (rechargeError) {
+      setError(rechargeError instanceof Error ? rechargeError.message : "充值失败，请稍后重试");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function submitQuickRedeemItem() {
+    const points = parsePositiveInteger(quickRedeemPoints);
+    const name = trimText(quickRedeemName, 120) || "快捷兑换";
+    if (points <= 0) {
+      setError("请填写快捷兑换积分。");
+      return;
+    }
+    setCart((current) => [
+      ...current,
+      {
+        itemId: `quick-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+        customName: name,
+        customCode: "快捷兑换",
+        customPoints: points,
+        quantity: 1,
+      },
+    ]);
+    setQuickRedeemName("");
+    setQuickRedeemPoints("");
+    setQuickRedeemDialogOpen(false);
+    setError("");
+    setNotice("快捷兑换已加入购物车。");
   }
 
   function clearSale() {
@@ -604,7 +795,10 @@ export default function MerchantPointRedemptionCashier({
           action: "member_redemption_checkout",
           membershipId: selectedMember.id,
           redemptionItems: cartRows.map((row) => ({
-            redemptionItemId: row.item.id,
+            redemptionItemId: row.item?.id,
+            customName: row.custom ? row.name : undefined,
+            customCode: row.custom ? row.code : undefined,
+            customPoints: row.custom ? row.unitPoints : undefined,
             quantity: row.quantity,
           })),
           note: note.trim(),
@@ -619,6 +813,7 @@ export default function MerchantPointRedemptionCashier({
       );
       setCart([]);
       setNote("");
+      setCheckoutConfirmOpen(false);
       setNotice(`兑换完成，已扣减 ${formatPoints(totalPoints)} 积分。`);
       await loadData();
     } catch (checkoutError) {
@@ -629,7 +824,7 @@ export default function MerchantPointRedemptionCashier({
   }
 
   function notifyUnavailable(label: string) {
-    setNotice(`积分兑换工作台暂不需要${label}。`);
+    setNotice(`积分兑换暂不需要${label}。`);
   }
 
   return (
@@ -889,7 +1084,7 @@ export default function MerchantPointRedemptionCashier({
         .merchant-pos-cashier .member-search input:focus,
         .merchant-pos-cashier .product-search-input:focus,
         .merchant-pos-cashier .checkout-note input:focus,
-        .merchant-pos-cashier .cart-nickname-input:focus,
+        .merchant-pos-cashier .quick-input:focus,
         .merchant-pos-cashier .cart-qty-input:focus {
           border-color: var(--pos-primary);
           box-shadow: 0 0 0 3px rgba(14, 118, 102, 0.12);
@@ -965,7 +1160,7 @@ export default function MerchantPointRedemptionCashier({
         .merchant-pos-cashier .cart-header,
         .merchant-pos-cashier .cart-row {
           display: grid;
-          grid-template-columns: 120px minmax(190px, 1fr) 96px 190px 110px 130px;
+          grid-template-columns: 120px minmax(190px, 1fr) 96px 190px 110px;
           align-items: center;
           gap: 12px;
         }
@@ -1028,8 +1223,7 @@ export default function MerchantPointRedemptionCashier({
         }
 
         .merchant-pos-cashier .cart-code,
-        .merchant-pos-cashier .cart-name,
-        .merchant-pos-cashier .cart-nickname {
+        .merchant-pos-cashier .cart-name {
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
@@ -1095,15 +1289,6 @@ export default function MerchantPointRedemptionCashier({
           border-radius: 8px;
           text-align: center;
           font-weight: 900;
-          outline: none;
-        }
-
-        .merchant-pos-cashier .cart-nickname-input {
-          width: 100%;
-          height: 34px;
-          border: 1px solid var(--pos-line);
-          border-radius: 8px;
-          padding: 0 8px;
           outline: none;
         }
 
@@ -1290,6 +1475,171 @@ export default function MerchantPointRedemptionCashier({
 
         .merchant-pos-cashier .product-search-input {
           padding-left: 34px;
+        }
+
+        .merchant-pos-cashier .coupon-results {
+          display: grid;
+          gap: 8px;
+          margin-bottom: 14px;
+        }
+
+        .merchant-pos-cashier .coupon-result {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          gap: 6px 10px;
+          align-items: center;
+          padding: 10px 12px;
+          border: 1px solid var(--pos-line);
+          border-radius: 8px;
+          background: #fffaf0;
+          color: var(--pos-text);
+        }
+
+        .merchant-pos-cashier .coupon-result strong,
+        .merchant-pos-cashier .coupon-result span {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .merchant-pos-cashier .coupon-result small {
+          grid-column: 1 / -1;
+          color: var(--pos-muted);
+          font-weight: 700;
+        }
+
+        .merchant-pos-cashier .modal-backdrop {
+          position: fixed;
+          inset: 0;
+          z-index: 80;
+          display: grid;
+          place-items: center;
+          padding: 24px;
+          background: rgba(15, 23, 42, 0.38);
+        }
+
+        .merchant-pos-cashier .pos-modal {
+          width: min(560px, 100%);
+          max-height: min(720px, calc(100vh - 48px));
+          overflow-y: auto;
+          border-radius: 10px;
+          border: 1px solid var(--pos-line);
+          background: var(--pos-surface);
+          box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
+        }
+
+        .merchant-pos-cashier .pos-modal-header,
+        .merchant-pos-cashier .pos-modal-footer {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          padding: 16px 18px;
+        }
+
+        .merchant-pos-cashier .pos-modal-header {
+          border-bottom: 1px solid var(--pos-line);
+        }
+
+        .merchant-pos-cashier .pos-modal-header h3 {
+          margin: 0;
+          font-size: 18px;
+          font-weight: 900;
+        }
+
+        .merchant-pos-cashier .pos-modal-body {
+          display: grid;
+          gap: 12px;
+          padding: 16px 18px;
+        }
+
+        .merchant-pos-cashier .pos-modal-footer {
+          justify-content: flex-end;
+          border-top: 1px solid var(--pos-line);
+        }
+
+        .merchant-pos-cashier .recharge-plan-option {
+          display: grid;
+          grid-template-columns: auto minmax(0, 1fr);
+          gap: 10px;
+          align-items: start;
+          padding: 12px;
+          border: 1px solid var(--pos-line);
+          border-radius: 8px;
+          cursor: pointer;
+        }
+
+        .merchant-pos-cashier .recharge-plan-option.is-active {
+          border-color: var(--pos-primary);
+          background: var(--pos-primary-soft);
+          box-shadow: var(--pos-focus-inset);
+        }
+
+        .merchant-pos-cashier .recharge-plan-option strong {
+          display: block;
+          margin-bottom: 4px;
+        }
+
+        .merchant-pos-cashier .recharge-plan-meta {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+          color: var(--pos-muted);
+          font-size: 13px;
+          font-weight: 800;
+        }
+
+        .merchant-pos-cashier .quick-field {
+          display: grid;
+          gap: 6px;
+          color: var(--pos-text);
+          font-weight: 800;
+        }
+
+        .merchant-pos-cashier .quick-input {
+          width: 100%;
+          height: 40px;
+          border: 1px solid var(--pos-line);
+          border-radius: 8px;
+          padding: 0 12px;
+          outline: none;
+        }
+
+        .merchant-pos-cashier .records-panel {
+          padding: 18px;
+        }
+
+        .merchant-pos-cashier .records-table {
+          overflow: hidden;
+          border: 1px solid var(--pos-line);
+          border-radius: 8px;
+        }
+
+        .merchant-pos-cashier .records-row {
+          display: grid;
+          grid-template-columns: 170px minmax(150px, 1fr) 110px minmax(240px, 1.4fr);
+          gap: 12px;
+          align-items: center;
+          min-height: 48px;
+          padding: 10px 14px;
+          border-bottom: 1px solid var(--pos-line);
+        }
+
+        .merchant-pos-cashier .records-row.header {
+          background: var(--pos-surface-soft);
+          color: #4b5a6b;
+          font-weight: 900;
+        }
+
+        .merchant-pos-cashier .records-row:last-child {
+          border-bottom: 0;
+        }
+
+        .merchant-pos-cashier .records-row span,
+        .merchant-pos-cashier .records-row strong {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
 
         .merchant-pos-cashier .product-view-toggle {
@@ -1515,14 +1865,13 @@ export default function MerchantPointRedemptionCashier({
       <div className="cashier-header">
         <div>
           <div className="cashier-title">
-            <h2>积分兑换工作台</h2>
+            <h2>{view === "records" ? "兑换记录" : "积分兑换"}</h2>
           </div>
           <div className="cashier-refresh-line">
             <span>{formatDateYmd()}</span>
             <button type="button" className="pos-button" onClick={loadData}>
               刷新
             </button>
-            <span>{siteName || normalizedSiteId}</span>
             {loading ? <span>正在刷新...</span> : null}
           </div>
         </div>
@@ -1530,8 +1879,8 @@ export default function MerchantPointRedemptionCashier({
           <button type="button" className="el-button el-button--default" onClick={() => notifyUnavailable("开钱箱")}>
             开钱箱
           </button>
-          <button type="button" className="el-button el-button--default" onClick={() => notifyUnavailable("存取现金")}>
-            存取现金
+          <button type="button" className="el-button el-button--default" onClick={() => notifyUnavailable("多语言切换")}>
+            多语言
           </button>
         </div>
       </div>
@@ -1539,6 +1888,32 @@ export default function MerchantPointRedemptionCashier({
       {error ? <div className="pos-alert error">{error}</div> : null}
       {notice ? <div className="pos-alert notice">{notice}</div> : null}
 
+      {view === "records" ? (
+        <section className="panel records-panel">
+          <div className="records-table">
+            <div className="records-row header">
+              <span>时间</span>
+              <span>会员</span>
+              <span>积分</span>
+              <span>记录</span>
+            </div>
+            {redemptionRecords.length ? (
+              redemptionRecords.map((record) => (
+                <div key={record.id} className="records-row">
+                  <span>{record.at ? formatDateTime(new Date(record.at)) : "-"}</span>
+                  <strong>
+                    {record.memberName} / {record.memberNo}
+                  </strong>
+                  <span>{formatPoints(record.points)}</span>
+                  <span>{record.note}</span>
+                </div>
+              ))
+            ) : (
+              <div className="catalog-empty">暂无兑换记录。</div>
+            )}
+          </div>
+        </section>
+      ) : (
       <section className="cashier-workbench">
         <section className="panel sale-panel">
           <div className="panel-heading compact">
@@ -1594,17 +1969,13 @@ export default function MerchantPointRedemptionCashier({
                 ) : null}
               </div>
               <div className="member-action-buttons">
-                <button type="button" className="el-button el-button--default" onClick={() => notifyUnavailable("绑定手环")}>
-                  <IconLink />
-                  绑定手环
-                </button>
-                <button type="button" className="el-button el-button--primary" onClick={() => setNotice("请从右侧选择兑换项目。")}>
+                <button type="button" className="el-button el-button--primary" onClick={openRechargeDialog}>
                   <IconDoorOpen />
-                  购票
+                  充值
                 </button>
-                <button type="button" className="el-button el-button--default" onClick={() => notifyUnavailable("临时商品")}>
+                <button type="button" className="el-button el-button--default" onClick={() => setQuickRedeemDialogOpen(true)}>
                   <IconWallet />
-                  临时商品
+                  快捷兑换
                 </button>
               </div>
             </div>
@@ -1615,21 +1986,20 @@ export default function MerchantPointRedemptionCashier({
               <div className="cart-header">
                 <span>编号</span>
                 <span>产品/项目</span>
-                <span>单价</span>
+                <span>积分</span>
                 <span>数量</span>
                 <span>小计</span>
-                <span>昵称</span>
               </div>
               <div className="cart-body">
                 {cartRows.length ? (
                   cartRows.map((row, index) => (
-                    <div key={`${row.item.id}-${index}`} className="cart-row-shell">
+                    <div key={`${row.itemId}-${index}`} className="cart-row-shell">
                       <div className="cart-row">
-                        <span className="cart-code">{row.item.code || row.item.id}</span>
+                        <span className="cart-code">{row.code || row.itemId}</span>
                         <strong className="cart-name">
-                          {row.item.name}
+                          {row.name}
                           <span className="cart-meta">
-                            {categoryName(enabledCategories, row.item.categoryId)} / {stockLabel(row.item)}
+                            {row.custom ? "快捷兑换" : `${categoryName(enabledCategories, row.categoryId)} / ${row.item ? stockLabel(row.item) : "不限库存"}`}
                           </span>
                         </strong>
                         <span>{formatPoints(row.unitPoints)}</span>
@@ -1649,12 +2019,6 @@ export default function MerchantPointRedemptionCashier({
                           </button>
                         </div>
                         <span>{formatPoints(row.subtotalPoints)}</span>
-                        <input
-                          value={row.nickname}
-                          onChange={(event) => changeNickname(index, event.target.value)}
-                          className="cart-nickname-input"
-                          placeholder="-"
-                        />
                       </div>
                       <button type="button" className="cart-delete-action" onClick={() => removeCartItem(index)}>
                         删除
@@ -1708,10 +2072,6 @@ export default function MerchantPointRedemptionCashier({
                 <strong>{totalQuantity}</strong>
               </div>
               <div className="summary-item">
-                <span>参考金额</span>
-                <strong>{formatMoney(totalReferenceAmount)}</strong>
-              </div>
-              <div className="summary-item">
                 <span>会员积分</span>
                 <strong>{formatPoints(selectedInsight.pointBalance)}</strong>
               </div>
@@ -1719,8 +2079,8 @@ export default function MerchantPointRedemptionCashier({
                 <span>合计积分</span>
                 <strong>{formatPoints(totalPoints)}</strong>
               </div>
-              <button type="button" className="checkout-button" disabled={!canCheckout} onClick={submitCheckout}>
-                {saving ? "结算中" : "结账"}
+              <button type="button" className="checkout-button" disabled={!canCheckout} onClick={() => setCheckoutConfirmOpen(true)}>
+                {saving ? "结算中" : "结算"}
               </button>
             </div>
           </div>
@@ -1736,7 +2096,7 @@ export default function MerchantPointRedemptionCashier({
                 value={itemKeyword}
                 onChange={(event) => setItemKeyword(event.target.value)}
                 className="product-search-input"
-                placeholder="商品条码 / 门票码 / 订单码 / 名称"
+                placeholder="商品条码 / 名称 / 优惠券"
               />
             </div>
             <div className="product-view-toggle">
@@ -1758,6 +2118,20 @@ export default function MerchantPointRedemptionCashier({
               </button>
             </div>
           </div>
+
+          {couponSearchResults.length ? (
+            <div className="coupon-results">
+              {couponSearchResults.map((coupon) => (
+                <div key={coupon.key} className="coupon-result">
+                  <strong>{coupon.title}</strong>
+                  <span>{coupon.status}</span>
+                  <small>
+                    {coupon.subtitle} / {coupon.code}
+                  </small>
+                </div>
+              ))}
+            </div>
+          ) : null}
 
           <div className="category-row">
             <button
@@ -1836,7 +2210,122 @@ export default function MerchantPointRedemptionCashier({
             )}
           </div>
         </section>
+        {rechargeDialogOpen ? (
+          <div className="modal-backdrop" role="presentation" onMouseDown={() => !saving && setRechargeDialogOpen(false)}>
+            <div className="pos-modal" role="dialog" aria-modal="true" aria-label="充值方案" onMouseDown={(event) => event.stopPropagation()}>
+              <div className="pos-modal-header">
+                <h3>充值方案</h3>
+                <button type="button" className="link-button" onClick={() => setRechargeDialogOpen(false)} disabled={saving}>
+                  关闭
+                </button>
+              </div>
+              <div className="pos-modal-body">
+                {enabledRechargePlans.length ? (
+                  enabledRechargePlans.map((plan) => (
+                    <label
+                      key={plan.id}
+                      className={`recharge-plan-option ${selectedRechargePlanId === plan.id ? "is-active" : ""}`}
+                    >
+                      <input
+                        type="radio"
+                        name="rechargePlan"
+                        checked={selectedRechargePlanId === plan.id}
+                        onChange={() => setSelectedRechargePlanId(plan.id)}
+                      />
+                      <span>
+                        <strong>{plan.title}</strong>
+                        <span className="recharge-plan-meta">
+                          <span>充值 €{formatMoney(plan.rechargeAmount)}</span>
+                          <span>赠送 €{formatMoney(plan.giftAmount)}</span>
+                          <span>赠送积分 {formatPoints(plan.giftPoints)}</span>
+                        </span>
+                      </span>
+                    </label>
+                  ))
+                ) : (
+                  <div className="catalog-empty">暂无启用充值方案，请先在会员管理中配置。</div>
+                )}
+              </div>
+              <div className="pos-modal-footer">
+                <button type="button" className="el-button el-button--default" onClick={() => setRechargeDialogOpen(false)} disabled={saving}>
+                  取消
+                </button>
+                <button type="button" className="el-button el-button--primary" onClick={submitRechargePlan} disabled={saving || !enabledRechargePlans.length}>
+                  {saving ? "充值中" : "确认充值"}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+        {quickRedeemDialogOpen ? (
+          <div className="modal-backdrop" role="presentation" onMouseDown={() => setQuickRedeemDialogOpen(false)}>
+            <div className="pos-modal" role="dialog" aria-modal="true" aria-label="快捷兑换" onMouseDown={(event) => event.stopPropagation()}>
+              <div className="pos-modal-header">
+                <h3>快捷兑换</h3>
+                <button type="button" className="link-button" onClick={() => setQuickRedeemDialogOpen(false)}>
+                  关闭
+                </button>
+              </div>
+              <div className="pos-modal-body">
+                <label className="quick-field">
+                  项目名称
+                  <input
+                    value={quickRedeemName}
+                    onChange={(event) => setQuickRedeemName(event.target.value)}
+                    className="quick-input"
+                    placeholder="快捷兑换"
+                  />
+                </label>
+                <label className="quick-field">
+                  积分
+                  <input
+                    type="number"
+                    min={1}
+                    value={quickRedeemPoints}
+                    onChange={(event) => setQuickRedeemPoints(event.target.value)}
+                    className="quick-input"
+                    placeholder="填写本次兑换所需积分"
+                  />
+                </label>
+              </div>
+              <div className="pos-modal-footer">
+                <button type="button" className="el-button el-button--default" onClick={() => setQuickRedeemDialogOpen(false)}>
+                  取消
+                </button>
+                <button type="button" className="el-button el-button--primary" onClick={submitQuickRedeemItem}>
+                  加入购物车
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+        {checkoutConfirmOpen ? (
+          <div className="modal-backdrop" role="presentation" onMouseDown={() => !saving && setCheckoutConfirmOpen(false)}>
+            <div className="pos-modal" role="dialog" aria-modal="true" aria-label="确认结算" onMouseDown={(event) => event.stopPropagation()}>
+              <div className="pos-modal-header">
+                <h3>确认结算</h3>
+                <button type="button" className="link-button" onClick={() => setCheckoutConfirmOpen(false)} disabled={saving}>
+                  关闭
+                </button>
+              </div>
+              <div className="pos-modal-body">
+                <div>会员：{selectedMember ? `${getMemberDisplayName(selectedMember)} / ${selectedMember.memberNo}` : "-"}</div>
+                <div>项目：{totalQuantity}</div>
+                <div>扣减积分：{formatPoints(totalPoints)}</div>
+              </div>
+              <div className="pos-modal-footer">
+                <button type="button" className="el-button el-button--default" onClick={() => setCheckoutConfirmOpen(false)} disabled={saving}>
+                  取消
+                </button>
+                <button type="button" className="el-button el-button--primary" onClick={submitCheckout} disabled={saving}>
+                  {saving ? "结算中" : "确认结算"}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </section>
+      )}
     </section>
   );
 }

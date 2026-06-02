@@ -1440,6 +1440,7 @@ type MerchantDesktopSection =
   | "cards"
   | "coupons"
   | "pointRedemption"
+  | "redemptionRecords"
   | "booking"
   | "orders"
   | "analytics"
@@ -11642,9 +11643,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       window.removeEventListener("message", handleSupportFaollaMessage);
     };
   }, [resetSupportFaollaBackendFrame]);
-  const openMerchantFaollaPanel = useCallback(() => {
-    setMerchantDesktopSection("faolla");
-  }, []);
   const openSupportMobileHomeTab = useCallback((tab: SupportMobileHomeTab) => {
     setSupportMobileHomeTab(tab);
   }, []);
@@ -13722,6 +13720,16 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
     setMerchantSiteIdOverride(resolvedSiteId);
     setMerchantDesktopSection("pointRedemption");
+  }
+
+  async function openMerchantRedemptionRecordsPanel() {
+    const resolvedSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
+    if (!resolvedSiteId) {
+      showTip("当前商户还没准备好会员资料，请稍后重试");
+      return;
+    }
+    setMerchantSiteIdOverride(resolvedSiteId);
+    setMerchantDesktopSection("redemptionRecords");
   }
 
   async function openMerchantBookingPanel() {
@@ -18999,6 +19007,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               siteName={effectiveMerchantDisplayName || merchantDisplayName}
               className="min-h-[calc(100vh-14rem)]"
             />
+          ) : merchantDesktopSection === "redemptionRecords" ? (
+            <MerchantPointRedemptionCashier
+              siteId={editingSiteId || merchantSiteIdOverride || ""}
+              siteName={effectiveMerchantDisplayName || merchantDisplayName}
+              className="min-h-[calc(100vh-14rem)]"
+              view="records"
+            />
           ) : merchantDesktopSection === "members" ? (
             merchantMemberSettingsView === "list" ? (
               <MerchantMemberManager
@@ -19212,7 +19227,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   <div className="grid gap-2">
                     <button
                       type="button"
-                      className={getMerchantDesktopMenuButtonClassName(merchantDesktopSection === "pointRedemption")}
+                      className={getMerchantDesktopMenuButtonClassName(
+                        merchantDesktopSection === "pointRedemption" || merchantDesktopSection === "redemptionRecords",
+                      )}
                       onClick={() => {
                         void openMerchantPointRedemptionPanel();
                       }}
@@ -19278,13 +19295,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       }}
                     >
                       会员管理
-                    </button>
-                    <button
-                      type="button"
-                      className={getMerchantDesktopMenuButtonClassName(merchantDesktopSection === "faolla")}
-                      onClick={openMerchantFaollaPanel}
-                    >
-                      Faolla
                     </button>
                     <div className="grid gap-2 border-t border-slate-100 pt-2">
                       <button
@@ -19423,13 +19433,31 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             <div className="border-t">
               <div className="w-full px-6 py-4">
                 <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
-                  {merchantDesktopSection === "pointRedemption" ? (
-                    <>
-                      <div className="text-base font-semibold text-slate-900">积分兑换</div>
-                      <div className="mt-1 text-sm text-slate-500">
-                        选择会员和兑换项目，按会员等级折扣扣减积分，并同步项目库存。
-                      </div>
-                    </>
+                  {merchantDesktopSection === "pointRedemption" || merchantDesktopSection === "redemptionRecords" ? (
+                    <div className="grid gap-2">
+                      <button
+                        type="button"
+                        className={`flex min-h-10 w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-sm font-semibold transition ${
+                          merchantDesktopSection === "pointRedemption"
+                            ? "border-slate-950 bg-slate-950 text-white"
+                            : "border-slate-200 bg-white text-slate-800 hover:border-slate-300 hover:bg-slate-50"
+                        }`}
+                        onClick={() => void openMerchantPointRedemptionPanel()}
+                      >
+                        积分兑换
+                      </button>
+                      <button
+                        type="button"
+                        className={`flex min-h-10 w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-sm font-semibold transition ${
+                          merchantDesktopSection === "redemptionRecords"
+                            ? "border-slate-950 bg-slate-950 text-white"
+                            : "border-slate-200 bg-white text-slate-800 hover:border-slate-300 hover:bg-slate-50"
+                        }`}
+                        onClick={() => void openMerchantRedemptionRecordsPanel()}
+                      >
+                        兑换记录
+                      </button>
+                    </div>
                   ) : merchantDesktopSection === "booking" ? (
                     <div className="grid gap-2">
                       <button

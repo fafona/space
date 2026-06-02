@@ -735,15 +735,50 @@ export async function applyMerchantMembershipRedemptionCart(input: {
           if (!record) return null;
           const itemId = trimText(record.redemptionItemId ?? record.itemId ?? record.id, 120);
           const quantity = Math.max(1, normalizePositiveInteger(record.quantity) || 1);
-          return itemId ? { itemId, quantity } : null;
+          const customName = trimText(record.customName, 120);
+          const customCode = trimText(record.customCode, 120);
+          const customPoints = normalizePositiveInteger(record.customPoints);
+          if (itemId) return { itemId, quantity, customName: "", customCode: "", customPoints: 0 };
+          if (customName && customPoints > 0) {
+            return {
+              itemId: `custom:${customName}:${customPoints}`,
+              quantity,
+              customName,
+              customCode,
+              customPoints,
+            };
+          }
+          return null;
         })
-        .filter((entry): entry is { itemId: string; quantity: number } => Boolean(entry))
+        .filter(
+          (
+            entry,
+          ): entry is {
+            itemId: string;
+            quantity: number;
+            customName: string;
+            customCode: string;
+            customPoints: number;
+          } => Boolean(entry),
+        )
     : [];
-  const quantityByItemId = new Map<string, number>();
+  const quantityByItemId = new Map<
+    string,
+    { quantity: number; customName: string; customCode: string; customPoints: number }
+  >();
   requestedItems.forEach((entry) => {
-    quantityByItemId.set(entry.itemId, (quantityByItemId.get(entry.itemId) ?? 0) + entry.quantity);
+    const current = quantityByItemId.get(entry.itemId) ?? {
+      quantity: 0,
+      customName: entry.customName,
+      customCode: entry.customCode,
+      customPoints: entry.customPoints,
+    };
+    quantityByItemId.set(entry.itemId, {
+      ...current,
+      quantity: current.quantity + entry.quantity,
+    });
   });
-  const cartItems = Array.from(quantityByItemId.entries()).map(([itemId, quantity]) => ({ itemId, quantity }));
+  const cartItems = Array.from(quantityByItemId.entries()).map(([itemId, entry]) => ({ itemId, ...entry }));
   if (cartItems.length === 0) throw new Error("membership_operation_empty");
 
   const stored = await loadStoredMerchantMemberships(supabase, siteId);
@@ -755,6 +790,26 @@ export async function applyMerchantMembershipRedemptionCart(input: {
 
   const redemptionRows = cartItems.map((cartItem) => {
     const item = settings.redemptionItems.find((entry) => entry.enabled && entry.id === cartItem.itemId);
+    if (!item && cartItem.customName && cartItem.customPoints > 0) {
+      return {
+        item: {
+          id: cartItem.itemId,
+          categoryId: "",
+          code: cartItem.customCode,
+          name: cartItem.customName,
+          description: "",
+          enabled: true,
+          pointsCost: cartItem.customPoints,
+          referenceAmount: 0,
+          stock: 0,
+          sort: 0,
+        },
+        quantity: cartItem.quantity,
+        unitPoints: cartItem.customPoints,
+        subtotalPoints: cartItem.customPoints * cartItem.quantity,
+        custom: true,
+      };
+    }
     if (!item) throw new Error("membership_redemption_item_not_found");
     if (item.stock > 0 && cartItem.quantity > item.stock) throw new Error("membership_redemption_stock_insufficient");
     const unitPoints = getRedemptionPointCostForMember(item, currentMembership, settings);
@@ -763,6 +818,7 @@ export async function applyMerchantMembershipRedemptionCart(input: {
       quantity: cartItem.quantity,
       unitPoints,
       subtotalPoints: unitPoints * cartItem.quantity,
+      custom: false,
     };
   });
   const totalPoints = redemptionRows.reduce((sum, row) => sum + row.subtotalPoints, 0);
@@ -808,7 +864,7 @@ export async function applyMerchantMembershipRedemptionCart(input: {
 
   const stockDeltaByItemId = new Map<string, number>();
   redemptionRows.forEach((row) => {
-    if (row.item.stock > 0) {
+    if (!row.custom && row.item.stock > 0) {
       stockDeltaByItemId.set(row.item.id, (stockDeltaByItemId.get(row.item.id) ?? 0) + row.quantity);
     }
   });
