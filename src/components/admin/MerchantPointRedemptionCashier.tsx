@@ -682,6 +682,15 @@ export default function MerchantPointRedemptionCashier({
     };
   }, [languageMenuOpen]);
 
+  useEffect(() => {
+    if (!error && !notice) return;
+    const timer = window.setTimeout(() => {
+      setError("");
+      setNotice("");
+    }, 3000);
+    return () => window.clearTimeout(timer);
+  }, [error, notice]);
+
   function selectMember(membership: MerchantMembershipListItem) {
     setSelectedMemberId(membership.id);
     setMemberKeyword(
@@ -873,6 +882,19 @@ export default function MerchantPointRedemptionCashier({
     setHeldSales((current) => current.filter((item) => item.id !== sale.id));
     setHeldOpen(false);
     setNotice("已提单。");
+  }
+
+  function handleRetrieveHeldSale() {
+    if (heldSales.length === 0) {
+      setError("暂无挂单。");
+      setHeldOpen(false);
+      return;
+    }
+    if (heldSales.length === 1) {
+      restoreHeldSale(heldSales[0]);
+      return;
+    }
+    setHeldOpen((current) => !current);
   }
 
   async function submitCheckout() {
@@ -1180,10 +1202,22 @@ export default function MerchantPointRedemptionCashier({
         }
 
         .merchant-pos-cashier .pos-alert {
-          margin-bottom: 12px;
+          position: fixed;
+          left: 50%;
+          top: 50%;
+          z-index: 120;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          max-width: min(520px, calc(100vw - 48px));
+          min-height: 46px;
           border-radius: 8px;
-          padding: 10px 12px;
+          padding: 12px 18px;
           font-weight: 800;
+          text-align: center;
+          box-shadow: 0 24px 70px rgba(15, 23, 42, 0.24);
+          transform: translate(-50%, -50%);
+          animation: pos-toast-in 0.16s ease-out;
         }
 
         .merchant-pos-cashier .pos-alert.error {
@@ -1196,6 +1230,17 @@ export default function MerchantPointRedemptionCashier({
           border: 1px solid #a7f3d0;
           background: #ecfdf5;
           color: #047857;
+        }
+
+        @keyframes pos-toast-in {
+          from {
+            opacity: 0;
+            transform: translate(-50%, calc(-50% + 10px));
+          }
+          to {
+            opacity: 1;
+            transform: translate(-50%, -50%);
+          }
         }
 
         .merchant-pos-cashier .cashier-workbench {
@@ -1270,7 +1315,7 @@ export default function MerchantPointRedemptionCashier({
           display: flex;
           flex-wrap: nowrap;
           align-items: center;
-          justify-content: space-between;
+          justify-content: flex-end;
           gap: 10px;
           min-width: 0;
           width: 100%;
@@ -1278,7 +1323,8 @@ export default function MerchantPointRedemptionCashier({
 
         .merchant-pos-cashier .member-search {
           position: relative;
-          width: min(420px, 45vw);
+          flex: 0 1 360px;
+          width: min(360px, 34vw);
           gap: 8px;
         }
 
@@ -2288,8 +2334,11 @@ export default function MerchantPointRedemptionCashier({
         </div>
       </div>
 
-      {error ? <div className="pos-alert error">{error}</div> : null}
-      {notice ? <div className="pos-alert notice">{notice}</div> : null}
+      {error || notice ? (
+        <div className={`pos-alert ${error ? "error" : "notice"}`} role={error ? "alert" : "status"} aria-live="polite">
+          {error || notice}
+        </div>
+      ) : null}
 
       {view === "records" || view === "rechargeRecords" ? (
         <>
@@ -2486,9 +2535,6 @@ export default function MerchantPointRedemptionCashier({
                   }}
                   placeholder="会员手机号 / 卡号"
                 />
-                <button type="button" className="el-button el-button--default" onClick={lookupMember}>
-                  选择会员
-                </button>
                 {memberPickerOpen && filteredMembers.length ? (
                   <div className="member-suggestions">
                     {filteredMembers.map((membership) => (
@@ -2583,7 +2629,7 @@ export default function MerchantPointRedemptionCashier({
                 <button type="button" className="el-button el-button--default" onClick={holdCurrentSale}>
                   挂单
                 </button>
-                <button type="button" className="el-button el-button--default" onClick={() => setHeldOpen((open) => !open)}>
+                <button type="button" className="el-button el-button--default" onClick={handleRetrieveHeldSale}>
                   提单
                   {heldSales.length ? <span className="held-count">{heldSales.length}</span> : null}
                 </button>
