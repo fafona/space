@@ -715,6 +715,118 @@ export async function applyMerchantMembershipAccountOperation(input: {
   return toMerchantMembershipListItem(nextMembership);
 }
 
+export async function applyMerchantMembershipRedemptionCart(input: {
+  siteId: string;
+  membershipId: string;
+  items?: unknown;
+  note?: unknown;
+  operatorId?: unknown;
+}): Promise<MerchantMembershipListItem> {
+  const supabase = requireMembershipsStoreClient();
+  const siteId = trimText(input.siteId, 64);
+  const membershipId = trimText(input.membershipId, 160);
+  if (!siteId || !membershipId) throw new Error("membership_not_found");
+  const settings = await getMerchantMembershipSettings(siteId).catch(() => null);
+  if (!settings) throw new Error("membership_settings_unavailable");
+  const requestedItems = Array.isArray(input.items)
+    ? input.items
+        .map((entry) => {
+          const record = readRecord(entry);
+          if (!record) return null;
+          const itemId = trimText(record.redemptionItemId ?? record.itemId ?? record.id, 120);
+          const quantity = Math.max(1, normalizePositiveInteger(record.quantity) || 1);
+          return itemId ? { itemId, quantity } : null;
+        })
+        .filter((entry): entry is { itemId: string; quantity: number } => Boolean(entry))
+    : [];
+  const quantityByItemId = new Map<string, number>();
+  requestedItems.forEach((entry) => {
+    quantityByItemId.set(entry.itemId, (quantityByItemId.get(entry.itemId) ?? 0) + entry.quantity);
+  });
+  const cartItems = Array.from(quantityByItemId.entries()).map(([itemId, quantity]) => ({ itemId, quantity }));
+  if (cartItems.length === 0) throw new Error("membership_operation_empty");
+
+  const stored = await loadStoredMerchantMemberships(supabase, siteId);
+  const current = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
+  const index = current.findIndex((membership) => membership.id === membershipId);
+  if (index < 0) throw new Error("membership_not_found");
+  const currentMembership = current[index];
+  if (currentMembership.status !== "active") throw new Error("membership_not_active");
+
+  const redemptionRows = cartItems.map((cartItem) => {
+    const item = settings.redemptionItems.find((entry) => entry.enabled && entry.id === cartItem.itemId);
+    if (!item) throw new Error("membership_redemption_item_not_found");
+    if (item.stock > 0 && cartItem.quantity > item.stock) throw new Error("membership_redemption_stock_insufficient");
+    const unitPoints = getRedemptionPointCostForMember(item, currentMembership, settings);
+    return {
+      item,
+      quantity: cartItem.quantity,
+      unitPoints,
+      subtotalPoints: unitPoints * cartItem.quantity,
+    };
+  });
+  const totalPoints = redemptionRows.reduce((sum, row) => sum + row.subtotalPoints, 0);
+  if (totalPoints <= 0) throw new Error("membership_operation_empty");
+  const nextPointBalance = currentMembership.pointBalance - totalPoints;
+  if (nextPointBalance < 0) throw new Error("membership_balance_insufficient");
+
+  const now = new Date().toISOString();
+  const growthDelta = settings ? totalPoints * settings.growthRules.spendPointGrowth : 0;
+  const summary = redemptionRows.map((row) => `${row.item.name} x ${row.quantity}`).join(" / ");
+  let nextMembership: MerchantMembershipRecord = {
+    ...currentMembership,
+    pointBalance: nextPointBalance,
+    transactions: [
+      {
+        id: `MT${Date.parse(now).toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+        type: "redeem" as const,
+        at: now,
+        pointDelta: -totalPoints,
+        balanceDelta: 0,
+        growthDelta: normalizeGrowthValue(growthDelta),
+        note: trimText(input.note, 500) || `积分兑换：${summary}`,
+        operatorId: trimText(input.operatorId, 120),
+      },
+      ...currentMembership.transactions,
+    ].slice(0, 500),
+    updatedAt: now,
+  };
+  nextMembership = applyMembershipGrowthAndLevel({
+    membership: nextMembership,
+    settings,
+    growthDelta,
+    now,
+  });
+  const nextMemberships = [...current];
+  nextMemberships[index] = nextMembership;
+  const saved = await saveStoredMerchantMemberships(supabase, {
+    siteId,
+    memberships: nextMemberships,
+    updatedAt: now,
+  });
+  if (saved.error) throw new Error(saved.error);
+
+  const stockDeltaByItemId = new Map<string, number>();
+  redemptionRows.forEach((row) => {
+    if (row.item.stock > 0) {
+      stockDeltaByItemId.set(row.item.id, (stockDeltaByItemId.get(row.item.id) ?? 0) + row.quantity);
+    }
+  });
+  if (stockDeltaByItemId.size > 0) {
+    await updateMerchantMembershipSettings({
+      siteId,
+      settings: {
+        ...settings,
+        redemptionItems: settings.redemptionItems.map((item) => {
+          const delta = stockDeltaByItemId.get(item.id) ?? 0;
+          return delta > 0 ? { ...item, stock: Math.max(0, item.stock - delta) } : item;
+        }),
+      },
+    });
+  }
+  return toMerchantMembershipListItem(nextMembership);
+}
+
 export async function awardMerchantMembershipPointsForOrder(order: MerchantOrderRecord) {
   if (order.status !== "completed") return null;
   const siteId = trimText(order.siteId, 64);

@@ -16,6 +16,7 @@ import {
 import {
   applyMerchantMembershipAccountOperation,
   applyMerchantMembershipPointDeduction,
+  applyMerchantMembershipRedemptionCart,
   awardMerchantMembershipRulePoints,
   joinMerchantMembership,
   leaveMerchantMembership,
@@ -277,6 +278,7 @@ export async function PATCH(request: Request) {
       rechargePlanId?: unknown;
       redemptionItemId?: unknown;
       redemptionQuantity?: unknown;
+      redemptionItems?: unknown;
       orderAmount?: unknown;
       orderId?: unknown;
       requestedPoints?: unknown;
@@ -314,6 +316,20 @@ export async function PATCH(request: Request) {
         rechargePlanId: body?.rechargePlanId,
         redemptionItemId: body?.redemptionItemId,
         redemptionQuantity: body?.redemptionQuantity,
+      });
+      return NextResponse.json({ ok: true, membership });
+    }
+    if (trimText(body?.action, 80) === "member_redemption_checkout") {
+      const merchantSession = await resolveMerchantSessionFromRequest(request, { hintedMerchantId: siteId });
+      if (!merchantSession || merchantSession.merchantId !== siteId) {
+        return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+      }
+      const membership = await applyMerchantMembershipRedemptionCart({
+        siteId,
+        membershipId: trimText(body?.membershipId, 160),
+        items: body?.redemptionItems,
+        note: body?.note,
+        operatorId: merchantSession.merchantId,
       });
       return NextResponse.json({ ok: true, membership });
     }

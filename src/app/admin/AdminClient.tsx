@@ -347,6 +347,11 @@ const MerchantMemberManager = dynamic(() => import("@/components/admin/MerchantM
   loading: () => <DeferredAdminPanelLoading label="会员管理加载中..." />,
 });
 
+const MerchantPointRedemptionCashier = dynamic(() => import("@/components/admin/MerchantPointRedemptionCashier"), {
+  ssr: false,
+  loading: () => <DeferredAdminPanelLoading label="积分兑换加载中..." />,
+});
+
 const MerchantMembershipSettingsPanel = dynamic(() => import("@/components/admin/MerchantMembershipSettingsPanel"), {
   ssr: false,
   loading: () => <DeferredAdminPanelLoading label="会员配置加载中..." />,
@@ -1434,6 +1439,7 @@ type MerchantDesktopSection =
   | "profile"
   | "cards"
   | "coupons"
+  | "pointRedemption"
   | "booking"
   | "orders"
   | "analytics"
@@ -13708,6 +13714,16 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setMerchantDesktopSection("members");
   }
 
+  async function openMerchantPointRedemptionPanel() {
+    const resolvedSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
+    if (!resolvedSiteId) {
+      showTip("当前商户还没准备好会员资料，请稍后重试");
+      return;
+    }
+    setMerchantSiteIdOverride(resolvedSiteId);
+    setMerchantDesktopSection("pointRedemption");
+  }
+
   async function openMerchantBookingPanel() {
     const resolvedSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
     if (!resolvedSiteId) {
@@ -15879,11 +15895,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const shouldShowPublishActions = showPublishActions ?? !isPlatformEditor;
   const isDesktopMerchantWorkspace = desktopMerchantWorkspaceActive;
   const showDesktopMerchantSupportPanel = isDesktopMerchantWorkspace && merchantDesktopSection === "support";
-  const defaultMerchantDesktopSection: MerchantDesktopSection = canUseBookingBlock
-    ? "booking"
-    : canUseOrderManagement
-      ? "orders"
-      : "support";
+  const defaultMerchantDesktopSection: MerchantDesktopSection = "pointRedemption";
   useEffect(() => {
     if (checkingAuth || !isDesktopMerchantWorkspace || merchantEditorOnly) return;
     const explicitFaollaSection = typeof window !== "undefined" && isFaollaSectionSearch(window.location.search);
@@ -18981,6 +18993,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             <MerchantBusinessCardManager {...merchantBusinessCardManagerCommonProps} folderViewMode="page" />
           ) : merchantDesktopSection === "coupons" && merchantCouponManagerCommonProps ? (
             <MerchantCouponManager {...merchantCouponManagerCommonProps} />
+          ) : merchantDesktopSection === "pointRedemption" ? (
+            <MerchantPointRedemptionCashier
+              siteId={editingSiteId || merchantSiteIdOverride || ""}
+              siteName={effectiveMerchantDisplayName || merchantDisplayName}
+              className="min-h-[calc(100vh-14rem)]"
+            />
           ) : merchantDesktopSection === "members" ? (
             merchantMemberSettingsView === "list" ? (
               <MerchantMemberManager
@@ -19192,6 +19210,15 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               <div className="grid gap-3">
                 <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
                   <div className="grid gap-2">
+                    <button
+                      type="button"
+                      className={getMerchantDesktopMenuButtonClassName(merchantDesktopSection === "pointRedemption")}
+                      onClick={() => {
+                        void openMerchantPointRedemptionPanel();
+                      }}
+                    >
+                      <span>积分兑换</span>
+                    </button>
                     {canUseBookingBlock ? (
                       <button
                         type="button"
@@ -19396,7 +19423,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             <div className="border-t">
               <div className="w-full px-6 py-4">
                 <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
-                  {merchantDesktopSection === "booking" ? (
+                  {merchantDesktopSection === "pointRedemption" ? (
+                    <>
+                      <div className="text-base font-semibold text-slate-900">积分兑换</div>
+                      <div className="mt-1 text-sm text-slate-500">
+                        选择会员和兑换项目，按会员等级折扣扣减积分，并同步项目库存。
+                      </div>
+                    </>
+                  ) : merchantDesktopSection === "booking" ? (
                     <div className="grid gap-2">
                       <button
                         type="button"
