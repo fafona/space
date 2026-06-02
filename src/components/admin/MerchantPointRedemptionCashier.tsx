@@ -989,16 +989,6 @@ export default function MerchantPointRedemptionCashier({
           position: relative;
         }
 
-        .merchant-pos-cashier .language-action-button {
-          width: 44px;
-          min-width: 44px;
-          height: 40px;
-          min-height: 40px;
-          padding: 0;
-          justify-content: center;
-          overflow: visible;
-        }
-
         .merchant-pos-cashier .language-flag-icon {
           display: block;
           width: 32px;
@@ -1090,6 +1080,24 @@ export default function MerchantPointRedemptionCashier({
           border-color: #9ecfc4;
           background: var(--pos-primary-soft);
           color: var(--pos-primary-dark);
+        }
+
+        .merchant-pos-cashier .cashier-actions .el-button.language-action-button {
+          width: 44px;
+          min-width: 44px;
+          height: 40px;
+          min-height: 40px;
+          padding: 0;
+          justify-content: center;
+          overflow: visible;
+          box-shadow: var(--pos-shadow-soft);
+        }
+
+        .merchant-pos-cashier .cashier-actions .el-button.language-action-button .language-flag-icon {
+          width: 32px;
+          height: 22px;
+          max-width: none;
+          max-height: none;
         }
 
         .merchant-pos-cashier .el-button--primary,
