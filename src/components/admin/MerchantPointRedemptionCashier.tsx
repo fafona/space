@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   getMerchantCouponDiscountLabel,
   getMerchantCouponDisplayTitle,
@@ -18,7 +18,7 @@ type MerchantPointRedemptionCashierProps = {
   siteId: string;
   siteName?: string;
   className?: string;
-  view?: "cashier" | "records";
+  view?: "cashier" | "records" | "rechargeRecords";
 };
 
 type MembershipsPayload = {
@@ -320,8 +320,9 @@ export default function MerchantPointRedemptionCashier({
   const [rechargeDialogOpen, setRechargeDialogOpen] = useState(false);
   const [selectedRechargePlanId, setSelectedRechargePlanId] = useState("");
   const [quickRedeemDialogOpen, setQuickRedeemDialogOpen] = useState(false);
-  const [quickRedeemName, setQuickRedeemName] = useState("");
+  const [quickRedeemName, setQuickRedeemName] = useState("临时项目");
   const [quickRedeemPoints, setQuickRedeemPoints] = useState("");
+  const quickRedeemPointsInputRef = useRef<HTMLInputElement | null>(null);
   const [checkoutConfirmOpen, setCheckoutConfirmOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -476,23 +477,25 @@ export default function MerchantPointRedemptionCashier({
     totalPoints <= selectedInsight.pointBalance &&
     !saving;
 
-  const redemptionRecords = useMemo(() => {
+  const transactionRecords = useMemo(() => {
+    const transactionType = view === "rechargeRecords" ? "recharge" : "redeem";
     return memberships
       .flatMap((membership) =>
         membership.transactions
-          .filter((transaction) => transaction.type === "redeem")
+          .filter((transaction) => transaction.type === transactionType)
           .map((transaction) => ({
             id: `${membership.id}:${transaction.id}`,
             at: transaction.at,
             memberName: getMemberDisplayName(membership),
             memberNo: membership.memberNo,
             points: Math.abs(transaction.pointDelta),
+            balanceAmount: Math.abs(transaction.balanceDelta),
             note: transaction.note || "-",
           })),
       )
       .sort((left, right) => Date.parse(right.at) - Date.parse(left.at))
       .slice(0, 200);
-  }, [memberships]);
+  }, [memberships, view]);
 
   const loadData = useCallback(async () => {
     if (!/^\d{8}$/.test(normalizedSiteId)) {
@@ -571,6 +574,16 @@ export default function MerchantPointRedemptionCashier({
     }
   }, [activeMembers, selectedMemberId]);
 
+  useEffect(() => {
+    if (!quickRedeemDialogOpen) return;
+    setQuickRedeemName((current) => (current.trim() ? current : "临时项目"));
+    const timer = window.setTimeout(() => {
+      quickRedeemPointsInputRef.current?.focus();
+      quickRedeemPointsInputRef.current?.select();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [quickRedeemDialogOpen]);
+
   function selectMember(membership: MerchantMembershipListItem) {
     setSelectedMemberId(membership.id);
     setMemberKeyword(
@@ -642,10 +655,6 @@ export default function MerchantPointRedemptionCashier({
     });
   }
 
-  function removeCartItem(index: number) {
-    setCart((current) => current.filter((_, lineIndex) => lineIndex !== index));
-  }
-
   function openRechargeDialog() {
     setError("");
     setNotice("");
@@ -705,7 +714,7 @@ export default function MerchantPointRedemptionCashier({
 
   function submitQuickRedeemItem() {
     const points = parsePositiveInteger(quickRedeemPoints);
-    const name = trimText(quickRedeemName, 120) || "快捷兑换";
+    const name = trimText(quickRedeemName, 120) || "临时项目";
     if (points <= 0) {
       setError("请填写快捷兑换积分。");
       return;
@@ -720,11 +729,11 @@ export default function MerchantPointRedemptionCashier({
         quantity: 1,
       },
     ]);
-    setQuickRedeemName("");
+    setQuickRedeemName("临时项目");
     setQuickRedeemPoints("");
     setQuickRedeemDialogOpen(false);
     setError("");
-    setNotice("快捷兑换已加入购物车。");
+    setNotice("快捷兑换已加入兑换。");
   }
 
   function clearSale() {
@@ -1203,23 +1212,6 @@ export default function MerchantPointRedemptionCashier({
           min-height: 56px;
           padding: 7px 14px;
           background: var(--pos-surface);
-          transition: transform 0.16s ease;
-        }
-
-        .merchant-pos-cashier .cart-row-shell:hover .cart-row {
-          transform: translateX(-84px);
-        }
-
-        .merchant-pos-cashier .cart-delete-action {
-          position: absolute;
-          top: 0;
-          right: 0;
-          bottom: 0;
-          width: 84px;
-          border: 0;
-          background: var(--pos-danger);
-          color: #fff;
-          font-weight: 900;
         }
 
         .merchant-pos-cashier .cart-code,
@@ -1865,7 +1857,7 @@ export default function MerchantPointRedemptionCashier({
       <div className="cashier-header">
         <div>
           <div className="cashier-title">
-            <h2>{view === "records" ? "兑换记录" : "积分兑换"}</h2>
+            <h2>{view === "records" ? "兑换记录" : view === "rechargeRecords" ? "充值记录" : "积分兑换"}</h2>
           </div>
           <div className="cashier-refresh-line">
             <span>{formatDateYmd()}</span>
@@ -1888,28 +1880,32 @@ export default function MerchantPointRedemptionCashier({
       {error ? <div className="pos-alert error">{error}</div> : null}
       {notice ? <div className="pos-alert notice">{notice}</div> : null}
 
-      {view === "records" ? (
+      {view === "records" || view === "rechargeRecords" ? (
         <section className="panel records-panel">
           <div className="records-table">
             <div className="records-row header">
               <span>时间</span>
               <span>会员</span>
-              <span>积分</span>
+              <span>{view === "rechargeRecords" ? "余额/积分" : "积分"}</span>
               <span>记录</span>
             </div>
-            {redemptionRecords.length ? (
-              redemptionRecords.map((record) => (
+            {transactionRecords.length ? (
+              transactionRecords.map((record) => (
                 <div key={record.id} className="records-row">
                   <span>{record.at ? formatDateTime(new Date(record.at)) : "-"}</span>
                   <strong>
                     {record.memberName} / {record.memberNo}
                   </strong>
-                  <span>{formatPoints(record.points)}</span>
+                  <span>
+                    {view === "rechargeRecords"
+                      ? `€${formatMoney(record.balanceAmount)} / ${formatPoints(record.points)}`
+                      : formatPoints(record.points)}
+                  </span>
                   <span>{record.note}</span>
                 </div>
               ))
             ) : (
-              <div className="catalog-empty">暂无兑换记录。</div>
+              <div className="catalog-empty">暂无{view === "rechargeRecords" ? "充值" : "兑换"}记录。</div>
             )}
           </div>
         </section>
@@ -2020,9 +2016,6 @@ export default function MerchantPointRedemptionCashier({
                         </div>
                         <span>{formatPoints(row.subtotalPoints)}</span>
                       </div>
-                      <button type="button" className="cart-delete-action" onClick={() => removeCartItem(index)}>
-                        删除
-                      </button>
                     </div>
                   ))
                 ) : (
@@ -2273,18 +2266,31 @@ export default function MerchantPointRedemptionCashier({
                     value={quickRedeemName}
                     onChange={(event) => setQuickRedeemName(event.target.value)}
                     className="quick-input"
-                    placeholder="快捷兑换"
+                    placeholder="临时项目"
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+                        event.preventDefault();
+                        submitQuickRedeemItem();
+                      }
+                    }}
                   />
                 </label>
                 <label className="quick-field">
                   积分
                   <input
+                    ref={quickRedeemPointsInputRef}
                     type="number"
                     min={1}
                     value={quickRedeemPoints}
                     onChange={(event) => setQuickRedeemPoints(event.target.value)}
                     className="quick-input"
                     placeholder="填写本次兑换所需积分"
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+                        event.preventDefault();
+                        submitQuickRedeemItem();
+                      }
+                    }}
                   />
                 </label>
               </div>
@@ -2293,7 +2299,7 @@ export default function MerchantPointRedemptionCashier({
                   取消
                 </button>
                 <button type="button" className="el-button el-button--primary" onClick={submitQuickRedeemItem}>
-                  加入购物车
+                  加入兑换
                 </button>
               </div>
             </div>

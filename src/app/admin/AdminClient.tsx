@@ -1441,6 +1441,7 @@ type MerchantDesktopSection =
   | "coupons"
   | "pointRedemption"
   | "redemptionRecords"
+  | "rechargeRecords"
   | "booking"
   | "orders"
   | "analytics"
@@ -13732,6 +13733,16 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setMerchantDesktopSection("redemptionRecords");
   }
 
+  async function openMerchantRechargeRecordsPanel() {
+    const resolvedSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
+    if (!resolvedSiteId) {
+      showTip("当前商户还没准备好会员资料，请稍后重试");
+      return;
+    }
+    setMerchantSiteIdOverride(resolvedSiteId);
+    setMerchantDesktopSection("rechargeRecords");
+  }
+
   async function openMerchantBookingPanel() {
     const resolvedSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
     if (!resolvedSiteId) {
@@ -19014,6 +19025,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               className="min-h-[calc(100vh-14rem)]"
               view="records"
             />
+          ) : merchantDesktopSection === "rechargeRecords" ? (
+            <MerchantPointRedemptionCashier
+              siteId={editingSiteId || merchantSiteIdOverride || ""}
+              siteName={effectiveMerchantDisplayName || merchantDisplayName}
+              className="min-h-[calc(100vh-14rem)]"
+              view="rechargeRecords"
+            />
           ) : merchantDesktopSection === "members" ? (
             merchantMemberSettingsView === "list" ? (
               <MerchantMemberManager
@@ -19228,7 +19246,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     <button
                       type="button"
                       className={getMerchantDesktopMenuButtonClassName(
-                        merchantDesktopSection === "pointRedemption" || merchantDesktopSection === "redemptionRecords",
+                        merchantDesktopSection === "pointRedemption" ||
+                          merchantDesktopSection === "redemptionRecords" ||
+                          merchantDesktopSection === "rechargeRecords",
                       )}
                       onClick={() => {
                         void openMerchantPointRedemptionPanel();
@@ -19433,19 +19453,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             <div className="border-t">
               <div className="w-full px-6 py-4">
                 <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
-                  {merchantDesktopSection === "pointRedemption" || merchantDesktopSection === "redemptionRecords" ? (
+                  {merchantDesktopSection === "pointRedemption" ||
+                  merchantDesktopSection === "redemptionRecords" ||
+                  merchantDesktopSection === "rechargeRecords" ? (
                     <div className="grid gap-2">
-                      <button
-                        type="button"
-                        className={`flex min-h-10 w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-sm font-semibold transition ${
-                          merchantDesktopSection === "pointRedemption"
-                            ? "border-slate-950 bg-slate-950 text-white"
-                            : "border-slate-200 bg-white text-slate-800 hover:border-slate-300 hover:bg-slate-50"
-                        }`}
-                        onClick={() => void openMerchantPointRedemptionPanel()}
-                      >
-                        积分兑换
-                      </button>
                       <button
                         type="button"
                         className={`flex min-h-10 w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-sm font-semibold transition ${
@@ -19456,6 +19467,17 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         onClick={() => void openMerchantRedemptionRecordsPanel()}
                       >
                         兑换记录
+                      </button>
+                      <button
+                        type="button"
+                        className={`flex min-h-10 w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-sm font-semibold transition ${
+                          merchantDesktopSection === "rechargeRecords"
+                            ? "border-slate-950 bg-slate-950 text-white"
+                            : "border-slate-200 bg-white text-slate-800 hover:border-slate-300 hover:bg-slate-50"
+                        }`}
+                        onClick={() => void openMerchantRechargeRecordsPanel()}
+                      >
+                        充值记录
                       </button>
                     </div>
                   ) : merchantDesktopSection === "booking" ? (
