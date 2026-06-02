@@ -2,10 +2,11 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
-  MERCHANT_MEMBER_HOLIDAY_OPTIONS,
+  buildMerchantMemberHolidayPresets,
   createEmptyMerchantMembershipSettings,
   createMerchantMemberSettingsId,
   normalizeMerchantMembershipSettings,
+  type MerchantMemberHolidayPointRule,
   type MerchantMemberRedemptionCategory,
   type MerchantMemberRedemptionItem,
   type MerchantMemberSettingsView,
@@ -188,11 +189,15 @@ export default function MerchantMembershipSettingsPanel({
     mode: "create" | "edit";
     draft: MerchantMemberRedemptionItem;
   } | null>(null);
+  const currentYear = new Date().getFullYear();
+  const [holidayPresetYear, setHolidayPresetYear] = useState(currentYear);
+  const [holidayDraft, setHolidayDraft] = useState({ date: "", name: "" });
 
   const activeSettings = useMemo(
     () => normalizeMerchantMembershipSettings(normalizedSiteId, settings),
     [normalizedSiteId, settings],
   );
+  const holidayPresets = useMemo(() => buildMerchantMemberHolidayPresets(holidayPresetYear), [holidayPresetYear]);
 
   function patchSettings(recipe: (current: MerchantMembershipSettings) => MerchantMembershipSettings) {
     setSettings((current) => recipe(current));
@@ -243,6 +248,7 @@ export default function MerchantMembershipSettingsPanel({
     setNotice("");
     try {
       const normalized = normalizeMerchantMembershipSettings(normalizedSiteId, activeSettings);
+      normalized.pointsRules.holidayNames = [];
       const response = await fetch("/api/membership-settings", {
         method: "PUT",
         cache: "no-store",
@@ -1171,6 +1177,64 @@ export default function MerchantMembershipSettingsPanel({
     </div>
   );
 
+  function normalizeHolidayDraftRule(input: { date: string; name: string }): MerchantMemberHolidayPointRule | null {
+    const date = trimText(input.date, 32);
+    const name = trimText(input.name, 120);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !name) return null;
+    return {
+      id: createMerchantMemberSettingsId("holiday"),
+      date,
+      name,
+      enabled: true,
+      sort: activeSettings.pointsRules.holidayRules.length,
+    };
+  }
+
+  function addHolidayRule(input: { date: string; name: string }) {
+    const rule = normalizeHolidayDraftRule(input);
+    if (!rule) {
+      setError("请选择日期并填写节日名称。");
+      return;
+    }
+    patchSettings((current) => {
+      const currentRules = current.pointsRules.holidayRules ?? [];
+      const exists = currentRules.some((item) => item.date === rule.date && item.name.trim() === rule.name);
+      return {
+        ...current,
+        pointsRules: {
+          ...current.pointsRules,
+          holidayRules: exists ? currentRules : [...currentRules, rule],
+        },
+      };
+    });
+    setHolidayDraft({ date: "", name: "" });
+    setError("");
+  }
+
+  function patchHolidayRule(ruleId: string, patch: Partial<MerchantMemberHolidayPointRule>) {
+    patchSettings((current) => ({
+      ...current,
+      pointsRules: {
+        ...current.pointsRules,
+        holidayRules: (current.pointsRules.holidayRules ?? []).map((rule) =>
+          rule.id === ruleId ? { ...rule, ...patch } : rule,
+        ),
+      },
+    }));
+  }
+
+  function deleteHolidayRule(ruleId: string) {
+    patchSettings((current) => ({
+      ...current,
+      pointsRules: {
+        ...current.pointsRules,
+        holidayRules: (current.pointsRules.holidayRules ?? [])
+          .filter((rule) => rule.id !== ruleId)
+          .map((rule, index) => ({ ...rule, sort: index })),
+      },
+    }));
+  }
+
   const renderPointsRules = () => (
     <SectionCard title="积分规则">
       <div className="space-y-4">
@@ -1239,43 +1303,109 @@ export default function MerchantMembershipSettingsPanel({
         <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3">
           <div className="grid gap-3 lg:grid-cols-[1fr_180px]">
             <div>
-              <div className="text-sm font-semibold text-slate-800">指定节日积分倍数</div>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {MERCHANT_MEMBER_HOLIDAY_OPTIONS.map((holiday) => {
-                  const checked = activeSettings.pointsRules.holidayNames.includes(holiday);
-                  return (
-                    <label
-                      key={holiday}
-                      className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${
-                        checked
-                          ? "border-slate-950 bg-white text-slate-950"
-                          : "border-slate-200 bg-white text-slate-600"
-                      }`}
+              <div className="text-sm font-semibold text-slate-800">指定日期积分倍数</div>
+              <div className="mt-2 grid gap-2 md:grid-cols-[170px_1fr_auto]">
+                <input
+                  type="date"
+                  className={inputClassName()}
+                  value={holidayDraft.date}
+                  onChange={(event) => setHolidayDraft((current) => ({ ...current, date: event.target.value }))}
+                />
+                <input
+                  className={inputClassName()}
+                  value={holidayDraft.name}
+                  placeholder="节日名称，可自定义"
+                  onChange={(event) => setHolidayDraft((current) => ({ ...current, name: event.target.value }))}
+                />
+                <button
+                  type="button"
+                  className="h-10 rounded-xl border border-slate-900 bg-white px-4 text-sm font-semibold text-slate-950 hover:bg-slate-50"
+                  onClick={() => addHolidayRule(holidayDraft)}
+                >
+                  添加
+                </button>
+              </div>
+              <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-xs font-semibold text-slate-500">内置节日标注</div>
+                  <div className="flex items-center gap-2 text-xs text-slate-500">
+                    <button
+                      type="button"
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-1 font-semibold text-slate-700 hover:bg-slate-50"
+                      onClick={() => setHolidayPresetYear((year) => year - 1)}
                     >
+                      上一年
+                    </button>
+                    <span className="font-semibold text-slate-900">{holidayPresetYear}</span>
+                    <button
+                      type="button"
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-1 font-semibold text-slate-700 hover:bg-slate-50"
+                      onClick={() => setHolidayPresetYear((year) => year + 1)}
+                    >
+                      下一年
+                    </button>
+                  </div>
+                </div>
+                <div className="mt-2 flex max-h-36 flex-wrap gap-2 overflow-y-auto">
+                  {holidayPresets.map((preset) => {
+                    const selected = activeSettings.pointsRules.holidayRules.some(
+                      (rule) => rule.enabled && rule.date === preset.date && rule.name === preset.name,
+                    );
+                    return (
+                      <button
+                        type="button"
+                        key={`${preset.date}:${preset.name}`}
+                        className={`rounded-xl border px-3 py-2 text-left text-xs font-semibold ${
+                          selected
+                            ? "border-slate-950 bg-slate-950 text-white"
+                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                        }`}
+                        onClick={() => addHolidayRule(preset)}
+                      >
+                        <span className="font-mono">{preset.date}</span>
+                        <span className="ml-2">{preset.name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="mt-3 space-y-2">
+                {activeSettings.pointsRules.holidayRules.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-slate-300 bg-white px-3 py-4 text-center text-sm text-slate-500">
+                    还没有指定日期，订单完成日命中这里的日期时才使用节日倍数。
+                  </div>
+                ) : (
+                  activeSettings.pointsRules.holidayRules.map((rule) => (
+                    <div key={rule.id} className="grid gap-2 rounded-xl border border-slate-200 bg-white p-2 md:grid-cols-[170px_1fr_auto_auto]">
                       <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={(event) =>
-                          patchSettings((current) => {
-                            const currentNames = Array.isArray(current.pointsRules.holidayNames)
-                              ? current.pointsRules.holidayNames
-                              : [];
-                            return {
-                              ...current,
-                              pointsRules: {
-                                ...current.pointsRules,
-                                holidayNames: event.target.checked
-                                  ? Array.from(new Set([...currentNames, holiday]))
-                                  : currentNames.filter((item) => item !== holiday),
-                              },
-                            };
-                          })
-                        }
+                        type="date"
+                        className={inputClassName()}
+                        value={rule.date}
+                        onChange={(event) => patchHolidayRule(rule.id, { date: event.target.value })}
                       />
-                      {holiday}
-                    </label>
-                  );
-                })}
+                      <input
+                        className={inputClassName()}
+                        value={rule.name}
+                        onChange={(event) => patchHolidayRule(rule.id, { name: event.target.value })}
+                      />
+                      <label className="flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={rule.enabled}
+                          onChange={(event) => patchHolidayRule(rule.id, { enabled: event.target.checked })}
+                        />
+                        启用
+                      </label>
+                      <button
+                        type="button"
+                        className="h-10 rounded-xl border border-rose-200 bg-white px-3 text-sm font-semibold text-rose-600 hover:bg-rose-50"
+                        onClick={() => deleteHolidayRule(rule.id)}
+                      >
+                        删除
+                      </button>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
             <Field label="倍数">

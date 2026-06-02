@@ -9,17 +9,36 @@ export type MerchantMemberSettingsView =
 export const MERCHANT_MEMBER_HOLIDAY_OPTIONS = [
   "元旦",
   "春节",
+  "元宵节",
   "情人节",
   "妇女节",
+  "清明节",
+  "复活节",
   "劳动节",
+  "儿童节",
   "端午节",
+  "母亲节",
+  "父亲节",
   "七夕",
+  "中元节",
   "中秋节",
   "国庆节",
+  "重阳节",
+  "腊八节",
+  "感恩节",
   "万圣节",
   "黑五",
+  "平安夜",
   "圣诞节",
 ] as const;
+
+export type MerchantMemberHolidayPointRule = {
+  id: string;
+  date: string;
+  name: string;
+  enabled: boolean;
+  sort: number;
+};
 
 export type MerchantMemberRechargePlan = {
   id: string;
@@ -94,6 +113,7 @@ export type MerchantMemberPointsRules = {
   birthdayPoints: number;
   invitationPoints: number;
   reviewPoints: number;
+  holidayRules: MerchantMemberHolidayPointRule[];
   holidayNames: string[];
   holidayMultiplier: number;
   deductionAmountPerPoint: number;
@@ -114,6 +134,112 @@ export type MerchantMembershipSettings = {
   pointsRules: MerchantMemberPointsRules;
   updatedAt: string | null;
 };
+
+export type MerchantMemberHolidayPreset = {
+  date: string;
+  name: string;
+};
+
+function formatDateYmd(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function getNthWeekdayOfMonth(year: number, monthIndex: number, weekday: number, nth: number) {
+  const date = new Date(year, monthIndex, 1);
+  const offset = (weekday - date.getDay() + 7) % 7;
+  date.setDate(1 + offset + (nth - 1) * 7);
+  return date;
+}
+
+function getChineseMonthDayKey(date: Date) {
+  try {
+    const parts = new Intl.DateTimeFormat("zh-u-ca-chinese", { month: "long", day: "numeric" }).formatToParts(date);
+    const month = parts.find((part) => part.type === "month")?.value ?? "";
+    const day = parts.find((part) => part.type === "day")?.value ?? "";
+    return month && day ? `${month}-${day}` : "";
+  } catch {
+    return "";
+  }
+}
+
+function getQingmingDate(year: number) {
+  const shortYear = year % 100;
+  const day = Math.floor(shortYear * 0.2422 + 4.81) - Math.floor(shortYear / 4);
+  return new Date(year, 3, Math.max(4, Math.min(6, day)));
+}
+
+function getEasterDate(year: number) {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(year, month - 1, day);
+}
+
+export function getMerchantMemberHolidayNamesForDate(date: Date) {
+  if (!Number.isFinite(date.getTime())) return [];
+  const year = date.getFullYear();
+  const monthDay = `${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  const holidays: string[] = [];
+  const fixedHolidayMap: Record<string, string[]> = {
+    "01-01": ["元旦"],
+    "02-14": ["情人节"],
+    "03-08": ["妇女节"],
+    "05-01": ["劳动节"],
+    "06-01": ["儿童节"],
+    "10-01": ["国庆节"],
+    "10-31": ["万圣节"],
+    "12-24": ["平安夜"],
+    "12-25": ["圣诞节"],
+  };
+  fixedHolidayMap[monthDay]?.forEach((name) => holidays.push(name));
+  if (formatDateYmd(getQingmingDate(year)) === formatDateYmd(date)) holidays.push("清明节");
+  if (formatDateYmd(getNthWeekdayOfMonth(year, 4, 0, 2)) === formatDateYmd(date)) holidays.push("母亲节");
+  if (formatDateYmd(getNthWeekdayOfMonth(year, 5, 0, 3)) === formatDateYmd(date)) holidays.push("父亲节");
+  const thanksgiving = getNthWeekdayOfMonth(year, 10, 4, 4);
+  if (formatDateYmd(thanksgiving) === formatDateYmd(date)) holidays.push("感恩节");
+  const blackFriday = new Date(thanksgiving);
+  blackFriday.setDate(thanksgiving.getDate() + 1);
+  if (formatDateYmd(blackFriday) === formatDateYmd(date)) holidays.push("黑五");
+  const easter = getEasterDate(year);
+  if (formatDateYmd(easter) === formatDateYmd(date)) holidays.push("复活节");
+
+  const lunarHolidayMap: Record<string, string> = {
+    "正月-1": "春节",
+    "正月-15": "元宵节",
+    "五月-5": "端午节",
+    "七月-7": "七夕",
+    "七月-15": "中元节",
+    "八月-15": "中秋节",
+    "九月-9": "重阳节",
+    "腊月-8": "腊八节",
+  };
+  const lunarHoliday = lunarHolidayMap[getChineseMonthDayKey(date)];
+  if (lunarHoliday) holidays.push(lunarHoliday);
+  return Array.from(new Set(holidays));
+}
+
+export function buildMerchantMemberHolidayPresets(year = new Date().getFullYear()): MerchantMemberHolidayPreset[] {
+  const start = new Date(year, 0, 1);
+  const end = new Date(year, 11, 31);
+  const presets: MerchantMemberHolidayPreset[] = [];
+  for (const cursor = new Date(start); cursor <= end; cursor.setDate(cursor.getDate() + 1)) {
+    getMerchantMemberHolidayNamesForDate(cursor).forEach((name) => {
+      presets.push({ date: formatDateYmd(cursor), name });
+    });
+  }
+  return presets.sort((left, right) => left.date.localeCompare(right.date) || left.name.localeCompare(right.name));
+}
 
 export function calculateMerchantMemberPointDeduction(input: {
   orderAmount: number;
@@ -148,6 +274,21 @@ export function calculateMerchantMemberPointDeduction(input: {
     maxPoints,
     maxAmount: Number((maxPoints * amountPerPoint).toFixed(2)),
   };
+}
+
+export function parseMerchantMemberPointDiscountRate(value: unknown) {
+  const text = trimText(value, 32).replace(/\s+/g, "");
+  if (!text) return 1;
+  const numericMatch = text.match(/\d+(?:\.\d+)?/);
+  if (!numericMatch) return 1;
+  const numberValue = Number.parseFloat(numericMatch[0]);
+  if (!Number.isFinite(numberValue) || numberValue <= 0) return 1;
+  if (text.includes("折")) return Math.min(1, Math.max(0.01, numberValue / 10));
+  if (text.includes("%") || text.includes("％")) return Math.min(1, Math.max(0.01, numberValue / 100));
+  if (numberValue <= 1) return Math.min(1, Math.max(0.01, numberValue));
+  if (numberValue <= 10) return Math.min(1, Math.max(0.01, numberValue / 10));
+  if (numberValue <= 100) return Math.min(1, Math.max(0.01, numberValue / 100));
+  return 1;
 }
 
 function trimText(value: unknown, maxLength = 4096) {
@@ -224,6 +365,7 @@ export function createEmptyMerchantMembershipSettings(siteId: string): MerchantM
       birthdayPoints: 0,
       invitationPoints: 0,
       reviewPoints: 0,
+      holidayRules: [],
       holidayNames: [],
       holidayMultiplier: 1,
       deductionAmountPerPoint: 0,
@@ -356,6 +498,49 @@ function normalizeGrowthRules(value: unknown): MerchantMemberGrowthRules {
   };
 }
 
+function normalizeDateText(value: unknown) {
+  const raw = trimText(value, 32);
+  if (!raw) return "";
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return "";
+  const date = new Date(`${raw}T00:00:00`);
+  if (!Number.isFinite(date.getTime())) return "";
+  const [year, month, day] = match.slice(1);
+  if (
+    date.getFullYear() !== Number(year) ||
+    date.getMonth() + 1 !== Number(month) ||
+    date.getDate() !== Number(day)
+  ) {
+    return "";
+  }
+  return raw;
+}
+
+function normalizeHolidayRules(value: unknown): MerchantMemberHolidayPointRule[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  return value
+    .map((item, index) => {
+      const record = readRecord(item);
+      if (!record) return null;
+      const date = normalizeDateText(record.date);
+      const name = trimText(record.name ?? record.title, 120);
+      if (!date || !name) return null;
+      const key = `${date}:${name.toLowerCase()}`;
+      if (seen.has(key)) return null;
+      seen.add(key);
+      return {
+        id: normalizeId(record.id, "holiday", index),
+        date,
+        name,
+        enabled: normalizeBoolean(record.enabled, true),
+        sort: normalizeSort(record.sort, index),
+      };
+    })
+    .filter((item): item is MerchantMemberHolidayPointRule => Boolean(item))
+    .sort((left, right) => left.date.localeCompare(right.date) || left.sort - right.sort);
+}
+
 function normalizePointsRules(value: unknown): MerchantMemberPointsRules {
   const record = readRecord(value) ?? {};
   const pointsValidDays = normalizeInteger(record.pointsValidDays);
@@ -369,6 +554,7 @@ function normalizePointsRules(value: unknown): MerchantMemberPointsRules {
     birthdayPoints: normalizeInteger(record.birthdayPoints),
     invitationPoints: normalizeInteger(record.invitationPoints),
     reviewPoints: normalizeInteger(record.reviewPoints),
+    holidayRules: normalizeHolidayRules(record.holidayRules),
     holidayNames: normalizeStringList(record.holidayNames),
     holidayMultiplier: normalizeMoney(record.holidayMultiplier, 1),
     deductionAmountPerPoint: normalizeMoney(record.deductionAmountPerPoint),

@@ -9,10 +9,12 @@ import {
   type MerchantMembershipListItem,
 } from "@/lib/merchantMemberships";
 import type {
+  MerchantMemberLevel,
   MerchantMemberRechargePlan,
   MerchantMemberRedemptionItem,
   MerchantMembershipSettings,
 } from "@/lib/merchantMembershipSettings";
+import { parseMerchantMemberPointDiscountRate } from "@/lib/merchantMembershipSettings";
 
 type MerchantMemberManagerProps = {
   siteId: string;
@@ -115,6 +117,7 @@ function formatAccountTransactionChange(transaction: MerchantMemberAccountTransa
   const parts = [];
   if (transaction.pointDelta !== 0) parts.push(`积分 ${formatSignedNumber(transaction.pointDelta)}`);
   if (transaction.balanceDelta !== 0) parts.push(`余额 ${formatSignedMoney(transaction.balanceDelta)}`);
+  if (transaction.growthDelta !== 0) parts.push(`成长值 ${formatSignedMoney(transaction.growthDelta)}`);
   return parts.join(" / ") || "-";
 }
 
@@ -137,6 +140,36 @@ function genderLabel(value: string | null | undefined) {
 
 function joinLocation(...parts: Array<string | null | undefined>) {
   return parts.map((part) => trimText(part, 120)).filter(Boolean).join(" / ") || "-";
+}
+
+function getEnabledLevels(settings: MerchantMembershipSettings | null) {
+  return (settings?.levels ?? [])
+    .filter((level) => level.enabled && trimText(level.name, 120))
+    .sort((left, right) => left.requiredGrowthValue - right.requiredGrowthValue || left.sort - right.sort);
+}
+
+function resolveMembershipLevel(
+  settings: MerchantMembershipSettings | null,
+  membership: Pick<MerchantMembershipListItem, "growthValue" | "levelId"> | null,
+): MerchantMemberLevel | null {
+  if (!membership) return null;
+  const levels = getEnabledLevels(settings);
+  return (
+    levels.find((level) => level.id === membership.levelId) ??
+    levels.reduce<MerchantMemberLevel | null>((matched, level) => {
+      return membership.growthValue >= level.requiredGrowthValue ? level : matched;
+    }, null)
+  );
+}
+
+function getRedemptionPointCostForMember(
+  item: MerchantMemberRedemptionItem,
+  membership: MerchantMembershipListItem | null,
+  settings: MerchantMembershipSettings | null,
+) {
+  const level = resolveMembershipLevel(settings, membership);
+  const rate = parseMerchantMemberPointDiscountRate(level?.benefit.pointDiscount);
+  return Math.max(0, Math.ceil(item.pointsCost * rate));
 }
 
 function formatBirthday(membership: MerchantMembershipListItem) {
@@ -238,6 +271,10 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     return memberships.find((membership) => membership.id === selectedMembershipId) ?? null;
   }, [memberships, selectedMembershipId]);
   const selectedInsight = selectedMembership?.insight ?? EMPTY_MEMBER_INSIGHT;
+  const selectedMembershipLevel = useMemo(
+    () => resolveMembershipLevel(memberSettings, selectedMembership),
+    [memberSettings, selectedMembership],
+  );
   const operationMembership = useMemo(() => {
     return operationDialog ? memberships.find((membership) => membership.id === operationDialog.membershipId) ?? null : null;
   }, [memberships, operationDialog]);
@@ -257,6 +294,13 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
   const selectedRedemptionItem = useMemo(
     () => enabledRedemptionItems.find((item) => item.id === operationRedemptionItemId) ?? null,
     [enabledRedemptionItems, operationRedemptionItemId],
+  );
+  const selectedRedemptionUnitPoints = useMemo(
+    () =>
+      selectedRedemptionItem
+        ? getRedemptionPointCostForMember(selectedRedemptionItem, operationMembership, memberSettings)
+        : 0,
+    [memberSettings, operationMembership, selectedRedemptionItem],
   );
 
   const loadMemberships = useCallback(async () => {
@@ -403,7 +447,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     setOperationRedemptionQuantity("1");
     setOperationError("");
     if (defaultRechargePlan) applyRechargePlanSelection(defaultRechargePlan);
-    if (defaultRedemptionItem) applyRedemptionItemSelection(defaultRedemptionItem, "1");
+    if (defaultRedemptionItem) applyRedemptionItemSelection(defaultRedemptionItem, "1", membership);
   }
 
   function closeMemberOperation() {
@@ -415,6 +459,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
   function readOperationErrorMessage(value: unknown, fallback: string) {
     const message = trimText(value);
     if (message === "membership_balance_insufficient") return "积分或余额不足，不能兑换。";
+    if (message === "membership_redemption_stock_insufficient") return "兑换项目库存不足。";
     if (message === "membership_operation_empty") return "请填写积分或金额。";
     if (message === "membership_not_active") return "该会员不是正常状态，不能操作。";
     return message || fallback;
@@ -428,12 +473,16 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     setOperationNote((current) => current || `充值方案：${plan.title}`);
   }
 
-  function applyRedemptionItemSelection(item: MerchantMemberRedemptionItem | null, quantityValue = operationRedemptionQuantity) {
+  function applyRedemptionItemSelection(
+    item: MerchantMemberRedemptionItem | null,
+    quantityValue = operationRedemptionQuantity,
+    membership: MerchantMembershipListItem | null = operationMembership,
+  ) {
     const quantity = Math.max(1, Number.parseInt(quantityValue, 10) || 1);
     setOperationRedemptionItemId(item?.id ?? "");
     setOperationRedemptionQuantity(String(quantity));
     if (!item) return;
-    setOperationPoints(String((item.pointsCost || 0) * quantity));
+    setOperationPoints(String(getRedemptionPointCostForMember(item, membership, memberSettings) * quantity));
     setOperationBalance("");
     setOperationNote((current) => current || `兑换项目：${item.name} x ${quantity}`);
   }
@@ -445,7 +494,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
       operationDialog.type === "recharge" && selectedRechargePlan
         ? selectedRechargePlan.giftPoints
         : operationDialog.type === "redeem" && selectedRedemptionItem
-          ? selectedRedemptionItem.pointsCost * redemptionQuantity
+          ? getRedemptionPointCostForMember(selectedRedemptionItem, operationMembership, memberSettings) * redemptionQuantity
           : Number.parseInt(operationPoints, 10) || 0;
     const balanceAmount =
       operationDialog.type === "recharge" && selectedRechargePlan
@@ -509,6 +558,9 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
       );
       setOperationDialog(null);
       setOperationError("");
+      if (operationDialog.type === "redeem" && selectedRedemptionItem?.stock) {
+        void loadMemberSettings();
+      }
     } catch (error) {
       setOperationError(error instanceof Error ? error.message : "会员账户操作失败，请稍后重试");
     } finally {
@@ -744,6 +796,8 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                           <ProfileField label="积分" value={selectedInsight.pointBalance} />
                           <ProfileField label="余额" value={formatMoney(selectedInsight.balanceAmount)} />
+                          <ProfileField label="等级" value={selectedMembershipLevel?.name || "-"} />
+                          <ProfileField label="成长值" value={formatMoney(selectedMembership.growthValue)} />
                           <ProfileField label="累计消费金额" value={formatMoney(selectedInsight.totalSpendAmount)} />
                           <ProfileField label="累计订单数" value={selectedInsight.totalOrderCount} />
                           <ProfileField label="消费频率" value={formatFrequency(selectedInsight.consumptionFrequencyPerMonth)} />
@@ -1053,8 +1107,12 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                     </div>
                     {selectedRedemptionItem ? (
                       <div className="mt-2 text-xs text-slate-500">
-                        库存 {selectedRedemptionItem.stock || 0}，本次扣减{" "}
-                        {selectedRedemptionItem.pointsCost * (Number.parseInt(operationRedemptionQuantity, 10) || 1)} 积分。
+                        库存 {selectedRedemptionItem.stock > 0 ? selectedRedemptionItem.stock : "不限"}，本次扣减{" "}
+                        {selectedRedemptionUnitPoints * (Number.parseInt(operationRedemptionQuantity, 10) || 1)} 积分
+                        {selectedRedemptionUnitPoints !== selectedRedemptionItem.pointsCost
+                          ? `（原 ${selectedRedemptionItem.pointsCost} 积分/件）`
+                          : ""}
+                        。
                       </div>
                     ) : null}
                   </div>

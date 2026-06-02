@@ -26,6 +26,7 @@ export type MerchantMemberAccountTransaction = {
   at: string;
   pointDelta: number;
   balanceDelta: number;
+  growthDelta: number;
   note: string;
   operatorId: string;
 };
@@ -117,6 +118,8 @@ export type MerchantMembershipRecord = {
   allergens: string[];
   pointBalance: number;
   balanceAmount: number;
+  growthValue: number;
+  levelId: string;
   transactions: MerchantMemberAccountTransaction[];
   status: MerchantMembershipStatus;
   joinedAt: string;
@@ -210,6 +213,7 @@ export function normalizeMerchantMemberAccountTransactions(value: unknown): Merc
         at,
         pointDelta: normalizeIntegerValue(record.pointDelta),
         balanceDelta: normalizeMoneyValue(record.balanceDelta),
+        growthDelta: normalizeMoneyValue(record.growthDelta),
         note: trimText(record.note, 500),
         operatorId: trimText(record.operatorId, 120),
       };
@@ -309,6 +313,8 @@ export function normalizeMerchantMembershipRecord(value: unknown): MerchantMembe
     allergens: normalizeMerchantMemberAllergens(record.allergens),
     pointBalance: Math.max(0, normalizeIntegerValue(record.pointBalance)),
     balanceAmount: Math.max(0, normalizeMoneyValue(record.balanceAmount)),
+    growthValue: Math.max(0, normalizeMoneyValue(record.growthValue)),
+    levelId: trimText(record.levelId, 120),
     transactions: normalizeMerchantMemberAccountTransactions(record.transactions),
     status,
     joinedAt,
@@ -422,6 +428,8 @@ export function toMerchantMembershipListItem(record: MerchantMembershipRecord): 
     allergens: [],
     pointBalance: 0,
     balanceAmount: 0,
+    growthValue: 0,
+    levelId: "",
     transactions: [],
     profileVisible: false,
   };

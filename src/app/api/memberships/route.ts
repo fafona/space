@@ -16,6 +16,7 @@ import {
 import {
   applyMerchantMembershipAccountOperation,
   applyMerchantMembershipPointDeduction,
+  awardMerchantMembershipRulePoints,
   joinMerchantMembership,
   leaveMerchantMembership,
   listMerchantMemberships,
@@ -279,6 +280,7 @@ export async function PATCH(request: Request) {
       orderAmount?: unknown;
       orderId?: unknown;
       requestedPoints?: unknown;
+      referenceId?: unknown;
     } | null;
     const siteId = trimText(body?.siteId, 64);
     if (!isMerchantNumericId(siteId)) {
@@ -312,6 +314,32 @@ export async function PATCH(request: Request) {
         rechargePlanId: body?.rechargePlanId,
         redemptionItemId: body?.redemptionItemId,
         redemptionQuantity: body?.redemptionQuantity,
+      });
+      return NextResponse.json({ ok: true, membership });
+    }
+    if (trimText(body?.action, 80) === "member_checkin") {
+      const session = await resolvePersonalAccountSessionFromRequest(request);
+      if (!session) {
+        return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+      }
+      const membership = await awardMerchantMembershipRulePoints({
+        siteId,
+        session,
+        action: "checkin",
+      });
+      return NextResponse.json({ ok: true, membership });
+    }
+    if (trimText(body?.action, 80) === "award_invitation_points" || trimText(body?.action, 80) === "award_review_points") {
+      const merchantSession = await resolveMerchantSessionFromRequest(request, { hintedMerchantId: siteId });
+      if (!merchantSession || merchantSession.merchantId !== siteId) {
+        return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+      }
+      const membership = await awardMerchantMembershipRulePoints({
+        siteId,
+        membershipId: trimText(body?.membershipId, 160),
+        action: trimText(body?.action, 80) === "award_invitation_points" ? "invitation" : "review",
+        referenceId: body?.referenceId,
+        operatorId: merchantSession.merchantId,
       });
       return NextResponse.json({ ok: true, membership });
     }
