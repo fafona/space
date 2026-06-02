@@ -51,6 +51,11 @@ function parseMoney(value: string) {
   return Number.isFinite(parsed) ? Math.max(0, Number(parsed.toFixed(2))) : 0;
 }
 
+function parseMultiplier(value: unknown, fallback = 1) {
+  const parsed = typeof value === "number" ? value : Number.parseFloat(String(value ?? ""));
+  return Number.isFinite(parsed) ? Math.max(0, Number(parsed.toFixed(2))) : fallback;
+}
+
 function parseInteger(value: string) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : 0;
@@ -75,6 +80,41 @@ function Field({
 
 function inputClassName(extra = "") {
   return `h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-900 ${extra}`;
+}
+
+function DatePickerInput({
+  value,
+  onChange,
+  label,
+  placeholder = "选择日期",
+  className = "",
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  label: string;
+  placeholder?: string;
+  className?: string;
+}) {
+  return (
+    <label
+      className={`relative flex h-10 w-full cursor-pointer items-center rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 transition focus-within:border-slate-900 ${className}`}
+    >
+      <span className={value ? "font-mono" : "text-slate-400"}>{value || placeholder}</span>
+      <span className="ml-auto text-xs font-semibold text-slate-500" aria-hidden="true">
+        日历
+      </span>
+      <input
+        type="date"
+        className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+        aria-label={label}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        onClick={(event) => {
+          (event.currentTarget as HTMLInputElement & { showPicker?: () => void }).showPicker?.();
+        }}
+      />
+    </label>
+  );
 }
 
 function textareaClassName(extra = "") {
@@ -191,7 +231,7 @@ export default function MerchantMembershipSettingsPanel({
   } | null>(null);
   const currentYear = new Date().getFullYear();
   const [holidayPresetYear, setHolidayPresetYear] = useState(currentYear);
-  const [holidayDraft, setHolidayDraft] = useState({ date: "", name: "" });
+  const [holidayDraft, setHolidayDraft] = useState({ date: "", name: "", multiplier: "1" });
 
   const activeSettings = useMemo(
     () => normalizeMerchantMembershipSettings(normalizedSiteId, settings),
@@ -1177,7 +1217,7 @@ export default function MerchantMembershipSettingsPanel({
     </div>
   );
 
-  function normalizeHolidayDraftRule(input: { date: string; name: string }): MerchantMemberHolidayPointRule | null {
+  function normalizeHolidayDraftRule(input: { date: string; name: string; multiplier?: unknown }): MerchantMemberHolidayPointRule | null {
     const date = trimText(input.date, 32);
     const name = trimText(input.name, 120);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !name) return null;
@@ -1185,12 +1225,13 @@ export default function MerchantMembershipSettingsPanel({
       id: createMerchantMemberSettingsId("holiday"),
       date,
       name,
+      multiplier: parseMultiplier(input.multiplier, activeSettings.pointsRules.holidayMultiplier ?? 1),
       enabled: true,
       sort: activeSettings.pointsRules.holidayRules.length,
     };
   }
 
-  function addHolidayRule(input: { date: string; name: string }) {
+  function addHolidayRule(input: { date: string; name: string; multiplier?: unknown }) {
     const rule = normalizeHolidayDraftRule(input);
     if (!rule) {
       setError("请选择日期并填写节日名称。");
@@ -1207,7 +1248,7 @@ export default function MerchantMembershipSettingsPanel({
         },
       };
     });
-    setHolidayDraft({ date: "", name: "" });
+    setHolidayDraft({ date: "", name: "", multiplier: String(activeSettings.pointsRules.holidayMultiplier ?? 1) });
     setError("");
   }
 
@@ -1301,21 +1342,29 @@ export default function MerchantMembershipSettingsPanel({
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3">
-          <div className="grid gap-3 lg:grid-cols-[1fr_180px]">
+          <div className="grid gap-3">
             <div>
               <div className="text-sm font-semibold text-slate-800">指定日期积分倍数</div>
-              <div className="mt-2 grid gap-2 md:grid-cols-[170px_1fr_auto]">
-                <input
-                  type="date"
-                  className={inputClassName()}
+              <div className="mt-2 grid gap-2 md:grid-cols-[170px_1fr_120px_auto]">
+                <DatePickerInput
+                  label="指定日期"
                   value={holidayDraft.date}
-                  onChange={(event) => setHolidayDraft((current) => ({ ...current, date: event.target.value }))}
+                  onChange={(value) => setHolidayDraft((current) => ({ ...current, date: value }))}
                 />
                 <input
                   className={inputClassName()}
                   value={holidayDraft.name}
                   placeholder="节日名称，可自定义"
                   onChange={(event) => setHolidayDraft((current) => ({ ...current, name: event.target.value }))}
+                />
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  className={inputClassName()}
+                  value={holidayDraft.multiplier}
+                  placeholder="倍数"
+                  onChange={(event) => setHolidayDraft((current) => ({ ...current, multiplier: event.target.value }))}
                 />
                 <button
                   type="button"
@@ -1376,17 +1425,25 @@ export default function MerchantMembershipSettingsPanel({
                   </div>
                 ) : (
                   activeSettings.pointsRules.holidayRules.map((rule) => (
-                    <div key={rule.id} className="grid gap-2 rounded-xl border border-slate-200 bg-white p-2 md:grid-cols-[170px_1fr_auto_auto]">
-                      <input
-                        type="date"
-                        className={inputClassName()}
+                    <div key={rule.id} className="grid gap-2 rounded-xl border border-slate-200 bg-white p-2 md:grid-cols-[170px_1fr_120px_auto_auto]">
+                      <DatePickerInput
+                        label={`${rule.name || "指定日期"}日期`}
                         value={rule.date}
-                        onChange={(event) => patchHolidayRule(rule.id, { date: event.target.value })}
+                        onChange={(value) => patchHolidayRule(rule.id, { date: value })}
                       />
                       <input
                         className={inputClassName()}
                         value={rule.name}
                         onChange={(event) => patchHolidayRule(rule.id, { name: event.target.value })}
+                      />
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        className={inputClassName()}
+                        value={toNumberInputValue(rule.multiplier)}
+                        aria-label={`${rule.name || "指定日期"}倍数`}
+                        onChange={(event) => patchHolidayRule(rule.id, { multiplier: parseMultiplier(event.target.value) })}
                       />
                       <label className="flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700">
                         <input
@@ -1408,21 +1465,6 @@ export default function MerchantMembershipSettingsPanel({
                 )}
               </div>
             </div>
-            <Field label="倍数">
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                className={inputClassName()}
-                value={toNumberInputValue(activeSettings.pointsRules.holidayMultiplier)}
-                onChange={(event) =>
-                  patchSettings((current) => ({
-                    ...current,
-                    pointsRules: { ...current.pointsRules, holidayMultiplier: parseMoney(event.target.value) },
-                  }))
-                }
-              />
-            </Field>
           </div>
         </div>
 

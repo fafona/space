@@ -36,6 +36,7 @@ export type MerchantMemberHolidayPointRule = {
   id: string;
   date: string;
   name: string;
+  multiplier: number;
   enabled: boolean;
   sort: number;
 };
@@ -516,7 +517,7 @@ function normalizeDateText(value: unknown) {
   return raw;
 }
 
-function normalizeHolidayRules(value: unknown): MerchantMemberHolidayPointRule[] {
+function normalizeHolidayRules(value: unknown, fallbackMultiplier = 1): MerchantMemberHolidayPointRule[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
   return value
@@ -533,6 +534,7 @@ function normalizeHolidayRules(value: unknown): MerchantMemberHolidayPointRule[]
         id: normalizeId(record.id, "holiday", index),
         date,
         name,
+        multiplier: normalizeMoney(record.multiplier ?? record.holidayMultiplier ?? record.pointsMultiplier, fallbackMultiplier),
         enabled: normalizeBoolean(record.enabled, true),
         sort: normalizeSort(record.sort, index),
       };
@@ -545,6 +547,7 @@ function normalizePointsRules(value: unknown): MerchantMemberPointsRules {
   const record = readRecord(value) ?? {};
   const pointsValidDays = normalizeInteger(record.pointsValidDays);
   const pointsNeverExpire = normalizeBoolean(record.pointsNeverExpire, pointsValidDays <= 0);
+  const holidayMultiplier = normalizeMoney(record.holidayMultiplier, 1);
   return {
     paidAmount: normalizeMoney(record.paidAmount, 1),
     paidPoints: normalizeInteger(record.paidPoints),
@@ -554,9 +557,9 @@ function normalizePointsRules(value: unknown): MerchantMemberPointsRules {
     birthdayPoints: normalizeInteger(record.birthdayPoints),
     invitationPoints: normalizeInteger(record.invitationPoints),
     reviewPoints: normalizeInteger(record.reviewPoints),
-    holidayRules: normalizeHolidayRules(record.holidayRules),
+    holidayRules: normalizeHolidayRules(record.holidayRules, holidayMultiplier),
     holidayNames: normalizeStringList(record.holidayNames),
-    holidayMultiplier: normalizeMoney(record.holidayMultiplier, 1),
+    holidayMultiplier,
     deductionAmountPerPoint: normalizeMoney(record.deductionAmountPerPoint),
     deductionMinOrderAmount: normalizeMoney(record.deductionMinOrderAmount),
     deductionMaxAmount: normalizeMoney(record.deductionMaxAmount),

@@ -173,11 +173,16 @@ function calculateOrderPoints(order: MerchantOrderRecord, settings: MerchantMemb
   const basePoints = Math.floor(order.totalAmount / paidAmount) * paidPoints;
   const orderDate = new Date(order.completedAt || order.confirmedAt || order.createdAt);
   const orderDateText = formatDateYmd(orderDate);
-  const matchedDateRule = settings.pointsRules.holidayRules.some((rule) => rule.enabled && rule.date === orderDateText);
+  const matchedDateRule = settings.pointsRules.holidayRules
+    .filter((rule) => rule.enabled && rule.date === orderDateText)
+    .sort((left, right) => right.multiplier - left.multiplier || left.sort - right.sort)[0];
   const holidayNames = getMerchantMemberHolidayNamesForDate(orderDate);
   const matchedLegacyHoliday = holidayNames.some((holidayName) => settings.pointsRules.holidayNames.includes(holidayName));
-  const shouldApplyHolidayMultiplier = matchedDateRule || matchedLegacyHoliday;
-  const multiplier = shouldApplyHolidayMultiplier ? Math.max(0, settings.pointsRules.holidayMultiplier || 1) : 1;
+  const multiplier = matchedDateRule
+    ? Math.max(0, matchedDateRule.multiplier ?? 1)
+    : matchedLegacyHoliday
+      ? Math.max(0, settings.pointsRules.holidayMultiplier ?? 1)
+      : 1;
   return Math.max(0, Math.floor(basePoints * multiplier));
 }
 
