@@ -172,6 +172,115 @@ function storageKey(siteId: string) {
   return `faolla.memberPointRedemption.heldSales.${siteId}`;
 }
 
+function IconSearch() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="11" cy="11" r="7" />
+      <path d="m16.5 16.5 4 4" />
+    </svg>
+  );
+}
+
+function IconImage() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="4" y="4" width="16" height="16" rx="2" />
+      <circle cx="9" cy="9" r="2" />
+      <path d="m7 17 4.5-4.5 3 3L17 13l2 2" />
+    </svg>
+  );
+}
+
+function IconList() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M8 6h12" />
+      <path d="M8 12h12" />
+      <path d="M8 18h12" />
+      <path d="M4 6h.01" />
+      <path d="M4 12h.01" />
+      <path d="M4 18h.01" />
+    </svg>
+  );
+}
+
+function IconGrid() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="4" y="4" width="6" height="6" rx="1" />
+      <rect x="14" y="4" width="6" height="6" rx="1" />
+      <rect x="4" y="14" width="6" height="6" rx="1" />
+      <rect x="14" y="14" width="6" height="6" rx="1" />
+    </svg>
+  );
+}
+
+function IconCup() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M7 4h10l-1.2 16H8.2L7 4Z" />
+      <path d="M6 8h12" />
+      <path d="M10 4V2h4v2" />
+    </svg>
+  );
+}
+
+function IconThumbsUp() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M7 11v9H4v-9h3Z" />
+      <path d="M7 11 11 4c.8-1.4 3-.8 3 1v4h4.2c1.2 0 2.1 1 1.9 2.2l-1.1 6A3 3 0 0 1 16 20H7" />
+    </svg>
+  );
+}
+
+function IconBean() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M8.5 15.5c-2.8-2.8-3.4-6.8-1.3-8.9s6.1-1.5 8.9 1.3 3.4 6.8 1.3 8.9-6.1 1.5-8.9-1.3Z" />
+      <path d="M9 7c.6 3.3 3.8 3 5 6" />
+    </svg>
+  );
+}
+
+function IconLink() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M10 13a5 5 0 0 0 7.1.1l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1" />
+      <path d="M14 11a5 5 0 0 0-7.1-.1l-2 2a5 5 0 0 0 7.1 7.1l1.1-1.1" />
+    </svg>
+  );
+}
+
+function IconDoorOpen() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 21h16" />
+      <path d="M6 21V4a1 1 0 0 1 1-1h8v18" />
+      <path d="M15 5h2a1 1 0 0 1 1 1v15" />
+      <path d="M11 12h.01" />
+    </svg>
+  );
+}
+
+function IconWallet() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="3" y="6" width="18" height="14" rx="2" />
+      <path d="M3 10h18" />
+      <path d="M16 15h2" />
+    </svg>
+  );
+}
+
+function CategoryIcon({ name }: { name: string }) {
+  if (!name) return <IconGrid />;
+  if (name.includes("饮")) return <IconCup />;
+  if (name.includes("推荐") || name.includes("热")) return <IconThumbsUp />;
+  if (name.includes("零") || name.includes("食")) return <IconBean />;
+  return <IconGrid />;
+}
+
 export default function MerchantPointRedemptionCashier({
   siteId,
   siteName = "",
@@ -560,6 +669,16 @@ export default function MerchantPointRedemptionCashier({
           letter-spacing: 0;
         }
 
+        .merchant-pos-cashier svg {
+          width: 17px;
+          height: 17px;
+          stroke: currentColor;
+          stroke-width: 2;
+          stroke-linecap: round;
+          stroke-linejoin: round;
+          fill: none;
+        }
+
         .merchant-pos-cashier button {
           cursor: pointer;
         }
@@ -612,39 +731,43 @@ export default function MerchantPointRedemptionCashier({
           gap: 10px;
         }
 
+        .merchant-pos-cashier .el-button,
         .merchant-pos-cashier .pos-button {
           display: inline-flex;
           align-items: center;
           justify-content: center;
           gap: 7px;
-          min-height: 38px;
+          min-height: 36px;
           padding: 0 14px;
           border: 1px solid var(--pos-line);
           border-radius: 8px;
           background: var(--pos-surface);
           color: var(--pos-text);
-          font-weight: 800;
-          box-shadow: 0 1px 1px rgba(20, 28, 38, 0.04);
-          transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+          font-weight: 720;
+          white-space: nowrap;
+          box-shadow: inset 0 -1px 0 rgba(20, 28, 38, 0.05);
+          transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease, color 0.15s ease;
         }
 
+        .merchant-pos-cashier .el-button:hover,
         .merchant-pos-cashier .pos-button:hover {
-          border-color: var(--pos-primary);
+          border-color: #9ecfc4;
           background: var(--pos-primary-soft);
           color: var(--pos-primary-dark);
-          box-shadow: var(--pos-focus-inset);
         }
 
+        .merchant-pos-cashier .el-button--primary,
         .merchant-pos-cashier .pos-button.primary {
           border-color: var(--pos-primary);
           background: var(--pos-primary);
           color: #fff;
         }
 
+        .merchant-pos-cashier .el-button--primary:hover,
         .merchant-pos-cashier .pos-button.primary:hover {
+          border-color: var(--pos-primary-dark);
           background: var(--pos-primary-dark);
           color: #fff;
-          box-shadow: var(--pos-shadow-soft);
         }
 
         .merchant-pos-cashier .pos-alert {
@@ -1187,7 +1310,7 @@ export default function MerchantPointRedemptionCashier({
           border-radius: 6px;
           background: transparent;
           color: var(--pos-muted);
-          font-weight: 900;
+          cursor: pointer;
         }
 
         .merchant-pos-cashier .view-mode-button:hover,
@@ -1221,7 +1344,8 @@ export default function MerchantPointRedemptionCashier({
           border-radius: 8px;
           background: var(--pos-surface-soft);
           color: var(--pos-text);
-          font-weight: 800;
+          cursor: pointer;
+          font-weight: 720;
           transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
         }
 
@@ -1234,14 +1358,18 @@ export default function MerchantPointRedemptionCashier({
         }
 
         .merchant-pos-cashier .category-button-icon {
+          flex: 0 0 auto;
           display: grid;
           place-items: center;
-          width: 16px;
-          height: 16px;
-          border: 1px solid currentColor;
-          border-radius: 4px;
-          font-size: 10px;
-          line-height: 1;
+          width: 17px;
+          height: 17px;
+        }
+
+        .merchant-pos-cashier .category-button-label {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
 
         .merchant-pos-cashier .catalog-products {
@@ -1399,10 +1527,10 @@ export default function MerchantPointRedemptionCashier({
           </div>
         </div>
         <div className="cashier-actions">
-          <button type="button" className="pos-button" onClick={() => notifyUnavailable("开钱箱")}>
+          <button type="button" className="el-button el-button--default" onClick={() => notifyUnavailable("开钱箱")}>
             开钱箱
           </button>
-          <button type="button" className="pos-button" onClick={() => notifyUnavailable("存取现金")}>
+          <button type="button" className="el-button el-button--default" onClick={() => notifyUnavailable("存取现金")}>
             存取现金
           </button>
         </div>
@@ -1444,7 +1572,7 @@ export default function MerchantPointRedemptionCashier({
                   }}
                   placeholder="会员手机号 / 卡号"
                 />
-                <button type="button" className="pos-button" onClick={lookupMember}>
+                <button type="button" className="el-button el-button--default" onClick={lookupMember}>
                   选择会员
                 </button>
                 {memberPickerOpen && filteredMembers.length ? (
@@ -1466,14 +1594,17 @@ export default function MerchantPointRedemptionCashier({
                 ) : null}
               </div>
               <div className="member-action-buttons">
-                <button type="button" className="pos-button" onClick={() => notifyUnavailable("绑定手机")}>
-                  绑定手机
+                <button type="button" className="el-button el-button--default" onClick={() => notifyUnavailable("绑定手环")}>
+                  <IconLink />
+                  绑定手环
                 </button>
-                <button type="button" className="pos-button primary" onClick={() => setNotice("请从右侧选择兑换项目。")}>
-                  兑换项目
+                <button type="button" className="el-button el-button--primary" onClick={() => setNotice("请从右侧选择兑换项目。")}>
+                  <IconDoorOpen />
+                  购票
                 </button>
-                <button type="button" className="pos-button" onClick={() => notifyUnavailable("临时项目")}>
-                  临时项目
+                <button type="button" className="el-button el-button--default" onClick={() => notifyUnavailable("临时商品")}>
+                  <IconWallet />
+                  临时商品
                 </button>
               </div>
             </div>
@@ -1549,10 +1680,10 @@ export default function MerchantPointRedemptionCashier({
 
             <div className="sale-summary">
               <div className="summary-actions-left">
-                <button type="button" className="pos-button" onClick={holdCurrentSale}>
+                <button type="button" className="el-button el-button--default" onClick={holdCurrentSale}>
                   挂单
                 </button>
-                <button type="button" className="pos-button" onClick={() => setHeldOpen((open) => !open)}>
+                <button type="button" className="el-button el-button--default" onClick={() => setHeldOpen((open) => !open)}>
                   提单
                   {heldSales.length ? <span className="held-count">{heldSales.length}</span> : null}
                 </button>
@@ -1598,7 +1729,9 @@ export default function MerchantPointRedemptionCashier({
         <section className="panel catalog-panel">
           <div className="catalog-toolbar">
             <div className="product-search-wrap">
-              <span className="product-search-prefix">⌕</span>
+              <span className="product-search-prefix">
+                <IconSearch />
+              </span>
               <input
                 value={itemKeyword}
                 onChange={(event) => setItemKeyword(event.target.value)}
@@ -1613,7 +1746,7 @@ export default function MerchantPointRedemptionCashier({
                 onClick={() => setViewMode("image")}
                 title="图片模式"
               >
-                图
+                <IconImage />
               </button>
               <button
                 type="button"
@@ -1621,7 +1754,7 @@ export default function MerchantPointRedemptionCashier({
                 onClick={() => setViewMode("text")}
                 title="列表模式"
               >
-                列
+                <IconList />
               </button>
             </div>
           </div>
@@ -1632,8 +1765,10 @@ export default function MerchantPointRedemptionCashier({
               className={`category-chip ${!categoryId ? "active" : ""}`}
               onClick={() => setCategoryId("")}
             >
-              <span className="category-button-icon">全</span>
-              <span>全部</span>
+              <span className="category-button-icon">
+                <IconGrid />
+              </span>
+              <span className="category-button-label">全部</span>
             </button>
             {enabledCategories.map((category) => (
               <button
@@ -1642,8 +1777,10 @@ export default function MerchantPointRedemptionCashier({
                 className={`category-chip ${categoryId === category.id ? "active" : ""}`}
                 onClick={() => setCategoryId(category.id)}
               >
-                <span className="category-button-icon">{trimText(category.name, 1) || "类"}</span>
-                <span>{category.name}</span>
+                <span className="category-button-icon">
+                  <CategoryIcon name={category.name} />
+                </span>
+                <span className="category-button-label">{category.name}</span>
               </button>
             ))}
           </div>
