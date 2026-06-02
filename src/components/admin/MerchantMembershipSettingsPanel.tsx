@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "react";
-import Image from "next/image";
 import {
   buildMerchantMemberHolidayPresets,
   createEmptyMerchantMembershipSettings,
@@ -88,6 +87,15 @@ function parseMultiplier(value: unknown, fallback = 1) {
 function parseInteger(value: string) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : 0;
+}
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+    reader.onerror = () => reject(reader.error ?? new Error("file_read_failed"));
+    reader.readAsDataURL(file);
+  });
 }
 
 function Field({
@@ -673,15 +681,22 @@ export default function MerchantMembershipSettingsPanel({
     setItemImageUploading(true);
     setError("");
     try {
+      const localPreviewUrl = await readFileAsDataUrl(file);
+      if (localPreviewUrl) {
+        patchItemDraft({ imageUrl: localPreviewUrl });
+      }
       const uploadedUrl = await uploadFileToPublicStorage(file, {
         merchantHint: normalizedSiteId || "membership",
         folder: "merchant-assets",
         usage: "generic-image",
       });
-      if (!uploadedUrl) throw new Error("商品图片上传失败，请稍后重试");
-      patchItemDraft({ imageUrl: uploadedUrl });
+      if (uploadedUrl) {
+        patchItemDraft({ imageUrl: uploadedUrl });
+      }
     } catch (uploadError) {
-      setError(uploadError instanceof Error ? uploadError.message : "商品图片上传失败，请稍后重试");
+      if (uploadError instanceof Error && uploadError.message === "file_read_failed") {
+        setError("商品图片读取失败，请重新选择图片");
+      }
     } finally {
       setItemImageUploading(false);
     }
@@ -978,13 +993,11 @@ export default function MerchantMembershipSettingsPanel({
               <div className="grid gap-4 md:grid-cols-[108px_minmax(0,1fr)]">
                 <label className="group relative grid h-[108px] cursor-pointer place-items-center overflow-hidden rounded-lg border border-teal-100 bg-teal-50 text-sm font-semibold text-teal-800 transition hover:border-teal-300">
                   {itemDialog.draft.imageUrl ? (
-                    <Image
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
                       src={itemDialog.draft.imageUrl}
                       alt={itemDialog.draft.name || "商品图片"}
-                      fill
-                      unoptimized
-                      sizes="108px"
-                      className="object-cover"
+                      className="h-full w-full object-cover"
                     />
                   ) : (
                     <span className="grid place-items-center gap-2">
