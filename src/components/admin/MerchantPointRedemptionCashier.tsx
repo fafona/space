@@ -1,11 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useI18n } from "@/components/I18nProvider";
 import {
   getMerchantCouponDiscountLabel,
   getMerchantCouponDisplayTitle,
   type MerchantCouponRecord,
 } from "@/lib/merchantCoupons";
+import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
 import type { MerchantMembershipInsight, MerchantMembershipListItem } from "@/lib/merchantMemberships";
 import type {
   MerchantMemberRedemptionCategory,
@@ -65,6 +67,10 @@ type HeldSale = {
 };
 
 type ProductViewMode = "image" | "text";
+
+function flagImageUrl(countryCode: string) {
+  return `https://flagcdn.com/${countryCode.toLowerCase()}.svg`;
+}
 
 const EMPTY_MEMBER_INSIGHT: MerchantMembershipInsight = {
   pointBalance: 0,
@@ -303,6 +309,7 @@ export default function MerchantPointRedemptionCashier({
   className = "",
   view = "cashier",
 }: MerchantPointRedemptionCashierProps) {
+  const { locale, setLocale, t } = useI18n();
   const normalizedSiteId = siteId.trim();
   const [memberships, setMemberships] = useState<MerchantMembershipListItem[]>([]);
   const [settings, setSettings] = useState<MerchantMembershipSettings | null>(null);
@@ -328,6 +335,14 @@ export default function MerchantPointRedemptionCashier({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
+  const languageRootRef = useRef<HTMLDivElement | null>(null);
+  const languageMenuRef = useRef<HTMLDivElement | null>(null);
+  const resolvedLocale = useMemo(() => resolveSupportedLocale(locale), [locale]);
+  const currentLanguage = useMemo(
+    () => LANGUAGE_OPTIONS.find((item) => item.code === resolvedLocale) ?? LANGUAGE_OPTIONS[0],
+    [resolvedLocale],
+  );
 
   const enabledCategories = useMemo(
     () => (settings?.redemptionCategories ?? []).filter((category) => category.enabled),
@@ -583,6 +598,24 @@ export default function MerchantPointRedemptionCashier({
     }, 0);
     return () => window.clearTimeout(timer);
   }, [quickRedeemDialogOpen]);
+
+  useEffect(() => {
+    if (!languageMenuOpen || typeof document === "undefined") return;
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (languageRootRef.current?.contains(target) || languageMenuRef.current?.contains(target)) return;
+      setLanguageMenuOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setLanguageMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [languageMenuOpen]);
 
   function selectMember(membership: MerchantMembershipListItem) {
     setSelectedMemberId(membership.id);
@@ -859,8 +892,15 @@ export default function MerchantPointRedemptionCashier({
           padding: 0;
           color: var(--pos-text);
           background: var(--pos-bg);
+          font-family:
+            Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei",
+            sans-serif;
           font-size: 14px;
           line-height: 1.45;
+          font-synthesis: none;
+          text-rendering: optimizeLegibility;
+          -webkit-font-smoothing: antialiased;
+          -moz-osx-font-smoothing: grayscale;
         }
 
         .merchant-pos-cashier * {
@@ -868,7 +908,9 @@ export default function MerchantPointRedemptionCashier({
         }
 
         .merchant-pos-cashier button,
-        .merchant-pos-cashier input {
+        .merchant-pos-cashier input,
+        .merchant-pos-cashier textarea,
+        .merchant-pos-cashier select {
           font: inherit;
           letter-spacing: 0;
         }
@@ -908,9 +950,10 @@ export default function MerchantPointRedemptionCashier({
         .merchant-pos-cashier .cashier-title h2 {
           margin: 0;
           color: var(--pos-text);
-          font-size: 28px;
-          font-weight: 900;
-          line-height: 1.15;
+          font-size: 24px;
+          font-weight: 780;
+          line-height: 1.2;
+          letter-spacing: 0;
         }
 
         .merchant-pos-cashier .cashier-title small {
@@ -933,6 +976,95 @@ export default function MerchantPointRedemptionCashier({
           display: flex;
           align-items: center;
           gap: 10px;
+        }
+
+        .merchant-pos-cashier .cashier-actions .el-button {
+          min-height: 40px;
+          padding: 0 12px;
+          font-size: 13px;
+          font-weight: 740;
+        }
+
+        .merchant-pos-cashier .language-menu-wrap {
+          position: relative;
+        }
+
+        .merchant-pos-cashier .language-action-button {
+          width: 44px;
+          min-width: 44px;
+          height: 40px;
+          min-height: 40px;
+          padding: 0;
+          justify-content: center;
+          overflow: visible;
+        }
+
+        .merchant-pos-cashier .language-flag-icon {
+          display: block;
+          width: 32px;
+          height: 22px;
+          flex: 0 0 auto;
+          overflow: hidden;
+          border: 1px solid rgba(148, 163, 184, 0.45);
+          border-radius: 4px;
+          object-fit: cover;
+          background: #fff;
+          box-shadow: 0 1px 2px rgba(20, 28, 38, 0.08);
+        }
+
+        .merchant-pos-cashier .language-flag-icon.small {
+          width: 18px;
+          height: 14px;
+          border: 1px solid rgba(148, 163, 184, 0.55);
+          border-radius: 3px;
+        }
+
+        .merchant-pos-cashier .language-dropdown-menu {
+          position: absolute;
+          top: calc(100% + 8px);
+          right: 0;
+          z-index: 90;
+          width: 230px;
+          max-height: 380px;
+          overflow-y: auto;
+          padding: 6px;
+          border: 1px solid var(--pos-line);
+          border-radius: 8px;
+          background: var(--pos-surface);
+          box-shadow: 0 22px 60px rgba(15, 23, 42, 0.22);
+        }
+
+        .merchant-pos-cashier .language-dropdown-item {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          width: 100%;
+          min-height: 34px;
+          padding: 0 9px;
+          border: 0;
+          border-radius: 6px;
+          background: transparent;
+          color: var(--pos-text);
+          text-align: left;
+          font-size: 13px;
+          font-weight: 650;
+        }
+
+        .merchant-pos-cashier .language-dropdown-item:hover,
+        .merchant-pos-cashier .language-dropdown-item.is-active-language {
+          color: var(--pos-primary-dark);
+          background: var(--pos-primary-soft);
+        }
+
+        .merchant-pos-cashier .language-dropdown-item.is-active-language {
+          font-weight: 800;
+        }
+
+        .merchant-pos-cashier .language-dropdown-item span {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
 
         .merchant-pos-cashier .el-button,
@@ -1871,9 +2003,52 @@ export default function MerchantPointRedemptionCashier({
           <button type="button" className="el-button el-button--default" onClick={() => notifyUnavailable("开钱箱")}>
             开钱箱
           </button>
-          <button type="button" className="el-button el-button--default" onClick={() => notifyUnavailable("多语言切换")}>
-            多语言
-          </button>
+          <div ref={languageRootRef} className="language-menu-wrap" data-no-translate="1">
+            <button
+              type="button"
+              className="el-button el-button--default language-action-button"
+              onClick={() => setLanguageMenuOpen((current) => !current)}
+              aria-label={t("lang.placeholder")}
+              aria-expanded={languageMenuOpen}
+              title={currentLanguage.label}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                className="language-flag-icon"
+                src={flagImageUrl(currentLanguage.countryCode)}
+                alt={currentLanguage.label}
+                width={24}
+                height={18}
+              />
+            </button>
+            {languageMenuOpen ? (
+              <div ref={languageMenuRef} className="language-dropdown-menu" role="menu">
+                {LANGUAGE_OPTIONS.map((item) => (
+                  <button
+                    key={item.code}
+                    type="button"
+                    className={`language-dropdown-item${item.code === currentLanguage.code ? " is-active-language" : ""}`}
+                    onClick={() => {
+                      setLocale(item.code);
+                      setLanguageMenuOpen(false);
+                    }}
+                    role="menuitem"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      className="language-flag-icon small"
+                      src={flagImageUrl(item.countryCode)}
+                      alt={item.label}
+                      width={18}
+                      height={14}
+                      loading="lazy"
+                    />
+                    <span>{item.label}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
 
