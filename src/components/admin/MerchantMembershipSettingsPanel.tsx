@@ -1798,7 +1798,7 @@ export default function MerchantMembershipSettingsPanel({
 
   return (
     <section className={`space-y-4 py-6 ${className}`}>
-      <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-[0_12px_32px_rgba(15,23,42,0.05)]">
+      <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_18px_48px_rgba(15,23,42,0.08)]">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-xl font-semibold text-slate-950">{VIEW_TITLES[view]}</h2>

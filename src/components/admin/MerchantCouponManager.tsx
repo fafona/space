@@ -1953,12 +1953,12 @@ export default function MerchantCouponManager({
           ? "券面数值（可选）"
           : "优惠金额";
   const canEditCoupons = !listOnly;
-  const rootClassName = listOnly ? `space-y-4 ${className}` : `min-h-[calc(100vh-14rem)] space-y-4 ${className}`;
+  const rootClassName = listOnly ? `space-y-4 ${className}` : `min-h-[calc(100vh-14rem)] space-y-4 py-6 ${className}`;
 
   return (
     <div className={rootClassName}>
       {!listOnly ? (
-      <section className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+      <section className="rounded-[28px] border border-slate-200 bg-white px-5 py-5 shadow-[0_18px_48px_rgba(15,23,42,0.08)]">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="text-lg font-semibold text-slate-950">优惠券管理</div>
@@ -2832,7 +2832,7 @@ export default function MerchantCouponManager({
         </div>
       ) : null}
 
-      <section className="rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
+      <section className="rounded-[28px] border border-slate-200 bg-white px-5 py-5 shadow-[0_18px_48px_rgba(15,23,42,0.08)]">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <div className="text-base font-semibold text-slate-900">优惠券列表</div>
@@ -2982,7 +2982,7 @@ export default function MerchantCouponManager({
       </section>
 
       <section className="grid gap-4 lg:grid-cols-3">
-        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
+        <div className="rounded-[28px] border border-slate-200 bg-white px-4 py-4 shadow-[0_18px_48px_rgba(15,23,42,0.08)]">
           <div className="text-sm font-semibold text-slate-900">领取记录</div>
           <div className="mt-3 max-h-72 space-y-2 overflow-auto text-xs">
             {claimRecordRows.length === 0 ? (
@@ -3002,7 +3002,7 @@ export default function MerchantCouponManager({
           </div>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
+        <div className="rounded-[28px] border border-slate-200 bg-white px-4 py-4 shadow-[0_18px_48px_rgba(15,23,42,0.08)]">
           <div className="text-sm font-semibold text-slate-900">核销记录</div>
           <div className="mt-3 max-h-72 space-y-2 overflow-auto text-xs">
             {redeemRecordRows.length === 0 ? (
@@ -3022,7 +3022,7 @@ export default function MerchantCouponManager({
           </div>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
+        <div className="rounded-[28px] border border-slate-200 bg-white px-4 py-4 shadow-[0_18px_48px_rgba(15,23,42,0.08)]">
           <div className="text-sm font-semibold text-slate-900">日报统计</div>
           <div className="mt-3 max-h-72 space-y-2 overflow-auto text-xs">
             {dailyStatsRows.length === 0 ? (

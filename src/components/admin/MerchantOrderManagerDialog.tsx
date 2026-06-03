@@ -1157,8 +1157,12 @@ export default function MerchantOrderManagerDialog({
     : null;
 
   const content = (
-    <div className={isInline ? "space-y-5" : "max-h-[88vh] overflow-hidden rounded-[28px]"}>
-      <div className="flex max-h-[88vh] min-h-[540px] flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.12)]">
+    <div className={isInline ? "w-full py-6" : "max-h-[88vh] overflow-hidden rounded-[28px]"}>
+      <div
+        className={`flex min-h-[540px] flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white ${
+          isInline ? "max-h-none shadow-[0_18px_48px_rgba(15,23,42,0.08)]" : "max-h-[88vh] shadow-[0_24px_70px_rgba(15,23,42,0.12)]"
+        }`}
+      >
         <div
           className={`${
             isInline ? "sticky top-0 z-20 bg-white/95 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-white/90" : ""
@@ -1374,7 +1378,7 @@ export default function MerchantOrderManagerDialog({
                       </label>
                     ) : null}
                     <article
-                      className="relative overflow-visible rounded-2xl border bg-slate-50 p-3.5 shadow-sm"
+                      className="relative overflow-visible rounded-[22px] border border-slate-200 bg-slate-50/80 p-3.5 shadow-sm"
                       onClick={(event) => handleSelectionCardClick(event, record.id)}
                     >
                     <div className="flex flex-wrap items-start justify-between gap-3">

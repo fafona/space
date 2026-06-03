@@ -1362,7 +1362,7 @@ export default function MerchantBookingManagerDialog({
 
   const content = (
     <div
-      className={isInline ? "w-full" : "fixed inset-0 z-[2147482800] bg-black/45 p-4"}
+      className={isInline ? "w-full py-6" : "fixed inset-0 z-[2147482800] bg-black/45 p-4"}
       onMouseDown={
         isInline
           ? undefined
@@ -1372,8 +1372,8 @@ export default function MerchantBookingManagerDialog({
       }
     >
       <div
-        className={`mx-auto flex w-full flex-col rounded-2xl border bg-white ${
-          isInline ? "max-w-none overflow-visible shadow-sm" : "h-full max-h-[calc(100vh-2rem)] max-w-6xl overflow-hidden shadow-2xl"
+        className={`mx-auto flex w-full flex-col rounded-[28px] border border-slate-200 bg-white ${
+          isInline ? "max-w-none overflow-hidden shadow-[0_18px_48px_rgba(15,23,42,0.08)]" : "h-full max-h-[calc(100vh-2rem)] max-w-6xl overflow-hidden shadow-2xl"
         }${className ? ` ${className}` : ""}`}
         onMouseDown={isInline ? undefined : (event) => event.stopPropagation()}
       >
@@ -1387,7 +1387,7 @@ export default function MerchantBookingManagerDialog({
         <div className="flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
           <div className="min-w-0 flex-1 space-y-1">
               <div className="flex flex-wrap items-center gap-2.5">
-              <div className="text-lg font-semibold text-slate-900">{getMerchantBookingFieldText("managementTitle", locale)}</div>
+              <div className="text-[26px] font-semibold leading-8 text-slate-950">{getMerchantBookingFieldText("managementTitle", locale)}</div>
               {!hideWorkbenchButton ? (
                 <button
                   type="button"
@@ -1684,7 +1684,7 @@ export default function MerchantBookingManagerDialog({
                       </label>
                     ) : null}
                     <article
-                      className="relative overflow-visible rounded-2xl border bg-slate-50 p-3.5 shadow-sm"
+                      className="relative overflow-visible rounded-[22px] border border-slate-200 bg-slate-50/80 p-3.5 shadow-sm"
                       onClick={(event) => handleSelectionCardClick(event, record.id)}
                     >
                       {isNewRecord ? (

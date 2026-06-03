@@ -972,7 +972,7 @@ export default function MerchantPointRedemptionCashier({
           --pos-primary-soft: #eaf2ff;
           --pos-danger: #d92d20;
           --pos-danger-soft: #fff1ef;
-          --pos-shadow: 0 1px 2px rgba(20, 28, 38, 0.05), 0 14px 34px rgba(20, 28, 38, 0.08);
+          --pos-shadow: 0 18px 48px rgba(15, 23, 42, 0.08);
           --pos-shadow-soft: 0 1px 2px rgba(20, 28, 38, 0.05), 0 8px 22px rgba(20, 28, 38, 0.055);
           --pos-focus-inset: 0 0 0 3px rgba(47, 95, 159, 0.18) inset;
           min-height: calc(100vh - 120px);
@@ -1256,9 +1256,10 @@ export default function MerchantPointRedemptionCashier({
 
         .merchant-pos-cashier .panel {
           border: 1px solid var(--pos-line);
-          border-radius: 8px;
+          border-radius: 28px;
           background: var(--pos-surface);
           box-shadow: var(--pos-shadow);
+          overflow: hidden;
         }
 
         .merchant-pos-cashier .sale-panel,

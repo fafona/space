@@ -752,8 +752,8 @@ export default function MerchantProfileDialog({
 
   const content = (
     <div
-      className={`w-full space-y-4 rounded-xl border bg-white p-4 shadow-xl ${
-        isInline ? "max-w-none shadow-sm" : "my-4 max-h-[calc(100vh-2rem)] max-w-2xl overflow-y-auto"
+      className={`w-full space-y-4 rounded-[28px] border border-slate-200 bg-white p-5 shadow-xl ${
+        isInline ? "max-w-none shadow-[0_18px_48px_rgba(15,23,42,0.08)]" : "my-4 max-h-[calc(100vh-2rem)] max-w-2xl overflow-y-auto"
       }${className ? ` ${className}` : ""}`}
       onMouseDown={isInline ? undefined : (event) => event.stopPropagation()}
     >
