@@ -10,6 +10,7 @@ import {
   type ReactNode,
   type CSSProperties,
   type ChangeEvent,
+  type ClipboardEvent as ReactClipboardEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type TouchEvent,
@@ -4431,7 +4432,23 @@ function getSupportContactAvatarLabel(value: string | null | undefined, fallback
 
 const SUPPORT_PHOTO_PICKER_ACCEPT =
   "image/png,image/jpeg,image/webp,image/heic,image/heif,image/gif";
+const SUPPORT_FILE_IMAGE_ACCEPTS = [
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".webp",
+  ".heic",
+  ".heif",
+  ".gif",
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/heic",
+  "image/heif",
+  "image/gif",
+];
 const SUPPORT_FILE_PICKER_ACCEPT = [
+  ...SUPPORT_FILE_IMAGE_ACCEPTS,
   ".pdf",
   ".txt",
   ".csv",
@@ -4459,6 +4476,53 @@ const SUPPORT_FILE_PICKER_ACCEPT = [
   "application/vnd.ms-powerpoint",
   "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 ].join(",");
+
+const SUPPORT_REPLY_MESSAGE_PREFIX = "[faolla-reply]";
+
+function isSupportImageFile(file: File) {
+  const type = String(file.type ?? "").toLowerCase();
+  const name = String(file.name ?? "").toLowerCase();
+  return type.startsWith("image/") || /\.(?:png|jpe?g|webp|gif|heic|heif|bmp|svg)$/i.test(name);
+}
+
+function normalizeSupportReplyText(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function buildSupportReplyMessageText(reply: SupportReplyDraft, body: string) {
+  const replyText = normalizeSupportReplyText(reply.text);
+  const senderLabel = normalizeSupportReplyText(reply.senderLabel) || "消息";
+  return [
+    SUPPORT_REPLY_MESSAGE_PREFIX,
+    `from:${senderLabel}`,
+    `text:${replyText}`,
+    "",
+    body.trim(),
+  ].join("\n");
+}
+
+function parseSupportReplyMessageText(value: string) {
+  const text = String(value ?? "");
+  if (!text.startsWith(`${SUPPORT_REPLY_MESSAGE_PREFIX}\n`)) return null;
+  const lines = text.split(/\r?\n/);
+  const emptyLineIndex = lines.findIndex((line, index) => index > 0 && !line.trim());
+  if (emptyLineIndex < 0) return null;
+  const senderLine = lines.find((line) => line.startsWith("from:")) ?? "";
+  const replyLine = lines.find((line) => line.startsWith("text:")) ?? "";
+  const senderLabel = senderLine.slice("from:".length).trim() || "消息";
+  const replyText = replyLine.slice("text:".length).trim();
+  const body = lines.slice(emptyLineIndex + 1).join("\n").trim();
+  if (!replyText || !body) return null;
+  return {
+    senderLabel,
+    text: replyText,
+    body,
+  };
+}
+
+function getSupportDisplayMessageText(value: string) {
+  return parseSupportReplyMessageText(value)?.body ?? value;
+}
 
 function normalizeSupportDetailText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -5130,6 +5194,12 @@ type SupportMessageContextMenuState = {
   localStatus: LocalSupportMessageStatus | null;
   x: number;
   y: number;
+};
+
+type SupportReplyDraft = {
+  key: string;
+  senderLabel: string;
+  text: string;
 };
 
 const SUPPORT_SYSTEM_EMOJIS = [
@@ -5923,6 +5993,7 @@ export default function AdminClient({
   const [supportSelfCardPickerCards, setSupportSelfCardPickerCards] = useState<MerchantBusinessCardAsset[] | null>(null);
   const [supportMessageContextMenu, setSupportMessageContextMenu] = useState<SupportMessageContextMenuState | null>(null);
   const [supportPinnedMessage, setSupportPinnedMessage] = useState<{ key: string; text: string } | null>(null);
+  const [supportReplyDraft, setSupportReplyDraft] = useState<SupportReplyDraft | null>(null);
   const [supportStarredMessageKeys, setSupportStarredMessageKeys] = useState<string[]>([]);
   const [supportSelectedMessageKeys, setSupportSelectedMessageKeys] = useState<string[]>([]);
   const [supportHiddenMessageKeys, setSupportHiddenMessageKeys] = useState<string[]>([]);
@@ -6145,10 +6216,14 @@ export default function AdminClient({
   const resizeSupportComposerInput = useCallback((target?: HTMLTextAreaElement | null) => {
     const input = target ?? supportInputRef.current;
     if (!input) return;
-    if (input.dataset.supportAutoResize !== "mobile") return;
-    const maxHeight = 24 * 4;
-    input.style.height = "24px";
-    const nextHeight = Math.min(maxHeight, Math.max(24, input.scrollHeight));
+    const mode = input.dataset.supportAutoResize;
+    if (mode !== "mobile" && mode !== "desktop") return;
+    const minHeight = mode === "desktop" ? 36 : 24;
+    const lineHeight = mode === "desktop" ? 20 : 24;
+    const verticalPadding = mode === "desktop" ? 16 : 0;
+    const maxHeight = lineHeight * 3 + verticalPadding;
+    input.style.height = `${minHeight}px`;
+    const nextHeight = Math.min(maxHeight, Math.max(minHeight, input.scrollHeight));
     input.style.height = `${nextHeight}px`;
     input.style.overflowY = input.scrollHeight > maxHeight ? "auto" : "hidden";
   }, []);
@@ -11307,6 +11382,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   );
   const visibleSupportMessages =
     supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY ? officialVisibleSupportMessages : peerVisibleSupportMessages;
+  const selectedSupportMessages = visibleSupportMessages.filter((message) => {
+    const key = buildVisibleSupportMessageKey(message);
+    return supportSelectedMessageKeys.includes(key) && !supportHiddenMessageKeys.includes(key);
+  });
+  const supportSelectionActive = selectedSupportMessages.length > 0;
   const latestOfficialVisibleSupportMessage =
     officialVisibleSupportMessages[officialVisibleSupportMessages.length - 1] ?? null;
   const latestVisibleSupportMessage = visibleSupportMessages[visibleSupportMessages.length - 1] ?? null;
@@ -14675,6 +14755,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       setSupportSelfCardPickerOpen(false);
       setSupportMessageContextMenu(null);
       setSupportPinnedMessage(null);
+      setSupportReplyDraft(null);
       setSupportStarredMessageKeys([]);
       setSupportSelectedMessageKeys([]);
       setSupportHiddenMessageKeys([]);
@@ -14691,6 +14772,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setSupportSelfCardPickerOpen(false);
     setSupportMessageContextMenu(null);
     setSupportPinnedMessage(null);
+    setSupportReplyDraft(null);
     setSupportStarredMessageKeys([]);
     setSupportSelectedMessageKeys([]);
     setSupportHiddenMessageKeys([]);
@@ -15063,8 +15145,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   return shareUrl ? ["联系卡", shareUrl].join("\n") : "";
 }
 
-  async function sendSupportTextPayload(rawText: string, options?: { clearDraft?: boolean }) {
-    if (supportSending || supportSendingRef.current) return false;
+  async function sendSupportTextPayload(rawText: string, options?: { clearDraft?: boolean; allowSequential?: boolean }) {
+    if (supportSendingRef.current || (!options?.allowSequential && supportSending)) return false;
     const text = rawText.trim();
     if (!text) {
       showTip("请先填写留言内容");
@@ -15239,7 +15321,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   }
 
   async function sendSupportMessage() {
-    await sendSupportTextPayload(supportDraft, { clearDraft: true });
+    const rawText = supportReplyDraft ? buildSupportReplyMessageText(supportReplyDraft, supportDraft) : supportDraft;
+    const sent = await sendSupportTextPayload(rawText, { clearDraft: true });
+    if (sent) {
+      setSupportReplyDraft(null);
+    }
   }
 
   function insertSupportDraftText(insertText: string, target?: HTMLTextAreaElement | null) {
@@ -15280,6 +15366,19 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     if (event.metaKey || event.altKey || event.shiftKey) return;
     event.preventDefault();
     void sendSupportMessage();
+  }
+
+  function handleSupportComposerPaste(event: ReactClipboardEvent<HTMLTextAreaElement>) {
+    if (!supportComposerAvailable || supportComposerBusy) return;
+    const clipboardData = event.clipboardData;
+    const imageFromFiles = Array.from(clipboardData.files ?? []).find(isSupportImageFile);
+    const imageFromItems = Array.from(clipboardData.items ?? [])
+      .find((item) => item.kind === "file" && item.type.toLowerCase().startsWith("image/"))
+      ?.getAsFile();
+    const imageFile = imageFromFiles ?? imageFromItems ?? null;
+    if (!imageFile) return;
+    event.preventDefault();
+    void handleSupportImageAttachment(imageFile, "照片");
   }
 
   function appendSupportEmoji(emoji: string) {
@@ -15327,27 +15426,67 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     });
   }
 
+  function toggleSupportMessageSelection(key: string) {
+    setSupportSelectedMessageKeys((current) =>
+      current.includes(key) ? current.filter((item) => item !== key) : [...current, key],
+    );
+  }
+
+  function clearSupportMessageSelection() {
+    setSupportSelectedMessageKeys([]);
+  }
+
+  function runSupportSelectedMessagesAction(action: "forward" | "star" | "delete") {
+    const selectedKeys = selectedSupportMessages.map((message) => buildVisibleSupportMessageKey(message));
+    if (!selectedKeys.length) return;
+    if (action === "forward") {
+      const text = selectedSupportMessages
+        .map((message) => getSupportDisplayMessageText(message.text).trim())
+        .filter(Boolean)
+        .join("\n\n");
+      setSupportDraft(text);
+      clearSupportMessageSelection();
+      showTip("已放入输入框，可切换会话后发送");
+      focusSupportInput();
+      return;
+    }
+    if (action === "star") {
+      setSupportStarredMessageKeys((current) => Array.from(new Set([...current, ...selectedKeys])));
+      clearSupportMessageSelection();
+      showTip("已添加星标");
+      return;
+    }
+    setSupportHiddenMessageKeys((current) => Array.from(new Set([...current, ...selectedKeys])));
+    setSupportPinnedMessage((current) => (current && selectedKeys.includes(current.key) ? null : current));
+    setSupportStarredMessageKeys((current) => current.filter((key) => !selectedKeys.includes(key)));
+    clearSupportMessageSelection();
+  }
+
   function runSupportMessageContextAction(
     action: "reply" | "copy" | "forward" | "pin" | "star" | "select" | "delete",
   ) {
     const context = supportMessageContextMenu;
     if (!context) return;
-    const previewText = getSupportContextPreviewText(context.text);
+    const displayText = getSupportDisplayMessageText(context.text);
+    const previewText = getSupportContextPreviewText(displayText);
     setSupportMessageContextMenu(null);
     if (action === "reply") {
-      const replyPrefix = `回复 ${context.isSelf ? "我" : selectedSupportDisplayName}：${previewText}\n`;
-      setSupportDraft((current) => `${replyPrefix}${current}`);
+      setSupportReplyDraft({
+        key: context.key,
+        senderLabel: context.isSelf ? "我" : selectedSupportDisplayName,
+        text: previewText,
+      });
       focusSupportInput();
       return;
     }
     if (action === "copy") {
-      void copySupportTextToClipboard(context.text)
+      void copySupportTextToClipboard(displayText)
         .then(() => showTip("已复制"))
         .catch(() => showTip("复制失败，请手动选择复制"));
       return;
     }
     if (action === "forward") {
-      setSupportDraft(context.text);
+      setSupportDraft(displayText);
       showTip("已放入输入框，可切换会话后发送");
       focusSupportInput();
       return;
@@ -15452,6 +15591,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
 
   async function handleSupportFileAttachment(file: File) {
     if (supportComposerBusy) return;
+    if (isSupportImageFile(file)) {
+      await handleSupportImageAttachment(file, "照片");
+      return;
+    }
     setSupportAttachmentBusy(true);
     setSupportAttachmentMenuOpen(false);
     setSupportEmojiMenuOpen(false);
@@ -15592,6 +15735,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               description: "文件",
               accept: {
                 "application/pdf": [".pdf"],
+                "image/*": [".png", ".jpg", ".jpeg", ".webp", ".heic", ".heif", ".gif"],
                 "text/plain": [".txt"],
                 "text/csv": [".csv"],
                 "application/json": [".json"],
@@ -15698,7 +15842,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           showTip("联系卡短链暂时没生成成功，已先发送名片图片");
           return;
         }
-        const sentLink = await sendSupportTextPayload(linkMessageText);
+        const sentLink = await sendSupportTextPayload(linkMessageText, { allowSequential: true });
         if (!sentLink) {
           showTip("名片图已发送，但联系卡短链发送失败，请稍后重试");
         }
@@ -17953,21 +18097,106 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     </div>
   );
 
+  const supportReplyDraftBanner = supportReplyDraft ? (
+    <div className="mb-2 flex items-start gap-2 rounded-2xl bg-white px-3 py-2 text-left shadow-sm ring-1 ring-slate-200/80">
+      <div className="min-w-0 flex-1 border-l-2 border-slate-300 pl-2">
+        <div className="text-[11px] font-semibold text-slate-500">回复 {supportReplyDraft.senderLabel}</div>
+        <div className="mt-0.5 line-clamp-2 text-xs leading-5 text-slate-700">{supportReplyDraft.text}</div>
+      </div>
+      <button
+        type="button"
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+        onClick={() => setSupportReplyDraft(null)}
+        aria-label="取消回复"
+      >
+        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" aria-hidden="true">
+          <path d="m7 7 10 10M17 7 7 17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        </svg>
+      </button>
+    </div>
+  ) : null;
+
+  const supportSelectionActionBar = supportSelectionActive ? (
+    <div className="mb-2 flex items-center gap-2 rounded-2xl bg-white px-3 py-2 text-sm text-slate-700 shadow-sm ring-1 ring-slate-200/80">
+      <button
+        type="button"
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-700 hover:bg-slate-100"
+        onClick={clearSupportMessageSelection}
+        aria-label="退出选择"
+      >
+        <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+          <path d="m7 7 10 10M17 7 7 17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        </svg>
+      </button>
+      <span className="min-w-0 flex-1 font-medium">已选{selectedSupportMessages.length}项</span>
+      {[
+        {
+          key: "forward",
+          label: "转发",
+          icon: (
+            <path d="m14 7 5 5-5 5M19 12H9a5 5 0 0 0-5 5" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+          ),
+        },
+        {
+          key: "star",
+          label: "标星",
+          icon: (
+            <path d="m12 4 2.1 4.4 4.8.7-3.5 3.4.8 4.8L12 15l-4.2 2.3.8-4.8-3.5-3.4 4.8-.7L12 4Z" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+          ),
+        },
+        {
+          key: "delete",
+          label: "删除",
+          icon: (
+            <path d="M9 5h6m-7 4v10m8-10v10M6.5 7.5h11L16.8 20H7.2L6.5 7.5ZM10 5l.7-1h2.6l.7 1" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+          ),
+        },
+      ].map((action) => (
+        <button
+          key={action.key}
+          type="button"
+          className={`flex h-8 w-8 items-center justify-center rounded-full transition ${
+            action.key === "delete" ? "text-rose-600 hover:bg-rose-50" : "text-slate-700 hover:bg-slate-100"
+          }`}
+          onClick={() => runSupportSelectedMessagesAction(action.key as "forward" | "star" | "delete")}
+          aria-label={action.label}
+          title={action.label}
+        >
+          <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+            {action.icon}
+          </svg>
+        </button>
+      ))}
+    </div>
+  ) : null;
+
   const supportPinnedMessageBanner = supportPinnedMessage ? (
-    <button
-      type="button"
-      className="sticky top-0 z-20 mb-3 flex max-w-full items-center gap-2 rounded-full border border-slate-200/80 bg-white/95 px-3 py-1.5 text-left text-xs text-slate-600 shadow-sm backdrop-blur transition hover:bg-white"
-      onClick={() => {
-        const target = supportMessageElementByKeyRef.current[supportPinnedMessage.key];
-        target?.scrollIntoView({ behavior: "smooth", block: "center" });
-      }}
-      title={supportPinnedMessage.text}
-    >
-      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 shrink-0 text-slate-500" fill="none" aria-hidden="true">
-        <path d="m9 4 6 6m-7.5 2.5 6-6L18 11l-6 6-4.5.5.5-5Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-      <span className="min-w-0 truncate">置顶：{supportPinnedMessage.text}</span>
-    </button>
+    <div className="sticky top-0 z-20 mb-3 flex max-w-full items-center gap-1 rounded-full border border-slate-200/80 bg-white/95 px-2 py-1 text-xs text-slate-600 shadow-sm backdrop-blur">
+      <button
+        type="button"
+        className="flex min-w-0 flex-1 items-center gap-2 rounded-full px-1.5 py-1 text-left transition hover:bg-slate-50"
+        onClick={() => {
+          const target = supportMessageElementByKeyRef.current[supportPinnedMessage.key];
+          target?.scrollIntoView({ behavior: "smooth", block: "center" });
+        }}
+        title={supportPinnedMessage.text}
+      >
+        <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 shrink-0 text-slate-500" fill="none" aria-hidden="true">
+          <path d="m9 4 6 6m-7.5 2.5 6-6L18 11l-6 6-4.5.5.5-5Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        <span className="min-w-0 truncate">置顶：{supportPinnedMessage.text}</span>
+      </button>
+      <button
+        type="button"
+        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+        onClick={() => setSupportPinnedMessage(null)}
+        aria-label="取消置顶"
+      >
+        <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" aria-hidden="true">
+          <path d="m7 7 10 10M17 7 7 17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        </svg>
+      </button>
+    </div>
   ) : null;
 
   const supportMessageContextMenuOverlay = supportMessageContextMenu
@@ -18141,6 +18370,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       <div
         ref={supportMessagesViewportRef}
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-4 pt-4"
+        style={{
+          backgroundColor: "#eff6f3",
+          backgroundImage:
+            "linear-gradient(135deg, rgba(222,249,238,0.96) 0%, rgba(239,247,255,0.9) 46%, rgba(222,231,244,0.92) 100%)",
+        }}
       >
         {supportPinnedMessageBanner}
         {selectedSupportLoading ? (
@@ -18160,7 +18394,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   : message.localStatus === "failed"
                     ? "发送失败"
                     : formatSupportClockTime(message.createdAt);
-              const hasAttachmentPreview = Boolean(parseSupportMessageAttachmentPreview(message.text));
+              const replyContent = parseSupportReplyMessageText(message.text);
+              const displayMessageText = replyContent?.body ?? message.text;
+              const hasAttachmentPreview = Boolean(parseSupportMessageAttachmentPreview(displayMessageText));
               const messageHidden = supportHiddenMessageKeys.includes(messageKey);
               const messageSelected = supportSelectedMessageKeys.includes(messageKey);
               const messageStarred = supportStarredMessageKeys.includes(messageKey);
@@ -18181,7 +18417,26 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     </div>
                   ) : null}
                   <div className={`flex min-w-0 ${message.isSelf ? "justify-end" : "justify-start"}`}>
-                    <div className={`flex max-w-[84%] min-w-0 items-end ${message.isSelf ? "ml-auto justify-end" : "mr-auto justify-start"}`}>
+                    <div className={`flex max-w-[84%] min-w-0 items-end gap-2 ${message.isSelf ? "ml-auto justify-end" : "mr-auto justify-start"}`}>
+                      {supportSelectionActive ? (
+                        <button
+                          type="button"
+                          className={`mb-1 flex h-5 w-5 shrink-0 items-center justify-center rounded border text-white transition ${
+                            messageSelected ? "border-emerald-500 bg-emerald-500" : "border-slate-300 bg-white"
+                          }`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            toggleSupportMessageSelection(messageKey);
+                          }}
+                          aria-label={messageSelected ? "取消选择消息" : "选择消息"}
+                        >
+                          {messageSelected ? (
+                            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" aria-hidden="true">
+                              <path d="M6 12.5 10 16l8-9" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                          ) : null}
+                        </button>
+                      ) : null}
                       <div
                         className={`faolla-message-bubble max-w-full min-w-0 rounded-[18px] shadow-sm ${
                           hasAttachmentPreview
@@ -18191,15 +18446,25 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                               : "border border-transparent bg-white px-3 py-1.5 text-slate-950"
                         } ${messageSelected ? "ring-2 ring-blue-400/70" : ""}`}
                         onContextMenu={(event) => openSupportMessageContextMenu(event, message)}
+                        onClick={() => {
+                          if (!supportSelectionActive) return;
+                          toggleSupportMessageSelection(messageKey);
+                        }}
                       >
+                        {replyContent ? (
+                          <div className="mb-1.5 max-w-full rounded-xl bg-slate-100/95 px-2.5 py-1.5 text-left text-xs leading-5 text-slate-500">
+                            <div className="font-semibold text-slate-600">{replyContent.senderLabel}</div>
+                            <div className="line-clamp-2">{replyContent.text}</div>
+                          </div>
+                        ) : null}
                         <SupportMessageContent
-                          value={message.text}
+                          value={displayMessageText}
                           isSelf={message.isSelf}
                           onImageActivate={handleSupportMessageImageActivate}
                         />
                         <span className={`faolla-message-time text-[11px] leading-none ${hasAttachmentPreview ? "mt-1 block text-right" : "ml-2 inline-block align-baseline"} ${message.isSelf ? "text-slate-500" : "text-slate-400"}`}>
                           {messageMeta}
-                          {messageStarred ? <span className="ml-1 text-amber-400">★</span> : null}
+                          {messageStarred ? <span className="ml-1 text-[16px] leading-none text-amber-400">★</span> : null}
                         </span>
                       </div>
                       {message.isSelf && message.localStatus === "failed" ? (
@@ -18263,6 +18528,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           event.stopPropagation();
         }}
       >
+        {supportSelectionActionBar}
+        {supportReplyDraftBanner}
         {supportAttachmentMenuOpen ? (
           <div className="faolla-mobile-attachment-menu mb-2 rounded-[20px] bg-white px-2.5 py-2.5 shadow-none ring-1 ring-slate-200/80">
             <div className="grid grid-cols-5 gap-2">
@@ -18430,6 +18697,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 }
               }}
               onKeyDown={handleSupportComposerKeyDown}
+              onPaste={handleSupportComposerPaste}
               disabled={!supportComposerAvailable}
               autoComplete="off"
               autoCorrect="off"
@@ -19355,9 +19623,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           ref={supportMessagesViewportRef}
           className="min-h-0 min-w-0 flex-1 overflow-y-auto px-10 py-5"
           style={{
-            backgroundColor: "#edf5f2",
+            backgroundColor: "#eff6f3",
             backgroundImage:
-              "linear-gradient(135deg, rgba(221,250,239,0.92) 0%, rgba(231,246,255,0.84) 45%, rgba(212,224,238,0.82) 100%)",
+              "linear-gradient(135deg, rgba(222,249,238,0.96) 0%, rgba(239,247,255,0.9) 46%, rgba(222,231,244,0.92) 100%)",
           }}
         >
           {supportPinnedMessageBanner}
@@ -19376,7 +19644,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     : message.localStatus === "failed"
                       ? "发送失败"
                       : formatSupportClockTime(message.createdAt);
-                const hasAttachmentPreview = Boolean(parseSupportMessageAttachmentPreview(message.text));
+                const replyContent = parseSupportReplyMessageText(message.text);
+                const displayMessageText = replyContent?.body ?? message.text;
+                const hasAttachmentPreview = Boolean(parseSupportMessageAttachmentPreview(displayMessageText));
                 const messageHidden = supportHiddenMessageKeys.includes(messageKey);
                 const messageSelected = supportSelectedMessageKeys.includes(messageKey);
                 const messageStarred = supportStarredMessageKeys.includes(messageKey);
@@ -19397,7 +19667,26 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       </div>
                     ) : null}
                     <div className={`flex min-w-0 ${message.isSelf ? "justify-end" : "justify-start"}`}>
-                      <div className={`flex max-w-[82%] min-w-0 items-end ${message.isSelf ? "ml-auto justify-end" : "mr-auto justify-start"}`}>
+                      <div className={`flex max-w-[82%] min-w-0 items-end gap-2 ${message.isSelf ? "ml-auto justify-end" : "mr-auto justify-start"}`}>
+                        {supportSelectionActive ? (
+                          <button
+                            type="button"
+                            className={`mb-1 flex h-5 w-5 shrink-0 items-center justify-center rounded border text-white transition ${
+                              messageSelected ? "border-emerald-500 bg-emerald-500" : "border-slate-300 bg-white"
+                            }`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              toggleSupportMessageSelection(messageKey);
+                            }}
+                            aria-label={messageSelected ? "取消选择消息" : "选择消息"}
+                          >
+                            {messageSelected ? (
+                              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" aria-hidden="true">
+                                <path d="M6 12.5 10 16l8-9" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            ) : null}
+                          </button>
+                        ) : null}
                         <div
                           className={`faolla-message-bubble max-w-full min-w-0 rounded-[18px] shadow-sm ${
                             hasAttachmentPreview
@@ -19407,15 +19696,25 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                                 : "border border-transparent bg-white px-3 py-1.5 text-slate-950"
                           } ${messageSelected ? "ring-2 ring-blue-400/70" : ""}`}
                           onContextMenu={(event) => openSupportMessageContextMenu(event, message)}
+                          onClick={() => {
+                            if (!supportSelectionActive) return;
+                            toggleSupportMessageSelection(messageKey);
+                          }}
                         >
+                          {replyContent ? (
+                            <div className="mb-1.5 max-w-full rounded-xl bg-slate-100/95 px-2.5 py-1.5 text-left text-xs leading-5 text-slate-500">
+                              <div className="font-semibold text-slate-600">{replyContent.senderLabel}</div>
+                              <div className="line-clamp-2">{replyContent.text}</div>
+                            </div>
+                          ) : null}
                           <SupportMessageContent
-                            value={message.text}
+                            value={displayMessageText}
                             isSelf={message.isSelf}
                             onImageActivate={handleSupportMessageImageActivate}
                           />
                           <span className={`faolla-message-time text-[11px] leading-none ${hasAttachmentPreview ? "mt-1 block text-right" : "ml-2 inline-block align-baseline"} ${message.isSelf ? "text-slate-500" : "text-slate-400"}`}>
                             {messageMeta}
-                            {messageStarred ? <span className="ml-1 text-amber-400">★</span> : null}
+                            {messageStarred ? <span className="ml-1 text-[16px] leading-none text-amber-400">★</span> : null}
                           </span>
                         </div>
                         {message.isSelf && message.localStatus === "failed" ? (
@@ -19468,6 +19767,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           {supportError && supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY ? (
             <div className="mb-3 text-sm text-rose-600">{supportError}</div>
           ) : null}
+          {supportSelectionActionBar}
+          {supportReplyDraftBanner}
           <div className="flex min-w-0 items-end gap-2 rounded-full bg-white px-3 py-2 shadow-sm ring-1 ring-slate-200/70">
             <div className="relative shrink-0">
               <button
@@ -19560,11 +19861,15 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             <textarea
               ref={supportInputRef}
               rows={1}
+              data-support-auto-resize="desktop"
               className="min-h-[36px] min-w-0 flex-1 resize-none border-0 bg-transparent px-1 py-2 text-[15px] leading-5 text-slate-900 caret-slate-900 outline-none transition placeholder:text-slate-400"
               placeholder={selectedSupportInputPlaceholder}
               value={supportDraft}
               style={{ WebkitTextFillColor: "#0f172a" }}
-              onChange={(event) => setSupportDraft(event.target.value)}
+              onChange={(event) => {
+                setSupportDraft(event.target.value);
+                resizeSupportComposerInput(event.target);
+              }}
               onFocus={() => {
                 setSupportAttachmentMenuOpen(false);
                 setSupportEmojiMenuOpen(false);
@@ -19572,6 +19877,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 setSupportMessageContextMenu(null);
               }}
               onKeyDown={handleSupportComposerKeyDown}
+              onPaste={handleSupportComposerPaste}
               disabled={supportSending || (!selectedSupportPeerContact && supportSelectedContactKey !== SUPPORT_OFFICIAL_CONTACT_KEY)}
             />
             <button
