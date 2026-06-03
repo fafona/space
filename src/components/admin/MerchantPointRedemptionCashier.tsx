@@ -218,11 +218,13 @@ function stockLabel(item: MerchantMemberRedemptionItem) {
   return item.stock > 0 ? `库存 ${item.stock}` : "无库存";
 }
 
-function operationErrorMessage(message: unknown, fallback: string) {
+function operationErrorMessage(message: unknown, fallback: string, operationType: "redeem" | "recharge" = "redeem") {
   const text = trimText(message, 1000);
   if (text === "membership_balance_insufficient") return "会员积分不足，不能兑换。";
   if (text === "membership_redemption_stock_insufficient") return "兑换项目库存不足。";
-  if (text === "membership_operation_empty") return "请选择兑换项目。";
+  if (text === "membership_operation_empty") {
+    return operationType === "recharge" ? "充值方案金额和积分不能都为空" : "请选择兑换项目。";
+  }
   if (text === "membership_not_active") return "该会员不是正常状态，不能兑换。";
   if (text === "membership_redemption_item_not_found") return "兑换项目不存在或已停用";
   if (text === "membership_settings_unavailable") return "会员兑换配置不可用。";
@@ -907,7 +909,7 @@ export default function MerchantPointRedemptionCashier({
       });
       const payload = (await response.json().catch(() => null)) as MembershipPatchPayload | null;
       if (!response.ok || !payload?.ok || !payload.membership) {
-        throw new Error(operationErrorMessage(payload?.message, "充值失败，请稍后重试"));
+        throw new Error(operationErrorMessage(payload?.message, "充值失败，请稍后重试", "recharge"));
       }
       setMemberships((current) =>
         current.map((membership) => (membership.id === payload.membership?.id ? payload.membership : membership)),
