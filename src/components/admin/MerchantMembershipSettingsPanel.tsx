@@ -37,7 +37,7 @@ type MembershipSettingsPayload = {
 const VIEW_TITLES: Record<Exclude<MerchantMemberSettingsView, "list">, string> = {
   rechargePlans: "充值方案",
   redemptionCategories: "项目分类",
-  redemptionItems: "兑换项目",
+  redemptionItems: "项目管理",
   levels: "等级&权益",
   pointsRules: "积分规则",
 };
@@ -956,14 +956,14 @@ export default function MerchantMembershipSettingsPanel({
     return (
       <div className="space-y-4">
         <SectionCard
-          title="兑换项目"
+          title="项目管理"
           action={
             <button
               type="button"
               className="rounded-xl bg-slate-950 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800"
               onClick={openItemCreate}
             >
-              新增兑换项目
+              新增项目
             </button>
           }
         >

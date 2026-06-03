@@ -20594,20 +20594,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     <div className="grid gap-2">
                       <button
                         type="button"
-                        className={getMerchantDesktopSubmenuButtonClassName(merchantDesktopSection === "redemptionCategories")}
-                        onClick={() => void openMerchantPointRedemptionSettingsPanel("redemptionCategories")}
-                      >
-                        项目分类
-                      </button>
-                      <button
-                        type="button"
-                        className={getMerchantDesktopSubmenuButtonClassName(merchantDesktopSection === "redemptionItems")}
-                        onClick={() => void openMerchantPointRedemptionSettingsPanel("redemptionItems")}
-                      >
-                        兑换项目
-                      </button>
-                      <button
-                        type="button"
                         className={getMerchantDesktopSubmenuButtonClassName(merchantDesktopSection === "redemptionRecords")}
                         onClick={() => void openMerchantRedemptionRecordsPanel()}
                       >
@@ -20619,6 +20605,20 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         onClick={() => void openMerchantRechargeRecordsPanel()}
                       >
                         充值记录
+                      </button>
+                      <button
+                        type="button"
+                        className={getMerchantDesktopSubmenuButtonClassName(merchantDesktopSection === "redemptionCategories")}
+                        onClick={() => void openMerchantPointRedemptionSettingsPanel("redemptionCategories")}
+                      >
+                        项目分类
+                      </button>
+                      <button
+                        type="button"
+                        className={getMerchantDesktopSubmenuButtonClassName(merchantDesktopSection === "redemptionItems")}
+                        onClick={() => void openMerchantPointRedemptionSettingsPanel("redemptionItems")}
+                      >
+                        项目管理
                       </button>
                     </div>
                   ) : merchantDesktopSection === "booking" ? (
