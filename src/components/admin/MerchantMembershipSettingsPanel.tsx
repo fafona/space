@@ -365,7 +365,7 @@ export default function MerchantMembershipSettingsPanel({
     }
   }
 
-  async function saveSettings(nextSettings: MerchantMembershipSettings = activeSettings) {
+  async function saveSettings(nextSettings: MerchantMembershipSettings = activeSettings, successNotice = "已保存") {
     if (saving) return false;
     if (!/^\d{8}$/.test(normalizedSiteId)) {
       setError("当前商户资料还没准备好，请稍后重试。");
@@ -397,7 +397,7 @@ export default function MerchantMembershipSettingsPanel({
         throw new Error(readPayloadMessage(payload?.message, "会员配置保存失败，请稍后重试"));
       }
       setSettings(normalizeMerchantMembershipSettings(normalizedSiteId, payload.settings));
-      setNotice("已保存。");
+      setNotice(successNotice);
       return true;
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "会员配置保存失败，请稍后重试");
@@ -642,7 +642,7 @@ export default function MerchantMembershipSettingsPanel({
       redemptionCategories: activeSettings.redemptionCategories
         .filter((item) => item.id !== category.id)
         .map((item, index) => ({ ...item, sort: index })),
-    });
+    }, "已删除");
   }
 
   function openItemCreate() {
@@ -838,7 +838,7 @@ export default function MerchantMembershipSettingsPanel({
                                 redemptionCategories: activeSettings.redemptionCategories.map((item) =>
                                   item.id === category.id ? { ...item, enabled: !item.enabled } : item,
                                 ),
-                              })
+                              }, category.enabled ? "已停用" : "已启用")
                             }
                           >
                             {category.enabled ? "启用" : "停用"}
@@ -1079,7 +1079,7 @@ export default function MerchantMembershipSettingsPanel({
                               redemptionItems: activeSettings.redemptionItems.map((entry) =>
                                 entry.id === item.id ? { ...entry, enabled: !entry.enabled } : entry,
                               ),
-                            })
+                            }, item.enabled ? "已停用" : "已启用")
                           }
                         >
                           {item.enabled ? "启用" : "停用"}
@@ -1103,7 +1103,7 @@ export default function MerchantMembershipSettingsPanel({
                                 redemptionItems: activeSettings.redemptionItems
                                   .filter((entry) => entry.id !== item.id)
                                   .map((entry, index) => ({ ...entry, sort: index })),
-                              })
+                              }, "已删除")
                             }
                           >
                             删除

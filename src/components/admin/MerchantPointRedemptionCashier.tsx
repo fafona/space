@@ -224,7 +224,7 @@ function operationErrorMessage(message: unknown, fallback: string) {
   if (text === "membership_redemption_stock_insufficient") return "兑换项目库存不足。";
   if (text === "membership_operation_empty") return "请选择兑换项目。";
   if (text === "membership_not_active") return "该会员不是正常状态，不能兑换。";
-  if (text === "membership_redemption_item_not_found") return "兑换项目不存在或已停用。";
+  if (text === "membership_redemption_item_not_found") return "兑换项目不存在或已停用";
   if (text === "membership_settings_unavailable") return "会员兑换配置不可用。";
   return text || fallback;
 }
@@ -395,7 +395,7 @@ export default function MerchantPointRedemptionCashier({
 
   const filteredMembers = useMemo(() => {
     const keyword = memberKeyword.trim().toLowerCase();
-    if (!keyword) return activeMembers.slice(0, 12);
+    if (!keyword) return [];
     return activeMembers.filter((membership) => buildMemberSearchText(membership).includes(keyword)).slice(0, 20);
   }, [activeMembers, memberKeyword]);
 
@@ -797,9 +797,13 @@ export default function MerchantPointRedemptionCashier({
   }
 
   function lookupMember() {
+    const keyword = memberKeyword.trim().toLowerCase();
+    if (!keyword) {
+      setMemberPickerOpen(false);
+      return;
+    }
     const exact =
       filteredMembers.find((membership) => {
-        const keyword = memberKeyword.trim().toLowerCase();
         return (
           keyword &&
           [membership.memberNo, membership.phone, membership.email, membership.accountId]
@@ -2869,10 +2873,11 @@ export default function MerchantPointRedemptionCashier({
                 <input
                   value={memberKeyword}
                   onChange={(event) => {
-                    setMemberKeyword(event.target.value);
-                    setMemberPickerOpen(true);
+                    const nextKeyword = event.target.value;
+                    setMemberKeyword(nextKeyword);
+                    setMemberPickerOpen(nextKeyword.trim().length > 0);
                   }}
-                  onFocus={() => setMemberPickerOpen(true)}
+                  onFocus={() => setMemberPickerOpen(memberKeyword.trim().length > 0)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter") lookupMember();
                   }}

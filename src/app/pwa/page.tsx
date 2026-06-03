@@ -350,7 +350,7 @@ function resolveNotificationPanelCopy(locale: string): NotificationPanelCopy {
       routeModeLabel: "点击通知后",
       routeModeTarget: "优先打开通知目标",
       routeModeWorkspace: "优先回到最近工作区",
-      saveDone: "通知设置已保存。",
+      saveDone: "通知设置已保存",
       permissionReady: "通知权限已开启。",
       permissionFailed: "通知权限请求失败，请稍后重试。",
       testSent: "测试通知已发送。",
