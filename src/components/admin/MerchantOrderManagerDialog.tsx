@@ -1159,19 +1159,19 @@ export default function MerchantOrderManagerDialog({
   const content = (
     <div className={isInline ? "w-full py-6" : "max-h-[88vh] overflow-hidden rounded-[28px]"}>
       <div
-        className={`flex min-h-[540px] flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white ${
-          isInline ? "max-h-none shadow-[0_18px_48px_rgba(15,23,42,0.08)]" : "max-h-[88vh] shadow-[0_24px_70px_rgba(15,23,42,0.12)]"
+        className={`flex min-h-[540px] flex-col overflow-hidden rounded-[24px] border border-slate-200 bg-white ${
+          isInline ? "max-h-none shadow-[0_12px_32px_rgba(15,23,42,0.05)]" : "max-h-[88vh] shadow-[0_24px_70px_rgba(15,23,42,0.12)]"
         }`}
       >
         <div
           className={`${
-            isInline ? "sticky top-0 z-20 bg-white/95 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-white/90" : ""
+            isInline ? "bg-white" : ""
           }`}
         >
-          <div className="flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-5">
             <div className="min-w-0 flex-1 space-y-1">
               <div className="flex flex-wrap items-center gap-2.5">
-                <div className="text-[26px] font-semibold text-slate-950">订单管理</div>
+                <div className="text-[26px] font-bold leading-8 text-slate-950">订单管理</div>
                 <button
                   type="button"
                   className={hideWorkbenchButton ? "hidden" : workbenchButtonClassName}
@@ -1252,7 +1252,7 @@ export default function MerchantOrderManagerDialog({
             ) : null}
           </div>
 
-          <div className="space-y-3 border-b px-5 py-4">
+          <div className="space-y-3 border-b border-slate-200 px-5 py-4">
             <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
               <input
                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-slate-300 focus:ring-2 focus:ring-slate-200"

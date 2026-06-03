@@ -2339,11 +2339,11 @@ export default function MerchantBusinessCardManager({
       </div>
     );
   const folderPageSurface = (
-    <div className="flex min-h-[calc(100vh-14rem)] flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_16px_36px_rgba(15,23,42,0.08)]">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-5">
+    <div className="flex min-h-[calc(100vh-14rem)] flex-col overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-[0_12px_32px_rgba(15,23,42,0.05)]">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-5">
         <div>
           <div className="flex flex-wrap items-center gap-2">
-            <div className="text-lg font-semibold text-slate-900">名片夹</div>
+            <div className="text-[26px] font-bold leading-8 text-slate-950">名片夹</div>
             <div className="text-sm font-medium text-slate-500">（{cardFolderCountLabel}）</div>
             <button
               type="button"
@@ -2357,12 +2357,12 @@ export default function MerchantBusinessCardManager({
           <div className="text-sm text-slate-500">查看已生成的图片名片或链接名片，可预览并继续操作。</div>
         </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">{folderGridContent}</div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">{folderGridContent}</div>
     </div>
   );
 
   return (
-    <div className={isPageFolderView ? "space-y-4" : "space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4"}>
+    <div className={isPageFolderView ? "space-y-4 py-6" : "space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4"}>
       {!isPageFolderView ? (
         <div className="flex">
           <button

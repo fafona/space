@@ -1372,22 +1372,22 @@ export default function MerchantBookingManagerDialog({
       }
     >
       <div
-        className={`mx-auto flex w-full flex-col rounded-[28px] border border-slate-200 bg-white ${
-          isInline ? "max-w-none overflow-hidden shadow-[0_18px_48px_rgba(15,23,42,0.08)]" : "h-full max-h-[calc(100vh-2rem)] max-w-6xl overflow-hidden shadow-2xl"
+        className={`mx-auto flex w-full flex-col rounded-[24px] border border-slate-200 bg-white ${
+          isInline ? "max-w-none overflow-hidden shadow-[0_12px_32px_rgba(15,23,42,0.05)]" : "h-full max-h-[calc(100vh-2rem)] max-w-6xl overflow-hidden shadow-2xl"
         }${className ? ` ${className}` : ""}`}
         onMouseDown={isInline ? undefined : (event) => event.stopPropagation()}
       >
         <div
           className={`${
             isInline
-              ? "sticky top-0 z-20 bg-white/95 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-white/90"
+              ? "bg-white"
               : ""
           }`}
         >
-        <div className="flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-5">
           <div className="min-w-0 flex-1 space-y-1">
               <div className="flex flex-wrap items-center gap-2.5">
-              <div className="text-[26px] font-semibold leading-8 text-slate-950">{getMerchantBookingFieldText("managementTitle", locale)}</div>
+              <div className="text-[26px] font-bold leading-8 text-slate-950">{getMerchantBookingFieldText("managementTitle", locale)}</div>
               {!hideWorkbenchButton ? (
                 <button
                   type="button"
@@ -1467,10 +1467,10 @@ export default function MerchantBookingManagerDialog({
           ) : null}
         </div>
 
-        <div className="space-y-3 border-b px-5 py-4">
+        <div className="space-y-3 border-b border-slate-200 px-5 py-4">
           <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
             <input
-              className="w-full rounded border px-3 py-2 text-sm"
+              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-slate-300 focus:ring-2 focus:ring-slate-200"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder={getMerchantBookingFieldText("searchDesktop", locale)}

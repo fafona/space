@@ -19290,14 +19290,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           font-family: inherit;
         }
 
-        [data-desktop-sidebar="1"] .merchant-desktop-collapse-tab {
-          --collapse-tab-bg: #111827;
-          background:
-            radial-gradient(18px 18px at 0 0, transparent 17px, var(--collapse-tab-bg) 17.5px) top left / 22px 22px no-repeat,
-            radial-gradient(18px 18px at 0 100%, transparent 17px, var(--collapse-tab-bg) 17.5px) bottom left / 22px 22px no-repeat,
-            linear-gradient(var(--collapse-tab-bg), var(--collapse-tab-bg)) left 11px top / calc(100% - 11px) 100% no-repeat,
-            linear-gradient(var(--collapse-tab-bg), var(--collapse-tab-bg)) left top 18px / 100% calc(100% - 36px) no-repeat;
-        }
       `}</style>
       {!topBarCollapsed && backendNotice ? (
         <div className={isMobileMerchantEditorShell ? "mx-auto max-w-[460px] px-4 pb-4" : "max-w-6xl mx-auto px-6 pb-3"}>
@@ -19317,7 +19309,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           shouldUseDesktopEditorSidebar
             ? topBarCollapsed
               ? "left-0 top-28"
-              : "left-[220px] top-28"
+              : "left-[227px] top-28"
             : isMobileMerchantEditorShell
               ? `left-4 ${topBarCollapsed ? "top-[calc(var(--faolla-mobile-safe-top)+1rem)]" : "top-[calc(var(--faolla-mobile-safe-top)+1.1rem)]"}`
               : "left-0 top-3"
@@ -19327,7 +19319,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           type="button"
           className={`group flex items-center justify-center border text-base leading-none transition-all ${
             shouldUseDesktopEditorSidebar
-              ? "merchant-desktop-collapse-tab h-20 w-8 rounded-r-[22px] border-0 pl-2 text-[#dbeafe] shadow-none hover:text-white"
+              ? "h-16 w-7 rounded-r-full border-0 bg-[#111827] text-[#dbeafe] shadow-none hover:bg-[#111827] hover:text-white"
               : isMobileMerchantEditorShell
                 ? "h-11 w-11 rounded-full border-white/70 bg-white/92 text-slate-700 shadow-[0_18px_40px_rgba(15,23,42,0.14)]"
                 : "h-10 w-7 rounded-r-lg border-l-0 bg-white text-slate-700 shadow-sm hover:bg-gray-50"
