@@ -19254,7 +19254,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           shouldUseDesktopEditorSidebar
             ? topBarCollapsed
               ? "left-0 top-28"
-              : "left-[220px] top-28"
+              : "left-[228px] top-28"
             : isMobileMerchantEditorShell
               ? `left-4 ${topBarCollapsed ? "top-[calc(var(--faolla-mobile-safe-top)+1rem)]" : "top-[calc(var(--faolla-mobile-safe-top)+1.1rem)]"}`
               : "left-0 top-3"
@@ -19264,7 +19264,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           type="button"
           className={`group flex items-center justify-center border text-base leading-none transition-all ${
             shouldUseDesktopEditorSidebar
-              ? "h-24 w-8 rounded-r-[28px] border border-l-0 border-blue-200/15 bg-[#111827] text-[#dbeafe] shadow-[0_14px_28px_rgba(15,23,42,0.22),inset_0_0_0_1px_rgba(147,197,253,0.08)] hover:bg-[#17233f] hover:text-white"
+              ? "h-24 w-8 -translate-x-px rounded-r-[28px] border-0 bg-[#111827] text-[#dbeafe] shadow-none hover:bg-[#111827] hover:text-white"
               : isMobileMerchantEditorShell
                 ? "h-11 w-11 rounded-full border-white/70 bg-white/92 text-slate-700 shadow-[0_18px_40px_rgba(15,23,42,0.14)]"
                 : "h-10 w-7 rounded-r-lg border-l-0 bg-white text-slate-700 shadow-sm hover:bg-gray-50"
@@ -19662,21 +19662,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       </button>
                       <button
                         type="button"
-                        className={getMerchantDesktopSubmenuButtonClassName(false)}
-                        onClick={() => {
-                          void openMerchantEditorInNewWindow();
-                        }}
-                      >
-                        网站编辑
-                      </button>
-                      <button
-                        type="button"
                         className={getMerchantDesktopSubmenuButtonClassName(merchantDesktopSection === "cards", "cyan")}
                         onClick={openMerchantCardsPanel}
                       >
                         <span>名片夹</span>
-                        <span className="rounded-full bg-cyan-50 px-2 py-0.5 text-[11px] font-bold text-cyan-700 ring-1 ring-cyan-100">
-                          {merchantBusinessCardCount} 张
+                        <span className="min-w-8 rounded-full bg-blue-50 px-2 py-0.5 text-center text-[11px] font-bold text-blue-700 ring-1 ring-blue-100">
+                          {merchantBusinessCardCount}
                         </span>
                       </button>
                       {canUseCouponModule ? (
@@ -19686,8 +19677,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                           onClick={openMerchantCouponsPanel}
                         >
                           <span>优惠券</span>
-                          <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-bold text-rose-700 ring-1 ring-rose-100">
-                            {merchantVisibleCouponCount} 张
+                          <span className="min-w-8 rounded-full bg-blue-50 px-2 py-0.5 text-center text-[11px] font-bold text-blue-700 ring-1 ring-blue-100">
+                            {merchantVisibleCouponCount}
                           </span>
                         </button>
                       ) : null}
@@ -19697,6 +19688,20 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         onClick={openMerchantAnalyticsPanel}
                       >
                         数据统计
+                      </button>
+                      <button
+                        type="button"
+                        className={getMerchantDesktopSubmenuButtonClassName(false)}
+                        onClick={() => {
+                          void openMerchantEditorInNewWindow();
+                        }}
+                      >
+                        <span>网站编辑</span>
+                        <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0 opacity-80" fill="none" aria-hidden="true">
+                          <path d="M14 5h5v5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                          <path d="M10 14 19 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                          <path d="M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
                       </button>
                     </div>
                   ) : merchantDesktopSection === "members" ? (
