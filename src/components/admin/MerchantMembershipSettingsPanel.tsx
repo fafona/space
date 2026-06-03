@@ -316,22 +316,22 @@ export default function MerchantMembershipSettingsPanel({
     }
   }
 
-  async function saveSettings() {
-    if (saving) return;
+  async function saveSettings(nextSettings: MerchantMembershipSettings = activeSettings) {
+    if (saving) return false;
     if (!/^\d{8}$/.test(normalizedSiteId)) {
       setError("当前商户资料还没准备好，请稍后重试。");
-      return;
+      return false;
     }
-    if (settings.levels.some((level) => !trimText(level.name, 120))) {
+    if (nextSettings.levels.some((level) => !trimText(level.name, 120))) {
       setError("等级名称不能为空，请填写后再保存。");
       setNotice("");
-      return;
+      return false;
     }
     setSaving(true);
     setError("");
     setNotice("");
     try {
-      const normalized = normalizeMerchantMembershipSettings(normalizedSiteId, activeSettings);
+      const normalized = normalizeMerchantMembershipSettings(normalizedSiteId, nextSettings);
       normalized.pointsRules.holidayNames = [];
       const response = await fetch("/api/membership-settings", {
         method: "PUT",
@@ -349,8 +349,10 @@ export default function MerchantMembershipSettingsPanel({
       }
       setSettings(normalizeMerchantMembershipSettings(normalizedSiteId, payload.settings));
       setNotice("已保存。");
+      return true;
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "会员配置保存失败，请稍后重试");
+      return false;
     } finally {
       setSaving(false);
     }
@@ -541,7 +543,7 @@ export default function MerchantMembershipSettingsPanel({
     setCategoryDialog({ mode: "edit", draft: { ...category } });
   }
 
-  function saveCategoryDialog() {
+  async function saveCategoryDialog() {
     if (!categoryDialog) return;
     const draft = {
       ...categoryDialog.draft,
@@ -559,25 +561,28 @@ export default function MerchantMembershipSettingsPanel({
       setError("分类名称不能重复。");
       return;
     }
-    patchSettings((current) => ({
-      ...current,
+    const nextSettings: MerchantMembershipSettings = {
+      ...activeSettings,
       redemptionCategories:
         categoryDialog.mode === "create"
-          ? [...current.redemptionCategories, draft]
-          : current.redemptionCategories.map((category) => (category.id === draft.id ? draft : category)),
-    }));
-    setCategoryDialog(null);
-    setError("");
+          ? [...activeSettings.redemptionCategories, draft]
+          : activeSettings.redemptionCategories.map((category) => (category.id === draft.id ? draft : category)),
+    };
+    const saved = await saveSettings(nextSettings);
+    if (saved) {
+      setCategoryDialog(null);
+      setError("");
+    }
   }
 
-  function deleteRedemptionCategory(category: MerchantMemberRedemptionCategory) {
+  async function deleteRedemptionCategory(category: MerchantMemberRedemptionCategory) {
     if (redemptionCategoryReferenced(category.id)) return;
-    patchSettings((current) => ({
-      ...current,
-      redemptionCategories: current.redemptionCategories
+    await saveSettings({
+      ...activeSettings,
+      redemptionCategories: activeSettings.redemptionCategories
         .filter((item) => item.id !== category.id)
         .map((item, index) => ({ ...item, sort: index })),
-    }));
+    });
   }
 
   function openItemCreate() {
@@ -609,7 +614,7 @@ export default function MerchantMembershipSettingsPanel({
     setItemDialog({ mode: "edit", draft: { ...item } });
   }
 
-  function saveItemDialog() {
+  async function saveItemDialog() {
     if (!itemDialog) return;
     const draft = {
       ...itemDialog.draft,
@@ -631,15 +636,18 @@ export default function MerchantMembershipSettingsPanel({
       setError("兑换项目编号不能重复。");
       return;
     }
-    patchSettings((current) => ({
-      ...current,
+    const nextSettings: MerchantMembershipSettings = {
+      ...activeSettings,
       redemptionItems:
         itemDialog.mode === "create"
-          ? [...current.redemptionItems, draft]
-          : current.redemptionItems.map((item) => (item.id === draft.id ? draft : item)),
-    }));
-    setItemDialog(null);
-    setError("");
+          ? [...activeSettings.redemptionItems, draft]
+          : activeSettings.redemptionItems.map((item) => (item.id === draft.id ? draft : item)),
+    };
+    const saved = await saveSettings(nextSettings);
+    if (saved) {
+      setItemDialog(null);
+      setError("");
+    }
   }
 
   async function handleItemImageUpload(event: ChangeEvent<HTMLInputElement>) {
@@ -748,12 +756,12 @@ export default function MerchantMembershipSettingsPanel({
                               category.enabled ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"
                             }`}
                             onClick={() =>
-                              patchSettings((current) => ({
-                                ...current,
-                                redemptionCategories: current.redemptionCategories.map((item) =>
+                              void saveSettings({
+                                ...activeSettings,
+                                redemptionCategories: activeSettings.redemptionCategories.map((item) =>
                                   item.id === category.id ? { ...item, enabled: !item.enabled } : item,
                                 ),
-                              }))
+                              })
                             }
                           >
                             {category.enabled ? "启用" : "停用"}
@@ -773,7 +781,7 @@ export default function MerchantMembershipSettingsPanel({
                               disabled={referenced}
                               title={referenced ? "分类下已有兑换项目，不能删除" : ""}
                               className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-300 disabled:hover:bg-white"
-                              onClick={() => deleteRedemptionCategory(category)}
+                              onClick={() => void deleteRedemptionCategory(category)}
                             >
                               删除
                             </button>
@@ -950,12 +958,12 @@ export default function MerchantMembershipSettingsPanel({
                             item.enabled ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"
                           }`}
                           onClick={() =>
-                            patchSettings((current) => ({
-                              ...current,
-                              redemptionItems: current.redemptionItems.map((entry) =>
+                            void saveSettings({
+                              ...activeSettings,
+                              redemptionItems: activeSettings.redemptionItems.map((entry) =>
                                 entry.id === item.id ? { ...entry, enabled: !entry.enabled } : entry,
                               ),
-                            }))
+                            })
                           }
                         >
                           {item.enabled ? "启用" : "停用"}
@@ -974,12 +982,12 @@ export default function MerchantMembershipSettingsPanel({
                             type="button"
                             className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50"
                             onClick={() =>
-                              patchSettings((current) => ({
-                                ...current,
-                                redemptionItems: current.redemptionItems
+                              void saveSettings({
+                                ...activeSettings,
+                                redemptionItems: activeSettings.redemptionItems
                                   .filter((entry) => entry.id !== item.id)
                                   .map((entry, index) => ({ ...entry, sort: index })),
-                              }))
+                              })
                             }
                           >
                             删除
@@ -1787,6 +1795,8 @@ export default function MerchantMembershipSettingsPanel({
     </SectionCard>
   );
 
+  const showHeaderSaveButton = view !== "redemptionCategories" && view !== "redemptionItems";
+
   return (
     <section className={`space-y-4 py-6 ${className}`}>
       <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_18px_48px_rgba(15,23,42,0.08)]">
@@ -1804,14 +1814,16 @@ export default function MerchantMembershipSettingsPanel({
             >
               {loading ? "刷新中..." : "刷新"}
             </button>
-            <button
-              type="button"
-              className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-              onClick={() => void saveSettings()}
-              disabled={loading || saving}
-            >
-              {saving ? "保存中..." : "保存配置"}
-            </button>
+            {showHeaderSaveButton ? (
+              <button
+                type="button"
+                className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={() => void saveSettings()}
+                disabled={loading || saving}
+              >
+                {saving ? "保存中..." : "保存配置"}
+              </button>
+            ) : null}
           </div>
         </div>
         {error ? (

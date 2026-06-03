@@ -1035,10 +1035,6 @@ export default function MerchantPointRedemptionCashier({
     }
   }
 
-  function notifyUnavailable(label: string) {
-    setNotice(`积分兑换暂不需要${label}。`);
-  }
-
   return (
     <section className={`merchant-pos-cashier ${className}`}>
       <style>{`
@@ -1132,21 +1128,19 @@ export default function MerchantPointRedemptionCashier({
           letter-spacing: 0;
         }
 
-        .merchant-pos-cashier .cashier-title small {
-          display: block;
-          margin-top: 4px;
+        .merchant-pos-cashier .cashier-date {
           color: var(--pos-muted);
+          font-size: 14px;
           font-weight: 700;
         }
 
-        .merchant-pos-cashier .cashier-refresh-line {
+        .merchant-pos-cashier .cashier-loading {
           display: flex;
           align-items: center;
-          gap: 8px;
-          height: 36px;
-          margin-top: 2px;
+          min-height: 20px;
+          margin-top: 6px;
           color: var(--pos-muted);
-          font-size: 14px;
+          font-size: 13px;
         }
 
         .merchant-pos-cashier .cashier-actions {
@@ -1495,7 +1489,6 @@ export default function MerchantPointRedemptionCashier({
           align-items: center;
           justify-content: flex-end;
           gap: 10px;
-          margin-left: auto;
         }
 
         .merchant-pos-cashier .cart-area {
@@ -2633,18 +2626,13 @@ export default function MerchantPointRedemptionCashier({
         <div>
           <div className="cashier-title">
             <h2>{view === "records" ? "兑换记录" : view === "rechargeRecords" ? "充值记录" : "积分兑换"}</h2>
+            <span className="cashier-date">{formatDateYmd()}</span>
           </div>
-          <div className="cashier-refresh-line">
-            <span>{formatDateYmd()}</span>
-            <button type="button" className="pos-button" onClick={loadData}>
-              刷新
-            </button>
-            {loading ? <span>正在刷新...</span> : null}
-          </div>
+          {loading ? <div className="cashier-loading">正在刷新...</div> : null}
         </div>
         <div className="cashier-actions">
-          <button type="button" className="el-button el-button--default" onClick={() => notifyUnavailable("开钱箱")}>
-            开钱箱
+          <button type="button" className="el-button el-button--default" onClick={loadData} disabled={loading}>
+            {loading ? "刷新中..." : "刷新"}
           </button>
           <div ref={languageRootRef} className="language-menu-wrap" data-no-translate="1">
             <button
