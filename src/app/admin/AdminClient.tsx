@@ -19319,7 +19319,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           type="button"
           className={`group flex items-center justify-center border text-base leading-none transition-all ${
             shouldUseDesktopEditorSidebar
-              ? "h-16 w-7 rounded-r-full border-0 bg-[#111827] text-[#dbeafe] shadow-none hover:bg-[#111827] hover:text-white"
+              ? "h-24 w-7 rounded-r-full border-0 bg-[#111827] text-[#dbeafe] shadow-none hover:bg-[#111827] hover:text-white"
               : isMobileMerchantEditorShell
                 ? "h-11 w-11 rounded-full border-white/70 bg-white/92 text-slate-700 shadow-[0_18px_40px_rgba(15,23,42,0.14)]"
                 : "h-10 w-7 rounded-r-lg border-l-0 bg-white text-slate-700 shadow-sm hover:bg-gray-50"

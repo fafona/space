@@ -2194,6 +2194,10 @@ export default function MerchantPointRedemptionCashier({
           font-weight: 820;
         }
 
+        .merchant-pos-cashier .category-filter-shell {
+          position: relative;
+        }
+
         .merchant-pos-cashier .catalog-sort-row {
           display: grid;
           grid-template-columns: 1fr 1fr;
@@ -2956,6 +2960,7 @@ export default function MerchantPointRedemptionCashier({
             </div>
           ) : null}
 
+          <div className="category-filter-shell">
           <div className="category-row">
             <div className="category-menu-anchor">
             <button
@@ -3048,6 +3053,73 @@ export default function MerchantPointRedemptionCashier({
                 <span className="category-button-label">{category.name}</span>
               </button>
             ))}
+          </div>
+            {categoryMenuOpen ? (
+              <div className="catalog-popover catalog-popover-left">
+                <div className="catalog-popover-stack">
+                  {([
+                    ["hot", "热卖"],
+                    ["category", "分类"],
+                    ["recommend", "推荐"],
+                  ] as Array<[CatalogFilterTab, string]>).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={`catalog-panel-button ${catalogFilterTab === value ? "active" : ""}`}
+                      onClick={() => setCatalogFilterTab(value)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                  <div className="catalog-panel-label">默认</div>
+                  <div className="catalog-sort-row">
+                    <button
+                      type="button"
+                      className={`catalog-panel-button ${catalogSortMode === "code" ? "active" : ""}`}
+                      onClick={() => setCatalogSortMode("code")}
+                    >
+                      编号
+                    </button>
+                    <button
+                      type="button"
+                      className={`catalog-panel-button ${catalogSortMode === "name" ? "active" : ""}`}
+                      onClick={() => setCatalogSortMode("name")}
+                    >
+                      字母
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    className={`category-check-row ${!categoryId ? "active" : ""}`}
+                    onClick={() => setCategoryId("")}
+                  >
+                    <span className="category-check-box">
+                      <IconCheck />
+                    </span>
+                    <span className="category-button-icon">
+                      <IconGrid />
+                    </span>
+                    <span className="category-button-label">全部</span>
+                  </button>
+                  {enabledCategories.map((category) => (
+                    <button
+                      key={category.id}
+                      type="button"
+                      className={`category-check-row ${categoryId === category.id ? "active" : ""}`}
+                      onClick={() => setCategoryId(category.id)}
+                    >
+                      <span className="category-check-box">
+                        <IconCheck />
+                      </span>
+                      <span className="category-button-icon">
+                        <CategoryIcon name={category.name} />
+                      </span>
+                      <span className="category-button-label">{category.name}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
 
           <div className={`catalog-products ${viewMode === "image" ? `goods-grid goods-grid-${productImageSize}` : "goods-list"}`}>
