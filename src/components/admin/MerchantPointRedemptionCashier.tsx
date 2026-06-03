@@ -67,6 +67,9 @@ type HeldSale = {
 };
 
 type ProductViewMode = "image" | "text";
+type ProductImageSize = "large" | "medium" | "small";
+type CatalogFilterTab = "hot" | "category" | "recommend";
+type CatalogSortMode = "code" | "name";
 type RecordsTimeFilter = "today" | "yesterday" | "week" | "month" | "all";
 
 function flagImageUrl(countryCode: string) {
@@ -264,6 +267,14 @@ function IconList() {
   );
 }
 
+function IconCheck() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="m5 12 4.2 4.2L19 6.8" />
+    </svg>
+  );
+}
+
 function IconGrid() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -349,6 +360,11 @@ export default function MerchantPointRedemptionCashier({
   const [cart, setCart] = useState<CartLine[]>([]);
   const [note, setNote] = useState("");
   const [viewMode, setViewMode] = useState<ProductViewMode>("image");
+  const [productImageSize, setProductImageSize] = useState<ProductImageSize>("medium");
+  const [categoryMenuOpen, setCategoryMenuOpen] = useState(false);
+  const [imageSizeMenuOpen, setImageSizeMenuOpen] = useState(false);
+  const [catalogFilterTab, setCatalogFilterTab] = useState<CatalogFilterTab>("hot");
+  const [catalogSortMode, setCatalogSortMode] = useState<CatalogSortMode>("code");
   const [heldSales, setHeldSales] = useState<HeldSale[]>([]);
   const [heldOpen, setHeldOpen] = useState(false);
   const [memberPickerOpen, setMemberPickerOpen] = useState(false);
@@ -462,15 +478,34 @@ export default function MerchantPointRedemptionCashier({
 
   const filteredItems = useMemo(() => {
     const keyword = itemKeyword.trim().toLowerCase();
-    return enabledItems.filter((item) => {
+    const recommendedCategoryIds = new Set(
+      enabledCategories
+        .filter((category) => {
+          const name = category.name.toLowerCase();
+          return name.includes("推荐") || name.includes("热卖") || name.includes("recommended") || name.includes("hot");
+        })
+        .map((category) => category.id),
+    );
+    return enabledItems
+      .filter((item) => {
       if (categoryId && item.categoryId !== categoryId) return false;
+      if (catalogFilterTab === "recommend") {
+        const text = [item.name, item.code, item.description].join(" ").toLowerCase();
+        if (!recommendedCategoryIds.has(item.categoryId) && !text.includes("推荐") && !text.includes("热卖") && !text.includes("recommended")) {
+          return false;
+        }
+      }
       if (!keyword) return true;
       return [item.code, item.name, item.description, categoryName(enabledCategories, item.categoryId)]
         .join(" ")
         .toLowerCase()
         .includes(keyword);
-    });
-  }, [categoryId, enabledCategories, enabledItems, itemKeyword]);
+    })
+      .sort((left, right) => {
+        if (catalogSortMode === "name") return left.name.localeCompare(right.name) || left.sort - right.sort;
+        return (left.code || left.id).localeCompare(right.code || right.id) || left.sort - right.sort;
+      });
+  }, [catalogFilterTab, catalogSortMode, categoryId, enabledCategories, enabledItems, itemKeyword]);
 
   const cartRows = useMemo(() => {
     return cart
@@ -531,6 +566,12 @@ export default function MerchantPointRedemptionCashier({
     { value: "week", label: "近7天" },
     { value: "month", label: "本月" },
     { value: "all", label: "全部" },
+  ];
+
+  const productImageSizeOptions: Array<{ value: ProductImageSize; label: string }> = [
+    { value: "large", label: "大" },
+    { value: "medium", label: "中" },
+    { value: "small", label: "小" },
   ];
 
   const transactionRecords = useMemo(() => {
@@ -2049,6 +2090,7 @@ export default function MerchantPointRedemptionCashier({
         }
 
         .merchant-pos-cashier .product-view-toggle {
+          position: relative;
           display: flex;
           gap: 6px;
           padding: 3px;
@@ -2076,6 +2118,143 @@ export default function MerchantPointRedemptionCashier({
           box-shadow: 0 0 0 1px var(--pos-line) inset;
         }
 
+        .merchant-pos-cashier .catalog-toolbar {
+          position: relative;
+        }
+
+        .merchant-pos-cashier .catalog-popover {
+          position: absolute;
+          top: calc(100% + 10px);
+          right: 0;
+          z-index: 20;
+          width: 220px;
+          border: 1px solid var(--pos-line);
+          border-radius: 8px;
+          background: var(--pos-surface);
+          padding: 7px;
+          box-shadow: 0 20px 44px rgba(15, 23, 42, 0.16);
+        }
+
+        .merchant-pos-cashier .catalog-popover::before {
+          content: "";
+          position: absolute;
+          right: 24px;
+          top: -7px;
+          width: 13px;
+          height: 13px;
+          border-left: 1px solid var(--pos-line);
+          border-top: 1px solid var(--pos-line);
+          background: var(--pos-surface);
+          transform: rotate(45deg);
+        }
+
+        .merchant-pos-cashier .catalog-popover-left {
+          left: 6px;
+          right: auto;
+          width: 210px;
+        }
+
+        .merchant-pos-cashier .catalog-popover-left::before {
+          left: 88px;
+          right: auto;
+        }
+
+        .merchant-pos-cashier .catalog-popover-stack {
+          display: grid;
+          gap: 6px;
+        }
+
+        .merchant-pos-cashier .catalog-panel-button {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 7px;
+          min-height: 31px;
+          border: 1px solid var(--pos-line);
+          border-radius: 6px;
+          background: var(--pos-surface-soft);
+          color: var(--pos-text);
+          font-weight: 820;
+          cursor: pointer;
+          transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        .merchant-pos-cashier .catalog-panel-button:hover,
+        .merchant-pos-cashier .catalog-panel-button.active {
+          border-color: var(--pos-primary);
+          background: var(--pos-primary-soft);
+          color: var(--pos-primary-dark);
+          box-shadow: var(--pos-focus-inset);
+        }
+
+        .merchant-pos-cashier .catalog-panel-label {
+          margin-top: 2px;
+          color: var(--pos-muted);
+          font-size: 12px;
+          font-weight: 820;
+        }
+
+        .merchant-pos-cashier .catalog-sort-row {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 6px;
+        }
+
+        .merchant-pos-cashier .category-check-row {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          width: 100%;
+          min-height: 34px;
+          border: 1px solid var(--pos-line);
+          border-radius: 6px;
+          background: var(--pos-surface-soft);
+          padding: 0 9px;
+          color: var(--pos-text);
+          font-weight: 820;
+          text-align: left;
+          cursor: pointer;
+        }
+
+        .merchant-pos-cashier .category-check-row.active {
+          border-color: var(--pos-primary);
+          background: var(--pos-primary-soft);
+          color: var(--pos-primary-dark);
+          box-shadow: var(--pos-focus-inset);
+        }
+
+        .merchant-pos-cashier .category-check-box {
+          display: grid;
+          place-items: center;
+          width: 17px;
+          height: 17px;
+          border: 1px solid var(--pos-line);
+          border-radius: 4px;
+          color: transparent;
+          background: var(--pos-surface);
+        }
+
+        .merchant-pos-cashier .category-check-row.active .category-check-box {
+          border-color: var(--pos-primary);
+          background: var(--pos-primary);
+          color: white;
+        }
+
+        .merchant-pos-cashier .category-check-box svg,
+        .merchant-pos-cashier .catalog-panel-button svg {
+          width: 14px;
+          height: 14px;
+          fill: none;
+          stroke: currentColor;
+          stroke-width: 2.4;
+          stroke-linecap: round;
+          stroke-linejoin: round;
+        }
+
+        .merchant-pos-cashier .image-size-popover {
+          width: 152px;
+        }
+
         .merchant-pos-cashier .category-row {
           display: flex;
           flex-wrap: nowrap;
@@ -2085,6 +2264,11 @@ export default function MerchantPointRedemptionCashier({
           overflow-y: hidden;
           padding: 0 2px 5px 0;
           overscroll-behavior-x: contain;
+        }
+
+        .merchant-pos-cashier .category-menu-anchor {
+          position: relative;
+          flex: 0 0 auto;
         }
 
         .merchant-pos-cashier .category-chip {
@@ -2142,6 +2326,14 @@ export default function MerchantPointRedemptionCashier({
           overscroll-behavior: contain;
         }
 
+        .merchant-pos-cashier .goods-grid.goods-grid-large {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .merchant-pos-cashier .goods-grid.goods-grid-small {
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+
         .merchant-pos-cashier .goods-list {
           display: grid;
           gap: 8px;
@@ -2192,6 +2384,21 @@ export default function MerchantPointRedemptionCashier({
           color: var(--pos-primary-dark);
           font-size: 28px;
           font-weight: 900;
+        }
+
+        .merchant-pos-cashier .goods-grid-large .product-visual {
+          font-size: 34px;
+        }
+
+        .merchant-pos-cashier .goods-grid-small .product-visual {
+          font-size: 20px;
+        }
+
+        .merchant-pos-cashier .product-visual img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+          display: block;
         }
 
         .merchant-pos-cashier .product-footer {
@@ -2694,7 +2901,10 @@ export default function MerchantPointRedemptionCashier({
               <button
                 type="button"
                 className={`view-mode-button ${viewMode === "image" ? "active" : ""}`}
-                onClick={() => setViewMode("image")}
+                onClick={() => {
+                  setViewMode("image");
+                  setImageSizeMenuOpen((current) => !current);
+                }}
                 title="图片模式"
               >
                 <IconImage />
@@ -2702,11 +2912,33 @@ export default function MerchantPointRedemptionCashier({
               <button
                 type="button"
                 className={`view-mode-button ${viewMode === "text" ? "active" : ""}`}
-                onClick={() => setViewMode("text")}
+                onClick={() => {
+                  setViewMode("text");
+                  setImageSizeMenuOpen(false);
+                }}
                 title="列表模式"
               >
                 <IconList />
               </button>
+              {imageSizeMenuOpen && viewMode === "image" ? (
+                <div className="catalog-popover image-size-popover">
+                  <div className="catalog-popover-stack">
+                    {productImageSizeOptions.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={`catalog-panel-button ${productImageSize === option.value ? "active" : ""}`}
+                        onClick={() => {
+                          setProductImageSize(option.value);
+                          setImageSizeMenuOpen(false);
+                        }}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
           </div>
 
@@ -2725,16 +2957,84 @@ export default function MerchantPointRedemptionCashier({
           ) : null}
 
           <div className="category-row">
+            <div className="category-menu-anchor">
             <button
               type="button"
               className={`category-chip ${!categoryId ? "active" : ""}`}
-              onClick={() => setCategoryId("")}
+              onClick={() => setCategoryMenuOpen((current) => !current)}
             >
               <span className="category-button-icon">
                 <IconGrid />
               </span>
               <span className="category-button-label">全部</span>
             </button>
+              {categoryMenuOpen ? (
+                <div className="catalog-popover catalog-popover-left">
+                  <div className="catalog-popover-stack">
+                    {([
+                      ["hot", "热卖"],
+                      ["category", "分类"],
+                      ["recommend", "推荐"],
+                    ] as Array<[CatalogFilterTab, string]>).map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        className={`catalog-panel-button ${catalogFilterTab === value ? "active" : ""}`}
+                        onClick={() => setCatalogFilterTab(value)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                    <div className="catalog-panel-label">默认</div>
+                    <div className="catalog-sort-row">
+                      <button
+                        type="button"
+                        className={`catalog-panel-button ${catalogSortMode === "code" ? "active" : ""}`}
+                        onClick={() => setCatalogSortMode("code")}
+                      >
+                        编号
+                      </button>
+                      <button
+                        type="button"
+                        className={`catalog-panel-button ${catalogSortMode === "name" ? "active" : ""}`}
+                        onClick={() => setCatalogSortMode("name")}
+                      >
+                        字母
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      className={`category-check-row ${!categoryId ? "active" : ""}`}
+                      onClick={() => setCategoryId("")}
+                    >
+                      <span className="category-check-box">
+                        <IconCheck />
+                      </span>
+                      <span className="category-button-icon">
+                        <IconGrid />
+                      </span>
+                      <span className="category-button-label">全部</span>
+                    </button>
+                    {enabledCategories.map((category) => (
+                      <button
+                        key={category.id}
+                        type="button"
+                        className={`category-check-row ${categoryId === category.id ? "active" : ""}`}
+                        onClick={() => setCategoryId(category.id)}
+                      >
+                        <span className="category-check-box">
+                          <IconCheck />
+                        </span>
+                        <span className="category-button-icon">
+                          <CategoryIcon name={category.name} />
+                        </span>
+                        <span className="category-button-label">{category.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
             {enabledCategories.map((category) => (
               <button
                 key={category.id}
@@ -2750,7 +3050,7 @@ export default function MerchantPointRedemptionCashier({
             ))}
           </div>
 
-          <div className={`catalog-products ${viewMode === "image" ? "goods-grid" : "goods-list"}`}>
+          <div className={`catalog-products ${viewMode === "image" ? `goods-grid goods-grid-${productImageSize}` : "goods-list"}`}>
             {filteredItems.length ? (
               filteredItems.map((item) => {
                 const unitPoints = getRedemptionPointCostForMember(item, selectedMember, settings);
@@ -2783,7 +3083,12 @@ export default function MerchantPointRedemptionCashier({
                     onClick={() => addToCart(item)}
                   >
                     <div className="product-visual">
-                      <span>{productInitial(item)}</span>
+                      {item.imageUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={item.imageUrl} alt={item.name || item.code || "兑换项目"} />
+                      ) : (
+                        <span>{productInitial(item)}</span>
+                      )}
                     </div>
                     <div className="product-footer">
                       <strong>{item.name}</strong>

@@ -18884,7 +18884,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         </div>
       </div>
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[#efeae2]">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[#edf4f7]">
         <div className="flex min-h-[64px] min-w-0 items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 py-3">
           <div className="flex min-w-0 items-center gap-3">
             {selectedSupportIsOfficial ? (
@@ -18963,10 +18963,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           ref={supportMessagesViewportRef}
           className="min-h-0 min-w-0 flex-1 overflow-y-auto px-10 py-5"
           style={{
-            backgroundColor: "#efeae2",
+            backgroundColor: "#edf4f7",
             backgroundImage:
-              "radial-gradient(circle at 12px 12px, rgba(120,113,108,0.08) 1.2px, transparent 1.4px), radial-gradient(circle at 36px 32px, rgba(120,113,108,0.06) 1px, transparent 1.2px)",
-            backgroundSize: "64px 64px",
+              "linear-gradient(135deg, rgba(240,253,250,0.76) 0%, rgba(241,245,249,0.72) 48%, rgba(226,232,240,0.66) 100%)",
           }}
         >
           {selectedSupportLoading ? (
@@ -19066,33 +19065,58 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           )}
         </div>
 
-        <div className="min-w-0 shrink-0 space-y-3 bg-[#f0f2f5] px-5 py-3">
+        <div className="min-w-0 shrink-0 bg-[#edf4f7] px-5 py-3">
           {supportError && supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY ? (
-            <div className="text-sm text-rose-600">{supportError}</div>
+            <div className="mb-3 text-sm text-rose-600">{supportError}</div>
           ) : null}
-          <textarea
-            ref={supportInputRef}
-            rows={1}
-            className="w-full max-w-full min-w-0 resize-none rounded-full border-0 bg-white px-5 py-3 text-sm text-slate-900 caret-slate-900 outline-none transition placeholder:text-slate-400 focus:ring-2 focus:ring-slate-200"
-            placeholder={selectedSupportInputPlaceholder}
-            value={supportDraft}
-            style={{ WebkitTextFillColor: "#0f172a" }}
-            onChange={(event) => setSupportDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key !== "Enter" || !event.ctrlKey || event.nativeEvent.isComposing) return;
-              event.preventDefault();
-              void sendSupportMessage();
-            }}
-            disabled={supportSending || (!selectedSupportPeerContact && supportSelectedContactKey !== SUPPORT_OFFICIAL_CONTACT_KEY)}
-          />
-          <div className="flex min-w-0 justify-end">
+          <div className="flex min-w-0 items-end gap-2 rounded-full bg-white px-3 py-2 shadow-sm ring-1 ring-slate-200/70">
             <button
               type="button"
-              className="shrink-0 rounded-full bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-slate-950 transition hover:bg-slate-100 disabled:opacity-45"
+              disabled={supportSending}
+              aria-label="添加附件"
+            >
+              <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" aria-hidden="true">
+                <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-slate-950 transition hover:bg-slate-100 disabled:opacity-45"
+              disabled={supportSending}
+              aria-label="选择表情"
+            >
+              <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" aria-hidden="true">
+                <circle cx="12" cy="12" r="8.5" stroke="currentColor" strokeWidth="1.8" />
+                <path d="M8.8 10h.01M15.2 10h.01" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" />
+                <path d="M8.8 14.2c.82 1.12 1.87 1.68 3.2 1.68s2.38-.56 3.2-1.68" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+              </svg>
+            </button>
+            <textarea
+              ref={supportInputRef}
+              rows={1}
+              className="min-h-[36px] min-w-0 flex-1 resize-none border-0 bg-transparent px-1 py-2 text-[15px] leading-5 text-slate-900 caret-slate-900 outline-none transition placeholder:text-slate-400"
+              placeholder={selectedSupportInputPlaceholder}
+              value={supportDraft}
+              style={{ WebkitTextFillColor: "#0f172a" }}
+              onChange={(event) => setSupportDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" || !event.ctrlKey || event.nativeEvent.isComposing) return;
+                event.preventDefault();
+                void sendSupportMessage();
+              }}
+              disabled={supportSending || (!selectedSupportPeerContact && supportSelectedContactKey !== SUPPORT_OFFICIAL_CONTACT_KEY)}
+            />
+            <button
+              type="button"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#22c55e] text-white transition hover:bg-[#16a34a] disabled:bg-slate-300 disabled:text-white"
               onClick={() => void sendSupportMessage()}
               disabled={supportSending || !supportCanSend}
+              aria-label={supportSending ? "发送中" : selectedSupportSendButtonLabel}
             >
-              {supportSending ? "发送中..." : selectedSupportSendButtonLabel}
+              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor" aria-hidden="true">
+                <path d="M5.35 4.45c-.74-.35-1.5.42-1.14 1.15l2.45 5.05c.12.24.36.4.63.42l6.26.47-6.26.47a.78.78 0 0 0-.63.42l-2.45 5.05c-.36.73.4 1.5 1.14 1.15l15-7.1a.85.85 0 0 0 0-1.54l-15-7.1Z" />
+              </svg>
             </button>
           </div>
         </div>
@@ -19265,6 +19289,15 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         [data-desktop-sidebar="1"] .merchant-desktop-workspace [data-editor-overlay] {
           font-family: inherit;
         }
+
+        [data-desktop-sidebar="1"] .merchant-desktop-collapse-tab {
+          --collapse-tab-bg: #111827;
+          background:
+            radial-gradient(18px 18px at 0 0, transparent 17px, var(--collapse-tab-bg) 17.5px) top left / 22px 22px no-repeat,
+            radial-gradient(18px 18px at 0 100%, transparent 17px, var(--collapse-tab-bg) 17.5px) bottom left / 22px 22px no-repeat,
+            linear-gradient(var(--collapse-tab-bg), var(--collapse-tab-bg)) left 11px top / calc(100% - 11px) 100% no-repeat,
+            linear-gradient(var(--collapse-tab-bg), var(--collapse-tab-bg)) left top 18px / 100% calc(100% - 36px) no-repeat;
+        }
       `}</style>
       {!topBarCollapsed && backendNotice ? (
         <div className={isMobileMerchantEditorShell ? "mx-auto max-w-[460px] px-4 pb-4" : "max-w-6xl mx-auto px-6 pb-3"}>
@@ -19284,7 +19317,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           shouldUseDesktopEditorSidebar
             ? topBarCollapsed
               ? "left-0 top-28"
-              : "left-[204px] top-28"
+              : "left-[220px] top-28"
             : isMobileMerchantEditorShell
               ? `left-4 ${topBarCollapsed ? "top-[calc(var(--faolla-mobile-safe-top)+1rem)]" : "top-[calc(var(--faolla-mobile-safe-top)+1.1rem)]"}`
               : "left-0 top-3"
@@ -19294,7 +19327,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           type="button"
           className={`group flex items-center justify-center border text-base leading-none transition-all ${
             shouldUseDesktopEditorSidebar
-              ? "h-20 w-12 rounded-r-[24px] border-0 bg-[#111827] pl-6 text-[#dbeafe] shadow-none hover:bg-[#111827] hover:text-white"
+              ? "merchant-desktop-collapse-tab h-20 w-8 rounded-r-[22px] border-0 pl-2 text-[#dbeafe] shadow-none hover:text-white"
               : isMobileMerchantEditorShell
                 ? "h-11 w-11 rounded-full border-white/70 bg-white/92 text-slate-700 shadow-[0_18px_40px_rgba(15,23,42,0.14)]"
                 : "h-10 w-7 rounded-r-lg border-l-0 bg-white text-slate-700 shadow-sm hover:bg-gray-50"

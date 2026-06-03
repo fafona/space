@@ -244,7 +244,7 @@ export default function GlobalLanguageSwitcher() {
   return (
     <div
       data-no-translate="1"
-      className={`pointer-events-none fixed right-3 ${isMobileAdminPage ? "z-[2147483605]" : "z-[20010]"} ${mobileAdminTopClassName} md:right-5`}
+      className={`pointer-events-none fixed right-6 ${isMobileAdminPage ? "z-[2147483605]" : "z-[20010]"} ${mobileAdminTopClassName} md:right-8`}
     >
       <div ref={rootRef} className="pointer-events-auto relative">
         <button
