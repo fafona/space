@@ -960,21 +960,21 @@ export default function MerchantPointRedemptionCashier({
     <section className={`merchant-pos-cashier ${className}`}>
       <style>{`
         .merchant-pos-cashier {
-          --pos-bg: #f4f6f8;
+          --pos-bg: #f3f6fb;
           --pos-surface: #ffffff;
           --pos-surface-soft: #f8fafc;
           --pos-line: #dfe7ee;
           --pos-line-strong: #b7c5d0;
           --pos-text: #17212b;
           --pos-muted: #657487;
-          --pos-primary: #0e7666;
-          --pos-primary-dark: #075e53;
-          --pos-primary-soft: #e7f6f2;
+          --pos-primary: #2f5f9f;
+          --pos-primary-dark: #1f477e;
+          --pos-primary-soft: #eaf2ff;
           --pos-danger: #d92d20;
           --pos-danger-soft: #fff1ef;
           --pos-shadow: 0 1px 2px rgba(20, 28, 38, 0.05), 0 14px 34px rgba(20, 28, 38, 0.08);
           --pos-shadow-soft: 0 1px 2px rgba(20, 28, 38, 0.05), 0 8px 22px rgba(20, 28, 38, 0.055);
-          --pos-focus-inset: 0 0 0 3px rgba(14, 118, 102, 0.18) inset;
+          --pos-focus-inset: 0 0 0 3px rgba(47, 95, 159, 0.18) inset;
           min-height: calc(100vh - 120px);
           padding: 0;
           color: var(--pos-text);
@@ -1022,10 +1022,12 @@ export default function MerchantPointRedemptionCashier({
 
         .merchant-pos-cashier .cashier-header {
           display: flex;
-          align-items: flex-start;
+          align-items: center;
           justify-content: space-between;
           gap: 16px;
+          min-height: 86px;
           margin-bottom: 16px;
+          padding: 0 0 2px;
         }
 
         .merchant-pos-cashier .cashier-title {
@@ -1037,9 +1039,9 @@ export default function MerchantPointRedemptionCashier({
         .merchant-pos-cashier .cashier-title h2 {
           margin: 0;
           color: var(--pos-text);
-          font-size: 24px;
-          font-weight: 780;
-          line-height: 1.2;
+          font-size: 26px;
+          font-weight: 800;
+          line-height: 32px;
           letter-spacing: 0;
         }
 
@@ -1054,7 +1056,8 @@ export default function MerchantPointRedemptionCashier({
           display: flex;
           align-items: center;
           gap: 8px;
-          margin-top: 4px;
+          height: 36px;
+          margin-top: 2px;
           color: var(--pos-muted);
           font-size: 14px;
         }
@@ -1063,6 +1066,7 @@ export default function MerchantPointRedemptionCashier({
           display: flex;
           align-items: center;
           gap: 10px;
+          min-height: 40px;
         }
 
         .merchant-pos-cashier .cashier-actions .el-button {

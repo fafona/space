@@ -3132,26 +3132,26 @@ function getMerchantDesktopMenuButtonClassName(active: boolean, tone: "default" 
   if (active) {
     return tone === "alert"
       ? "relative flex h-10 items-center justify-between gap-2 rounded-lg border-0 bg-rose-900/45 px-3 text-sm font-semibold text-white shadow-[inset_3px_0_0_#fb7185]"
-      : "relative flex h-10 items-center justify-between gap-2 rounded-lg border-0 bg-[#22342f] px-3 text-sm font-semibold text-white shadow-[inset_3px_0_0_#74d9be,0_1px_0_rgba(255,255,255,0.04)]";
+      : "relative flex h-10 items-center justify-between gap-2 rounded-lg border-0 bg-[#1f2f55] px-3 text-sm font-semibold text-white shadow-[inset_3px_0_0_#93c5fd,0_1px_0_rgba(255,255,255,0.04)]";
   }
   return tone === "alert"
     ? "relative flex h-10 items-center justify-between gap-2 rounded-lg border-0 bg-transparent px-3 text-sm font-semibold text-rose-100 transition hover:bg-rose-950/35 hover:text-white"
-    : "relative flex h-10 items-center justify-between gap-2 rounded-lg border-0 bg-transparent px-3 text-sm font-semibold text-[#d9e5e0] transition hover:bg-[#1b2a26] hover:text-white";
+    : "relative flex h-10 items-center justify-between gap-2 rounded-lg border-0 bg-transparent px-3 text-sm font-semibold text-[#dbeafe] transition hover:bg-[#17233f] hover:text-white";
 }
 
 function getMerchantDesktopSubmenuButtonClassName(active: boolean, tone: "default" | "cyan" | "rose" | "emerald" | "amber" = "default") {
-  if (active) return "flex h-10 w-full items-center justify-between gap-2 rounded-lg border-0 bg-[#22342f] px-3 text-left text-sm font-semibold text-white shadow-[inset_3px_0_0_#74d9be,0_1px_0_rgba(255,255,255,0.04)] transition";
+  if (active) return "flex h-10 w-full items-center justify-between gap-2 rounded-lg border-0 bg-[#1f2f55] px-3 text-left text-sm font-semibold text-white shadow-[inset_3px_0_0_#93c5fd,0_1px_0_rgba(255,255,255,0.04)] transition";
   const toneClassName =
     tone === "cyan"
-      ? "hover:bg-[#1b2a26] hover:text-cyan-50"
+      ? "hover:bg-[#17233f] hover:text-cyan-50"
       : tone === "rose"
-        ? "hover:bg-[#1b2a26] hover:text-rose-50"
+        ? "hover:bg-[#17233f] hover:text-rose-50"
         : tone === "emerald"
-          ? "hover:bg-[#1b2a26] hover:text-emerald-50"
+          ? "hover:bg-[#17233f] hover:text-emerald-50"
           : tone === "amber"
-            ? "hover:bg-[#1b2a26] hover:text-amber-50"
-            : "hover:bg-[#1b2a26] hover:text-white";
-  return `flex h-10 w-full items-center justify-between gap-2 rounded-lg border-0 bg-transparent px-3 text-left text-sm font-semibold text-[#d9e5e0] transition ${toneClassName}`;
+            ? "hover:bg-[#17233f] hover:text-amber-50"
+            : "hover:bg-[#17233f] hover:text-white";
+  return `flex h-10 w-full items-center justify-between gap-2 rounded-lg border-0 bg-transparent px-3 text-left text-sm font-semibold text-[#dbeafe] transition ${toneClassName}`;
 }
 
 function MerchantDesktopMenuIcon({ name }: { name: "points" | "booking" | "orders" | "support" | "members" | "business" }) {
@@ -18392,12 +18392,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const editorMainClassName = `min-h-screen ${
     isMobileMerchantEditorShell
       ? "overflow-x-hidden bg-[radial-gradient(circle_at_top,_rgba(103,232,249,0.16),_transparent_28%),linear-gradient(180deg,_#eef6ff_0%,_#f8fbff_34%,_#e8f1ff_100%)]"
-      : "bg-gray-100"
+      : "bg-[#f3f6fb]"
   } ${!topBarCollapsed && shouldUseDesktopEditorSidebar ? "pl-[228px]" : ""}`;
   const toolbarWrapperClassName = topBarCollapsed
     ? "hidden"
     : shouldUseDesktopEditorSidebar
-      ? "fixed inset-y-0 left-0 z-[15000] w-[228px] overflow-y-auto border-r border-white/5 bg-[#111d1a] text-white shadow-[inset_-1px_0_0_rgba(0,0,0,0.12)]"
+      ? "fixed inset-y-0 left-0 z-[15000] w-[228px] overflow-y-auto border-r border-white/5 bg-[#111827] text-white shadow-[inset_-1px_0_0_rgba(0,0,0,0.12)]"
       : "fixed inset-x-0 top-0 z-[15000] border-b border-white/70 bg-[rgba(248,251,255,0.88)] shadow-[0_22px_48px_rgba(15,23,42,0.10)] backdrop-blur-xl";
   const toolbarContentClassName = shouldUseDesktopEditorSidebar
     ? "mx-0 flex max-w-none flex-col items-stretch justify-start gap-4 px-3 py-[18px]"
@@ -19085,7 +19085,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   );
   const desktopMerchantWorkspaceContent =
     isDesktopMerchantWorkspace && merchantDesktopSection !== "editor" ? (
-      <div className={merchantDesktopSection === "support" || merchantDesktopSection === "faolla" ? "min-h-screen bg-white" : "min-h-screen bg-slate-50/70"}>
+      <div className={`merchant-desktop-workspace ${merchantDesktopSection === "support" || merchantDesktopSection === "faolla" ? "min-h-screen bg-white" : "min-h-screen bg-[#f3f6fb]"}`}>
         <div className={merchantDesktopSection === "support" || merchantDesktopSection === "faolla" ? "w-full" : "w-full px-6 pb-8"}>
           {merchantDesktopSection === "profile" && merchantProfileDialogCommonProps ? (
             <MerchantProfileDialog
@@ -19198,7 +19198,44 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       onMouseDownCapture={handleEditorMouseDownCapture}
       data-editor-mode={editorMode}
       data-force-desktop-sidebar={forceDesktopEditorSidebar ? "1" : "0"}
+      data-desktop-sidebar={shouldUseDesktopEditorSidebar ? "1" : "0"}
     >
+      <style jsx global>{`
+        [data-desktop-sidebar="1"],
+        [data-desktop-sidebar="1"] .merchant-desktop-workspace {
+          font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+          font-synthesis: none;
+          text-rendering: optimizeLegibility;
+          -webkit-font-smoothing: antialiased;
+          -moz-osx-font-smoothing: grayscale;
+        }
+
+        [data-desktop-sidebar="1"] .merchant-desktop-workspace > div:first-child {
+          min-height: 100vh;
+        }
+
+        [data-desktop-sidebar="1"] .merchant-desktop-workspace h1,
+        [data-desktop-sidebar="1"] .merchant-desktop-workspace h2,
+        [data-desktop-sidebar="1"] .merchant-desktop-workspace .cashier-title h2 {
+          margin: 0;
+          color: #0f172a;
+          font-size: 26px;
+          font-weight: 800;
+          line-height: 32px;
+          letter-spacing: 0;
+        }
+
+        [data-desktop-sidebar="1"] .merchant-desktop-workspace .text-\\[26px\\] {
+          font-size: 26px;
+          line-height: 32px;
+          font-weight: 800;
+          letter-spacing: 0;
+        }
+
+        [data-desktop-sidebar="1"] .merchant-desktop-workspace .text-2xl {
+          letter-spacing: 0;
+        }
+      `}</style>
       {!topBarCollapsed && backendNotice ? (
         <div className={isMobileMerchantEditorShell ? "mx-auto max-w-[460px] px-4 pb-4" : "max-w-6xl mx-auto px-6 pb-3"}>
           <div
@@ -19227,7 +19264,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           type="button"
           className={`group flex items-center justify-center border text-base leading-none transition-all ${
             shouldUseDesktopEditorSidebar
-              ? "h-24 w-8 rounded-r-[28px] border-0 bg-[#4f843f] text-[#d9f5cf] shadow-[0_14px_28px_rgba(15,23,42,0.22)] hover:bg-[#5a9349] hover:text-white"
+              ? "h-24 w-8 rounded-r-[28px] border-0 bg-[#2f5f9f] text-[#dbeafe] shadow-[0_14px_28px_rgba(15,23,42,0.22)] hover:bg-[#386fb8] hover:text-white"
               : isMobileMerchantEditorShell
                 ? "h-11 w-11 rounded-full border-white/70 bg-white/92 text-slate-700 shadow-[0_18px_40px_rgba(15,23,42,0.14)]"
                 : "h-10 w-7 rounded-r-lg border-l-0 bg-white text-slate-700 shadow-sm hover:bg-gray-50"
@@ -19287,31 +19324,31 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   </div>
                 ) : (
                   <div className="relative block min-h-[70px] border-b border-white/10 px-2 pb-[18px] pt-2">
-                    <div className="min-w-0 pr-7">
-                      <div className="truncate text-[17px] font-bold leading-tight text-white" title={merchantDisplayName}>
-                        {merchantDisplayName}
+                    <div className="flex min-w-0 items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="truncate text-[17px] font-bold leading-tight text-white" title={merchantDisplayName}>
+                          {merchantDisplayName}
+                        </div>
+                        <div className="mt-1 truncate text-[13px] text-[#bfdbfe]">FAOLLA</div>
                       </div>
-                      <div className="mt-1 truncate text-[13px] text-[#b9c8c3]">FAOLLA</div>
+                      {isDesktopMerchantWorkspace ? (
+                          <button
+                            type="button"
+                            className="inline-flex h-9 w-10 shrink-0 items-center justify-center rounded-lg border border-rose-400/70 bg-transparent text-rose-100 transition hover:bg-rose-900/35 hover:text-white disabled:opacity-50"
+                            onClick={() => {
+                              void requestLogout();
+                            }}
+                            disabled={loggingOut}
+                            title={loggingOut ? "退出中..." : "退出登录"}
+                            aria-label={loggingOut ? "退出中..." : "退出登录"}
+                          >
+                            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+                              <path d="M14 7h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                              <path d="M10 8 6 12l4 4M7 12h9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                          </button>
+                      ) : null}
                     </div>
-                    {isDesktopMerchantWorkspace ? (
-                      <div className="mt-3 flex justify-end">
-                        <button
-                          type="button"
-                          className="inline-flex h-9 w-10 items-center justify-center rounded-lg border border-rose-400/70 bg-transparent text-rose-100 transition hover:bg-rose-900/35 hover:text-white disabled:opacity-50"
-                          onClick={() => {
-                            void requestLogout();
-                          }}
-                          disabled={loggingOut}
-                          title={loggingOut ? "退出中..." : "退出登录"}
-                          aria-label={loggingOut ? "退出中..." : "退出登录"}
-                        >
-                          <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
-                            <path d="M14 7h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                            <path d="M10 8 6 12l4 4M7 12h9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                          </svg>
-                        </button>
-                      </div>
-                    ) : null}
                   </div>
                 )
               ) : null}
