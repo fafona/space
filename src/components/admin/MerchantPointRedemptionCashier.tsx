@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CategoryIconGlyph, normalizeCategoryIconName } from "./CategoryIconGlyph";
 import { useI18n } from "@/components/I18nProvider";
 import {
   getMerchantCouponDiscountLabel,
@@ -282,34 +283,6 @@ function IconGrid() {
   );
 }
 
-function IconCup() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M7 4h10l-1.2 16H8.2L7 4Z" />
-      <path d="M6 8h12" />
-      <path d="M10 4V2h4v2" />
-    </svg>
-  );
-}
-
-function IconThumbsUp() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M7 11v9H4v-9h3Z" />
-      <path d="M7 11 11 4c.8-1.4 3-.8 3 1v4h4.2c1.2 0 2.1 1 1.9 2.2l-1.1 6A3 3 0 0 1 16 20H7" />
-    </svg>
-  );
-}
-
-function IconBean() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M8.5 15.5c-2.8-2.8-3.4-6.8-1.3-8.9s6.1-1.5 8.9 1.3 3.4 6.8 1.3 8.9-6.1 1.5-8.9-1.3Z" />
-      <path d="M9 7c.6 3.3 3.8 3 5 6" />
-    </svg>
-  );
-}
-
 function IconDoorOpen() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -329,14 +302,6 @@ function IconWallet() {
       <path d="M16 15h2" />
     </svg>
   );
-}
-
-function CategoryIcon({ name }: { name: string }) {
-  if (!name) return <IconGrid />;
-  if (name.includes("饮")) return <IconCup />;
-  if (name.includes("推荐") || name.includes("热")) return <IconThumbsUp />;
-  if (name.includes("零") || name.includes("食")) return <IconBean />;
-  return <IconGrid />;
 }
 
 export default function MerchantPointRedemptionCashier({
@@ -3159,9 +3124,11 @@ export default function MerchantPointRedemptionCashier({
                   className={`category-chip ${categoryId === category.id ? "active" : ""}`}
                   onClick={() => selectCategory(category.id)}
                 >
-                  <span className="category-button-icon">
-                    <CategoryIcon name={category.name} />
-                  </span>
+                  {normalizeCategoryIconName(category.iconName) ? (
+                    <span className="category-button-icon">
+                      <CategoryIconGlyph name={category.iconName} className="h-[17px] w-[17px]" emptyLabel="" />
+                    </span>
+                  ) : null}
                   <span className="category-button-label">{category.name}</span>
                 </button>
               ))}
@@ -3236,9 +3203,11 @@ export default function MerchantPointRedemptionCashier({
                       />
                       <span />
                     </label>
-                    <span className="category-button-icon">
-                      <CategoryIcon name={category.name} />
-                    </span>
+                    {normalizeCategoryIconName(category.iconName) ? (
+                      <span className="category-button-icon">
+                        <CategoryIconGlyph name={category.iconName} className="h-[17px] w-[17px]" emptyLabel="" />
+                      </span>
+                    ) : null}
                     <span className="category-button-label">{category.name}</span>
                   </button>
                 ))}

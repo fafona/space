@@ -54,6 +54,7 @@ export type MerchantMemberRechargePlan = {
 export type MerchantMemberRedemptionCategory = {
   id: string;
   name: string;
+  iconName: string;
   enabled: boolean;
   sort: number;
 };
@@ -422,6 +423,7 @@ function normalizeRedemptionCategories(value: unknown): MerchantMemberRedemption
       return {
         id: normalizeId(record.id, "category", index),
         name: trimText(record.name ?? record.title, 120) || `分类 ${index + 1}`,
+        iconName: trimText(record.iconName ?? record.icon ?? record.categoryIcon ?? record.category_icon ?? record.icon_name, 80),
         enabled: normalizeBoolean(record.enabled, true),
         sort: normalizeSort(record.sort, index),
       };

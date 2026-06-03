@@ -13,6 +13,12 @@ import {
   type MerchantMembershipSettings,
 } from "@/lib/merchantMembershipSettings";
 import { uploadFileToPublicStorage } from "@/lib/publicAssetUpload";
+import {
+  CATEGORY_ICON_OPTIONS,
+  CategoryIconGlyph,
+  getCategoryIconLabel,
+  normalizeCategoryIconName,
+} from "./CategoryIconGlyph";
 
 type MerchantMembershipSettingsPanelProps = {
   siteId: string;
@@ -33,33 +39,6 @@ const VIEW_TITLES: Record<Exclude<MerchantMemberSettingsView, "list">, string> =
   levels: "等级&权益",
   pointsRules: "积分规则",
 };
-
-const REDEMPTION_ITEM_ICON_OPTIONS = [
-  ["none", "无"],
-  ["tag", "标签"],
-  ["category", "分类"],
-  ["box", "商品"],
-  ["gift", "礼品"],
-  ["hot", "热卖"],
-  ["star", "新品"],
-  ["like", "推荐"],
-  ["cluster", "落客"],
-  ["package", "套餐"],
-  ["check", "必选"],
-  ["badge", "纪念品"],
-  ["figure", "手办"],
-  ["toy", "玩具"],
-  ["pen", "文具"],
-  ["spark", "精选"],
-  ["ticket", "门票"],
-  ["door", "入场"],
-  ["coffee", "咖啡"],
-  ["drink", "饮料"],
-  ["food", "餐饮"],
-  ["light", "轻食"],
-  ["pizza", "披萨"],
-  ["dessert", "甜品"],
-] as const;
 
 function trimText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
@@ -192,45 +171,6 @@ function SummaryPill({ label, value, tone = "slate" }: { label: string; value: R
       <div className="text-xs font-medium">{label}</div>
       <div className="mt-1 text-xl font-semibold text-slate-950">{value}</div>
     </div>
-  );
-}
-
-function RedemptionIconGlyph({ name }: { name: string }) {
-  const label = REDEMPTION_ITEM_ICON_OPTIONS.find(([value]) => value === name)?.[1] ?? "无";
-  if (!name || name === "none") {
-    return (
-      <span className="grid h-5 w-5 place-items-center text-xs font-semibold leading-none text-teal-700">
-        无
-      </span>
-    );
-  }
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5 text-teal-700">
-      <title>{label}</title>
-      {name === "tag" ? (
-        <path d="M4 12V5h7l9 9-6 6-10-8Z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-      ) : name === "category" ? (
-        <path d="M6 6h5v5H6V6Zm7 0h5v5h-5V6ZM6 13h5v5H6v-5Zm7 0h5v5h-5v-5Z" fill="none" stroke="currentColor" strokeWidth="1.8" />
-      ) : name === "box" || name === "package" ? (
-        <path d="m4 8 8-4 8 4v9l-8 4-8-4V8Zm0 0 8 4 8-4M12 12v9" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-      ) : name === "gift" ? (
-        <path d="M4 10h16v10H4V10Zm8 0v10M4 14h16M8 10c-2 0-3-1-3-2s1-2 2.4-2C9 6 10 8 12 10c2-2 3-4 4.6-4C18 6 19 7 19 8s-1 2-3 2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-      ) : name === "hot" ? (
-        <path d="M13 3c1 4-4 5-1 9 1-2 4-2 5 1 1.5 4-1.4 8-5 8s-6-2.5-6-6c0-3 2-5 4-7 1.2-1.2 2-2.5 3-5Z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-      ) : name === "star" || name === "spark" ? (
-        <path d="m12 3 2.6 5.7 6.2.7-4.6 4.2 1.2 6.1L12 16.6l-5.4 3.1 1.2-6.1-4.6-4.2 6.2-.7L12 3Z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-      ) : name === "like" ? (
-        <path d="M7 11v9H4v-9h3Zm0 0 4-7c1.2.4 1.8 1.5 1.4 3l-.5 2H19c1 0 1.8.9 1.6 2l-1.2 6.8c-.2 1.2-1.2 2.2-2.5 2.2H7" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-      ) : name === "ticket" ? (
-        <path d="M4 8h16v4a2 2 0 0 0 0 4v4H4v-4a2 2 0 0 0 0-4V8Zm8 1v10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-      ) : name === "coffee" || name === "drink" ? (
-        <path d="M7 8h9v8a4 4 0 0 1-4 4h-1a4 4 0 0 1-4-4V8Zm9 2h2a2 2 0 0 1 0 4h-2M6 4h12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      ) : name === "food" ? (
-        <path d="M7 3v18M4 3v6a3 3 0 0 0 6 0V3M17 3v18M17 3c2 2 3 4 3 7 0 2-1 3-3 3" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      ) : (
-        <path d="M12 4v16M4 12h16M6.5 6.5l11 11M17.5 6.5l-11 11" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      )}
-    </svg>
   );
 }
 
@@ -590,6 +530,7 @@ export default function MerchantMembershipSettingsPanel({
       draft: {
         id: createMerchantMemberSettingsId("category"),
         name: "",
+        iconName: "",
         enabled: true,
         sort: activeSettings.redemptionCategories.length,
       },
@@ -602,7 +543,11 @@ export default function MerchantMembershipSettingsPanel({
 
   function saveCategoryDialog() {
     if (!categoryDialog) return;
-    const draft = { ...categoryDialog.draft, name: trimText(categoryDialog.draft.name, 120) };
+    const draft = {
+      ...categoryDialog.draft,
+      name: trimText(categoryDialog.draft.name, 120),
+      iconName: normalizeCategoryIconName(categoryDialog.draft.iconName),
+    };
     if (!draft.name) {
       setError("请填写分类名称。");
       return;
@@ -672,7 +617,7 @@ export default function MerchantMembershipSettingsPanel({
       barcode: trimText(itemDialog.draft.barcode, 120),
       name: trimText(itemDialog.draft.name, 160),
       imageUrl: trimText(itemDialog.draft.imageUrl, 1000),
-      iconName: trimText(itemDialog.draft.iconName, 80) || "none",
+      iconName: normalizeCategoryIconName(itemDialog.draft.iconName) || "none",
       description: trimText(itemDialog.draft.description, 500),
     };
     if (!draft.code || !draft.name) {
@@ -758,10 +703,11 @@ export default function MerchantMembershipSettingsPanel({
             />
           </div>
           <div className="overflow-x-auto rounded-2xl border border-slate-200">
-            <table className="min-w-[760px] w-full border-collapse text-sm">
+            <table className="min-w-[860px] w-full border-collapse text-sm">
               <thead className="bg-slate-50 text-left text-xs font-semibold text-slate-500">
                 <tr>
                   <th className="px-4 py-3">分类名称</th>
+                  <th className="px-4 py-3">分类标签</th>
                   <th className="px-4 py-3">排序</th>
                   <th className="px-4 py-3">项目数</th>
                   <th className="px-4 py-3">状态</th>
@@ -771,7 +717,7 @@ export default function MerchantMembershipSettingsPanel({
               <tbody className="divide-y divide-slate-100">
                 {categoryRows.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
+                    <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
                       还没有分类，可先新增分类再添加项目。
                     </td>
                   </tr>
@@ -781,6 +727,16 @@ export default function MerchantMembershipSettingsPanel({
                     return (
                       <tr key={category.id} className="bg-white">
                         <td className="px-4 py-3 font-semibold text-slate-950">{category.name}</td>
+                        <td className="px-4 py-3">
+                          <span className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                            <CategoryIconGlyph
+                              name={category.iconName}
+                              className="h-4 w-4 text-teal-700"
+                              emptyClassName="grid h-4 w-4 place-items-center text-[10px] font-semibold leading-none text-teal-700"
+                            />
+                            <span>{getCategoryIconLabel(category.iconName)}</span>
+                          </span>
+                        </td>
                         <td className="px-4 py-3 text-slate-700">{category.sort + 1}</td>
                         <td className="px-4 py-3 text-slate-700">
                           {activeSettings.redemptionItems.filter((item) => item.categoryId === category.id).length}
@@ -846,6 +802,34 @@ export default function MerchantMembershipSettingsPanel({
                   onChange={(event) => patchCategoryDraft({ name: event.target.value })}
                 />
               </Field>
+              <div className="md:col-span-2">
+                <div className="mb-2 text-sm font-medium text-slate-700">分类标签</div>
+                <div className="grid max-h-[270px] grid-cols-3 gap-2 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
+                  {CATEGORY_ICON_OPTIONS.map((option) => {
+                    const selected = normalizeCategoryIconName(categoryDialog.draft.iconName) === option.value;
+                    return (
+                      <button
+                        key={option.value || "none"}
+                        type="button"
+                        className={[
+                          "flex min-h-[58px] flex-col items-center justify-center gap-1 rounded-lg border px-2 text-xs font-semibold transition",
+                          selected
+                            ? "border-teal-600 bg-teal-50 text-teal-800 shadow-[0_0_0_1px_rgba(13,148,136,0.25)]"
+                            : "border-slate-200 bg-slate-50 text-slate-700 hover:border-teal-200 hover:bg-teal-50",
+                        ].join(" ")}
+                        onClick={() => patchCategoryDraft({ iconName: option.value })}
+                      >
+                        <CategoryIconGlyph
+                          name={option.value}
+                          className="h-5 w-5 text-teal-700"
+                          emptyClassName="grid h-5 w-5 place-items-center text-xs font-semibold leading-none text-teal-700"
+                        />
+                        <span>{option.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
               <Field label="排序">
                 <input
                   type="number"
@@ -1054,22 +1038,29 @@ export default function MerchantMembershipSettingsPanel({
               <div>
                 <div className="mb-2 text-sm font-medium text-slate-700">商品图标</div>
                 <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
-                  {REDEMPTION_ITEM_ICON_OPTIONS.map(([value, label]) => (
-                    <button
-                      key={value}
-                      type="button"
-                      className={[
-                        "flex min-h-[58px] flex-col items-center justify-center gap-1 rounded-lg border px-2 text-xs font-semibold transition",
-                        itemDialog.draft.iconName === value
-                          ? "border-teal-600 bg-teal-50 text-teal-800 shadow-[0_0_0_1px_rgba(13,148,136,0.25)]"
-                          : "border-slate-200 bg-slate-50 text-slate-700 hover:border-teal-200 hover:bg-teal-50",
-                      ].join(" ")}
-                      onClick={() => patchItemDraft({ iconName: value })}
-                    >
-                      <RedemptionIconGlyph name={value} />
-                      <span>{label}</span>
-                    </button>
-                  ))}
+                  {CATEGORY_ICON_OPTIONS.map((option) => {
+                    const selected = normalizeCategoryIconName(itemDialog.draft.iconName) === option.value;
+                    return (
+                      <button
+                        key={option.value || "none"}
+                        type="button"
+                        className={[
+                          "flex min-h-[58px] flex-col items-center justify-center gap-1 rounded-lg border px-2 text-xs font-semibold transition",
+                          selected
+                            ? "border-teal-600 bg-teal-50 text-teal-800 shadow-[0_0_0_1px_rgba(13,148,136,0.25)]"
+                            : "border-slate-200 bg-slate-50 text-slate-700 hover:border-teal-200 hover:bg-teal-50",
+                        ].join(" ")}
+                        onClick={() => patchItemDraft({ iconName: option.value || "none" })}
+                      >
+                        <CategoryIconGlyph
+                          name={option.value}
+                          className="h-5 w-5 text-teal-700"
+                          emptyClassName="grid h-5 w-5 place-items-center text-xs font-semibold leading-none text-teal-700"
+                        />
+                        <span>{option.label}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
