@@ -19264,7 +19264,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           type="button"
           className={`group flex items-center justify-center border text-base leading-none transition-all ${
             shouldUseDesktopEditorSidebar
-              ? "h-24 w-8 rounded-r-[28px] border-0 bg-[#2f5f9f] text-[#dbeafe] shadow-[0_14px_28px_rgba(15,23,42,0.22)] hover:bg-[#386fb8] hover:text-white"
+              ? "h-24 w-8 rounded-r-[28px] border border-l-0 border-blue-200/15 bg-[#111827] text-[#dbeafe] shadow-[0_14px_28px_rgba(15,23,42,0.22),inset_0_0_0_1px_rgba(147,197,253,0.08)] hover:bg-[#17233f] hover:text-white"
               : isMobileMerchantEditorShell
                 ? "h-11 w-11 rounded-full border-white/70 bg-white/92 text-slate-700 shadow-[0_18px_40px_rgba(15,23,42,0.14)]"
                 : "h-10 w-7 rounded-r-lg border-l-0 bg-white text-slate-700 shadow-sm hover:bg-gray-50"
@@ -19588,9 +19588,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           </div>
         {!topBarCollapsed ? (
           isDesktopMerchantWorkspace ? (
-            <div className="border-t border-white/10 bg-[#0d1627]/75">
-              <div className="w-full px-0 py-4">
-                <div className="px-0">
+            <div className="border-t border-blue-200/15 bg-[#16213a] shadow-[inset_0_1px_0_rgba(147,197,253,0.08),inset_0_18px_30px_rgba(0,0,0,0.10)]">
+              <div className="w-full px-2 py-4">
+                <div className="rounded-xl border border-blue-200/10 bg-[#111c32] px-2 py-2">
                   {merchantDesktopSection === "pointRedemption" ||
                   merchantDesktopSection === "redemptionRecords" ||
                   merchantDesktopSection === "rechargeRecords" ||
