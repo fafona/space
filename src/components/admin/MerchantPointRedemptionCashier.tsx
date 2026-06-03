@@ -9,6 +9,7 @@ import {
   type MerchantCouponRecord,
 } from "@/lib/merchantCoupons";
 import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
+import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import type { MerchantMembershipInsight, MerchantMembershipListItem } from "@/lib/merchantMemberships";
 import type {
   MerchantMemberRedemptionCategory,
@@ -3248,6 +3249,7 @@ export default function MerchantPointRedemptionCashier({
                 const unitPoints = getRedemptionPointCostForMember(item, selectedMember, settings);
                 const inCartQuantity = cartQuantityByItemId.get(item.id) ?? 0;
                 const outOfStock = item.stock !== null && inCartQuantity >= item.stock;
+                const itemImageUrl = normalizePublicAssetUrl(item.imageUrl || "");
                 const pointsUnavailable = item.pointsCost === null;
                 const itemDisabled = outOfStock || pointsUnavailable;
 
@@ -3277,9 +3279,9 @@ export default function MerchantPointRedemptionCashier({
                     onClick={() => addToCart(item)}
                   >
                     <div className="product-visual">
-                      {item.imageUrl ? (
+                      {itemImageUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={item.imageUrl} alt={item.name || item.code || "兑换项目"} />
+                        <img src={itemImageUrl} alt={item.name || item.code || "兑换项目"} />
                       ) : (
                         <span>{productInitial(item)}</span>
                       )}

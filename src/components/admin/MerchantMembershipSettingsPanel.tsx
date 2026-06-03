@@ -13,6 +13,7 @@ import {
   type MerchantMembershipSettings,
 } from "@/lib/merchantMembershipSettings";
 import { uploadDataUrlToPublicStorage } from "@/lib/publicAssetUpload";
+import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
   CATEGORY_ICON_OPTIONS,
   CategoryIconGlyph,
@@ -229,7 +230,7 @@ function RedemptionItemImagePreview({
   uploading: boolean;
 }) {
   const [failedUrl, setFailedUrl] = useState("");
-  const displayImageUrl = previewUrl || imageUrl;
+  const displayImageUrl = previewUrl || normalizePublicAssetUrl(imageUrl);
   const visibleImageUrl = displayImageUrl && failedUrl !== displayImageUrl ? displayImageUrl : "";
   return visibleImageUrl ? (
     // eslint-disable-next-line @next/next/no-img-element
@@ -732,7 +733,7 @@ export default function MerchantMembershipSettingsPanel({
         usage: "generic-image",
       });
       if (uploadedUrl) {
-        patchItemDraft({ imageUrl: uploadedUrl });
+        patchItemDraft({ imageUrl: normalizePublicAssetUrl(uploadedUrl) });
       } else {
         setError("图片上传失败，请重新选择图片。");
       }

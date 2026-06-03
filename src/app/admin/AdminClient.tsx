@@ -5202,6 +5202,16 @@ type SupportReplyDraft = {
   text: string;
 };
 
+type SupportPendingImageDraft = {
+  id: string;
+  source: "file" | "message";
+  previewUrl: string;
+  fileName: string;
+  label: "照片" | "拍照";
+  file?: File;
+  messageText?: string;
+};
+
 const SUPPORT_SYSTEM_EMOJIS = [
   "😀",
   "😃",
@@ -5994,6 +6004,7 @@ export default function AdminClient({
   const [supportMessageContextMenu, setSupportMessageContextMenu] = useState<SupportMessageContextMenuState | null>(null);
   const [supportPinnedMessage, setSupportPinnedMessage] = useState<{ key: string; text: string } | null>(null);
   const [supportReplyDraft, setSupportReplyDraft] = useState<SupportReplyDraft | null>(null);
+  const [supportPendingImageDrafts, setSupportPendingImageDrafts] = useState<SupportPendingImageDraft[]>([]);
   const [supportStarredMessageKeys, setSupportStarredMessageKeys] = useState<string[]>([]);
   const [supportSelectedMessageKeys, setSupportSelectedMessageKeys] = useState<string[]>([]);
   const [supportHiddenMessageKeys, setSupportHiddenMessageKeys] = useState<string[]>([]);
@@ -6227,6 +6238,32 @@ export default function AdminClient({
     input.style.height = `${nextHeight}px`;
     input.style.overflowY = input.scrollHeight > maxHeight ? "auto" : "hidden";
   }, []);
+  const keepSupportComposerCaretVisible = useCallback((target?: HTMLTextAreaElement | null) => {
+    const input = target ?? supportInputRef.current;
+    if (!input || typeof window === "undefined") return;
+    const selectionStart =
+      typeof input.selectionStart === "number" ? Math.max(0, Math.min(input.selectionStart, input.value.length)) : input.value.length;
+    const textBeforeCaret = input.value.slice(0, selectionStart);
+    const caretLineIndex = Math.max(0, textBeforeCaret.split("\n").length - 1);
+    const style = window.getComputedStyle(input);
+    const parsedLineHeight = Number.parseFloat(style.lineHeight);
+    const lineHeight = Number.isFinite(parsedLineHeight)
+      ? parsedLineHeight
+      : input.dataset.supportAutoResize === "mobile"
+        ? 24
+        : 20;
+    const paddingTop = Number.parseFloat(style.paddingTop) || 0;
+    const paddingBottom = Number.parseFloat(style.paddingBottom) || 0;
+    const caretTop = paddingTop + caretLineIndex * lineHeight;
+    const caretBottom = caretTop + lineHeight + paddingBottom;
+    const visibleTop = input.scrollTop;
+    const visibleBottom = visibleTop + input.clientHeight;
+    if (caretBottom > visibleBottom) {
+      input.scrollTop = Math.max(0, caretBottom - input.clientHeight);
+    } else if (caretTop < visibleTop) {
+      input.scrollTop = Math.max(0, caretTop - paddingTop);
+    }
+  }, []);
   const focusSupportInput = useCallback(() => {
     if (typeof window === "undefined") return;
     setSupportAttachmentMenuOpen(false);
@@ -6244,8 +6281,9 @@ export default function AdminClient({
       } catch {
         // Ignore browsers that do not allow setting selection on this element state.
       }
+      keepSupportComposerCaretVisible(input);
     });
-  }, [resizeSupportComposerInput]);
+  }, [keepSupportComposerCaretVisible, resizeSupportComposerInput]);
   const focusSupportInputImmediately = useCallback(() => {
     if (typeof document === "undefined") return;
     setSupportAttachmentMenuOpen(false);
@@ -6262,7 +6300,8 @@ export default function AdminClient({
     } catch {
       // Ignore browsers that do not allow setting selection on this element state.
     }
-  }, [resizeSupportComposerInput]);
+    keepSupportComposerCaretVisible(input);
+  }, [keepSupportComposerCaretVisible, resizeSupportComposerInput]);
   const closeMobileSupportThread = useCallback(() => {
     setSupportBusinessCardDialogOpen(false);
     setSupportMerchantInfoSheetOpen(false);
@@ -11973,7 +12012,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const supportComposerAvailable =
     supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY || !!selectedSupportPeerContact;
   const supportComposerBusy = supportSending || supportAttachmentBusy;
-  const supportCanSend = !!supportDraft.trim() && supportComposerAvailable;
+  const supportCanSend = (!!supportDraft.trim() || supportPendingImageDrafts.length > 0) && supportComposerAvailable;
   const supportDesktopPanelOpen =
     !isPlatformEditor && (forceDesktopEditorSidebar || isDesktopEditorSidebar) && merchantDesktopSection === "support";
   const supportInterfaceOpen = supportDialogOpen || isMobileMerchantSupportOnlyMode || supportDesktopPanelOpen;
@@ -11989,6 +12028,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   useEffect(() => {
     if (supportInterfaceOpen) return;
     setSupportImagePreview(null);
+    setSupportPendingImageDrafts([]);
   }, [supportInterfaceOpen]);
 
   useEffect(() => {
@@ -14756,6 +14796,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       setSupportMessageContextMenu(null);
       setSupportPinnedMessage(null);
       setSupportReplyDraft(null);
+      setSupportPendingImageDrafts([]);
       setSupportStarredMessageKeys([]);
       setSupportSelectedMessageKeys([]);
       setSupportHiddenMessageKeys([]);
@@ -15139,9 +15180,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   card: MerchantBusinessCardAsset;
   shareUrl?: string;
 }) {
-  const shareUrl = isSupportShortMerchantCardLink(input.shareUrl ?? "")
-    ? normalizeSupportDisplayValue(input.shareUrl)
-    : "";
+  const shareUrl =
+    normalizeSupportDisplayValue(input.shareUrl) ||
+    normalizeSupportDisplayValue(buildSupportMerchantCardLink(input.card));
   return shareUrl ? ["联系卡", shareUrl].join("\n") : "";
 }
 
@@ -15320,11 +15361,153 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     return false;
   }
 
+  function createSupportPendingImageDraftId() {
+    return `support-image-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  function getSupportPendingImageFileName(rawText: string) {
+    const firstLine = rawText
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean);
+    if (!firstLine) return "图片";
+    return firstLine.replace(/^(?:图片|照片|拍照|联系卡)\s*[：:]\s*/u, "").trim() || "图片";
+  }
+
+  function createSupportPendingImageDraftFromMessage(rawText: string): SupportPendingImageDraft | null {
+    const messageText = getSupportDisplayMessageText(rawText).trim();
+    if (!messageText) return null;
+    const preview = parseSupportMessageAttachmentPreview(messageText);
+    if (!preview?.imageUrl) return null;
+    return {
+      id: createSupportPendingImageDraftId(),
+      source: "message",
+      previewUrl: normalizePublicAssetUrl(preview.imageUrl),
+      fileName: getSupportPendingImageFileName(messageText),
+      label: "照片",
+      messageText,
+    };
+  }
+
+  async function queueSupportImageDraftFromFile(file: File, label: "照片" | "拍照") {
+    if (supportComposerBusy) return;
+    try {
+      const previewUrl = await fileToDataUrl(file);
+      setSupportPendingImageDrafts((current) => [
+        ...current,
+        {
+          id: createSupportPendingImageDraftId(),
+          source: "file",
+          previewUrl,
+          fileName: file.name.trim() || `${label}.jpg`,
+          label,
+          file,
+        },
+      ]);
+      setSupportAttachmentMenuOpen(false);
+      setSupportEmojiMenuOpen(false);
+      setSupportSelfCardPickerOpen(false);
+      setSupportMessageContextMenu(null);
+      focusSupportInput();
+    } catch {
+      showTip("图片读取失败，请重新复制图片");
+    }
+  }
+
+  async function uploadSupportImageAttachment(file: File, label: "照片" | "拍照") {
+    const imageCompression = {
+      maxSide: 1440,
+      quality: 0.76,
+    };
+    const originalDataUrl = await fileToDataUrl(file);
+    let uploadedDataUrl = await compressImageDataUrl(originalDataUrl, imageCompression);
+    let uploadedBytes = estimateDataUrlBytes(uploadedDataUrl);
+    if (uploadedBytes > 50 * 1024) {
+      const compressed = await compressImageFileWithinLimit(file, 50 * 1024, imageCompression);
+      uploadedDataUrl = compressed.dataUrl;
+      uploadedBytes = compressed.bytes;
+    }
+    if (!/^data:image\/webp/i.test(uploadedDataUrl)) {
+      uploadedDataUrl = await compressImageDataUrl(uploadedDataUrl, {
+        maxSide: 1280,
+        quality: 0.7,
+      });
+      uploadedBytes = estimateDataUrlBytes(uploadedDataUrl);
+    }
+    if (uploadedBytes > 50 * 1024) {
+      uploadedDataUrl = await compressImageDataUrl(uploadedDataUrl, {
+        maxSide: 1080,
+        quality: 0.62,
+      });
+      uploadedBytes = estimateDataUrlBytes(uploadedDataUrl);
+    }
+    if (uploadedBytes > 50 * 1024) {
+      throw new Error(`${label}已自动压缩，但仍超过当前上传上限`);
+    }
+    const uploadResult = await uploadSupportAssetDataUrl(uploadedDataUrl, "merchant-assets");
+    if (!uploadResult.ok || !uploadResult.url) {
+      throw new Error(uploadResult.message || `${label}上传失败，请稍后重试`);
+    }
+    return uploadResult.url;
+  }
+
+  async function sendSupportPendingImageDraft(
+    draft: SupportPendingImageDraft,
+    options?: { replyDraft?: SupportReplyDraft | null },
+  ) {
+    let messageText = normalizeSupportDisplayValue(draft.messageText);
+    if (!messageText) {
+      if (!draft.file) return false;
+      const uploadedUrl = await uploadSupportImageAttachment(draft.file, draft.label);
+      messageText = buildSupportPhotoMessageText(draft.label, draft.fileName || `${draft.label}.jpg`, uploadedUrl);
+    }
+    const outgoingText = options?.replyDraft ? buildSupportReplyMessageText(options.replyDraft, messageText) : messageText;
+    return sendSupportTextPayload(outgoingText, { clearDraft: false, allowSequential: true });
+  }
+
   async function sendSupportMessage() {
-    const rawText = supportReplyDraft ? buildSupportReplyMessageText(supportReplyDraft, supportDraft) : supportDraft;
-    const sent = await sendSupportTextPayload(rawText, { clearDraft: true });
-    if (sent) {
+    if (supportComposerBusy) return;
+    const pendingImages = supportPendingImageDrafts;
+    if (pendingImages.length === 0) {
+      const rawText = supportReplyDraft ? buildSupportReplyMessageText(supportReplyDraft, supportDraft) : supportDraft;
+      const sent = await sendSupportTextPayload(rawText, { clearDraft: true });
+      if (sent) {
+        setSupportReplyDraft(null);
+      }
+      return;
+    }
+
+    const draftHasText = !!supportDraft.trim();
+    const sentImageIds: string[] = [];
+    setSupportAttachmentBusy(true);
+    try {
+      for (let index = 0; index < pendingImages.length; index += 1) {
+        const draft = pendingImages[index];
+        const sent = await sendSupportPendingImageDraft(draft, {
+          replyDraft: !draftHasText && index === 0 ? supportReplyDraft : null,
+        });
+        if (!sent) {
+          setSupportPendingImageDrafts((current) => current.filter((item) => !sentImageIds.includes(item.id)));
+          return;
+        }
+        sentImageIds.push(draft.id);
+      }
+      setSupportPendingImageDrafts([]);
+      if (draftHasText) {
+        const rawText = supportReplyDraft ? buildSupportReplyMessageText(supportReplyDraft, supportDraft) : supportDraft;
+        const sentText = await sendSupportTextPayload(rawText, { clearDraft: true, allowSequential: true });
+        if (sentText) {
+          setSupportReplyDraft(null);
+        }
+        return;
+      }
+      setSupportDraft("");
       setSupportReplyDraft(null);
+    } catch (error) {
+      showTip(error instanceof Error ? error.message : "图片发送失败，请稍后重试");
+      setSupportPendingImageDrafts((current) => current.filter((item) => !sentImageIds.includes(item.id)));
+    } finally {
+      setSupportAttachmentBusy(false);
     }
   }
 
@@ -15353,6 +15536,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         // Ignore browsers that do not allow setting selection here.
       }
       resizeSupportComposerInput(nextInput);
+      keepSupportComposerCaretVisible(nextInput);
     });
   }
 
@@ -15378,7 +15562,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     const imageFile = imageFromFiles ?? imageFromItems ?? null;
     if (!imageFile) return;
     event.preventDefault();
-    void handleSupportImageAttachment(imageFile, "照片");
+    void queueSupportImageDraftFromFile(imageFile, "照片");
   }
 
   function appendSupportEmoji(emoji: string) {
@@ -15440,13 +15624,22 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     const selectedKeys = selectedSupportMessages.map((message) => buildVisibleSupportMessageKey(message));
     if (!selectedKeys.length) return;
     if (action === "forward") {
-      const text = selectedSupportMessages
-        .map((message) => getSupportDisplayMessageText(message.text).trim())
-        .filter(Boolean)
-        .join("\n\n");
-      setSupportDraft(text);
+      const pendingImages: SupportPendingImageDraft[] = [];
+      const textParts: string[] = [];
+      selectedSupportMessages.forEach((message) => {
+        const displayText = getSupportDisplayMessageText(message.text).trim();
+        if (!displayText) return;
+        const pendingImage = createSupportPendingImageDraftFromMessage(displayText);
+        if (pendingImage) {
+          pendingImages.push(pendingImage);
+          return;
+        }
+        textParts.push(displayText);
+      });
+      setSupportPendingImageDrafts(pendingImages);
+      setSupportDraft(textParts.join("\n\n"));
       clearSupportMessageSelection();
-      showTip("已放入输入框，可切换会话后发送");
+      showTip(pendingImages.length ? "已放入待发送内容，可切换会话后发送" : "已放入输入框，可切换会话后发送");
       focusSupportInput();
       return;
     }
@@ -15486,8 +15679,16 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       return;
     }
     if (action === "forward") {
-      setSupportDraft(displayText);
-      showTip("已放入输入框，可切换会话后发送");
+      const pendingImage = createSupportPendingImageDraftFromMessage(displayText);
+      if (pendingImage) {
+        setSupportPendingImageDrafts([pendingImage]);
+        setSupportDraft("");
+        showTip("已放入待发送图片，可切换会话后发送");
+      } else {
+        setSupportPendingImageDrafts([]);
+        setSupportDraft(displayText);
+        showTip("已放入输入框，可切换会话后发送");
+      }
       focusSupportInput();
       return;
     }
@@ -15548,40 +15749,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     setSupportSelfCardPickerOpen(false);
     supportInputRef.current?.blur();
     try {
-      const imageCompression = {
-        maxSide: 1440,
-        quality: 0.76,
-      };
-      const originalDataUrl = await fileToDataUrl(file);
-      let uploadedDataUrl = await compressImageDataUrl(originalDataUrl, imageCompression);
-      let uploadedBytes = estimateDataUrlBytes(uploadedDataUrl);
-      if (uploadedBytes > 50 * 1024) {
-        const compressed = await compressImageFileWithinLimit(file, 50 * 1024, imageCompression);
-        uploadedDataUrl = compressed.dataUrl;
-        uploadedBytes = compressed.bytes;
-      }
-      if (!/^data:image\/webp/i.test(uploadedDataUrl)) {
-        uploadedDataUrl = await compressImageDataUrl(uploadedDataUrl, {
-          maxSide: 1280,
-          quality: 0.7,
-        });
-        uploadedBytes = estimateDataUrlBytes(uploadedDataUrl);
-      }
-      if (uploadedBytes > 50 * 1024) {
-        uploadedDataUrl = await compressImageDataUrl(uploadedDataUrl, {
-          maxSide: 1080,
-          quality: 0.62,
-        });
-        uploadedBytes = estimateDataUrlBytes(uploadedDataUrl);
-      }
-      if (uploadedBytes > 50 * 1024) {
-        throw new Error(`${label}已自动压缩，但仍超过当前上传上限`);
-      }
-      const uploadResult = await uploadSupportAssetDataUrl(uploadedDataUrl, "merchant-assets");
-      if (!uploadResult.ok || !uploadResult.url) {
-        throw new Error(uploadResult.message || `${label}上传失败，请稍后重试`);
-      }
-      await sendSupportTextPayload(buildSupportPhotoMessageText(label, file.name.trim() || `${label}.jpg`, uploadResult.url));
+      const uploadedUrl = await uploadSupportImageAttachment(file, label);
+      await sendSupportTextPayload(buildSupportPhotoMessageText(label, file.name.trim() || `${label}.jpg`, uploadedUrl));
     } catch (error) {
       showTip(error instanceof Error ? error.message : `${label}发送失败，请稍后重试`);
     } finally {
@@ -15839,7 +16008,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           shareUrl: shareBundle.shareUrl,
         });
         if (!linkMessageText) {
-          showTip("联系卡短链暂时没生成成功，已先发送名片图片");
+          showTip("联系卡链接暂时没生成成功，已先发送名片图片");
           return;
         }
         const sentLink = await sendSupportTextPayload(linkMessageText, { allowSequential: true });
@@ -18116,6 +18285,38 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     </div>
   ) : null;
 
+  const supportPendingImageDraftsBanner = supportPendingImageDrafts.length ? (
+    <div className="mb-2 flex max-w-full gap-2 overflow-x-auto rounded-2xl bg-white px-3 py-2 shadow-sm ring-1 ring-slate-200/80">
+      {supportPendingImageDrafts.map((draft) => {
+        const pendingImageUrl = normalizePublicAssetUrl(draft.previewUrl);
+        return (
+          <div
+            key={draft.id}
+            className="relative h-20 w-20 shrink-0 overflow-hidden rounded-xl bg-slate-100 ring-1 ring-slate-200"
+            title={draft.fileName}
+          >
+            {pendingImageUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={pendingImageUrl} alt={draft.fileName || "待发送图片"} className="h-full w-full object-cover" />
+            ) : (
+              <div className="flex h-full w-full items-center justify-center text-xs text-slate-500">图片</div>
+            )}
+            <button
+              type="button"
+              className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-slate-950/75 text-white shadow-sm transition hover:bg-slate-950"
+              onClick={() => setSupportPendingImageDrafts((current) => current.filter((item) => item.id !== draft.id))}
+              aria-label="移除待发送图片"
+            >
+              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" aria-hidden="true">
+                <path d="m7 7 10 10M17 7 7 17" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+              </svg>
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  ) : null;
+
   const supportSelectionActionBar = supportSelectionActive ? (
     <div className="mb-2 flex items-center gap-2 rounded-2xl bg-white px-3 py-2 text-sm text-slate-700 shadow-sm ring-1 ring-slate-200/80">
       <button
@@ -18529,6 +18730,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         }}
       >
         {supportSelectionActionBar}
+        {supportPendingImageDraftsBanner}
         {supportReplyDraftBanner}
         {supportAttachmentMenuOpen ? (
           <div className="faolla-mobile-attachment-menu mb-2 rounded-[20px] bg-white px-2.5 py-2.5 shadow-none ring-1 ring-slate-200/80">
@@ -18669,6 +18871,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               onChange={(event) => {
                 setSupportDraft(event.target.value);
                 resizeSupportComposerInput(event.target);
+                keepSupportComposerCaretVisible(event.target);
               }}
               onTouchStart={(event) => {
                 if (!isIosSupportBrowser) return;
@@ -19768,6 +19971,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             <div className="mb-3 text-sm text-rose-600">{supportError}</div>
           ) : null}
           {supportSelectionActionBar}
+          {supportPendingImageDraftsBanner}
           {supportReplyDraftBanner}
           <div className="flex min-w-0 items-end gap-2 rounded-full bg-white px-3 py-2 shadow-sm ring-1 ring-slate-200/70">
             <div className="relative shrink-0">
@@ -19869,6 +20073,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               onChange={(event) => {
                 setSupportDraft(event.target.value);
                 resizeSupportComposerInput(event.target);
+                keepSupportComposerCaretVisible(event.target);
               }}
               onFocus={() => {
                 setSupportAttachmentMenuOpen(false);
@@ -19884,8 +20089,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               type="button"
               className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#22c55e] text-white transition hover:bg-[#16a34a] disabled:bg-slate-300 disabled:text-white"
               onClick={() => void sendSupportMessage()}
-              disabled={supportSending || !supportCanSend}
-              aria-label={supportSending ? "发送中" : selectedSupportSendButtonLabel}
+              disabled={supportComposerBusy || !supportCanSend}
+              aria-label={supportComposerBusy ? "发送中" : selectedSupportSendButtonLabel}
             >
               <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor" aria-hidden="true">
                 <path d="M5.35 4.45c-.74-.35-1.5.42-1.14 1.15l2.45 5.05c.12.24.36.4.63.42l6.26.47-6.26.47a.78.78 0 0 0-.63.42l-2.45 5.05c-.36.73.4 1.5 1.14 1.15l15-7.1a.85.85 0 0 0 0-1.54l-15-7.1Z" />
