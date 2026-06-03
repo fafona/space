@@ -3131,11 +3131,11 @@ function formatSuccessRate(total: number, success: number) {
 function getMerchantDesktopMenuButtonClassName(active: boolean, tone: "default" | "alert" = "default") {
   if (active) {
     return tone === "alert"
-      ? "relative flex h-10 items-center justify-between gap-2 rounded-lg border-0 bg-rose-900/45 px-3 text-sm font-semibold text-white shadow-[inset_3px_0_0_#fb7185]"
+      ? "relative flex h-10 items-center justify-between gap-2 rounded-lg border-0 bg-[#1f2f55] px-3 text-sm font-semibold text-white shadow-[inset_3px_0_0_#93c5fd,0_1px_0_rgba(255,255,255,0.04)]"
       : "relative flex h-10 items-center justify-between gap-2 rounded-lg border-0 bg-[#1f2f55] px-3 text-sm font-semibold text-white shadow-[inset_3px_0_0_#93c5fd,0_1px_0_rgba(255,255,255,0.04)]";
   }
   return tone === "alert"
-    ? "relative flex h-10 items-center justify-between gap-2 rounded-lg border-0 bg-transparent px-3 text-sm font-semibold text-rose-100 transition hover:bg-rose-950/35 hover:text-white"
+    ? "relative flex h-10 items-center justify-between gap-2 rounded-lg border-0 bg-transparent px-3 text-sm font-semibold text-[#dbeafe] transition hover:bg-[#17233f] hover:text-white"
     : "relative flex h-10 items-center justify-between gap-2 rounded-lg border-0 bg-transparent px-3 text-sm font-semibold text-[#dbeafe] transition hover:bg-[#17233f] hover:text-white";
 }
 
@@ -19334,7 +19334,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       {isDesktopMerchantWorkspace ? (
                           <button
                             type="button"
-                            className="inline-flex h-9 w-10 shrink-0 items-center justify-center rounded-lg border border-rose-400/70 bg-transparent text-rose-100 transition hover:bg-rose-900/35 hover:text-white disabled:opacity-50"
+                            className="inline-flex h-9 w-10 shrink-0 items-center justify-center rounded-lg border border-blue-300/35 bg-white/5 text-[#dbeafe] transition hover:bg-[#17233f] hover:text-white disabled:opacity-50"
                             onClick={() => {
                               void requestLogout();
                             }}
@@ -19428,7 +19428,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       onClick={openMerchantSupportPanel}
                       aria-label={supportHasUnreadMessages ? "会话，有新消息" : "会话"}
                     >
-                      <span className="relative inline-flex items-center">
+                      <span className="relative inline-flex min-w-0 items-center gap-2">
                         <MerchantDesktopMenuIcon name="support" />
                         <span>会话</span>
                         {supportHasUnreadMessages ? (
@@ -19588,7 +19588,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           </div>
         {!topBarCollapsed ? (
           isDesktopMerchantWorkspace ? (
-            <div className="border-t border-white/10">
+            <div className="border-t border-white/10 bg-[#0d1627]/75">
               <div className="w-full px-0 py-4">
                 <div className="px-0">
                   {merchantDesktopSection === "pointRedemption" ||
