@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type TouchEventHandler } from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "@/components/I18nProvider";
+import { showGlobalToast } from "@/lib/globalToast";
 import { getMerchantBookingFieldText, getMerchantBookingStatusText } from "@/lib/merchantBookingLocale";
 import { MERCHANT_BOOKING_STATUSES, type MerchantBookingRecord, type MerchantBookingStatus } from "@/lib/merchantBookings";
 import {
@@ -475,7 +476,6 @@ export default function BookingWorkbenchDialog({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [copySuccessNotice, setCopySuccessNotice] = useState("");
   const [sectionView, setSectionView] = useState<WorkbenchSectionView>("home");
   const [swipeOffset, setSwipeOffset] = useState(0);
   const swipeStateRef = useRef({
@@ -484,7 +484,6 @@ export default function BookingWorkbenchDialog({
     startY: 0,
   });
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const copySuccessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftRef = useRef(draft);
   const hasLoadedRef = useRef(false);
   const lastFailedDraftRef = useRef("");
@@ -501,16 +500,10 @@ export default function BookingWorkbenchDialog({
         clearTimeout(autosaveTimerRef.current);
         autosaveTimerRef.current = null;
       }
-      if (copySuccessTimerRef.current) {
-        clearTimeout(copySuccessTimerRef.current);
-        copySuccessTimerRef.current = null;
-      }
-      setCopySuccessNotice("");
       return;
     }
     setSectionView("home");
     setSwipeOffset(0);
-    setCopySuccessNotice("");
   }, [open]);
 
   useEffect(() => {
@@ -562,11 +555,15 @@ export default function BookingWorkbenchDialog({
       if (autosaveTimerRef.current) {
         clearTimeout(autosaveTimerRef.current);
       }
-      if (copySuccessTimerRef.current) {
-        clearTimeout(copySuccessTimerRef.current);
-      }
     };
   }, []);
+
+  useEffect(() => {
+    if (!error) return;
+    showGlobalToast(error, { tone: "error" });
+    const timer = window.setTimeout(() => setError(""), 3000);
+    return () => window.clearTimeout(timer);
+  }, [error]);
 
   const weekdayLabels = useMemo(() => buildWeekdayLabels(locale || "zh-CN"), [locale]);
   const reminderSummary = useMemo(
@@ -901,14 +898,7 @@ export default function BookingWorkbenchDialog({
   }, [calendarSyncUrl, saveWorkbench, siteId]);
 
   const showCopySuccessNotice = useCallback(() => {
-    setCopySuccessNotice("复制成功");
-    if (copySuccessTimerRef.current) {
-      clearTimeout(copySuccessTimerRef.current);
-    }
-    copySuccessTimerRef.current = setTimeout(() => {
-      copySuccessTimerRef.current = null;
-      setCopySuccessNotice("");
-    }, 1800);
+    showGlobalToast("复制成功", { tone: "success" });
   }, []);
 
   const copyCalendarSyncUrl = async () => {
@@ -1248,12 +1238,6 @@ export default function BookingWorkbenchDialog({
                   </div>
                 </section>
               </>
-            ) : null}
-
-            {error ? (
-              <div className={`rounded-2xl border px-4 py-3 text-sm ${darkMode ? "border-rose-700 bg-rose-950/60 text-rose-200" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
-                {error}
-              </div>
             ) : null}
 
             {loading ? (
@@ -1842,16 +1826,6 @@ export default function BookingWorkbenchDialog({
           </div>
         </div>
       </div>
-      {copySuccessNotice ? (
-        <div
-          className={`pointer-events-none ${isInline ? "absolute inset-x-0" : "fixed inset-x-0 z-[2147483200]"} flex justify-center px-4`}
-          style={{ top: "max(1.25rem, env(safe-area-inset-top))" }}
-        >
-          <div className={`rounded-full px-4 py-2 text-sm font-medium shadow-2xl ${darkMode ? "bg-slate-100 text-slate-900" : "bg-slate-900 text-white"}`}>
-            {copySuccessNotice}
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 

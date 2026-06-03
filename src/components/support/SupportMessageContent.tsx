@@ -89,6 +89,11 @@ export default function SupportMessageContent({
   const linkUrl = attachmentPreview.linkUrl;
 
   const openImagePreview = () => {
+    if (linkUrl && typeof window !== "undefined") {
+      window.open(linkUrl, "_blank", "noopener,noreferrer");
+      return;
+    }
+
     if (onImageActivate) {
       onImageActivate({
         rawText: value,

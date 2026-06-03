@@ -12,6 +12,7 @@ import {
   type MerchantMemberSettingsView,
   type MerchantMembershipSettings,
 } from "@/lib/merchantMembershipSettings";
+import { showGlobalToast } from "@/lib/globalToast";
 import { uploadDataUrlToPublicStorage } from "@/lib/publicAssetUpload";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
@@ -410,6 +411,16 @@ export default function MerchantMembershipSettingsPanel({
     void loadSettings();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [normalizedSiteId]);
+
+  useEffect(() => {
+    if (!error && !notice) return;
+    showGlobalToast(error || notice);
+    const timer = window.setTimeout(() => {
+      setError("");
+      setNotice("");
+    }, 3000);
+    return () => window.clearTimeout(timer);
+  }, [error, notice]);
 
   const renderRechargePlans = () => (
     <SectionCard
@@ -983,15 +994,18 @@ export default function MerchantMembershipSettingsPanel({
             <SummaryPill label="项目分类" value={itemCategoryCount} tone="amber" />
           </div>
           <div className="overflow-x-auto rounded-2xl border border-slate-200">
-            <table className="min-w-[980px] w-full border-collapse text-sm">
+            <table className="min-w-[1240px] w-full border-collapse text-sm">
               <thead className="bg-slate-50 text-left text-xs font-semibold text-slate-500">
                 <tr>
                   <th className="px-4 py-3">编号</th>
+                  <th className="px-4 py-3">图片</th>
+                  <th className="px-4 py-3">图标</th>
                   <th className="px-4 py-3">名称</th>
                   <th className="px-4 py-3">积分</th>
                   <th className="px-4 py-3">参考金额</th>
                   <th className="px-4 py-3">库存</th>
                   <th className="px-4 py-3">分类</th>
+                  <th className="px-4 py-3">推荐</th>
                   <th className="px-4 py-3">状态</th>
                   <th className="px-4 py-3 text-right">操作</th>
                 </tr>
@@ -999,7 +1013,7 @@ export default function MerchantMembershipSettingsPanel({
               <tbody className="divide-y divide-slate-100">
                 {filteredItems.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-8 text-center text-slate-500">
+                    <td colSpan={11} className="px-4 py-8 text-center text-slate-500">
                       还没有匹配的兑换项目。
                     </td>
                   </tr>
@@ -1007,6 +1021,33 @@ export default function MerchantMembershipSettingsPanel({
                   filteredItems.map((item) => (
                     <tr key={item.id} className="bg-white align-top">
                       <td className="px-4 py-3 font-mono text-xs text-slate-700">{item.code || "-"}</td>
+                      <td className="px-4 py-3">
+                        {item.imageUrl ? (
+                          <span className="block h-11 w-11 overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={normalizePublicAssetUrl(item.imageUrl)}
+                              alt={item.name || "图片"}
+                              className="h-full w-full object-cover"
+                              onError={(event) => {
+                                event.currentTarget.style.display = "none";
+                              }}
+                            />
+                          </span>
+                        ) : (
+                          <span className="text-slate-400">-</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        {normalizeCategoryIconName(item.iconName) ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-teal-700">
+                            <CategoryIconGlyph name={item.iconName} className="h-4 w-4" />
+                            <span>{getCategoryIconLabel(item.iconName)}</span>
+                          </span>
+                        ) : (
+                          <span className="text-slate-400">-</span>
+                        )}
+                      </td>
                       <td className="px-4 py-3">
                         <div className="font-semibold text-slate-950">{item.name}</div>
                         {item.description ? <div className="mt-1 line-clamp-2 text-xs text-slate-500">{item.description}</div> : null}
@@ -1017,6 +1058,15 @@ export default function MerchantMembershipSettingsPanel({
                       </td>
                       <td className="px-4 py-3 text-slate-700">{redemptionStockText(item.stock)}</td>
                       <td className="px-4 py-3 text-slate-700">{redemptionCategoryName(item.categoryId)}</td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                            item.recommended ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-500"
+                          }`}
+                        >
+                          {item.recommended ? "推荐" : "-"}
+                        </span>
+                      </td>
                       <td className="px-4 py-3">
                         <button
                           type="button"
@@ -1895,14 +1945,6 @@ export default function MerchantMembershipSettingsPanel({
             ) : null}
           </div>
         </div>
-        {error ? (
-          <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>
-        ) : null}
-        {notice ? (
-          <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-            {notice}
-          </div>
-        ) : null}
       </div>
 
       {view === "rechargePlans"

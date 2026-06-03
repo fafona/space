@@ -4,6 +4,7 @@ import Script from "next/script";
 import ClientDomTranslator from "@/components/ClientDomTranslator";
 import CapacitorAppBridge from "@/components/CapacitorAppBridge";
 import GlobalLanguageSwitcher from "@/components/GlobalLanguageSwitcher";
+import GlobalToastViewport from "@/components/GlobalToastViewport";
 import { I18nProvider } from "@/components/I18nProvider";
 import MobileSwipeBack from "@/components/MobileSwipeBack";
 import PwaBootstrapLoader from "@/components/PwaBootstrapLoader";
@@ -1318,6 +1319,7 @@ export default async function RootLayout({
           <GlobalLanguageSwitcher />
           <MobileSwipeBack />
           {children}
+          <GlobalToastViewport />
         </I18nProvider>
       </body>
     </html>

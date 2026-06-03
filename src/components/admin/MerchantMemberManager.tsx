@@ -8,6 +8,7 @@ import {
   type MerchantMembershipInsight,
   type MerchantMembershipListItem,
 } from "@/lib/merchantMemberships";
+import { showGlobalToast } from "@/lib/globalToast";
 import type {
   MerchantMemberLevel,
   MerchantMemberRechargePlan,
@@ -308,6 +309,17 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
         : 0,
     [memberSettings, operationMembership, selectedRedemptionItem],
   );
+
+  useEffect(() => {
+    const message = allergenError || operationError;
+    if (!message) return;
+    showGlobalToast(message, { tone: "error" });
+    const timer = window.setTimeout(() => {
+      setAllergenError("");
+      setOperationError("");
+    }, 3000);
+    return () => window.clearTimeout(timer);
+  }, [allergenError, operationError]);
 
   const loadMemberships = useCallback(async () => {
     if (!/^\d{8}$/.test(normalizedSiteId)) {
@@ -960,11 +972,6 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                             );
                           })}
                         </div>
-                        {allergenError ? (
-                          <div className="mt-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-                            {allergenError}
-                          </div>
-                        ) : null}
                       </div>
 
                       <div>
@@ -1161,11 +1168,6 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                     disabled={operationSaving}
                   />
                 </label>
-                {operationError ? (
-                  <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                    {operationError}
-                  </div>
-                ) : null}
               </div>
               <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-4">
                 <button

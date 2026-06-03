@@ -14,6 +14,7 @@ import {
 import { createPortal } from "react-dom";
 import { toPng } from "html-to-image";
 import QRCode from "qrcode";
+import { showGlobalToast } from "@/lib/globalToast";
 import {
   MERCHANT_BUSINESS_CARD_RATIO_OPTIONS,
   MERCHANT_BUSINESS_CARD_PHONE_LIMIT,
@@ -1548,7 +1549,8 @@ export default function MerchantBusinessCardManager({
 
   useEffect(() => {
     if (!tip) return;
-    const timer = window.setTimeout(() => setTip(""), 2600);
+    showGlobalToast(tip);
+    const timer = window.setTimeout(() => setTip(""), 3000);
     return () => window.clearTimeout(timer);
   }, [tip]);
 
@@ -3396,7 +3398,6 @@ export default function MerchantBusinessCardManager({
         </div>,
       ) : null}
 
-      {tip ? overlay(<div className="pointer-events-none fixed inset-0 z-[2147483200] flex items-center justify-center p-4"><div className="rounded-lg bg-black/85 px-4 py-2 text-sm text-white shadow-lg">{tip}</div></div>) : null}
     </div>
   );
 

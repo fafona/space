@@ -14,6 +14,7 @@ import { createPortal } from "react-dom";
 import BookingWorkbenchDialog from "@/components/admin/BookingWorkbenchDialog";
 import BookingStatusFilterDropdown from "@/components/admin/BookingStatusFilterDropdown";
 import { useI18n } from "@/components/I18nProvider";
+import { showGlobalToast } from "@/lib/globalToast";
 import BookingDateTimeInput from "@/components/booking/BookingDateTimeInput";
 import BookingQuickTimeRangePicker from "@/components/booking/BookingQuickTimeRangePicker";
 import {
@@ -619,6 +620,13 @@ export default function MerchantBookingMobilePanel({
     const day = String(now.getDate()).padStart(2, "0");
     setTodayDateValue(`${year}-${month}-${day}`);
   }, []);
+
+  useEffect(() => {
+    if (!error) return;
+    showGlobalToast(error, { tone: "error" });
+    const timer = window.setTimeout(() => setError(""), 3000);
+    return () => window.clearTimeout(timer);
+  }, [error]);
 
   const loadWorkbenchCustomerEmailLocale = useCallback(async () => {
     if (!siteId) return defaultCustomerEmailLocale;
@@ -1819,12 +1827,6 @@ export default function MerchantBookingMobilePanel({
           </div>
 
           <div className="space-y-3">
-            {error ? (
-              <div className="rounded-[24px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                {error}
-              </div>
-            ) : null}
-
             {loading ? (
               <div className="rounded-[28px] border border-slate-200 bg-white px-5 py-8 text-center text-sm text-slate-500 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
                 {getMerchantBookingFieldText("managementLoading", locale)}

@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import BookingWorkbenchDialog from "@/components/admin/BookingWorkbenchDialog";
 import BookingStatusFilterDropdown from "@/components/admin/BookingStatusFilterDropdown";
 import { useI18n } from "@/components/I18nProvider";
+import { showGlobalToast } from "@/lib/globalToast";
 import BookingDateTimeInput from "@/components/booking/BookingDateTimeInput";
 import BookingQuickTimeRangePicker from "@/components/booking/BookingQuickTimeRangePicker";
 import {
@@ -595,6 +596,13 @@ export default function MerchantBookingManagerDialog({
       setWorkbenchOpen(false);
     }
   }, [open, setWorkbenchOpen]);
+
+  useEffect(() => {
+    if (!error) return;
+    showGlobalToast(error, { tone: "error" });
+    const timer = window.setTimeout(() => setError(""), 3000);
+    return () => window.clearTimeout(timer);
+  }, [error]);
 
   useEffect(() => {
     setCustomerEmailLocale(defaultCustomerEmailLocale);
@@ -1627,9 +1635,6 @@ export default function MerchantBookingManagerDialog({
               </>
             ) : null}
           </div>
-          {error ? (
-            <div className="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>
-          ) : null}
         </div>
         </div>
 

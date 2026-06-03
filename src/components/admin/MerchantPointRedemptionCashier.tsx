@@ -8,6 +8,7 @@ import {
   getMerchantCouponDisplayTitle,
   type MerchantCouponRecord,
 } from "@/lib/merchantCoupons";
+import { showGlobalToast } from "@/lib/globalToast";
 import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import type { MerchantMembershipInsight, MerchantMembershipListItem } from "@/lib/merchantMemberships";
@@ -749,6 +750,7 @@ export default function MerchantPointRedemptionCashier({
 
   useEffect(() => {
     if (!error && !notice) return;
+    showGlobalToast(error || notice);
     const timer = window.setTimeout(() => {
       setError("");
       setNotice("");
@@ -1298,48 +1300,6 @@ export default function MerchantPointRedemptionCashier({
           border-color: var(--pos-primary-dark);
           background: var(--pos-primary-dark);
           color: #fff;
-        }
-
-        .merchant-pos-cashier .pos-alert {
-          position: fixed;
-          left: 50%;
-          top: 50%;
-          z-index: 120;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          max-width: min(520px, calc(100vw - 48px));
-          min-height: 46px;
-          border-radius: 8px;
-          padding: 12px 18px;
-          font-weight: 800;
-          text-align: center;
-          box-shadow: 0 24px 70px rgba(15, 23, 42, 0.24);
-          transform: translate(-50%, -50%);
-          animation: pos-toast-in 0.16s ease-out;
-        }
-
-        .merchant-pos-cashier .pos-alert.error {
-          border: 1px solid #fecdd3;
-          background: #fff1f2;
-          color: #be123c;
-        }
-
-        .merchant-pos-cashier .pos-alert.notice {
-          border: 1px solid #a7f3d0;
-          background: #ecfdf5;
-          color: #047857;
-        }
-
-        @keyframes pos-toast-in {
-          from {
-            opacity: 0;
-            transform: translate(-50%, calc(-50% + 10px));
-          }
-          to {
-            opacity: 1;
-            transform: translate(-50%, -50%);
-          }
         }
 
         .merchant-pos-cashier .cashier-workbench {
@@ -2720,12 +2680,6 @@ export default function MerchantPointRedemptionCashier({
           </div>
         </div>
       </div>
-
-      {error || notice ? (
-        <div className={`pos-alert ${error ? "error" : "notice"}`} role={error ? "alert" : "status"} aria-live="polite">
-          {error || notice}
-        </div>
-      ) : null}
 
       {view === "records" || view === "rechargeRecords" ? (
         <>

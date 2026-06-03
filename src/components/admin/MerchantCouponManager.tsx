@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type ReactNode } from "react";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
 import { loadEuropeLocationOptionsApi, type EuropeLocationOptionsApi } from "@/lib/europeLocationOptionsLoader";
+import { showGlobalToast } from "@/lib/globalToast";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
   MERCHANT_COUPON_BEHAVIOR_TRIGGERS,
@@ -1413,6 +1414,16 @@ export default function MerchantCouponManager({
     };
   }, []);
 
+  useEffect(() => {
+    if (!error && !tip) return;
+    showGlobalToast(error || tip);
+    const timer = window.setTimeout(() => {
+      setError("");
+      setTip("");
+    }, 3000);
+    return () => window.clearTimeout(timer);
+  }, [error, tip]);
+
   const locationCountryOptions = useMemo(() => locationOptionsApi?.getEuropeCountryOptions() ?? [], [locationOptionsApi]);
   const selectedLocationCountryCodes = useMemo(() => {
     const selected = new Set(splitRuleList(form.claimAllowedCountries).map(normalizeLocationOptionText));
@@ -2009,8 +2020,6 @@ export default function MerchantCouponManager({
             <div className="mt-1 text-xl font-semibold text-cyan-700">{contactCardVisibleCount}</div>
           </div>
         </div>
-        {error ? <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-600">{error}</div> : null}
-        {tip ? <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{tip}</div> : null}
       </section>
       ) : null}
 
@@ -2866,9 +2875,6 @@ export default function MerchantCouponManager({
               ) : null}
             </div>
           </div>
-          {listOnly && error ? <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-600">{error}</div> : null}
-          {listOnly && tip ? <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{tip}</div> : null}
-
           <div className="mt-4 grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
             {loading ? (
               <div className="col-span-full rounded-xl border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-500">正在加载优惠券...</div>

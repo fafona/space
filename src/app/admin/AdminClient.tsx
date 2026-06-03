@@ -141,6 +141,7 @@ import {
 } from "@/lib/merchantBookingRules";
 import { buildPublicBlockId } from "@/lib/blockPublicId";
 import { countInlineAssets, hasInlineAssets, type InlineAssetStats } from "@/lib/inlineAssetStats";
+import { showGlobalToast } from "@/lib/globalToast";
 import { useNotificationSound } from "@/lib/useNotificationSound";
 import {
   canUseFaollaNativeNotifications,
@@ -783,8 +784,6 @@ const MIN_BLOCK_WIDTH = 240;
 const MIN_BLOCK_HEIGHT = 120;
 const NUDGE_STEP = 4;
 const HISTORY_LIMIT = 120;
-const DEFAULT_TIP_DURATION_MS = 2600;
-const SAVE_PUBLISH_TIP_DURATION_MS = 5200;
 const AUTH_CHECK_TIMEOUT_MS = 6000;
 const ADMIN_PAGE_LOAD_TIMEOUT_MS = 35000;
 const SUPPORT_THREAD_OPEN_POLL_INTERVAL_MS = 1200;
@@ -5947,8 +5946,6 @@ export default function AdminClient({
   const [previewViewport, setPreviewViewport] = useState<"desktop" | "mobile">("desktop");
   const [tip, setTip] = useState<string>("");
   const [backendNotice, setBackendNotice] = useState<string | null>(supabaseMissingEnvNotice);
-  const tipDurationMsRef = useRef<number | null>(DEFAULT_TIP_DURATION_MS);
-  const tipDismissByPointerRef = useRef<boolean>(true);
   const [dialog, setDialog] = useState<CenterDialog | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(startInLoadingState);
   const [hasEditorContent, setHasEditorContent] = useState(true);
@@ -6726,24 +6723,16 @@ export default function AdminClient({
     });
   }
 
-  function showTip(message: string, options?: { durationMs?: number | null; dismissOnPointer?: boolean }) {
-    tipDurationMsRef.current = options?.durationMs ?? DEFAULT_TIP_DURATION_MS;
-    tipDismissByPointerRef.current = options?.dismissOnPointer ?? true;
+  function showTip(message: string, _options?: { durationMs?: number | null; dismissOnPointer?: boolean }) {
     setTip(message);
   }
 
   function showSavePublishTip(message: string) {
-    showTip(message, {
-      durationMs: SAVE_PUBLISH_TIP_DURATION_MS,
-      dismissOnPointer: false,
-    });
+    showTip(message);
   }
 
   function showPublishFailedTip(message: string) {
-    showTip(message, {
-      durationMs: null,
-      dismissOnPointer: true,
-    });
+    showTip(message);
   }
 
   function getMerchantRemoteVerificationScopes(merchantIds: string[]) {
@@ -9167,30 +9156,8 @@ export default function AdminClient({
 
   useEffect(() => {
     if (!tip) return;
-
-    const onPointerDown = () => {
-      if (!tipDismissByPointerRef.current) return;
-      setTip("");
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setTip("");
-      }
-    };
-    const timeoutId =
-      typeof tipDurationMsRef.current === "number"
-        ? window.setTimeout(() => {
-            setTip("");
-          }, tipDurationMsRef.current)
-        : null;
-
-    window.addEventListener("pointerdown", onPointerDown, true);
-    window.addEventListener("keydown", onKeyDown, true);
-    return () => {
-      if (typeof timeoutId === "number") window.clearTimeout(timeoutId);
-      window.removeEventListener("pointerdown", onPointerDown, true);
-      window.removeEventListener("keydown", onKeyDown, true);
-    };
+    showGlobalToast(tip);
+    setTip("");
   }, [tip]);
 
   useEffect(() => {
@@ -19243,11 +19210,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           }}
         />
         {dialogOverlay}
-        {tip ? (
-          <div className="pointer-events-none fixed inset-0 z-[2147483500] flex items-center justify-center p-4">
-            <div className="rounded-lg bg-black/85 px-4 py-2 text-sm text-white shadow-lg">{tip}</div>
-          </div>
-        ) : null}
       </>
     );
   }
@@ -20297,7 +20259,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           type="button"
           className={`group flex items-center justify-center border text-base leading-none transition-all ${
             shouldUseDesktopEditorSidebar
-              ? "h-24 w-7 rounded-r-full border-0 bg-[#111827] text-[#dbeafe] shadow-none hover:bg-[#111827] hover:text-white"
+              ? "h-24 w-7 rounded-r-[16px] border-0 bg-[#111827] text-[#dbeafe] shadow-none hover:bg-[#111827] hover:text-white"
               : isMobileMerchantEditorShell
                 ? "h-11 w-11 rounded-full border-white/70 bg-white/92 text-slate-700 shadow-[0_18px_40px_rgba(15,23,42,0.14)]"
                 : "h-10 w-7 rounded-r-lg border-l-0 bg-white text-slate-700 shadow-sm hover:bg-gray-50"
@@ -22142,11 +22104,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         : null}
 
       {dialogOverlay}
-      {tip ? (
-        <div className="fixed inset-0 z-[2147483500] pointer-events-none flex items-center justify-center p-4">
-          <div className="px-4 py-2 rounded-lg bg-black/85 text-white text-sm shadow-lg">{tip}</div>
-        </div>
-      ) : null}
     </main>
   );
 }

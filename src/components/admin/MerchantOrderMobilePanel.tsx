@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { showGlobalToast } from "@/lib/globalToast";
 import {
   formatMerchantOrderAmount,
   isMerchantOrderPendingMerchantTouch,
@@ -279,6 +280,13 @@ export default function MerchantOrderMobilePanel({
   useEffect(() => {
     onOrdersChange?.(records);
   }, [onOrdersChange, records]);
+
+  useEffect(() => {
+    if (!error) return;
+    showGlobalToast(error, { tone: "error" });
+    const timer = window.setTimeout(() => setError(""), 3000);
+    return () => window.clearTimeout(timer);
+  }, [error]);
 
   useEffect(() => {
     if (!overflowMenuOpen || typeof document === "undefined") return;
@@ -1192,12 +1200,6 @@ export default function MerchantOrderMobilePanel({
             ))}
           </div>
         </div>
-
-        {error ? (
-          <div className="rounded-[24px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-            {error}
-          </div>
-        ) : null}
 
         {loading ? (
           <div className={emptyPanelClassName}>正在读取订单...</div>

@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent, type ReactNode, type TouchEvent } from "react";
 import { createPortal } from "react-dom";
 import { buildMerchantBusinessCardShareUrl, resolveMerchantBusinessCardShareOrigin } from "@/lib/merchantBusinessCardShare";
+import { showGlobalToast } from "@/lib/globalToast";
 import {
   getBlocksSnapshot,
   getPublishedBlocksSnapshot,
@@ -1063,7 +1064,6 @@ const MAX_PLATFORM_STATE_STORAGE_BYTES = 4_500_000;
 const MERCHANT_CARD_IMAGE_MAX_SIDE = 1280;
 const MERCHANT_CARD_IMAGE_MIN_SIDE = 160;
 const MERCHANT_CARD_IMAGE_TARGET_BYTES = 80_000;
-const TIP_AUTO_DISMISS_MS = 4200;
 const STORAGE_SAFE_AUDIT_RECORDS = 500;
 const STORAGE_SAFE_ALERT_RECORDS = 240;
 const STORAGE_SAFE_APPROVAL_RECORDS = 300;
@@ -2523,8 +2523,8 @@ export default function SuperAdminClient() {
 
   useEffect(() => {
     if (!tip) return;
-    const timer = window.setTimeout(() => setTip(""), TIP_AUTO_DISMISS_MS);
-    return () => window.clearTimeout(timer);
+    showGlobalToast(tip);
+    setTip("");
   }, [tip]);
 
   useEffect(() => {
@@ -6740,25 +6740,6 @@ export default function SuperAdminClient() {
               </button>
             </div>
           </header>
-          ) : null}
-
-          {tip ? (
-            <div
-              className={`pointer-events-none fixed left-4 right-4 z-[130] ${
-                isMobileSupportOnlyMode
-                  ? "top-[calc(env(safe-area-inset-top)+0.75rem)]"
-                  : "top-20 md:left-72 md:right-auto md:w-[min(680px,calc(100vw-20rem))]"
-              }`}
-            >
-              <div
-                className="pointer-events-auto rounded border border-amber-300 bg-amber-50/95 px-3 py-2 text-sm text-amber-700 shadow-lg backdrop-blur"
-                role="status"
-                aria-live="polite"
-                onClick={() => setTip("")}
-              >
-                {tip}
-              </div>
-            </div>
           ) : null}
 
           <div className={isMobileSupportOnlyMode ? "flex-1 min-h-0 overflow-hidden p-0" : "space-y-4 p-4"}>

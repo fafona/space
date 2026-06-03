@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import OrderStatusFilterDropdown from "@/components/admin/OrderStatusFilterDropdown";
+import { showGlobalToast } from "@/lib/globalToast";
 import {
   MERCHANT_ORDER_STATUSES,
   formatMerchantOrderAmount,
@@ -304,6 +305,13 @@ export default function MerchantOrderManagerDialog({
       setWorkbenchOpen(false);
     }
   }, [open, setWorkbenchOpen]);
+
+  useEffect(() => {
+    if (!error) return;
+    showGlobalToast(error, { tone: "error" });
+    const timer = window.setTimeout(() => setError(""), 3000);
+    return () => window.clearTimeout(timer);
+  }, [error]);
 
   const loadOrders = useCallback(async () => {
     if (!siteId) return;
@@ -1331,9 +1339,6 @@ export default function MerchantOrderManagerDialog({
               </div>
             ) : null}
 
-            {error ? (
-              <div className="mt-4 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>
-            ) : null}
           </div>
         </div>
 
