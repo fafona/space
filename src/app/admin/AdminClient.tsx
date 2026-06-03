@@ -3154,6 +3154,70 @@ function getMerchantDesktopSubmenuButtonClassName(active: boolean, tone: "defaul
   return `flex h-10 w-full items-center justify-between gap-2 rounded-lg border-0 bg-transparent px-3 text-left text-sm font-semibold text-[#d9e5e0] transition ${toneClassName}`;
 }
 
+function MerchantDesktopMenuIcon({ name }: { name: "points" | "booking" | "orders" | "support" | "members" | "business" }) {
+  const commonProps = {
+    className: "h-[18px] w-[18px] shrink-0",
+    fill: "none",
+    stroke: "currentColor",
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    strokeWidth: 2,
+    viewBox: "0 0 24 24",
+    "aria-hidden": true,
+  };
+
+  if (name === "points") {
+    return (
+      <svg {...commonProps}>
+        <path d="M12 3 4 7l8 4 8-4-8-4Z" />
+        <path d="M4 12l8 4 8-4" />
+        <path d="M4 17l8 4 8-4" />
+      </svg>
+    );
+  }
+  if (name === "booking") {
+    return (
+      <svg {...commonProps}>
+        <path d="M8 2v4M16 2v4M4 9h16" />
+        <path d="M5 5h14a1 1 0 0 1 1 1v16H4V6a1 1 0 0 1 1-1Z" />
+      </svg>
+    );
+  }
+  if (name === "orders") {
+    return (
+      <svg {...commonProps}>
+        <path d="M7 3h10l2 3v18l-2-1-2 1-2-1-2 1-2-1-2 1V3Z" />
+        <path d="M9 9h6M9 13h6M9 17h4" />
+      </svg>
+    );
+  }
+  if (name === "support") {
+    return (
+      <svg {...commonProps}>
+        <path d="M21 15a4 4 0 0 1-4 4H9l-5 3v-7a4 4 0 0 1 4-4h9a4 4 0 0 1 4 4Z" />
+        <path d="M8 7a4 4 0 0 1 4-4h1a4 4 0 0 1 4 4" />
+      </svg>
+    );
+  }
+  if (name === "members") {
+    return (
+      <svg {...commonProps}>
+        <path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2" />
+        <path d="M9.5 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" />
+        <path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+      </svg>
+    );
+  }
+  return (
+    <svg {...commonProps}>
+      <path d="M3 21h18" />
+      <path d="M5 21V7l8-4v18" />
+      <path d="M19 21V11l-6-4" />
+      <path d="M9 9h1M9 13h1M9 17h1M15 13h1M15 17h1" />
+    </svg>
+  );
+}
+
 type LargeStringField = {
   path: string;
   bytes: number;
@@ -18365,6 +18429,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const merchantMobileToolbarSegmentButtonBaseClassName =
     "min-h-[48px] rounded-[18px] px-3 py-2 text-sm font-semibold transition active:scale-[0.99]";
   const merchantDesktopOperationCenterActive =
+    merchantDesktopSection === "profile" ||
     merchantDesktopSection === "editor" ||
     merchantDesktopSection === "business" ||
     merchantDesktopSection === "cards" ||
@@ -19151,8 +19216,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         className={`fixed z-[16000] ${
           shouldUseDesktopEditorSidebar
             ? topBarCollapsed
-              ? "left-0 top-6"
-              : "left-[228px] top-6"
+              ? "left-0 top-28"
+              : "left-[220px] top-28"
             : isMobileMerchantEditorShell
               ? `left-4 ${topBarCollapsed ? "top-[calc(var(--faolla-mobile-safe-top)+1rem)]" : "top-[calc(var(--faolla-mobile-safe-top)+1.1rem)]"}`
               : "left-0 top-3"
@@ -19162,7 +19227,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           type="button"
           className={`group flex items-center justify-center border text-base leading-none transition-all ${
             shouldUseDesktopEditorSidebar
-              ? "h-12 w-4 rounded-r-[16px] border-l-0 border-white/10 bg-[#111d1a] text-[#d9e5e0] shadow-[0_16px_34px_rgba(15,23,42,0.18)] hover:bg-[#1b2a26] hover:text-white"
+              ? "h-24 w-8 rounded-r-[28px] border-0 bg-[#4f843f] text-[#d9f5cf] shadow-[0_14px_28px_rgba(15,23,42,0.22)] hover:bg-[#5a9349] hover:text-white"
               : isMobileMerchantEditorShell
                 ? "h-11 w-11 rounded-full border-white/70 bg-white/92 text-slate-700 shadow-[0_18px_40px_rgba(15,23,42,0.14)]"
                 : "h-10 w-7 rounded-r-lg border-l-0 bg-white text-slate-700 shadow-sm hover:bg-gray-50"
@@ -19175,10 +19240,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           {isMobileMerchantEditorShell ? (
             topBarCollapsed ? "≡" : "×"
           ) : shouldUseDesktopEditorSidebar ? (
-            <span className="pointer-events-none flex h-8 w-2.5 items-center justify-center rounded-full bg-white/10 transition-transform group-hover:scale-[1.03]">
-              <span className={`text-[11px] font-semibold transition-transform ${topBarCollapsed ? "translate-x-[1px]" : "-translate-x-[1px]"}`}>
-                {topBarCollapsed ? ">" : "<"}
-              </span>
+            <span className="pointer-events-none flex items-center justify-center transition-transform group-hover:scale-[1.04]">
+              <svg viewBox="0 0 24 24" className={`h-8 w-8 ${topBarCollapsed ? "rotate-180" : ""}`} fill="none" aria-hidden="true">
+                <path d="M15 6 9 12l6 6" stroke="currentColor" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
             </span>
           ) : topBarCollapsed ? (
             ">"
@@ -19222,31 +19287,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   </div>
                 ) : (
                   <div className="relative block min-h-[70px] border-b border-white/10 px-2 pb-[18px] pt-2">
-                    <div className="absolute left-2 top-2 grid h-[38px] w-[38px] place-items-center rounded-lg bg-[#9ce7d2] text-base font-extrabold text-[#06362f] shadow-[inset_0_-1px_0_rgba(16,53,47,0.12)]">
-                      F
-                    </div>
-                    <div className="min-w-0 pl-[50px] pr-7">
+                    <div className="min-w-0 pr-7">
                       <div className="truncate text-[17px] font-bold leading-tight text-white" title={merchantDisplayName}>
                         {merchantDisplayName}
                       </div>
                       <div className="mt-1 truncate text-[13px] text-[#b9c8c3]">FAOLLA</div>
                     </div>
                     {isDesktopMerchantWorkspace ? (
-                      <div className="mt-3 grid grid-cols-[1fr_40px] gap-2">
-                        <button
-                          ref={merchantProfileButtonRef}
-                          type="button"
-                          className={`h-9 rounded-lg border px-3 text-sm font-semibold transition-colors disabled:opacity-50 ${
-                            merchantProfileAttention
-                              ? "border-rose-400/70 bg-rose-900/35 text-rose-50 hover:bg-rose-900/50"
-                              : "border-white/10 bg-white/5 text-[#d9e5e0] hover:bg-white/10 hover:text-white"
-                          }`}
-                          onClick={() => {
-                            void openMerchantProfilePanel();
-                          }}
-                        >
-                          商户信息
-                        </button>
+                      <div className="mt-3 flex justify-end">
                         <button
                           type="button"
                           className="inline-flex h-9 w-10 items-center justify-center rounded-lg border border-rose-400/70 bg-transparent text-rose-100 transition hover:bg-rose-900/35 hover:text-white disabled:opacity-50"
@@ -19291,7 +19339,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         void openMerchantPointRedemptionPanel();
                       }}
                     >
-                      <span>积分兑换</span>
+                      <span className="inline-flex min-w-0 items-center gap-2">
+                        <MerchantDesktopMenuIcon name="points" />
+                        <span>积分兑换</span>
+                      </span>
                     </button>
                     {canUseBookingBlock ? (
                       <button
@@ -19301,7 +19352,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                           void openMerchantBookingPanel();
                         }}
                       >
-                        <span>预约管理</span>
+                        <span className="inline-flex min-w-0 items-center gap-2">
+                          <MerchantDesktopMenuIcon name="booking" />
+                          <span>预约管理</span>
+                        </span>
                         {merchantBookingAttentionSummary.count > 0 ? (
                           <span className="ml-2 inline-flex min-w-[1.5rem] items-center justify-center rounded-full bg-emerald-500 px-2 py-0.5 text-xs font-semibold leading-none text-white">
                             {merchantBookingAttentionSummary.count > 99 ? "99+" : merchantBookingAttentionSummary.count}
@@ -19317,7 +19371,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                           void openMerchantOrderPanel();
                         }}
                       >
-                        <span>订单管理</span>
+                        <span className="inline-flex min-w-0 items-center gap-2">
+                          <MerchantDesktopMenuIcon name="orders" />
+                          <span>订单管理</span>
+                        </span>
                         {merchantOrderAttentionSummary.count > 0 ? (
                           <span className="ml-2 inline-flex min-w-[1.5rem] items-center justify-center rounded-full bg-emerald-500 px-2 py-0.5 text-xs font-semibold leading-none text-white">
                             {merchantOrderAttentionSummary.count > 99 ? "99+" : merchantOrderAttentionSummary.count}
@@ -19335,7 +19392,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       aria-label={supportHasUnreadMessages ? "会话，有新消息" : "会话"}
                     >
                       <span className="relative inline-flex items-center">
-                        会话
+                        <MerchantDesktopMenuIcon name="support" />
+                        <span>会话</span>
                         {supportHasUnreadMessages ? (
                           <span
                             aria-hidden="true"
@@ -19351,16 +19409,22 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         void openMerchantMembersPanel();
                       }}
                     >
-                      会员管理
+                      <span className="inline-flex min-w-0 items-center gap-2">
+                        <MerchantDesktopMenuIcon name="members" />
+                        <span>会员管理</span>
+                      </span>
                     </button>
-                    <div className="grid gap-[5px] border-t border-white/10 pt-3">
+                    <div className="grid gap-[5px] pt-1">
                       <button
                         type="button"
                         className={getMerchantDesktopMenuButtonClassName(merchantDesktopOperationCenterActive)}
                         onClick={openMerchantBusinessCenterPanel}
                         aria-current={merchantDesktopOperationCenterActive ? "page" : undefined}
                       >
-                        经营中心
+                        <span className="inline-flex min-w-0 items-center gap-2">
+                          <MerchantDesktopMenuIcon name="business" />
+                          <span>经营中心</span>
+                        </span>
                       </button>
                     </div>
                 </div>
@@ -19550,6 +19614,16 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   ) : merchantDesktopOperationCenterActive ? (
                     <div className="grid gap-2">
                       <button
+                        ref={merchantProfileButtonRef}
+                        type="button"
+                        className={getMerchantDesktopSubmenuButtonClassName(merchantDesktopSection === "profile")}
+                        onClick={() => {
+                          void openMerchantProfilePanel();
+                        }}
+                      >
+                        商户信息
+                      </button>
+                      <button
                         type="button"
                         className={getMerchantDesktopSubmenuButtonClassName(false)}
                         onClick={() => {
@@ -19607,18 +19681,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   ) : (
                     <>
                       <div className="px-3 text-[13px] font-semibold text-[#b9c8c3]">
-                        {merchantDesktopSection === "profile"
-                          ? "商户信息"
-                        : merchantDesktopSection === "faolla"
-                            ? "Faolla"
-                            : "会话"}
+                        {merchantDesktopSection === "faolla" ? "Faolla" : "会话"}
                       </div>
                       <div className="mt-1 px-3 text-xs leading-5 text-[#8fa39b]">
-                        {merchantDesktopSection === "profile"
-                          ? "这里集中维护商户资料、域名前缀和地址联系人。"
-                        : merchantDesktopSection === "faolla"
-                            ? "打开 Faolla 总站或登录前访问的前台页面。"
-                            : "这里集中处理官方客服和商户聊天消息。"}
+                        {merchantDesktopSection === "faolla"
+                          ? "打开 Faolla 总站或登录前访问的前台页面。"
+                          : "这里集中处理官方客服和商户聊天消息。"}
                       </div>
                     </>
                   )}
