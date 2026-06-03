@@ -1428,8 +1428,6 @@ const GALLERY_FRAME_WIDTH_LABELS: Record<CustomGalleryFrameWidth, string> = {
 };
 const MERCHANT_MEMBER_CONTEXT_MENU_ITEMS: Array<{ label: string; view: Exclude<MerchantMemberSettingsView, "list"> }> = [
   { label: "充值方案", view: "rechargePlans" },
-  { label: "项目分类", view: "redemptionCategories" },
-  { label: "兑换项目", view: "redemptionItems" },
   { label: "等级&权益", view: "levels" },
   { label: "积分规则", view: "pointsRules" },
 ];
@@ -1442,6 +1440,8 @@ type MerchantDesktopSection =
   | "pointRedemption"
   | "redemptionRecords"
   | "rechargeRecords"
+  | "redemptionCategories"
+  | "redemptionItems"
   | "booking"
   | "orders"
   | "analytics"
@@ -3131,12 +3131,27 @@ function formatSuccessRate(total: number, success: number) {
 function getMerchantDesktopMenuButtonClassName(active: boolean, tone: "default" | "alert" = "default") {
   if (active) {
     return tone === "alert"
-      ? "relative flex items-center justify-between rounded-xl border border-rose-600 bg-rose-600 px-3 py-2.5 text-sm font-semibold text-white shadow-sm"
-      : "relative flex items-center justify-between rounded-xl border border-slate-950 bg-slate-950 px-3 py-2.5 text-sm font-semibold text-white shadow-sm";
+      ? "relative flex min-h-[41px] items-center justify-between rounded-xl border border-rose-600 bg-rose-600 px-3.5 py-2 text-sm font-bold text-white shadow-sm"
+      : "relative flex min-h-[41px] items-center justify-between rounded-xl border border-[#030720] bg-[#030720] px-3.5 py-2 text-sm font-bold text-white shadow-sm";
   }
   return tone === "alert"
-    ? "relative flex items-center justify-between rounded-xl border border-rose-200 bg-white px-3 py-2.5 text-sm font-semibold text-rose-700 transition hover:bg-rose-50"
-    : "relative flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50";
+    ? "relative flex min-h-[41px] items-center justify-between rounded-xl border border-rose-200 bg-white px-3.5 py-2 text-sm font-bold text-rose-700 transition hover:bg-rose-50"
+    : "relative flex min-h-[41px] items-center justify-between rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-bold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50";
+}
+
+function getMerchantDesktopSubmenuButtonClassName(active: boolean, tone: "default" | "cyan" | "rose" | "emerald" | "amber" = "default") {
+  if (active) return "flex min-h-[40px] w-full items-center justify-between gap-2 rounded-xl border border-[#030720] bg-[#030720] px-3.5 py-2 text-left text-sm font-bold text-white transition";
+  const toneClassName =
+    tone === "cyan"
+      ? "hover:border-cyan-200 hover:bg-cyan-50"
+      : tone === "rose"
+        ? "hover:border-rose-200 hover:bg-rose-50"
+        : tone === "emerald"
+          ? "hover:border-emerald-200 hover:bg-emerald-50"
+          : tone === "amber"
+            ? "hover:border-amber-200 hover:bg-amber-50"
+            : "hover:border-slate-300 hover:bg-slate-50";
+  return `flex min-h-[40px] w-full items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-left text-sm font-bold text-slate-700 transition ${toneClassName}`;
 }
 
 type LargeStringField = {
@@ -13743,6 +13758,16 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setMerchantDesktopSection("rechargeRecords");
   }
 
+  async function openMerchantPointRedemptionSettingsPanel(view: "redemptionCategories" | "redemptionItems") {
+    const resolvedSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
+    if (!resolvedSiteId) {
+      showTip("当前商户还没准备好会员资料，请稍后重试");
+      return;
+    }
+    setMerchantSiteIdOverride(resolvedSiteId);
+    setMerchantDesktopSection(view);
+  }
+
   async function openMerchantBookingPanel() {
     const resolvedSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
     if (!resolvedSiteId) {
@@ -18308,7 +18333,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const toolbarWrapperClassName = topBarCollapsed
     ? "hidden"
     : shouldUseDesktopEditorSidebar
-      ? "fixed inset-y-0 left-0 z-[15000] w-[320px] overflow-y-auto border-r bg-white shadow-sm"
+      ? "fixed inset-y-0 left-0 z-[15000] w-[320px] overflow-y-auto border-r border-slate-200 bg-white shadow-[1px_0_0_rgba(15,23,42,0.04)]"
       : "fixed inset-x-0 top-0 z-[15000] border-b border-white/70 bg-[rgba(248,251,255,0.88)] shadow-[0_22px_48px_rgba(15,23,42,0.10)] backdrop-blur-xl";
   const toolbarContentClassName = shouldUseDesktopEditorSidebar
     ? "mx-0 flex max-w-none flex-col items-stretch justify-start gap-3 px-4 py-4"
@@ -19032,6 +19057,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               className="min-h-[calc(100vh-14rem)]"
               view="rechargeRecords"
             />
+          ) : merchantDesktopSection === "redemptionCategories" || merchantDesktopSection === "redemptionItems" ? (
+            <MerchantMembershipSettingsPanel
+              siteId={editingSiteId || merchantSiteIdOverride || ""}
+              view={merchantDesktopSection}
+              className="min-h-[calc(100vh-14rem)]"
+            />
           ) : merchantDesktopSection === "members" ? (
             merchantMemberSettingsView === "list" ? (
               <MerchantMemberManager
@@ -19190,7 +19221,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     </div>
                   </div>
                 ) : (
-                  <div className="flex items-center justify-between gap-3 rounded border border-slate-300 bg-slate-50 px-3 py-1">
+                  <div className="flex min-h-[49px] items-center justify-between gap-3 rounded border border-slate-200 bg-white px-3 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
                     <div className="min-w-0 flex-1">
                       <div className="max-w-[160px] truncate text-sm font-semibold text-slate-900" title={merchantDisplayName}>
                         {merchantDisplayName}
@@ -19201,7 +19232,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         <button
                           ref={merchantProfileButtonRef}
                           type="button"
-                          className={`rounded border px-3 py-2 text-sm transition-colors disabled:opacity-50 ${
+                          className={`h-10 rounded border px-3 text-sm font-semibold transition-colors disabled:opacity-50 ${
                             merchantProfileAttention
                               ? "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"
                               : "bg-white text-slate-900 hover:bg-gray-50"
@@ -19214,7 +19245,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         </button>
                         <button
                           type="button"
-                          className="inline-flex h-10 w-10 items-center justify-center rounded border bg-white text-rose-600 transition hover:bg-rose-50 disabled:opacity-50"
+                          className="inline-flex h-10 w-10 items-center justify-center rounded border border-rose-500 bg-white text-rose-600 transition hover:bg-rose-50 disabled:opacity-50"
                           onClick={() => {
                             void requestLogout();
                           }}
@@ -19241,14 +19272,16 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             {isDesktopMerchantWorkspace ? (
               merchantEditorOnly ? null : (
               <div className="grid gap-3">
-                <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+                <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
                   <div className="grid gap-2">
                     <button
                       type="button"
                       className={getMerchantDesktopMenuButtonClassName(
                         merchantDesktopSection === "pointRedemption" ||
                           merchantDesktopSection === "redemptionRecords" ||
-                          merchantDesktopSection === "rechargeRecords",
+                          merchantDesktopSection === "rechargeRecords" ||
+                          merchantDesktopSection === "redemptionCategories" ||
+                          merchantDesktopSection === "redemptionItems",
                       )}
                       onClick={() => {
                         void openMerchantPointRedemptionPanel();
@@ -19452,29 +19485,37 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           isDesktopMerchantWorkspace && merchantDesktopSection !== "editor" ? (
             <div className="border-t">
               <div className="w-full px-6 py-4">
-                <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+                <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
                   {merchantDesktopSection === "pointRedemption" ||
                   merchantDesktopSection === "redemptionRecords" ||
-                  merchantDesktopSection === "rechargeRecords" ? (
+                  merchantDesktopSection === "rechargeRecords" ||
+                  merchantDesktopSection === "redemptionCategories" ||
+                  merchantDesktopSection === "redemptionItems" ? (
                     <div className="grid gap-2">
                       <button
                         type="button"
-                        className={`flex min-h-10 w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-sm font-semibold transition ${
-                          merchantDesktopSection === "redemptionRecords"
-                            ? "border-slate-950 bg-slate-950 text-white"
-                            : "border-slate-200 bg-white text-slate-800 hover:border-slate-300 hover:bg-slate-50"
-                        }`}
+                        className={getMerchantDesktopSubmenuButtonClassName(merchantDesktopSection === "redemptionCategories")}
+                        onClick={() => void openMerchantPointRedemptionSettingsPanel("redemptionCategories")}
+                      >
+                        项目分类
+                      </button>
+                      <button
+                        type="button"
+                        className={getMerchantDesktopSubmenuButtonClassName(merchantDesktopSection === "redemptionItems")}
+                        onClick={() => void openMerchantPointRedemptionSettingsPanel("redemptionItems")}
+                      >
+                        兑换项目
+                      </button>
+                      <button
+                        type="button"
+                        className={getMerchantDesktopSubmenuButtonClassName(merchantDesktopSection === "redemptionRecords")}
                         onClick={() => void openMerchantRedemptionRecordsPanel()}
                       >
                         兑换记录
                       </button>
                       <button
                         type="button"
-                        className={`flex min-h-10 w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-sm font-semibold transition ${
-                          merchantDesktopSection === "rechargeRecords"
-                            ? "border-slate-950 bg-slate-950 text-white"
-                            : "border-slate-200 bg-white text-slate-800 hover:border-slate-300 hover:bg-slate-50"
-                        }`}
+                        className={getMerchantDesktopSubmenuButtonClassName(merchantDesktopSection === "rechargeRecords")}
                         onClick={() => void openMerchantRechargeRecordsPanel()}
                       >
                         充值记录
@@ -19484,11 +19525,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     <div className="grid gap-2">
                       <button
                         type="button"
-                        className={`flex min-h-10 w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-sm font-semibold transition ${
-                          merchantBookingWorkbenchOpen
-                            ? "border-amber-200 bg-amber-50 text-amber-800"
-                            : "border-slate-200 bg-white text-slate-800 hover:border-amber-200 hover:bg-amber-50"
-                        }`}
+                        className={getMerchantDesktopSubmenuButtonClassName(merchantBookingWorkbenchOpen, "amber")}
                         onClick={() => setMerchantBookingWorkbenchOpen(true)}
                         aria-pressed={merchantBookingWorkbenchOpen}
                       >
@@ -19499,11 +19536,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     <div className="grid gap-2">
                       <button
                         type="button"
-                        className={`flex min-h-10 w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-sm font-semibold transition ${
-                          merchantOrderWorkbenchOpen
-                            ? "border-amber-200 bg-amber-50 text-amber-800"
-                            : "border-slate-200 bg-white text-slate-800 hover:border-amber-200 hover:bg-amber-50"
-                        }`}
+                        className={getMerchantDesktopSubmenuButtonClassName(merchantOrderWorkbenchOpen, "amber")}
                         onClick={() => setMerchantOrderWorkbenchOpen(true)}
                         aria-pressed={merchantOrderWorkbenchOpen}
                       >
@@ -19514,7 +19547,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     <div className="grid gap-2">
                       <button
                         type="button"
-                        className="flex min-h-10 w-full items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-sm font-semibold text-slate-800 transition hover:border-slate-300 hover:bg-slate-50"
+                        className={getMerchantDesktopSubmenuButtonClassName(false)}
                         onClick={() => {
                           void openMerchantEditorInNewWindow();
                         }}
@@ -19523,41 +19556,29 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       </button>
                       <button
                         type="button"
-                        className={`flex min-h-10 w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-sm font-semibold transition ${
-                          merchantDesktopSection === "cards"
-                            ? "border-cyan-200 bg-cyan-50 text-cyan-800"
-                            : "border-slate-200 bg-white text-slate-800 hover:border-cyan-200 hover:bg-cyan-50"
-                        }`}
+                        className={getMerchantDesktopSubmenuButtonClassName(merchantDesktopSection === "cards", "cyan")}
                         onClick={openMerchantCardsPanel}
                       >
                         <span>名片夹</span>
-                        <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-bold text-cyan-700 ring-1 ring-cyan-100">
+                        <span className="rounded-full bg-cyan-50 px-2 py-0.5 text-[11px] font-bold text-cyan-700 ring-1 ring-cyan-100">
                           {merchantBusinessCardCount} 张
                         </span>
                       </button>
                       {canUseCouponModule ? (
                         <button
                           type="button"
-                          className={`flex min-h-10 w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-sm font-semibold transition ${
-                            merchantDesktopSection === "coupons"
-                              ? "border-rose-200 bg-rose-50 text-rose-800"
-                              : "border-slate-200 bg-white text-slate-800 hover:border-rose-200 hover:bg-rose-50"
-                          }`}
+                          className={getMerchantDesktopSubmenuButtonClassName(merchantDesktopSection === "coupons", "rose")}
                           onClick={openMerchantCouponsPanel}
                         >
                           <span>优惠券</span>
-                          <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-bold text-rose-700 ring-1 ring-rose-100">
+                          <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-bold text-rose-700 ring-1 ring-rose-100">
                             {merchantVisibleCouponCount} 张
                           </span>
                         </button>
                       ) : null}
                       <button
                         type="button"
-                        className={`flex min-h-10 w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-sm font-semibold transition ${
-                          merchantDesktopSection === "analytics"
-                            ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                            : "border-slate-200 bg-white text-slate-800 hover:border-emerald-200 hover:bg-emerald-50"
-                        }`}
+                        className={getMerchantDesktopSubmenuButtonClassName(merchantDesktopSection === "analytics", "emerald")}
                         onClick={openMerchantAnalyticsPanel}
                       >
                         数据统计
@@ -19571,11 +19592,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                           <button
                             key={item.view}
                             type="button"
-                            className={`flex min-h-10 w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-sm font-semibold transition ${
-                              merchantMemberSettingsView === item.view
-                                ? "border-slate-950 bg-slate-950 text-white"
-                                : "border-slate-200 bg-white text-slate-800 hover:border-slate-300 hover:bg-slate-50"
-                            }`}
+                            className={getMerchantDesktopSubmenuButtonClassName(merchantMemberSettingsView === item.view)}
                             onClick={() => void openMerchantMemberSettingsPanel(item.view)}
                           >
                             {item.label}
