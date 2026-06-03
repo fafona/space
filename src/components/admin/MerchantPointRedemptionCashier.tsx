@@ -1025,9 +1025,13 @@ export default function MerchantPointRedemptionCashier({
           align-items: center;
           justify-content: space-between;
           gap: 16px;
-          min-height: 86px;
-          margin-bottom: 16px;
-          padding: 0 0 2px;
+          min-height: 96px;
+          margin-bottom: 18px;
+          padding: 20px 22px;
+          border: 1px solid var(--pos-line);
+          border-radius: 28px;
+          background: var(--pos-surface);
+          box-shadow: var(--pos-shadow);
         }
 
         .merchant-pos-cashier .cashier-title {

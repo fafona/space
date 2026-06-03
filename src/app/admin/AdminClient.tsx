@@ -18759,18 +18759,37 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const supportDesktopSurfaceContent = (
     <div
       data-editor-overlay
-      className={`flex min-h-0 min-w-0 w-full flex-col overflow-hidden rounded-2xl border bg-white ${
+      className={`flex min-h-0 min-w-0 w-full flex-col overflow-hidden border bg-white ${
         showDesktopMerchantSupportPanel
-          ? "h-[calc(100vh-3rem)] min-h-[620px] rounded-[28px] border-slate-200 shadow-[0_18px_48px_rgba(15,23,42,0.08)] md:grid md:grid-cols-[320px_minmax(0,1fr)]"
+          ? "h-[calc(100vh-3rem)] min-h-[620px] rounded-[28px] border-slate-200 shadow-[0_18px_48px_rgba(15,23,42,0.08)] md:grid md:grid-cols-[360px_minmax(0,1fr)]"
           : "h-full max-h-[88vh] w-full max-w-5xl shadow-2xl md:grid md:grid-cols-[320px_minmax(0,1fr)]"
       }`}
     >
-      <div className="flex min-h-0 min-w-0 flex-col overflow-hidden border-b bg-white md:border-b-0 md:border-r">
-        <div className="border-b px-4 py-3">
-          <div className="flex items-center gap-2">
+      <div className="flex min-h-0 min-w-0 flex-col overflow-hidden border-b border-slate-200 bg-white md:border-b-0 md:border-r">
+        <div className="space-y-4 border-b border-slate-100 px-5 py-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-[26px] font-bold leading-8 text-slate-950">聊天</div>
+            <button
+              type="button"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full text-slate-700 transition hover:bg-slate-100"
+              onClick={() => void searchSupportPeerMerchant()}
+              disabled={supportSearchLoading}
+              aria-label="搜索"
+            >
+              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+                <path d="m21 21-4.3-4.3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
+              </svg>
+            </button>
+          </div>
+          <div className="flex h-11 items-center gap-2 rounded-full bg-[#f0f2f5] px-4">
+            <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0 text-slate-500" fill="none" aria-hidden="true">
+              <path d="m21 21-4.3-4.3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
+            </svg>
             <input
               type="text"
-              className="min-w-0 flex-1 rounded border px-3 py-2 text-sm outline-none transition focus:border-slate-400"
+              className="min-w-0 flex-1 border-0 bg-transparent px-0 py-2 text-sm text-slate-900 outline-none placeholder:text-slate-500"
               placeholder="精确搜索商户ID或邮箱"
               value={supportContactKeyword}
               onChange={(event) => setSupportContactKeyword(event.target.value)}
@@ -18780,14 +18799,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 void searchSupportPeerMerchant();
               }}
             />
-            <button
-              type="button"
-              className="shrink-0 rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
-              onClick={() => void searchSupportPeerMerchant()}
-              disabled={supportSearchLoading}
-            >
-              {supportSearchLoading ? "搜索中..." : "搜索"}
-            </button>
           </div>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto bg-white p-3">
@@ -18805,8 +18816,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   <button
                     key={contactRow.key}
                     type="button"
-                    className={`w-full rounded-2xl border px-3 py-3 text-left transition ${
-                      active ? "border-blue-300 bg-blue-50" : "bg-white hover:bg-slate-50"
+                    className={`w-full rounded-[14px] border-0 px-3 py-3 text-left transition ${
+                      active ? "bg-[#f0f2f5]" : "bg-white hover:bg-slate-50"
                     }`}
                     onClick={() => {
                       setSupportSelectedContactKey(contactRow.key);
@@ -18873,8 +18884,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         </div>
       </div>
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        <div className="flex min-w-0 items-center justify-between gap-3 border-b px-5 py-4">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[#efeae2]">
+        <div className="flex min-h-[64px] min-w-0 items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 py-3">
           <div className="flex min-w-0 items-center gap-3">
             {selectedSupportIsOfficial ? (
               <SupportAvatarBadge
@@ -18948,7 +18959,16 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           ) : null}
         </div>
 
-        <div ref={supportMessagesViewportRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-white px-5 py-5">
+        <div
+          ref={supportMessagesViewportRef}
+          className="min-h-0 min-w-0 flex-1 overflow-y-auto px-10 py-5"
+          style={{
+            backgroundColor: "#efeae2",
+            backgroundImage:
+              "radial-gradient(circle at 12px 12px, rgba(120,113,108,0.08) 1.2px, transparent 1.4px), radial-gradient(circle at 36px 32px, rgba(120,113,108,0.06) 1px, transparent 1.2px)",
+            backgroundSize: "64px 64px",
+          }}
+        >
           {selectedSupportLoading ? (
             <div className="rounded-2xl border border-dashed bg-white px-4 py-6 text-center text-sm text-slate-500">正在加载聊天记录...</div>
           ) : visibleSupportMessages.length ? (
@@ -19046,18 +19066,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           )}
         </div>
 
-        <div
-          className={`min-w-0 shrink-0 space-y-3 border-t px-5 py-4 ${
-            showDesktopMerchantSupportPanel ? "sticky bottom-0 bg-white" : ""
-          }`}
-        >
+        <div className="min-w-0 shrink-0 space-y-3 bg-[#f0f2f5] px-5 py-3">
           {supportError && supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY ? (
             <div className="text-sm text-rose-600">{supportError}</div>
           ) : null}
           <textarea
             ref={supportInputRef}
-            rows={4}
-            className="w-full max-w-full min-w-0 resize-none rounded-2xl border bg-white px-4 py-3 text-sm text-slate-900 caret-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-400"
+            rows={1}
+            className="w-full max-w-full min-w-0 resize-none rounded-full border-0 bg-white px-5 py-3 text-sm text-slate-900 caret-slate-900 outline-none transition placeholder:text-slate-400 focus:ring-2 focus:ring-slate-200"
             placeholder={selectedSupportInputPlaceholder}
             value={supportDraft}
             style={{ WebkitTextFillColor: "#0f172a" }}
@@ -19072,7 +19088,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           <div className="flex min-w-0 justify-end">
             <button
               type="button"
-              className="shrink-0 rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50"
+              className="shrink-0 rounded-full bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
               onClick={() => void sendSupportMessage()}
               disabled={supportSending || !supportCanSend}
             >
@@ -19240,6 +19256,15 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         [data-desktop-sidebar="1"] .merchant-desktop-workspace .text-2xl {
           letter-spacing: 0;
         }
+
+        [data-desktop-sidebar="1"] .merchant-desktop-workspace > div:first-child > section:first-child,
+        [data-desktop-sidebar="1"] .merchant-desktop-workspace > div:first-child > div:first-child {
+          scroll-margin-top: 24px;
+        }
+
+        [data-desktop-sidebar="1"] .merchant-desktop-workspace [data-editor-overlay] {
+          font-family: inherit;
+        }
       `}</style>
       {!topBarCollapsed && backendNotice ? (
         <div className={isMobileMerchantEditorShell ? "mx-auto max-w-[460px] px-4 pb-4" : "max-w-6xl mx-auto px-6 pb-3"}>
@@ -19259,7 +19284,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           shouldUseDesktopEditorSidebar
             ? topBarCollapsed
               ? "left-0 top-28"
-              : "left-[212px] top-28"
+              : "left-[204px] top-28"
             : isMobileMerchantEditorShell
               ? `left-4 ${topBarCollapsed ? "top-[calc(var(--faolla-mobile-safe-top)+1rem)]" : "top-[calc(var(--faolla-mobile-safe-top)+1.1rem)]"}`
               : "left-0 top-3"
@@ -19269,7 +19294,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           type="button"
           className={`group flex items-center justify-center border text-base leading-none transition-all ${
             shouldUseDesktopEditorSidebar
-              ? "h-24 w-12 rounded-r-[28px] border-0 bg-[#111827] pl-4 text-[#dbeafe] shadow-none hover:bg-[#111827] hover:text-white"
+              ? "h-20 w-12 rounded-r-[24px] border-0 bg-[#111827] pl-6 text-[#dbeafe] shadow-none hover:bg-[#111827] hover:text-white"
               : isMobileMerchantEditorShell
                 ? "h-11 w-11 rounded-full border-white/70 bg-white/92 text-slate-700 shadow-[0_18px_40px_rgba(15,23,42,0.14)]"
                 : "h-10 w-7 rounded-r-lg border-l-0 bg-white text-slate-700 shadow-sm hover:bg-gray-50"
@@ -19283,7 +19308,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             topBarCollapsed ? "≡" : "×"
           ) : shouldUseDesktopEditorSidebar ? (
             <span className="pointer-events-none flex items-center justify-center transition-transform group-hover:scale-[1.04]">
-              <svg viewBox="0 0 24 24" className={`h-8 w-8 ${topBarCollapsed ? "rotate-180" : ""}`} fill="none" aria-hidden="true">
+              <svg viewBox="0 0 24 24" className={`h-7 w-7 ${topBarCollapsed ? "rotate-180" : ""}`} fill="none" aria-hidden="true">
                 <path d="M15 6 9 12l6 6" stroke="currentColor" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </span>
@@ -19710,9 +19735,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       </button>
                     </div>
                   ) : merchantDesktopSection === "members" ? (
-                    <>
-                      <div className="px-3 text-[13px] font-semibold text-[#b9c8c3]">会员管理</div>
-                      <div className="mt-3 grid gap-2">
+                    <div className="grid gap-2">
                         {MERCHANT_MEMBER_CONTEXT_MENU_ITEMS.map((item) => (
                           <button
                             key={item.view}
@@ -19724,7 +19747,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                           </button>
                         ))}
                       </div>
-                    </>
                   ) : (
                     <>
                       <div className="px-3 text-[13px] font-semibold text-[#b9c8c3]">
