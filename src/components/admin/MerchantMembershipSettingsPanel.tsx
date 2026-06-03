@@ -234,6 +234,33 @@ function RedemptionIconGlyph({ name }: { name: string }) {
   );
 }
 
+function RedemptionItemImagePreview({
+  imageUrl,
+  title,
+  uploading,
+}: {
+  imageUrl: string;
+  title: string;
+  uploading: boolean;
+}) {
+  const [failedUrl, setFailedUrl] = useState("");
+  const visibleImageUrl = imageUrl && failedUrl !== imageUrl ? imageUrl : "";
+  return visibleImageUrl ? (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={visibleImageUrl}
+      alt={title || "商品图片"}
+      className="h-full w-full object-cover"
+      onError={() => setFailedUrl(visibleImageUrl)}
+    />
+  ) : (
+    <span className="grid place-items-center gap-2">
+      <span className="text-2xl leading-none">⇧</span>
+      <span>{uploading ? "上传中..." : imageUrl ? "重新上传" : "上传图片"}</span>
+    </span>
+  );
+}
+
 function DialogShell({
   title,
   children,
@@ -992,19 +1019,11 @@ export default function MerchantMembershipSettingsPanel({
             <div className="space-y-4">
               <div className="grid gap-4 md:grid-cols-[108px_minmax(0,1fr)]">
                 <label className="group relative grid h-[108px] cursor-pointer place-items-center overflow-hidden rounded-lg border border-teal-100 bg-teal-50 text-sm font-semibold text-teal-800 transition hover:border-teal-300">
-                  {itemDialog.draft.imageUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={itemDialog.draft.imageUrl}
-                      alt={itemDialog.draft.name || "商品图片"}
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    <span className="grid place-items-center gap-2">
-                      <span className="text-2xl leading-none">⇧</span>
-                      <span>{itemImageUploading ? "上传中..." : "上传图片"}</span>
-                    </span>
-                  )}
+                  <RedemptionItemImagePreview
+                    imageUrl={itemDialog.draft.imageUrl}
+                    title={itemDialog.draft.name}
+                    uploading={itemImageUploading}
+                  />
                   <input type="file" accept="image/*" className="sr-only" disabled={itemImageUploading} onChange={handleItemImageUpload} />
                 </label>
                 <div className="grid gap-3 md:grid-cols-2">
