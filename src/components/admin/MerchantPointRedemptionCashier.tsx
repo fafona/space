@@ -235,6 +235,10 @@ function storageKey(siteId: string) {
   return `faolla.memberPointRedemption.heldSales.${siteId}`;
 }
 
+function allCategoryFilterStorageKey(siteId: string) {
+  return `faolla.memberPointRedemption.allCategoryExcluded.${siteId}`;
+}
+
 function IconSearch() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -263,14 +267,6 @@ function IconList() {
       <path d="M4 6h.01" />
       <path d="M4 12h.01" />
       <path d="M4 18h.01" />
-    </svg>
-  );
-}
-
-function IconCheck() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="m5 12 4.2 4.2L19 6.8" />
     </svg>
   );
 }
@@ -365,6 +361,7 @@ export default function MerchantPointRedemptionCashier({
   const [imageSizeMenuOpen, setImageSizeMenuOpen] = useState(false);
   const [catalogFilterTab, setCatalogFilterTab] = useState<CatalogFilterTab>("hot");
   const [catalogSortMode, setCatalogSortMode] = useState<CatalogSortMode>("code");
+  const [allCategoryExcludedIds, setAllCategoryExcludedIds] = useState<Set<string>>(() => new Set());
   const [heldSales, setHeldSales] = useState<HeldSale[]>([]);
   const [heldOpen, setHeldOpen] = useState(false);
   const [memberPickerOpen, setMemberPickerOpen] = useState(false);
@@ -486,26 +483,38 @@ export default function MerchantPointRedemptionCashier({
         })
         .map((category) => category.id),
     );
+    const categorySortIndex = new Map(enabledCategories.map((category, index) => [category.id, index]));
     return enabledItems
       .filter((item) => {
-      if (categoryId && item.categoryId !== categoryId) return false;
-      if (catalogFilterTab === "recommend") {
+        if (categoryId && item.categoryId !== categoryId) return false;
+        if (!categoryId && allCategoryExcludedIds.has(item.categoryId)) return false;
+        if (!keyword) return true;
+        return [item.code, item.name, item.description, categoryName(enabledCategories, item.categoryId)]
+          .join(" ")
+          .toLowerCase()
+          .includes(keyword);
+      })
+      .filter((item) => {
+        if (categoryId || catalogFilterTab !== "recommend") return true;
         const text = [item.name, item.code, item.description].join(" ").toLowerCase();
         if (!recommendedCategoryIds.has(item.categoryId) && !text.includes("推荐") && !text.includes("热卖") && !text.includes("recommended")) {
           return false;
         }
-      }
-      if (!keyword) return true;
-      return [item.code, item.name, item.description, categoryName(enabledCategories, item.categoryId)]
-        .join(" ")
-        .toLowerCase()
-        .includes(keyword);
-    })
+        return true;
+      })
       .sort((left, right) => {
         if (catalogSortMode === "name") return left.name.localeCompare(right.name) || left.sort - right.sort;
+        if (!categoryId && catalogFilterTab === "category") {
+          return (
+            (categorySortIndex.get(left.categoryId) ?? Number.MAX_SAFE_INTEGER) -
+              (categorySortIndex.get(right.categoryId) ?? Number.MAX_SAFE_INTEGER) ||
+            (left.code || left.id).localeCompare(right.code || right.id) ||
+            left.sort - right.sort
+          );
+        }
         return (left.code || left.id).localeCompare(right.code || right.id) || left.sort - right.sort;
       });
-  }, [catalogFilterTab, catalogSortMode, categoryId, enabledCategories, enabledItems, itemKeyword]);
+  }, [allCategoryExcludedIds, catalogFilterTab, catalogSortMode, categoryId, enabledCategories, enabledItems, itemKeyword]);
 
   const cartRows = useMemo(() => {
     return cart
@@ -689,6 +698,25 @@ export default function MerchantPointRedemptionCashier({
   }, [heldSales, normalizedSiteId]);
 
   useEffect(() => {
+    if (!normalizedSiteId || typeof window === "undefined") return;
+    const validIds = new Set(enabledCategories.map((category) => category.id));
+    const raw = window.localStorage.getItem(allCategoryFilterStorageKey(normalizedSiteId));
+    if (!raw) {
+      setAllCategoryExcludedIds(new Set());
+      return;
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      const next = new Set<string>(
+        Array.isArray(parsed) ? parsed.map((item) => String(item)).filter((id) => validIds.has(id)) : [],
+      );
+      setAllCategoryExcludedIds(next);
+    } catch {
+      setAllCategoryExcludedIds(new Set());
+    }
+  }, [enabledCategories, normalizedSiteId]);
+
+  useEffect(() => {
     if (!selectedMemberId) return;
     if (!activeMembers.some((membership) => membership.id === selectedMemberId)) {
       setSelectedMemberId("");
@@ -724,6 +752,25 @@ export default function MerchantPointRedemptionCashier({
   }, [languageMenuOpen]);
 
   useEffect(() => {
+    if (!categoryMenuOpen || typeof document === "undefined") return;
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (!target) return;
+      if (target.closest(".category-floating-panel") || target.closest(".category-chip.is-all-category")) return;
+      setCategoryMenuOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setCategoryMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown, true);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [categoryMenuOpen]);
+
+  useEffect(() => {
     if (!error && !notice) return;
     const timer = window.setTimeout(() => {
       setError("");
@@ -731,6 +778,36 @@ export default function MerchantPointRedemptionCashier({
     }, 3000);
     return () => window.clearTimeout(timer);
   }, [error, notice]);
+
+  function selectCategory(id: string) {
+    setCategoryId(id);
+  }
+
+  function isCategoryIncludedInAll(id: string) {
+    if (!id) {
+      return enabledCategories.length > 0 && enabledCategories.every((category) => !allCategoryExcludedIds.has(category.id));
+    }
+    return !allCategoryExcludedIds.has(id);
+  }
+
+  function setCategoryIncludedInAll(id: string, checked: boolean) {
+    const next = new Set(allCategoryExcludedIds);
+    if (!id) {
+      if (checked) {
+        next.clear();
+      } else {
+        enabledCategories.forEach((category) => next.add(category.id));
+      }
+    } else if (checked) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
+    setAllCategoryExcludedIds(next);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(allCategoryFilterStorageKey(normalizedSiteId), JSON.stringify(Array.from(next)));
+    }
+  }
 
   function selectMember(membership: MerchantMembershipListItem) {
     setSelectedMemberId(membership.id);
@@ -2204,47 +2281,146 @@ export default function MerchantPointRedemptionCashier({
           gap: 6px;
         }
 
-        .merchant-pos-cashier .category-check-row {
-          display: flex;
-          align-items: center;
+        .merchant-pos-cashier .category-floating-panel {
+          position: absolute;
+          top: 82px;
+          right: calc(100% + 10px);
+          z-index: 45;
+          display: grid;
           gap: 8px;
-          width: 100%;
-          min-height: 34px;
+          width: 220px;
+          max-height: calc(100vh - 330px);
+          overflow-y: auto;
+          padding: 8px;
           border: 1px solid var(--pos-line);
-          border-radius: 6px;
+          border-radius: 8px;
+          background: var(--pos-surface);
+          box-shadow: 0 20px 44px rgba(15, 23, 42, 0.16);
+          overscroll-behavior: contain;
+          scrollbar-width: thin;
+          touch-action: pan-y;
+          -webkit-overflow-scrolling: touch;
+          user-select: none;
+        }
+
+        .merchant-pos-cashier .category-sort-panel {
+          display: grid;
+          gap: 7px;
+          padding: 2px 0 4px;
+        }
+
+        .merchant-pos-cashier .category-sort-row {
+          display: grid;
+          grid-template-columns: 1fr;
+          gap: 6px;
+        }
+
+        .merchant-pos-cashier .category-sort-row.compact {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          align-items: center;
+        }
+
+        .merchant-pos-cashier .category-sort-row span {
+          grid-column: 1 / -1;
+          color: var(--pos-muted);
+          font-size: 12px;
+          font-weight: 720;
+        }
+
+        .merchant-pos-cashier .category-sort-row button,
+        .merchant-pos-cashier .product-size-menu button {
+          min-height: 30px;
+          height: auto;
+          padding: 6px 8px;
+          border: 1px solid var(--pos-line);
+          border-radius: 8px;
           background: var(--pos-surface-soft);
-          padding: 0 9px;
           color: var(--pos-text);
-          font-weight: 820;
-          text-align: left;
+          font-weight: 720;
+          line-height: 1.15;
+          overflow-wrap: anywhere;
+          white-space: normal;
           cursor: pointer;
         }
 
-        .merchant-pos-cashier .category-check-row.active {
+        .merchant-pos-cashier .category-sort-row button.active,
+        .merchant-pos-cashier .category-sort-row button:hover,
+        .merchant-pos-cashier .product-size-menu button.active,
+        .merchant-pos-cashier .product-size-menu button:hover {
           border-color: var(--pos-primary);
           background: var(--pos-primary-soft);
           color: var(--pos-primary-dark);
           box-shadow: var(--pos-focus-inset);
         }
 
-        .merchant-pos-cashier .category-check-box {
-          display: grid;
+        .merchant-pos-cashier .category-side-item {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          width: 100%;
+          height: 36px;
+          border: 1px solid var(--pos-line);
+          border-radius: 8px;
+          background: var(--pos-surface-soft);
+          padding: 0 9px;
+          color: var(--pos-text);
+          font-weight: 720;
+          text-align: left;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          cursor: pointer;
+          transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        .merchant-pos-cashier .category-side-item.active,
+        .merchant-pos-cashier .category-side-item:hover {
+          border-color: var(--pos-primary);
+          background: var(--pos-primary-soft);
+          color: var(--pos-primary-dark);
+          box-shadow: var(--pos-focus-inset);
+        }
+
+        .merchant-pos-cashier .category-side-checkbox {
+          flex: 0 0 auto;
+          display: inline-grid;
           place-items: center;
-          width: 17px;
-          height: 17px;
+          width: 16px;
+          height: 16px;
+          cursor: pointer;
+        }
+
+        .merchant-pos-cashier .category-side-checkbox input {
+          position: absolute;
+          opacity: 0;
+          pointer-events: none;
+        }
+
+        .merchant-pos-cashier .category-side-checkbox span {
+          width: 15px;
+          height: 15px;
           border: 1px solid var(--pos-line);
           border-radius: 4px;
-          color: transparent;
           background: var(--pos-surface);
+          box-shadow: 0 1px 1px rgba(15, 33, 29, 0.04);
         }
 
-        .merchant-pos-cashier .category-check-row.active .category-check-box {
+        .merchant-pos-cashier .category-side-checkbox input:checked + span {
           border-color: var(--pos-primary);
-          background: var(--pos-primary);
-          color: white;
+          background: linear-gradient(135deg, transparent 50%, rgba(255, 255, 255, 0.2) 50%), var(--pos-primary);
         }
 
-        .merchant-pos-cashier .category-check-box svg,
+        .merchant-pos-cashier .category-side-checkbox input:checked + span::after {
+          content: "";
+          display: block;
+          width: 8px;
+          height: 4px;
+          margin: 3px 0 0 3px;
+          border-left: 2px solid #fff;
+          border-bottom: 2px solid #fff;
+          transform: rotate(-45deg);
+        }
+
         .merchant-pos-cashier .catalog-panel-button svg {
           width: 14px;
           height: 14px;
@@ -2926,7 +3102,7 @@ export default function MerchantPointRedemptionCashier({
               </button>
               {imageSizeMenuOpen && viewMode === "image" ? (
                 <div className="catalog-popover image-size-popover">
-                  <div className="catalog-popover-stack">
+                  <div className="product-size-menu">
                     {productImageSizeOptions.map((option) => (
                       <button
                         key={option.value}
@@ -2961,21 +3137,39 @@ export default function MerchantPointRedemptionCashier({
           ) : null}
 
           <div className="category-filter-shell">
-          <div className="category-row">
-            <div className="category-menu-anchor">
-            <button
-              type="button"
-              className={`category-chip ${!categoryId ? "active" : ""}`}
-              onClick={() => setCategoryMenuOpen((current) => !current)}
-            >
-              <span className="category-button-icon">
-                <IconGrid />
-              </span>
-              <span className="category-button-label">全部</span>
-            </button>
-              {categoryMenuOpen ? (
-                <div className="catalog-popover catalog-popover-left">
-                  <div className="catalog-popover-stack">
+            <div className="category-row">
+              <button
+                type="button"
+                className={`category-chip is-all-category ${!categoryId ? "active" : ""}`}
+                onClick={() => selectCategory("")}
+                onDoubleClick={(event) => {
+                  event.preventDefault();
+                  setCategoryMenuOpen((current) => !current);
+                }}
+              >
+                <span className="category-button-icon">
+                  <IconGrid />
+                </span>
+                <span className="category-button-label">全部</span>
+              </button>
+              {enabledCategories.map((category) => (
+                <button
+                  key={category.id}
+                  type="button"
+                  className={`category-chip ${categoryId === category.id ? "active" : ""}`}
+                  onClick={() => selectCategory(category.id)}
+                >
+                  <span className="category-button-icon">
+                    <CategoryIcon name={category.name} />
+                  </span>
+                  <span className="category-button-label">{category.name}</span>
+                </button>
+              ))}
+            </div>
+            {categoryMenuOpen ? (
+              <aside className="category-floating-panel" onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()}>
+                <div className="category-sort-panel">
+                  <div className="category-sort-row">
                     {([
                       ["hot", "热卖"],
                       ["category", "分类"],
@@ -2984,141 +3178,71 @@ export default function MerchantPointRedemptionCashier({
                       <button
                         key={value}
                         type="button"
-                        className={`catalog-panel-button ${catalogFilterTab === value ? "active" : ""}`}
+                        className={catalogFilterTab === value ? "active" : ""}
                         onClick={() => setCatalogFilterTab(value)}
                       >
                         {label}
                       </button>
                     ))}
-                    <div className="catalog-panel-label">默认</div>
-                    <div className="catalog-sort-row">
-                      <button
-                        type="button"
-                        className={`catalog-panel-button ${catalogSortMode === "code" ? "active" : ""}`}
-                        onClick={() => setCatalogSortMode("code")}
-                      >
-                        编号
-                      </button>
-                      <button
-                        type="button"
-                        className={`catalog-panel-button ${catalogSortMode === "name" ? "active" : ""}`}
-                        onClick={() => setCatalogSortMode("name")}
-                      >
-                        字母
-                      </button>
-                    </div>
-                    <button
-                      type="button"
-                      className={`category-check-row ${!categoryId ? "active" : ""}`}
-                      onClick={() => setCategoryId("")}
-                    >
-                      <span className="category-check-box">
-                        <IconCheck />
-                      </span>
-                      <span className="category-button-icon">
-                        <IconGrid />
-                      </span>
-                      <span className="category-button-label">全部</span>
-                    </button>
-                    {enabledCategories.map((category) => (
-                      <button
-                        key={category.id}
-                        type="button"
-                        className={`category-check-row ${categoryId === category.id ? "active" : ""}`}
-                        onClick={() => setCategoryId(category.id)}
-                      >
-                        <span className="category-check-box">
-                          <IconCheck />
-                        </span>
-                        <span className="category-button-icon">
-                          <CategoryIcon name={category.name} />
-                        </span>
-                        <span className="category-button-label">{category.name}</span>
-                      </button>
-                    ))}
                   </div>
-                </div>
-              ) : null}
-            </div>
-            {enabledCategories.map((category) => (
-              <button
-                key={category.id}
-                type="button"
-                className={`category-chip ${categoryId === category.id ? "active" : ""}`}
-                onClick={() => setCategoryId(category.id)}
-              >
-                <span className="category-button-icon">
-                  <CategoryIcon name={category.name} />
-                </span>
-                <span className="category-button-label">{category.name}</span>
-              </button>
-            ))}
-          </div>
-            {categoryMenuOpen ? (
-              <div className="catalog-popover catalog-popover-left">
-                <div className="catalog-popover-stack">
-                  {([
-                    ["hot", "热卖"],
-                    ["category", "分类"],
-                    ["recommend", "推荐"],
-                  ] as Array<[CatalogFilterTab, string]>).map(([value, label]) => (
-                    <button
-                      key={value}
-                      type="button"
-                      className={`catalog-panel-button ${catalogFilterTab === value ? "active" : ""}`}
-                      onClick={() => setCatalogFilterTab(value)}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                  <div className="catalog-panel-label">默认</div>
-                  <div className="catalog-sort-row">
+                  <div className="category-sort-row compact">
+                    <span>默认</span>
                     <button
                       type="button"
-                      className={`catalog-panel-button ${catalogSortMode === "code" ? "active" : ""}`}
+                      className={catalogSortMode === "code" ? "active" : ""}
                       onClick={() => setCatalogSortMode("code")}
                     >
                       编号
                     </button>
                     <button
                       type="button"
-                      className={`catalog-panel-button ${catalogSortMode === "name" ? "active" : ""}`}
+                      className={catalogSortMode === "name" ? "active" : ""}
                       onClick={() => setCatalogSortMode("name")}
                     >
                       字母
                     </button>
                   </div>
-                  <button
-                    type="button"
-                    className={`category-check-row ${!categoryId ? "active" : ""}`}
-                    onClick={() => setCategoryId("")}
-                  >
-                    <span className="category-check-box">
-                      <IconCheck />
-                    </span>
-                    <span className="category-button-icon">
-                      <IconGrid />
-                    </span>
-                    <span className="category-button-label">全部</span>
-                  </button>
-                  {enabledCategories.map((category) => (
-                    <button
-                      key={category.id}
-                      type="button"
-                      className={`category-check-row ${categoryId === category.id ? "active" : ""}`}
-                      onClick={() => setCategoryId(category.id)}
-                    >
-                      <span className="category-check-box">
-                        <IconCheck />
-                      </span>
-                      <span className="category-button-icon">
-                        <CategoryIcon name={category.name} />
-                      </span>
-                      <span className="category-button-label">{category.name}</span>
-                    </button>
-                  ))}
                 </div>
-              </div>
+                <button
+                  type="button"
+                  className={`category-side-item ${!categoryId ? "active" : ""}`}
+                  onClick={() => selectCategory("")}
+                >
+                  <label className="category-side-checkbox" onClick={(event) => event.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={isCategoryIncludedInAll("")}
+                      onChange={(event) => setCategoryIncludedInAll("", event.currentTarget.checked)}
+                    />
+                    <span />
+                  </label>
+                  <span className="category-button-icon">
+                    <IconGrid />
+                  </span>
+                  <span className="category-button-label">全部</span>
+                </button>
+                {enabledCategories.map((category) => (
+                  <button
+                    key={category.id}
+                    type="button"
+                    className={`category-side-item ${categoryId === category.id ? "active" : ""}`}
+                    onClick={() => selectCategory(category.id)}
+                  >
+                    <label className="category-side-checkbox" onClick={(event) => event.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={isCategoryIncludedInAll(category.id)}
+                        onChange={(event) => setCategoryIncludedInAll(category.id, event.currentTarget.checked)}
+                      />
+                      <span />
+                    </label>
+                    <span className="category-button-icon">
+                      <CategoryIcon name={category.name} />
+                    </span>
+                    <span className="category-button-label">{category.name}</span>
+                  </button>
+                ))}
+              </aside>
             ) : null}
           </div>
 
