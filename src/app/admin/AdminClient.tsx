@@ -19227,7 +19227,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         {merchantDisplayName}
                       </div>
                     </div>
-                    {isDesktopMerchantWorkspace && merchantDesktopSection !== "editor" ? (
+                    {isDesktopMerchantWorkspace ? (
                       <div className="flex shrink-0 items-center gap-2">
                         <button
                           ref={merchantProfileButtonRef}
@@ -19482,8 +19482,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             )}
           </div>
         {!topBarCollapsed ? (
-          isDesktopMerchantWorkspace && merchantDesktopSection !== "editor" ? (
-            <div className="border-t">
+          isDesktopMerchantWorkspace ? (
+            <div className="border-t border-slate-200">
               <div className="w-full px-6 py-4">
                 <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
                   {merchantDesktopSection === "pointRedemption" ||
