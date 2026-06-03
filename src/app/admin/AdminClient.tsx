@@ -3131,27 +3131,27 @@ function formatSuccessRate(total: number, success: number) {
 function getMerchantDesktopMenuButtonClassName(active: boolean, tone: "default" | "alert" = "default") {
   if (active) {
     return tone === "alert"
-      ? "relative flex min-h-[41px] items-center justify-between rounded-xl border border-rose-600 bg-rose-600 px-3.5 py-2 text-sm font-bold text-white shadow-sm"
-      : "relative flex min-h-[41px] items-center justify-between rounded-xl border border-[#030720] bg-[#030720] px-3.5 py-2 text-sm font-bold text-white shadow-sm";
+      ? "relative flex h-10 items-center justify-between gap-2 rounded-lg border-0 bg-rose-900/45 px-3 text-sm font-semibold text-white shadow-[inset_3px_0_0_#fb7185]"
+      : "relative flex h-10 items-center justify-between gap-2 rounded-lg border-0 bg-[#22342f] px-3 text-sm font-semibold text-white shadow-[inset_3px_0_0_#74d9be,0_1px_0_rgba(255,255,255,0.04)]";
   }
   return tone === "alert"
-    ? "relative flex min-h-[41px] items-center justify-between rounded-xl border border-rose-200 bg-white px-3.5 py-2 text-sm font-bold text-rose-700 transition hover:bg-rose-50"
-    : "relative flex min-h-[41px] items-center justify-between rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-bold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50";
+    ? "relative flex h-10 items-center justify-between gap-2 rounded-lg border-0 bg-transparent px-3 text-sm font-semibold text-rose-100 transition hover:bg-rose-950/35 hover:text-white"
+    : "relative flex h-10 items-center justify-between gap-2 rounded-lg border-0 bg-transparent px-3 text-sm font-semibold text-[#d9e5e0] transition hover:bg-[#1b2a26] hover:text-white";
 }
 
 function getMerchantDesktopSubmenuButtonClassName(active: boolean, tone: "default" | "cyan" | "rose" | "emerald" | "amber" = "default") {
-  if (active) return "flex min-h-[40px] w-full items-center justify-between gap-2 rounded-xl border border-[#030720] bg-[#030720] px-3.5 py-2 text-left text-sm font-bold text-white transition";
+  if (active) return "flex h-10 w-full items-center justify-between gap-2 rounded-lg border-0 bg-[#22342f] px-3 text-left text-sm font-semibold text-white shadow-[inset_3px_0_0_#74d9be,0_1px_0_rgba(255,255,255,0.04)] transition";
   const toneClassName =
     tone === "cyan"
-      ? "hover:border-cyan-200 hover:bg-cyan-50"
+      ? "hover:bg-[#1b2a26] hover:text-cyan-50"
       : tone === "rose"
-        ? "hover:border-rose-200 hover:bg-rose-50"
+        ? "hover:bg-[#1b2a26] hover:text-rose-50"
         : tone === "emerald"
-          ? "hover:border-emerald-200 hover:bg-emerald-50"
+          ? "hover:bg-[#1b2a26] hover:text-emerald-50"
           : tone === "amber"
-            ? "hover:border-amber-200 hover:bg-amber-50"
-            : "hover:border-slate-300 hover:bg-slate-50";
-  return `flex min-h-[40px] w-full items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-left text-sm font-bold text-slate-700 transition ${toneClassName}`;
+            ? "hover:bg-[#1b2a26] hover:text-amber-50"
+            : "hover:bg-[#1b2a26] hover:text-white";
+  return `flex h-10 w-full items-center justify-between gap-2 rounded-lg border-0 bg-transparent px-3 text-left text-sm font-semibold text-[#d9e5e0] transition ${toneClassName}`;
 }
 
 type LargeStringField = {
@@ -18329,14 +18329,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     isMobileMerchantEditorShell
       ? "overflow-x-hidden bg-[radial-gradient(circle_at_top,_rgba(103,232,249,0.16),_transparent_28%),linear-gradient(180deg,_#eef6ff_0%,_#f8fbff_34%,_#e8f1ff_100%)]"
       : "bg-gray-100"
-  } ${!topBarCollapsed && shouldUseDesktopEditorSidebar ? "pl-[320px]" : ""}`;
+  } ${!topBarCollapsed && shouldUseDesktopEditorSidebar ? "pl-[228px]" : ""}`;
   const toolbarWrapperClassName = topBarCollapsed
     ? "hidden"
     : shouldUseDesktopEditorSidebar
-      ? "fixed inset-y-0 left-0 z-[15000] w-[320px] overflow-y-auto border-r border-slate-200 bg-white shadow-[1px_0_0_rgba(15,23,42,0.04)]"
+      ? "fixed inset-y-0 left-0 z-[15000] w-[228px] overflow-y-auto border-r border-white/5 bg-[#111d1a] text-white shadow-[inset_-1px_0_0_rgba(0,0,0,0.12)]"
       : "fixed inset-x-0 top-0 z-[15000] border-b border-white/70 bg-[rgba(248,251,255,0.88)] shadow-[0_22px_48px_rgba(15,23,42,0.10)] backdrop-blur-xl";
   const toolbarContentClassName = shouldUseDesktopEditorSidebar
-    ? "mx-0 flex max-w-none flex-col items-stretch justify-start gap-3 px-4 py-4"
+    ? "mx-0 flex max-w-none flex-col items-stretch justify-start gap-4 px-3 py-[18px]"
     : "mx-auto flex max-w-[460px] flex-col items-stretch gap-4 px-4 pb-4 pt-[calc(var(--faolla-mobile-safe-top)+0.9rem)]";
   const toolbarHeaderClassName = shouldUseDesktopEditorSidebar
     ? "flex flex-col items-stretch gap-3"
@@ -19152,7 +19152,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           shouldUseDesktopEditorSidebar
             ? topBarCollapsed
               ? "left-0 top-6"
-              : "left-[320px] top-6"
+              : "left-[228px] top-6"
             : isMobileMerchantEditorShell
               ? `left-4 ${topBarCollapsed ? "top-[calc(var(--faolla-mobile-safe-top)+1rem)]" : "top-[calc(var(--faolla-mobile-safe-top)+1.1rem)]"}`
               : "left-0 top-3"
@@ -19162,7 +19162,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           type="button"
           className={`group flex items-center justify-center border text-base leading-none transition-all ${
             shouldUseDesktopEditorSidebar
-              ? "h-12 w-4 rounded-r-[16px] border-l-0 border-slate-200/90 bg-[linear-gradient(180deg,_rgba(255,255,255,0.98),_rgba(241,245,249,0.94))] text-slate-500 shadow-[0_16px_34px_rgba(15,23,42,0.12)] backdrop-blur hover:border-slate-300 hover:text-slate-700"
+              ? "h-12 w-4 rounded-r-[16px] border-l-0 border-white/10 bg-[#111d1a] text-[#d9e5e0] shadow-[0_16px_34px_rgba(15,23,42,0.18)] hover:bg-[#1b2a26] hover:text-white"
               : isMobileMerchantEditorShell
                 ? "h-11 w-11 rounded-full border-white/70 bg-white/92 text-slate-700 shadow-[0_18px_40px_rgba(15,23,42,0.14)]"
                 : "h-10 w-7 rounded-r-lg border-l-0 bg-white text-slate-700 shadow-sm hover:bg-gray-50"
@@ -19175,7 +19175,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           {isMobileMerchantEditorShell ? (
             topBarCollapsed ? "≡" : "×"
           ) : shouldUseDesktopEditorSidebar ? (
-            <span className="pointer-events-none flex h-8 w-2.5 items-center justify-center rounded-full bg-slate-100/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-transform group-hover:scale-[1.03]">
+            <span className="pointer-events-none flex h-8 w-2.5 items-center justify-center rounded-full bg-white/10 transition-transform group-hover:scale-[1.03]">
               <span className={`text-[11px] font-semibold transition-transform ${topBarCollapsed ? "translate-x-[1px]" : "-translate-x-[1px]"}`}>
                 {topBarCollapsed ? ">" : "<"}
               </span>
@@ -19221,21 +19221,25 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     </div>
                   </div>
                 ) : (
-                  <div className="flex min-h-[49px] items-center justify-between gap-3 rounded border border-slate-200 bg-white px-3 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
-                    <div className="min-w-0 flex-1">
-                      <div className="max-w-[160px] truncate text-sm font-semibold text-slate-900" title={merchantDisplayName}>
+                  <div className="relative block min-h-[70px] border-b border-white/10 px-2 pb-[18px] pt-2">
+                    <div className="absolute left-2 top-2 grid h-[38px] w-[38px] place-items-center rounded-lg bg-[#9ce7d2] text-base font-extrabold text-[#06362f] shadow-[inset_0_-1px_0_rgba(16,53,47,0.12)]">
+                      F
+                    </div>
+                    <div className="min-w-0 pl-[50px] pr-7">
+                      <div className="truncate text-[17px] font-bold leading-tight text-white" title={merchantDisplayName}>
                         {merchantDisplayName}
                       </div>
+                      <div className="mt-1 truncate text-[13px] text-[#b9c8c3]">FAOLLA</div>
                     </div>
                     {isDesktopMerchantWorkspace ? (
-                      <div className="flex shrink-0 items-center gap-2">
+                      <div className="mt-3 grid grid-cols-[1fr_40px] gap-2">
                         <button
                           ref={merchantProfileButtonRef}
                           type="button"
-                          className={`h-10 rounded border px-3 text-sm font-semibold transition-colors disabled:opacity-50 ${
+                          className={`h-9 rounded-lg border px-3 text-sm font-semibold transition-colors disabled:opacity-50 ${
                             merchantProfileAttention
-                              ? "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"
-                              : "bg-white text-slate-900 hover:bg-gray-50"
+                              ? "border-rose-400/70 bg-rose-900/35 text-rose-50 hover:bg-rose-900/50"
+                              : "border-white/10 bg-white/5 text-[#d9e5e0] hover:bg-white/10 hover:text-white"
                           }`}
                           onClick={() => {
                             void openMerchantProfilePanel();
@@ -19245,7 +19249,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         </button>
                         <button
                           type="button"
-                          className="inline-flex h-10 w-10 items-center justify-center rounded border border-rose-500 bg-white text-rose-600 transition hover:bg-rose-50 disabled:opacity-50"
+                          className="inline-flex h-9 w-10 items-center justify-center rounded-lg border border-rose-400/70 bg-transparent text-rose-100 transition hover:bg-rose-900/35 hover:text-white disabled:opacity-50"
                           onClick={() => {
                             void requestLogout();
                           }}
@@ -19271,9 +19275,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             </div>
             {isDesktopMerchantWorkspace ? (
               merchantEditorOnly ? null : (
-              <div className="grid gap-3">
-                <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
-                  <div className="grid gap-2">
+              <div className="grid gap-4">
+                <div className="grid gap-[5px]">
+                  <div className="grid gap-[5px]">
                     <button
                       type="button"
                       className={getMerchantDesktopMenuButtonClassName(
@@ -19349,7 +19353,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     >
                       会员管理
                     </button>
-                    <div className="grid gap-2 border-t border-slate-100 pt-2">
+                    <div className="grid gap-[5px] border-t border-white/10 pt-3">
                       <button
                         type="button"
                         className={getMerchantDesktopMenuButtonClassName(merchantDesktopOperationCenterActive)}
@@ -19359,8 +19363,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         经营中心
                       </button>
                     </div>
-                  </div>
                 </div>
+              </div>
               </div>
               )
             ) : (
@@ -19483,9 +19487,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           </div>
         {!topBarCollapsed ? (
           isDesktopMerchantWorkspace ? (
-            <div className="border-t border-slate-200">
-              <div className="w-full px-6 py-4">
-                <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
+            <div className="border-t border-white/10">
+              <div className="w-full px-0 py-4">
+                <div className="px-0">
                   {merchantDesktopSection === "pointRedemption" ||
                   merchantDesktopSection === "redemptionRecords" ||
                   merchantDesktopSection === "rechargeRecords" ||
@@ -19586,7 +19590,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     </div>
                   ) : merchantDesktopSection === "members" ? (
                     <>
-                      <div className="text-base font-semibold text-slate-900">会员管理</div>
+                      <div className="px-3 text-[13px] font-semibold text-[#b9c8c3]">会员管理</div>
                       <div className="mt-3 grid gap-2">
                         {MERCHANT_MEMBER_CONTEXT_MENU_ITEMS.map((item) => (
                           <button
@@ -19602,14 +19606,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     </>
                   ) : (
                     <>
-                      <div className="text-base font-semibold text-slate-900">
+                      <div className="px-3 text-[13px] font-semibold text-[#b9c8c3]">
                         {merchantDesktopSection === "profile"
                           ? "商户信息"
                         : merchantDesktopSection === "faolla"
                             ? "Faolla"
                             : "会话"}
                       </div>
-                      <div className="mt-1 text-sm text-slate-500">
+                      <div className="mt-1 px-3 text-xs leading-5 text-[#8fa39b]">
                         {merchantDesktopSection === "profile"
                           ? "这里集中维护商户资料、域名前缀和地址联系人。"
                         : merchantDesktopSection === "faolla"
