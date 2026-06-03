@@ -58,6 +58,10 @@ function parseMoney(value: string) {
   return Number.isFinite(parsed) ? Math.max(0, Number(parsed.toFixed(2))) : 0;
 }
 
+function parseOptionalMoney(value: string) {
+  return value.trim() ? parseMoney(value) : null;
+}
+
 function parseMultiplier(value: unknown, fallback = 1) {
   const parsed = typeof value === "number" ? value : Number.parseFloat(String(value ?? ""));
   return Number.isFinite(parsed) ? Math.max(0, Number(parsed.toFixed(2))) : fallback;
@@ -66,6 +70,14 @@ function parseMultiplier(value: unknown, fallback = 1) {
 function parseInteger(value: string) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : 0;
+}
+
+function parseOptionalInteger(value: string) {
+  return value.trim() ? parseInteger(value) : null;
+}
+
+function toOptionalNumberInputValue(value: number | null | undefined) {
+  return value === null || value === undefined ? "" : toNumberInputValue(value);
 }
 
 function readFileAsDataUrl(file: File) {
@@ -176,15 +188,18 @@ function SummaryPill({ label, value, tone = "slate" }: { label: string; value: R
 
 function RedemptionItemImagePreview({
   imageUrl,
+  previewUrl,
   title,
   uploading,
 }: {
   imageUrl: string;
+  previewUrl: string;
   title: string;
   uploading: boolean;
 }) {
   const [failedUrl, setFailedUrl] = useState("");
-  const visibleImageUrl = imageUrl && failedUrl !== imageUrl ? imageUrl : "";
+  const displayImageUrl = previewUrl || imageUrl;
+  const visibleImageUrl = displayImageUrl && failedUrl !== displayImageUrl ? displayImageUrl : "";
   return visibleImageUrl ? (
     // eslint-disable-next-line @next/next/no-img-element
     <img
@@ -273,6 +288,7 @@ export default function MerchantMembershipSettingsPanel({
     draft: MerchantMemberRedemptionItem;
   } | null>(null);
   const [itemImageUploading, setItemImageUploading] = useState(false);
+  const [itemImagePreviewUrl, setItemImagePreviewUrl] = useState("");
   const currentYear = new Date().getFullYear();
   const [holidayPresetYear, setHolidayPresetYear] = useState(currentYear);
   const [holidayDraft, setHolidayDraft] = useState({ date: "", name: "", multiplier: "1" });
@@ -514,8 +530,9 @@ export default function MerchantMembershipSettingsPanel({
     return activeSettings.redemptionItems.some((item) => item.categoryId === categoryId);
   }
 
-  function redemptionStockText(stock: number) {
-    return stock > 0 ? String(stock) : "不限";
+  function redemptionStockText(stock: number | null) {
+    if (stock === null) return "不限";
+    return stock > 0 ? String(stock) : "无库存";
   }
 
   function patchCategoryDraft(patch: Partial<MerchantMemberRedemptionCategory>) {
@@ -586,6 +603,7 @@ export default function MerchantMembershipSettingsPanel({
   }
 
   function openItemCreate() {
+    setItemImagePreviewUrl("");
     setItemDialog({
       mode: "create",
       draft: {
@@ -598,11 +616,11 @@ export default function MerchantMembershipSettingsPanel({
         iconName: "none",
         description: "",
         enabled: true,
-        pointsCost: 0,
-        referenceAmount: 0,
-        memberPrice: 0,
-        taxRate: 10,
-        stock: 0,
+        pointsCost: null,
+        referenceAmount: null,
+        memberPrice: null,
+        taxRate: null,
+        stock: null,
         pointProduct: true,
         recommended: false,
         sort: activeSettings.redemptionItems.length,
@@ -611,11 +629,22 @@ export default function MerchantMembershipSettingsPanel({
   }
 
   function openItemEdit(item: MerchantMemberRedemptionItem) {
+    setItemImagePreviewUrl("");
     setItemDialog({ mode: "edit", draft: { ...item } });
+  }
+
+  function closeItemDialog() {
+    setItemDialog(null);
+    setItemImagePreviewUrl("");
+    setItemImageUploading(false);
   }
 
   async function saveItemDialog() {
     if (!itemDialog) return;
+    if (itemImageUploading) {
+      setError("图片正在上传，请稍后再保存。");
+      return;
+    }
     const draft = {
       ...itemDialog.draft,
       code: trimText(itemDialog.draft.code, 120),
@@ -645,7 +674,7 @@ export default function MerchantMembershipSettingsPanel({
     };
     const saved = await saveSettings(nextSettings);
     if (saved) {
-      setItemDialog(null);
+      closeItemDialog();
       setError("");
     }
   }
@@ -663,7 +692,7 @@ export default function MerchantMembershipSettingsPanel({
     try {
       const localPreviewUrl = await readFileAsDataUrl(file);
       if (localPreviewUrl) {
-        patchItemDraft({ imageUrl: localPreviewUrl });
+        setItemImagePreviewUrl(localPreviewUrl);
       }
       const uploadedUrl = await uploadFileToPublicStorage(file, {
         merchantHint: normalizedSiteId || "membership",
@@ -672,10 +701,14 @@ export default function MerchantMembershipSettingsPanel({
       });
       if (uploadedUrl) {
         patchItemDraft({ imageUrl: uploadedUrl });
+      } else {
+        setError("图片上传失败，请重新选择图片。");
       }
     } catch (uploadError) {
       if (uploadError instanceof Error && uploadError.message === "file_read_failed") {
         setError("商品图片读取失败，请重新选择图片");
+      } else {
+        setError(uploadError instanceof Error ? uploadError.message : "图片上传失败，请重新选择图片。");
       }
     } finally {
       setItemImageUploading(false);
@@ -913,7 +946,7 @@ export default function MerchantMembershipSettingsPanel({
           <div className="mb-3 grid gap-3 md:grid-cols-4">
             <SummaryPill label="兑换项目" value={activeSettings.redemptionItems.length} tone="slate" />
             <SummaryPill label="启用项目" value={activeSettings.redemptionItems.filter((item) => item.enabled).length} tone="green" />
-            <SummaryPill label="不限库存" value={activeSettings.redemptionItems.filter((item) => item.stock <= 0).length} tone="cyan" />
+            <SummaryPill label="不限库存" value={activeSettings.redemptionItems.filter((item) => item.stock === null).length} tone="cyan" />
             <SummaryPill label="项目分类" value={itemCategoryCount} tone="amber" />
           </div>
           <div className="overflow-x-auto rounded-2xl border border-slate-200">
@@ -945,9 +978,9 @@ export default function MerchantMembershipSettingsPanel({
                         <div className="font-semibold text-slate-950">{item.name}</div>
                         {item.description ? <div className="mt-1 line-clamp-2 text-xs text-slate-500">{item.description}</div> : null}
                       </td>
-                      <td className="px-4 py-3 font-semibold text-slate-950">{item.pointsCost}</td>
+                      <td className="px-4 py-3 font-semibold text-slate-950">{item.pointsCost ?? "-"}</td>
                       <td className="px-4 py-3 text-slate-700">
-                        {item.referenceAmount > 0 ? item.referenceAmount.toFixed(2) : "-"}
+                        {item.referenceAmount === null ? "-" : item.referenceAmount.toFixed(2)}
                       </td>
                       <td className="px-4 py-3 text-slate-700">{redemptionStockText(item.stock)}</td>
                       <td className="px-4 py-3 text-slate-700">{redemptionCategoryName(item.categoryId)}</td>
@@ -1004,8 +1037,8 @@ export default function MerchantMembershipSettingsPanel({
 
         {itemDialog ? (
           <DialogShell
-            title={itemDialog.mode === "create" ? "新增积分兑换商品" : "编辑积分兑换商品"}
-            onClose={() => setItemDialog(null)}
+            title={itemDialog.mode === "create" ? "新增积分兑换项目" : "编辑积分兑换项目"}
+            onClose={closeItemDialog}
             onConfirm={saveItemDialog}
           >
             <div className="space-y-4">
@@ -1013,13 +1046,14 @@ export default function MerchantMembershipSettingsPanel({
                 <label className="group relative grid h-[108px] cursor-pointer place-items-center overflow-hidden rounded-lg border border-teal-100 bg-teal-50 text-sm font-semibold text-teal-800 transition hover:border-teal-300">
                   <RedemptionItemImagePreview
                     imageUrl={itemDialog.draft.imageUrl}
+                    previewUrl={itemImagePreviewUrl}
                     title={itemDialog.draft.name}
                     uploading={itemImageUploading}
                   />
                   <input type="file" accept="image/*" className="sr-only" disabled={itemImageUploading} onChange={handleItemImageUpload} />
                 </label>
                 <div className="grid gap-3 md:grid-cols-2">
-                  <Field label="商品编号">
+                  <Field label="编号">
                     <input
                       className={inputClassName()}
                       value={itemDialog.draft.code}
@@ -1033,7 +1067,7 @@ export default function MerchantMembershipSettingsPanel({
                       onChange={(event) => patchItemDraft({ barcode: event.target.value })}
                     />
                   </Field>
-                  <Field label="商品名称" className="md:col-span-2">
+                  <Field label="名称" className="md:col-span-2">
                     <input
                       className={inputClassName()}
                       value={itemDialog.draft.name}
@@ -1044,8 +1078,8 @@ export default function MerchantMembershipSettingsPanel({
               </div>
 
               <div>
-                <div className="mb-2 text-sm font-medium text-slate-700">商品图标</div>
-                <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
+                <div className="mb-2 text-sm font-medium text-slate-700">图标</div>
+                <div className="grid max-h-[198px] grid-cols-3 gap-2 overflow-y-auto pr-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
                   {CATEGORY_ICON_OPTIONS.map((option) => {
                     const selected = normalizeCategoryIconName(itemDialog.draft.iconName) === option.value;
                     return (
@@ -1093,8 +1127,9 @@ export default function MerchantMembershipSettingsPanel({
                     min="0"
                     step="0.01"
                     className={inputClassName()}
-                    value={toNumberInputValue(itemDialog.draft.referenceAmount)}
-                    onChange={(event) => patchItemDraft({ referenceAmount: parseMoney(event.target.value) })}
+                    value={toOptionalNumberInputValue(itemDialog.draft.referenceAmount)}
+                    onChange={(event) => patchItemDraft({ referenceAmount: parseOptionalMoney(event.target.value) })}
+                    placeholder="留空表示没有价格"
                   />
                 </Field>
                 <Field label="会员价">
@@ -1103,8 +1138,8 @@ export default function MerchantMembershipSettingsPanel({
                     min="0"
                     step="0.01"
                     className={inputClassName()}
-                    value={toNumberInputValue(itemDialog.draft.memberPrice)}
-                    onChange={(event) => patchItemDraft({ memberPrice: parseMoney(event.target.value) })}
+                    value={toOptionalNumberInputValue(itemDialog.draft.memberPrice)}
+                    onChange={(event) => patchItemDraft({ memberPrice: parseOptionalMoney(event.target.value) })}
                     placeholder="留空则使用普通价格"
                   />
                 </Field>
@@ -1114,8 +1149,8 @@ export default function MerchantMembershipSettingsPanel({
                     min="0"
                     step="1"
                     className={inputClassName()}
-                    value={toNumberInputValue(itemDialog.draft.stock)}
-                    onChange={(event) => patchItemDraft({ stock: parseInteger(event.target.value) })}
+                    value={toOptionalNumberInputValue(itemDialog.draft.stock)}
+                    onChange={(event) => patchItemDraft({ stock: parseOptionalInteger(event.target.value) })}
                     placeholder="留空表示不限库存"
                   />
                 </Field>
@@ -1125,29 +1160,30 @@ export default function MerchantMembershipSettingsPanel({
                     min="0"
                     step="0.01"
                     className={inputClassName()}
-                    value={toNumberInputValue(itemDialog.draft.taxRate)}
-                    onChange={(event) => patchItemDraft({ taxRate: parseMoney(event.target.value) })}
+                    value={toOptionalNumberInputValue(itemDialog.draft.taxRate)}
+                    onChange={(event) => patchItemDraft({ taxRate: parseOptionalMoney(event.target.value) })}
+                    placeholder="留空表示没有税率"
                   />
                 </Field>
-                <Field label="兑换积分">
+                <Field label="积分">
                   <input
                     type="number"
                     min="0"
                     step="1"
                     className={inputClassName()}
-                    value={toNumberInputValue(itemDialog.draft.pointsCost)}
-                    onChange={(event) => patchItemDraft({ pointsCost: parseInteger(event.target.value) })}
+                    value={toOptionalNumberInputValue(itemDialog.draft.pointsCost)}
+                    onChange={(event) => patchItemDraft({ pointsCost: parseOptionalInteger(event.target.value) })}
+                    placeholder="留空表示未设置积分"
                   />
                 </Field>
               </div>
 
               <div>
-                <div className="mb-2 text-sm font-medium text-slate-700">商品标记</div>
+                <div className="mb-2 text-sm font-medium text-slate-700">项目标记</div>
                 <div className="flex flex-wrap gap-3">
                   {[
-                    ["pointProduct", "积分商品"],
-                    ["recommended", "推荐商品"],
-                    ["enabled", "启用项目"],
+                    ["pointProduct", "积分项目"],
+                    ["recommended", "推荐项目"],
                   ].map(([key, label]) => (
                     <label key={key} className="flex items-center gap-2 text-sm font-semibold text-slate-700">
                       <input

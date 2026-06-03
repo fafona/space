@@ -194,6 +194,7 @@ function getRedemptionPointCostForMember(
   membership: MerchantMembershipListItem | null,
   settings: MerchantMembershipSettings | null,
 ) {
+  const basePoints = item.pointsCost ?? 0;
   const levels = (settings?.levels ?? [])
     .filter((level) => level.enabled && trimText(level.name, 120))
     .sort((left, right) => left.requiredGrowthValue - right.requiredGrowthValue || left.sort - right.sort);
@@ -203,7 +204,7 @@ function getRedemptionPointCostForMember(
       return (membership?.growthValue ?? 0) >= entry.requiredGrowthValue ? entry : matched;
     }, null);
   const rate = parseMerchantMemberPointDiscountRate(level?.benefit.pointDiscount);
-  return Math.max(0, Math.ceil(item.pointsCost * rate));
+  return Math.max(0, Math.ceil(basePoints * rate));
 }
 
 function productInitial(item: MerchantMemberRedemptionItem) {
@@ -211,7 +212,8 @@ function productInitial(item: MerchantMemberRedemptionItem) {
 }
 
 function stockLabel(item: MerchantMemberRedemptionItem) {
-  return item.stock > 0 ? `库存 ${item.stock}` : "不限库存";
+  if (item.stock === null) return "不限库存";
+  return item.stock > 0 ? `库存 ${item.stock}` : "无库存";
 }
 
 function operationErrorMessage(message: unknown, fallback: string) {
@@ -300,6 +302,15 @@ function IconWallet() {
       <rect x="3" y="6" width="18" height="14" rx="2" />
       <path d="M3 10h18" />
       <path d="M16 15h2" />
+    </svg>
+  );
+}
+
+function IconX() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M18 6 6 18" />
+      <path d="m6 6 12 12" />
     </svg>
   );
 }
@@ -495,7 +506,7 @@ export default function MerchantPointRedemptionCashier({
           code: item?.code || line.customCode || line.itemId,
           name: item?.name || line.customName || "快捷兑换",
           categoryId: item?.categoryId || "",
-          stock: item?.stock ?? 0,
+          stock: item?.stock ?? null,
           custom: !item,
           quantity: line.quantity,
           unitPoints,
@@ -509,7 +520,7 @@ export default function MerchantPointRedemptionCashier({
           code: string;
           name: string;
           categoryId: string;
-          stock: number;
+          stock: number | null;
           custom: boolean;
           quantity: number;
           unitPoints: number;
@@ -776,9 +787,7 @@ export default function MerchantPointRedemptionCashier({
 
   function selectMember(membership: MerchantMembershipListItem) {
     setSelectedMemberId(membership.id);
-    setMemberKeyword(
-      [getMemberDisplayName(membership), membership.phone, membership.memberNo].filter(Boolean).join(" / "),
-    );
+    setMemberKeyword("");
     setMemberPickerOpen(false);
     setNotice("");
     setError("");
@@ -812,11 +821,15 @@ export default function MerchantPointRedemptionCashier({
   function addToCart(item: MerchantMemberRedemptionItem) {
     setError("");
     setNotice("");
+    if (item.pointsCost === null) {
+      setError("请先设置兑换积分。");
+      return;
+    }
     setCart((current) => {
       const existingQuantity = current
         .filter((line) => line.itemId === item.id)
         .reduce((sum, line) => sum + line.quantity, 0);
-      if (item.stock > 0 && existingQuantity + 1 > item.stock) {
+      if (item.stock !== null && existingQuantity + 1 > item.stock) {
         setError("兑换项目库存不足。");
         return current;
       }
@@ -837,7 +850,7 @@ export default function MerchantPointRedemptionCashier({
       const item = enabledItems.find((entry) => entry.id === line.itemId);
       const quantity = Math.max(0, Math.floor(nextQuantity));
       if (quantity <= 0) return current.filter((_, lineIndex) => lineIndex !== index);
-      if (item?.stock && item.stock > 0 && quantity > item.stock) {
+      if (item?.stock !== null && item?.stock !== undefined && quantity > item.stock) {
         setError("兑换项目库存不足。");
         return current;
       }
@@ -1409,9 +1422,33 @@ export default function MerchantPointRedemptionCashier({
 
         .merchant-pos-cashier .member-search {
           position: relative;
-          flex: 0 1 360px;
-          width: min(360px, 34vw);
+          flex: 0 1 306px;
+          width: min(306px, 29vw);
           gap: 8px;
+        }
+
+        .merchant-pos-cashier .member-clear-button {
+          display: inline-grid;
+          place-items: center;
+          flex: 0 0 auto;
+          width: 38px;
+          height: 38px;
+          border: 1px solid var(--pos-line);
+          border-radius: 8px;
+          background: var(--pos-surface);
+          color: var(--pos-muted);
+          transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+        }
+
+        .merchant-pos-cashier .member-clear-button:hover {
+          border-color: #9ecfc4;
+          background: var(--pos-primary-soft);
+          color: var(--pos-primary-dark);
+        }
+
+        .merchant-pos-cashier .member-clear-button svg {
+          width: 18px;
+          height: 18px;
         }
 
         .merchant-pos-cashier .member-search input,
@@ -2859,18 +2896,20 @@ export default function MerchantPointRedemptionCashier({
               {selectedMember ? (
                 <>
                   <strong>{getMemberDisplayName(selectedMember)}</strong>
-                  <span>会员卡号: {selectedMember.memberNo}</span>
+                  <span>卡号: {selectedMember.memberNo}</span>
                   <span>积分: {formatPoints(selectedInsight.pointBalance)}</span>
                   <span>余额: €{formatMoney(selectedInsight.balanceAmount)}</span>
-                  <button type="button" className="link-button" onClick={clearMember}>
-                    清除
-                  </button>
                 </>
               ) : (
                 <span>散客</span>
               )}
             </div>
             <div className="member-actions">
+              {selectedMember ? (
+                <button type="button" className="member-clear-button" onClick={clearMember} aria-label="清除会员" title="清除会员">
+                  <IconX />
+                </button>
+              ) : null}
               <div className="member-search">
                 <input
                   value={memberKeyword}
@@ -3208,21 +3247,23 @@ export default function MerchantPointRedemptionCashier({
               filteredItems.map((item) => {
                 const unitPoints = getRedemptionPointCostForMember(item, selectedMember, settings);
                 const inCartQuantity = cartQuantityByItemId.get(item.id) ?? 0;
-                const outOfStock = item.stock > 0 && inCartQuantity >= item.stock;
+                const outOfStock = item.stock !== null && inCartQuantity >= item.stock;
+                const pointsUnavailable = item.pointsCost === null;
+                const itemDisabled = outOfStock || pointsUnavailable;
 
                 if (viewMode === "text") {
                   return (
                     <button
                       key={item.id}
                       type="button"
-                      className={`product-tile product-tile-text ${outOfStock ? "is-out-of-stock" : ""}`}
-                      disabled={outOfStock}
+                      className={`product-tile product-tile-text ${itemDisabled ? "is-out-of-stock" : ""}`}
+                      disabled={itemDisabled}
                       onClick={() => addToCart(item)}
                     >
                       <span className="product-code">{item.code || item.id}</span>
                       <strong>{item.name}</strong>
                       <span className={`product-stock ${outOfStock ? "danger" : ""}`}>{stockLabel(item)}</span>
-                      <span className="product-price">{formatPoints(unitPoints)}</span>
+                      <span className="product-price">{pointsUnavailable ? "-" : formatPoints(unitPoints)}</span>
                     </button>
                   );
                 }
@@ -3231,8 +3272,8 @@ export default function MerchantPointRedemptionCashier({
                   <button
                     key={item.id}
                     type="button"
-                    className={`product-tile ${outOfStock ? "is-out-of-stock" : ""}`}
-                    disabled={outOfStock}
+                    className={`product-tile ${itemDisabled ? "is-out-of-stock" : ""}`}
+                    disabled={itemDisabled}
                     onClick={() => addToCart(item)}
                   >
                     <div className="product-visual">
@@ -3245,7 +3286,7 @@ export default function MerchantPointRedemptionCashier({
                     </div>
                     <div className="product-footer">
                       <strong>{item.name}</strong>
-                      <span className="product-price">{formatPoints(unitPoints)}</span>
+                      <span className="product-price">{pointsUnavailable ? "-" : formatPoints(unitPoints)}</span>
                       <span className={`product-stock ${outOfStock ? "danger" : ""}`}>
                         {stockLabel(item)}
                         {inCartQuantity ? ` / 已选 ${inCartQuantity}` : ""}

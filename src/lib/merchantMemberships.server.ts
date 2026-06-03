@@ -224,14 +224,15 @@ function getMembershipLevel(settings: MerchantMembershipSettings, membership: Me
 }
 
 function getRedemptionPointCostForMember(
-  item: { pointsCost: number },
+  item: { pointsCost: number | null },
   membership: MerchantMembershipRecord,
   settings: MerchantMembershipSettings | null,
 ) {
-  if (!settings) return item.pointsCost;
+  const basePoints = item.pointsCost ?? 0;
+  if (!settings) return basePoints;
   const level = getMembershipLevel(settings, membership);
   const rate = parseMerchantMemberPointDiscountRate(level?.benefit.pointDiscount);
-  return Math.max(0, Math.ceil(item.pointsCost * rate));
+  return Math.max(0, Math.ceil(basePoints * rate));
 }
 
 function hasLevelGiftBenefit(level: MerchantMemberLevel, kind: "oneTime" | "recurring" | "birthday") {
@@ -630,7 +631,7 @@ export async function applyMerchantMembershipAccountOperation(input: {
       : null;
   const redemptionQuantity = Math.max(1, normalizePositiveInteger(input.redemptionQuantity) || 1);
   const currentMembership = current[index];
-  if (redemptionItem && redemptionItem.stock > 0 && redemptionQuantity > redemptionItem.stock) {
+  if (redemptionItem && redemptionItem.stock !== null && redemptionQuantity > redemptionItem.stock) {
     throw new Error("membership_redemption_stock_insufficient");
   }
   const redemptionPointCost = redemptionItem
@@ -676,7 +677,7 @@ export async function applyMerchantMembershipAccountOperation(input: {
             ? `充值方案：${rechargePlan.title}`
             : redemptionItem
               ? `兑换项目：${redemptionItem.name} x ${redemptionQuantity}${
-                  redemptionPointCost !== redemptionItem.pointsCost
+                  redemptionItem.pointsCost !== null && redemptionPointCost !== redemptionItem.pointsCost
                     ? `（等级折扣 ${redemptionItem.pointsCost}→${redemptionPointCost} 积分/件）`
                     : ""
                 }`
@@ -701,13 +702,15 @@ export async function applyMerchantMembershipAccountOperation(input: {
     updatedAt: now,
   });
   if (saved.error) throw new Error(saved.error);
-  if (settings && redemptionItem && redemptionItem.stock > 0) {
+  if (settings && redemptionItem && redemptionItem.stock !== null) {
     await updateMerchantMembershipSettings({
       siteId,
       settings: {
         ...settings,
         redemptionItems: settings.redemptionItems.map((item) =>
-          item.id === redemptionItem.id ? { ...item, stock: Math.max(0, item.stock - redemptionQuantity) } : item,
+          item.id === redemptionItem.id && item.stock !== null
+            ? { ...item, stock: Math.max(0, item.stock - redemptionQuantity) }
+            : item,
         ),
       },
     });
@@ -796,12 +799,19 @@ export async function applyMerchantMembershipRedemptionCart(input: {
           id: cartItem.itemId,
           categoryId: "",
           code: cartItem.customCode,
+          barcode: "",
           name: cartItem.customName,
+          imageUrl: "",
+          iconName: "",
           description: "",
           enabled: true,
           pointsCost: cartItem.customPoints,
-          referenceAmount: 0,
-          stock: 0,
+          referenceAmount: null,
+          memberPrice: null,
+          taxRate: null,
+          stock: null,
+          pointProduct: true,
+          recommended: false,
           sort: 0,
         },
         quantity: cartItem.quantity,
@@ -811,7 +821,7 @@ export async function applyMerchantMembershipRedemptionCart(input: {
       };
     }
     if (!item) throw new Error("membership_redemption_item_not_found");
-    if (item.stock > 0 && cartItem.quantity > item.stock) throw new Error("membership_redemption_stock_insufficient");
+    if (item.stock !== null && cartItem.quantity > item.stock) throw new Error("membership_redemption_stock_insufficient");
     const unitPoints = getRedemptionPointCostForMember(item, currentMembership, settings);
     return {
       item,
@@ -864,7 +874,7 @@ export async function applyMerchantMembershipRedemptionCart(input: {
 
   const stockDeltaByItemId = new Map<string, number>();
   redemptionRows.forEach((row) => {
-    if (!row.custom && row.item.stock > 0) {
+    if (!row.custom && row.item.stock !== null) {
       stockDeltaByItemId.set(row.item.id, (stockDeltaByItemId.get(row.item.id) ?? 0) + row.quantity);
     }
   });
@@ -875,7 +885,7 @@ export async function applyMerchantMembershipRedemptionCart(input: {
         ...settings,
         redemptionItems: settings.redemptionItems.map((item) => {
           const delta = stockDeltaByItemId.get(item.id) ?? 0;
-          return delta > 0 ? { ...item, stock: Math.max(0, item.stock - delta) } : item;
+          return delta > 0 && item.stock !== null ? { ...item, stock: Math.max(0, item.stock - delta) } : item;
         }),
       },
     });

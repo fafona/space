@@ -69,11 +69,11 @@ export type MerchantMemberRedemptionItem = {
   iconName: string;
   description: string;
   enabled: boolean;
-  pointsCost: number;
-  referenceAmount: number;
-  memberPrice: number;
-  taxRate: number;
-  stock: number;
+  pointsCost: number | null;
+  referenceAmount: number | null;
+  memberPrice: number | null;
+  taxRate: number | null;
+  stock: number | null;
   pointProduct: boolean;
   recommended: boolean;
   sort: number;
@@ -330,6 +330,16 @@ function normalizeInteger(value: unknown, fallback = 0) {
   return Math.max(0, Math.round(numberValue));
 }
 
+function normalizeOptionalMoney(value: unknown) {
+  if (value === null || value === undefined || (typeof value === "string" && value.trim() === "")) return null;
+  return normalizeMoney(value);
+}
+
+function normalizeOptionalInteger(value: unknown) {
+  if (value === null || value === undefined || (typeof value === "string" && value.trim() === "")) return null;
+  return normalizeInteger(value);
+}
+
 function normalizeSort(value: unknown, fallback: number) {
   const numberValue = typeof value === "number" ? value : Number.parseInt(String(value ?? ""), 10);
   if (!Number.isFinite(numberValue)) return fallback;
@@ -448,11 +458,11 @@ function normalizeRedemptionItems(value: unknown): MerchantMemberRedemptionItem[
         name: trimText(record.name ?? record.title, 160) || `兑换项目 ${index + 1}`,
         description: trimText(record.description, 500),
         enabled: normalizeBoolean(record.enabled, true),
-        pointsCost: normalizeInteger(record.pointsCost ?? record.points),
-        referenceAmount: normalizeMoney(record.referenceAmount ?? record.price),
-        memberPrice: normalizeMoney(record.memberPrice ?? record.vipPrice ?? record.uprice),
-        taxRate: normalizeMoney(record.taxRate ?? record.tax),
-        stock: normalizeInteger(record.stock),
+        pointsCost: normalizeOptionalInteger(record.pointsCost ?? record.points),
+        referenceAmount: normalizeOptionalMoney(record.referenceAmount ?? record.price),
+        memberPrice: normalizeOptionalMoney(record.memberPrice ?? record.vipPrice ?? record.uprice),
+        taxRate: normalizeOptionalMoney(record.taxRate ?? record.tax),
+        stock: normalizeOptionalInteger(record.stock),
         pointProduct: normalizeBoolean(record.pointProduct ?? record.isPointProduct, true),
         recommended: normalizeBoolean(record.recommended ?? record.isRecommended ?? record.recommend),
         sort: normalizeSort(record.sort, index),

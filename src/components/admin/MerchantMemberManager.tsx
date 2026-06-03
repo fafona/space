@@ -167,9 +167,15 @@ function getRedemptionPointCostForMember(
   membership: MerchantMembershipListItem | null,
   settings: MerchantMembershipSettings | null,
 ) {
+  const basePoints = item.pointsCost ?? 0;
   const level = resolveMembershipLevel(settings, membership);
   const rate = parseMerchantMemberPointDiscountRate(level?.benefit.pointDiscount);
-  return Math.max(0, Math.ceil(item.pointsCost * rate));
+  return Math.max(0, Math.ceil(basePoints * rate));
+}
+
+function redemptionStockText(stock: number | null) {
+  if (stock === null) return "不限";
+  return stock > 0 ? String(stock) : "无库存";
 }
 
 function formatBirthday(membership: MerchantMembershipListItem) {
@@ -558,7 +564,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
       );
       setOperationDialog(null);
       setOperationError("");
-      if (operationDialog.type === "redeem" && selectedRedemptionItem?.stock) {
+      if (operationDialog.type === "redeem" && selectedRedemptionItem && selectedRedemptionItem.stock !== null) {
         void loadMemberSettings();
       }
     } catch (error) {
@@ -1087,7 +1093,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                       >
                         {enabledRedemptionItems.map((item) => (
                           <option key={item.id} value={item.id}>
-                            {item.name}（{item.pointsCost} 积分）
+                            {item.name}（{item.pointsCost ?? "-"} 积分）
                           </option>
                         ))}
                       </select>
@@ -1107,9 +1113,9 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                     </div>
                     {selectedRedemptionItem ? (
                       <div className="mt-2 text-xs text-slate-500">
-                        库存 {selectedRedemptionItem.stock > 0 ? selectedRedemptionItem.stock : "不限"}，本次扣减{" "}
+                        库存 {redemptionStockText(selectedRedemptionItem.stock)}，本次扣减{" "}
                         {selectedRedemptionUnitPoints * (Number.parseInt(operationRedemptionQuantity, 10) || 1)} 积分
-                        {selectedRedemptionUnitPoints !== selectedRedemptionItem.pointsCost
+                        {selectedRedemptionItem.pointsCost !== null && selectedRedemptionUnitPoints !== selectedRedemptionItem.pointsCost
                           ? `（原 ${selectedRedemptionItem.pointsCost} 积分/件）`
                           : ""}
                         。
