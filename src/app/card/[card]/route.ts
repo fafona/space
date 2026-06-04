@@ -72,6 +72,56 @@ function normalizeText(value: string | null | undefined) {
 
 const BUSINESS_CARD_SHARE_MANIFEST_BUCKETS = ["page-assets", "assets", "uploads", "public"] as const;
 const GOOGLE_REVIEW_DISPLAY_TEXT = "欢迎评价";
+const GOOGLE_REVIEW_DISPLAY_TRANSLATIONS: Record<string, string> = {
+  "zh-CN": GOOGLE_REVIEW_DISPLAY_TEXT,
+  "zh-TW": "\u6b61\u8fce\u8a55\u50f9",
+  "ja-JP": "\u30ec\u30d3\u30e5\u30fc\u3092\u66f8\u304f",
+  "ko-KR": "\ub9ac\ubdf0 \ub0a8\uae30\uae30",
+  "en-GB": "Leave a review",
+  "es-ES": "Deja una rese\u00f1a",
+  "de-DE": "Bewertung schreiben",
+  "fr-FR": "Laisser un avis",
+  "tr-TR": "Yorum b\u0131rak\u0131n",
+  "it-IT": "Lascia una recensione",
+  "pl-PL": "Dodaj opini\u0119",
+  "uk-UA": "\u0417\u0430\u043b\u0438\u0448\u0438\u0442\u0438 \u0432\u0456\u0434\u0433\u0443\u043a",
+  "nl-NL": "Laat een review achter",
+  "ro-RO": "Las\u0103 o recenzie",
+  "pt-PT": "Deixe uma avalia\u00e7\u00e3o",
+  "ru-RU": "\u041e\u0441\u0442\u0430\u0432\u0438\u0442\u044c \u043e\u0442\u0437\u044b\u0432",
+  "el-GR": "\u0391\u03c6\u03ae\u03c3\u03c4\u03b5 \u03bc\u03b9\u03b1 \u03ba\u03c1\u03b9\u03c4\u03b9\u03ba\u03ae",
+  "cs-CZ": "Zanechat recenzi",
+  "sv-SE": "L\u00e4mna en recension",
+  "hu-HU": "\u00cdrjon \u00e9rt\u00e9kel\u00e9st",
+  "be-BY": "\u041f\u0430\u043a\u0456\u043d\u0443\u0446\u044c \u0432\u043e\u0434\u0433\u0443\u043a",
+  "bg-BG": "\u041e\u0441\u0442\u0430\u0432\u0435\u0442\u0435 \u043e\u0442\u0437\u0438\u0432",
+  "sr-RS": "Ostavite recenziju",
+  "da-DK": "Skriv en anmeldelse",
+  "fi-FI": "J\u00e4t\u00e4 arvostelu",
+  "sk-SK": "Zanechajte recenziu",
+  "no-NO": "Legg igjen en anmeldelse",
+  "hr-HR": "Ostavite recenziju",
+  "bs-BA": "Ostavite recenziju",
+  "sq-AL": "Lini nj\u00eb vler\u00ebsim",
+  "lt-LT": "Palikite atsiliepim\u0105",
+  "sl-SI": "Pustite oceno",
+  "lv-LV": "Atst\u0101jiet atsauksmi",
+  "et-EE": "J\u00e4tke arvustus",
+  "mk-MK": "\u041e\u0441\u0442\u0430\u0432\u0435\u0442\u0435 \u0440\u0435\u0446\u0435\u043d\u0437\u0438\u0458\u0430",
+  "ca-ES": "Deixa una ressenya",
+  "eu-ES": "Utzi iritzia",
+  "gl-ES": "Deixa unha recensi\u00f3n",
+  "cy-GB": "Gadewch adolygiad",
+  "is-IS": "Skildu eftir ums\u00f6gn",
+  "ga-IE": "F\u00e1g l\u00e9irmheas",
+  "mt-MT": "\u0126alli revi\u017cjoni",
+  "lb-LU": "Schreift eng Bew\u00e4ertung",
+};
+
+function buildLanguageFlagUrl(countryCode: string) {
+  const code = normalizeText(countryCode).toLowerCase();
+  return code ? `https://flagcdn.com/${code}.svg` : "";
+}
 
 type StorageOperationError = {
   message?: string | null;
@@ -255,6 +305,7 @@ type SummaryRow = {
   value: string;
   actionHtml: string;
   key?: MerchantBusinessCardContactDisplayKey;
+  translateValue?: boolean;
 };
 
 function buildCopyActionHtml(rawValue: string, label: string) {
@@ -300,11 +351,12 @@ function buildSummaryRowsHtml(rows: SummaryRow[]) {
       const fullAddressAttrs = isAddress
         ? ` role="button" tabindex="0" title="${escapeHtml(row.value)}" data-full-address="${escapeHtml(row.value)}"`
         : "";
+      const valueTranslateAttrs = row.translateValue ? "" : ` data-no-translate="1"`;
       return `
         <div class="${rowClass}">
           <div class="summary-copy">
             <strong class="summary-label">${escapeHtml(row.label)}：</strong>
-            <span class="${valueClass}" data-no-translate="1"${fullAddressAttrs}>${escapeHtml(row.value)}</span>
+            <span class="${valueClass}"${valueTranslateAttrs}${fullAddressAttrs}>${escapeHtml(row.value)}</span>
           </div>
           ${row.actionHtml ? `<div class="summary-action">${row.actionHtml}</div>` : ""}
         </div>`;
@@ -490,6 +542,7 @@ function buildContactNoteFallbackRows(note?: string) {
       value: key === "googleReview" ? GOOGLE_REVIEW_DISPLAY_TEXT : value,
       actionHtml: buildSummaryActionHtmlFromKey(key, label, value),
       key,
+      translateValue: key === "googleReview",
     };
     rowsByKey[key] = [...(rowsByKey[key] ?? []), row];
   }
@@ -519,10 +572,14 @@ function buildLanguageSwitcherHtml() {
     </optgroup>`;
 
   const defaultOption = LANGUAGE_OPTIONS.find((item) => item.code === DEFAULT_LOCALE) ?? LANGUAGE_OPTIONS[0];
-  const defaultFlag = defaultOption ? `https://flagcdn.com/24x18/${defaultOption.countryCode.toLowerCase()}.png` : "";
+  const defaultFlag = defaultOption ? buildLanguageFlagUrl(defaultOption.countryCode) : "";
 
   return `<label class="lang-switcher" data-no-translate="1" title="${escapeHtml(defaultOption?.label ?? DEFAULT_LOCALE)}" aria-label="Select language">
-    ${defaultFlag ? `<img data-language-flag src="${escapeHtml(defaultFlag)}" alt="${escapeHtml(defaultOption?.label ?? DEFAULT_LOCALE)}" />` : ""}
+    ${
+      defaultFlag
+        ? `<img data-language-flag src="${escapeHtml(defaultFlag)}" alt="${escapeHtml(defaultOption?.label ?? DEFAULT_LOCALE)}" width="80" height="60" decoding="async" />`
+        : ""
+    }
     <span class="lang-switcher-sr" data-language-label>${escapeHtml(defaultOption?.label ?? DEFAULT_LOCALE)}</span>
     <select id="contact-card-language" aria-label="Select language">
       ${renderGroup("Asia", asiaOptions)}
@@ -541,9 +598,13 @@ function buildInlineI18nScript() {
   return `(() => {
     if (typeof window === "undefined" || typeof document === "undefined") return;
     const STORAGE_KEY = ${serializeInlineScriptValue(I18N_STORAGE_KEY)};
+    const CONTACT_CARD_STORAGE_KEY = STORAGE_KEY + ":contact-card";
     const CACHE_PREFIX = "merchant-space:dom-i18n-cache:v3:";
     const DEFAULT_LOCALE = ${serializeInlineScriptValue(DEFAULT_LOCALE)};
     const LANGUAGE_OPTIONS = ${serializeInlineScriptValue(languageOptions)};
+    const FIXED_TRANSLATIONS = ${serializeInlineScriptValue({
+      [GOOGLE_REVIEW_DISPLAY_TEXT]: GOOGLE_REVIEW_DISPLAY_TRANSLATIONS,
+    })};
     const INTRO_UNMUTE_TEXT = {
       "zh-CN": "点按屏幕取消静音",
       "zh-TW": "點按螢幕取消靜音",
@@ -636,6 +697,28 @@ function buildInlineI18nScript() {
       return matched ? matched.code : DEFAULT_LOCALE;
     }
 
+    function getLanguageFlagUrl(countryCode) {
+      const code = String(countryCode || "").trim().toLowerCase();
+      return code ? "https://flagcdn.com/" + encodeURIComponent(code) + ".svg" : "";
+    }
+
+    function resolveFixedTranslation(source, locale) {
+      const translations = FIXED_TRANSLATIONS[source];
+      if (!translations) return "";
+      const normalized = resolveLocale(locale);
+      const language = normalized.toLowerCase().split("-")[0] || "";
+      const languageMatch = LANGUAGE_OPTIONS.find((item) => item.code.toLowerCase().startsWith(language + "-"))?.code || "";
+      return translations[normalized] || translations[languageMatch] || translations["en-GB"] || "";
+    }
+
+    function resolveFixedSource(input, locale) {
+      const normalized = resolveLocale(locale);
+      for (const source of Object.keys(FIXED_TRANSLATIONS)) {
+        if (source === input || resolveFixedTranslation(source, normalized) === input) return source;
+      }
+      return "";
+    }
+
     function readRequestedLocaleFromSearch(search) {
       try {
         const params = new URLSearchParams(String(search || "").replace(/^\\?/, ""));
@@ -655,15 +738,16 @@ function buildInlineI18nScript() {
       }
     }
 
-    function detectInitialLocale() {
-      const requested = readRequestedLocaleFromSearch(window.location.search);
-      if (requested) return requested;
+    function readStoredLocaleFromKey(key) {
       try {
-        const stored = window.localStorage.getItem(STORAGE_KEY);
-        if (stored) return resolveLocale(stored);
-      } catch {}
-      const cookieLocale = readStoredLocaleCookie();
-      if (cookieLocale) return cookieLocale;
+        const stored = window.localStorage.getItem(key);
+        return stored ? resolveLocale(stored) : "";
+      } catch {
+        return "";
+      }
+    }
+
+    function detectSystemLocale() {
       const navigatorLanguages =
         Array.isArray(window.navigator.languages) && window.navigator.languages.length > 0
           ? window.navigator.languages
@@ -672,6 +756,20 @@ function buildInlineI18nScript() {
         const resolved = resolveLocale(item);
         if (resolved) return resolved;
       }
+      return "";
+    }
+
+    function detectInitialLocale() {
+      const requested = readRequestedLocaleFromSearch(window.location.search);
+      if (requested) return requested;
+      const contactCardStored = readStoredLocaleFromKey(CONTACT_CARD_STORAGE_KEY);
+      if (contactCardStored) return contactCardStored;
+      const systemLocale = detectSystemLocale();
+      if (systemLocale) return systemLocale;
+      const stored = readStoredLocaleFromKey(STORAGE_KEY);
+      if (stored) return stored;
+      const cookieLocale = readStoredLocaleCookie();
+      if (cookieLocale) return cookieLocale;
       return DEFAULT_LOCALE;
     }
 
@@ -771,6 +869,8 @@ function buildInlineI18nScript() {
       const normalized = resolveLocale(locale);
       if (toApiTarget(normalized) === "zh-CN") return input;
       const parts = splitOuterWhitespace(input);
+      const fixed = resolveFixedTranslation(parts.core, normalized);
+      if (fixed) return parts.leading + fixed + parts.trailing;
       if (!shouldTranslateCoreText(parts.core, normalized)) return input;
       const translated = getLocaleCache(normalized).get(parts.core);
       return translated ? parts.leading + translated + parts.trailing : input;
@@ -781,6 +881,8 @@ function buildInlineI18nScript() {
       if (toApiTarget(normalized) === "zh-CN") return input;
       const parts = splitOuterWhitespace(input);
       if (!parts.core) return null;
+      const fixedSource = resolveFixedSource(parts.core, normalized);
+      if (fixedSource) return parts.leading + fixedSource + parts.trailing;
       const source = getReverseLocaleCache(normalized).get(parts.core);
       return source ? parts.leading + source + parts.trailing : null;
     }
@@ -847,6 +949,7 @@ function buildInlineI18nScript() {
       texts.forEach((text) => {
         const core = splitOuterWhitespace(text).core;
         if (!core || !shouldTranslateCoreText(core, normalized)) return;
+        if (resolveFixedTranslation(core, normalized)) return;
         if (getLocaleCache(normalized).has(core) || seen.has(core)) return;
         seen.add(core);
         queue.push(core);
@@ -965,7 +1068,7 @@ function buildInlineI18nScript() {
       const switcherEl = document.querySelector(".lang-switcher");
       if (labelEl && selected) labelEl.textContent = selected.label;
       if (flagEl && selected) {
-        flagEl.setAttribute("src", "https://flagcdn.com/24x18/" + selected.countryCode.toLowerCase() + ".png");
+        flagEl.setAttribute("src", getLanguageFlagUrl(selected.countryCode));
         flagEl.setAttribute("alt", selected.label);
       }
       if (switcherEl && selected) {
@@ -991,16 +1094,19 @@ function buildInlineI18nScript() {
       if (sound) sound.textContent = resolveIntroText(INTRO_SOUND_TEXT, normalized, "en-GB");
     }
 
-    async function applyLocale(locale) {
+    async function applyLocale(locale, options = {}) {
       const normalized = resolveLocale(locale);
       const previousLocale = document.documentElement.getAttribute("data-ui-locale") || "zh-CN";
       document.documentElement.lang = normalized;
       document.documentElement.setAttribute("data-ui-locale", normalized);
       updateLanguageUi(normalized);
       updateIntroControls(normalized);
-      try {
-        window.localStorage.setItem(STORAGE_KEY, normalized);
-      } catch {}
+      if (options.persist === true) {
+        try {
+          window.localStorage.setItem(CONTACT_CARD_STORAGE_KEY, normalized);
+          window.localStorage.setItem(STORAGE_KEY, normalized);
+        } catch {}
+      }
       const sourceRecoveryLocale = normalized === "zh-CN" && previousLocale.toLowerCase() !== "zh-cn" ? previousLocale : null;
       const missing = new Set();
       traverse(document.body, normalized, missing, false, sourceRecoveryLocale);
@@ -1014,7 +1120,7 @@ function buildInlineI18nScript() {
       selectEl.addEventListener("change", (event) => {
         const target = event.target;
         if (!(target instanceof HTMLSelectElement)) return;
-        void applyLocale(target.value);
+        void applyLocale(target.value, { persist: true });
       });
     }
 
@@ -1503,12 +1609,14 @@ function buildContactSummaryHtmlLegacy(input: {
           }),
         }
       : null,
-  ].filter(Boolean) as Array<{ label: string; value: string; actionHtml: string }>;
+  ].filter(Boolean) as SummaryRow[];
   if (input.contact?.googleReview) {
     rows.push({
       label: "Google",
       value: GOOGLE_REVIEW_DISPLAY_TEXT,
       actionHtml: buildSummaryActionHtmlFromKey("googleReview", "Google", input.contact.googleReview),
+      key: "googleReview",
+      translateValue: true,
     });
   }
   const invoiceRows = buildInvoiceSummaryRows(input.contact);
@@ -2200,6 +2308,7 @@ function buildOrderedContactSummaryHtml(input: {
           label: "Google",
           value: GOOGLE_REVIEW_DISPLAY_TEXT,
           actionHtml: buildSummaryActionHtmlFromKey("googleReview", "Google", contact.googleReview),
+          translateValue: true,
         }
       : null,
   );
@@ -2324,14 +2433,14 @@ function buildShareCardHtml(input: {
         right: 16px;
         z-index: 20;
         display: block;
-        width: 35px;
-        height: 24px;
-        min-height: 24px;
-        border-radius: 3px;
-        border: 1px solid rgba(203,213,225,.8);
-        background: transparent;
+        width: 40px;
+        height: 28px;
+        min-height: 28px;
+        border-radius: 2px;
+        border: 1px solid rgba(148,163,184,.7);
+        background: #fff;
         padding: 0;
-        box-shadow: none;
+        box-shadow: 0 1px 2px rgba(15,23,42,.12);
         overflow: hidden;
         cursor: pointer;
       }
@@ -2342,6 +2451,8 @@ function buildShareCardHtml(input: {
         border-radius: 0;
         border: 0;
         object-fit: cover;
+        transform: none;
+        filter: none;
       }
       .lang-switcher-sr {
         position: absolute;
@@ -2800,9 +2911,9 @@ function buildShareCardHtml(input: {
         .lang-switcher {
           top: max(12px, calc(env(safe-area-inset-top) + 12px));
           right: max(12px, calc(env(safe-area-inset-right) + 12px));
-          width: 35px;
-          height: 24px;
-          min-height: 24px;
+          width: 40px;
+          height: 28px;
+          min-height: 28px;
           z-index: 100;
         }
       }
