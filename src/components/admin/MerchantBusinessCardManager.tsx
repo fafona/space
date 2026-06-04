@@ -1772,8 +1772,12 @@ export default function MerchantBusinessCardManager({
     setIsDraftSaving(true);
     try {
       writeSavedBusinessCardDraft(draftStorageKey, draft);
-      const savedExistingCard = editingCardId ? await saveCurrentDraftSettingsToExistingCard() : null;
-      setTip(savedExistingCard ? "名片设置已保存并同步联系卡" : "名片草稿已保存");
+      const savedExistingCard = editingCardId
+        ? websiteUrl && qrReadyForCurrentDraft
+          ? await saveCurrentDraftToFolder()
+          : await saveCurrentDraftSettingsToExistingCard()
+        : null;
+      setTip(savedExistingCard ? "名片已保存并同步联系卡" : "名片草稿已保存");
     } catch {
       setTip(editingCardId ? "名片设置同步失败，请点保存修改重试" : "草稿保存失败，请重试");
     } finally {
@@ -3679,14 +3683,43 @@ export default function MerchantBusinessCardManager({
     renderedImageUrl?: string;
     cardName?: string;
     targetUrl?: string;
+    syncCardMeta?: boolean;
   }) {
     const shareOrigin = resolveMerchantBusinessCardShareOrigin(undefined, input.targetUrl);
+    const syncCardMeta = input.syncCardMeta !== false;
+    const renderedImageUrl = normalizeText(input.renderedImageUrl);
+    if (/^data:image\//i.test(renderedImageUrl)) {
+      const uploadedUrl = await uploadImageDataUrlToPublicStorage(
+        renderedImageUrl,
+        sanitizeShareAssetHint(
+          normalizeText(profile.domainPrefix) ||
+            normalizeText(input.cardName) ||
+            normalizeText(input.card?.name) ||
+            normalizeText(profile.merchantName),
+        ),
+        "business-card-export",
+      );
+      const publicUrl = normalizeMerchantBusinessCardShareImageUrl(uploadedUrl, shareOrigin);
+      if (publicUrl) {
+        if (syncCardMeta && input.card) {
+          updateCardShareMeta(input.card.id, { shareImageUrl: publicUrl });
+        }
+        return publicUrl;
+      }
+    }
+    const renderedPublicUrl = normalizeMerchantBusinessCardShareImageUrl(renderedImageUrl, shareOrigin);
+    if (renderedPublicUrl) {
+      if (syncCardMeta && input.card && normalizeText(input.card.shareImageUrl) !== renderedPublicUrl) {
+        updateCardShareMeta(input.card.id, { shareImageUrl: renderedPublicUrl });
+      }
+      return renderedPublicUrl;
+    }
     const existingPublicUrl = normalizeMerchantBusinessCardShareImageUrl(
       normalizeText(input.card?.shareImageUrl) || normalizeText(input.card?.imageUrl),
       shareOrigin,
     );
     if (existingPublicUrl) {
-      if (input.card && normalizeText(input.card.shareImageUrl) !== existingPublicUrl) {
+      if (syncCardMeta && input.card && normalizeText(input.card.shareImageUrl) !== existingPublicUrl) {
         updateCardShareMeta(input.card.id, { shareImageUrl: existingPublicUrl });
       }
       return existingPublicUrl;
@@ -3709,7 +3742,7 @@ export default function MerchantBusinessCardManager({
       "business-card-export",
     );
     const publicUrl = normalizeMerchantBusinessCardShareImageUrl(uploadedUrl, shareOrigin);
-    if (publicUrl && input.card) {
+    if (publicUrl && syncCardMeta && input.card) {
       updateCardShareMeta(input.card.id, { shareImageUrl: publicUrl });
     }
     return publicUrl;
@@ -3720,34 +3753,48 @@ export default function MerchantBusinessCardManager({
     imageUrl?: string;
     cardName?: string;
     targetUrl?: string;
+    syncCardMeta?: boolean;
+    preferImageUrl?: boolean;
   }) {
     const shareOrigin = resolveMerchantBusinessCardShareOrigin(undefined, input.targetUrl);
+    const syncCardMeta = input.syncCardMeta !== false;
+    const sourceImageUrl = normalizeText(input.imageUrl) || normalizeText(input.card?.contactPageImageUrl);
+    const resolveSourceImageUrl = async () => {
+      if (/^data:image\//i.test(sourceImageUrl)) {
+        const uploadedUrl = await uploadImageDataUrlToPublicStorage(
+          sourceImageUrl,
+          sanitizeShareAssetHint(
+            `${normalizeText(profile.domainPrefix) || normalizeText(input.cardName) || normalizeText(input.card?.name) || normalizeText(profile.merchantName)}-contact`,
+          ),
+          "business-card-contact",
+        );
+        const publicUrl = normalizeMerchantBusinessCardShareImageUrl(uploadedUrl, shareOrigin);
+        if (publicUrl && syncCardMeta && input.card) {
+          updateCardShareMeta(input.card.id, { contactPagePublicImageUrl: publicUrl });
+        }
+        return publicUrl;
+      }
+      const publicUrl = normalizeMerchantBusinessCardShareImageUrl(sourceImageUrl, shareOrigin);
+      if (publicUrl && syncCardMeta && input.card && normalizeText(input.card.contactPagePublicImageUrl) !== publicUrl) {
+        updateCardShareMeta(input.card.id, { contactPagePublicImageUrl: publicUrl });
+      }
+      return publicUrl;
+    };
+    if (input.preferImageUrl) {
+      const explicitUrl = await resolveSourceImageUrl();
+      if (explicitUrl) return explicitUrl;
+    }
     const existingPublicUrl = normalizeMerchantBusinessCardShareImageUrl(
       normalizeText(input.card?.contactPagePublicImageUrl) || normalizeText(input.imageUrl) || normalizeText(input.card?.contactPageImageUrl),
       shareOrigin,
     );
     if (existingPublicUrl) {
-      if (input.card && normalizeText(input.card.contactPagePublicImageUrl) !== existingPublicUrl) {
+      if (syncCardMeta && input.card && normalizeText(input.card.contactPagePublicImageUrl) !== existingPublicUrl) {
         updateCardShareMeta(input.card.id, { contactPagePublicImageUrl: existingPublicUrl });
       }
       return existingPublicUrl;
     }
-
-    const sourceImageUrl = normalizeText(input.imageUrl) || normalizeText(input.card?.contactPageImageUrl);
-    if (!/^data:image\//i.test(sourceImageUrl)) return "";
-
-    const uploadedUrl = await uploadImageDataUrlToPublicStorage(
-      sourceImageUrl,
-      sanitizeShareAssetHint(
-        `${normalizeText(profile.domainPrefix) || normalizeText(input.cardName) || normalizeText(input.card?.name) || normalizeText(profile.merchantName)}-contact`,
-      ),
-      "business-card-contact",
-    );
-    const publicUrl = normalizeMerchantBusinessCardShareImageUrl(uploadedUrl, shareOrigin);
-    if (publicUrl && input.card) {
-      updateCardShareMeta(input.card.id, { contactPagePublicImageUrl: publicUrl });
-    }
-    return publicUrl;
+    return resolveSourceImageUrl();
   }
 
   async function buildShareBundle(input: {
@@ -3765,6 +3812,8 @@ export default function MerchantBusinessCardManager({
     imageWidth?: number;
     imageHeight?: number;
     contact?: MerchantBusinessCardShareContact;
+    syncCardMeta?: boolean;
+    preferContactPageImage?: boolean;
   }) {
     const targetUrl = normalizeText(input.targetUrl);
     if (!targetUrl) {
@@ -3776,12 +3825,15 @@ export default function MerchantBusinessCardManager({
       renderedImageUrl: input.renderedImageUrl,
       cardName: input.cardName,
       targetUrl,
+      syncCardMeta: input.syncCardMeta,
     });
     const detailImageUrl = await resolveContactPageImageUrl({
       card: input.card,
       imageUrl: input.contactPageImageUrl,
       cardName: input.cardName,
       targetUrl,
+      syncCardMeta: input.syncCardMeta,
+      preferImageUrl: input.preferContactPageImage,
     });
     const introVideoUrl = canUseIntroVideo ? normalizeText(input.introVideoUrl) : "";
     const introPosterUrl = introVideoUrl && canUseIntroVideo ? normalizeText(input.introVideoPosterUrl) : "";
@@ -3900,7 +3952,7 @@ export default function MerchantBusinessCardManager({
             : "share_link_unavailable",
       );
     }
-    if (input.card && (shareKey || shareImageUrl || detailImageUrl)) {
+    if (input.syncCardMeta !== false && input.card && (shareKey || shareImageUrl || detailImageUrl)) {
       updateCardShareMeta(input.card.id, {
         ...(shareImageUrl ? { shareImageUrl } : {}),
         ...(shareKey ? { shareKey } : {}),
@@ -4002,6 +4054,8 @@ export default function MerchantBusinessCardManager({
             imageWidth: nextDraft.width,
             imageHeight: nextDraft.height,
             contact: shareContactPayload,
+            syncCardMeta: false,
+            preferContactPageImage: true,
           })
         : null;
     if (nextDraft.mode === "link" && !normalizeText(shareBundle?.shareKey)) {
@@ -4076,6 +4130,8 @@ export default function MerchantBusinessCardManager({
             imageWidth: nextDraft.width,
             imageHeight: nextDraft.height,
             contact: shareContactPayload,
+            syncCardMeta: false,
+            preferContactPageImage: true,
           })
         : null;
     if (nextDraft.mode === "link" && !normalizeText(shareBundle?.shareKey)) {

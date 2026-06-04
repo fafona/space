@@ -250,7 +250,12 @@ function buildDiscordActionHtml(rawValue?: string) {
   </button>`;
 }
 
-type SummaryRow = { label: string; value: string; actionHtml: string };
+type SummaryRow = {
+  label: string;
+  value: string;
+  actionHtml: string;
+  key?: MerchantBusinessCardContactDisplayKey;
+};
 
 function buildCopyActionHtml(rawValue: string, label: string) {
   const normalizedValue = normalizeText(rawValue);
@@ -288,16 +293,22 @@ function buildInvoiceSummaryRows(contact?: MerchantBusinessCardShareContact): Su
 
 function buildSummaryRowsHtml(rows: SummaryRow[]) {
   return rows
-    .map(
-      (row) => `
-        <div class="summary-row">
+    .map((row) => {
+      const isAddress = row.key === "address";
+      const rowClass = isAddress ? "summary-row summary-row-address" : "summary-row";
+      const valueClass = isAddress ? "summary-value summary-value-address" : "summary-value";
+      const fullAddressAttrs = isAddress
+        ? ` role="button" tabindex="0" title="${escapeHtml(row.value)}" data-full-address="${escapeHtml(row.value)}"`
+        : "";
+      return `
+        <div class="${rowClass}">
           <div class="summary-copy">
             <strong class="summary-label">${escapeHtml(row.label)}：</strong>
-            <span class="summary-value" data-no-translate="1">${escapeHtml(row.value)}</span>
+            <span class="${valueClass}" data-no-translate="1"${fullAddressAttrs}>${escapeHtml(row.value)}</span>
           </div>
           ${row.actionHtml ? `<div class="summary-action">${row.actionHtml}</div>` : ""}
-        </div>`,
-    )
+        </div>`;
+    })
     .join("");
 }
 
@@ -478,6 +489,7 @@ function buildContactNoteFallbackRows(note?: string) {
       label,
       value: key === "googleReview" ? GOOGLE_REVIEW_DISPLAY_TEXT : value,
       actionHtml: buildSummaryActionHtmlFromKey(key, label, value),
+      key,
     };
     rowsByKey[key] = [...(rowsByKey[key] ?? []), row];
   }
@@ -1008,7 +1020,7 @@ function buildInlineI18nScript() {
 
     let wechatToastTimer = null;
 
-    function showWechatToast(message) {
+    function showWechatToast(message, duration) {
       let toast = document.getElementById("wechat-open-toast");
       if (!toast) {
         toast = document.createElement("div");
@@ -1037,7 +1049,7 @@ function buildInlineI18nScript() {
       if (wechatToastTimer !== null) window.clearTimeout(wechatToastTimer);
       wechatToastTimer = window.setTimeout(() => {
         toast.style.opacity = "0";
-      }, 2400);
+      }, Number(duration) > 0 ? Number(duration) : 2400);
     }
 
     async function copyWechatId(value) {
@@ -1199,6 +1211,23 @@ function buildInlineI18nScript() {
       });
     });
 
+    const fullAddressValues = Array.from(document.querySelectorAll("[data-full-address]"));
+    fullAddressValues.forEach((valueEl) => {
+      const showFullAddress = (event) => {
+        event.preventDefault();
+        const target = event.currentTarget;
+        if (!(target instanceof HTMLElement)) return;
+        const fullAddress = String(target.dataset.fullAddress || "").trim();
+        if (!fullAddress) return;
+        showWechatToast(fullAddress, 5200);
+      };
+      valueEl.addEventListener("click", showFullAddress);
+      valueEl.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        showFullAddress(event);
+      });
+    });
+
     const claimButtons = Array.from(document.querySelectorAll("[data-claim-coupon-id]"));
     claimButtons.forEach((button) => {
       button.addEventListener("click", async (event) => {
@@ -1313,6 +1342,7 @@ function buildContactSummaryHtmlLegacy(input: {
       : null,
     input.contact?.address
       ? {
+          key: "address",
           label: "地址",
           value: input.contact.address,
           actionHtml: buildActionButtonHtml({
@@ -1925,7 +1955,7 @@ function buildOrderedContactSummaryHtml(input: {
 
   const pushRow = (key: MerchantBusinessCardContactDisplayKey, row: SummaryRow | null) => {
     if (!row) return;
-    rowsByKey[key] = [...(rowsByKey[key] ?? []), row];
+    rowsByKey[key] = [...(rowsByKey[key] ?? []), { ...row, key }];
   };
 
   pushRow(
@@ -2659,6 +2689,29 @@ function buildShareCardHtml(input: {
       .summary-value {
         color: #334155;
         word-break: break-word;
+      }
+      .summary-row-address .summary-copy {
+        flex: 1 1 auto;
+        flex-wrap: nowrap;
+        align-items: center;
+        overflow: hidden;
+      }
+      .summary-row-address .summary-label {
+        flex: 0 0 auto;
+      }
+      .summary-value-address {
+        display: block;
+        min-width: 0;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        cursor: pointer;
+      }
+      .summary-value-address:focus {
+        outline: 2px solid rgba(37,99,235,.35);
+        outline-offset: 2px;
+        border-radius: 6px;
       }
       .summary-action {
         flex-shrink: 0;
