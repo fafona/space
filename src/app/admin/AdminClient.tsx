@@ -1446,6 +1446,7 @@ type MerchantDesktopSection =
   | "booking"
   | "orders"
   | "analytics"
+  | "logs"
   | "business"
   | "members"
   | "support"
@@ -14012,6 +14013,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setMerchantDesktopSection("analytics");
   }
 
+  function openMerchantLogsPanel() {
+    setMerchantDesktopSection("logs");
+  }
+
   function openMerchantBusinessCenterPanel() {
     setMerchantDesktopSection("business");
   }
@@ -14152,7 +14157,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, [desktopMerchantWorkspaceActive, merchantDesktopSection, supportDialogOpen]);
 
   useEffect(() => {
-    if (!desktopMerchantWorkspaceActive || merchantDesktopSection !== "analytics") return;
+    if (!desktopMerchantWorkspaceActive || (merchantDesktopSection !== "analytics" && merchantDesktopSection !== "logs")) return;
     let cancelled = false;
     setMerchantAnalyticsLoading(true);
     setMerchantAnalyticsError("");
@@ -16560,7 +16565,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     }
   }, [isDesktopMerchantWorkspace, merchantDesktopSection]);
   const merchantAnalyticsSnapshot: MerchantAnalyticsSnapshot =
-    isDesktopMerchantWorkspace && merchantDesktopSection === "analytics"
+    isDesktopMerchantWorkspace && (merchantDesktopSection === "analytics" || merchantDesktopSection === "logs")
       ? (() => {
     const desktopConfig = previewViewport === "desktop" ? planConfig : viewportStatesRef.current.desktop.planConfig;
     const mobileConfig = previewViewport === "mobile" ? planConfig : viewportStatesRef.current.mobile.planConfig;
@@ -19259,7 +19264,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     merchantDesktopSection === "business" ||
     merchantDesktopSection === "cards" ||
     merchantDesktopSection === "coupons" ||
-    merchantDesktopSection === "analytics";
+    merchantDesktopSection === "analytics" ||
+    merchantDesktopSection === "logs";
   const merchantBookingManagerDialogCommonProps =
     !isPlatformEditor && canUseBookingBlock
       ? {
@@ -19322,6 +19328,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const merchantAnalyticsRemoteSuccessRate30d = merchantAnalyticsRemoteSummary
     ? formatSuccessRate(merchantAnalyticsRemoteSummary.publishTotal30d, merchantAnalyticsRemoteSummary.publishSuccess30d)
     : "暂无";
+  const formatMerchantLogTime = (value: string) => {
+    const date = new Date(value);
+    return Number.isFinite(date.getTime()) ? date.toLocaleString("zh-CN", { hour12: false }) : value;
+  };
+  const merchantPublishLogItems = [...merchantAnalyticsSnapshot.publish30d]
+    .sort((left, right) => new Date(right.at).getTime() - new Date(left.at).getTime())
+    .slice(0, 50);
   const merchantAnalyticsPanelContent = (
     <div className="min-h-[calc(100vh-14rem)] space-y-4">
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -19524,6 +19537,88 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           </div>
         </section>
       </div>
+    </div>
+  );
+  const merchantLogsPanelContent = (
+    <div className="min-h-[calc(100vh-14rem)] space-y-4">
+      <section className="rounded-2xl border border-slate-200 bg-white px-6 py-5 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className="text-[26px] font-bold leading-8 text-slate-950">日志</div>
+            <div className="mt-1 text-sm text-slate-500">查看最近发布、失败快照和经营中心相关记录。</div>
+          </div>
+        </div>
+        <div className="mt-5 grid gap-3 md:grid-cols-3">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <div className="text-xs font-semibold text-slate-500">30 日发布</div>
+            <div className="mt-2 text-2xl font-semibold text-slate-950">{merchantAnalyticsSnapshot.publish30d.length}</div>
+          </div>
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+            <div className="text-xs font-semibold text-emerald-700">30 日成功率</div>
+            <div className="mt-2 text-2xl font-semibold text-emerald-800">{merchantAnalyticsSuccessRate30d}</div>
+          </div>
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3">
+            <div className="text-xs font-semibold text-rose-700">失败快照</div>
+            <div className="mt-2 text-2xl font-semibold text-rose-800">{merchantAnalyticsSnapshot.failureSnapshots.length}</div>
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
+        <div className="text-lg font-semibold text-slate-900">发布日志</div>
+        <div className="mt-1 text-sm text-slate-500">显示最近 30 日本设备记录的发布操作。</div>
+        <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200">
+          {merchantPublishLogItems.length ? (
+            <div className="divide-y divide-slate-100">
+              {merchantPublishLogItems.map((item, index) => (
+                <article key={`${item.at}:${index}`} className="grid gap-3 bg-white px-4 py-3 md:grid-cols-[180px_120px_1fr_120px] md:items-center">
+                  <div className="text-sm font-medium text-slate-700">{formatMerchantLogTime(item.at)}</div>
+                  <div>
+                    <span
+                      className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
+                        item.success ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100" : "bg-rose-50 text-rose-700 ring-1 ring-rose-100"
+                      }`}
+                    >
+                      {item.success ? "发布成功" : "发布失败"}
+                    </span>
+                  </div>
+                  <div className="text-sm text-slate-600">
+                    改动 {item.changedBlocks} 个区块
+                    {item.reason ? <span className="ml-2 text-rose-600">{item.reason}</span> : null}
+                  </div>
+                  <div className="text-right text-sm font-semibold text-slate-700">{formatBytes(item.bytes)}</div>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="px-4 py-8 text-center text-sm text-slate-500">最近 30 日暂无发布日志。</div>
+          )}
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
+        <div className="text-lg font-semibold text-slate-900">失败快照</div>
+        <div className="mt-1 text-sm text-slate-500">发布失败时会保留本地快照，方便回溯问题。</div>
+        <div className="mt-4 space-y-3">
+          {merchantAnalyticsSnapshot.failureSnapshots.length ? (
+            merchantAnalyticsSnapshot.failureSnapshots.slice(0, 12).map((item) => (
+              <article key={`${item.at}:${item.reason}`} className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-rose-700">{item.reason}</div>
+                    <div className="mt-1 text-xs text-rose-600">{formatMerchantLogTime(item.at)}</div>
+                  </div>
+                  <div className="shrink-0 rounded-full bg-white px-2 py-1 text-[11px] font-medium text-rose-600 ring-1 ring-rose-200">
+                    {formatBytes(item.bytes)}
+                  </div>
+                </div>
+              </article>
+            ))
+          ) : (
+            <div className="rounded-xl border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-500">最近没有发布失败记录。</div>
+          )}
+        </div>
+      </section>
     </div>
   );
   const merchantBusinessCardCount = normalizeMerchantBusinessCards(
@@ -20151,6 +20246,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             />
           ) : merchantDesktopSection === "analytics" ? (
             merchantAnalyticsPanelContent
+          ) : merchantDesktopSection === "logs" ? (
+            merchantLogsPanelContent
           ) : merchantDesktopSection === "support" ? (
             supportDesktopSurfaceContent
           ) : null}
@@ -20683,6 +20780,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         onClick={openMerchantAnalyticsPanel}
                       >
                         数据统计
+                      </button>
+                      <button
+                        type="button"
+                        className={getMerchantDesktopSubmenuButtonClassName(merchantDesktopSection === "logs")}
+                        onClick={openMerchantLogsPanel}
+                      >
+                        日志
                       </button>
                       <button
                         type="button"
