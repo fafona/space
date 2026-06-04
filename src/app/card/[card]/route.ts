@@ -71,6 +71,7 @@ function normalizeText(value: string | null | undefined) {
 }
 
 const BUSINESS_CARD_SHARE_MANIFEST_BUCKETS = ["page-assets", "assets", "uploads", "public"] as const;
+const GOOGLE_REVIEW_DISPLAY_TEXT = "欢迎评价";
 
 type StorageOperationError = {
   message?: string | null;
@@ -475,7 +476,7 @@ function buildContactNoteFallbackRows(note?: string) {
     if (!key || !value) continue;
     const row: SummaryRow = {
       label,
-      value,
+      value: key === "googleReview" ? GOOGLE_REVIEW_DISPLAY_TEXT : value,
       actionHtml: buildSummaryActionHtmlFromKey(key, label, value),
     };
     rowsByKey[key] = [...(rowsByKey[key] ?? []), row];
@@ -1476,7 +1477,7 @@ function buildContactSummaryHtmlLegacy(input: {
   if (input.contact?.googleReview) {
     rows.push({
       label: "Google",
-      value: input.contact.googleReview,
+      value: GOOGLE_REVIEW_DISPLAY_TEXT,
       actionHtml: buildSummaryActionHtmlFromKey("googleReview", "Google", input.contact.googleReview),
     });
   }
@@ -2167,7 +2168,7 @@ function buildOrderedContactSummaryHtml(input: {
     contact.googleReview
       ? {
           label: "Google",
-          value: contact.googleReview,
+          value: GOOGLE_REVIEW_DISPLAY_TEXT,
           actionHtml: buildSummaryActionHtmlFromKey("googleReview", "Google", contact.googleReview),
         }
       : null,

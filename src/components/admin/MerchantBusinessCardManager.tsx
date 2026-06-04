@@ -93,6 +93,7 @@ const CONTACT_FIELD_LABELS = Object.fromEntries(CONTACT_FIELDS.map((item) => [it
   MerchantBusinessCardEditableContactFieldKey,
   string
 >;
+const GOOGLE_REVIEW_DISPLAY_TEXT = "欢迎评价";
 
 const INVOICE_FIELDS = [
   { key: "name", label: "名称", summaryLabel: "开票名称", placeholder: "请输入开票名称" },
@@ -800,6 +801,7 @@ function resolveContactDisplayValue(
   contacts: MerchantBusinessCardDraft["contacts"],
   key: MerchantBusinessCardEditableContactFieldKey,
 ) {
+  if (key === "googleReview") return normalizeText(contacts.googleReview) ? GOOGLE_REVIEW_DISPLAY_TEXT : "";
   return key === "phone" ? buildPhoneContactValue(contacts) : normalizeText(contacts[key]);
 }
 
