@@ -18,10 +18,10 @@ export type MerchantOperationLogInput = Omit<MerchantOperationLogEntry, "id" | "
 };
 
 const MERCHANT_OPERATION_LOG_KEY_PREFIX = "merchant-space:merchant-operation-logs:v1:";
-const MAX_MERCHANT_OPERATION_LOGS = 3000;
+export const MAX_MERCHANT_OPERATION_LOGS = 3000;
 export const MERCHANT_OPERATION_LOG_EVENT = "merchant-operation-log-recorded";
 
-function normalizeText(value: unknown, maxLength = 240) {
+export function normalizeMerchantOperationLogText(value: unknown, maxLength = 240) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
 
@@ -29,44 +29,41 @@ function getStorageKey(siteId: string) {
   return `${MERCHANT_OPERATION_LOG_KEY_PREFIX}${siteId}`;
 }
 
-function normalizeLogEntry(value: unknown): MerchantOperationLogEntry | null {
+export function normalizeMerchantOperationLogEntry(value: unknown): MerchantOperationLogEntry | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
-  const siteId = normalizeText(record.siteId, 80);
-  const at = normalizeText(record.at, 80);
-  const moduleName = normalizeText(record.module, 80);
-  const action = normalizeText(record.action, 80);
-  const summary = normalizeText(record.summary, 240);
+  const siteId = normalizeMerchantOperationLogText(record.siteId, 80);
+  const at = normalizeMerchantOperationLogText(record.at, 80);
+  const moduleName = normalizeMerchantOperationLogText(record.module, 80);
+  const action = normalizeMerchantOperationLogText(record.action, 80);
+  const summary = normalizeMerchantOperationLogText(record.summary, 240);
   if (!siteId || !at || !moduleName || !action || !summary) return null;
   return {
-    id: normalizeText(record.id, 120) || `op-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    id: normalizeMerchantOperationLogText(record.id, 120) || `op-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     siteId,
     at,
     module: moduleName,
     action,
     summary,
     status: record.status === "failed" ? "failed" : "success",
-    method: normalizeText(record.method, 16) || undefined,
-    endpoint: normalizeText(record.endpoint, 160) || undefined,
-    detail: normalizeText(record.detail, 240) || undefined,
+    method: normalizeMerchantOperationLogText(record.method, 16) || undefined,
+    endpoint: normalizeMerchantOperationLogText(record.endpoint, 160) || undefined,
+    detail: normalizeMerchantOperationLogText(record.detail, 240) || undefined,
   };
 }
 
-function isSystemSyncNoise(entry: MerchantOperationLogEntry) {
-  return entry.endpoint === "/api/business-card-share" && entry.action === "保存名片";
-}
-
-function isChatOperationLog(entry: MerchantOperationLogEntry) {
+export function shouldKeepMerchantOperationLog(entry: MerchantOperationLogEntry) {
   return (
-    entry.endpoint === "/api/merchant-chat-business-card" ||
-    entry.endpoint === "/api/merchant-peer-messages" ||
-    entry.endpoint === "/api/support-messages" ||
-    entry.module === "会话"
+    entry.endpoint !== "/api/merchant-chat-business-card" &&
+    entry.endpoint !== "/api/merchant-peer-messages" &&
+    entry.endpoint !== "/api/support-messages" &&
+    entry.endpoint !== "/api/merchant-operation-logs" &&
+    entry.module !== "会话"
   );
 }
 
 export function readMerchantOperationLogs(siteId: string, limit = MAX_MERCHANT_OPERATION_LOGS): MerchantOperationLogEntry[] {
-  const normalizedSiteId = normalizeText(siteId, 80);
+  const normalizedSiteId = normalizeMerchantOperationLogText(siteId, 80);
   if (!normalizedSiteId || typeof window === "undefined") return [];
   try {
     const raw = window.localStorage.getItem(getStorageKey(normalizedSiteId));
@@ -74,11 +71,8 @@ export function readMerchantOperationLogs(siteId: string, limit = MAX_MERCHANT_O
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
     return parsed
-      .map(normalizeLogEntry)
-      .filter((item): item is MerchantOperationLogEntry => {
-        if (!item) return false;
-        return !isSystemSyncNoise(item) && !isChatOperationLog(item);
-      })
+      .map(normalizeMerchantOperationLogEntry)
+      .filter((item): item is MerchantOperationLogEntry => Boolean(item && shouldKeepMerchantOperationLog(item)))
       .slice(0, limit);
   } catch {
     return [];
@@ -86,21 +80,21 @@ export function readMerchantOperationLogs(siteId: string, limit = MAX_MERCHANT_O
 }
 
 export function recordMerchantOperationLog(input: MerchantOperationLogInput) {
-  const siteId = normalizeText(input.siteId, 80);
+  const siteId = normalizeMerchantOperationLogText(input.siteId, 80);
   if (!siteId || typeof window === "undefined") return;
   const entry: MerchantOperationLogEntry = {
     id: `op-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
     siteId,
     at: input.at || new Date().toISOString(),
-    module: normalizeText(input.module, 80) || "后台",
-    action: normalizeText(input.action, 80) || "操作",
-    summary: normalizeText(input.summary, 240) || "商户后台操作",
+    module: normalizeMerchantOperationLogText(input.module, 80) || "后台",
+    action: normalizeMerchantOperationLogText(input.action, 80) || "操作",
+    summary: normalizeMerchantOperationLogText(input.summary, 240) || "商户后台操作",
     status: input.status === "failed" ? "failed" : "success",
-    method: normalizeText(input.method, 16) || undefined,
-    endpoint: normalizeText(input.endpoint, 160) || undefined,
-    detail: normalizeText(input.detail, 240) || undefined,
+    method: normalizeMerchantOperationLogText(input.method, 16) || undefined,
+    endpoint: normalizeMerchantOperationLogText(input.endpoint, 160) || undefined,
+    detail: normalizeMerchantOperationLogText(input.detail, 240) || undefined,
   };
-  if (isSystemSyncNoise(entry) || isChatOperationLog(entry)) return;
+  if (!shouldKeepMerchantOperationLog(entry)) return;
   try {
     const current = readMerchantOperationLogs(siteId, MAX_MERCHANT_OPERATION_LOGS);
     window.localStorage.setItem(getStorageKey(siteId), JSON.stringify([entry, ...current].slice(0, MAX_MERCHANT_OPERATION_LOGS)));
@@ -108,4 +102,16 @@ export function recordMerchantOperationLog(input: MerchantOperationLogInput) {
   } catch {
     // Operation logs should never block the actual merchant action.
   }
+  fetch("/api/merchant-operation-logs", {
+    method: "POST",
+    cache: "no-store",
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+      accept: "application/json",
+    },
+    body: JSON.stringify(entry),
+  }).catch(() => {
+    // Server persistence is best-effort; the real merchant action already completed.
+  });
 }

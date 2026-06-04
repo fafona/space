@@ -1029,6 +1029,8 @@ export default function MerchantMembershipSettingsPanel({
                               src={normalizePublicAssetUrl(item.imageUrl)}
                               alt={item.name || "图片"}
                               className="h-full w-full object-cover"
+                              loading="lazy"
+                              decoding="async"
                               onError={(event) => {
                                 event.currentTarget.style.display = "none";
                               }}

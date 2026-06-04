@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
   MERCHANT_MEMBER_LEGAL_ALLERGENS,
   type MerchantMemberAccountTransaction,
@@ -26,6 +26,9 @@ type MerchantMemberManagerProps = {
 type MembershipsPayload = {
   ok?: unknown;
   memberships?: MerchantMembershipListItem[];
+  total?: unknown;
+  allTotal?: unknown;
+  hasMore?: unknown;
   message?: unknown;
 };
 
@@ -47,7 +50,7 @@ type MemberOperationDialogState = {
   type: MerchantMemberAccountTransactionType;
 } | null;
 
-const MERCHANT_MEMBER_RENDER_LIMIT = 300;
+const MERCHANT_MEMBER_PAGE_SIZE = 120;
 
 const EMPTY_MEMBER_INSIGHT: MerchantMembershipInsight = {
   pointBalance: 0,
@@ -199,33 +202,6 @@ function getAvatarInitial(membership: MerchantMembershipListItem) {
   return getMemberDisplayName(membership).slice(0, 1).toUpperCase() || "会";
 }
 
-function buildSearchText(membership: MerchantMembershipListItem) {
-  const publicParts = [membership.memberNo, membership.status, membership.joinedAt, membership.leftAt];
-  if (!membership.profileVisible) return publicParts.join(" ").toLowerCase();
-  return [
-    ...publicParts,
-    membership.nickname,
-    membership.name,
-    membership.accountId,
-    membership.email,
-    membership.phone,
-    membership.birthday,
-    membership.gender,
-    membership.country,
-    membership.province,
-    membership.city,
-    membership.address,
-    membership.taxName,
-    membership.taxNumber,
-    membership.taxCountry,
-    membership.taxProvince,
-    membership.taxCity,
-    membership.taxAddress,
-  ]
-    .join(" ")
-    .toLowerCase();
-}
-
 function ProfileField({
   label,
   value,
@@ -249,9 +225,12 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
   const [selectedMembershipId, setSelectedMembershipId] = useState("");
   const [statusFilter, setStatusFilter] = useState<MemberStatusFilter>("all");
   const [keyword, setKeyword] = useState("");
-  const [renderLimit, setRenderLimit] = useState(MERCHANT_MEMBER_RENDER_LIMIT);
+  const [membershipTotal, setMembershipTotal] = useState(0);
+  const [membershipAllTotal, setMembershipAllTotal] = useState(0);
+  const [membershipHasMore, setMembershipHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const membershipsRef = useRef<MerchantMembershipListItem[]>([]);
   const [couponHistoryOpen, setCouponHistoryOpen] = useState(false);
   const [allergenSaving, setAllergenSaving] = useState(false);
   const [allergenError, setAllergenError] = useState("");
@@ -269,35 +248,17 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
   const normalizedSiteId = siteId.trim();
   const deferredKeyword = useDeferredValue(keyword);
 
-  const membershipSearchRows = useMemo(
-    () => memberships.map((membership) => ({ membership, searchText: buildSearchText(membership) })),
-    [memberships],
-  );
-
   const membershipById = useMemo(
     () => new Map(memberships.map((membership) => [membership.id, membership])),
     [memberships],
   );
 
-  const filteredMemberships = useMemo(() => {
-    const normalizedKeyword = deferredKeyword.trim().toLowerCase();
-    return membershipSearchRows
-      .filter(({ membership, searchText }) => {
-        if (statusFilter !== "all" && membership.status !== statusFilter) return false;
-        if (!normalizedKeyword) return true;
-        return searchText.includes(normalizedKeyword);
-      })
-      .map((row) => row.membership);
-  }, [deferredKeyword, membershipSearchRows, statusFilter]);
-
-  const renderedMemberships = useMemo(
-    () => filteredMemberships.slice(0, renderLimit),
-    [filteredMemberships, renderLimit],
-  );
+  const filteredMemberships = memberships;
+  const renderedMemberships = memberships;
 
   useEffect(() => {
-    setRenderLimit(MERCHANT_MEMBER_RENDER_LIMIT);
-  }, [deferredKeyword, statusFilter]);
+    membershipsRef.current = memberships;
+  }, [memberships]);
 
   const selectedMembership = useMemo(() => {
     return membershipById.get(selectedMembershipId) ?? null;
@@ -346,17 +307,28 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     return () => window.clearTimeout(timer);
   }, [allergenError, operationError]);
 
-  const loadMemberships = useCallback(async () => {
+  const loadMemberships = useCallback(async (mode: "reset" | "append" = "reset") => {
     if (!/^\d{8}$/.test(normalizedSiteId)) {
       setMemberships([]);
       setSelectedMembershipId("");
+      setMembershipTotal(0);
+      setMembershipAllTotal(0);
+      setMembershipHasMore(false);
       setLoadError("当前商户资料还没准备好，请稍后重试。");
       return;
     }
     setLoading(true);
     setLoadError("");
     try {
-      const response = await fetch(`/api/memberships?siteId=${encodeURIComponent(normalizedSiteId)}`, {
+      const params = new URLSearchParams({
+        siteId: normalizedSiteId,
+        offset: mode === "append" ? String(membershipsRef.current.length) : "0",
+        limit: String(MERCHANT_MEMBER_PAGE_SIZE),
+      });
+      if (statusFilter !== "all") params.set("status", statusFilter);
+      const normalizedKeyword = deferredKeyword.trim();
+      if (normalizedKeyword) params.set("query", normalizedKeyword);
+      const response = await fetch(`/api/memberships?${params.toString()}`, {
         method: "GET",
         cache: "no-store",
         credentials: "same-origin",
@@ -369,19 +341,28 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
         throw new Error(readPayloadMessage(payload?.message, "会员列表加载失败，请稍后重试"));
       }
       const nextMemberships = Array.isArray(payload.memberships) ? payload.memberships : [];
-      setMemberships(nextMemberships);
+      setMemberships((current) => (mode === "append" ? [...current, ...nextMemberships] : nextMemberships));
+      setMembershipTotal(Number(payload.total) || nextMemberships.length);
+      setMembershipAllTotal(Number(payload.allTotal) || nextMemberships.length);
+      setMembershipHasMore(payload.hasMore === true);
       setSelectedMembershipId((current) => {
-        if (current && nextMemberships.some((membership) => membership.id === current)) return current;
+        const candidateMemberships = mode === "append" ? [...membershipsRef.current, ...nextMemberships] : nextMemberships;
+        if (current && candidateMemberships.some((membership) => membership.id === current)) return current;
         return "";
       });
     } catch (error) {
-      setMemberships([]);
+      if (mode === "reset") {
+        setMemberships([]);
+        setMembershipTotal(0);
+        setMembershipAllTotal(0);
+        setMembershipHasMore(false);
+      }
       setSelectedMembershipId("");
       setLoadError(error instanceof Error ? error.message : "会员列表加载失败，请稍后重试");
     } finally {
       setLoading(false);
     }
-  }, [normalizedSiteId]);
+  }, [deferredKeyword, normalizedSiteId, statusFilter]);
 
   const loadMemberSettings = useCallback(async () => {
     if (!/^\d{8}$/.test(normalizedSiteId)) {
@@ -626,6 +607,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold text-slate-950">会员列表</h2>
+            <div className="mt-1 text-xs text-slate-500">当前筛选 {membershipTotal} / 全部 {membershipAllTotal}</div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button
@@ -767,16 +749,17 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                         </tr>
                       );
                     })}
-                    {filteredMemberships.length > renderedMemberships.length ? (
+                    {membershipHasMore ? (
                       <tr>
                         <td colSpan={9} className="px-3 py-4 text-center text-xs text-slate-500">
-                          <div>当前筛选结果 {filteredMemberships.length} 条，已显示 {renderedMemberships.length} 条。</div>
+                          <div>当前筛选结果 {membershipTotal} 条，已加载 {renderedMemberships.length} 条。</div>
                           <button
                             type="button"
-                            className="mt-3 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-700 transition hover:bg-white"
-                            onClick={() => setRenderLimit((current) => current + MERCHANT_MEMBER_RENDER_LIMIT)}
+                            className="mt-3 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+                            disabled={loading}
+                            onClick={() => void loadMemberships("append")}
                           >
-                            显示更多
+                            {loading ? "加载中..." : "显示更多"}
                           </button>
                         </td>
                       </tr>

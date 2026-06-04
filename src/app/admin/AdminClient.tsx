@@ -802,6 +802,30 @@ const SUPPORT_OFFICIAL_CONTACT_KEY = "official";
 const MERCHANT_IDS_CACHE_KEY = "merchant-space:admin:merchant-ids:v2";
 const MERCHANT_IDS_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
+function readMerchantLogDatePartsValue(value: string) {
+  const normalized = value
+    .trim()
+    .replace(/[年月]/g, "-")
+    .replace(/日/g, "")
+    .replace(/[./]/g, "-")
+    .replace(/\s+/g, "");
+  if (!normalized) return null;
+  const match = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return null;
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  return { year, month, day };
+}
+
+function formatMerchantLogDateValue(value: string) {
+  const parts = readMerchantLogDatePartsValue(value);
+  if (!parts) return "";
+  return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+}
+
 function isSameBlocksSnapshot(a: Block[], b: Block[]) {
   try {
     return JSON.stringify(a) === JSON.stringify(b);
@@ -3509,6 +3533,7 @@ function buildMerchantOperationFetchInfo(
   if (!endpoint.startsWith("/api/") || endpoint.startsWith("/api/auth/") || endpoint.startsWith("/api/supabase-proxy/")) {
     return null;
   }
+  if (endpoint === "/api/merchant-operation-logs") return null;
   if (isMerchantChatOperationEndpoint(endpoint)) return null;
   const body = readMerchantOperationBody(init);
   const siteId = resolveMerchantOperationSiteId(url, body, fallbackSiteId);
@@ -6229,6 +6254,14 @@ export default function AdminClient({
   const [merchantOperationLogStatusFilter, setMerchantOperationLogStatusFilter] = useState<"all" | MerchantOperationLogStatus>("all");
   const [merchantOperationLogStartDate, setMerchantOperationLogStartDate] = useState("");
   const [merchantOperationLogEndDate, setMerchantOperationLogEndDate] = useState("");
+  const [merchantOperationLogTotal, setMerchantOperationLogTotal] = useState(0);
+  const [merchantOperationLogAllTotal, setMerchantOperationLogAllTotal] = useState(0);
+  const [merchantOperationLogSuccessTotal, setMerchantOperationLogSuccessTotal] = useState(0);
+  const [merchantOperationLogFailedTotal, setMerchantOperationLogFailedTotal] = useState(0);
+  const [merchantOperationLogModules, setMerchantOperationLogModules] = useState<string[]>([]);
+  const [merchantOperationLogHasMore, setMerchantOperationLogHasMore] = useState(false);
+  const [merchantOperationLogsLoading, setMerchantOperationLogsLoading] = useState(false);
+  const merchantOperationLogsCountRef = useRef(0);
   const merchantOperationLogStartPickerRef = useRef<HTMLInputElement>(null);
   const merchantOperationLogEndPickerRef = useRef<HTMLInputElement>(null);
   const [europeLocationOptionsApi, setEuropeLocationOptionsApi] = useState<EuropeLocationOptionsApi | null>(null);
@@ -6277,7 +6310,12 @@ export default function AdminClient({
   const [supportLocalMessages, setSupportLocalMessages] = useState<LocalSupportMessage[]>([]);
   const [supportPeerContacts, setSupportPeerContacts] = useState<MerchantPeerContactSummary[]>([]);
   const [supportPeerThreads, setSupportPeerThreads] = useState<MerchantPeerThread[]>([]);
+  const supportPeerThreadsRef = useRef<MerchantPeerThread[]>([]);
   const [supportPeerLoading, setSupportPeerLoading] = useState(false);
+  const [supportPeerHistoryLoading, setSupportPeerHistoryLoading] = useState(false);
+  const [supportPeerMessagePageByMerchantId, setSupportPeerMessagePageByMerchantId] = useState<
+    Record<string, { total: number; offset: number; limit: number; hasMore: boolean }>
+  >({});
   const [supportPeerError, setSupportPeerError] = useState("");
   const [supportSearchLoading, setSupportSearchLoading] = useState(false);
   const [supportSearchError, setSupportSearchError] = useState("");
@@ -11468,19 +11506,102 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, [editingSiteId, isPlatformEditor]);
 
   useEffect(() => {
-    if (isPlatformEditor || typeof window === "undefined" || !isMerchantNumericId(editingSiteId)) {
-      setMerchantOperationLogs([]);
-      return;
-    }
+    merchantOperationLogsCountRef.current = merchantOperationLogs.length;
+  }, [merchantOperationLogs.length]);
+
+  const loadMerchantOperationLogs = useCallback(
+    async (mode: "reset" | "append" = "reset") => {
+      if (isPlatformEditor || typeof window === "undefined" || !isMerchantNumericId(editingSiteId)) {
+        setMerchantOperationLogs([]);
+        setMerchantOperationLogTotal(0);
+        setMerchantOperationLogAllTotal(0);
+        setMerchantOperationLogSuccessTotal(0);
+        setMerchantOperationLogFailedTotal(0);
+        setMerchantOperationLogModules([]);
+        setMerchantOperationLogHasMore(false);
+        return;
+      }
+      const offset = mode === "append" ? merchantOperationLogsCountRef.current : 0;
+      setMerchantOperationLogsLoading(true);
+      try {
+        const params = new URLSearchParams({
+          siteId: editingSiteId,
+          offset: String(offset),
+          limit: "120",
+        });
+        if (merchantOperationLogModuleFilter !== "all") params.set("module", merchantOperationLogModuleFilter);
+        if (merchantOperationLogStatusFilter !== "all") params.set("status", merchantOperationLogStatusFilter);
+        if (merchantOperationLogStartDate.trim()) params.set("startDate", formatMerchantLogDateValue(merchantOperationLogStartDate) || merchantOperationLogStartDate.trim());
+        if (merchantOperationLogEndDate.trim()) params.set("endDate", formatMerchantLogDateValue(merchantOperationLogEndDate) || merchantOperationLogEndDate.trim());
+        const response = await fetch(`/api/merchant-operation-logs?${params.toString()}`, {
+          method: "GET",
+          cache: "no-store",
+          credentials: "same-origin",
+          headers: {
+            accept: "application/json",
+          },
+        });
+        const payload = (await response.json().catch(() => null)) as
+          | {
+              ok?: unknown;
+              logs?: MerchantOperationLogEntry[];
+              total?: unknown;
+              allTotal?: unknown;
+              successCount?: unknown;
+              failedCount?: unknown;
+              modules?: unknown;
+              hasMore?: unknown;
+            }
+          | null;
+        if (!response.ok || payload?.ok !== true || !Array.isArray(payload.logs)) {
+          throw new Error("merchant_operation_logs_load_failed");
+        }
+        setMerchantOperationLogs((current) => (mode === "append" ? [...current, ...payload.logs!] : payload.logs!));
+        setMerchantOperationLogTotal(Number(payload.total) || 0);
+        setMerchantOperationLogAllTotal(Number(payload.allTotal) || 0);
+        setMerchantOperationLogSuccessTotal(Number(payload.successCount) || 0);
+        setMerchantOperationLogFailedTotal(Number(payload.failedCount) || 0);
+        setMerchantOperationLogModules(Array.isArray(payload.modules) ? payload.modules.filter((item): item is string => typeof item === "string") : []);
+        setMerchantOperationLogHasMore(payload.hasMore === true);
+      } catch {
+        if (mode === "reset") {
+          const localLogs = readMerchantOperationLogs(editingSiteId);
+          setMerchantOperationLogs(localLogs);
+          setMerchantOperationLogTotal(localLogs.length);
+          setMerchantOperationLogAllTotal(localLogs.length);
+          setMerchantOperationLogSuccessTotal(localLogs.filter((item) => item.status === "success").length);
+          setMerchantOperationLogFailedTotal(localLogs.filter((item) => item.status === "failed").length);
+          setMerchantOperationLogModules(Array.from(new Set(localLogs.map((item) => item.module).filter(Boolean))));
+          setMerchantOperationLogHasMore(false);
+        }
+      } finally {
+        setMerchantOperationLogsLoading(false);
+      }
+    },
+    [
+      editingSiteId,
+      isPlatformEditor,
+      merchantOperationLogEndDate,
+      merchantOperationLogModuleFilter,
+      merchantOperationLogStartDate,
+      merchantOperationLogStatusFilter,
+    ],
+  );
+
+  useEffect(() => {
+    void loadMerchantOperationLogs("reset");
+  }, [loadMerchantOperationLogs]);
+
+  useEffect(() => {
+    if (isPlatformEditor || typeof window === "undefined" || !isMerchantNumericId(editingSiteId)) return;
     const refreshLogs = () => {
-      setMerchantOperationLogs(readMerchantOperationLogs(editingSiteId));
+      void loadMerchantOperationLogs("reset");
     };
-    refreshLogs();
     window.addEventListener(MERCHANT_OPERATION_LOG_EVENT, refreshLogs);
     return () => {
       window.removeEventListener(MERCHANT_OPERATION_LOG_EVENT, refreshLogs);
     };
-  }, [editingSiteId, isPlatformEditor]);
+  }, [editingSiteId, isPlatformEditor, loadMerchantOperationLogs]);
 
   useEffect(() => {
     if (isPlatformEditor || typeof window === "undefined") return;
@@ -13480,7 +13601,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   );
 
   const requestMerchantPeerWithSessionRecovery = useCallback(
-    (init: RequestInit) => {
+    (init: RequestInit, extraParams?: Record<string, string>) => {
       const params = new URLSearchParams();
       const peerSiteId = (
         editingSiteId ||
@@ -13501,6 +13622,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       }
       if (merchantDisplayName) {
         params.set("merchantName", merchantDisplayName);
+      }
+      if (extraParams) {
+        Object.entries(extraParams).forEach(([key, value]) => {
+          if (value) params.set(key, value);
+        });
       }
       const path = params.size > 0 ? `/api/merchant-peer-messages?${params.toString()}` : "/api/merchant-peer-messages";
       let nextInit = init;
@@ -14216,12 +14342,104 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
   }, [currentSupportMerchantId, editingSiteId, isPlatformEditor, requestMerchantPeerWithSessionRecovery]);
 
+  useEffect(() => {
+    supportPeerThreadsRef.current = supportPeerThreads;
+  }, [supportPeerThreads]);
+
+  const loadSupportPeerThreadMessages = useCallback(
+    async (contactMerchantId: string, mode: "reset" | "prepend" = "reset") => {
+      const normalizedContactId = contactMerchantId.trim();
+      if (isPlatformEditor || !/^\d{8}$/.test(normalizedContactId)) return;
+      const existingThread = supportPeerThreadsRef.current.find((thread) => {
+        return (
+          (thread.merchantAId === currentSupportMerchantId && thread.merchantBId === normalizedContactId) ||
+          (thread.merchantBId === currentSupportMerchantId && thread.merchantAId === normalizedContactId)
+        );
+      });
+      const offset = mode === "prepend" ? existingThread?.messages.length ?? 0 : 0;
+      setSupportPeerHistoryLoading(true);
+      try {
+        const response = await requestMerchantPeerWithSessionRecovery(
+          {
+            method: "GET",
+          },
+          {
+            contactMerchantId: normalizedContactId,
+            offset: String(offset),
+            limit: "120",
+          },
+        );
+        const payload = (await response.json().catch(() => null)) as
+          | {
+              ok?: unknown;
+              thread?: MerchantPeerThread | null;
+              messagePage?: {
+                total?: unknown;
+                offset?: unknown;
+                limit?: unknown;
+                hasMore?: unknown;
+              } | null;
+            }
+          | null;
+        if (!response.ok || payload?.ok !== true || !payload.thread) return;
+        const incomingThread = payload.thread;
+        setSupportPeerThreads((current) => {
+          const existingIndex = current.findIndex((thread) => thread.threadKey === incomingThread.threadKey);
+          const mergeMessages = (existing: MerchantPeerThread | null) => {
+            const messageMap = new Map<string, MerchantPeerThread["messages"][number]>();
+            const existingMessages = mode === "prepend" ? existing?.messages ?? [] : [];
+            [...incomingThread.messages, ...existingMessages].forEach((message) => {
+              messageMap.set(message.id, message);
+            });
+            return Array.from(messageMap.values()).sort((left, right) => {
+              const leftTime = Date.parse(left.createdAt);
+              const rightTime = Date.parse(right.createdAt);
+              if (leftTime !== rightTime) return leftTime - rightTime;
+              return left.id.localeCompare(right.id, "en");
+            });
+          };
+          if (existingIndex < 0) {
+            return [...current, incomingThread];
+          }
+          const next = [...current];
+          next[existingIndex] = {
+            ...next[existingIndex],
+            ...incomingThread,
+            messages: mergeMessages(next[existingIndex]),
+          };
+          return next;
+        });
+        setSupportPeerMessagePageByMerchantId((current) => ({
+          ...current,
+          [normalizedContactId]: {
+            total: Number(payload.messagePage?.total) || incomingThread.messages.length,
+            offset: Number(payload.messagePage?.offset) || 0,
+            limit: Number(payload.messagePage?.limit) || incomingThread.messages.length,
+            hasMore: payload.messagePage?.hasMore === true,
+          },
+        }));
+      } finally {
+        setSupportPeerHistoryLoading(false);
+      }
+    },
+    [
+      currentSupportMerchantId,
+      isPlatformEditor,
+      requestMerchantPeerWithSessionRecovery,
+    ],
+  );
+
   const refreshSupportMobileConversations = useCallback(async () => {
     await Promise.all([
       loadSupportThread({ silent: false, suppressError: false }),
       loadSupportPeerInbox({ silent: false, suppressError: false }),
     ]);
   }, [loadSupportPeerInbox, loadSupportThread]);
+
+  useEffect(() => {
+    if (!selectedSupportPeerContact?.merchantId) return;
+    void loadSupportPeerThreadMessages(selectedSupportPeerContact.merchantId, "reset");
+  }, [loadSupportPeerThreadMessages, selectedSupportPeerContact?.merchantId]);
 
   const {
     pullDistance: supportMobileConversationPullDistance,
@@ -18647,6 +18865,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     isMobileSupportDialog && !showMobileSupportThread && !isSupportMobileKeyboardVisible
       ? renderTopMostOverlay(supportMobileBottomNav)
       : null;
+  const selectedSupportPeerMessagePage = selectedSupportPeerMerchantId
+    ? supportPeerMessagePageByMerchantId[selectedSupportPeerMerchantId] ?? null
+    : null;
+  const canLoadOlderSupportPeerMessages =
+    supportSelectedContactKey !== SUPPORT_OFFICIAL_CONTACT_KEY &&
+    Boolean(selectedSupportPeerContact?.merchantId && selectedSupportPeerMessagePage?.hasMore);
 
   const supportEmojiPickerGrid = (
     <div className="grid grid-cols-8 gap-1.5">
@@ -18977,6 +19201,18 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         }}
       >
         {supportPinnedMessageBanner}
+        {canLoadOlderSupportPeerMessages ? (
+          <div className="mb-3 flex justify-center">
+            <button
+              type="button"
+              className="rounded-full bg-white/90 px-3 py-1.5 text-xs font-semibold text-slate-600 shadow-sm transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={supportPeerHistoryLoading}
+              onClick={() => selectedSupportPeerContact?.merchantId && void loadSupportPeerThreadMessages(selectedSupportPeerContact.merchantId, "prepend")}
+            >
+              {supportPeerHistoryLoading ? "加载中..." : "加载更早消息"}
+            </button>
+          </div>
+        ) : null}
         {selectedSupportLoading ? (
           <div className="rounded-[28px] border border-dashed border-slate-300 bg-white/90 px-5 py-8 text-center text-sm text-slate-500 shadow-sm">
             正在加载聊天记录...
@@ -19759,38 +19995,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     const date = new Date(value);
     return Number.isFinite(date.getTime()) ? date.toLocaleString("zh-CN", { hour12: false }) : value;
   };
-  const readMerchantLogDateParts = (value: string) => {
-    const normalized = value
-      .trim()
-      .replace(/[年月]/g, "-")
-      .replace(/日/g, "")
-      .replace(/[./]/g, "-")
-      .replace(/\s+/g, "");
-    if (!normalized) return null;
-    const match = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-    if (!match) return null;
-    const year = Number(match[1]);
-    const month = Number(match[2]);
-    const day = Number(match[3]);
-    if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return null;
-    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-    return { year, month, day };
-  };
-  const formatMerchantLogDateInputValue = (value: string) => {
-    const parts = readMerchantLogDateParts(value);
-    if (!parts) return "";
-    return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
-  };
-  const readMerchantLogDateBoundary = (value: string, boundary: "start" | "end") => {
-    const parts = readMerchantLogDateParts(value);
-    if (!parts) return null;
-    const date =
-      boundary === "start"
-        ? new Date(parts.year, parts.month - 1, parts.day, 0, 0, 0, 0)
-        : new Date(parts.year, parts.month - 1, parts.day, 23, 59, 59, 999);
-    const time = date.getTime();
-    return Number.isFinite(time) ? time : null;
-  };
   const openMerchantOperationLogDatePicker = (input: HTMLInputElement | null) => {
     if (!input) return;
     const picker = input as HTMLInputElement & { showPicker?: () => void };
@@ -19801,62 +20005,51 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     input.focus();
     input.click();
   };
-  const merchantOperationLogModuleOptions = Array.from(
-    new Set(merchantOperationLogs.map((item) => item.module).filter(Boolean)),
-  ).sort((left, right) => left.localeCompare(right, "zh-CN"));
-  const merchantOperationLogStartAt = readMerchantLogDateBoundary(merchantOperationLogStartDate, "start");
-  const merchantOperationLogEndAt = readMerchantLogDateBoundary(merchantOperationLogEndDate, "end");
+  const merchantOperationLogModuleOptions =
+    merchantOperationLogModules.length > 0
+      ? merchantOperationLogModules
+      : Array.from(new Set(merchantOperationLogs.map((item) => item.module).filter(Boolean))).sort((left, right) =>
+          left.localeCompare(right, "zh-CN"),
+        );
   const hasMerchantOperationLogFilters =
     merchantOperationLogModuleFilter !== "all" ||
     merchantOperationLogStatusFilter !== "all" ||
     Boolean(merchantOperationLogStartDate) ||
     Boolean(merchantOperationLogEndDate);
-  const filteredMerchantOperationLogs = merchantOperationLogs.filter((item) => {
-    if (merchantOperationLogModuleFilter !== "all" && item.module !== merchantOperationLogModuleFilter) return false;
-    if (merchantOperationLogStatusFilter !== "all" && item.status !== merchantOperationLogStatusFilter) return false;
-    const itemTime = new Date(item.at).getTime();
-    if (Number.isFinite(itemTime)) {
-      if (merchantOperationLogStartAt !== null && itemTime < merchantOperationLogStartAt) return false;
-      if (merchantOperationLogEndAt !== null && itemTime > merchantOperationLogEndAt) return false;
-    }
-    return true;
-  });
-  const merchantOperationLogItems = filteredMerchantOperationLogs;
-  const merchantOperationLogFailedCount = filteredMerchantOperationLogs.filter((item) => item.status === "failed").length;
-  const merchantOperationLogSuccessCount = filteredMerchantOperationLogs.length - merchantOperationLogFailedCount;
-  const exportMerchantOperationLogs = () => {
-    if (!filteredMerchantOperationLogs.length) {
+  const merchantOperationLogItems = merchantOperationLogs;
+  const exportMerchantOperationLogs = async () => {
+    if (!merchantOperationLogTotal) {
       showTip("没有可导出的日志");
       return;
     }
-    const escapeCsvCell = (value: unknown) => {
-      const text = String(value ?? "");
-      return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-    };
-    const rows = [
-      ["时间", "菜单", "状态", "操作", "摘要", "详情", "方法", "接口"],
-      ...filteredMerchantOperationLogs.map((item) => [
-        formatMerchantLogTime(item.at),
-        item.module,
-        item.status === "success" ? "成功" : "失败",
-        item.action,
-        item.summary,
-        item.detail || "",
-        item.method || "",
-        item.endpoint || "",
-      ]),
-    ];
-    const csv = `\uFEFF${rows.map((row) => row.map(escapeCsvCell).join(",")).join("\r\n")}`;
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `merchant-operation-logs-${editingSiteId || "merchant"}-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-    showTip("已导出日志");
+    try {
+      const params = new URLSearchParams({
+        siteId: editingSiteId,
+        export: "csv",
+      });
+      if (merchantOperationLogModuleFilter !== "all") params.set("module", merchantOperationLogModuleFilter);
+      if (merchantOperationLogStatusFilter !== "all") params.set("status", merchantOperationLogStatusFilter);
+      if (merchantOperationLogStartDate.trim()) params.set("startDate", formatMerchantLogDateValue(merchantOperationLogStartDate) || merchantOperationLogStartDate.trim());
+      if (merchantOperationLogEndDate.trim()) params.set("endDate", formatMerchantLogDateValue(merchantOperationLogEndDate) || merchantOperationLogEndDate.trim());
+      const response = await fetch(`/api/merchant-operation-logs?${params.toString()}`, {
+        method: "GET",
+        cache: "no-store",
+        credentials: "same-origin",
+      });
+      if (!response.ok) throw new Error("export_failed");
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `merchant-operation-logs-${editingSiteId || "merchant"}-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      showTip("已导出日志");
+    } catch {
+      showTip("导出失败");
+    }
   };
   const merchantAnalyticsPanelContent = (
     <div className="min-h-[calc(100vh-14rem)] space-y-4">
@@ -20074,16 +20267,16 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         <div className="mt-5 grid gap-3 md:grid-cols-3">
           <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
             <div className="text-xs font-semibold text-slate-500">操作记录</div>
-            <div className="mt-2 text-2xl font-semibold text-slate-950">{filteredMerchantOperationLogs.length}</div>
-            <div className="mt-1 text-xs text-slate-500">全部 {merchantOperationLogs.length}</div>
+            <div className="mt-2 text-2xl font-semibold text-slate-950">{merchantOperationLogTotal}</div>
+            <div className="mt-1 text-xs text-slate-500">全部 {merchantOperationLogAllTotal}</div>
           </div>
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
             <div className="text-xs font-semibold text-emerald-700">成功操作</div>
-            <div className="mt-2 text-2xl font-semibold text-emerald-800">{merchantOperationLogSuccessCount}</div>
+            <div className="mt-2 text-2xl font-semibold text-emerald-800">{merchantOperationLogSuccessTotal}</div>
           </div>
           <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3">
             <div className="text-xs font-semibold text-rose-700">失败操作</div>
-            <div className="mt-2 text-2xl font-semibold text-rose-800">{merchantOperationLogFailedCount}</div>
+            <div className="mt-2 text-2xl font-semibold text-rose-800">{merchantOperationLogFailedTotal}</div>
           </div>
         </div>
       </section>
@@ -20093,13 +20286,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           <div>
             <div className="text-lg font-semibold text-slate-900">操作日志</div>
             <div className="mt-1 text-sm text-slate-500">
-              显示当前设备记录的此商户后台写操作，最新操作在最上方。筛选结果 {filteredMerchantOperationLogs.length} 条。
+              显示此商户后台写操作，最新操作在最上方。筛选结果 {merchantOperationLogTotal} 条。
             </div>
           </div>
           <button
             type="button"
             className="h-10 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800 shadow-sm transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={!filteredMerchantOperationLogs.length}
+            disabled={!merchantOperationLogTotal}
             onClick={exportMerchantOperationLogs}
           >
             导出
@@ -20153,7 +20346,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 tabIndex={-1}
                 aria-hidden="true"
                 className="absolute right-3 top-1/2 h-px w-px -translate-y-1/2 opacity-0"
-                value={formatMerchantLogDateInputValue(merchantOperationLogStartDate)}
+                value={formatMerchantLogDateValue(merchantOperationLogStartDate)}
                 onChange={(event) => setMerchantOperationLogStartDate(event.currentTarget.value)}
               />
               <button
@@ -20189,7 +20382,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 tabIndex={-1}
                 aria-hidden="true"
                 className="absolute right-3 top-1/2 h-px w-px -translate-y-1/2 opacity-0"
-                value={formatMerchantLogDateInputValue(merchantOperationLogEndDate)}
+                value={formatMerchantLogDateValue(merchantOperationLogEndDate)}
                 onChange={(event) => setMerchantOperationLogEndDate(event.currentTarget.value)}
               />
               <button
@@ -20252,6 +20445,20 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             </div>
           )}
         </div>
+        {merchantOperationLogHasMore ? (
+          <div className="mt-4 flex justify-center">
+            <button
+              type="button"
+              className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={merchantOperationLogsLoading}
+              onClick={() => void loadMerchantOperationLogs("append")}
+            >
+              {merchantOperationLogsLoading ? "加载中..." : `加载更多（已显示 ${merchantOperationLogItems.length} / ${merchantOperationLogTotal}）`}
+            </button>
+          </div>
+        ) : merchantOperationLogsLoading ? (
+          <div className="mt-4 text-center text-sm text-slate-500">正在加载日志...</div>
+        ) : null}
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
@@ -20547,6 +20754,18 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           }}
         >
           {supportPinnedMessageBanner}
+          {canLoadOlderSupportPeerMessages ? (
+            <div className="mb-3 flex justify-center">
+              <button
+                type="button"
+                className="rounded-full bg-white/90 px-3 py-1.5 text-xs font-semibold text-slate-600 shadow-sm transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={supportPeerHistoryLoading}
+                onClick={() => selectedSupportPeerContact?.merchantId && void loadSupportPeerThreadMessages(selectedSupportPeerContact.merchantId, "prepend")}
+              >
+                {supportPeerHistoryLoading ? "加载中..." : "加载更早消息"}
+              </button>
+            </div>
+          ) : null}
           {selectedSupportLoading ? (
             <div className="rounded-2xl border border-dashed bg-white px-4 py-6 text-center text-sm text-slate-500">正在加载聊天记录...</div>
           ) : visibleSupportMessages.length ? (

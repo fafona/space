@@ -93,6 +93,50 @@ type MerchantPeerSessionHintInput = {
   merchantName?: unknown;
 } | null;
 
+const MERCHANT_PEER_DEFAULT_THREAD_MESSAGE_LIMIT = 80;
+
+function normalizeNonNegativeInteger(value: unknown) {
+  const numberValue = Number(trimText(value));
+  return Number.isFinite(numberValue) && numberValue > 0 ? Math.floor(numberValue) : 0;
+}
+
+function normalizePositiveInteger(value: unknown, fallback: number, max: number) {
+  const numberValue = Number(trimText(value));
+  if (!Number.isFinite(numberValue) || numberValue <= 0) return fallback;
+  return Math.min(max, Math.max(1, Math.floor(numberValue)));
+}
+
+function readMerchantPeerThreadWindow(
+  thread: ReturnType<typeof findMerchantPeerThreadForMerchants>,
+  offset: number,
+  limit: number,
+) {
+  if (!thread) {
+    return {
+      thread: null,
+      total: 0,
+      offset: 0,
+      limit,
+      hasMore: false,
+    };
+  }
+  const messages = thread.messages;
+  const normalizedOffset = Math.max(0, Math.floor(offset));
+  const normalizedLimit = Math.max(1, Math.floor(limit));
+  const end = Math.max(0, messages.length - normalizedOffset);
+  const start = Math.max(0, end - normalizedLimit);
+  return {
+    thread: {
+      ...thread,
+      messages: messages.slice(start, end),
+    },
+    total: messages.length,
+    offset: normalizedOffset,
+    limit: normalizedLimit,
+    hasMore: start > 0,
+  };
+}
+
 function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -566,6 +610,7 @@ async function buildInboxResponse(
   merchantId: string,
   supabase?: (PlatformIdentitySupabaseClient & PlatformMerchantSnapshotStoreClient) | null,
   readStatePayload?: MerchantSupportReadStatePayload | null,
+  options?: { threadMessageLimit?: number },
 ) {
   const contacts = listMerchantPeerContactsForMerchant(payload, merchantId);
   const contactMerchantIds = contacts.map((contact) => contact.merchantId);
@@ -604,7 +649,11 @@ async function buildInboxResponse(
         : {}),
     };
   });
-  const threads = listMerchantPeerThreadsForMerchant(payload, merchantId);
+  const threadMessageLimit = Math.max(1, options?.threadMessageLimit ?? MERCHANT_PEER_DEFAULT_THREAD_MESSAGE_LIMIT);
+  const threads = listMerchantPeerThreadsForMerchant(payload, merchantId).map((thread) => ({
+    ...thread,
+    messages: thread.messages.slice(-threadMessageLimit),
+  }));
   const readState = readStatePayload ? getMerchantSupportReadState(readStatePayload, merchantId) : null;
   return {
     ok: true,
@@ -629,6 +678,26 @@ export async function GET(request: Request) {
     loadStoredMerchantPeerInbox(supabase as unknown as MerchantPeerInboxStoreClient),
     loadStoredMerchantSupportReadState(supabase as unknown as MerchantSupportReadStateStoreClient),
   ]);
+  const url = new URL(request.url);
+  const contactMerchantId = normalizeMerchantId(url.searchParams.get("contactMerchantId"));
+  if (contactMerchantId) {
+    const offset = normalizeNonNegativeInteger(url.searchParams.get("offset"));
+    const limit = normalizePositiveInteger(url.searchParams.get("limit"), MERCHANT_PEER_DEFAULT_THREAD_MESSAGE_LIMIT, 200);
+    const fullThread = findMerchantPeerThreadForMerchants(payload, session.merchantId, contactMerchantId);
+    const windowResult = readMerchantPeerThreadWindow(fullThread, offset, limit);
+    return noStoreJson({
+      ok: true,
+      thread: windowResult.thread,
+      messagePage: {
+        total: windowResult.total,
+        offset: windowResult.offset,
+        limit: windowResult.limit,
+        hasMore: windowResult.hasMore,
+      },
+      currentMerchantId: session.merchantId,
+      currentMerchantEmail: session.merchantEmail,
+    });
+  }
   return noStoreJson({
     ...(await buildInboxResponse(
       payload,

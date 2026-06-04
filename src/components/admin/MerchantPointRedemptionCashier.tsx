@@ -654,13 +654,13 @@ export default function MerchantPointRedemptionCashier({
     setError("");
     try {
       const [membersResponse, settingsResponse, couponsResponse] = await Promise.all([
-        fetch(`/api/memberships?siteId=${encodeURIComponent(normalizedSiteId)}`, {
+        fetch(`/api/memberships?siteId=${encodeURIComponent(normalizedSiteId)}&status=active&limit=300`, {
           method: "GET",
           cache: "no-store",
           credentials: "same-origin",
           headers: { accept: "application/json" },
         }),
-        fetch(`/api/membership-settings?siteId=${encodeURIComponent(normalizedSiteId)}`, {
+        fetch(`/api/membership-settings?siteId=${encodeURIComponent(normalizedSiteId)}&scope=redemption-cashier`, {
           method: "GET",
           cache: "no-store",
           credentials: "same-origin",
