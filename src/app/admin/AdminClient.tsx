@@ -3526,10 +3526,7 @@ function buildMerchantOperationFetchInfo(
   if (endpoint === "/api/bookings/workbench") {
     return { siteId, method, endpoint, module: "预约管理", action: "更新工作台", summary: "更新预约工作台" };
   }
-  if (endpoint === "/api/business-card-share") {
-    const action = method === "DELETE" ? "删除名片" : "保存名片";
-    return { siteId, method, endpoint, module: "经营中心", action, summary: `${action}${target}` };
-  }
+  if (endpoint === "/api/business-card-share") return null;
   if (endpoint === "/api/merchant-chat-business-card") {
     return { siteId, method, endpoint, module: "会话", action: "发送名片", summary: `发送会话名片${target}` };
   }
@@ -6189,6 +6186,10 @@ export default function AdminClient({
   const [merchantAnalyticsLoading, setMerchantAnalyticsLoading] = useState(false);
   const [merchantAnalyticsError, setMerchantAnalyticsError] = useState("");
   const [merchantOperationLogs, setMerchantOperationLogs] = useState<MerchantOperationLogEntry[]>([]);
+  const [merchantOperationLogModuleFilter, setMerchantOperationLogModuleFilter] = useState("all");
+  const [merchantOperationLogStatusFilter, setMerchantOperationLogStatusFilter] = useState<"all" | MerchantOperationLogStatus>("all");
+  const [merchantOperationLogStartDate, setMerchantOperationLogStartDate] = useState("");
+  const [merchantOperationLogEndDate, setMerchantOperationLogEndDate] = useState("");
   const [europeLocationOptionsApi, setEuropeLocationOptionsApi] = useState<EuropeLocationOptionsApi | null>(null);
   const [merchantProfileDialogOpen, setMerchantProfileDialogOpen] = useState(false);
   const [merchantProfileDialogShowBusinessCards, setMerchantProfileDialogShowBusinessCards] = useState(true);
@@ -19625,9 +19626,69 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     const date = new Date(value);
     return Number.isFinite(date.getTime()) ? date.toLocaleString("zh-CN", { hour12: false }) : value;
   };
-  const merchantOperationLogItems = merchantOperationLogs.slice(0, 120);
-  const merchantOperationLogFailedCount = merchantOperationLogs.filter((item) => item.status === "failed").length;
-  const merchantOperationLogSuccessCount = merchantOperationLogs.length - merchantOperationLogFailedCount;
+  const readMerchantLogDateBoundary = (value: string, boundary: "start" | "end") => {
+    if (!value) return null;
+    const date = new Date(`${value}T${boundary === "start" ? "00:00:00.000" : "23:59:59.999"}`);
+    const time = date.getTime();
+    return Number.isFinite(time) ? time : null;
+  };
+  const merchantOperationLogModuleOptions = Array.from(
+    new Set(merchantOperationLogs.map((item) => item.module).filter(Boolean)),
+  ).sort((left, right) => left.localeCompare(right, "zh-CN"));
+  const merchantOperationLogStartAt = readMerchantLogDateBoundary(merchantOperationLogStartDate, "start");
+  const merchantOperationLogEndAt = readMerchantLogDateBoundary(merchantOperationLogEndDate, "end");
+  const hasMerchantOperationLogFilters =
+    merchantOperationLogModuleFilter !== "all" ||
+    merchantOperationLogStatusFilter !== "all" ||
+    Boolean(merchantOperationLogStartDate) ||
+    Boolean(merchantOperationLogEndDate);
+  const filteredMerchantOperationLogs = merchantOperationLogs.filter((item) => {
+    if (merchantOperationLogModuleFilter !== "all" && item.module !== merchantOperationLogModuleFilter) return false;
+    if (merchantOperationLogStatusFilter !== "all" && item.status !== merchantOperationLogStatusFilter) return false;
+    const itemTime = new Date(item.at).getTime();
+    if (Number.isFinite(itemTime)) {
+      if (merchantOperationLogStartAt !== null && itemTime < merchantOperationLogStartAt) return false;
+      if (merchantOperationLogEndAt !== null && itemTime > merchantOperationLogEndAt) return false;
+    }
+    return true;
+  });
+  const merchantOperationLogItems = filteredMerchantOperationLogs.slice(0, 120);
+  const merchantOperationLogFailedCount = filteredMerchantOperationLogs.filter((item) => item.status === "failed").length;
+  const merchantOperationLogSuccessCount = filteredMerchantOperationLogs.length - merchantOperationLogFailedCount;
+  const exportMerchantOperationLogs = () => {
+    if (!filteredMerchantOperationLogs.length) {
+      showTip("没有可导出的日志");
+      return;
+    }
+    const escapeCsvCell = (value: unknown) => {
+      const text = String(value ?? "");
+      return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    };
+    const rows = [
+      ["时间", "菜单", "状态", "操作", "摘要", "详情", "方法", "接口"],
+      ...filteredMerchantOperationLogs.map((item) => [
+        formatMerchantLogTime(item.at),
+        item.module,
+        item.status === "success" ? "成功" : "失败",
+        item.action,
+        item.summary,
+        item.detail || "",
+        item.method || "",
+        item.endpoint || "",
+      ]),
+    ];
+    const csv = `\uFEFF${rows.map((row) => row.map(escapeCsvCell).join(",")).join("\r\n")}`;
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `merchant-operation-logs-${editingSiteId || "merchant"}-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    showTip("已导出日志");
+  };
   const merchantAnalyticsPanelContent = (
     <div className="min-h-[calc(100vh-14rem)] space-y-4">
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -19844,7 +19905,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         <div className="mt-5 grid gap-3 md:grid-cols-3">
           <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
             <div className="text-xs font-semibold text-slate-500">操作记录</div>
-            <div className="mt-2 text-2xl font-semibold text-slate-950">{merchantOperationLogs.length}</div>
+            <div className="mt-2 text-2xl font-semibold text-slate-950">{filteredMerchantOperationLogs.length}</div>
+            <div className="mt-1 text-xs text-slate-500">全部 {merchantOperationLogs.length}</div>
           </div>
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
             <div className="text-xs font-semibold text-emerald-700">成功操作</div>
@@ -19858,8 +19920,82 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
-        <div className="text-lg font-semibold text-slate-900">操作日志</div>
-        <div className="mt-1 text-sm text-slate-500">显示当前设备记录的此商户后台写操作，最新操作在最上方。</div>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="text-lg font-semibold text-slate-900">操作日志</div>
+            <div className="mt-1 text-sm text-slate-500">
+              显示当前设备记录的此商户后台写操作，最新操作在最上方。筛选结果 {filteredMerchantOperationLogs.length} 条。
+            </div>
+          </div>
+          <button
+            type="button"
+            className="h-10 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800 shadow-sm transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={!filteredMerchantOperationLogs.length}
+            onClick={exportMerchantOperationLogs}
+          >
+            导出
+          </button>
+        </div>
+        <div className="mt-4 grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 md:grid-cols-[1fr_1fr_1fr_1fr_auto] md:items-end">
+          <label className="grid gap-1 text-xs font-semibold text-slate-500">
+            菜单
+            <select
+              className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+              value={merchantOperationLogModuleFilter}
+              onChange={(event) => setMerchantOperationLogModuleFilter(event.currentTarget.value)}
+            >
+              <option value="all">全部菜单</option>
+              {merchantOperationLogModuleOptions.map((moduleName) => (
+                <option key={moduleName} value={moduleName}>
+                  {moduleName}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="grid gap-1 text-xs font-semibold text-slate-500">
+            状态
+            <select
+              className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+              value={merchantOperationLogStatusFilter}
+              onChange={(event) => setMerchantOperationLogStatusFilter(event.currentTarget.value as "all" | MerchantOperationLogStatus)}
+            >
+              <option value="all">全部状态</option>
+              <option value="success">成功</option>
+              <option value="failed">失败</option>
+            </select>
+          </label>
+          <label className="grid gap-1 text-xs font-semibold text-slate-500">
+            开始时间
+            <input
+              type="date"
+              className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+              value={merchantOperationLogStartDate}
+              onChange={(event) => setMerchantOperationLogStartDate(event.currentTarget.value)}
+            />
+          </label>
+          <label className="grid gap-1 text-xs font-semibold text-slate-500">
+            结束时间
+            <input
+              type="date"
+              className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+              value={merchantOperationLogEndDate}
+              onChange={(event) => setMerchantOperationLogEndDate(event.currentTarget.value)}
+            />
+          </label>
+          <button
+            type="button"
+            className="h-10 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={!hasMerchantOperationLogFilters}
+            onClick={() => {
+              setMerchantOperationLogModuleFilter("all");
+              setMerchantOperationLogStatusFilter("all");
+              setMerchantOperationLogStartDate("");
+              setMerchantOperationLogEndDate("");
+            }}
+          >
+            重置
+          </button>
+        </div>
         <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200">
           {merchantOperationLogItems.length ? (
             <div className="divide-y divide-slate-100">
@@ -19888,7 +20024,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               ))}
             </div>
           ) : (
-            <div className="px-4 py-8 text-center text-sm text-slate-500">当前还没有记录到此商户的后台操作。</div>
+            <div className="px-4 py-8 text-center text-sm text-slate-500">
+              {hasMerchantOperationLogFilters ? "没有匹配当前筛选条件的操作记录。" : "当前还没有记录到此商户的后台操作。"}
+            </div>
           )}
         </div>
       </section>

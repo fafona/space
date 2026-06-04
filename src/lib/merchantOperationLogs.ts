@@ -52,6 +52,10 @@ function normalizeLogEntry(value: unknown): MerchantOperationLogEntry | null {
   };
 }
 
+function isSystemSyncNoise(entry: MerchantOperationLogEntry) {
+  return entry.endpoint === "/api/business-card-share" && entry.action === "保存名片";
+}
+
 export function readMerchantOperationLogs(siteId: string, limit = 300): MerchantOperationLogEntry[] {
   const normalizedSiteId = normalizeText(siteId, 80);
   if (!normalizedSiteId || typeof window === "undefined") return [];
@@ -60,7 +64,13 @@ export function readMerchantOperationLogs(siteId: string, limit = 300): Merchant
     if (!raw) return [];
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
-    return parsed.map(normalizeLogEntry).filter((item): item is MerchantOperationLogEntry => Boolean(item)).slice(0, limit);
+    return parsed
+      .map(normalizeLogEntry)
+      .filter((item): item is MerchantOperationLogEntry => {
+        if (!item) return false;
+        return !isSystemSyncNoise(item);
+      })
+      .slice(0, limit);
   } catch {
     return [];
   }
