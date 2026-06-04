@@ -18,7 +18,7 @@ export type MerchantOperationLogInput = Omit<MerchantOperationLogEntry, "id" | "
 };
 
 const MERCHANT_OPERATION_LOG_KEY_PREFIX = "merchant-space:merchant-operation-logs:v1:";
-const MAX_MERCHANT_OPERATION_LOGS = 600;
+const MAX_MERCHANT_OPERATION_LOGS = 3000;
 export const MERCHANT_OPERATION_LOG_EVENT = "merchant-operation-log-recorded";
 
 function normalizeText(value: unknown, maxLength = 240) {
@@ -56,7 +56,7 @@ function isSystemSyncNoise(entry: MerchantOperationLogEntry) {
   return entry.endpoint === "/api/business-card-share" && entry.action === "保存名片";
 }
 
-export function readMerchantOperationLogs(siteId: string, limit = 300): MerchantOperationLogEntry[] {
+export function readMerchantOperationLogs(siteId: string, limit = MAX_MERCHANT_OPERATION_LOGS): MerchantOperationLogEntry[] {
   const normalizedSiteId = normalizeText(siteId, 80);
   if (!normalizedSiteId || typeof window === "undefined") return [];
   try {

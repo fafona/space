@@ -2286,6 +2286,12 @@ async function yieldToBrowser() {
   });
 }
 
+async function waitForMs(ms: number) {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, Math.max(0, ms));
+  });
+}
+
 async function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality: number) {
   return await new Promise<Blob | null>((resolve) => {
     canvas.toBlob((blob) => resolve(blob), type, quality);
@@ -6168,6 +6174,7 @@ export default function AdminClient({
   const [backendNotice, setBackendNotice] = useState<string | null>(supabaseMissingEnvNotice);
   const [dialog, setDialog] = useState<CenterDialog | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(startInLoadingState);
+  const checkingAuthRef = useRef(startInLoadingState);
   const [hasEditorContent, setHasEditorContent] = useState(true);
   const [remoteContentVerified, setRemoteContentVerified] = useState<boolean>(
     () => !isSupabaseEnabled || isSupabaseFallbackMode || hasRemoteContentVerifiedStamp([storeScope]),
@@ -6244,6 +6251,9 @@ export default function AdminClient({
   const [supportMobileView, setSupportMobileView] = useState<"list" | "thread">("list");
   const [supportMobileHomeTab, setSupportMobileHomeTab] = useState<SupportMobileHomeTab>("conversations");
   const supportMobileHomeTabRef = useRef<SupportMobileHomeTab>("conversations");
+  useEffect(() => {
+    checkingAuthRef.current = checkingAuth;
+  }, [checkingAuth]);
   useEffect(() => {
     supportMobileHomeTabRef.current = supportMobileHomeTab;
   }, [supportMobileHomeTab]);
@@ -6959,6 +6969,91 @@ export default function AdminClient({
 
   function showPublishFailedTip(message: string) {
     showTip(message);
+  }
+
+  function applyMerchantSessionIdentityPayload(payload: Awaited<ReturnType<typeof readMerchantSessionPayload>> | null) {
+    if (!payload || payload.authenticated !== true) return false;
+    const merchantIds = readMerchantSessionMerchantIds(payload);
+    const merchantId =
+      (typeof payload.merchantId === "string" ? payload.merchantId.trim() : "") ||
+      merchantIds.find((item) => isMerchantNumericId(item)) ||
+      merchantIds[0] ||
+      "";
+    const email = typeof payload.user?.email === "string" ? payload.user.email.trim() : "";
+    if (!merchantId && !email) return false;
+    if (merchantIds.length > 0 || merchantId) {
+      merchantIdsRef.current = mergePreferredMerchantIds(
+        merchantIds.length > 0 ? merchantIds : [merchantId],
+        merchantIdsRef.current,
+      );
+    }
+    merchantSessionIdentityRef.current = {
+      merchantId,
+      email: email || null,
+    };
+    if (merchantId) {
+      setMerchantSiteIdOverride((current) => current || merchantId);
+    }
+    return true;
+  }
+
+  async function ensureMerchantSessionRecoveredBeforePublish() {
+    if (isPlatformEditor || !isSupabaseEnabled || isSupabaseFallbackMode) return true;
+
+    if (checkingAuthRef.current) {
+      showSavePublishTip("正在自动恢复登录...");
+      const deadline = Date.now() + Math.max(6000, Math.min(12_000, AUTH_CHECK_TIMEOUT_MS + 5000));
+      while (checkingAuthRef.current && Date.now() < deadline) {
+        await waitForMs(200);
+      }
+    }
+
+    const acceptRecoveredIdentity = () => {
+      setBackendNotice(null);
+      setCheckingAuth(false);
+      checkingAuthRef.current = false;
+      return true;
+    };
+
+    const currentPayload = await readMerchantSessionPayload(Math.max(2200, Math.min(6200, AUTH_CHECK_TIMEOUT_MS))).catch(
+      () => null,
+    );
+    if (applyMerchantSessionIdentityPayload(currentPayload)) return acceptRecoveredIdentity();
+
+    const recoveredSession = await recoverBrowserSupabaseSessionWithRefresh(
+      Math.max(3200, Math.min(9000, AUTH_CHECK_TIMEOUT_MS + 1800)),
+    ).catch(() => null);
+    if (recoveredSession) {
+      const syncedPayload = await syncMerchantSessionCookies(
+        recoveredSession,
+        Math.max(2600, Math.min(7000, AUTH_CHECK_TIMEOUT_MS)),
+      ).catch(() => null);
+      if (applyMerchantSessionIdentityPayload(syncedPayload)) return acceptRecoveredIdentity();
+    }
+
+    const cookieSession = await recoverBrowserSupabaseSessionViaMerchantCookies(
+      Math.max(2600, Math.min(7600, AUTH_CHECK_TIMEOUT_MS)),
+    ).catch(() => null);
+    if (cookieSession) {
+      const syncedPayload = await syncMerchantSessionCookies(
+        cookieSession,
+        Math.max(2600, Math.min(7000, AUTH_CHECK_TIMEOUT_MS)),
+      ).catch(() => null);
+      if (applyMerchantSessionIdentityPayload(syncedPayload)) return acceptRecoveredIdentity();
+    }
+
+    const retryPayload = await readMerchantSessionPayload(Math.max(2200, Math.min(6200, AUTH_CHECK_TIMEOUT_MS))).catch(
+      () => null,
+    );
+    if (applyMerchantSessionIdentityPayload(retryPayload)) return acceptRecoveredIdentity();
+
+    const freshIdentity = await readFreshMerchantSessionIdentity(Math.max(2600, AUTH_CHECK_TIMEOUT_MS)).catch(() => null);
+    const freshMerchantId = freshIdentity?.merchantId?.trim() ?? "";
+    const freshEmail = typeof freshIdentity?.email === "string" ? freshIdentity.email.trim() : "";
+    if (freshMerchantId || freshEmail) return acceptRecoveredIdentity();
+
+    showTip("登录状态恢复失败，请稍后再试");
+    return false;
   }
 
   function getMerchantRemoteVerificationScopes(merchantIds: string[]) {
@@ -10851,6 +10946,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       });
       return;
     }
+    if (!isPlatformEditor) {
+      const sessionReady = await ensureMerchantSessionRecoveredBeforePublish();
+      if (!sessionReady) return;
+    }
     if (!isPlatformEditor && !remoteContentVerified) {
       const verified = await ensureRemoteContentVerifiedBeforePublish(scopedSiteIdForGuard);
       if (!verified) {
@@ -11340,7 +11439,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       return;
     }
     const refreshLogs = () => {
-      setMerchantOperationLogs(readMerchantOperationLogs(editingSiteId, 500));
+      setMerchantOperationLogs(readMerchantOperationLogs(editingSiteId));
     };
     refreshLogs();
     window.addEventListener(MERCHANT_OPERATION_LOG_EVENT, refreshLogs);
@@ -19627,8 +19726,24 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     return Number.isFinite(date.getTime()) ? date.toLocaleString("zh-CN", { hour12: false }) : value;
   };
   const readMerchantLogDateBoundary = (value: string, boundary: "start" | "end") => {
-    if (!value) return null;
-    const date = new Date(`${value}T${boundary === "start" ? "00:00:00.000" : "23:59:59.999"}`);
+    const normalized = value
+      .trim()
+      .replace(/[年月]/g, "-")
+      .replace(/日/g, "")
+      .replace(/[./]/g, "-")
+      .replace(/\s+/g, "");
+    if (!normalized) return null;
+    const match = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (!match) return null;
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return null;
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    const date =
+      boundary === "start"
+        ? new Date(year, month - 1, day, 0, 0, 0, 0)
+        : new Date(year, month - 1, day, 23, 59, 59, 999);
     const time = date.getTime();
     return Number.isFinite(time) ? time : null;
   };
@@ -19652,7 +19767,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     }
     return true;
   });
-  const merchantOperationLogItems = filteredMerchantOperationLogs.slice(0, 120);
+  const merchantOperationLogItems = filteredMerchantOperationLogs;
   const merchantOperationLogFailedCount = filteredMerchantOperationLogs.filter((item) => item.status === "failed").length;
   const merchantOperationLogSuccessCount = filteredMerchantOperationLogs.length - merchantOperationLogFailedCount;
   const exportMerchantOperationLogs = () => {
@@ -19967,7 +20082,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           <label className="grid gap-1 text-xs font-semibold text-slate-500">
             开始时间
             <input
-              type="date"
+              type="text"
+              inputMode="numeric"
+              autoComplete="off"
+              placeholder="YYYY-MM-DD"
               className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
               value={merchantOperationLogStartDate}
               onChange={(event) => setMerchantOperationLogStartDate(event.currentTarget.value)}
@@ -19976,7 +20094,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           <label className="grid gap-1 text-xs font-semibold text-slate-500">
             结束时间
             <input
-              type="date"
+              type="text"
+              inputMode="numeric"
+              autoComplete="off"
+              placeholder="YYYY-MM-DD"
               className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
               value={merchantOperationLogEndDate}
               onChange={(event) => setMerchantOperationLogEndDate(event.currentTarget.value)}
