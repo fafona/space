@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import OrderStatusFilterDropdown from "@/components/admin/OrderStatusFilterDropdown";
 import { showGlobalToast } from "@/lib/globalToast";
@@ -43,6 +43,9 @@ type MerchantOrderManagerDialogProps = {
 };
 
 type MerchantOrderFilter = "all" | MerchantOrderStatus;
+
+const MERCHANT_ORDER_RENDER_LIMIT = 250;
+const MERCHANT_ORDER_FETCH_LIMIT = 500;
 
 function overlay(children: ReactNode) {
   if (typeof document === "undefined") return null;
@@ -257,8 +260,11 @@ export default function MerchantOrderManagerDialog({
   const isInline = mode === "inline";
   const [records, setRecords] = useState<MerchantOrderRecord[]>(() => readCachedOrderRecords(siteId));
   const [loading, setLoading] = useState(false);
+  const [loadingMoreRecords, setLoadingMoreRecords] = useState(false);
+  const [hasMoreRemoteRecords, setHasMoreRemoteRecords] = useState(false);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [renderLimit, setRenderLimit] = useState(MERCHANT_ORDER_RENDER_LIMIT);
   const [filter, setFilter] = useState<MerchantOrderFilter>("all");
   const [sortMode, setSortMode] = useState<MerchantOrderSortMode>(
     () => loadMerchantOrderManagerPreferences(siteId).sortMode,
@@ -275,6 +281,7 @@ export default function MerchantOrderManagerDialog({
   const [selectedStatuses, setSelectedStatuses] = useState<MerchantOrderStatus[]>(
     () => loadMerchantOrderManagerPreferences(siteId).selectedStatuses,
   );
+  const deferredSearch = useDeferredValue(search);
   const isWorkbenchOpenControlled = controlledWorkbenchOpen !== undefined;
   const workbenchOpen = controlledWorkbenchOpen ?? internalWorkbenchOpen;
   const setWorkbenchOpen = useCallback(
@@ -326,26 +333,65 @@ export default function MerchantOrderManagerDialog({
     }
     setError("");
     try {
-      const response = await fetch(`/api/orders?siteId=${encodeURIComponent(siteId)}`, {
-        cache: "no-store",
-        credentials: "same-origin",
-      });
+      const response = await fetch(
+        `/api/orders?siteId=${encodeURIComponent(siteId)}&offset=0&limit=${MERCHANT_ORDER_FETCH_LIMIT}`,
+        {
+          cache: "no-store",
+          credentials: "same-origin",
+        },
+      );
       const payload = (await response.json().catch(() => null)) as
-        | { orders?: MerchantOrderRecord[]; message?: string; error?: string }
+        | { orders?: MerchantOrderRecord[]; hasMore?: boolean; message?: string; error?: string }
         | null;
       if (!response.ok) {
         throw new Error(payload?.message || payload?.error || "order_list_failed");
       }
       const nextRecords = Array.isArray(payload?.orders) ? payload.orders : [];
+      setHasMoreRemoteRecords(Boolean(payload?.hasMore));
       writeCachedOrderRecords(siteId, nextRecords);
       setRecords(nextRecords);
       onOrdersChange?.(nextRecords);
     } catch (nextError) {
+      setHasMoreRemoteRecords(false);
       setError(cachedRecords.length > 0 ? "" : nextError instanceof Error && nextError.message ? nextError.message : "订单读取失败");
     } finally {
       setLoading(false);
     }
   }, [onOrdersChange, siteId]);
+
+  const loadMoreOrders = useCallback(async () => {
+    if (!siteId || loading || loadingMoreRecords || !hasMoreRemoteRecords) return;
+    setLoadingMoreRecords(true);
+    setError("");
+    try {
+      const response = await fetch(
+        `/api/orders?siteId=${encodeURIComponent(siteId)}&offset=${records.length}&limit=${MERCHANT_ORDER_FETCH_LIMIT}`,
+        {
+          cache: "no-store",
+          credentials: "same-origin",
+        },
+      );
+      const payload = (await response.json().catch(() => null)) as
+        | { orders?: MerchantOrderRecord[]; hasMore?: boolean; message?: string; error?: string }
+        | null;
+      if (!response.ok) {
+        throw new Error(payload?.message || payload?.error || "order_list_failed");
+      }
+      const nextRecords = Array.isArray(payload?.orders) ? payload.orders : [];
+      setHasMoreRemoteRecords(Boolean(payload?.hasMore));
+      setRecords((current) => {
+        const existingIds = new Set(current.map((record) => record.id));
+        const mergedRecords = [...current, ...nextRecords.filter((record) => !existingIds.has(record.id))];
+        writeCachedOrderRecords(siteId, mergedRecords);
+        onOrdersChange?.(mergedRecords);
+        return mergedRecords;
+      });
+    } catch (nextError) {
+      setError(nextError instanceof Error && nextError.message ? nextError.message : "order_list_failed");
+    } finally {
+      setLoadingMoreRecords(false);
+    }
+  }, [hasMoreRemoteRecords, loading, loadingMoreRecords, onOrdersChange, records.length, siteId]);
 
   useEffect(() => {
     if (!open || !siteId) return;
@@ -377,9 +423,33 @@ export default function MerchantOrderManagerDialog({
     }
   }, [selectedOrderIds.length, selectionMode]);
 
+  useEffect(() => {
+    setRenderLimit(MERCHANT_ORDER_RENDER_LIMIT);
+  }, [deferredSearch, filter, historyVisibility, selectedStatuses, sortMode]);
+
   const historyFilteredRecords = useMemo(
     () => filterMerchantOrdersByHistory(records, historyVisibility),
     [historyVisibility, records],
+  );
+
+  const orderSearchTextById = useMemo(
+    () =>
+      new Map(
+        records.map((record) => [
+          record.id,
+          [
+            record.id,
+            record.customer.name,
+            record.customer.phone,
+            record.customer.email,
+            record.customer.note,
+            record.items.map((item) => `${item.name}\n${item.code}\n${item.description}`).join("\n"),
+          ]
+            .join("\n")
+            .toLowerCase(),
+        ]),
+      ),
+    [records],
   );
 
   const counts = useMemo(
@@ -396,7 +466,7 @@ export default function MerchantOrderManagerDialog({
   );
 
   const filteredRecords = useMemo(() => {
-    const keyword = search.trim().toLowerCase();
+    const keyword = deferredSearch.trim().toLowerCase();
     return sortMerchantOrders(
       historyFilteredRecords.filter((record) => {
         if (filter === "all") {
@@ -405,21 +475,16 @@ export default function MerchantOrderManagerDialog({
           return false;
         }
         if (!keyword) return true;
-        return [
-          record.id,
-          record.customer.name,
-          record.customer.phone,
-          record.customer.email,
-          record.customer.note,
-          record.items.map((item) => `${item.name}\n${item.code}\n${item.description}`).join("\n"),
-        ]
-          .join("\n")
-          .toLowerCase()
-          .includes(keyword);
+        return (orderSearchTextById.get(record.id) ?? "").includes(keyword);
       }),
       sortMode,
     );
-  }, [filter, historyFilteredRecords, search, selectedStatuses, sortMode]);
+  }, [deferredSearch, filter, historyFilteredRecords, orderSearchTextById, selectedStatuses, sortMode]);
+
+  const renderedRecords = useMemo(
+    () => filteredRecords.slice(0, renderLimit),
+    [filteredRecords, renderLimit],
+  );
 
   const visibleRecordIdSet = useMemo(() => new Set(filteredRecords.map((record) => record.id)), [filteredRecords]);
   const selectedRecordSet = useMemo(() => new Set(selectedOrderIds), [selectedOrderIds]);
@@ -509,7 +574,7 @@ export default function MerchantOrderManagerDialog({
         }),
       });
       const payload = (await response.json().catch(() => null)) as
-        | { orders?: MerchantOrderRecord[]; message?: string; error?: string }
+        | { orders?: MerchantOrderRecord[]; hasMore?: boolean; message?: string; error?: string }
         | null;
       if (!response.ok || !Array.isArray(payload?.orders)) {
         throw new Error(payload?.message || payload?.error || "order_update_failed");
@@ -1349,7 +1414,8 @@ export default function MerchantOrderManagerDialog({
                 正在读取订单...
               </div>
             ) : filteredRecords.length > 0 ? (
-              filteredRecords.map((record) => {
+              <>
+              {renderedRecords.map((record) => {
                 const canOpenConversation = Boolean(record.customerAccountId || record.customerLoginEmail);
                 const displayName = record.customer.name || "未命名客户";
                 return (
@@ -1487,7 +1553,27 @@ export default function MerchantOrderManagerDialog({
                   </article>
                   </div>
                 );
-              })
+              })}
+              {filteredRecords.length > renderedRecords.length || hasMoreRemoteRecords ? (
+                <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-5 py-4 text-center text-sm text-slate-500">
+                  <div>当前筛选结果 {filteredRecords.length} 条，已显示 {renderedRecords.length} 条。</div>
+                  <button
+                    type="button"
+                    className="mt-3 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={() => {
+                      if (filteredRecords.length > renderedRecords.length) {
+                        setRenderLimit((current) => current + MERCHANT_ORDER_RENDER_LIMIT);
+                        return;
+                      }
+                      void loadMoreOrders();
+                    }}
+                    disabled={loadingMoreRecords}
+                  >
+                    显示更多
+                  </button>
+                </div>
+              ) : null}
+              </>
             ) : (
               <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-500">
                 还没有匹配到订单。

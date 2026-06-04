@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { CategoryIconGlyph, normalizeCategoryIconName } from "./CategoryIconGlyph";
 import { useI18n } from "@/components/I18nProvider";
 import {
@@ -94,6 +94,8 @@ const EMPTY_MEMBER_INSIGHT: MerchantMembershipInsight = {
   yearlySpendAmount: 0,
   productPreferences: [],
 };
+
+const MERCHANT_REDEMPTION_ITEM_RENDER_LIMIT = 300;
 
 function trimText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
@@ -332,6 +334,7 @@ export default function MerchantPointRedemptionCashier({
   const [selectedMemberId, setSelectedMemberId] = useState("");
   const [memberKeyword, setMemberKeyword] = useState("");
   const [itemKeyword, setItemKeyword] = useState("");
+  const [itemRenderLimit, setItemRenderLimit] = useState(MERCHANT_REDEMPTION_ITEM_RENDER_LIMIT);
   const [categoryId, setCategoryId] = useState("");
   const [cart, setCart] = useState<CartLine[]>([]);
   const [note, setNote] = useState("");
@@ -363,6 +366,9 @@ export default function MerchantPointRedemptionCashier({
   const [selectedRecordId, setSelectedRecordId] = useState("");
   const languageRootRef = useRef<HTMLDivElement | null>(null);
   const languageMenuRef = useRef<HTMLDivElement | null>(null);
+  const deferredMemberKeyword = useDeferredValue(memberKeyword);
+  const deferredItemKeyword = useDeferredValue(itemKeyword);
+  const deferredRecordsKeyword = useDeferredValue(recordsKeyword);
   const resolvedLocale = useMemo(() => resolveSupportedLocale(locale), [locale]);
   const currentLanguage = useMemo(
     () => LANGUAGE_OPTIONS.find((item) => item.code === resolvedLocale) ?? LANGUAGE_OPTIONS[0],
@@ -395,21 +401,44 @@ export default function MerchantPointRedemptionCashier({
     [memberships],
   );
 
+  const activeMemberSearchRows = useMemo(
+    () => activeMembers.map((membership) => ({ membership, searchText: buildMemberSearchText(membership) })),
+    [activeMembers],
+  );
+
+  const activeMemberById = useMemo(
+    () => new Map(activeMembers.map((membership) => [membership.id, membership])),
+    [activeMembers],
+  );
+
+  const enabledItemById = useMemo(
+    () => new Map(enabledItems.map((item) => [item.id, item])),
+    [enabledItems],
+  );
+
+  const categoryNameById = useMemo(
+    () => new Map(enabledCategories.map((category) => [category.id, category.name])),
+    [enabledCategories],
+  );
+
   const filteredMembers = useMemo(() => {
-    const keyword = memberKeyword.trim().toLowerCase();
+    const keyword = deferredMemberKeyword.trim().toLowerCase();
     if (!keyword) return [];
-    return activeMembers.filter((membership) => buildMemberSearchText(membership).includes(keyword)).slice(0, 20);
-  }, [activeMembers, memberKeyword]);
+    return activeMemberSearchRows
+      .filter((row) => row.searchText.includes(keyword))
+      .map((row) => row.membership)
+      .slice(0, 20);
+  }, [activeMemberSearchRows, deferredMemberKeyword]);
 
   const selectedMember = useMemo(
-    () => activeMembers.find((membership) => membership.id === selectedMemberId) ?? null,
-    [activeMembers, selectedMemberId],
+    () => activeMemberById.get(selectedMemberId) ?? null,
+    [activeMemberById, selectedMemberId],
   );
 
   const selectedInsight = selectedMember?.insight ?? EMPTY_MEMBER_INSIGHT;
 
   const couponSearchResults = useMemo(() => {
-    const keyword = itemKeyword.trim().toLowerCase();
+    const keyword = deferredItemKeyword.trim().toLowerCase();
     if (!keyword) return [];
     const merchantCouponRows = coupons.map((coupon) => ({
       key: `coupon:${coupon.id}`,
@@ -451,10 +480,10 @@ export default function MerchantPointRedemptionCashier({
       if (searchText.includes(keyword)) unique.set(coupon.key, coupon);
     });
     return Array.from(unique.values()).slice(0, 8);
-  }, [coupons, itemKeyword, selectedInsight.availableCoupons, selectedInsight.couponHistory, selectedMember]);
+  }, [coupons, deferredItemKeyword, selectedInsight.availableCoupons, selectedInsight.couponHistory, selectedMember]);
 
   const filteredItems = useMemo(() => {
-    const keyword = itemKeyword.trim().toLowerCase();
+    const keyword = deferredItemKeyword.trim().toLowerCase();
     const recommendedCategoryIds = new Set(
       enabledCategories
         .filter((category) => {
@@ -469,7 +498,7 @@ export default function MerchantPointRedemptionCashier({
         if (categoryId && item.categoryId !== categoryId) return false;
         if (!categoryId && allCategoryExcludedIds.has(item.categoryId)) return false;
         if (!keyword) return true;
-        return [item.code, item.name, item.description, categoryName(enabledCategories, item.categoryId)]
+        return [item.code, item.name, item.description, categoryNameById.get(item.categoryId) ?? ""]
           .join(" ")
           .toLowerCase()
           .includes(keyword);
@@ -494,12 +523,21 @@ export default function MerchantPointRedemptionCashier({
         }
         return (left.code || left.id).localeCompare(right.code || right.id) || left.sort - right.sort;
       });
-  }, [allCategoryExcludedIds, catalogFilterTab, catalogSortMode, categoryId, enabledCategories, enabledItems, itemKeyword]);
+  }, [allCategoryExcludedIds, catalogFilterTab, catalogSortMode, categoryId, categoryNameById, deferredItemKeyword, enabledCategories, enabledItems]);
+
+  const renderedItems = useMemo(
+    () => filteredItems.slice(0, itemRenderLimit),
+    [filteredItems, itemRenderLimit],
+  );
+
+  useEffect(() => {
+    setItemRenderLimit(MERCHANT_REDEMPTION_ITEM_RENDER_LIMIT);
+  }, [allCategoryExcludedIds, catalogFilterTab, catalogSortMode, categoryId, deferredItemKeyword]);
 
   const cartRows = useMemo(() => {
     return cart
       .map((line) => {
-        const item = enabledItems.find((entry) => entry.id === line.itemId);
+        const item = enabledItemById.get(line.itemId);
         const unitPoints = item
           ? getRedemptionPointCostForMember(item, selectedMember, settings)
           : parsePositiveInteger(line.customPoints);
@@ -531,7 +569,7 @@ export default function MerchantPointRedemptionCashier({
           subtotalPoints: number;
         } => Boolean(row),
       );
-  }, [cart, enabledItems, selectedMember, settings]);
+  }, [cart, enabledItemById, selectedMember, settings]);
 
   const cartQuantityByItemId = useMemo(() => {
     const quantities = new Map<string, number>();
@@ -587,7 +625,7 @@ export default function MerchantPointRedemptionCashier({
   }, [memberships, view]);
 
   const filteredTransactionRecords = useMemo(() => {
-    const keyword = recordsKeyword.trim().toLowerCase();
+    const keyword = deferredRecordsKeyword.trim().toLowerCase();
     return transactionRecords.filter((record) => {
       if (!isInRecordsTimeFilter(record.at, recordsTimeFilter)) return false;
       if (!keyword) return true;
@@ -596,7 +634,7 @@ export default function MerchantPointRedemptionCashier({
         .toLowerCase()
         .includes(keyword);
     });
-  }, [recordsKeyword, recordsTimeFilter, transactionRecords]);
+  }, [deferredRecordsKeyword, recordsTimeFilter, transactionRecords]);
 
   const recordsPageSize = 30;
   const recordsTotalPages = Math.max(1, Math.ceil(filteredTransactionRecords.length / recordsPageSize));
@@ -3206,7 +3244,8 @@ export default function MerchantPointRedemptionCashier({
 
           <div className={`catalog-products ${viewMode === "image" ? `goods-grid goods-grid-${productImageSize}` : "goods-list"}`}>
             {filteredItems.length ? (
-              filteredItems.map((item) => {
+              <>
+              {renderedItems.map((item) => {
                 const unitPoints = getRedemptionPointCostForMember(item, selectedMember, settings);
                 const inCartQuantity = cartQuantityByItemId.get(item.id) ?? 0;
                 const outOfStock = item.stock !== null && inCartQuantity >= item.stock;
@@ -3242,7 +3281,12 @@ export default function MerchantPointRedemptionCashier({
                     <div className="product-visual">
                       {itemImageUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={itemImageUrl} alt={item.name || item.code || "兑换项目"} />
+                        <img
+                          src={itemImageUrl}
+                          alt={item.name || item.code || "兑换项目"}
+                          loading="lazy"
+                          decoding="async"
+                        />
                       ) : (
                         <span>{productInitial(item)}</span>
                       )}
@@ -3257,7 +3301,20 @@ export default function MerchantPointRedemptionCashier({
                     </div>
                   </button>
                 );
-              })
+              })}
+              {filteredItems.length > renderedItems.length ? (
+                <div className="catalog-empty">
+                  <div>当前筛选结果 {filteredItems.length} 个，已显示 {renderedItems.length} 个。</div>
+                  <button
+                    type="button"
+                    className="mt-3 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                    onClick={() => setItemRenderLimit((current) => current + MERCHANT_REDEMPTION_ITEM_RENDER_LIMIT)}
+                  >
+                    显示更多
+                  </button>
+                </div>
+              ) : null}
+              </>
             ) : (
               <div className="catalog-empty">暂无匹配项目。请在会员管理的兑换项目中添加并启用。</div>
             )}

@@ -46,16 +46,49 @@ function normalizeEmail(value: unknown) {
   return trimText(value, 320).toLowerCase();
 }
 
-function matchesMemberIdentity(
-  membership: Pick<MerchantMembershipListItem, "accountId" | "userId" | "email">,
-  input: { accountId?: string | null; userId?: string | null; email?: string | null },
-) {
+function buildMemberIdentityKeys(input: { accountId?: unknown; userId?: unknown; email?: unknown }) {
+  const keys: string[] = [];
   const accountId = trimText(input.accountId, 128);
   const userId = trimText(input.userId, 128);
   const email = normalizeEmail(input.email);
-  if (membership.accountId && accountId && membership.accountId === accountId) return true;
-  if (membership.userId && userId && membership.userId === userId) return true;
-  return Boolean(membership.email && email && normalizeEmail(membership.email) === email);
+  if (accountId) keys.push(`account:${accountId}`);
+  if (userId) keys.push(`user:${userId}`);
+  if (email) keys.push(`email:${email}`);
+  return keys;
+}
+
+function appendIdentityMappedItem<T>(
+  map: Map<string, T[]>,
+  keys: string[],
+  item: T,
+) {
+  const uniqueKeys = [...new Set(keys)];
+  uniqueKeys.forEach((key) => {
+    const current = map.get(key);
+    if (current) {
+      current.push(item);
+      return;
+    }
+    map.set(key, [item]);
+  });
+}
+
+function readIdentityMappedItems<T>(
+  map: Map<string, T[]>,
+  membership: Pick<MerchantMembershipListItem, "accountId" | "userId" | "email">,
+  getItemKey: (item: T) => string,
+) {
+  const items: T[] = [];
+  const seen = new Set<string>();
+  buildMemberIdentityKeys(membership).forEach((key) => {
+    (map.get(key) ?? []).forEach((item) => {
+      const itemKey = getItemKey(item);
+      if (seen.has(itemKey)) return;
+      seen.add(itemKey);
+      items.push(item);
+    });
+  });
+  return items;
 }
 
 function getOrderActivityAt(order: MerchantOrderRecord) {
@@ -87,22 +120,62 @@ function getClaimStatus(coupon: MerchantCouponRecord, claimEvent: MerchantCoupon
   return "available";
 }
 
+function buildMemberOrdersByIdentity(orders: MerchantOrderRecord[]) {
+  const map = new Map<string, MerchantOrderRecord[]>();
+  orders
+    .filter((order) => order.status !== "cancelled")
+    .forEach((order) => {
+      appendIdentityMappedItem(
+        map,
+        buildMemberIdentityKeys({
+          accountId: order.customerAccountId,
+          userId: order.customerUserId,
+          email: order.customerLoginEmail || order.customer.email,
+        }),
+        order,
+      );
+    });
+  return map;
+}
+
+function buildCouponHistoryByIdentity(coupons: MerchantCouponRecord[], nowMs: number) {
+  const map = new Map<string, MerchantMemberCouponHistoryItem[]>();
+  coupons.forEach((coupon) => {
+    coupon.claimEvents.forEach((claimEvent) => {
+      const redeemedAt = getCouponRedeemAt(coupon, claimEvent);
+      const item = {
+        id: claimEvent.id,
+        couponId: coupon.id,
+        title: getMerchantCouponDisplayTitle(coupon),
+        discountLabel: getMerchantCouponDiscountLabel(coupon),
+        claimedAt: claimEvent.at,
+        validUntil: claimEvent.validUntil,
+        redeemedAt,
+        settlementType: claimEvent.settlementType,
+        settlementCode: claimEvent.settlementCode,
+        status: getClaimStatus(coupon, claimEvent, nowMs),
+      } satisfies MerchantMemberCouponHistoryItem;
+      appendIdentityMappedItem(
+        map,
+        buildMemberIdentityKeys({
+          accountId: claimEvent.accountId,
+          userId: claimEvent.userId,
+          email: claimEvent.email,
+        }),
+        item,
+      );
+    });
+  });
+  return map;
+}
+
 function buildMembershipInsight(
   membership: MerchantMembershipListItem,
-  orders: MerchantOrderRecord[],
-  coupons: MerchantCouponRecord[],
+  memberOrders: MerchantOrderRecord[],
+  couponHistory: MerchantMemberCouponHistoryItem[],
+  now: Date,
 ): MerchantMembershipInsight {
-  const now = new Date();
   const nowMs = now.getTime();
-  const memberOrders = orders
-    .filter((order) =>
-      matchesMemberIdentity(membership, {
-        accountId: order.customerAccountId,
-        userId: order.customerUserId,
-        email: order.customerLoginEmail || order.customer.email,
-      }),
-    )
-    .filter((order) => order.status !== "cancelled");
   const totalSpendAmount = memberOrders.reduce((sum, order) => sum + order.totalAmount, 0);
   const totalOrderCount = memberOrders.length;
   const orderedActivityTimes = memberOrders
@@ -125,34 +198,6 @@ function buildMembershipInsight(
       productMap.set(name, current);
     });
   });
-
-  const couponHistory = coupons
-    .flatMap((coupon) =>
-      coupon.claimEvents
-        .filter((claimEvent) =>
-          matchesMemberIdentity(membership, {
-            accountId: claimEvent.accountId,
-            userId: claimEvent.userId,
-            email: claimEvent.email,
-          }),
-        )
-        .map((claimEvent) => {
-          const redeemedAt = getCouponRedeemAt(coupon, claimEvent);
-          return {
-            id: claimEvent.id,
-            couponId: coupon.id,
-            title: getMerchantCouponDisplayTitle(coupon),
-            discountLabel: getMerchantCouponDiscountLabel(coupon),
-            claimedAt: claimEvent.at,
-            validUntil: claimEvent.validUntil,
-            redeemedAt,
-            settlementType: claimEvent.settlementType,
-            settlementCode: claimEvent.settlementCode,
-            status: getClaimStatus(coupon, claimEvent, nowMs),
-          } satisfies MerchantMemberCouponHistoryItem;
-        }),
-    )
-    .sort((left, right) => Date.parse(right.claimedAt) - Date.parse(left.claimedAt));
 
   const availableCouponMap = new Map<string, MerchantMembershipInsight["availableCoupons"][number]>();
   couponHistory
@@ -213,11 +258,23 @@ export async function GET(request: Request) {
     listMerchantOrders(siteId).catch(() => []),
     listMerchantCoupons(siteId).catch(() => []),
   ]);
+  const now = new Date();
+  const memberOrdersByIdentity = buildMemberOrdersByIdentity(orders);
+  const couponHistoryByIdentity = buildCouponHistoryByIdentity(coupons, now.getTime());
   return NextResponse.json({
     ok: true,
     memberships: memberships.map((membership) => ({
       ...membership,
-      insight: buildMembershipInsight(membership, orders, coupons),
+      insight: buildMembershipInsight(
+        membership,
+        readIdentityMappedItems(memberOrdersByIdentity, membership, (order) => order.id),
+        readIdentityMappedItems(
+          couponHistoryByIdentity,
+          membership,
+          (item) => `${item.couponId}:${item.id || item.settlementCode || item.claimedAt}`,
+        ).sort((left, right) => Date.parse(right.claimedAt) - Date.parse(left.claimedAt)),
+        now,
+      ),
     })),
   });
 }

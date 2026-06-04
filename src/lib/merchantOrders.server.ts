@@ -16,6 +16,7 @@ import { awardMerchantMembershipPointsForOrder } from "@/lib/merchantMemberships
 import {
   listStoredMerchantOrdersByCustomer,
   loadStoredMerchantOrders,
+  loadStoredMerchantOrdersWindow,
   saveStoredMerchantOrders,
 } from "@/lib/merchantOrdersStore";
 
@@ -31,6 +32,17 @@ export async function listMerchantOrders(siteId: string) {
   const supabase = requireOrdersStoreClient();
   const stored = await loadStoredMerchantOrders(supabase, siteId);
   return stored?.orders ?? [];
+}
+
+export async function listMerchantOrdersWindow(
+  siteId: string,
+  input: {
+    offset?: number;
+    limit?: number;
+  },
+) {
+  const supabase = requireOrdersStoreClient();
+  return loadStoredMerchantOrdersWindow(supabase, siteId, input);
 }
 
 export async function listPersonalMerchantOrders(input: {

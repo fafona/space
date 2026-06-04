@@ -31,6 +31,8 @@ type MerchantOrderHistoryVisibility = "none" | "today" | "3d" | "7d";
 
 const MERCHANT_ORDER_SORT_OPTIONS: MerchantOrderSortMode[] = ["created_desc", "created_asc"];
 const MERCHANT_ORDER_HISTORY_OPTIONS: MerchantOrderHistoryVisibility[] = ["none", "today", "3d", "7d"];
+const MERCHANT_ORDER_FETCH_LIMIT = 500;
+const MERCHANT_ORDER_MOBILE_RENDER_LIMIT = 100;
 
 function MailIcon() {
   return (
@@ -195,8 +197,11 @@ export default function MerchantOrderMobilePanel({
   const overflowMenuRef = useRef<HTMLDivElement>(null);
   const [records, setRecords] = useState<MerchantOrderRecord[]>(() => readCachedOrderRecords(siteId));
   const [loading, setLoading] = useState(false);
+  const [loadingMoreRecords, setLoadingMoreRecords] = useState(false);
+  const [hasMoreRemoteRecords, setHasMoreRemoteRecords] = useState(false);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [renderLimit, setRenderLimit] = useState(MERCHANT_ORDER_MOBILE_RENDER_LIMIT);
   const [filter, setFilter] = useState<MerchantOrderFilter>("all");
   const [sortMode, setSortMode] = useState<MerchantOrderSortMode>("created_desc");
   const [historyVisibility, setHistoryVisibility] = useState<MerchantOrderHistoryVisibility>("none");
@@ -252,25 +257,63 @@ export default function MerchantOrderMobilePanel({
     }
     setError("");
     try {
-      const response = await fetch(`/api/orders?siteId=${encodeURIComponent(siteId)}`, {
-        cache: "no-store",
-        credentials: "same-origin",
-      });
+      const response = await fetch(
+        `/api/orders?siteId=${encodeURIComponent(siteId)}&offset=0&limit=${MERCHANT_ORDER_FETCH_LIMIT}`,
+        {
+          cache: "no-store",
+          credentials: "same-origin",
+        },
+      );
       const payload = (await response.json().catch(() => null)) as
-        | { orders?: MerchantOrderRecord[]; message?: string; error?: string }
+        | { orders?: MerchantOrderRecord[]; hasMore?: boolean; message?: string; error?: string }
         | null;
       if (!response.ok) {
         throw new Error(payload?.message || payload?.error || "order_list_failed");
       }
       const nextRecords = Array.isArray(payload?.orders) ? payload.orders : [];
+      setHasMoreRemoteRecords(Boolean(payload?.hasMore));
       writeCachedOrderRecords(siteId, nextRecords);
       setRecords(nextRecords);
     } catch (nextError) {
+      setHasMoreRemoteRecords(false);
       setError(cachedRecords.length > 0 ? "" : nextError instanceof Error && nextError.message ? nextError.message : "订单读取失败");
     } finally {
       setLoading(false);
     }
   }, [siteId]);
+
+  const loadMoreOrders = useCallback(async () => {
+    if (!siteId || loading || loadingMoreRecords || !hasMoreRemoteRecords) return;
+    setLoadingMoreRecords(true);
+    setError("");
+    try {
+      const response = await fetch(
+        `/api/orders?siteId=${encodeURIComponent(siteId)}&offset=${records.length}&limit=${MERCHANT_ORDER_FETCH_LIMIT}`,
+        {
+          cache: "no-store",
+          credentials: "same-origin",
+        },
+      );
+      const payload = (await response.json().catch(() => null)) as
+        | { orders?: MerchantOrderRecord[]; hasMore?: boolean; message?: string; error?: string }
+        | null;
+      if (!response.ok) {
+        throw new Error(payload?.message || payload?.error || "order_list_failed");
+      }
+      const nextRecords = Array.isArray(payload?.orders) ? payload.orders : [];
+      setHasMoreRemoteRecords(Boolean(payload?.hasMore));
+      setRecords((current) => {
+        const existingIds = new Set(current.map((record) => record.id));
+        const mergedRecords = [...current, ...nextRecords.filter((record) => !existingIds.has(record.id))];
+        writeCachedOrderRecords(siteId, mergedRecords);
+        return mergedRecords;
+      });
+    } catch (nextError) {
+      setError(nextError instanceof Error && nextError.message ? nextError.message : "order_list_failed");
+    } finally {
+      setLoadingMoreRecords(false);
+    }
+  }, [hasMoreRemoteRecords, loading, loadingMoreRecords, records.length, siteId]);
 
   useEffect(() => {
     if (!siteId) return;
@@ -329,6 +372,15 @@ export default function MerchantOrderMobilePanel({
       sortMode,
     );
   }, [filter, historyFilteredRecords, search, sortMode]);
+
+  useEffect(() => {
+    setRenderLimit(MERCHANT_ORDER_MOBILE_RENDER_LIMIT);
+  }, [filter, historyVisibility, search, sortMode]);
+
+  const renderedRecords = useMemo(
+    () => filteredRecords.slice(0, renderLimit),
+    [filteredRecords, renderLimit],
+  );
 
   const counts = useMemo(
     () =>
@@ -1204,7 +1256,8 @@ export default function MerchantOrderMobilePanel({
         {loading ? (
           <div className={emptyPanelClassName}>正在读取订单...</div>
         ) : filteredRecords.length > 0 ? (
-          filteredRecords.map((record) => {
+          <>
+          {renderedRecords.map((record) => {
             const displayName = record.customer.name || "未命名客户";
             const isNewRecord = isMerchantOrderPendingMerchantTouch(record);
             const canOpenConversation = Boolean(record.customerAccountId || record.customerLoginEmail);
@@ -1297,7 +1350,28 @@ export default function MerchantOrderMobilePanel({
                 </div>
               </div>
             );
-          })
+          })}
+          {filteredRecords.length > renderedRecords.length || hasMoreRemoteRecords ? (
+            <button
+              type="button"
+              className={`w-full rounded-[20px] border px-4 py-3 text-sm font-semibold shadow-sm transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                darkMode
+                  ? "border-white/10 bg-white/5 text-slate-100 hover:bg-white/10"
+                  : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+              }`}
+              onClick={() => {
+                if (filteredRecords.length > renderedRecords.length) {
+                  setRenderLimit((current) => current + MERCHANT_ORDER_MOBILE_RENDER_LIMIT);
+                  return;
+                }
+                void loadMoreOrders();
+              }}
+              disabled={loadingMoreRecords}
+            >
+              {loadingMoreRecords ? "加载中" : "显示更多"}
+            </button>
+          ) : null}
+          </>
         ) : (
           <div className={emptyPanelClassName}>还没有匹配到订单。</div>
         )}

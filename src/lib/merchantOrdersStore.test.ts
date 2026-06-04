@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createMerchantOrder } from "@/lib/merchantOrders";
-import { chunkMerchantOrderRecords, mergeStoredMerchantOrdersRows } from "@/lib/merchantOrdersStore";
+import {
+  chunkMerchantOrderRecords,
+  getMerchantOrderChunkIndexesForWindow,
+  mergeStoredMerchantOrdersRows,
+} from "@/lib/merchantOrdersStore";
 
 test("chunkMerchantOrderRecords splits orders into stable chunks", () => {
   const orders = Array.from({ length: 205 }, (_, index) =>
@@ -26,6 +30,13 @@ test("chunkMerchantOrderRecords splits orders into stable chunks", () => {
   assert.equal(chunks[0]?.length, 100);
   assert.equal(chunks[1]?.length, 100);
   assert.equal(chunks[2]?.length, 5);
+});
+
+test("getMerchantOrderChunkIndexesForWindow returns only chunks needed by the requested window", () => {
+  assert.deepEqual(getMerchantOrderChunkIndexesForWindow(5, 0, 50), [0]);
+  assert.deepEqual(getMerchantOrderChunkIndexesForWindow(5, 90, 40), [0, 1]);
+  assert.deepEqual(getMerchantOrderChunkIndexesForWindow(5, 250, 120), [2, 3]);
+  assert.deepEqual(getMerchantOrderChunkIndexesForWindow(2, 250, 50), []);
 });
 
 test("mergeStoredMerchantOrdersRows prefers chunked rows over legacy row", () => {

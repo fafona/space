@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import BookingWorkbenchDialog from "@/components/admin/BookingWorkbenchDialog";
 import BookingStatusFilterDropdown from "@/components/admin/BookingStatusFilterDropdown";
@@ -109,27 +109,11 @@ type MerchantBookingAdminDraft = {
   note: string;
 };
 
+const MERCHANT_BOOKING_RENDER_LIMIT = 250;
+
 function overlay(children: ReactNode) {
   if (typeof document === "undefined") return null;
   return createPortal(children, document.body);
-}
-
-function matchesSearch(record: MerchantBookingRecord, query: string) {
-  const keyword = query.trim().toLowerCase();
-  if (!keyword) return true;
-  return [
-    record.id,
-    record.store,
-    record.item,
-    record.title,
-    record.customerName,
-    record.email,
-    record.phone,
-    record.note,
-  ]
-    .join("\n")
-    .toLowerCase()
-    .includes(keyword);
 }
 
 function createDraft(record: MerchantBookingRecord): MerchantBookingAdminDraft {
@@ -547,10 +531,12 @@ export default function MerchantBookingManagerDialog({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
+  const [renderLimit, setRenderLimit] = useState(MERCHANT_BOOKING_RENDER_LIMIT);
   const [filter, setFilter] = useState<MerchantBookingFilter>("all");
   const [selectedStatuses, setSelectedStatuses] = useState<MerchantBookingStatus[]>(
     () => loadMerchantBookingManagerPreferences(siteId).selectedStatuses,
   );
+  const deferredQuery = useDeferredValue(query);
   const [sortMode, setSortMode] = useState<MerchantBookingSortMode>(
     () => loadMerchantBookingManagerPreferences(siteId).sortMode,
   );
@@ -735,9 +721,35 @@ export default function MerchantBookingManagerDialog({
     });
   }, [historyVisibility, selectedStatuses, siteId, sortMode]);
 
+  useEffect(() => {
+    setRenderLimit(MERCHANT_BOOKING_RENDER_LIMIT);
+  }, [deferredQuery, filter, historyVisibility, selectedStatuses, sortMode]);
+
   const historyFilteredRecords = useMemo(
     () => filterMerchantBookingRecordsByHistory(records, historyVisibility),
     [historyVisibility, records],
+  );
+
+  const bookingSearchTextById = useMemo(
+    () =>
+      new Map(
+        records.map((record) => [
+          record.id,
+          [
+            record.id,
+            record.store,
+            record.item,
+            record.title,
+            record.customerName,
+            record.email,
+            record.phone,
+            record.note,
+          ]
+            .join("\n")
+            .toLowerCase(),
+        ]),
+      ),
+    [records],
   );
 
   const counts = useMemo(() => createStatusCounts(historyFilteredRecords), [historyFilteredRecords]);
@@ -751,11 +763,17 @@ export default function MerchantBookingManagerDialog({
         } else if (item.status !== filter) {
           return false;
         }
-        return matchesSearch(item, query);
+        const keyword = deferredQuery.trim().toLowerCase();
+        if (!keyword) return true;
+        return (bookingSearchTextById.get(item.id) ?? "").includes(keyword);
         }),
         sortMode,
       ),
-    [filter, historyFilteredRecords, query, selectedStatuses, sortMode],
+    [bookingSearchTextById, deferredQuery, filter, historyFilteredRecords, selectedStatuses, sortMode],
+  );
+  const renderedRecords = useMemo(
+    () => filteredRecords.slice(0, renderLimit),
+    [filteredRecords, renderLimit],
   );
   const attentionScopedRecords = useMemo(
     () =>
@@ -1645,7 +1663,7 @@ export default function MerchantBookingManagerDialog({
             </div>
           ) : filteredRecords.length > 0 ? (
             <div className="space-y-4">
-              {filteredRecords.map((record) => {
+              {renderedRecords.map((record) => {
                 const appointmentParts = splitMerchantBookingDateTime(record.appointmentAt);
                 const displayName = formatMerchantBookingDisplayName(record.customerName, record.title, locale);
                 const isNewRecord = isMerchantBookingPendingMerchantTouch(record);
@@ -1844,6 +1862,18 @@ export default function MerchantBookingManagerDialog({
                   </div>
                 );
               })}
+              {filteredRecords.length > renderedRecords.length ? (
+                <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-5 py-4 text-center text-sm text-slate-500">
+                  <div>当前筛选结果 {filteredRecords.length} 条，已显示 {renderedRecords.length} 条。</div>
+                  <button
+                    type="button"
+                    className="mt-3 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-white"
+                    onClick={() => setRenderLimit((current) => current + MERCHANT_BOOKING_RENDER_LIMIT)}
+                  >
+                    显示更多
+                  </button>
+                </div>
+              ) : null}
             </div>
           ) : (
             <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-dashed bg-slate-50 px-6 text-center text-sm text-slate-500">

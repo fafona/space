@@ -15,6 +15,12 @@ export type StoredMerchantOrders = {
   updatedAt: string | null;
 };
 
+export type StoredMerchantOrdersWindow = StoredMerchantOrders & {
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+};
+
 function normalizeText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -75,6 +81,11 @@ type StoredMerchantOrdersRow = {
   updated_at?: unknown;
 };
 
+type StoredMerchantOrdersRowWithChunk = StoredMerchantOrdersRow & {
+  normalizedSlug: string;
+  chunkIndex: number | null;
+};
+
 type MerchantOrderCustomerLookup = {
   accountId?: string | null;
   userId?: string | null;
@@ -88,6 +99,39 @@ export function chunkMerchantOrderRecords(orders: MerchantOrderRecord[], chunkSi
     chunks.push(orders.slice(index, index + normalizedChunkSize));
   }
   return chunks;
+}
+
+export function getMerchantOrderChunkIndexesForWindow(
+  totalChunks: number,
+  offset: number,
+  limit: number,
+  chunkSize = MERCHANT_ORDER_CHUNK_SIZE,
+) {
+  const normalizedTotalChunks = Math.max(0, Math.round(totalChunks));
+  const normalizedChunkSize = Math.max(1, Math.round(chunkSize));
+  const normalizedOffset = Math.max(0, Math.floor(offset));
+  const normalizedLimit = Math.max(0, Math.floor(limit));
+  if (normalizedTotalChunks <= 0 || normalizedLimit <= 0) return [];
+  const startChunkIndex = Math.floor(normalizedOffset / normalizedChunkSize);
+  if (startChunkIndex >= normalizedTotalChunks) return [];
+  const endChunkIndex = Math.min(
+    normalizedTotalChunks - 1,
+    Math.floor((normalizedOffset + normalizedLimit - 1) / normalizedChunkSize),
+  );
+  const indexes: number[] = [];
+  for (let index = startChunkIndex; index <= endChunkIndex; index += 1) {
+    indexes.push(index);
+  }
+  return indexes;
+}
+
+function attachMerchantOrderChunkIndex(siteId: string, row: StoredMerchantOrdersRow): StoredMerchantOrdersRowWithChunk {
+  const normalizedSlug = normalizeText(row.slug);
+  return {
+    ...row,
+    normalizedSlug,
+    chunkIndex: parseOrdersChunkIndex(siteId, normalizedSlug),
+  };
 }
 
 export function mergeStoredMerchantOrdersRows(
@@ -162,6 +206,88 @@ async function listStoredMerchantOrdersRows(supabase: MerchantOrdersStoreClient,
     } else {
       return [];
     }
+  }
+
+  if (error) return [];
+  return Array.isArray(data) ? data : [];
+}
+
+async function listStoredMerchantOrdersRowMetadata(supabase: MerchantOrdersStoreClient, siteId: string) {
+  const normalizedSiteId = normalizeSiteId(siteId);
+  if (!normalizedSiteId) return [] as StoredMerchantOrdersRow[];
+  const slugPrefix = `${buildOrdersSlug(normalizedSiteId)}%`;
+
+  const runQuery = async (selectFields: string, includeMerchantId: boolean) => {
+    const query = supabase.from("pages").select(selectFields).like("slug", slugPrefix);
+    return includeMerchantId ? query.eq("merchant_id", normalizedSiteId) : query;
+  };
+
+  let query = await runQuery("id,slug,updated_at", true);
+  let data = (query.data ?? []) as StoredMerchantOrdersRow[];
+  let error = query.error;
+
+  if (error) {
+    const message = toErrorMessage(error);
+    if (isMissingMerchantIdColumn(message)) {
+      query = await runQuery("id,slug,updated_at", false);
+      data = (query.data ?? []) as StoredMerchantOrdersRow[];
+      error = query.error;
+    } else if (isMissingUpdatedAtColumn(message)) {
+      query = await runQuery("id,slug", true);
+      data = (query.data ?? []) as StoredMerchantOrdersRow[];
+      error = query.error;
+    } else if (isMissingSlugColumn(message)) {
+      return [];
+    }
+  }
+
+  if (error && isMissingUpdatedAtColumn(toErrorMessage(error))) {
+    const fallback = await runQuery("id,slug", false);
+    data = (fallback.data ?? []) as StoredMerchantOrdersRow[];
+    error = fallback.error;
+  }
+
+  if (error) return [];
+  return Array.isArray(data) ? data : [];
+}
+
+async function listStoredMerchantOrdersRowsBySlugs(
+  supabase: MerchantOrdersStoreClient,
+  siteId: string,
+  slugs: string[],
+) {
+  const normalizedSiteId = normalizeSiteId(siteId);
+  const normalizedSlugs = [...new Set(slugs.map(normalizeText).filter(Boolean))];
+  if (!normalizedSiteId || normalizedSlugs.length === 0) return [] as StoredMerchantOrdersRow[];
+
+  const runQuery = async (selectFields: string, includeMerchantId: boolean) => {
+    const query = supabase.from("pages").select(selectFields).in("slug", normalizedSlugs);
+    return includeMerchantId ? query.eq("merchant_id", normalizedSiteId) : query;
+  };
+
+  let query = await runQuery("id,slug,blocks,updated_at", true);
+  let data = (query.data ?? []) as StoredMerchantOrdersRow[];
+  let error = query.error;
+
+  if (error) {
+    const message = toErrorMessage(error);
+    if (isMissingMerchantIdColumn(message)) {
+      query = await runQuery("id,slug,blocks,updated_at", false);
+      data = (query.data ?? []) as StoredMerchantOrdersRow[];
+      error = query.error;
+    } else if (isMissingUpdatedAtColumn(message)) {
+      query = await runQuery("id,slug,blocks", true);
+      data = (query.data ?? []) as StoredMerchantOrdersRow[];
+      error = query.error;
+    } else if (isMissingSlugColumn(message)) {
+      return [];
+    }
+  }
+
+  if (error && isMissingUpdatedAtColumn(toErrorMessage(error))) {
+    const fallback = await runQuery("id,slug,blocks", false);
+    data = (fallback.data ?? []) as StoredMerchantOrdersRow[];
+    error = fallback.error;
   }
 
   if (error) return [];
@@ -246,6 +372,73 @@ export async function loadStoredMerchantOrders(
   if (!normalizedSiteId) return null;
   const rows = await listStoredMerchantOrdersRows(supabase, normalizedSiteId);
   return mergeStoredMerchantOrdersRows(normalizedSiteId, rows);
+}
+
+export async function loadStoredMerchantOrdersWindow(
+  supabase: MerchantOrdersStoreClient,
+  siteId: string,
+  input: {
+    offset?: number;
+    limit?: number;
+  },
+): Promise<StoredMerchantOrdersWindow | null> {
+  const normalizedSiteId = normalizeSiteId(siteId);
+  if (!normalizedSiteId) return null;
+  const offset = Math.max(0, Math.floor(input.offset ?? 0));
+  const limit = Math.max(1, Math.floor(input.limit ?? MERCHANT_ORDER_CHUNK_SIZE));
+  const metadataRows = await listStoredMerchantOrdersRowMetadata(supabase, normalizedSiteId);
+  const chunkRows = metadataRows
+    .map((row) => attachMerchantOrderChunkIndex(normalizedSiteId, row))
+    .filter((row): row is StoredMerchantOrdersRowWithChunk & { chunkIndex: number } => (row.chunkIndex ?? -1) >= 0)
+    .sort((left, right) => left.chunkIndex - right.chunkIndex);
+
+  if (chunkRows.length === 0) {
+    const fallback = await loadStoredMerchantOrders(supabase, normalizedSiteId);
+    if (!fallback) return null;
+    const orders = fallback.orders.slice(offset, offset + limit);
+    return {
+      ...fallback,
+      orders,
+      offset,
+      limit,
+      hasMore: offset + orders.length < fallback.orders.length,
+    };
+  }
+
+  const maxChunkIndex = chunkRows.reduce((max, row) => Math.max(max, row.chunkIndex), 0);
+  const chunkIndexes = getMerchantOrderChunkIndexesForWindow(maxChunkIndex + 1, offset, limit);
+  if (chunkIndexes.length === 0) {
+    return {
+      siteId: normalizedSiteId,
+      orders: [],
+      updatedAt: null,
+      offset,
+      limit,
+      hasMore: false,
+    };
+  }
+
+  const chunkIndexSet = new Set(chunkIndexes);
+  const selectedSlugs = chunkRows
+    .filter((row) => chunkIndexSet.has(row.chunkIndex))
+    .map((row) => row.normalizedSlug);
+  const selectedRows = await listStoredMerchantOrdersRowsBySlugs(supabase, normalizedSiteId, selectedSlugs);
+  const merged = mergeStoredMerchantOrdersRows(normalizedSiteId, selectedRows);
+  const firstChunkIndex = chunkIndexes[0] ?? 0;
+  const offsetInsideSelectedRows = Math.max(0, offset - firstChunkIndex * MERCHANT_ORDER_CHUNK_SIZE);
+  const selectedOrders = merged?.orders ?? [];
+  const orders = selectedOrders.slice(offsetInsideSelectedRows, offsetInsideSelectedRows + limit);
+  const selectedRowsHaveMore = selectedOrders.length > offsetInsideSelectedRows + orders.length;
+  const hasMore = selectedRowsHaveMore || (chunkIndexes.at(-1) ?? maxChunkIndex) < maxChunkIndex;
+
+  return {
+    siteId: normalizedSiteId,
+    orders,
+    updatedAt: merged?.updatedAt ?? null,
+    offset,
+    limit,
+    hasMore,
+  };
 }
 
 export async function saveStoredMerchantOrders(

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 import {
   MERCHANT_MEMBER_LEGAL_ALLERGENS,
   type MerchantMemberAccountTransaction,
@@ -46,6 +46,8 @@ type MemberOperationDialogState = {
   membershipId: string;
   type: MerchantMemberAccountTransactionType;
 } | null;
+
+const MERCHANT_MEMBER_RENDER_LIMIT = 300;
 
 const EMPTY_MEMBER_INSIGHT: MerchantMembershipInsight = {
   pointBalance: 0,
@@ -247,6 +249,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
   const [selectedMembershipId, setSelectedMembershipId] = useState("");
   const [statusFilter, setStatusFilter] = useState<MemberStatusFilter>("all");
   const [keyword, setKeyword] = useState("");
+  const [renderLimit, setRenderLimit] = useState(MERCHANT_MEMBER_RENDER_LIMIT);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [couponHistoryOpen, setCouponHistoryOpen] = useState(false);
@@ -264,27 +267,49 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
   const [memberSettings, setMemberSettings] = useState<MerchantMembershipSettings | null>(null);
   const [memberSettingsError, setMemberSettingsError] = useState("");
   const normalizedSiteId = siteId.trim();
+  const deferredKeyword = useDeferredValue(keyword);
+
+  const membershipSearchRows = useMemo(
+    () => memberships.map((membership) => ({ membership, searchText: buildSearchText(membership) })),
+    [memberships],
+  );
+
+  const membershipById = useMemo(
+    () => new Map(memberships.map((membership) => [membership.id, membership])),
+    [memberships],
+  );
 
   const filteredMemberships = useMemo(() => {
-    const normalizedKeyword = keyword.trim().toLowerCase();
-    return memberships.filter((membership) => {
-      if (statusFilter !== "all" && membership.status !== statusFilter) return false;
-      if (!normalizedKeyword) return true;
-      return buildSearchText(membership).includes(normalizedKeyword);
-    });
-  }, [keyword, memberships, statusFilter]);
+    const normalizedKeyword = deferredKeyword.trim().toLowerCase();
+    return membershipSearchRows
+      .filter(({ membership, searchText }) => {
+        if (statusFilter !== "all" && membership.status !== statusFilter) return false;
+        if (!normalizedKeyword) return true;
+        return searchText.includes(normalizedKeyword);
+      })
+      .map((row) => row.membership);
+  }, [deferredKeyword, membershipSearchRows, statusFilter]);
+
+  const renderedMemberships = useMemo(
+    () => filteredMemberships.slice(0, renderLimit),
+    [filteredMemberships, renderLimit],
+  );
+
+  useEffect(() => {
+    setRenderLimit(MERCHANT_MEMBER_RENDER_LIMIT);
+  }, [deferredKeyword, statusFilter]);
 
   const selectedMembership = useMemo(() => {
-    return memberships.find((membership) => membership.id === selectedMembershipId) ?? null;
-  }, [memberships, selectedMembershipId]);
+    return membershipById.get(selectedMembershipId) ?? null;
+  }, [membershipById, selectedMembershipId]);
   const selectedInsight = selectedMembership?.insight ?? EMPTY_MEMBER_INSIGHT;
   const selectedMembershipLevel = useMemo(
     () => resolveMembershipLevel(memberSettings, selectedMembership),
     [memberSettings, selectedMembership],
   );
   const operationMembership = useMemo(() => {
-    return operationDialog ? memberships.find((membership) => membership.id === operationDialog.membershipId) ?? null : null;
-  }, [memberships, operationDialog]);
+    return operationDialog ? membershipById.get(operationDialog.membershipId) ?? null : null;
+  }, [membershipById, operationDialog]);
   const operationInsight = operationMembership?.insight ?? EMPTY_MEMBER_INSIGHT;
   const enabledRechargePlans = useMemo(
     () => (memberSettings?.rechargePlans ?? []).filter((plan) => plan.enabled),
@@ -677,7 +702,8 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                       </td>
                     </tr>
                   ) : (
-                    filteredMemberships.map((membership, index) => {
+                    <>
+                    {renderedMemberships.map((membership, index) => {
                       const selected = selectedMembership?.id === membership.id;
                       const displayName = getMemberDisplayName(membership);
                       return (
@@ -740,7 +766,22 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                           </td>
                         </tr>
                       );
-                    })
+                    })}
+                    {filteredMemberships.length > renderedMemberships.length ? (
+                      <tr>
+                        <td colSpan={9} className="px-3 py-4 text-center text-xs text-slate-500">
+                          <div>当前筛选结果 {filteredMemberships.length} 条，已显示 {renderedMemberships.length} 条。</div>
+                          <button
+                            type="button"
+                            className="mt-3 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-700 transition hover:bg-white"
+                            onClick={() => setRenderLimit((current) => current + MERCHANT_MEMBER_RENDER_LIMIT)}
+                          >
+                            显示更多
+                          </button>
+                        </td>
+                      </tr>
+                    ) : null}
+                    </>
                   )}
                 </tbody>
               </table>

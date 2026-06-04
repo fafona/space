@@ -7,6 +7,7 @@ import {
   createMerchantOrderRecord,
   cancelPersonalMerchantOrder,
   listMerchantOrders,
+  listMerchantOrdersWindow,
   listPersonalMerchantOrders,
   updateMerchantOrdersBatchBySite,
   updateMerchantOrderBySite,
@@ -39,6 +40,17 @@ async function isOrderManagementEnabled(siteId: string) {
 
 function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeOrderListOffset(value: unknown) {
+  const parsed = Number.parseInt(trimText(value), 10);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+}
+
+function normalizeOrderListLimit(value: unknown) {
+  const parsed = Number.parseInt(trimText(value), 10);
+  if (!Number.isFinite(parsed)) return 500;
+  return Math.min(1000, Math.max(1, parsed));
 }
 
 function normalizeOrderAction(value: unknown): MerchantOrderAction | null {
@@ -83,6 +95,19 @@ export async function GET(request: Request) {
     const session = await resolveOrderAdminSession(request, siteId);
     if (!session) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    }
+    if (searchParams.has("offset") || searchParams.has("limit")) {
+      const windowedOrders = await listMerchantOrdersWindow(siteId, {
+        offset: normalizeOrderListOffset(searchParams.get("offset")),
+        limit: normalizeOrderListLimit(searchParams.get("limit")),
+      });
+      return NextResponse.json({
+        ok: true,
+        orders: windowedOrders?.orders ?? [],
+        offset: windowedOrders?.offset ?? 0,
+        limit: windowedOrders?.limit ?? normalizeOrderListLimit(searchParams.get("limit")),
+        hasMore: Boolean(windowedOrders?.hasMore),
+      });
     }
     const orders = await listMerchantOrders(siteId);
     return NextResponse.json({ ok: true, orders });

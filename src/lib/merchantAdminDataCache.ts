@@ -2,6 +2,7 @@
 
 const CACHE_PREFIX = "faolla:merchant-admin-data-cache:v1";
 const DEFAULT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_CACHE_PAYLOAD_CHARS = 1_500_000;
 
 type CacheEnvelope<T> = {
   savedAt: number;
@@ -21,6 +22,10 @@ export function readMerchantAdminDataCache<T>(key: string, maxAgeMs = DEFAULT_MA
   try {
     const raw = window.localStorage.getItem(key);
     if (!raw) return null;
+    if (raw.length > MAX_CACHE_PAYLOAD_CHARS) {
+      window.localStorage.removeItem(key);
+      return null;
+    }
     const parsed = JSON.parse(raw) as Partial<CacheEnvelope<T>> | null;
     const savedAt = Number(parsed?.savedAt ?? 0);
     if (!Number.isFinite(savedAt) || savedAt <= 0 || Date.now() - savedAt > maxAgeMs) {
@@ -36,13 +41,15 @@ export function readMerchantAdminDataCache<T>(key: string, maxAgeMs = DEFAULT_MA
 export function writeMerchantAdminDataCache<T>(key: string, data: T) {
   if (typeof window === "undefined" || !key) return;
   try {
-    window.localStorage.setItem(
-      key,
-      JSON.stringify({
-        savedAt: Date.now(),
-        data,
-      } satisfies CacheEnvelope<T>),
-    );
+    const payload = JSON.stringify({
+      savedAt: Date.now(),
+      data,
+    } satisfies CacheEnvelope<T>);
+    if (payload.length > MAX_CACHE_PAYLOAD_CHARS) {
+      window.localStorage.removeItem(key);
+      return;
+    }
+    window.localStorage.setItem(key, payload);
   } catch {
     // Ignore cache quota and private-mode failures.
   }
