@@ -51,6 +51,7 @@ const SNAPSHOT_CONTACT_FIELD_LABELS: Record<MerchantBusinessCardContactDisplayKe
   telegram: "Telegram",
   linkedin: "LinkedIn",
   discord: "Discord",
+  googleReview: "Google",
   facebook: "Facebook",
   instagram: "Instagram",
   tiktok: "TikTok",
@@ -194,6 +195,7 @@ function countShareContactFields(contact?: MerchantBusinessCardShareContact | nu
     "tiktok",
     "douyin",
     "xiaohongshu",
+    "googleReview",
     "websiteUrl",
     "note",
   ].forEach((key) => {
@@ -384,6 +386,7 @@ function buildSnapshotCardSharePayload(card: MerchantBusinessCardAsset, preferre
         tiktok: normalizeText(card.contacts?.tiktok),
         douyin: normalizeText(card.contacts?.douyin),
         xiaohongshu: normalizeText(card.contacts?.xiaohongshu),
+        googleReview: normalizeText(card.contacts?.googleReview),
         contactFieldOrder: orderedKeys,
         ...(normalizeSnapshotCardContactOnlyFields(card.contactOnlyFields)
           ? { contactOnlyFields: normalizeSnapshotCardContactOnlyFields(card.contactOnlyFields) }

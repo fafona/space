@@ -48,6 +48,7 @@ function buildCardShareContact(card: MerchantBusinessCardAsset): MerchantBusines
     tiktok: normalizeText(card.contacts.tiktok),
     douyin: normalizeText(card.contacts.douyin),
     xiaohongshu: normalizeText(card.contacts.xiaohongshu),
+    googleReview: normalizeText(card.contacts.googleReview),
     websiteUrl: normalizeText(card.targetUrl),
   };
 }

@@ -255,6 +255,7 @@ test("normalizeMerchantBusinessCardShareContact keeps useful contact fields and 
         invoiceTaxNumber: " ESB12345678 ",
         invoiceAddress: " Sevilla, Spain ",
         douyin: " fafona_douyin ",
+        googleReview: " https://g.page/r/fafona/review ",
         contactOnlyFields: {
           merchantName: true,
           douyin: true,
@@ -273,6 +274,7 @@ test("normalizeMerchantBusinessCardShareContact keeps useful contact fields and 
       invoiceTaxNumber: "ESB12345678",
       invoiceAddress: "Sevilla, Spain",
       douyin: "fafona_douyin",
+      googleReview: "https://g.page/r/fafona/review",
       contactOnlyFields: {
         merchantName: true,
         douyin: true,
@@ -298,6 +300,24 @@ test("share helpers preserve douyin contact params", () => {
 
   const parsed = parseMerchantBusinessCardShareParams(new URL(shareUrl).searchParams, "https://faolla.com");
   assert.equal(parsed?.contact?.douyin, "fafona_douyin");
+});
+
+test("share helpers preserve Google review contact params", () => {
+  const googleReview = "https://g.page/r/fafona/review";
+  const shareUrl = buildMerchantBusinessCardShareUrl({
+    origin: "https://faolla.com",
+    name: "fafona",
+    targetUrl: "https://fafona.faolla.com",
+    contact: {
+      displayName: "Felix",
+      googleReview,
+    },
+  });
+
+  assert.match(shareUrl, /googleReview=https%3A%2F%2Fg\.page%2Fr%2Ffafona%2Freview/);
+
+  const parsed = parseMerchantBusinessCardShareParams(new URL(shareUrl).searchParams, "https://faolla.com");
+  assert.equal(parsed?.contact?.googleReview, googleReview);
 });
 
 test("share helpers preserve invoice contact params", () => {

@@ -65,6 +65,7 @@ export type MerchantBusinessCardShareContact = {
   tiktok?: string;
   douyin?: string;
   xiaohongshu?: string;
+  googleReview?: string;
   websiteUrl?: string;
   note?: string;
 };
@@ -486,6 +487,9 @@ export function normalizeMerchantBusinessCardShareContact(
     ...(clampContactText(source.xiaohongshu, 120)
       ? { xiaohongshu: clampContactText(source.xiaohongshu, 120) }
       : {}),
+    ...(clampContactText(source.googleReview, 500)
+      ? { googleReview: clampContactText(source.googleReview, 500) }
+      : {}),
     ...(websiteUrl ? { websiteUrl } : {}),
     ...(contactOnlyFields ? { contactOnlyFields } : {}),
     ...(clampContactText(source.note, 600)
@@ -605,6 +609,7 @@ export function buildMerchantBusinessCardShareLegacyFingerprint(
     contact.tiktok ?? "",
     contact.douyin ?? "",
     contact.xiaohongshu ?? "",
+    contact.googleReview ?? "",
     contact.websiteUrl ?? "",
     contact.note ?? "",
     ...(payload.introVideoUrl ? [`introVideo:${payload.introVideoUrl}`] : []),
@@ -810,6 +815,9 @@ export function buildMerchantBusinessCardShareUrl(input: {
   if (payload.contact?.xiaohongshu) {
     shareUrl.searchParams.set("xiaohongshu", payload.contact.xiaohongshu);
   }
+  if (payload.contact?.googleReview) {
+    shareUrl.searchParams.set("googleReview", payload.contact.googleReview);
+  }
   if (payload.contact?.websiteUrl) {
     shareUrl.searchParams.set("website", payload.contact.websiteUrl);
   }
@@ -877,6 +885,7 @@ export function parseMerchantBusinessCardShareParams(
         tiktok: readSearchParam(searchParams, "tiktok"),
         douyin: readSearchParam(searchParams, "douyin"),
         xiaohongshu: readSearchParam(searchParams, "xiaohongshu"),
+        googleReview: readSearchParam(searchParams, "googleReview") || readSearchParam(searchParams, "google"),
         websiteUrl: readSearchParam(searchParams, "website"),
         note: readSearchParam(searchParams, "note"),
       },
@@ -1047,6 +1056,7 @@ export function buildMerchantBusinessCardLegacyContactDownloadUrl(input: {
   if (payload.contact?.tiktok) url.searchParams.set("tiktok", payload.contact.tiktok);
   if (payload.contact?.douyin) url.searchParams.set("douyin", payload.contact.douyin);
   if (payload.contact?.xiaohongshu) url.searchParams.set("xiaohongshu", payload.contact.xiaohongshu);
+  if (payload.contact?.googleReview) url.searchParams.set("googleReview", payload.contact.googleReview);
   if (payload.contact?.websiteUrl) url.searchParams.set("website", payload.contact.websiteUrl);
   if (payload.contact?.note) url.searchParams.set("note", payload.contact.note);
   return url.toString();
@@ -1059,6 +1069,7 @@ export function buildMerchantBusinessCardVCard(payload: MerchantBusinessCardShar
   const structuredAddress = parseStructuredAddress(contact?.address || "");
   const noteLines = [
     contact?.note || "",
+    contact?.googleReview ? `Google: ${contact.googleReview}` : "",
     contact?.invoiceName ? `开票名称: ${contact.invoiceName}` : "",
     contact?.invoiceTaxNumber ? `税号: ${contact.invoiceTaxNumber}` : "",
     contact?.invoiceAddress ? `开票地址: ${contact.invoiceAddress}` : "",
@@ -1145,6 +1156,7 @@ function countShareContactFields(contact?: MerchantBusinessCardShareContact | nu
     "tiktok",
     "douyin",
     "xiaohongshu",
+    "googleReview",
     "websiteUrl",
     "note",
   ];

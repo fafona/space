@@ -86,6 +86,7 @@ const CONTACT_FIELDS: Array<{ key: MerchantBusinessCardEditableContactFieldKey; 
   { key: "tiktok", label: "TikTok" },
   { key: "douyin", label: "抖音" },
   { key: "xiaohongshu", label: "小红书" },
+  { key: "googleReview", label: "Google" },
 ];
 
 const CONTACT_FIELD_LABELS = Object.fromEntries(CONTACT_FIELDS.map((item) => [item.key, item.label])) as Record<
@@ -2910,7 +2911,7 @@ export default function MerchantBusinessCardManager({
                                   onChange={(event) =>
                                     applyDraft((current) => ({ ...current, contacts: { ...current.contacts, [key]: event.target.value } }))
                                   }
-                                  placeholder={`请输入${label}`}
+                                  placeholder={key === "googleReview" ? "请输入Google评价链接" : `请输入${label}`}
                                 />
                                 <button
                                   type="button"
@@ -4236,6 +4237,7 @@ export default function MerchantBusinessCardManager({
       tiktok: normalizeText(input.contacts.tiktok),
       douyin: normalizeText(input.contacts.douyin),
       xiaohongshu: normalizeText(input.contacts.xiaohongshu),
+      googleReview: normalizeText(input.contacts.googleReview),
       contactFieldOrder: orderedKeys,
       ...(Object.keys(contactOnlyFields).length > 0 ? { contactOnlyFields } : {}),
       websiteUrl: normalizeText(input.targetUrl),

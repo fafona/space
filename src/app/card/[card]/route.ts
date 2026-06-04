@@ -144,6 +144,17 @@ function buildAddressHref(rawAddress?: string) {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
 }
 
+function buildGoogleReviewHref(rawValue?: string) {
+  const value = normalizeText(rawValue);
+  if (!value) return "";
+  if (looksLikeUrl(value)) return value;
+  const normalized = value.replace(/^@+/, "").trim();
+  if (/^(?:www\.)?(?:google\.[^\s/]+|maps\.app\.goo\.gl|g\.page)\b/i.test(normalized)) {
+    return `https://${normalized.replace(/^\/+/, "")}`;
+  }
+  return `https://www.google.com/search?q=${encodeURIComponent(value)}`;
+}
+
 function buildInlineSvgIcon(kind: "phone" | "map" | "copy") {
   if (kind === "phone") {
     return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.62 10.79a15.53 15.53 0 0 0 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C10.4 21 3 13.6 3 4c0-.55.45-1 1-1h3.49c.55 0 1 .45 1 1 0 1.24.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.19 2.2z"/></svg>`;
@@ -158,6 +169,7 @@ function buildSocialHref(label: string, rawValue?: string) {
   const value = normalizeText(rawValue);
   if (!value) return "";
   if (looksLikeUrl(value) || /^weixin:\/\//i.test(value)) return value;
+  if (label === "Google") return buildGoogleReviewHref(value);
 
   if (label === "邮箱") return `mailto:${value}`;
   if (label === "微信") {
@@ -393,6 +405,13 @@ function buildSummaryActionHtmlFromKey(key: MerchantBusinessCardContactDisplayKe
         iconUrl: "/social-icons/xiaohongshu.svg",
         bgColor: "#FF2442",
       });
+    case "googleReview":
+      return buildActionButtonHtml({
+        href: buildGoogleReviewHref(normalizedValue),
+        label: "Open Google review",
+        iconUrl: "/social-icons/google.svg",
+        bgColor: "#ffffff",
+      });
     default:
       return "";
   }
@@ -435,6 +454,8 @@ function resolveContactNoteKey(label: string): MerchantBusinessCardContactDispla
       return "douyin";
     case "小红书":
       return "xiaohongshu";
+    case "Google":
+      return "googleReview";
     default:
       return null;
   }
@@ -1452,6 +1473,13 @@ function buildContactSummaryHtmlLegacy(input: {
         }
       : null,
   ].filter(Boolean) as Array<{ label: string; value: string; actionHtml: string }>;
+  if (input.contact?.googleReview) {
+    rows.push({
+      label: "Google",
+      value: input.contact.googleReview,
+      actionHtml: buildSummaryActionHtmlFromKey("googleReview", "Google", input.contact.googleReview),
+    });
+  }
   const invoiceRows = buildInvoiceSummaryRows(input.contact);
   const invoiceLegacyLabels = new Set(["\u5f00\u7968\u540d\u79f0", "\u7a0e\u53f7", "\u5f00\u7968\u5730\u5740"]);
   const contactRows = rows.filter((row) => !invoiceLegacyLabels.has(row.label));
@@ -1787,6 +1815,7 @@ function buildSharePayloadFromSnapshotMatch(
         tiktok: normalizeText(card.contacts?.tiktok),
         douyin: normalizeText(card.contacts?.douyin),
         xiaohongshu: normalizeText(card.contacts?.xiaohongshu),
+        googleReview: normalizeText(card.contacts?.googleReview),
         contactFieldOrder: normalizeMerchantBusinessCardContactFieldOrder(card.contactFieldOrder),
         contactOnlyFields: card.contactOnlyFields,
         websiteUrl: targetUrl,
@@ -2130,6 +2159,16 @@ function buildOrderedContactSummaryHtml(input: {
             iconUrl: "/social-icons/xiaohongshu.svg",
             bgColor: "#FF2442",
           }),
+        }
+      : null,
+  );
+  pushRow(
+    "googleReview",
+    contact.googleReview
+      ? {
+          label: "Google",
+          value: contact.googleReview,
+          actionHtml: buildSummaryActionHtmlFromKey("googleReview", "Google", contact.googleReview),
         }
       : null,
   );

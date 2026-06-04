@@ -32,7 +32,8 @@ export type MerchantBusinessCardFieldKey =
   | "instagram"
   | "tiktok"
   | "douyin"
-  | "xiaohongshu";
+  | "xiaohongshu"
+  | "googleReview";
 
 export type MerchantBusinessCardTextLayout = Record<
   MerchantBusinessCardFieldKey,
@@ -77,6 +78,7 @@ export type MerchantBusinessCardContacts = {
   tiktok: string;
   douyin: string;
   xiaohongshu: string;
+  googleReview: string;
 };
 
 export type MerchantBusinessCardInvoiceInfo = {
@@ -104,6 +106,7 @@ export const MERCHANT_BUSINESS_CARD_CONTACT_FIELD_KEYS = [
   "telegram",
   "linkedin",
   "discord",
+  "googleReview",
 ] as const satisfies readonly MerchantBusinessCardContactDisplayKey[];
 
 export type MerchantBusinessCardPrimaryContactOnlyKey = "merchantName";
@@ -265,6 +268,7 @@ function createDefaultContactOnlyFields(): MerchantBusinessCardContactOnlyFields
     tiktok: false,
     douyin: false,
     xiaohongshu: false,
+    googleReview: false,
   };
 }
 
@@ -335,6 +339,7 @@ const LEGACY_MERCHANT_BUSINESS_CARD_TEXT_LAYOUT: MerchantBusinessCardTextLayout 
   tiktok: { x: 360, y: 262 },
   douyin: { x: 360, y: 442 },
   xiaohongshu: { x: 360, y: 298 },
+  googleReview: { x: 360, y: 430 },
 };
 
 const MERCHANT_BUSINESS_CARD_CONTACT_LAYOUT_SLOTS = [
@@ -354,6 +359,7 @@ const MERCHANT_BUSINESS_CARD_CONTACT_LAYOUT_SLOTS = [
   { x: 360, y: 340 },
   { x: 360, y: 370 },
   { x: 360, y: 400 },
+  { x: 360, y: 430 },
 ] as const;
 
 export function buildOrderedMerchantBusinessCardContactTextLayout(
@@ -482,6 +488,7 @@ export function createDefaultMerchantBusinessCardDraft(
       tiktok: "",
       douyin: "",
       xiaohongshu: "",
+      googleReview: "",
     },
     invoice: {
       name: "",
@@ -518,6 +525,7 @@ export function createDefaultMerchantBusinessCardDraft(
       tiktok: { ...typography.info },
       douyin: { ...typography.info },
       xiaohongshu: { ...typography.info },
+      googleReview: { ...typography.info },
     },
   };
 }
@@ -637,6 +645,7 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
       tiktok: normalizeText(source.contacts?.tiktok),
       douyin: normalizeText((source.contacts as { douyin?: unknown } | undefined)?.douyin),
       xiaohongshu: normalizeText(source.contacts?.xiaohongshu),
+      googleReview: normalizeText((source.contacts as { googleReview?: unknown } | undefined)?.googleReview),
     },
     invoice: {
       name: normalizeText((source.invoice as { name?: unknown } | undefined)?.name),
@@ -665,6 +674,7 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
       tiktok: normalizeBoolean(contactOnlyFieldsSource.tiktok, fallback.contactOnlyFields.tiktok),
       douyin: normalizeBoolean(contactOnlyFieldsSource.douyin, fallback.contactOnlyFields.douyin),
       xiaohongshu: normalizeBoolean(contactOnlyFieldsSource.xiaohongshu, fallback.contactOnlyFields.xiaohongshu),
+      googleReview: normalizeBoolean(contactOnlyFieldsSource.googleReview, fallback.contactOnlyFields.googleReview),
     },
     customTexts,
     textLayout: {
@@ -687,6 +697,7 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
       tiktok: resolveTextLayoutEntry("tiktok", textLayoutSource, textLayoutFallback),
       douyin: resolveTextLayoutEntry("douyin", textLayoutSource, textLayoutFallback),
       xiaohongshu: resolveTextLayoutEntry("xiaohongshu", textLayoutSource, textLayoutFallback),
+      googleReview: resolveTextLayoutEntry("googleReview", textLayoutSource, textLayoutFallback),
     },
     qr: {
       x: clampInt(source.qr?.x, fallback.qr.x, 0, 2000),
@@ -775,6 +786,10 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
       xiaohongshu: normalizeTypographyStyle(
         fieldTypographySource.xiaohongshu,
         typographySource.info ? normalizeTypographyStyle(typographySource.info, fallback.typography.info) : fallback.fieldTypography.xiaohongshu,
+      ),
+      googleReview: normalizeTypographyStyle(
+        fieldTypographySource.googleReview,
+        typographySource.info ? normalizeTypographyStyle(typographySource.info, fallback.typography.info) : fallback.fieldTypography.googleReview,
       ),
     },
   };

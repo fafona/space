@@ -438,6 +438,7 @@ function buildSupportMerchantCardLink(card: MerchantBusinessCardAsset | null) {
       tiktok: normalizeSupportDetailText(card.contacts.tiktok),
       douyin: normalizeSupportDetailText(card.contacts.douyin),
       xiaohongshu: normalizeSupportDetailText(card.contacts.xiaohongshu),
+      googleReview: normalizeSupportDetailText(card.contacts.googleReview),
       websiteUrl: targetUrl,
     },
   });

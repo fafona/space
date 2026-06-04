@@ -1417,6 +1417,7 @@ function buildConversationMerchantCardShareContact(card: MerchantBusinessCardAss
     tiktok: normalizeConversationDetailText(contacts.tiktok),
     douyin: normalizeConversationDetailText(contacts.douyin),
     xiaohongshu: normalizeConversationDetailText(contacts.xiaohongshu),
+    googleReview: normalizeConversationDetailText(contacts.googleReview),
     websiteUrl: normalizeConversationDetailText(card.targetUrl),
   };
 }
