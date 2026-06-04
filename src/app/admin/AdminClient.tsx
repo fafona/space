@@ -3468,6 +3468,34 @@ function resolveMerchantBookingActionLabel(action: string, status: string) {
   return "更新预约";
 }
 
+function isMerchantChatOperationEndpoint(endpoint: string) {
+  return (
+    endpoint === "/api/merchant-chat-business-card" ||
+    endpoint === "/api/merchant-peer-messages" ||
+    endpoint === "/api/support-messages"
+  );
+}
+
+function resolveGenericMerchantOperationModule(endpoint: string) {
+  if (endpoint.includes("booking")) return "预约管理";
+  if (endpoint.includes("order")) return "订单管理";
+  if (endpoint.includes("membership") || endpoint.includes("member")) return "会员管理";
+  if (endpoint.includes("coupon")) return "经营中心";
+  if (endpoint.includes("business-card")) return "经营中心";
+  if (endpoint.includes("merchant-draft") || endpoint.includes("publish") || endpoint.includes("site-published")) return "网站编辑";
+  if (endpoint.includes("domain") || endpoint.includes("profile")) return "商户信息";
+  if (endpoint.includes("assets") || endpoint.includes("upload")) return "素材";
+  return "后台";
+}
+
+function resolveGenericMerchantOperationAction(method: string, actionText: string) {
+  if (actionText) return actionText;
+  if (method === "POST") return "提交";
+  if (method === "PATCH" || method === "PUT") return "更新";
+  if (method === "DELETE") return "删除";
+  return "操作";
+}
+
 function buildMerchantOperationFetchInfo(
   input: RequestInfo | URL,
   init: RequestInit | undefined,
@@ -3481,6 +3509,7 @@ function buildMerchantOperationFetchInfo(
   if (!endpoint.startsWith("/api/") || endpoint.startsWith("/api/auth/") || endpoint.startsWith("/api/supabase-proxy/")) {
     return null;
   }
+  if (isMerchantChatOperationEndpoint(endpoint)) return null;
   const body = readMerchantOperationBody(init);
   const siteId = resolveMerchantOperationSiteId(url, body, fallbackSiteId);
   if (!siteId) return null;
@@ -3533,16 +3562,19 @@ function buildMerchantOperationFetchInfo(
     return { siteId, method, endpoint, module: "预约管理", action: "更新工作台", summary: "更新预约工作台" };
   }
   if (endpoint === "/api/business-card-share") return null;
-  if (endpoint === "/api/merchant-chat-business-card") {
-    return { siteId, method, endpoint, module: "会话", action: "发送名片", summary: `发送会话名片${target}` };
-  }
-  if (endpoint === "/api/merchant-peer-messages" || endpoint === "/api/support-messages") {
-    return { siteId, method, endpoint, module: "会话", action: "发送消息", summary: "发送会话消息" };
-  }
   if (endpoint === "/api/assets/upload") {
     return { siteId, method, endpoint, module: "素材", action: "上传素材", summary: "上传图片或文件素材" };
   }
-  return null;
+  const genericModule = resolveGenericMerchantOperationModule(endpoint);
+  const genericAction = resolveGenericMerchantOperationAction(method, actionText);
+  return {
+    siteId,
+    method,
+    endpoint,
+    module: genericModule,
+    action: genericAction,
+    summary: `${genericAction}${target || `：${endpoint}`}`,
+  };
 }
 
 function readMerchantOperationResponseMessage(payload: unknown) {
@@ -6197,6 +6229,8 @@ export default function AdminClient({
   const [merchantOperationLogStatusFilter, setMerchantOperationLogStatusFilter] = useState<"all" | MerchantOperationLogStatus>("all");
   const [merchantOperationLogStartDate, setMerchantOperationLogStartDate] = useState("");
   const [merchantOperationLogEndDate, setMerchantOperationLogEndDate] = useState("");
+  const merchantOperationLogStartPickerRef = useRef<HTMLInputElement>(null);
+  const merchantOperationLogEndPickerRef = useRef<HTMLInputElement>(null);
   const [europeLocationOptionsApi, setEuropeLocationOptionsApi] = useState<EuropeLocationOptionsApi | null>(null);
   const [merchantProfileDialogOpen, setMerchantProfileDialogOpen] = useState(false);
   const [merchantProfileDialogShowBusinessCards, setMerchantProfileDialogShowBusinessCards] = useState(true);
@@ -19725,7 +19759,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     const date = new Date(value);
     return Number.isFinite(date.getTime()) ? date.toLocaleString("zh-CN", { hour12: false }) : value;
   };
-  const readMerchantLogDateBoundary = (value: string, boundary: "start" | "end") => {
+  const readMerchantLogDateParts = (value: string) => {
     const normalized = value
       .trim()
       .replace(/[年月]/g, "-")
@@ -19740,12 +19774,32 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     const day = Number(match[3]);
     if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return null;
     if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    return { year, month, day };
+  };
+  const formatMerchantLogDateInputValue = (value: string) => {
+    const parts = readMerchantLogDateParts(value);
+    if (!parts) return "";
+    return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+  };
+  const readMerchantLogDateBoundary = (value: string, boundary: "start" | "end") => {
+    const parts = readMerchantLogDateParts(value);
+    if (!parts) return null;
     const date =
       boundary === "start"
-        ? new Date(year, month - 1, day, 0, 0, 0, 0)
-        : new Date(year, month - 1, day, 23, 59, 59, 999);
+        ? new Date(parts.year, parts.month - 1, parts.day, 0, 0, 0, 0)
+        : new Date(parts.year, parts.month - 1, parts.day, 23, 59, 59, 999);
     const time = date.getTime();
     return Number.isFinite(time) ? time : null;
+  };
+  const openMerchantOperationLogDatePicker = (input: HTMLInputElement | null) => {
+    if (!input) return;
+    const picker = input as HTMLInputElement & { showPicker?: () => void };
+    if (typeof picker.showPicker === "function") {
+      picker.showPicker();
+      return;
+    }
+    input.focus();
+    input.click();
   };
   const merchantOperationLogModuleOptions = Array.from(
     new Set(merchantOperationLogs.map((item) => item.module).filter(Boolean)),
@@ -20014,7 +20068,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="text-[26px] font-bold leading-8 text-slate-950">日志</div>
-            <div className="mt-1 text-sm text-slate-500">查看此商户后台关键操作痕迹，包含保存、启停、删除、充值、兑换、订单、预约、名片和会话等写操作。</div>
+            <div className="mt-1 text-sm text-slate-500">查看此商户后台关键操作痕迹，包含保存、启停、删除、充值、兑换、订单、预约和名片等写操作，不记录会话聊天内容。</div>
           </div>
         </div>
         <div className="mt-5 grid gap-3 md:grid-cols-3">
@@ -20081,27 +20135,75 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           </label>
           <label className="grid gap-1 text-xs font-semibold text-slate-500">
             开始时间
-            <input
-              type="text"
-              inputMode="numeric"
-              autoComplete="off"
-              placeholder="YYYY-MM-DD"
-              className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-              value={merchantOperationLogStartDate}
-              onChange={(event) => setMerchantOperationLogStartDate(event.currentTarget.value)}
-            />
+            <span className="relative block">
+              <input
+                key="merchant-operation-log-start-text-input"
+                type="text"
+                inputMode="numeric"
+                autoComplete="off"
+                pattern="[0-9./-]*"
+                placeholder="例如 2026-06-04"
+                className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 pr-11 text-sm font-semibold text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                value={merchantOperationLogStartDate}
+                onChange={(event) => setMerchantOperationLogStartDate(event.currentTarget.value)}
+              />
+              <input
+                ref={merchantOperationLogStartPickerRef}
+                type="date"
+                tabIndex={-1}
+                aria-hidden="true"
+                className="absolute right-3 top-1/2 h-px w-px -translate-y-1/2 opacity-0"
+                value={formatMerchantLogDateInputValue(merchantOperationLogStartDate)}
+                onChange={(event) => setMerchantOperationLogStartDate(event.currentTarget.value)}
+              />
+              <button
+                type="button"
+                className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
+                onClick={() => openMerchantOperationLogDatePicker(merchantOperationLogStartPickerRef.current)}
+                aria-label="选择开始时间"
+              >
+                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                  <path d="M8 2v4M16 2v4M3 10h18" />
+                  <path d="M5 5h14a2 2 0 0 1 2 2v14H3V7a2 2 0 0 1 2-2Z" />
+                </svg>
+              </button>
+            </span>
           </label>
           <label className="grid gap-1 text-xs font-semibold text-slate-500">
             结束时间
-            <input
-              type="text"
-              inputMode="numeric"
-              autoComplete="off"
-              placeholder="YYYY-MM-DD"
-              className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-              value={merchantOperationLogEndDate}
-              onChange={(event) => setMerchantOperationLogEndDate(event.currentTarget.value)}
-            />
+            <span className="relative block">
+              <input
+                key="merchant-operation-log-end-text-input"
+                type="text"
+                inputMode="numeric"
+                autoComplete="off"
+                pattern="[0-9./-]*"
+                placeholder="例如 2026-06-04"
+                className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 pr-11 text-sm font-semibold text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                value={merchantOperationLogEndDate}
+                onChange={(event) => setMerchantOperationLogEndDate(event.currentTarget.value)}
+              />
+              <input
+                ref={merchantOperationLogEndPickerRef}
+                type="date"
+                tabIndex={-1}
+                aria-hidden="true"
+                className="absolute right-3 top-1/2 h-px w-px -translate-y-1/2 opacity-0"
+                value={formatMerchantLogDateInputValue(merchantOperationLogEndDate)}
+                onChange={(event) => setMerchantOperationLogEndDate(event.currentTarget.value)}
+              />
+              <button
+                type="button"
+                className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
+                onClick={() => openMerchantOperationLogDatePicker(merchantOperationLogEndPickerRef.current)}
+                aria-label="选择结束时间"
+              >
+                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                  <path d="M8 2v4M16 2v4M3 10h18" />
+                  <path d="M5 5h14a2 2 0 0 1 2 2v14H3V7a2 2 0 0 1 2-2Z" />
+                </svg>
+              </button>
+            </span>
           </label>
           <button
             type="button"

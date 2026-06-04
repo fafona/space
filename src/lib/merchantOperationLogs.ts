@@ -56,6 +56,15 @@ function isSystemSyncNoise(entry: MerchantOperationLogEntry) {
   return entry.endpoint === "/api/business-card-share" && entry.action === "保存名片";
 }
 
+function isChatOperationLog(entry: MerchantOperationLogEntry) {
+  return (
+    entry.endpoint === "/api/merchant-chat-business-card" ||
+    entry.endpoint === "/api/merchant-peer-messages" ||
+    entry.endpoint === "/api/support-messages" ||
+    entry.module === "会话"
+  );
+}
+
 export function readMerchantOperationLogs(siteId: string, limit = MAX_MERCHANT_OPERATION_LOGS): MerchantOperationLogEntry[] {
   const normalizedSiteId = normalizeText(siteId, 80);
   if (!normalizedSiteId || typeof window === "undefined") return [];
@@ -68,7 +77,7 @@ export function readMerchantOperationLogs(siteId: string, limit = MAX_MERCHANT_O
       .map(normalizeLogEntry)
       .filter((item): item is MerchantOperationLogEntry => {
         if (!item) return false;
-        return !isSystemSyncNoise(item);
+        return !isSystemSyncNoise(item) && !isChatOperationLog(item);
       })
       .slice(0, limit);
   } catch {
@@ -91,6 +100,7 @@ export function recordMerchantOperationLog(input: MerchantOperationLogInput) {
     endpoint: normalizeText(input.endpoint, 160) || undefined,
     detail: normalizeText(input.detail, 240) || undefined,
   };
+  if (isSystemSyncNoise(entry) || isChatOperationLog(entry)) return;
   try {
     const current = readMerchantOperationLogs(siteId, MAX_MERCHANT_OPERATION_LOGS);
     window.localStorage.setItem(getStorageKey(siteId), JSON.stringify([entry, ...current].slice(0, MAX_MERCHANT_OPERATION_LOGS)));
