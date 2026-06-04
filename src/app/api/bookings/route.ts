@@ -5,6 +5,7 @@ import {
   acknowledgeMerchantBookingBySite,
   createMerchantBooking,
   listMerchantBookings,
+  listMerchantBookingsWindow,
   listPersonalMerchantBookings,
   sendMerchantBookingManualEmailBySite,
   updateMerchantBooking,
@@ -37,6 +38,17 @@ function normalizeBookingViewport(value: unknown): MerchantBookingRuleViewport |
 
 function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeBookingListOffset(value: string | null) {
+  const numeric = Number.parseInt(String(value ?? ""), 10);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
+}
+
+function normalizeBookingListLimit(value: string | null) {
+  const numeric = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(numeric) || numeric < 1) return 500;
+  return Math.min(Math.max(numeric, 1), 1000);
 }
 
 async function resolveBookingAdminSession(request: Request, siteId: string) {
@@ -76,6 +88,23 @@ export async function GET(request: Request) {
     const session = await resolveBookingAdminSession(request, siteId);
     if (!session) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    }
+    if (searchParams.has("offset") || searchParams.has("limit")) {
+      const windowResult = await listMerchantBookingsWindow(siteId, {
+        offset: normalizeBookingListOffset(searchParams.get("offset")),
+        limit: normalizeBookingListLimit(searchParams.get("limit")),
+        includeAutomationState: true,
+        includeCustomerEmailLogs: true,
+        includeTimeline: true,
+      });
+      return NextResponse.json({
+        ok: true,
+        bookings: windowResult.records,
+        offset: windowResult.offset,
+        limit: windowResult.limit,
+        total: windowResult.total,
+        hasMore: windowResult.hasMore,
+      });
     }
     const bookings = await listMerchantBookings(siteId, {
       includeAutomationState: true,

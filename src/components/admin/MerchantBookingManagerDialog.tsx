@@ -110,6 +110,7 @@ type MerchantBookingAdminDraft = {
 };
 
 const MERCHANT_BOOKING_RENDER_LIMIT = 250;
+const MERCHANT_BOOKING_FETCH_LIMIT = 500;
 
 function overlay(children: ReactNode) {
   if (typeof document === "undefined") return null;
@@ -532,6 +533,8 @@ export default function MerchantBookingManagerDialog({
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [renderLimit, setRenderLimit] = useState(MERCHANT_BOOKING_RENDER_LIMIT);
+  const [loadingMoreRecords, setLoadingMoreRecords] = useState(false);
+  const [hasMoreRemoteRecords, setHasMoreRemoteRecords] = useState(false);
   const [filter, setFilter] = useState<MerchantBookingFilter>("all");
   const [selectedStatuses, setSelectedStatuses] = useState<MerchantBookingStatus[]>(
     () => loadMerchantBookingManagerPreferences(siteId).selectedStatuses,
@@ -654,12 +657,15 @@ export default function MerchantBookingManagerDialog({
       }
       setError("");
       try {
-        const response = await fetch(`/api/bookings?siteId=${encodeURIComponent(siteId)}`, {
-          cache: "no-store",
-          credentials: "same-origin",
-        });
+        const response = await fetch(
+          `/api/bookings?siteId=${encodeURIComponent(siteId)}&offset=0&limit=${MERCHANT_BOOKING_FETCH_LIMIT}`,
+          {
+            cache: "no-store",
+            credentials: "same-origin",
+          },
+        );
         const json = (await response.json().catch(() => null)) as
-          | { ok?: boolean; bookings?: MerchantBookingRecord[]; message?: string }
+          | { ok?: boolean; bookings?: MerchantBookingRecord[]; hasMore?: boolean; message?: string }
           | null;
         if (!response.ok || !json?.ok || !Array.isArray(json.bookings)) {
           throw new Error(json?.message || loadFailedText);
@@ -668,10 +674,12 @@ export default function MerchantBookingManagerDialog({
           writeCachedBookingRecords(siteId, json.bookings);
           setRecords(json.bookings);
           setDrafts(Object.fromEntries(json.bookings.map((record) => [record.id, createDraft(record)])));
+          setHasMoreRemoteRecords(Boolean(json.hasMore));
         }
       } catch (loadError) {
         if (!cancelled) {
           setError(cachedRecords.length > 0 ? "" : loadError instanceof Error ? loadError.message : loadFailedText);
+          setHasMoreRemoteRecords(false);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -682,6 +690,43 @@ export default function MerchantBookingManagerDialog({
       cancelled = true;
     };
   }, [loadFailedText, onRecordsChange, open, siteId]);
+
+  const loadMoreBookings = useCallback(async () => {
+    if (!siteId || loading || loadingMoreRecords || !hasMoreRemoteRecords) return;
+    setLoadingMoreRecords(true);
+    setError("");
+    try {
+      const response = await fetch(
+        `/api/bookings?siteId=${encodeURIComponent(siteId)}&offset=${records.length}&limit=${MERCHANT_BOOKING_FETCH_LIMIT}`,
+        {
+          cache: "no-store",
+          credentials: "same-origin",
+        },
+      );
+      const json = (await response.json().catch(() => null)) as
+        | { ok?: boolean; bookings?: MerchantBookingRecord[]; hasMore?: boolean; message?: string }
+        | null;
+      if (!response.ok || !json?.ok || !Array.isArray(json.bookings)) {
+        throw new Error(json?.message || loadFailedText);
+      }
+      const nextBookings = json.bookings;
+      setHasMoreRemoteRecords(Boolean(json.hasMore));
+      setRecords((currentRecords) => {
+        const existingIds = new Set(currentRecords.map((record) => record.id));
+        const mergedRecords = [
+          ...currentRecords,
+          ...nextBookings.filter((record) => !existingIds.has(record.id)),
+        ];
+        writeCachedBookingRecords(siteId, mergedRecords);
+        setDrafts(Object.fromEntries(mergedRecords.map((record) => [record.id, createDraft(record)])));
+        return mergedRecords;
+      });
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : loadFailedText);
+    } finally {
+      setLoadingMoreRecords(false);
+    }
+  }, [hasMoreRemoteRecords, loadFailedText, loading, loadingMoreRecords, records.length, siteId]);
 
   useEffect(() => {
     if (!open || !siteId) return;
@@ -1862,15 +1907,32 @@ export default function MerchantBookingManagerDialog({
                   </div>
                 );
               })}
-              {filteredRecords.length > renderedRecords.length ? (
+              {filteredRecords.length > renderedRecords.length || hasMoreRemoteRecords ? (
                 <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-5 py-4 text-center text-sm text-slate-500">
-                  <div>当前筛选结果 {filteredRecords.length} 条，已显示 {renderedRecords.length} 条。</div>
+                  <div>
+                    {locale.startsWith("es")
+                      ? `${renderedRecords.length} de ${filteredRecords.length} resultados visibles.`
+                      : `当前筛选结果 ${filteredRecords.length} 条，已显示 ${renderedRecords.length} 条`}
+                  </div>
                   <button
                     type="button"
-                    className="mt-3 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-white"
-                    onClick={() => setRenderLimit((current) => current + MERCHANT_BOOKING_RENDER_LIMIT)}
+                    className="mt-3 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={loadingMoreRecords}
+                    onClick={() => {
+                      if (filteredRecords.length > renderedRecords.length) {
+                        setRenderLimit((current) => current + MERCHANT_BOOKING_RENDER_LIMIT);
+                        return;
+                      }
+                      void loadMoreBookings();
+                    }}
                   >
-                    显示更多
+                    {loadingMoreRecords
+                      ? locale.startsWith("es")
+                        ? "Cargando"
+                        : "加载中"
+                      : locale.startsWith("es")
+                        ? "Mostrar mas"
+                        : "显示更多"}
                   </button>
                 </div>
               ) : null}

@@ -51,9 +51,22 @@ type MerchantBookingStoreFile = {
   records: MerchantBookingStoredRecord[];
 };
 
+type MerchantBookingListOptions = {
+  includeAutomationState?: boolean;
+  includeCustomerEmailLogs?: boolean;
+  includeTimeline?: boolean;
+};
+
+type MerchantBookingWindowOptions = MerchantBookingListOptions & {
+  offset?: number;
+  limit?: number;
+};
+
 const STORE_VERSION = 1 as const;
 const BOOKING_STORE_PATH = path.join(process.cwd(), ".runtime", "merchant-bookings.json");
 const LOCK_KEY = "__merchantBookingsQueue";
+const DEFAULT_BOOKING_WINDOW_LIMIT = 500;
+const MAX_BOOKING_WINDOW_LIMIT = 1000;
 
 function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -117,6 +130,17 @@ function sortNewestFirst<T extends { updatedAt?: string; createdAt?: string }>(r
     const rightTime = new Date(right.updatedAt ?? right.createdAt ?? 0).getTime();
     return (Number.isFinite(rightTime) ? rightTime : 0) - (Number.isFinite(leftTime) ? leftTime : 0);
   });
+}
+
+function normalizeBookingWindowOffset(value: unknown) {
+  const numeric = Number.parseInt(String(value ?? ""), 10);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
+}
+
+function normalizeBookingWindowLimit(value: unknown) {
+  const numeric = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(numeric) || numeric < 1) return DEFAULT_BOOKING_WINDOW_LIMIT;
+  return Math.min(Math.max(numeric, 1), MAX_BOOKING_WINDOW_LIMIT);
 }
 
 function normalizeBookingRuleBinding(input?: MerchantBookingRuleLocator | null): MerchantBookingRuleBinding {
@@ -769,7 +793,7 @@ export async function runMerchantBookingAutomationForAllSites() {
 
 export async function listMerchantBookings(
   siteId: string,
-  options?: { includeAutomationState?: boolean; includeCustomerEmailLogs?: boolean; includeTimeline?: boolean },
+  options?: MerchantBookingListOptions,
 ): Promise<MerchantBookingRecord[]> {
   const normalizedSiteId = trimText(siteId);
   if (!normalizedSiteId) return [];
@@ -784,6 +808,31 @@ export async function listMerchantBookings(
       .filter((item) => item.siteId === normalizedSiteId)
       .map((item) => withoutMerchantBookingToken(item, options)),
   );
+}
+
+export async function listMerchantBookingsWindow(
+  siteId: string,
+  options?: MerchantBookingWindowOptions,
+): Promise<{ records: MerchantBookingRecord[]; offset: number; limit: number; total: number; hasMore: boolean }> {
+  const normalizedSiteId = trimText(siteId);
+  const offset = normalizeBookingWindowOffset(options?.offset);
+  const limit = normalizeBookingWindowLimit(options?.limit);
+  if (!normalizedSiteId) return { records: [], offset, limit, total: 0, hasMore: false };
+  let store: MerchantBookingStoreFile;
+  try {
+    store = await runMerchantBookingAutomationForSite(normalizedSiteId);
+  } catch {
+    store = await readMerchantBookingStore();
+  }
+  const sortedRecords = sortNewestFirst(store.records.filter((item) => item.siteId === normalizedSiteId));
+  const windowRecords = sortedRecords.slice(offset, offset + limit);
+  return {
+    records: windowRecords.map((item) => withoutMerchantBookingToken(item, options)),
+    offset,
+    limit,
+    total: sortedRecords.length,
+    hasMore: offset + windowRecords.length < sortedRecords.length,
+  };
 }
 
 function matchesPersonalBookingCustomer(

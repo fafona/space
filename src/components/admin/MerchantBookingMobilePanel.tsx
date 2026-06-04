@@ -2,6 +2,7 @@
 
 import {
   useCallback,
+  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -84,6 +85,9 @@ import {
   writeMerchantAdminDataCache,
 } from "@/lib/merchantAdminDataCache";
 import usePullToRefresh from "@/lib/usePullToRefresh";
+
+const MERCHANT_BOOKING_MOBILE_RENDER_LIMIT = 100;
+const MERCHANT_BOOKING_FETCH_LIMIT = 500;
 
 type MerchantBookingMobilePanelProps = {
   siteId: string;
@@ -565,6 +569,9 @@ export default function MerchantBookingMobilePanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
+  const [renderLimit, setRenderLimit] = useState(MERCHANT_BOOKING_MOBILE_RENDER_LIMIT);
+  const [loadingMoreRecords, setLoadingMoreRecords] = useState(false);
+  const [hasMoreRemoteRecords, setHasMoreRemoteRecords] = useState(false);
   const [filter, setFilter] = useState<MerchantBookingFilter>("all");
   const [selectedStatuses, setSelectedStatuses] = useState<MerchantBookingStatus[]>(
     () => loadMerchantBookingManagerPreferences(siteId).selectedStatuses,
@@ -587,6 +594,7 @@ export default function MerchantBookingMobilePanel({
   );
   const [customerEmailLocale, setCustomerEmailLocale] = useState(defaultCustomerEmailLocale);
   const [customerEmailLocaleLoaded, setCustomerEmailLocaleLoaded] = useState(false);
+  const deferredQuery = useDeferredValue(query);
   const filterSelectShellClassName = darkMode
     ? "faolla-mobile-filter-select rounded-[16px] border border-slate-700 bg-slate-900/75 py-1.5 pl-4 pr-9 text-slate-100 shadow-sm"
     : "faolla-mobile-filter-select rounded-[16px] border border-slate-200 bg-white py-1.5 pl-4 pr-9 text-slate-900 shadow-sm";
@@ -675,12 +683,15 @@ export default function MerchantBookingMobilePanel({
     }
     setError("");
     try {
-      const response = await fetch(`/api/bookings?siteId=${encodeURIComponent(siteId)}`, {
-        cache: "no-store",
-        credentials: "same-origin",
-      });
+      const response = await fetch(
+        `/api/bookings?siteId=${encodeURIComponent(siteId)}&offset=0&limit=${MERCHANT_BOOKING_FETCH_LIMIT}`,
+        {
+          cache: "no-store",
+          credentials: "same-origin",
+        },
+      );
       const json = (await response.json().catch(() => null)) as
-        | { ok?: boolean; bookings?: MerchantBookingRecord[]; message?: string }
+        | { ok?: boolean; bookings?: MerchantBookingRecord[]; hasMore?: boolean; message?: string }
         | null;
       if (!response.ok || !json?.ok || !Array.isArray(json.bookings)) {
         throw new Error(json?.message || loadFailedText);
@@ -688,12 +699,51 @@ export default function MerchantBookingMobilePanel({
       writeCachedBookingRecords(siteId, json.bookings);
       setRecords(json.bookings);
       setDrafts(Object.fromEntries(json.bookings.map((record) => [record.id, createDraft(record)])));
+      setHasMoreRemoteRecords(Boolean(json.hasMore));
     } catch (loadError) {
       setError(cachedRecords.length > 0 ? "" : loadError instanceof Error ? loadError.message : loadFailedText);
+      setHasMoreRemoteRecords(false);
     } finally {
       setLoading(false);
     }
   }, [loadFailedText, siteId]);
+
+  const loadMoreBookings = useCallback(async () => {
+    if (!siteId || loading || loadingMoreRecords || !hasMoreRemoteRecords) return;
+    setLoadingMoreRecords(true);
+    setError("");
+    try {
+      const response = await fetch(
+        `/api/bookings?siteId=${encodeURIComponent(siteId)}&offset=${records.length}&limit=${MERCHANT_BOOKING_FETCH_LIMIT}`,
+        {
+          cache: "no-store",
+          credentials: "same-origin",
+        },
+      );
+      const json = (await response.json().catch(() => null)) as
+        | { ok?: boolean; bookings?: MerchantBookingRecord[]; hasMore?: boolean; message?: string }
+        | null;
+      if (!response.ok || !json?.ok || !Array.isArray(json.bookings)) {
+        throw new Error(json?.message || loadFailedText);
+      }
+      const nextBookings = json.bookings;
+      setHasMoreRemoteRecords(Boolean(json.hasMore));
+      setRecords((currentRecords) => {
+        const existingIds = new Set(currentRecords.map((record) => record.id));
+        const mergedRecords = [
+          ...currentRecords,
+          ...nextBookings.filter((record) => !existingIds.has(record.id)),
+        ];
+        writeCachedBookingRecords(siteId, mergedRecords);
+        setDrafts(Object.fromEntries(mergedRecords.map((record) => [record.id, createDraft(record)])));
+        return mergedRecords;
+      });
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : loadFailedText);
+    } finally {
+      setLoadingMoreRecords(false);
+    }
+  }, [hasMoreRemoteRecords, loadFailedText, loading, loadingMoreRecords, records.length, siteId]);
 
   useEffect(() => {
     void loadBookings();
@@ -763,10 +813,14 @@ export default function MerchantBookingMobilePanel({
     refreshing: pullRefreshing,
     bind: pullToRefreshBind,
   } = usePullToRefresh({
-    disabled: loading || Boolean(detailBookingId),
+    disabled: loading || loadingMoreRecords || Boolean(detailBookingId),
     getScrollElement: () => (rootRef.current?.parentElement instanceof HTMLElement ? rootRef.current.parentElement : null),
     onRefresh: loadBookings,
   });
+
+  useEffect(() => {
+    setRenderLimit(MERCHANT_BOOKING_MOBILE_RENDER_LIMIT);
+  }, [deferredQuery, filter, historyVisibility, selectedStatuses, sortMode]);
 
   const historyFilteredRecords = useMemo(
     () => filterMerchantBookingRecordsByHistory(records, historyVisibility),
@@ -784,11 +838,15 @@ export default function MerchantBookingMobilePanel({
         } else if (item.status !== filter) {
           return false;
         }
-        return matchesSearch(item, query);
+        return matchesSearch(item, deferredQuery);
         }),
         sortMode,
       ),
-    [filter, historyFilteredRecords, query, selectedStatuses, sortMode],
+    [deferredQuery, filter, historyFilteredRecords, selectedStatuses, sortMode],
+  );
+  const renderedRecords = useMemo(
+    () => filteredRecords.slice(0, renderLimit),
+    [filteredRecords, renderLimit],
   );
   const visibleRecordIdSet = useMemo(() => new Set(filteredRecords.map((record) => record.id)), [filteredRecords]);
   const selectedRecordSet = useMemo(() => new Set(selectedBookingIds), [selectedBookingIds]);
@@ -1833,7 +1891,7 @@ export default function MerchantBookingMobilePanel({
               </div>
             ) : filteredRecords.length > 0 ? (
               <div className="space-y-3">
-                {filteredRecords.map((record) => {
+                {renderedRecords.map((record) => {
                   const appointmentParts = splitMerchantBookingDateTime(record.appointmentAt);
                   const displayName = formatMerchantBookingDisplayName(record.customerName, record.title, locale);
                   const isNewRecord = isMerchantBookingPendingMerchantTouch(record);
@@ -1988,6 +2046,35 @@ export default function MerchantBookingMobilePanel({
                     </article>
                   );
                 })}
+                {filteredRecords.length > renderedRecords.length || hasMoreRemoteRecords ? (
+                  <div className="rounded-[24px] border border-dashed border-slate-300 bg-white px-5 py-4 text-center text-sm text-slate-500 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+                    <div>
+                      {locale.startsWith("es")
+                        ? `${renderedRecords.length} de ${filteredRecords.length} resultados visibles.`
+                        : `当前筛选结果 ${filteredRecords.length} 条，已显示 ${renderedRecords.length} 条`}
+                    </div>
+                    <button
+                      type="button"
+                      className="mt-3 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                      disabled={loadingMoreRecords}
+                      onClick={() => {
+                        if (filteredRecords.length > renderedRecords.length) {
+                          setRenderLimit((current) => current + MERCHANT_BOOKING_MOBILE_RENDER_LIMIT);
+                          return;
+                        }
+                        void loadMoreBookings();
+                      }}
+                    >
+                      {loadingMoreRecords
+                        ? locale.startsWith("es")
+                          ? "Cargando"
+                          : "加载中"
+                        : locale.startsWith("es")
+                          ? "Mostrar mas"
+                          : "显示更多"}
+                    </button>
+                  </div>
+                ) : null}
               </div>
             ) : (
               <div className="rounded-[28px] border border-dashed border-slate-300 bg-white px-5 py-8 text-center text-sm text-slate-500 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
