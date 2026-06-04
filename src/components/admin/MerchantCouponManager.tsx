@@ -40,6 +40,7 @@ type MerchantCouponManagerProps = {
   publicSiteUrl?: string;
   couponPageId?: string;
   pricePrefix?: string;
+  view?: "list" | "claims" | "redemptions" | "dailyStats";
   onCouponsChange?: (coupons: MerchantCouponRecord[]) => void;
   onClose?: () => void;
   className?: string;
@@ -1150,6 +1151,7 @@ export default function MerchantCouponManager({
   publicSiteUrl,
   couponPageId,
   pricePrefix = "",
+  view = "list",
   onCouponsChange,
   onClose,
   className = "",
@@ -1252,6 +1254,12 @@ export default function MerchantCouponManager({
     });
     return Array.from(stats.values()).sort((left, right) => right.date.localeCompare(left.date)).slice(0, 30);
   }, [coupons]);
+  const showCouponList = view === "list";
+  const showClaimRecords = view === "list" || view === "claims";
+  const showRedeemRecords = view === "list" || view === "redemptions";
+  const showDailyStats = view === "list" || view === "dailyStats";
+  const recordSectionClassName = view === "list" ? "grid gap-4 lg:grid-cols-3" : "grid gap-4";
+  const recordScrollClassName = view === "list" ? "mt-3 max-h-72 space-y-2 overflow-auto text-xs" : "mt-3 max-h-[calc(100vh-22rem)] space-y-2 overflow-auto text-xs";
   const formPreviewData = useMemo<CouponVisualCardData>(() => {
     const itemText: Record<MerchantCouponDisplayField, string> = {
       discount: form.displayDiscountText.trim(),
@@ -2841,6 +2849,7 @@ export default function MerchantCouponManager({
         </div>
       ) : null}
 
+      {showCouponList ? (
       <section className="rounded-[28px] border border-slate-200 bg-white px-5 py-5 shadow-[0_18px_48px_rgba(15,23,42,0.08)]">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -2986,11 +2995,13 @@ export default function MerchantCouponManager({
             )}
           </div>
       </section>
+      ) : null}
 
-      <section className="grid gap-4 lg:grid-cols-3">
+      <section className={recordSectionClassName}>
+        {showClaimRecords ? (
         <div className="rounded-[28px] border border-slate-200 bg-white px-4 py-4 shadow-[0_18px_48px_rgba(15,23,42,0.08)]">
           <div className="text-sm font-semibold text-slate-900">领取记录</div>
-          <div className="mt-3 max-h-72 space-y-2 overflow-auto text-xs">
+          <div className={recordScrollClassName}>
             {claimRecordRows.length === 0 ? (
               <div className="rounded-lg border border-dashed border-slate-200 px-3 py-4 text-center text-slate-500">暂无领取记录</div>
             ) : (
@@ -3007,10 +3018,12 @@ export default function MerchantCouponManager({
             )}
           </div>
         </div>
+        ) : null}
 
+        {showRedeemRecords ? (
         <div className="rounded-[28px] border border-slate-200 bg-white px-4 py-4 shadow-[0_18px_48px_rgba(15,23,42,0.08)]">
           <div className="text-sm font-semibold text-slate-900">核销记录</div>
-          <div className="mt-3 max-h-72 space-y-2 overflow-auto text-xs">
+          <div className={recordScrollClassName}>
             {redeemRecordRows.length === 0 ? (
               <div className="rounded-lg border border-dashed border-slate-200 px-3 py-4 text-center text-slate-500">暂无核销记录</div>
             ) : (
@@ -3027,10 +3040,12 @@ export default function MerchantCouponManager({
             )}
           </div>
         </div>
+        ) : null}
 
+        {showDailyStats ? (
         <div className="rounded-[28px] border border-slate-200 bg-white px-4 py-4 shadow-[0_18px_48px_rgba(15,23,42,0.08)]">
           <div className="text-sm font-semibold text-slate-900">日报统计</div>
-          <div className="mt-3 max-h-72 space-y-2 overflow-auto text-xs">
+          <div className={recordScrollClassName}>
             {dailyStatsRows.length === 0 ? (
               <div className="rounded-lg border border-dashed border-slate-200 px-3 py-4 text-center text-slate-500">暂无统计</div>
             ) : (
@@ -3044,6 +3059,7 @@ export default function MerchantCouponManager({
             )}
           </div>
         </div>
+        ) : null}
       </section>
     </div>
   );
