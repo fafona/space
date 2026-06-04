@@ -178,6 +178,13 @@ import {
 } from "@/lib/galleryLayout";
 import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
 import type { PublishEvent, RemoteAnalyticsSummary } from "@/lib/analytics";
+import {
+  MERCHANT_OPERATION_LOG_EVENT,
+  readMerchantOperationLogs,
+  recordMerchantOperationLog,
+  type MerchantOperationLogEntry,
+  type MerchantOperationLogStatus,
+} from "@/lib/merchantOperationLogs";
 import { loadEuropeLocationOptionsApi, type EuropeLocationOptionsApi } from "@/lib/europeLocationOptionsLoader";
 import {
   buildMerchantCardPlacement,
@@ -3343,6 +3350,221 @@ function recordPublishEvent(input: PublishEventInput) {
     });
 }
 
+type MerchantOperationFetchInfo = {
+  siteId: string;
+  method: string;
+  endpoint: string;
+  module: string;
+  action: string;
+  summary: string;
+};
+
+function normalizeOperationField(value: unknown, maxLength = 120) {
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+function readMerchantOperationBody(init?: RequestInit): Record<string, unknown> | null {
+  const body = init?.body;
+  if (!body) return null;
+  if (typeof body === "string") {
+    const trimmed = body.trim();
+    if (!trimmed || (!trimmed.startsWith("{") && !trimmed.startsWith("["))) return null;
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+    } catch {
+      return null;
+    }
+  }
+  if (typeof URLSearchParams !== "undefined" && body instanceof URLSearchParams) {
+    return Object.fromEntries(body.entries());
+  }
+  if (typeof FormData !== "undefined" && body instanceof FormData) {
+    const record: Record<string, unknown> = {};
+    body.forEach((value, key) => {
+      if (typeof value === "string") record[key] = value;
+    });
+    return record;
+  }
+  return null;
+}
+
+function getMerchantOperationUrl(input: RequestInfo | URL) {
+  if (typeof window === "undefined") return null;
+  try {
+    const rawUrl = input instanceof Request ? input.url : input instanceof URL ? input.toString() : String(input);
+    return new URL(rawUrl, window.location.origin);
+  } catch {
+    return null;
+  }
+}
+
+function getMerchantOperationMethod(input: RequestInfo | URL, init?: RequestInit) {
+  const method = normalizeOperationField(init?.method || (input instanceof Request ? input.method : "GET"), 16).toUpperCase();
+  return method || "GET";
+}
+
+function getMerchantOperationBodyText(body: Record<string, unknown> | null, keys: string[]) {
+  if (!body) return "";
+  for (const key of keys) {
+    const value = body[key];
+    const text = normalizeOperationField(value, 80);
+    if (text) return text;
+  }
+  return "";
+}
+
+function resolveMerchantOperationSiteId(url: URL, body: Record<string, unknown> | null, fallbackSiteId: string) {
+  const direct = getMerchantOperationBodyText(body, ["siteId", "merchantId"]);
+  if (direct) return direct;
+  const querySiteId = normalizeOperationField(url.searchParams.get("siteId"), 80);
+  if (querySiteId) return querySiteId;
+  const merchantIds = body?.merchantIds;
+  if (Array.isArray(merchantIds)) {
+    const first = merchantIds.map((item) => normalizeOperationField(item, 80)).find(Boolean);
+    if (first) return first;
+  }
+  return normalizeOperationField(fallbackSiteId, 80);
+}
+
+function formatMerchantOperationTarget(body: Record<string, unknown> | null) {
+  const target = getMerchantOperationBodyText(body, [
+    "title",
+    "name",
+    "couponTitle",
+    "orderId",
+    "bookingId",
+    "membershipId",
+    "rechargePlanId",
+    "redemptionItemId",
+    "cardId",
+    "id",
+  ]);
+  return target ? `：${target}` : "";
+}
+
+function resolveMerchantOrderActionLabel(action: string, status: string) {
+  if (status) return `更新订单状态为 ${status}`;
+  if (action === "confirm") return "确认订单";
+  if (action === "cancel") return "取消订单";
+  if (action === "complete") return "完成订单";
+  if (action === "unconfirm") return "取消确认订单";
+  return "更新订单";
+}
+
+function resolveMerchantBookingActionLabel(action: string, status: string) {
+  if (status) return `更新预约状态为 ${status}`;
+  if (action === "confirm") return "确认预约";
+  if (action === "cancel") return "取消预约";
+  if (action === "complete") return "完成预约";
+  if (action === "hide") return "隐藏预约";
+  if (action === "unhide") return "取消隐藏预约";
+  return "更新预约";
+}
+
+function buildMerchantOperationFetchInfo(
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  fallbackSiteId: string,
+): MerchantOperationFetchInfo | null {
+  const method = getMerchantOperationMethod(input, init);
+  if (!["POST", "PATCH", "PUT", "DELETE"].includes(method)) return null;
+  const url = getMerchantOperationUrl(input);
+  if (!url) return null;
+  const endpoint = url.pathname;
+  if (!endpoint.startsWith("/api/") || endpoint.startsWith("/api/auth/") || endpoint.startsWith("/api/supabase-proxy/")) {
+    return null;
+  }
+  const body = readMerchantOperationBody(init);
+  const siteId = resolveMerchantOperationSiteId(url, body, fallbackSiteId);
+  if (!siteId) return null;
+  const target = formatMerchantOperationTarget(body);
+  const actionText = normalizeOperationField(body?.action, 80);
+  const statusText = normalizeOperationField(body?.status, 80);
+  const typeText = normalizeOperationField(body?.type, 80);
+
+  if (endpoint === "/api/publish") {
+    return { siteId, method, endpoint, module: "网站编辑", action: "发布", summary: "发布网站" };
+  }
+  if (endpoint === "/api/merchant-draft") {
+    return { siteId, method, endpoint, module: "网站编辑", action: "保存草稿", summary: "保存网站草稿" };
+  }
+  if (endpoint === "/api/merchant-domain-binding") {
+    return { siteId, method, endpoint, module: "商户信息", action: "域名绑定", summary: "更新域名绑定" };
+  }
+  if (endpoint === "/api/membership-settings") {
+    return { siteId, method, endpoint, module: "会员管理", action: "保存配置", summary: "保存会员配置" };
+  }
+  if (endpoint === "/api/memberships") {
+    if (actionText === "member_redemption_checkout") {
+      return { siteId, method, endpoint, module: "积分兑换", action: "结算", summary: `积分兑换结算${target}` };
+    }
+    if (actionText === "member_operation") {
+      const action = typeText === "recharge" ? "充值" : "积分调整";
+      return { siteId, method, endpoint, module: "会员管理", action, summary: `会员${action}${target}` };
+    }
+    if (actionText === "update_allergens") {
+      return { siteId, method, endpoint, module: "会员管理", action: "更新过敏信息", summary: `更新会员过敏信息${target}` };
+    }
+    if (actionText === "checkin") {
+      return { siteId, method, endpoint, module: "会员管理", action: "签到", summary: `会员签到${target}` };
+    }
+    return { siteId, method, endpoint, module: "会员管理", action: method === "POST" ? "新增会员" : "更新会员", summary: `${method === "POST" ? "新增" : "更新"}会员${target}` };
+  }
+  if (endpoint === "/api/coupons") {
+    const action = method === "POST" ? "新建优惠券" : method === "DELETE" ? "删除优惠券" : statusText ? "更新优惠券状态" : "更新优惠券";
+    return { siteId, method, endpoint, module: "经营中心", action, summary: `${action}${target}` };
+  }
+  if (endpoint === "/api/orders") {
+    const action = method === "POST" ? "创建订单" : resolveMerchantOrderActionLabel(actionText, statusText);
+    return { siteId, method, endpoint, module: "订单管理", action, summary: `${action}${target}` };
+  }
+  if (endpoint === "/api/bookings") {
+    const action = method === "POST" ? "创建预约" : resolveMerchantBookingActionLabel(actionText, statusText);
+    return { siteId, method, endpoint, module: "预约管理", action, summary: `${action}${target}` };
+  }
+  if (endpoint === "/api/bookings/workbench") {
+    return { siteId, method, endpoint, module: "预约管理", action: "更新工作台", summary: "更新预约工作台" };
+  }
+  if (endpoint === "/api/business-card-share") {
+    const action = method === "DELETE" ? "删除名片" : "保存名片";
+    return { siteId, method, endpoint, module: "经营中心", action, summary: `${action}${target}` };
+  }
+  if (endpoint === "/api/merchant-chat-business-card") {
+    return { siteId, method, endpoint, module: "会话", action: "发送名片", summary: `发送会话名片${target}` };
+  }
+  if (endpoint === "/api/merchant-peer-messages" || endpoint === "/api/support-messages") {
+    return { siteId, method, endpoint, module: "会话", action: "发送消息", summary: "发送会话消息" };
+  }
+  if (endpoint === "/api/assets/upload") {
+    return { siteId, method, endpoint, module: "素材", action: "上传素材", summary: "上传图片或文件素材" };
+  }
+  return null;
+}
+
+function readMerchantOperationResponseMessage(payload: unknown) {
+  if (!payload || typeof payload !== "object") return "";
+  const record = payload as Record<string, unknown>;
+  return (
+    normalizeOperationField(record.message, 160) ||
+    normalizeOperationField(record.error, 160) ||
+    normalizeOperationField(record.code, 160)
+  );
+}
+
+function recordMerchantOperationFetchResult(info: MerchantOperationFetchInfo, status: MerchantOperationLogStatus, detail?: string) {
+  recordMerchantOperationLog({
+    siteId: info.siteId,
+    module: info.module,
+    action: info.action,
+    summary: info.summary,
+    status,
+    method: info.method,
+    endpoint: info.endpoint,
+    detail,
+  });
+}
+
 function computePublishDiffSummary(nextBlocks: Block[], previousBlocks: Block[]): PublishDiffSummary {
   const toKey = (block: Block) => `${block.type}:${block.id}`;
   const previousMap = new Map(previousBlocks.map((block) => [toKey(block), JSON.stringify(block)]));
@@ -5966,6 +6188,7 @@ export default function AdminClient({
   const [merchantAnalyticsRemoteSummary, setMerchantAnalyticsRemoteSummary] = useState<RemoteAnalyticsSummary | null>(null);
   const [merchantAnalyticsLoading, setMerchantAnalyticsLoading] = useState(false);
   const [merchantAnalyticsError, setMerchantAnalyticsError] = useState("");
+  const [merchantOperationLogs, setMerchantOperationLogs] = useState<MerchantOperationLogEntry[]>([]);
   const [europeLocationOptionsApi, setEuropeLocationOptionsApi] = useState<EuropeLocationOptionsApi | null>(null);
   const [merchantProfileDialogOpen, setMerchantProfileDialogOpen] = useState(false);
   const [merchantProfileDialogShowBusinessCards, setMerchantProfileDialogShowBusinessCards] = useState(true);
@@ -6203,6 +6426,7 @@ export default function AdminClient({
   const supportPeerProfileFetchedAtRef = useRef<Record<string, number>>({});
   const supportPeerProfileLocalMutationAtRef = useRef<Record<string, number>>({});
   const supportNotificationPreferencesKeyRef = useRef("");
+  const merchantOperationLogSiteIdRef = useRef("");
   const mobileVisualViewportLayoutHeightRef = useRef(readMobileVisualViewportLayoutHeightCandidate());
   const mobileVisualViewportOrientationRef = useRef(readMobileVisualViewportOrientation());
   const [supportSelfLanguageMenuOpen, setSupportSelfLanguageMenuOpen] = useState(false);
@@ -11104,6 +11328,60 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (!isMerchantNumericId(editingSiteId)) return;
     persistRecentMerchantLaunchState(editingSiteId);
   }, [editingSiteId, isPlatformEditor]);
+
+  useEffect(() => {
+    merchantOperationLogSiteIdRef.current = !isPlatformEditor && isMerchantNumericId(editingSiteId) ? editingSiteId : "";
+  }, [editingSiteId, isPlatformEditor]);
+
+  useEffect(() => {
+    if (isPlatformEditor || typeof window === "undefined" || !isMerchantNumericId(editingSiteId)) {
+      setMerchantOperationLogs([]);
+      return;
+    }
+    const refreshLogs = () => {
+      setMerchantOperationLogs(readMerchantOperationLogs(editingSiteId, 500));
+    };
+    refreshLogs();
+    window.addEventListener(MERCHANT_OPERATION_LOG_EVENT, refreshLogs);
+    return () => {
+      window.removeEventListener(MERCHANT_OPERATION_LOG_EVENT, refreshLogs);
+    };
+  }, [editingSiteId, isPlatformEditor]);
+
+  useEffect(() => {
+    if (isPlatformEditor || typeof window === "undefined") return;
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      const info = buildMerchantOperationFetchInfo(input, init, merchantOperationLogSiteIdRef.current);
+      if (!info || !isMerchantNumericId(info.siteId)) {
+        return originalFetch(input, init);
+      }
+      return originalFetch(input, init)
+        .then((response) => {
+          void response
+            .clone()
+            .json()
+            .catch(() => null)
+            .then((payload) => {
+              const payloadOk = payload && typeof payload === "object" ? (payload as Record<string, unknown>).ok !== false : true;
+              const status: MerchantOperationLogStatus = response.ok && payloadOk ? "success" : "failed";
+              recordMerchantOperationFetchResult(info, status, status === "failed" ? readMerchantOperationResponseMessage(payload) : undefined);
+            });
+          return response;
+        })
+        .catch((error) => {
+          recordMerchantOperationFetchResult(
+            info,
+            "failed",
+            error instanceof Error ? error.message : "request_failed",
+          );
+          throw error;
+        });
+    }) as typeof window.fetch;
+    return () => {
+      window.fetch = originalFetch;
+    };
+  }, [isPlatformEditor]);
 
   useEffect(() => {
     if (isPlatformEditor || explicitFaollaSectionEntry || !isMerchantNumericId(editingSiteId)) {
@@ -17009,6 +17287,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         },
         onCardsChange: (cards: MerchantBusinessCardAsset[]) => {
           if (!editingSiteId) return;
+          const previousCount = normalizeMerchantBusinessCards(editingSite?.businessCards ?? []).length;
           const platformState = loadPlatformState();
           savePlatformState({
             ...platformState,
@@ -17023,6 +17302,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             ),
           });
           scheduleMerchantChatBusinessCardSync(editingSiteId, cards);
+          recordMerchantOperationLog({
+            siteId: editingSiteId,
+            module: "经营中心",
+            action: "更新名片夹",
+            summary: `更新名片夹：${previousCount} 张 -> ${cards.length} 张`,
+            status: "success",
+          });
         },
         onSave: async ({
           merchantName,
@@ -17099,6 +17385,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             setMerchantProfileDialogOpen(false);
           }
           setMerchantProfileAttention(false);
+          recordMerchantOperationLog({
+            siteId: targetSiteId,
+            module: "商户信息",
+            action: "保存",
+            summary: `保存商户信息：${merchantName || targetSiteId}`,
+            status: "success",
+          });
           showTip("商户信息已保存");
         },
       }
@@ -19332,9 +19625,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     const date = new Date(value);
     return Number.isFinite(date.getTime()) ? date.toLocaleString("zh-CN", { hour12: false }) : value;
   };
-  const merchantPublishLogItems = [...merchantAnalyticsSnapshot.publish30d]
-    .sort((left, right) => new Date(right.at).getTime() - new Date(left.at).getTime())
-    .slice(0, 50);
+  const merchantOperationLogItems = merchantOperationLogs.slice(0, 120);
+  const merchantOperationLogFailedCount = merchantOperationLogs.filter((item) => item.status === "failed").length;
+  const merchantOperationLogSuccessCount = merchantOperationLogs.length - merchantOperationLogFailedCount;
   const merchantAnalyticsPanelContent = (
     <div className="min-h-[calc(100vh-14rem)] space-y-4">
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -19545,53 +19838,57 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="text-[26px] font-bold leading-8 text-slate-950">日志</div>
-            <div className="mt-1 text-sm text-slate-500">查看最近发布、失败快照和经营中心相关记录。</div>
+            <div className="mt-1 text-sm text-slate-500">查看此商户后台关键操作痕迹，包含保存、启停、删除、充值、兑换、订单、预约、名片和会话等写操作。</div>
           </div>
         </div>
         <div className="mt-5 grid gap-3 md:grid-cols-3">
           <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-            <div className="text-xs font-semibold text-slate-500">30 日发布</div>
-            <div className="mt-2 text-2xl font-semibold text-slate-950">{merchantAnalyticsSnapshot.publish30d.length}</div>
+            <div className="text-xs font-semibold text-slate-500">操作记录</div>
+            <div className="mt-2 text-2xl font-semibold text-slate-950">{merchantOperationLogs.length}</div>
           </div>
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-            <div className="text-xs font-semibold text-emerald-700">30 日成功率</div>
-            <div className="mt-2 text-2xl font-semibold text-emerald-800">{merchantAnalyticsSuccessRate30d}</div>
+            <div className="text-xs font-semibold text-emerald-700">成功操作</div>
+            <div className="mt-2 text-2xl font-semibold text-emerald-800">{merchantOperationLogSuccessCount}</div>
           </div>
           <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3">
-            <div className="text-xs font-semibold text-rose-700">失败快照</div>
-            <div className="mt-2 text-2xl font-semibold text-rose-800">{merchantAnalyticsSnapshot.failureSnapshots.length}</div>
+            <div className="text-xs font-semibold text-rose-700">失败操作</div>
+            <div className="mt-2 text-2xl font-semibold text-rose-800">{merchantOperationLogFailedCount}</div>
           </div>
         </div>
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
-        <div className="text-lg font-semibold text-slate-900">发布日志</div>
-        <div className="mt-1 text-sm text-slate-500">显示最近 30 日本设备记录的发布操作。</div>
+        <div className="text-lg font-semibold text-slate-900">操作日志</div>
+        <div className="mt-1 text-sm text-slate-500">显示当前设备记录的此商户后台写操作，最新操作在最上方。</div>
         <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200">
-          {merchantPublishLogItems.length ? (
+          {merchantOperationLogItems.length ? (
             <div className="divide-y divide-slate-100">
-              {merchantPublishLogItems.map((item, index) => (
-                <article key={`${item.at}:${index}`} className="grid gap-3 bg-white px-4 py-3 md:grid-cols-[180px_120px_1fr_120px] md:items-center">
+              {merchantOperationLogItems.map((item) => (
+                <article key={item.id} className="grid gap-3 bg-white px-4 py-3 md:grid-cols-[180px_120px_140px_1fr_120px] md:items-center">
                   <div className="text-sm font-medium text-slate-700">{formatMerchantLogTime(item.at)}</div>
                   <div>
                     <span
                       className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
-                        item.success ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100" : "bg-rose-50 text-rose-700 ring-1 ring-rose-100"
+                        item.status === "success" ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100" : "bg-rose-50 text-rose-700 ring-1 ring-rose-100"
                       }`}
                     >
-                      {item.success ? "发布成功" : "发布失败"}
+                      {item.status === "success" ? "成功" : "失败"}
                     </span>
                   </div>
-                  <div className="text-sm text-slate-600">
-                    改动 {item.changedBlocks} 个区块
-                    {item.reason ? <span className="ml-2 text-rose-600">{item.reason}</span> : null}
+                  <div className="text-sm font-semibold text-slate-800">{item.module}</div>
+                  <div className="min-w-0 text-sm text-slate-600">
+                    <span className="font-semibold text-slate-900">{item.action}</span>
+                    <span className="ml-2 break-words">{item.summary}</span>
+                    {item.detail ? <span className="ml-2 break-words text-rose-600">{item.detail}</span> : null}
                   </div>
-                  <div className="text-right text-sm font-semibold text-slate-700">{formatBytes(item.bytes)}</div>
+                  <div className="text-right text-xs font-semibold text-slate-500">
+                    {item.method || "-"} {item.endpoint || ""}
+                  </div>
                 </article>
               ))}
             </div>
           ) : (
-            <div className="px-4 py-8 text-center text-sm text-slate-500">最近 30 日暂无发布日志。</div>
+            <div className="px-4 py-8 text-center text-sm text-slate-500">当前还没有记录到此商户的后台操作。</div>
           )}
         </div>
       </section>
