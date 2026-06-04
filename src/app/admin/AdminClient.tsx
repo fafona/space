@@ -1469,6 +1469,7 @@ type MerchantDesktopSection =
   | "profile"
   | "cards"
   | "coupons"
+  | "couponRedeemWorkbench"
   | "couponClaims"
   | "couponRedemptions"
   | "couponDailyStats"
@@ -14566,7 +14567,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   function openMerchantCouponsPanel(
-    section: "coupons" | "couponClaims" | "couponRedemptions" | "couponDailyStats" = "coupons",
+    section: "coupons" | "couponRedeemWorkbench" | "couponClaims" | "couponRedemptions" | "couponDailyStats" = "coupons",
   ) {
     if (!canUseCouponModule) {
       showTip("当前商户未开通优惠券模块");
@@ -19982,11 +19983,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     merchantDesktopSection === "logs";
   const merchantDesktopCouponCenterActive =
     merchantDesktopSection === "coupons" ||
+    merchantDesktopSection === "couponRedeemWorkbench" ||
     merchantDesktopSection === "couponClaims" ||
     merchantDesktopSection === "couponRedemptions" ||
     merchantDesktopSection === "couponDailyStats";
   const merchantCouponManagerView =
-    merchantDesktopSection === "couponClaims"
+    merchantDesktopSection === "couponRedeemWorkbench"
+      ? "redeemWorkbench"
+      : merchantDesktopSection === "couponClaims"
       ? "claims"
       : merchantDesktopSection === "couponRedemptions"
         ? "redemptions"
@@ -21689,6 +21693,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     </div>
                   ) : merchantDesktopCouponCenterActive ? (
                     <div className="grid gap-2">
+                      <button
+                        type="button"
+                        className={getMerchantDesktopSubmenuButtonClassName(merchantDesktopSection === "couponRedeemWorkbench", "rose")}
+                        onClick={() => openMerchantCouponsPanel("couponRedeemWorkbench")}
+                      >
+                        核销工作台
+                      </button>
                       <button
                         type="button"
                         className={getMerchantDesktopSubmenuButtonClassName(merchantDesktopSection === "couponClaims", "rose")}

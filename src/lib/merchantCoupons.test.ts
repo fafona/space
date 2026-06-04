@@ -20,6 +20,7 @@ import {
   merchantCouponRequiresPersonalClaim,
   merchantCouponSupportsUsageScenario,
   normalizeMerchantCouponRecord,
+  redeemMerchantCoupon,
 } from "@/lib/merchantCoupons";
 
 test("buildMerchantCouponCode creates unique uppercase codes", () => {
@@ -269,6 +270,36 @@ test("claim rules normalize limits, windows, triggers, tasks, and claim events",
   assert.equal(claimed.claimEvents[0].validUntil, "2026-06-02T10:00:00.000Z");
   assert.equal(buildMerchantCouponClaimValidUntil(claimed, "2026-06-01T10:00:00.000Z"), "2026-06-02T10:00:00.000Z");
   assert.match(buildMerchantCouponSettlementCode(claimed, "checkout_barcode", 1, "abc123"), /^BAR000000ABC1230001$/);
+});
+
+test("redeemMerchantCoupon validates claim state and validity", () => {
+  const coupon = createMerchantCoupon({
+    siteId: "10000000",
+    title: "Redeem",
+    discountValue: 5,
+    claimValidHoursAfterClaim: 24,
+    startsAt: "2026-06-01T00:00:00.000Z",
+    expiresAt: "2026-06-30T00:00:00.000Z",
+  });
+  const claimed = claimMerchantCoupon(coupon, "2026-06-01T10:00:00.000Z", {
+    accountId: "acct_1",
+    userId: "user_1",
+    email: "user@example.com",
+    settlementType: "barcode",
+    settlementCode: "BAR100000000001",
+  });
+  const settlementCode = claimed.claimEvents[0].settlementCode;
+  const redeemed = redeemMerchantCoupon(claimed, {
+    settlementCode,
+    operatorId: "merchant@example.com",
+    now: "2026-06-01T11:00:00.000Z",
+  });
+
+  assert.equal(redeemed.usedCount, 1);
+  assert.equal(redeemed.redeemEvents[0].settlementCode, settlementCode);
+  assert.throws(() => redeemMerchantCoupon(redeemed, { settlementCode, now: "2026-06-01T12:00:00.000Z" }), /coupon_already_redeemed/);
+  assert.throws(() => redeemMerchantCoupon(claimed, { settlementCode, now: "2026-06-03T10:00:00.000Z" }), /coupon_claim_expired/);
+  assert.throws(() => redeemMerchantCoupon({ ...claimed, status: "paused" }, { settlementCode, now: "2026-06-01T11:00:00.000Z" }), /coupon_not_active/);
 });
 
 test("getContactCardVisibleMerchantCoupons uses contact card visibility flag", () => {

@@ -40,7 +40,7 @@ type MerchantCouponManagerProps = {
   publicSiteUrl?: string;
   couponPageId?: string;
   pricePrefix?: string;
-  view?: "list" | "claims" | "redemptions" | "dailyStats";
+  view?: "list" | "redeemWorkbench" | "claims" | "redemptions" | "dailyStats";
   onCouponsChange?: (coupons: MerchantCouponRecord[]) => void;
   onClose?: () => void;
   className?: string;
@@ -763,6 +763,31 @@ async function writeClipboardText(text: string) {
   if (!ok) throw new Error("copy_failed");
 }
 
+function getCouponRedeemErrorMessage(message: string | undefined) {
+  switch (message) {
+    case "invalid_coupon_redeem":
+    case "invalid_settlement_code":
+      return "请输入有效券码";
+    case "coupon_claim_not_found":
+      return "未找到该券码";
+    case "coupon_already_redeemed":
+      return "该优惠券已核销";
+    case "coupon_not_active":
+      return "该优惠券未启用";
+    case "coupon_not_started":
+      return "该优惠券还未开始";
+    case "coupon_expired":
+    case "coupon_claim_expired":
+      return "该优惠券已过期";
+    case "coupon_module_disabled":
+      return "当前商户未开通优惠券模块";
+    case "unauthorized":
+      return "登录状态已失效";
+    default:
+      return message || "核销失败";
+  }
+}
+
 function validateCouponForm(form: CouponFormState) {
   const discountValue = toNumberValue(form.discountValue);
   const minimumAmount = toNumberValue(form.minimumAmount);
@@ -1175,6 +1200,9 @@ export default function MerchantCouponManager({
   const [claimDateWindowEnd, setClaimDateWindowEnd] = useState("");
   const [claimDailyWindowStart, setClaimDailyWindowStart] = useState("");
   const [claimDailyWindowEnd, setClaimDailyWindowEnd] = useState("");
+  const [redeemCodeInput, setRedeemCodeInput] = useState("");
+  const [redeemNote, setRedeemNote] = useState("");
+  const [redeeming, setRedeeming] = useState(false);
   const backgroundFileInputRef = useRef<HTMLInputElement>(null);
 
   const selectedCoupon = useMemo(
@@ -1254,11 +1282,48 @@ export default function MerchantCouponManager({
     });
     return Array.from(stats.values()).sort((left, right) => right.date.localeCompare(left.date)).slice(0, 30);
   }, [coupons]);
+  const redeemLookup = useMemo(() => {
+    const query = redeemCodeInput.trim();
+    if (!query) return null;
+    const normalizedQuery = query.toLowerCase();
+    for (const coupon of coupons) {
+      const claimEvent = coupon.claimEvents.find(
+        (event) => event.settlementCode.toLowerCase() === normalizedQuery,
+      );
+      if (!claimEvent) continue;
+      const redeemEvent = coupon.redeemEvents.find(
+        (event) => event.settlementCode === claimEvent.settlementCode || event.claimEventId === claimEvent.id,
+      );
+      const lifecycleStatus = getCouponLifecycleStatus(coupon);
+      const claimValidUntilTime = claimEvent.validUntil ? Date.parse(claimEvent.validUntil) : Number.NaN;
+      const claimExpired = Number.isFinite(claimValidUntilTime) && claimValidUntilTime < Date.now();
+      return {
+        coupon,
+        claimEvent,
+        redeemEvent,
+        lifecycleStatus,
+        claimExpired,
+      };
+    }
+    return null;
+  }, [coupons, redeemCodeInput]);
+  const redeemLookupStatus = useMemo(() => {
+    if (!redeemCodeInput.trim()) return { label: "等待输入", className: "border-slate-200 bg-slate-50 text-slate-600", redeemable: false };
+    if (!redeemLookup) return { label: "未找到", className: "border-rose-200 bg-rose-50 text-rose-700", redeemable: false };
+    if (redeemLookup.redeemEvent) return { label: "已核销", className: "border-slate-200 bg-slate-100 text-slate-600", redeemable: false };
+    if (redeemLookup.claimExpired) return { label: "已过期", className: "border-rose-200 bg-rose-50 text-rose-700", redeemable: false };
+    if (redeemLookup.lifecycleStatus !== "running") {
+      return { label: COUPON_LIFECYCLE_STATUS_LABELS[redeemLookup.lifecycleStatus], className: COUPON_LIFECYCLE_STATUS_CLASS_NAMES[redeemLookup.lifecycleStatus], redeemable: false };
+    }
+    return { label: "可核销", className: "border-emerald-200 bg-emerald-50 text-emerald-700", redeemable: true };
+  }, [redeemCodeInput, redeemLookup]);
   const showCouponList = view === "list";
-  const showClaimRecords = view === "list" || view === "claims";
-  const showRedeemRecords = view === "list" || view === "redemptions";
-  const showDailyStats = view === "list" || view === "dailyStats";
-  const recordSectionClassName = view === "list" ? "grid gap-4 lg:grid-cols-3" : "grid gap-4";
+  const showRedeemWorkbench = view === "redeemWorkbench";
+  const showClaimRecords = view === "claims";
+  const showRedeemRecords = view === "redemptions";
+  const showDailyStats = view === "dailyStats";
+  const showRecordSections = showClaimRecords || showRedeemRecords || showDailyStats;
+  const recordSectionClassName = "grid gap-4";
   const recordScrollClassName = view === "list" ? "mt-3 max-h-72 space-y-2 overflow-auto text-xs" : "mt-3 max-h-[calc(100vh-22rem)] space-y-2 overflow-auto text-xs";
   const formPreviewData = useMemo<CouponVisualCardData>(() => {
     const itemText: Record<MerchantCouponDisplayField, string> = {
@@ -1901,6 +1966,52 @@ export default function MerchantCouponManager({
       setError(patchError instanceof Error ? patchError.message : "优惠券更新失败");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function redeemCurrentCouponCode() {
+    if (!siteId || redeeming) return;
+    if (!redeemCodeInput.trim()) {
+      setError("请输入券码");
+      setTip("");
+      return;
+    }
+    if (!redeemLookup) {
+      setError("未找到该券码");
+      setTip("");
+      return;
+    }
+    if (!redeemLookupStatus.redeemable) {
+      setError(redeemLookupStatus.label);
+      setTip("");
+      return;
+    }
+    setRedeeming(true);
+    setError("");
+    setTip("");
+    try {
+      const response = await fetch("/api/coupons/redeem", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          siteId,
+          settlementCode: redeemLookup.claimEvent.settlementCode,
+          note: redeemNote.trim(),
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as { coupon?: MerchantCouponRecord; message?: string; error?: string } | null;
+      if (!response.ok) {
+        throw new Error(getCouponRedeemErrorMessage(payload?.message || payload?.error));
+      }
+      await loadCoupons();
+      setRedeemCodeInput("");
+      setRedeemNote("");
+      setTip("核销成功");
+    } catch (redeemError) {
+      setError(redeemError instanceof Error ? redeemError.message : "核销失败");
+    } finally {
+      setRedeeming(false);
     }
   }
 
@@ -2849,6 +2960,130 @@ export default function MerchantCouponManager({
         </div>
       ) : null}
 
+      {showRedeemWorkbench ? (
+        <section className="rounded-[28px] border border-slate-200 bg-white px-5 py-5 shadow-[0_18px_48px_rgba(15,23,42,0.08)]">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-base font-semibold text-slate-900">核销工作台</div>
+              <div className="mt-1 text-xs text-slate-500">输入客户出示的券码，确认后写入核销记录。</div>
+            </div>
+            <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${redeemLookupStatus.className}`}>
+              {redeemLookupStatus.label}
+            </span>
+          </div>
+          <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-4">
+              <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+                <label className="min-w-0 space-y-1 text-sm">
+                  <span className="block font-semibold text-slate-700">券码</span>
+                  <input
+                    className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm font-semibold tracking-wide text-slate-900 outline-none focus:border-slate-500"
+                    value={redeemCodeInput}
+                    onChange={(event) => setRedeemCodeInput(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter") return;
+                      event.preventDefault();
+                      void redeemCurrentCouponCode();
+                    }}
+                    placeholder="输入二维码 / 条码 / 核销码"
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="self-end rounded-xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+                  onClick={() => void redeemCurrentCouponCode()}
+                  disabled={redeeming || !redeemLookupStatus.redeemable}
+                >
+                  {redeeming ? "核销中..." : "确认核销"}
+                </button>
+              </div>
+              <label className="mt-3 block space-y-1 text-sm">
+                <span className="block font-semibold text-slate-700">备注</span>
+                <input
+                  className="h-10 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-slate-500"
+                  value={redeemNote}
+                  onChange={(event) => setRedeemNote(event.target.value)}
+                  placeholder="可选"
+                />
+              </label>
+
+              {redeemCodeInput.trim() && !redeemLookup ? (
+                <div className="mt-4 rounded-xl border border-dashed border-rose-200 bg-rose-50 px-4 py-6 text-center text-sm font-semibold text-rose-700">
+                  未找到该券码
+                </div>
+              ) : null}
+
+              {redeemLookup ? (
+                <div className="mt-4 grid gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-4 text-sm md:grid-cols-2">
+                  <div>
+                    <div className="text-xs text-slate-400">优惠券</div>
+                    <div className="mt-1 font-semibold text-slate-900">{getMerchantCouponDisplayTitle(redeemLookup.coupon)}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-400">优惠内容</div>
+                    <div className="mt-1 font-semibold text-slate-900">{getMerchantCouponDiscountLabel(redeemLookup.coupon, pricePrefix)}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-400">领取人</div>
+                    <div className="mt-1 break-all font-semibold text-slate-900">
+                      {redeemLookup.claimEvent.customerName || redeemLookup.claimEvent.email || redeemLookup.claimEvent.accountId || "访客"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-400">领取时间</div>
+                    <div className="mt-1 font-semibold text-slate-900">{formatDateTime(redeemLookup.claimEvent.at)}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-400">有效期</div>
+                    <div className="mt-1 font-semibold text-slate-900">
+                      {redeemLookup.claimEvent.validUntil ? formatDateTime(redeemLookup.claimEvent.validUntil) : "不限"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-400">核销码</div>
+                    <div className="mt-1 break-all font-mono font-semibold text-slate-900">{redeemLookup.claimEvent.settlementCode}</div>
+                  </div>
+                  {redeemLookup.redeemEvent ? (
+                    <div className="md:col-span-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-slate-600">
+                      已于 {formatDateTime(redeemLookup.redeemEvent.at)} 核销
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+
+            <aside className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+              <div className="text-sm font-semibold text-slate-900">预览</div>
+              <div className="mt-3">
+                {redeemLookup ? (
+                  <CouponVisualCard data={buildCouponVisualDataFromRecord(redeemLookup.coupon, pricePrefix)} className="min-h-[188px]" />
+                ) : (
+                  <div className="flex min-h-[188px] items-center justify-center rounded-lg border border-dashed border-slate-300 bg-white text-sm text-slate-500">
+                    等待券码
+                  </div>
+                )}
+              </div>
+              <div className="mt-4 text-sm font-semibold text-slate-900">最近核销</div>
+              <div className="mt-2 max-h-56 space-y-2 overflow-auto text-xs">
+                {redeemRecordRows.slice(0, 6).length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-slate-200 px-3 py-4 text-center text-slate-500">暂无核销记录</div>
+                ) : (
+                  redeemRecordRows.slice(0, 6).map(({ coupon, event }) => (
+                    <div key={`workbench-${coupon.id}-${event.id}`} className="rounded-lg border border-slate-100 bg-white px-3 py-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate font-semibold text-slate-800">{getMerchantCouponDisplayTitle(coupon)}</span>
+                        <span className="shrink-0 text-slate-400">{formatDateTime(event.at)}</span>
+                      </div>
+                      <div className="mt-1 break-all font-mono text-slate-600">{event.settlementCode}</div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </aside>
+          </div>
+        </section>
+      ) : null}
+
       {showCouponList ? (
       <section className="rounded-[28px] border border-slate-200 bg-white px-5 py-5 shadow-[0_18px_48px_rgba(15,23,42,0.08)]">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -2997,6 +3232,7 @@ export default function MerchantCouponManager({
       </section>
       ) : null}
 
+      {showRecordSections ? (
       <section className={recordSectionClassName}>
         {showClaimRecords ? (
         <div className="rounded-[28px] border border-slate-200 bg-white px-4 py-4 shadow-[0_18px_48px_rgba(15,23,42,0.08)]">
@@ -3061,6 +3297,7 @@ export default function MerchantCouponManager({
         </div>
         ) : null}
       </section>
+      ) : null}
     </div>
   );
 }

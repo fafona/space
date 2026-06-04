@@ -626,12 +626,20 @@ export function redeemMerchantCoupon(
 ) {
   const settlementCode = trimText(input.settlementCode);
   if (!settlementCode) throw new Error("invalid_settlement_code");
+  const now = input.now instanceof Date ? input.now.toISOString() : normalizeIsoDateValue(input.now) ?? new Date().toISOString();
+  const nowTime = Date.parse(now);
+  if (coupon.status !== "active") throw new Error("coupon_not_active");
+  const startsAtTime = coupon.startsAt ? Date.parse(coupon.startsAt) : Number.NaN;
+  if (Number.isFinite(startsAtTime) && startsAtTime > nowTime) throw new Error("coupon_not_started");
+  const expiresAtTime = coupon.expiresAt ? Date.parse(coupon.expiresAt) : Number.NaN;
+  if (Number.isFinite(expiresAtTime) && expiresAtTime < nowTime) throw new Error("coupon_expired");
   const claimEvent = coupon.claimEvents.find((event) => event.settlementCode === settlementCode);
   if (!claimEvent) throw new Error("coupon_claim_not_found");
   if (coupon.redeemEvents.some((event) => event.settlementCode === settlementCode || event.claimEventId === claimEvent.id)) {
     throw new Error("coupon_already_redeemed");
   }
-  const now = input.now instanceof Date ? input.now.toISOString() : normalizeIsoDateValue(input.now) ?? new Date().toISOString();
+  const claimValidUntilTime = claimEvent.validUntil ? Date.parse(claimEvent.validUntil) : Number.NaN;
+  if (Number.isFinite(claimValidUntilTime) && claimValidUntilTime < nowTime) throw new Error("coupon_claim_expired");
   const redeemEvent: MerchantCouponRedeemEvent = {
     id: `RE${Date.parse(now).toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
     at: now,
