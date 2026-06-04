@@ -23,6 +23,15 @@ function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+type MerchantCouponRedeemRequest = {
+  settlementCode: string;
+  operatorId?: string;
+  note?: string;
+  expectedAccountId?: string;
+  expectedUserId?: string;
+  expectedEmail?: string;
+};
+
 export async function listMerchantCoupons(siteId: string) {
   const supabase = requireCouponsStoreClient();
   const stored = await loadStoredMerchantCoupons(supabase, siteId);
@@ -132,26 +141,75 @@ export async function redeemMerchantCouponRecord(input: {
   operatorId?: string;
   note?: string;
 }) {
+  const [coupon] = await redeemMerchantCouponRecords({
+    siteId: input.siteId,
+    operatorId: input.operatorId,
+    redemptions: [
+      {
+        settlementCode: input.settlementCode,
+        note: input.note,
+      },
+    ],
+  });
+  return coupon;
+}
+
+export async function redeemMerchantCouponRecords(input: {
+  siteId: string;
+  operatorId?: string;
+  redemptions: MerchantCouponRedeemRequest[];
+}) {
   const supabase = requireCouponsStoreClient();
   const siteId = trimText(input.siteId);
-  const settlementCode = trimText(input.settlementCode);
-  if (!siteId || !settlementCode) throw new Error("coupon_not_found");
+  if (!siteId) throw new Error("coupon_not_found");
+  const seenSettlementCodes = new Set<string>();
+  const redemptions = (Array.isArray(input.redemptions) ? input.redemptions : [])
+    .map((redemption) => ({
+      settlementCode: trimText(redemption.settlementCode),
+      operatorId: trimText(redemption.operatorId) || trimText(input.operatorId),
+      note: trimText(redemption.note),
+      expectedAccountId: trimText(redemption.expectedAccountId),
+      expectedUserId: trimText(redemption.expectedUserId),
+      expectedEmail: trimText(redemption.expectedEmail).toLowerCase(),
+    }))
+    .filter((redemption) => {
+      if (!redemption.settlementCode || seenSettlementCodes.has(redemption.settlementCode)) return false;
+      seenSettlementCodes.add(redemption.settlementCode);
+      return true;
+    });
+  if (redemptions.length === 0) throw new Error("invalid_settlement_code");
   const stored = await loadStoredMerchantCoupons(supabase, siteId);
   const coupons = normalizeMerchantCouponRecords(stored?.coupons ?? []);
-  const index = coupons.findIndex((coupon) => coupon.claimEvents.some((event) => event.settlementCode === settlementCode));
-  if (index < 0) throw new Error("coupon_claim_not_found");
-  const next = redeemMerchantCoupon(coupons[index], {
-    settlementCode,
-    operatorId: input.operatorId,
-    note: input.note,
+  const redeemedCoupons: MerchantCouponRecord[] = [];
+  redemptions.forEach((redemption) => {
+    const index = coupons.findIndex((coupon) =>
+      coupon.claimEvents.some((event) => event.settlementCode === redemption.settlementCode),
+    );
+    if (index < 0) throw new Error("coupon_claim_not_found");
+    const claimEvent = coupons[index].claimEvents.find((event) => event.settlementCode === redemption.settlementCode);
+    if (!claimEvent) throw new Error("coupon_claim_not_found");
+    const hasExpectedIdentity = Boolean(
+      redemption.expectedAccountId || redemption.expectedUserId || redemption.expectedEmail,
+    );
+    const identityMatches = Boolean(
+      (redemption.expectedAccountId && claimEvent.accountId === redemption.expectedAccountId) ||
+        (redemption.expectedUserId && claimEvent.userId === redemption.expectedUserId) ||
+        (redemption.expectedEmail && claimEvent.email.toLowerCase() === redemption.expectedEmail),
+    );
+    if (hasExpectedIdentity && !identityMatches) throw new Error("coupon_claim_member_mismatch");
+    const next = redeemMerchantCoupon(coupons[index], {
+      settlementCode: redemption.settlementCode,
+      operatorId: redemption.operatorId,
+      note: redemption.note,
+    });
+    coupons[index] = next;
+    redeemedCoupons.push(next);
   });
-  const updatedCoupons = [...coupons];
-  updatedCoupons[index] = next;
   const saved = await saveStoredMerchantCoupons(supabase, {
     siteId,
-    coupons: updatedCoupons,
-    updatedAt: next.updatedAt,
+    coupons,
+    updatedAt: new Date().toISOString(),
   });
   if (saved.error) throw new Error(saved.error);
-  return next;
+  return redeemedCoupons;
 }

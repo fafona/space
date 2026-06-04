@@ -54,8 +54,15 @@ type CartLine = {
   customName?: string;
   customCode?: string;
   customPoints?: number;
+  couponId?: string;
+  couponClaimId?: string;
+  couponSettlementCode?: string;
+  couponTitle?: string;
+  couponDiscountLabel?: string;
   quantity: number;
 };
+
+type MemberCouponClaim = MerchantMembershipInsight["couponHistory"][number];
 
 type HeldSale = {
   id: string;
@@ -230,6 +237,11 @@ function operationErrorMessage(message: unknown, fallback: string, operationType
   if (text === "membership_not_active") return "该会员不是正常状态，不能兑换。";
   if (text === "membership_redemption_item_not_found") return "兑换项目不存在或已停用";
   if (text === "membership_settings_unavailable") return "会员兑换配置不可用。";
+  if (text === "coupon_already_redeemed") return "所选卡券已核销，不能重复使用。";
+  if (text === "coupon_expired" || text === "coupon_claim_expired") return "所选卡券已过期，不能使用。";
+  if (text === "coupon_not_active" || text === "coupon_not_started") return "所选卡券暂不可用。";
+  if (text === "coupon_claim_not_found") return "没有找到所选卡券领取记录。";
+  if (text === "coupon_claim_member_mismatch") return "所选卡券不属于当前会员。";
   return text || fallback;
 }
 
@@ -238,6 +250,36 @@ function couponStatusLabel(status: MerchantMembershipInsight["couponHistory"][nu
   if (status === "used") return "已核销";
   if (status === "expired") return "已过期";
   return "不可用";
+}
+
+function getCouponCartItemName(coupon: MemberCouponClaim) {
+  if (coupon.discountType === "product_voucher") return trimText(coupon.productName, 120) || coupon.title;
+  if (coupon.discountType === "exchange_voucher") return trimText(coupon.exchangeItem, 120) || coupon.title;
+  if (coupon.discountType === "ticket_voucher") return trimText(coupon.ticketVenue, 120) || coupon.title;
+  return coupon.title;
+}
+
+function getCouponCartQuantity(coupon: MemberCouponClaim) {
+  const quantity =
+    coupon.discountType === "product_voucher"
+      ? coupon.productQuantity
+      : coupon.discountType === "exchange_voucher"
+        ? coupon.exchangeQuantity
+        : 1;
+  return Math.max(1, Math.floor(Number(quantity) || 1));
+}
+
+function getCouponDirectUseUnavailableReason(coupon: MemberCouponClaim) {
+  if (coupon.status !== "available") return couponStatusLabel(coupon.status);
+  if (!coupon.settlementCode) return "无核销码";
+  if (
+    coupon.discountType !== "product_voucher" &&
+    coupon.discountType !== "exchange_voucher" &&
+    coupon.discountType !== "ticket_voucher"
+  ) {
+    return "需在订单中使用";
+  }
+  return "";
 }
 
 function storageKey(siteId: string) {
@@ -436,6 +478,19 @@ export default function MerchantPointRedemptionCashier({
   );
 
   const selectedInsight = selectedMember?.insight ?? EMPTY_MEMBER_INSIGHT;
+  const selectedAvailableCouponClaims = useMemo(
+    () =>
+      selectedMember
+        ? selectedInsight.couponHistory
+            .filter((coupon) => coupon.status === "available")
+            .sort((left, right) => Date.parse(left.validUntil || left.claimedAt) - Date.parse(right.validUntil || right.claimedAt))
+        : [],
+    [selectedInsight.couponHistory, selectedMember],
+  );
+  const couponClaimIdsInCart = useMemo(
+    () => new Set(cart.map((line) => line.couponClaimId).filter((id): id is string => Boolean(id))),
+    [cart],
+  );
 
   const couponSearchResults = useMemo(() => {
     const keyword = deferredItemKeyword.trim().toLowerCase();
@@ -541,7 +596,8 @@ export default function MerchantPointRedemptionCashier({
         const unitPoints = item
           ? getRedemptionPointCostForMember(item, selectedMember, settings)
           : parsePositiveInteger(line.customPoints);
-        if (!item && (!line.customName || unitPoints <= 0)) return null;
+        const couponSettlementCode = trimText(line.couponSettlementCode, 200);
+        if (!item && (!line.customName || (unitPoints <= 0 && !couponSettlementCode))) return null;
         return {
           item,
           itemId: line.itemId,
@@ -553,6 +609,11 @@ export default function MerchantPointRedemptionCashier({
           quantity: line.quantity,
           unitPoints,
           subtotalPoints: unitPoints * line.quantity,
+          couponId: trimText(line.couponId, 160),
+          couponClaimId: trimText(line.couponClaimId, 160),
+          couponSettlementCode,
+          couponTitle: trimText(line.couponTitle, 120),
+          couponDiscountLabel: trimText(line.couponDiscountLabel, 160),
         };
       })
       .filter(
@@ -567,6 +628,11 @@ export default function MerchantPointRedemptionCashier({
           quantity: number;
           unitPoints: number;
           subtotalPoints: number;
+          couponId: string;
+          couponClaimId: string;
+          couponSettlementCode: string;
+          couponTitle: string;
+          couponDiscountLabel: string;
         } => Boolean(row),
       );
   }, [cart, enabledItemById, selectedMember, settings]);
@@ -582,7 +648,6 @@ export default function MerchantPointRedemptionCashier({
   const canCheckout =
     Boolean(selectedMember) &&
     cartRows.length > 0 &&
-    totalPoints > 0 &&
     totalPoints <= selectedInsight.pointBalance &&
     !saving;
 
@@ -890,6 +955,44 @@ export default function MerchantPointRedemptionCashier({
     });
   }
 
+  function addCouponClaimToCart(coupon: MemberCouponClaim) {
+    setError("");
+    setNotice("");
+    if (!selectedMember) {
+      setError("请先选择会员。");
+      setMemberPickerOpen(true);
+      return;
+    }
+    const unavailableReason = getCouponDirectUseUnavailableReason(coupon);
+    if (unavailableReason) {
+      setError(`此券暂不能直接使用：${unavailableReason}`);
+      return;
+    }
+    if (couponClaimIdsInCart.has(coupon.id)) {
+      setNotice("这张券已在购物车中。");
+      return;
+    }
+    const itemName = getCouponCartItemName(coupon);
+    const quantity = getCouponCartQuantity(coupon);
+    setCart((current) => [
+      ...current,
+      {
+        itemId: `coupon-${coupon.id}`,
+        customName: itemName,
+        customCode: coupon.productBarcode || coupon.couponCode || "卡券",
+        customPoints: 0,
+        couponId: coupon.couponId,
+        couponClaimId: coupon.id,
+        couponSettlementCode: coupon.settlementCode,
+        couponTitle: coupon.title,
+        couponDiscountLabel: coupon.discountLabel,
+        quantity,
+      },
+    ]);
+    setNote((current) => current || `卡券兑换：${coupon.title}`);
+    setNotice(`已加入购物车：${itemName} x ${quantity}`);
+  }
+
   function changeQuantity(index: number, nextQuantity: number) {
     setCart((current) => {
       const line = current[index];
@@ -1071,6 +1174,11 @@ export default function MerchantPointRedemptionCashier({
             customName: row.custom ? row.name : undefined,
             customCode: row.custom ? row.code : undefined,
             customPoints: row.custom ? row.unitPoints : undefined,
+            couponId: row.couponId || undefined,
+            couponClaimId: row.couponClaimId || undefined,
+            couponSettlementCode: row.couponSettlementCode || undefined,
+            couponTitle: row.couponTitle || undefined,
+            couponDiscountLabel: row.couponDiscountLabel || undefined,
             quantity: row.quantity,
           })),
           note: note.trim(),
@@ -1086,7 +1194,14 @@ export default function MerchantPointRedemptionCashier({
       setCart([]);
       setNote("");
       setCheckoutConfirmOpen(false);
-      setNotice(`兑换完成，已扣减 ${formatPoints(totalPoints)} 积分。`);
+      const couponLineCount = cartRows.filter((row) => row.couponSettlementCode).length;
+      setNotice(
+        totalPoints > 0 && couponLineCount > 0
+          ? `兑换完成，已扣减 ${formatPoints(totalPoints)} 积分，并核销 ${couponLineCount} 张卡券。`
+          : totalPoints > 0
+          ? `兑换完成，已扣减 ${formatPoints(totalPoints)} 积分。`
+          : `兑换完成，已核销 ${couponLineCount} 张卡券。`,
+      );
       await loadData();
     } catch (checkoutError) {
       setError(checkoutError instanceof Error ? checkoutError.message : "积分兑换失败，请稍后重试");
@@ -1533,6 +1648,107 @@ export default function MerchantPointRedemptionCashier({
           gap: 10px;
         }
 
+        .merchant-pos-cashier .member-coupon-wallet {
+          display: grid;
+          gap: 10px;
+          margin-bottom: 12px;
+          padding: 12px;
+          border: 1px solid var(--pos-line);
+          border-radius: 8px;
+          background: var(--pos-surface-soft);
+        }
+
+        .merchant-pos-cashier .member-coupon-wallet-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+        }
+
+        .merchant-pos-cashier .member-coupon-wallet-title {
+          color: var(--pos-text);
+          font-weight: 900;
+        }
+
+        .merchant-pos-cashier .member-coupon-wallet-count {
+          color: var(--pos-muted);
+          font-size: 12px;
+          font-weight: 800;
+        }
+
+        .merchant-pos-cashier .member-coupon-list {
+          display: flex;
+          gap: 8px;
+          overflow-x: auto;
+          padding-bottom: 2px;
+          overscroll-behavior-x: contain;
+        }
+
+        .merchant-pos-cashier .member-coupon-card {
+          display: grid;
+          flex: 0 0 240px;
+          gap: 7px;
+          min-height: 116px;
+          padding: 10px;
+          border: 1px solid var(--pos-line);
+          border-radius: 8px;
+          background: var(--pos-surface);
+        }
+
+        .merchant-pos-cashier .member-coupon-card.is-in-cart {
+          border-color: var(--pos-primary);
+          background: var(--pos-primary-soft);
+          box-shadow: var(--pos-focus-inset);
+        }
+
+        .merchant-pos-cashier .member-coupon-card strong,
+        .merchant-pos-cashier .member-coupon-card span,
+        .merchant-pos-cashier .member-coupon-card small {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .merchant-pos-cashier .member-coupon-card strong {
+          color: var(--pos-text);
+          font-size: 14px;
+        }
+
+        .merchant-pos-cashier .member-coupon-card span,
+        .merchant-pos-cashier .member-coupon-card small {
+          color: var(--pos-muted);
+          font-size: 12px;
+          font-weight: 760;
+        }
+
+        .merchant-pos-cashier .member-coupon-card button {
+          justify-self: start;
+          min-height: 30px;
+          padding: 0 10px;
+          border: 1px solid var(--pos-primary);
+          border-radius: 8px;
+          background: var(--pos-primary);
+          color: #fff;
+          font-size: 12px;
+          font-weight: 900;
+        }
+
+        .merchant-pos-cashier .member-coupon-card button:disabled {
+          border-color: var(--pos-line);
+          background: #e2e8f0;
+          color: var(--pos-muted);
+        }
+
+        .merchant-pos-cashier .member-coupon-empty {
+          display: grid;
+          place-items: center;
+          min-height: 78px;
+          border: 1px dashed var(--pos-line);
+          border-radius: 8px;
+          color: var(--pos-muted);
+          font-weight: 720;
+        }
+
         .merchant-pos-cashier .cart-area {
           padding: 18px;
         }
@@ -1660,6 +1876,18 @@ export default function MerchantPointRedemptionCashier({
           text-align: center;
           font-weight: 900;
           outline: none;
+        }
+
+        .merchant-pos-cashier .coupon-locked-quantity {
+          display: inline-grid;
+          place-items: center;
+          min-width: 62px;
+          height: 34px;
+          border: 1px solid var(--pos-line);
+          border-radius: 8px;
+          background: var(--pos-surface-soft);
+          color: var(--pos-primary-dark);
+          font-weight: 900;
         }
 
         .merchant-pos-cashier .cart-empty {
@@ -2955,6 +3183,42 @@ export default function MerchantPointRedemptionCashier({
           </div>
 
           <div className="cart-area">
+            {selectedMember ? (
+              <div className="member-coupon-wallet">
+                <div className="member-coupon-wallet-header">
+                  <div className="member-coupon-wallet-title">会员卡券</div>
+                  <div className="member-coupon-wallet-count">可用 {selectedAvailableCouponClaims.length} 张</div>
+                </div>
+                {selectedAvailableCouponClaims.length ? (
+                  <div className="member-coupon-list">
+                    {selectedAvailableCouponClaims.map((coupon) => {
+                      const unavailableReason = getCouponDirectUseUnavailableReason(coupon);
+                      const inCart = couponClaimIdsInCart.has(coupon.id);
+                      const itemName = getCouponCartItemName(coupon);
+                      const quantity = getCouponCartQuantity(coupon);
+                      return (
+                        <div key={coupon.id} className={`member-coupon-card${inCart ? " is-in-cart" : ""}`}>
+                          <strong>{coupon.title}</strong>
+                          <span>{coupon.discountLabel}</span>
+                          <small>
+                            {itemName} x {quantity} / {coupon.settlementCode || coupon.couponCode}
+                          </small>
+                          <button
+                            type="button"
+                            disabled={Boolean(unavailableReason) || inCart || saving}
+                            onClick={() => addCouponClaimToCart(coupon)}
+                          >
+                            {inCart ? "已加入" : unavailableReason ? unavailableReason : "使用"}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="member-coupon-empty">此会员暂无可用卡券。</div>
+                )}
+              </div>
+            ) : null}
             <div className="cart-table">
               <div className="cart-header">
                 <span>编号</span>
@@ -2972,24 +3236,34 @@ export default function MerchantPointRedemptionCashier({
                         <strong className="cart-name">
                           {row.name}
                           <span className="cart-meta">
-                            {row.custom ? "快捷兑换" : `${categoryName(enabledCategories, row.categoryId)} / ${row.item ? stockLabel(row.item) : "不限库存"}`}
+                            {row.couponSettlementCode
+                              ? row.couponDiscountLabel || "卡券兑换"
+                              : row.custom
+                                ? "快捷兑换"
+                                : `${categoryName(enabledCategories, row.categoryId)} / ${row.item ? stockLabel(row.item) : "不限库存"}`}
                           </span>
                         </strong>
                         <span>{formatPoints(row.unitPoints)}</span>
                         <div className="quantity-control">
-                          <button type="button" className="qty-button" onClick={() => changeQuantity(index, row.quantity - 1)}>
-                            -
-                          </button>
-                          <input
-                            type="number"
-                            min={1}
-                            value={row.quantity}
-                            onChange={(event) => changeQuantity(index, Number(event.target.value))}
-                            className="cart-qty-input"
-                          />
-                          <button type="button" className="qty-button plus" onClick={() => changeQuantity(index, row.quantity + 1)}>
-                            +
-                          </button>
+                          {row.couponSettlementCode ? (
+                            <span className="coupon-locked-quantity">{row.quantity}</span>
+                          ) : (
+                            <>
+                              <button type="button" className="qty-button" onClick={() => changeQuantity(index, row.quantity - 1)}>
+                                -
+                              </button>
+                              <input
+                                type="number"
+                                min={1}
+                                value={row.quantity}
+                                onChange={(event) => changeQuantity(index, Number(event.target.value))}
+                                className="cart-qty-input"
+                              />
+                              <button type="button" className="qty-button plus" onClick={() => changeQuantity(index, row.quantity + 1)}>
+                                +
+                              </button>
+                            </>
+                          )}
                         </div>
                         <span>{formatPoints(row.subtotalPoints)}</span>
                       </div>

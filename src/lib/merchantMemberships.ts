@@ -1,3 +1,5 @@
+import type { MerchantCouponDiscountType } from "@/lib/merchantCoupons";
+
 export type MerchantMembershipStatus = "active" | "left";
 
 export const MERCHANT_MEMBER_LEGAL_ALLERGENS = [
@@ -41,8 +43,18 @@ export type MerchantMemberCouponSummary = {
 export type MerchantMemberCouponHistoryItem = {
   id: string;
   couponId: string;
+  couponCode: string;
   title: string;
   discountLabel: string;
+  discountType: MerchantCouponDiscountType;
+  productName: string;
+  productBarcode: string;
+  productQuantity: number;
+  productAmount: number;
+  exchangeItem: string;
+  exchangeQuantity: number;
+  ticketVenue: string;
+  ticketDurationMinutes: number;
   claimedAt: string;
   validUntil: string | null;
   redeemedAt: string | null;

@@ -103,6 +103,19 @@ function couponClaimStatusLabel(status: MerchantMembershipInsight["couponHistory
   return "有效未使用";
 }
 
+function couponBenefitTargetLabel(item: MerchantMembershipInsight["couponHistory"][number]) {
+  if (item.discountType === "product_voucher") {
+    return `${item.productName || item.title} x ${Math.max(1, item.productQuantity || 1)}`;
+  }
+  if (item.discountType === "exchange_voucher") {
+    return `${item.exchangeItem || item.title} x ${Math.max(1, item.exchangeQuantity || 1)}`;
+  }
+  if (item.discountType === "ticket_voucher") {
+    return item.ticketVenue || item.title;
+  }
+  return item.discountLabel;
+}
+
 function accountTransactionTypeLabel(type: MerchantMemberAccountTransactionType) {
   return type === "recharge" ? "充值" : "兑换";
 }
@@ -232,6 +245,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
   const [loadError, setLoadError] = useState("");
   const membershipsRef = useRef<MerchantMembershipListItem[]>([]);
   const [couponHistoryOpen, setCouponHistoryOpen] = useState(false);
+  const [couponWalletMembershipId, setCouponWalletMembershipId] = useState("");
   const [allergenSaving, setAllergenSaving] = useState(false);
   const [allergenError, setAllergenError] = useState("");
   const [operationDialog, setOperationDialog] = useState<MemberOperationDialogState>(null);
@@ -264,6 +278,10 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     return membershipById.get(selectedMembershipId) ?? null;
   }, [membershipById, selectedMembershipId]);
   const selectedInsight = selectedMembership?.insight ?? EMPTY_MEMBER_INSIGHT;
+  const couponWalletMembership = useMemo(() => {
+    return membershipById.get(couponWalletMembershipId) ?? null;
+  }, [couponWalletMembershipId, membershipById]);
+  const couponWalletInsight = couponWalletMembership?.insight ?? EMPTY_MEMBER_INSIGHT;
   const selectedMembershipLevel = useMemo(
     () => resolveMembershipLevel(memberSettings, selectedMembership),
     [memberSettings, selectedMembership],
@@ -478,6 +496,10 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     if (operationSaving) return;
     setOperationDialog(null);
     setOperationError("");
+  }
+
+  function openMemberCoupons(membership: MerchantMembershipListItem) {
+    setCouponWalletMembershipId(membership.id);
   }
 
   function readOperationErrorMessage(value: unknown, fallback: string) {
@@ -739,6 +761,14 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                               </button>
                               <button
                                 type="button"
+                                className="rounded border bg-white px-2 py-1 text-xs hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                                onClick={() => openMemberCoupons(membership)}
+                                disabled={!membership.profileVisible}
+                              >
+                                卡券
+                              </button>
+                              <button
+                                type="button"
                                 className="rounded border bg-white px-2 py-1 text-xs hover:bg-slate-50"
                                 onClick={() => setSelectedMembershipId(membership.id)}
                               >
@@ -872,6 +902,13 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                               onClick={() => openMemberOperation(selectedMembership, "recharge")}
                             >
                               充值
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                              onClick={() => openMemberCoupons(selectedMembership)}
+                            >
+                              卡券
                             </button>
                           </div>
                         </div>
@@ -1038,6 +1075,104 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                       此会员已退会。按规则保留会员记录，但不再展示个人资料。
                     </div>
                   )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {couponWalletMembership ? (
+        <div className="fixed inset-0 z-[125]">
+          <button
+            type="button"
+            aria-label="关闭会员卡券"
+            className="absolute inset-0 cursor-default bg-slate-950/45"
+            onClick={() => setCouponWalletMembershipId("")}
+          />
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-4">
+            <div className="pointer-events-auto max-h-[88vh] w-full max-w-3xl overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-2xl">
+              <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
+                <div>
+                  <div className="text-lg font-semibold text-slate-950">会员卡券</div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    {getMemberDisplayName(couponWalletMembership)} · {couponWalletMembership.memberNo}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                  onClick={() => setCouponWalletMembershipId("")}
+                >
+                  关闭
+                </button>
+              </div>
+              <div className="max-h-[calc(88vh-82px)] overflow-y-auto p-5">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">有效未使用</div>
+                      <div className="mt-1 text-xs text-slate-500">{couponWalletInsight.availableCouponCount} 张可用</div>
+                    </div>
+                  </div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    {couponWalletInsight.couponHistory.filter((item) => item.status === "available").length > 0 ? (
+                      couponWalletInsight.couponHistory
+                        .filter((item) => item.status === "available")
+                        .map((item) => (
+                          <div key={item.id} className="rounded-xl bg-white px-3 py-2 text-sm">
+                            <div className="font-semibold text-slate-900">{item.title}</div>
+                            <div className="mt-0.5 text-xs text-slate-500">{couponBenefitTargetLabel(item)}</div>
+                            <div className="mt-1 font-mono text-xs text-slate-500">{item.settlementCode || item.couponCode}</div>
+                          </div>
+                        ))
+                    ) : (
+                      <div className="rounded-xl bg-white px-3 py-3 text-sm text-slate-500 sm:col-span-2">
+                        暂无有效未使用卡券。
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                  <div className="border-b border-slate-100 px-4 py-3 text-sm font-semibold text-slate-900">全部领取记录</div>
+                  <div className="max-h-80 overflow-auto">
+                    <table className="min-w-[760px] w-full text-left text-xs">
+                      <thead className="bg-slate-50 text-slate-500">
+                        <tr>
+                          <th className="px-3 py-2">卡券</th>
+                          <th className="px-3 py-2">内容</th>
+                          <th className="px-3 py-2">领取时间</th>
+                          <th className="px-3 py-2">有效期</th>
+                          <th className="px-3 py-2">核销码</th>
+                          <th className="px-3 py-2">状态</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {couponWalletInsight.couponHistory.length > 0 ? (
+                          couponWalletInsight.couponHistory.map((item) => (
+                            <tr key={item.id} className="border-t">
+                              <td className="px-3 py-2">
+                                <div className="font-semibold text-slate-900">{item.title}</div>
+                                <div className="text-slate-500">{item.discountLabel}</div>
+                              </td>
+                              <td className="px-3 py-2 text-slate-600">{couponBenefitTargetLabel(item)}</td>
+                              <td className="px-3 py-2 text-slate-600">{formatDateTime(item.claimedAt)}</td>
+                              <td className="px-3 py-2 text-slate-600">{formatDateTime(item.validUntil)}</td>
+                              <td className="px-3 py-2 font-mono text-slate-600">{item.settlementCode || "-"}</td>
+                              <td className="px-3 py-2 text-slate-700">{couponClaimStatusLabel(item.status)}</td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td colSpan={6} className="px-3 py-8 text-center text-slate-500">
+                              暂无领取记录。
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
             </div>

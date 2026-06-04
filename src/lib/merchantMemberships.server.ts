@@ -26,6 +26,7 @@ import {
   type MerchantMembershipSettings,
 } from "@/lib/merchantMembershipSettings";
 import type { MerchantOrderRecord } from "@/lib/merchantOrders";
+import { redeemMerchantCouponRecords } from "@/lib/merchantCoupons.server";
 import { loadStoredMerchantMemberships, saveStoredMerchantMemberships } from "@/lib/merchantMembershipsStore";
 import { readPersonalCustomerProfileFromSession } from "@/lib/personalCustomerProfile";
 import type { PersonalAccountSession } from "@/lib/personalAccountSession.server";
@@ -741,14 +742,39 @@ export async function applyMerchantMembershipRedemptionCart(input: {
           const customName = trimText(record.customName, 120);
           const customCode = trimText(record.customCode, 120);
           const customPoints = normalizePositiveInteger(record.customPoints);
-          if (itemId) return { itemId, quantity, customName: "", customCode: "", customPoints: 0 };
-          if (customName && customPoints > 0) {
+          const couponId = trimText(record.couponId, 160);
+          const couponClaimId = trimText(record.couponClaimId, 160);
+          const couponSettlementCode = trimText(record.couponSettlementCode ?? record.settlementCode, 200);
+          const couponTitle = trimText(record.couponTitle, 120);
+          const couponDiscountLabel = trimText(record.couponDiscountLabel, 160);
+          if (itemId) {
             return {
-              itemId: `custom:${customName}:${customPoints}`,
+              itemId,
+              quantity,
+              customName: "",
+              customCode: "",
+              customPoints: 0,
+              couponId: "",
+              couponClaimId: "",
+              couponSettlementCode: "",
+              couponTitle: "",
+              couponDiscountLabel: "",
+            };
+          }
+          if (customName && (customPoints > 0 || couponSettlementCode)) {
+            return {
+              itemId: couponSettlementCode
+                ? `coupon:${couponClaimId || couponSettlementCode}`
+                : `custom:${customName}:${customPoints}`,
               quantity,
               customName,
               customCode,
               customPoints,
+              couponId,
+              couponClaimId,
+              couponSettlementCode,
+              couponTitle,
+              couponDiscountLabel,
             };
           }
           return null;
@@ -762,12 +788,27 @@ export async function applyMerchantMembershipRedemptionCart(input: {
             customName: string;
             customCode: string;
             customPoints: number;
+            couponId: string;
+            couponClaimId: string;
+            couponSettlementCode: string;
+            couponTitle: string;
+            couponDiscountLabel: string;
           } => Boolean(entry),
         )
     : [];
   const quantityByItemId = new Map<
     string,
-    { quantity: number; customName: string; customCode: string; customPoints: number }
+    {
+      quantity: number;
+      customName: string;
+      customCode: string;
+      customPoints: number;
+      couponId: string;
+      couponClaimId: string;
+      couponSettlementCode: string;
+      couponTitle: string;
+      couponDiscountLabel: string;
+    }
   >();
   requestedItems.forEach((entry) => {
     const current = quantityByItemId.get(entry.itemId) ?? {
@@ -775,6 +816,11 @@ export async function applyMerchantMembershipRedemptionCart(input: {
       customName: entry.customName,
       customCode: entry.customCode,
       customPoints: entry.customPoints,
+      couponId: entry.couponId,
+      couponClaimId: entry.couponClaimId,
+      couponSettlementCode: entry.couponSettlementCode,
+      couponTitle: entry.couponTitle,
+      couponDiscountLabel: entry.couponDiscountLabel,
     };
     quantityByItemId.set(entry.itemId, {
       ...current,
@@ -818,6 +864,39 @@ export async function applyMerchantMembershipRedemptionCart(input: {
         unitPoints: cartItem.customPoints,
         subtotalPoints: cartItem.customPoints * cartItem.quantity,
         custom: true,
+        couponSettlementCode: "",
+        couponTitle: "",
+        couponDiscountLabel: "",
+      };
+    }
+    if (!item && cartItem.customName && cartItem.couponSettlementCode) {
+      return {
+        item: {
+          id: cartItem.itemId,
+          categoryId: "",
+          code: cartItem.customCode,
+          barcode: "",
+          name: cartItem.customName,
+          imageUrl: "",
+          iconName: "",
+          description: cartItem.couponDiscountLabel || cartItem.couponTitle,
+          enabled: true,
+          pointsCost: 0,
+          referenceAmount: null,
+          memberPrice: null,
+          taxRate: null,
+          stock: null,
+          pointProduct: true,
+          recommended: false,
+          sort: 0,
+        },
+        quantity: cartItem.quantity,
+        unitPoints: 0,
+        subtotalPoints: 0,
+        custom: true,
+        couponSettlementCode: cartItem.couponSettlementCode,
+        couponTitle: cartItem.couponTitle,
+        couponDiscountLabel: cartItem.couponDiscountLabel,
       };
     }
     if (!item) throw new Error("membership_redemption_item_not_found");
@@ -829,12 +908,31 @@ export async function applyMerchantMembershipRedemptionCart(input: {
       unitPoints,
       subtotalPoints: unitPoints * cartItem.quantity,
       custom: false,
+      couponSettlementCode: "",
+      couponTitle: "",
+      couponDiscountLabel: "",
     };
   });
   const totalPoints = redemptionRows.reduce((sum, row) => sum + row.subtotalPoints, 0);
-  if (totalPoints <= 0) throw new Error("membership_operation_empty");
+  const couponRedemptionRows = redemptionRows.filter((row) => row.couponSettlementCode);
+  if (totalPoints <= 0 && couponRedemptionRows.length === 0) throw new Error("membership_operation_empty");
   const nextPointBalance = currentMembership.pointBalance - totalPoints;
   if (nextPointBalance < 0) throw new Error("membership_balance_insufficient");
+
+  if (couponRedemptionRows.length > 0) {
+    const fallbackNote = trimText(input.note, 500);
+    await redeemMerchantCouponRecords({
+      siteId,
+      operatorId: trimText(input.operatorId, 120),
+      redemptions: couponRedemptionRows.map((row) => ({
+        settlementCode: row.couponSettlementCode,
+        note: fallbackNote || `积分兑换使用卡券：${row.couponTitle || row.item.name}`,
+        expectedAccountId: currentMembership.accountId,
+        expectedUserId: currentMembership.userId,
+        expectedEmail: currentMembership.email,
+      })),
+    });
+  }
 
   const now = new Date().toISOString();
   const growthDelta = settings ? totalPoints * settings.growthRules.spendPointGrowth : 0;
