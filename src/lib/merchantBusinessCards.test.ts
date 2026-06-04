@@ -4,6 +4,7 @@ import {
   createDefaultMerchantBusinessCardDraft,
   disableMerchantBusinessCardChatDisplay,
   getMerchantBusinessCardRequiredFields,
+  mergeMerchantBusinessCardAssets,
   normalizeMerchantBusinessCardDraft,
   normalizeMerchantBusinessCards,
   resolveMerchantBusinessCardForChatDisplay,
@@ -472,6 +473,59 @@ test("normalizeMerchantBusinessCards keeps only valid generated card assets", ()
   assert.equal(cards[0]?.contacts.address, "Sevilla");
   assert.deepEqual(cards[0]?.contacts.phones, ["123", "456"]);
   assert.equal(cards[0]?.showInChat, true);
+});
+
+test("mergeMerchantBusinessCardAssets preserves locally saved Google review links over older remote cards", () => {
+  const [remoteCard] = normalizeMerchantBusinessCards([
+    {
+      id: "card-1",
+      createdAt: "2026-06-04T10:00:00.000Z",
+      mode: "link",
+      name: "Haoyouduo",
+      imageUrl: "https://faolla.com/storage/v1/object/public/page-assets/card.png",
+      shareImageUrl: "https://faolla.com/storage/v1/object/public/page-assets/card.png",
+      contactPagePublicImageUrl: "https://faolla.com/storage/v1/object/public/page-assets/contact.png",
+      shareKey: "luis-gpyv6u",
+      targetUrl: "https://faolla.com",
+      contacts: {
+        contactName: "LUIS",
+        phone: "679776548",
+        phones: ["679776548"],
+        email: "haoyouduo@ollamail.com",
+        address: "C. Avenida de la prensa 44,41007 / Sevilla / Sevilla / Spain",
+        wechat: "haoyouduo2024888",
+        whatsapp: "+34634147455",
+        twitter: "",
+        weibo: "",
+        telegram: "",
+        linkedin: "",
+        discord: "",
+        facebook: "",
+        instagram: "",
+        tiktok: "",
+        douyin: "",
+        xiaohongshu: "",
+        googleReview: "",
+      },
+    },
+  ]);
+  assert.ok(remoteCard);
+  const localCard = normalizeMerchantBusinessCards([
+    {
+      ...remoteCard,
+      contacts: {
+        ...remoteCard.contacts,
+        googleReview: "https://g.page/r/example/review",
+      },
+    },
+  ])[0];
+  assert.ok(localCard);
+
+  const merged = mergeMerchantBusinessCardAssets(localCard, remoteCard, { prefer: "primary" });
+
+  assert.equal(merged.contacts.googleReview, "https://g.page/r/example/review");
+  assert.equal(merged.shareKey, "luis-gpyv6u");
+  assert.equal(merged.contactPagePublicImageUrl, "https://faolla.com/storage/v1/object/public/page-assets/contact.png");
 });
 
 test("business card chat display defaults to the first card and can be reassigned", () => {

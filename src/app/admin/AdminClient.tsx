@@ -106,6 +106,7 @@ import type { SupportMessageImageActivatePayload } from "@/components/support/Su
 import {
   normalizeMerchantBusinessCards,
   normalizeMerchantBusinessCardChatDisplaySelection,
+  mergeMerchantBusinessCardAssets,
   resolveMerchantBusinessCardForChatDisplay,
   selectMerchantBusinessCardForChat,
   type MerchantBusinessCardAsset,
@@ -5029,53 +5030,9 @@ function buildSupportBusinessCardIdentityKeys(card: MerchantBusinessCardAsset | 
 function mergeSupportBusinessCardCandidates(
   primary: MerchantBusinessCardAsset,
   secondary: MerchantBusinessCardAsset,
+  options?: { prefer?: "primary" | "secondary" | "richer" },
 ): MerchantBusinessCardAsset {
-  const primaryScore = Number(Boolean(primary.shareKey)) + Number(Boolean(primary.shareImageUrl)) + Number(Boolean(primary.contactPagePublicImageUrl));
-  const secondaryScore =
-    Number(Boolean(secondary.shareKey)) + Number(Boolean(secondary.shareImageUrl)) + Number(Boolean(secondary.contactPagePublicImageUrl));
-  const merged = secondaryScore > primaryScore ? { ...primary, ...secondary } : { ...secondary, ...primary };
-  const backgroundSource = normalizeSupportDetailText(secondary.backgroundImageUrl)
-    ? secondary
-    : normalizeSupportDetailText(primary.backgroundImageUrl)
-      ? primary
-      : null;
-  const contactPageImageSource = normalizeSupportDetailText(secondary.contactPageImageUrl)
-    ? secondary
-    : normalizeSupportDetailText(primary.contactPageImageUrl)
-      ? primary
-      : null;
-  const introVideoSource = normalizeSupportDetailText(secondary.contactIntroVideoUrl)
-    ? secondary
-    : normalizeSupportDetailText(primary.contactIntroVideoUrl)
-      ? primary
-      : null;
-
-  return {
-    ...merged,
-    ...(backgroundSource
-      ? {
-          backgroundImageUrl: backgroundSource.backgroundImageUrl,
-          backgroundImageSnapshotOnly: backgroundSource.backgroundImageSnapshotOnly,
-          backgroundImageX: backgroundSource.backgroundImageX,
-          backgroundImageY: backgroundSource.backgroundImageY,
-          backgroundImageScale: backgroundSource.backgroundImageScale,
-          backgroundImageOpacity: backgroundSource.backgroundImageOpacity,
-        }
-      : {}),
-    ...(contactPageImageSource
-      ? {
-          contactPageImageUrl: contactPageImageSource.contactPageImageUrl,
-          contactPageImageHeight: contactPageImageSource.contactPageImageHeight,
-        }
-      : {}),
-    ...(introVideoSource
-      ? {
-          contactIntroVideoUrl: introVideoSource.contactIntroVideoUrl,
-          contactIntroVideoPosterUrl: introVideoSource.contactIntroVideoPosterUrl,
-          contactIntroVideoMuted: introVideoSource.contactIntroVideoMuted,
-        }
-      : {}),
-  };
+  return mergeMerchantBusinessCardAssets(primary, secondary, options);
 }
 
 function dedupeSupportBusinessCards(cards: MerchantBusinessCardAsset[]) {
@@ -5086,7 +5043,9 @@ function dedupeSupportBusinessCards(cards: MerchantBusinessCardAsset[]) {
       return cardKeys.some((key) => itemKeys.includes(key));
     });
     if (duplicateIndex >= 0) {
-      accumulator[duplicateIndex] = mergeSupportBusinessCardCandidates(accumulator[duplicateIndex], card);
+      accumulator[duplicateIndex] = mergeSupportBusinessCardCandidates(accumulator[duplicateIndex], card, {
+        prefer: "richer",
+      });
     } else {
       accumulator.push(card);
     }
@@ -5101,6 +5060,39 @@ function sortSupportBusinessCardsForDisplay(cards: MerchantBusinessCardAsset[]) 
     if (leftChat !== rightChat) return leftChat ? -1 : 1;
     return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
   });
+}
+
+function mergeSupportBusinessCardLists(
+  localCardsInput: unknown,
+  remoteCardsInput: unknown,
+) {
+  const localCards = normalizeMerchantBusinessCards(localCardsInput);
+  const remoteCards = dedupeSupportBusinessCards(normalizeMerchantBusinessCards(remoteCardsInput));
+  if (remoteCards.length === 0) {
+    return sortSupportBusinessCardsForDisplay(localCards.filter((card) => !isSupportSnapshotFallbackBusinessCard(card)));
+  }
+  if (localCards.length === 0) {
+    return sortSupportBusinessCardsForDisplay(remoteCards.filter((card) => !isSupportSnapshotFallbackBusinessCard(card)));
+  }
+  const mergedCards = [...remoteCards];
+  localCards.forEach((card) => {
+    if (isSupportSnapshotFallbackBusinessCard(card)) return;
+    const matchIndex = mergedCards.findIndex((item) => {
+      const itemKeys = buildSupportBusinessCardIdentityKeys(item);
+      const cardKeys = buildSupportBusinessCardIdentityKeys(card);
+      return cardKeys.some((key) => itemKeys.includes(key));
+    });
+    if (matchIndex >= 0) {
+      mergedCards[matchIndex] = mergeSupportBusinessCardCandidates(card, mergedCards[matchIndex], {
+        prefer: "primary",
+      });
+    } else {
+      mergedCards.push(card);
+    }
+  });
+  return sortSupportBusinessCardsForDisplay(
+    dedupeSupportBusinessCards(mergedCards).filter((card) => !isSupportSnapshotFallbackBusinessCard(card)),
+  );
 }
 
 function buildSupportMerchantCardLink(card: MerchantBusinessCardAsset | null) {
@@ -5974,7 +5966,7 @@ function mergeSupportPublishedProfileIntoSite(
         ? profile.merchantCardImageOpacity
         : site.merchantCardImageOpacity,
     businessCards: Array.isArray(profile.businessCards)
-      ? normalizeMerchantBusinessCards(profile.businessCards)
+      ? mergeSupportBusinessCardLists(site.businessCards ?? [], profile.businessCards)
       : site.businessCards,
     serviceExpiresAt: profile.serviceExpiresAt ?? site.serviceExpiresAt ?? null,
     sortConfig: profile.sortConfig ?? site.sortConfig ?? createDefaultMerchantSortConfig(),
@@ -6241,6 +6233,7 @@ export default function AdminClient({
   const [newBlockType, setNewBlockType] = useState<Block["type"]>("common");
   const [previewViewport, setPreviewViewport] = useState<"desktop" | "mobile">("desktop");
   const [tip, setTip] = useState<string>("");
+  const [, setMerchantPlatformRevision] = useState(0);
   const [backendNotice, setBackendNotice] = useState<string | null>(supabaseMissingEnvNotice);
   const [dialog, setDialog] = useState<CenterDialog | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(startInLoadingState);
@@ -7012,6 +7005,7 @@ export default function AdminClient({
     () =>
       subscribePlatformState(() => {
         setPlanTemplates(loadPlatformState().planTemplates ?? []);
+        setMerchantPlatformRevision((current) => current + 1);
       }),
     [],
   );
@@ -10809,6 +10803,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       location?: SiteLocation | null;
       chatAvatarImageUrl?: string;
       contactVisibility?: MerchantContactVisibility | null;
+      businessCards?: MerchantBusinessCardAsset[];
     },
   ) {
     const normalizedMerchantId = String(merchantId ?? "").trim();
@@ -10843,6 +10838,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           : {}),
         ...(profile?.contactVisibility
           ? { contactVisibility: profile.contactVisibility }
+          : {}),
+        ...(Array.isArray(profile?.businessCards)
+          ? { businessCards: normalizeMerchantBusinessCardChatDisplaySelection(profile.businessCards) }
           : {}),
       }),
     });
@@ -12163,35 +12161,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     !Array.isArray(editingSite?.businessCards) ||
     editingSite.businessCards.length === 0;
   const supportSelfBusinessCards = useMemo(() => {
-    const localCards = Array.isArray(editingSite?.businessCards) ? normalizeMerchantBusinessCards(editingSite.businessCards) : [];
-    const remoteCards = dedupeSupportBusinessCards(normalizeMerchantBusinessCards([
+    return mergeSupportBusinessCardLists(editingSite?.businessCards ?? [], [
       ...(Array.isArray(supportSelfFetchedProfile?.businessCards) ? supportSelfFetchedProfile.businessCards : []),
       ...(supportSelfFetchedBusinessCard ? [supportSelfFetchedBusinessCard] : []),
       ...(supportSelfProfile?.chatBusinessCard ? [supportSelfProfile.chatBusinessCard] : []),
-    ]).filter((card) => !isSupportSnapshotFallbackBusinessCard(card)));
-    if (remoteCards.length === 0) {
-      return localCards.filter((card) => !isSupportSnapshotFallbackBusinessCard(card));
-    }
-    if (localCards.length === 0) {
-      return remoteCards;
-    }
-    const mergedCards = [...remoteCards];
-    localCards.forEach((card) => {
-      const matchIndex = mergedCards.findIndex(
-        (item) => {
-          const itemKeys = buildSupportBusinessCardIdentityKeys(item);
-          const cardKeys = buildSupportBusinessCardIdentityKeys(card);
-          return cardKeys.some((key) => itemKeys.includes(key));
-        },
-      );
-      if (matchIndex >= 0) {
-        mergedCards[matchIndex] = mergeSupportBusinessCardCandidates(mergedCards[matchIndex], card);
-      } else {
-        mergedCards.push(card);
-      }
-    });
-    const deduplicatedCards = dedupeSupportBusinessCards(mergedCards);
-    return sortSupportBusinessCardsForDisplay(deduplicatedCards);
+    ]);
   }, [
     editingSite?.businessCards,
     supportSelfFetchedBusinessCard,
@@ -16834,6 +16808,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           location: nextSite.location ?? null,
           chatAvatarImageUrl: nextSite.chatAvatarImageUrl ?? "",
           contactVisibility: nextSite.contactVisibility ?? createDefaultMerchantContactVisibility(),
+          businessCards: nextBusinessCards,
         },
       );
       if (!syncResult.ok) {
@@ -17695,24 +17670,42 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           if (!editingSiteId) return;
           const previousCount = normalizeMerchantBusinessCards(editingSite?.businessCards ?? []).length;
           const platformState = loadPlatformState();
+          const normalizedCards = normalizeMerchantBusinessCardChatDisplaySelection(cards);
+          const nextUpdatedAt = new Date().toISOString();
+          const currentSite = platformState.sites.find((item) => item.id === editingSiteId) ?? null;
+          const nextSite = currentSite
+            ? {
+                ...currentSite,
+                businessCards: normalizedCards,
+                updatedAt: nextUpdatedAt,
+              }
+            : null;
           savePlatformState({
             ...platformState,
             sites: platformState.sites.map((item) =>
               item.id === editingSiteId
-                ? {
-                    ...item,
-                    businessCards: cards,
-                    updatedAt: new Date().toISOString(),
-                  }
+                ? nextSite ?? item
                 : item,
             ),
           });
-          scheduleMerchantChatBusinessCardSync(editingSiteId, cards);
+          supportPeerProfileLocalMutationAtRef.current[editingSiteId] = Date.now();
+          if (nextSite) {
+            const nextProfile = buildSupportPublishedProfileFromSite(nextSite);
+            setSupportPeerProfilesByMerchantId((current) => ({
+              ...current,
+              [editingSiteId]: nextProfile,
+            }));
+            setSupportPeerBusinessCardByMerchantId((current) => ({
+              ...current,
+              [editingSiteId]: nextProfile.chatBusinessCard ?? null,
+            }));
+          }
+          scheduleMerchantChatBusinessCardSync(editingSiteId, normalizedCards);
           recordMerchantOperationLog({
             siteId: editingSiteId,
             module: "经营中心",
             action: "更新名片夹",
-            summary: `更新名片夹：${previousCount} 张 -> ${cards.length} 张`,
+            summary: `更新名片夹：${previousCount} 张 -> ${normalizedCards.length} 张`,
             status: "success",
           });
         },
@@ -17779,6 +17772,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             contactEmail,
             industry,
             location,
+            businessCards: normalizeMerchantBusinessCardChatDisplaySelection(target?.businessCards ?? []),
           });
           if (!syncResult.ok) {
             throw new Error(syncResult.message || "商户信息同步失败，请稍后重新保存");

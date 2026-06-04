@@ -7,6 +7,10 @@ import {
   validateMerchantProfileBindingPayload,
 } from "@/lib/merchantProfileBinding";
 import {
+  normalizeMerchantBusinessCards,
+  resolveMerchantBusinessCardForChatDisplay,
+} from "@/lib/merchantBusinessCards";
+import {
   buildPlatformMerchantSnapshotSite,
   upsertPlatformMerchantSnapshotSite,
 } from "@/lib/platformMerchantSnapshot";
@@ -76,6 +80,7 @@ type DomainBindingBody = {
   location?: unknown;
   chatAvatarImageUrl?: unknown;
   contactVisibility?: unknown;
+  businessCards?: unknown;
 };
 
 function readEnv(name: string) {
@@ -338,6 +343,7 @@ async function syncMerchantProfileSnapshot(
     location?: SiteLocation;
     chatAvatarImageUrl?: string;
     contactVisibility?: MerchantContactVisibility;
+    businessCards?: unknown;
   },
 ): Promise<
   | { ok: true }
@@ -345,6 +351,10 @@ async function syncMerchantProfileSnapshot(
 > {
   const existingPayload = await loadStoredPlatformMerchantSnapshot(supabase);
   const existingSite = existingPayload?.snapshot.find((site) => site.id === input.merchantId) ?? null;
+  const normalizedBusinessCards =
+    typeof input.businessCards === "undefined"
+      ? existingSite?.businessCards ?? []
+      : normalizeMerchantBusinessCards(input.businessCards);
   const snapshotSite = buildPlatformMerchantSnapshotSite({
     id: input.merchantId,
     merchantName: input.merchantName,
@@ -364,9 +374,10 @@ async function syncMerchantProfileSnapshot(
     chatAvatarImageUrl: input.chatAvatarImageUrl || existingSite?.chatAvatarImageUrl || "",
     contactVisibility: input.contactVisibility || existingSite?.contactVisibility,
     permissionConfig: existingSite?.permissionConfig ?? undefined,
-    businessCards: existingSite?.businessCards ?? [],
+    businessCards: normalizedBusinessCards,
     merchantCardImageOpacity: existingSite?.merchantCardImageOpacity ?? 1,
-    chatBusinessCard: existingSite?.chatBusinessCard ?? null,
+    chatBusinessCard:
+      resolveMerchantBusinessCardForChatDisplay(normalizedBusinessCards) ?? existingSite?.chatBusinessCard ?? null,
     status: existingSite?.status ?? "online",
     serviceExpiresAt: existingSite?.serviceExpiresAt ?? null,
     sortConfig: existingSite?.sortConfig ?? undefined,
@@ -441,6 +452,10 @@ export async function POST(request: Request) {
       body && Object.prototype.hasOwnProperty.call(body, "contactVisibility")
         ? normalizeContactVisibility(body?.contactVisibility)
         : undefined,
+    businessCards:
+      body && Object.prototype.hasOwnProperty.call(body, "businessCards")
+        ? normalizeMerchantBusinessCards(body?.businessCards)
+        : undefined,
   };
 
   try {
@@ -493,6 +508,7 @@ export async function POST(request: Request) {
       location: normalizedProfile.location,
       chatAvatarImageUrl: normalizedProfile.chatAvatarImageUrl,
       contactVisibility: normalizedProfile.contactVisibility,
+      businessCards: normalizedProfile.businessCards,
     });
     if (!snapshotResult.ok) {
       return NextResponse.json(

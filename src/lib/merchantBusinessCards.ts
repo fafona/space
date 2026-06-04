@@ -827,6 +827,118 @@ export function normalizeMerchantBusinessCards(value: unknown): MerchantBusiness
   return normalizeMerchantBusinessCardChatDisplaySelection(normalizedCards);
 }
 
+function countMerchantBusinessCardAssetCompleteness(card: MerchantBusinessCardAsset) {
+  const contactValues = card.contacts
+    ? [
+        card.contacts.contactName,
+        card.contacts.phone,
+        ...(Array.isArray(card.contacts.phones) ? card.contacts.phones : []),
+        card.contacts.email,
+        card.contacts.address,
+        card.contacts.wechat,
+        card.contacts.whatsapp,
+        card.contacts.twitter,
+        card.contacts.weibo,
+        card.contacts.telegram,
+        card.contacts.linkedin,
+        card.contacts.discord,
+        card.contacts.facebook,
+        card.contacts.instagram,
+        card.contacts.tiktok,
+        card.contacts.douyin,
+        card.contacts.xiaohongshu,
+        card.contacts.googleReview,
+      ]
+    : [];
+  const invoiceValues = card.invoice ? [card.invoice.name, card.invoice.taxNumber, card.invoice.address] : [];
+  return [
+    card.shareKey,
+    card.shareImageUrl,
+    card.contactPagePublicImageUrl,
+    card.contactPageImageUrl,
+    card.contactIntroVideoUrl,
+    card.contactIntroVideoPosterUrl,
+    card.backgroundImageUrl,
+    ...contactValues,
+    ...invoiceValues,
+  ].filter((value) => normalizeText(value)).length;
+}
+
+function mergeMerchantBusinessCardContactValues(
+  preferred: MerchantBusinessCardContacts,
+  fallback: MerchantBusinessCardContacts,
+  fillEmptyFromFallback: boolean,
+) {
+  const merged: MerchantBusinessCardContacts = {
+    ...fallback,
+    ...preferred,
+    phones: normalizePhoneList(preferred.phones).length
+      ? normalizePhoneList(preferred.phones)
+      : normalizePhoneList(fallback.phones),
+  };
+  if (!fillEmptyFromFallback) return merged;
+  for (const key of MERCHANT_BUSINESS_CARD_CONTACT_FIELD_KEYS) {
+    const preferredValue = normalizeText(preferred[key]);
+    const fallbackValue = normalizeText(fallback[key]);
+    if (!preferredValue && fallbackValue) {
+      merged[key] = fallbackValue;
+    }
+  }
+  return merged;
+}
+
+export function mergeMerchantBusinessCardAssets(
+  primary: MerchantBusinessCardAsset,
+  secondary: MerchantBusinessCardAsset,
+  options?: { prefer?: "primary" | "secondary" | "richer" },
+) {
+  const primaryCard = normalizeMerchantBusinessCards([primary])[0];
+  const secondaryCard = normalizeMerchantBusinessCards([secondary])[0];
+  if (!primaryCard) return secondaryCard ?? secondary;
+  if (!secondaryCard) return primaryCard;
+
+  const primaryScore = countMerchantBusinessCardAssetCompleteness(primaryCard);
+  const secondaryScore = countMerchantBusinessCardAssetCompleteness(secondaryCard);
+  const preferPrimary =
+    options?.prefer === "primary" ||
+    (options?.prefer !== "secondary" && (options?.prefer === "richer" || !options?.prefer) && primaryScore >= secondaryScore);
+  const preferred = preferPrimary ? primaryCard : secondaryCard;
+  const fallback = preferPrimary ? secondaryCard : primaryCard;
+  const preferredHasBackground = Boolean(normalizeText(preferred.backgroundImageUrl));
+  const preferredHasContactImage = Boolean(normalizeText(preferred.contactPageImageUrl));
+  const merged = {
+    ...fallback,
+    ...preferred,
+    backgroundImageUrl: normalizeText(preferred.backgroundImageUrl) || normalizeText(fallback.backgroundImageUrl),
+    backgroundImageSnapshotOnly: preferred.backgroundImageSnapshotOnly || fallback.backgroundImageSnapshotOnly,
+    backgroundImageX: preferredHasBackground ? preferred.backgroundImageX : fallback.backgroundImageX,
+    backgroundImageY: preferredHasBackground ? preferred.backgroundImageY : fallback.backgroundImageY,
+    backgroundImageScale: preferredHasBackground ? preferred.backgroundImageScale : fallback.backgroundImageScale,
+    backgroundImageOpacity: preferredHasBackground ? preferred.backgroundImageOpacity : fallback.backgroundImageOpacity,
+    contactPageImageUrl: normalizeText(preferred.contactPageImageUrl) || normalizeText(fallback.contactPageImageUrl),
+    contactPageImageHeight: preferredHasContactImage ? preferred.contactPageImageHeight : fallback.contactPageImageHeight,
+    contactIntroVideoUrl: normalizeText(preferred.contactIntroVideoUrl) || normalizeText(fallback.contactIntroVideoUrl),
+    contactIntroVideoPosterUrl:
+      normalizeText(preferred.contactIntroVideoPosterUrl) || normalizeText(fallback.contactIntroVideoPosterUrl),
+    contactIntroVideoMuted: preferred.contactIntroVideoMuted,
+    contacts: mergeMerchantBusinessCardContactValues(
+      preferred.contacts,
+      fallback.contacts,
+      !options?.prefer || options.prefer === "richer",
+    ),
+    invoice:
+      !options?.prefer || options.prefer === "richer"
+        ? {
+            name: normalizeText(preferred.invoice.name) || normalizeText(fallback.invoice.name),
+            taxNumber: normalizeText(preferred.invoice.taxNumber) || normalizeText(fallback.invoice.taxNumber),
+            address: normalizeText(preferred.invoice.address) || normalizeText(fallback.invoice.address),
+          }
+        : preferred.invoice,
+  } satisfies MerchantBusinessCardAsset;
+
+  return normalizeMerchantBusinessCards([merged])[0] ?? merged;
+}
+
 export function normalizeMerchantBusinessCardChatDisplaySelection(cards: MerchantBusinessCardAsset[]) {
   const normalizedCards = cards.map((card) => ({
     ...card,
