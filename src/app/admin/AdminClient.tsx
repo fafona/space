@@ -6249,6 +6249,13 @@ export default function AdminClient({
   const [merchantAnalyticsRemoteSummary, setMerchantAnalyticsRemoteSummary] = useState<RemoteAnalyticsSummary | null>(null);
   const [merchantAnalyticsLoading, setMerchantAnalyticsLoading] = useState(false);
   const [merchantAnalyticsError, setMerchantAnalyticsError] = useState("");
+  const [merchantAnalyticsSnapshot, setMerchantAnalyticsSnapshot] = useState<MerchantAnalyticsSnapshot>(
+    EMPTY_MERCHANT_ANALYTICS_SNAPSHOT,
+  );
+  const [merchantAnalyticsSnapshotLoading, setMerchantAnalyticsSnapshotLoading] = useState(false);
+  const [merchantLogFailureSnapshots, setMerchantLogFailureSnapshots] = useState<
+    ReturnType<typeof readPublishFailureSnapshots>
+  >([]);
   const [merchantOperationLogs, setMerchantOperationLogs] = useState<MerchantOperationLogEntry[]>([]);
   const [merchantOperationLogModuleFilter, setMerchantOperationLogModuleFilter] = useState("all");
   const [merchantOperationLogStatusFilter, setMerchantOperationLogStatusFilter] = useState<"all" | MerchantOperationLogStatus>("all");
@@ -14787,7 +14794,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, [desktopMerchantWorkspaceActive, merchantDesktopSection, supportDialogOpen]);
 
   useEffect(() => {
-    if (!desktopMerchantWorkspaceActive || (merchantDesktopSection !== "analytics" && merchantDesktopSection !== "logs")) return;
+    if (!desktopMerchantWorkspaceActive || merchantDesktopSection !== "analytics") return;
     let cancelled = false;
     setMerchantAnalyticsLoading(true);
     setMerchantAnalyticsError("");
@@ -14826,6 +14833,19 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       cancelled = true;
     };
   }, [desktopMerchantWorkspaceActive, merchantDesktopSection]);
+
+  useEffect(() => {
+    if (!desktopMerchantWorkspaceActive || merchantDesktopSection !== "logs") return;
+    let cancelled = false;
+    const timeout = window.setTimeout(() => {
+      if (cancelled) return;
+      setMerchantLogFailureSnapshots(readPublishFailureSnapshots(storeScope).slice(0, 12));
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [desktopMerchantWorkspaceActive, merchantDesktopSection, storeScope]);
 
   useEffect(() => {
     if (isPlatformEditor || supportDataActivated) return;
@@ -17194,64 +17214,83 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       setMerchantOrderWorkbenchOpen(false);
     }
   }, [isDesktopMerchantWorkspace, merchantDesktopSection]);
-  const merchantAnalyticsSnapshot: MerchantAnalyticsSnapshot =
-    isDesktopMerchantWorkspace && (merchantDesktopSection === "analytics" || merchantDesktopSection === "logs")
-      ? (() => {
-    const desktopConfig = previewViewport === "desktop" ? planConfig : viewportStatesRef.current.desktop.planConfig;
-    const mobileConfig = previewViewport === "mobile" ? planConfig : viewportStatesRef.current.mobile.planConfig;
-    const combinedBlocks = buildCombinedPersistedBlocks(desktopConfig, mobileConfig);
-    const payloadBytes = estimateUtf8Size(JSON.stringify(combinedBlocks));
-    const diffSummary = computePublishDiffSummary(
-      combinedBlocks,
-      loadPublishedBlocksFromStorage(defaultEditorBlocks, storeScope),
-    );
-    const byType = new Map<string, number>();
-    blocks.forEach((item) => {
-      byType.set(item.type, (byType.get(item.type) ?? 0) + 1);
-    });
-    const localAnalytics = merchantAnalyticsLocalData ?? EMPTY_MERCHANT_ANALYTICS_LOCAL_DATA;
-    const clickStats = localAnalytics.clickStats;
-    const clickDaily = localAnalytics.clickDaily;
-    const clickPairs = Object.entries(clickStats).sort((a, b) => b[1] - a[1]);
-    const viewDailyByPath = localAnalytics.viewDailyByPath;
-    const mergedViewDaily: Record<string, number> = {};
-    Object.values(viewDailyByPath).forEach((daily) => {
-      Object.entries(daily).forEach(([day, count]) => {
-        mergedViewDaily[day] = (mergedViewDaily[day] ?? 0) + count;
-      });
-    });
-    const publishEvents = localAnalytics.publishEvents;
-    const nowMs = Date.now();
-    const inLastDays = (iso: string, days: number) => {
-      const at = new Date(iso).getTime();
-      if (!Number.isFinite(at)) return false;
-      return nowMs - at <= days * 24 * 60 * 60 * 1000;
-    };
-    const publish7d = publishEvents.filter((item) => inLastDays(item.at, 7));
-    const publish30d = publishEvents.filter((item) => inLastDays(item.at, 30));
-    return {
+  useEffect(() => {
+    if (!isDesktopMerchantWorkspace || merchantDesktopSection !== "analytics") return;
+    let cancelled = false;
+    setMerchantAnalyticsSnapshotLoading(true);
+    setMerchantAnalyticsSnapshot((current) => ({
+      ...current,
       blockCount: blocks.length,
-      payloadBytes,
-      diffSummary,
-      byType: Array.from(byType.entries()).sort((a, b) => b[1] - a[1]),
-      visit1d: sumDailyValues(mergedViewDaily, 1),
-      visit7d: sumDailyValues(mergedViewDaily, 7),
-      visit30d: sumDailyValues(mergedViewDaily, 30),
-      clickPairs,
-      topClick7d: Object.entries(clickDaily)
-        .map(([channel, daily]) => ({ channel, count: sumDailyValues(daily, 7) }))
-        .filter((item) => item.count > 0)
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 5),
-      publish7d,
-      publish30d,
-      failureSnapshots: readPublishFailureSnapshots(storeScope),
+    }));
+    const timeout = window.setTimeout(() => {
+      if (cancelled) return;
+      const desktopConfig = previewViewport === "desktop" ? planConfig : viewportStatesRef.current.desktop.planConfig;
+      const mobileConfig = previewViewport === "mobile" ? planConfig : viewportStatesRef.current.mobile.planConfig;
+      const combinedBlocks = buildCombinedPersistedBlocks(desktopConfig, mobileConfig);
+      const payloadBytes = estimateUtf8Size(JSON.stringify(combinedBlocks));
+      const diffSummary = computePublishDiffSummary(
+        combinedBlocks,
+        loadPublishedBlocksFromStorage(defaultEditorBlocks, storeScope),
+      );
+      const byType = new Map<string, number>();
+      blocks.forEach((item) => {
+        byType.set(item.type, (byType.get(item.type) ?? 0) + 1);
+      });
+      const localAnalytics = merchantAnalyticsLocalData ?? EMPTY_MERCHANT_ANALYTICS_LOCAL_DATA;
+      const clickStats = localAnalytics.clickStats;
+      const clickDaily = localAnalytics.clickDaily;
+      const clickPairs = Object.entries(clickStats).sort((a, b) => b[1] - a[1]);
+      const viewDailyByPath = localAnalytics.viewDailyByPath;
+      const mergedViewDaily: Record<string, number> = {};
+      Object.values(viewDailyByPath).forEach((daily) => {
+        Object.entries(daily).forEach(([day, count]) => {
+          mergedViewDaily[day] = (mergedViewDaily[day] ?? 0) + count;
+        });
+      });
+      const publishEvents = localAnalytics.publishEvents;
+      const nowMs = Date.now();
+      const inLastDays = (iso: string, days: number) => {
+        const at = new Date(iso).getTime();
+        if (!Number.isFinite(at)) return false;
+        return nowMs - at <= days * 24 * 60 * 60 * 1000;
+      };
+      const publish7d = publishEvents.filter((item) => inLastDays(item.at, 7));
+      const publish30d = publishEvents.filter((item) => inLastDays(item.at, 30));
+      if (cancelled) return;
+      setMerchantAnalyticsSnapshot({
+        blockCount: blocks.length,
+        payloadBytes,
+        diffSummary,
+        byType: Array.from(byType.entries()).sort((a, b) => b[1] - a[1]),
+        visit1d: sumDailyValues(mergedViewDaily, 1),
+        visit7d: sumDailyValues(mergedViewDaily, 7),
+        visit30d: sumDailyValues(mergedViewDaily, 30),
+        clickPairs,
+        topClick7d: Object.entries(clickDaily)
+          .map(([channel, daily]) => ({ channel, count: sumDailyValues(daily, 7) }))
+          .filter((item) => item.count > 0)
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 5),
+        publish7d,
+        publish30d,
+        failureSnapshots: readPublishFailureSnapshots(storeScope),
+      });
+      setMerchantAnalyticsSnapshotLoading(false);
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
     };
-        })()
-      : {
-          ...EMPTY_MERCHANT_ANALYTICS_SNAPSHOT,
-          blockCount: blocks.length,
-        };
+  }, [
+    blocks,
+    defaultEditorBlocks,
+    isDesktopMerchantWorkspace,
+    merchantAnalyticsLocalData,
+    merchantDesktopSection,
+    planConfig,
+    previewViewport,
+    storeScope,
+  ]);
   const planTemplateKeyword = planTemplateSearch.trim().toLowerCase();
   const planTemplateCards = useMemo(
     () =>
@@ -20051,8 +20090,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       showTip("导出失败");
     }
   };
-  const merchantAnalyticsPanelContent = (
+  const merchantAnalyticsPanelContent = merchantDesktopSection === "analytics" ? (
     <div className="min-h-[calc(100vh-14rem)] space-y-4">
+      {merchantAnalyticsSnapshotLoading ? (
+        <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700">
+          正在整理统计数据...
+        </div>
+      ) : null}
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {[
           { label: "当前页区块", value: `${merchantAnalyticsSnapshot.blockCount} 个`, helper: "基于当前正在编辑的页面" },
@@ -20254,8 +20298,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         </section>
       </div>
     </div>
-  );
-  const merchantLogsPanelContent = (
+  ) : null;
+  const merchantLogsPanelContent = merchantDesktopSection === "logs" ? (
     <div className="min-h-[calc(100vh-14rem)] space-y-4">
       <section className="rounded-2xl border border-slate-200 bg-white px-6 py-5 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-4">
@@ -20465,8 +20509,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         <div className="text-lg font-semibold text-slate-900">失败快照</div>
         <div className="mt-1 text-sm text-slate-500">发布失败时会保留本地快照，方便回溯问题。</div>
         <div className="mt-4 space-y-3">
-          {merchantAnalyticsSnapshot.failureSnapshots.length ? (
-            merchantAnalyticsSnapshot.failureSnapshots.slice(0, 12).map((item) => (
+          {merchantLogFailureSnapshots.length ? (
+            merchantLogFailureSnapshots.map((item) => (
               <article key={`${item.at}:${item.reason}`} className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
@@ -20485,7 +20529,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         </div>
       </section>
     </div>
-  );
+  ) : null;
   const merchantBusinessCardCount = normalizeMerchantBusinessCards(
     effectiveEditingSite?.businessCards ?? editingSite?.businessCards ?? [],
   ).length;
