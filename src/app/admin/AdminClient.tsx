@@ -8850,6 +8850,7 @@ export default function AdminClient({
             }
             if (!detachKeepAlive) {
               detachKeepAlive = startMerchantSessionKeepAlive({
+                intervalMs: 2 * 60_000,
                 timeoutMs: Math.max(2200, Math.min(6000, AUTH_CHECK_TIMEOUT_MS)),
               });
             }
@@ -9032,6 +9033,7 @@ export default function AdminClient({
         }
         if (session && !isPlatformEditor && !detachKeepAlive) {
           detachKeepAlive = startMerchantSessionKeepAlive({
+            intervalMs: 2 * 60_000,
             timeoutMs: Math.max(2200, Math.min(6000, AUTH_CHECK_TIMEOUT_MS)),
           });
         }

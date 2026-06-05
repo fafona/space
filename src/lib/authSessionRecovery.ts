@@ -597,7 +597,7 @@ type MerchantSessionKeepAliveOptions = {
 export function startMerchantSessionKeepAlive(options?: MerchantSessionKeepAliveOptions) {
   if (typeof window === "undefined") return () => {};
 
-  const intervalMs = Math.max(60_000, Math.min(15 * 60_000, options?.intervalMs ?? 8 * 60_000));
+  const intervalMs = Math.max(60_000, Math.min(15 * 60_000, options?.intervalMs ?? 3 * 60_000));
   const timeoutMs = Math.max(1800, Math.min(9000, options?.timeoutMs ?? 4200));
   let disposed = false;
   let inFlight: Promise<MerchantCookieSessionPayload | null> | null = null;
@@ -642,6 +642,9 @@ export function startMerchantSessionKeepAlive(options?: MerchantSessionKeepAlive
   const onFocus = () => {
     void tick();
   };
+  const onOnline = () => {
+    void tick();
+  };
 
   const intervalId = window.setInterval(() => {
     if (document.visibilityState === "hidden") return;
@@ -650,6 +653,7 @@ export function startMerchantSessionKeepAlive(options?: MerchantSessionKeepAlive
 
   document.addEventListener("visibilitychange", onVisibilityChange);
   window.addEventListener("focus", onFocus);
+  window.addEventListener("online", onOnline);
   void tick();
 
   return () => {
@@ -657,6 +661,7 @@ export function startMerchantSessionKeepAlive(options?: MerchantSessionKeepAlive
     window.clearInterval(intervalId);
     document.removeEventListener("visibilitychange", onVisibilityChange);
     window.removeEventListener("focus", onFocus);
+    window.removeEventListener("online", onOnline);
   };
 }
 
