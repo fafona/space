@@ -286,6 +286,12 @@ function normalizeListLimit(value: unknown) {
   return Math.min(300, Math.max(1, Math.floor(numberValue)));
 }
 
+function shouldIncludeMembershipInsights(value: unknown) {
+  const normalized = trimText(value, 32).toLowerCase();
+  if (!normalized) return true;
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
 async function resolveSiteName(siteId: string, fallback: string) {
   const snapshot = await loadCurrentMerchantSnapshotSiteBySiteId(siteId).catch(() => null);
   return trimText(snapshot?.merchantName, 120) || trimText(snapshot?.name, 120) || trimText(fallback, 120) || siteId;
@@ -303,39 +309,47 @@ export async function GET(request: Request) {
   }
   const statusFilter = trimText(url.searchParams.get("status"), 32);
   const keyword = trimText(url.searchParams.get("query") ?? url.searchParams.get("keyword"), 200).toLowerCase();
+  const membershipId = trimText(url.searchParams.get("membershipId"), 160);
+  const includeInsights = shouldIncludeMembershipInsights(url.searchParams.get("includeInsights"));
   const offset = normalizeListOffset(url.searchParams.get("offset"));
   const limit = normalizeListLimit(url.searchParams.get("limit"));
   const memberships = await listMerchantMemberships(siteId);
   const filteredMemberships = memberships.filter((membership) => {
+    if (membershipId && membership.id !== membershipId) return false;
     if ((statusFilter === "active" || statusFilter === "left") && membership.status !== statusFilter) return false;
     if (!keyword) return true;
     return buildMembershipSearchText(membership).includes(keyword);
   });
   const pagedMemberships = filteredMemberships.slice(offset, offset + limit);
-  const [orders, coupons] = pagedMemberships.length
-    ? await Promise.all([
-        listMerchantOrders(siteId).catch(() => []),
-        listMerchantCoupons(siteId).catch(() => []),
-      ])
-    : [[], []];
+  const [orders, coupons] =
+    pagedMemberships.length > 0 && includeInsights
+      ? await Promise.all([
+          listMerchantOrders(siteId).catch(() => []),
+          listMerchantCoupons(siteId).catch(() => []),
+        ])
+      : [[], []];
   const now = new Date();
   const memberOrdersByIdentity = buildMemberOrdersByIdentity(orders);
   const couponHistoryByIdentity = buildCouponHistoryByIdentity(coupons, now.getTime());
   return NextResponse.json({
     ok: true,
-    memberships: pagedMemberships.map((membership) => ({
-      ...membership,
-      insight: buildMembershipInsight(
-        membership,
-        readIdentityMappedItems(memberOrdersByIdentity, membership, (order) => order.id),
-        readIdentityMappedItems(
-          couponHistoryByIdentity,
-          membership,
-          (item) => `${item.couponId}:${item.id || item.settlementCode || item.claimedAt}`,
-        ).sort((left, right) => Date.parse(right.claimedAt) - Date.parse(left.claimedAt)),
-        now,
-      ),
-    })),
+    memberships: pagedMemberships.map((membership) =>
+      includeInsights
+        ? {
+            ...membership,
+            insight: buildMembershipInsight(
+              membership,
+              readIdentityMappedItems(memberOrdersByIdentity, membership, (order) => order.id),
+              readIdentityMappedItems(
+                couponHistoryByIdentity,
+                membership,
+                (item) => `${item.couponId}:${item.id || item.settlementCode || item.claimedAt}`,
+              ).sort((left, right) => Date.parse(right.claimedAt) - Date.parse(left.claimedAt)),
+              now,
+            ),
+          }
+        : membership,
+    ),
     total: filteredMemberships.length,
     allTotal: memberships.length,
     offset,

@@ -263,6 +263,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
   const membershipsRef = useRef<MerchantMembershipListItem[]>([]);
+  const membershipInsightRequestIdsRef = useRef<Set<string>>(new Set());
   const [couponHistoryOpen, setCouponHistoryOpen] = useState(false);
   const [couponWalletMembershipId, setCouponWalletMembershipId] = useState("");
   const [allergenSaving, setAllergenSaving] = useState(false);
@@ -361,6 +362,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
         siteId: normalizedSiteId,
         offset: mode === "append" ? String(membershipsRef.current.length) : "0",
         limit: String(MERCHANT_MEMBER_PAGE_SIZE),
+        includeInsights: "0",
       });
       if (statusFilter !== "all") params.set("status", statusFilter);
       const normalizedKeyword = deferredKeyword.trim();
@@ -428,6 +430,44 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     }
   }, [normalizedSiteId]);
 
+  const ensureMembershipInsight = useCallback(async (membershipId: string) => {
+    const normalizedMembershipId = trimText(membershipId, 160);
+    if (!/^\d{8}$/.test(normalizedSiteId) || !normalizedMembershipId) return;
+    const currentMembership = membershipsRef.current.find((membership) => membership.id === normalizedMembershipId);
+    if (!currentMembership || currentMembership.insight) return;
+    if (membershipInsightRequestIdsRef.current.has(normalizedMembershipId)) return;
+
+    membershipInsightRequestIdsRef.current.add(normalizedMembershipId);
+    try {
+      const params = new URLSearchParams({
+        siteId: normalizedSiteId,
+        membershipId: normalizedMembershipId,
+        limit: "1",
+        includeInsights: "1",
+      });
+      const response = await fetchMemberJson(`/api/memberships?${params.toString()}`, {
+        method: "GET",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: {
+          accept: "application/json",
+        },
+      });
+      const payload = (await response.json().catch(() => null)) as MembershipsPayload | null;
+      const detailedMembership = Array.isArray(payload?.memberships) ? payload.memberships[0] : null;
+      if (!response.ok || payload?.ok !== true || !detailedMembership) return;
+      setMemberships((current) =>
+        current.map((membership) =>
+          membership.id === detailedMembership.id ? { ...membership, ...detailedMembership } : membership,
+        ),
+      );
+    } catch {
+      // The list stays usable; insight data can be retried by reopening the member.
+    } finally {
+      membershipInsightRequestIdsRef.current.delete(normalizedMembershipId);
+    }
+  }, [normalizedSiteId]);
+
   useEffect(() => {
     void loadMemberships();
   }, [loadMemberships]);
@@ -440,6 +480,16 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     setCouponHistoryOpen(false);
     setAllergenError("");
   }, [selectedMembershipId]);
+
+  useEffect(() => {
+    if (!selectedMembershipId) return;
+    void ensureMembershipInsight(selectedMembershipId);
+  }, [ensureMembershipInsight, selectedMembershipId]);
+
+  useEffect(() => {
+    if (!couponWalletMembershipId) return;
+    void ensureMembershipInsight(couponWalletMembershipId);
+  }, [couponWalletMembershipId, ensureMembershipInsight]);
 
   async function toggleMemberAllergen(allergen: string) {
     if (!selectedMembership || !selectedMembership.profileVisible || allergenSaving) return;
@@ -572,8 +622,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
       return;
     }
     if (operationDialog.type === "redeem") {
-      const insight = operationMembership.insight ?? EMPTY_MEMBER_INSIGHT;
-      if (points > insight.pointBalance || balanceAmount > insight.balanceAmount) {
+      if (points > operationMembership.pointBalance || balanceAmount > operationMembership.balanceAmount) {
         setOperationError("积分或余额不足，不能兑换。");
         return;
       }
