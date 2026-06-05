@@ -51,6 +51,7 @@ type MemberOperationDialogState = {
 } | null;
 
 const MERCHANT_MEMBER_PAGE_SIZE = 120;
+const MERCHANT_MEMBER_REQUEST_TIMEOUT_MS = 12_000;
 
 const EMPTY_MEMBER_INSIGHT: MerchantMembershipInsight = {
   pointBalance: 0,
@@ -206,6 +207,24 @@ function readPayloadMessage(value: unknown, fallback: string) {
   return trimText(value) || fallback;
 }
 
+async function fetchMemberJson(input: RequestInfo | URL, init: RequestInit = {}) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), MERCHANT_MEMBER_REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("请求超时，请刷新后重试");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
 function getMemberDisplayName(membership: MerchantMembershipListItem) {
   if (!membership.profileVisible) return "已退会会员";
   return membership.nickname || membership.name || membership.email || membership.accountId || membership.memberNo;
@@ -346,7 +365,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
       if (statusFilter !== "all") params.set("status", statusFilter);
       const normalizedKeyword = deferredKeyword.trim();
       if (normalizedKeyword) params.set("query", normalizedKeyword);
-      const response = await fetch(`/api/memberships?${params.toString()}`, {
+      const response = await fetchMemberJson(`/api/memberships?${params.toString()}`, {
         method: "GET",
         cache: "no-store",
         credentials: "same-origin",
@@ -390,7 +409,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     }
     setMemberSettingsError("");
     try {
-      const response = await fetch(`/api/membership-settings?siteId=${encodeURIComponent(normalizedSiteId)}`, {
+      const response = await fetchMemberJson(`/api/membership-settings?siteId=${encodeURIComponent(normalizedSiteId)}`, {
         method: "GET",
         cache: "no-store",
         credentials: "same-origin",
@@ -438,7 +457,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
       ),
     );
     try {
-      const response = await fetch("/api/memberships", {
+      const response = await fetchMemberJson("/api/memberships", {
         method: "PATCH",
         cache: "no-store",
         credentials: "same-origin",
@@ -562,7 +581,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     setOperationSaving(true);
     setOperationError("");
     try {
-      const response = await fetch("/api/memberships", {
+      const response = await fetchMemberJson("/api/memberships", {
         method: "PATCH",
         cache: "no-store",
         credentials: "same-origin",

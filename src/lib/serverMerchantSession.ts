@@ -30,7 +30,22 @@ export type ResolvedMerchantSession = {
 };
 
 const MERCHANT_SESSION_CACHE_TTL_MS = 20_000;
+const MERCHANT_SESSION_LOOKUP_TIMEOUT_MS = 3_500;
 const merchantSessionCache = new Map<string, { expiresAt: number; session: CachedMerchantSession }>();
+
+async function withTimeout<T>(task: PromiseLike<T>, timeoutMs: number, fallback: T): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      Promise.resolve(task),
+      new Promise<T>((resolve) => {
+        timeoutId = setTimeout(() => resolve(fallback), Math.max(500, timeoutMs));
+      }),
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
 
 function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -136,7 +151,11 @@ async function resolveMerchantIdForUser(user: AuthUserSummary | null) {
     });
   }
 
-  const settled = await Promise.allSettled(lookupTasks);
+  const settled = await withTimeout(
+    Promise.allSettled(lookupTasks),
+    MERCHANT_SESSION_LOOKUP_TIMEOUT_MS,
+    [] as PromiseSettledResult<{ data?: unknown; error?: { message?: string } | null }>[],
+  );
   settled.forEach((result) => {
     if (result.status !== "fulfilled" || result.value.error) return;
     const record = (result.value.data ?? null) as { id?: unknown } | null;
@@ -185,7 +204,11 @@ async function listAuthorizedMerchantIdsForUser(user: AuthUserSummary | null) {
     });
   }
 
-  const settled = await Promise.allSettled(lookupTasks);
+  const settled = await withTimeout(
+    Promise.allSettled(lookupTasks),
+    MERCHANT_SESSION_LOOKUP_TIMEOUT_MS,
+    [] as PromiseSettledResult<{ data?: unknown; error?: { message?: string } | null }>[],
+  );
   settled.forEach((result) => {
     if (result.status !== "fulfilled" || result.value.error) return;
     const rows = Array.isArray(result.value.data) ? result.value.data : [];
@@ -243,9 +266,11 @@ export async function resolveMerchantSessionFromRequest(
   if (authSupabase) {
     const candidates = [...accessTokens, accessToken].map((value) => trimText(value)).filter(Boolean);
     for (const candidateAccessToken of candidates) {
-      const { data, error } = await authSupabase.auth
-        .getUser(candidateAccessToken)
-        .catch(() => ({ data: null, error: true }));
+      const { data, error } = await withTimeout(
+        authSupabase.auth.getUser(candidateAccessToken).catch(() => ({ data: null, error: true })),
+        MERCHANT_SESSION_LOOKUP_TIMEOUT_MS,
+        { data: null, error: true },
+      );
       if (!error && data?.user) {
         validatedAccessToken = candidateAccessToken;
         user = data.user as AuthUserSummary;

@@ -8555,15 +8555,6 @@ export default function AdminClient({
       setSelectedId("");
       releaseCheckingScreen({ notice });
     };
-    const preserveCachedMerchantEditorState = (notice: string) => {
-      if (!mounted || isPlatformEditor) return false;
-      const hasCachedContent = initialCached.length > 0 || hasMeaningfulCachedDraft();
-      if (!hasCachedContent) return false;
-      setRemoteContentVerified(false);
-      setHasEditorContent(true);
-      releaseCheckingScreen({ notice });
-      return true;
-    };
     const shouldPreserveMerchantSessionDuringResume = () => {
       if (isPlatformEditor || typeof document === "undefined") return false;
       if (document.visibilityState !== "visible") return true;
@@ -8786,9 +8777,6 @@ export default function AdminClient({
           if (shouldPreserveMerchantSessionDuringResume()) {
             return;
           }
-          if (preserveCachedMerchantEditorState("登录状态正在恢复，请稍后再发布。")) {
-            return;
-          }
           if (justSignedIn) {
             releaseMerchantUnauthenticatedState("登录已断开，请重新登录后继续。");
             return;
@@ -8878,13 +8866,7 @@ export default function AdminClient({
               const restored = await tryLoadJustSignedInPublishedContent();
               if (!mounted) return;
               if (restored) return;
-              if (preserveCachedMerchantEditorState("登录状态正在恢复，请稍后再发布。")) {
-                return;
-              }
               releaseMerchantUnauthenticatedState("登录未完成，请重新登录后继续。");
-              return;
-            }
-            if (preserveCachedMerchantEditorState("登录状态正在恢复，请稍后再发布。")) {
               return;
             }
             releaseMerchantUnauthenticatedState("当前未登录，请重新登录后继续。");
@@ -9105,9 +9087,6 @@ export default function AdminClient({
               const restored = await tryLoadJustSignedInPublishedContent();
               if (!mounted) return;
               if (restored) return;
-              if (preserveCachedMerchantEditorState("登录状态正在恢复，请稍后再发布。")) {
-                return;
-              }
               releaseMerchantUnauthenticatedState("登录未完成，请重新登录后继续。");
               return;
             }
@@ -9117,9 +9096,6 @@ export default function AdminClient({
               setHasEditorContent(true);
               releaseCheckingScreen({ notice: null });
             } else {
-              if (preserveCachedMerchantEditorState("登录状态正在恢复，请稍后再发布。")) {
-                return;
-              }
               releaseMerchantUnauthenticatedState("当前未登录，请重新登录后继续。");
               return;
             }
