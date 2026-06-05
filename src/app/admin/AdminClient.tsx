@@ -178,7 +178,6 @@ import {
   type GalleryRowAlign,
 } from "@/lib/galleryLayout";
 import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
-import type { PublishEvent, RemoteAnalyticsSummary } from "@/lib/analytics";
 import {
   MERCHANT_OPERATION_LOG_EVENT,
   readMerchantOperationLogs,
@@ -1481,7 +1480,6 @@ type MerchantDesktopSection =
   | "redemptionItems"
   | "booking"
   | "orders"
-  | "analytics"
   | "logs"
   | "business"
   | "members"
@@ -3167,11 +3165,6 @@ function formatBytes(bytes: number) {
   return `${bytes}B`;
 }
 
-function formatSuccessRate(total: number, success: number) {
-  if (total <= 0) return "暂无";
-  return `${Math.round((success / total) * 100)}%`;
-}
-
 function getMerchantDesktopMenuButtonClassName(active: boolean, tone: "default" | "alert" = "default") {
   if (active) {
     return tone === "alert"
@@ -3323,57 +3316,6 @@ type PublishDiffSummary = {
   addedCount: number;
   removedCount: number;
   changedPaths: string[];
-};
-
-type MerchantAnalyticsSnapshot = {
-  blockCount: number;
-  payloadBytes: number;
-  diffSummary: PublishDiffSummary;
-  byType: Array<[string, number]>;
-  visit1d: number;
-  visit7d: number;
-  visit30d: number;
-  clickPairs: Array<[string, number]>;
-  topClick7d: Array<{ channel: string; count: number }>;
-  publish7d: PublishEvent[];
-  publish30d: PublishEvent[];
-  failureSnapshots: ReturnType<typeof readPublishFailureSnapshots>;
-};
-
-type MerchantAnalyticsLocalData = {
-  clickStats: Record<string, number>;
-  clickDaily: Record<string, Record<string, number>>;
-  viewDailyByPath: Record<string, Record<string, number>>;
-  publishEvents: PublishEvent[];
-};
-
-const EMPTY_PUBLISH_DIFF_SUMMARY: PublishDiffSummary = {
-  changedCount: 0,
-  addedCount: 0,
-  removedCount: 0,
-  changedPaths: [],
-};
-
-const EMPTY_MERCHANT_ANALYTICS_SNAPSHOT: MerchantAnalyticsSnapshot = {
-  blockCount: 0,
-  payloadBytes: 0,
-  diffSummary: EMPTY_PUBLISH_DIFF_SUMMARY,
-  byType: [],
-  visit1d: 0,
-  visit7d: 0,
-  visit30d: 0,
-  clickPairs: [],
-  topClick7d: [],
-  publish7d: [],
-  publish30d: [],
-  failureSnapshots: [],
-};
-
-const EMPTY_MERCHANT_ANALYTICS_LOCAL_DATA: MerchantAnalyticsLocalData = {
-  clickStats: {},
-  clickDaily: {},
-  viewDailyByPath: {},
-  publishEvents: [],
 };
 
 type PublishEventInput = {
@@ -4015,17 +3957,6 @@ async function optimizeBlocksForPublishIfNeeded(
       ? `发布前已自动优化资源：${formatBytes(originalBytes)} -> ${formatBytes(bestBytes)}${bestLabel ? `（${bestLabel}，${bestSummary}）` : ""}`
       : null,
   };
-}
-
-function sumDailyValues(stats: Record<string, number>, days: number, now = new Date()) {
-  let total = 0;
-  for (let i = 0; i < days; i += 1) {
-    const date = new Date(now);
-    date.setDate(now.getDate() - i);
-    const key = `${date.getFullYear()}-${`${date.getMonth() + 1}`.padStart(2, "0")}-${`${date.getDate()}`.padStart(2, "0")}`;
-    total += stats[key] ?? 0;
-  }
-  return total;
 }
 
 function buildMerchantIdsCacheIdentity(sessionUserId?: string, email?: string) {
@@ -6251,14 +6182,6 @@ export default function AdminClient({
   const [merchantDesktopSection, setMerchantDesktopSection] = useState<MerchantDesktopSection>("editor");
   const [merchantMemberSettingsView, setMerchantMemberSettingsView] = useState<MerchantMemberSettingsView>("list");
   const merchantDesktopDefaultSectionSiteRef = useRef("");
-  const [merchantAnalyticsLocalData, setMerchantAnalyticsLocalData] = useState<MerchantAnalyticsLocalData | null>(null);
-  const [merchantAnalyticsRemoteSummary, setMerchantAnalyticsRemoteSummary] = useState<RemoteAnalyticsSummary | null>(null);
-  const [merchantAnalyticsLoading, setMerchantAnalyticsLoading] = useState(false);
-  const [merchantAnalyticsError, setMerchantAnalyticsError] = useState("");
-  const [merchantAnalyticsSnapshot, setMerchantAnalyticsSnapshot] = useState<MerchantAnalyticsSnapshot>(
-    EMPTY_MERCHANT_ANALYTICS_SNAPSHOT,
-  );
-  const [merchantAnalyticsSnapshotLoading, setMerchantAnalyticsSnapshotLoading] = useState(false);
   const [merchantLogFailureSnapshots, setMerchantLogFailureSnapshots] = useState<
     ReturnType<typeof readPublishFailureSnapshots>
   >([]);
@@ -10861,120 +10784,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     showSavePublishTip("草稿已保存");
   }
 
-  async function showAnalyticsSummary() {
-    const mergedConfig = mergePlanConfigWithEditingBlocks(
-      planConfigRef.current,
-      editingPlanIdRef.current,
-      editingPageIdRef.current,
-      blocksRef.current,
-    );
-    const desktopConfig = previewViewport === "desktop" ? mergedConfig : viewportStatesRef.current.desktop.planConfig;
-    const mobileConfig = previewViewport === "mobile" ? mergedConfig : viewportStatesRef.current.mobile.planConfig;
-    const combinedBlocks = buildCombinedPersistedBlocks(desktopConfig, mobileConfig);
-    const payloadBytes = estimateUtf8Size(JSON.stringify(combinedBlocks));
-    const diffSummary = computePublishDiffSummary(combinedBlocks, loadPublishedBlocksFromStorage(defaultEditorBlocks, storeScope));
-    const byType = new Map<string, number>();
-    blocksRef.current.forEach((item) => {
-      byType.set(item.type, (byType.get(item.type) ?? 0) + 1);
-    });
-    const {
-      readContactClickStats,
-      readContactClickDailyStats,
-      readPageViewDailyStats,
-      readPublishEvents,
-      readRemoteAnalyticsSummary,
-    } = await import("@/lib/analytics");
-    const clickStats = readContactClickStats();
-    const clickDaily = readContactClickDailyStats();
-    const clickPairs = Object.entries(clickStats).sort((a, b) => b[1] - a[1]);
-    const viewDailyByPath = readPageViewDailyStats();
-    const mergedViewDaily: Record<string, number> = {};
-    Object.values(viewDailyByPath).forEach((daily) => {
-      Object.entries(daily).forEach(([day, count]) => {
-        mergedViewDaily[day] = (mergedViewDaily[day] ?? 0) + count;
-      });
-    });
-    const visit1d = sumDailyValues(mergedViewDaily, 1);
-    const visit7d = sumDailyValues(mergedViewDaily, 7);
-    const visit30d = sumDailyValues(mergedViewDaily, 30);
-    const topClick7d = Object.entries(clickDaily)
-      .map(([channel, daily]) => ({ channel, count: sumDailyValues(daily, 7) }))
-      .filter((item) => item.count > 0)
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 5);
-    const publishEvents = readPublishEvents();
-    const nowMs = Date.now();
-    const inLastDays = (iso: string, days: number) => {
-      const at = new Date(iso).getTime();
-      if (!Number.isFinite(at)) return false;
-      return nowMs - at <= days * 24 * 60 * 60 * 1000;
-    };
-    const publish7d = publishEvents.filter((item) => inLastDays(item.at, 7));
-    const publish30d = publishEvents.filter((item) => inLastDays(item.at, 30));
-    let successRate7d = "暂无";
-    if (publish7d.length > 0) {
-      successRate7d = `${Math.round((publish7d.filter((item) => item.success).length / publish7d.length) * 100)}%`;
-    }
-    let successRate30d = "暂无";
-    if (publish30d.length > 0) {
-      successRate30d = `${Math.round((publish30d.filter((item) => item.success).length / publish30d.length) * 100)}%`;
-    }
-    const remoteSummary = await readRemoteAnalyticsSummary(30);
-    const failureSnapshots = readPublishFailureSnapshots(storeScope);
-    const lines = [
-      `当前页区块数量：${blocksRef.current.length}`,
-      `发布体积估算：${formatBytes(payloadBytes)}`,
-      `相对已发布变化：改动 ${diffSummary.changedCount}，新增 ${diffSummary.addedCount}，删除 ${diffSummary.removedCount}`,
-      "",
-      "访问趋势",
-      `- 今日：${visit1d}`,
-      `- 7日：${visit7d}`,
-      `- 30日：${visit30d}`,
-      "",
-      "发布趋势",
-      `- 7日成功率：${successRate7d}（${publish7d.length}次）`,
-      `- 30日成功率：${successRate30d}（${publish30d.length}次）`,
-      "",
-      "发布失败记录",
-      `- 本地保留：${failureSnapshots.length} 条`,
-      ...(failureSnapshots[0]
-        ? [`- 最近失败：${failureSnapshots[0].at} / ${failureSnapshots[0].reason}`]
-        : ["- 最近失败：暂无"]),
-      "",
-      "区块类型统计（当前页）：",
-      ...(Array.from(byType.entries()).length > 0
-        ? Array.from(byType.entries()).map(([type, count]) => `- ${type}: ${count}`)
-        : ["- 暂无"]),
-      "",
-      "联系方式点击统计（本设备）：",
-      ...(clickPairs.length > 0 ? clickPairs.map(([key, count]) => `- ${key}: ${count}`) : ["- 暂无"]),
-      "",
-      "联系方式7日趋势：",
-      ...(topClick7d.length > 0 ? topClick7d.map((item) => `- ${item.channel}: ${item.count}`) : ["- 暂无"]),
-      "",
-      "远端统计（Supabase）：",
-      ...(remoteSummary
-        ? [
-            `- 访问：今${remoteSummary.pageView1d} / 7日${remoteSummary.pageView7d} / 30日${remoteSummary.pageView30d}`,
-            `- 发布成功率7日：${
-              remoteSummary.publishTotal7d > 0
-                ? `${Math.round((remoteSummary.publishSuccess7d / remoteSummary.publishTotal7d) * 100)}%`
-                : "暂无"
-            }`,
-            `- 发布成功率30日：${
-              remoteSummary.publishTotal30d > 0
-                ? `${Math.round((remoteSummary.publishSuccess30d / remoteSummary.publishTotal30d) * 100)}%`
-                : "暂无"
-            }`,
-            ...(remoteSummary.contactTop7d.length > 0
-              ? remoteSummary.contactTop7d.map((item) => `- 联系方式7日：${item.channel} ${item.count}`)
-              : ["- 联系方式7日：暂无"]),
-          ]
-        : ["- 未启用或未检测到 page_events，已自动回退本地统计"]),
-    ];
-    await openAlert(lines.join("\n"), "数据统计");
-  }
-
   async function runPublishPreflightDialog(blocks: Block[], payloadBytes: number) {
     const result = runPublishPreflight(blocks, payloadBytes);
     if (result.errors.length > 0) {
@@ -14481,38 +14290,40 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       return;
     }
     setMerchantSiteIdOverride(resolvedSiteId);
-    if (/^\d{8}$/.test(resolvedSiteId)) {
-      try {
-        const requestStartedAt = Date.now();
-        const response = await requestMerchantChatBusinessCardById(resolvedSiteId, {
-          cache: "no-store",
-        });
-        const payload = (await response.json().catch(() => null)) as
-          | {
-              profile?: MerchantListPublishedSite | null;
-              chatBusinessCard?: MerchantBusinessCardAsset | null;
-            }
-          | null;
-        if (response.ok) {
-          if ((supportPeerProfileLocalMutationAtRef.current[resolvedSiteId] ?? 0) > requestStartedAt) {
-            return;
-          }
-          supportPeerProfileFetchedAtRef.current[resolvedSiteId] = Date.now();
-          setSupportPeerProfilesByMerchantId((current) => ({
-            ...current,
-            [resolvedSiteId]: payload?.profile ?? null,
-          }));
-          setSupportPeerBusinessCardByMerchantId((current) => ({
-            ...current,
-            [resolvedSiteId]: payload?.chatBusinessCard ?? payload?.profile?.chatBusinessCard ?? null,
-          }));
-        }
-      } catch {
-        // Ignore and let the panel fall back to local cached data.
-      }
-    }
     setMerchantProfileDialogShowBusinessCards(false);
     setMerchantDesktopSection("profile");
+    if (/^\d{8}$/.test(resolvedSiteId)) {
+      void (async () => {
+        try {
+          const requestStartedAt = Date.now();
+          const response = await requestMerchantChatBusinessCardById(resolvedSiteId, {
+            cache: "no-store",
+          });
+          const payload = (await response.json().catch(() => null)) as
+            | {
+                profile?: MerchantListPublishedSite | null;
+                chatBusinessCard?: MerchantBusinessCardAsset | null;
+              }
+            | null;
+          if (response.ok) {
+            if ((supportPeerProfileLocalMutationAtRef.current[resolvedSiteId] ?? 0) > requestStartedAt) {
+              return;
+            }
+            supportPeerProfileFetchedAtRef.current[resolvedSiteId] = Date.now();
+            setSupportPeerProfilesByMerchantId((current) => ({
+              ...current,
+              [resolvedSiteId]: payload?.profile ?? null,
+            }));
+            setSupportPeerBusinessCardByMerchantId((current) => ({
+              ...current,
+              [resolvedSiteId]: payload?.chatBusinessCard ?? payload?.profile?.chatBusinessCard ?? null,
+            }));
+          }
+        } catch {
+          // Ignore and let the panel fall back to local cached data.
+        }
+      })();
+    }
   }
 
   function openMerchantCardsPanel() {
@@ -14611,10 +14422,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setMerchantSiteIdOverride(resolvedSiteId);
     setMerchantOrderWorkbenchOpen(false);
     setMerchantDesktopSection("orders");
-  }
-
-  function openMerchantAnalyticsPanel() {
-    setMerchantDesktopSection("analytics");
   }
 
   function openMerchantLogsPanel() {
@@ -14759,47 +14566,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       setSupportDialogOpen(false);
     }
   }, [desktopMerchantWorkspaceActive, merchantDesktopSection, supportDialogOpen]);
-
-  useEffect(() => {
-    if (!desktopMerchantWorkspaceActive || merchantDesktopSection !== "analytics") return;
-    let cancelled = false;
-    setMerchantAnalyticsLoading(true);
-    setMerchantAnalyticsError("");
-    void import("@/lib/analytics")
-      .then(
-        ({
-          readContactClickStats,
-          readContactClickDailyStats,
-          readPageViewDailyStats,
-          readPublishEvents,
-          readRemoteAnalyticsSummary,
-        }) => {
-          if (cancelled) return Promise.resolve(null);
-          setMerchantAnalyticsLocalData({
-            clickStats: readContactClickStats(),
-            clickDaily: readContactClickDailyStats(),
-            viewDailyByPath: readPageViewDailyStats(),
-            publishEvents: readPublishEvents(),
-          });
-          return readRemoteAnalyticsSummary(30);
-        },
-      )
-      .then((summary) => {
-        if (cancelled) return;
-        setMerchantAnalyticsRemoteSummary(summary);
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        setMerchantAnalyticsError(error instanceof Error ? error.message : "数据统计加载失败");
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setMerchantAnalyticsLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [desktopMerchantWorkspaceActive, merchantDesktopSection]);
 
   useEffect(() => {
     if (!desktopMerchantWorkspaceActive || merchantDesktopSection !== "logs") return;
@@ -17182,83 +16948,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       setMerchantOrderWorkbenchOpen(false);
     }
   }, [isDesktopMerchantWorkspace, merchantDesktopSection]);
-  useEffect(() => {
-    if (!isDesktopMerchantWorkspace || merchantDesktopSection !== "analytics") return;
-    let cancelled = false;
-    setMerchantAnalyticsSnapshotLoading(true);
-    setMerchantAnalyticsSnapshot((current) => ({
-      ...current,
-      blockCount: blocks.length,
-    }));
-    const timeout = window.setTimeout(() => {
-      if (cancelled) return;
-      const desktopConfig = previewViewport === "desktop" ? planConfig : viewportStatesRef.current.desktop.planConfig;
-      const mobileConfig = previewViewport === "mobile" ? planConfig : viewportStatesRef.current.mobile.planConfig;
-      const combinedBlocks = buildCombinedPersistedBlocks(desktopConfig, mobileConfig);
-      const payloadBytes = estimateUtf8Size(JSON.stringify(combinedBlocks));
-      const diffSummary = computePublishDiffSummary(
-        combinedBlocks,
-        loadPublishedBlocksFromStorage(defaultEditorBlocks, storeScope),
-      );
-      const byType = new Map<string, number>();
-      blocks.forEach((item) => {
-        byType.set(item.type, (byType.get(item.type) ?? 0) + 1);
-      });
-      const localAnalytics = merchantAnalyticsLocalData ?? EMPTY_MERCHANT_ANALYTICS_LOCAL_DATA;
-      const clickStats = localAnalytics.clickStats;
-      const clickDaily = localAnalytics.clickDaily;
-      const clickPairs = Object.entries(clickStats).sort((a, b) => b[1] - a[1]);
-      const viewDailyByPath = localAnalytics.viewDailyByPath;
-      const mergedViewDaily: Record<string, number> = {};
-      Object.values(viewDailyByPath).forEach((daily) => {
-        Object.entries(daily).forEach(([day, count]) => {
-          mergedViewDaily[day] = (mergedViewDaily[day] ?? 0) + count;
-        });
-      });
-      const publishEvents = localAnalytics.publishEvents;
-      const nowMs = Date.now();
-      const inLastDays = (iso: string, days: number) => {
-        const at = new Date(iso).getTime();
-        if (!Number.isFinite(at)) return false;
-        return nowMs - at <= days * 24 * 60 * 60 * 1000;
-      };
-      const publish7d = publishEvents.filter((item) => inLastDays(item.at, 7));
-      const publish30d = publishEvents.filter((item) => inLastDays(item.at, 30));
-      if (cancelled) return;
-      setMerchantAnalyticsSnapshot({
-        blockCount: blocks.length,
-        payloadBytes,
-        diffSummary,
-        byType: Array.from(byType.entries()).sort((a, b) => b[1] - a[1]),
-        visit1d: sumDailyValues(mergedViewDaily, 1),
-        visit7d: sumDailyValues(mergedViewDaily, 7),
-        visit30d: sumDailyValues(mergedViewDaily, 30),
-        clickPairs,
-        topClick7d: Object.entries(clickDaily)
-          .map(([channel, daily]) => ({ channel, count: sumDailyValues(daily, 7) }))
-          .filter((item) => item.count > 0)
-          .sort((a, b) => b.count - a.count)
-          .slice(0, 5),
-        publish7d,
-        publish30d,
-        failureSnapshots: readPublishFailureSnapshots(storeScope),
-      });
-      setMerchantAnalyticsSnapshotLoading(false);
-    }, 0);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timeout);
-    };
-  }, [
-    blocks,
-    defaultEditorBlocks,
-    isDesktopMerchantWorkspace,
-    merchantAnalyticsLocalData,
-    merchantDesktopSection,
-    planConfig,
-    previewViewport,
-    storeScope,
-  ]);
   const planTemplateKeyword = planTemplateSearch.trim().toLowerCase();
   const planTemplateCards = useMemo(
     () =>
@@ -19952,7 +19641,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     merchantDesktopSection === "editor" ||
     merchantDesktopSection === "business" ||
     merchantDesktopSection === "cards" ||
-    merchantDesktopSection === "analytics" ||
     merchantDesktopSection === "logs";
   const merchantDesktopCouponCenterActive =
     merchantDesktopSection === "coupons" ||
@@ -20018,20 +19706,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           onCouponsChange: setMerchantCouponRecords,
         }
       : null;
-  const merchantAnalyticsSuccessRate7d = formatSuccessRate(
-    merchantAnalyticsSnapshot.publish7d.length,
-    merchantAnalyticsSnapshot.publish7d.filter((item) => item.success).length,
-  );
-  const merchantAnalyticsSuccessRate30d = formatSuccessRate(
-    merchantAnalyticsSnapshot.publish30d.length,
-    merchantAnalyticsSnapshot.publish30d.filter((item) => item.success).length,
-  );
-  const merchantAnalyticsRemoteSuccessRate7d = merchantAnalyticsRemoteSummary
-    ? formatSuccessRate(merchantAnalyticsRemoteSummary.publishTotal7d, merchantAnalyticsRemoteSummary.publishSuccess7d)
-    : "暂无";
-  const merchantAnalyticsRemoteSuccessRate30d = merchantAnalyticsRemoteSummary
-    ? formatSuccessRate(merchantAnalyticsRemoteSummary.publishTotal30d, merchantAnalyticsRemoteSummary.publishSuccess30d)
-    : "暂无";
   const formatMerchantLogTime = (value: string) => {
     const date = new Date(value);
     return Number.isFinite(date.getTime()) ? date.toLocaleString("zh-CN", { hour12: false }) : value;
@@ -20092,215 +19766,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       showTip("导出失败");
     }
   };
-  const merchantAnalyticsPanelContent = merchantDesktopSection === "analytics" ? (
-    <div className="min-h-[calc(100vh-14rem)] space-y-4">
-      {merchantAnalyticsSnapshotLoading ? (
-        <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700">
-          正在整理统计数据...
-        </div>
-      ) : null}
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {[
-          { label: "当前页区块", value: `${merchantAnalyticsSnapshot.blockCount} 个`, helper: "基于当前正在编辑的页面" },
-          { label: "发布体积", value: formatBytes(merchantAnalyticsSnapshot.payloadBytes), helper: "桌面+手机合并估算" },
-          {
-            label: "本地访问 7 日",
-            value: `${merchantAnalyticsSnapshot.visit7d}`,
-            helper: `今日 ${merchantAnalyticsSnapshot.visit1d} / 30日 ${merchantAnalyticsSnapshot.visit30d}`,
-          },
-          {
-            label: "本地发布成功率",
-            value: merchantAnalyticsSuccessRate30d,
-            helper: `7日 ${merchantAnalyticsSuccessRate7d} / 30日 ${merchantAnalyticsSnapshot.publish30d.length} 次`,
-          },
-          {
-            label: "远端访问 7 日",
-            value: merchantAnalyticsRemoteSummary ? `${merchantAnalyticsRemoteSummary.pageView7d}` : merchantAnalyticsLoading ? "加载中..." : "暂无",
-            helper: merchantAnalyticsRemoteSummary
-              ? `今日 ${merchantAnalyticsRemoteSummary.pageView1d} / 30日 ${merchantAnalyticsRemoteSummary.pageView30d}`
-              : merchantAnalyticsError || "Supabase 统计未返回",
-          },
-          {
-            label: "远端发布成功率",
-            value: merchantAnalyticsRemoteSummary ? merchantAnalyticsRemoteSuccessRate30d : merchantAnalyticsLoading ? "加载中..." : "暂无",
-            helper: merchantAnalyticsRemoteSummary
-              ? `7日 ${merchantAnalyticsRemoteSuccessRate7d} / 30日 ${merchantAnalyticsRemoteSummary.publishTotal30d} 次`
-              : "基于远端事件统计",
-          },
-        ].map((item) => (
-          <section key={item.label} className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">{item.label}</div>
-            <div className="mt-3 text-2xl font-semibold text-slate-900">{item.value}</div>
-            <div className="mt-2 text-sm text-slate-500">{item.helper}</div>
-          </section>
-        ))}
-      </div>
-
-      <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-        <section className="rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
-          <div className="text-lg font-semibold text-slate-900">发布概览</div>
-          <div className="mt-1 text-sm text-slate-500">这里汇总当前编辑页相对已发布版本的差异，以及最近发布表现。</div>
-          <div className="mt-4 grid gap-3 sm:grid-cols-3">
-            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-              <div className="text-xs text-slate-500">改动区块</div>
-              <div className="mt-1 text-xl font-semibold text-slate-900">{merchantAnalyticsSnapshot.diffSummary.changedCount}</div>
-            </div>
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-              <div className="text-xs text-emerald-700">新增区块</div>
-              <div className="mt-1 text-xl font-semibold text-emerald-700">{merchantAnalyticsSnapshot.diffSummary.addedCount}</div>
-            </div>
-            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
-              <div className="text-xs text-amber-700">删除区块</div>
-              <div className="mt-1 text-xl font-semibold text-amber-700">{merchantAnalyticsSnapshot.diffSummary.removedCount}</div>
-            </div>
-          </div>
-          <div className="mt-5 grid gap-4 lg:grid-cols-2">
-            <div className="rounded-2xl border border-slate-200 px-4 py-4">
-              <div className="text-sm font-semibold text-slate-900">本地最近发布</div>
-              <div className="mt-3 space-y-2 text-sm text-slate-600">
-                <div className="flex items-center justify-between gap-3">
-                  <span>7 日内发布次数</span>
-                  <span className="font-semibold text-slate-900">{merchantAnalyticsSnapshot.publish7d.length}</span>
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                  <span>30 日内发布次数</span>
-                  <span className="font-semibold text-slate-900">{merchantAnalyticsSnapshot.publish30d.length}</span>
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                  <span>7 日成功率</span>
-                  <span className="font-semibold text-slate-900">{merchantAnalyticsSuccessRate7d}</span>
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                  <span>30 日成功率</span>
-                  <span className="font-semibold text-slate-900">{merchantAnalyticsSuccessRate30d}</span>
-                </div>
-              </div>
-            </div>
-            <div className="rounded-2xl border border-slate-200 px-4 py-4">
-              <div className="text-sm font-semibold text-slate-900">远端事件统计</div>
-              {merchantAnalyticsLoading ? (
-                <div className="mt-3 text-sm text-slate-500">正在加载远端统计...</div>
-              ) : merchantAnalyticsError ? (
-                <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-600">
-                  {merchantAnalyticsError}
-                </div>
-              ) : merchantAnalyticsRemoteSummary ? (
-                <div className="mt-3 space-y-2 text-sm text-slate-600">
-                  <div className="flex items-center justify-between gap-3">
-                    <span>7 日发布次数</span>
-                    <span className="font-semibold text-slate-900">{merchantAnalyticsRemoteSummary.publishTotal7d}</span>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span>30 日发布次数</span>
-                    <span className="font-semibold text-slate-900">{merchantAnalyticsRemoteSummary.publishTotal30d}</span>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span>7 日成功率</span>
-                    <span className="font-semibold text-slate-900">{merchantAnalyticsRemoteSuccessRate7d}</span>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span>30 日成功率</span>
-                    <span className="font-semibold text-slate-900">{merchantAnalyticsRemoteSuccessRate30d}</span>
-                  </div>
-                </div>
-              ) : (
-                <div className="mt-3 text-sm text-slate-500">还没有远端统计数据。</div>
-              )}
-            </div>
-          </div>
-        </section>
-
-        <section className="rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
-          <div className="text-lg font-semibold text-slate-900">区块分布</div>
-          <div className="mt-1 text-sm text-slate-500">按当前页面区块类型统计，方便快速判断页面结构。</div>
-          <div className="mt-4 space-y-3">
-            {merchantAnalyticsSnapshot.byType.length > 0 ? (
-              merchantAnalyticsSnapshot.byType.map(([type, count]) => (
-                <div key={type} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-sm font-medium text-slate-700">{type}</span>
-                    <span className="text-sm font-semibold text-slate-900">{count}</span>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div className="rounded-xl border border-dashed border-slate-300 px-4 py-5 text-sm text-slate-500">当前页面还没有可统计的区块。</div>
-            )}
-          </div>
-        </section>
-      </div>
-
-      <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
-        <section className="rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
-          <div className="text-lg font-semibold text-slate-900">联系方式点击</div>
-          <div className="mt-1 text-sm text-slate-500">本设备会记录联系方式点击次数；远端统计会汇总最近 7 日的真实访问。</div>
-          <div className="mt-4 grid gap-4 lg:grid-cols-2">
-            <div className="rounded-2xl border border-slate-200 px-4 py-4">
-              <div className="text-sm font-semibold text-slate-900">本设备累计</div>
-              <div className="mt-3 space-y-2">
-                {merchantAnalyticsSnapshot.clickPairs.length > 0 ? (
-                  merchantAnalyticsSnapshot.clickPairs.map(([key, count]) => (
-                    <div key={key} className="flex items-center justify-between gap-3 text-sm text-slate-600">
-                      <span className="truncate">{key}</span>
-                      <span className="font-semibold text-slate-900">{count}</span>
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-sm text-slate-500">暂无点击记录</div>
-                )}
-              </div>
-            </div>
-            <div className="rounded-2xl border border-slate-200 px-4 py-4">
-              <div className="text-sm font-semibold text-slate-900">最近 7 日</div>
-              <div className="mt-3 space-y-2">
-                {merchantAnalyticsRemoteSummary?.contactTop7d?.length ? (
-                  merchantAnalyticsRemoteSummary.contactTop7d.map((item) => (
-                    <div key={item.channel} className="flex items-center justify-between gap-3 text-sm text-slate-600">
-                      <span className="truncate">{item.channel}</span>
-                      <span className="font-semibold text-slate-900">{item.count}</span>
-                    </div>
-                  ))
-                ) : merchantAnalyticsSnapshot.topClick7d.length > 0 ? (
-                  merchantAnalyticsSnapshot.topClick7d.map((item) => (
-                    <div key={item.channel} className="flex items-center justify-between gap-3 text-sm text-slate-600">
-                      <span className="truncate">{item.channel}</span>
-                      <span className="font-semibold text-slate-900">{item.count}</span>
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-sm text-slate-500">最近 7 日暂无点击趋势</div>
-                )}
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section className="rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
-          <div className="text-lg font-semibold text-slate-900">发布失败记录</div>
-          <div className="mt-1 text-sm text-slate-500">这里保留最近的本地发布失败快照，方便回溯问题。</div>
-          <div className="mt-4 space-y-3">
-            {merchantAnalyticsSnapshot.failureSnapshots.length > 0 ? (
-              merchantAnalyticsSnapshot.failureSnapshots.slice(0, 5).map((item) => (
-                <article key={`${item.at}:${item.reason}`} className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-semibold text-rose-700">{item.reason}</div>
-                      <div className="mt-1 text-xs text-rose-600">{item.at}</div>
-                    </div>
-                    <div className="shrink-0 rounded-full bg-white px-2 py-1 text-[11px] font-medium text-rose-600 ring-1 ring-rose-200">
-                      {formatBytes(item.bytes)}
-                    </div>
-                  </div>
-                </article>
-              ))
-            ) : (
-              <div className="rounded-xl border border-dashed border-slate-300 px-4 py-5 text-sm text-slate-500">最近没有发布失败记录。</div>
-            )}
-          </div>
-        </section>
-      </div>
-    </div>
-  ) : null;
   const merchantLogsPanelContent = merchantDesktopSection === "logs" ? (
     <div className="min-h-[calc(100vh-14rem)] space-y-4">
       <section className="rounded-2xl border border-slate-200 bg-white px-6 py-5 shadow-sm">
@@ -20546,7 +20011,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               <div className="mt-1 text-sm text-slate-500">集中管理网站内容之外的经营数据，网站区块会从这里读取真实内容。</div>
             </div>
           </div>
-          <div className="mt-5 grid gap-4 md:grid-cols-3">
+          <div className="mt-5 grid gap-4 md:grid-cols-2">
             <button
               type="button"
               className="rounded-2xl border border-cyan-200 bg-cyan-50 px-4 py-4 text-left transition hover:border-cyan-300 hover:bg-cyan-100"
@@ -20555,15 +20020,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               <div className="text-sm font-semibold text-cyan-900">名片夹</div>
               <div className="mt-2 text-2xl font-semibold text-cyan-900">{merchantBusinessCardCount} 张</div>
               <div className="mt-2 text-xs leading-5 text-cyan-700">管理图片名片和联系卡短链。</div>
-            </button>
-            <button
-              type="button"
-              className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-left transition hover:border-emerald-300 hover:bg-emerald-100"
-              onClick={openMerchantAnalyticsPanel}
-            >
-              <div className="text-sm font-semibold text-emerald-900">数据统计</div>
-              <div className="mt-2 text-2xl font-semibold text-emerald-900">概览</div>
-              <div className="mt-2 text-xs leading-5 text-emerald-700">查看访问、发布和联系方式点击。</div>
             </button>
           </div>
         </section>
@@ -21150,8 +20606,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               onWorkbenchOpenChange={setMerchantOrderWorkbenchOpen}
               className="min-h-[calc(100vh-14rem)]"
             />
-          ) : merchantDesktopSection === "analytics" ? (
-            merchantAnalyticsPanelContent
           ) : merchantDesktopSection === "logs" ? (
             merchantLogsPanelContent
           ) : merchantDesktopSection === "support" ? (
@@ -21533,16 +20987,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     {"商户信息"}
                   </button>
                 ) : null}
-                <button
-                  className={
-                    isMobileMerchantEditorShell
-                      ? merchantMobileToolbarButtonClassName
-                      : "px-3 py-2 rounded border bg-white hover:bg-gray-50"
-                  }
-                  onClick={() => void showAnalyticsSummary()}
-                >
-                  {"数据统计"}
-                </button>
                 {!isPlatformEditor && canUseBookingBlock ? (
                   <button
                     className={
@@ -21716,13 +21160,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         <span className="min-w-8 rounded-full bg-blue-50 px-2 py-0.5 text-center text-[11px] font-bold text-blue-700 ring-1 ring-blue-100">
                           {merchantBusinessCardCount}
                         </span>
-                      </button>
-                      <button
-                        type="button"
-                        className={getMerchantDesktopSubmenuButtonClassName(merchantDesktopSection === "analytics", "emerald")}
-                        onClick={openMerchantAnalyticsPanel}
-                      >
-                        数据统计
                       </button>
                       <button
                         type="button"
