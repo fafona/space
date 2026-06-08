@@ -9,6 +9,13 @@ import {
   type MerchantCouponRecord,
 } from "@/lib/merchantCoupons";
 import { showGlobalToast } from "@/lib/globalToast";
+import {
+  MERCHANT_ADMIN_DATA_CACHE_TTL_MS,
+  invalidateMerchantAdminDataCachePrefix,
+  makeMerchantAdminDataCacheKey,
+  readMerchantAdminDataCache,
+  writeMerchantAdminDataCache,
+} from "@/lib/merchantAdminDataCache";
 import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import type { MerchantMembershipInsight, MerchantMembershipListItem } from "@/lib/merchantMemberships";
@@ -751,20 +758,60 @@ export default function MerchantPointRedemptionCashier({
     membershipsRef.current = memberships;
   }, [memberships]);
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (force = false) => {
     if (!/^\d{8}$/.test(normalizedSiteId)) {
       setError("当前商户资料还没准备好，请稍后重试。");
+      return;
+    }
+    const membersParams = new URLSearchParams({
+      siteId: normalizedSiteId,
+      status: "active",
+      limit: "300",
+      includeInsights: "0",
+    });
+    const membersCacheKey = makeMerchantAdminDataCacheKey("merchant-memberships", normalizedSiteId, "cashier-active", 0, 300);
+    const settingsCacheKey = makeMerchantAdminDataCacheKey(
+      "merchant-membership-settings",
+      normalizedSiteId,
+      "redemption-cashier",
+    );
+    const couponsCacheKey = makeMerchantAdminDataCacheKey("merchant-coupons", normalizedSiteId);
+    const applyLoadedData = (
+      nextMemberships: MerchantMembershipListItem[],
+      nextSettings: MerchantMembershipSettings,
+      nextCoupons: MerchantCouponRecord[],
+    ) => {
+      setMemberships((current) => {
+        const insightById = new Map(
+          current
+            .map((membership) => [membership.id, membership.insight] as const)
+            .filter((entry): entry is readonly [string, MerchantMembershipInsight] => Boolean(entry[1])),
+        );
+        return nextMemberships.map((membership) => {
+          const insight = membership.insight ?? insightById.get(membership.id);
+          return insight ? { ...membership, insight } : membership;
+        });
+      });
+      setSettings(nextSettings);
+      setCoupons(nextCoupons);
+    };
+    const cachedMemberships = force
+      ? null
+      : readMerchantAdminDataCache<MerchantMembershipListItem[]>(membersCacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
+    const cachedSettings = force
+      ? null
+      : readMerchantAdminDataCache<MerchantMembershipSettings>(settingsCacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
+    const cachedCoupons = force
+      ? null
+      : readMerchantAdminDataCache<MerchantCouponRecord[]>(couponsCacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
+    if (cachedMemberships && cachedSettings && cachedCoupons) {
+      setError("");
+      applyLoadedData(cachedMemberships, cachedSettings, cachedCoupons);
       return;
     }
     setLoading(true);
     setError("");
     try {
-      const membersParams = new URLSearchParams({
-        siteId: normalizedSiteId,
-        status: "active",
-        limit: "300",
-        includeInsights: "0",
-      });
       const [membersResponse, settingsResponse, couponsResponse] = await Promise.all([
         fetchPointRedemptionJson(`/api/memberships?${membersParams.toString()}`, {
           method: "GET",
@@ -797,19 +844,12 @@ export default function MerchantPointRedemptionCashier({
         throw new Error(readPayloadMessage(settingsPayload?.message, "兑换项目加载失败，请先检查会员配置"));
       }
       const nextMemberships = Array.isArray(membersPayload.memberships) ? membersPayload.memberships : [];
-      setMemberships((current) => {
-        const insightById = new Map(
-          current
-            .map((membership) => [membership.id, membership.insight] as const)
-            .filter((entry): entry is readonly [string, MerchantMembershipInsight] => Boolean(entry[1])),
-        );
-        return nextMemberships.map((membership) => {
-          const insight = membership.insight ?? insightById.get(membership.id);
-          return insight ? { ...membership, insight } : membership;
-        });
-      });
-      setSettings(settingsPayload.settings);
-      setCoupons(couponsResponse?.ok && Array.isArray(couponsPayload?.coupons) ? couponsPayload.coupons : []);
+      const nextSettings = settingsPayload.settings;
+      const nextCoupons = couponsResponse?.ok && Array.isArray(couponsPayload?.coupons) ? couponsPayload.coupons : [];
+      writeMerchantAdminDataCache(membersCacheKey, nextMemberships);
+      writeMerchantAdminDataCache(settingsCacheKey, nextSettings);
+      writeMerchantAdminDataCache(couponsCacheKey, nextCoupons);
+      applyLoadedData(nextMemberships, nextSettings, nextCoupons);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "积分兑换数据加载失败，请稍后重试");
     } finally {
@@ -827,6 +867,19 @@ export default function MerchantPointRedemptionCashier({
     const currentMembership = membershipsRef.current.find((membership) => membership.id === normalizedMembershipId);
     if (!currentMembership || currentMembership.insight) return;
     if (memberInsightRequestIdsRef.current.has(normalizedMembershipId)) return;
+    const cacheKey = makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, normalizedMembershipId);
+    const cachedMembership = readMerchantAdminDataCache<MerchantMembershipListItem>(
+      cacheKey,
+      MERCHANT_ADMIN_DATA_CACHE_TTL_MS,
+    );
+    if (cachedMembership) {
+      setMemberships((current) =>
+        current.map((membership) =>
+          membership.id === cachedMembership.id ? { ...membership, ...cachedMembership } : membership,
+        ),
+      );
+      return;
+    }
 
     memberInsightRequestIdsRef.current.add(normalizedMembershipId);
     setMemberInsightLoadingIds((current) => new Set(current).add(normalizedMembershipId));
@@ -848,6 +901,7 @@ export default function MerchantPointRedemptionCashier({
       const payload = (await response.json().catch(() => null)) as MembershipsPayload | null;
       const detailedMembership = Array.isArray(payload?.memberships) ? payload.memberships[0] : null;
       if (!response.ok || payload?.ok !== true || !detailedMembership) return;
+      writeMerchantAdminDataCache(cacheKey, detailedMembership);
       setMemberships((current) =>
         current.map((membership) =>
           membership.id === detailedMembership.id ? { ...membership, ...detailedMembership } : membership,
@@ -1173,9 +1227,13 @@ export default function MerchantPointRedemptionCashier({
       setMemberships((current) =>
         current.map((membership) => (membership.id === payload.membership?.id ? payload.membership : membership)),
       );
+      invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-memberships", normalizedSiteId));
+      invalidateMerchantAdminDataCachePrefix(
+        makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, selectedMember.id),
+      );
       setRechargeDialogOpen(false);
       setNotice(`充值完成，余额增加 €${formatMoney(plan.rechargeAmount + plan.giftAmount)}，积分增加 ${formatPoints(plan.giftPoints)}。`);
-      await loadData();
+      await loadData(true);
     } catch (rechargeError) {
       setError(rechargeError instanceof Error ? rechargeError.message : "充值失败，请稍后重试");
     } finally {
@@ -1309,6 +1367,12 @@ export default function MerchantPointRedemptionCashier({
       setMemberships((current) =>
         current.map((membership) => (membership.id === payload.membership?.id ? payload.membership : membership)),
       );
+      invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-memberships", normalizedSiteId));
+      invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-membership-settings", normalizedSiteId));
+      invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-coupons", normalizedSiteId));
+      invalidateMerchantAdminDataCachePrefix(
+        makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, selectedMember.id),
+      );
       setCart([]);
       setNote("");
       setCheckoutConfirmOpen(false);
@@ -1320,7 +1384,7 @@ export default function MerchantPointRedemptionCashier({
           ? `兑换完成，已扣减 ${formatPoints(totalPoints)} 积分。`
           : `兑换完成，已核销 ${couponLineCount} 张卡券。`,
       );
-      await loadData();
+      await loadData(true);
     } catch (checkoutError) {
       setError(checkoutError instanceof Error ? checkoutError.message : "积分兑换失败，请稍后重试");
     } finally {
@@ -3133,7 +3197,7 @@ export default function MerchantPointRedemptionCashier({
           {loading ? <div className="cashier-loading">正在刷新...</div> : null}
         </div>
         <div className="cashier-actions">
-          <button type="button" className="el-button el-button--default" onClick={loadData} disabled={loading}>
+          <button type="button" className="el-button el-button--default" onClick={() => void loadData(true)} disabled={loading}>
             {loading ? "刷新中..." : "刷新"}
           </button>
           <div ref={languageRootRef} className="language-menu-wrap" data-no-translate="1">

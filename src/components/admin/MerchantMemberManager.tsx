@@ -9,6 +9,14 @@ import {
   type MerchantMembershipListItem,
 } from "@/lib/merchantMemberships";
 import { showGlobalToast } from "@/lib/globalToast";
+import {
+  MERCHANT_ADMIN_DATA_CACHE_TTL_MS,
+  fetchMerchantAdminDataWithCache,
+  invalidateMerchantAdminDataCachePrefix,
+  makeMerchantAdminDataCacheKey,
+  readMerchantAdminDataCache,
+  writeMerchantAdminDataCache,
+} from "@/lib/merchantAdminDataCache";
 import type {
   MerchantMemberLevel,
   MerchantMemberRechargePlan,
@@ -345,7 +353,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     return () => window.clearTimeout(timer);
   }, [allergenError, operationError]);
 
-  const loadMemberships = useCallback(async (mode: "reset" | "append" = "reset") => {
+  const loadMemberships = useCallback(async (mode: "reset" | "append" = "reset", force = false) => {
     if (!/^\d{8}$/.test(normalizedSiteId)) {
       setMemberships([]);
       setSelectedMembershipId("");
@@ -355,30 +363,25 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
       setLoadError("当前商户资料还没准备好，请稍后重试。");
       return;
     }
-    setLoading(true);
-    setLoadError("");
-    try {
-      const params = new URLSearchParams({
-        siteId: normalizedSiteId,
-        offset: mode === "append" ? String(membershipsRef.current.length) : "0",
-        limit: String(MERCHANT_MEMBER_PAGE_SIZE),
-        includeInsights: "0",
-      });
-      if (statusFilter !== "all") params.set("status", statusFilter);
-      const normalizedKeyword = deferredKeyword.trim();
-      if (normalizedKeyword) params.set("query", normalizedKeyword);
-      const response = await fetchMemberJson(`/api/memberships?${params.toString()}`, {
-        method: "GET",
-        cache: "no-store",
-        credentials: "same-origin",
-        headers: {
-          accept: "application/json",
-        },
-      });
-      const payload = (await response.json().catch(() => null)) as MembershipsPayload | null;
-      if (!response.ok || payload?.ok !== true) {
-        throw new Error(readPayloadMessage(payload?.message, "会员列表加载失败，请稍后重试"));
-      }
+    const offset = mode === "append" ? membershipsRef.current.length : 0;
+    const normalizedKeyword = deferredKeyword.trim();
+    const params = new URLSearchParams({
+      siteId: normalizedSiteId,
+      offset: String(offset),
+      limit: String(MERCHANT_MEMBER_PAGE_SIZE),
+      includeInsights: "0",
+    });
+    if (statusFilter !== "all") params.set("status", statusFilter);
+    if (normalizedKeyword) params.set("query", normalizedKeyword);
+    const cacheKey = makeMerchantAdminDataCacheKey(
+      "merchant-memberships",
+      normalizedSiteId,
+      statusFilter,
+      normalizedKeyword,
+      offset,
+      MERCHANT_MEMBER_PAGE_SIZE,
+    );
+    const applyMembershipsPayload = (payload: MembershipsPayload) => {
       const nextMemberships = Array.isArray(payload.memberships) ? payload.memberships : [];
       setMemberships((current) => (mode === "append" ? [...current, ...nextMemberships] : nextMemberships));
       setMembershipTotal(Number(payload.total) || nextMemberships.length);
@@ -389,6 +392,36 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
         if (current && candidateMemberships.some((membership) => membership.id === current)) return current;
         return "";
       });
+    };
+    const cachedPayload = force ? null : readMerchantAdminDataCache<MembershipsPayload>(cacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
+    if (cachedPayload) {
+      setLoadError("");
+      applyMembershipsPayload(cachedPayload);
+      return;
+    }
+    setLoading(true);
+    setLoadError("");
+    try {
+      const payload = await fetchMerchantAdminDataWithCache(
+        cacheKey,
+        async () => {
+          const response = await fetchMemberJson(`/api/memberships?${params.toString()}`, {
+            method: "GET",
+            cache: "no-store",
+            credentials: "same-origin",
+            headers: {
+              accept: "application/json",
+            },
+          });
+          const payload = (await response.json().catch(() => null)) as MembershipsPayload | null;
+          if (!response.ok || payload?.ok !== true) {
+            throw new Error(readPayloadMessage(payload?.message, "会员列表加载失败，请稍后重试"));
+          }
+          return payload;
+        },
+        { force, allowStaleOnError: true },
+      );
+      applyMembershipsPayload(payload);
     } catch (error) {
       if (mode === "reset") {
         setMemberships([]);
@@ -403,27 +436,43 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     }
   }, [deferredKeyword, normalizedSiteId, statusFilter]);
 
-  const loadMemberSettings = useCallback(async () => {
+  const loadMemberSettings = useCallback(async (force = false) => {
     if (!/^\d{8}$/.test(normalizedSiteId)) {
       setMemberSettings(null);
       setMemberSettingsError("");
       return;
     }
+    const cacheKey = makeMerchantAdminDataCacheKey("merchant-membership-settings", normalizedSiteId, "full");
+    const cachedSettings = force
+      ? null
+      : readMerchantAdminDataCache<MerchantMembershipSettings>(cacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
+    if (cachedSettings) {
+      setMemberSettingsError("");
+      setMemberSettings(cachedSettings);
+      return;
+    }
     setMemberSettingsError("");
     try {
-      const response = await fetchMemberJson(`/api/membership-settings?siteId=${encodeURIComponent(normalizedSiteId)}`, {
-        method: "GET",
-        cache: "no-store",
-        credentials: "same-origin",
-        headers: {
-          accept: "application/json",
+      const settings = await fetchMerchantAdminDataWithCache(
+        cacheKey,
+        async () => {
+          const response = await fetchMemberJson(`/api/membership-settings?siteId=${encodeURIComponent(normalizedSiteId)}`, {
+            method: "GET",
+            cache: "no-store",
+            credentials: "same-origin",
+            headers: {
+              accept: "application/json",
+            },
+          });
+          const payload = (await response.json().catch(() => null)) as MembershipSettingsPayload | null;
+          if (!response.ok || payload?.ok !== true || !payload.settings) {
+            throw new Error(readPayloadMessage(payload?.message, "会员配置加载失败，充值和兑换将暂时使用手动输入。"));
+          }
+          return payload.settings;
         },
-      });
-      const payload = (await response.json().catch(() => null)) as MembershipSettingsPayload | null;
-      if (!response.ok || payload?.ok !== true || !payload.settings) {
-        throw new Error(readPayloadMessage(payload?.message, "会员配置加载失败，充值和兑换将暂时使用手动输入。"));
-      }
-      setMemberSettings(payload.settings);
+        { force, allowStaleOnError: true },
+      );
+      setMemberSettings(settings);
     } catch (error) {
       setMemberSettings(null);
       setMemberSettingsError(error instanceof Error ? error.message : "会员配置加载失败，充值和兑换将暂时使用手动输入。");
@@ -436,6 +485,19 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     const currentMembership = membershipsRef.current.find((membership) => membership.id === normalizedMembershipId);
     if (!currentMembership || currentMembership.insight) return;
     if (membershipInsightRequestIdsRef.current.has(normalizedMembershipId)) return;
+    const cacheKey = makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, normalizedMembershipId);
+    const cachedMembership = readMerchantAdminDataCache<MerchantMembershipListItem>(
+      cacheKey,
+      MERCHANT_ADMIN_DATA_CACHE_TTL_MS,
+    );
+    if (cachedMembership) {
+      setMemberships((current) =>
+        current.map((membership) =>
+          membership.id === cachedMembership.id ? { ...membership, ...cachedMembership } : membership,
+        ),
+      );
+      return;
+    }
 
     membershipInsightRequestIdsRef.current.add(normalizedMembershipId);
     try {
@@ -456,6 +518,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
       const payload = (await response.json().catch(() => null)) as MembershipsPayload | null;
       const detailedMembership = Array.isArray(payload?.memberships) ? payload.memberships[0] : null;
       if (!response.ok || payload?.ok !== true || !detailedMembership) return;
+      writeMerchantAdminDataCache(cacheKey, detailedMembership);
       setMemberships((current) =>
         current.map((membership) =>
           membership.id === detailedMembership.id ? { ...membership, ...detailedMembership } : membership,
@@ -526,6 +589,10 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
       if (!response.ok || payload?.ok !== true || !payload.membership) {
         throw new Error(readPayloadMessage(payload?.message, "过敏信息保存失败，请稍后重试"));
       }
+      invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-memberships", normalizedSiteId));
+      invalidateMerchantAdminDataCachePrefix(
+        makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, selectedMembership.id),
+      );
       setMemberships((current) =>
         current.map((membership) =>
           membership.id === selectedMembership.id
@@ -655,6 +722,10 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
       if (!response.ok || payload?.ok !== true || !payload.membership) {
         throw new Error(readOperationErrorMessage(payload?.message, "会员账户操作失败，请稍后重试"));
       }
+      invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-memberships", normalizedSiteId));
+      invalidateMerchantAdminDataCachePrefix(
+        makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, operationMembership.id),
+      );
       setMemberships((current) =>
         current.map((membership) => {
           if (membership.id !== operationMembership.id || !payload.membership) return membership;
@@ -673,7 +744,8 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
       setOperationDialog(null);
       setOperationError("");
       if (operationDialog.type === "redeem" && selectedRedemptionItem && selectedRedemptionItem.stock !== null) {
-        void loadMemberSettings();
+        invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-membership-settings", normalizedSiteId));
+        void loadMemberSettings(true);
       }
     } catch (error) {
       setOperationError(error instanceof Error ? error.message : "会员账户操作失败，请稍后重试");
@@ -704,8 +776,8 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
               type="button"
               className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               onClick={() => {
-                void loadMemberships();
-                void loadMemberSettings();
+                void loadMemberships("reset", true);
+                void loadMemberSettings(true);
               }}
               disabled={loading}
             >

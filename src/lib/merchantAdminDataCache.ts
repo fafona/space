@@ -4,17 +4,27 @@ const CACHE_PREFIX = "faolla:merchant-admin-data-cache:v1";
 const DEFAULT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_CACHE_PAYLOAD_CHARS = 1_500_000;
 
+export const MERCHANT_ADMIN_DATA_CACHE_TTL_MS = 2 * 60 * 1000;
+
 type CacheEnvelope<T> = {
   savedAt: number;
   data: T;
 };
 
+const adminDataInFlightRequests = new Map<string, Promise<unknown>>();
+
 function normalizeCachePart(value: string) {
-  return String(value ?? "").trim().replace(/[^a-zA-Z0-9_.:-]/g, "_");
+  return String(value ?? "")
+    .trim()
+    .replace(/[^a-zA-Z0-9_.:-]/g, "_");
 }
 
 export function buildMerchantAdminDataCacheKey(kind: string, siteId: string) {
   return `${CACHE_PREFIX}:${normalizeCachePart(kind)}:${normalizeCachePart(siteId)}`;
+}
+
+export function makeMerchantAdminDataCacheKey(...parts: Array<string | number | boolean | null | undefined>) {
+  return `${CACHE_PREFIX}:${parts.map((part) => normalizeCachePart(String(part ?? ""))).join(":")}`;
 }
 
 export function readMerchantAdminDataCache<T>(key: string, maxAgeMs = DEFAULT_MAX_AGE_MS): T | null {
@@ -53,4 +63,65 @@ export function writeMerchantAdminDataCache<T>(key: string, data: T) {
   } catch {
     // Ignore cache quota and private-mode failures.
   }
+}
+
+export function invalidateMerchantAdminDataCache(key: string) {
+  adminDataInFlightRequests.delete(key);
+  if (typeof window === "undefined" || !key) return;
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+export function invalidateMerchantAdminDataCachePrefix(prefix: string) {
+  for (const key of adminDataInFlightRequests.keys()) {
+    if (key.startsWith(prefix)) adminDataInFlightRequests.delete(key);
+  }
+  if (typeof window === "undefined" || !prefix) return;
+  try {
+    for (let index = window.localStorage.length - 1; index >= 0; index -= 1) {
+      const key = window.localStorage.key(index);
+      if (key?.startsWith(prefix)) window.localStorage.removeItem(key);
+    }
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+export async function fetchMerchantAdminDataWithCache<T>(
+  key: string,
+  loader: () => Promise<T>,
+  options: {
+    force?: boolean;
+    ttlMs?: number;
+    allowStaleOnError?: boolean;
+  } = {},
+): Promise<T> {
+  const ttlMs = options.ttlMs ?? MERCHANT_ADMIN_DATA_CACHE_TTL_MS;
+  if (!options.force) {
+    const cached = readMerchantAdminDataCache<T>(key, ttlMs);
+    if (cached !== null) return cached;
+    const inFlight = adminDataInFlightRequests.get(key) as Promise<T> | undefined;
+    if (inFlight) return inFlight;
+  }
+
+  const stale = options.allowStaleOnError ? readMerchantAdminDataCache<T>(key, Number.MAX_SAFE_INTEGER) : null;
+  const promise = loader()
+    .then((value) => {
+      writeMerchantAdminDataCache(key, value);
+      return value;
+    })
+    .catch((error) => {
+      if (options.allowStaleOnError && stale !== null) return stale;
+      throw error;
+    })
+    .finally(() => {
+      if (adminDataInFlightRequests.get(key) === promise) {
+        adminDataInFlightRequests.delete(key);
+      }
+    });
+  adminDataInFlightRequests.set(key, promise);
+  return promise;
 }

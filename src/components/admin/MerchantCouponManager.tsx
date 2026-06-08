@@ -4,6 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
 import { loadEuropeLocationOptionsApi, type EuropeLocationOptionsApi } from "@/lib/europeLocationOptionsLoader";
 import { showGlobalToast } from "@/lib/globalToast";
+import {
+  MERCHANT_ADMIN_DATA_CACHE_TTL_MS,
+  fetchMerchantAdminDataWithCache,
+  makeMerchantAdminDataCacheKey,
+  readMerchantAdminDataCache,
+} from "@/lib/merchantAdminDataCache";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
   MERCHANT_COUPON_BEHAVIOR_TRIGGERS,
@@ -1445,23 +1451,38 @@ export default function MerchantCouponManager({
     [onCouponsChange],
   );
 
-  const loadCoupons = useCallback(async () => {
+  const loadCoupons = useCallback(async (force = false) => {
     if (!siteId) {
       notifyCouponsChange([]);
+      return;
+    }
+    const cacheKey = makeMerchantAdminDataCacheKey("merchant-coupons", siteId);
+    const cachedCoupons = force
+      ? null
+      : readMerchantAdminDataCache<MerchantCouponRecord[]>(cacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
+    if (cachedCoupons) {
+      setError("");
+      notifyCouponsChange(cachedCoupons);
       return;
     }
     setLoading(true);
     setError("");
     try {
-      const response = await fetch(`/api/coupons?siteId=${encodeURIComponent(siteId)}`, {
-        credentials: "same-origin",
-        cache: "no-store",
-      });
-      const payload = (await response.json().catch(() => null)) as { coupons?: unknown; message?: string; error?: string } | null;
-      if (!response.ok) {
-        throw new Error(payload?.message || payload?.error || "优惠券加载失败");
-      }
-      const nextCoupons = normalizeMerchantCouponRecords(payload?.coupons);
+      const nextCoupons = await fetchMerchantAdminDataWithCache(
+        cacheKey,
+        async () => {
+          const response = await fetch(`/api/coupons?siteId=${encodeURIComponent(siteId)}`, {
+            credentials: "same-origin",
+            cache: "no-store",
+          });
+          const payload = (await response.json().catch(() => null)) as { coupons?: unknown; message?: string; error?: string } | null;
+          if (!response.ok) {
+            throw new Error(payload?.message || payload?.error || "优惠券加载失败");
+          }
+          return normalizeMerchantCouponRecords(payload?.coupons);
+        },
+        { force, allowStaleOnError: true },
+      );
       notifyCouponsChange(nextCoupons);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "优惠券加载失败");
@@ -1931,7 +1952,7 @@ export default function MerchantCouponManager({
       if (payload?.coupon?.id) {
         setForm(buildFormFromCoupon(payload.coupon, pricePrefix));
       }
-      await loadCoupons();
+      await loadCoupons(true);
       setFormOpen(false);
       setTip(editing ? "优惠券已更新" : "优惠券已创建");
     } catch (saveError) {
@@ -1960,7 +1981,7 @@ export default function MerchantCouponManager({
       if (payload?.coupon?.id === form.id) {
         setForm(buildFormFromCoupon(payload.coupon, pricePrefix));
       }
-      await loadCoupons();
+      await loadCoupons(true);
       setTip(successMessage);
     } catch (patchError) {
       setError(patchError instanceof Error ? patchError.message : "优惠券更新失败");
@@ -2004,7 +2025,7 @@ export default function MerchantCouponManager({
       if (!response.ok) {
         throw new Error(getCouponRedeemErrorMessage(payload?.message || payload?.error));
       }
-      await loadCoupons();
+      await loadCoupons(true);
       setRedeemCodeInput("");
       setRedeemNote("");
       setTip("核销成功");
@@ -2038,7 +2059,7 @@ export default function MerchantCouponManager({
         setForm(buildNewCouponForm(pricePrefix));
         setFormOpen(false);
       }
-      await loadCoupons();
+      await loadCoupons(true);
       setTip("优惠券已删除");
     } catch (archiveError) {
       setError(archiveError instanceof Error ? archiveError.message : "优惠券删除失败");
@@ -2100,7 +2121,7 @@ export default function MerchantCouponManager({
             <button
               type="button"
               className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
-              onClick={() => void loadCoupons()}
+              onClick={() => void loadCoupons(true)}
               disabled={loading || !siteId}
             >
               {loading ? "刷新中..." : "刷新"}
@@ -3111,7 +3132,7 @@ export default function MerchantCouponManager({
               <button
                 type="button"
                 className="shrink-0 rounded border bg-white px-3 py-2 text-xs hover:bg-slate-50 disabled:opacity-50"
-                onClick={() => void loadCoupons()}
+                onClick={() => void loadCoupons(true)}
                 disabled={loading || !siteId}
               >
                 {loading ? "刷新中" : "刷新"}
