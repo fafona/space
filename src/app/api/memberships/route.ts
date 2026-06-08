@@ -314,6 +314,10 @@ export async function GET(request: Request) {
   const offset = normalizeListOffset(url.searchParams.get("offset"));
   const limit = normalizeListLimit(url.searchParams.get("limit"));
   const membershipsSnapshot = await getMerchantMembershipsSnapshot(siteId);
+  const knownVersion = trimText(url.searchParams.get("knownVersion"), 128);
+  if (!includeInsights && knownVersion && membershipsSnapshot.updatedAt && knownVersion === membershipsSnapshot.updatedAt) {
+    return NextResponse.json({ ok: true, notModified: true, version: membershipsSnapshot.updatedAt });
+  }
   const memberships = membershipsSnapshot.memberships;
   const filteredMemberships = memberships.filter((membership) => {
     if (membershipId && membership.id !== membershipId) return false;

@@ -39,12 +39,16 @@ type MembershipsPayload = {
   allTotal?: unknown;
   hasMore?: unknown;
   message?: unknown;
+  notModified?: unknown;
+  version?: unknown;
 };
 
 type MembershipSettingsPayload = {
   ok?: unknown;
   settings?: MerchantMembershipSettings;
   message?: unknown;
+  notModified?: unknown;
+  version?: unknown;
 };
 
 type MembershipPatchPayload = {
@@ -385,6 +389,10 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
       MERCHANT_MEMBER_PAGE_SIZE,
     );
     const requestId = ++membershipLoadRequestIdRef.current;
+    let loadedMembershipsVersion: string | null = null;
+    const cachedPayload = force
+      ? null
+      : readMerchantAdminDataCacheSnapshot<MembershipsPayload>(cacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
     const applyMembershipsPayload = (payload: MembershipsPayload) => {
       const nextMemberships = Array.isArray(payload.memberships) ? payload.memberships : [];
       setMemberships((current) => (mode === "append" ? [...current, ...nextMemberships] : nextMemberships));
@@ -398,7 +406,9 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
       });
     };
     const loadMembershipsFromServer = async () => {
-      const response = await fetchMemberJson(`/api/memberships?${params.toString()}`, {
+      const requestParams = new URLSearchParams(params);
+      if (cachedPayload?.version) requestParams.set("knownVersion", cachedPayload.version);
+      const response = await fetchMemberJson(`/api/memberships?${requestParams.toString()}`, {
         method: "GET",
         cache: "no-store",
         credentials: "same-origin",
@@ -410,11 +420,10 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
       if (!response.ok || payload?.ok !== true) {
         throw new Error(readPayloadMessage(payload?.message, "会员列表加载失败，请稍后重试"));
       }
+      loadedMembershipsVersion = typeof payload.version === "string" && payload.version.trim() ? payload.version.trim() : null;
+      if (payload.notModified === true && cachedPayload) return cachedPayload.data;
       return payload;
     };
-    const cachedPayload = force
-      ? null
-      : readMerchantAdminDataCacheSnapshot<MembershipsPayload>(cacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
     if (cachedPayload) {
       setLoadError("");
       applyMembershipsPayload(cachedPayload.data);
@@ -423,6 +432,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
           force: true,
           allowStaleOnError: true,
           dedupe: true,
+          cacheVersion: () => loadedMembershipsVersion,
         })
           .then((payload) => {
             if (membershipLoadRequestIdRef.current === requestId) applyMembershipsPayload(payload);
@@ -436,22 +446,8 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     try {
       const payload = await fetchMerchantAdminDataWithCache(
         cacheKey,
-        async () => {
-          const response = await fetchMemberJson(`/api/memberships?${params.toString()}`, {
-            method: "GET",
-            cache: "no-store",
-            credentials: "same-origin",
-            headers: {
-              accept: "application/json",
-            },
-          });
-          const payload = (await response.json().catch(() => null)) as MembershipsPayload | null;
-          if (!response.ok || payload?.ok !== true) {
-            throw new Error(readPayloadMessage(payload?.message, "会员列表加载失败，请稍后重试"));
-          }
-          return payload;
-        },
-        { force, allowStaleOnError: true },
+        loadMembershipsFromServer,
+        { force, allowStaleOnError: true, cacheVersion: () => loadedMembershipsVersion },
       );
       if (membershipLoadRequestIdRef.current === requestId) applyMembershipsPayload(payload);
     } catch (error) {
@@ -478,8 +474,14 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     }
     const cacheKey = makeMerchantAdminDataCacheKey("merchant-membership-settings", normalizedSiteId, "full");
     const requestId = ++memberSettingsLoadRequestIdRef.current;
+    let loadedMemberSettingsVersion: string | null = null;
+    const cachedSettings = force
+      ? null
+      : readMerchantAdminDataCacheSnapshot<MerchantMembershipSettings>(cacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
     const loadSettingsFromServer = async () => {
-      const response = await fetchMemberJson(`/api/membership-settings?siteId=${encodeURIComponent(normalizedSiteId)}`, {
+      const params = new URLSearchParams({ siteId: normalizedSiteId });
+      if (cachedSettings?.version) params.set("knownVersion", cachedSettings.version);
+      const response = await fetchMemberJson(`/api/membership-settings?${params.toString()}`, {
         method: "GET",
         cache: "no-store",
         credentials: "same-origin",
@@ -488,14 +490,16 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
         },
       });
       const payload = (await response.json().catch(() => null)) as MembershipSettingsPayload | null;
-      if (!response.ok || payload?.ok !== true || !payload.settings) {
+      if (!response.ok || payload?.ok !== true) {
         throw new Error(readPayloadMessage(payload?.message, "会员配置加载失败，充值和兑换将暂时使用手动输入。"));
+      }
+      loadedMemberSettingsVersion = typeof payload.version === "string" && payload.version.trim() ? payload.version.trim() : null;
+      if (payload.notModified === true && cachedSettings) return cachedSettings.data;
+      if (!payload.settings) {
+        throw new Error(readPayloadMessage(payload.message, "会员配置加载失败，充值和兑换将暂时使用手动输入。"));
       }
       return payload.settings;
     };
-    const cachedSettings = force
-      ? null
-      : readMerchantAdminDataCacheSnapshot<MerchantMembershipSettings>(cacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
     if (cachedSettings) {
       setMemberSettingsError("");
       setMemberSettings(cachedSettings.data);
@@ -503,6 +507,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
         force: true,
         allowStaleOnError: true,
         dedupe: true,
+        cacheVersion: () => loadedMemberSettingsVersion,
       })
         .then((settings) => {
           if (memberSettingsLoadRequestIdRef.current === requestId) setMemberSettings(settings);
@@ -514,22 +519,8 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     try {
       const settings = await fetchMerchantAdminDataWithCache(
         cacheKey,
-        async () => {
-          const response = await fetchMemberJson(`/api/membership-settings?siteId=${encodeURIComponent(normalizedSiteId)}`, {
-            method: "GET",
-            cache: "no-store",
-            credentials: "same-origin",
-            headers: {
-              accept: "application/json",
-            },
-          });
-          const payload = (await response.json().catch(() => null)) as MembershipSettingsPayload | null;
-          if (!response.ok || payload?.ok !== true || !payload.settings) {
-            throw new Error(readPayloadMessage(payload?.message, "会员配置加载失败，充值和兑换将暂时使用手动输入。"));
-          }
-          return payload.settings;
-        },
-        { force, allowStaleOnError: true },
+        loadSettingsFromServer,
+        { force, allowStaleOnError: true, cacheVersion: () => loadedMemberSettingsVersion },
       );
       if (memberSettingsLoadRequestIdRef.current === requestId) setMemberSettings(settings);
     } catch (error) {

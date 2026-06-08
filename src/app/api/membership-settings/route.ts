@@ -31,10 +31,15 @@ export async function GET(request: Request) {
   }
   const settings = await getMerchantMembershipSettings(siteId);
   const scope = trimText(url.searchParams.get("scope"), 64);
+  const version = settings.updatedAt ?? null;
+  const knownVersion = trimText(url.searchParams.get("knownVersion"), 128);
+  if (knownVersion && version && knownVersion === version) {
+    return NextResponse.json({ ok: true, notModified: true, version });
+  }
   return NextResponse.json({
     ok: true,
     settings: scope === "redemption-cashier" ? buildRedemptionCashierSettings(settings) : settings,
-    version: settings.updatedAt ?? null,
+    version,
   });
 }
 

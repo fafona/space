@@ -9,12 +9,14 @@ export const MERCHANT_ADMIN_DATA_CACHE_TTL_MS = 2 * 60 * 1000;
 type CacheEnvelope<T> = {
   savedAt: number;
   data: T;
+  version?: string | null;
 };
 
 export type MerchantAdminDataCacheSnapshot<T> = {
   data: T;
   savedAt: number;
   fresh: boolean;
+  version: string | null;
 };
 
 const adminDataInFlightRequests = new Map<string, Promise<unknown>>();
@@ -79,18 +81,20 @@ export function readMerchantAdminDataCacheSnapshot<T>(
       data: parsed.data,
       savedAt,
       fresh: ageMs <= freshAgeMs,
+      version: typeof parsed.version === "string" && parsed.version.trim() ? parsed.version.trim() : null,
     };
   } catch {
     return null;
   }
 }
 
-export function writeMerchantAdminDataCache<T>(key: string, data: T) {
+export function writeMerchantAdminDataCache<T>(key: string, data: T, options: { version?: string | null } = {}) {
   if (typeof window === "undefined" || !key) return;
   try {
     const payload = JSON.stringify({
       savedAt: Date.now(),
       data,
+      version: typeof options.version === "string" && options.version.trim() ? options.version.trim() : null,
     } satisfies CacheEnvelope<T>);
     if (payload.length > MAX_CACHE_PAYLOAD_CHARS) {
       window.localStorage.removeItem(key);
@@ -139,6 +143,7 @@ export async function fetchMerchantAdminDataWithCache<T>(
     ttlMs?: number;
     allowStaleOnError?: boolean;
     dedupe?: boolean;
+    cacheVersion?: string | null | ((value: T) => string | null | undefined);
   } = {},
 ): Promise<T> {
   const ttlMs = options.ttlMs ?? MERCHANT_ADMIN_DATA_CACHE_TTL_MS;
@@ -155,7 +160,9 @@ export async function fetchMerchantAdminDataWithCache<T>(
   const promise = loader()
     .then((value) => {
       if (adminDataRequestSerials.get(key) === requestSerial) {
-        writeMerchantAdminDataCache(key, value);
+        const version =
+          typeof options.cacheVersion === "function" ? options.cacheVersion(value) : options.cacheVersion;
+        writeMerchantAdminDataCache(key, value, { version });
       }
       return value;
     })

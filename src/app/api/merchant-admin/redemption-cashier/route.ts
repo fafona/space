@@ -35,11 +35,20 @@ export async function GET(request: Request) {
     }
 
     const limit = normalizeLimit(url.searchParams.get("limit"));
+    const knownMembershipVersion = trimText(url.searchParams.get("knownMembershipVersion"), 128);
+    const knownSettingsVersion = trimText(url.searchParams.get("knownSettingsVersion"), 128);
+    const knownCouponVersion = trimText(url.searchParams.get("knownCouponVersion"), 128);
     const [membershipsSnapshot, settings, couponsSnapshot] = await Promise.all([
       getMerchantMembershipsSnapshot(siteId),
       getMerchantMembershipSettings(siteId),
       getMerchantCouponsSnapshot(siteId).catch(() => ({ coupons: [], updatedAt: null })),
     ]);
+    const membershipVersion = membershipsSnapshot.updatedAt;
+    const settingsVersion = settings.updatedAt ?? null;
+    const couponVersion = couponsSnapshot.updatedAt;
+    const membershipsNotModified = Boolean(knownMembershipVersion && membershipVersion && knownMembershipVersion === membershipVersion);
+    const settingsNotModified = Boolean(knownSettingsVersion && settingsVersion && knownSettingsVersion === settingsVersion);
+    const couponsNotModified = Boolean(knownCouponVersion && couponVersion && knownCouponVersion === couponVersion);
     const memberships = membershipsSnapshot.memberships
       .filter((membership) => membership.status === "active")
       .slice(0, limit);
@@ -51,12 +60,15 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       ok: true,
-      memberships,
-      membershipVersion: membershipsSnapshot.updatedAt,
-      settings: buildRedemptionCashierSettings(settings),
-      settingsVersion: settings.updatedAt ?? null,
-      coupons: couponCatalog,
-      couponVersion: couponsSnapshot.updatedAt,
+      memberships: membershipsNotModified ? undefined : memberships,
+      membershipsNotModified,
+      membershipVersion,
+      settings: settingsNotModified ? undefined : buildRedemptionCashierSettings(settings),
+      settingsNotModified,
+      settingsVersion,
+      coupons: couponsNotModified ? undefined : couponCatalog,
+      couponsNotModified,
+      couponVersion,
       limit,
     });
   } catch (error) {

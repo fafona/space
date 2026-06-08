@@ -45,6 +45,12 @@ type RedemptionCashierPayload = {
   memberships?: MerchantMembershipListItem[];
   settings?: MerchantMembershipSettings;
   coupons?: MerchantCouponRecord[];
+  membershipsNotModified?: unknown;
+  settingsNotModified?: unknown;
+  couponsNotModified?: unknown;
+  membershipVersion?: unknown;
+  settingsVersion?: unknown;
+  couponVersion?: unknown;
   message?: unknown;
 };
 
@@ -770,6 +776,15 @@ export default function MerchantPointRedemptionCashier({
     );
     const couponsCacheKey = makeMerchantAdminDataCacheKey("merchant-coupons", normalizedSiteId, "cashier-catalog");
     const requestId = ++cashierLoadRequestIdRef.current;
+    const cachedMemberships = force
+      ? null
+      : readMerchantAdminDataCacheSnapshot<MerchantMembershipListItem[]>(membersCacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
+    const cachedSettings = force
+      ? null
+      : readMerchantAdminDataCacheSnapshot<MerchantMembershipSettings>(settingsCacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
+    const cachedCoupons = force
+      ? null
+      : readMerchantAdminDataCacheSnapshot<MerchantCouponRecord[]>(couponsCacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
     const applyLoadedData = (
       nextMemberships: MerchantMembershipListItem[],
       nextSettings: MerchantMembershipSettings,
@@ -794,6 +809,9 @@ export default function MerchantPointRedemptionCashier({
         siteId: normalizedSiteId,
         limit: "300",
       });
+      if (cachedMemberships?.version) params.set("knownMembershipVersion", cachedMemberships.version);
+      if (cachedSettings?.version) params.set("knownSettingsVersion", cachedSettings.version);
+      if (cachedCoupons?.version) params.set("knownCouponVersion", cachedCoupons.version);
       const response = await fetchPointRedemptionJson(`/api/merchant-admin/redemption-cashier?${params.toString()}`, {
         method: "GET",
         cache: "no-store",
@@ -801,27 +819,46 @@ export default function MerchantPointRedemptionCashier({
         headers: { accept: "application/json" },
       });
       const payload = (await response.json().catch(() => null)) as RedemptionCashierPayload | null;
-      if (!response.ok || payload?.ok !== true || !payload.settings) {
+      if (!response.ok || payload?.ok !== true) {
         throw new Error(readPayloadMessage(payload?.message, "积分兑换数据加载失败，请稍后重试"));
       }
-      const nextMemberships = Array.isArray(payload.memberships) ? payload.memberships : [];
-      const nextSettings = payload.settings;
-      const nextCoupons = Array.isArray(payload.coupons) ? payload.coupons : [];
+      const membershipVersion =
+        typeof payload.membershipVersion === "string" && payload.membershipVersion.trim()
+          ? payload.membershipVersion.trim()
+          : null;
+      const settingsVersion =
+        typeof payload.settingsVersion === "string" && payload.settingsVersion.trim() ? payload.settingsVersion.trim() : null;
+      const couponVersion =
+        typeof payload.couponVersion === "string" && payload.couponVersion.trim() ? payload.couponVersion.trim() : null;
+      const nextMemberships =
+        payload.membershipsNotModified === true && cachedMemberships
+          ? cachedMemberships.data
+          : Array.isArray(payload.memberships)
+            ? payload.memberships
+            : [];
+      const nextSettings =
+        payload.settingsNotModified === true && cachedSettings ? cachedSettings.data : payload.settings;
+      if (!nextSettings) {
+        throw new Error(readPayloadMessage(payload.message, "积分兑换数据加载失败，请稍后重试"));
+      }
+      const nextCoupons =
+        payload.couponsNotModified === true && cachedCoupons
+          ? cachedCoupons.data
+          : Array.isArray(payload.coupons)
+            ? payload.coupons
+            : [];
       if (cashierLoadRequestIdRef.current !== requestId) return;
-      writeMerchantAdminDataCache(membersCacheKey, nextMemberships);
-      writeMerchantAdminDataCache(settingsCacheKey, nextSettings);
-      writeMerchantAdminDataCache(couponsCacheKey, nextCoupons);
+      writeMerchantAdminDataCache(membersCacheKey, nextMemberships, {
+        version: membershipVersion ?? cachedMemberships?.version ?? null,
+      });
+      writeMerchantAdminDataCache(settingsCacheKey, nextSettings, {
+        version: settingsVersion ?? cachedSettings?.version ?? null,
+      });
+      writeMerchantAdminDataCache(couponsCacheKey, nextCoupons, {
+        version: couponVersion ?? cachedCoupons?.version ?? null,
+      });
       applyLoadedData(nextMemberships, nextSettings, nextCoupons);
     };
-    const cachedMemberships = force
-      ? null
-      : readMerchantAdminDataCacheSnapshot<MerchantMembershipListItem[]>(membersCacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
-    const cachedSettings = force
-      ? null
-      : readMerchantAdminDataCacheSnapshot<MerchantMembershipSettings>(settingsCacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
-    const cachedCoupons = force
-      ? null
-      : readMerchantAdminDataCacheSnapshot<MerchantCouponRecord[]>(couponsCacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
     if (cachedMemberships && cachedSettings && cachedCoupons) {
       setError("");
       applyLoadedData(cachedMemberships.data, cachedSettings.data, cachedCoupons.data);

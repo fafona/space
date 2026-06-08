@@ -1460,20 +1460,31 @@ export default function MerchantCouponManager({
     }
     const cacheKey = makeMerchantAdminDataCacheKey("merchant-coupons", siteId);
     const requestId = ++couponLoadRequestIdRef.current;
-    const loadCouponsFromServer = async () => {
-      const response = await fetch(`/api/coupons?siteId=${encodeURIComponent(siteId)}`, {
-        credentials: "same-origin",
-        cache: "no-store",
-      });
-      const payload = (await response.json().catch(() => null)) as { coupons?: unknown; message?: string; error?: string } | null;
-      if (!response.ok) {
-        throw new Error(payload?.message || payload?.error || "优惠券加载失败");
-      }
-      return normalizeMerchantCouponRecords(payload?.coupons);
-    };
+    let loadedCouponsVersion: string | null = null;
     const cachedSnapshot = force
       ? null
       : readMerchantAdminDataCacheSnapshot<MerchantCouponRecord[]>(cacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
+    const loadCouponsFromServer = async () => {
+      const params = new URLSearchParams({ siteId });
+      if (cachedSnapshot?.version) params.set("knownVersion", cachedSnapshot.version);
+      const response = await fetch(`/api/coupons?${params.toString()}`, {
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => null)) as {
+        coupons?: unknown;
+        message?: string;
+        error?: string;
+        notModified?: unknown;
+        version?: unknown;
+      } | null;
+      if (!response.ok) {
+        throw new Error(payload?.message || payload?.error || "优惠券加载失败");
+      }
+      loadedCouponsVersion = typeof payload?.version === "string" && payload.version.trim() ? payload.version.trim() : null;
+      if (payload?.notModified === true && cachedSnapshot) return cachedSnapshot.data;
+      return normalizeMerchantCouponRecords(payload?.coupons);
+    };
     if (cachedSnapshot) {
       setError("");
       notifyCouponsChange(cachedSnapshot.data);
@@ -1481,6 +1492,7 @@ export default function MerchantCouponManager({
         force: true,
         allowStaleOnError: true,
         dedupe: true,
+        cacheVersion: () => loadedCouponsVersion,
       })
         .then((nextCoupons) => {
           if (couponLoadRequestIdRef.current === requestId) notifyCouponsChange(nextCoupons);
@@ -1493,18 +1505,8 @@ export default function MerchantCouponManager({
     try {
       const nextCoupons = await fetchMerchantAdminDataWithCache(
         cacheKey,
-        async () => {
-          const response = await fetch(`/api/coupons?siteId=${encodeURIComponent(siteId)}`, {
-            credentials: "same-origin",
-            cache: "no-store",
-          });
-          const payload = (await response.json().catch(() => null)) as { coupons?: unknown; message?: string; error?: string } | null;
-          if (!response.ok) {
-            throw new Error(payload?.message || payload?.error || "优惠券加载失败");
-          }
-          return normalizeMerchantCouponRecords(payload?.coupons);
-        },
-        { force, allowStaleOnError: true },
+        loadCouponsFromServer,
+        { force, allowStaleOnError: true, cacheVersion: () => loadedCouponsVersion },
       );
       if (couponLoadRequestIdRef.current === requestId) notifyCouponsChange(nextCoupons);
     } catch (loadError) {

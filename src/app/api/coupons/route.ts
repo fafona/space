@@ -68,11 +68,15 @@ export async function GET(request: Request) {
     }
 
     const publicScope = trimText(searchParams.get("scope")) === "public";
+    const knownVersion = trimText(searchParams.get("knownVersion"));
     if (publicScope) {
       if (!(await isCouponWebsiteBlockEnabled(siteId))) {
         return NextResponse.json({ ok: true, coupons: [], version: null });
       }
       const snapshot = await getMerchantCouponsSnapshot(siteId);
+      if (knownVersion && snapshot.updatedAt && knownVersion === snapshot.updatedAt) {
+        return NextResponse.json({ ok: true, notModified: true, version: snapshot.updatedAt });
+      }
       const coupons = getVisibleMerchantCoupons(snapshot.coupons);
       return NextResponse.json({ ok: true, coupons, version: snapshot.updatedAt });
     }
@@ -82,6 +86,9 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
     const snapshot = await getMerchantCouponsSnapshot(siteId);
+    if (knownVersion && snapshot.updatedAt && knownVersion === snapshot.updatedAt) {
+      return NextResponse.json({ ok: true, notModified: true, version: snapshot.updatedAt });
+    }
     const statusFilter = trimText(searchParams.get("status"));
     const keyword = trimText(searchParams.get("query") ?? searchParams.get("keyword")).toLowerCase();
     const paged = searchParams.has("limit") || searchParams.has("offset");
