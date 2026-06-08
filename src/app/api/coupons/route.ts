@@ -22,11 +22,6 @@ async function resolveCouponAdminSession(request: Request, siteId: string) {
   return session;
 }
 
-async function isCouponModuleEnabled(siteId: string) {
-  const site = await loadCurrentMerchantSnapshotSiteBySiteId(siteId).catch(() => null);
-  return Boolean(site?.permissionConfig?.allowCouponModule);
-}
-
 async function isCouponWebsiteBlockEnabled(siteId: string) {
   const site = await loadCurrentMerchantSnapshotSiteBySiteId(siteId).catch(() => null);
   return Boolean(site?.permissionConfig?.allowCouponModule && site?.permissionConfig?.allowCouponBlock);
@@ -57,9 +52,6 @@ export async function GET(request: Request) {
     if (!session) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
-    if (!(await isCouponModuleEnabled(siteId))) {
-      return NextResponse.json({ error: "coupon_module_disabled" }, { status: 403 });
-    }
     const coupons = await listMerchantCoupons(siteId);
     return NextResponse.json({ ok: true, coupons });
   } catch (error) {
@@ -86,9 +78,6 @@ export async function POST(request: Request) {
     const session = await resolveCouponAdminSession(request, siteId);
     if (!session) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-    }
-    if (!(await isCouponModuleEnabled(siteId))) {
-      return NextResponse.json({ error: "coupon_module_disabled" }, { status: 403 });
     }
     const coupon = await createMerchantCouponRecord({
       ...(body ?? {}),
@@ -121,9 +110,6 @@ export async function PATCH(request: Request) {
     if (!session) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
-    if (!(await isCouponModuleEnabled(siteId))) {
-      return NextResponse.json({ error: "coupon_module_disabled" }, { status: 403 });
-    }
     const coupon = await updateMerchantCouponRecord({
       siteId,
       couponId,
@@ -155,9 +141,6 @@ export async function DELETE(request: Request) {
     const session = await resolveCouponAdminSession(request, siteId);
     if (!session) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-    }
-    if (!(await isCouponModuleEnabled(siteId))) {
-      return NextResponse.json({ error: "coupon_module_disabled" }, { status: 403 });
     }
     const coupon = await archiveMerchantCouponRecord({ siteId, couponId });
     return NextResponse.json({ ok: true, coupon });

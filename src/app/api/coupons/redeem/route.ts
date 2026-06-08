@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { redeemMerchantCouponRecord } from "@/lib/merchantCoupons.server";
-import { loadCurrentMerchantSnapshotSiteBySiteId } from "@/lib/publishedMerchantService";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 
@@ -10,11 +9,6 @@ export const revalidate = 0;
 
 function trimText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
-}
-
-async function isCouponModuleEnabled(siteId: string) {
-  const site = await loadCurrentMerchantSnapshotSiteBySiteId(siteId).catch(() => null);
-  return Boolean(site?.permissionConfig?.allowCouponModule);
 }
 
 export async function POST(request: Request) {
@@ -31,9 +25,6 @@ export async function POST(request: Request) {
     const session = await resolveMerchantSessionFromRequest(request, { hintedMerchantId: siteId });
     if (!session || session.merchantId !== siteId) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-    }
-    if (!(await isCouponModuleEnabled(siteId))) {
-      return NextResponse.json({ error: "coupon_module_disabled" }, { status: 403 });
     }
     const coupon = await redeemMerchantCouponRecord({
       siteId,
