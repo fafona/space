@@ -16,7 +16,12 @@ export async function POST(request: Request) {
     return getTrustedMutationRequestErrorResponse();
   }
   try {
-    const body = (await request.json()) as { siteId?: unknown; settlementCode?: unknown; note?: unknown } | null;
+    const body = (await request.json()) as {
+      siteId?: unknown;
+      settlementCode?: unknown;
+      note?: unknown;
+      operationId?: unknown;
+    } | null;
     const siteId = trimText(body?.siteId, 32);
     const settlementCode = trimText(body?.settlementCode, 200);
     if (!isMerchantNumericId(siteId) || !settlementCode) {
@@ -31,6 +36,7 @@ export async function POST(request: Request) {
       settlementCode,
       operatorId: session.merchantEmail || session.merchantId,
       note: trimText(body?.note, 500),
+      operationId: body?.operationId,
     });
     return NextResponse.json({ ok: true, coupon });
   } catch (error) {

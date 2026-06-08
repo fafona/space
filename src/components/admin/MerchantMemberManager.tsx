@@ -17,6 +17,7 @@ import {
   readMerchantAdminDataCacheSnapshot,
   writeMerchantAdminDataCache,
 } from "@/lib/merchantAdminDataCache";
+import { createClientMutationOperationId } from "@/lib/mutationOperationId";
 import type {
   MerchantMemberLevel,
   MerchantMemberRechargePlan,
@@ -770,6 +771,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     setOperationSaving(true);
     setOperationError("");
     try {
+      const operationId = createClientMutationOperationId("member-operation");
       const response = await fetchMemberJson("/api/memberships", {
         method: "PATCH",
         cache: "no-store",
@@ -789,6 +791,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
           rechargePlanId: selectedRechargePlan?.id ?? "",
           redemptionItemId: selectedRedemptionItem?.id ?? "",
           redemptionQuantity,
+          operationId,
         }),
       });
       const payload = (await response.json().catch(() => null)) as MembershipPatchPayload | null;

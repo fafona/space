@@ -17,6 +17,7 @@ import {
   writeMerchantAdminDataCache,
 } from "@/lib/merchantAdminDataCache";
 import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
+import { createClientMutationOperationId } from "@/lib/mutationOperationId";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import type { MerchantMembershipInsight, MerchantMembershipListItem } from "@/lib/merchantMemberships";
 import type {
@@ -1202,6 +1203,7 @@ export default function MerchantPointRedemptionCashier({
     setError("");
     setNotice("");
     try {
+      const operationId = createClientMutationOperationId("member-recharge");
       const response = await fetch("/api/memberships", {
         method: "PATCH",
         credentials: "same-origin",
@@ -1212,6 +1214,7 @@ export default function MerchantPointRedemptionCashier({
           type: "recharge",
           membershipId: selectedMember.id,
           rechargePlanId: plan.id,
+          operationId,
           note: `积分兑换充值：${plan.title}`,
         }),
       });
@@ -1332,6 +1335,7 @@ export default function MerchantPointRedemptionCashier({
     }
     setSaving(true);
     try {
+      const operationId = createClientMutationOperationId("member-redemption-checkout");
       const response = await fetch("/api/memberships", {
         method: "PATCH",
         credentials: "same-origin",
@@ -1353,6 +1357,7 @@ export default function MerchantPointRedemptionCashier({
             quantity: row.quantity,
           })),
           note: note.trim(),
+          operationId,
         }),
       });
       const payload = (await response.json().catch(() => null)) as MembershipPatchPayload | null;

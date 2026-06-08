@@ -421,6 +421,7 @@ export async function PATCH(request: Request) {
       orderId?: unknown;
       requestedPoints?: unknown;
       referenceId?: unknown;
+      operationId?: unknown;
     } | null;
     const siteId = trimText(body?.siteId, 64);
     if (!isMerchantNumericId(siteId)) {
@@ -454,6 +455,7 @@ export async function PATCH(request: Request) {
         rechargePlanId: body?.rechargePlanId,
         redemptionItemId: body?.redemptionItemId,
         redemptionQuantity: body?.redemptionQuantity,
+        operationId: body?.operationId,
       });
       return NextResponse.json({ ok: true, membership });
     }
@@ -468,6 +470,7 @@ export async function PATCH(request: Request) {
         items: body?.redemptionItems,
         note: body?.note,
         operatorId: merchantSession.merchantId,
+        operationId: body?.operationId,
       });
       return NextResponse.json({ ok: true, membership });
     }

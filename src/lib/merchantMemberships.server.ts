@@ -28,6 +28,7 @@ import {
 import type { MerchantOrderRecord } from "@/lib/merchantOrders";
 import { redeemMerchantCouponRecords } from "@/lib/merchantCoupons.server";
 import { loadStoredMerchantMemberships, saveStoredMerchantMemberships } from "@/lib/merchantMembershipsStore";
+import { appendMutationOperationMarker, buildMutationOperationMarker } from "@/lib/mutationOperationId";
 import { readPersonalCustomerProfileFromSession } from "@/lib/personalCustomerProfile";
 import type { PersonalAccountSession } from "@/lib/personalAccountSession.server";
 
@@ -150,6 +151,10 @@ function createMerchantMemberTransaction(input: {
 
 function transactionHasMarker(membership: MerchantMembershipRecord, marker: string) {
   return membership.transactions.some((transaction) => transaction.note.includes(marker));
+}
+
+function buildMembershipMutationNote(note: unknown, fallback: string, marker: string) {
+  return appendMutationOperationMarker(trimText(note, 500) || fallback, marker);
 }
 
 function readBirthdayMonthDay(value: string) {
@@ -628,6 +633,7 @@ export async function applyMerchantMembershipAccountOperation(input: {
   rechargePlanId?: unknown;
   redemptionItemId?: unknown;
   redemptionQuantity?: unknown;
+  operationId?: unknown;
 }): Promise<MerchantMembershipListItem> {
   const supabase = requireMembershipsStoreClient();
   const siteId = trimText(input.siteId, 64);
@@ -637,7 +643,12 @@ export async function applyMerchantMembershipAccountOperation(input: {
   const current = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
   const index = current.findIndex((membership) => membership.id === membershipId);
   if (index < 0) throw new Error("membership_not_found");
-  if (current[index].status !== "active") throw new Error("membership_not_active");
+  const currentMembership = current[index];
+  const operationMarker = buildMutationOperationMarker("member-operation", input.operationId);
+  if (operationMarker && transactionHasMarker(currentMembership, operationMarker)) {
+    return toMerchantMembershipListItem(currentMembership);
+  }
+  if (currentMembership.status !== "active") throw new Error("membership_not_active");
   const type: MerchantMemberAccountTransactionType = input.type === "recharge" ? "recharge" : "redeem";
   const settings = await getMerchantMembershipSettings(siteId).catch(() => null);
   const rechargePlanId = trimText(input.rechargePlanId, 120);
@@ -651,7 +662,6 @@ export async function applyMerchantMembershipAccountOperation(input: {
       ? settings?.redemptionItems.find((item) => item.enabled && item.id === redemptionItemId)
       : null;
   const redemptionQuantity = Math.max(1, normalizePositiveInteger(input.redemptionQuantity) || 1);
-  const currentMembership = current[index];
   if (redemptionItem && redemptionItem.stock !== null && redemptionQuantity > redemptionItem.stock) {
     throw new Error("membership_redemption_stock_insufficient");
   }
@@ -680,6 +690,15 @@ export async function applyMerchantMembershipAccountOperation(input: {
       : settings && type === "redeem"
         ? rawPoints * settings.growthRules.spendPointGrowth
         : 0;
+  const fallbackNote = rechargePlan
+    ? `充值方案：${rechargePlan.title}`
+    : redemptionItem
+      ? `兑换项目：${redemptionItem.name} x ${redemptionQuantity}${
+          redemptionItem.pointsCost !== null && redemptionPointCost !== redemptionItem.pointsCost
+            ? `（等级折扣 ${redemptionItem.pointsCost}→${redemptionPointCost} 积分/件）`
+            : ""
+        }`
+      : "";
   let nextMembership: MerchantMembershipRecord = {
     ...currentMembership,
     pointBalance: nextPointBalance,
@@ -692,17 +711,7 @@ export async function applyMerchantMembershipAccountOperation(input: {
         pointDelta,
         balanceDelta,
         growthDelta: normalizeGrowthValue(growthDelta),
-        note:
-          trimText(input.note, 500) ||
-          (rechargePlan
-            ? `充值方案：${rechargePlan.title}`
-            : redemptionItem
-              ? `兑换项目：${redemptionItem.name} x ${redemptionQuantity}${
-                  redemptionItem.pointsCost !== null && redemptionPointCost !== redemptionItem.pointsCost
-                    ? `（等级折扣 ${redemptionItem.pointsCost}→${redemptionPointCost} 积分/件）`
-                    : ""
-                }`
-              : ""),
+        note: buildMembershipMutationNote(input.note, fallbackNote, operationMarker),
         operatorId: trimText(input.operatorId, 120),
       },
       ...currentMembership.transactions,
@@ -745,6 +754,7 @@ export async function applyMerchantMembershipRedemptionCart(input: {
   items?: unknown;
   note?: unknown;
   operatorId?: unknown;
+  operationId?: unknown;
 }): Promise<MerchantMembershipListItem> {
   const supabase = requireMembershipsStoreClient();
   const siteId = trimText(input.siteId, 64);
@@ -855,6 +865,10 @@ export async function applyMerchantMembershipRedemptionCart(input: {
   const index = current.findIndex((membership) => membership.id === membershipId);
   if (index < 0) throw new Error("membership_not_found");
   const currentMembership = current[index];
+  const operationMarker = buildMutationOperationMarker("member-redemption-checkout", input.operationId);
+  if (operationMarker && transactionHasMarker(currentMembership, operationMarker)) {
+    return toMerchantMembershipListItem(currentMembership);
+  }
   if (currentMembership.status !== "active") throw new Error("membership_not_active");
 
   const redemptionRows = cartItems.map((cartItem) => {
@@ -946,6 +960,8 @@ export async function applyMerchantMembershipRedemptionCart(input: {
       operatorId: trimText(input.operatorId, 120),
       redemptions: couponRedemptionRows.map((row) => ({
         settlementCode: row.couponSettlementCode,
+        operationId: input.operationId,
+        operationScope: "member-redemption-checkout",
         note: fallbackNote || `积分兑换使用卡券：${row.couponTitle || row.item.name}`,
         expectedAccountId: currentMembership.accountId,
         expectedUserId: currentMembership.userId,
@@ -968,7 +984,7 @@ export async function applyMerchantMembershipRedemptionCart(input: {
         pointDelta: -totalPoints,
         balanceDelta: 0,
         growthDelta: normalizeGrowthValue(growthDelta),
-        note: trimText(input.note, 500) || `积分兑换：${summary}`,
+        note: buildMembershipMutationNote(input.note, `积分兑换：${summary}`, operationMarker),
         operatorId: trimText(input.operatorId, 120),
       },
       ...currentMembership.transactions,

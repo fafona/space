@@ -10,6 +10,11 @@ import {
   type MerchantCouponRecord,
 } from "@/lib/merchantCoupons";
 import { loadStoredMerchantCoupons, saveStoredMerchantCoupons } from "@/lib/merchantCouponsStore";
+import {
+  appendMutationOperationMarker,
+  buildMutationOperationMarker,
+  hasMutationOperationMarker,
+} from "@/lib/mutationOperationId";
 
 function requireCouponsStoreClient() {
   const supabase = createServerSupabaseServiceClient();
@@ -19,8 +24,8 @@ function requireCouponsStoreClient() {
   return supabase;
 }
 
-function trimText(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
+function trimText(value: unknown, maxLength = 4096) {
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
 
 type MerchantCouponRedeemRequest = {
@@ -30,6 +35,8 @@ type MerchantCouponRedeemRequest = {
   expectedAccountId?: string;
   expectedUserId?: string;
   expectedEmail?: string;
+  operationId?: unknown;
+  operationScope?: unknown;
 };
 
 export async function getMerchantCouponsSnapshot(siteId: string) {
@@ -148,6 +155,7 @@ export async function redeemMerchantCouponRecord(input: {
   settlementCode: string;
   operatorId?: string;
   note?: string;
+  operationId?: unknown;
 }) {
   const [coupon] = await redeemMerchantCouponRecords({
     siteId: input.siteId,
@@ -156,6 +164,8 @@ export async function redeemMerchantCouponRecord(input: {
       {
         settlementCode: input.settlementCode,
         note: input.note,
+        operationId: input.operationId,
+        operationScope: "coupon-redeem",
       },
     ],
   });
@@ -179,6 +189,7 @@ export async function redeemMerchantCouponRecords(input: {
       expectedAccountId: trimText(redemption.expectedAccountId),
       expectedUserId: trimText(redemption.expectedUserId),
       expectedEmail: trimText(redemption.expectedEmail).toLowerCase(),
+      operationMarker: buildMutationOperationMarker(trimText(redemption.operationScope, 80) || "coupon-redeem", redemption.operationId),
     }))
     .filter((redemption) => {
       if (!redemption.settlementCode || seenSettlementCodes.has(redemption.settlementCode)) return false;
@@ -196,6 +207,16 @@ export async function redeemMerchantCouponRecords(input: {
     if (index < 0) throw new Error("coupon_claim_not_found");
     const claimEvent = coupons[index].claimEvents.find((event) => event.settlementCode === redemption.settlementCode);
     if (!claimEvent) throw new Error("coupon_claim_not_found");
+    const existingRedeemEvent = coupons[index].redeemEvents.find(
+      (event) => event.settlementCode === redemption.settlementCode || event.claimEventId === claimEvent.id,
+    );
+    if (existingRedeemEvent) {
+      if (hasMutationOperationMarker(existingRedeemEvent.note, redemption.operationMarker)) {
+        redeemedCoupons.push(coupons[index]);
+        return;
+      }
+      throw new Error("coupon_already_redeemed");
+    }
     const hasExpectedIdentity = Boolean(
       redemption.expectedAccountId || redemption.expectedUserId || redemption.expectedEmail,
     );
@@ -208,7 +229,7 @@ export async function redeemMerchantCouponRecords(input: {
     const next = redeemMerchantCoupon(coupons[index], {
       settlementCode: redemption.settlementCode,
       operatorId: redemption.operatorId,
-      note: redemption.note,
+      note: appendMutationOperationMarker(redemption.note, redemption.operationMarker),
     });
     coupons[index] = next;
     redeemedCoupons.push(next);

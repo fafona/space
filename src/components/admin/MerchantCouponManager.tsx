@@ -10,6 +10,7 @@ import {
   makeMerchantAdminDataCacheKey,
   readMerchantAdminDataCacheSnapshot,
 } from "@/lib/merchantAdminDataCache";
+import { createClientMutationOperationId } from "@/lib/mutationOperationId";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
   MERCHANT_COUPON_BEHAVIOR_TRIGGERS,
@@ -2048,6 +2049,7 @@ export default function MerchantCouponManager({
     setError("");
     setTip("");
     try {
+      const operationId = createClientMutationOperationId("coupon-redeem");
       const response = await fetch("/api/coupons/redeem", {
         method: "POST",
         credentials: "same-origin",
@@ -2056,6 +2058,7 @@ export default function MerchantCouponManager({
           siteId,
           settlementCode: redeemLookup.claimEvent.settlementCode,
           note: redeemNote.trim(),
+          operationId,
         }),
       });
       const payload = (await response.json().catch(() => null)) as { coupon?: MerchantCouponRecord; message?: string; error?: string } | null;
