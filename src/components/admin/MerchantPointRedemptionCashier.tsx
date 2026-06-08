@@ -103,6 +103,7 @@ const EMPTY_MEMBER_INSIGHT: MerchantMembershipInsight = {
 };
 
 const MERCHANT_REDEMPTION_ITEM_RENDER_LIMIT = 300;
+const MERCHANT_POINT_REDEMPTION_REQUEST_TIMEOUT_MS = 12_000;
 
 function trimText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
@@ -110,6 +111,24 @@ function trimText(value: unknown, maxLength = 4096) {
 
 function readPayloadMessage(value: unknown, fallback: string) {
   return trimText(value, 1000) || fallback;
+}
+
+async function fetchPointRedemptionJson(input: RequestInfo | URL, init: RequestInit = {}) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), MERCHANT_POINT_REDEMPTION_REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("请求超时，请刷新后重试");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
 }
 
 function formatDateYmd(date = new Date()) {
@@ -397,6 +416,8 @@ export default function MerchantPointRedemptionCashier({
   const [quickRedeemPoints, setQuickRedeemPoints] = useState("");
   const quickRedeemPointsInputRef = useRef<HTMLInputElement | null>(null);
   const [checkoutConfirmOpen, setCheckoutConfirmOpen] = useState(false);
+  const [couponWalletOpen, setCouponWalletOpen] = useState(false);
+  const [memberInsightLoadingIds, setMemberInsightLoadingIds] = useState<Set<string>>(() => new Set());
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -408,6 +429,8 @@ export default function MerchantPointRedemptionCashier({
   const [selectedRecordId, setSelectedRecordId] = useState("");
   const languageRootRef = useRef<HTMLDivElement | null>(null);
   const languageMenuRef = useRef<HTMLDivElement | null>(null);
+  const membershipsRef = useRef<MerchantMembershipListItem[]>([]);
+  const memberInsightRequestIdsRef = useRef<Set<string>>(new Set());
   const deferredMemberKeyword = useDeferredValue(memberKeyword);
   const deferredItemKeyword = useDeferredValue(itemKeyword);
   const deferredRecordsKeyword = useDeferredValue(recordsKeyword);
@@ -478,12 +501,26 @@ export default function MerchantPointRedemptionCashier({
   );
 
   const selectedInsight = selectedMember?.insight ?? EMPTY_MEMBER_INSIGHT;
+  const selectedMemberInsightLoading = selectedMember ? memberInsightLoadingIds.has(selectedMember.id) : false;
   const selectedAvailableCouponClaims = useMemo(
     () =>
       selectedMember
         ? selectedInsight.couponHistory
             .filter((coupon) => coupon.status === "available")
             .sort((left, right) => Date.parse(left.validUntil || left.claimedAt) - Date.parse(right.validUntil || right.claimedAt))
+        : [],
+    [selectedInsight.couponHistory, selectedMember],
+  );
+  const directlyUsableCouponClaims = useMemo(
+    () => selectedAvailableCouponClaims.filter((coupon) => !getCouponDirectUseUnavailableReason(coupon)),
+    [selectedAvailableCouponClaims],
+  );
+  const unavailableCouponClaims = useMemo(
+    () =>
+      selectedMember
+        ? selectedInsight.couponHistory
+            .filter((coupon) => coupon.status !== "available" || Boolean(getCouponDirectUseUnavailableReason(coupon)))
+            .sort((left, right) => Date.parse(right.claimedAt) - Date.parse(left.claimedAt))
         : [],
     [selectedInsight.couponHistory, selectedMember],
   );
@@ -710,6 +747,10 @@ export default function MerchantPointRedemptionCashier({
   );
   const selectedRecord = transactionRecords.find((record) => record.id === selectedRecordId) ?? null;
 
+  useEffect(() => {
+    membershipsRef.current = memberships;
+  }, [memberships]);
+
   const loadData = useCallback(async () => {
     if (!/^\d{8}$/.test(normalizedSiteId)) {
       setError("当前商户资料还没准备好，请稍后重试。");
@@ -718,20 +759,26 @@ export default function MerchantPointRedemptionCashier({
     setLoading(true);
     setError("");
     try {
+      const membersParams = new URLSearchParams({
+        siteId: normalizedSiteId,
+        status: "active",
+        limit: "300",
+        includeInsights: "0",
+      });
       const [membersResponse, settingsResponse, couponsResponse] = await Promise.all([
-        fetch(`/api/memberships?siteId=${encodeURIComponent(normalizedSiteId)}&status=active&limit=300`, {
+        fetchPointRedemptionJson(`/api/memberships?${membersParams.toString()}`, {
           method: "GET",
           cache: "no-store",
           credentials: "same-origin",
           headers: { accept: "application/json" },
         }),
-        fetch(`/api/membership-settings?siteId=${encodeURIComponent(normalizedSiteId)}&scope=redemption-cashier`, {
+        fetchPointRedemptionJson(`/api/membership-settings?siteId=${encodeURIComponent(normalizedSiteId)}&scope=redemption-cashier`, {
           method: "GET",
           cache: "no-store",
           credentials: "same-origin",
           headers: { accept: "application/json" },
         }),
-        fetch(`/api/coupons?siteId=${encodeURIComponent(normalizedSiteId)}`, {
+        fetchPointRedemptionJson(`/api/coupons?siteId=${encodeURIComponent(normalizedSiteId)}`, {
           method: "GET",
           cache: "no-store",
           credentials: "same-origin",
@@ -749,7 +796,18 @@ export default function MerchantPointRedemptionCashier({
       if (!settingsResponse.ok || !settingsPayload?.ok || !settingsPayload.settings) {
         throw new Error(readPayloadMessage(settingsPayload?.message, "兑换项目加载失败，请先检查会员配置"));
       }
-      setMemberships(Array.isArray(membersPayload.memberships) ? membersPayload.memberships : []);
+      const nextMemberships = Array.isArray(membersPayload.memberships) ? membersPayload.memberships : [];
+      setMemberships((current) => {
+        const insightById = new Map(
+          current
+            .map((membership) => [membership.id, membership.insight] as const)
+            .filter((entry): entry is readonly [string, MerchantMembershipInsight] => Boolean(entry[1])),
+        );
+        return nextMemberships.map((membership) => {
+          const insight = membership.insight ?? insightById.get(membership.id);
+          return insight ? { ...membership, insight } : membership;
+        });
+      });
       setSettings(settingsPayload.settings);
       setCoupons(couponsResponse?.ok && Array.isArray(couponsPayload?.coupons) ? couponsPayload.coupons : []);
     } catch (loadError) {
@@ -762,6 +820,50 @@ export default function MerchantPointRedemptionCashier({
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  const ensureMembershipInsight = useCallback(async (membershipId: string) => {
+    const normalizedMembershipId = trimText(membershipId, 160);
+    if (!/^\d{8}$/.test(normalizedSiteId) || !normalizedMembershipId) return;
+    const currentMembership = membershipsRef.current.find((membership) => membership.id === normalizedMembershipId);
+    if (!currentMembership || currentMembership.insight) return;
+    if (memberInsightRequestIdsRef.current.has(normalizedMembershipId)) return;
+
+    memberInsightRequestIdsRef.current.add(normalizedMembershipId);
+    setMemberInsightLoadingIds((current) => new Set(current).add(normalizedMembershipId));
+    try {
+      const params = new URLSearchParams({
+        siteId: normalizedSiteId,
+        membershipId: normalizedMembershipId,
+        limit: "1",
+        includeInsights: "1",
+      });
+      const response = await fetchPointRedemptionJson(`/api/memberships?${params.toString()}`, {
+        method: "GET",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: {
+          accept: "application/json",
+        },
+      });
+      const payload = (await response.json().catch(() => null)) as MembershipsPayload | null;
+      const detailedMembership = Array.isArray(payload?.memberships) ? payload.memberships[0] : null;
+      if (!response.ok || payload?.ok !== true || !detailedMembership) return;
+      setMemberships((current) =>
+        current.map((membership) =>
+          membership.id === detailedMembership.id ? { ...membership, ...detailedMembership } : membership,
+        ),
+      );
+    } catch {
+      // The cashier stays usable; member details can be retried by selecting the member again.
+    } finally {
+      memberInsightRequestIdsRef.current.delete(normalizedMembershipId);
+      setMemberInsightLoadingIds((current) => {
+        const next = new Set(current);
+        next.delete(normalizedMembershipId);
+        return next;
+      });
+    }
+  }, [normalizedSiteId]);
 
   useEffect(() => {
     if (!normalizedSiteId || typeof window === "undefined") return;
@@ -805,6 +907,15 @@ export default function MerchantPointRedemptionCashier({
       setSelectedMemberId("");
     }
   }, [activeMembers, selectedMemberId]);
+
+  useEffect(() => {
+    if (!selectedMemberId || !selectedMember || selectedMember.insight) return;
+    void ensureMembershipInsight(selectedMemberId);
+  }, [ensureMembershipInsight, selectedMember, selectedMemberId]);
+
+  useEffect(() => {
+    setCouponWalletOpen(false);
+  }, [selectedMemberId]);
 
   useEffect(() => {
     if (!quickRedeemDialogOpen) return;
@@ -928,6 +1039,13 @@ export default function MerchantPointRedemptionCashier({
     setSelectedMemberId("");
     setMemberKeyword("");
     setMemberPickerOpen(false);
+    setCouponWalletOpen(false);
+  }
+
+  function openSelectedMemberCouponWallet() {
+    if (!selectedMember) return;
+    setCouponWalletOpen(true);
+    void ensureMembershipInsight(selectedMember.id);
   }
 
   function addToCart(item: MerchantMemberRedemptionItem) {
@@ -1521,6 +1639,26 @@ export default function MerchantPointRedemptionCashier({
         .merchant-pos-cashier .member-line strong {
           color: var(--pos-text);
           font-size: 14px;
+        }
+
+        .merchant-pos-cashier .member-name-button {
+          min-width: 0;
+          max-width: 180px;
+          overflow: hidden;
+          border: 0;
+          background: transparent;
+          color: var(--pos-text);
+          font-size: 14px;
+          font-weight: 900;
+          text-align: left;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .merchant-pos-cashier .member-name-button:hover {
+          color: var(--pos-primary-dark);
+          text-decoration: underline;
+          text-underline-offset: 3px;
         }
 
         .merchant-pos-cashier .link-button {
@@ -2154,6 +2292,100 @@ export default function MerchantPointRedemptionCashier({
         .merchant-pos-cashier .pos-modal-footer {
           justify-content: flex-end;
           border-top: 1px solid var(--pos-line);
+        }
+
+        .merchant-pos-cashier .member-coupon-modal {
+          width: min(760px, 100%);
+        }
+
+        .merchant-pos-cashier .member-coupon-modal-member {
+          margin-top: 4px;
+          color: var(--pos-muted);
+          font-size: 12px;
+          font-weight: 760;
+        }
+
+        .merchant-pos-cashier .member-coupon-modal-summary {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+
+        .merchant-pos-cashier .member-coupon-modal-summary span,
+        .merchant-pos-cashier .member-coupon-card .member-coupon-status-tag {
+          display: inline-flex;
+          align-items: center;
+          width: max-content;
+          min-height: 26px;
+          padding: 0 9px;
+          border-radius: 999px;
+          background: var(--pos-primary-soft);
+          color: var(--pos-primary-dark);
+          font-size: 12px;
+          font-weight: 850;
+        }
+
+        .merchant-pos-cashier .member-coupon-sections {
+          display: grid;
+          gap: 14px;
+        }
+
+        .merchant-pos-cashier .member-coupon-section {
+          display: grid;
+          gap: 10px;
+          padding: 12px;
+          border: 1px solid var(--pos-line);
+          border-radius: 8px;
+          background: var(--pos-surface-soft);
+        }
+
+        .merchant-pos-cashier .member-coupon-section-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+        }
+
+        .merchant-pos-cashier .member-coupon-section-header strong {
+          color: var(--pos-text);
+          font-weight: 900;
+        }
+
+        .merchant-pos-cashier .member-coupon-section-header span {
+          color: var(--pos-muted);
+          font-size: 12px;
+          font-weight: 800;
+        }
+
+        .merchant-pos-cashier .member-coupon-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+          gap: 10px;
+        }
+
+        .merchant-pos-cashier .member-coupon-modal .member-coupon-card {
+          flex: initial;
+          min-width: 0;
+        }
+
+        .merchant-pos-cashier .member-coupon-card.is-disabled {
+          background: #f8fafc;
+        }
+
+        .merchant-pos-cashier .member-coupon-card.is-disabled .member-coupon-status-tag {
+          border: 1px solid var(--pos-line);
+          background: #e2e8f0;
+          color: var(--pos-muted);
+        }
+
+        .merchant-pos-cashier .member-coupon-loading {
+          display: grid;
+          place-items: center;
+          min-height: 120px;
+          border: 1px dashed var(--pos-line);
+          border-radius: 8px;
+          color: var(--pos-muted);
+          font-weight: 800;
         }
 
         .merchant-pos-cashier .recharge-plan-option {
@@ -3122,7 +3354,14 @@ export default function MerchantPointRedemptionCashier({
               <span className="member-avatar">{getAvatarInitial(selectedMember)}</span>
               {selectedMember ? (
                 <>
-                  <strong>{getMemberDisplayName(selectedMember)}</strong>
+                  <button
+                    type="button"
+                    className="member-name-button"
+                    onClick={openSelectedMemberCouponWallet}
+                    title="查看会员卡券"
+                  >
+                    {getMemberDisplayName(selectedMember)}
+                  </button>
                   <span>卡号: {selectedMember.memberNo}</span>
                   <span>积分: {formatPoints(selectedInsight.pointBalance)}</span>
                   <span>余额: €{formatMoney(selectedInsight.balanceAmount)}</span>
@@ -3183,42 +3422,6 @@ export default function MerchantPointRedemptionCashier({
           </div>
 
           <div className="cart-area">
-            {selectedMember ? (
-              <div className="member-coupon-wallet">
-                <div className="member-coupon-wallet-header">
-                  <div className="member-coupon-wallet-title">会员卡券</div>
-                  <div className="member-coupon-wallet-count">可用 {selectedAvailableCouponClaims.length} 张</div>
-                </div>
-                {selectedAvailableCouponClaims.length ? (
-                  <div className="member-coupon-list">
-                    {selectedAvailableCouponClaims.map((coupon) => {
-                      const unavailableReason = getCouponDirectUseUnavailableReason(coupon);
-                      const inCart = couponClaimIdsInCart.has(coupon.id);
-                      const itemName = getCouponCartItemName(coupon);
-                      const quantity = getCouponCartQuantity(coupon);
-                      return (
-                        <div key={coupon.id} className={`member-coupon-card${inCart ? " is-in-cart" : ""}`}>
-                          <strong>{coupon.title}</strong>
-                          <span>{coupon.discountLabel}</span>
-                          <small>
-                            {itemName} x {quantity} / {coupon.settlementCode || coupon.couponCode}
-                          </small>
-                          <button
-                            type="button"
-                            disabled={Boolean(unavailableReason) || inCart || saving}
-                            onClick={() => addCouponClaimToCart(coupon)}
-                          >
-                            {inCart ? "已加入" : unavailableReason ? unavailableReason : "使用"}
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="member-coupon-empty">此会员暂无可用卡券。</div>
-                )}
-              </div>
-            ) : null}
             <div className="cart-table">
               <div className="cart-header">
                 <span>编号</span>
@@ -3594,6 +3797,106 @@ export default function MerchantPointRedemptionCashier({
             )}
           </div>
         </section>
+        {couponWalletOpen && selectedMember ? (
+          <div className="modal-backdrop" role="presentation" onMouseDown={() => setCouponWalletOpen(false)}>
+            <div
+              className="pos-modal member-coupon-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-label="会员卡券"
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              <div className="pos-modal-header">
+                <div>
+                  <h3>会员卡券</h3>
+                  <div className="member-coupon-modal-member">
+                    {getMemberDisplayName(selectedMember)} / {selectedMember.memberNo}
+                  </div>
+                </div>
+                <button type="button" className="link-button" onClick={() => setCouponWalletOpen(false)}>
+                  关闭
+                </button>
+              </div>
+              <div className="pos-modal-body">
+                <div className="member-coupon-modal-summary">
+                  <span>可直接使用 {directlyUsableCouponClaims.length} 张</span>
+                  <span>不可直接使用 {unavailableCouponClaims.length} 张</span>
+                </div>
+                {selectedMemberInsightLoading && !selectedMember.insight ? (
+                  <div className="member-coupon-loading">正在加载会员卡券...</div>
+                ) : (
+                  <div className="member-coupon-sections">
+                    <section className="member-coupon-section">
+                      <div className="member-coupon-section-header">
+                        <strong>可直接使用</strong>
+                        <span>{directlyUsableCouponClaims.length} 张</span>
+                      </div>
+                      {directlyUsableCouponClaims.length ? (
+                        <div className="member-coupon-grid">
+                          {directlyUsableCouponClaims.map((coupon) => {
+                            const inCart = couponClaimIdsInCart.has(coupon.id);
+                            const itemName = getCouponCartItemName(coupon);
+                            const quantity = getCouponCartQuantity(coupon);
+                            return (
+                              <div key={coupon.id} className={`member-coupon-card${inCart ? " is-in-cart" : ""}`}>
+                                <strong>{coupon.title}</strong>
+                                <span>{coupon.discountLabel}</span>
+                                <small>
+                                  {itemName} x {quantity} / {coupon.settlementCode || coupon.couponCode}
+                                </small>
+                                <button
+                                  type="button"
+                                  disabled={inCart || saving}
+                                  onClick={() => addCouponClaimToCart(coupon)}
+                                >
+                                  {inCart ? "已加入" : "使用"}
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="member-coupon-empty">暂无可直接使用的卡券。</div>
+                      )}
+                    </section>
+                    <section className="member-coupon-section">
+                      <div className="member-coupon-section-header">
+                        <strong>不可直接使用</strong>
+                        <span>{unavailableCouponClaims.length} 张</span>
+                      </div>
+                      {unavailableCouponClaims.length ? (
+                        <div className="member-coupon-grid">
+                          {unavailableCouponClaims.map((coupon) => {
+                            const reason = getCouponDirectUseUnavailableReason(coupon) || "不可用";
+                            const itemName = getCouponCartItemName(coupon);
+                            const quantity = getCouponCartQuantity(coupon);
+                            return (
+                              <div key={coupon.id} className="member-coupon-card is-disabled">
+                                <strong>{coupon.title}</strong>
+                                <span>{coupon.discountLabel}</span>
+                                <small>
+                                  {itemName} x {quantity} / {coupon.settlementCode || coupon.couponCode}
+                                </small>
+                                <span className="member-coupon-status-tag">{reason}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="member-coupon-empty">暂无不可用卡券。</div>
+                      )}
+                    </section>
+                  </div>
+                )}
+              </div>
+              <div className="pos-modal-footer">
+                <button type="button" className="el-button el-button--primary" onClick={() => setCouponWalletOpen(false)}>
+                  确定
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
         {rechargeDialogOpen ? (
           <div className="modal-backdrop" role="presentation" onMouseDown={() => !saving && setRechargeDialogOpen(false)}>
             <div className="pos-modal" role="dialog" aria-modal="true" aria-label="充值方案" onMouseDown={(event) => event.stopPropagation()}>
