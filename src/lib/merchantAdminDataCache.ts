@@ -11,7 +11,14 @@ type CacheEnvelope<T> = {
   data: T;
 };
 
+export type MerchantAdminDataCacheSnapshot<T> = {
+  data: T;
+  savedAt: number;
+  fresh: boolean;
+};
+
 const adminDataInFlightRequests = new Map<string, Promise<unknown>>();
+const adminDataRequestSerials = new Map<string, number>();
 
 function normalizeCachePart(value: string) {
   return String(value ?? "")
@@ -48,6 +55,36 @@ export function readMerchantAdminDataCache<T>(key: string, maxAgeMs = DEFAULT_MA
   }
 }
 
+export function readMerchantAdminDataCacheSnapshot<T>(
+  key: string,
+  freshAgeMs = MERCHANT_ADMIN_DATA_CACHE_TTL_MS,
+  maxAgeMs = DEFAULT_MAX_AGE_MS,
+): MerchantAdminDataCacheSnapshot<T> | null {
+  if (typeof window === "undefined" || !key) return null;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return null;
+    if (raw.length > MAX_CACHE_PAYLOAD_CHARS) {
+      window.localStorage.removeItem(key);
+      return null;
+    }
+    const parsed = JSON.parse(raw) as Partial<CacheEnvelope<T>> | null;
+    const savedAt = Number(parsed?.savedAt ?? 0);
+    const ageMs = Date.now() - savedAt;
+    if (!Number.isFinite(savedAt) || savedAt <= 0 || ageMs > maxAgeMs || parsed?.data === undefined) {
+      window.localStorage.removeItem(key);
+      return null;
+    }
+    return {
+      data: parsed.data,
+      savedAt,
+      fresh: ageMs <= freshAgeMs,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function writeMerchantAdminDataCache<T>(key: string, data: T) {
   if (typeof window === "undefined" || !key) return;
   try {
@@ -67,6 +104,7 @@ export function writeMerchantAdminDataCache<T>(key: string, data: T) {
 
 export function invalidateMerchantAdminDataCache(key: string) {
   adminDataInFlightRequests.delete(key);
+  adminDataRequestSerials.set(key, (adminDataRequestSerials.get(key) ?? 0) + 1);
   if (typeof window === "undefined" || !key) return;
   try {
     window.localStorage.removeItem(key);
@@ -77,7 +115,10 @@ export function invalidateMerchantAdminDataCache(key: string) {
 
 export function invalidateMerchantAdminDataCachePrefix(prefix: string) {
   for (const key of adminDataInFlightRequests.keys()) {
-    if (key.startsWith(prefix)) adminDataInFlightRequests.delete(key);
+    if (key.startsWith(prefix)) {
+      adminDataInFlightRequests.delete(key);
+      adminDataRequestSerials.set(key, (adminDataRequestSerials.get(key) ?? 0) + 1);
+    }
   }
   if (typeof window === "undefined" || !prefix) return;
   try {
@@ -97,20 +138,25 @@ export async function fetchMerchantAdminDataWithCache<T>(
     force?: boolean;
     ttlMs?: number;
     allowStaleOnError?: boolean;
+    dedupe?: boolean;
   } = {},
 ): Promise<T> {
   const ttlMs = options.ttlMs ?? MERCHANT_ADMIN_DATA_CACHE_TTL_MS;
+  const inFlight = adminDataInFlightRequests.get(key) as Promise<T> | undefined;
+  if ((options.dedupe || !options.force) && inFlight) return inFlight;
   if (!options.force) {
     const cached = readMerchantAdminDataCache<T>(key, ttlMs);
     if (cached !== null) return cached;
-    const inFlight = adminDataInFlightRequests.get(key) as Promise<T> | undefined;
-    if (inFlight) return inFlight;
   }
 
   const stale = options.allowStaleOnError ? readMerchantAdminDataCache<T>(key, Number.MAX_SAFE_INTEGER) : null;
+  const requestSerial = (adminDataRequestSerials.get(key) ?? 0) + 1;
+  adminDataRequestSerials.set(key, requestSerial);
   const promise = loader()
     .then((value) => {
-      writeMerchantAdminDataCache(key, value);
+      if (adminDataRequestSerials.get(key) === requestSerial) {
+        writeMerchantAdminDataCache(key, value);
+      }
       return value;
     })
     .catch((error) => {

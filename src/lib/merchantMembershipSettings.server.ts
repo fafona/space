@@ -29,6 +29,52 @@ export async function getMerchantMembershipSettings(siteId: string): Promise<Mer
   return stored ?? createEmptyMerchantMembershipSettings(normalizedSiteId);
 }
 
+export function buildRedemptionCashierSettings(settings: MerchantMembershipSettings): MerchantMembershipSettings {
+  return {
+    ...settings,
+    rechargePlans: settings.rechargePlans.filter((plan) => plan.enabled),
+    redemptionCategories: settings.redemptionCategories
+      .filter((category) => category.enabled)
+      .map((category) => ({
+        id: category.id,
+        name: category.name,
+        iconName: category.iconName,
+        enabled: category.enabled,
+        sort: category.sort,
+      })),
+    redemptionItems: settings.redemptionItems
+      .filter((item) => item.enabled)
+      .map((item) => ({
+        id: item.id,
+        categoryId: item.categoryId,
+        code: item.code,
+        barcode: item.barcode,
+        name: item.name,
+        imageUrl: item.imageUrl,
+        iconName: item.iconName,
+        description: item.description,
+        enabled: item.enabled,
+        pointsCost: item.pointsCost,
+        referenceAmount: item.referenceAmount,
+        memberPrice: item.memberPrice,
+        taxRate: item.taxRate,
+        stock: item.stock,
+        pointProduct: item.pointProduct,
+        recommended: item.recommended,
+        sort: item.sort,
+      })),
+    levels: settings.levels
+      .filter((level) => level.enabled)
+      .map((level) => ({
+        ...level,
+        benefit: {
+          ...level.benefit,
+          pointDiscount: level.benefit.pointDiscount,
+        },
+      })),
+  };
+}
+
 export async function updateMerchantMembershipSettings(input: {
   siteId: string;
   settings: unknown;

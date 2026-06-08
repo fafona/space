@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import {
+  buildRedemptionCashierSettings,
   getMerchantMembershipSettings,
   updateMerchantMembershipSettings,
 } from "@/lib/merchantMembershipSettings.server";
-import type { MerchantMembershipSettings } from "@/lib/merchantMembershipSettings";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 
@@ -18,52 +18,6 @@ function trimText(value: unknown, maxLength = 4096) {
 async function requireMerchant(siteId: string, request: Request) {
   const session = await resolveMerchantSessionFromRequest(request, { hintedMerchantId: siteId });
   return Boolean(session && session.merchantId === siteId);
-}
-
-function buildRedemptionCashierSettings(settings: MerchantMembershipSettings): MerchantMembershipSettings {
-  return {
-    ...settings,
-    rechargePlans: settings.rechargePlans.filter((plan) => plan.enabled),
-    redemptionCategories: settings.redemptionCategories
-      .filter((category) => category.enabled)
-      .map((category) => ({
-        id: category.id,
-        name: category.name,
-        iconName: category.iconName,
-        enabled: category.enabled,
-        sort: category.sort,
-      })),
-    redemptionItems: settings.redemptionItems
-      .filter((item) => item.enabled)
-      .map((item) => ({
-        id: item.id,
-        categoryId: item.categoryId,
-        code: item.code,
-        barcode: item.barcode,
-        name: item.name,
-        imageUrl: item.imageUrl,
-        iconName: item.iconName,
-        description: item.description,
-        enabled: item.enabled,
-        pointsCost: item.pointsCost,
-        referenceAmount: item.referenceAmount,
-        memberPrice: item.memberPrice,
-        taxRate: item.taxRate,
-        stock: item.stock,
-        pointProduct: item.pointProduct,
-        recommended: item.recommended,
-        sort: item.sort,
-      })),
-    levels: settings.levels
-      .filter((level) => level.enabled)
-      .map((level) => ({
-        ...level,
-        benefit: {
-          ...level.benefit,
-          pointDiscount: level.benefit.pointDiscount,
-        },
-      })),
-  };
 }
 
 export async function GET(request: Request) {
@@ -80,6 +34,7 @@ export async function GET(request: Request) {
   return NextResponse.json({
     ok: true,
     settings: scope === "redemption-cashier" ? buildRedemptionCashierSettings(settings) : settings,
+    version: settings.updatedAt ?? null,
   });
 }
 

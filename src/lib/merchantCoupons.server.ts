@@ -32,10 +32,18 @@ type MerchantCouponRedeemRequest = {
   expectedEmail?: string;
 };
 
-export async function listMerchantCoupons(siteId: string) {
+export async function getMerchantCouponsSnapshot(siteId: string) {
   const supabase = requireCouponsStoreClient();
   const stored = await loadStoredMerchantCoupons(supabase, siteId);
-  return stored?.coupons ?? [];
+  return {
+    coupons: normalizeMerchantCouponRecords(stored?.coupons ?? []),
+    updatedAt: stored?.updatedAt ?? null,
+  };
+}
+
+export async function listMerchantCoupons(siteId: string) {
+  const snapshot = await getMerchantCouponsSnapshot(siteId);
+  return snapshot.coupons;
 }
 
 export async function createMerchantCouponRecord(input: MerchantCouponInput) {

@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
-import { getVisibleMerchantCoupons, type MerchantCouponInput } from "@/lib/merchantCoupons";
+import { getVisibleMerchantCoupons, type MerchantCouponInput, type MerchantCouponRecord } from "@/lib/merchantCoupons";
 import {
   archiveMerchantCouponRecord,
   createMerchantCouponRecord,
-  listMerchantCoupons,
+  getMerchantCouponsSnapshot,
   updateMerchantCouponRecord,
 } from "@/lib/merchantCoupons.server";
 import { loadCurrentMerchantSnapshotSiteBySiteId } from "@/lib/publishedMerchantService";
@@ -31,6 +31,34 @@ function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function normalizeListOffset(value: unknown) {
+  const numberValue = Number(trimText(value));
+  return Number.isFinite(numberValue) && numberValue > 0 ? Math.floor(numberValue) : 0;
+}
+
+function normalizeListLimit(value: unknown) {
+  const numberValue = Number(trimText(value));
+  if (!Number.isFinite(numberValue) || numberValue <= 0) return 100;
+  return Math.min(300, Math.max(1, Math.floor(numberValue)));
+}
+
+function buildCouponSearchText(coupon: MerchantCouponRecord) {
+  return [
+    coupon.id,
+    coupon.code,
+    coupon.title,
+    coupon.description,
+    coupon.productName,
+    coupon.productBarcode,
+    coupon.exchangeItem,
+    coupon.ticketVenue,
+    coupon.discountType,
+    coupon.status,
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -42,18 +70,41 @@ export async function GET(request: Request) {
     const publicScope = trimText(searchParams.get("scope")) === "public";
     if (publicScope) {
       if (!(await isCouponWebsiteBlockEnabled(siteId))) {
-        return NextResponse.json({ ok: true, coupons: [] });
+        return NextResponse.json({ ok: true, coupons: [], version: null });
       }
-      const coupons = getVisibleMerchantCoupons(await listMerchantCoupons(siteId));
-      return NextResponse.json({ ok: true, coupons });
+      const snapshot = await getMerchantCouponsSnapshot(siteId);
+      const coupons = getVisibleMerchantCoupons(snapshot.coupons);
+      return NextResponse.json({ ok: true, coupons, version: snapshot.updatedAt });
     }
 
     const session = await resolveCouponAdminSession(request, siteId);
     if (!session) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
-    const coupons = await listMerchantCoupons(siteId);
-    return NextResponse.json({ ok: true, coupons });
+    const snapshot = await getMerchantCouponsSnapshot(siteId);
+    const statusFilter = trimText(searchParams.get("status"));
+    const keyword = trimText(searchParams.get("query") ?? searchParams.get("keyword")).toLowerCase();
+    const paged = searchParams.has("limit") || searchParams.has("offset");
+    const filteredCoupons = snapshot.coupons.filter((coupon) => {
+      if ((statusFilter === "active" || statusFilter === "paused" || statusFilter === "archived") && coupon.status !== statusFilter) {
+        return false;
+      }
+      if (!keyword) return true;
+      return buildCouponSearchText(coupon).includes(keyword);
+    });
+    const offset = paged ? normalizeListOffset(searchParams.get("offset")) : 0;
+    const limit = paged ? normalizeListLimit(searchParams.get("limit")) : filteredCoupons.length;
+    const coupons = paged ? filteredCoupons.slice(offset, offset + limit) : filteredCoupons;
+    return NextResponse.json({
+      ok: true,
+      coupons,
+      total: filteredCoupons.length,
+      allTotal: snapshot.coupons.length,
+      offset,
+      limit,
+      hasMore: offset + coupons.length < filteredCoupons.length,
+      version: snapshot.updatedAt,
+    });
   } catch (error) {
     return NextResponse.json(
       {

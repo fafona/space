@@ -18,9 +18,9 @@ import {
   applyMerchantMembershipPointDeduction,
   applyMerchantMembershipRedemptionCart,
   awardMerchantMembershipRulePoints,
+  getMerchantMembershipsSnapshot,
   joinMerchantMembership,
   leaveMerchantMembership,
-  listMerchantMemberships,
   quoteMerchantMembershipPointDeduction,
   updateMerchantMembershipAllergens,
 } from "@/lib/merchantMemberships.server";
@@ -313,7 +313,8 @@ export async function GET(request: Request) {
   const includeInsights = shouldIncludeMembershipInsights(url.searchParams.get("includeInsights"));
   const offset = normalizeListOffset(url.searchParams.get("offset"));
   const limit = normalizeListLimit(url.searchParams.get("limit"));
-  const memberships = await listMerchantMemberships(siteId);
+  const membershipsSnapshot = await getMerchantMembershipsSnapshot(siteId);
+  const memberships = membershipsSnapshot.memberships;
   const filteredMemberships = memberships.filter((membership) => {
     if (membershipId && membership.id !== membershipId) return false;
     if ((statusFilter === "active" || statusFilter === "left") && membership.status !== statusFilter) return false;
@@ -355,6 +356,7 @@ export async function GET(request: Request) {
     offset,
     limit,
     hasMore: offset + pagedMemberships.length < filteredMemberships.length,
+    version: membershipsSnapshot.updatedAt,
   });
 }
 

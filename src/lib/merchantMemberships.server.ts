@@ -454,12 +454,32 @@ async function applyScheduledPointRules(siteId: string, memberships: MerchantMem
   return nextMemberships;
 }
 
-export async function listMerchantMemberships(siteId: string): Promise<MerchantMembershipListItem[]> {
+function resolveMerchantMembershipsVersion(memberships: MerchantMembershipRecord[], fallback: string | null) {
+  return memberships.reduce<string | null>((latest, membership) => {
+    const updatedAt = trimText(membership.updatedAt, 64);
+    if (!updatedAt) return latest;
+    if (!latest) return updatedAt;
+    return Date.parse(updatedAt) > Date.parse(latest) ? updatedAt : latest;
+  }, fallback);
+}
+
+export async function getMerchantMembershipsSnapshot(siteId: string): Promise<{
+  memberships: MerchantMembershipListItem[];
+  updatedAt: string | null;
+}> {
   const supabase = requireMembershipsStoreClient();
   const stored = await loadStoredMerchantMemberships(supabase, siteId);
   const memberships = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
   const nextMemberships = await applyScheduledPointRules(siteId, memberships);
-  return nextMemberships.map(toMerchantMembershipListItem);
+  return {
+    memberships: nextMemberships.map(toMerchantMembershipListItem),
+    updatedAt: resolveMerchantMembershipsVersion(nextMemberships, stored?.updatedAt ?? null),
+  };
+}
+
+export async function listMerchantMemberships(siteId: string): Promise<MerchantMembershipListItem[]> {
+  const snapshot = await getMerchantMembershipsSnapshot(siteId);
+  return snapshot.memberships;
 }
 
 export async function updateMerchantMembershipAllergens(input: {

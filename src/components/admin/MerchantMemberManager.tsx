@@ -14,7 +14,7 @@ import {
   fetchMerchantAdminDataWithCache,
   invalidateMerchantAdminDataCachePrefix,
   makeMerchantAdminDataCacheKey,
-  readMerchantAdminDataCache,
+  readMerchantAdminDataCacheSnapshot,
   writeMerchantAdminDataCache,
 } from "@/lib/merchantAdminDataCache";
 import type {
@@ -272,6 +272,8 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
   const [loadError, setLoadError] = useState("");
   const membershipsRef = useRef<MerchantMembershipListItem[]>([]);
   const membershipInsightRequestIdsRef = useRef<Set<string>>(new Set());
+  const membershipLoadRequestIdRef = useRef(0);
+  const memberSettingsLoadRequestIdRef = useRef(0);
   const [couponHistoryOpen, setCouponHistoryOpen] = useState(false);
   const [couponWalletMembershipId, setCouponWalletMembershipId] = useState("");
   const [allergenSaving, setAllergenSaving] = useState(false);
@@ -381,6 +383,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
       offset,
       MERCHANT_MEMBER_PAGE_SIZE,
     );
+    const requestId = ++membershipLoadRequestIdRef.current;
     const applyMembershipsPayload = (payload: MembershipsPayload) => {
       const nextMemberships = Array.isArray(payload.memberships) ? payload.memberships : [];
       setMemberships((current) => (mode === "append" ? [...current, ...nextMemberships] : nextMemberships));
@@ -393,10 +396,38 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
         return "";
       });
     };
-    const cachedPayload = force ? null : readMerchantAdminDataCache<MembershipsPayload>(cacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
+    const loadMembershipsFromServer = async () => {
+      const response = await fetchMemberJson(`/api/memberships?${params.toString()}`, {
+        method: "GET",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: {
+          accept: "application/json",
+        },
+      });
+      const payload = (await response.json().catch(() => null)) as MembershipsPayload | null;
+      if (!response.ok || payload?.ok !== true) {
+        throw new Error(readPayloadMessage(payload?.message, "会员列表加载失败，请稍后重试"));
+      }
+      return payload;
+    };
+    const cachedPayload = force
+      ? null
+      : readMerchantAdminDataCacheSnapshot<MembershipsPayload>(cacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
     if (cachedPayload) {
       setLoadError("");
-      applyMembershipsPayload(cachedPayload);
+      applyMembershipsPayload(cachedPayload.data);
+      if (mode === "reset") {
+        void fetchMerchantAdminDataWithCache(cacheKey, loadMembershipsFromServer, {
+          force: true,
+          allowStaleOnError: true,
+          dedupe: true,
+        })
+          .then((payload) => {
+            if (membershipLoadRequestIdRef.current === requestId) applyMembershipsPayload(payload);
+          })
+          .catch(() => {});
+      }
       return;
     }
     setLoading(true);
@@ -421,18 +452,20 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
         },
         { force, allowStaleOnError: true },
       );
-      applyMembershipsPayload(payload);
+      if (membershipLoadRequestIdRef.current === requestId) applyMembershipsPayload(payload);
     } catch (error) {
-      if (mode === "reset") {
-        setMemberships([]);
-        setMembershipTotal(0);
-        setMembershipAllTotal(0);
-        setMembershipHasMore(false);
+      if (membershipLoadRequestIdRef.current === requestId) {
+        if (mode === "reset") {
+          setMemberships([]);
+          setMembershipTotal(0);
+          setMembershipAllTotal(0);
+          setMembershipHasMore(false);
+        }
+        setSelectedMembershipId("");
+        setLoadError(error instanceof Error ? error.message : "会员列表加载失败，请稍后重试");
       }
-      setSelectedMembershipId("");
-      setLoadError(error instanceof Error ? error.message : "会员列表加载失败，请稍后重试");
     } finally {
-      setLoading(false);
+      if (membershipLoadRequestIdRef.current === requestId) setLoading(false);
     }
   }, [deferredKeyword, normalizedSiteId, statusFilter]);
 
@@ -443,12 +476,37 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
       return;
     }
     const cacheKey = makeMerchantAdminDataCacheKey("merchant-membership-settings", normalizedSiteId, "full");
+    const requestId = ++memberSettingsLoadRequestIdRef.current;
+    const loadSettingsFromServer = async () => {
+      const response = await fetchMemberJson(`/api/membership-settings?siteId=${encodeURIComponent(normalizedSiteId)}`, {
+        method: "GET",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: {
+          accept: "application/json",
+        },
+      });
+      const payload = (await response.json().catch(() => null)) as MembershipSettingsPayload | null;
+      if (!response.ok || payload?.ok !== true || !payload.settings) {
+        throw new Error(readPayloadMessage(payload?.message, "会员配置加载失败，充值和兑换将暂时使用手动输入。"));
+      }
+      return payload.settings;
+    };
     const cachedSettings = force
       ? null
-      : readMerchantAdminDataCache<MerchantMembershipSettings>(cacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
+      : readMerchantAdminDataCacheSnapshot<MerchantMembershipSettings>(cacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
     if (cachedSettings) {
       setMemberSettingsError("");
-      setMemberSettings(cachedSettings);
+      setMemberSettings(cachedSettings.data);
+      void fetchMerchantAdminDataWithCache(cacheKey, loadSettingsFromServer, {
+        force: true,
+        allowStaleOnError: true,
+        dedupe: true,
+      })
+        .then((settings) => {
+          if (memberSettingsLoadRequestIdRef.current === requestId) setMemberSettings(settings);
+        })
+        .catch(() => {});
       return;
     }
     setMemberSettingsError("");
@@ -472,10 +530,12 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
         },
         { force, allowStaleOnError: true },
       );
-      setMemberSettings(settings);
+      if (memberSettingsLoadRequestIdRef.current === requestId) setMemberSettings(settings);
     } catch (error) {
-      setMemberSettings(null);
-      setMemberSettingsError(error instanceof Error ? error.message : "会员配置加载失败，充值和兑换将暂时使用手动输入。");
+      if (memberSettingsLoadRequestIdRef.current === requestId) {
+        setMemberSettings(null);
+        setMemberSettingsError(error instanceof Error ? error.message : "会员配置加载失败，充值和兑换将暂时使用手动输入。");
+      }
     }
   }, [normalizedSiteId]);
 
@@ -486,17 +546,16 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     if (!currentMembership || currentMembership.insight) return;
     if (membershipInsightRequestIdsRef.current.has(normalizedMembershipId)) return;
     const cacheKey = makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, normalizedMembershipId);
-    const cachedMembership = readMerchantAdminDataCache<MerchantMembershipListItem>(
+    const cachedMembership = readMerchantAdminDataCacheSnapshot<MerchantMembershipListItem>(
       cacheKey,
       MERCHANT_ADMIN_DATA_CACHE_TTL_MS,
     );
     if (cachedMembership) {
       setMemberships((current) =>
         current.map((membership) =>
-          membership.id === cachedMembership.id ? { ...membership, ...cachedMembership } : membership,
+          membership.id === cachedMembership.data.id ? { ...membership, ...cachedMembership.data } : membership,
         ),
       );
-      return;
     }
 
     membershipInsightRequestIdsRef.current.add(normalizedMembershipId);
@@ -538,6 +597,20 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
   useEffect(() => {
     void loadMemberSettings();
   }, [loadMemberSettings]);
+
+  useEffect(() => {
+    const refreshOnVisible = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      void loadMemberships();
+      void loadMemberSettings();
+    };
+    window.addEventListener("focus", refreshOnVisible);
+    document.addEventListener("visibilitychange", refreshOnVisible);
+    return () => {
+      window.removeEventListener("focus", refreshOnVisible);
+      document.removeEventListener("visibilitychange", refreshOnVisible);
+    };
+  }, [loadMemberSettings, loadMemberships]);
 
   useEffect(() => {
     setCouponHistoryOpen(false);

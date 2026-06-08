@@ -13,7 +13,7 @@ import {
   MERCHANT_ADMIN_DATA_CACHE_TTL_MS,
   invalidateMerchantAdminDataCachePrefix,
   makeMerchantAdminDataCacheKey,
-  readMerchantAdminDataCache,
+  readMerchantAdminDataCacheSnapshot,
   writeMerchantAdminDataCache,
 } from "@/lib/merchantAdminDataCache";
 import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
@@ -39,15 +39,12 @@ type MembershipsPayload = {
   message?: unknown;
 };
 
-type MembershipSettingsPayload = {
+type RedemptionCashierPayload = {
   ok?: unknown;
+  memberships?: MerchantMembershipListItem[];
   settings?: MerchantMembershipSettings;
-  message?: unknown;
-};
-
-type CouponsPayload = {
-  ok?: unknown;
   coupons?: MerchantCouponRecord[];
+  message?: unknown;
 };
 
 type MembershipPatchPayload = {
@@ -438,6 +435,7 @@ export default function MerchantPointRedemptionCashier({
   const languageMenuRef = useRef<HTMLDivElement | null>(null);
   const membershipsRef = useRef<MerchantMembershipListItem[]>([]);
   const memberInsightRequestIdsRef = useRef<Set<string>>(new Set());
+  const cashierLoadRequestIdRef = useRef(0);
   const deferredMemberKeyword = useDeferredValue(memberKeyword);
   const deferredItemKeyword = useDeferredValue(itemKeyword);
   const deferredRecordsKeyword = useDeferredValue(recordsKeyword);
@@ -758,24 +756,19 @@ export default function MerchantPointRedemptionCashier({
     membershipsRef.current = memberships;
   }, [memberships]);
 
-  const loadData = useCallback(async (force = false) => {
+  const loadData = useCallback(async (force = false, options: { silent?: boolean } = {}) => {
     if (!/^\d{8}$/.test(normalizedSiteId)) {
       setError("当前商户资料还没准备好，请稍后重试。");
       return;
     }
-    const membersParams = new URLSearchParams({
-      siteId: normalizedSiteId,
-      status: "active",
-      limit: "300",
-      includeInsights: "0",
-    });
     const membersCacheKey = makeMerchantAdminDataCacheKey("merchant-memberships", normalizedSiteId, "cashier-active", 0, 300);
     const settingsCacheKey = makeMerchantAdminDataCacheKey(
       "merchant-membership-settings",
       normalizedSiteId,
       "redemption-cashier",
     );
-    const couponsCacheKey = makeMerchantAdminDataCacheKey("merchant-coupons", normalizedSiteId);
+    const couponsCacheKey = makeMerchantAdminDataCacheKey("merchant-coupons", normalizedSiteId, "cashier-catalog");
+    const requestId = ++cashierLoadRequestIdRef.current;
     const applyLoadedData = (
       nextMemberships: MerchantMembershipListItem[],
       nextSettings: MerchantMembershipSettings,
@@ -795,70 +788,73 @@ export default function MerchantPointRedemptionCashier({
       setSettings(nextSettings);
       setCoupons(nextCoupons);
     };
-    const cachedMemberships = force
-      ? null
-      : readMerchantAdminDataCache<MerchantMembershipListItem[]>(membersCacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
-    const cachedSettings = force
-      ? null
-      : readMerchantAdminDataCache<MerchantMembershipSettings>(settingsCacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
-    const cachedCoupons = force
-      ? null
-      : readMerchantAdminDataCache<MerchantCouponRecord[]>(couponsCacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
-    if (cachedMemberships && cachedSettings && cachedCoupons) {
-      setError("");
-      applyLoadedData(cachedMemberships, cachedSettings, cachedCoupons);
-      return;
-    }
-    setLoading(true);
-    setError("");
-    try {
-      const [membersResponse, settingsResponse, couponsResponse] = await Promise.all([
-        fetchPointRedemptionJson(`/api/memberships?${membersParams.toString()}`, {
-          method: "GET",
-          cache: "no-store",
-          credentials: "same-origin",
-          headers: { accept: "application/json" },
-        }),
-        fetchPointRedemptionJson(`/api/membership-settings?siteId=${encodeURIComponent(normalizedSiteId)}&scope=redemption-cashier`, {
-          method: "GET",
-          cache: "no-store",
-          credentials: "same-origin",
-          headers: { accept: "application/json" },
-        }),
-        fetchPointRedemptionJson(`/api/coupons?siteId=${encodeURIComponent(normalizedSiteId)}`, {
-          method: "GET",
-          cache: "no-store",
-          credentials: "same-origin",
-          headers: { accept: "application/json" },
-        }).catch(() => null),
-      ]);
-      const membersPayload = (await membersResponse.json().catch(() => null)) as MembershipsPayload | null;
-      const settingsPayload = (await settingsResponse.json().catch(() => null)) as MembershipSettingsPayload | null;
-      const couponsPayload = couponsResponse
-        ? ((await couponsResponse.json().catch(() => null)) as CouponsPayload | null)
-        : null;
-      if (!membersResponse.ok || !membersPayload?.ok) {
-        throw new Error(readPayloadMessage(membersPayload?.message, "会员列表加载失败"));
+    const loadCashierDataFromServer = async () => {
+      const params = new URLSearchParams({
+        siteId: normalizedSiteId,
+        limit: "300",
+      });
+      const response = await fetchPointRedemptionJson(`/api/merchant-admin/redemption-cashier?${params.toString()}`, {
+        method: "GET",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: { accept: "application/json" },
+      });
+      const payload = (await response.json().catch(() => null)) as RedemptionCashierPayload | null;
+      if (!response.ok || payload?.ok !== true || !payload.settings) {
+        throw new Error(readPayloadMessage(payload?.message, "积分兑换数据加载失败，请稍后重试"));
       }
-      if (!settingsResponse.ok || !settingsPayload?.ok || !settingsPayload.settings) {
-        throw new Error(readPayloadMessage(settingsPayload?.message, "兑换项目加载失败，请先检查会员配置"));
-      }
-      const nextMemberships = Array.isArray(membersPayload.memberships) ? membersPayload.memberships : [];
-      const nextSettings = settingsPayload.settings;
-      const nextCoupons = couponsResponse?.ok && Array.isArray(couponsPayload?.coupons) ? couponsPayload.coupons : [];
+      const nextMemberships = Array.isArray(payload.memberships) ? payload.memberships : [];
+      const nextSettings = payload.settings;
+      const nextCoupons = Array.isArray(payload.coupons) ? payload.coupons : [];
+      if (cashierLoadRequestIdRef.current !== requestId) return;
       writeMerchantAdminDataCache(membersCacheKey, nextMemberships);
       writeMerchantAdminDataCache(settingsCacheKey, nextSettings);
       writeMerchantAdminDataCache(couponsCacheKey, nextCoupons);
       applyLoadedData(nextMemberships, nextSettings, nextCoupons);
+    };
+    const cachedMemberships = force
+      ? null
+      : readMerchantAdminDataCacheSnapshot<MerchantMembershipListItem[]>(membersCacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
+    const cachedSettings = force
+      ? null
+      : readMerchantAdminDataCacheSnapshot<MerchantMembershipSettings>(settingsCacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
+    const cachedCoupons = force
+      ? null
+      : readMerchantAdminDataCacheSnapshot<MerchantCouponRecord[]>(couponsCacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
+    if (cachedMemberships && cachedSettings && cachedCoupons) {
+      setError("");
+      applyLoadedData(cachedMemberships.data, cachedSettings.data, cachedCoupons.data);
+      void loadCashierDataFromServer().catch(() => {});
+      return;
+    }
+    if (!options.silent) setLoading(true);
+    setError("");
+    try {
+      await loadCashierDataFromServer();
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "积分兑换数据加载失败，请稍后重试");
+      if (cashierLoadRequestIdRef.current === requestId) {
+        setError(loadError instanceof Error ? loadError.message : "积分兑换数据加载失败，请稍后重试");
+      }
     } finally {
-      setLoading(false);
+      if (!options.silent && cashierLoadRequestIdRef.current === requestId) setLoading(false);
     }
   }, [normalizedSiteId]);
 
   useEffect(() => {
     void loadData();
+  }, [loadData]);
+
+  useEffect(() => {
+    const refreshOnVisible = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      void loadData();
+    };
+    window.addEventListener("focus", refreshOnVisible);
+    document.addEventListener("visibilitychange", refreshOnVisible);
+    return () => {
+      window.removeEventListener("focus", refreshOnVisible);
+      document.removeEventListener("visibilitychange", refreshOnVisible);
+    };
   }, [loadData]);
 
   const ensureMembershipInsight = useCallback(async (membershipId: string) => {
@@ -868,17 +864,16 @@ export default function MerchantPointRedemptionCashier({
     if (!currentMembership || currentMembership.insight) return;
     if (memberInsightRequestIdsRef.current.has(normalizedMembershipId)) return;
     const cacheKey = makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, normalizedMembershipId);
-    const cachedMembership = readMerchantAdminDataCache<MerchantMembershipListItem>(
+    const cachedMembership = readMerchantAdminDataCacheSnapshot<MerchantMembershipListItem>(
       cacheKey,
       MERCHANT_ADMIN_DATA_CACHE_TTL_MS,
     );
     if (cachedMembership) {
       setMemberships((current) =>
         current.map((membership) =>
-          membership.id === cachedMembership.id ? { ...membership, ...cachedMembership } : membership,
+          membership.id === cachedMembership.data.id ? { ...membership, ...cachedMembership.data } : membership,
         ),
       );
-      return;
     }
 
     memberInsightRequestIdsRef.current.add(normalizedMembershipId);
@@ -1233,7 +1228,7 @@ export default function MerchantPointRedemptionCashier({
       );
       setRechargeDialogOpen(false);
       setNotice(`充值完成，余额增加 €${formatMoney(plan.rechargeAmount + plan.giftAmount)}，积分增加 ${formatPoints(plan.giftPoints)}。`);
-      await loadData(true);
+      void loadData(true, { silent: true });
     } catch (rechargeError) {
       setError(rechargeError instanceof Error ? rechargeError.message : "充值失败，请稍后重试");
     } finally {
@@ -1384,7 +1379,7 @@ export default function MerchantPointRedemptionCashier({
           ? `兑换完成，已扣减 ${formatPoints(totalPoints)} 积分。`
           : `兑换完成，已核销 ${couponLineCount} 张卡券。`,
       );
-      await loadData(true);
+      void loadData(true, { silent: true });
     } catch (checkoutError) {
       setError(checkoutError instanceof Error ? checkoutError.message : "积分兑换失败，请稍后重试");
     } finally {

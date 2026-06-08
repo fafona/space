@@ -8,7 +8,7 @@ import {
   MERCHANT_ADMIN_DATA_CACHE_TTL_MS,
   fetchMerchantAdminDataWithCache,
   makeMerchantAdminDataCacheKey,
-  readMerchantAdminDataCache,
+  readMerchantAdminDataCacheSnapshot,
 } from "@/lib/merchantAdminDataCache";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
@@ -1210,6 +1210,7 @@ export default function MerchantCouponManager({
   const [redeemNote, setRedeemNote] = useState("");
   const [redeeming, setRedeeming] = useState(false);
   const backgroundFileInputRef = useRef<HTMLInputElement>(null);
+  const couponLoadRequestIdRef = useRef(0);
 
   const selectedCoupon = useMemo(
     () => coupons.find((coupon) => coupon.id === form.id) ?? null,
@@ -1457,12 +1458,33 @@ export default function MerchantCouponManager({
       return;
     }
     const cacheKey = makeMerchantAdminDataCacheKey("merchant-coupons", siteId);
-    const cachedCoupons = force
+    const requestId = ++couponLoadRequestIdRef.current;
+    const loadCouponsFromServer = async () => {
+      const response = await fetch(`/api/coupons?siteId=${encodeURIComponent(siteId)}`, {
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => null)) as { coupons?: unknown; message?: string; error?: string } | null;
+      if (!response.ok) {
+        throw new Error(payload?.message || payload?.error || "优惠券加载失败");
+      }
+      return normalizeMerchantCouponRecords(payload?.coupons);
+    };
+    const cachedSnapshot = force
       ? null
-      : readMerchantAdminDataCache<MerchantCouponRecord[]>(cacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
-    if (cachedCoupons) {
+      : readMerchantAdminDataCacheSnapshot<MerchantCouponRecord[]>(cacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
+    if (cachedSnapshot) {
       setError("");
-      notifyCouponsChange(cachedCoupons);
+      notifyCouponsChange(cachedSnapshot.data);
+      void fetchMerchantAdminDataWithCache(cacheKey, loadCouponsFromServer, {
+        force: true,
+        allowStaleOnError: true,
+        dedupe: true,
+      })
+        .then((nextCoupons) => {
+          if (couponLoadRequestIdRef.current === requestId) notifyCouponsChange(nextCoupons);
+        })
+        .catch(() => {});
       return;
     }
     setLoading(true);
@@ -1483,17 +1505,32 @@ export default function MerchantCouponManager({
         },
         { force, allowStaleOnError: true },
       );
-      notifyCouponsChange(nextCoupons);
+      if (couponLoadRequestIdRef.current === requestId) notifyCouponsChange(nextCoupons);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "优惠券加载失败");
-      notifyCouponsChange([]);
+      if (couponLoadRequestIdRef.current === requestId) {
+        setError(loadError instanceof Error ? loadError.message : "优惠券加载失败");
+        notifyCouponsChange([]);
+      }
     } finally {
-      setLoading(false);
+      if (couponLoadRequestIdRef.current === requestId) setLoading(false);
     }
   }, [notifyCouponsChange, siteId]);
 
   useEffect(() => {
     void loadCoupons();
+  }, [loadCoupons]);
+
+  useEffect(() => {
+    const refreshOnVisible = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      void loadCoupons();
+    };
+    window.addEventListener("focus", refreshOnVisible);
+    document.addEventListener("visibilitychange", refreshOnVisible);
+    return () => {
+      window.removeEventListener("focus", refreshOnVisible);
+      document.removeEventListener("visibilitychange", refreshOnVisible);
+    };
   }, [loadCoupons]);
 
   useEffect(() => {
