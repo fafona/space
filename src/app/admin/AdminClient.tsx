@@ -20989,7 +20989,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     {"商户信息"}
                   </button>
                 ) : null}
-                {!isPlatformEditor && canUseBookingBlock ? (
+                {!isPlatformEditor && !merchantEditorOnly && canUseBookingBlock ? (
                   <button
                     className={
                       isMobileMerchantEditorShell
@@ -21002,7 +21002,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     {"预约管理"}
                   </button>
                 ) : null}
-                {canUseOrderManagement ? (
+                {!merchantEditorOnly && canUseOrderManagement ? (
                   <button
                     className={
                       isMobileMerchantEditorShell
@@ -21015,7 +21015,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     {"订单管理"}
                   </button>
                 ) : null}
-                {canUseCouponModule ? (
+                {!merchantEditorOnly && canUseCouponModule ? (
                   <button
                     className={
                       isMobileMerchantEditorShell
