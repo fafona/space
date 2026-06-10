@@ -21254,7 +21254,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       </button>
                     ) : null}
                     <select
-                      className={isMobileMerchantEditorShell ? merchantMobileToolbarSelectClassName : "border p-2 rounded min-w-[140px] lg:w-full"}
+                      className={
+                        isMobileMerchantEditorShell
+                          ? merchantMobileToolbarSelectClassName
+                          : "min-w-[140px] rounded border bg-white p-2 text-slate-900 lg:w-full"
+                      }
                       value={editingPlanId}
                       onChange={(e) => switchEditingPlan(e.target.value as PlanId)}
                       title="选择要编辑的方案"
@@ -21293,7 +21297,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     ) : (
                       <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_72px] items-center gap-2">
                         <select
-                          className="w-full min-w-0 rounded border p-2"
+                          className="w-full min-w-0 rounded border bg-white p-2 text-slate-900"
                           value={editingPageId}
                           onChange={(e) => switchEditingPage(e.target.value)}
                           title="选择要编辑的页面"
@@ -21496,8 +21500,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                           ? `${merchantMobileToolbarSelectClassName} ${
                               canUseThemeEffects ? "" : "bg-gray-100 text-gray-400 cursor-not-allowed"
                             }`
-                          : `border p-2 rounded min-w-[130px] lg:w-full ${
-                              canUseThemeEffects ? "" : "bg-gray-100 text-gray-400 cursor-not-allowed"
+                          : `min-w-[130px] rounded border p-2 lg:w-full ${
+                              canUseThemeEffects ? "bg-white text-slate-900" : "bg-gray-100 text-gray-400 cursor-not-allowed"
                             }`
                       }
                       value={themePreset}
@@ -21529,7 +21533,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     ) : null}
                     <div className={isMobileMerchantEditorShell ? "grid grid-cols-[minmax(0,1fr)_72px] items-start gap-3" : "grid w-full grid-cols-[minmax(0,1fr)_56px] items-start gap-2"}>
                       <select
-                        className={isMobileMerchantEditorShell ? merchantMobileToolbarSelectClassName : "border p-2 rounded min-w-0 w-full"}
+                        className={
+                          isMobileMerchantEditorShell
+                            ? merchantMobileToolbarSelectClassName
+                            : "min-w-0 w-full rounded border bg-white p-2 text-slate-900"
+                        }
                         value={newBlockType}
                         onChange={(e) => setNewBlockType(e.target.value as Block["type"])}
                       >
