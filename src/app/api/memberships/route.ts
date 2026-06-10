@@ -151,6 +151,8 @@ function buildCouponHistoryByIdentity(coupons: MerchantCouponRecord[], nowMs: nu
         discountLabel: getMerchantCouponDiscountLabel(coupon),
         discountType: coupon.discountType,
         discountValue: coupon.discountValue,
+        pointsVoucherMaxPerRedemption: coupon.pointsVoucherMaxPerRedemption,
+        pointsVoucherMinimumRedeemPoints: coupon.pointsVoucherMinimumRedeemPoints,
         productName: coupon.productName,
         productBarcode: coupon.productBarcode,
         productQuantity: coupon.productQuantity,

@@ -51,6 +51,25 @@ function normalizePositiveInteger(value: unknown) {
   return Math.round(numberValue);
 }
 
+function isPointsVoucherCoupon(coupon: { discountType: string }) {
+  return coupon.discountType === "points_voucher";
+}
+
+function readPointsVoucherDiscount(coupon: { discountType: string; discountValue: number }) {
+  return isPointsVoucherCoupon(coupon) ? Math.max(0, Math.round(Number(coupon.discountValue) || 0)) : 0;
+}
+
+function readPointsVoucherLimit(coupon: { discountType: string; pointsVoucherMaxPerRedemption: number }) {
+  return isPointsVoucherCoupon(coupon) ? normalizePositiveInteger(coupon.pointsVoucherMaxPerRedemption) : 0;
+}
+
+function readPointsVoucherMinimumRedeemPoints(coupon: {
+  discountType: string;
+  pointsVoucherMinimumRedeemPoints: number;
+}) {
+  return isPointsVoucherCoupon(coupon) ? normalizePositiveInteger(coupon.pointsVoucherMinimumRedeemPoints) : 0;
+}
+
 function normalizePositiveMoney(value: unknown) {
   const numberValue = typeof value === "number" ? value : Number.parseFloat(String(value ?? ""));
   if (!Number.isFinite(numberValue) || numberValue <= 0) return 0;
@@ -979,12 +998,28 @@ export async function applyMerchantMembershipRedemptionCart(input: {
           commit: false,
         })
       : [];
+  const pointsVoucherPreviews = couponPreviews.filter(isPointsVoucherCoupon);
   const rawCouponPointDiscountTotal = couponPreviews.reduce(
-    (sum, coupon) =>
-      coupon.discountType === "points_voucher" ? sum + Math.max(0, Math.round(coupon.discountValue)) : sum,
+    (sum, coupon) => sum + readPointsVoucherDiscount(coupon),
     0,
   );
   if (grossPoints <= 0 && rawCouponPointDiscountTotal > 0) throw new Error("coupon_points_voucher_requires_points");
+  const pointsVoucherLimit = pointsVoucherPreviews.reduce((limit, coupon) => {
+    const couponLimit = readPointsVoucherLimit(coupon);
+    if (couponLimit <= 0) return limit;
+    return limit <= 0 ? couponLimit : Math.min(limit, couponLimit);
+  }, 0);
+  if (pointsVoucherLimit > 0 && pointsVoucherPreviews.length > pointsVoucherLimit) {
+    throw new Error("coupon_points_voucher_limit_exceeded");
+  }
+  if (
+    pointsVoucherPreviews.some((coupon) => {
+      const minimumRedeemPoints = readPointsVoucherMinimumRedeemPoints(coupon);
+      return minimumRedeemPoints > 0 && grossPoints < minimumRedeemPoints;
+    })
+  ) {
+    throw new Error("coupon_points_voucher_minimum_not_met");
+  }
   const couponPointDiscountTotal = Math.min(grossPoints, rawCouponPointDiscountTotal);
   const totalPoints = Math.max(0, grossPoints - couponPointDiscountTotal);
   const nextPointBalance = currentMembership.pointBalance - totalPoints;

@@ -48,6 +48,8 @@ export type MerchantMemberCouponHistoryItem = {
   discountLabel: string;
   discountType: MerchantCouponDiscountType;
   discountValue: number;
+  pointsVoucherMaxPerRedemption: number;
+  pointsVoucherMinimumRedeemPoints: number;
   productName: string;
   productBarcode: string;
   productQuantity: number;

@@ -147,9 +147,13 @@ test("createMerchantCoupon normalizes usage scenarios", () => {
     title: "积分券",
     discountType: "points_voucher",
     discountValue: 20,
+    pointsVoucherMaxPerRedemption: 2.4,
+    pointsVoucherMinimumRedeemPoints: 100.4,
     usageScenarios: ["points_redemption", "checkout_qr"],
   });
   assert.equal(merchantCouponSupportsUsageScenario(pointsCoupon, "points_redemption"), true);
+  assert.equal(pointsCoupon.pointsVoucherMaxPerRedemption, 2);
+  assert.equal(pointsCoupon.pointsVoucherMinimumRedeemPoints, 100);
 });
 
 test("createMerchantCoupon normalizes display text and typography", () => {

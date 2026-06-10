@@ -30487,6 +30487,8 @@ type GalleryEditorImage = {
         discountType: "threshold_amount_off",
         discountValue: 5,
         minimumAmount: 30,
+        pointsVoucherMaxPerRedemption: 0,
+        pointsVoucherMinimumRedeemPoints: 0,
         productName: "",
         productBarcode: "",
         productQuantity: 0,

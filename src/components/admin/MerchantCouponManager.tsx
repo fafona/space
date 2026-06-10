@@ -64,6 +64,8 @@ type CouponFormState = {
   discountType: MerchantCouponDiscountType;
   discountValue: string;
   minimumAmount: string;
+  pointsVoucherMaxPerRedemption: string;
+  pointsVoucherMinimumRedeemPoints: string;
   productName: string;
   productBarcode: string;
   productQuantity: string;
@@ -143,6 +145,8 @@ const EMPTY_FORM: CouponFormState = {
   discountType: "threshold_amount_off",
   discountValue: "5",
   minimumAmount: "30",
+  pointsVoucherMaxPerRedemption: "",
+  pointsVoucherMinimumRedeemPoints: "",
   productName: "",
   productBarcode: "",
   productQuantity: "",
@@ -225,6 +229,28 @@ const EMPTY_FORM: CouponFormState = {
   claimTaskInviteCount: "",
   applicableTags: "",
 };
+
+const GENERATED_DISCOUNT_TEXT_FIELDS = new Set<keyof CouponFormState>([
+  "discountType",
+  "discountValue",
+  "minimumAmount",
+  "productName",
+  "exchangeItem",
+  "ticketVenue",
+]);
+
+const GENERATED_META_TEXT_FIELDS = new Set<keyof CouponFormState>([
+  "discountValue",
+  "minimumAmount",
+  "pointsVoucherMaxPerRedemption",
+  "pointsVoucherMinimumRedeemPoints",
+  "productBarcode",
+  "productQuantity",
+  "productAmount",
+  "exchangeQuantity",
+  "ticketDurationMinutes",
+  "expiresAt",
+]);
 
 type CouponLifecycleStatus = "running" | "ended" | "paused" | "not_started";
 type CouponLifecycleStatusFilter = "all" | CouponLifecycleStatus;
@@ -532,7 +558,15 @@ function buildRecordDefaultMetaText(coupon: MerchantCouponRecord, pricePrefix: s
     coupon.discountType === "exchange_voucher" && coupon.exchangeQuantity > 0 ? `数量 ${coupon.exchangeQuantity}` : "",
     coupon.discountType === "ticket_voucher" && coupon.ticketDurationMinutes > 0 ? `时长 ${coupon.ticketDurationMinutes} min` : "",
     coupon.discountType === "points_voucher" && coupon.discountValue > 0 ? `抵扣 ${Math.round(coupon.discountValue)} 积分` : "",
-    coupon.minimumAmount > 0 ? `门槛 ${pricePrefix}${coupon.minimumAmount.toFixed(2)}` : "",
+    coupon.discountType === "points_voucher" && coupon.pointsVoucherMinimumRedeemPoints > 0
+      ? `满 ${coupon.pointsVoucherMinimumRedeemPoints} 积分可用`
+      : "",
+    coupon.discountType === "points_voucher" && coupon.pointsVoucherMaxPerRedemption > 0
+      ? `单次最多 ${coupon.pointsVoucherMaxPerRedemption} 张`
+      : "",
+    coupon.discountType !== "points_voucher" && coupon.minimumAmount > 0
+      ? `门槛 ${pricePrefix}${coupon.minimumAmount.toFixed(2)}`
+      : "",
     formatUsageScenarios(coupon.usageScenarios),
     coupon.expiresAt ? `至 ${formatDateTime(coupon.expiresAt)}` : "",
   ]
@@ -593,7 +627,13 @@ function buildFormDefaultMetaText(form: CouponFormState, pricePrefix: string) {
     form.discountType === "points_voucher" && toNumberValue(form.discountValue) > 0
       ? `抵扣 ${Math.round(toNumberValue(form.discountValue))} 积分`
       : "",
-    minimumAmount > 0 ? `门槛 ${pricePrefix}${minimumAmount.toFixed(2)}` : "",
+    form.discountType === "points_voucher" && toIntValue(form.pointsVoucherMinimumRedeemPoints) > 0
+      ? `满 ${toIntValue(form.pointsVoucherMinimumRedeemPoints)} 积分可用`
+      : "",
+    form.discountType === "points_voucher" && toIntValue(form.pointsVoucherMaxPerRedemption) > 0
+      ? `单次最多 ${toIntValue(form.pointsVoucherMaxPerRedemption)} 张`
+      : "",
+    form.discountType !== "points_voucher" && minimumAmount > 0 ? `门槛 ${pricePrefix}${minimumAmount.toFixed(2)}` : "",
     formatUsageScenarios(form.usageScenarios),
     fromDateTimeTextValue(form.expiresAt) ? `至 ${formatDateTime(fromDateTimeTextValue(form.expiresAt))}` : "",
   ]
@@ -629,6 +669,10 @@ function buildFormFromCoupon(coupon: MerchantCouponRecord, pricePrefix: string):
     discountType: coupon.discountType,
     discountValue: coupon.discountValue > 0 ? String(coupon.discountValue) : "",
     minimumAmount: coupon.minimumAmount > 0 ? String(coupon.minimumAmount) : "",
+    pointsVoucherMaxPerRedemption:
+      coupon.pointsVoucherMaxPerRedemption > 0 ? String(coupon.pointsVoucherMaxPerRedemption) : "",
+    pointsVoucherMinimumRedeemPoints:
+      coupon.pointsVoucherMinimumRedeemPoints > 0 ? String(coupon.pointsVoucherMinimumRedeemPoints) : "",
     productName: coupon.productName,
     productBarcode: coupon.productBarcode,
     productQuantity: coupon.productQuantity > 0 ? String(coupon.productQuantity) : "",
@@ -722,7 +766,15 @@ function buildCouponVisualDataFromRecord(coupon: MerchantCouponRecord, pricePref
     coupon.discountType === "exchange_voucher" && coupon.exchangeQuantity > 0 ? `数量 ${coupon.exchangeQuantity}` : "",
     coupon.discountType === "ticket_voucher" && coupon.ticketDurationMinutes > 0 ? `时长 ${coupon.ticketDurationMinutes} min` : "",
     coupon.discountType === "points_voucher" && coupon.discountValue > 0 ? `抵扣 ${Math.round(coupon.discountValue)} 积分` : "",
-    coupon.minimumAmount > 0 ? `门槛 ${pricePrefix}${coupon.minimumAmount.toFixed(2)}` : "",
+    coupon.discountType === "points_voucher" && coupon.pointsVoucherMinimumRedeemPoints > 0
+      ? `满 ${coupon.pointsVoucherMinimumRedeemPoints} 积分可用`
+      : "",
+    coupon.discountType === "points_voucher" && coupon.pointsVoucherMaxPerRedemption > 0
+      ? `单次最多 ${coupon.pointsVoucherMaxPerRedemption} 张`
+      : "",
+    coupon.discountType !== "points_voucher" && coupon.minimumAmount > 0
+      ? `门槛 ${pricePrefix}${coupon.minimumAmount.toFixed(2)}`
+      : "",
     formatUsageScenarios(coupon.usageScenarios),
     coupon.expiresAt ? `至 ${formatDateTime(coupon.expiresAt)}` : "",
   ]
@@ -1637,7 +1689,24 @@ export default function MerchantCouponManager({
   }, [cityRuleInput, form.claimAllowedProvinces, locationCountryOptions, locationOptionsApi, selectedLocationCountryCodes]);
 
   function updateField<K extends keyof CouponFormState>(key: K, value: CouponFormState[K]) {
-    setForm((current) => ({ ...current, [key]: value }));
+    setForm((current) => {
+      const previousGeneratedDiscountText = buildFormGeneratedDiscountText(current, pricePrefix);
+      const previousGeneratedMetaText = buildFormDefaultMetaText(current, pricePrefix);
+      const next = { ...current, [key]: value };
+      if (
+        GENERATED_DISCOUNT_TEXT_FIELDS.has(key) &&
+        (!current.displayDiscountText.trim() || current.displayDiscountText.trim() === previousGeneratedDiscountText)
+      ) {
+        next.displayDiscountText = buildFormGeneratedDiscountText(next, pricePrefix);
+      }
+      if (
+        GENERATED_META_TEXT_FIELDS.has(key) &&
+        (!current.displayMetaText.trim() || current.displayMetaText.trim() === previousGeneratedMetaText)
+      ) {
+        next.displayMetaText = buildFormDefaultMetaText(next, pricePrefix);
+      }
+      return next;
+    });
   }
 
   function addRuleListItem(field: LocationRuleField, value: string) {
@@ -1744,15 +1813,18 @@ export default function MerchantCouponManager({
   function updateDiscountType(value: MerchantCouponDiscountType) {
     setForm((current) => {
       const previousGeneratedText = buildFormGeneratedDiscountText(current, pricePrefix);
+      const previousGeneratedMetaText = buildFormDefaultMetaText(current, pricePrefix);
       const nextUsageScenarios: MerchantCouponUsageScenario[] =
         value === "points_voucher"
           ? Array.from(new Set([...normalizeFormUsageScenarios(current.usageScenarios), "points_redemption"]))
           : current.usageScenarios;
       const next = { ...current, discountType: value, usageScenarios: nextUsageScenarios };
       const shouldRefreshDisplayText = !current.displayDiscountText.trim() || current.displayDiscountText.trim() === previousGeneratedText;
+      const shouldRefreshMetaText = !current.displayMetaText.trim() || current.displayMetaText.trim() === previousGeneratedMetaText;
       return {
         ...next,
         displayDiscountText: shouldRefreshDisplayText ? buildFormGeneratedDiscountText(next, pricePrefix) : current.displayDiscountText,
+        displayMetaText: shouldRefreshMetaText ? buildFormDefaultMetaText(next, pricePrefix) : current.displayMetaText,
       };
     });
   }
@@ -1870,6 +1942,8 @@ export default function MerchantCouponManager({
       discountType: form.discountType,
       discountValue: toNumberValue(form.discountValue),
       minimumAmount: toNumberValue(form.minimumAmount),
+      pointsVoucherMaxPerRedemption: toIntValue(form.pointsVoucherMaxPerRedemption),
+      pointsVoucherMinimumRedeemPoints: toIntValue(form.pointsVoucherMinimumRedeemPoints),
       productName: form.productName.trim(),
       productBarcode: form.productBarcode.trim(),
       productQuantity: toIntValue(form.productQuantity),
@@ -2648,18 +2722,44 @@ export default function MerchantCouponManager({
                       />
                     </label>
                   ) : form.discountType === "points_voucher" ? (
-                    <label className="space-y-1 text-sm">
-                      <span className="block text-slate-600">抵扣积分</span>
-                      <input
-                        type="number"
-                        min={0}
-                        step={1}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                        value={form.discountValue}
-                        onChange={handleInputChange("discountValue")}
-                        placeholder="例如：50"
-                      />
-                    </label>
+                    <>
+                      <label className="space-y-1 text-sm">
+                        <span className="block text-slate-600">抵扣积分</span>
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                          value={form.discountValue}
+                          onChange={handleInputChange("discountValue")}
+                          placeholder="例如：50"
+                        />
+                      </label>
+                      <label className="space-y-1 text-sm">
+                        <span className="block text-slate-600">使用门槛积分</span>
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                          value={form.pointsVoucherMinimumRedeemPoints}
+                          onChange={handleInputChange("pointsVoucherMinimumRedeemPoints")}
+                          placeholder="空为不限制"
+                        />
+                      </label>
+                      <label className="space-y-1 text-sm">
+                        <span className="block text-slate-600">单次最多使用张数</span>
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                          value={form.pointsVoucherMaxPerRedemption}
+                          onChange={handleInputChange("pointsVoucherMaxPerRedemption")}
+                          placeholder="空为不限制"
+                        />
+                      </label>
+                    </>
                   ) : form.discountType === "exchange_voucher" ? (
                     <>
                       <label className="space-y-1 text-sm">

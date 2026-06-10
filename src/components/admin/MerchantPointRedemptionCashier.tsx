@@ -72,6 +72,8 @@ type CartLine = {
   couponTitle?: string;
   couponDiscountLabel?: string;
   couponPointDiscount?: number;
+  couponPointsVoucherMaxPerRedemption?: number;
+  couponPointsVoucherMinimumRedeemPoints?: number;
   quantity: number;
 };
 
@@ -276,6 +278,8 @@ function operationErrorMessage(message: unknown, fallback: string, operationType
   if (text === "coupon_claim_member_mismatch") return "所选卡券不属于当前会员。";
   if (text === "coupon_not_direct_redeemable") return "此券不能在积分兑换中直接使用，请在订单中使用。";
   if (text === "coupon_points_voucher_requires_points") return "积分券需要和兑换项目一起使用。";
+  if (text === "coupon_points_voucher_limit_exceeded") return "本次积分兑换使用的积分券数量超过限制。";
+  if (text === "coupon_points_voucher_minimum_not_met") return "本次兑换积分未达到积分券使用门槛。";
   return text || fallback;
 }
 
@@ -306,6 +310,31 @@ function getCouponCartQuantity(coupon: MemberCouponClaim) {
 
 function getCouponPointDiscount(coupon: MemberCouponClaim) {
   return coupon.discountType === "points_voucher" ? Math.max(0, Math.round(Number(coupon.discountValue) || 0)) : 0;
+}
+
+function getCouponPointsVoucherMaxPerRedemption(coupon: MemberCouponClaim) {
+  return coupon.discountType === "points_voucher"
+    ? Math.max(0, Math.round(Number(coupon.pointsVoucherMaxPerRedemption) || 0))
+    : 0;
+}
+
+function getCouponPointsVoucherMinimumRedeemPoints(coupon: MemberCouponClaim) {
+  return coupon.discountType === "points_voucher"
+    ? Math.max(0, Math.round(Number(coupon.pointsVoucherMinimumRedeemPoints) || 0))
+    : 0;
+}
+
+function getCouponPointsVoucherRuleText(coupon: Pick<MemberCouponClaim, "discountType" | "pointsVoucherMaxPerRedemption" | "pointsVoucherMinimumRedeemPoints">) {
+  if (coupon.discountType !== "points_voucher") return "";
+  const rules = [
+    Math.max(0, Math.round(Number(coupon.pointsVoucherMinimumRedeemPoints) || 0)) > 0
+      ? `满 ${Math.max(0, Math.round(Number(coupon.pointsVoucherMinimumRedeemPoints) || 0))} 积分可用`
+      : "",
+    Math.max(0, Math.round(Number(coupon.pointsVoucherMaxPerRedemption) || 0)) > 0
+      ? `单次最多 ${Math.max(0, Math.round(Number(coupon.pointsVoucherMaxPerRedemption) || 0))} 张积分券`
+      : "",
+  ].filter(Boolean);
+  return rules.join(" / ");
 }
 
 function getCouponDirectUseUnavailableReason(coupon: MemberCouponClaim) {
@@ -667,6 +696,12 @@ export default function MerchantPointRedemptionCashier({
           couponTitle: trimText(line.couponTitle, 120),
           couponDiscountLabel: trimText(line.couponDiscountLabel, 160),
           couponPointDiscount: couponSettlementCode ? parsePositiveInteger(line.couponPointDiscount) : 0,
+          couponPointsVoucherMaxPerRedemption: couponSettlementCode
+            ? parsePositiveInteger(line.couponPointsVoucherMaxPerRedemption)
+            : 0,
+          couponPointsVoucherMinimumRedeemPoints: couponSettlementCode
+            ? parsePositiveInteger(line.couponPointsVoucherMinimumRedeemPoints)
+            : 0,
         };
       })
       .filter(
@@ -687,6 +722,8 @@ export default function MerchantPointRedemptionCashier({
           couponTitle: string;
           couponDiscountLabel: string;
           couponPointDiscount: number;
+          couponPointsVoucherMaxPerRedemption: number;
+          couponPointsVoucherMinimumRedeemPoints: number;
         } => Boolean(row),
       );
   }, [cart, enabledItemById, selectedMember, settings]);
@@ -699,6 +736,16 @@ export default function MerchantPointRedemptionCashier({
 
   const grossPoints = cartRows.reduce((sum, row) => sum + row.subtotalPoints, 0);
   const rawCouponPointDiscountTotal = cartRows.reduce((sum, row) => sum + row.couponPointDiscount, 0);
+  const pointVoucherRows = cartRows.filter((row) => row.couponSettlementCode && row.couponPointDiscount > 0);
+  const pointVoucherLimit = pointVoucherRows.reduce((limit, row) => {
+    const rowLimit = row.couponPointsVoucherMaxPerRedemption;
+    if (rowLimit <= 0) return limit;
+    return limit <= 0 ? rowLimit : Math.min(limit, rowLimit);
+  }, 0);
+  const pointVoucherLimitExceeded = pointVoucherLimit > 0 && pointVoucherRows.length > pointVoucherLimit;
+  const pointVoucherMinimumViolation = pointVoucherRows.find(
+    (row) => row.couponPointsVoucherMinimumRedeemPoints > 0 && grossPoints < row.couponPointsVoucherMinimumRedeemPoints,
+  );
   const couponPointDiscountTotal = Math.min(grossPoints, rawCouponPointDiscountTotal);
   const totalPoints = Math.max(0, grossPoints - couponPointDiscountTotal);
   const totalQuantity = cartRows.reduce((sum, row) => sum + row.quantity, 0);
@@ -708,6 +755,8 @@ export default function MerchantPointRedemptionCashier({
     cartRows.length > 0 &&
     hasRedeemableCartEffect &&
     !(grossPoints <= 0 && rawCouponPointDiscountTotal > 0) &&
+    !pointVoucherLimitExceeded &&
+    !pointVoucherMinimumViolation &&
     totalPoints <= selectedInsight.pointBalance &&
     !saving;
 
@@ -1194,6 +1243,17 @@ export default function MerchantPointRedemptionCashier({
     const itemName = getCouponCartItemName(coupon);
     const quantity = getCouponCartQuantity(coupon);
     const couponPointDiscount = getCouponPointDiscount(coupon);
+    if (couponPointDiscount > 0) {
+      const couponLimit = getCouponPointsVoucherMaxPerRedemption(coupon);
+      const effectiveLimit = [pointVoucherLimit, couponLimit].filter((limit) => limit > 0).reduce(
+        (limit, nextLimit) => (limit <= 0 ? nextLimit : Math.min(limit, nextLimit)),
+        0,
+      );
+      if (effectiveLimit > 0 && pointVoucherRows.length + 1 > effectiveLimit) {
+        setError(`本次积分兑换最多可使用 ${effectiveLimit} 张积分券。`);
+        return;
+      }
+    }
     setCart((current) => [
       ...current,
       {
@@ -1207,6 +1267,8 @@ export default function MerchantPointRedemptionCashier({
         couponTitle: coupon.title,
         couponDiscountLabel: coupon.discountLabel,
         couponPointDiscount,
+        couponPointsVoucherMaxPerRedemption: getCouponPointsVoucherMaxPerRedemption(coupon),
+        couponPointsVoucherMinimumRedeemPoints: getCouponPointsVoucherMinimumRedeemPoints(coupon),
         quantity,
       },
     ]);
@@ -1388,6 +1450,14 @@ export default function MerchantPointRedemptionCashier({
     }
     if (grossPoints <= 0 && rawCouponPointDiscountTotal > 0) {
       setError("积分券需要和需扣积分的兑换项目一起使用。");
+      return;
+    }
+    if (pointVoucherLimitExceeded) {
+      setError(`本次积分兑换最多可使用 ${pointVoucherLimit} 张积分券。`);
+      return;
+    }
+    if (pointVoucherMinimumViolation) {
+      setError(`本次兑换需满 ${formatPoints(pointVoucherMinimumViolation.couponPointsVoucherMinimumRedeemPoints)} 积分才可使用所选积分券。`);
       return;
     }
     if (totalPoints > selectedInsight.pointBalance) {
@@ -3975,6 +4045,7 @@ export default function MerchantPointRedemptionCashier({
                             const inCart = couponClaimIdsInCart.has(coupon.id);
                             const itemName = getCouponCartItemName(coupon);
                             const quantity = getCouponCartQuantity(coupon);
+                            const ruleText = getCouponPointsVoucherRuleText(coupon);
                             return (
                               <div key={coupon.id} className={`member-coupon-card${inCart ? " is-in-cart" : ""}`}>
                                 <strong>{coupon.title}</strong>
@@ -3982,6 +4053,7 @@ export default function MerchantPointRedemptionCashier({
                                 <small>
                                   {itemName} x {quantity} / {coupon.settlementCode || coupon.couponCode}
                                 </small>
+                                {ruleText ? <small>{ruleText}</small> : null}
                                 <button
                                   type="button"
                                   disabled={inCart || saving}
@@ -4008,6 +4080,7 @@ export default function MerchantPointRedemptionCashier({
                             const reason = getCouponDirectUseUnavailableReason(coupon) || "不可用";
                             const itemName = getCouponCartItemName(coupon);
                             const quantity = getCouponCartQuantity(coupon);
+                            const ruleText = getCouponPointsVoucherRuleText(coupon);
                             return (
                               <div key={coupon.id} className="member-coupon-card is-disabled">
                                 <strong>{coupon.title}</strong>
@@ -4015,6 +4088,7 @@ export default function MerchantPointRedemptionCashier({
                                 <small>
                                   {itemName} x {quantity} / {coupon.settlementCode || coupon.couponCode}
                                 </small>
+                                {ruleText ? <small>{ruleText}</small> : null}
                                 <span className="member-coupon-status-tag">{reason}</span>
                               </div>
                             );

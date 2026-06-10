@@ -84,6 +84,8 @@ export type MerchantCouponInput = {
   discountType?: MerchantCouponDiscountType;
   discountValue?: number;
   minimumAmount?: number;
+  pointsVoucherMaxPerRedemption?: number;
+  pointsVoucherMinimumRedeemPoints?: number;
   productName?: string;
   productBarcode?: string;
   productQuantity?: number;
@@ -412,6 +414,10 @@ export function normalizeMerchantCouponRecord(input: MerchantCouponInput | null 
     discountType === "threshold_amount_off"
       ? Math.max(0.01, normalizeMoneyValue(input?.minimumAmount))
       : normalizeMoneyValue(input?.minimumAmount);
+  const pointsVoucherMaxPerRedemption =
+    discountType === "points_voucher" ? normalizePositiveInt(input?.pointsVoucherMaxPerRedemption) : 0;
+  const pointsVoucherMinimumRedeemPoints =
+    discountType === "points_voucher" ? normalizePositiveInt(input?.pointsVoucherMinimumRedeemPoints) : 0;
   return {
     id,
     siteId,
@@ -421,6 +427,8 @@ export function normalizeMerchantCouponRecord(input: MerchantCouponInput | null 
     discountType,
     discountValue,
     minimumAmount,
+    pointsVoucherMaxPerRedemption,
+    pointsVoucherMinimumRedeemPoints,
     productName: trimText(input?.productName),
     productBarcode: trimText(input?.productBarcode),
     productQuantity: normalizePositiveInt(input?.productQuantity),
