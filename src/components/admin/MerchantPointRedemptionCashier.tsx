@@ -3759,8 +3759,12 @@ export default function MerchantPointRedemptionCashier({
                 type="button"
                 className={`view-mode-button ${viewMode === "image" ? "active" : ""}`}
                 onClick={() => {
+                  if (viewMode === "image") {
+                    setImageSizeMenuOpen((current) => !current);
+                    return;
+                  }
                   setViewMode("image");
-                  setImageSizeMenuOpen((current) => !current);
+                  setImageSizeMenuOpen(false);
                 }}
                 title="图片模式"
               >
