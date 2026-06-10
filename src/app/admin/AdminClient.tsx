@@ -19605,7 +19605,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const toolbarWrapperClassName = topBarCollapsed
     ? "hidden"
     : shouldUseDesktopEditorSidebar
-      ? "fixed inset-y-0 left-0 z-[15000] w-[228px] overflow-y-auto border-r border-white/5 bg-[#111827] text-white shadow-[inset_-1px_0_0_rgba(0,0,0,0.12)]"
+      ? `fixed inset-y-0 left-0 z-[15000] w-[228px] overflow-y-auto border-r border-white/5 bg-[#111827] ${
+          merchantEditorOnly ? "text-slate-900" : "text-white"
+        } shadow-[inset_-1px_0_0_rgba(0,0,0,0.12)]`
       : "fixed inset-x-0 top-0 z-[15000] border-b border-white/70 bg-[rgba(248,251,255,0.88)] shadow-[0_22px_48px_rgba(15,23,42,0.10)] backdrop-blur-xl";
   const toolbarContentClassName = shouldUseDesktopEditorSidebar
     ? "mx-0 flex max-w-none flex-col items-stretch justify-start gap-4 px-3 py-[18px]"
