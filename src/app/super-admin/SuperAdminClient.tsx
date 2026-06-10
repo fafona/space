@@ -2620,23 +2620,16 @@ export default function SuperAdminClient() {
       const mergedSite = localSite
         ? {
             ...applyBackendProfileSnapshot(localSite, account.profileSnapshot, account.email),
-            permissionConfig:
-              account.profileSnapshot?.permissionConfig ??
-              localSite.permissionConfig ??
-              createDefaultMerchantPermissionConfig(),
-            serviceExpiresAt:
-              account.profileSnapshot?.serviceExpiresAt ??
-              localSite.serviceExpiresAt ??
-              null,
-            sortConfig:
-              account.profileSnapshot?.sortConfig ??
-              localSite.sortConfig ??
-              createDefaultMerchantSortConfig(),
-            status: account.profileSnapshot?.status ?? localSite.status ?? "online",
-            configHistory:
-              account.profileConfigHistory?.length > 0
-                ? mergeMerchantConfigHistoryEntries(account.profileConfigHistory)
-                : localSite.configHistory ?? [],
+            status: localSite.status ?? account.profileSnapshot?.status ?? "online",
+            serviceExpiresAt: localSite.serviceExpiresAt ?? null,
+            permissionConfig: localSite.permissionConfig ?? createDefaultMerchantPermissionConfig(),
+            merchantCardImageUrl: (localSite.merchantCardImageUrl ?? "").trim(),
+            merchantCardImageOpacity: normalizeUnitInterval(localSite.merchantCardImageOpacity, 1),
+            sortConfig: localSite.sortConfig ?? createDefaultMerchantSortConfig(),
+            configHistory: mergeMerchantConfigHistoryEntries(
+              account.profileConfigHistory,
+              localSite.configHistory,
+            ),
           }
         : null;
       const localSiteContext = mergedSite
@@ -4055,6 +4048,27 @@ export default function SuperAdminClient() {
       });
       return replaced ? next : [nextItem, ...prev];
     });
+  }, []);
+  const updateBackendMerchantAccountProfileSnapshot = useCallback((site: Site) => {
+    const merchantId = normalizeMerchantIdValue(site.id);
+    if (!merchantId) return;
+    const snapshot = buildPlatformMerchantSnapshotPayloadFromSites([site]).snapshot[0] ?? null;
+    if (!snapshot) return;
+    setBackendMerchantAccounts((prev) =>
+      prev.map((account) => {
+        if (account.accountType !== "merchant") return account;
+        const accountMerchantId =
+          normalizeMerchantIdValue(account.merchantId) ||
+          normalizeMerchantIdValue(account.accountId) ||
+          normalizeMerchantIdValue(account.profileSnapshot?.id);
+        if (accountMerchantId !== merchantId) return account;
+        return {
+          ...account,
+          profileSnapshot: snapshot,
+          profileConfigHistory: mergeMerchantConfigHistoryEntries(site.configHistory),
+        };
+      }),
+    );
   }, []);
   const hydratePersonalConfigDraft = useCallback((account: BackendMerchantAccount | null | undefined) => {
     const config = normalizePersonalAccountServiceConfig(
@@ -6129,21 +6143,37 @@ export default function SuperAdminClient() {
       after: afterSnapshot,
     });
     const buildConfigState = (baseState: PlatformState): PlatformState => {
+      let replacedSite = false;
       const nextSites = baseState.sites.map((item) =>
-        item.id === selectedMerchantSite.id
-          ? {
-              ...item,
-              status: nextStatus,
-              serviceExpiresAt: afterSnapshot.serviceExpiresAt,
-              permissionConfig: afterSnapshot.permissionConfig,
-              merchantCardImageUrl: afterSnapshot.merchantCardImageUrl,
-              merchantCardImageOpacity: afterSnapshot.merchantCardImageOpacity,
-              sortConfig: afterSnapshot.sortConfig,
-              configHistory: appendMerchantConfigHistory(item.configHistory, historyEntry),
-              updatedAt: nextIsoNow(),
-            }
-          : item,
+        {
+          if (item.id !== selectedMerchantSite.id) return item;
+          replacedSite = true;
+          return {
+            ...item,
+            status: nextStatus,
+            serviceExpiresAt: afterSnapshot.serviceExpiresAt,
+            permissionConfig: afterSnapshot.permissionConfig,
+            merchantCardImageUrl: afterSnapshot.merchantCardImageUrl,
+            merchantCardImageOpacity: afterSnapshot.merchantCardImageOpacity,
+            sortConfig: afterSnapshot.sortConfig,
+            configHistory: appendMerchantConfigHistory(item.configHistory, historyEntry),
+            updatedAt: nextIsoNow(),
+          };
+        },
       );
+      if (!replacedSite) {
+        nextSites.push({
+          ...selectedMerchantSite,
+          status: nextStatus,
+          serviceExpiresAt: afterSnapshot.serviceExpiresAt,
+          permissionConfig: afterSnapshot.permissionConfig,
+          merchantCardImageUrl: afterSnapshot.merchantCardImageUrl,
+          merchantCardImageOpacity: afterSnapshot.merchantCardImageOpacity,
+          sortConfig: afterSnapshot.sortConfig,
+          configHistory: appendMerchantConfigHistory(selectedMerchantSite.configHistory, historyEntry),
+          updatedAt: nextIsoNow(),
+        });
+      }
       return {
         ...baseState,
         sites: nextSites,
@@ -6201,6 +6231,10 @@ export default function SuperAdminClient() {
     if (!persisted) {
       setTip("配置已保存到服务端，但本地缓存写入失败，请稍后刷新确认");
       return;
+    }
+    const persistedSite = stateToPersist.sites.find((site) => site.id === selectedMerchantSite.id) ?? null;
+    if (persistedSite) {
+      updateBackendMerchantAccountProfileSnapshot(persistedSite);
     }
     setTip(mergedAfterConflict ? "检测到服务端已有更新，已合并并保存本次配置" : SUPER_ADMIN_MESSAGES.configSaved);
   }
