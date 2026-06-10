@@ -227,8 +227,12 @@ function getRedemptionPointCostForMember(
 }
 
 function redemptionStockText(stock: number | null) {
-  if (stock === null) return "不限";
+  if (stock === null) return "∞";
   return stock > 0 ? String(stock) : "无库存";
+}
+
+function shouldShowRedemptionStock(item: MerchantMemberRedemptionItem) {
+  return item.showStock !== false;
 }
 
 function formatBirthday(membership: MerchantMembershipListItem) {
@@ -1524,7 +1528,10 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                     </div>
                     {selectedRedemptionItem ? (
                       <div className="mt-2 text-xs text-slate-500">
-                        库存 {redemptionStockText(selectedRedemptionItem.stock)}，本次扣减{" "}
+                        {shouldShowRedemptionStock(selectedRedemptionItem)
+                          ? `库存 ${redemptionStockText(selectedRedemptionItem.stock)}，`
+                          : ""}
+                        本次扣减{" "}
                         {selectedRedemptionUnitPoints * (Number.parseInt(operationRedemptionQuantity, 10) || 1)} 积分
                         {selectedRedemptionItem.pointsCost !== null && selectedRedemptionUnitPoints !== selectedRedemptionItem.pointsCost
                           ? `（原 ${selectedRedemptionItem.pointsCost} 积分/件）`

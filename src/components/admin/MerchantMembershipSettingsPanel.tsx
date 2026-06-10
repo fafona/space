@@ -579,7 +579,7 @@ export default function MerchantMembershipSettingsPanel({
   }
 
   function redemptionStockText(stock: number | null) {
-    if (stock === null) return "不限";
+    if (stock === null) return "∞";
     return stock > 0 ? String(stock) : "无库存";
   }
 
@@ -669,6 +669,7 @@ export default function MerchantMembershipSettingsPanel({
         memberPrice: null,
         taxRate: null,
         stock: null,
+        showStock: true,
         pointProduct: true,
         recommended: false,
         sort: activeSettings.redemptionItems.length,
@@ -701,6 +702,7 @@ export default function MerchantMembershipSettingsPanel({
       imageUrl: trimText(itemDialog.draft.imageUrl, 1000),
       iconName: normalizeCategoryIconName(itemDialog.draft.iconName) || "none",
       description: trimText(itemDialog.draft.description, 500),
+      showStock: itemDialog.draft.showStock !== false,
     };
     if (!draft.code || !draft.name) {
       setError("请填写兑换项目编号和名称。");
@@ -995,7 +997,7 @@ export default function MerchantMembershipSettingsPanel({
           <div className="mb-3 grid gap-3 md:grid-cols-4">
             <SummaryPill label="兑换项目" value={activeSettings.redemptionItems.length} tone="slate" />
             <SummaryPill label="启用项目" value={activeSettings.redemptionItems.filter((item) => item.enabled).length} tone="green" />
-            <SummaryPill label="不限库存" value={activeSettings.redemptionItems.filter((item) => item.stock === null).length} tone="cyan" />
+            <SummaryPill label="∞ 库存" value={activeSettings.redemptionItems.filter((item) => item.stock === null).length} tone="cyan" />
             <SummaryPill label="项目分类" value={itemCategoryCount} tone="amber" />
           </div>
           <div className="overflow-x-auto rounded-2xl border border-slate-200">
@@ -1063,7 +1065,13 @@ export default function MerchantMembershipSettingsPanel({
                       <td className="px-4 py-3 text-slate-700">
                         {item.referenceAmount === null ? "-" : item.referenceAmount.toFixed(2)}
                       </td>
-                      <td className="px-4 py-3 text-slate-700">{redemptionStockText(item.stock)}</td>
+                      <td className="px-4 py-3 text-slate-700">
+                        {item.showStock === false ? (
+                          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">隐藏</span>
+                        ) : (
+                          redemptionStockText(item.stock)
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-slate-700">{redemptionCategoryName(item.categoryId)}</td>
                       <td className="px-4 py-3">
                         <span
@@ -1241,7 +1249,7 @@ export default function MerchantMembershipSettingsPanel({
                     className={inputClassName()}
                     value={toOptionalNumberInputValue(itemDialog.draft.stock)}
                     onChange={(event) => patchItemDraft({ stock: parseOptionalInteger(event.target.value) })}
-                    placeholder="留空表示不限库存"
+                    placeholder="留空表示 ∞"
                   />
                 </Field>
                 <Field label="税率">
@@ -1274,11 +1282,16 @@ export default function MerchantMembershipSettingsPanel({
                   {[
                     ["pointProduct", "积分项目"],
                     ["recommended", "推荐项目"],
+                    ["showStock", "显示库存"],
                   ].map(([key, label]) => (
                     <label key={key} className="flex items-center gap-2 text-sm font-semibold text-slate-700">
                       <input
                         type="checkbox"
-                        checked={Boolean(itemDialog.draft[key as keyof MerchantMemberRedemptionItem])}
+                        checked={
+                          key === "showStock"
+                            ? itemDialog.draft.showStock !== false
+                            : Boolean(itemDialog.draft[key as keyof MerchantMemberRedemptionItem])
+                        }
                         onChange={(event) => patchItemDraft({ [key]: event.target.checked } as Partial<MerchantMemberRedemptionItem>)}
                       />
                       {label}

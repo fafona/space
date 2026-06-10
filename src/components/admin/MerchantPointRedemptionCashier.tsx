@@ -257,8 +257,12 @@ function productInitial(item: MerchantMemberRedemptionItem) {
 }
 
 function stockLabel(item: MerchantMemberRedemptionItem) {
-  if (item.stock === null) return "不限库存";
+  if (item.stock === null) return "∞";
   return item.stock > 0 ? `库存 ${item.stock}` : "无库存";
+}
+
+function shouldShowStock(item: MerchantMemberRedemptionItem) {
+  return item.showStock !== false;
 }
 
 function operationErrorMessage(message: unknown, fallback: string, operationType: "redeem" | "recharge" = "redeem") {
@@ -3652,7 +3656,9 @@ export default function MerchantPointRedemptionCashier({
                               ? row.couponDiscountLabel || "卡券兑换"
                               : row.custom
                                 ? "快捷兑换"
-                                : `${categoryName(enabledCategories, row.categoryId)} / ${row.item ? stockLabel(row.item) : "不限库存"}`}
+                                : row.item && shouldShowStock(row.item)
+                                  ? `${categoryName(enabledCategories, row.categoryId)} / ${stockLabel(row.item)}`
+                                  : categoryName(enabledCategories, row.categoryId)}
                           </span>
                         </strong>
                         <span>{row.couponPointDiscount > 0 ? `-${formatPoints(row.couponPointDiscount)}` : formatPoints(row.unitPoints)}</span>
@@ -3952,6 +3958,7 @@ export default function MerchantPointRedemptionCashier({
                 const itemImageUrl = normalizePublicAssetUrl(item.imageUrl || "");
                 const pointsUnavailable = item.pointsCost === null;
                 const itemDisabled = outOfStock || pointsUnavailable;
+                const showStock = shouldShowStock(item);
 
                 if (viewMode === "text") {
                   return (
@@ -3965,7 +3972,7 @@ export default function MerchantPointRedemptionCashier({
                       <span className="product-code">{item.code || item.id}</span>
                       <strong>{item.name}</strong>
                       <span className="product-price">{pointsUnavailable ? "-" : formatPoints(unitPoints)}</span>
-                      <span className={`product-stock ${outOfStock ? "danger" : ""}`}>{stockLabel(item)}</span>
+                      {showStock ? <span className={`product-stock ${outOfStock ? "danger" : ""}`}>{stockLabel(item)}</span> : null}
                     </button>
                   );
                 }
@@ -3994,10 +4001,12 @@ export default function MerchantPointRedemptionCashier({
                     <div className="product-footer">
                       <strong>{item.name}</strong>
                       <span className="product-price">{pointsUnavailable ? "-" : formatPoints(unitPoints)}</span>
-                      <span className={`product-stock ${outOfStock ? "danger" : ""}`}>
-                        {stockLabel(item)}
-                        {inCartQuantity ? ` / 已选 ${inCartQuantity}` : ""}
-                      </span>
+                      {showStock ? (
+                        <span className={`product-stock ${outOfStock ? "danger" : ""}`}>
+                          {stockLabel(item)}
+                          {inCartQuantity ? ` / 已选 ${inCartQuantity}` : ""}
+                        </span>
+                      ) : null}
                     </div>
                   </button>
                 );

@@ -74,6 +74,7 @@ export type MerchantMemberRedemptionItem = {
   memberPrice: number | null;
   taxRate: number | null;
   stock: number | null;
+  showStock?: boolean;
   pointProduct: boolean;
   recommended: boolean;
   sort: number;
@@ -308,7 +309,7 @@ function readRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
-function normalizeBoolean(value: unknown, fallback = false) {
+function normalizeBoolean(value: unknown, fallback = false): boolean {
   if (typeof value === "boolean") return value;
   if (typeof value === "string") {
     const normalized = value.trim().toLowerCase();
@@ -444,32 +445,32 @@ function normalizeRedemptionCategories(value: unknown): MerchantMemberRedemption
 
 function normalizeRedemptionItems(value: unknown): MerchantMemberRedemptionItem[] {
   if (!Array.isArray(value)) return [];
-  return value
-    .map((item, index) => {
-      const record = readRecord(item);
-      if (!record) return null;
-      return {
-        id: normalizeId(record.id, "item", index),
-        categoryId: trimText(record.categoryId, 120),
-        code: trimText(record.code, 120),
-        barcode: trimText(record.barcode ?? record.barCode ?? record.goodsBarcode, 120),
-        imageUrl: trimText(record.imageUrl ?? record.image ?? record.goodsImage, 1000),
-        iconName: trimText(record.iconName ?? record.icon ?? record.goodsIcon, 80),
-        name: trimText(record.name ?? record.title, 160) || `兑换项目 ${index + 1}`,
-        description: trimText(record.description, 500),
-        enabled: normalizeBoolean(record.enabled, true),
-        pointsCost: normalizeOptionalInteger(record.pointsCost ?? record.points),
-        referenceAmount: normalizeOptionalMoney(record.referenceAmount ?? record.price),
-        memberPrice: normalizeOptionalMoney(record.memberPrice ?? record.vipPrice ?? record.uprice),
-        taxRate: normalizeOptionalMoney(record.taxRate ?? record.tax),
-        stock: normalizeOptionalInteger(record.stock),
-        pointProduct: normalizeBoolean(record.pointProduct ?? record.isPointProduct, true),
-        recommended: normalizeBoolean(record.recommended ?? record.isRecommended ?? record.recommend),
-        sort: normalizeSort(record.sort, index),
-      };
-    })
-    .filter((item): item is MerchantMemberRedemptionItem => Boolean(item))
-    .sort((left, right) => left.sort - right.sort);
+  const items: MerchantMemberRedemptionItem[] = [];
+  value.forEach((item, index) => {
+    const record = readRecord(item);
+    if (!record) return;
+    items.push({
+      id: normalizeId(record.id, "item", index),
+      categoryId: trimText(record.categoryId, 120),
+      code: trimText(record.code, 120),
+      barcode: trimText(record.barcode ?? record.barCode ?? record.goodsBarcode, 120),
+      imageUrl: trimText(record.imageUrl ?? record.image ?? record.goodsImage, 1000),
+      iconName: trimText(record.iconName ?? record.icon ?? record.goodsIcon, 80),
+      name: trimText(record.name ?? record.title, 160) || `兑换项目 ${index + 1}`,
+      description: trimText(record.description, 500),
+      enabled: normalizeBoolean(record.enabled, true),
+      pointsCost: normalizeOptionalInteger(record.pointsCost ?? record.points),
+      referenceAmount: normalizeOptionalMoney(record.referenceAmount ?? record.price),
+      memberPrice: normalizeOptionalMoney(record.memberPrice ?? record.vipPrice ?? record.uprice),
+      taxRate: normalizeOptionalMoney(record.taxRate ?? record.tax),
+      stock: normalizeOptionalInteger(record.stock),
+      showStock: normalizeBoolean(record.showStock ?? record.stockVisible ?? record.displayStock, true),
+      pointProduct: normalizeBoolean(record.pointProduct ?? record.isPointProduct, true),
+      recommended: normalizeBoolean(record.recommended ?? record.isRecommended ?? record.recommend),
+      sort: normalizeSort(record.sort, index),
+    });
+  });
+  return items.sort((left, right) => left.sort - right.sort);
 }
 
 function normalizeLevelBenefit(value: unknown): MerchantMemberLevelBenefit {
