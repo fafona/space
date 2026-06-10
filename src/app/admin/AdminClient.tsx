@@ -20942,31 +20942,33 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               )
             ) : (
               <div className={toolbarActionsClassName}>
-                <button
-                  className={
-                    isMobileMerchantEditorShell
-                      ? merchantMobileToolbarButtonClassName
-                      : "px-3 py-2 rounded border bg-white hover:bg-gray-50"
-                  }
-                  onClick={() => {
-                    if (!isPlatformEditor) {
-                      const missingFields = missingMerchantProfileFields;
-                      if (missingFields.length > 0) {
-                        setTopBarCollapsed(false);
-                        triggerMerchantProfileAttention();
-                        showTip(`请先完善商户信息后再去前台（缺少：${missingFields.join("、")}）`);
-                        return;
+                {!merchantEditorOnly ? (
+                  <button
+                    className={
+                      isMobileMerchantEditorShell
+                        ? merchantMobileToolbarButtonClassName
+                        : "px-3 py-2 rounded border bg-white hover:bg-gray-50"
+                    }
+                    onClick={() => {
+                      if (!isPlatformEditor) {
+                        const missingFields = missingMerchantProfileFields;
+                        if (missingFields.length > 0) {
+                          setTopBarCollapsed(false);
+                          triggerMerchantProfileAttention();
+                          showTip(`请先完善商户信息后再去前台（缺少：${missingFields.join("、")}）`);
+                          return;
+                        }
                       }
-                    }
-                    const opened = window.open(effectiveFrontendHref, "_blank", "noopener,noreferrer");
-                    if (!opened) {
-                      showTip("浏览器拦截了新窗口，请允许弹窗后重试");
-                    }
-                  }}
-                >
-                  {"去前台"}
-                </button>
-                {!isPlatformEditor ? (
+                      const opened = window.open(effectiveFrontendHref, "_blank", "noopener,noreferrer");
+                      if (!opened) {
+                        showTip("浏览器拦截了新窗口，请允许弹窗后重试");
+                      }
+                    }}
+                  >
+                    {"去前台"}
+                  </button>
+                ) : null}
+                {!isPlatformEditor && !merchantEditorOnly ? (
                   <button
                     ref={merchantProfileButtonRef}
                     className={
