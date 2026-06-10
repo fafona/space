@@ -21028,7 +21028,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     {"优惠券"}
                   </button>
                 ) : null}
-                {!isPlatformEditor ? (
+                {!isPlatformEditor && !merchantEditorOnly ? (
                   <button
                     className={supportButtonClassName}
                     onClick={openSupportDialog}
