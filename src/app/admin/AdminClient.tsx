@@ -371,6 +371,16 @@ const MerchantMembershipSettingsPanel = dynamic(() => import("@/components/admin
   loading: () => <DeferredAdminPanelLoading label="会员配置加载中..." />,
 });
 
+const MerchantRedemptionCategoriesSettingsPanel = dynamic(() => import("@/components/admin/MerchantMembershipSettingsPanel"), {
+  ssr: false,
+  loading: () => <DeferredAdminPanelLoading label="项目分类加载中..." />,
+});
+
+const MerchantRedemptionItemsSettingsPanel = dynamic(() => import("@/components/admin/MerchantMembershipSettingsPanel"), {
+  ssr: false,
+  loading: () => <DeferredAdminPanelLoading label="项目管理加载中..." />,
+});
+
 const MerchantBookingManagerDialog = dynamic(() => import("@/components/admin/MerchantBookingManagerDialog"), {
   ssr: false,
   loading: () => <DeferredAdminPanelLoading label="预约管理加载中..." />,
@@ -20571,10 +20581,16 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               className="min-h-[calc(100vh-14rem)] py-6"
               view="rechargeRecords"
             />
-          ) : merchantDesktopSection === "redemptionCategories" || merchantDesktopSection === "redemptionItems" ? (
-            <MerchantMembershipSettingsPanel
+          ) : merchantDesktopSection === "redemptionCategories" ? (
+            <MerchantRedemptionCategoriesSettingsPanel
               siteId={editingSiteId || merchantSiteIdOverride || ""}
-              view={merchantDesktopSection}
+              view="redemptionCategories"
+              className="min-h-[calc(100vh-14rem)]"
+            />
+          ) : merchantDesktopSection === "redemptionItems" ? (
+            <MerchantRedemptionItemsSettingsPanel
+              siteId={editingSiteId || merchantSiteIdOverride || ""}
+              view="redemptionItems"
               className="min-h-[calc(100vh-14rem)]"
             />
           ) : merchantDesktopSection === "members" ? (

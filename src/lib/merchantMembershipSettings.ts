@@ -74,7 +74,6 @@ export type MerchantMemberRedemptionItem = {
   memberPrice: number | null;
   taxRate: number | null;
   stock: number | null;
-  showStock?: boolean;
   pointProduct: boolean;
   recommended: boolean;
   sort: number;
@@ -139,6 +138,7 @@ export type MerchantMembershipSettings = {
   rechargePlans: MerchantMemberRechargePlan[];
   redemptionCategories: MerchantMemberRedemptionCategory[];
   redemptionItems: MerchantMemberRedemptionItem[];
+  redemptionShowStock: boolean;
   growthRules: MerchantMemberGrowthRules;
   levels: MerchantMemberLevel[];
   pointsRules: MerchantMemberPointsRules;
@@ -368,6 +368,7 @@ export function createEmptyMerchantMembershipSettings(siteId: string): MerchantM
     rechargePlans: [],
     redemptionCategories: [],
     redemptionItems: [],
+    redemptionShowStock: true,
     growthRules: {
       spendAmountGrowth: 0,
       rechargeAmountGrowth: 0,
@@ -464,7 +465,6 @@ function normalizeRedemptionItems(value: unknown): MerchantMemberRedemptionItem[
       memberPrice: normalizeOptionalMoney(record.memberPrice ?? record.vipPrice ?? record.uprice),
       taxRate: normalizeOptionalMoney(record.taxRate ?? record.tax),
       stock: normalizeOptionalInteger(record.stock),
-      showStock: normalizeBoolean(record.showStock ?? record.stockVisible ?? record.displayStock, true),
       pointProduct: normalizeBoolean(record.pointProduct ?? record.isPointProduct, true),
       recommended: normalizeBoolean(record.recommended ?? record.isRecommended ?? record.recommend),
       sort: normalizeSort(record.sort, index),
@@ -599,11 +599,24 @@ function normalizePointsRules(value: unknown): MerchantMemberPointsRules {
 export function normalizeMerchantMembershipSettings(siteId: string, value: unknown): MerchantMembershipSettings {
   const fallback = createEmptyMerchantMembershipSettings(siteId);
   const record = readRecord(value) ?? {};
+  const redemptionItemsRecord = Array.isArray(record.redemptionItems) ? record.redemptionItems : [];
+  const legacyRedemptionShowStock = redemptionItemsRecord.some((item) => {
+    const itemRecord = readRecord(item);
+    return itemRecord
+      ? normalizeBoolean(itemRecord.showStock ?? itemRecord.stockVisible ?? itemRecord.displayStock, true) === false
+      : false;
+  })
+    ? false
+    : true;
   return {
     siteId: trimText(record.siteId, 64) || fallback.siteId,
     rechargePlans: normalizeRechargePlans(record.rechargePlans),
     redemptionCategories: normalizeRedemptionCategories(record.redemptionCategories),
     redemptionItems: normalizeRedemptionItems(record.redemptionItems),
+    redemptionShowStock: normalizeBoolean(
+      record.redemptionShowStock ?? record.showRedemptionStock ?? record.redemptionStockVisible,
+      legacyRedemptionShowStock,
+    ),
     growthRules: normalizeGrowthRules(record.growthRules),
     levels: normalizeLevels(record.levels),
     pointsRules: normalizePointsRules(record.pointsRules),

@@ -261,8 +261,8 @@ function stockLabel(item: MerchantMemberRedemptionItem) {
   return item.stock > 0 ? `库存 ${item.stock}` : "无库存";
 }
 
-function shouldShowStock(item: MerchantMemberRedemptionItem) {
-  return item.showStock !== false;
+function shouldShowStock(settings: MerchantMembershipSettings | null) {
+  return settings?.redemptionShowStock !== false;
 }
 
 function operationErrorMessage(message: unknown, fallback: string, operationType: "redeem" | "recharge" = "redeem") {
@@ -3656,7 +3656,7 @@ export default function MerchantPointRedemptionCashier({
                               ? row.couponDiscountLabel || "卡券兑换"
                               : row.custom
                                 ? "快捷兑换"
-                                : row.item && shouldShowStock(row.item)
+                                : row.item && shouldShowStock(settings)
                                   ? `${categoryName(enabledCategories, row.categoryId)} / ${stockLabel(row.item)}`
                                   : categoryName(enabledCategories, row.categoryId)}
                           </span>
@@ -3958,7 +3958,7 @@ export default function MerchantPointRedemptionCashier({
                 const itemImageUrl = normalizePublicAssetUrl(item.imageUrl || "");
                 const pointsUnavailable = item.pointsCost === null;
                 const itemDisabled = outOfStock || pointsUnavailable;
-                const showStock = shouldShowStock(item);
+                const showStock = shouldShowStock(settings);
 
                 if (viewMode === "text") {
                   return (

@@ -46,6 +46,22 @@ const VIEW_TITLES: Record<Exclude<MerchantMemberSettingsView, "list">, string> =
   pointsRules: "积分规则",
 };
 
+const VIEW_DESCRIPTIONS: Record<Exclude<MerchantMemberSettingsView, "list">, string> = {
+  rechargePlans: "这里配置会员充值方案，会员列表中的充值操作会读取已启用内容。",
+  redemptionCategories: "这里配置积分兑换项目分类，积分兑换页面会读取已启用分类。",
+  redemptionItems: "这里配置积分兑换项目，积分兑换页面会读取已启用项目。",
+  levels: "这里配置会员等级和权益，会员积分与兑换折扣会读取已启用内容。",
+  pointsRules: "这里配置会员积分规则，会员积分计算会读取这些设置。",
+};
+
+const VIEW_LOAD_LABELS: Record<Exclude<MerchantMemberSettingsView, "list">, string> = {
+  rechargePlans: "充值方案",
+  redemptionCategories: "项目分类",
+  redemptionItems: "项目管理",
+  levels: "等级权益",
+  pointsRules: "积分规则",
+};
+
 function trimText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
@@ -334,6 +350,7 @@ export default function MerchantMembershipSettingsPanel({
     () => normalizeMerchantMembershipSettings(normalizedSiteId, settings),
     [normalizedSiteId, settings],
   );
+  const viewLoadLabel = VIEW_LOAD_LABELS[view];
   const holidayPresets = useMemo(() => buildMerchantMemberHolidayPresets(holidayPresetYear), [holidayPresetYear]);
 
   function patchSettings(recipe: (current: MerchantMembershipSettings) => MerchantMembershipSettings) {
@@ -359,11 +376,11 @@ export default function MerchantMembershipSettingsPanel({
       });
       const payload = (await response.json().catch(() => null)) as MembershipSettingsPayload | null;
       if (!response.ok || payload?.ok !== true || !payload.settings) {
-        throw new Error(readPayloadMessage(payload?.message, "会员配置加载失败，请稍后重试"));
+        throw new Error(readPayloadMessage(payload?.message, `${viewLoadLabel}加载失败，请稍后重试`));
       }
       setSettings(normalizeMerchantMembershipSettings(normalizedSiteId, payload.settings));
     } catch (fetchError) {
-      setError(fetchError instanceof Error ? fetchError.message : "会员配置加载失败，请稍后重试");
+      setError(fetchError instanceof Error ? fetchError.message : `${viewLoadLabel}加载失败，请稍后重试`);
     } finally {
       setLoading(false);
     }
@@ -669,7 +686,6 @@ export default function MerchantMembershipSettingsPanel({
         memberPrice: null,
         taxRate: null,
         stock: null,
-        showStock: true,
         pointProduct: true,
         recommended: false,
         sort: activeSettings.redemptionItems.length,
@@ -702,7 +718,6 @@ export default function MerchantMembershipSettingsPanel({
       imageUrl: trimText(itemDialog.draft.imageUrl, 1000),
       iconName: normalizeCategoryIconName(itemDialog.draft.iconName) || "none",
       description: trimText(itemDialog.draft.description, 500),
-      showStock: itemDialog.draft.showStock !== false,
     };
     if (!draft.code || !draft.name) {
       setError("请填写兑换项目编号和名称。");
@@ -965,13 +980,29 @@ export default function MerchantMembershipSettingsPanel({
         <SectionCard
           title="项目管理"
           action={
-            <button
-              type="button"
-              className="rounded-xl bg-slate-950 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-              onClick={openItemCreate}
-            >
-              新增项目
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={activeSettings.redemptionShowStock}
+                  disabled={loading || saving}
+                  onChange={(event) =>
+                    void saveSettings(
+                      { ...activeSettings, redemptionShowStock: event.target.checked },
+                      event.target.checked ? "已显示库存" : "已隐藏库存",
+                    )
+                  }
+                />
+                显示库存
+              </label>
+              <button
+                type="button"
+                className="rounded-xl bg-slate-950 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+                onClick={openItemCreate}
+              >
+                新增项目
+              </button>
+            </div>
           }
         >
           <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -1066,7 +1097,7 @@ export default function MerchantMembershipSettingsPanel({
                         {item.referenceAmount === null ? "-" : item.referenceAmount.toFixed(2)}
                       </td>
                       <td className="px-4 py-3 text-slate-700">
-                        {item.showStock === false ? (
+                        {activeSettings.redemptionShowStock === false ? (
                           <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">隐藏</span>
                         ) : (
                           redemptionStockText(item.stock)
@@ -1282,16 +1313,11 @@ export default function MerchantMembershipSettingsPanel({
                   {[
                     ["pointProduct", "积分项目"],
                     ["recommended", "推荐项目"],
-                    ["showStock", "显示库存"],
                   ].map(([key, label]) => (
                     <label key={key} className="flex items-center gap-2 text-sm font-semibold text-slate-700">
                       <input
                         type="checkbox"
-                        checked={
-                          key === "showStock"
-                            ? itemDialog.draft.showStock !== false
-                            : Boolean(itemDialog.draft[key as keyof MerchantMemberRedemptionItem])
-                        }
+                        checked={Boolean(itemDialog.draft[key as keyof MerchantMemberRedemptionItem])}
                         onChange={(event) => patchItemDraft({ [key]: event.target.checked } as Partial<MerchantMemberRedemptionItem>)}
                       />
                       {label}
@@ -1942,7 +1968,7 @@ export default function MerchantMembershipSettingsPanel({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-xl font-semibold text-slate-950">{VIEW_TITLES[view]}</h2>
-            <p className="mt-1 text-sm text-slate-500">这里配置会员功能，会员列表中的充值和兑换会读取已启用内容。</p>
+            <p className="mt-1 text-sm text-slate-500">{VIEW_DESCRIPTIONS[view]}</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <button

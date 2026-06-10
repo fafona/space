@@ -231,8 +231,8 @@ function redemptionStockText(stock: number | null) {
   return stock > 0 ? String(stock) : "无库存";
 }
 
-function shouldShowRedemptionStock(item: MerchantMemberRedemptionItem) {
-  return item.showStock !== false;
+function shouldShowRedemptionStock(settings: MerchantMembershipSettings | null) {
+  return settings?.redemptionShowStock !== false;
 }
 
 function formatBirthday(membership: MerchantMembershipListItem) {
@@ -1528,7 +1528,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                     </div>
                     {selectedRedemptionItem ? (
                       <div className="mt-2 text-xs text-slate-500">
-                        {shouldShowRedemptionStock(selectedRedemptionItem)
+                        {shouldShowRedemptionStock(memberSettings)
                           ? `库存 ${redemptionStockText(selectedRedemptionItem.stock)}，`
                           : ""}
                         本次扣减{" "}

@@ -59,7 +59,6 @@ export function buildRedemptionCashierSettings(settings: MerchantMembershipSetti
         memberPrice: item.memberPrice,
         taxRate: item.taxRate,
         stock: item.stock,
-        showStock: item.showStock !== false,
         pointProduct: item.pointProduct,
         recommended: item.recommended,
         sort: item.sort,
