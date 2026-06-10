@@ -16901,7 +16901,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const merchantBookingRulesSnapshot = merchantBookingManagerData.bookingRulesSnapshot;
   const merchantEditorAvatarLabel = !isPlatformEditor ? getSupportContactAvatarLabel(effectiveMerchantDisplayName || merchantDisplayName, "商") : "";
   const shouldShowPublishActions = showPublishActions ?? !isPlatformEditor;
-  const isDesktopMerchantWorkspace = desktopMerchantWorkspaceActive;
+  const isDesktopMerchantWorkspace = desktopMerchantWorkspaceActive && !merchantEditorOnly;
   const showDesktopMerchantSupportPanel = isDesktopMerchantWorkspace && merchantDesktopSection === "support";
   const defaultMerchantDesktopSection: MerchantDesktopSection = "pointRedemption";
   useEffect(() => {

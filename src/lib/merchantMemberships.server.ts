@@ -26,6 +26,7 @@ import {
   type MerchantMembershipSettings,
 } from "@/lib/merchantMembershipSettings";
 import type { MerchantOrderRecord } from "@/lib/merchantOrders";
+import { MERCHANT_COUPON_DIRECT_REDEMPTION_DISCOUNT_TYPES } from "@/lib/merchantCoupons";
 import { redeemMerchantCouponRecords } from "@/lib/merchantCoupons.server";
 import { loadStoredMerchantMemberships, saveStoredMerchantMemberships } from "@/lib/merchantMembershipsStore";
 import { appendMutationOperationMarker, buildMutationOperationMarker } from "@/lib/mutationOperationId";
@@ -898,6 +899,8 @@ export async function applyMerchantMembershipRedemptionCart(input: {
         unitPoints: cartItem.customPoints,
         subtotalPoints: cartItem.customPoints * cartItem.quantity,
         custom: true,
+        couponId: "",
+        couponClaimId: "",
         couponSettlementCode: "",
         couponTitle: "",
         couponDiscountLabel: "",
@@ -928,6 +931,8 @@ export async function applyMerchantMembershipRedemptionCart(input: {
         unitPoints: 0,
         subtotalPoints: 0,
         custom: true,
+        couponId: cartItem.couponId,
+        couponClaimId: cartItem.couponClaimId,
         couponSettlementCode: cartItem.couponSettlementCode,
         couponTitle: cartItem.couponTitle,
         couponDiscountLabel: cartItem.couponDiscountLabel,
@@ -942,31 +947,54 @@ export async function applyMerchantMembershipRedemptionCart(input: {
       unitPoints,
       subtotalPoints: unitPoints * cartItem.quantity,
       custom: false,
+      couponId: "",
+      couponClaimId: "",
       couponSettlementCode: "",
       couponTitle: "",
       couponDiscountLabel: "",
     };
   });
-  const totalPoints = redemptionRows.reduce((sum, row) => sum + row.subtotalPoints, 0);
+  const grossPoints = redemptionRows.reduce((sum, row) => sum + row.subtotalPoints, 0);
   const couponRedemptionRows = redemptionRows.filter((row) => row.couponSettlementCode);
-  if (totalPoints <= 0 && couponRedemptionRows.length === 0) throw new Error("membership_operation_empty");
+  if (grossPoints <= 0 && couponRedemptionRows.length === 0) throw new Error("membership_operation_empty");
+  const fallbackNote = trimText(input.note, 500);
+  const couponRedemptionRequests = couponRedemptionRows.map((row) => ({
+    settlementCode: row.couponSettlementCode,
+    expectedCouponId: row.couponId,
+    expectedClaimEventId: row.couponClaimId,
+    operationId: input.operationId,
+    operationScope: "member-redemption-checkout",
+    note: fallbackNote || `积分兑换使用卡券：${row.couponTitle || row.item.name}`,
+    expectedAccountId: currentMembership.accountId,
+    expectedUserId: currentMembership.userId,
+    expectedEmail: currentMembership.email,
+    allowedDiscountTypes: MERCHANT_COUPON_DIRECT_REDEMPTION_DISCOUNT_TYPES,
+  }));
+  const couponPreviews =
+    couponRedemptionRequests.length > 0
+      ? await redeemMerchantCouponRecords({
+          siteId,
+          operatorId: trimText(input.operatorId, 120),
+          redemptions: couponRedemptionRequests,
+          commit: false,
+        })
+      : [];
+  const rawCouponPointDiscountTotal = couponPreviews.reduce(
+    (sum, coupon) =>
+      coupon.discountType === "points_voucher" ? sum + Math.max(0, Math.round(coupon.discountValue)) : sum,
+    0,
+  );
+  if (grossPoints <= 0 && rawCouponPointDiscountTotal > 0) throw new Error("coupon_points_voucher_requires_points");
+  const couponPointDiscountTotal = Math.min(grossPoints, rawCouponPointDiscountTotal);
+  const totalPoints = Math.max(0, grossPoints - couponPointDiscountTotal);
   const nextPointBalance = currentMembership.pointBalance - totalPoints;
   if (nextPointBalance < 0) throw new Error("membership_balance_insufficient");
 
   if (couponRedemptionRows.length > 0) {
-    const fallbackNote = trimText(input.note, 500);
     await redeemMerchantCouponRecords({
       siteId,
       operatorId: trimText(input.operatorId, 120),
-      redemptions: couponRedemptionRows.map((row) => ({
-        settlementCode: row.couponSettlementCode,
-        operationId: input.operationId,
-        operationScope: "member-redemption-checkout",
-        note: fallbackNote || `积分兑换使用卡券：${row.couponTitle || row.item.name}`,
-        expectedAccountId: currentMembership.accountId,
-        expectedUserId: currentMembership.userId,
-        expectedEmail: currentMembership.email,
-      })),
+      redemptions: couponRedemptionRequests,
     });
   }
 

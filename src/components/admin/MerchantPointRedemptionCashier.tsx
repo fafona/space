@@ -6,6 +6,7 @@ import { useI18n } from "@/components/I18nProvider";
 import {
   getMerchantCouponDiscountLabel,
   getMerchantCouponDisplayTitle,
+  isMerchantCouponDirectRedemptionDiscountType,
   type MerchantCouponRecord,
 } from "@/lib/merchantCoupons";
 import { showGlobalToast } from "@/lib/globalToast";
@@ -70,6 +71,7 @@ type CartLine = {
   couponSettlementCode?: string;
   couponTitle?: string;
   couponDiscountLabel?: string;
+  couponPointDiscount?: number;
   quantity: number;
 };
 
@@ -272,6 +274,8 @@ function operationErrorMessage(message: unknown, fallback: string, operationType
   if (text === "coupon_not_active" || text === "coupon_not_started") return "所选卡券暂不可用。";
   if (text === "coupon_claim_not_found") return "没有找到所选卡券领取记录。";
   if (text === "coupon_claim_member_mismatch") return "所选卡券不属于当前会员。";
+  if (text === "coupon_not_direct_redeemable") return "此券不能在积分兑换中直接使用，请在订单中使用。";
+  if (text === "coupon_points_voucher_requires_points") return "积分券需要和兑换项目一起使用。";
   return text || fallback;
 }
 
@@ -286,6 +290,7 @@ function getCouponCartItemName(coupon: MemberCouponClaim) {
   if (coupon.discountType === "product_voucher") return trimText(coupon.productName, 120) || coupon.title;
   if (coupon.discountType === "exchange_voucher") return trimText(coupon.exchangeItem, 120) || coupon.title;
   if (coupon.discountType === "ticket_voucher") return trimText(coupon.ticketVenue, 120) || coupon.title;
+  if (coupon.discountType === "points_voucher") return "积分抵扣";
   return coupon.title;
 }
 
@@ -299,16 +304,14 @@ function getCouponCartQuantity(coupon: MemberCouponClaim) {
   return Math.max(1, Math.floor(Number(quantity) || 1));
 }
 
+function getCouponPointDiscount(coupon: MemberCouponClaim) {
+  return coupon.discountType === "points_voucher" ? Math.max(0, Math.round(Number(coupon.discountValue) || 0)) : 0;
+}
+
 function getCouponDirectUseUnavailableReason(coupon: MemberCouponClaim) {
   if (coupon.status !== "available") return couponStatusLabel(coupon.status);
   if (!coupon.settlementCode) return "无核销码";
-  if (
-    coupon.discountType !== "product_voucher" &&
-    coupon.discountType !== "exchange_voucher" &&
-    coupon.discountType !== "ticket_voucher"
-  ) {
-    return "需在订单中使用";
-  }
+  if (!isMerchantCouponDirectRedemptionDiscountType(coupon.discountType)) return "需在订单中使用";
   return "";
 }
 
@@ -663,6 +666,7 @@ export default function MerchantPointRedemptionCashier({
           couponSettlementCode,
           couponTitle: trimText(line.couponTitle, 120),
           couponDiscountLabel: trimText(line.couponDiscountLabel, 160),
+          couponPointDiscount: couponSettlementCode ? parsePositiveInteger(line.couponPointDiscount) : 0,
         };
       })
       .filter(
@@ -682,6 +686,7 @@ export default function MerchantPointRedemptionCashier({
           couponSettlementCode: string;
           couponTitle: string;
           couponDiscountLabel: string;
+          couponPointDiscount: number;
         } => Boolean(row),
       );
   }, [cart, enabledItemById, selectedMember, settings]);
@@ -692,11 +697,17 @@ export default function MerchantPointRedemptionCashier({
     return quantities;
   }, [cart]);
 
-  const totalPoints = cartRows.reduce((sum, row) => sum + row.subtotalPoints, 0);
+  const grossPoints = cartRows.reduce((sum, row) => sum + row.subtotalPoints, 0);
+  const rawCouponPointDiscountTotal = cartRows.reduce((sum, row) => sum + row.couponPointDiscount, 0);
+  const couponPointDiscountTotal = Math.min(grossPoints, rawCouponPointDiscountTotal);
+  const totalPoints = Math.max(0, grossPoints - couponPointDiscountTotal);
   const totalQuantity = cartRows.reduce((sum, row) => sum + row.quantity, 0);
+  const hasRedeemableCartEffect = cartRows.some((row) => row.subtotalPoints > 0 || (row.couponSettlementCode && row.couponPointDiscount <= 0));
   const canCheckout =
     Boolean(selectedMember) &&
     cartRows.length > 0 &&
+    hasRedeemableCartEffect &&
+    !(grossPoints <= 0 && rawCouponPointDiscountTotal > 0) &&
     totalPoints <= selectedInsight.pointBalance &&
     !saving;
 
@@ -1179,18 +1190,20 @@ export default function MerchantPointRedemptionCashier({
     }
     const itemName = getCouponCartItemName(coupon);
     const quantity = getCouponCartQuantity(coupon);
+    const couponPointDiscount = getCouponPointDiscount(coupon);
     setCart((current) => [
       ...current,
       {
         itemId: `coupon-${coupon.id}`,
         customName: itemName,
-        customCode: coupon.productBarcode || coupon.couponCode || "卡券",
+        customCode: coupon.discountType === "points_voucher" ? "积分券" : coupon.productBarcode || coupon.couponCode || "卡券",
         customPoints: 0,
         couponId: coupon.couponId,
         couponClaimId: coupon.id,
         couponSettlementCode: coupon.settlementCode,
         couponTitle: coupon.title,
         couponDiscountLabel: coupon.discountLabel,
+        couponPointDiscount,
         quantity,
       },
     ]);
@@ -1366,6 +1379,14 @@ export default function MerchantPointRedemptionCashier({
       setError("请先选择兑换项目。");
       return;
     }
+    if (!hasRedeemableCartEffect) {
+      setError("积分券需要和兑换项目一起使用。");
+      return;
+    }
+    if (grossPoints <= 0 && rawCouponPointDiscountTotal > 0) {
+      setError("积分券需要和需扣积分的兑换项目一起使用。");
+      return;
+    }
     if (totalPoints > selectedInsight.pointBalance) {
       setError("会员积分不足，不能兑换。");
       return;
@@ -1391,6 +1412,7 @@ export default function MerchantPointRedemptionCashier({
             couponSettlementCode: row.couponSettlementCode || undefined,
             couponTitle: row.couponTitle || undefined,
             couponDiscountLabel: row.couponDiscountLabel || undefined,
+            couponPointDiscount: row.couponPointDiscount || undefined,
             quantity: row.quantity,
           })),
           note: note.trim(),
@@ -1417,6 +1439,8 @@ export default function MerchantPointRedemptionCashier({
       setNotice(
         totalPoints > 0 && couponLineCount > 0
           ? `兑换完成，已扣减 ${formatPoints(totalPoints)} 积分，并核销 ${couponLineCount} 张卡券。`
+          : totalPoints === 0 && couponPointDiscountTotal > 0 && couponLineCount > 0
+            ? `兑换完成，积分券已抵扣 ${formatPoints(couponPointDiscountTotal)} 积分，并核销 ${couponLineCount} 张卡券。`
           : totalPoints > 0
           ? `兑换完成，已扣减 ${formatPoints(totalPoints)} 积分。`
           : `兑换完成，已核销 ${couponLineCount} 张卡券。`,
@@ -3547,7 +3571,7 @@ export default function MerchantPointRedemptionCashier({
                                 : `${categoryName(enabledCategories, row.categoryId)} / ${row.item ? stockLabel(row.item) : "不限库存"}`}
                           </span>
                         </strong>
-                        <span>{formatPoints(row.unitPoints)}</span>
+                        <span>{row.couponPointDiscount > 0 ? `-${formatPoints(row.couponPointDiscount)}` : formatPoints(row.unitPoints)}</span>
                         <div className="quantity-control">
                           {row.couponSettlementCode ? (
                             <span className="coupon-locked-quantity">{row.quantity}</span>
@@ -3569,7 +3593,11 @@ export default function MerchantPointRedemptionCashier({
                             </>
                           )}
                         </div>
-                        <span>{formatPoints(row.subtotalPoints)}</span>
+                        <span>
+                          {row.couponPointDiscount > 0
+                            ? `-${formatPoints(Math.min(grossPoints, row.couponPointDiscount))}`
+                            : formatPoints(row.subtotalPoints)}
+                        </span>
                       </div>
                     </div>
                   ))
@@ -3624,9 +3652,15 @@ export default function MerchantPointRedemptionCashier({
                 <strong>{formatPoints(selectedInsight.pointBalance)}</strong>
               </div>
               <div className="summary-total">
-                <span>合计积分</span>
+                <span>{couponPointDiscountTotal > 0 ? "扣减积分" : "合计积分"}</span>
                 <strong>{formatPoints(totalPoints)}</strong>
               </div>
+              {couponPointDiscountTotal > 0 ? (
+                <div className="summary-item">
+                  <span>积分券抵扣</span>
+                  <strong>-{formatPoints(couponPointDiscountTotal)}</strong>
+                </div>
+              ) : null}
               <button type="button" className="checkout-button" disabled={!canCheckout} onClick={() => setCheckoutConfirmOpen(true)}>
                 {saving ? "结算中" : "结算"}
               </button>
@@ -4112,6 +4146,7 @@ export default function MerchantPointRedemptionCashier({
               <div className="pos-modal-body">
                 <div>会员：{selectedMember ? `${getMemberDisplayName(selectedMember)} / ${selectedMember.memberNo}` : "-"}</div>
                 <div>项目：{totalQuantity}</div>
+                {couponPointDiscountTotal > 0 ? <div>积分券抵扣：-{formatPoints(couponPointDiscountTotal)}</div> : null}
                 <div>扣减积分：{formatPoints(totalPoints)}</div>
               </div>
               <div className="pos-modal-footer">

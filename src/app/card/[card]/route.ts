@@ -1651,6 +1651,7 @@ const CONTACT_COUPON_USAGE_LABELS: Record<MerchantCouponUsageScenario, string> =
   order_cart: "订单",
   checkout_qr: "二维码",
   checkout_barcode: "条码",
+  points_redemption: "积分兑换",
 };
 
 function formatContactCouponUsageScenarios(coupon: MerchantCouponRecord) {
@@ -1737,6 +1738,7 @@ function buildContactCouponDefaultMetaText(input: {
     coupon.discountType === "product_voucher" && coupon.productAmount > 0 ? `商品金额 ${coupon.productAmount.toFixed(2)}` : "",
     coupon.discountType === "exchange_voucher" && coupon.exchangeQuantity > 0 ? `数量 ${coupon.exchangeQuantity}` : "",
     coupon.discountType === "ticket_voucher" && coupon.ticketDurationMinutes > 0 ? `时长 ${coupon.ticketDurationMinutes} min` : "",
+    coupon.discountType === "points_voucher" && coupon.discountValue > 0 ? `抵扣 ${Math.round(coupon.discountValue)} 积分` : "",
     coupon.minimumAmount > 0 ? `门槛 ${coupon.minimumAmount.toFixed(2)}` : "",
     usageLabel,
     remaining !== null ? `剩余 ${remaining}` : "",

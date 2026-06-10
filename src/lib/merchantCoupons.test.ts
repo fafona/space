@@ -15,7 +15,9 @@ import {
   getMerchantCouponDiscountLabel,
   getMerchantCouponRemainingCount,
   getVisibleMerchantCoupons,
+  isMerchantCouponDirectRedemptionDiscountType,
   isMerchantCouponDisplayFieldHidden,
+  MERCHANT_COUPON_DIRECT_REDEMPTION_DISCOUNT_TYPES,
   merchantCouponRequiresClaimCode,
   merchantCouponRequiresPersonalClaim,
   merchantCouponSupportsUsageScenario,
@@ -80,6 +82,32 @@ test("createMerchantCoupon supports voucher coupon types", () => {
 
   assert.equal(getMerchantCouponDiscountLabel(createMerchantCoupon({ siteId: "10000000", title: "兑换", discountType: "exchange_voucher" })), "兑换券");
   assert.equal(getMerchantCouponDiscountLabel(createMerchantCoupon({ siteId: "10000000", title: "门票", discountType: "ticket_voucher" })), "门票券");
+  const points = createMerchantCoupon({
+    siteId: "10000000",
+    title: "积分抵扣",
+    discountType: "points_voucher",
+    discountValue: 30.6,
+  });
+  assert.equal(points.discountType, "points_voucher");
+  assert.equal(points.discountValue, 31);
+  assert.equal(getMerchantCouponDiscountLabel(points), "积分券：抵扣 31 积分");
+});
+
+test("direct redemption coupon types are limited to point redemption vouchers", () => {
+  assert.deepEqual([...MERCHANT_COUPON_DIRECT_REDEMPTION_DISCOUNT_TYPES], [
+    "product_voucher",
+    "exchange_voucher",
+    "ticket_voucher",
+    "points_voucher",
+  ]);
+  assert.equal(isMerchantCouponDirectRedemptionDiscountType("product_voucher"), true);
+  assert.equal(isMerchantCouponDirectRedemptionDiscountType("exchange_voucher"), true);
+  assert.equal(isMerchantCouponDirectRedemptionDiscountType("ticket_voucher"), true);
+  assert.equal(isMerchantCouponDirectRedemptionDiscountType("points_voucher"), true);
+  assert.equal(isMerchantCouponDirectRedemptionDiscountType("amount_off"), false);
+  assert.equal(isMerchantCouponDirectRedemptionDiscountType("percent_off"), false);
+  assert.equal(isMerchantCouponDirectRedemptionDiscountType("threshold_amount_off"), false);
+  assert.equal(isMerchantCouponDirectRedemptionDiscountType("stored_value"), false);
 });
 
 test("createMerchantCoupon normalizes background image settings", () => {
@@ -113,6 +141,15 @@ test("createMerchantCoupon normalizes usage scenarios", () => {
   assert.equal(merchantCouponSupportsUsageScenario(checkoutCoupon, "checkout_qr"), true);
   assert.equal(merchantCouponSupportsUsageScenario(checkoutCoupon, "order_cart"), false);
   assert.match(buildMerchantCouponSettlementCode(checkoutCoupon, "checkout_qr", 3), /^QR000000/);
+
+  const pointsCoupon = createMerchantCoupon({
+    siteId: "10000000",
+    title: "积分券",
+    discountType: "points_voucher",
+    discountValue: 20,
+    usageScenarios: ["points_redemption", "checkout_qr"],
+  });
+  assert.equal(merchantCouponSupportsUsageScenario(pointsCoupon, "points_redemption"), true);
 });
 
 test("createMerchantCoupon normalizes display text and typography", () => {

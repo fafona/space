@@ -47,6 +47,7 @@ export type MerchantMemberCouponHistoryItem = {
   title: string;
   discountLabel: string;
   discountType: MerchantCouponDiscountType;
+  discountValue: number;
   productName: string;
   productBarcode: string;
   productQuantity: number;

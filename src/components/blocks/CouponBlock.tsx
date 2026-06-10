@@ -50,6 +50,7 @@ const COUPON_USAGE_SCENARIO_LABELS: Record<MerchantCouponUsageScenario, string> 
   order_cart: "订单",
   checkout_qr: "二维码",
   checkout_barcode: "条码",
+  points_redemption: "积分兑换",
 };
 
 function formatCouponUsageScenarios(coupon: MerchantCouponRecord) {
@@ -141,6 +142,7 @@ function buildCouponDisplayItems(
   const displayDescription = getMerchantCouponDisplayDescription(coupon);
   const displayMetaText = getMerchantCouponDisplayMetaText(coupon);
   const metaItems = [
+    coupon.discountType === "points_voucher" && coupon.discountValue > 0 ? `抵扣 ${Math.round(coupon.discountValue)} 积分` : "",
     coupon.minimumAmount > 0 ? `门槛 ${input.pricePrefix}${coupon.minimumAmount.toFixed(2)}` : "",
     input.usageScenarioLabel,
     input.showRemaining && input.remaining !== null ? `剩余 ${input.remaining}` : "",

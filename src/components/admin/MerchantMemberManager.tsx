@@ -8,6 +8,7 @@ import {
   type MerchantMembershipInsight,
   type MerchantMembershipListItem,
 } from "@/lib/merchantMemberships";
+import { isMerchantCouponDirectRedemptionDiscountType } from "@/lib/merchantCoupons";
 import { showGlobalToast } from "@/lib/globalToast";
 import {
   MERCHANT_ADMIN_DATA_CACHE_TTL_MS,
@@ -127,7 +128,26 @@ function couponBenefitTargetLabel(item: MerchantMembershipInsight["couponHistory
   if (item.discountType === "ticket_voucher") {
     return item.ticketVenue || item.title;
   }
+  if (item.discountType === "points_voucher") {
+    return `抵扣 ${Math.max(0, Math.round(item.discountValue))} 积分`;
+  }
   return item.discountLabel;
+}
+
+function couponDirectUseLabel(item: MerchantMembershipInsight["couponHistory"][number]) {
+  if (item.status !== "available") return couponClaimStatusLabel(item.status);
+  if (!item.settlementCode) return "缺少核销码";
+  return isMerchantCouponDirectRedemptionDiscountType(item.discountType)
+    ? "可用于积分兑换"
+    : "需在订单中使用";
+}
+
+function couponDirectUseBadgeClass(item: MerchantMembershipInsight["couponHistory"][number]) {
+  if (item.status !== "available") return "border-slate-200 bg-slate-100 text-slate-500";
+  if (!item.settlementCode) return "border-amber-200 bg-amber-50 text-amber-700";
+  return isMerchantCouponDirectRedemptionDiscountType(item.discountType)
+    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+    : "border-sky-200 bg-sky-50 text-sky-700";
 }
 
 function accountTransactionTypeLabel(type: MerchantMemberAccountTransactionType) {
@@ -1330,6 +1350,15 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                           <div key={item.id} className="rounded-xl bg-white px-3 py-2 text-sm">
                             <div className="font-semibold text-slate-900">{item.title}</div>
                             <div className="mt-0.5 text-xs text-slate-500">{couponBenefitTargetLabel(item)}</div>
+                            <div className="mt-2">
+                              <span
+                                className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${couponDirectUseBadgeClass(
+                                  item,
+                                )}`}
+                              >
+                                {couponDirectUseLabel(item)}
+                              </span>
+                            </div>
                             <div className="mt-1 font-mono text-xs text-slate-500">{item.settlementCode || item.couponCode}</div>
                           </div>
                         ))
@@ -1367,7 +1396,16 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                               <td className="px-3 py-2 text-slate-600">{formatDateTime(item.claimedAt)}</td>
                               <td className="px-3 py-2 text-slate-600">{formatDateTime(item.validUntil)}</td>
                               <td className="px-3 py-2 font-mono text-slate-600">{item.settlementCode || "-"}</td>
-                              <td className="px-3 py-2 text-slate-700">{couponClaimStatusLabel(item.status)}</td>
+                              <td className="px-3 py-2 text-slate-700">
+                                <div>{couponClaimStatusLabel(item.status)}</div>
+                                <span
+                                  className={`mt-1 inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${couponDirectUseBadgeClass(
+                                    item,
+                                  )}`}
+                                >
+                                  {couponDirectUseLabel(item)}
+                                </span>
+                              </td>
                             </tr>
                           ))
                         ) : (

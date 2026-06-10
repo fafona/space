@@ -259,6 +259,7 @@ const USAGE_SCENARIO_LABELS: Record<MerchantCouponUsageScenario, string> = {
   order_cart: "订单",
   checkout_qr: "二维码",
   checkout_barcode: "条码",
+  points_redemption: "积分兑换",
 };
 
 const COUPON_FONT_OPTIONS = [
@@ -302,6 +303,7 @@ const COUPON_DISCOUNT_TYPE_OPTIONS: Array<{ value: MerchantCouponDiscountType; l
   { value: "stored_value", label: "储值券" },
   { value: "exchange_voucher", label: "兑换券" },
   { value: "ticket_voucher", label: "门票券" },
+  { value: "points_voucher", label: "积分券" },
 ];
 
 const DISCOUNT_VALUE_REQUIRED_TYPES: MerchantCouponDiscountType[] = [
@@ -309,6 +311,7 @@ const DISCOUNT_VALUE_REQUIRED_TYPES: MerchantCouponDiscountType[] = [
   "amount_off",
   "percent_off",
   "stored_value",
+  "points_voucher",
 ];
 
 const COUPON_DISCOUNT_TYPE_LABELS = Object.fromEntries(
@@ -528,6 +531,7 @@ function buildRecordDefaultMetaText(coupon: MerchantCouponRecord, pricePrefix: s
     coupon.discountType === "product_voucher" && coupon.productAmount > 0 ? `商品金额 ${pricePrefix}${coupon.productAmount.toFixed(2)}` : "",
     coupon.discountType === "exchange_voucher" && coupon.exchangeQuantity > 0 ? `数量 ${coupon.exchangeQuantity}` : "",
     coupon.discountType === "ticket_voucher" && coupon.ticketDurationMinutes > 0 ? `时长 ${coupon.ticketDurationMinutes} min` : "",
+    coupon.discountType === "points_voucher" && coupon.discountValue > 0 ? `抵扣 ${Math.round(coupon.discountValue)} 积分` : "",
     coupon.minimumAmount > 0 ? `门槛 ${pricePrefix}${coupon.minimumAmount.toFixed(2)}` : "",
     formatUsageScenarios(coupon.usageScenarios),
     coupon.expiresAt ? `至 ${formatDateTime(coupon.expiresAt)}` : "",
@@ -574,6 +578,7 @@ function buildFormGeneratedDiscountText(form: CouponFormState, pricePrefix: stri
   if (form.discountType === "stored_value") return `储值 ${pricePrefix}${discountValue.toFixed(2)}`;
   if (form.discountType === "exchange_voucher") return form.exchangeItem.trim() ? `兑换券：${form.exchangeItem.trim()}` : "兑换券";
   if (form.discountType === "ticket_voucher") return form.ticketVenue.trim() ? `门票券：${form.ticketVenue.trim()}` : "门票券";
+  if (form.discountType === "points_voucher") return `积分券：抵扣 ${Math.max(0, Math.round(discountValue))} 积分`;
   return `减 ${pricePrefix}${discountValue.toFixed(2)}`;
 }
 
@@ -585,6 +590,9 @@ function buildFormDefaultMetaText(form: CouponFormState, pricePrefix: string) {
     form.discountType === "product_voucher" && toNumberValue(form.productAmount) > 0 ? `商品金额 ${pricePrefix}${toNumberValue(form.productAmount).toFixed(2)}` : "",
     form.discountType === "exchange_voucher" && toIntValue(form.exchangeQuantity) > 0 ? `数量 ${toIntValue(form.exchangeQuantity)}` : "",
     form.discountType === "ticket_voucher" && toIntValue(form.ticketDurationMinutes) > 0 ? `时长 ${toIntValue(form.ticketDurationMinutes)} min` : "",
+    form.discountType === "points_voucher" && toNumberValue(form.discountValue) > 0
+      ? `抵扣 ${Math.round(toNumberValue(form.discountValue))} 积分`
+      : "",
     minimumAmount > 0 ? `门槛 ${pricePrefix}${minimumAmount.toFixed(2)}` : "",
     formatUsageScenarios(form.usageScenarios),
     fromDateTimeTextValue(form.expiresAt) ? `至 ${formatDateTime(fromDateTimeTextValue(form.expiresAt))}` : "",
@@ -713,6 +721,7 @@ function buildCouponVisualDataFromRecord(coupon: MerchantCouponRecord, pricePref
     coupon.discountType === "product_voucher" && coupon.productAmount > 0 ? `商品金额 ${pricePrefix}${coupon.productAmount.toFixed(2)}` : "",
     coupon.discountType === "exchange_voucher" && coupon.exchangeQuantity > 0 ? `数量 ${coupon.exchangeQuantity}` : "",
     coupon.discountType === "ticket_voucher" && coupon.ticketDurationMinutes > 0 ? `时长 ${coupon.ticketDurationMinutes} min` : "",
+    coupon.discountType === "points_voucher" && coupon.discountValue > 0 ? `抵扣 ${Math.round(coupon.discountValue)} 积分` : "",
     coupon.minimumAmount > 0 ? `门槛 ${pricePrefix}${coupon.minimumAmount.toFixed(2)}` : "",
     formatUsageScenarios(coupon.usageScenarios),
     coupon.expiresAt ? `至 ${formatDateTime(coupon.expiresAt)}` : "",
@@ -801,6 +810,7 @@ function validateCouponForm(form: CouponFormState) {
   const startsAt = fromDateTimeTextValue(form.startsAt);
   const expiresAt = fromDateTimeTextValue(form.expiresAt);
 
+  if (form.discountType === "points_voucher" && Math.round(discountValue) <= 0) return "请填写大于 0 的抵扣积分";
   if (DISCOUNT_VALUE_REQUIRED_TYPES.includes(form.discountType) && discountValue <= 0) return "请填写大于 0 的优惠值";
   if (normalizeFormUsageScenarios(form.usageScenarios).length === 0) return "请至少选择一个使用场景";
   if (form.discountType === "percent_off" && discountValue > 100) return "折扣百分比不能超过 100";
@@ -1734,7 +1744,11 @@ export default function MerchantCouponManager({
   function updateDiscountType(value: MerchantCouponDiscountType) {
     setForm((current) => {
       const previousGeneratedText = buildFormGeneratedDiscountText(current, pricePrefix);
-      const next = { ...current, discountType: value };
+      const nextUsageScenarios: MerchantCouponUsageScenario[] =
+        value === "points_voucher"
+          ? Array.from(new Set([...normalizeFormUsageScenarios(current.usageScenarios), "points_redemption"]))
+          : current.usageScenarios;
+      const next = { ...current, discountType: value, usageScenarios: nextUsageScenarios };
       const shouldRefreshDisplayText = !current.displayDiscountText.trim() || current.displayDiscountText.trim() === previousGeneratedText;
       return {
         ...next,
@@ -2128,6 +2142,8 @@ export default function MerchantCouponManager({
         ? "门槛金额和优惠金额都会展示在网站优惠券区块中。"
         : form.discountType === "stored_value"
           ? "储值券按储值金额抵扣订单；也可以用于结算二维码/条码核销。"
+          : form.discountType === "points_voucher"
+            ? "积分券在积分兑换台使用，按券中积分值抵扣本次应扣积分。"
           : form.discountType === "product_voucher"
             ? "商品券用于指定商品权益或核销，不会自动抵扣购物车金额。"
             : form.discountType === "exchange_voucher"
@@ -2140,6 +2156,8 @@ export default function MerchantCouponManager({
       ? "折扣百分比"
       : form.discountType === "stored_value"
         ? "储值金额"
+        : form.discountType === "points_voucher"
+          ? "抵扣积分"
         : form.discountType === "product_voucher" ||
             form.discountType === "exchange_voucher" ||
             form.discountType === "ticket_voucher"
@@ -2284,6 +2302,14 @@ export default function MerchantCouponManager({
                       onChange={(event) => toggleUsageScenario("order_cart", event.target.checked)}
                     />
                     订单（购物车中扣除）
+                  </label>
+                  <label className="flex min-h-[42px] items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={form.usageScenarios.includes("points_redemption")}
+                      onChange={(event) => toggleUsageScenario("points_redemption", event.target.checked)}
+                    />
+                    积分兑换
                   </label>
                 </div>
 
@@ -2542,7 +2568,9 @@ export default function MerchantCouponManager({
                   className={`grid gap-3 ${
                     form.discountType === "product_voucher"
                       ? "md:grid-cols-2 xl:grid-cols-5"
-                      : form.discountType === "stored_value" || form.discountType === "exchange_voucher"
+                      : form.discountType === "stored_value" ||
+                          form.discountType === "points_voucher" ||
+                          form.discountType === "exchange_voucher"
                         ? "md:grid-cols-2"
                         : form.discountType === "ticket_voucher"
                           ? "md:grid-cols-2"
@@ -2617,6 +2645,19 @@ export default function MerchantCouponManager({
                         className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
                         value={form.discountValue}
                         onChange={handleInputChange("discountValue")}
+                      />
+                    </label>
+                  ) : form.discountType === "points_voucher" ? (
+                    <label className="space-y-1 text-sm">
+                      <span className="block text-slate-600">抵扣积分</span>
+                      <input
+                        type="number"
+                        min={0}
+                        step={1}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+                        value={form.discountValue}
+                        onChange={handleInputChange("discountValue")}
+                        placeholder="例如：50"
                       />
                     </label>
                   ) : form.discountType === "exchange_voucher" ? (

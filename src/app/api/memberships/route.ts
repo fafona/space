@@ -150,6 +150,7 @@ function buildCouponHistoryByIdentity(coupons: MerchantCouponRecord[], nowMs: nu
         title: getMerchantCouponDisplayTitle(coupon),
         discountLabel: getMerchantCouponDiscountLabel(coupon),
         discountType: coupon.discountType,
+        discountValue: coupon.discountValue,
         productName: coupon.productName,
         productBarcode: coupon.productBarcode,
         productQuantity: coupon.productQuantity,

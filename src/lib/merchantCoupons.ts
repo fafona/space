@@ -6,9 +6,10 @@ export const MERCHANT_COUPON_DISCOUNT_TYPES = [
   "stored_value",
   "exchange_voucher",
   "ticket_voucher",
+  "points_voucher",
 ] as const;
 export const MERCHANT_COUPON_STATUSES = ["active", "paused", "archived"] as const;
-export const MERCHANT_COUPON_USAGE_SCENARIOS = ["order_cart", "checkout_qr", "checkout_barcode"] as const;
+export const MERCHANT_COUPON_USAGE_SCENARIOS = ["order_cart", "checkout_qr", "checkout_barcode", "points_redemption"] as const;
 export const MERCHANT_COUPON_DISPLAY_FIELDS = ["discount", "title", "description", "meta", "button"] as const;
 export const MERCHANT_COUPON_DISPLAY_BOX_STYLES = ["none", "soft", "outline", "solid"] as const;
 export const MERCHANT_COUPON_BEHAVIOR_TRIGGERS = [
@@ -35,6 +36,14 @@ export const MERCHANT_COUPON_TASK_REQUIREMENTS = [
 ] as const;
 
 export type MerchantCouponDiscountType = (typeof MERCHANT_COUPON_DISCOUNT_TYPES)[number];
+export const MERCHANT_COUPON_DIRECT_REDEMPTION_DISCOUNT_TYPES = [
+  "product_voucher",
+  "exchange_voucher",
+  "ticket_voucher",
+  "points_voucher",
+] as const satisfies readonly MerchantCouponDiscountType[];
+export type MerchantCouponDirectRedemptionDiscountType =
+  (typeof MERCHANT_COUPON_DIRECT_REDEMPTION_DISCOUNT_TYPES)[number];
 export type MerchantCouponStatus = (typeof MERCHANT_COUPON_STATUSES)[number];
 export type MerchantCouponUsageScenario = (typeof MERCHANT_COUPON_USAGE_SCENARIOS)[number];
 export type MerchantCouponDisplayField = (typeof MERCHANT_COUPON_DISPLAY_FIELDS)[number];
@@ -226,6 +235,14 @@ function normalizeCouponDiscountType(value: unknown): MerchantCouponDiscountType
     : "amount_off";
 }
 
+export function isMerchantCouponDirectRedemptionDiscountType(
+  value: unknown,
+): value is MerchantCouponDirectRedemptionDiscountType {
+  return MERCHANT_COUPON_DIRECT_REDEMPTION_DISCOUNT_TYPES.includes(
+    value as MerchantCouponDirectRedemptionDiscountType,
+  );
+}
+
 function normalizeCouponStatus(value: unknown): MerchantCouponStatus {
   return MERCHANT_COUPON_STATUSES.includes(value as MerchantCouponStatus)
     ? (value as MerchantCouponStatus)
@@ -385,7 +402,12 @@ export function normalizeMerchantCouponRecord(input: MerchantCouponInput | null 
   const now = new Date().toISOString();
   const discountType = normalizeCouponDiscountType(input?.discountType);
   const rawDiscountValue = normalizeMoneyValue(input?.discountValue);
-  const discountValue = discountType === "percent_off" ? Math.min(100, rawDiscountValue) : rawDiscountValue;
+  const discountValue =
+    discountType === "percent_off"
+      ? Math.min(100, rawDiscountValue)
+      : discountType === "points_voucher"
+        ? normalizePositiveInt(input?.discountValue)
+        : rawDiscountValue;
   const minimumAmount =
     discountType === "threshold_amount_off"
       ? Math.max(0.01, normalizeMoneyValue(input?.minimumAmount))
@@ -560,7 +582,7 @@ export function merchantCouponSupportsUsageScenario(
 
 export function buildMerchantCouponSettlementCode(
   coupon: MerchantCouponRecord,
-  scenario: Exclude<MerchantCouponUsageScenario, "order_cart">,
+  scenario: Extract<MerchantCouponUsageScenario, "checkout_qr" | "checkout_barcode">,
   sequenceInput = Math.max(1, coupon.claimedCount, coupon.usedCount),
   codeOverride = "",
 ) {
@@ -755,6 +777,7 @@ export function getMerchantCouponDiscountLabel(coupon: MerchantCouponRecord, pri
   if (coupon.discountType === "product_voucher") return coupon.productName ? `商品券：${coupon.productName}` : "商品券";
   if (coupon.discountType === "exchange_voucher") return coupon.exchangeItem ? `兑换券：${coupon.exchangeItem}` : "兑换券";
   if (coupon.discountType === "ticket_voucher") return coupon.ticketVenue ? `门票券：${coupon.ticketVenue}` : "门票券";
+  if (coupon.discountType === "points_voucher") return `积分券：抵扣 ${Math.max(0, Math.round(coupon.discountValue))} 积分`;
   const amount = `${pricePrefix}${coupon.discountValue.toFixed(2)}`;
   if (coupon.discountType === "stored_value") return `储值 ${amount}`;
   if (coupon.discountType === "threshold_amount_off" && coupon.minimumAmount > 0) {

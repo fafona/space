@@ -6,6 +6,7 @@ import {
   redeemMerchantCoupon,
   updateMerchantCoupon,
   type MerchantCouponClaimEvent,
+  type MerchantCouponDiscountType,
   type MerchantCouponInput,
   type MerchantCouponRecord,
 } from "@/lib/merchantCoupons";
@@ -30,6 +31,8 @@ function trimText(value: unknown, maxLength = 4096) {
 
 type MerchantCouponRedeemRequest = {
   settlementCode: string;
+  expectedCouponId?: string;
+  expectedClaimEventId?: string;
   operatorId?: string;
   note?: string;
   expectedAccountId?: string;
@@ -37,6 +40,7 @@ type MerchantCouponRedeemRequest = {
   expectedEmail?: string;
   operationId?: unknown;
   operationScope?: unknown;
+  allowedDiscountTypes?: readonly MerchantCouponDiscountType[];
 };
 
 export async function getMerchantCouponsSnapshot(siteId: string) {
@@ -176,6 +180,7 @@ export async function redeemMerchantCouponRecords(input: {
   siteId: string;
   operatorId?: string;
   redemptions: MerchantCouponRedeemRequest[];
+  commit?: boolean;
 }) {
   const supabase = requireCouponsStoreClient();
   const siteId = trimText(input.siteId);
@@ -184,11 +189,14 @@ export async function redeemMerchantCouponRecords(input: {
   const redemptions = (Array.isArray(input.redemptions) ? input.redemptions : [])
     .map((redemption) => ({
       settlementCode: trimText(redemption.settlementCode),
+      expectedCouponId: trimText(redemption.expectedCouponId, 160),
+      expectedClaimEventId: trimText(redemption.expectedClaimEventId, 160),
       operatorId: trimText(redemption.operatorId) || trimText(input.operatorId),
       note: trimText(redemption.note),
       expectedAccountId: trimText(redemption.expectedAccountId),
       expectedUserId: trimText(redemption.expectedUserId),
       expectedEmail: trimText(redemption.expectedEmail).toLowerCase(),
+      allowedDiscountTypes: redemption.allowedDiscountTypes,
       operationMarker: buildMutationOperationMarker(trimText(redemption.operationScope, 80) || "coupon-redeem", redemption.operationId),
     }))
     .filter((redemption) => {
@@ -207,6 +215,18 @@ export async function redeemMerchantCouponRecords(input: {
     if (index < 0) throw new Error("coupon_claim_not_found");
     const claimEvent = coupons[index].claimEvents.find((event) => event.settlementCode === redemption.settlementCode);
     if (!claimEvent) throw new Error("coupon_claim_not_found");
+    if (redemption.expectedCouponId && coupons[index].id !== redemption.expectedCouponId) {
+      throw new Error("coupon_claim_not_found");
+    }
+    if (redemption.expectedClaimEventId && claimEvent.id !== redemption.expectedClaimEventId) {
+      throw new Error("coupon_claim_not_found");
+    }
+    if (
+      redemption.allowedDiscountTypes?.length &&
+      !redemption.allowedDiscountTypes.includes(coupons[index].discountType)
+    ) {
+      throw new Error("coupon_not_direct_redeemable");
+    }
     const existingRedeemEvent = coupons[index].redeemEvents.find(
       (event) => event.settlementCode === redemption.settlementCode || event.claimEventId === claimEvent.id,
     );
@@ -234,6 +254,9 @@ export async function redeemMerchantCouponRecords(input: {
     coupons[index] = next;
     redeemedCoupons.push(next);
   });
+  if (input.commit === false) {
+    return redeemedCoupons;
+  }
   const saved = await saveStoredMerchantCoupons(supabase, {
     siteId,
     coupons,
