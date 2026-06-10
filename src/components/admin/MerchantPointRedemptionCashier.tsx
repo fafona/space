@@ -3263,8 +3263,8 @@ export default function MerchantPointRedemptionCashier({
           grid-template-columns: 64px minmax(0, 1fr) auto auto;
           grid-template-rows: 1fr;
           align-items: center;
-          min-height: 52px;
-          padding: 10px 12px;
+          min-height: 42px;
+          padding: 8px 12px;
         }
 
         .merchant-pos-cashier .product-code {
@@ -3284,6 +3284,17 @@ export default function MerchantPointRedemptionCashier({
           font-size: 12px;
           font-weight: 800;
           text-align: right;
+        }
+
+        .merchant-pos-cashier .product-tile-text .product-stock {
+          grid-column: auto;
+          min-width: 58px;
+          white-space: nowrap;
+        }
+
+        .merchant-pos-cashier .product-tile-text .product-price {
+          min-width: 42px;
+          justify-self: end;
         }
 
         .merchant-pos-cashier .product-stock.danger {
@@ -3953,8 +3964,8 @@ export default function MerchantPointRedemptionCashier({
                     >
                       <span className="product-code">{item.code || item.id}</span>
                       <strong>{item.name}</strong>
-                      <span className={`product-stock ${outOfStock ? "danger" : ""}`}>{stockLabel(item)}</span>
                       <span className="product-price">{pointsUnavailable ? "-" : formatPoints(unitPoints)}</span>
+                      <span className={`product-stock ${outOfStock ? "danger" : ""}`}>{stockLabel(item)}</span>
                     </button>
                   );
                 }
