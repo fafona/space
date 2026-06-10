@@ -25,6 +25,7 @@ import {
   type BlockBorderStyle,
   type BackgroundEditableProps,
   type Block,
+  type ButtonHoverAnimation,
   type CommonProps,
   type CouponActionMode,
   type CouponDisplayMode,
@@ -262,7 +263,10 @@ import { broadcastPublishSync } from "@/lib/publishSync";
 import {
   BUTTON_BLOCK_MIN_HEIGHT,
   BUTTON_BLOCK_MIN_WIDTH,
+  BUTTON_HOVER_ANIMATION_OPTIONS,
   buildButtonLabelPatch,
+  getButtonHoverAnimationClassName,
+  normalizeButtonHoverAnimation,
   resolveButtonContentPadding,
   resolveButtonLabel,
 } from "@/lib/buttonBlock";
@@ -10007,6 +10011,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           blockHeight: 56,
           buttonLabel: "按钮",
           buttonJumpTarget: "",
+          buttonHoverAnimation: "none",
         },
       };
     }
@@ -22834,6 +22839,7 @@ type GalleryEditorImage = {
   const [commonInsertMode, setCommonInsertMode] = useState(false);
   const [activeCommonTextBoxId, setActiveCommonTextBoxId] = useState<string | null>(null);
   const [buttonJumpDialogOpen, setButtonJumpDialogOpen] = useState(false);
+  const [buttonAnimationDialogOpen, setButtonAnimationDialogOpen] = useState(false);
   const [buttonJumpTargetInput, setButtonJumpTargetInput] = useState("");
   const [galleryEditorOpen, setGalleryEditorOpen] = useState(false);
   const [previewNavPageId, setPreviewNavPageId] = useState(currentPageId);
@@ -24609,6 +24615,19 @@ type GalleryEditorImage = {
     setButtonJumpDialogOpen(false);
   }
 
+  function openButtonAnimationDialog() {
+    if (block.type !== "button") return;
+    setButtonAnimationDialogOpen(true);
+  }
+
+  function applyButtonHoverAnimation(value: ButtonHoverAnimation) {
+    if (block.type !== "button") return;
+    onChange({
+      buttonHoverAnimation: normalizeButtonHoverAnimation(value),
+    });
+    setButtonAnimationDialogOpen(false);
+  }
+
   function editBorderSettings() {
     const current = (block.props.blockBorderColor ?? "").trim();
     setBorderColorInput(/^#([0-9a-fA-F]{6})$/.test(current) ? current : "#6b7280");
@@ -26189,6 +26208,9 @@ type GalleryEditorImage = {
     </div>
   ) : null;
 
+  const currentButtonHoverAnimation =
+    block.type === "button" ? normalizeButtonHoverAnimation(block.props.buttonHoverAnimation) : "none";
+
   const buttonJumpDialog =
     buttonJumpDialogOpen && block.type === "button"
       ? renderOverlay(
@@ -26254,6 +26276,43 @@ type GalleryEditorImage = {
         )
       : null;
 
+  const buttonAnimationDialog =
+    buttonAnimationDialogOpen && block.type === "button"
+      ? renderOverlay(
+          <div data-editor-overlay className="fixed inset-0 z-[2147483600] bg-black/40 flex items-center justify-center p-4">
+            <div className="w-full max-w-lg rounded-xl border bg-white p-4 space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-semibold">{"鼠标移入动画"}</div>
+                <button
+                  type="button"
+                  className="rounded border bg-white px-3 py-1.5 text-xs hover:bg-gray-50"
+                  onClick={() => setButtonAnimationDialogOpen(false)}
+                >
+                  {"关闭"}
+                </button>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {BUTTON_HOVER_ANIMATION_OPTIONS.map((item) => {
+                  const active = currentButtonHoverAnimation === item.value;
+                  return (
+                    <button
+                      key={item.value}
+                      type="button"
+                      className={`rounded-xl border px-4 py-3 text-left text-sm font-semibold transition ${
+                        active ? "border-slate-950 bg-slate-950 text-white" : "border-slate-200 bg-white text-slate-800 hover:bg-slate-50"
+                      } ${getButtonHoverAnimationClassName(item.value)}`}
+                      onClick={() => applyButtonHoverAnimation(item.value)}
+                    >
+                      {item.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>,
+        )
+      : null;
+
   if (block.type === "button") {
     const buttonLabel = resolveButtonLabel(block.props);
     const buttonFontColor = (block.props.fontColor ?? "").trim();
@@ -26277,6 +26336,7 @@ type GalleryEditorImage = {
         buttonLabelStyle.color = buttonFontColor;
       }
     }
+    const buttonHoverAnimationClassName = getButtonHoverAnimationClassName(block.props.buttonHoverAnimation);
 
     return (
       <section
@@ -26296,6 +26356,7 @@ type GalleryEditorImage = {
           onEditTypography={editTypography}
           onInsertImage={insertImage}
           onConfigureJump={openButtonJumpDialog}
+          onEditButtonAnimation={openButtonAnimationDialog}
           onEditImageSettings={editImageSettings}
           onEditBorderStyle={editBorderSettings}
           isMobileViewport={previewViewport === "mobile"}
@@ -26306,7 +26367,7 @@ type GalleryEditorImage = {
         <div
           ref={resizeTargetRef}
           data-block-visual-boundary
-          className={`relative rounded-xl shadow-sm pointer-events-auto ${isSelected ? "overflow-visible" : "overflow-hidden"} ${borderClass}`}
+          className={`relative rounded-xl shadow-sm pointer-events-auto ${buttonHoverAnimationClassName} ${isSelected ? "overflow-visible" : "overflow-hidden"} ${borderClass}`}
           onClick={onSelect}
           style={{
             ...blockPreviewShellStyle,
@@ -26320,6 +26381,7 @@ type GalleryEditorImage = {
           {layerSettingsDialog}
           {typographyDialog}
           {buttonJumpDialog}
+          {buttonAnimationDialog}
           <div
             className="absolute inset-0 box-border flex min-h-0 min-w-0 items-center justify-center overflow-hidden text-center"
             style={resolveButtonContentPadding(blockWidth, blockHeight)}
@@ -34179,6 +34241,7 @@ function EditorBlockHeader({
   onInsertText,
   onInsertImage,
   onConfigureJump,
+  onEditButtonAnimation,
   onEditImageSettings,
   onEditBorderStyle,
   isMobileViewport,
@@ -34198,6 +34261,7 @@ function EditorBlockHeader({
   onInsertText?: (() => void) | undefined;
   onInsertImage?: (() => void) | undefined;
   onConfigureJump?: (() => void) | undefined;
+  onEditButtonAnimation?: (() => void) | undefined;
   onEditImageSettings: () => void;
   onEditBorderStyle: () => void;
   isMobileViewport?: boolean;
@@ -34286,6 +34350,17 @@ function EditorBlockHeader({
                 }}
               >
                 {"跳转"}
+              </button>
+            ) : null}
+            {onEditButtonAnimation ? (
+              <button
+                className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50 shrink-0 whitespace-nowrap"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onEditButtonAnimation();
+                }}
+              >
+                {"动画"}
               </button>
             ) : null}
             <button

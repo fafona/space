@@ -2,6 +2,7 @@ import type { ButtonProps } from "@/data/homeBlocks";
 import {
   BUTTON_BLOCK_MIN_HEIGHT,
   BUTTON_BLOCK_MIN_WIDTH,
+  getButtonHoverAnimationClassName,
   resolveButtonContentPadding,
   resolveButtonJumpPageId,
   resolveButtonLabel,
@@ -94,6 +95,7 @@ export default function ButtonBlock(props: ButtonBlockRuntimeProps) {
   const borderClass = getBlockBorderClass(props.blockBorderStyle);
   const borderInlineStyle = getBlockBorderInlineStyle(props.blockBorderStyle, props.blockBorderColor);
   const typographyStyle = getTypographyStyle(props);
+  const hoverAnimationClassName = getButtonHoverAnimationClassName(props.buttonHoverAnimation);
   const jumpTarget = (props.buttonJumpTarget ?? "").trim();
   const isClickable = jumpTarget.length > 0;
   const labelHtml = toRichHtml(resolveButtonLabel(props), "按钮");
@@ -101,13 +103,16 @@ export default function ButtonBlock(props: ButtonBlockRuntimeProps) {
   return (
     <section className={resolveMobileFitSectionClass("max-w-6xl mx-auto px-6 py-6", mobileFitScreenWidth)} style={offsetStyle}>
       <div
-        className={resolveMobileFitCardClass(`relative overflow-hidden rounded-xl shadow-sm ${borderClass}`, mobileFitScreenWidth)}
+        className={resolveMobileFitCardClass(
+          `relative overflow-hidden rounded-xl shadow-sm ${borderClass} ${hoverAnimationClassName}`,
+          mobileFitScreenWidth,
+        )}
         style={{ ...cardStyle, ...sizeStyle, ...borderInlineStyle }}
       >
         {isClickable ? (
           <button
             type="button"
-            className="relative h-full min-h-0 w-full appearance-none border-0 bg-transparent p-0 text-center transition hover:brightness-[0.98]"
+            className="relative h-full min-h-0 w-full appearance-none border-0 bg-transparent p-0 text-center"
             onClick={() => performJump(jumpTarget, props.onNavigatePage, props.availablePages)}
           >
             <div className="absolute inset-0 box-border flex min-h-0 min-w-0 items-center justify-center overflow-hidden text-center" style={resolveButtonContentPadding(blockWidth, blockHeight)}>

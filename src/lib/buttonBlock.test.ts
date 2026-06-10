@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ButtonProps } from "../data/homeBlocks";
-import { buildButtonLabelPatch, resolveButtonJumpPageId, resolveButtonLabel } from "./buttonBlock";
+import {
+  buildButtonLabelPatch,
+  getButtonHoverAnimationClassName,
+  normalizeButtonHoverAnimation,
+  resolveButtonJumpPageId,
+  resolveButtonLabel,
+} from "./buttonBlock";
 
 function makeButtonProps(props: Partial<ButtonProps> = {}): ButtonProps {
   return {
@@ -32,6 +38,15 @@ test("resolveButtonJumpPageId matches page names and front page aliases", () => 
   ];
   assert.equal(resolveButtonJumpPageId("front page", pages), "page-1");
   assert.equal(resolveButtonJumpPageId("page:Offers", pages), "page-177");
+});
+
+test("button hover animation values are normalized for legacy data", () => {
+  assert.equal(normalizeButtonHoverAnimation("grow"), "grow");
+  assert.equal(normalizeButtonHoverAnimation("unknown"), "none");
+  assert.equal(
+    getButtonHoverAnimationClassName("glow"),
+    "faolla-button-hover-target faolla-button-hover-glow",
+  );
 });
 
 test("resolveButtonLabel falls back to legacy button text boxes", () => {

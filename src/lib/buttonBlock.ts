@@ -1,4 +1,4 @@
-import type { ButtonProps } from "@/data/homeBlocks";
+import type { ButtonHoverAnimation, ButtonProps } from "@/data/homeBlocks";
 
 type LegacyButtonTextBox = NonNullable<ButtonProps["commonTextBoxes"]>[number];
 
@@ -8,6 +8,34 @@ export type ButtonJumpPage = {
 };
 export const BUTTON_BLOCK_MIN_WIDTH = 18;
 export const BUTTON_BLOCK_MIN_HEIGHT = 18;
+
+export const BUTTON_HOVER_ANIMATION_OPTIONS: Array<{
+  value: ButtonHoverAnimation;
+  label: string;
+}> = [
+  { value: "none", label: "无效果" },
+  { value: "lift", label: "上浮" },
+  { value: "grow", label: "放大" },
+  { value: "press", label: "轻按" },
+  { value: "glow", label: "发光" },
+  { value: "pulse", label: "脉冲" },
+  { value: "wiggle", label: "摇晃" },
+];
+
+const BUTTON_HOVER_ANIMATION_VALUES = new Set<ButtonHoverAnimation>(
+  BUTTON_HOVER_ANIMATION_OPTIONS.map((item) => item.value),
+);
+
+export function normalizeButtonHoverAnimation(value: unknown): ButtonHoverAnimation {
+  return typeof value === "string" && BUTTON_HOVER_ANIMATION_VALUES.has(value as ButtonHoverAnimation)
+    ? (value as ButtonHoverAnimation)
+    : "none";
+}
+
+export function getButtonHoverAnimationClassName(value: unknown) {
+  const normalized = normalizeButtonHoverAnimation(value);
+  return `faolla-button-hover-target faolla-button-hover-${normalized}`;
+}
 
 export const DEFAULT_BUTTON_LABEL = "按钮";
 

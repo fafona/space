@@ -21,6 +21,7 @@ import type {
 
 export type ImageFillMode = "cover" | "contain" | "fill" | "repeat" | "repeat-x" | "repeat-y";
 export type BlockBorderStyle = "none" | "glass" | "soft" | "solid" | "dashed" | "double" | "accent";
+export type ButtonHoverAnimation = "none" | "lift" | "grow" | "press" | "glow" | "pulse" | "wiggle";
 
 export type BackgroundEditableProps = {
   schemaVersion?: number;
@@ -274,7 +275,8 @@ export type CommonProps = BackgroundEditableProps &
 export type ButtonProps = BackgroundEditableProps &
   TypographyEditableProps & {
     buttonLabel?: string;
-  buttonJumpTarget?: string;
+    buttonJumpTarget?: string;
+    buttonHoverAnimation?: ButtonHoverAnimation;
     // Legacy fields kept for button blocks created before the dedicated button editor.
     commonTextBoxes?: CommonProps["commonTextBoxes"];
     commonItems?: string[];

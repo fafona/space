@@ -421,3 +421,77 @@ html[data-i18n-pending="1"] body {
   border-left-width: 0 !important;
   border-right-width: 0 !important;
 }
+
+.faolla-button-hover-target {
+  transform-origin: center;
+  transition:
+    transform 180ms ease,
+    box-shadow 180ms ease,
+    filter 180ms ease;
+  will-change: transform, box-shadow, filter;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .faolla-button-hover-lift:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 18px 34px rgba(15, 23, 42, 0.18);
+  }
+
+  .faolla-button-hover-grow:hover {
+    transform: scale(1.045);
+  }
+
+  .faolla-button-hover-press:hover {
+    transform: scale(0.97);
+  }
+
+  .faolla-button-hover-glow:hover {
+    filter: brightness(1.06);
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.42),
+      0 16px 34px rgba(59, 130, 246, 0.28);
+  }
+
+  .faolla-button-hover-pulse:hover {
+    animation: faolla-button-hover-pulse 760ms ease-in-out infinite;
+  }
+
+  .faolla-button-hover-wiggle:hover {
+    animation: faolla-button-hover-wiggle 420ms ease-in-out both;
+  }
+}
+
+@keyframes faolla-button-hover-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.04);
+  }
+}
+
+@keyframes faolla-button-hover-wiggle {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  22% {
+    transform: rotate(-2deg);
+  }
+  48% {
+    transform: rotate(2deg);
+  }
+  72% {
+    transform: rotate(-1deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .faolla-button-hover-target,
+  .faolla-button-hover-target:hover {
+    animation: none !important;
+    transform: none !important;
+    transition: none !important;
+  }
+}
