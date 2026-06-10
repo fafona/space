@@ -155,6 +155,27 @@ function createStoredRow(id: number, slug: string, payload: PlatformMerchantSnap
   };
 }
 
+function createPayloadWithSite(revision: string, siteId: string, merchantName: string): PlatformMerchantSnapshotPayload {
+  const base = createPayload(revision, 0);
+  const site = base.snapshot[0];
+  assert.ok(site);
+  return {
+    ...base,
+    snapshot: [
+      {
+        ...site,
+        id: siteId,
+        merchantName,
+        name: merchantName,
+        domainPrefix: merchantName.toLowerCase(),
+        domainSuffix: merchantName.toLowerCase(),
+        domain: merchantName.toLowerCase(),
+      },
+    ],
+    merchantConfigHistoryBySiteId: {},
+  };
+}
+
 function createMockSnapshotStore(initialRows: PageRow[]) {
   let rows = initialRows.map((row) => ({ ...row }));
   let nextId = rows.reduce((max, row) => Math.max(max, row.id), 0) + 1;
@@ -267,5 +288,39 @@ test("savePlatformMerchantSnapshot preserves existing history when incoming payl
   assert.equal(
     client.read(PLATFORM_MERCHANT_SNAPSHOT_HISTORY_BACKUP_SLUG)?.merchantConfigHistoryBySiteId["10000000"]?.length,
     1,
+  );
+});
+
+test("savePlatformMerchantSnapshot rejects stale revisions without writing", async () => {
+  const client = createMockSnapshotStore([
+    createStoredRow(1, PLATFORM_MERCHANT_SNAPSHOT_SLUG, createPayload("revision-current", 0)),
+  ]);
+
+  const result = await savePlatformMerchantSnapshot(client, createPayload("revision-stale", 0), {
+    expectedRevision: "revision-stale",
+  });
+
+  assert.equal(result.code, "conflict");
+  assert.equal(result.error, "platform_merchant_snapshot_conflict");
+  assert.equal(client.read(PLATFORM_MERCHANT_SNAPSHOT_SLUG)?.revision, "revision-current");
+});
+
+test("savePlatformMerchantSnapshot keeps existing merchants missing from incoming payload", async () => {
+  const client = createMockSnapshotStore([
+    createStoredRow(1, PLATFORM_MERCHANT_SNAPSHOT_SLUG, createPayloadWithSite("revision-main", "10000000", "Alpha")),
+  ]);
+
+  const result = await savePlatformMerchantSnapshot(
+    client,
+    createPayloadWithSite("revision-main", "20000000", "Beta"),
+    { expectedRevision: "revision-main" },
+  );
+
+  assert.equal(result.error, null);
+  const saved = client.read(PLATFORM_MERCHANT_SNAPSHOT_SLUG);
+  assert.ok(saved);
+  assert.deepEqual(
+    saved.snapshot.map((site) => site.id).sort(),
+    ["10000000", "20000000"],
   );
 });

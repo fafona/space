@@ -19,6 +19,7 @@ import {
   readPlatformMerchantSnapshotFromBlocks,
   type PlatformMerchantSnapshotPayload,
 } from "@/lib/platformMerchantSnapshot";
+import { mergePublishedMerchantSnapshots } from "@/lib/platformPublished";
 
 type SnapshotErrorLike = { message?: string } | null;
 
@@ -160,6 +161,38 @@ async function loadStoredPlatformMerchantSnapshotBySlug(
   return payload && payload.snapshot.length > 0 ? payload : null;
 }
 
+type SnapshotStoredPayloadEntry = {
+  record: SnapshotStoredRow;
+  payload: PlatformMerchantSnapshotPayload | null;
+  error: string | null;
+  supportsSlug: boolean;
+  supportsMerchantId: boolean;
+};
+
+async function loadStoredPlatformMerchantSnapshotEntryBySlug(
+  supabase: PlatformMerchantSnapshotStoreClient,
+  slug: string,
+): Promise<SnapshotStoredPayloadEntry> {
+  const row = await querySnapshotRowBySlug(supabase, slug, "id,blocks");
+  if (row.error) {
+    return {
+      record: row.record,
+      payload: null,
+      error: row.error,
+      supportsSlug: row.supportsSlug,
+      supportsMerchantId: row.supportsMerchantId,
+    };
+  }
+  const payload = readPlatformMerchantSnapshotFromBlocks(row.record?.blocks);
+  return {
+    record: row.record,
+    payload: payload && payload.snapshot.length > 0 ? payload : null,
+    error: null,
+    supportsSlug: row.supportsSlug,
+    supportsMerchantId: row.supportsMerchantId,
+  };
+}
+
 function mergeSnapshotPayloadHistory(
   primary: PlatformMerchantSnapshotPayload | null,
   ...fallbacks: Array<PlatformMerchantSnapshotPayload | null>
@@ -180,6 +213,24 @@ function mergeSnapshotPayloadHistory(
   });
 }
 
+function mergePlatformMerchantSnapshotPayloads(
+  incoming: PlatformMerchantSnapshotPayload,
+  existing: PlatformMerchantSnapshotPayload,
+): PlatformMerchantSnapshotPayload {
+  const mergedCurrent = mergePublishedMerchantSnapshots(incoming.snapshot, existing.snapshot);
+  const mergedIds = new Set(mergedCurrent.map((site) => site.id));
+  const appendedExisting = existing.snapshot.filter((site) => !mergedIds.has(site.id));
+  return normalizePlatformMerchantSnapshotPayload({
+    revision: incoming.revision || existing.revision,
+    snapshot: [...mergedCurrent, ...appendedExisting],
+    defaultSortRule: incoming.defaultSortRule || existing.defaultSortRule,
+    merchantConfigHistoryBySiteId: mergePlatformMerchantConfigHistoryBySiteId(
+      incoming.merchantConfigHistoryBySiteId,
+      existing.merchantConfigHistoryBySiteId,
+    ),
+  });
+}
+
 export async function loadStoredPlatformMerchantSnapshot(
   supabase: PlatformMerchantSnapshotStoreClient,
   options: PlatformMerchantSnapshotLoadOptions = {},
@@ -188,13 +239,12 @@ export async function loadStoredPlatformMerchantSnapshot(
     return platformMerchantSnapshotCache.value;
   }
 
-  const primaryPayload = await loadStoredPlatformMerchantSnapshotBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_SLUG);
-  const backupPayload = await loadStoredPlatformMerchantSnapshotBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_BACKUP_SLUG);
-  const historyPayload = await loadStoredPlatformMerchantSnapshotBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_HISTORY_SLUG);
-  const historyBackupPayload = await loadStoredPlatformMerchantSnapshotBySlug(
-    supabase,
-    PLATFORM_MERCHANT_SNAPSHOT_HISTORY_BACKUP_SLUG,
-  );
+  const [primaryPayload, backupPayload, historyPayload, historyBackupPayload] = await Promise.all([
+    loadStoredPlatformMerchantSnapshotBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_SLUG),
+    loadStoredPlatformMerchantSnapshotBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_BACKUP_SLUG),
+    loadStoredPlatformMerchantSnapshotBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_HISTORY_SLUG),
+    loadStoredPlatformMerchantSnapshotBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_HISTORY_BACKUP_SLUG),
+  ]);
   const normalizedPayload = mergeSnapshotPayloadHistory(
     primaryPayload,
     backupPayload,
@@ -215,18 +265,17 @@ export async function savePlatformMerchantSnapshot(
     expectedRevision?: string | null;
   } = {},
 ): Promise<PlatformMerchantSnapshotSaveResult> {
-  const primaryPayload = await loadStoredPlatformMerchantSnapshotBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_SLUG);
-  const backupPayload = await loadStoredPlatformMerchantSnapshotBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_BACKUP_SLUG);
-  const historyPayload = await loadStoredPlatformMerchantSnapshotBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_HISTORY_SLUG);
-  const historyBackupPayload = await loadStoredPlatformMerchantSnapshotBySlug(
-    supabase,
-    PLATFORM_MERCHANT_SNAPSHOT_HISTORY_BACKUP_SLUG,
-  );
+  const [primaryEntry, backupEntry, historyEntry, historyBackupEntry] = await Promise.all([
+    loadStoredPlatformMerchantSnapshotEntryBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_SLUG),
+    loadStoredPlatformMerchantSnapshotEntryBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_BACKUP_SLUG),
+    loadStoredPlatformMerchantSnapshotEntryBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_HISTORY_SLUG),
+    loadStoredPlatformMerchantSnapshotEntryBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_HISTORY_BACKUP_SLUG),
+  ]);
   const existingPayload = mergeSnapshotPayloadHistory(
-    primaryPayload,
-    backupPayload,
-    historyPayload,
-    historyBackupPayload,
+    primaryEntry.payload,
+    backupEntry.payload,
+    historyEntry.payload,
+    historyBackupEntry.payload,
   );
   const expectedRevision = String(options.expectedRevision ?? "").trim();
   const currentRevision = String(existingPayload?.revision ?? "").trim();
@@ -238,11 +287,14 @@ export async function savePlatformMerchantSnapshot(
     };
   }
 
+  const payloadWithExisting = existingPayload
+    ? mergePlatformMerchantSnapshotPayloads(payload, existingPayload)
+    : payload;
   const payloadToPersist = normalizePlatformMerchantSnapshotPayload({
-    ...payload,
+    ...payloadWithExisting,
     revision: createPlatformMerchantSnapshotRevision(),
     merchantConfigHistoryBySiteId: mergePlatformMerchantConfigHistoryBySiteId(
-      payload.merchantConfigHistoryBySiteId,
+      payloadWithExisting.merchantConfigHistoryBySiteId,
       existingPayload?.merchantConfigHistoryBySiteId,
     ),
   });
@@ -253,8 +305,7 @@ export async function savePlatformMerchantSnapshot(
   };
 
   const payloadWithoutUpdatedAt = { blocks };
-  const persistBySlug = async (slug: string) => {
-    const existing = await querySnapshotRowBySlug(supabase, slug, "id");
+  const persistBySlug = async (slug: string, existing: SnapshotStoredPayloadEntry) => {
     if (existing.error) {
       return { error: existing.error };
     }
@@ -284,25 +335,28 @@ export async function savePlatformMerchantSnapshot(
     return updatePayload(payloadWithoutUpdatedAt);
   };
 
-  const primarySave = await persistBySlug(PLATFORM_MERCHANT_SNAPSHOT_SLUG);
+  const primarySave = await persistBySlug(PLATFORM_MERCHANT_SNAPSHOT_SLUG, primaryEntry);
   if (primarySave.error) {
     return { error: primarySave.error };
   }
 
-  const backupSave = await persistBySlug(PLATFORM_MERCHANT_SNAPSHOT_BACKUP_SLUG);
-  if (backupSave.error && typeof console !== "undefined") {
-    console.error("[platform-merchant-snapshot] backup save failed", backupSave.error);
-  }
-
-  const historySave = await persistBySlug(PLATFORM_MERCHANT_SNAPSHOT_HISTORY_SLUG);
-  if (historySave.error && typeof console !== "undefined") {
-    console.error("[platform-merchant-snapshot] history save failed", historySave.error);
-  }
-
-  const historyBackupSave = await persistBySlug(PLATFORM_MERCHANT_SNAPSHOT_HISTORY_BACKUP_SLUG);
-  if (historyBackupSave.error && typeof console !== "undefined") {
-    console.error("[platform-merchant-snapshot] history backup save failed", historyBackupSave.error);
-  }
+  const auxiliarySaves = [
+    persistBySlug(PLATFORM_MERCHANT_SNAPSHOT_BACKUP_SLUG, backupEntry).then((backupSave) => {
+      if (backupSave.error && typeof console !== "undefined") {
+        console.error("[platform-merchant-snapshot] backup save failed", backupSave.error);
+      }
+    }),
+    persistBySlug(PLATFORM_MERCHANT_SNAPSHOT_HISTORY_SLUG, historyEntry).then((historySave) => {
+      if (historySave.error && typeof console !== "undefined") {
+        console.error("[platform-merchant-snapshot] history save failed", historySave.error);
+      }
+    }),
+    persistBySlug(PLATFORM_MERCHANT_SNAPSHOT_HISTORY_BACKUP_SLUG, historyBackupEntry).then((historyBackupSave) => {
+      if (historyBackupSave.error && typeof console !== "undefined") {
+        console.error("[platform-merchant-snapshot] history backup save failed", historyBackupSave.error);
+      }
+    }),
+  ];
 
   const archiveDelta = derivePlatformMerchantConfigArchiveEntries({
     previousHistoryBySiteId: existingPayload?.merchantConfigHistoryBySiteId,
@@ -310,17 +364,22 @@ export async function savePlatformMerchantSnapshot(
     nextSnapshot: payloadToPersist.snapshot,
   });
   if (archiveDelta.audits.length > 0 || archiveDelta.backups.length > 0) {
-    const existingArchive = await loadStoredPlatformMerchantConfigArchive(
-      supabase as unknown as PlatformMerchantConfigArchiveStoreClient,
+    auxiliarySaves.push(
+      (async () => {
+        const existingArchive = await loadStoredPlatformMerchantConfigArchive(
+          supabase as unknown as PlatformMerchantConfigArchiveStoreClient,
+        );
+        const archiveSave = await savePlatformMerchantConfigArchive(
+          supabase as unknown as PlatformMerchantConfigArchiveStoreClient,
+          mergePlatformMerchantConfigArchivePayloads(existingArchive, archiveDelta),
+        );
+        if (archiveSave.error && typeof console !== "undefined") {
+          console.error("[platform-merchant-snapshot] config archive save failed", archiveSave.error);
+        }
+      })(),
     );
-    const archiveSave = await savePlatformMerchantConfigArchive(
-      supabase as unknown as PlatformMerchantConfigArchiveStoreClient,
-      mergePlatformMerchantConfigArchivePayloads(existingArchive, archiveDelta),
-    );
-    if (archiveSave.error && typeof console !== "undefined") {
-      console.error("[platform-merchant-snapshot] config archive save failed", archiveSave.error);
-    }
   }
+  await Promise.all(auxiliarySaves);
 
   platformMerchantSnapshotCache = {
     expiresAt: Date.now() + PLATFORM_MERCHANT_SNAPSHOT_CACHE_TTL_MS,

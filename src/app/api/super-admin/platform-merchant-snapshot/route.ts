@@ -1,11 +1,8 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import {
-  mergePlatformMerchantConfigHistoryBySiteId,
   normalizePlatformMerchantSnapshotPayload,
-  type PlatformMerchantSnapshotPayload,
 } from "@/lib/platformMerchantSnapshot";
-import { mergePublishedMerchantSnapshots } from "@/lib/platformPublished";
 import {
   loadStoredPlatformMerchantSnapshot,
   savePlatformMerchantSnapshot,
@@ -50,24 +47,6 @@ function createServerSupabaseClient() {
       detectSessionInUrl: false,
     },
   }) as unknown as LooseSupabaseClient;
-}
-
-function mergePlatformMerchantSnapshotPayloads(
-  incoming: PlatformMerchantSnapshotPayload,
-  existing: PlatformMerchantSnapshotPayload,
-): PlatformMerchantSnapshotPayload {
-  const mergedCurrent = mergePublishedMerchantSnapshots(incoming.snapshot, existing.snapshot);
-  const mergedIds = new Set(mergedCurrent.map((site) => site.id));
-  const appendedExisting = existing.snapshot.filter((site) => !mergedIds.has(site.id));
-  return normalizePlatformMerchantSnapshotPayload({
-    revision: incoming.revision || existing.revision,
-    snapshot: [...mergedCurrent, ...appendedExisting],
-    defaultSortRule: incoming.defaultSortRule || existing.defaultSortRule,
-    merchantConfigHistoryBySiteId: mergePlatformMerchantConfigHistoryBySiteId(
-      incoming.merchantConfigHistoryBySiteId,
-      existing.merchantConfigHistoryBySiteId,
-    ),
-  });
 }
 
 export async function GET(request: Request) {
@@ -115,28 +94,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "empty_snapshot" }, { status: 400 });
   }
 
-  const existingPayload = await loadStoredPlatformMerchantSnapshot(
-    supabase as unknown as PlatformMerchantSnapshotStoreClient,
-    { bypassCache: true },
-  );
-  if (existingPayload && payload.revision !== existingPayload.revision) {
-    return NextResponse.json(
-      {
-        error: "platform_merchant_snapshot_conflict",
-        payload: existingPayload,
-      },
-      { status: 409 },
-    );
-  }
-  const nextPayload = existingPayload
-    ? mergePlatformMerchantSnapshotPayloads(payload, existingPayload)
-    : payload;
-
   const saveResult = await savePlatformMerchantSnapshot(
     supabase as unknown as PlatformMerchantSnapshotStoreClient,
-    nextPayload,
+    payload,
     {
-      expectedRevision: existingPayload?.revision ?? "",
+      expectedRevision: payload.revision,
     },
   );
 
@@ -144,7 +106,7 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error: "platform_merchant_snapshot_conflict",
-        payload: saveResult.payload ?? existingPayload ?? normalizePlatformMerchantSnapshotPayload({}),
+        payload: saveResult.payload ?? normalizePlatformMerchantSnapshotPayload({}),
       },
       { status: 409 },
     );
@@ -162,8 +124,8 @@ export async function POST(request: Request) {
 
   return NextResponse.json({
     ok: true,
-    count: saveResult.payload?.snapshot.length ?? nextPayload.snapshot.length,
-    defaultSortRule: saveResult.payload?.defaultSortRule ?? nextPayload.defaultSortRule,
-    payload: saveResult.payload ?? nextPayload,
+    count: saveResult.payload?.snapshot.length ?? payload.snapshot.length,
+    defaultSortRule: saveResult.payload?.defaultSortRule ?? payload.defaultSortRule,
+    payload: saveResult.payload ?? payload,
   });
 }

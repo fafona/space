@@ -144,14 +144,16 @@ export async function loadStoredPlatformMerchantConfigArchive(
     return platformMerchantConfigArchiveCache.value;
   }
 
-  const primaryPayload = await loadStoredPlatformMerchantConfigArchiveBySlug(
-    supabase,
-    PLATFORM_MERCHANT_CONFIG_ARCHIVE_SLUG,
-  );
-  const backupPayload = await loadStoredPlatformMerchantConfigArchiveBySlug(
-    supabase,
-    PLATFORM_MERCHANT_CONFIG_ARCHIVE_BACKUP_SLUG,
-  );
+  const [primaryPayload, backupPayload] = await Promise.all([
+    loadStoredPlatformMerchantConfigArchiveBySlug(
+      supabase,
+      PLATFORM_MERCHANT_CONFIG_ARCHIVE_SLUG,
+    ),
+    loadStoredPlatformMerchantConfigArchiveBySlug(
+      supabase,
+      PLATFORM_MERCHANT_CONFIG_ARCHIVE_BACKUP_SLUG,
+    ),
+  ]);
   const merged = mergePlatformMerchantConfigArchivePayloads(primaryPayload, backupPayload);
   platformMerchantConfigArchiveCache = {
     expiresAt: Date.now() + PLATFORM_MERCHANT_CONFIG_ARCHIVE_CACHE_TTL_MS,
