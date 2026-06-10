@@ -1924,6 +1924,11 @@ export default function SuperAdminClient() {
   const [merchantConfigAuditEntries, setMerchantConfigAuditEntries] = useState<PlatformMerchantConfigAuditEntry[]>([]);
   const [merchantConfigBackupEntries, setMerchantConfigBackupEntries] = useState<PlatformMerchantConfigBackupEntry[]>([]);
   const [merchantConfigRestoreSubmittingId, setMerchantConfigRestoreSubmittingId] = useState("");
+  const [merchantConfigSubmitting, setMerchantConfigSubmitting] = useState(false);
+  const [merchantConfigSaveMessage, setMerchantConfigSaveMessage] = useState<{
+    kind: "info" | "success" | "error";
+    text: string;
+  } | null>(null);
   const [dataBackups, setDataBackups] = useState<PlatformAdminDataBackupListItem[]>([]);
   const [dataBackupsLoading, setDataBackupsLoading] = useState(false);
   const [dataBackupsError, setDataBackupsError] = useState("");
@@ -3883,14 +3888,26 @@ export default function SuperAdminClient() {
       if (payload.snapshot.length === 0) {
         throw new Error("empty_snapshot");
       }
-      const response = await fetch("/api/super-admin/platform-merchant-snapshot", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-        },
-        cache: "no-store",
-        body: JSON.stringify(payload),
-      });
+      const sendSnapshotRequest = () =>
+        fetch("/api/super-admin/platform-merchant-snapshot", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "content-type": "application/json",
+          },
+          cache: "no-store",
+          body: JSON.stringify(payload),
+        });
+      let response = await sendSnapshotRequest();
+      if (response.status === 401 || response.status === 403) {
+        const recovered = await refreshSuperAdminAuthenticatedState();
+        if (recovered) {
+          setAuthed(true);
+          response = await sendSnapshotRequest();
+        } else {
+          setAuthed(false);
+        }
+      }
       const result = (await response.json().catch(() => null)) as
         | { ok?: boolean; error?: string; message?: string; payload?: unknown }
         | null;
@@ -4874,6 +4891,7 @@ export default function SuperAdminClient() {
   function openMerchantConfigPanel(site: Site) {
     setMerchantDetailSiteId(site.id);
     hydrateMerchantConfigDraft(site);
+    setMerchantConfigSaveMessage(null);
     setUserPanelMode("config");
     setMerchantPanelOpen(true);
   }
@@ -5893,6 +5911,8 @@ export default function SuperAdminClient() {
   }
 
   async function saveMerchantConfigAction() {
+    if (merchantConfigSubmitting) return;
+    setMerchantConfigSaveMessage(null);
     if (!guard("user.manage", SUPER_ADMIN_MESSAGES.noUserPermission)) return;
     if (!selectedMerchantSite) {
       setTip(SUPER_ADMIN_MESSAGES.selectMerchantFirst);
@@ -5929,6 +5949,7 @@ export default function SuperAdminClient() {
     const serviceExpiresAt = parseDateInputToIso(configExpireDate);
     if (configExpireDate.trim() && !serviceExpiresAt) {
       setTip(SUPER_ADMIN_MESSAGES.expireDateInvalid);
+      setMerchantConfigSaveMessage({ kind: "error", text: SUPER_ADMIN_MESSAGES.expireDateInvalid });
       return;
     }
     const expired = getMerchantServiceState(selectedMerchantSite.status, serviceExpiresAt, nowMs).expired;
@@ -5946,7 +5967,9 @@ export default function SuperAdminClient() {
     if (/^data:image\//i.test(nextMerchantCardImage)) {
       const uploadedUrl = await uploadMerchantCardImageDataUrlToSupabase(nextMerchantCardImage, selectedMerchantSite.id);
       if (!uploadedUrl) {
-        setTip("商户框图片上传失败，请重新上传后再保存");
+        const message = "商户框图片上传失败，请重新上传后再保存";
+        setTip(message);
+        setMerchantConfigSaveMessage({ kind: "error", text: message });
         return;
       }
       nextMerchantCardImage = uploadedUrl;
@@ -6088,6 +6111,7 @@ export default function SuperAdminClient() {
     }
     if (pendingChanges.length === 0) {
       setTip(SUPER_ADMIN_MESSAGES.configNoChanges);
+      setMerchantConfigSaveMessage({ kind: "info", text: SUPER_ADMIN_MESSAGES.configNoChanges });
       return;
     }
     const confirmMessage = [
@@ -6099,6 +6123,14 @@ export default function SuperAdminClient() {
     if (typeof window !== "undefined" && !window.confirm(confirmMessage)) {
       return;
     }
+    setMerchantConfigSubmitting(true);
+    setMerchantConfigSaveMessage({ kind: "info", text: "正在保存配置..." });
+    const stopMerchantConfigSaveWithError = (message: string) => {
+      setTip(message);
+      setMerchantConfigSaveMessage({ kind: "error", text: message });
+      setMerchantConfigSubmitting(false);
+    };
+    try {
     const beforeSnapshot = createMerchantConfigSnapshot(selectedMerchantSite);
     const afterSnapshot: MerchantConfigSnapshot = {
       serviceExpiresAt,
@@ -6191,7 +6223,7 @@ export default function SuperAdminClient() {
     const nextStatePreview = compactPlatformStateForStorage(nextStatePreviewRaw);
     const nextStateBytes = estimateUtf8Size(JSON.stringify(nextStatePreview));
     if (nextStateBytes > MAX_PLATFORM_STATE_STORAGE_BYTES) {
-      setTip(`${SUPER_ADMIN_MESSAGES.configTooLargePrefix}（${formatBytes(nextStateBytes)}），请压缩图片后重试`);
+      stopMerchantConfigSaveWithError(`${SUPER_ADMIN_MESSAGES.configTooLargePrefix}（${formatBytes(nextStateBytes)}），请压缩图片后重试`);
       return;
     }
 
@@ -6206,7 +6238,7 @@ export default function SuperAdminClient() {
         const retryPreview = compactPlatformStateForStorage(retryPreviewRaw);
         const retryBytes = estimateUtf8Size(JSON.stringify(retryPreview));
         if (retryBytes > MAX_PLATFORM_STATE_STORAGE_BYTES) {
-          setTip(`${SUPER_ADMIN_MESSAGES.configTooLargePrefix}（${formatBytes(retryBytes)}），请压缩图片后重试`);
+          stopMerchantConfigSaveWithError(`${SUPER_ADMIN_MESSAGES.configTooLargePrefix}（${formatBytes(retryBytes)}），请压缩图片后重试`);
           return;
         }
         stateToPersist = buildAuditedConfigState(stateRef.current, "配置已更新（合并服务端最新版本）");
@@ -6215,7 +6247,7 @@ export default function SuperAdminClient() {
           mergedAfterConflict = true;
         } catch (retryError) {
           const retryMessage = retryError instanceof Error ? retryError.message : "unknown_error";
-          setTip(
+          stopMerchantConfigSaveWithError(
             retryMessage === "platform_merchant_snapshot_conflict"
               ? "服务端配置刚刚又被更新，请重新打开配置后再保存"
               : `服务端配置保存失败：${retryMessage}`,
@@ -6223,20 +6255,26 @@ export default function SuperAdminClient() {
           return;
         }
       } else {
-        setTip(`服务端配置保存失败：${message}`);
+        stopMerchantConfigSaveWithError(`服务端配置保存失败：${message}`);
         return;
       }
     }
     const persisted = applyLocalPlatformState(stateToPersist, { allowVolatile: true });
     if (!persisted) {
-      setTip("配置已保存到服务端，但本地缓存写入失败，请稍后刷新确认");
+      stopMerchantConfigSaveWithError("配置已保存到服务端，但本地缓存写入失败，请稍后刷新确认");
       return;
     }
     const persistedSite = stateToPersist.sites.find((site) => site.id === selectedMerchantSite.id) ?? null;
     if (persistedSite) {
       updateBackendMerchantAccountProfileSnapshot(persistedSite);
     }
-    setTip(mergedAfterConflict ? "检测到服务端已有更新，已合并并保存本次配置" : SUPER_ADMIN_MESSAGES.configSaved);
+    const successMessage = mergedAfterConflict ? "检测到服务端已有更新，已合并并保存本次配置" : SUPER_ADMIN_MESSAGES.configSaved;
+    setTip(successMessage);
+    setMerchantConfigSaveMessage({ kind: "success", text: successMessage });
+    setMerchantConfigSubmitting(false);
+    } catch (error) {
+      stopMerchantConfigSaveWithError(error instanceof Error ? error.message : "配置保存失败，请稍后重试");
+    }
   }
 
   async function rollbackMerchantConfigByHistoryAction(historyId: string) {
@@ -7593,7 +7631,12 @@ export default function SuperAdminClient() {
                         <tbody>
                           {pagedMerchantRows.map(({ row, seq }) => {
                             return (
-                              <tr key={row.site.id} className={`border-t ${selectedMerchantRow?.site.id === row.site.id ? "bg-blue-50/30" : ""}`}>
+                              <tr
+                                key={row.site.id}
+                                className={`border-t transition-colors hover:bg-blue-50/70 ${
+                                  selectedMerchantRow?.site.id === row.site.id ? "bg-blue-50/50" : ""
+                                }`}
+                              >
                                 <td className="px-3 py-2 text-xs text-slate-500">{seq}</td>
                                 <td className="px-3 py-2 text-xs">
                                   <div className="font-medium text-slate-900">{row.loginAccount || "-"}</div>
@@ -7752,7 +7795,7 @@ export default function SuperAdminClient() {
                           </thead>
                           <tbody>
                             {filteredPersonalAccounts.map((account) => (
-                              <tr key={getBackendAccountSelectionKey(account)} className="border-t">
+                              <tr key={getBackendAccountSelectionKey(account)} className="border-t transition-colors hover:bg-blue-50/70">
                                 <td className="px-3 py-2 text-xs">
                                   <div className="font-medium text-slate-900">{account.email || "-"}</div>
                                 </td>
@@ -8468,6 +8511,7 @@ export default function SuperAdminClient() {
                             const localSite = ensureSelectedMerchantConfigSite();
                             if (!localSite) return;
                             hydrateMerchantConfigDraft(localSite);
+                            setMerchantConfigSaveMessage(null);
                             setUserPanelMode("config");
                           }}
                           disabled={!selectedMerchantRow?.hasSite}
@@ -9096,8 +9140,26 @@ export default function SuperAdminClient() {
                                 </div>
                               </div>
                             </div>
-                            <button className="w-full rounded border bg-black px-3 py-2 text-sm text-white" onClick={saveMerchantConfigAction}>
-                              保存配置
+                            {merchantConfigSaveMessage ? (
+                              <div
+                                className={`rounded border px-3 py-2 text-xs ${
+                                  merchantConfigSaveMessage.kind === "error"
+                                    ? "border-rose-200 bg-rose-50 text-rose-700"
+                                    : merchantConfigSaveMessage.kind === "success"
+                                      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                      : "border-blue-200 bg-blue-50 text-blue-700"
+                                }`}
+                              >
+                                {merchantConfigSaveMessage.text}
+                              </div>
+                            ) : null}
+                            <button
+                              type="button"
+                              className="w-full rounded border bg-black px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                              onClick={saveMerchantConfigAction}
+                              disabled={merchantConfigSubmitting}
+                            >
+                              {merchantConfigSubmitting ? "保存中..." : "保存配置"}
                             </button>
                           </div>
                         )}
