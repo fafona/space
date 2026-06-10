@@ -13,6 +13,10 @@ import {
   type MerchantMembershipSettings,
 } from "@/lib/merchantMembershipSettings";
 import { showGlobalToast } from "@/lib/globalToast";
+import {
+  invalidateMerchantAdminDataCachePrefix,
+  makeMerchantAdminDataCacheKey,
+} from "@/lib/merchantAdminDataCache";
 import { uploadDataUrlToPublicStorage } from "@/lib/publicAssetUpload";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
@@ -397,6 +401,7 @@ export default function MerchantMembershipSettingsPanel({
         throw new Error(readPayloadMessage(payload?.message, "会员配置保存失败，请稍后重试"));
       }
       setSettings(normalizeMerchantMembershipSettings(normalizedSiteId, payload.settings));
+      invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-membership-settings", normalizedSiteId));
       setNotice(successNotice);
       return true;
     } catch (saveError) {

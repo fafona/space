@@ -796,6 +796,7 @@ export default function MerchantPointRedemptionCashier({
     const cachedCoupons = force
       ? null
       : readMerchantAdminDataCacheSnapshot<MerchantCouponRecord[]>(couponsCacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
+    const cachedSettingsHasEnabledItems = (cachedSettings?.data.redemptionItems ?? []).some((item) => item.enabled);
     const applyLoadedData = (
       nextMemberships: MerchantMembershipListItem[],
       nextSettings: MerchantMembershipSettings,
@@ -821,7 +822,9 @@ export default function MerchantPointRedemptionCashier({
         limit: "300",
       });
       if (cachedMemberships?.version) params.set("knownMembershipVersion", cachedMemberships.version);
-      if (cachedSettings?.version) params.set("knownSettingsVersion", cachedSettings.version);
+      if (cachedSettings?.version && cachedSettingsHasEnabledItems) {
+        params.set("knownSettingsVersion", cachedSettings.version);
+      }
       if (cachedCoupons?.version) params.set("knownCouponVersion", cachedCoupons.version);
       const response = await fetchPointRedemptionJson(`/api/merchant-admin/redemption-cashier?${params.toString()}`, {
         method: "GET",
