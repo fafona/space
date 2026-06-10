@@ -10009,7 +10009,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         props: {
           blockWidth: 160,
           blockHeight: 56,
-          buttonLabel: "按钮",
+          buttonLabel: "",
           buttonJumpTarget: "",
           buttonHoverAnimation: "none",
         },
@@ -26400,7 +26400,7 @@ type GalleryEditorImage = {
               <div
                 className="block min-h-0 min-w-0 w-full overflow-hidden break-words whitespace-pre-wrap text-center text-gray-700"
                 style={buttonLabelStyle}
-                dangerouslySetInnerHTML={{ __html: toRichHtml(buttonLabel, "按钮") }}
+                dangerouslySetInnerHTML={{ __html: toRichHtml(buttonLabel, "") }}
               />
             )}
           </div>

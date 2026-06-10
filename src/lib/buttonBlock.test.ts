@@ -3,6 +3,7 @@ import test from "node:test";
 import type { ButtonProps } from "../data/homeBlocks";
 import {
   buildButtonLabelPatch,
+  DEFAULT_BUTTON_LABEL,
   getButtonHoverAnimationClassName,
   normalizeButtonHoverAnimation,
   resolveButtonJumpPageId,
@@ -69,8 +70,13 @@ test("resolveButtonLabel falls back to legacy button text boxes", () => {
   );
 });
 
-test("resolveButtonLabel falls back to default label when content is empty", () => {
-  assert.equal(resolveButtonLabel(makeButtonProps({ buttonLabel: "<div><br></div>" })), "按钮");
+test("resolveButtonLabel keeps an explicitly empty dedicated label empty", () => {
+  assert.equal(resolveButtonLabel(makeButtonProps({ buttonLabel: "" })), "");
+  assert.equal(resolveButtonLabel(makeButtonProps({ buttonLabel: "<div><br></div>" })), "<div><br></div>");
+});
+
+test("resolveButtonLabel falls back to default label only without dedicated or legacy content", () => {
+  assert.equal(resolveButtonLabel(makeButtonProps()), DEFAULT_BUTTON_LABEL);
 });
 
 test("buildButtonLabelPatch clears legacy content fields", () => {

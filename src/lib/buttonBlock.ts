@@ -99,8 +99,8 @@ function resolveOrdinalPageIndex(target: string) {
 }
 
 export function resolveButtonLabel(props: ButtonProps) {
-  if (hasVisibleContent(props.buttonLabel)) {
-    return props.buttonLabel ?? DEFAULT_BUTTON_LABEL;
+  if (typeof props.buttonLabel === "string") {
+    return props.buttonLabel;
   }
   return findLegacyButtonLabel(props) || DEFAULT_BUTTON_LABEL;
 }

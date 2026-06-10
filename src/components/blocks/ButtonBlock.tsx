@@ -98,7 +98,7 @@ export default function ButtonBlock(props: ButtonBlockRuntimeProps) {
   const hoverAnimationClassName = getButtonHoverAnimationClassName(props.buttonHoverAnimation);
   const jumpTarget = (props.buttonJumpTarget ?? "").trim();
   const isClickable = jumpTarget.length > 0;
-  const labelHtml = toRichHtml(resolveButtonLabel(props), "按钮");
+  const labelHtml = toRichHtml(resolveButtonLabel(props), "");
 
   return (
     <section className={resolveMobileFitSectionClass("max-w-6xl mx-auto px-6 py-6", mobileFitScreenWidth)} style={offsetStyle}>
