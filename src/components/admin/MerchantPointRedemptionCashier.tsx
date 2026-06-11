@@ -632,6 +632,17 @@ export default function MerchantPointRedemptionCashier({
         })
         .map((category) => category.id),
     );
+    const getRecommendPriority = (item: MerchantMemberRedemptionItem) => {
+      if (item.recommended) return 0;
+      const text = [item.name, item.code, item.description].join(" ").toLowerCase();
+      if (recommendedCategoryIds.has(item.categoryId)) return 1;
+      if (text.includes("推荐") || text.includes("热卖") || text.includes("recommended") || text.includes("hot")) return 1;
+      return 2;
+    };
+    const sortByDefault = (left: MerchantMemberRedemptionItem, right: MerchantMemberRedemptionItem) =>
+      catalogSortMode === "name"
+        ? left.name.localeCompare(right.name) || left.sort - right.sort
+        : (left.code || left.id).localeCompare(right.code || right.id) || left.sort - right.sort;
     const categorySortIndex = new Map(enabledCategories.map((category, index) => [category.id, index]));
     return enabledItems
       .filter((item) => {
@@ -643,16 +654,11 @@ export default function MerchantPointRedemptionCashier({
           .toLowerCase()
           .includes(keyword);
       })
-      .filter((item) => {
-        if (categoryId || catalogFilterTab !== "recommend") return true;
-        const text = [item.name, item.code, item.description].join(" ").toLowerCase();
-        if (!recommendedCategoryIds.has(item.categoryId) && !text.includes("推荐") && !text.includes("热卖") && !text.includes("recommended")) {
-          return false;
-        }
-        return true;
-      })
       .sort((left, right) => {
-        if (catalogSortMode === "name") return left.name.localeCompare(right.name) || left.sort - right.sort;
+        if (catalogFilterTab === "recommend") {
+          return getRecommendPriority(left) - getRecommendPriority(right) || sortByDefault(left, right);
+        }
+        if (catalogSortMode === "name") return sortByDefault(left, right);
         if (!categoryId && catalogFilterTab === "category") {
           return (
             (categorySortIndex.get(left.categoryId) ?? Number.MAX_SAFE_INTEGER) -
