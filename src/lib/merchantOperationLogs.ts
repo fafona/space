@@ -53,11 +53,16 @@ export function normalizeMerchantOperationLogEntry(value: unknown): MerchantOper
 }
 
 export function shouldKeepMerchantOperationLog(entry: MerchantOperationLogEntry) {
+  const isAutomaticBusinessCardShareImageLog =
+    entry.endpoint === "/api/assets/upload" &&
+    entry.module === "经营中心 > 名片夹" &&
+    entry.action === "生成名片分享图";
   return (
     entry.endpoint !== "/api/merchant-chat-business-card" &&
     entry.endpoint !== "/api/merchant-peer-messages" &&
     entry.endpoint !== "/api/support-messages" &&
     entry.endpoint !== "/api/merchant-operation-logs" &&
+    !isAutomaticBusinessCardShareImageLog &&
     entry.module !== "会话"
   );
 }

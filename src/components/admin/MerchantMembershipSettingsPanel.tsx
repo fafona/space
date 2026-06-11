@@ -1126,7 +1126,7 @@ export default function MerchantMembershipSettingsPanel({
                     )
                   }
                 />
-                显示库存
+                兑换页显示库存
               </label>
               <button
                 type="button"
@@ -1230,11 +1230,7 @@ export default function MerchantMembershipSettingsPanel({
                         {item.referenceAmount === null ? "-" : item.referenceAmount.toFixed(2)}
                       </td>
                       <td className="px-4 py-3 text-slate-700">
-                        {activeSettings.redemptionShowStock === false ? (
-                          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">隐藏</span>
-                        ) : (
-                          redemptionStockText(item.stock)
-                        )}
+                        {redemptionStockText(item.stock)}
                       </td>
                       <td className="px-4 py-3 text-slate-700">{redemptionCategoryName(item.categoryId)}</td>
                       <td className="px-4 py-3">

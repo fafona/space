@@ -3511,11 +3511,7 @@ function resolveAssetUploadOperationContext(body: Record<string, unknown> | null
     };
   }
   if (usage === "business-card-export") {
-    return {
-      module: "经营中心 > 名片夹",
-      action: "生成名片分享图",
-      summary: "在经营中心 > 名片夹生成并上传名片分享图",
-    };
+    return null;
   }
   if (usage === "business-card-intro-video") {
     return {
@@ -3614,6 +3610,7 @@ function buildMerchantOperationFetchInfo(
   }
   if (endpoint === "/api/merchant-operation-logs") return null;
   if (isMerchantChatOperationEndpoint(endpoint)) return null;
+  if (readCurrentMerchantOperationContext()?.skipOperationLog === true) return null;
   const body = readMerchantOperationBody(init);
   const siteId = resolveMerchantOperationSiteId(url, body, fallbackSiteId);
   if (!siteId) return null;
@@ -3679,7 +3676,7 @@ function buildMerchantOperationFetchInfo(
   if (endpoint === "/api/business-card-share") return null;
   if (endpoint === "/api/assets/upload") {
     const assetContext = resolveAssetUploadOperationContext(body);
-    return { siteId, method, endpoint, ...assetContext };
+    return assetContext ? { siteId, method, endpoint, ...assetContext } : null;
   }
   const genericModule = resolveGenericMerchantOperationModule(endpoint);
   const genericAction = resolveGenericMerchantOperationAction(method, actionText);
@@ -13923,9 +13920,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               ).trim(),
               "business-card-export",
               {
-                operationModule: "经营中心 > 名片夹",
-                operationAction: "生成名片分享图",
-                operationSummary: `在经营中心 > 名片夹生成并上传名片分享图：${card.name || "未命名名片"}`,
+                skipOperationLog: true,
               },
             )) ?? "";
         }

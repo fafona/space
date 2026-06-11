@@ -2,6 +2,7 @@ export type MerchantOperationContext = {
   operationModule?: string;
   operationAction?: string;
   operationSummary?: string;
+  skipOperationLog?: boolean;
 };
 
 const operationContextStack: MerchantOperationContext[] = [];
@@ -15,11 +16,13 @@ function normalizeContext(context: MerchantOperationContext | null | undefined):
   const operationModule = normalizeContextText(context.operationModule, 120);
   const operationAction = normalizeContextText(context.operationAction, 120);
   const operationSummary = normalizeContextText(context.operationSummary, 240);
-  if (!operationModule && !operationAction && !operationSummary) return null;
+  const skipOperationLog = context.skipOperationLog === true;
+  if (!operationModule && !operationAction && !operationSummary && !skipOperationLog) return null;
   return {
     ...(operationModule ? { operationModule } : {}),
     ...(operationAction ? { operationAction } : {}),
     ...(operationSummary ? { operationSummary } : {}),
+    ...(skipOperationLog ? { skipOperationLog: true } : {}),
   };
 }
 

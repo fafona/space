@@ -3704,9 +3704,7 @@ export default function MerchantBusinessCardManager({
         ),
         "business-card-export",
         {
-          operationModule: "经营中心 > 名片夹",
-          operationAction: "生成名片分享图",
-          operationSummary: `在经营中心 > 名片夹生成并上传名片分享图：${input.cardName || input.card?.name || profile.merchantName || "未命名名片"}`,
+          skipOperationLog: true,
         },
       );
       const publicUrl = normalizeMerchantBusinessCardShareImageUrl(uploadedUrl, shareOrigin);
@@ -3751,9 +3749,7 @@ export default function MerchantBusinessCardManager({
       ),
       "business-card-export",
       {
-        operationModule: "经营中心 > 名片夹",
-        operationAction: "生成名片分享图",
-        operationSummary: `在经营中心 > 名片夹生成并上传名片分享图：${input.cardName || input.card?.name || profile.merchantName || "未命名名片"}`,
+        skipOperationLog: true,
       },
     );
     const publicUrl = normalizeMerchantBusinessCardShareImageUrl(uploadedUrl, shareOrigin);
