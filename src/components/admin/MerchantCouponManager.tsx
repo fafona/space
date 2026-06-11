@@ -10,6 +10,7 @@ import {
   makeMerchantAdminDataCacheKey,
   readMerchantAdminDataCacheSnapshot,
 } from "@/lib/merchantAdminDataCache";
+import { runWithMerchantOperationContext } from "@/lib/merchantOperationContext";
 import { createClientMutationOperationId } from "@/lib/mutationOperationId";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
@@ -2027,14 +2028,19 @@ export default function MerchantCouponManager({
       formData.append("folder", "merchant-assets");
       formData.append("merchantHint", siteId || "coupon");
       formData.append("usage", "generic-image");
-      formData.append("operationModule", "优惠券 > 优惠券管理");
-      formData.append("operationAction", "上传优惠券背景图");
-      formData.append("operationSummary", `在优惠券 > 优惠券管理上传优惠券背景图：${form.title.trim() || "未命名优惠券"}`);
-      const response = await fetch("/api/assets/upload", {
-        method: "POST",
-        credentials: "same-origin",
-        body: formData,
-      });
+      const response = await runWithMerchantOperationContext(
+        {
+          operationModule: "优惠券 > 优惠券管理",
+          operationAction: "上传优惠券背景图",
+          operationSummary: `在优惠券 > 优惠券管理上传优惠券背景图：${form.title.trim() || "未命名优惠券"}`,
+        },
+        () =>
+          fetch("/api/assets/upload", {
+            method: "POST",
+            credentials: "same-origin",
+            body: formData,
+          }),
+      );
       const payload = (await response.json().catch(() => null)) as { url?: string; message?: string; error?: string } | null;
       if (!response.ok || !payload?.url) {
         throw new Error(payload?.message || payload?.error || "背景图上传失败");

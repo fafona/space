@@ -21,6 +21,7 @@ import {
   readMerchantAdminDataCacheSnapshot,
   writeMerchantAdminDataCache,
 } from "@/lib/merchantAdminDataCache";
+import { runWithMerchantOperationContext } from "@/lib/merchantOperationContext";
 import { uploadDataUrlToPublicStorage } from "@/lib/publicAssetUpload";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
@@ -412,6 +413,22 @@ export default function MerchantMembershipSettingsPanel({
     };
   }
 
+  function isNetworkFetchError(error: unknown) {
+    const message = error instanceof Error ? error.message : String(error ?? "");
+    return /failed to fetch|fetch failed|networkerror|network request failed|load failed/i.test(message);
+  }
+
+  function readSettingsSaveErrorMessage(error: unknown) {
+    if (isNetworkFetchError(error)) return "保存请求没有成功发送，请检查网络后重试。";
+    return error instanceof Error ? error.message : "会员配置保存失败，请稍后重试";
+  }
+
+  function wait(ms: number) {
+    return new Promise<void>((resolve) => {
+      window.setTimeout(resolve, ms);
+    });
+  }
+
   async function loadSettings(force = false) {
     if (!/^\d{8}$/.test(normalizedSiteId)) {
       setSettings(createEmptyMerchantMembershipSettings(normalizedSiteId));
@@ -497,16 +514,31 @@ export default function MerchantMembershipSettingsPanel({
     try {
       const normalized = normalizeMerchantMembershipSettings(normalizedSiteId, nextSettings);
       normalized.pointsRules.holidayNames = [];
-      const response = await fetch("/api/membership-settings", {
-        method: "PUT",
-        cache: "no-store",
-        credentials: "same-origin",
-        headers: {
-          "Content-Type": "application/json",
-          accept: "application/json",
-        },
-        body: JSON.stringify({ siteId: normalizedSiteId, settings: normalized, ...buildSettingsOperationContext() }),
-      });
+      let response: Response | null = null;
+      let lastNetworkError: unknown = null;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          response = await runWithMerchantOperationContext(buildSettingsOperationContext(), () =>
+            fetch("/api/membership-settings", {
+              method: "PUT",
+              cache: "no-store",
+              credentials: "same-origin",
+              headers: {
+                "Content-Type": "application/json",
+                accept: "application/json",
+              },
+              body: JSON.stringify({ siteId: normalizedSiteId, settings: normalized }),
+            }),
+          );
+          lastNetworkError = null;
+          break;
+        } catch (fetchError) {
+          lastNetworkError = fetchError;
+          if (!isNetworkFetchError(fetchError) || attempt > 0) break;
+          await wait(500);
+        }
+      }
+      if (!response) throw lastNetworkError;
       const payload = (await response.json().catch(() => null)) as MembershipSettingsPayload | null;
       if (!response.ok || payload?.ok !== true || !payload.settings) {
         throw new Error(readPayloadMessage(payload?.message, "会员配置保存失败，请稍后重试"));
@@ -518,7 +550,7 @@ export default function MerchantMembershipSettingsPanel({
       setNotice(successNotice);
       return true;
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "会员配置保存失败，请稍后重试");
+      setError(readSettingsSaveErrorMessage(saveError));
       return false;
     } finally {
       setSaving(false);

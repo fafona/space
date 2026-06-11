@@ -186,6 +186,11 @@ import {
   type MerchantOperationLogEntry,
   type MerchantOperationLogStatus,
 } from "@/lib/merchantOperationLogs";
+import {
+  readCurrentMerchantOperationContext,
+  runWithMerchantOperationContext,
+  type MerchantOperationContext,
+} from "@/lib/merchantOperationContext";
 import { loadEuropeLocationOptionsApi, type EuropeLocationOptionsApi } from "@/lib/europeLocationOptionsLoader";
 import {
   buildMerchantCardPlacement,
@@ -2695,20 +2700,21 @@ async function uploadDataUrlViaServerApi(
   operation?: MerchantAssetUploadOperationContext,
 ): Promise<string | null> {
   try {
-    const response = await fetch("/api/assets/upload", {
-      method: "POST",
-      headers: {
-      "content-type": "application/json",
-      },
-      credentials: "same-origin",
-      body: JSON.stringify({
-        dataUrl,
-        merchantHint,
-        folder,
-        usage,
-        ...buildMerchantAssetUploadOperationFields(operation),
+    const response = await runWithMerchantOperationContext(operation, () =>
+      fetch("/api/assets/upload", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          dataUrl,
+          merchantHint,
+          folder,
+          usage,
+        }),
       }),
-    });
+    );
     if (!response.ok) return null;
     const payload = (await response.json().catch(() => null)) as { url?: unknown } | null;
     return typeof payload?.url === "string" && payload.url.trim() ? payload.url.trim() : null;
@@ -3361,11 +3367,7 @@ type MerchantOperationFetchInfo = {
   summary: string;
 };
 
-type MerchantAssetUploadOperationContext = {
-  operationModule?: string;
-  operationAction?: string;
-  operationSummary?: string;
-};
+type MerchantAssetUploadOperationContext = MerchantOperationContext;
 
 function normalizeOperationField(value: unknown, maxLength = 120) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
@@ -3455,29 +3457,25 @@ function formatMerchantOperationTarget(body: Record<string, unknown> | null) {
   return target ? `：${target}` : "";
 }
 
-function readExplicitMerchantOperationContext(body: Record<string, unknown> | null) {
-  if (!body) return null;
-  const moduleName = getMerchantOperationBodyText(body, ["operationModule", "operationMenu"]);
-  const action = getMerchantOperationBodyText(body, ["operationAction"]);
+function readExplicitMerchantOperationContext(
+  body: Record<string, unknown> | null,
+) {
+  const currentContext = readCurrentMerchantOperationContext();
+  const moduleName =
+    normalizeOperationField(currentContext?.operationModule, 120) ||
+    getMerchantOperationBodyText(body, ["operationModule", "operationMenu"]);
+  const action =
+    normalizeOperationField(currentContext?.operationAction, 120) ||
+    getMerchantOperationBodyText(body, ["operationAction"]);
   const summary =
-    normalizeOperationField(body.operationSummary, 240) ||
-    normalizeOperationField(body.operationDescription, 240);
+    normalizeOperationField(currentContext?.operationSummary, 240) ||
+    normalizeOperationField(body?.operationSummary, 240) ||
+    normalizeOperationField(body?.operationDescription, 240);
   if (!moduleName && !action && !summary) return null;
   return {
     module: moduleName || "后台",
     action: action || "操作",
     summary: summary || `${action || "操作"}${moduleName ? `（${moduleName}）` : ""}`,
-  };
-}
-
-function buildMerchantAssetUploadOperationFields(operation?: MerchantAssetUploadOperationContext) {
-  const operationModule = normalizeOperationField(operation?.operationModule, 120);
-  const operationAction = normalizeOperationField(operation?.operationAction, 120);
-  const operationSummary = normalizeOperationField(operation?.operationSummary, 240);
-  return {
-    ...(operationModule ? { operationModule } : {}),
-    ...(operationAction ? { operationAction } : {}),
-    ...(operationSummary ? { operationSummary } : {}),
   };
 }
 
@@ -15670,19 +15668,20 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               operationAction: "上传会话图片",
               operationSummary: "在会话中上传图片附件",
             };
-    const response = await requestMerchantChatWithSessionRecovery("/api/assets/upload", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        dataUrl,
-        merchantHint: buildSupportUploadMerchantHint(),
-        folder,
-        usage,
-        ...operation,
+    const response = await runWithMerchantOperationContext(operation, () =>
+      requestMerchantChatWithSessionRecovery("/api/assets/upload", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          dataUrl,
+          merchantHint: buildSupportUploadMerchantHint(),
+          folder,
+          usage,
+        }),
       }),
-    });
+    );
     const payload = (await response.json().catch(() => null)) as
       | {
           ok?: boolean;

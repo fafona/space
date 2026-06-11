@@ -1,3 +1,5 @@
+import { runWithMerchantOperationContext, type MerchantOperationContext } from "@/lib/merchantOperationContext";
+
 const FOLDER_CANDIDATES = new Set(["merchant-assets", "merchant-audio"]);
 
 export class PublicAssetUploadError extends Error {
@@ -22,11 +24,7 @@ export type PublicAssetUploadUsage =
   | "audio"
   | "generic-image";
 
-export type PublicAssetUploadOperationContext = {
-  operationModule?: string;
-  operationAction?: string;
-  operationSummary?: string;
-};
+export type PublicAssetUploadOperationContext = MerchantOperationContext;
 
 export type PublicAssetUploadResult = {
   url: string;
@@ -52,28 +50,6 @@ function sanitizeMerchantHint(input: string) {
 function delay(ms: number) {
   return new Promise<void>((resolve) => {
     setTimeout(resolve, ms);
-  });
-}
-
-function normalizeOperationContextText(value: unknown, maxLength = 160) {
-  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
-}
-
-function buildOperationContextPayload(operation?: PublicAssetUploadOperationContext) {
-  const operationModule = normalizeOperationContextText(operation?.operationModule, 120);
-  const operationAction = normalizeOperationContextText(operation?.operationAction, 120);
-  const operationSummary = normalizeOperationContextText(operation?.operationSummary, 240);
-  return {
-    ...(operationModule ? { operationModule } : {}),
-    ...(operationAction ? { operationAction } : {}),
-    ...(operationSummary ? { operationSummary } : {}),
-  };
-}
-
-function appendOperationContextToFormData(formData: FormData, operation?: PublicAssetUploadOperationContext) {
-  const context = buildOperationContextPayload(operation);
-  Object.entries(context).forEach(([key, value]) => {
-    formData.set(key, value);
   });
 }
 
@@ -119,23 +95,24 @@ async function uploadDataUrlViaServerApi(
     try {
       const timeoutMs =
         usage === "business-card-intro-video" ? (attempt === 0 ? 180_000 : 240_000) : attempt === 0 ? 15_000 : 20_000;
-      const response = await fetchWithTimeout(
-        "/api/assets/upload",
-        {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
+      const response = await runWithMerchantOperationContext(operation, () =>
+        fetchWithTimeout(
+          "/api/assets/upload",
+          {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+            },
+            credentials: "same-origin",
+            body: JSON.stringify({
+              dataUrl,
+              merchantHint,
+              folder,
+              usage,
+            }),
           },
-          credentials: "same-origin",
-          body: JSON.stringify({
-            dataUrl,
-            merchantHint,
-            folder,
-            usage,
-            ...buildOperationContextPayload(operation),
-          }),
-        },
-        timeoutMs,
+          timeoutMs,
+        ),
       );
       if (response.ok) {
         const payload = (await response.json().catch(() => null)) as {
@@ -206,15 +183,16 @@ async function uploadFileViaServerApi(
       formData.set("merchantHint", merchantHint);
       formData.set("folder", folder);
       formData.set("usage", usage);
-      appendOperationContextToFormData(formData, operation);
-      const response = await fetchWithTimeout(
-        "/api/assets/upload",
-        {
-          method: "POST",
-          credentials: "same-origin",
-          body: formData,
-        },
-        timeoutMs,
+      const response = await runWithMerchantOperationContext(operation, () =>
+        fetchWithTimeout(
+          "/api/assets/upload",
+          {
+            method: "POST",
+            credentials: "same-origin",
+            body: formData,
+          },
+          timeoutMs,
+        ),
       );
       if (response.ok) {
         const payload = (await response.json().catch(() => null)) as {
