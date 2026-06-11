@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import {
   buildMerchantMemberHolidayPresets,
   createEmptyMerchantMembershipSettings,
@@ -14,8 +14,12 @@ import {
 } from "@/lib/merchantMembershipSettings";
 import { showGlobalToast } from "@/lib/globalToast";
 import {
+  fetchMerchantAdminDataWithCache,
   invalidateMerchantAdminDataCachePrefix,
   makeMerchantAdminDataCacheKey,
+  MERCHANT_ADMIN_DATA_CACHE_TTL_MS,
+  readMerchantAdminDataCacheSnapshot,
+  writeMerchantAdminDataCache,
 } from "@/lib/merchantAdminDataCache";
 import { uploadDataUrlToPublicStorage } from "@/lib/publicAssetUpload";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
@@ -36,6 +40,8 @@ type MembershipSettingsPayload = {
   ok?: unknown;
   settings?: MerchantMembershipSettings;
   message?: unknown;
+  notModified?: boolean;
+  version?: unknown;
 };
 
 const VIEW_TITLES: Record<Exclude<MerchantMemberSettingsView, "list">, string> = {
@@ -342,6 +348,7 @@ export default function MerchantMembershipSettingsPanel({
   } | null>(null);
   const [itemImageUploading, setItemImageUploading] = useState(false);
   const [itemImagePreviewUrl, setItemImagePreviewUrl] = useState("");
+  const settingsLoadRequestIdRef = useRef(0);
   const currentYear = new Date().getFullYear();
   const [holidayPresetYear, setHolidayPresetYear] = useState(currentYear);
   const [holidayDraft, setHolidayDraft] = useState({ date: "", name: "", multiplier: "1" });
@@ -358,31 +365,75 @@ export default function MerchantMembershipSettingsPanel({
     setNotice("");
   }
 
-  async function loadSettings() {
+  function settingsCacheKey() {
+    return makeMerchantAdminDataCacheKey("merchant-membership-settings", normalizedSiteId, "settings-panel");
+  }
+
+  async function loadSettings(force = false) {
     if (!/^\d{8}$/.test(normalizedSiteId)) {
       setSettings(createEmptyMerchantMembershipSettings(normalizedSiteId));
       setError("当前商户资料还没准备好，请稍后重试。");
       return;
     }
-    setLoading(true);
-    setError("");
-    setNotice("");
-    try {
-      const response = await fetch(`/api/membership-settings?siteId=${encodeURIComponent(normalizedSiteId)}`, {
+    const cacheKey = settingsCacheKey();
+    const requestId = ++settingsLoadRequestIdRef.current;
+    let loadedSettingsVersion: string | null = null;
+    const cachedSettings = force
+      ? null
+      : readMerchantAdminDataCacheSnapshot<MerchantMembershipSettings>(cacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
+    const loadSettingsFromServer = async () => {
+      const params = new URLSearchParams({ siteId: normalizedSiteId });
+      if (cachedSettings?.version) params.set("knownVersion", cachedSettings.version);
+      const response = await fetch(`/api/membership-settings?${params.toString()}`, {
         method: "GET",
         cache: "no-store",
         credentials: "same-origin",
         headers: { accept: "application/json" },
       });
       const payload = (await response.json().catch(() => null)) as MembershipSettingsPayload | null;
-      if (!response.ok || payload?.ok !== true || !payload.settings) {
+      if (!response.ok || payload?.ok !== true) {
         throw new Error(readPayloadMessage(payload?.message, `${viewLoadLabel}加载失败，请稍后重试`));
       }
-      setSettings(normalizeMerchantMembershipSettings(normalizedSiteId, payload.settings));
+      loadedSettingsVersion = typeof payload.version === "string" && payload.version.trim() ? payload.version.trim() : null;
+      if (payload.notModified === true && cachedSettings) return cachedSettings.data;
+      if (!payload.settings) {
+        throw new Error(readPayloadMessage(payload?.message, `${viewLoadLabel}加载失败，请稍后重试`));
+      }
+      return normalizeMerchantMembershipSettings(normalizedSiteId, payload.settings);
+    };
+    if (cachedSettings) {
+      setSettings(cachedSettings.data);
+      setError("");
+      setNotice("");
+      void fetchMerchantAdminDataWithCache(cacheKey, loadSettingsFromServer, {
+        force: true,
+        allowStaleOnError: true,
+        dedupe: true,
+        cacheVersion: () => loadedSettingsVersion,
+      })
+        .then((nextSettings) => {
+          if (settingsLoadRequestIdRef.current === requestId) setSettings(nextSettings);
+        })
+        .catch(() => {});
+      return;
+    }
+    setLoading(true);
+    setError("");
+    setNotice("");
+    try {
+      const nextSettings = await fetchMerchantAdminDataWithCache(cacheKey, loadSettingsFromServer, {
+        force,
+        allowStaleOnError: true,
+        dedupe: true,
+        cacheVersion: () => loadedSettingsVersion,
+      });
+      if (settingsLoadRequestIdRef.current === requestId) setSettings(nextSettings);
     } catch (fetchError) {
-      setError(fetchError instanceof Error ? fetchError.message : `${viewLoadLabel}加载失败，请稍后重试`);
+      if (settingsLoadRequestIdRef.current === requestId) {
+        setError(fetchError instanceof Error ? fetchError.message : `${viewLoadLabel}加载失败，请稍后重试`);
+      }
     } finally {
-      setLoading(false);
+      if (settingsLoadRequestIdRef.current === requestId) setLoading(false);
     }
   }
 
@@ -417,8 +468,10 @@ export default function MerchantMembershipSettingsPanel({
       if (!response.ok || payload?.ok !== true || !payload.settings) {
         throw new Error(readPayloadMessage(payload?.message, "会员配置保存失败，请稍后重试"));
       }
-      setSettings(normalizeMerchantMembershipSettings(normalizedSiteId, payload.settings));
+      const savedSettings = normalizeMerchantMembershipSettings(normalizedSiteId, payload.settings);
+      setSettings(savedSettings);
       invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-membership-settings", normalizedSiteId));
+      writeMerchantAdminDataCache(settingsCacheKey(), savedSettings, { version: savedSettings.updatedAt });
       setNotice(successNotice);
       return true;
     } catch (saveError) {
@@ -1974,7 +2027,7 @@ export default function MerchantMembershipSettingsPanel({
             <button
               type="button"
               className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              onClick={() => void loadSettings()}
+              onClick={() => void loadSettings(true)}
               disabled={loading || saving}
             >
               {loading ? "刷新中..." : "刷新"}
