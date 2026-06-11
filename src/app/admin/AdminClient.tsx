@@ -2692,6 +2692,7 @@ async function uploadDataUrlViaServerApi(
   merchantHint = "public",
   folder = "merchant-assets",
   usage = folder === "merchant-audio" ? "audio" : folder === "merchant-files" ? "support-file" : "generic-image",
+  operation?: MerchantAssetUploadOperationContext,
 ): Promise<string | null> {
   try {
     const response = await fetch("/api/assets/upload", {
@@ -2705,6 +2706,7 @@ async function uploadDataUrlViaServerApi(
         merchantHint,
         folder,
         usage,
+        ...buildMerchantAssetUploadOperationFields(operation),
       }),
     });
     if (!response.ok) return null;
@@ -2720,23 +2722,29 @@ async function uploadDataUrlToSupabase(
   merchantHint = "public",
   folder = "merchant-assets",
   usage = folder === "merchant-audio" ? "audio" : folder === "merchant-files" ? "support-file" : "generic-image",
+  operation?: MerchantAssetUploadOperationContext,
 ): Promise<string | null> {
   const meta = parseDataUrlMeta(dataUrl);
   if (!meta) return null;
   void meta;
-  return uploadDataUrlViaServerApi(dataUrl, merchantHint, folder, usage);
+  return uploadDataUrlViaServerApi(dataUrl, merchantHint, folder, usage, operation);
 }
 
 async function uploadImageDataUrlToSupabase(
   dataUrl: string,
   merchantHint = "public",
   usage = "generic-image",
+  operation?: MerchantAssetUploadOperationContext,
 ): Promise<string | null> {
-  return uploadDataUrlToSupabase(dataUrl, merchantHint, "merchant-assets", usage);
+  return uploadDataUrlToSupabase(dataUrl, merchantHint, "merchant-assets", usage, operation);
 }
 
-async function uploadAudioDataUrlToSupabase(dataUrl: string, merchantHint = "public"): Promise<string | null> {
-  return uploadDataUrlToSupabase(dataUrl, merchantHint, "merchant-audio", "audio");
+async function uploadAudioDataUrlToSupabase(
+  dataUrl: string,
+  merchantHint = "public",
+  operation?: MerchantAssetUploadOperationContext,
+): Promise<string | null> {
+  return uploadDataUrlToSupabase(dataUrl, merchantHint, "merchant-audio", "audio", operation);
 }
 
 function formatSupportAttachmentFileSize(bytes: number) {
@@ -3353,6 +3361,12 @@ type MerchantOperationFetchInfo = {
   summary: string;
 };
 
+type MerchantAssetUploadOperationContext = {
+  operationModule?: string;
+  operationAction?: string;
+  operationSummary?: string;
+};
+
 function normalizeOperationField(value: unknown, maxLength = 120) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
@@ -3426,15 +3440,118 @@ function formatMerchantOperationTarget(body: Record<string, unknown> | null) {
     "title",
     "name",
     "couponTitle",
+    "couponId",
     "orderId",
     "bookingId",
     "membershipId",
+    "memberId",
     "rechargePlanId",
     "redemptionItemId",
+    "itemId",
+    "categoryId",
     "cardId",
     "id",
   ]);
   return target ? `：${target}` : "";
+}
+
+function readExplicitMerchantOperationContext(body: Record<string, unknown> | null) {
+  if (!body) return null;
+  const moduleName = getMerchantOperationBodyText(body, ["operationModule", "operationMenu"]);
+  const action = getMerchantOperationBodyText(body, ["operationAction"]);
+  const summary =
+    normalizeOperationField(body.operationSummary, 240) ||
+    normalizeOperationField(body.operationDescription, 240);
+  if (!moduleName && !action && !summary) return null;
+  return {
+    module: moduleName || "后台",
+    action: action || "操作",
+    summary: summary || `${action || "操作"}${moduleName ? `（${moduleName}）` : ""}`,
+  };
+}
+
+function buildMerchantAssetUploadOperationFields(operation?: MerchantAssetUploadOperationContext) {
+  const operationModule = normalizeOperationField(operation?.operationModule, 120);
+  const operationAction = normalizeOperationField(operation?.operationAction, 120);
+  const operationSummary = normalizeOperationField(operation?.operationSummary, 240);
+  return {
+    ...(operationModule ? { operationModule } : {}),
+    ...(operationAction ? { operationAction } : {}),
+    ...(operationSummary ? { operationSummary } : {}),
+  };
+}
+
+function resolveAssetUploadOperationContext(body: Record<string, unknown> | null) {
+  const usage = getMerchantOperationBodyText(body, ["usage"]);
+  const folder = getMerchantOperationBodyText(body, ["folder"]);
+  if (usage === "common-block-image") {
+    return {
+      module: "网站编辑 > 区块编辑",
+      action: "上传通用区块图片",
+      summary: "在网站编辑 > 区块编辑上传通用区块图片",
+    };
+  }
+  if (usage === "gallery-block-image") {
+    return {
+      module: "网站编辑 > 相册区块",
+      action: "上传相册图片",
+      summary: "在网站编辑 > 相册区块上传图片",
+    };
+  }
+  if (usage === "business-card-background") {
+    return {
+      module: "经营中心 > 名片夹",
+      action: "上传名片底图",
+      summary: "在经营中心 > 名片夹上传名片底图",
+    };
+  }
+  if (usage === "business-card-contact") {
+    return {
+      module: "经营中心 > 名片夹",
+      action: "上传联系卡图片",
+      summary: "在经营中心 > 名片夹上传联系卡图片",
+    };
+  }
+  if (usage === "business-card-export") {
+    return {
+      module: "经营中心 > 名片夹",
+      action: "生成名片分享图",
+      summary: "在经营中心 > 名片夹生成并上传名片分享图",
+    };
+  }
+  if (usage === "business-card-intro-video") {
+    return {
+      module: "经营中心 > 名片夹",
+      action: "上传联系卡开场视频",
+      summary: "在经营中心 > 名片夹上传联系卡开场视频",
+    };
+  }
+  if (usage === "support-image") {
+    return {
+      module: "会话",
+      action: "上传会话图片",
+      summary: "在会话中上传图片附件",
+    };
+  }
+  if (usage === "support-file" || folder === "merchant-files") {
+    return {
+      module: "会话",
+      action: "上传会话文件",
+      summary: "在会话中上传文件附件",
+    };
+  }
+  if (usage === "audio" || folder === "merchant-audio") {
+    return {
+      module: "网站编辑 > 音频素材",
+      action: "上传音频",
+      summary: "在网站编辑上传音频素材",
+    };
+  }
+  return {
+    module: "网站编辑 > 素材",
+    action: folder === "merchant-files" ? "上传文件" : "上传图片",
+    summary: folder === "merchant-files" ? "在网站编辑上传文件素材" : "在网站编辑上传图片素材",
+  };
 }
 
 function resolveMerchantOrderActionLabel(action: string, status: string) {
@@ -3506,6 +3623,17 @@ function buildMerchantOperationFetchInfo(
   const actionText = normalizeOperationField(body?.action, 80);
   const statusText = normalizeOperationField(body?.status, 80);
   const typeText = normalizeOperationField(body?.type, 80);
+  const explicitContext = readExplicitMerchantOperationContext(body);
+  if (explicitContext) {
+    return {
+      siteId,
+      method,
+      endpoint,
+      module: explicitContext.module,
+      action: explicitContext.action,
+      summary: explicitContext.summary,
+    };
+  }
 
   if (endpoint === "/api/publish") {
     return { siteId, method, endpoint, module: "网站编辑", action: "发布", summary: "发布网站" };
@@ -3552,7 +3680,8 @@ function buildMerchantOperationFetchInfo(
   }
   if (endpoint === "/api/business-card-share") return null;
   if (endpoint === "/api/assets/upload") {
-    return { siteId, method, endpoint, module: "素材", action: "上传素材", summary: "上传图片或文件素材" };
+    const assetContext = resolveAssetUploadOperationContext(body);
+    return { siteId, method, endpoint, ...assetContext };
   }
   const genericModule = resolveGenericMerchantOperationModule(endpoint);
   const genericAction = resolveGenericMerchantOperationAction(method, actionText);
@@ -3767,6 +3896,7 @@ async function externalizeInlineImagesUnknown(
   merchantHint: string,
   stats: ExternalizeStats,
   minBytes = EXTERNALIZE_MIN_IMAGE_BYTES,
+  operation?: MerchantAssetUploadOperationContext,
 ): Promise<unknown> {
   if (typeof input === "string") {
     if (!/^data:image\//i.test(input)) return input;
@@ -3775,7 +3905,7 @@ async function externalizeInlineImagesUnknown(
     stats.visited += 1;
     stats.beforeBytes += bytes;
     try {
-      const url = await uploadImageDataUrlToSupabase(input, merchantHint);
+      const url = await uploadImageDataUrlToSupabase(input, merchantHint, "generic-image", operation);
       if (!url) {
         stats.failed += 1;
         stats.afterBytes += bytes;
@@ -3794,14 +3924,14 @@ async function externalizeInlineImagesUnknown(
   if (Array.isArray(input)) {
     const next: unknown[] = [];
     for (const item of input) {
-      next.push(await externalizeInlineImagesUnknown(item, merchantHint, stats, minBytes));
+      next.push(await externalizeInlineImagesUnknown(item, merchantHint, stats, minBytes, operation));
     }
     return next;
   }
   if (input && typeof input === "object") {
     const nextRecord: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
-      nextRecord[key] = await externalizeInlineImagesUnknown(value, merchantHint, stats, minBytes);
+      nextRecord[key] = await externalizeInlineImagesUnknown(value, merchantHint, stats, minBytes, operation);
     }
     return nextRecord;
   }
@@ -3812,6 +3942,7 @@ async function externalizeInlineImagesInBlocks(
   blocks: Block[],
   merchantHint: string,
   minBytes = EXTERNALIZE_MIN_IMAGE_BYTES,
+  operation?: MerchantAssetUploadOperationContext,
 ) {
   const stats: ExternalizeStats = {
     visited: 0,
@@ -3820,7 +3951,7 @@ async function externalizeInlineImagesInBlocks(
     beforeBytes: 0,
     afterBytes: 0,
   };
-  const next = (await externalizeInlineImagesUnknown(blocks, merchantHint, stats, minBytes)) as Block[];
+  const next = (await externalizeInlineImagesUnknown(blocks, merchantHint, stats, minBytes, operation)) as Block[];
   return { blocks: next, stats };
 }
 
@@ -3828,6 +3959,7 @@ async function externalizeInlineAudioUnknown(
   input: unknown,
   merchantHint: string,
   stats: ExternalizeStats,
+  operation?: MerchantAssetUploadOperationContext,
 ): Promise<unknown> {
   if (typeof input === "string") {
     if (!/^data:audio\//i.test(input)) return input;
@@ -3835,7 +3967,7 @@ async function externalizeInlineAudioUnknown(
     stats.visited += 1;
     stats.beforeBytes += bytes;
     try {
-      const url = await uploadAudioDataUrlToSupabase(input, merchantHint);
+      const url = await uploadAudioDataUrlToSupabase(input, merchantHint, operation);
       if (!url) {
         stats.failed += 1;
         stats.afterBytes += bytes;
@@ -3855,7 +3987,7 @@ async function externalizeInlineAudioUnknown(
   if (Array.isArray(input)) {
     const next: unknown[] = [];
     for (const item of input) {
-      next.push(await externalizeInlineAudioUnknown(item, merchantHint, stats));
+      next.push(await externalizeInlineAudioUnknown(item, merchantHint, stats, operation));
     }
     return next;
   }
@@ -3863,7 +3995,7 @@ async function externalizeInlineAudioUnknown(
   if (input && typeof input === "object") {
     const nextRecord: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
-      nextRecord[key] = await externalizeInlineAudioUnknown(value, merchantHint, stats);
+      nextRecord[key] = await externalizeInlineAudioUnknown(value, merchantHint, stats, operation);
     }
     return nextRecord;
   }
@@ -3871,7 +4003,11 @@ async function externalizeInlineAudioUnknown(
   return input;
 }
 
-async function externalizeInlineAudioInBlocks(blocks: Block[], merchantHint: string) {
+async function externalizeInlineAudioInBlocks(
+  blocks: Block[],
+  merchantHint: string,
+  operation?: MerchantAssetUploadOperationContext,
+) {
   const stats: ExternalizeStats = {
     visited: 0,
     replaced: 0,
@@ -3879,7 +4015,7 @@ async function externalizeInlineAudioInBlocks(blocks: Block[], merchantHint: str
     beforeBytes: 0,
     afterBytes: 0,
   };
-  const next = (await externalizeInlineAudioUnknown(blocks, merchantHint, stats)) as Block[];
+  const next = (await externalizeInlineAudioUnknown(blocks, merchantHint, stats, operation)) as Block[];
   return { blocks: next, stats };
 }
 
@@ -3925,14 +4061,21 @@ async function optimizeBlocksForPublishIfNeeded(
 
   for (const compressionOption of compressionSequence) {
     const recompressed = await recompressInlineImagesInBlocks(blocks, compressionOption);
+    const publishUploadOperation = {
+      operationModule: "网站编辑 > 发布",
+      operationAction: "上传发布资源",
+      operationSummary: "发布网站时上传页面内联图片或音频资源",
+    };
     const externalized = await externalizeInlineImagesInBlocks(
       recompressed.blocks,
       options.merchantHint || "public",
       1,
+      publishUploadOperation,
     );
     const audioExternalized = await externalizeInlineAudioInBlocks(
       externalized.blocks,
       options.merchantHint || "public",
+      publishUploadOperation,
     );
     const nextBlocks = audioExternalized.blocks;
     const nextBytes = estimateUtf8Size(JSON.stringify(nextBlocks));
@@ -7425,13 +7568,14 @@ export default function AdminClient({
   async function persistInlineImageForEditor(
     dataUrl: string,
     usage: "common-block-image" | "gallery-block-image" | "generic-image" = "generic-image",
+    operation?: MerchantAssetUploadOperationContext,
   ): Promise<PersistedEditorAssetResult> {
     const safeValue = ensureSafeImageUrlSize(dataUrl);
     if (!safeValue || !isInlineDataImageUrl(safeValue)) {
       return { value: safeValue ?? "", externalized: false };
     }
     const merchantHint = ((isPlatformEditor ? "platform" : await resolveFirstMerchantHint()) || "public").trim() || "public";
-    const uploadedUrl = await uploadImageDataUrlToSupabase(safeValue, merchantHint, usage);
+    const uploadedUrl = await uploadImageDataUrlToSupabase(safeValue, merchantHint, usage, operation);
     if (uploadedUrl) {
       return { value: uploadedUrl, externalized: true };
     }
@@ -7468,23 +7612,50 @@ export default function AdminClient({
     } else {
       dataUrl = await fileToOriginalImageDataUrl(file, imageCompressionOptions);
     }
-    return persistInlineImageForEditor(
-      dataUrl,
-      options?.purpose === "gallery" ? "gallery-block-image" : options?.purpose === "common" ? "common-block-image" : "generic-image",
-    );
+    const usage =
+      options?.purpose === "gallery" ? "gallery-block-image" : options?.purpose === "common" ? "common-block-image" : "generic-image";
+    const operation =
+      options?.purpose === "gallery"
+        ? {
+            operationModule: "网站编辑 > 相册区块",
+            operationAction: "上传相册图片",
+            operationSummary: "在网站编辑 > 相册区块上传图片",
+          }
+        : options?.purpose === "common"
+          ? {
+              operationModule: "网站编辑 > 区块编辑",
+              operationAction: "上传通用区块图片",
+              operationSummary: "在网站编辑 > 区块编辑上传通用区块图片",
+            }
+          : options?.purpose === "page-background"
+            ? {
+                operationModule: "网站编辑 > 背景设置",
+                operationAction: "上传页面背景图",
+                operationSummary: "在网站编辑 > 背景设置上传页面背景图",
+              }
+            : {
+                operationModule: "网站编辑 > 图片素材",
+                operationAction: "上传图片",
+                operationSummary: "在网站编辑上传图片素材",
+              };
+    return persistInlineImageForEditor(dataUrl, usage, operation);
   }
 
   async function persistProductImageFileForEditor(file: File): Promise<PersistedEditorAssetResult> {
     const dataUrl = await fileToOptimizedImageDataUrl(file, PRODUCT_IMAGE_UPLOAD_OPTIONS);
-    return persistInlineImageForEditor(dataUrl, "generic-image");
+    return persistInlineImageForEditor(dataUrl, "generic-image", {
+      operationModule: "网站编辑 > 产品/预约",
+      operationAction: "上传产品图片",
+      operationSummary: "在网站编辑 > 产品/预约上传产品或项目图片",
+    });
   }
 
-  async function persistInlineAudioForEditor(dataUrl: string) {
+  async function persistInlineAudioForEditor(dataUrl: string, operation?: MerchantAssetUploadOperationContext) {
     if (!/^data:audio\//i.test(dataUrl)) {
       return { value: dataUrl, externalized: false };
     }
     const merchantHint = ((isPlatformEditor ? "platform" : await resolveFirstMerchantHint()) || "public").trim() || "public";
-    const uploadedUrl = await uploadAudioDataUrlToSupabase(dataUrl, merchantHint);
+    const uploadedUrl = await uploadAudioDataUrlToSupabase(dataUrl, merchantHint, operation);
     if (uploadedUrl) {
       return { value: uploadedUrl, externalized: true };
     }
@@ -7493,7 +7664,11 @@ export default function AdminClient({
 
   async function persistAudioFileForEditor(file: File) {
     const dataUrl = await fileToAudioDataUrl(file);
-    return persistInlineAudioForEditor(dataUrl);
+    return persistInlineAudioForEditor(dataUrl, {
+      operationModule: "网站编辑 > 音频素材",
+      operationAction: "上传音频",
+      operationSummary: "在网站编辑上传音频素材",
+    });
   }
 
   function getThemeSnapshotKey() {
@@ -13748,6 +13923,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                 merchantDisplayName ||
                 "public"
               ).trim(),
+              "business-card-export",
+              {
+                operationModule: "经营中心 > 名片夹",
+                operationAction: "生成名片分享图",
+                operationSummary: `在经营中心 > 名片夹生成并上传名片分享图：${card.name || "未命名名片"}`,
+              },
             )) ?? "";
         }
       }
@@ -15471,6 +15652,24 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   ) {
     const usage =
       folder === "merchant-files" ? "support-file" : folder === "merchant-audio" ? "audio" : "support-image";
+    const operation =
+      folder === "merchant-files"
+        ? {
+            operationModule: "会话",
+            operationAction: "上传会话文件",
+            operationSummary: "在会话中上传文件附件",
+          }
+        : folder === "merchant-audio"
+          ? {
+              operationModule: "会话",
+              operationAction: "上传会话音频",
+              operationSummary: "在会话中上传音频附件",
+            }
+          : {
+              operationModule: "会话",
+              operationAction: "上传会话图片",
+              operationSummary: "在会话中上传图片附件",
+            };
     const response = await requestMerchantChatWithSessionRecovery("/api/assets/upload", {
       method: "POST",
       headers: {
@@ -15481,6 +15680,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         merchantHint: buildSupportUploadMerchantHint(),
         folder,
         usage,
+        ...operation,
       }),
     });
     const payload = (await response.json().catch(() => null)) as
@@ -17380,9 +17580,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           scheduleMerchantChatBusinessCardSync(editingSiteId, normalizedCards);
           recordMerchantOperationLog({
             siteId: editingSiteId,
-            module: "经营中心",
+            module: "经营中心 > 名片夹",
             action: "更新名片夹",
-            summary: `更新名片夹：${previousCount} 张 -> ${normalizedCards.length} 张`,
+            summary: `在经营中心 > 名片夹更新名片数量：${previousCount} 张 -> ${normalizedCards.length} 张`,
             status: "success",
           });
         },

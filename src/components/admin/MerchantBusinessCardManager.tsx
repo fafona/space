@@ -1920,6 +1920,11 @@ export default function MerchantBusinessCardManager({
         ),
         folder: "merchant-assets",
         usage: "business-card-intro-video",
+        operation: {
+          operationModule: "经营中心 > 名片夹",
+          operationAction: "上传联系卡开场视频",
+          operationSummary: `在经营中心 > 名片夹上传联系卡开场视频：${draft.name || profile.merchantName || "未命名名片"}`,
+        },
       });
       const uploadedUrl = normalizeText(uploadedAsset?.url);
       if (!uploadedUrl) {
@@ -3698,6 +3703,11 @@ export default function MerchantBusinessCardManager({
             normalizeText(profile.merchantName),
         ),
         "business-card-export",
+        {
+          operationModule: "经营中心 > 名片夹",
+          operationAction: "生成名片分享图",
+          operationSummary: `在经营中心 > 名片夹生成并上传名片分享图：${input.cardName || input.card?.name || profile.merchantName || "未命名名片"}`,
+        },
       );
       const publicUrl = normalizeMerchantBusinessCardShareImageUrl(uploadedUrl, shareOrigin);
       if (publicUrl) {
@@ -3740,6 +3750,11 @@ export default function MerchantBusinessCardManager({
           normalizeText(profile.merchantName),
       ),
       "business-card-export",
+      {
+        operationModule: "经营中心 > 名片夹",
+        operationAction: "生成名片分享图",
+        operationSummary: `在经营中心 > 名片夹生成并上传名片分享图：${input.cardName || input.card?.name || profile.merchantName || "未命名名片"}`,
+      },
     );
     const publicUrl = normalizeMerchantBusinessCardShareImageUrl(uploadedUrl, shareOrigin);
     if (publicUrl && syncCardMeta && input.card) {
@@ -3767,6 +3782,11 @@ export default function MerchantBusinessCardManager({
             `${normalizeText(profile.domainPrefix) || normalizeText(input.cardName) || normalizeText(input.card?.name) || normalizeText(profile.merchantName)}-contact`,
           ),
           "business-card-contact",
+          {
+            operationModule: "经营中心 > 名片夹",
+            operationAction: "上传联系卡图片",
+            operationSummary: `在经营中心 > 名片夹上传联系卡图片：${input.cardName || input.card?.name || profile.merchantName || "未命名名片"}`,
+          },
         );
         const publicUrl = normalizeMerchantBusinessCardShareImageUrl(uploadedUrl, shareOrigin);
         if (publicUrl && syncCardMeta && input.card) {

@@ -369,6 +369,49 @@ export default function MerchantMembershipSettingsPanel({
     return makeMerchantAdminDataCacheKey("merchant-membership-settings", normalizedSiteId, "settings-panel");
   }
 
+  function buildSettingsOperationContext() {
+    if (view === "redemptionCategories") {
+      return {
+        operationModule: "积分兑换 > 项目分类",
+        operationAction: "保存项目分类配置",
+        operationSummary: "在积分兑换 > 项目分类保存项目分类配置",
+      };
+    }
+    if (view === "redemptionItems") {
+      return {
+        operationModule: "积分兑换 > 项目管理",
+        operationAction: "保存项目配置",
+        operationSummary: "在积分兑换 > 项目管理保存项目配置",
+      };
+    }
+    if (view === "levels") {
+      return {
+        operationModule: "会员管理 > 等级&权益",
+        operationAction: "保存等级权益配置",
+        operationSummary: "在会员管理 > 等级&权益保存会员等级和权益配置",
+      };
+    }
+    if (view === "rechargePlans") {
+      return {
+        operationModule: "会员管理 > 充值方案",
+        operationAction: "保存充值方案",
+        operationSummary: "在会员管理 > 充值方案保存充值方案配置",
+      };
+    }
+    if (view === "pointsRules") {
+      return {
+        operationModule: "会员管理 > 积分规则",
+        operationAction: "保存积分规则",
+        operationSummary: "在会员管理 > 积分规则保存积分规则配置",
+      };
+    }
+    return {
+      operationModule: "会员管理 > 配置",
+      operationAction: "保存会员配置",
+      operationSummary: "在会员管理保存会员配置",
+    };
+  }
+
   async function loadSettings(force = false) {
     if (!/^\d{8}$/.test(normalizedSiteId)) {
       setSettings(createEmptyMerchantMembershipSettings(normalizedSiteId));
@@ -462,7 +505,7 @@ export default function MerchantMembershipSettingsPanel({
           "Content-Type": "application/json",
           accept: "application/json",
         },
-        body: JSON.stringify({ siteId: normalizedSiteId, settings: normalized }),
+        body: JSON.stringify({ siteId: normalizedSiteId, settings: normalized, ...buildSettingsOperationContext() }),
       });
       const payload = (await response.json().catch(() => null)) as MembershipSettingsPayload | null;
       if (!response.ok || payload?.ok !== true || !payload.settings) {
@@ -817,6 +860,11 @@ export default function MerchantMembershipSettingsPanel({
         merchantHint: normalizedSiteId || "membership",
         folder: "merchant-assets",
         usage: "generic-image",
+        operation: {
+          operationModule: "积分兑换 > 项目管理",
+          operationAction: "上传项目图片",
+          operationSummary: `在积分兑换 > 项目管理上传项目图片：${itemDialog?.draft.name.trim() || itemDialog?.draft.code.trim() || "未命名项目"}`,
+        },
       });
       if (uploadedUrl) {
         patchItemDraft({ imageUrl: normalizePublicAssetUrl(uploadedUrl) });

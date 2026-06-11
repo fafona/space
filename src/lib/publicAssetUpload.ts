@@ -22,6 +22,12 @@ export type PublicAssetUploadUsage =
   | "audio"
   | "generic-image";
 
+export type PublicAssetUploadOperationContext = {
+  operationModule?: string;
+  operationAction?: string;
+  operationSummary?: string;
+};
+
 export type PublicAssetUploadResult = {
   url: string;
   posterUrl?: string;
@@ -46,6 +52,28 @@ function sanitizeMerchantHint(input: string) {
 function delay(ms: number) {
   return new Promise<void>((resolve) => {
     setTimeout(resolve, ms);
+  });
+}
+
+function normalizeOperationContextText(value: unknown, maxLength = 160) {
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+function buildOperationContextPayload(operation?: PublicAssetUploadOperationContext) {
+  const operationModule = normalizeOperationContextText(operation?.operationModule, 120);
+  const operationAction = normalizeOperationContextText(operation?.operationAction, 120);
+  const operationSummary = normalizeOperationContextText(operation?.operationSummary, 240);
+  return {
+    ...(operationModule ? { operationModule } : {}),
+    ...(operationAction ? { operationAction } : {}),
+    ...(operationSummary ? { operationSummary } : {}),
+  };
+}
+
+function appendOperationContextToFormData(formData: FormData, operation?: PublicAssetUploadOperationContext) {
+  const context = buildOperationContextPayload(operation);
+  Object.entries(context).forEach(([key, value]) => {
+    formData.set(key, value);
   });
 }
 
@@ -85,6 +113,7 @@ async function uploadDataUrlViaServerApi(
   merchantHint: string,
   folder: string,
   usage: PublicAssetUploadUsage,
+  operation?: PublicAssetUploadOperationContext,
 ): Promise<PublicAssetUploadResult | null> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
@@ -103,6 +132,7 @@ async function uploadDataUrlViaServerApi(
             merchantHint,
             folder,
             usage,
+            ...buildOperationContextPayload(operation),
           }),
         },
         timeoutMs,
@@ -165,6 +195,7 @@ async function uploadFileViaServerApi(
   merchantHint: string,
   folder: string,
   usage: PublicAssetUploadUsage,
+  operation?: PublicAssetUploadOperationContext,
 ): Promise<PublicAssetUploadResult | null> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
@@ -175,6 +206,7 @@ async function uploadFileViaServerApi(
       formData.set("merchantHint", merchantHint);
       formData.set("folder", folder);
       formData.set("usage", usage);
+      appendOperationContextToFormData(formData, operation);
       const response = await fetchWithTimeout(
         "/api/assets/upload",
         {
@@ -243,6 +275,7 @@ export async function uploadDataUrlToPublicStorage(
     merchantHint?: string;
     folder?: "merchant-assets" | "merchant-audio";
     usage?: PublicAssetUploadUsage;
+    operation?: PublicAssetUploadOperationContext;
   },
 ): Promise<string | null> {
   const meta = parseDataUrlMeta(dataUrl);
@@ -253,7 +286,7 @@ export async function uploadDataUrlToPublicStorage(
   const usage =
     options?.usage ??
     (folder === "merchant-audio" || meta.mime.startsWith("audio/") ? "audio" : "generic-image");
-  return (await uploadDataUrlViaServerApi(dataUrl, merchantHint, folder, usage))?.url ?? null;
+  return (await uploadDataUrlViaServerApi(dataUrl, merchantHint, folder, usage, options?.operation))?.url ?? null;
 }
 
 export async function uploadFileToPublicStorage(
@@ -262,6 +295,7 @@ export async function uploadFileToPublicStorage(
     merchantHint?: string;
     folder?: "merchant-assets" | "merchant-audio";
     usage?: PublicAssetUploadUsage;
+    operation?: PublicAssetUploadOperationContext;
   },
 ): Promise<string | null> {
   const folder = String(options?.folder ?? "merchant-assets").trim();
@@ -273,7 +307,7 @@ export async function uploadFileToPublicStorage(
     (folder === "merchant-audio" || String(file.type ?? "").toLowerCase().startsWith("audio/")
       ? "audio"
       : "generic-image");
-  return (await uploadFileViaServerApi(file, merchantHint, folder, usage))?.url ?? null;
+  return (await uploadFileViaServerApi(file, merchantHint, folder, usage, options?.operation))?.url ?? null;
 }
 
 export async function uploadFileToPublicStorageWithMetadata(
@@ -282,6 +316,7 @@ export async function uploadFileToPublicStorageWithMetadata(
     merchantHint?: string;
     folder?: "merchant-assets" | "merchant-audio";
     usage?: PublicAssetUploadUsage;
+    operation?: PublicAssetUploadOperationContext;
   },
 ): Promise<PublicAssetUploadResult | null> {
   const folder = String(options?.folder ?? "merchant-assets").trim();
@@ -293,17 +328,19 @@ export async function uploadFileToPublicStorageWithMetadata(
     (folder === "merchant-audio" || String(file.type ?? "").toLowerCase().startsWith("audio/")
       ? "audio"
       : "generic-image");
-  return uploadFileViaServerApi(file, merchantHint, folder, usage);
+  return uploadFileViaServerApi(file, merchantHint, folder, usage, options?.operation);
 }
 
 export async function uploadImageDataUrlToPublicStorage(
   dataUrl: string,
   merchantHint = "public",
   usage: PublicAssetUploadUsage = "generic-image",
+  operation?: PublicAssetUploadOperationContext,
 ) {
   return uploadDataUrlToPublicStorage(dataUrl, {
     merchantHint,
     folder: "merchant-assets",
     usage,
+    operation,
   });
 }
