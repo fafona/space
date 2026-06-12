@@ -20,6 +20,7 @@ import dynamic from "next/dynamic";
 import { createPortal } from "react-dom";
 import AccountSwitcherDialog from "@/components/AccountSwitcherDialog";
 import FaollaQrPanel from "@/components/FaollaQrPanel";
+import MerchantCouponManager from "@/components/admin/MerchantCouponManager";
 import {
   homeBlocks,
   type BlockBorderStyle,
@@ -354,11 +355,6 @@ function readSameOriginFrameHref(frame: HTMLIFrameElement | null) {
 const MerchantBusinessCardManager = dynamic(() => import("@/components/admin/MerchantBusinessCardManager"), {
   ssr: false,
   loading: () => <DeferredAdminPanelLoading label="名片夹加载中..." />,
-});
-
-const MerchantCouponManager = dynamic(() => import("@/components/admin/MerchantCouponManager"), {
-  ssr: false,
-  loading: () => <DeferredAdminPanelLoading label="优惠券加载中..." />,
 });
 
 const MerchantMemberManager = dynamic(() => import("@/components/admin/MerchantMemberManager"), {
