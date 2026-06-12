@@ -20,6 +20,7 @@ const MERCHANT_BUSINESS_CARD_SHARE_REVOCATION_LEGACY_FOLDER = `${MERCHANT_BUSINE
 const MERCHANT_BUSINESS_CARD_SHARE_KEY_SLUG_MAX_LENGTH = 18;
 const MERCHANT_BUSINESS_CARD_SHARE_KEY_CODE_LENGTH = 6;
 const MERCHANT_BUSINESS_CARD_SHARE_KEY_CODE_ALPHABET = "23456789abcdefghjkmnpqrstuvwxyz";
+const BUSINESS_CARD_SHARE_STORAGE_FETCH_TIMEOUT_MS = 3500;
 
 type SearchParamValue = string | string[] | undefined;
 type SearchParamsLike = URLSearchParams | Record<string, SearchParamValue>;
@@ -529,6 +530,19 @@ function buildStorageNoStoreUrl(value: string) {
   }
 }
 
+async function fetchBusinessCardStorageUrl(url: string, init: RequestInit = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), BUSINESS_CARD_SHARE_STORAGE_FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export function buildMerchantBusinessCardShareManifestPublicUrls(key: string, preferredOrigin?: string | null) {
   const objectPath = buildMerchantBusinessCardShareManifestObjectPath(key);
   return buildPublicStorageObjectUrls(objectPath, preferredOrigin);
@@ -663,7 +677,7 @@ export async function isMerchantBusinessCardShareRevoked(input: {
   const checks = Array.from(new Set(objectPaths)).flatMap((objectPath) =>
     buildPublicStorageObjectUrls(objectPath, input.preferredOrigin).map(async (url) => {
       try {
-        const response = await fetch(buildStorageNoStoreUrl(url), {
+        const response = await fetchBusinessCardStorageUrl(buildStorageNoStoreUrl(url), {
           cache: "no-store",
           next: { revalidate: 0 },
         });
@@ -1188,7 +1202,7 @@ export async function loadMerchantBusinessCardSharePayloadByKey(
     await Promise.all(
       buildMerchantBusinessCardShareManifestPublicUrls(normalizedKey, preferredOrigin).map(async (url) => {
         try {
-          const response = await fetch(buildStorageNoStoreUrl(url), {
+          const response = await fetchBusinessCardStorageUrl(buildStorageNoStoreUrl(url), {
             cache: "no-store",
             next: { revalidate: 0 },
           });

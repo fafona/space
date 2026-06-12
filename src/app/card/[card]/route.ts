@@ -1850,6 +1850,20 @@ async function loadContactCardCoupons(siteId: string) {
   return getContactCardVisibleMerchantCoupons(coupons);
 }
 
+async function withContactCardTimeout<T>(promise: Promise<T>, fallback: T, timeoutMs = 3000): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((resolve) => {
+        timeout = setTimeout(() => resolve(fallback), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 type ContactCardSnapshotMatch = {
   siteId: string;
   card: MerchantBusinessCardAsset;
@@ -3421,11 +3435,14 @@ export async function GET(
   }
 
   const [revoked, storedPayload] = await Promise.all([
-    isMerchantBusinessCardShareRevoked({
-      shareKey,
-      preferredOrigin: requestOrigin,
-    }),
-    loadMerchantBusinessCardSharePayloadByKey(shareKey, requestOrigin),
+    withContactCardTimeout(
+      isMerchantBusinessCardShareRevoked({
+        shareKey,
+        preferredOrigin: requestOrigin,
+      }),
+      false,
+    ),
+    withContactCardTimeout(loadMerchantBusinessCardSharePayloadByKey(shareKey, requestOrigin), null),
   ]);
   if (revoked) {
     return new NextResponse("Business card not found", {
@@ -3437,7 +3454,11 @@ export async function GET(
     });
   }
 
-  const snapshotMatch = await resolveContactCardSnapshotMatch(shareKey, storedPayload?.ownerMerchantId).catch(() => null);
+  const snapshotMatch = await withContactCardTimeout(
+    resolveContactCardSnapshotMatch(shareKey, storedPayload?.ownerMerchantId).catch(() => null),
+    null,
+    storedPayload ? 1600 : 3500,
+  );
   const snapshotPayload = buildSharePayloadFromSnapshotMatch(snapshotMatch, requestOrigin);
   const payload = storedPayload ?? snapshotPayload;
 
@@ -3450,13 +3471,16 @@ export async function GET(
       },
     });
   }
-  if (!storedPayload && snapshotPayload && !(await hasExistingShareManifestObject(shareKey, requestOrigin))) {
-    await repairShareManifestFromSnapshot({
-      shareKey,
-      snapshotMatch,
-      payload: snapshotPayload,
-      preferredOrigin: requestOrigin,
-    }).catch(() => false);
+  if (!storedPayload && snapshotPayload) {
+    void withContactCardTimeout(hasExistingShareManifestObject(shareKey, requestOrigin), true, 1200).then((exists) => {
+      if (exists) return;
+      void repairShareManifestFromSnapshot({
+        shareKey,
+        snapshotMatch,
+        payload: snapshotPayload,
+        preferredOrigin: requestOrigin,
+      }).catch(() => false);
+    });
   }
 
   const title = buildMerchantBusinessCardShareTitle(payload.name);
@@ -3509,7 +3533,11 @@ export async function GET(
     name: payload.name,
     contact: payload.contact,
   });
-  const serviceState = await loadPublishedMerchantServiceStateByTargetUrl(payload.targetUrl).catch(() => null);
+  const serviceState = await withContactCardTimeout(
+    loadPublishedMerchantServiceStateByTargetUrl(payload.targetUrl).catch(() => null),
+    null,
+    1600,
+  );
   if (serviceState?.maintenance) {
     return new NextResponse(
       buildServiceMaintenanceCardHtml({
@@ -3531,7 +3559,9 @@ export async function GET(
     normalizeText(snapshotMatch?.siteId) ||
     serviceState?.siteId ||
     "";
-  const contactCoupons = contactCouponSiteId ? await loadContactCardCoupons(contactCouponSiteId) : [];
+  const contactCoupons = contactCouponSiteId
+    ? await withContactCardTimeout(loadContactCardCoupons(contactCouponSiteId), [], 1600)
+    : [];
 
   return new NextResponse(
     buildShareCardHtml({
