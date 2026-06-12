@@ -1230,7 +1230,7 @@ function buildEditableBusinessCardDraftFromAsset(card: MerchantBusinessCardAsset
     isSameAssetUrl(draft.backgroundImageUrl, renderedImageUrl) ||
     isSameAssetUrl(draft.backgroundImageUrl, renderedShareImageUrl);
 
-  if (!normalizeText(draft.backgroundImageUrl) && fallbackSnapshotImageUrl) {
+  if (!normalizeText(draft.backgroundImageUrl) && fallbackSnapshotImageUrl && draft.backgroundImageSnapshotOnly) {
     draft = normalizeMerchantBusinessCardDraft({
       ...draft,
       backgroundImageUrl: fallbackSnapshotImageUrl,
