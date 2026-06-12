@@ -2249,7 +2249,7 @@ export default function MerchantBusinessCardManager({
                         {copyingLinkCardId === card.id ? "生成链接中..." : "生成联系卡链接"}
                       </button>
                     )}
-                    <div className="grid grid-cols-1 gap-2">
+                    <div className="grid grid-cols-2 gap-2">
                       <button
                         type="button"
                         className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
