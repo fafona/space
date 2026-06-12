@@ -1202,11 +1202,20 @@ function CouponNativePickerField({
 }
 
 function CouponFormSection({ title, children, defaultOpen = true }: { title: string; children: ReactNode; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
   return (
-    <details open={defaultOpen} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4">
-      <summary className="cursor-pointer select-none text-sm font-semibold text-slate-900">{title}</summary>
-      <div className="mt-3 grid gap-3">{children}</div>
-    </details>
+    <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50 text-sm">
+      <button
+        type="button"
+        className="flex w-full items-start justify-between gap-3 px-4 py-4 text-left"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className="font-semibold text-slate-900">{title}</span>
+        <span className="shrink-0 text-xs font-semibold text-slate-500">{open ? "收起" : "展开"}</span>
+      </button>
+      {open ? <div className="grid gap-3 border-t border-white/70 px-4 py-4">{children}</div> : null}
+    </div>
   );
 }
 
@@ -2307,7 +2316,7 @@ export default function MerchantCouponManager({
       ) : null}
 
       {!listOnly && formOpen ? (
-        <div className="fixed inset-0 z-[80] flex items-start justify-center overflow-y-auto bg-slate-950/45 px-4 py-6">
+        <div className="fixed inset-0 z-[80] flex items-start justify-center overflow-hidden bg-slate-950/45 px-4 py-6">
           <button
             type="button"
             aria-label="关闭优惠券编辑"
@@ -2316,7 +2325,7 @@ export default function MerchantCouponManager({
               if (!saving && !uploadingBackground) setFormOpen(false);
             }}
           />
-          <section className="relative z-10 w-full max-w-7xl rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-2xl">
+          <section className="relative z-10 max-h-[calc(100vh-3rem)] w-full max-w-7xl overflow-y-auto rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-2xl">
           <div className="flex items-center justify-between gap-3">
             <div>
               <div className="text-base font-semibold text-slate-900">{formTitle}</div>
@@ -2330,6 +2339,14 @@ export default function MerchantCouponManager({
               ) : null}
               <button
                 type="button"
+                className="inline-flex h-9 items-center justify-center rounded border bg-slate-950 px-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+                onClick={() => void saveCoupon()}
+                disabled={saving || !siteId}
+              >
+                {saving ? "保存中..." : form.id ? "保存修改" : "创建优惠券"}
+              </button>
+              <button
+                type="button"
                 className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
                 onClick={() => setFormOpen(false)}
                 disabled={saving || uploadingBackground}
@@ -2339,8 +2356,8 @@ export default function MerchantCouponManager({
             </div>
           </div>
 
-          <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
-            <div className="grid gap-3">
+          <div className="mt-5 grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+            <div className="space-y-3">
               <CouponFormSection title="基础设置">
                 <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_140px_220px_220px] md:items-end">
                   <label className="space-y-1 text-sm">
@@ -3119,29 +3136,6 @@ export default function MerchantCouponManager({
                 </label>
               </CouponFormSection>
 
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
-                onClick={() => void saveCoupon()}
-                disabled={saving || !siteId}
-              >
-                {saving ? "保存中..." : form.id ? "保存修改" : "创建优惠券"}
-              </button>
-              <button
-                type="button"
-                className="rounded-lg border bg-white px-4 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
-                onClick={() => {
-                  setFormOpen(false);
-                  setForm(buildNewCouponForm(pricePrefix));
-                  setError("");
-                  setTip("");
-                }}
-                disabled={saving || uploadingBackground}
-              >
-                取消
-              </button>
-            </div>
           </div>
           <aside className="lg:sticky lg:top-6 self-start rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
             <div className="text-sm font-semibold text-slate-900">实时预览</div>
