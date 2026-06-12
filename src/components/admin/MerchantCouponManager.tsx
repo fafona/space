@@ -2257,6 +2257,204 @@ export default function MerchantCouponManager({
           : "优惠金额";
   const canEditCoupons = !listOnly;
   const rootClassName = listOnly ? `space-y-4 ${className}` : `min-h-[calc(100vh-14rem)] space-y-4 py-6 ${className}`;
+  const discountTypeFields = (
+    <div
+      className={`grid gap-3 ${
+        form.discountType === "product_voucher"
+          ? "md:grid-cols-2 xl:grid-cols-5"
+          : form.discountType === "stored_value" ||
+              form.discountType === "points_voucher" ||
+              form.discountType === "exchange_voucher"
+            ? "md:grid-cols-2"
+            : form.discountType === "ticket_voucher"
+              ? "md:grid-cols-2"
+              : "md:grid-cols-3"
+      }`}
+    >
+      <label className="space-y-1 text-sm">
+        <span className="block text-slate-600">优惠类型</span>
+        <select
+          className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+          value={form.discountType}
+          onChange={(event) => updateDiscountType(event.target.value as MerchantCouponDiscountType)}
+        >
+          {COUPON_DISCOUNT_TYPE_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      {form.discountType === "product_voucher" ? (
+        <>
+          <label className="space-y-1 text-sm">
+            <span className="block text-slate-600">商品名称</span>
+            <input
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+              value={form.productName}
+              onChange={handleInputChange("productName")}
+              placeholder="例如：指定商品"
+            />
+          </label>
+          <label className="space-y-1 text-sm">
+            <span className="block text-slate-600">商品条码</span>
+            <input
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+              value={form.productBarcode}
+              onChange={handleInputChange("productBarcode")}
+              placeholder="可选"
+            />
+          </label>
+          <label className="space-y-1 text-sm">
+            <span className="block text-slate-600">商品数量</span>
+            <input
+              type="number"
+              min={0}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+              value={form.productQuantity}
+              onChange={handleInputChange("productQuantity")}
+              placeholder="可选"
+            />
+          </label>
+          <label className="space-y-1 text-sm">
+            <span className="block text-slate-600">商品金额</span>
+            <input
+              type="number"
+              min={0}
+              step={0.01}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+              value={form.productAmount}
+              onChange={handleInputChange("productAmount")}
+              placeholder="可选"
+            />
+          </label>
+        </>
+      ) : form.discountType === "stored_value" ? (
+        <label className="space-y-1 text-sm">
+          <span className="block text-slate-600">储值金额</span>
+          <input
+            type="number"
+            min={0}
+            step={0.01}
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+            value={form.discountValue}
+            onChange={handleInputChange("discountValue")}
+          />
+        </label>
+      ) : form.discountType === "points_voucher" ? (
+        <>
+          <label className="space-y-1 text-sm">
+            <span className="block text-slate-600">抵扣积分</span>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+              value={form.discountValue}
+              onChange={handleInputChange("discountValue")}
+              placeholder="例如：50"
+            />
+          </label>
+          <label className="space-y-1 text-sm">
+            <span className="block text-slate-600">使用门槛积分</span>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+              value={form.pointsVoucherMinimumRedeemPoints}
+              onChange={handleInputChange("pointsVoucherMinimumRedeemPoints")}
+              placeholder="空为不限制"
+            />
+          </label>
+          <label className="space-y-1 text-sm">
+            <span className="block text-slate-600">单次最多使用张数</span>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+              value={form.pointsVoucherMaxPerRedemption}
+              onChange={handleInputChange("pointsVoucherMaxPerRedemption")}
+              placeholder="空为不限制"
+            />
+          </label>
+        </>
+      ) : form.discountType === "exchange_voucher" ? (
+        <>
+          <label className="space-y-1 text-sm">
+            <span className="block text-slate-600">兑换项目</span>
+            <input
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+              value={form.exchangeItem}
+              onChange={handleInputChange("exchangeItem")}
+              placeholder="填写项目内容"
+            />
+          </label>
+          <label className="space-y-1 text-sm">
+            <span className="block text-slate-600">项目数量</span>
+            <input
+              type="number"
+              min={0}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+              value={form.exchangeQuantity}
+              onChange={handleInputChange("exchangeQuantity")}
+              placeholder="可选"
+            />
+          </label>
+        </>
+      ) : form.discountType === "ticket_voucher" ? (
+        <>
+          <label className="space-y-1 text-sm">
+            <span className="block text-slate-600">场地</span>
+            <input
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+              value={form.ticketVenue}
+              onChange={handleInputChange("ticketVenue")}
+              placeholder="填写场地名称"
+            />
+          </label>
+          <label className="space-y-1 text-sm">
+            <span className="block text-slate-600">时长（min）</span>
+            <input
+              type="number"
+              min={0}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+              value={form.ticketDurationMinutes}
+              onChange={handleInputChange("ticketDurationMinutes")}
+              placeholder="单位：min"
+            />
+          </label>
+        </>
+      ) : (
+        <>
+          <label className="space-y-1 text-sm">
+            <span className="block text-slate-600">{discountValueLabel}</span>
+            <input
+              type="number"
+              min={0}
+              step={form.discountType === "percent_off" ? 1 : 0.01}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+              value={form.discountValue}
+              onChange={handleInputChange("discountValue")}
+            />
+          </label>
+          <label className="space-y-1 text-sm">
+            <span className="block text-slate-600">门槛金额</span>
+            <input
+              type="number"
+              min={0}
+              step={0.01}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
+              value={form.minimumAmount}
+              onChange={handleInputChange("minimumAmount")}
+              disabled={form.discountType === "amount_off"}
+            />
+          </label>
+        </>
+      )}
+    </div>
+  );
 
   return (
     <div className={rootClassName}>
@@ -2359,6 +2557,8 @@ export default function MerchantCouponManager({
           <div className="mt-5 grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
             <div className="space-y-3">
               <CouponFormSection title="基础设置">
+                {discountTypeFields}
+
                 <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_140px_220px_220px] md:items-end">
                   <label className="space-y-1 text-sm">
                     <span className="block text-slate-600">优惠券名称</span>
@@ -2664,202 +2864,6 @@ export default function MerchantCouponManager({
                   </div>
                 </div>
 
-                <div
-                  className={`grid gap-3 ${
-                    form.discountType === "product_voucher"
-                      ? "md:grid-cols-2 xl:grid-cols-5"
-                      : form.discountType === "stored_value" ||
-                          form.discountType === "points_voucher" ||
-                          form.discountType === "exchange_voucher"
-                        ? "md:grid-cols-2"
-                        : form.discountType === "ticket_voucher"
-                          ? "md:grid-cols-2"
-                        : "md:grid-cols-3"
-                  }`}
-                >
-                  <label className="space-y-1 text-sm">
-                    <span className="block text-slate-600">优惠类型</span>
-                    <select
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                      value={form.discountType}
-                      onChange={(event) => updateDiscountType(event.target.value as MerchantCouponDiscountType)}
-                    >
-                      {COUPON_DISCOUNT_TYPE_OPTIONS.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  {form.discountType === "product_voucher" ? (
-                    <>
-                      <label className="space-y-1 text-sm">
-                        <span className="block text-slate-600">商品名称</span>
-                        <input
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                          value={form.productName}
-                          onChange={handleInputChange("productName")}
-                          placeholder="例如：指定商品"
-                        />
-                      </label>
-                      <label className="space-y-1 text-sm">
-                        <span className="block text-slate-600">商品条码</span>
-                        <input
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                          value={form.productBarcode}
-                          onChange={handleInputChange("productBarcode")}
-                          placeholder="可选"
-                        />
-                      </label>
-                      <label className="space-y-1 text-sm">
-                        <span className="block text-slate-600">商品数量</span>
-                        <input
-                          type="number"
-                          min={0}
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                          value={form.productQuantity}
-                          onChange={handleInputChange("productQuantity")}
-                          placeholder="可选"
-                        />
-                      </label>
-                      <label className="space-y-1 text-sm">
-                        <span className="block text-slate-600">商品金额</span>
-                        <input
-                          type="number"
-                          min={0}
-                          step={0.01}
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                          value={form.productAmount}
-                          onChange={handleInputChange("productAmount")}
-                          placeholder="可选"
-                        />
-                      </label>
-                    </>
-                  ) : form.discountType === "stored_value" ? (
-                    <label className="space-y-1 text-sm">
-                      <span className="block text-slate-600">储值金额</span>
-                      <input
-                        type="number"
-                        min={0}
-                        step={0.01}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                        value={form.discountValue}
-                        onChange={handleInputChange("discountValue")}
-                      />
-                    </label>
-                  ) : form.discountType === "points_voucher" ? (
-                    <>
-                      <label className="space-y-1 text-sm">
-                        <span className="block text-slate-600">抵扣积分</span>
-                        <input
-                          type="number"
-                          min={0}
-                          step={1}
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                          value={form.discountValue}
-                          onChange={handleInputChange("discountValue")}
-                          placeholder="例如：50"
-                        />
-                      </label>
-                      <label className="space-y-1 text-sm">
-                        <span className="block text-slate-600">使用门槛积分</span>
-                        <input
-                          type="number"
-                          min={0}
-                          step={1}
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                          value={form.pointsVoucherMinimumRedeemPoints}
-                          onChange={handleInputChange("pointsVoucherMinimumRedeemPoints")}
-                          placeholder="空为不限制"
-                        />
-                      </label>
-                      <label className="space-y-1 text-sm">
-                        <span className="block text-slate-600">单次最多使用张数</span>
-                        <input
-                          type="number"
-                          min={0}
-                          step={1}
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                          value={form.pointsVoucherMaxPerRedemption}
-                          onChange={handleInputChange("pointsVoucherMaxPerRedemption")}
-                          placeholder="空为不限制"
-                        />
-                      </label>
-                    </>
-                  ) : form.discountType === "exchange_voucher" ? (
-                    <>
-                      <label className="space-y-1 text-sm">
-                        <span className="block text-slate-600">兑换项目</span>
-                        <input
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                          value={form.exchangeItem}
-                          onChange={handleInputChange("exchangeItem")}
-                          placeholder="填写项目内容"
-                        />
-                      </label>
-                      <label className="space-y-1 text-sm">
-                        <span className="block text-slate-600">项目数量</span>
-                        <input
-                          type="number"
-                          min={0}
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                          value={form.exchangeQuantity}
-                          onChange={handleInputChange("exchangeQuantity")}
-                          placeholder="可选"
-                        />
-                      </label>
-                    </>
-                  ) : form.discountType === "ticket_voucher" ? (
-                    <>
-                      <label className="space-y-1 text-sm">
-                        <span className="block text-slate-600">场地</span>
-                        <input
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                          value={form.ticketVenue}
-                          onChange={handleInputChange("ticketVenue")}
-                          placeholder="填写场地名称"
-                        />
-                      </label>
-                      <label className="space-y-1 text-sm">
-                        <span className="block text-slate-600">时长（min）</span>
-                        <input
-                          type="number"
-                          min={0}
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                          value={form.ticketDurationMinutes}
-                          onChange={handleInputChange("ticketDurationMinutes")}
-                          placeholder="单位：min"
-                        />
-                      </label>
-                    </>
-                  ) : (
-                    <>
-                      <label className="space-y-1 text-sm">
-                        <span className="block text-slate-600">{discountValueLabel}</span>
-                        <input
-                          type="number"
-                          min={0}
-                          step={form.discountType === "percent_off" ? 1 : 0.01}
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                          value={form.discountValue}
-                          onChange={handleInputChange("discountValue")}
-                        />
-                      </label>
-                      <label className="space-y-1 text-sm">
-                        <span className="block text-slate-600">门槛金额</span>
-                        <input
-                          type="number"
-                          min={0}
-                          step={0.01}
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-                          value={form.minimumAmount}
-                          onChange={handleInputChange("minimumAmount")}
-                          disabled={form.discountType === "amount_off"}
-                        />
-                      </label>
-                    </>
-                  )}
-                </div>
               </CouponFormSection>
 
               <CouponFormSection title="展示文案">
