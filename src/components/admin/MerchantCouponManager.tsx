@@ -19,7 +19,6 @@ import {
   MERCHANT_COUPON_DISPLAY_FIELDS,
   MERCHANT_COUPON_TASK_REQUIREMENTS,
   MERCHANT_COUPON_USAGE_SCENARIOS,
-  getContactCardVisibleMerchantCoupons,
   getMerchantCouponDisplayBoxColor,
   getMerchantCouponDisplayBoxStyle,
   getMerchantCouponDisplayButtonText,
@@ -28,7 +27,6 @@ import {
   getMerchantCouponDisplayMetaText,
   getMerchantCouponDisplayTitle,
   getMerchantCouponDiscountLabel,
-  getVisibleMerchantCoupons,
   isMerchantCouponDisplayFieldHidden,
   normalizeMerchantCouponRecords,
   type MerchantCouponBehaviorTrigger,
@@ -1290,18 +1288,6 @@ export default function MerchantCouponManager({
     [coupons, form.id],
   );
 
-  const activeVisibleCount = useMemo(
-    () => getVisibleMerchantCoupons(coupons).length,
-    [coupons],
-  );
-  const contactCardVisibleCount = useMemo(
-    () => getContactCardVisibleMerchantCoupons(coupons).length,
-    [coupons],
-  );
-  const activeCouponCount = useMemo(
-    () => coupons.filter((coupon) => coupon.status !== "archived").length,
-    [coupons],
-  );
   const displayCoupons = useMemo(
     () =>
       coupons
@@ -2496,20 +2482,6 @@ export default function MerchantCouponManager({
             ) : null}
           </div>
         </div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-3">
-          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-            <div className="text-xs text-slate-500">未删除优惠券</div>
-            <div className="mt-1 text-xl font-semibold text-slate-900">{activeCouponCount}</div>
-          </div>
-          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-            <div className="text-xs text-emerald-700">网站可展示</div>
-            <div className="mt-1 text-xl font-semibold text-emerald-700">{activeVisibleCount}</div>
-          </div>
-          <div className="rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-3">
-            <div className="text-xs text-cyan-700">联系卡可展示</div>
-            <div className="mt-1 text-xl font-semibold text-cyan-700">{contactCardVisibleCount}</div>
-          </div>
-        </div>
       </section>
       ) : null}
 
@@ -3330,11 +3302,11 @@ export default function MerchantCouponManager({
               ) : null}
             </div>
           </div>
-          <div className="mt-4 grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
+          <div className="mt-4 space-y-3">
             {loading ? (
-              <div className="col-span-full rounded-xl border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-500">正在加载优惠券...</div>
+              <div className="rounded-xl border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-500">正在加载优惠券...</div>
             ) : displayCoupons.length === 0 ? (
-              <div className="col-span-full rounded-xl border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-500">
+              <div className="rounded-xl border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-500">
                 {couponStatusFilter === "all" ? "还没有优惠券。先创建一张，并保持“网站区块展示”开启。" : "当前状态下没有优惠券。"}
               </div>
             ) : (
@@ -3350,13 +3322,13 @@ export default function MerchantCouponManager({
                 return (
                   <article
                     key={coupon.id}
-                    className={`flex min-w-0 flex-col gap-2 transition ${
+                    className={`grid min-w-0 gap-3 rounded-xl border border-slate-200 bg-white p-3 transition md:grid-cols-[minmax(280px,420px)_minmax(0,1fr)_128px] md:items-stretch ${
                       selected ? "rounded-lg ring-2 ring-slate-950 ring-offset-2" : ""
                     }`}
                   >
                     <button
                       type="button"
-                      className={`block w-full rounded-lg text-left transition ${canEditCoupons ? "hover:ring-1 hover:ring-slate-300" : ""}`}
+                      className={`block min-w-0 rounded-lg text-left transition ${canEditCoupons ? "hover:ring-1 hover:ring-slate-300" : ""}`}
                       onClick={() => {
                         if (!canEditCoupons) return;
                         setForm(buildFormFromCoupon(coupon, pricePrefix));
@@ -3366,9 +3338,9 @@ export default function MerchantCouponManager({
                         setFormOpen(true);
                       }}
                     >
-                      <CouponVisualCard data={visualData} className="min-h-[188px]" />
+                      <CouponVisualCard data={visualData} className="min-h-[168px] md:h-full" />
                     </button>
-                      <div className="grid gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 sm:grid-cols-6">
+                      <div className="grid content-start gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-600 sm:grid-cols-2 xl:grid-cols-3">
                         <div className="min-w-0">
                           <span className="block text-[11px] text-slate-400">优惠类型</span>
                           <span className="mt-0.5 block truncate font-semibold text-slate-800">
@@ -3408,10 +3380,10 @@ export default function MerchantCouponManager({
                           </span>
                         </div>
                       </div>
-                      <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                      <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 md:flex-col md:items-stretch md:justify-center">
                         <button
                           type="button"
-                          className="rounded border bg-white px-3 py-1.5 text-xs hover:bg-slate-50 disabled:opacity-50"
+                          className="rounded border bg-white px-3 py-1.5 text-xs hover:bg-slate-50 disabled:opacity-50 md:w-full"
                           onClick={() => void copyCoupon(coupon)}
                           disabled={saving}
                         >
@@ -3419,6 +3391,7 @@ export default function MerchantCouponManager({
                         </button>
                         <>
                           <CouponStatusSwitch
+                            className="justify-center md:w-full"
                             checked={coupon.status === "active"}
                             onChange={(checked) =>
                               void patchCoupon(coupon, { status: checked ? "active" : "paused" }, checked ? "优惠券已启用" : "优惠券已暂停")
@@ -3427,7 +3400,7 @@ export default function MerchantCouponManager({
                           />
                           <button
                             type="button"
-                            className="rounded border border-rose-200 bg-white px-3 py-1.5 text-xs text-rose-600 hover:bg-rose-50 disabled:opacity-50"
+                            className="rounded border border-rose-200 bg-white px-3 py-1.5 text-xs text-rose-600 hover:bg-rose-50 disabled:opacity-50 md:w-full"
                             onClick={() => void archiveCoupon(coupon)}
                             disabled={saving}
                           >
