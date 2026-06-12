@@ -1226,11 +1226,12 @@ function buildEditableBusinessCardDraftFromAsset(card: MerchantBusinessCardAsset
   const renderedImageUrl = normalizePublicAssetUrl(normalizeText(card.imageUrl));
   const renderedShareImageUrl = normalizePublicAssetUrl(normalizeText(card.shareImageUrl));
   const fallbackSnapshotImageUrl = renderedImageUrl || renderedShareImageUrl;
-  const backgroundIsRenderedSnapshot =
-    isSameAssetUrl(draft.backgroundImageUrl, renderedImageUrl) ||
-    isSameAssetUrl(draft.backgroundImageUrl, renderedShareImageUrl);
+  const currentBackgroundImageUrl = normalizeText(draft.backgroundImageUrl);
+  const backgroundIsFallbackSnapshot =
+    isSameAssetUrl(currentBackgroundImageUrl, renderedImageUrl) ||
+    isSameAssetUrl(currentBackgroundImageUrl, renderedShareImageUrl);
 
-  if (!normalizeText(draft.backgroundImageUrl) && fallbackSnapshotImageUrl && draft.backgroundImageSnapshotOnly) {
+  if (!currentBackgroundImageUrl && fallbackSnapshotImageUrl && draft.backgroundImageSnapshotOnly) {
     draft = normalizeMerchantBusinessCardDraft({
       ...draft,
       backgroundImageUrl: fallbackSnapshotImageUrl,
@@ -1240,10 +1241,10 @@ function buildEditableBusinessCardDraftFromAsset(card: MerchantBusinessCardAsset
       backgroundImageScale: 1,
       backgroundImageOpacity: 1,
     });
-  } else if (backgroundIsRenderedSnapshot && !draft.backgroundImageSnapshotOnly) {
+  } else if (currentBackgroundImageUrl && draft.backgroundImageSnapshotOnly && !backgroundIsFallbackSnapshot) {
     draft = normalizeMerchantBusinessCardDraft({
       ...draft,
-      backgroundImageSnapshotOnly: true,
+      backgroundImageSnapshotOnly: false,
     });
   }
 
