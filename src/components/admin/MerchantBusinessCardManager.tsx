@@ -2222,19 +2222,34 @@ export default function MerchantBusinessCardManager({
                   <div className="text-xs text-slate-500">
                     {new Date(card.createdAt).toLocaleString("zh-CN", { hour12: false })}
                   </div>
-                  {card.mode === "link" ? (
-                    <div className="mt-1 text-xs text-slate-500">手机打开联系卡链接后可直接保存联系人。</div>
-                  ) : null}
                 </div>
                 {card.mode === "link" ? (
                   <div className="space-y-2">
                     {resolveCardShortLink(card) ? (
-                      <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
-                        <div className="text-[11px] font-semibold text-slate-500">短链</div>
-                        <div className="mt-1 break-all text-xs text-slate-900">{resolveCardShortLink(card)}</div>
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
+                        <div className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2">
+                          <div className="break-all text-xs text-slate-900">{resolveCardShortLink(card)}</div>
+                        </div>
+                        <button
+                          type="button"
+                          className="shrink-0 rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:cursor-wait disabled:opacity-60"
+                          onClick={() => void copyCardLink(card)}
+                          disabled={copyingLinkCardId === card.id}
+                        >
+                          {copyingLinkCardId === card.id ? "生成链接中..." : "复制联系卡链接"}
+                        </button>
                       </div>
-                    ) : null}
-                    <div className="grid grid-cols-2 gap-2">
+                    ) : (
+                      <button
+                        type="button"
+                        className="w-full rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:cursor-wait disabled:opacity-60"
+                        onClick={() => void copyCardLink(card)}
+                        disabled={copyingLinkCardId === card.id}
+                      >
+                        {copyingLinkCardId === card.id ? "生成链接中..." : "生成联系卡链接"}
+                      </button>
+                    )}
+                    <div className="grid grid-cols-1 gap-2">
                       <button
                         type="button"
                         className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
@@ -2244,14 +2259,6 @@ export default function MerchantBusinessCardManager({
                         }}
                       >
                         预览
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:cursor-wait disabled:opacity-60"
-                        onClick={() => void copyCardLink(card)}
-                        disabled={copyingLinkCardId === card.id}
-                      >
-                        {copyingLinkCardId === card.id ? "生成链接中..." : "复制联系卡链接"}
                       </button>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
@@ -2265,7 +2272,7 @@ export default function MerchantBusinessCardManager({
                       </button>
                       <button
                         type="button"
-                        className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                        className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800"
                         onClick={() => void copyCardImage(card)}
                       >
                         复制名片图片

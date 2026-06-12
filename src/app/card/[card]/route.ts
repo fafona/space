@@ -3107,11 +3107,6 @@ function buildShareCardHtml(input: {
         overlay.classList.remove("is-hidden", "is-playing", "has-video-progress");
         overlay.classList.add("needs-manual-play");
       };
-      const closeStalledWechatIntro = (reason) => {
-        if (!isWechat || closed || progressed) return;
-        debug("wechat-stalled-close", { reason });
-        closeIntro();
-      };
       const playIntro = (options = {}) => {
         if (closed) return Promise.resolve(false);
         const forceMuted = isWechat ? false : Boolean(options.forceMuted);
@@ -3200,7 +3195,7 @@ function buildShareCardHtml(input: {
       }, { once: true });
       video.addEventListener("error", () => {
         if (isWechat) {
-          closeStalledWechatIntro("error");
+          debug("wechat-error-no-close");
         }
         else closeIntro();
       }, { once: true });
@@ -3220,16 +3215,6 @@ function buildShareCardHtml(input: {
         [80, 600, 1400].forEach((delay) => {
           window.setTimeout(() => {
             if (!closed && !progressed) playThroughBridge();
-          }, delay);
-        });
-        [2800, 5200].forEach((delay) => {
-          window.setTimeout(() => {
-            if (closed || progressed) return;
-            if (video.currentTime > 0.05) {
-              markPlaying();
-              return;
-            }
-            closeStalledWechatIntro("timeout-" + delay);
           }, delay);
         });
         document.addEventListener("touchstart", () => {
