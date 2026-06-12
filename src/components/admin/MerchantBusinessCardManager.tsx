@@ -4195,27 +4195,17 @@ export default function MerchantBusinessCardManager({
       return;
     }
     const readyShareUrl = normalizeText(card.shareKey) ? resolveCardShortLink(card) : "";
-    const shouldRefreshExistingShare = Boolean(readyShareUrl && canUseIntroVideo && normalizeText(card.contactIntroVideoUrl));
-    if (readyShareUrl && !shouldRefreshExistingShare) {
-      if (!(await verifyShortBusinessCardShareLink(readyShareUrl))) {
-        setTip("联系卡短链未就绪，正在重新同步...");
-      } else {
-        try {
-          await copyTextToClipboard(readyShareUrl);
-          setTip("联系卡链接已复制，手机打开后可保存联系人");
-        } catch {
-          setTip("浏览器阻止自动复制，请手动复制上方短链");
-        }
-        return;
+    if (readyShareUrl) {
+      try {
+        await copyTextToClipboard(readyShareUrl);
+        setTip("联系卡链接已复制，手机打开后可保存联系人");
+      } catch {
+        setTip("浏览器阻止自动复制，请手动复制上方短链");
       }
+      return;
     }
 
-    if (readyShareUrl && shouldRefreshExistingShare) {
-      setTip("正在同步联系卡内容...");
-    } else if (!readyShareUrl) {
-      setTip("正在生成联系卡链接...");
-    }
-
+    setTip("正在生成联系卡链接...");
     setCopyingLinkCardId(card.id);
     try {
       const { shareUrl, shareKey } = await buildShareBundle({
