@@ -302,12 +302,14 @@ test("savePlatformMerchantSnapshot preserves existing history when incoming payl
   });
 
   assert.equal(result.error, null);
-  assert.equal(client.read(PLATFORM_MERCHANT_SNAPSHOT_SLUG)?.merchantConfigHistoryBySiteId["10000000"]?.length, 1);
+  assert.equal(client.read(PLATFORM_MERCHANT_SNAPSHOT_SLUG)?.merchantConfigHistoryBySiteId["10000000"]?.length ?? 0, 0);
   assert.equal(client.read(PLATFORM_MERCHANT_SNAPSHOT_HISTORY_SLUG)?.merchantConfigHistoryBySiteId["10000000"]?.length, 1);
   assert.equal(
     client.read(PLATFORM_MERCHANT_SNAPSHOT_HISTORY_BACKUP_SLUG)?.merchantConfigHistoryBySiteId["10000000"]?.length,
     1,
   );
+  const merged = await loadStoredPlatformMerchantSnapshot(client, { bypassCache: true });
+  assert.equal(merged?.merchantConfigHistoryBySiteId["10000000"]?.length, 1);
 });
 
 test("savePlatformMerchantSnapshot rejects stale revisions without writing", async () => {
@@ -354,8 +356,26 @@ test("savePlatformMerchantSnapshot updates legacy internal rows whose merchant i
   });
 
   assert.equal(result.error, null);
-  const saved = client.read(PLATFORM_MERCHANT_SNAPSHOT_SLUG);
+  const saved = await loadStoredPlatformMerchantSnapshot(client, { bypassCache: true });
   assert.ok(saved);
   assert.notEqual(saved.revision, "revision-main");
   assert.equal(saved.merchantConfigHistoryBySiteId["10000000"]?.length, 1);
+});
+
+test("loadStoredPlatformMerchantSnapshot can return lightweight current snapshot without history", async () => {
+  const client = createMockSnapshotStore([
+    createStoredRow(1, PLATFORM_MERCHANT_SNAPSHOT_SLUG, createPayload("revision-main", 3)),
+    createStoredRow(2, PLATFORM_MERCHANT_SNAPSHOT_HISTORY_SLUG, createPayload("revision-history", 5)),
+  ]);
+
+  const lightweight = await loadStoredPlatformMerchantSnapshot(client, {
+    bypassCache: true,
+    includeHistory: false,
+  });
+  const full = await loadStoredPlatformMerchantSnapshot(client, { bypassCache: true });
+
+  assert.ok(lightweight);
+  assert.equal(lightweight.revision, "revision-main");
+  assert.equal(lightweight.merchantConfigHistoryBySiteId["10000000"]?.length ?? 0, 0);
+  assert.equal(full?.merchantConfigHistoryBySiteId["10000000"]?.length, 5);
 });

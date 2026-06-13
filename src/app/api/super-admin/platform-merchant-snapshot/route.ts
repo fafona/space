@@ -61,7 +61,7 @@ export async function GET(request: Request) {
 
   const payload = await loadStoredPlatformMerchantSnapshot(
     supabase as unknown as PlatformMerchantSnapshotStoreClient,
-    { bypassCache: true },
+    { bypassCache: true, includeHistory: false },
   );
   return NextResponse.json({
     ok: true,

@@ -400,7 +400,9 @@ export function buildPlatformMerchantSnapshotPayloadFromState(
 
 export function buildPlatformMerchantSnapshotBlocks(
   payload: PlatformMerchantSnapshotPayload,
+  options: { includeHistory?: boolean } = {},
 ): Block[] {
+  const includeHistory = options.includeHistory !== false;
   return [
     {
       id: PLATFORM_MERCHANT_SNAPSHOT_BLOCK_ID,
@@ -410,7 +412,7 @@ export function buildPlatformMerchantSnapshotBlocks(
         platformMerchantSnapshotRevision: payload.revision,
         publishedMerchantSnapshot: payload.snapshot,
         publishedMerchantDefaultSortRule: payload.defaultSortRule,
-        publishedMerchantConfigHistoryBySiteId: payload.merchantConfigHistoryBySiteId,
+        publishedMerchantConfigHistoryBySiteId: includeHistory ? payload.merchantConfigHistoryBySiteId : {},
       } as never,
     },
   ];

@@ -45,6 +45,7 @@ export type PlatformMerchantSnapshotSaveResult = {
 
 export type PlatformMerchantSnapshotLoadOptions = {
   bypassCache?: boolean;
+  includeHistory?: boolean;
 };
 
 const PLATFORM_MERCHANT_SNAPSHOT_CACHE_TTL_MS = 30_000;
@@ -270,8 +271,21 @@ export async function loadStoredPlatformMerchantSnapshot(
   supabase: PlatformMerchantSnapshotStoreClient,
   options: PlatformMerchantSnapshotLoadOptions = {},
 ): Promise<PlatformMerchantSnapshotPayload | null> {
-  if (!options.bypassCache && platformMerchantSnapshotCache && platformMerchantSnapshotCache.expiresAt > Date.now()) {
+  const includeHistory = options.includeHistory !== false;
+  if (includeHistory && !options.bypassCache && platformMerchantSnapshotCache && platformMerchantSnapshotCache.expiresAt > Date.now()) {
     return platformMerchantSnapshotCache.value;
+  }
+
+  if (!includeHistory) {
+    const primaryPayload = await loadStoredPlatformMerchantSnapshotBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_SLUG);
+    const fallbackPayload =
+      primaryPayload ?? (await loadStoredPlatformMerchantSnapshotBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_BACKUP_SLUG));
+    return fallbackPayload
+      ? normalizePlatformMerchantSnapshotPayload({
+          ...fallbackPayload,
+          merchantConfigHistoryBySiteId: {},
+        })
+      : null;
   }
 
   const [primaryPayload, backupPayload, historyPayload, historyBackupPayload] = await Promise.all([
@@ -333,13 +347,16 @@ export async function savePlatformMerchantSnapshot(
       existingPayload?.merchantConfigHistoryBySiteId,
     ),
   });
-  const blocks = buildPlatformMerchantSnapshotBlocks(payloadToPersist);
-  const basePayload = {
-    blocks,
-    updated_at: new Date().toISOString(),
-  };
-
-  const payloadWithoutUpdatedAt = { blocks };
+  const currentBlocks = buildPlatformMerchantSnapshotBlocks(payloadToPersist, { includeHistory: false });
+  const historyBlocks = buildPlatformMerchantSnapshotBlocks(payloadToPersist);
+  const updatedAt = new Date().toISOString();
+  const buildPersistPayload = (slug: string, includeUpdatedAt: boolean) => ({
+    blocks:
+      slug === PLATFORM_MERCHANT_SNAPSHOT_SLUG || slug === PLATFORM_MERCHANT_SNAPSHOT_BACKUP_SLUG
+        ? currentBlocks
+        : historyBlocks,
+    ...(includeUpdatedAt ? { updated_at: updatedAt } : {}),
+  });
   const persistBySlug = async (slug: string, existing: SnapshotStoredPayloadEntry) => {
     if (existing.error) {
       return { error: existing.error };
@@ -364,10 +381,10 @@ export async function savePlatformMerchantSnapshot(
       return { error: "pages_slug_column_missing" };
     };
 
-    const first = await updatePayload(basePayload);
+    const first = await updatePayload(buildPersistPayload(slug, true));
     if (!first.error) return { error: null };
     if (!isMissingUpdatedAtColumn(first.error)) return first;
-    return updatePayload(payloadWithoutUpdatedAt);
+    return updatePayload(buildPersistPayload(slug, false));
   };
 
   const primarySave = await persistBySlug(PLATFORM_MERCHANT_SNAPSHOT_SLUG, primaryEntry);
