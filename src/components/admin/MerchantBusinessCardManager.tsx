@@ -30,6 +30,7 @@ import {
   selectMerchantBusinessCardForChat,
   type MerchantBusinessCardAsset,
   type MerchantBusinessCardContactDisplayKey,
+  type MerchantBusinessCardContactOnlyFieldKey,
   type MerchantBusinessCardContactSectionKey,
   type MerchantBusinessCardCustomContactLink,
   type MerchantBusinessCardCustomText,
@@ -72,6 +73,13 @@ type MerchantBusinessCardManagerProps = {
 };
 
 type MerchantBusinessCardEditableContactFieldKey = MerchantBusinessCardContactDisplayKey;
+type MerchantBusinessCardContactDisplayTargetKey = "businessCard" | "contactCard";
+type ContactPreviewRow = {
+  label: string;
+  value: string;
+  key?: MerchantBusinessCardEditableContactFieldKey;
+  customLink?: MerchantBusinessCardCustomContactLink;
+};
 
 const CONTACT_FIELDS: Array<{ key: MerchantBusinessCardEditableContactFieldKey; label: string }> = [
   { key: "contactName", label: "联系人" },
@@ -131,6 +139,29 @@ const CUSTOM_CONTACT_ICON_PRESET_SYMBOLS: Record<(typeof MERCHANT_BUSINESS_CARD_
   review: "评",
   favorite: "♡",
   checkin: "✓",
+};
+
+const CONTACT_FIELD_ICON_META: Record<
+  MerchantBusinessCardEditableContactFieldKey,
+  { iconUrl?: string; symbol?: string; bgColor: string; textColor?: string }
+> = {
+  contactName: { symbol: "人", bgColor: "#0f172a" },
+  phone: { symbol: "☎", bgColor: "#007AFF" },
+  email: { iconUrl: "/social-icons/maildotru.svg", bgColor: "#0A84FF" },
+  address: { symbol: "⌖", bgColor: "#EA4335" },
+  wechat: { iconUrl: "/social-icons/wechat.svg", bgColor: "#07C160" },
+  whatsapp: { iconUrl: "/social-icons/whatsapp.svg", bgColor: "#25D366" },
+  twitter: { iconUrl: "/social-icons/twitter.svg", bgColor: "#111827" },
+  weibo: { iconUrl: "/social-icons/weibo.svg", bgColor: "#E6162D" },
+  telegram: { iconUrl: "/social-icons/telegram.svg", bgColor: "#229ED9" },
+  linkedin: { iconUrl: "/social-icons/linkedin.svg", bgColor: "#0A66C2" },
+  discord: { iconUrl: "/social-icons/discord.svg", bgColor: "#5865F2" },
+  facebook: { iconUrl: "/social-icons/facebook.svg", bgColor: "#1877F2" },
+  instagram: { iconUrl: "/social-icons/instagram.svg", bgColor: "#E4405F" },
+  tiktok: { iconUrl: "/social-icons/tiktok.svg", bgColor: "#111827" },
+  douyin: { iconUrl: "/social-icons/tiktok.svg", bgColor: "#161823" },
+  xiaohongshu: { iconUrl: "/social-icons/xiaohongshu.svg", bgColor: "#FF2442" },
+  googleReview: { iconUrl: "/social-icons/google.svg", bgColor: "#ffffff", textColor: "#0f172a" },
 };
 
 const INVOICE_FIELDS = [
@@ -848,6 +879,142 @@ function resolveContactDisplayValue(
   return key === "phone" ? buildPhoneContactValue(contacts) : normalizeText(contacts[key]);
 }
 
+function resolveContactDisplayTarget(
+  contactDisplayFields: MerchantBusinessCardDraft["contactDisplayFields"],
+  key: MerchantBusinessCardContactOnlyFieldKey,
+) {
+  return contactDisplayFields[key] ?? { businessCard: true, contactCard: true };
+}
+
+function isContactFieldVisibleOnBusinessCard(
+  contactDisplayFields: MerchantBusinessCardDraft["contactDisplayFields"],
+  key: MerchantBusinessCardContactOnlyFieldKey,
+) {
+  return resolveContactDisplayTarget(contactDisplayFields, key).businessCard !== false;
+}
+
+function isContactFieldVisibleOnContactCard(
+  contactDisplayFields: MerchantBusinessCardDraft["contactDisplayFields"],
+  key: MerchantBusinessCardContactOnlyFieldKey,
+) {
+  return resolveContactDisplayTarget(contactDisplayFields, key).contactCard !== false;
+}
+
+function MoveArrowIcon({ direction }: { direction: "up" | "down" }) {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4">
+      {direction === "up" ? (
+        <path fill="currentColor" d="M10 4.5 4.75 10l1.1 1.05 3.37-3.53V16h1.56V7.52l3.37 3.53L15.25 10 10 4.5Z" />
+      ) : (
+        <path fill="currentColor" d="M10 15.5 15.25 10l-1.1-1.05-3.37 3.53V4H9.22v8.48L5.85 8.95 4.75 10 10 15.5Z" />
+      )}
+    </svg>
+  );
+}
+
+function MoveIconButton({
+  direction,
+  disabled,
+  onClick,
+  className = "",
+}: {
+  direction: "up" | "down";
+  disabled?: boolean;
+  onClick: () => void;
+  className?: string;
+}) {
+  const label = direction === "up" ? "上移" : "下移";
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      className={`inline-flex h-8 w-8 items-center justify-center rounded border bg-white text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
+      onClick={onClick}
+      disabled={disabled}
+    >
+      <MoveArrowIcon direction={direction} />
+    </button>
+  );
+}
+
+function ContactDisplayCheckboxes({
+  value,
+  onChange,
+}: {
+  value: { businessCard: boolean; contactCard: boolean };
+  onChange: (target: MerchantBusinessCardContactDisplayTargetKey, checked: boolean) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {([
+        ["businessCard", "名片"],
+        ["contactCard", "联系卡"],
+      ] as const).map(([target, label]) => (
+        <label key={target} className="inline-flex items-center gap-1.5 whitespace-nowrap rounded border bg-slate-50 px-2.5 py-1.5 text-[11px] text-slate-700">
+          <input
+            type="checkbox"
+            checked={value[target]}
+            onChange={(event) => onChange(target, event.target.checked)}
+          />
+          {label}
+        </label>
+      ))}
+    </div>
+  );
+}
+
+function CustomContactPresetSymbol({ preset }: { preset?: string }) {
+  return (
+    <>
+      {
+        CUSTOM_CONTACT_ICON_PRESET_SYMBOLS[
+          (MERCHANT_BUSINESS_CARD_CUSTOM_CONTACT_ICON_PRESETS as readonly string[]).includes(normalizeText(preset))
+            ? (normalizeText(preset) as (typeof MERCHANT_BUSINESS_CARD_CUSTOM_CONTACT_ICON_PRESETS)[number])
+            : "link"
+        ]
+      }
+    </>
+  );
+}
+
+function ContactDisplayIcon({
+  fieldKey,
+  customLink,
+}: {
+  fieldKey?: MerchantBusinessCardEditableContactFieldKey;
+  customLink?: MerchantBusinessCardCustomContactLink;
+}) {
+  if (customLink) {
+    const bgColor = normalizeText(customLink.bgColor) || "#0f172a";
+    return (
+      <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white shadow-sm" style={{ backgroundColor: bgColor }}>
+        {normalizeText(customLink.iconUrl) ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={customLink.iconUrl} alt="" className="h-4 w-4 object-contain" />
+        ) : (
+          <CustomContactPresetSymbol preset={customLink.iconPreset} />
+        )}
+      </span>
+    );
+  }
+  const meta = fieldKey ? CONTACT_FIELD_ICON_META[fieldKey] : null;
+  if (!meta) return null;
+  return (
+    <span
+      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold shadow-sm"
+      style={{ backgroundColor: meta.bgColor, color: meta.textColor || "#fff" }}
+    >
+      {meta.iconUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={meta.iconUrl} alt="" className="h-4 w-4 object-contain" />
+      ) : (
+        meta.symbol
+      )}
+    </span>
+  );
+}
+
 function typographyStyle(
   style: MerchantBusinessCardDraft["fieldTypography"][MerchantBusinessCardFieldKey],
 ): CSSProperties {
@@ -888,7 +1055,7 @@ function CardSurface({
   const orderedContactFields = getOrderedContactFields(draft.contactFieldOrder);
   const contacts = orderedContactFields.map(({ key, label }) => {
     const value = resolveContactDisplayValue(draft.contacts, key);
-    if (!value || draft.contactOnlyFields[key]) return null;
+    if (!value || !isContactFieldVisibleOnBusinessCard(draft.contactDisplayFields, key)) return null;
     return { key, label, value };
   }).filter((item): item is { key: MerchantBusinessCardEditableContactFieldKey; label: string; value: string } => !!item);
   const websiteText = [
@@ -959,7 +1126,7 @@ function CardSurface({
           <>
             {TEXT_LAYOUT_FIELDS.filter(
               ({ key }) =>
-                (key === "merchantName" && !draft.contactOnlyFields.merchantName && draft.name) ||
+                (key === "merchantName" && isContactFieldVisibleOnBusinessCard(draft.contactDisplayFields, "merchantName") && draft.name) ||
                 (key === "title" && draft.title) ||
                 (key === "website" && websiteText),
             ).map(({ key }) => {
@@ -1043,37 +1210,41 @@ function buildContactPreviewRows(
   name: string,
   contacts: MerchantBusinessCardDraft["contacts"],
   contactFieldOrder: MerchantBusinessCardDraft["contactFieldOrder"],
+  contactDisplayFields: MerchantBusinessCardDraft["contactDisplayFields"],
   customContactLinks: MerchantBusinessCardCustomContactLink[] = [],
-) {
+): ContactPreviewRow[] {
   const phoneValues = normalizePhoneList(Array.isArray(contacts.phones) ? contacts.phones : []);
   const primaryPhone = phoneValues[0] || normalizeText(contacts.phone);
   const contactRows = getOrderedContactFields(contactFieldOrder)
-    .flatMap(({ key, label }) => {
+    .flatMap(({ key, label }): ContactPreviewRow[] => {
+      if (!isContactFieldVisibleOnContactCard(contactDisplayFields, key)) return [];
       if (key === "phone") {
-        return [
-          primaryPhone ? { label: "电话", value: primaryPhone } : null,
-          ...phoneValues
-            .slice(primaryPhone ? 1 : 0)
-            .map((value, index) => ({ label: index === 0 ? "工作" : `工作${index + 1}`, value })),
-        ].filter((item): item is { label: string; value: string } => !!item);
+        const phoneRows: ContactPreviewRow[] = [];
+        if (primaryPhone) phoneRows.push({ key, label: "电话", value: primaryPhone });
+        phoneValues
+          .slice(primaryPhone ? 1 : 0)
+          .forEach((value, index) => {
+            phoneRows.push({ key, label: index === 0 ? "工作" : `工作${index + 1}`, value });
+          });
+        return phoneRows;
       }
 
       const value =
         key === "contactName"
           ? normalizeText(contacts.contactName) || normalizeText(name)
           : normalizeText(contacts[key]);
-      return value ? [{ label, value }] : [];
+      return value ? [{ key, label, value }] : [];
     });
   const customRows = customContactLinks
-    .map((item, index) => {
+    .flatMap((item, index): ContactPreviewRow[] => {
       const value = normalizeText(item.displayText) || normalizeText(item.url);
-      if (!value) return null;
-      return {
+      if (!value) return [];
+      return [{
         label: normalizeText(item.label) || `自定义${index + 1}`,
         value,
-      };
-    })
-    .filter((item): item is { label: string; value: string } => !!item);
+        customLink: item,
+      }];
+    });
   return [...contactRows, ...customRows];
 }
 
@@ -1293,6 +1464,7 @@ function ContactCardSurface({
   contacts,
   invoice,
   contactFieldOrder,
+  contactDisplayFields,
   sectionOrder,
   showContactSaveButton = true,
   showContactWebsiteButton = true,
@@ -1316,6 +1488,7 @@ function ContactCardSurface({
   contacts: MerchantBusinessCardDraft["contacts"];
   invoice: MerchantBusinessCardDraft["invoice"];
   contactFieldOrder: MerchantBusinessCardDraft["contactFieldOrder"];
+  contactDisplayFields: MerchantBusinessCardDraft["contactDisplayFields"];
   sectionOrder?: MerchantBusinessCardDraft["contactPageSectionOrder"];
   showContactSaveButton?: boolean;
   showContactWebsiteButton?: boolean;
@@ -1334,10 +1507,10 @@ function ContactCardSurface({
   onContactImagePointerMove?: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onContactImagePointerEnd?: (event: ReactPointerEvent<HTMLDivElement>) => void;
 }) {
-  const rows = buildContactPreviewRows(name, contacts, contactFieldOrder, customContactLinks);
+  const rows = buildContactPreviewRows(name, contacts, contactFieldOrder, contactDisplayFields, customContactLinks);
   const invoiceRows = buildInvoicePreviewRows(invoice);
   const normalizedSectionOrder = normalizeMerchantBusinessCardContactSectionOrder(sectionOrder);
-  const displayName = normalizeText(name);
+  const displayName = isContactFieldVisibleOnContactCard(contactDisplayFields, "merchantName") ? normalizeText(name) : "";
   const hasImage = Boolean(normalizeText(imageUrl));
   const normalizedImageLinkUrl = normalizeText(imageLinkUrl);
   const canDragContactImage = hasImage && Boolean(onContactImagePointerDown);
@@ -1402,9 +1575,12 @@ function ContactCardSurface({
           <div className="rounded-[28px] border border-slate-200 bg-slate-50 p-5 shadow-[0_16px_42px_rgba(15,23,42,.08)]">
             <div className="space-y-4 text-slate-800">
               {rows.map((row) => (
-                <div key={`${row.label}-${row.value}`} className="text-sm leading-7 text-slate-700">
-                  <span className="font-semibold text-slate-900">{row.label}：</span>
-                  <span className="break-words">{row.value}</span>
+                <div key={`${row.label}-${row.value}`} className="flex items-start gap-3 text-sm leading-7 text-slate-700">
+                  <ContactDisplayIcon fieldKey={row.key} customLink={row.customLink} />
+                  <div className="min-w-0 flex-1">
+                    <span className="font-semibold text-slate-900">{row.label}：</span>
+                    <span className="break-words">{row.value}</span>
+                  </div>
                 </div>
               ))}
             </div>
@@ -1850,7 +2026,7 @@ export default function MerchantBusinessCardManager({
         contacts: draft.contacts,
         invoice: draft.invoice,
         contactFieldOrder: draft.contactFieldOrder,
-        contactOnlyFields: draft.contactOnlyFields,
+        contactDisplayFields: draft.contactDisplayFields,
         customContactLinks: draft.customContactLinks,
         targetUrl: websiteUrl,
       }),
@@ -1859,10 +2035,10 @@ export default function MerchantBusinessCardManager({
     activeLinkShareKey,
     canUseIntroVideo,
     draft.contactFieldOrder,
+    draft.contactDisplayFields,
     draft.contactIntroVideoPosterUrl,
     draft.contactIntroVideoMuted,
     draft.contactIntroVideoUrl,
-    draft.contactOnlyFields,
     draft.contactPageSectionOrder,
     draft.contacts,
     draft.customContactLinks,
@@ -2378,17 +2554,24 @@ export default function MerchantBusinessCardManager({
     setSingleSelectedField(key);
   };
 
-  const updateContactOnlyField = (
-    key: keyof MerchantBusinessCardDraft["contactOnlyFields"],
+  const updateContactDisplayField = (
+    key: MerchantBusinessCardContactOnlyFieldKey,
+    target: MerchantBusinessCardContactDisplayTargetKey,
     checked: boolean,
   ) => {
-    applyDraft((current) => ({
-      ...current,
-      contactOnlyFields: {
-        ...current.contactOnlyFields,
-        [key]: checked,
-      },
-    }));
+    applyDraft((current) => {
+      const currentTarget = resolveContactDisplayTarget(current.contactDisplayFields, key);
+      return normalizeMerchantBusinessCardDraft({
+        ...current,
+        contactDisplayFields: {
+          ...current.contactDisplayFields,
+          [key]: {
+            ...currentTarget,
+            [target]: checked,
+          },
+        },
+      });
+    });
   };
 
   const moveContactPageSection = (key: MerchantBusinessCardContactSectionKey, direction: "up" | "down") => {
@@ -2496,7 +2679,7 @@ export default function MerchantBusinessCardManager({
         contacts: card.contacts,
         invoice: card.invoice,
         contactFieldOrder: card.contactFieldOrder,
-        contactOnlyFields: card.contactOnlyFields,
+        contactDisplayFields: card.contactDisplayFields,
         customContactLinks: card.customContactLinks,
         targetUrl,
       }),
@@ -2622,6 +2805,7 @@ export default function MerchantBusinessCardManager({
   const previewTitle = normalizeText(previewAsset?.title) || normalizeText(draft.title);
   const previewContacts = previewAsset?.contacts || draft.contacts;
   const previewContactFieldOrder = previewAsset?.contactFieldOrder || draft.contactFieldOrder;
+  const previewContactDisplayFields = previewAsset?.contactDisplayFields || draft.contactDisplayFields;
   const previewContactSectionOrder = previewAsset?.contactPageSectionOrder || draft.contactPageSectionOrder;
   const previewShowContactSaveButton = previewAsset?.showContactSaveButton ?? draft.showContactSaveButton;
   const previewShowContactWebsiteButton = previewAsset?.showContactWebsiteButton ?? draft.showContactWebsiteButton;
@@ -2993,14 +3177,12 @@ export default function MerchantBusinessCardManager({
                           名片名称
                           <input className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.name} onFocus={() => setSingleSelectedField("merchantName")} onChange={(event) => applyDraft((current) => ({ ...current, name: event.target.value }))} />
                         </label>
-                        <label className="mt-2 inline-flex items-center gap-1.5 whitespace-nowrap rounded border bg-slate-50 px-2.5 py-1.5 text-[11px] text-slate-700">
-                          <input
-                            type="checkbox"
-                            checked={Boolean(draft.contactOnlyFields.merchantName)}
-                            onChange={(event) => updateContactOnlyField("merchantName", event.target.checked)}
+                        <div className="mt-2">
+                          <ContactDisplayCheckboxes
+                            value={resolveContactDisplayTarget(draft.contactDisplayFields, "merchantName")}
+                            onChange={(target, checked) => updateContactDisplayField("merchantName", target, checked)}
                           />
-                          仅联系卡展示
-                        </label>
+                        </div>
                       </div>
                       <label className="block text-xs text-slate-600">职位<input className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.title} onFocus={() => setSingleSelectedField("title")} onChange={(event) => applyDraft((current) => ({ ...current, title: event.target.value }))} /></label>
                     </div>
@@ -3355,22 +3537,18 @@ export default function MerchantBusinessCardManager({
                               {normalizeMerchantBusinessCardContactSectionOrder(draft.contactPageSectionOrder).map((key, index, order) => (
                                 <div key={key} className="flex items-center gap-2 rounded-xl border bg-slate-50 px-3 py-2 text-xs text-slate-700">
                                   <div className="min-w-0 flex-1 font-medium">{CONTACT_CARD_SECTION_LABELS[key]}</div>
-                                  <button
-                                    type="button"
-                                    className="rounded border bg-white px-2 py-1 text-[11px] hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                  <MoveIconButton
+                                    direction="up"
                                     onClick={() => moveContactPageSection(key, "up")}
                                     disabled={index === 0}
-                                  >
-                                    上移
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="rounded border bg-white px-2 py-1 text-[11px] hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                    className="h-7 w-7"
+                                  />
+                                  <MoveIconButton
+                                    direction="down"
                                     onClick={() => moveContactPageSection(key, "down")}
                                     disabled={index === order.length - 1}
-                                  >
-                                    下移
-                                  </button>
+                                    className="h-7 w-7"
+                                  />
                                 </div>
                               ))}
                             </div>
@@ -3512,38 +3690,28 @@ export default function MerchantBusinessCardManager({
                                       <div className="hidden md:block" />
                                     )}
                                     {phoneIndex === 0 ? (
-                                      <button
-                                        type="button"
-                                        className="rounded border bg-white px-2 py-1 text-[11px] whitespace-nowrap hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                      <MoveIconButton
+                                        direction="up"
                                         onClick={() => moveContactField(key, "up")}
                                         disabled={!canMoveUp}
-                                      >
-                                        上移
-                                      </button>
+                                      />
                                     ) : (
                                       <div className="hidden md:block" />
                                     )}
                                     {phoneIndex === 0 ? (
-                                      <button
-                                        type="button"
-                                        className="rounded border bg-white px-2 py-1 text-[11px] whitespace-nowrap hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                      <MoveIconButton
+                                        direction="down"
                                         onClick={() => moveContactField(key, "down")}
                                         disabled={!canMoveDown}
-                                      >
-                                        下移
-                                      </button>
+                                      />
                                     ) : (
                                       <div className="hidden md:block" />
                                     )}
                                     {phoneIndex === 0 ? (
-                                      <label className="flex items-center gap-1.5 whitespace-nowrap rounded border bg-slate-50 px-2.5 py-1.5 text-[11px] text-slate-700">
-                                        <input
-                                          type="checkbox"
-                                          checked={draft.contactOnlyFields[key]}
-                                          onChange={(event) => updateContactOnlyField(key, event.target.checked)}
-                                        />
-                                        仅联系卡展示
-                                      </label>
+                                      <ContactDisplayCheckboxes
+                                        value={resolveContactDisplayTarget(draft.contactDisplayFields, key)}
+                                        onChange={(target, checked) => updateContactDisplayField(key, target, checked)}
+                                      />
                                     ) : (
                                       <div className="hidden md:block" />
                                     )}
@@ -3573,30 +3741,20 @@ export default function MerchantBusinessCardManager({
                                   }
                                   placeholder={key === "googleReview" ? "请输入Google评价链接" : `请输入${label}`}
                                 />
-                                <button
-                                  type="button"
-                                  className="rounded border bg-white px-2 py-1 text-[11px] whitespace-nowrap hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                <MoveIconButton
+                                  direction="up"
                                   onClick={() => moveContactField(key, "up")}
                                   disabled={!canMoveUp}
-                                >
-                                  上移
-                                </button>
-                                <button
-                                  type="button"
-                                  className="rounded border bg-white px-2 py-1 text-[11px] whitespace-nowrap hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                />
+                                <MoveIconButton
+                                  direction="down"
                                   onClick={() => moveContactField(key, "down")}
                                   disabled={!canMoveDown}
-                                >
-                                  下移
-                                </button>
-                                <label className="flex items-center gap-1.5 whitespace-nowrap rounded border bg-slate-50 px-2.5 py-1.5 text-[11px] text-slate-700">
-                                  <input
-                                    type="checkbox"
-                                    checked={draft.contactOnlyFields[key]}
-                                    onChange={(event) => updateContactOnlyField(key, event.target.checked)}
-                                  />
-                                  仅联系卡展示
-                                </label>
+                                />
+                                <ContactDisplayCheckboxes
+                                  value={resolveContactDisplayTarget(draft.contactDisplayFields, key)}
+                                  onChange={(target, checked) => updateContactDisplayField(key, target, checked)}
+                                />
                               </div>
                             )}
                           </div>
@@ -4025,6 +4183,7 @@ export default function MerchantBusinessCardManager({
                           contacts={draft.contacts}
                           invoice={draft.invoice}
                           contactFieldOrder={draft.contactFieldOrder}
+                          contactDisplayFields={draft.contactDisplayFields}
                           sectionOrder={draft.contactPageSectionOrder}
                           showContactSaveButton={draft.showContactSaveButton}
                           showContactWebsiteButton={draft.showContactWebsiteButton}
@@ -4122,6 +4281,7 @@ export default function MerchantBusinessCardManager({
                         contacts={previewContacts}
                         invoice={previewAsset?.invoice || draft.invoice}
                         contactFieldOrder={previewContactFieldOrder}
+                        contactDisplayFields={previewContactDisplayFields}
                         sectionOrder={previewContactSectionOrder}
                         showContactSaveButton={previewShowContactSaveButton}
                         showContactWebsiteButton={previewShowContactWebsiteButton}
@@ -4898,7 +5058,7 @@ export default function MerchantBusinessCardManager({
             contacts: nextDraft.contacts,
             invoice: nextDraft.invoice,
             contactFieldOrder: nextDraft.contactFieldOrder,
-            contactOnlyFields: nextDraft.contactOnlyFields,
+            contactDisplayFields: nextDraft.contactDisplayFields,
             customContactLinks: nextDraft.customContactLinks,
             targetUrl: websiteUrl,
           })
@@ -4983,7 +5143,7 @@ export default function MerchantBusinessCardManager({
             contacts: nextDraft.contacts,
             invoice: nextDraft.invoice,
             contactFieldOrder: nextDraft.contactFieldOrder,
-            contactOnlyFields: nextDraft.contactOnlyFields,
+            contactDisplayFields: nextDraft.contactDisplayFields,
             customContactLinks: nextDraft.customContactLinks,
             targetUrl: websiteUrl,
           })
@@ -5100,7 +5260,7 @@ export default function MerchantBusinessCardManager({
           contacts: card.contacts,
           invoice: card.invoice,
           contactFieldOrder: card.contactFieldOrder,
-          contactOnlyFields: card.contactOnlyFields,
+          contactDisplayFields: card.contactDisplayFields,
           customContactLinks: card.customContactLinks,
           targetUrl,
         }),
@@ -5133,14 +5293,25 @@ export default function MerchantBusinessCardManager({
     contacts: MerchantBusinessCardDraft["contacts"];
     invoice: MerchantBusinessCardDraft["invoice"];
     contactFieldOrder: MerchantBusinessCardDraft["contactFieldOrder"];
-    contactOnlyFields: MerchantBusinessCardDraft["contactOnlyFields"];
+    contactDisplayFields: MerchantBusinessCardDraft["contactDisplayFields"];
     customContactLinks?: MerchantBusinessCardCustomContactLink[];
     targetUrl: string;
   }) {
     const orderedKeys = normalizeMerchantBusinessCardContactFieldOrder(input.contactFieldOrder);
     const contactOnlyFields = {
-      ...(input.contactOnlyFields.merchantName ? { merchantName: true } : {}),
-      ...Object.fromEntries(orderedKeys.filter((key) => input.contactOnlyFields[key]).map((key) => [key, true])),
+      ...(isContactFieldVisibleOnBusinessCard(input.contactDisplayFields, "merchantName") === false &&
+      isContactFieldVisibleOnContactCard(input.contactDisplayFields, "merchantName")
+        ? { merchantName: true }
+        : {}),
+      ...Object.fromEntries(
+        orderedKeys
+          .filter(
+            (key) =>
+              isContactFieldVisibleOnBusinessCard(input.contactDisplayFields, key) === false &&
+              isContactFieldVisibleOnContactCard(input.contactDisplayFields, key),
+          )
+          .map((key) => [key, true]),
+      ),
     } as Partial<MerchantBusinessCardDraft["contactOnlyFields"]>;
     const extraPhoneLines = normalizePhoneList(input.contacts.phones ?? [])
       .slice(1)
@@ -5182,6 +5353,7 @@ export default function MerchantBusinessCardManager({
       contactFieldOrder: orderedKeys,
       customLinks: input.customContactLinks ?? [],
       ...(Object.keys(contactOnlyFields).length > 0 ? { contactOnlyFields } : {}),
+      contactDisplayFields: input.contactDisplayFields,
       websiteUrl: normalizeText(input.targetUrl),
       note: [...extraPhoneLines, ...socialLines].join("\n"),
     };

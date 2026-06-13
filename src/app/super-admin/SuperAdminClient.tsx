@@ -78,6 +78,18 @@ import {
   type PersonalAccountServiceConfig,
 } from "@/lib/personalAccountServiceConfig";
 import type { PlatformAccountType } from "@/lib/platformAccounts";
+
+function MoveArrowIcon({ direction }: { direction: "up" | "down" }) {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4">
+      {direction === "up" ? (
+        <path fill="currentColor" d="M10 4.5 4.75 10l1.1 1.05 3.37-3.53V16h1.56V7.52l3.37 3.53L15.25 10 10 4.5Z" />
+      ) : (
+        <path fill="currentColor" d="M10 15.5 15.25 10l-1.1-1.05-3.37 3.53V4H9.22v8.48L5.85 8.95 4.75 10 10 15.5Z" />
+      )}
+    </svg>
+  );
+}
 import { buildMerchantSiteLinker } from "@/lib/merchantSiteLinking";
 import {
   DEFAULT_PLAN_TEMPLATE_REPLACE_OPTIONS,
@@ -421,6 +433,7 @@ function buildSupportMerchantCardLink(card: MerchantBusinessCardAsset | null) {
       phones: Array.isArray(card.contacts.phones) ? card.contacts.phones.filter(Boolean) : [],
       contactFieldOrder: card.contactFieldOrder,
       contactOnlyFields: card.contactOnlyFields,
+      contactDisplayFields: card.contactDisplayFields,
       email: normalizeSupportDetailText(card.contacts.email),
       address: normalizeSupportDetailText(card.contacts.address),
       invoiceName: normalizeSupportDetailText(card.invoice?.name),
@@ -7074,22 +7087,26 @@ export default function SuperAdminClient() {
                                 </button>
                                 <button
                                   type="button"
-                                  className="rounded border px-3 py-2 text-xs"
+                                  aria-label="上移"
+                                  title="上移"
+                                  className="inline-flex h-9 w-9 items-center justify-center rounded border text-xs"
                                   onClick={() => movePortalSectionAction(selectedPortalSection.id, -1)}
                                   disabled={selectedPortalSectionIndex <= 0}
                                 >
-                                  上移
+                                  <MoveArrowIcon direction="up" />
                                 </button>
                                 <button
                                   type="button"
-                                  className="rounded border px-3 py-2 text-xs"
+                                  aria-label="下移"
+                                  title="下移"
+                                  className="inline-flex h-9 w-9 items-center justify-center rounded border text-xs"
                                   onClick={() => movePortalSectionAction(selectedPortalSection.id, 1)}
                                   disabled={
                                     selectedPortalSectionIndex < 0 ||
                                     selectedPortalSectionIndex >= portalDraft.sections.length - 1
                                   }
                                 >
-                                  下移
+                                  <MoveArrowIcon direction="down" />
                                 </button>
                                 <button
                                   type="button"

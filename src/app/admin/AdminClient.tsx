@@ -78,6 +78,18 @@ import {
   supabase,
   supabaseMissingEnvNotice,
 } from "@/lib/supabase";
+
+function MoveArrowIcon({ direction }: { direction: "up" | "down" }) {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4">
+      {direction === "up" ? (
+        <path fill="currentColor" d="M10 4.5 4.75 10l1.1 1.05 3.37-3.53V16h1.56V7.52l3.37 3.53L15.25 10 10 4.5Z" />
+      ) : (
+        <path fill="currentColor" d="M10 15.5 15.25 10l-1.1-1.05-3.37 3.53V4H9.22v8.48L5.85 8.95 4.75 10 10 15.5Z" />
+      )}
+    </svg>
+  );
+}
 import {
   clearStoredBrowserSupabaseSessionTokens,
   isTransientAuthValidationError,
@@ -4921,6 +4933,7 @@ function buildSupportMerchantCardShareContact(card: MerchantBusinessCardAsset) {
     phones: Array.isArray(card.contacts.phones) ? card.contacts.phones.filter(Boolean) : [],
     contactFieldOrder: card.contactFieldOrder,
     contactOnlyFields: card.contactOnlyFields,
+    contactDisplayFields: card.contactDisplayFields,
     email: normalizeSupportDetailText(card.contacts.email),
     address: normalizeSupportDetailText(card.contacts.address),
     invoiceName: normalizeSupportDetailText(card.invoice?.name),
@@ -26268,22 +26281,26 @@ type GalleryEditorImage = {
           {"置于顶层"}
         </button>
         <button
-          className="w-full px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm text-left"
+          aria-label="上移"
+          title="上移"
+          className="flex w-full items-center justify-center px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm"
           onClick={() => {
             onLayerUp();
             setLayerSettingsOpen(false);
           }}
         >
-          {"上移"}
+          <MoveArrowIcon direction="up" />
         </button>
         <button
-          className="w-full px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm text-left"
+          aria-label="下移"
+          title="下移"
+          className="flex w-full items-center justify-center px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm"
           onClick={() => {
             onLayerDown();
             setLayerSettingsOpen(false);
           }}
         >
-          {"下移"}
+          <MoveArrowIcon direction="down" />
         </button>
         <button
           className="w-full px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm text-left"

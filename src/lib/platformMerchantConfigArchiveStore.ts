@@ -83,8 +83,29 @@ async function queryArchiveRowBySlug(
     .maybeSingle();
 
   if (!initialQuery.error) {
+    const record = (initialQuery.data ?? null) as ArchiveStoredRow;
+    if (!record && slug.startsWith("__")) {
+      const bySlug = await supabase.from("pages").select(columns).eq("slug", slug).limit(1).maybeSingle();
+      if (!bySlug.error) {
+        return {
+          record: (bySlug.data ?? null) as ArchiveStoredRow,
+          error: null,
+          supportsSlug: true,
+          supportsMerchantId: true,
+        };
+      }
+      const bySlugMessage = toErrorMessage(bySlug.error);
+      if (!isMissingSlugColumn(bySlugMessage)) {
+        return {
+          record: null,
+          error: bySlugMessage,
+          supportsSlug: true,
+          supportsMerchantId: true,
+        };
+      }
+    }
     return {
-      record: (initialQuery.data ?? null) as ArchiveStoredRow,
+      record,
       error: null,
       supportsSlug: true,
       supportsMerchantId: true,

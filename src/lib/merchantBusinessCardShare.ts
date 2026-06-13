@@ -6,6 +6,7 @@ import {
   normalizeMerchantBusinessCardContactFieldOrder,
   type MerchantBusinessCardContactSectionKey,
   type MerchantBusinessCardCustomContactLink,
+  type MerchantBusinessCardContactDisplayFields,
   type MerchantBusinessCardContactOnlyFieldKey,
   type MerchantBusinessCardContactOnlyFields,
   type MerchantBusinessCardContactDisplayKey,
@@ -60,6 +61,7 @@ export type MerchantBusinessCardShareContact = {
   phones?: string[];
   contactFieldOrder?: MerchantBusinessCardContactDisplayKey[];
   contactOnlyFields?: Partial<MerchantBusinessCardContactOnlyFields>;
+  contactDisplayFields?: Partial<MerchantBusinessCardContactDisplayFields>;
   customLinks?: MerchantBusinessCardCustomContactLink[];
   email?: string;
   address?: string;
@@ -217,6 +219,75 @@ function normalizeContactOnlyFields(value: unknown) {
       .map((key) => [key, true]),
   ) as Partial<MerchantBusinessCardContactOnlyFields>;
   return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function normalizeContactDisplayFields(value: unknown, legacyContactOnlyFields?: Partial<MerchantBusinessCardContactOnlyFields>) {
+  const source = value && typeof value === "object"
+    ? (value as Partial<Record<MerchantBusinessCardContactOnlyFieldKey, Partial<{ businessCard: unknown; contactCard: unknown }>>>)
+    : {};
+  const normalized = Object.fromEntries(
+    MERCHANT_BUSINESS_CARD_CONTACT_ONLY_FIELD_KEYS.map((key) => {
+      const field = source[key] && typeof source[key] === "object" ? source[key] : null;
+      const hasBusinessCard = typeof field?.businessCard === "boolean";
+      const hasContactCard = typeof field?.contactCard === "boolean";
+      if (hasBusinessCard || hasContactCard) {
+        return [
+          key,
+          {
+            businessCard: hasBusinessCard ? field.businessCard === true : true,
+            contactCard: hasContactCard ? field.contactCard === true : true,
+          },
+        ];
+      }
+      return [
+        key,
+        legacyContactOnlyFields?.[key] === true
+          ? { businessCard: false, contactCard: true }
+          : { businessCard: true, contactCard: true },
+      ];
+    }),
+  ) as Partial<MerchantBusinessCardContactDisplayFields>;
+  const hasCustomVisibility = Object.values(normalized).some(
+    (field) => field?.businessCard !== true || field?.contactCard !== true,
+  );
+  return hasCustomVisibility ? normalized : undefined;
+}
+
+function encodeContactDisplayFields(value?: Partial<MerchantBusinessCardContactDisplayFields>) {
+  if (!value) return "";
+  return MERCHANT_BUSINESS_CARD_CONTACT_ONLY_FIELD_KEYS
+    .map((key) => {
+      const field = value[key];
+      if (!field || (field.businessCard !== false && field.contactCard !== false)) return "";
+      return `${key}:${field.businessCard === false ? "0" : "1"}${field.contactCard === false ? "0" : "1"}`;
+    })
+    .filter(Boolean)
+    .join(",");
+}
+
+function parseContactDisplayFieldsParam(value?: string | null) {
+  const normalized = normalizeText(value);
+  if (!normalized) return undefined;
+  const entries = normalized
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => {
+      const [rawKey, rawTargets] = item.split(":");
+      const key = normalizeText(rawKey) as MerchantBusinessCardContactOnlyFieldKey;
+      if (!(MERCHANT_BUSINESS_CARD_CONTACT_ONLY_FIELD_KEYS as readonly string[]).includes(key)) return null;
+      const targets = normalizeText(rawTargets);
+      if (!/^[01]{2}$/.test(targets)) return null;
+      return [
+        key,
+        {
+          businessCard: targets[0] !== "0",
+          contactCard: targets[1] !== "0",
+        },
+      ] as const;
+    })
+    .filter((item): item is readonly [MerchantBusinessCardContactOnlyFieldKey, { businessCard: boolean; contactCard: boolean }] => !!item);
+  return entries.length > 0 ? (Object.fromEntries(entries) as Partial<MerchantBusinessCardContactDisplayFields>) : undefined;
 }
 
 function normalizeCustomContactLinks(value: unknown): MerchantBusinessCardCustomContactLink[] {
@@ -521,6 +592,7 @@ export function normalizeMerchantBusinessCardShareContact(
     ? normalizeMerchantBusinessCardContactFieldOrder(source.contactFieldOrder)
     : undefined;
   const contactOnlyFields = normalizeContactOnlyFields(source.contactOnlyFields);
+  const contactDisplayFields = normalizeContactDisplayFields(source.contactDisplayFields, contactOnlyFields);
   const customLinks = normalizeCustomContactLinks(source.customLinks);
   const contact = {
     ...(clampContactText(source.displayName, 120)
@@ -594,6 +666,7 @@ export function normalizeMerchantBusinessCardShareContact(
       : {}),
     ...(websiteUrl ? { websiteUrl } : {}),
     ...(contactOnlyFields ? { contactOnlyFields } : {}),
+    ...(contactDisplayFields ? { contactDisplayFields } : {}),
     ...(customLinks.length > 0 ? { customLinks } : {}),
     ...(clampContactText(source.note, 600)
       ? { note: clampContactText(source.note, 600) }
@@ -724,6 +797,7 @@ export function buildMerchantBusinessCardShareLegacyFingerprint(
           .map(([key]) => key)
           .join("|")
       : ""),
+    encodeContactDisplayFields(contact.contactDisplayFields),
     contact.email ?? "",
     contact.address ?? "",
     contact.invoiceName ?? "",
@@ -950,6 +1024,10 @@ export function buildMerchantBusinessCardShareUrl(input: {
   if (contactOnlyKeys.length > 0) {
     shareUrl.searchParams.set("contactOnly", contactOnlyKeys.join(","));
   }
+  const contactDisplayParam = encodeContactDisplayFields(payload.contact?.contactDisplayFields);
+  if (contactDisplayParam) {
+    shareUrl.searchParams.set("contactDisplay", contactDisplayParam);
+  }
   if (payload.contact?.email) {
     shareUrl.searchParams.set("email", payload.contact.email);
   }
@@ -1066,6 +1144,7 @@ export function parseMerchantBusinessCardShareParams(
             ) ?? []
           ).map((key) => [key, true]),
         ) as Partial<MerchantBusinessCardContactOnlyFields>,
+        contactDisplayFields: parseContactDisplayFieldsParam(readSearchParam(searchParams, "contactDisplay")),
         email: readSearchParam(searchParams, "email"),
         address: readSearchParam(searchParams, "address"),
         invoiceName: readSearchParam(searchParams, "invoiceName"),
@@ -1262,6 +1341,10 @@ export function buildMerchantBusinessCardLegacyContactDownloadUrl(input: {
   if (contactOnlyKeys.length > 0) {
     url.searchParams.set("contactOnly", contactOnlyKeys.join(","));
   }
+  const contactDisplayParam = encodeContactDisplayFields(payload.contact?.contactDisplayFields);
+  if (contactDisplayParam) {
+    url.searchParams.set("contactDisplay", contactDisplayParam);
+  }
   if (payload.contact?.email) url.searchParams.set("email", payload.contact.email);
   if (payload.contact?.address) url.searchParams.set("address", payload.contact.address);
   if (payload.contact?.invoiceName) url.searchParams.set("invoiceName", payload.contact.invoiceName);
@@ -1396,6 +1479,11 @@ function countShareContactFields(contact?: MerchantBusinessCardShareContact | nu
   }
   if (contact.contactOnlyFields) {
     count += Object.values(contact.contactOnlyFields).filter(Boolean).length;
+  }
+  if (contact.contactDisplayFields) {
+    count += Object.values(contact.contactDisplayFields).filter(
+      (field) => field?.businessCard === false || field?.contactCard === false,
+    ).length;
   }
   if (Array.isArray(contact.customLinks)) {
     count += contact.customLinks

@@ -3100,7 +3100,27 @@ export default function MerchantPointRedemptionCashier({
         }
 
         .merchant-pos-cashier .image-size-popover {
-          width: 152px;
+          right: 37px;
+          width: 112px;
+        }
+
+        .merchant-pos-cashier .image-size-popover::before {
+          right: 25px;
+        }
+
+        .merchant-pos-cashier .product-size-menu {
+          display: grid;
+          justify-items: stretch;
+          gap: 6px;
+          width: 100%;
+        }
+
+        .merchant-pos-cashier .product-size-menu button {
+          display: flex;
+          align-items: center;
+          width: 100%;
+          justify-content: center;
+          text-align: center;
         }
 
         .merchant-pos-cashier .category-row {

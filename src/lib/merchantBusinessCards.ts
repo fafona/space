@@ -137,6 +137,16 @@ export type MerchantBusinessCardContactOnlyFields = Record<
 > &
   Partial<Record<MerchantBusinessCardPrimaryContactOnlyKey, boolean>>;
 
+export type MerchantBusinessCardContactDisplayTarget = {
+  businessCard: boolean;
+  contactCard: boolean;
+};
+
+export type MerchantBusinessCardContactDisplayFields = Record<
+  MerchantBusinessCardContactOnlyFieldKey,
+  MerchantBusinessCardContactDisplayTarget
+>;
+
 export type MerchantBusinessCardMode = "image" | "link";
 export type MerchantBusinessCardCornerMode = "rounded" | "square";
 
@@ -177,6 +187,7 @@ export type MerchantBusinessCardDraft = {
   invoice: MerchantBusinessCardInvoiceInfo;
   contactFieldOrder: MerchantBusinessCardContactDisplayKey[];
   contactOnlyFields: MerchantBusinessCardContactOnlyFields;
+  contactDisplayFields: MerchantBusinessCardContactDisplayFields;
   customTexts: MerchantBusinessCardCustomText[];
   textLayout: MerchantBusinessCardTextLayout;
   qr: {
@@ -349,6 +360,60 @@ function createDefaultContactOnlyFields(): MerchantBusinessCardContactOnlyFields
   };
 }
 
+function createDefaultContactDisplayFields(): MerchantBusinessCardContactDisplayFields {
+  return Object.fromEntries(
+    MERCHANT_BUSINESS_CARD_CONTACT_ONLY_FIELD_KEYS.map((key) => [
+      key,
+      { businessCard: true, contactCard: true },
+    ]),
+  ) as MerchantBusinessCardContactDisplayFields;
+}
+
+function normalizeContactDisplayFields(input: {
+  value: unknown;
+  legacyContactOnlyFields: Partial<MerchantBusinessCardContactOnlyFields>;
+  fallback: MerchantBusinessCardContactDisplayFields;
+}): MerchantBusinessCardContactDisplayFields {
+  const source = input.value && typeof input.value === "object"
+    ? (input.value as Partial<Record<MerchantBusinessCardContactOnlyFieldKey, Partial<MerchantBusinessCardContactDisplayTarget>>>)
+    : {};
+
+  return Object.fromEntries(
+    MERCHANT_BUSINESS_CARD_CONTACT_ONLY_FIELD_KEYS.map((key) => {
+      const fallbackTarget = input.fallback[key] ?? { businessCard: true, contactCard: true };
+      const sourceTarget = source[key] && typeof source[key] === "object" ? source[key] : null;
+      const hasBusinessCard = typeof sourceTarget?.businessCard === "boolean";
+      const hasContactCard = typeof sourceTarget?.contactCard === "boolean";
+      if (hasBusinessCard || hasContactCard) {
+        return [
+          key,
+          {
+            businessCard: hasBusinessCard ? sourceTarget.businessCard === true : fallbackTarget.businessCard,
+            contactCard: hasContactCard ? sourceTarget.contactCard === true : fallbackTarget.contactCard,
+          },
+        ];
+      }
+      return [
+        key,
+        input.legacyContactOnlyFields[key] === true
+          ? { businessCard: false, contactCard: true }
+          : { ...fallbackTarget },
+      ];
+    }),
+  ) as MerchantBusinessCardContactDisplayFields;
+}
+
+function buildLegacyContactOnlyFieldsFromDisplayFields(
+  contactDisplayFields: MerchantBusinessCardContactDisplayFields,
+): MerchantBusinessCardContactOnlyFields {
+  return Object.fromEntries(
+    MERCHANT_BUSINESS_CARD_CONTACT_ONLY_FIELD_KEYS.map((key) => [
+      key,
+      contactDisplayFields[key]?.businessCard === false && contactDisplayFields[key]?.contactCard === true,
+    ]),
+  ) as MerchantBusinessCardContactOnlyFields;
+}
+
 function normalizeTypographyStyle(
   value: unknown,
   fallback: TypographyEditableProps,
@@ -487,6 +552,7 @@ export function createDefaultMerchantBusinessCardDraft(
   profile: MerchantBusinessCardProfileInput,
 ): MerchantBusinessCardDraft {
   const contactFieldOrder = normalizeMerchantBusinessCardContactFieldOrder(MERCHANT_BUSINESS_CARD_CONTACT_FIELD_KEYS);
+  const contactDisplayFields = createDefaultContactDisplayFields();
   const textLayout = createDefaultMerchantBusinessCardTextLayout();
   const typography: MerchantBusinessCardTypographyMap = {
     name: {
@@ -583,6 +649,7 @@ export function createDefaultMerchantBusinessCardDraft(
     },
     contactFieldOrder,
     contactOnlyFields: createDefaultContactOnlyFields(),
+    contactDisplayFields,
     customTexts: [],
     textLayout,
     qr: {
@@ -644,6 +711,11 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
     source.contactOnlyFields && typeof source.contactOnlyFields === "object"
       ? (source.contactOnlyFields as Partial<MerchantBusinessCardContactOnlyFields>)
       : {};
+  const contactDisplayFields = normalizeContactDisplayFields({
+    value: (source as { contactDisplayFields?: unknown }).contactDisplayFields,
+    legacyContactOnlyFields: contactOnlyFieldsSource,
+    fallback: fallback.contactDisplayFields,
+  });
   const customTexts = Array.isArray(source.customTexts)
     ? source.customTexts
         .map((item, index) => {
@@ -782,29 +854,8 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
       address: normalizeText((source.invoice as { address?: unknown } | undefined)?.address),
     },
     contactFieldOrder,
-    contactOnlyFields: {
-      merchantName: normalizeBoolean(
-        contactOnlyFieldsSource.merchantName,
-        fallback.contactOnlyFields.merchantName ?? false,
-      ),
-      contactName: normalizeBoolean(contactOnlyFieldsSource.contactName, fallback.contactOnlyFields.contactName),
-      phone: normalizeBoolean(contactOnlyFieldsSource.phone, fallback.contactOnlyFields.phone),
-      email: normalizeBoolean(contactOnlyFieldsSource.email, fallback.contactOnlyFields.email),
-      address: normalizeBoolean(contactOnlyFieldsSource.address, fallback.contactOnlyFields.address),
-      wechat: normalizeBoolean(contactOnlyFieldsSource.wechat, fallback.contactOnlyFields.wechat),
-      whatsapp: normalizeBoolean(contactOnlyFieldsSource.whatsapp, fallback.contactOnlyFields.whatsapp),
-      twitter: normalizeBoolean(contactOnlyFieldsSource.twitter, fallback.contactOnlyFields.twitter),
-      weibo: normalizeBoolean(contactOnlyFieldsSource.weibo, fallback.contactOnlyFields.weibo),
-      telegram: normalizeBoolean(contactOnlyFieldsSource.telegram, fallback.contactOnlyFields.telegram),
-      linkedin: normalizeBoolean(contactOnlyFieldsSource.linkedin, fallback.contactOnlyFields.linkedin),
-      discord: normalizeBoolean(contactOnlyFieldsSource.discord, fallback.contactOnlyFields.discord),
-      facebook: normalizeBoolean(contactOnlyFieldsSource.facebook, fallback.contactOnlyFields.facebook),
-      instagram: normalizeBoolean(contactOnlyFieldsSource.instagram, fallback.contactOnlyFields.instagram),
-      tiktok: normalizeBoolean(contactOnlyFieldsSource.tiktok, fallback.contactOnlyFields.tiktok),
-      douyin: normalizeBoolean(contactOnlyFieldsSource.douyin, fallback.contactOnlyFields.douyin),
-      xiaohongshu: normalizeBoolean(contactOnlyFieldsSource.xiaohongshu, fallback.contactOnlyFields.xiaohongshu),
-      googleReview: normalizeBoolean(contactOnlyFieldsSource.googleReview, fallback.contactOnlyFields.googleReview),
-    },
+    contactOnlyFields: buildLegacyContactOnlyFieldsFromDisplayFields(contactDisplayFields),
+    contactDisplayFields,
     customTexts,
     textLayout: {
       merchantName: resolveTextLayoutEntry("merchantName", textLayoutSource, textLayoutFallback),

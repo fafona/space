@@ -214,6 +214,11 @@ function countShareContactFields(contact?: MerchantBusinessCardShareContact | nu
   count += normalizePhoneList(contact.phones).length;
   count += Array.isArray(contact.contactFieldOrder) ? contact.contactFieldOrder.filter(Boolean).length : 0;
   count += contact.contactOnlyFields ? Object.values(contact.contactOnlyFields).filter(Boolean).length : 0;
+  count += contact.contactDisplayFields
+    ? Object.values(contact.contactDisplayFields).filter(
+        (field) => field?.businessCard === false || field?.contactCard === false,
+      ).length
+    : 0;
   count += Array.isArray(contact.customLinks)
     ? contact.customLinks
         .flatMap((item) => [item.label, item.displayText, item.url, item.iconPreset, item.iconUrl])
@@ -418,6 +423,7 @@ function buildSnapshotCardSharePayload(card: MerchantBusinessCardAsset, preferre
         ...(normalizeSnapshotCardContactOnlyFields(card.contactOnlyFields)
           ? { contactOnlyFields: normalizeSnapshotCardContactOnlyFields(card.contactOnlyFields) }
           : {}),
+        contactDisplayFields: card.contactDisplayFields,
         websiteUrl: normalizeText(card.targetUrl),
         note: [...extraPhoneLines, ...socialLines].join("\n"),
       },

@@ -133,6 +133,10 @@ test("share helpers preserve contact card layout controls and custom links", () 
     targetUrl: "https://fafona.faolla.com",
     contact: {
       displayName: "Felix",
+      contactDisplayFields: {
+        phone: { businessCard: false, contactCard: false },
+        googleReview: { businessCard: false, contactCard: true },
+      },
       customLinks: [
         {
           id: "google-review",
@@ -156,6 +160,7 @@ test("share helpers preserve contact card layout controls and custom links", () 
   assert.equal(url.searchParams.get("detailImageY"), "-24");
   assert.equal(url.searchParams.get("detailImageScale"), "1.35");
   assert.equal(url.searchParams.get("detailImageOpacity"), "0.72");
+  assert.equal(url.searchParams.get("contactDisplay"), "phone:00,googleReview:01");
   assert.ok(url.searchParams.get("customLinks")?.includes("欢迎评价"));
 
   const parsed = parseMerchantBusinessCardShareParams(url.searchParams, "https://faolla.com");
@@ -167,6 +172,8 @@ test("share helpers preserve contact card layout controls and custom links", () 
   assert.equal(parsed?.detailImageY, -24);
   assert.equal(parsed?.detailImageScale, 1.35);
   assert.equal(parsed?.detailImageOpacity, 0.72);
+  assert.deepEqual(parsed?.contact?.contactDisplayFields?.phone, { businessCard: false, contactCard: false });
+  assert.deepEqual(parsed?.contact?.contactDisplayFields?.googleReview, { businessCard: false, contactCard: true });
   assert.equal(parsed?.contact?.customLinks?.[0]?.displayText, "欢迎评价");
   assert.equal(parsed?.contact?.customLinks?.[0]?.iconPreset, "google");
 });
@@ -299,27 +306,31 @@ test("parseMerchantBusinessCardShareParams normalizes storage image urls with pr
 });
 
 test("normalizeMerchantBusinessCardShareContact keeps useful contact fields and target url", () => {
-  assert.deepEqual(
-    normalizeMerchantBusinessCardShareContact(
-      {
-        displayName: " Felix ",
-        organization: " fafona ",
-        phone: " 633130577 ",
-        phones: [" 633130577 ", " 666888999 ", " 777000111 "],
-        invoiceName: " Fafona Trading ",
-        invoiceTaxNumber: " ESB12345678 ",
-        invoiceAddress: " Sevilla, Spain ",
-        douyin: " fafona_douyin ",
-        googleReview: " https://g.page/r/fafona/review ",
-        contactOnlyFields: {
-          merchantName: true,
-          douyin: true,
-          phone: false,
-        },
-        note: " WeChat: felix ",
+  const contact = normalizeMerchantBusinessCardShareContact(
+    {
+      displayName: " Felix ",
+      organization: " fafona ",
+      phone: " 633130577 ",
+      phones: [" 633130577 ", " 666888999 ", " 777000111 "],
+      invoiceName: " Fafona Trading ",
+      invoiceTaxNumber: " ESB12345678 ",
+      invoiceAddress: " Sevilla, Spain ",
+      douyin: " fafona_douyin ",
+      googleReview: " https://g.page/r/fafona/review ",
+      contactOnlyFields: {
+        merchantName: true,
+        douyin: true,
+        phone: false,
       },
-      "https://fafona.faolla.com",
-    ),
+      note: " WeChat: felix ",
+    },
+    "https://fafona.faolla.com",
+  );
+  assert.deepEqual(contact?.contactDisplayFields?.merchantName, { businessCard: false, contactCard: true });
+  assert.deepEqual(contact?.contactDisplayFields?.douyin, { businessCard: false, contactCard: true });
+  assert.deepEqual(contact?.contactDisplayFields?.phone, { businessCard: true, contactCard: true });
+  assert.deepEqual(
+    contact ? { ...contact, contactDisplayFields: undefined } : contact,
     {
       displayName: "Felix",
       organization: "fafona",
@@ -336,6 +347,7 @@ test("normalizeMerchantBusinessCardShareContact keeps useful contact fields and 
       },
       websiteUrl: "https://fafona.faolla.com/",
       note: "WeChat: felix",
+      contactDisplayFields: undefined,
     },
   );
 });

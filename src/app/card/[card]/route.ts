@@ -353,6 +353,7 @@ type SummaryRow = {
   value: string;
   actionHtml: string;
   key?: MerchantBusinessCardContactDisplayKey;
+  iconHtml?: string;
   translateValue?: boolean;
 };
 
@@ -362,6 +363,59 @@ function buildCopyActionHtml(rawValue: string, label: string) {
   return `<button class="inline-action inline-action-button" type="button" aria-label="复制${escapeHtml(label)}" title="复制${escapeHtml(label)}" style="background:#0f172a" data-copy-value="${escapeHtml(normalizedValue)}" data-copy-label="${escapeHtml(label)}">
     ${buildInlineSvgIcon("copy")}
   </button>`;
+}
+
+function buildSummaryIconImageHtml(iconUrl: string) {
+  return `<img src="${escapeHtml(iconUrl)}" alt="" loading="lazy" />`;
+}
+
+function buildSummaryFieldIconHtml(row: SummaryRow) {
+  if (row.iconHtml) return row.iconHtml;
+  switch (row.key) {
+    case "contactName":
+      return `<span class="summary-field-icon summary-field-icon-dark">${buildInlineSvgIcon("favorite")}</span>`;
+    case "phone":
+      return `<span class="summary-field-icon" style="background:#007AFF">${buildInlineSvgIcon("phone")}</span>`;
+    case "email":
+      return `<span class="summary-field-icon" style="background:#0A84FF">${buildSummaryIconImageHtml("/social-icons/maildotru.svg")}</span>`;
+    case "address":
+      return `<span class="summary-field-icon" style="background:#EA4335">${buildInlineSvgIcon("map")}</span>`;
+    case "wechat":
+      return `<span class="summary-field-icon" style="background:#07C160">${buildSummaryIconImageHtml("/social-icons/wechat.svg")}</span>`;
+    case "whatsapp":
+      return `<span class="summary-field-icon" style="background:#25D366">${buildSummaryIconImageHtml("/social-icons/whatsapp.svg")}</span>`;
+    case "twitter":
+      return `<span class="summary-field-icon summary-field-icon-dark">${buildSummaryIconImageHtml("/social-icons/twitter.svg")}</span>`;
+    case "weibo":
+      return `<span class="summary-field-icon" style="background:#E6162D">${buildSummaryIconImageHtml("/social-icons/weibo.svg")}</span>`;
+    case "telegram":
+      return `<span class="summary-field-icon" style="background:#229ED9">${buildSummaryIconImageHtml("/social-icons/telegram.svg")}</span>`;
+    case "linkedin":
+      return `<span class="summary-field-icon" style="background:#0A66C2">${buildSummaryIconImageHtml("/social-icons/linkedin.svg")}</span>`;
+    case "discord":
+      return `<span class="summary-field-icon" style="background:#5865F2">${buildSummaryIconImageHtml("/social-icons/discord.svg")}</span>`;
+    case "facebook":
+      return `<span class="summary-field-icon" style="background:#1877F2">${buildSummaryIconImageHtml("/social-icons/facebook.svg")}</span>`;
+    case "instagram":
+      return `<span class="summary-field-icon" style="background:#E4405F">${buildSummaryIconImageHtml("/social-icons/instagram.svg")}</span>`;
+    case "tiktok":
+      return `<span class="summary-field-icon summary-field-icon-dark">${buildSummaryIconImageHtml("/social-icons/tiktok.svg")}</span>`;
+    case "douyin":
+      return `<span class="summary-field-icon summary-field-icon-dark">${buildSummaryIconImageHtml("/social-icons/tiktok.svg")}</span>`;
+    case "xiaohongshu":
+      return `<span class="summary-field-icon" style="background:#FF2442">${buildSummaryIconImageHtml("/social-icons/xiaohongshu.svg")}</span>`;
+    case "googleReview":
+      return `<span class="summary-field-icon summary-field-icon-light">${buildSummaryIconImageHtml("/social-icons/google.svg")}</span>`;
+    default:
+      return "";
+  }
+}
+
+function buildCustomContactSummaryIconHtml(item: MerchantBusinessCardCustomContactLink) {
+  const bgColor = normalizeText(item.bgColor) || "#0f172a";
+  const iconUrl = normalizeText(item.iconUrl);
+  const iconHtml = iconUrl ? buildSummaryIconImageHtml(iconUrl) : resolveCustomContactIconSvg(item.iconPreset);
+  return `<span class="summary-field-icon" style="background:${escapeHtml(bgColor)}">${iconHtml}</span>`;
 }
 
 function buildInvoiceSummaryRows(contact?: MerchantBusinessCardShareContact): SummaryRow[] {
@@ -402,6 +456,7 @@ function buildSummaryRowsHtml(rows: SummaryRow[]) {
       const valueTranslateAttrs = row.translateValue ? "" : ` data-no-translate="1"`;
       return `
         <div class="${rowClass}">
+          ${buildSummaryFieldIconHtml(row)}
           <div class="summary-copy">
             <strong class="summary-label">${escapeHtml(row.label)}：</strong>
             <span class="${valueClass}"${valueTranslateAttrs}${fullAddressAttrs}>${escapeHtml(row.value)}</span>
@@ -560,13 +615,14 @@ function resolveCustomContactIconSvg(iconPreset?: string) {
 function buildCustomContactLinkRows(customLinks?: MerchantBusinessCardCustomContactLink[]): SummaryRow[] {
   if (!Array.isArray(customLinks)) return [];
   return customLinks
-    .map((item, index) => {
+    .flatMap((item, index): SummaryRow[] => {
       const label = normalizeText(item.label) || `自定义${index + 1}`;
       const value = normalizeText(item.displayText) || normalizeText(item.url);
-      if (!value) return null;
-      return {
+      if (!value) return [];
+      return [{
         label,
         value,
+        iconHtml: buildCustomContactSummaryIconHtml(item),
         actionHtml: buildActionButtonHtml({
           href: normalizeCustomContactHref(item.url),
           label,
@@ -574,9 +630,8 @@ function buildCustomContactLinkRows(customLinks?: MerchantBusinessCardCustomCont
           iconSvg: normalizeText(item.iconUrl) ? undefined : resolveCustomContactIconSvg(item.iconPreset),
           bgColor: normalizeText(item.bgColor) || "#0f172a",
         }),
-      } satisfies SummaryRow;
-    })
-    .filter((item): item is SummaryRow => !!item);
+      }];
+    });
 }
 
 function resolveContactNoteKey(label: string): MerchantBusinessCardContactDisplayKey | null {
@@ -2084,6 +2139,7 @@ function buildSharePayloadFromSnapshotMatch(
         contactFieldOrder: normalizeMerchantBusinessCardContactFieldOrder(card.contactFieldOrder),
         customLinks: card.customContactLinks,
         contactOnlyFields: card.contactOnlyFields,
+        contactDisplayFields: card.contactDisplayFields,
         websiteUrl: targetUrl,
       },
     },
@@ -2149,6 +2205,13 @@ async function hasExistingShareManifestObject(shareKey: string, preferredOrigin:
   return results.some(Boolean);
 }
 
+function isContactFieldVisibleOnContactCard(
+  contact: MerchantBusinessCardShareContact,
+  key: MerchantBusinessCardContactDisplayKey,
+) {
+  return contact.contactDisplayFields?.[key]?.contactCard !== false;
+}
+
 function buildOrderedContactSummaryHtml(input: {
   name: string;
   contact?: MerchantBusinessCardShareContact;
@@ -2190,6 +2253,7 @@ function buildOrderedContactSummaryHtml(input: {
 
   const pushRow = (key: MerchantBusinessCardContactDisplayKey, row: SummaryRow | null) => {
     if (!row) return;
+    if (!isContactFieldVisibleOnContactCard(contact, key)) return;
     rowsByKey[key] = [...(rowsByKey[key] ?? []), { ...row, key }];
   };
 
@@ -2450,6 +2514,7 @@ function buildOrderedContactSummaryHtml(input: {
     });
   }
   for (const key of orderedKeys) {
+    if (!isContactFieldVisibleOnContactCard(contact, key)) continue;
     const directRows = rowsByKey[key] ?? [];
     const fallbackRows = fallbackRowsByKey[key] ?? [];
     const mergedRows = [...directRows];
@@ -2461,7 +2526,7 @@ function buildOrderedContactSummaryHtml(input: {
   }
   rows.push(...buildCustomContactLinkRows(contact.customLinks));
 
-  if (rows.length === 0 && invoiceRows.length === 0) {
+  if (rows.length === 0 && invoiceRows.length === 0 && !contact.contactDisplayFields) {
     return `<div class="summary-row"><span class="summary-value" data-no-translate="1">${escapeHtml(normalizeText(input.name) || "电子名片")}</span></div>`;
   }
 
@@ -2985,6 +3050,36 @@ function buildShareCardHtml(input: {
         align-items: flex-start;
         gap: 4px;
         flex-wrap: wrap;
+      }
+      .summary-field-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 auto;
+        width: 34px;
+        height: 34px;
+        border-radius: 999px;
+        color: #fff;
+        box-shadow: 0 8px 20px rgba(15,23,42,.12);
+      }
+      .summary-field-icon-dark {
+        background: #111827;
+      }
+      .summary-field-icon-light {
+        background: #fff;
+        color: #0f172a;
+        border: 1px solid rgba(15,23,42,.1);
+      }
+      .summary-field-icon img,
+      .summary-field-icon svg {
+        width: 18px;
+        height: 18px;
+      }
+      .summary-field-icon img {
+        object-fit: contain;
+      }
+      .summary-field-icon svg {
+        fill: currentColor;
       }
       .summary-label {
         color: #0f172a;
@@ -3714,12 +3809,13 @@ export async function GET(
   const contactCoupons = contactCouponSiteId
     ? await withContactCardTimeout(loadContactCardCoupons(contactCouponSiteId), [], 1600)
     : [];
+  const shouldShowMerchantName = payload.contact?.contactDisplayFields?.merchantName?.contactCard !== false;
 
   return new NextResponse(
     buildShareCardHtml({
       title,
       description,
-      merchantName: payload.name,
+      merchantName: shouldShowMerchantName ? payload.name : "",
       previewImageUrl: previewImageUrl || undefined,
       contentImageUrl: detailImageUrl || undefined,
       contentImageHeight: payload.detailImageHeight ?? snapshotCard?.contactPageImageHeight,

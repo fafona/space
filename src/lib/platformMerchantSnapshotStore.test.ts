@@ -18,7 +18,7 @@ import {
 type PageRow = {
   id: number;
   slug: string;
-  merchant_id: null;
+  merchant_id: string | null;
   updated_at?: string;
   blocks?: unknown;
 };
@@ -155,6 +155,17 @@ function createStoredRow(id: number, slug: string, payload: PlatformMerchantSnap
   };
 }
 
+function createLegacyInternalStoredRow(
+  id: number,
+  slug: string,
+  payload: PlatformMerchantSnapshotPayload,
+): PageRow {
+  return {
+    ...createStoredRow(id, slug, payload),
+    merchant_id: "legacy-internal-owner",
+  };
+}
+
 function createPayloadWithSite(revision: string, siteId: string, merchantName: string): PlatformMerchantSnapshotPayload {
   const base = createPayload(revision, 0);
   const site = base.snapshot[0];
@@ -197,10 +208,18 @@ function createMockSnapshotStore(initialRows: PageRow[]) {
     }
 
     insert(payload: Record<string, unknown>) {
+      if (rows.some((row) => row.slug === String(payload.slug ?? ""))) {
+        return Promise.resolve({
+          data: null,
+          error: {
+            message: 'duplicate key value violates unique constraint "pages_merchant_slug_unique_idx"',
+          },
+        });
+      }
       rows.push({
         id: nextId,
         slug: String(payload.slug ?? ""),
-        merchant_id: (payload.merchant_id ?? null) as null,
+        merchant_id: (typeof payload.merchant_id === "string" ? payload.merchant_id : null),
         updated_at: typeof payload.updated_at === "string" ? payload.updated_at : undefined,
         blocks: payload.blocks,
       });
@@ -323,4 +342,20 @@ test("savePlatformMerchantSnapshot keeps existing merchants missing from incomin
     saved.snapshot.map((site) => site.id).sort(),
     ["10000000", "20000000"],
   );
+});
+
+test("savePlatformMerchantSnapshot updates legacy internal rows whose merchant id is not null", async () => {
+  const client = createMockSnapshotStore([
+    createLegacyInternalStoredRow(1, PLATFORM_MERCHANT_SNAPSHOT_SLUG, createPayload("revision-main", 0)),
+  ]);
+
+  const result = await savePlatformMerchantSnapshot(client, createPayload("revision-main", 1), {
+    expectedRevision: "revision-main",
+  });
+
+  assert.equal(result.error, null);
+  const saved = client.read(PLATFORM_MERCHANT_SNAPSHOT_SLUG);
+  assert.ok(saved);
+  assert.notEqual(saved.revision, "revision-main");
+  assert.equal(saved.merchantConfigHistoryBySiteId["10000000"]?.length, 1);
 });

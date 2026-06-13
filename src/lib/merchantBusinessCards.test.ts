@@ -75,6 +75,8 @@ test("default business card draft prefills merchant profile fields", () => {
   assert.equal(draft.contactOnlyFields.phone, false);
   assert.equal(draft.contactOnlyFields.douyin, false);
   assert.equal(draft.contactOnlyFields.googleReview, false);
+  assert.deepEqual(draft.contactDisplayFields.phone, { businessCard: true, contactCard: true });
+  assert.deepEqual(draft.contactDisplayFields.googleReview, { businessCard: true, contactCard: true });
   assert.equal(draft.fieldTypography.merchantName.fontSize, 36);
   assert.equal(draft.fieldTypography.contactName.fontSize, 14);
   assert.equal(draft.websiteLabel, "");
@@ -259,6 +261,28 @@ test("normalizeMerchantBusinessCardDraft preserves douyin and contact-only setti
   assert.equal(draft.contactOnlyFields.douyin, true);
   assert.equal(draft.contactOnlyFields.googleReview, true);
   assert.equal(draft.contactOnlyFields.tiktok, false);
+  assert.deepEqual(draft.contactDisplayFields.merchantName, { businessCard: false, contactCard: true });
+  assert.deepEqual(draft.contactDisplayFields.phone, { businessCard: false, contactCard: true });
+  assert.deepEqual(draft.contactDisplayFields.douyin, { businessCard: false, contactCard: true });
+  assert.deepEqual(draft.contactDisplayFields.googleReview, { businessCard: false, contactCard: true });
+  assert.deepEqual(draft.contactDisplayFields.tiktok, { businessCard: true, contactCard: true });
+});
+
+test("normalizeMerchantBusinessCardDraft supports separate business card and contact card visibility", () => {
+  const draft = normalizeMerchantBusinessCardDraft({
+    contactDisplayFields: {
+      phone: { businessCard: false, contactCard: false },
+      email: { businessCard: true, contactCard: false },
+      googleReview: { businessCard: false, contactCard: true },
+    },
+  });
+
+  assert.deepEqual(draft.contactDisplayFields.phone, { businessCard: false, contactCard: false });
+  assert.deepEqual(draft.contactDisplayFields.email, { businessCard: true, contactCard: false });
+  assert.deepEqual(draft.contactDisplayFields.googleReview, { businessCard: false, contactCard: true });
+  assert.equal(draft.contactOnlyFields.phone, false);
+  assert.equal(draft.contactOnlyFields.email, false);
+  assert.equal(draft.contactOnlyFields.googleReview, true);
 });
 
 test("normalizeMerchantBusinessCardDraft preserves invoice info", () => {

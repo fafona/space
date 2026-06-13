@@ -53,6 +53,18 @@ type MerchantCouponManagerProps = {
   listOnly?: boolean;
 };
 
+function MoveArrowIcon({ direction }: { direction: "up" | "down" }) {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4">
+      {direction === "up" ? (
+        <path fill="currentColor" d="M10 4.5 4.75 10l1.1 1.05 3.37-3.53V16h1.56V7.52l3.37 3.53L15.25 10 10 4.5Z" />
+      ) : (
+        <path fill="currentColor" d="M10 15.5 15.25 10l-1.1-1.05-3.37 3.53V4H9.22v8.48L5.85 8.95 4.75 10 10 15.5Z" />
+      )}
+    </svg>
+  );
+}
+
 type LocationRuleField = "claimAllowedCountries" | "claimAllowedProvinces" | "claimAllowedCities";
 
 type CouponFormState = {
@@ -2877,19 +2889,23 @@ export default function MerchantCouponManager({
                         <div className="flex shrink-0 gap-1">
                           <button
                             type="button"
-                            className="rounded border bg-white px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-40"
+                            aria-label="上移"
+                            title="上移"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded border bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40"
                             onClick={() => moveDisplayField(field, -1)}
                             disabled={index === 0}
                           >
-                            上移
+                            <MoveArrowIcon direction="up" />
                           </button>
                           <button
                             type="button"
-                            className="rounded border bg-white px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-40"
+                            aria-label="下移"
+                            title="下移"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded border bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40"
                             onClick={() => moveDisplayField(field, 1)}
                             disabled={index === form.displayFieldOrder.length - 1}
                           >
-                            下移
+                            <MoveArrowIcon direction="down" />
                           </button>
                         </div>
                       </div>
