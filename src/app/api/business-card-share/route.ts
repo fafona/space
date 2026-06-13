@@ -66,6 +66,11 @@ type BusinessCardShareRequestBody = {
   imageUrl?: unknown;
   detailImageUrl?: unknown;
   detailImageHeight?: unknown;
+  detailImageLinkUrl?: unknown;
+  detailImageX?: unknown;
+  detailImageY?: unknown;
+  detailImageScale?: unknown;
+  detailImageOpacity?: unknown;
   introVideoUrl?: unknown;
   introPosterUrl?: unknown;
   introVideoMuted?: unknown;
@@ -366,6 +371,15 @@ function buildSnapshotCardSharePayload(card: MerchantBusinessCardAsset, preferre
       detailImageUrl: normalizeText(card.contactPagePublicImageUrl) || normalizeText(card.contactPageImageUrl),
       detailImageHeight:
         typeof card.contactPageImageHeight === "number" ? Math.round(card.contactPageImageHeight) : undefined,
+      detailImageLinkUrl: normalizeText(card.contactPageImageLinkUrl),
+      detailImageX: typeof card.contactPageImageX === "number" ? Math.round(card.contactPageImageX) : undefined,
+      detailImageY: typeof card.contactPageImageY === "number" ? Math.round(card.contactPageImageY) : undefined,
+      detailImageScale:
+        typeof card.contactPageImageScale === "number" ? Math.round(card.contactPageImageScale * 100) / 100 : undefined,
+      detailImageOpacity:
+        typeof card.contactPageImageOpacity === "number"
+          ? Math.round(Math.max(0, Math.min(1, card.contactPageImageOpacity)) * 100) / 100
+          : undefined,
       introVideoUrl: normalizeText(card.contactIntroVideoUrl),
       introPosterUrl: normalizeText(card.contactIntroVideoPosterUrl),
       introVideoMuted: card.contactIntroVideoMuted,
@@ -586,6 +600,12 @@ export async function POST(request: Request) {
       imageUrl,
       detailImageUrl,
       detailImageHeight,
+      detailImageLinkUrl:
+        typeof body?.detailImageLinkUrl === "string" ? normalizeText(body.detailImageLinkUrl) : undefined,
+      detailImageX: typeof body?.detailImageX === "number" ? body.detailImageX : undefined,
+      detailImageY: typeof body?.detailImageY === "number" ? body.detailImageY : undefined,
+      detailImageScale: typeof body?.detailImageScale === "number" ? body.detailImageScale : undefined,
+      detailImageOpacity: typeof body?.detailImageOpacity === "number" ? body.detailImageOpacity : undefined,
       introVideoUrl,
       introPosterUrl,
       introVideoMuted,
@@ -637,6 +657,17 @@ export async function POST(request: Request) {
     imageUrl,
     ...(detailImageUrl ? { detailImageUrl } : {}),
     ...(detailImageUrl && detailImageHeight ? { detailImageHeight } : {}),
+    ...(detailImageUrl && normalizedPayload?.detailImageLinkUrl
+      ? { detailImageLinkUrl: normalizedPayload.detailImageLinkUrl }
+      : {}),
+    ...(detailImageUrl && normalizedPayload?.detailImageX ? { detailImageX: normalizedPayload.detailImageX } : {}),
+    ...(detailImageUrl && normalizedPayload?.detailImageY ? { detailImageY: normalizedPayload.detailImageY } : {}),
+    ...(detailImageUrl && normalizedPayload?.detailImageScale !== undefined && normalizedPayload.detailImageScale !== 1
+      ? { detailImageScale: normalizedPayload.detailImageScale }
+      : {}),
+    ...(detailImageUrl && normalizedPayload?.detailImageOpacity !== undefined && normalizedPayload.detailImageOpacity !== 1
+      ? { detailImageOpacity: normalizedPayload.detailImageOpacity }
+      : {}),
     ...(introVideoUrl ? { introVideoUrl, ...(introPosterUrl ? { introPosterUrl } : {}), introVideoMuted } : {}),
     ...(normalizedPayload?.contactPageSectionOrder
       ? { contactPageSectionOrder: normalizedPayload.contactPageSectionOrder }

@@ -2790,7 +2790,7 @@ function buildShareCardHtml(input: {
         cursor: pointer;
       }
       article {
-        width: min(100%, 560px);
+        width: min(100%, 430px);
         background: rgba(255,255,255,.94);
         border: 1px solid rgba(15,23,42,.08);
         border-radius: 28px;
