@@ -1161,6 +1161,22 @@ function extractVideoPosterFrame(src: string) {
   return promise;
 }
 
+async function uploadBusinessCardIntroVideoPosterFallback(dataUrl: string, merchantHint: string, cardName: string) {
+  const normalizedDataUrl = normalizeText(dataUrl);
+  if (!normalizedDataUrl) return "";
+  const uploadedUrl = await uploadImageDataUrlToPublicStorage(
+    normalizedDataUrl,
+    sanitizeShareAssetHint(`${merchantHint}-intro-video-poster`),
+    "business-card-contact",
+    {
+      operationModule: "经营中心 > 名片夹",
+      operationAction: "生成联系卡开场视频封面",
+      operationSummary: `在经营中心 > 名片夹为联系卡开场视频生成封面：${cardName || "未命名名片"}`,
+    },
+  ).catch(() => null);
+  return normalizeText(uploadedUrl) || normalizedDataUrl;
+}
+
 function AutoPlayingVideoPreview({
   src,
   poster,
@@ -1236,6 +1252,18 @@ function AutoPlayingVideoPreview({
     }, 60);
     return () => window.clearTimeout(timer);
   }, [autoPlay, muted, src]);
+
+  if (!autoPlay && resolvedPoster) {
+    const posterStyle: CSSProperties = {
+      backgroundImage: `url("${resolvedPoster.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}")`,
+      backgroundPosition: "center",
+      backgroundRepeat: "no-repeat",
+      backgroundSize: "contain",
+    };
+    return (
+      <div className={`${className} overflow-hidden`} style={posterStyle} aria-label="视频第一帧预览" />
+    );
+  }
 
   return (
     <video
@@ -2127,10 +2155,20 @@ export default function MerchantBusinessCardManager({
       setContactIntroVideoFileName(fileName || "开场视频");
       setContactIntroVideoFileDetail("上传并压缩转换中...");
       setIsContactIntroVideoProcessing(true);
+      const introVideoAssetHint = sanitizeShareAssetHint(
+        `${normalizeText(profile.domainPrefix) || normalizeText(draft.name) || normalizeText(profile.merchantName)}-intro-video`,
+      );
+      const localPosterPromise =
+        typeof URL !== "undefined" && typeof URL.createObjectURL === "function"
+          ? (() => {
+              const objectUrl = URL.createObjectURL(file);
+              return extractVideoPosterFrame(objectUrl).finally(() => {
+                URL.revokeObjectURL(objectUrl);
+              });
+            })()
+          : Promise.resolve("");
       const uploadedAsset = await uploadFileToPublicStorageWithMetadata(file, {
-        merchantHint: sanitizeShareAssetHint(
-          `${normalizeText(profile.domainPrefix) || normalizeText(draft.name) || normalizeText(profile.merchantName)}-intro-video`,
-        ),
+        merchantHint: introVideoAssetHint,
         folder: "merchant-assets",
         usage: "business-card-intro-video",
         operation: {
@@ -2143,10 +2181,21 @@ export default function MerchantBusinessCardManager({
       if (!uploadedUrl) {
         throw new Error("video_upload_failed");
       }
+      let posterUrl = normalizeText(uploadedAsset?.posterUrl);
+      if (!posterUrl) {
+        const localPoster = normalizeText(await localPosterPromise.catch(() => ""));
+        if (localPoster) {
+          posterUrl = await uploadBusinessCardIntroVideoPosterFallback(
+            localPoster,
+            introVideoAssetHint,
+            draft.name || profile.merchantName || "未命名名片",
+          );
+        }
+      }
       applyDraft((current) => ({
         ...current,
         contactIntroVideoUrl: uploadedUrl,
-        contactIntroVideoPosterUrl: normalizeText(uploadedAsset?.posterUrl),
+        contactIntroVideoPosterUrl: posterUrl,
       }));
       setContactIntroVideoFileName(fileName || "已上传开场视频");
       setContactIntroVideoFileDetail(`原始 ${formatImageResultSize(file.size)}，已转为快速播放 MP4`);
@@ -2955,9 +3004,21 @@ export default function MerchantBusinessCardManager({
                     {draft.mode === "link" ? (
                       canUseIntroVideo ? (
                       <div className="rounded-xl border bg-white px-3 py-3">
-                        <div className="text-xs font-semibold text-slate-700">联系卡开场视频</div>
-                        <div className="mt-1 text-xs leading-5 text-slate-500">
-                          上传后，用户打开联系卡会先播放视频；视频播完、跳过或加载失败都会进入联系卡内容。
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div className="text-xs font-semibold text-slate-700">联系卡开场视频</div>
+                          <label className="flex items-center gap-2 text-xs text-slate-700">
+                            <input
+                              type="checkbox"
+                              checked={draft.contactIntroVideoMuted}
+                              onChange={(event) =>
+                                applyDraft((current) => ({
+                                  ...current,
+                                  contactIntroVideoMuted: event.target.checked,
+                                }))
+                              }
+                            />
+                            <span>静音播放</span>
+                          </label>
                         </div>
                         <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_120px]">
                           <ImageFilePicker
@@ -2973,23 +3034,10 @@ export default function MerchantBusinessCardManager({
                             className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
                             onClick={handleClearContactIntroVideo}
                             disabled={isContactIntroVideoProcessing || !normalizeText(draft.contactIntroVideoUrl)}
-                          >
-                            清除
-                          </button>
-                        </div>
-                        <label className="mt-3 flex items-center gap-2 rounded border bg-slate-50 px-3 py-2 text-xs text-slate-700">
-                          <input
-                            type="checkbox"
-                            checked={draft.contactIntroVideoMuted}
-                            onChange={(event) =>
-                              applyDraft((current) => ({
-                                ...current,
-                                contactIntroVideoMuted: event.target.checked,
-                              }))
-                            }
-                          />
-                          <span>静音播放（建议开启，手机端更容易自动播放）</span>
-                        </label>
+                        >
+                          清除
+                        </button>
+                      </div>
                         <div className="mt-1 text-[11px] text-slate-400">
                           原文件上限 {Math.round(CONTACT_INTRO_VIDEO_SOURCE_LIMIT_BYTES / 1024 / 1024)} MB，上传后会自动压缩转换为适合网页快速播放的 MP4，成品上限 {normalizedIntroVideoLimitMb} MB。
                         </div>
