@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { MerchantListPublishedSite } from "@/data/homeBlocks";
 import type { MerchantConfigHistoryEntry } from "@/data/platformControlStore";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
@@ -29,6 +29,8 @@ export const revalidate = 0;
 const MERCHANT_ACCOUNTS_CACHE_TTL_MS = 30_000;
 const ACCOUNT_DELETE_VERIFICATION_EMAIL = "caimin6669@qq.com";
 const AUTH_USERS_LOAD_TIMEOUT_MS = 5_000;
+const MERCHANT_ROWS_LOAD_TIMEOUT_MS = 8_000;
+const SUPPORT_MERCHANT_ROWS_LOAD_TIMEOUT_MS = 4_000;
 const SNAPSHOT_LOAD_TIMEOUT_MS = 6_000;
 const PUBLISHED_SITE_INFO_TIMEOUT_MS = 4_000;
 const PAGE_EVENTS_TIMEOUT_MS = 2_500;
@@ -121,6 +123,11 @@ type AdminListUsersClient = {
 
 type AuthUsersLoadResult = {
   users: AuthUserSummary[];
+  errorMessage: string;
+};
+
+type MerchantRowsLoadResult = {
+  rows: MerchantRow[];
   errorMessage: string;
 };
 
@@ -401,6 +408,37 @@ async function listAuthUsersBestEffort(supabase: AdminListUsersClient): Promise<
   );
 }
 
+async function listMerchantRows(supabase: SupabaseClient) {
+  const { data, error } = await runSupabaseQueryWithRetry(() =>
+    supabase
+      .from("merchants")
+      .select("id,name,email,owner_email,contact_email,user_email,user_id,auth_user_id,created_at")
+      .order("created_at", { ascending: false })
+      .limit(500),
+  );
+  if (error) throw error;
+  return (data ?? []) as MerchantRow[];
+}
+
+async function listMerchantRowsBestEffort(
+  supabase: SupabaseClient,
+  timeoutMs = MERCHANT_ROWS_LOAD_TIMEOUT_MS,
+): Promise<MerchantRowsLoadResult> {
+  return withSoftTimeout(
+    listMerchantRows(supabase)
+      .then((rows) => ({
+        rows,
+        errorMessage: "",
+      }))
+      .catch((error) => ({
+        rows: [],
+        errorMessage: readErrorMessage(error) || "merchant_rows_load_failed",
+      })),
+    timeoutMs,
+    { rows: [], errorMessage: "merchant_rows_timeout" },
+  );
+}
+
 function sortByCreatedAtDesc(items: MerchantAccountItem[]) {
   return [...items].sort((left, right) => {
     const leftTs = new Date(left.createdAt ?? 0).getTime();
@@ -413,7 +451,7 @@ async function loadPlatformMerchantSnapshotByMerchantId(
   supabase: PlatformMerchantSnapshotStoreClient,
 ) {
   const payload = await withSoftTimeout(
-    loadStoredPlatformMerchantSnapshot(supabase, { bypassCache: true }).catch(() => null),
+    loadStoredPlatformMerchantSnapshot(supabase, { bypassCache: true, includeHistory: false }).catch(() => null),
     SNAPSHOT_LOAD_TIMEOUT_MS,
     null,
   );
@@ -639,6 +677,49 @@ function buildSupportScopeItems(merchants: MerchantRow[]) {
   );
 }
 
+function buildSnapshotMerchantAccountItems(
+  sites: MerchantListPublishedSite[],
+  configHistoryByMerchantId: Record<string, MerchantConfigHistoryEntry[]> = {},
+) {
+  const items: MerchantAccountItem[] = [];
+  sites.forEach((site) => {
+    const merchantId = String(site.id ?? "").trim();
+    if (!merchantId) return;
+    const merchantName =
+      String(site.merchantName ?? "").trim() ||
+      String(site.name ?? "").trim() ||
+      merchantId;
+    const siteSlug = String(site.domainPrefix ?? site.domainSuffix ?? site.domain ?? "").trim();
+    items.push({
+      accountType: "merchant",
+      accountId: merchantId,
+      merchantId,
+      merchantName,
+      email: normalizeEmail(site.contactEmail),
+      username: merchantName,
+      loginId: merchantId,
+      createdAt: site.createdAt ?? null,
+      authUserId: null,
+      emailConfirmed: false,
+      emailConfirmedAt: null,
+      lastSignInAt: null,
+      manualCreated: false,
+      hasPublishedSite: false,
+      siteSlug,
+      siteUpdatedAt: null,
+      publishedBytes: 0,
+      publishedBytesKnown: false,
+      visits: { today: 0, day7: 0, day30: 0, total: 0 },
+      visitsKnown: false,
+      profileSnapshot: site,
+      profileConfigHistory: configHistoryByMerchantId[merchantId] ?? [],
+      personalServiceConfig: null,
+      personalServicePaused: false,
+    });
+  });
+  return sortByCreatedAtDesc(items);
+}
+
 function buildPersonalAccountItemFromAuthUser(user: AuthUserSummary): MerchantAccountItem {
   const metadata = readAccountMetadata(user);
   const personalServiceConfig = normalizePersonalAccountServiceConfig(
@@ -684,7 +765,7 @@ export async function GET(request: Request) {
   }
 
   const scope = readMerchantAccountsScope(request);
-  const cachedItems = scope === "support" ? readMerchantAccountsCache(scope) : null;
+  const cachedItems = readMerchantAccountsCache(scope);
   if (cachedItems) {
     return NextResponse.json({ items: cachedItems });
   }
@@ -696,36 +777,28 @@ export async function GET(request: Request) {
 
   try {
     if (scope === "support") {
-      const { data: merchants, error: merchantError } = await runSupabaseQueryWithRetry(() =>
-        supabase
-          .from("merchants")
-          .select("id,name,email,owner_email,contact_email,user_email,user_id,auth_user_id,created_at")
-          .order("created_at", { ascending: false })
-          .limit(500),
-      );
-      if (merchantError) throw merchantError;
-      const items = buildSupportScopeItems((merchants ?? []) as MerchantRow[]);
-      writeMerchantAccountsCache(scope, items);
-      return NextResponse.json({ items });
+      const merchantRowsResult = await listMerchantRowsBestEffort(supabase, SUPPORT_MERCHANT_ROWS_LOAD_TIMEOUT_MS);
+      const items = merchantRowsResult.errorMessage ? [] : buildSupportScopeItems(merchantRowsResult.rows);
+      if (!merchantRowsResult.errorMessage) {
+        writeMerchantAccountsCache(scope, items);
+      }
+      return NextResponse.json({
+        items,
+        merchantRowsUnavailable: Boolean(merchantRowsResult.errorMessage),
+        merchantRowsError: merchantRowsResult.errorMessage,
+      });
     }
 
     const [
-      { data: merchants, error: merchantError },
+      merchantRowsResult,
       authUsersResult,
       { snapshotByMerchantId, configHistoryByMerchantId },
     ] = await Promise.all([
-      runSupabaseQueryWithRetry(() =>
-        supabase
-          .from("merchants")
-          .select("id,name,email,owner_email,contact_email,user_email,user_id,auth_user_id,created_at")
-          .order("created_at", { ascending: false })
-          .limit(500),
-      ),
+      listMerchantRowsBestEffort(supabase),
       listAuthUsersBestEffort(supabase),
       loadPlatformMerchantSnapshotByMerchantId(supabase as unknown as PlatformMerchantSnapshotStoreClient),
     ]);
 
-    if (merchantError) throw merchantError;
     const authUsers = authUsersResult.users;
 
     const authById = new Map(authUsers.map((user) => [user.id, user] as const));
@@ -735,51 +808,53 @@ export async function GET(request: Request) {
         .filter(([email]) => Boolean(email)),
     );
 
-    const merchantItems: MerchantAccountItem[] = ((merchants ?? []) as MerchantRow[]).map((merchant) => {
-      const email = normalizeEmail(
-        merchant.user_email,
-        merchant.email,
-        merchant.owner_email,
-        merchant.contact_email,
-      );
-      const fallbackAuthUserId = String(merchant.auth_user_id ?? merchant.user_id ?? "").trim();
-      const authUser =
-        authById.get(String(merchant.auth_user_id ?? "").trim()) ??
-        authById.get(String(merchant.user_id ?? "").trim()) ??
-        authByEmail.get(email) ??
-        null;
-      const metadata = readAccountMetadata(authUser);
-      const merchantId = String(merchant.id ?? "").trim();
-      const snapshotSite = snapshotByMerchantId.get(merchantId) ?? null;
-      const merchantName = String(merchant.name ?? "").trim() || String(snapshotSite?.merchantName ?? "").trim();
+    const merchantItems: MerchantAccountItem[] = merchantRowsResult.errorMessage
+      ? buildSnapshotMerchantAccountItems([...snapshotByMerchantId.values()], configHistoryByMerchantId)
+      : merchantRowsResult.rows.map((merchant) => {
+          const email = normalizeEmail(
+            merchant.user_email,
+            merchant.email,
+            merchant.owner_email,
+            merchant.contact_email,
+          );
+          const fallbackAuthUserId = String(merchant.auth_user_id ?? merchant.user_id ?? "").trim();
+          const authUser =
+            authById.get(String(merchant.auth_user_id ?? "").trim()) ??
+            authById.get(String(merchant.user_id ?? "").trim()) ??
+            authByEmail.get(email) ??
+            null;
+          const metadata = readAccountMetadata(authUser);
+          const merchantId = String(merchant.id ?? "").trim();
+          const snapshotSite = snapshotByMerchantId.get(merchantId) ?? null;
+          const merchantName = String(merchant.name ?? "").trim() || String(snapshotSite?.merchantName ?? "").trim();
 
-      return {
-        accountType: "merchant",
-        accountId: merchantId,
-        merchantId,
-        merchantName,
-        email,
-        username: metadata.username || merchantName,
-        loginId: metadata.loginId || metadata.merchantId || merchantId,
-        createdAt: merchant.created_at ?? authUser?.created_at ?? null,
-        authUserId: (authUser?.id ?? fallbackAuthUserId) || null,
-        emailConfirmed: Boolean(authUser?.email_confirmed_at),
-        emailConfirmedAt: authUser?.email_confirmed_at ?? null,
-        lastSignInAt: authUser?.last_sign_in_at ?? null,
-        manualCreated: metadata.manualCreated,
-        hasPublishedSite: false,
-        siteSlug: String(snapshotSite?.domainPrefix ?? snapshotSite?.domainSuffix ?? "").trim(),
-        siteUpdatedAt: null,
-        publishedBytes: 0,
-        publishedBytesKnown: false,
-        visits: { today: 0, day7: 0, day30: 0, total: 0 },
-        visitsKnown: false,
-        profileSnapshot: snapshotSite,
-        profileConfigHistory: configHistoryByMerchantId[merchantId] ?? [],
-        personalServiceConfig: null,
-        personalServicePaused: false,
-      };
-    });
+          return {
+            accountType: "merchant",
+            accountId: merchantId,
+            merchantId,
+            merchantName,
+            email,
+            username: metadata.username || merchantName,
+            loginId: metadata.loginId || metadata.merchantId || merchantId,
+            createdAt: merchant.created_at ?? authUser?.created_at ?? null,
+            authUserId: (authUser?.id ?? fallbackAuthUserId) || null,
+            emailConfirmed: Boolean(authUser?.email_confirmed_at),
+            emailConfirmedAt: authUser?.email_confirmed_at ?? null,
+            lastSignInAt: authUser?.last_sign_in_at ?? null,
+            manualCreated: metadata.manualCreated,
+            hasPublishedSite: false,
+            siteSlug: String(snapshotSite?.domainPrefix ?? snapshotSite?.domainSuffix ?? "").trim(),
+            siteUpdatedAt: null,
+            publishedBytes: 0,
+            publishedBytesKnown: false,
+            visits: { today: 0, day7: 0, day30: 0, total: 0 },
+            visitsKnown: false,
+            profileSnapshot: snapshotSite,
+            profileConfigHistory: configHistoryByMerchantId[merchantId] ?? [],
+            personalServiceConfig: null,
+            personalServicePaused: false,
+          };
+        });
 
     const linkedAuthKeys = new Set(
       merchantItems.flatMap((item) => {
@@ -926,12 +1001,25 @@ export async function GET(request: Request) {
       }),
     );
 
+    if (!merchantRowsResult.errorMessage && !authUsersResult.errorMessage) {
+      writeMerchantAccountsCache(scope, items);
+    }
     return NextResponse.json({
       items,
+      merchantRowsUnavailable: Boolean(merchantRowsResult.errorMessage),
+      merchantRowsError: merchantRowsResult.errorMessage,
       authUsersUnavailable: Boolean(authUsersResult.errorMessage),
       authUsersError: authUsersResult.errorMessage,
     });
   } catch (error) {
+    const cachedFallback = readMerchantAccountsCache(scope);
+    if (cachedFallback) {
+      return NextResponse.json({
+        items: cachedFallback,
+        merchantRowsUnavailable: true,
+        merchantRowsError: readErrorMessage(error) || "merchant_account_load_failed",
+      });
+    }
     return NextResponse.json(
       {
         error: "merchant_account_load_failed",

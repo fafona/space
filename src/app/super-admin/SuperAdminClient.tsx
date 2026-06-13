@@ -989,6 +989,9 @@ function describeBackendMerchantAccountsError(message: string) {
   if (message === "merchant_account_timeout") {
     return "后端用户接口超时，当前先显示本地站点用户。";
   }
+  if (message === "merchant_account_network_failed") {
+    return "后端用户接口网络请求失败，请刷新后重试。";
+  }
   if (message === "merchant_account_load_failed") {
     return "后端注册账号接口暂时不可用，当前先显示本地站点用户。";
   }
@@ -1009,10 +1012,20 @@ function describeBackendMerchantAccountsError(message: string) {
 
 function describeBackendMerchantAccountsWarning(message: string) {
   if (!message) return "";
-  if (message === "auth_users_unavailable") {
-    return "认证用户列表暂时不可用，已先显示商户表账号；个人账号可能暂时不完整。";
-  }
-  return message;
+  const descriptions = message
+    .split("|")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => {
+      if (item === "auth_users_unavailable") {
+        return "认证用户列表暂时不可用，已先显示商户表账号；个人账号可能暂时不完整。";
+      }
+      if (item === "merchant_rows_unavailable") {
+        return "商户表读取暂时不可用，已先显示快照/认证账号数据；列表可能暂时不完整。";
+      }
+      return item;
+    });
+  return descriptions.join(" ");
 }
 
 function merchantIdRuleTypeLabel(type: MerchantIdRule["type"]) {
@@ -2477,6 +2490,7 @@ export default function SuperAdminClient() {
         const payload = (await response.json().catch(() => null)) as {
           items?: BackendMerchantAccount[];
           authUsersUnavailable?: boolean;
+          merchantRowsUnavailable?: boolean;
           message?: string;
         } | null;
         if (!response.ok) {
@@ -2484,13 +2498,24 @@ export default function SuperAdminClient() {
         }
         if (cancelled) return;
         setBackendMerchantAccounts(Array.isArray(payload?.items) ? payload.items : []);
-        setBackendMerchantAccountsWarning(payload?.authUsersUnavailable ? "auth_users_unavailable" : "");
+        setBackendMerchantAccountsWarning(
+          [
+            payload?.merchantRowsUnavailable ? "merchant_rows_unavailable" : "",
+            payload?.authUsersUnavailable ? "auth_users_unavailable" : "",
+          ]
+            .filter(Boolean)
+            .join("|"),
+        );
       } catch (error) {
         if (cancelled) return;
         setBackendMerchantAccounts([]);
         setBackendMerchantAccountsWarning("");
-        if (error instanceof DOMException && error.name === "AbortError") {
+        if (isAbortRequestError(error)) {
           setBackendMerchantAccountsError("merchant_account_timeout");
+          return;
+        }
+        if (error instanceof Error && /failed to fetch|fetch failed|networkerror|load failed/i.test(error.message)) {
+          setBackendMerchantAccountsError("merchant_account_network_failed");
           return;
         }
         setBackendMerchantAccountsError(error instanceof Error ? error.message : "merchant_account_load_failed");
