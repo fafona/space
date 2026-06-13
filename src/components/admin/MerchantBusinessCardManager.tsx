@@ -981,17 +981,22 @@ function CustomContactPresetSymbol({ preset }: { preset?: string }) {
 function ContactDisplayIcon({
   fieldKey,
   customLink,
+  className = "h-8 w-8 text-xs",
+  imageClassName = "h-4 w-4",
 }: {
   fieldKey?: MerchantBusinessCardEditableContactFieldKey;
   customLink?: MerchantBusinessCardCustomContactLink;
+  className?: string;
+  imageClassName?: string;
 }) {
+  const iconClassName = `inline-flex shrink-0 items-center justify-center rounded-full font-semibold shadow-sm ${className}`;
   if (customLink) {
     const bgColor = normalizeText(customLink.bgColor) || "#0f172a";
     return (
-      <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white shadow-sm" style={{ backgroundColor: bgColor }}>
+      <span className={`${iconClassName} text-white`} style={{ backgroundColor: bgColor }}>
         {normalizeText(customLink.iconUrl) ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={customLink.iconUrl} alt="" className="h-4 w-4 object-contain" />
+          <img src={customLink.iconUrl} alt="" className={`${imageClassName} object-contain`} />
         ) : (
           <CustomContactPresetSymbol preset={customLink.iconPreset} />
         )}
@@ -1002,16 +1007,31 @@ function ContactDisplayIcon({
   if (!meta) return null;
   return (
     <span
-      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold shadow-sm"
+      className={iconClassName}
       style={{ backgroundColor: meta.bgColor, color: meta.textColor || "#fff" }}
     >
       {meta.iconUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={meta.iconUrl} alt="" className="h-4 w-4 object-contain" />
+        <img src={meta.iconUrl} alt="" className={`${imageClassName} object-contain`} />
       ) : (
         meta.symbol
       )}
     </span>
+  );
+}
+
+function ContactFieldEditorLabel({
+  fieldKey,
+  label,
+}: {
+  fieldKey: MerchantBusinessCardEditableContactFieldKey;
+  label: string;
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-2 text-xs font-medium leading-5 text-slate-700">
+      <ContactDisplayIcon fieldKey={fieldKey} className="h-6 w-6 text-[10px]" imageClassName="h-3.5 w-3.5" />
+      <span className="min-w-0">{label}</span>
+    </div>
   );
 }
 
@@ -1575,12 +1595,9 @@ function ContactCardSurface({
           <div className="rounded-[28px] border border-slate-200 bg-slate-50 p-5 shadow-[0_16px_42px_rgba(15,23,42,.08)]">
             <div className="space-y-4 text-slate-800">
               {rows.map((row) => (
-                <div key={`${row.label}-${row.value}`} className="flex items-start gap-3 text-sm leading-7 text-slate-700">
-                  <ContactDisplayIcon fieldKey={row.key} customLink={row.customLink} />
-                  <div className="min-w-0 flex-1">
-                    <span className="font-semibold text-slate-900">{row.label}：</span>
-                    <span className="break-words">{row.value}</span>
-                  </div>
+                <div key={`${row.label}-${row.value}`} className="text-sm leading-7 text-slate-700">
+                  <span className="font-semibold text-slate-900">{row.label}：</span>
+                  <span className="break-words">{row.value}</span>
                 </div>
               ))}
             </div>
@@ -3659,13 +3676,16 @@ export default function MerchantBusinessCardManager({
                                     key={`phone-${phoneIndex}`}
                                     className="flex flex-col gap-2 md:grid md:grid-cols-[140px_minmax(0,1fr)_auto_auto_auto_auto_auto] md:items-center"
                                   >
-                                    <div className="text-xs font-medium text-slate-700">
-                                      {phoneIndex === 0
-                                        ? `电话（最多 ${MERCHANT_BUSINESS_CARD_PHONE_LIMIT} 个）`
-                                        : phoneIndex === 1
-                                          ? "工作电话"
-                                          : `电话${phoneIndex + 1}`}
-                                    </div>
+                                    <ContactFieldEditorLabel
+                                      fieldKey="phone"
+                                      label={
+                                        phoneIndex === 0
+                                          ? `电话（最多 ${MERCHANT_BUSINESS_CARD_PHONE_LIMIT} 个）`
+                                          : phoneIndex === 1
+                                            ? "工作电话"
+                                            : `电话${phoneIndex + 1}`
+                                      }
+                                    />
                                     <input
                                       className="min-w-0 rounded border bg-white px-3 py-2 text-sm"
                                       value={phone}
@@ -3731,7 +3751,7 @@ export default function MerchantBusinessCardManager({
                               </div>
                             ) : (
                               <div className="flex flex-col gap-2 md:grid md:grid-cols-[88px_minmax(0,1fr)_auto_auto_auto] md:items-center">
-                                <div className="text-xs font-medium text-slate-700">{label}</div>
+                                <ContactFieldEditorLabel fieldKey={key} label={label} />
                                 <input
                                   className="min-w-0 rounded border bg-white px-3 py-2 text-sm"
                                   value={draft.contacts[key]}

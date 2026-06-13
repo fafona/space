@@ -48,6 +48,7 @@ export type PlatformMerchantSnapshotLoadOptions = {
 };
 
 const PLATFORM_MERCHANT_SNAPSHOT_CACHE_TTL_MS = 30_000;
+const PLATFORM_MERCHANT_SNAPSHOT_AUXILIARY_SAVE_TIMEOUT_MS = 3_500;
 let platformMerchantSnapshotCache:
   | {
       expiresAt: number;
@@ -80,6 +81,19 @@ function isMissingUpdatedAtColumn(message: string) {
     /column\s+pages\.updated_at\s+does\s+not\s+exist/i.test(message) ||
     /could not find the ['"]updated_at['"] column of ['"]pages['"] in the schema cache/i.test(message)
   );
+}
+
+async function waitForAuxiliarySnapshotSaves(tasks: Promise<void>[]) {
+  if (tasks.length === 0) return;
+  const result = await Promise.race([
+    Promise.all(tasks).then(() => "done" as const),
+    new Promise<"timeout">((resolve) => {
+      setTimeout(() => resolve("timeout"), PLATFORM_MERCHANT_SNAPSHOT_AUXILIARY_SAVE_TIMEOUT_MS);
+    }),
+  ]);
+  if (result === "timeout" && typeof console !== "undefined") {
+    console.warn("[platform-merchant-snapshot] auxiliary saves still running after timeout");
+  }
 }
 
 type SnapshotStoredRow = {
@@ -400,7 +414,7 @@ export async function savePlatformMerchantSnapshot(
       })(),
     );
   }
-  await Promise.all(auxiliarySaves);
+  await waitForAuxiliarySnapshotSaves(auxiliarySaves);
 
   platformMerchantSnapshotCache = {
     expiresAt: Date.now() + PLATFORM_MERCHANT_SNAPSHOT_CACHE_TTL_MS,

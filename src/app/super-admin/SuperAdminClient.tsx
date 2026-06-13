@@ -166,6 +166,54 @@ const SUPPORT_THREADS_OPEN_POLL_INTERVAL_MS = 1200;
 const SUPPORT_THREADS_IDLE_POLL_INTERVAL_MS = 5000;
 const SUPER_ADMIN_SUPPORT_LAST_READ_STORAGE_KEY_PREFIX = "super-admin-support-last-read:";
 const SUPER_ADMIN_PAGE_VIEW_DAILY_KEY = "merchant-space:page-views-daily:v1";
+const PLATFORM_MERCHANT_SNAPSHOT_LOAD_TIMEOUT_MS = 12_000;
+const PLATFORM_MERCHANT_SNAPSHOT_SAVE_TIMEOUT_MS = 25_000;
+const PLATFORM_MERCHANT_SNAPSHOT_BACKGROUND_SYNC_TIMEOUT_MS = 15_000;
+
+function isAbortRequestError(error: unknown) {
+  return (
+    (typeof DOMException !== "undefined" && error instanceof DOMException && error.name === "AbortError") ||
+    (error instanceof Error && /abort/i.test(error.name || error.message))
+  );
+}
+
+function describePlatformMerchantSnapshotRequestError(error: unknown, fallback: string) {
+  if (error instanceof Error) {
+    if (error.message === "request_timeout" || isAbortRequestError(error)) {
+      return "请求超时，请检查网络后重试";
+    }
+    if (/failed to fetch|networkerror|load failed/i.test(error.message)) {
+      return "网络请求失败，请检查连接后重试";
+    }
+    return error.message || fallback;
+  }
+  return fallback;
+}
+
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, timeoutMs: number) {
+  const controller = new AbortController();
+  const sourceSignal = init.signal;
+  const timeout = globalThis.setTimeout(() => controller.abort(), timeoutMs);
+  const abort = () => controller.abort();
+  if (sourceSignal?.aborted) {
+    controller.abort();
+  } else {
+    sourceSignal?.addEventListener("abort", abort, { once: true });
+  }
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (sourceSignal?.aborted) throw error;
+    if (isAbortRequestError(error)) throw new Error("request_timeout");
+    throw error;
+  } finally {
+    globalThis.clearTimeout(timeout);
+    sourceSignal?.removeEventListener("abort", abort);
+  }
+}
 
 function fmt(iso: string | null) {
   if (!iso) return "-";
@@ -2186,11 +2234,16 @@ export default function SuperAdminClient() {
         conflictTip?: string;
       } = {},
     ) => {
-      const response = await fetch("/api/super-admin/platform-merchant-snapshot", {
-        method: "GET",
-        cache: "no-store",
-        signal: options.signal,
-      });
+      const response = await fetchWithTimeout(
+        "/api/super-admin/platform-merchant-snapshot",
+        {
+          method: "GET",
+          credentials: "same-origin",
+          cache: "no-store",
+          signal: options.signal,
+        },
+        PLATFORM_MERCHANT_SNAPSHOT_LOAD_TIMEOUT_MS,
+      );
       const raw = (await response.json().catch(() => null)) as
         | {
             payload?: unknown;
@@ -2284,10 +2337,15 @@ export default function SuperAdminClient() {
         await loadPlatformMerchantSnapshotFromServer({
           signal: controller.signal,
         });
-      } catch {
+      } catch (error) {
         if (controller.signal.aborted) return;
         setPlatformSnapshotServerReady(false);
-        setTip("服务端商户配置加载失败，已暂停后台配置同步");
+        setTip(
+          `服务端商户配置加载失败：${describePlatformMerchantSnapshotRequestError(
+            error,
+            "platform_merchant_snapshot_load_failed",
+          )}，已暂停后台配置同步`,
+        );
       }
     };
     void run();
@@ -2301,14 +2359,19 @@ export default function SuperAdminClient() {
     if (platformMerchantSnapshotPayload.snapshot.length === 0) return;
     const timer = window.setTimeout(() => {
       const payload = buildPlatformMerchantSnapshotSyncPayload(stateRef.current);
-      void fetch("/api/super-admin/platform-merchant-snapshot", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
+      void fetchWithTimeout(
+        "/api/super-admin/platform-merchant-snapshot",
+        {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "content-type": "application/json",
+          },
+          cache: "no-store",
+          body: JSON.stringify(payload),
         },
-        cache: "no-store",
-        body: JSON.stringify(payload),
-      })
+        PLATFORM_MERCHANT_SNAPSHOT_BACKGROUND_SYNC_TIMEOUT_MS,
+      )
         .then(async (response) => {
           const result = (await response.json().catch(() => null)) as
             | { ok?: boolean; error?: string; message?: string; payload?: unknown }
@@ -3902,15 +3965,19 @@ export default function SuperAdminClient() {
         throw new Error("empty_snapshot");
       }
       const sendSnapshotRequest = () =>
-        fetch("/api/super-admin/platform-merchant-snapshot", {
-          method: "POST",
-          credentials: "same-origin",
-          headers: {
-            "content-type": "application/json",
+        fetchWithTimeout(
+          "/api/super-admin/platform-merchant-snapshot",
+          {
+            method: "POST",
+            credentials: "same-origin",
+            headers: {
+              "content-type": "application/json",
+            },
+            cache: "no-store",
+            body: JSON.stringify(payload),
           },
-          cache: "no-store",
-          body: JSON.stringify(payload),
-        });
+          PLATFORM_MERCHANT_SNAPSHOT_SAVE_TIMEOUT_MS,
+        );
       let response = await sendSnapshotRequest();
       if (response.status === 401 || response.status === 403) {
         const recovered = await refreshSuperAdminAuthenticatedState();
@@ -6245,7 +6312,7 @@ export default function SuperAdminClient() {
     try {
       await syncPlatformMerchantSnapshotToServer(stateToPersist);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "unknown_error";
+      const message = describePlatformMerchantSnapshotRequestError(error, "unknown_error");
       if (message === "platform_merchant_snapshot_conflict") {
         const retryPreviewRaw = buildConfigState(stateRef.current);
         const retryPreview = compactPlatformStateForStorage(retryPreviewRaw);
@@ -6259,7 +6326,7 @@ export default function SuperAdminClient() {
           await syncPlatformMerchantSnapshotToServer(stateToPersist);
           mergedAfterConflict = true;
         } catch (retryError) {
-          const retryMessage = retryError instanceof Error ? retryError.message : "unknown_error";
+          const retryMessage = describePlatformMerchantSnapshotRequestError(retryError, "unknown_error");
           stopMerchantConfigSaveWithError(
             retryMessage === "platform_merchant_snapshot_conflict"
               ? "服务端配置刚刚又被更新，请重新打开配置后再保存"
@@ -6394,7 +6461,7 @@ export default function SuperAdminClient() {
     try {
       await syncPlatformMerchantSnapshotToServer(auditedNextState);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "unknown_error";
+      const message = describePlatformMerchantSnapshotRequestError(error, "unknown_error");
       setTip(
         message === "platform_merchant_snapshot_conflict"
           ? "检测到其他超级后台已更新配置，当前页面已同步到最新版本"
@@ -6524,7 +6591,7 @@ export default function SuperAdminClient() {
     try {
       await syncPlatformMerchantSnapshotToServer(auditedNextState);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "unknown_error";
+      const message = describePlatformMerchantSnapshotRequestError(error, "unknown_error");
       setTip(
         message === "platform_merchant_snapshot_conflict"
           ? "检测到其他超级后台已更新配置，当前页面已同步到最新版本"
