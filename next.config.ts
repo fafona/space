@@ -3,6 +3,9 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   serverExternalPackages: ["ffmpeg-static"],
+  experimental: {
+    proxyClientMaxBodySize: "96mb",
+  },
   async headers() {
     return [
       {

@@ -113,6 +113,10 @@ const CUSTOM_CONTACT_ICON_PRESET_LABELS: Record<(typeof MERCHANT_BUSINESS_CARD_C
   map: "定位",
   gift: "礼物",
   google: "Google",
+  download: "下载",
+  review: "评论",
+  favorite: "收藏",
+  checkin: "签到",
 };
 
 const CUSTOM_CONTACT_ICON_PRESET_SYMBOLS: Record<(typeof MERCHANT_BUSINESS_CARD_CUSTOM_CONTACT_ICON_PRESETS)[number], string> = {
@@ -123,6 +127,10 @@ const CUSTOM_CONTACT_ICON_PRESET_SYMBOLS: Record<(typeof MERCHANT_BUSINESS_CARD_
   map: "⌖",
   gift: "□",
   google: "G",
+  download: "↓",
+  review: "评",
+  favorite: "♡",
+  checkin: "✓",
 };
 
 const INVOICE_FIELDS = [

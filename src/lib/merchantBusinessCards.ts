@@ -222,6 +222,10 @@ export const MERCHANT_BUSINESS_CARD_CUSTOM_CONTACT_ICON_PRESETS = [
   "map",
   "gift",
   "google",
+  "download",
+  "review",
+  "favorite",
+  "checkin",
 ] as const;
 
 function normalizeText(value: unknown) {

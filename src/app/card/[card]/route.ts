@@ -209,7 +209,22 @@ function buildGoogleReviewHref(rawValue?: string) {
   return `https://www.google.com/search?q=${encodeURIComponent(value)}`;
 }
 
-function buildInlineSvgIcon(kind: "phone" | "map" | "copy" | "link" | "star" | "heart" | "chat" | "gift" | "google") {
+function buildInlineSvgIcon(
+  kind:
+    | "phone"
+    | "map"
+    | "copy"
+    | "link"
+    | "star"
+    | "heart"
+    | "chat"
+    | "gift"
+    | "google"
+    | "download"
+    | "review"
+    | "favorite"
+    | "checkin",
+) {
   if (kind === "phone") {
     return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.62 10.79a15.53 15.53 0 0 0 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C10.4 21 3 13.6 3 4c0-.55.45-1 1-1h3.49c.55 0 1 .45 1 1 0 1.24.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.19 2.2z"/></svg>`;
   }
@@ -233,6 +248,18 @@ function buildInlineSvgIcon(kind: "phone" | "map" | "copy" | "link" | "star" | "
   }
   if (kind === "google") {
     return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.6 12.23c0-.74-.07-1.45-.19-2.14H12v4.05h5.38a4.6 4.6 0 0 1-1.99 3.02v2.51h3.23c1.89-1.74 2.98-4.3 2.98-7.44z"/><path d="M12 22c2.7 0 4.96-.89 6.62-2.33l-3.23-2.51c-.9.6-2.04.95-3.39.95-2.6 0-4.8-1.76-5.59-4.12H3.08v2.59A10 10 0 0 0 12 22z"/><path d="M6.41 13.99a6 6 0 0 1 0-3.98V7.42H3.08a10 10 0 0 0 0 9.16l3.33-2.59z"/><path d="M12 5.89c1.47 0 2.78.5 3.82 1.5l2.87-2.87C16.95 2.9 14.7 2 12 2a10 10 0 0 0-8.92 5.42l3.33 2.59C7.2 7.65 9.4 5.89 12 5.89z"/></svg>`;
+  }
+  if (kind === "download") {
+    return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20h14v-2H5v2zM13 4h-2v8.17L7.41 8.59 6 10l6 6 6-6-1.41-1.41L13 12.17V4z"/></svg>`;
+  }
+  if (kind === "review") {
+    return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H8l-5 4v-4H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm3 5h10V7H7v2zm0 4h7v-2H7v2z"/></svg>`;
+  }
+  if (kind === "favorite") {
+    return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1zm2 2v12.55l4-2.29 4 2.29V5H8z"/></svg>`;
+  }
+  if (kind === "checkin") {
+    return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm-1.2 13.6-4-4 1.4-1.4 2.6 2.58 5.6-5.58 1.4 1.4-7 7z"/></svg>`;
   }
   return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 9a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-7a2 2 0 0 1-2-2V9zm-5 6V6a2 2 0 0 1 2-2h8v2H6v9H4z"/></svg>`;
 }
@@ -513,7 +540,18 @@ function normalizeCustomContactHref(value?: string) {
 
 function resolveCustomContactIconSvg(iconPreset?: string) {
   const preset = normalizeText(iconPreset);
-  if (preset === "star" || preset === "heart" || preset === "chat" || preset === "map" || preset === "gift" || preset === "google") {
+  if (
+    preset === "star" ||
+    preset === "heart" ||
+    preset === "chat" ||
+    preset === "map" ||
+    preset === "gift" ||
+    preset === "google" ||
+    preset === "download" ||
+    preset === "review" ||
+    preset === "favorite" ||
+    preset === "checkin"
+  ) {
     return buildInlineSvgIcon(preset);
   }
   return buildInlineSvgIcon("link");

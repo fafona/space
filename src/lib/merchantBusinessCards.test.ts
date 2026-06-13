@@ -173,6 +173,23 @@ test("normalizeMerchantBusinessCardDraft keeps custom contact links", () => {
   });
 });
 
+test("normalizeMerchantBusinessCardDraft keeps extended custom contact icon presets", () => {
+  const draft = normalizeMerchantBusinessCardDraft({
+    customContactLinks: ["download", "review", "favorite", "checkin"].map((iconPreset) => ({
+      id: iconPreset,
+      label: iconPreset,
+      displayText: iconPreset,
+      url: `https://example.com/${iconPreset}`,
+      iconPreset,
+    })),
+  });
+
+  assert.deepEqual(
+    draft.customContactLinks.map((item) => item.iconPreset),
+    ["download", "review", "favorite", "checkin"],
+  );
+});
+
 test("normalizeMerchantBusinessCardDraft keeps at most two phones", () => {
   const draft = normalizeMerchantBusinessCardDraft({
     contacts: {

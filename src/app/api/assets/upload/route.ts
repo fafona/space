@@ -495,7 +495,7 @@ export async function POST(request: Request) {
         {
           ok: false,
           code: "invalid_form_data",
-          message: "Request body must be valid multipart form data.",
+          message: "上传文件解析失败，请确认文件没有超过上传上限后重新选择上传。",
         },
         { status: 400 },
       );
