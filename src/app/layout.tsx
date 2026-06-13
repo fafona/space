@@ -1251,6 +1251,117 @@ function buildFaollaInlineCacheRefreshScript(buildId: string) {
 `;
 }
 
+function buildFaollaClientErrorRecoveryScript(buildId: string) {
+  const serializedBuildId = JSON.stringify(buildId || "local");
+  return `
+(() => {
+  if (typeof window === "undefined" || typeof document === "undefined") return;
+  const buildId = ${serializedBuildId};
+  const recoveryKey = "faolla:client-error-recovery:" + buildId;
+  let scheduled = false;
+  const hasRecoveredForBuild = () => {
+    try {
+      return window.sessionStorage.getItem(recoveryKey) === "1";
+    } catch {
+      return false;
+    }
+  };
+  const markRecoveredForBuild = () => {
+    try {
+      window.sessionStorage.setItem(recoveryKey, "1");
+    } catch {
+      // Ignore storage failures.
+    }
+  };
+  const looksLikeNextClientErrorPage = () => {
+    try {
+      const text = (document.body && document.body.innerText ? document.body.innerText : "").trim();
+      return text.indexOf("Application error: a client-side exception has occurred") >= 0;
+    } catch {
+      return false;
+    }
+  };
+  const looksLikeStaleClientBundleError = (value) => {
+    const text = String(value || "");
+    return (
+      text.indexOf("ChunkLoadError") >= 0 ||
+      text.indexOf("Loading chunk") >= 0 ||
+      text.indexOf("Loading CSS chunk") >= 0 ||
+      text.indexOf("client-side exception") >= 0 ||
+      text.indexOf("Minified React error") >= 0
+    );
+  };
+  const clearRuntimeCaches = async () => {
+    try {
+      if ("caches" in window) {
+        const keys = await window.caches.keys();
+        await Promise.all(
+          keys
+            .filter((key) => key.indexOf("faolla-") === 0 && key !== "faolla-badge-state-v1")
+            .map((key) => window.caches.delete(key)),
+        );
+      }
+    } catch {
+      // Best effort only.
+    }
+    try {
+      if ("serviceWorker" in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(
+          registrations.map(async (registration) => {
+            const target = registration.active || registration.waiting || registration.installing || navigator.serviceWorker.controller;
+            if (target) {
+              target.postMessage({ type: "CLEAR_RUNTIME_CACHES" });
+              target.postMessage({ type: "SKIP_WAITING" });
+            }
+            await registration.update().catch(() => undefined);
+          }),
+        );
+      }
+    } catch {
+      // Best effort only.
+    }
+  };
+  const recover = () => {
+    if (scheduled || hasRecoveredForBuild()) return;
+    scheduled = true;
+    markRecoveredForBuild();
+    clearRuntimeCaches().finally(() => {
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.set("__faollaRecovered", buildId.slice(0, 12));
+        window.location.replace(url.pathname + url.search + url.hash);
+      } catch {
+        window.location.reload();
+      }
+    });
+  };
+  window.addEventListener("error", (event) => {
+    if (looksLikeStaleClientBundleError(event.message) || looksLikeStaleClientBundleError(event.error && event.error.message)) {
+      recover();
+    }
+  }, true);
+  window.addEventListener("unhandledrejection", (event) => {
+    const reason = event.reason;
+    const message = reason && typeof reason === "object" && typeof reason.message === "string" ? reason.message : reason;
+    if (looksLikeStaleClientBundleError(message)) {
+      event.preventDefault();
+      recover();
+    }
+  }, true);
+  const inspectErrorPage = () => {
+    if (looksLikeNextClientErrorPage()) recover();
+  };
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", inspectErrorPage, { once: true });
+  } else {
+    inspectErrorPage();
+  }
+  window.setTimeout(inspectErrorPage, 800);
+})();
+`;
+}
+
 export default async function RootLayout({
   children,
 }: {
@@ -1262,6 +1373,7 @@ export default async function RootLayout({
   const acceptLanguageLocale = readPreferredLocaleFromAcceptLanguage(headerStore.get("accept-language"));
   const initialLocale = resolveSupportedLocale(cookieLocale || acceptLanguageLocale || DEFAULT_LOCALE);
   const faollaInlineCacheRefreshScript = buildFaollaInlineCacheRefreshScript(resolveFaollaWebBuildId());
+  const faollaClientErrorRecoveryScript = buildFaollaClientErrorRecoveryScript(resolveFaollaWebBuildId());
 
   return (
     <html lang={initialLocale} data-ui-locale={initialLocale} suppressHydrationWarning>
@@ -1295,6 +1407,9 @@ export default async function RootLayout({
         </div>
         <Script id="faolla-inline-cache-refresh" strategy="beforeInteractive">
           {faollaInlineCacheRefreshScript}
+        </Script>
+        <Script id="faolla-client-error-recovery" strategy="beforeInteractive">
+          {faollaClientErrorRecoveryScript}
         </Script>
         <Script id="standalone-launch" strategy="beforeInteractive">
           {STANDALONE_LAUNCH_SCRIPT}
