@@ -118,6 +118,7 @@ import {
 import {
   getDaysBetweenDateKeys,
   getMadridDateKey,
+  type PlatformAdminDataBackupEntry,
   type PlatformAdminDataBackupListItem,
   type PlatformAdminDataBackupRestoreScope,
 } from "@/lib/platformAdminDataBackup";
@@ -384,6 +385,43 @@ function buildSuperAdminAlertSearchText(item: {
   return [item.id, item.level, item.title, item.message, item.createdAt, item.resolvedAt ?? "", item.resolvedBy ?? ""]
     .join(" ")
     .toLocaleLowerCase();
+}
+
+function parseSuperAdminLogDateTimeInput(value: string, boundary: "start" | "end") {
+  const normalized = value.trim();
+  if (!normalized) return boundary === "start" ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY;
+  const date = new Date(normalized);
+  const timestamp = date.getTime();
+  if (!Number.isFinite(timestamp)) return boundary === "start" ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY;
+  return timestamp;
+}
+
+function isWithinSuperAdminLogTimeRange(iso: string | null | undefined, startMs: number, endMs: number) {
+  const timestamp = new Date(String(iso ?? "").trim()).getTime();
+  if (!Number.isFinite(timestamp)) return false;
+  return timestamp >= startMs && timestamp <= endMs;
+}
+
+function hasAddedAuditRecord(prev: PlatformState, next: PlatformState) {
+  const nextAuditId = next.audits[0]?.id ?? "";
+  if (!nextAuditId) return false;
+  return nextAuditId !== (prev.audits[0]?.id ?? "");
+}
+
+function formatSuperAdminMenuLabel(key: string) {
+  if (key === "site_editor") return "网站编辑";
+  if (key === "user_manage") return "用户管理";
+  if (key === "support_messages") return "信息处理";
+  if (key === "merchant_id_rules") return "禁用ID设置";
+  if (key === "trusted_devices") return "白名单设备";
+  if (key === "stats") return "数据统计";
+  if (key === "logs") return "日志";
+  return key || "-";
+}
+
+function buildSuperAdminAuditDetail(detail: string, menuKey: string) {
+  const normalizedDetail = detail.trim() || "-";
+  return [`详情：${normalizedDetail}`, `菜单：${formatSuperAdminMenuLabel(menuKey)}`].join(" | ");
 }
 
 function formatPlatformAdminBackupSourceLabel(source: "manual" | "auto") {
@@ -1667,6 +1705,8 @@ function describePermissionValue(
     key === "allowOrderManagement" ||
     key === "allowCouponModule" ||
     key === "allowCouponBlock" ||
+    key === "allowMembershipManagement" ||
+    key === "allowPointsRedemption" ||
     key === "allowBookingBlock"
   ) {
     return value === true ? "是" : "否";
@@ -1720,6 +1760,8 @@ function buildMerchantConfigDiffLines(current: MerchantConfigSnapshot, target: M
     { key: "allowOrderManagement", label: "可订单管理" },
     { key: "allowCouponModule", label: "可优惠券模块" },
     { key: "allowCouponBlock", label: "可优惠券区块" },
+    { key: "allowMembershipManagement", label: "可会员管理" },
+    { key: "allowPointsRedemption", label: "可积分兑换" },
     { key: "allowBookingBlock", label: "可预约区块" },
   ];
   permissionFields.forEach(({ key, label }) => {
@@ -1975,6 +2017,8 @@ export default function SuperAdminClient() {
   const [configAllowOrderManagement, setConfigAllowOrderManagement] = useState(false);
   const [configAllowCouponModule, setConfigAllowCouponModule] = useState(false);
   const [configAllowCouponBlock, setConfigAllowCouponBlock] = useState(false);
+  const [configAllowMembershipManagement, setConfigAllowMembershipManagement] = useState(false);
+  const [configAllowPointsRedemption, setConfigAllowPointsRedemption] = useState(false);
   const [configAllowBookingBlock, setConfigAllowBookingBlock] = useState(false);
   const [configMerchantCardImage, setConfigMerchantCardImage] = useState("");
   const [configMerchantCardImageOpacity, setConfigMerchantCardImageOpacity] = useState(1);
@@ -2008,6 +2052,9 @@ export default function SuperAdminClient() {
   const [dataBackupsError, setDataBackupsError] = useState("");
   const [dataBackupCreating, setDataBackupCreating] = useState(false);
   const [dataBackupRestoringKey, setDataBackupRestoringKey] = useState("");
+  const [dataBackupDetail, setDataBackupDetail] = useState<PlatformAdminDataBackupEntry | null>(null);
+  const [dataBackupDetailLoadingId, setDataBackupDetailLoadingId] = useState("");
+  const [dataBackupDetailError, setDataBackupDetailError] = useState<{ id: string; text: string } | null>(null);
   const [dataBackupAutoChecked, setDataBackupAutoChecked] = useState(false);
   const [backendMerchantAccounts, setBackendMerchantAccounts] = useState<BackendMerchantAccount[]>([]);
   const [backendMerchantAccountsLoading, setBackendMerchantAccountsLoading] = useState(false);
@@ -2147,6 +2194,8 @@ export default function SuperAdminClient() {
   const [currentSuperAdminDeviceId, setCurrentSuperAdminDeviceId] = useState("");
   const [currentSuperAdminDeviceLabel, setCurrentSuperAdminDeviceLabel] = useState("");
   const [logKeyword, setLogKeyword] = useState("");
+  const [logStartAt, setLogStartAt] = useState("");
+  const [logEndAt, setLogEndAt] = useState("");
   const checklistStorageKeyRef = useRef(releaseChecklistStorageKeyForToday());
   const platformSnapshotRevisionRef = useRef("");
   const [releaseChecklistState, setReleaseChecklistState] = useState<Record<string, boolean>>(() =>
@@ -2156,10 +2205,26 @@ export default function SuperAdminClient() {
   const playNotificationSound = useNotificationSound();
   const applyLocalPlatformState = useCallback(
     (next: PlatformState, options: { allowVolatile?: boolean } = {}) => {
-      const persisted = savePlatformState(next);
+      const prev = stateRef.current;
+      let nextState = next;
+      let persisted = savePlatformState(nextState);
+      if (!persisted && hasAddedAuditRecord(prev, nextState)) {
+        const withoutNewAudit: PlatformState = {
+          ...nextState,
+          audits: prev.audits,
+        };
+        const persistedWithoutAudit = savePlatformState(withoutNewAudit);
+        if (persistedWithoutAudit) {
+          nextState = withoutNewAudit;
+          persisted = true;
+          if (typeof console !== "undefined") {
+            console.warn("[super-admin-audit] audit record skipped to keep the primary operation available");
+          }
+        }
+      }
       if (!persisted && !options.allowVolatile) return false;
-      stateRef.current = next;
-      setState(next);
+      stateRef.current = nextState;
+      setState(nextState);
       setNowMs(Date.now());
       return persisted;
     },
@@ -2972,14 +3037,26 @@ export default function SuperAdminClient() {
     return displayMerchantRows.slice(start, start + MERCHANT_USER_PAGE_SIZE_DEFAULT);
   }, [clampedMerchantTablePage, displayMerchantRows]);
   const normalizedLogKeyword = useMemo(() => normalizeSuperAdminLogKeyword(logKeyword), [logKeyword]);
+  const logStartMs = useMemo(() => parseSuperAdminLogDateTimeInput(logStartAt, "start"), [logStartAt]);
+  const logEndMs = useMemo(() => parseSuperAdminLogDateTimeInput(logEndAt, "end"), [logEndAt]);
+  const logTimeRangeActive = Boolean(logStartAt.trim() || logEndAt.trim());
+  const logFilterActive = Boolean(normalizedLogKeyword || logTimeRangeActive);
   const filteredAuditRows = useMemo(() => {
-    if (!normalizedLogKeyword) return state.audits.slice(0, 20);
-    return state.audits.filter((item) => buildSuperAdminAuditSearchText(item).includes(normalizedLogKeyword));
-  }, [normalizedLogKeyword, state.audits]);
+    const rows = state.audits.filter((item) => {
+      if (normalizedLogKeyword && !buildSuperAdminAuditSearchText(item).includes(normalizedLogKeyword)) return false;
+      if (logTimeRangeActive && !isWithinSuperAdminLogTimeRange(item.at, logStartMs, logEndMs)) return false;
+      return true;
+    });
+    return logFilterActive ? rows : rows.slice(0, 20);
+  }, [logEndMs, logFilterActive, logStartMs, logTimeRangeActive, normalizedLogKeyword, state.audits]);
   const filteredAlertRows = useMemo(() => {
-    if (!normalizedLogKeyword) return state.alerts.slice(0, 12);
-    return state.alerts.filter((item) => buildSuperAdminAlertSearchText(item).includes(normalizedLogKeyword));
-  }, [normalizedLogKeyword, state.alerts]);
+    const rows = state.alerts.filter((item) => {
+      if (normalizedLogKeyword && !buildSuperAdminAlertSearchText(item).includes(normalizedLogKeyword)) return false;
+      if (logTimeRangeActive && !isWithinSuperAdminLogTimeRange(item.createdAt, logStartMs, logEndMs)) return false;
+      return true;
+    });
+    return logFilterActive ? rows : rows.slice(0, 12);
+  }, [logEndMs, logFilterActive, logStartMs, logTimeRangeActive, normalizedLogKeyword, state.alerts]);
   const currentMadridDateKey = useMemo(() => getMadridDateKey(new Date(nowMs)), [nowMs]);
   const latestAutoDataBackup = useMemo(
     () => dataBackups.find((item) => item.source === "auto") ?? null,
@@ -4045,17 +4122,40 @@ export default function SuperAdminClient() {
     ],
   );
 
-  const withAudit = (
-    base: PlatformState,
-    action: string,
-    targetType: string,
-    targetId: string,
-    detail: string,
-  ) =>
-    applyAudit(
-      base,
-      createAuditRecord({ operator: operatorName, action, targetType, targetId, detail }),
-    );
+  const withAudit = useCallback(
+    (
+      base: PlatformState,
+      action: string,
+      targetType: string,
+      targetId: string,
+      detail: string,
+    ) =>
+      applyAudit(
+        base,
+        createAuditRecord({
+          operator: operatorName,
+          action,
+          targetType,
+          targetId,
+          detail: buildSuperAdminAuditDetail(detail, activeMenu),
+        }),
+      ),
+    [activeMenu, operatorName],
+  );
+
+  const recordAuditBestEffort = useCallback((action: string, targetType: string, targetId: string, detail: string) => {
+    try {
+      const auditedState = withAudit(stateRef.current, action, targetType, targetId, detail);
+      const persisted = applyLocalPlatformState(auditedState, { allowVolatile: true });
+      if (!persisted && typeof console !== "undefined") {
+        console.warn("[super-admin-audit] audit record kept in memory only", { action, targetType, targetId });
+      }
+    } catch (error) {
+      if (typeof console !== "undefined") {
+        console.warn("[super-admin-audit] audit record failed", error);
+      }
+    }
+  }, [applyLocalPlatformState, withAudit]);
 
   function confirmPublishChecklistAction(actionLabel: string) {
     const missing = RELEASE_REGRESSION_CHECKLIST.filter((item) => !releaseChecklistState[item.id]);
@@ -4098,6 +4198,8 @@ export default function SuperAdminClient() {
     setConfigAllowOrderManagement(permission.allowProductBlock && permission.allowOrderManagement);
     setConfigAllowCouponModule(permission.allowCouponModule);
     setConfigAllowCouponBlock(permission.allowCouponModule && permission.allowCouponBlock);
+    setConfigAllowMembershipManagement(permission.allowMembershipManagement);
+    setConfigAllowPointsRedemption(permission.allowMembershipManagement && permission.allowPointsRedemption);
     setConfigAllowBookingBlock(permission.allowBookingBlock);
     setConfigMerchantCardImage((site.merchantCardImageUrl ?? "").trim());
     setConfigMerchantCardImageOpacity(normalizeUnitInterval(site.merchantCardImageOpacity, 1));
@@ -4273,6 +4375,12 @@ export default function SuperAdminClient() {
         setAccountDeleteError(payload?.message || "删除验证码发送失败，请稍后重试");
         return;
       }
+      recordAuditBestEffort(
+        "account_delete_code_request",
+        target.accountType,
+        target.accountId || target.authUserId,
+        `账号：${target.label}；authUserId:${target.authUserId || "-"}；验证码邮箱:${payload?.verificationEmail || ACCOUNT_DELETE_VERIFICATION_EMAIL}`,
+      );
       setTip(`删除验证码已发送至 ${payload?.verificationEmail || ACCOUNT_DELETE_VERIFICATION_EMAIL}`);
     } catch (error) {
       setAccountDeleteError(error instanceof Error ? error.message : "删除验证码发送失败，请稍后重试");
@@ -4352,6 +4460,12 @@ export default function SuperAdminClient() {
       setAccountDeleteDialog(null);
       setAccountDeleteCode("");
       setAccountDeleteError("");
+      recordAuditBestEffort(
+        "account_delete",
+        target.accountType,
+        target.accountId || target.authUserId,
+        `账号：${target.label}；authUserId:${target.authUserId || "-"}；验证码已校验`,
+      );
       setTip(`已删除账号：${target.label}`);
     } catch (error) {
       setAccountDeleteError(error instanceof Error ? error.message : "删除账号失败，请稍后重试");
@@ -4395,6 +4509,12 @@ export default function SuperAdminClient() {
         ) {
           hydratePersonalConfigDraft(payload.item);
         }
+        recordAuditBestEffort(
+          "personal_service_toggle",
+          "personal",
+          payload.item.accountId || payload.item.authUserId || account.accountId,
+          `账号:${payload.item.email || payload.item.username || payload.item.accountId}；状态:${payload.item.personalServicePaused ? "暂停服务" : "开启服务"}；authUserId:${payload.item.authUserId || "-"}`,
+        );
         setTip(
           `${payload.item.email || payload.item.username || payload.item.accountId} 已${payload.item.personalServicePaused ? "暂停" : "开启"}服务`,
         );
@@ -4410,6 +4530,7 @@ export default function SuperAdminClient() {
       guard,
       hydratePersonalConfigDraft,
       personalPanelMode,
+      recordAuditBestEffort,
       replaceBackendMerchantAccount,
       requestSuperAdminWithSessionRecovery,
       selectedPersonalAccountId,
@@ -4468,6 +4589,12 @@ export default function SuperAdminClient() {
       hydratePersonalConfigDraft(payload.item);
       setSelectedPersonalAccountId(getBackendAccountSelectionKey(payload.item));
       setPersonalPanelMode("detail");
+      recordAuditBestEffort(
+        "personal_service_config_update",
+        "personal",
+        payload.item.accountId || payload.item.authUserId || selectedPersonalAccount.accountId,
+        `账号:${payload.item.email || payload.item.username || payload.item.accountId}；名片数量:${Math.round(businessCardLimit)}；链接模式:${personalConfigAllowBusinessCardLinkMode ? "开启" : "关闭"}；背景图:${Math.round(backgroundLimit)}KB；联系图:${Math.round(contactLimit)}KB；authUserId:${payload.item.authUserId || "-"}`,
+      );
       setTip(`已保存个人账号 ${payload.item.email || payload.item.username || payload.item.accountId} 的服务配置`);
     } catch (error) {
       setPersonalConfigError(error instanceof Error ? error.message : "个人账号配置保存失败，请稍后重试");
@@ -4481,6 +4608,7 @@ export default function SuperAdminClient() {
     personalConfigBusinessCardBackgroundImageLimitKb,
     personalConfigBusinessCardContactImageLimitKb,
     personalConfigBusinessCardLimit,
+    recordAuditBestEffort,
     replaceBackendMerchantAccount,
     requestSuperAdminWithSessionRecovery,
     selectedPersonalAccount,
@@ -4663,6 +4791,14 @@ export default function SuperAdminClient() {
       }
       setDataBackups(Array.isArray(payload?.backups) ? payload.backups : []);
       setDataBackupsError("");
+      if (payload?.created !== false) {
+        recordAuditBestEffort(
+          "data_backup_create",
+          "data_backup",
+          source,
+          `来源:${formatPlatformAdminBackupSourceLabel(source)}；备份数量:${Array.isArray(payload?.backups) ? payload.backups.length : "-"}；商户账号:${backendMerchantAccounts.length}`,
+        );
+      }
       if (source === "manual") {
         setTip(payload?.created === false ? "当前还没到自动备份周期，无需重复创建自动备份" : "超级后台备份已创建");
       }
@@ -4675,7 +4811,48 @@ export default function SuperAdminClient() {
         setDataBackupCreating(false);
       }
     }
-  }, [authed, backendMerchantAccounts, hydrated, operatorName, requestDataBackupsWithSessionRecovery, state]);
+  }, [authed, backendMerchantAccounts, hydrated, operatorName, recordAuditBestEffort, requestDataBackupsWithSessionRecovery, state]);
+
+  async function viewDataBackupDetailAction(backupId: string) {
+    if (!authed || !hydrated) return;
+    if (dataBackupDetail?.id === backupId) {
+      setDataBackupDetail(null);
+      setDataBackupDetailError(null);
+      return;
+    }
+    setDataBackupDetail(null);
+    setDataBackupDetailError(null);
+    setDataBackupDetailLoadingId(backupId);
+    try {
+      const response = await requestSuperAdminWithSessionRecovery(
+        `/api/super-admin/data-backups?backupId=${encodeURIComponent(backupId)}`,
+        {
+          method: "GET",
+          cache: "no-store",
+        },
+      );
+      const payload = (await response.json().catch(() => null)) as
+        | {
+            ok?: boolean;
+            backup?: PlatformAdminDataBackupEntry;
+            error?: string;
+            message?: string;
+          }
+        | null;
+      if (!response.ok || payload?.ok !== true || !payload.backup) {
+        setDataBackupDetailError({
+          id: backupId,
+          text: payload?.message || payload?.error || "备份内容加载失败，请稍后重试",
+        });
+        return;
+      }
+      setDataBackupDetail(payload.backup);
+    } catch {
+      setDataBackupDetailError({ id: backupId, text: "备份内容加载失败，请稍后重试" });
+    } finally {
+      setDataBackupDetailLoadingId("");
+    }
+  }
 
   async function restoreDataBackupAction(backupId: string, scope: PlatformAdminDataBackupRestoreScope) {
     if (!authed || !hydrated) return;
@@ -4733,6 +4910,12 @@ export default function SuperAdminClient() {
         applySupportThreadsState(payload.threads);
       }
 
+      recordAuditBestEffort(
+        "data_backup_restore",
+        "data_backup",
+        backupId,
+        `范围:${scopeLabel}；备份:${target.summary || backupId}；备份时间:${fmt(target.at)}；来源:${formatPlatformAdminBackupSourceLabel(target.source)}`,
+      );
       setTip(`${scopeLabel}数据已恢复`);
     } catch {
       setDataBackupsError("备份恢复失败，请稍后重试");
@@ -4790,6 +4973,12 @@ export default function SuperAdminClient() {
       }
       applySupportThreadsState(Array.isArray(payload?.threads) ? payload.threads : []);
       setSupportReplyDraft("");
+      recordAuditBestEffort(
+        "support_reply_send",
+        "support_thread",
+        selectedSupportThread.merchantId || selectedSupportThread.siteId,
+        `商户:${selectedSupportThread.merchantName || selectedSupportThread.merchantId || "-"}；site:${selectedSupportThread.siteId || "-"}；内容长度:${text.length}`,
+      );
       setTip("回复已发送");
     } catch {
       setSupportThreadsError("回复发送失败，请稍后重试");
@@ -4912,6 +5101,12 @@ export default function SuperAdminClient() {
         throw new Error(payload?.message || "转发失败，请稍后重试");
       }
       applySupportThreadsState(Array.isArray(payload?.threads) ? payload.threads : []);
+      recordAuditBestEffort(
+        "support_attachment_forward",
+        "support_thread",
+        target.merchantId || target.siteId,
+        `转发给:${recipientLabel || target.merchantName || target.merchantId}；site:${target.siteId || "-"}；内容长度:${text.length}`,
+      );
       setTip(`已转发给 ${recipientLabel || target.merchantName || target.merchantId}`);
     } finally {
       setSupportSending(false);
@@ -5794,6 +5989,12 @@ export default function SuperAdminClient() {
       setUserManageAccountTypeFilter(accountType);
       setManualUserDialogOpen(false);
       resetManualUserDialog();
+      recordAuditBestEffort(
+        "account_create",
+        accountType,
+        createdItem?.accountId || accountId,
+        `账号类型:${accountType === "personal" ? "个人" : "商户"}；ID:${createdItem?.accountId || accountId}；邮箱:${email}；authUserId:${createdItem?.authUserId || "-"}；手动创建:true`,
+      );
       setTip(`已创建${accountType === "personal" ? "个人" : "商户"}账号：${email}（ID ${accountId}）`);
     } catch (error) {
       setManualUserError(error instanceof Error ? error.message : "新增账号失败，请稍后重试");
@@ -5839,6 +6040,12 @@ export default function SuperAdminClient() {
       }
       setMerchantIdRuleInput("");
       setMerchantIdRuleNote("");
+      recordAuditBestEffort(
+        "merchant_id_rule_create",
+        "merchant_id_rule",
+        createdRule?.id || parsed.rule.expression,
+        `规则:${parsed.rule.expression}；类型:${merchantIdRuleTypeLabel(parsed.rule.type)}；备注:${merchantIdRuleNote.trim() || "-"}`,
+      );
       setTip(`已添加禁用 ID 规则：${parsed.rule.expression}`);
     } catch (error) {
       setMerchantIdRulesError(error instanceof Error ? error.message : "禁用 ID 规则保存失败，请稍后重试");
@@ -5866,6 +6073,12 @@ export default function SuperAdminClient() {
         return;
       }
       setMerchantIdRules((prev) => prev.filter((item) => item.id !== rule.id));
+      recordAuditBestEffort(
+        "merchant_id_rule_delete",
+        "merchant_id_rule",
+        rule.id,
+        `规则:${rule.expression}；类型:${merchantIdRuleTypeLabel(rule.type)}；备注:${rule.note || "-"}`,
+      );
       setTip(`已移除禁用 ID 规则：${rule.expression}`);
     } catch (error) {
       setMerchantIdRulesError(error instanceof Error ? error.message : "禁用 ID 规则删除失败，请稍后重试");
@@ -5893,6 +6106,12 @@ export default function SuperAdminClient() {
         return;
       }
       setTrustedDevices((prev) => prev.filter((item) => item.deviceId !== device.deviceId));
+      recordAuditBestEffort(
+        "trusted_device_delete",
+        "trusted_device",
+        device.deviceId,
+        `设备:${device.deviceLabel || device.deviceId}；首次IP:${device.firstLoginIp || "-"}；最近IP:${device.lastLoginIp || "-"}；浏览器:${formatTrustedDeviceBrowserSummary(device)}；系统:${formatTrustedDevicePlatformSummary(device)}`,
+      );
       setTip(`已移出白名单设备：${device.deviceLabel}`);
     } catch (error) {
       setTrustedDevicesError(error instanceof Error ? error.message : "白名单设备移除失败，请稍后重试");
@@ -5928,6 +6147,12 @@ export default function SuperAdminClient() {
       const savedLimit = typeof payload?.maxDevices === "number" ? payload.maxDevices : nextLimit;
       setTrustedDeviceLimit(savedLimit);
       setTrustedDeviceLimitInput(`${savedLimit}`);
+      recordAuditBestEffort(
+        "trusted_device_limit_update",
+        "trusted_device_policy",
+        "max_devices",
+        `上限:${trustedDeviceLimit} -> ${savedLimit}`,
+      );
       setTip(`白名单设备上限已更新为 ${savedLimit} 台`);
     } catch (error) {
       setTrustedDevicesError(error instanceof Error ? error.message : "白名单设备上限保存失败，请稍后重试");
@@ -6185,6 +6410,20 @@ export default function SuperAdminClient() {
         )}`,
       );
     }
+    if (prevPermission.allowMembershipManagement !== configAllowMembershipManagement) {
+      pendingChanges.push(
+        `会员管理：${formatBool(prevPermission.allowMembershipManagement)} -> ${formatBool(
+          configAllowMembershipManagement,
+        )}`,
+      );
+    }
+    if (prevPermission.allowPointsRedemption !== (configAllowMembershipManagement && configAllowPointsRedemption)) {
+      pendingChanges.push(
+        `积分兑换：${formatBool(prevPermission.allowPointsRedemption)} -> ${formatBool(
+          configAllowMembershipManagement && configAllowPointsRedemption,
+        )}`,
+      );
+    }
     if (prevPermission.allowBookingBlock !== configAllowBookingBlock) {
       pendingChanges.push(`预约区块：${formatBool(prevPermission.allowBookingBlock)} -> ${formatBool(configAllowBookingBlock)}`);
     }
@@ -6263,6 +6502,8 @@ export default function SuperAdminClient() {
         allowOrderManagement: configAllowProductBlock && configAllowOrderManagement,
         allowCouponModule: configAllowCouponModule,
         allowCouponBlock: configAllowCouponModule && configAllowCouponBlock,
+        allowMembershipManagement: configAllowMembershipManagement,
+        allowPointsRedemption: configAllowMembershipManagement && configAllowPointsRedemption,
         allowBookingBlock: configAllowBookingBlock,
       },
       merchantCardImageUrl: nextMerchantCardImage,
@@ -6322,7 +6563,7 @@ export default function SuperAdminClient() {
         "merchant_config_update",
         "site",
         selectedMerchantSite.id,
-        detail,
+        `${detail}；商户:${getSiteDisplayName(selectedMerchantSite) || selectedMerchantSite.id}；状态:${siteStatusLabel(selectedMerchantSite.status)} -> ${siteStatusLabel(nextStatus)}；到期:${beforeSnapshot.serviceExpiresAt || "-"} -> ${afterSnapshot.serviceExpiresAt || "-"}；变更:${pendingChanges.join("；")}`,
       );
     const nextStatePreviewRaw = buildConfigState(stateRef.current);
     const nextStatePreview = compactPlatformStateForStorage(nextStatePreviewRaw);
@@ -6481,7 +6722,7 @@ export default function SuperAdminClient() {
       "merchant_config_rollback",
       "site",
       selectedMerchantSite.id,
-      `rollback:${targetHistory.id}`,
+      `商户:${getSiteDisplayName(selectedMerchantSite) || selectedMerchantSite.id}；回滚到:${fmt(targetHistory.at)}；historyId:${targetHistory.id}；变更:${rollbackDiffLines.join("；") || "无"}`,
     );
     try {
       await syncPlatformMerchantSnapshotToServer(auditedNextState);
@@ -6611,7 +6852,7 @@ export default function SuperAdminClient() {
       "merchant_config_restore",
       "site",
       selectedSite.id,
-      `restore:${targetBackup.sourceHistoryEntryId || targetBackup.id}`,
+      `商户:${getSiteDisplayName(selectedSite) || selectedSite.id}；恢复备份:${fmt(targetBackup.at)}；backupId:${targetBackup.id}；sourceHistory:${targetBackup.sourceHistoryEntryId || "-"}；变更:${restoreDiffLines.join("；") || "无"}`,
     );
     try {
       await syncPlatformMerchantSnapshotToServer(auditedNextState);
@@ -8945,6 +9186,29 @@ export default function SuperAdminClient() {
                               <label className="flex items-center gap-2 rounded border px-2 py-1.5">
                                 <input
                                   type="checkbox"
+                                  checked={configAllowMembershipManagement}
+                                  onChange={(e) => {
+                                    const nextChecked = e.target.checked;
+                                    setConfigAllowMembershipManagement(nextChecked);
+                                    if (!nextChecked) {
+                                      setConfigAllowPointsRedemption(false);
+                                    }
+                                  }}
+                                />
+                                会员管理
+                              </label>
+                              <label className={`flex items-center gap-2 rounded border px-2 py-1.5 ${configAllowMembershipManagement ? "" : "opacity-50"}`}>
+                                <input
+                                  type="checkbox"
+                                  checked={configAllowMembershipManagement && configAllowPointsRedemption}
+                                  onChange={(e) => setConfigAllowPointsRedemption(e.target.checked)}
+                                  disabled={!configAllowMembershipManagement}
+                                />
+                                积分兑换
+                              </label>
+                              <label className="flex items-center gap-2 rounded border px-2 py-1.5">
+                                <input
+                                  type="checkbox"
                                   checked={configAllowBookingBlock}
                                   onChange={(e) => {
                                     const nextChecked = e.target.checked;
@@ -10404,6 +10668,21 @@ export default function SuperAdminClient() {
                       {dataBackups.map((backup) => {
                         const restoringUserManage = dataBackupRestoringKey === `${backup.id}:user_manage`;
                         const restoringSupport = dataBackupRestoringKey === `${backup.id}:support_messages`;
+                        const detailOpen = dataBackupDetail?.id === backup.id;
+                        const detailLoading = dataBackupDetailLoadingId === backup.id;
+                        const detailError = dataBackupDetailError?.id === backup.id ? dataBackupDetailError.text : "";
+                        const detailSnapshot = detailOpen ? dataBackupDetail.snapshot : null;
+                        const backupSites = detailSnapshot?.platformState.sites ?? [];
+                        const backupUsers = detailSnapshot?.platformState.users ?? [];
+                        const backupRoles = detailSnapshot?.platformState.roles ?? [];
+                        const backupMerchantAccounts = detailSnapshot?.merchantAccounts ?? [];
+                        const backupMerchantSnapshots = detailSnapshot?.merchantSnapshot?.snapshot ?? [];
+                        const backupMerchantConfigBackups = detailSnapshot?.merchantConfigArchive.backups ?? [];
+                        const backupSupportThreads = detailSnapshot?.supportInbox.threads ?? [];
+                        const backupSupportMessagesCount = backupSupportThreads.reduce(
+                          (total, thread) => total + thread.messages.length,
+                          0,
+                        );
                         return (
                           <div key={backup.id} className="rounded border px-3 py-3 text-xs">
                             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -10428,6 +10707,14 @@ export default function SuperAdminClient() {
                                 <button
                                   type="button"
                                   className="rounded border px-3 py-2 text-xs hover:bg-slate-50 disabled:opacity-50"
+                                  onClick={() => void viewDataBackupDetailAction(backup.id)}
+                                  disabled={detailLoading}
+                                >
+                                  {detailLoading ? "加载中..." : detailOpen ? "收起内容" : "查看内容"}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="rounded border px-3 py-2 text-xs hover:bg-slate-50 disabled:opacity-50"
                                   onClick={() => void restoreDataBackupAction(backup.id, "user_manage")}
                                   disabled={!!dataBackupRestoringKey}
                                 >
@@ -10443,6 +10730,130 @@ export default function SuperAdminClient() {
                                 </button>
                               </div>
                             </div>
+                            {detailError ? <div className="mt-3 text-xs text-rose-600">{detailError}</div> : null}
+                            {detailSnapshot ? (
+                              <div className="mt-3 space-y-3 rounded border bg-slate-50 p-3">
+                                <div className="grid gap-3 md:grid-cols-2">
+                                  <div className="rounded border bg-white p-3">
+                                    <div className="font-semibold text-slate-900">用户管理内容</div>
+                                    <div className="mt-1 text-slate-600">
+                                      站点 {backupSites.length} / 用户 {backupUsers.length} / 角色 {backupRoles.length} / 商户账号{" "}
+                                      {backupMerchantAccounts.length}
+                                    </div>
+                                    <div className="mt-1 text-slate-600">
+                                      发布快照 {backupMerchantSnapshots.length} / 商户配置备份 {backupMerchantConfigBackups.length}
+                                    </div>
+                                  </div>
+                                  <div className="rounded border bg-white p-3">
+                                    <div className="font-semibold text-slate-900">信息处理内容</div>
+                                    <div className="mt-1 text-slate-600">
+                                      会话 {backupSupportThreads.length} / 消息 {backupSupportMessagesCount}
+                                    </div>
+                                    <div className="mt-1 text-slate-600">
+                                      备份ID：<span className="break-all font-mono">{backup.id}</span>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div className="grid gap-3 md:grid-cols-2">
+                                  <div className="rounded border bg-white p-3">
+                                    <div className="mb-2 font-semibold text-slate-900">站点</div>
+                                    <div className="max-h-56 overflow-auto rounded border">
+                                      {backupSites.length === 0 ? (
+                                        <div className="px-2 py-2 text-slate-500">无站点数据</div>
+                                      ) : (
+                                        backupSites.map((site) => (
+                                          <div key={site.id} className="border-b px-2 py-2 last:border-b-0">
+                                            <div className="font-medium text-slate-900">
+                                              {site.name || site.merchantName || site.id}
+                                            </div>
+                                            <div className="text-slate-500">
+                                              {site.id} | {siteStatusLabel(site.status)} | {site.domainPrefix || site.domain || "-"}
+                                            </div>
+                                            <div className="text-slate-500">更新：{fmt(site.updatedAt)}</div>
+                                          </div>
+                                        ))
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div className="rounded border bg-white p-3">
+                                    <div className="mb-2 font-semibold text-slate-900">平台用户</div>
+                                    <div className="max-h-56 overflow-auto rounded border">
+                                      {backupUsers.length === 0 ? (
+                                        <div className="px-2 py-2 text-slate-500">无用户数据</div>
+                                      ) : (
+                                        backupUsers.map((user) => (
+                                          <div key={user.id} className="border-b px-2 py-2 last:border-b-0">
+                                            <div className="font-medium text-slate-900">{user.name || user.email || user.id}</div>
+                                            <div className="break-all text-slate-500">
+                                              {user.email || "-"} | {user.status} | 角色 {user.roleIds.join(",") || "-"}
+                                            </div>
+                                            <div className="break-all text-slate-500">站点 {user.siteIds.join(",") || "-"}</div>
+                                          </div>
+                                        ))
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div className="rounded border bg-white p-3">
+                                    <div className="mb-2 font-semibold text-slate-900">商户账号</div>
+                                    <div className="max-h-56 overflow-auto rounded border">
+                                      {backupMerchantAccounts.length === 0 ? (
+                                        <div className="px-2 py-2 text-slate-500">无商户账号数据</div>
+                                      ) : (
+                                        backupMerchantAccounts.map((account, index) => (
+                                          <div key={`${account.merchantId || account.email || account.loginId}-${index}`} className="border-b px-2 py-2 last:border-b-0">
+                                            <div className="font-medium text-slate-900">
+                                              {account.merchantName || account.merchantId || account.email || "-"}
+                                            </div>
+                                            <div className="break-all text-slate-500">
+                                              ID {account.merchantId || "-"} | {account.email || account.username || "-"}
+                                            </div>
+                                            <div className="break-all text-slate-500">
+                                              auth {account.authUserId || "-"} | 站点 {account.siteSlug || "-"} | 创建 {fmt(account.createdAt)}
+                                            </div>
+                                          </div>
+                                        ))
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div className="rounded border bg-white p-3">
+                                    <div className="mb-2 font-semibold text-slate-900">会话</div>
+                                    <div className="max-h-56 overflow-auto rounded border">
+                                      {backupSupportThreads.length === 0 ? (
+                                        <div className="px-2 py-2 text-slate-500">无会话数据</div>
+                                      ) : (
+                                        backupSupportThreads.map((thread) => {
+                                          const latestMessage = thread.messages[thread.messages.length - 1] ?? null;
+                                          return (
+                                            <div key={`${thread.merchantId}:${thread.siteId}`} className="border-b px-2 py-2 last:border-b-0">
+                                              <div className="font-medium text-slate-900">
+                                                {thread.merchantName || thread.merchantId}
+                                              </div>
+                                              <div className="break-all text-slate-500">
+                                                {thread.merchantId} | {thread.merchantEmail || "-"} | 消息 {thread.messages.length}
+                                              </div>
+                                              <div className="line-clamp-2 break-all text-slate-500">
+                                                最新：{latestMessage ? `${fmt(latestMessage.createdAt)} ${latestMessage.text}` : "-"}
+                                              </div>
+                                            </div>
+                                          );
+                                        })
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <details className="rounded border bg-white p-3">
+                                  <summary className="cursor-pointer font-semibold text-slate-900">完整原始备份 JSON</summary>
+                                  <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-all rounded bg-slate-950 p-3 text-[11px] leading-5 text-slate-100">
+                                    {JSON.stringify(detailSnapshot, null, 2)}
+                                  </pre>
+                                </details>
+                              </div>
+                            ) : null}
                           </div>
                         );
                       })}
@@ -10471,25 +10882,47 @@ export default function SuperAdminClient() {
                     <div>
                       <h2 className="font-semibold">审计日志</h2>
                       <div className="text-xs text-slate-500">
-                        {normalizedLogKeyword
-                          ? `当前关键词：${logKeyword}，审计命中 ${filteredAuditRows.length} 条，告警命中 ${filteredAlertRows.length} 条`
-                          : "支持对动作、操作人、目标、详情、告警标题和消息做模糊搜索。"}
+                        {logFilterActive
+                          ? `筛选结果：审计命中 ${filteredAuditRows.length} 条，告警命中 ${filteredAlertRows.length} 条`
+                          : "支持按时间段、动作、操作人、目标、详情、告警标题和消息搜索。"}
                       </div>
                     </div>
-                    <div className="flex min-w-[280px] flex-1 items-center gap-2 md:max-w-md">
+                    <div className="grid min-w-[280px] flex-1 gap-2 md:max-w-5xl md:grid-cols-[1fr_190px_190px_auto]">
                       <input
                         className="w-full rounded border px-3 py-2 text-sm"
                         value={logKeyword}
                         onChange={(event) => setLogKeyword(event.target.value)}
                         placeholder="搜索动作 / 操作人 / 站点ID / 详情 / 告警内容"
                       />
-                      {logKeyword.trim() ? (
+                      <label className="grid gap-1 text-[11px] text-slate-500">
+                        <span>开始时间</span>
+                        <input
+                          type="datetime-local"
+                          className="rounded border px-3 py-2 text-sm text-slate-900"
+                          value={logStartAt}
+                          onChange={(event) => setLogStartAt(event.target.value)}
+                        />
+                      </label>
+                      <label className="grid gap-1 text-[11px] text-slate-500">
+                        <span>结束时间</span>
+                        <input
+                          type="datetime-local"
+                          className="rounded border px-3 py-2 text-sm text-slate-900"
+                          value={logEndAt}
+                          onChange={(event) => setLogEndAt(event.target.value)}
+                        />
+                      </label>
+                      {logFilterActive ? (
                         <button
                           type="button"
-                          className="shrink-0 rounded border px-3 py-2 text-sm hover:bg-slate-50"
-                          onClick={() => setLogKeyword("")}
+                          className="self-end rounded border px-3 py-2 text-sm hover:bg-slate-50"
+                          onClick={() => {
+                            setLogKeyword("");
+                            setLogStartAt("");
+                            setLogEndAt("");
+                          }}
                         >
-                          清空
+                          清空筛选
                         </button>
                       ) : null}
                     </div>
@@ -10524,6 +10957,9 @@ export default function SuperAdminClient() {
                           <div className="flex items-center justify-between">
                             <span>{alert.title}</span>
                             <span className={`rounded border px-2 py-0.5 ${badgeClass(alert.level)}`}>{alert.level}</span>
+                          </div>
+                          <div className="text-slate-500">
+                            创建：{fmt(alert.createdAt)} | 处理：{alert.resolvedAt ? fmt(alert.resolvedAt) : "-"} | {alert.resolvedBy || "-"}
                           </div>
                           <div className="text-slate-500">{alert.message}</div>
                         </div>

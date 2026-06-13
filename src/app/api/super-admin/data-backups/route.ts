@@ -68,6 +68,18 @@ export async function GET(request: Request) {
   }
 
   const payload = await loadStoredPlatformAdminDataBackups(supabase as unknown as PlatformAdminDataBackupStoreClient);
+  const url = new URL(request.url);
+  const backupId = trimText(url.searchParams.get("backupId"));
+  if (backupId) {
+    const target = payload.backups.find((item) => item.id === backupId);
+    if (!target) {
+      return noStoreJson({ error: "super_admin_backup_not_found" }, { status: 404 });
+    }
+    return noStoreJson({
+      ok: true,
+      backup: target,
+    });
+  }
   return noStoreJson({
     ok: true,
     backups: payload.backups.map((item) => summarizePlatformAdminDataBackupEntry(item)),

@@ -109,6 +109,8 @@ export type MerchantServicePermissionConfig = {
   allowOrderManagement: boolean;
   allowCouponModule: boolean;
   allowCouponBlock: boolean;
+  allowMembershipManagement: boolean;
+  allowPointsRedemption: boolean;
   allowBookingBlock: boolean;
   publishSizeLimitMb: number;
 };
@@ -434,6 +436,8 @@ export function createDefaultMerchantPermissionConfig(): MerchantServicePermissi
     allowOrderManagement: false,
     allowCouponModule: false,
     allowCouponBlock: false,
+    allowMembershipManagement: false,
+    allowPointsRedemption: false,
     allowBookingBlock: false,
     publishSizeLimitMb: 5,
   };
@@ -464,6 +468,12 @@ export function normalizeMerchantPermissionConfig(value: unknown): MerchantServi
     typeof source.allowCouponModule === "boolean" ? source.allowCouponModule : fallback.allowCouponModule;
   const allowCouponBlockRaw =
     typeof source.allowCouponBlock === "boolean" ? source.allowCouponBlock : fallback.allowCouponBlock;
+  const allowMembershipManagement =
+    typeof source.allowMembershipManagement === "boolean"
+      ? source.allowMembershipManagement
+      : fallback.allowMembershipManagement;
+  const allowPointsRedemptionRaw =
+    typeof source.allowPointsRedemption === "boolean" ? source.allowPointsRedemption : fallback.allowPointsRedemption;
   return {
     planLimit: normalizeInt(source.planLimit, fallback.planLimit, 1, 200),
     pageLimit: normalizeInt(source.pageLimit, fallback.pageLimit, 1, 500),
@@ -530,6 +540,8 @@ export function normalizeMerchantPermissionConfig(value: unknown): MerchantServi
     allowOrderManagement: allowProductBlock && allowOrderManagementRaw,
     allowCouponModule,
     allowCouponBlock: allowCouponModule && allowCouponBlockRaw,
+    allowMembershipManagement,
+    allowPointsRedemption: allowMembershipManagement && allowPointsRedemptionRaw,
     allowBookingBlock: typeof source.allowBookingBlock === "boolean" ? source.allowBookingBlock : fallback.allowBookingBlock,
     publishSizeLimitMb: normalizeInt(source.publishSizeLimitMb, fallback.publishSizeLimitMb, 1, 100),
   };

@@ -44,6 +44,8 @@ test("merchant permission config includes default business card background image
   assert.equal(permission.allowOrderManagement, false);
   assert.equal(permission.allowCouponModule, false);
   assert.equal(permission.allowCouponBlock, false);
+  assert.equal(permission.allowMembershipManagement, false);
+  assert.equal(permission.allowPointsRedemption, false);
 });
 
 test("merchant permission config keeps order management disabled for legacy product-only configs", () => {
@@ -67,6 +69,21 @@ test("merchant permission config keeps coupon block disabled without coupon modu
   });
   assert.equal(enabled.allowCouponModule, true);
   assert.equal(enabled.allowCouponBlock, true);
+});
+
+test("merchant permission config keeps points redemption disabled without membership management", () => {
+  const permission = normalizeMerchantPermissionConfig({
+    allowPointsRedemption: true,
+  });
+  assert.equal(permission.allowMembershipManagement, false);
+  assert.equal(permission.allowPointsRedemption, false);
+
+  const enabled = normalizeMerchantPermissionConfig({
+    allowMembershipManagement: true,
+    allowPointsRedemption: true,
+  });
+  assert.equal(enabled.allowMembershipManagement, true);
+  assert.equal(enabled.allowPointsRedemption, true);
 });
 
 test("merchant config history keeps full entries and persists details outside main state payload", () => {

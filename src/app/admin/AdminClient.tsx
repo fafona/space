@@ -14534,6 +14534,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   async function openMerchantMembersPanel() {
+    if (!canUseMembershipManagement) {
+      showTip("当前商户未开通会员管理");
+      return;
+    }
     const resolvedSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
     if (!resolvedSiteId) {
       showTip("当前商户还没准备好会员资料，请稍后重试");
@@ -14545,6 +14549,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   async function openMerchantMemberSettingsPanel(view: Exclude<MerchantMemberSettingsView, "list">) {
+    if (!canUseMembershipManagement) {
+      showTip("当前商户未开通会员管理");
+      return;
+    }
     const resolvedSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
     if (!resolvedSiteId) {
       showTip("当前商户还没准备好会员资料，请稍后重试");
@@ -14556,6 +14564,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   async function openMerchantPointRedemptionPanel() {
+    if (!canUsePointsRedemption) {
+      showTip(canUseMembershipManagement ? "当前商户未开通积分兑换" : "请先开通会员管理");
+      return;
+    }
     const resolvedSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
     if (!resolvedSiteId) {
       showTip("当前商户还没准备好会员资料，请稍后重试");
@@ -14566,6 +14578,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   async function openMerchantRedemptionRecordsPanel() {
+    if (!canUsePointsRedemption) {
+      showTip(canUseMembershipManagement ? "当前商户未开通积分兑换" : "请先开通会员管理");
+      return;
+    }
     const resolvedSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
     if (!resolvedSiteId) {
       showTip("当前商户还没准备好会员资料，请稍后重试");
@@ -14576,6 +14592,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   async function openMerchantRechargeRecordsPanel() {
+    if (!canUsePointsRedemption) {
+      showTip(canUseMembershipManagement ? "当前商户未开通积分兑换" : "请先开通会员管理");
+      return;
+    }
     const resolvedSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
     if (!resolvedSiteId) {
       showTip("当前商户还没准备好会员资料，请稍后重试");
@@ -14586,6 +14606,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   async function openMerchantPointRedemptionSettingsPanel(view: "redemptionCategories" | "redemptionItems") {
+    if (!canUsePointsRedemption) {
+      showTip(canUseMembershipManagement ? "当前商户未开通积分兑换" : "请先开通会员管理");
+      return;
+    }
     const resolvedSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
     if (!resolvedSiteId) {
       showTip("当前商户还没准备好会员资料，请稍后重试");
@@ -16991,6 +17015,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     !isPlatformEditor &&
     Boolean(merchantPermissionConfig?.allowProductBlock) &&
     Boolean(merchantPermissionConfig?.allowOrderManagement);
+  const canUseMembershipManagement = !isPlatformEditor && Boolean(merchantPermissionConfig?.allowMembershipManagement);
+  const canUsePointsRedemption =
+    canUseMembershipManagement && Boolean(merchantPermissionConfig?.allowPointsRedemption);
   const canUseBookingBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowBookingBlock) || merchantHasBookingBlockConfigured;
   const canUseButtonBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowButtonBlock);
   const resolvedSupportMobileBusinessSection =
@@ -17116,7 +17143,23 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const shouldShowPublishActions = showPublishActions ?? !isPlatformEditor;
   const isDesktopMerchantWorkspace = desktopMerchantWorkspaceActive && !merchantEditorOnly;
   const showDesktopMerchantSupportPanel = isDesktopMerchantWorkspace && merchantDesktopSection === "support";
-  const defaultMerchantDesktopSection: MerchantDesktopSection = "pointRedemption";
+  const merchantDesktopPointRedemptionCenterActive =
+    merchantDesktopSection === "pointRedemption" ||
+    merchantDesktopSection === "redemptionRecords" ||
+    merchantDesktopSection === "rechargeRecords" ||
+    merchantDesktopSection === "redemptionCategories" ||
+    merchantDesktopSection === "redemptionItems";
+  const defaultMerchantDesktopSection: MerchantDesktopSection = canUsePointsRedemption
+    ? "pointRedemption"
+    : canUseBookingBlock
+      ? "booking"
+      : canUseOrderManagement
+        ? "orders"
+        : canUseMembershipManagement
+          ? "members"
+          : canUseCouponModule
+            ? "coupons"
+            : "business";
   useEffect(() => {
     if (checkingAuth || !isDesktopMerchantWorkspace || merchantEditorOnly) return;
     const explicitFaollaSection = typeof window !== "undefined" && isFaollaSectionSearch(window.location.search);
@@ -17152,6 +17195,24 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     merchantEditorOnly,
     merchantSiteIdOverride,
     storeScope,
+  ]);
+  useEffect(() => {
+    if (!isDesktopMerchantWorkspace || merchantEditorOnly) return;
+    if (merchantDesktopPointRedemptionCenterActive && !canUsePointsRedemption) {
+      setMerchantDesktopSection(defaultMerchantDesktopSection);
+      return;
+    }
+    if (merchantDesktopSection === "members" && !canUseMembershipManagement) {
+      setMerchantDesktopSection(defaultMerchantDesktopSection);
+    }
+  }, [
+    canUseMembershipManagement,
+    canUsePointsRedemption,
+    defaultMerchantDesktopSection,
+    isDesktopMerchantWorkspace,
+    merchantDesktopPointRedemptionCenterActive,
+    merchantDesktopSection,
+    merchantEditorOnly,
   ]);
   useEffect(() => {
     if (!isDesktopMerchantWorkspace || merchantDesktopSection !== "booking") {
@@ -20759,33 +20820,34 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             <MerchantBusinessCardManager {...merchantBusinessCardManagerCommonProps} folderViewMode="page" />
           ) : merchantDesktopCouponCenterActive && merchantCouponManagerCommonProps ? (
             <MerchantCouponManager {...merchantCouponManagerCommonProps} view={merchantCouponManagerView} />
-          ) : merchantDesktopSection === "pointRedemption" ? (
+          ) : merchantDesktopSection === "pointRedemption" && canUsePointsRedemption ? (
             <MerchantPointRedemptionCashier
               siteId={editingSiteId || merchantSiteIdOverride || ""}
               siteName={effectiveMerchantDisplayName || merchantDisplayName}
               className="min-h-[calc(100vh-14rem)] py-6"
             />
-          ) : merchantDesktopSection === "redemptionRecords" ? (
+          ) : merchantDesktopSection === "redemptionRecords" && canUsePointsRedemption ? (
             <MerchantPointRedemptionCashier
               siteId={editingSiteId || merchantSiteIdOverride || ""}
               siteName={effectiveMerchantDisplayName || merchantDisplayName}
               className="min-h-[calc(100vh-14rem)] py-6"
               view="records"
             />
-          ) : merchantDesktopSection === "rechargeRecords" ? (
+          ) : merchantDesktopSection === "rechargeRecords" && canUsePointsRedemption ? (
             <MerchantPointRedemptionCashier
               siteId={editingSiteId || merchantSiteIdOverride || ""}
               siteName={effectiveMerchantDisplayName || merchantDisplayName}
               className="min-h-[calc(100vh-14rem)] py-6"
               view="rechargeRecords"
             />
-          ) : merchantDesktopSection === "redemptionCategories" || merchantDesktopSection === "redemptionItems" ? (
+          ) : (merchantDesktopSection === "redemptionCategories" || merchantDesktopSection === "redemptionItems") &&
+            canUsePointsRedemption ? (
             <MerchantRedemptionSettingsPanel
               siteId={editingSiteId || merchantSiteIdOverride || ""}
               view={merchantDesktopSection}
               className="min-h-[calc(100vh-14rem)]"
             />
-          ) : merchantDesktopSection === "members" ? (
+          ) : merchantDesktopSection === "members" && canUseMembershipManagement ? (
             merchantMemberSettingsView === "list" ? (
               <MerchantMemberManager
                 siteId={editingSiteId || ""}
@@ -21030,24 +21092,20 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               <div className="grid gap-4">
                 <div className="grid gap-[5px]">
                   <div className="grid gap-[5px]">
-                    <button
-                      type="button"
-                      className={getMerchantDesktopMenuButtonClassName(
-                        merchantDesktopSection === "pointRedemption" ||
-                          merchantDesktopSection === "redemptionRecords" ||
-                          merchantDesktopSection === "rechargeRecords" ||
-                          merchantDesktopSection === "redemptionCategories" ||
-                          merchantDesktopSection === "redemptionItems",
-                      )}
-                      onClick={() => {
-                        void openMerchantPointRedemptionPanel();
-                      }}
-                    >
-                      <span className="inline-flex min-w-0 items-center gap-2">
-                        <MerchantDesktopMenuIcon name="points" />
-                        <span>积分兑换</span>
-                      </span>
-                    </button>
+                    {canUsePointsRedemption ? (
+                      <button
+                        type="button"
+                        className={getMerchantDesktopMenuButtonClassName(merchantDesktopPointRedemptionCenterActive)}
+                        onClick={() => {
+                          void openMerchantPointRedemptionPanel();
+                        }}
+                      >
+                        <span className="inline-flex min-w-0 items-center gap-2">
+                          <MerchantDesktopMenuIcon name="points" />
+                          <span>积分兑换</span>
+                        </span>
+                      </button>
+                    ) : null}
                     {canUseBookingBlock ? (
                       <button
                         type="button"
@@ -21106,18 +21164,20 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         ) : null}
                       </span>
                     </button>
-                    <button
-                      type="button"
-                      className={getMerchantDesktopMenuButtonClassName(merchantDesktopSection === "members")}
-                      onClick={() => {
-                        void openMerchantMembersPanel();
-                      }}
-                    >
-                      <span className="inline-flex min-w-0 items-center gap-2">
-                        <MerchantDesktopMenuIcon name="members" />
-                        <span>会员管理</span>
-                      </span>
-                    </button>
+                    {canUseMembershipManagement ? (
+                      <button
+                        type="button"
+                        className={getMerchantDesktopMenuButtonClassName(merchantDesktopSection === "members")}
+                        onClick={() => {
+                          void openMerchantMembersPanel();
+                        }}
+                      >
+                        <span className="inline-flex min-w-0 items-center gap-2">
+                          <MerchantDesktopMenuIcon name="members" />
+                          <span>会员管理</span>
+                        </span>
+                      </button>
+                    ) : null}
                     {canUseCouponModule ? (
                       <button
                         type="button"
@@ -21266,11 +21326,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             <div className="border-t border-blue-200/15 bg-[#16213a] shadow-[inset_0_1px_0_rgba(147,197,253,0.08),inset_0_18px_30px_rgba(0,0,0,0.10)]">
               <div className="w-full px-2 py-4">
                 <div className="rounded-xl border border-blue-200/10 bg-[#111c32] px-2 py-2">
-                  {merchantDesktopSection === "pointRedemption" ||
-                  merchantDesktopSection === "redemptionRecords" ||
-                  merchantDesktopSection === "rechargeRecords" ||
-                  merchantDesktopSection === "redemptionCategories" ||
-                  merchantDesktopSection === "redemptionItems" ? (
+                  {merchantDesktopPointRedemptionCenterActive && canUsePointsRedemption ? (
                     <div className="grid gap-2">
                       <button
                         type="button"
@@ -21398,7 +21454,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         </svg>
                       </button>
                     </div>
-                  ) : merchantDesktopSection === "members" ? (
+                  ) : merchantDesktopSection === "members" && canUseMembershipManagement ? (
                     <div className="grid gap-2">
                         {MERCHANT_MEMBER_CONTEXT_MENU_ITEMS.map((item) => (
                           <button
