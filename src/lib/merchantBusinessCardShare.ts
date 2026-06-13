@@ -2,7 +2,10 @@ import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
   MERCHANT_BUSINESS_CARD_CONTACT_ONLY_FIELD_KEYS,
   MERCHANT_BUSINESS_CARD_PHONE_LIMIT,
+  normalizeMerchantBusinessCardContactSectionOrder,
   normalizeMerchantBusinessCardContactFieldOrder,
+  type MerchantBusinessCardContactSectionKey,
+  type MerchantBusinessCardCustomContactLink,
   type MerchantBusinessCardContactOnlyFieldKey,
   type MerchantBusinessCardContactOnlyFields,
   type MerchantBusinessCardContactDisplayKey,
@@ -33,6 +36,9 @@ export type MerchantBusinessCardSharePayload = {
   introVideoUrl?: string;
   introPosterUrl?: string;
   introVideoMuted?: boolean;
+  contactPageSectionOrder?: MerchantBusinessCardContactSectionKey[];
+  showContactSaveButton?: boolean;
+  showContactWebsiteButton?: boolean;
   updatedAt?: string;
   targetUrl: string;
   ownerMerchantId?: string;
@@ -49,6 +55,7 @@ export type MerchantBusinessCardShareContact = {
   phones?: string[];
   contactFieldOrder?: MerchantBusinessCardContactDisplayKey[];
   contactOnlyFields?: Partial<MerchantBusinessCardContactOnlyFields>;
+  customLinks?: MerchantBusinessCardCustomContactLink[];
   email?: string;
   address?: string;
   invoiceName?: string;
@@ -192,6 +199,26 @@ function normalizeContactOnlyFields(value: unknown) {
   return Object.keys(normalized).length > 0 ? normalized : undefined;
 }
 
+function normalizeCustomContactLinks(value: unknown): MerchantBusinessCardCustomContactLink[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item, index) => {
+      if (!item || typeof item !== "object") return null;
+      const source = item as Partial<MerchantBusinessCardCustomContactLink>;
+      return {
+        id: clampContactText(source.id, 80) || `custom-contact-${index + 1}`,
+        label: clampContactText(source.label, 80) || `自定义${index + 1}`,
+        displayText: clampContactText(source.displayText, 160),
+        url: clampContactText(source.url, 500),
+        iconPreset: clampContactText(source.iconPreset, 32) || "link",
+        iconUrl: normalizeMerchantBusinessCardShareImageUrl(source.iconUrl, undefined) || clampContactText(source.iconUrl, 500),
+        bgColor: clampContactText(source.bgColor, 32) || "#0f172a",
+      } satisfies MerchantBusinessCardCustomContactLink;
+    })
+    .filter((item): item is MerchantBusinessCardCustomContactLink => Boolean(item && (item.url || item.displayText)))
+    .slice(0, 12);
+}
+
 function isLocalHost(hostname: string) {
   const normalized = normalizeText(hostname).toLowerCase();
   return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "[::1]" || normalized.endsWith(".localhost");
@@ -284,6 +311,16 @@ function readSearchParam(searchParams: SearchParamsLike, key: string) {
   return normalizeText(value);
 }
 
+function parseCustomContactLinksParam(value: string | null | undefined) {
+  const normalized = normalizeText(value);
+  if (!normalized) return [];
+  try {
+    return normalizeCustomContactLinks(JSON.parse(normalized));
+  } catch {
+    return [];
+  }
+}
+
 function buildTargetHostLabel(targetUrl: string) {
   const normalized = normalizeMerchantBusinessCardShareTargetUrl(targetUrl);
   if (!normalized) return "";
@@ -345,6 +382,9 @@ function normalizeSharePayload(
     introVideoUrl?: string | null;
     introPosterUrl?: string | null;
     introVideoMuted?: boolean | string | null;
+    contactPageSectionOrder?: MerchantBusinessCardContactSectionKey[] | string[] | null;
+    showContactSaveButton?: boolean | string | null;
+    showContactWebsiteButton?: boolean | string | null;
     updatedAt?: string | null;
     targetUrl?: string | null;
     ownerMerchantId?: string | null;
@@ -363,6 +403,13 @@ function normalizeSharePayload(
       ? normalizeMerchantBusinessCardShareImageUrl(input.introPosterUrl, preferredOrigin)
       : "";
   const introVideoMuted = introVideoUrl ? normalizeOptionalBoolean(input.introVideoMuted, true) : undefined;
+  const contactPageSectionOrder = normalizeMerchantBusinessCardContactSectionOrder(input.contactPageSectionOrder);
+  const defaultContactPageSectionOrder = normalizeMerchantBusinessCardContactSectionOrder(undefined);
+  const hasCustomContactPageSectionOrder =
+    Array.isArray(input.contactPageSectionOrder) &&
+    contactPageSectionOrder.join("|") !== defaultContactPageSectionOrder.join("|");
+  const showContactSaveButton = normalizeOptionalBoolean(input.showContactSaveButton, true);
+  const showContactWebsiteButton = normalizeOptionalBoolean(input.showContactWebsiteButton, true);
   const detailImageHeight = clampImageDimension(input.detailImageHeight);
   if (!targetUrl) return null;
   const updatedAt = normalizeUpdatedAt(input.updatedAt);
@@ -374,6 +421,9 @@ function normalizeSharePayload(
     ...(detailImageUrl ? { detailImageUrl } : {}),
     ...(detailImageUrl && detailImageHeight ? { detailImageHeight } : {}),
     ...(introVideoUrl ? { introVideoUrl, ...(introPosterUrl ? { introPosterUrl } : {}), introVideoMuted } : {}),
+    ...(hasCustomContactPageSectionOrder ? { contactPageSectionOrder } : {}),
+    ...(showContactSaveButton === false ? { showContactSaveButton } : {}),
+    ...(showContactWebsiteButton === false ? { showContactWebsiteButton } : {}),
     ...(updatedAt ? { updatedAt } : {}),
     targetUrl,
     ...(normalizeOwnerMerchantId(input.ownerMerchantId) ? { ownerMerchantId: normalizeOwnerMerchantId(input.ownerMerchantId) } : {}),
@@ -394,6 +444,9 @@ export function normalizeMerchantBusinessCardSharePayload(
     introVideoUrl?: string | null;
     introPosterUrl?: string | null;
     introVideoMuted?: boolean | string | null;
+    contactPageSectionOrder?: MerchantBusinessCardContactSectionKey[] | string[] | null;
+    showContactSaveButton?: boolean | string | null;
+    showContactWebsiteButton?: boolean | string | null;
     targetUrl?: string | null;
     ownerMerchantId?: string | null;
     imageWidth?: number | null;
@@ -421,6 +474,7 @@ export function normalizeMerchantBusinessCardShareContact(
     ? normalizeMerchantBusinessCardContactFieldOrder(source.contactFieldOrder)
     : undefined;
   const contactOnlyFields = normalizeContactOnlyFields(source.contactOnlyFields);
+  const customLinks = normalizeCustomContactLinks(source.customLinks);
   const contact = {
     ...(clampContactText(source.displayName, 120)
       ? { displayName: clampContactText(source.displayName, 120) }
@@ -493,6 +547,7 @@ export function normalizeMerchantBusinessCardShareContact(
       : {}),
     ...(websiteUrl ? { websiteUrl } : {}),
     ...(contactOnlyFields ? { contactOnlyFields } : {}),
+    ...(customLinks.length > 0 ? { customLinks } : {}),
     ...(clampContactText(source.note, 600)
       ? { note: clampContactText(source.note, 600) }
       : {}),
@@ -573,6 +628,9 @@ export function buildMerchantBusinessCardShareLegacyFingerprint(
         introVideoUrl?: string | null;
         introPosterUrl?: string | null;
         introVideoMuted?: boolean | string | null;
+        contactPageSectionOrder?: MerchantBusinessCardContactSectionKey[] | string[] | null;
+        showContactSaveButton?: boolean | string | null;
+        showContactWebsiteButton?: boolean | string | null;
         targetUrl?: string | null;
         imageWidth?: number | null;
         imageHeight?: number | null;
@@ -594,6 +652,9 @@ export function buildMerchantBusinessCardShareLegacyFingerprint(
     payload.targetUrl,
     String(payload.imageWidth ?? 0),
     String(payload.imageHeight ?? 0),
+    (payload.contactPageSectionOrder ?? []).join("|"),
+    payload.showContactSaveButton === false ? "save:0" : "",
+    payload.showContactWebsiteButton === false ? "website:0" : "",
     contact.displayName ?? "",
     contact.organization ?? "",
     contact.title ?? "",
@@ -625,6 +686,9 @@ export function buildMerchantBusinessCardShareLegacyFingerprint(
     contact.xiaohongshu ?? "",
     contact.googleReview ?? "",
     contact.websiteUrl ?? "",
+    (contact.customLinks ?? [])
+      .map((item) => [item.id, item.label, item.displayText, item.url, item.iconPreset, item.iconUrl, item.bgColor].join("~"))
+      .join("|"),
     contact.note ?? "",
     ...(payload.introVideoUrl ? [`introVideo:${payload.introVideoUrl}`] : []),
     ...(payload.introVideoUrl && payload.introPosterUrl ? [`introPoster:${payload.introPosterUrl}`] : []),
@@ -649,6 +713,9 @@ export function buildMerchantBusinessCardShareRevocationByLegacyPayloadObjectPat
         introVideoUrl?: string | null;
         introPosterUrl?: string | null;
         introVideoMuted?: boolean | string | null;
+        contactPageSectionOrder?: MerchantBusinessCardContactSectionKey[] | string[] | null;
+        showContactSaveButton?: boolean | string | null;
+        showContactWebsiteButton?: boolean | string | null;
         targetUrl?: string | null;
         imageWidth?: number | null;
         imageHeight?: number | null;
@@ -702,6 +769,9 @@ export function buildMerchantBusinessCardShareUrl(input: {
   introVideoUrl?: string | null;
   introPosterUrl?: string | null;
   introVideoMuted?: boolean | string | null;
+  contactPageSectionOrder?: MerchantBusinessCardContactSectionKey[] | string[] | null;
+  showContactSaveButton?: boolean | string | null;
+  showContactWebsiteButton?: boolean | string | null;
   targetUrl: string;
   contact?: MerchantBusinessCardShareContact | null;
 }) {
@@ -725,6 +795,9 @@ export function buildMerchantBusinessCardShareUrl(input: {
       introVideoUrl: input.introVideoUrl,
       introPosterUrl: input.introPosterUrl,
       introVideoMuted: input.introVideoMuted,
+      contactPageSectionOrder: input.contactPageSectionOrder,
+      showContactSaveButton: input.showContactSaveButton,
+      showContactWebsiteButton: input.showContactWebsiteButton,
       targetUrl: input.targetUrl,
       contact: input.contact,
     },
@@ -750,6 +823,15 @@ export function buildMerchantBusinessCardShareUrl(input: {
       shareUrl.searchParams.set("introMuted", "0");
     }
   }
+  if (payload.contactPageSectionOrder?.length) {
+    shareUrl.searchParams.set("contactSections", payload.contactPageSectionOrder.join(","));
+  }
+  if (payload.showContactSaveButton === false) {
+    shareUrl.searchParams.set("showContactSave", "0");
+  }
+  if (payload.showContactWebsiteButton === false) {
+    shareUrl.searchParams.set("showContactWebsite", "0");
+  }
   shareUrl.searchParams.set("target", payload.targetUrl);
   if (payload.name) {
     shareUrl.searchParams.set("name", payload.name);
@@ -771,6 +853,9 @@ export function buildMerchantBusinessCardShareUrl(input: {
   }
   if (payload.contact?.contactFieldOrder?.length) {
     shareUrl.searchParams.set("contactOrder", payload.contact.contactFieldOrder.join(","));
+  }
+  if (payload.contact?.customLinks?.length) {
+    shareUrl.searchParams.set("customLinks", JSON.stringify(payload.contact.customLinks));
   }
   const contactOnlyKeys = Object.entries(payload.contact?.contactOnlyFields ?? {})
     .filter(([, enabled]) => enabled)
@@ -854,6 +939,12 @@ export function parseMerchantBusinessCardShareParams(
       introVideoUrl: readSearchParam(searchParams, "introVideo"),
       introPosterUrl: readSearchParam(searchParams, "introPoster"),
       introVideoMuted: readSearchParam(searchParams, "introMuted"),
+      contactPageSectionOrder: readSearchParam(searchParams, "contactSections")
+        ?.split(",")
+        .map((item) => item.trim())
+        .filter(Boolean) as MerchantBusinessCardContactSectionKey[] | undefined,
+      showContactSaveButton: readSearchParam(searchParams, "showContactSave"),
+      showContactWebsiteButton: readSearchParam(searchParams, "showContactWebsite"),
       updatedAt: readSearchParam(searchParams, "updatedAt"),
       targetUrl: readSearchParam(searchParams, "target"),
       imageWidth: Number(readSearchParam(searchParams, "imageWidth")),
@@ -871,6 +962,7 @@ export function parseMerchantBusinessCardShareParams(
           ?.split(",")
           .map((item) => item.trim())
           .filter(Boolean) as MerchantBusinessCardContactDisplayKey[] | undefined,
+        customLinks: parseCustomContactLinksParam(readSearchParam(searchParams, "customLinks")),
         contactOnlyFields: Object.fromEntries(
           (readSearchParam(searchParams, "contactOnly")
             ?.split(",")
@@ -1187,6 +1279,12 @@ function countShareContactFields(contact?: MerchantBusinessCardShareContact | nu
   }
   if (contact.contactOnlyFields) {
     count += Object.values(contact.contactOnlyFields).filter(Boolean).length;
+  }
+  if (Array.isArray(contact.customLinks)) {
+    count += contact.customLinks
+      .flatMap((item) => [item.label, item.displayText, item.url, item.iconPreset, item.iconUrl])
+      .map((value) => normalizeText(value))
+      .filter(Boolean).length;
   }
   return count;
 }

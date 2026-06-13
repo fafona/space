@@ -69,6 +69,9 @@ type BusinessCardShareRequestBody = {
   introVideoUrl?: unknown;
   introPosterUrl?: unknown;
   introVideoMuted?: unknown;
+  contactPageSectionOrder?: unknown;
+  showContactSaveButton?: unknown;
+  showContactWebsiteButton?: unknown;
   targetUrl?: unknown;
   imageWidth?: unknown;
   imageHeight?: unknown;
@@ -206,6 +209,12 @@ function countShareContactFields(contact?: MerchantBusinessCardShareContact | nu
   count += normalizePhoneList(contact.phones).length;
   count += Array.isArray(contact.contactFieldOrder) ? contact.contactFieldOrder.filter(Boolean).length : 0;
   count += contact.contactOnlyFields ? Object.values(contact.contactOnlyFields).filter(Boolean).length : 0;
+  count += Array.isArray(contact.customLinks)
+    ? contact.customLinks
+        .flatMap((item) => [item.label, item.displayText, item.url, item.iconPreset, item.iconUrl])
+        .map((value) => normalizeText(value))
+        .filter(Boolean).length
+    : 0;
   return count;
 }
 
@@ -360,6 +369,9 @@ function buildSnapshotCardSharePayload(card: MerchantBusinessCardAsset, preferre
       introVideoUrl: normalizeText(card.contactIntroVideoUrl),
       introPosterUrl: normalizeText(card.contactIntroVideoPosterUrl),
       introVideoMuted: card.contactIntroVideoMuted,
+      contactPageSectionOrder: card.contactPageSectionOrder,
+      showContactSaveButton: card.showContactSaveButton,
+      showContactWebsiteButton: card.showContactWebsiteButton,
       targetUrl: normalizeText(card.targetUrl),
       imageWidth: typeof card.width === "number" ? Math.round(card.width) : undefined,
       imageHeight: typeof card.height === "number" ? Math.round(card.height) : undefined,
@@ -388,6 +400,7 @@ function buildSnapshotCardSharePayload(card: MerchantBusinessCardAsset, preferre
         xiaohongshu: normalizeText(card.contacts?.xiaohongshu),
         googleReview: normalizeText(card.contacts?.googleReview),
         contactFieldOrder: orderedKeys,
+        customLinks: card.customContactLinks,
         ...(normalizeSnapshotCardContactOnlyFields(card.contactOnlyFields)
           ? { contactOnlyFields: normalizeSnapshotCardContactOnlyFields(card.contactOnlyFields) }
           : {}),
@@ -567,6 +580,27 @@ export async function POST(request: Request) {
     body?.contact && typeof body.contact === "object" ? (body.contact as Record<string, unknown>) : undefined,
     targetUrl,
   );
+  const normalizedPayload = normalizeMerchantBusinessCardSharePayload(
+    {
+      name,
+      imageUrl,
+      detailImageUrl,
+      detailImageHeight,
+      introVideoUrl,
+      introPosterUrl,
+      introVideoMuted,
+      contactPageSectionOrder: Array.isArray(body?.contactPageSectionOrder)
+        ? (body.contactPageSectionOrder as string[])
+        : undefined,
+      showContactSaveButton: body?.showContactSaveButton as boolean | string | undefined,
+      showContactWebsiteButton: body?.showContactWebsiteButton as boolean | string | undefined,
+      targetUrl,
+      imageWidth,
+      imageHeight,
+      contact,
+    },
+    shareOrigin || request.url,
+  );
   if (!shareKey || !imageUrl || !targetUrl || !shareOrigin) {
     return jsonError(400, "invalid_payload");
   }
@@ -604,6 +638,11 @@ export async function POST(request: Request) {
     ...(detailImageUrl ? { detailImageUrl } : {}),
     ...(detailImageUrl && detailImageHeight ? { detailImageHeight } : {}),
     ...(introVideoUrl ? { introVideoUrl, ...(introPosterUrl ? { introPosterUrl } : {}), introVideoMuted } : {}),
+    ...(normalizedPayload?.contactPageSectionOrder
+      ? { contactPageSectionOrder: normalizedPayload.contactPageSectionOrder }
+      : {}),
+    ...(normalizedPayload?.showContactSaveButton === false ? { showContactSaveButton: false } : {}),
+    ...(normalizedPayload?.showContactWebsiteButton === false ? { showContactWebsiteButton: false } : {}),
     updatedAt: new Date().toISOString(),
     targetUrl,
     ...(imageWidth ? { imageWidth } : {}),

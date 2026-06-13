@@ -17,17 +17,21 @@ import QRCode from "qrcode";
 import { showGlobalToast } from "@/lib/globalToast";
 import {
   MERCHANT_BUSINESS_CARD_RATIO_OPTIONS,
+  MERCHANT_BUSINESS_CARD_CUSTOM_CONTACT_ICON_PRESETS,
   MERCHANT_BUSINESS_CARD_PHONE_LIMIT,
   applyMerchantBusinessCardContactFieldOrderToTextLayout,
   createDefaultMerchantBusinessCardDraft,
   getMerchantBusinessCardRequiredFields,
   normalizeMerchantBusinessCardChatDisplaySelection,
   normalizeMerchantBusinessCardDraft,
+  normalizeMerchantBusinessCardContactSectionOrder,
   normalizeMerchantBusinessCardContactFieldOrder,
   resolveMerchantBusinessCardForChatDisplay,
   selectMerchantBusinessCardForChat,
   type MerchantBusinessCardAsset,
   type MerchantBusinessCardContactDisplayKey,
+  type MerchantBusinessCardContactSectionKey,
+  type MerchantBusinessCardCustomContactLink,
   type MerchantBusinessCardCustomText,
   type MerchantBusinessCardDraft,
   type MerchantBusinessCardFieldKey,
@@ -94,6 +98,32 @@ const CONTACT_FIELD_LABELS = Object.fromEntries(CONTACT_FIELDS.map((item) => [it
   string
 >;
 const GOOGLE_REVIEW_DISPLAY_TEXT = "欢迎评价";
+
+const CONTACT_CARD_SECTION_LABELS: Record<MerchantBusinessCardContactSectionKey, string> = {
+  image: "联系卡图片",
+  contacts: "联系方式",
+  coupons: "优惠券",
+};
+
+const CUSTOM_CONTACT_ICON_PRESET_LABELS: Record<(typeof MERCHANT_BUSINESS_CARD_CUSTOM_CONTACT_ICON_PRESETS)[number], string> = {
+  link: "链接",
+  star: "星标",
+  heart: "爱心",
+  chat: "聊天",
+  map: "定位",
+  gift: "礼物",
+  google: "Google",
+};
+
+const CUSTOM_CONTACT_ICON_PRESET_SYMBOLS: Record<(typeof MERCHANT_BUSINESS_CARD_CUSTOM_CONTACT_ICON_PRESETS)[number], string> = {
+  link: "↗",
+  star: "★",
+  heart: "♥",
+  chat: "●",
+  map: "⌖",
+  gift: "□",
+  google: "G",
+};
 
 const INVOICE_FIELDS = [
   { key: "name", label: "名称", summaryLabel: "开票名称", placeholder: "请输入开票名称" },
@@ -1000,10 +1030,11 @@ function buildContactPreviewRows(
   name: string,
   contacts: MerchantBusinessCardDraft["contacts"],
   contactFieldOrder: MerchantBusinessCardDraft["contactFieldOrder"],
+  customContactLinks: MerchantBusinessCardCustomContactLink[] = [],
 ) {
   const phoneValues = normalizePhoneList(Array.isArray(contacts.phones) ? contacts.phones : []);
   const primaryPhone = phoneValues[0] || normalizeText(contacts.phone);
-  return getOrderedContactFields(contactFieldOrder)
+  const contactRows = getOrderedContactFields(contactFieldOrder)
     .flatMap(({ key, label }) => {
       if (key === "phone") {
         return [
@@ -1020,6 +1051,17 @@ function buildContactPreviewRows(
           : normalizeText(contacts[key]);
       return value ? [{ label, value }] : [];
     });
+  const customRows = customContactLinks
+    .map((item, index) => {
+      const value = normalizeText(item.displayText) || normalizeText(item.url);
+      if (!value) return null;
+      return {
+        label: normalizeText(item.label) || `自定义${index + 1}`,
+        value,
+      };
+    })
+    .filter((item): item is { label: string; value: string } => !!item);
+  return [...contactRows, ...customRows];
 }
 
 function buildInvoicePreviewRows(invoice: MerchantBusinessCardDraft["invoice"]) {
@@ -1039,6 +1081,7 @@ function AutoPlayingVideoPreview({
   controls = true,
   loop = true,
   muted = true,
+  autoPlay = true,
 }: {
   src: string;
   poster?: string;
@@ -1046,6 +1089,7 @@ function AutoPlayingVideoPreview({
   controls?: boolean;
   loop?: boolean;
   muted?: boolean;
+  autoPlay?: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
@@ -1066,13 +1110,29 @@ function AutoPlayingVideoPreview({
     try {
       video.load();
     } catch {}
+    if (!autoPlay) {
+      const showFirstFrame = () => {
+        try {
+          if (Number.isFinite(video.duration) && video.duration > 0) {
+            video.currentTime = Math.min(0.05, video.duration);
+          }
+        } catch {}
+      };
+      video.pause();
+      video.addEventListener("loadedmetadata", showFirstFrame, { once: true });
+      video.addEventListener("loadeddata", showFirstFrame, { once: true });
+      return () => {
+        video.removeEventListener("loadedmetadata", showFirstFrame);
+        video.removeEventListener("loadeddata", showFirstFrame);
+      };
+    }
     const timer = window.setTimeout(() => {
       try {
         void video.play?.().catch(() => undefined);
       } catch {}
     }, 60);
     return () => window.clearTimeout(timer);
-  }, [muted, src]);
+  }, [autoPlay, muted, src]);
 
   return (
     <video
@@ -1080,11 +1140,11 @@ function AutoPlayingVideoPreview({
       className={className}
       src={src}
       controls={controls}
-      autoPlay
+      autoPlay={autoPlay}
       loop={loop}
       muted={muted}
       poster={normalizeText(poster) || undefined}
-      preload="auto"
+      preload={autoPlay ? "auto" : "metadata"}
       playsInline
     />
   );
@@ -1096,6 +1156,10 @@ function ContactCardSurface({
   contacts,
   invoice,
   contactFieldOrder,
+  sectionOrder,
+  showContactSaveButton = true,
+  showContactWebsiteButton = true,
+  customContactLinks = [],
   introVideoUrl,
   introVideoPosterUrl,
   introVideoMuted = true,
@@ -1107,20 +1171,77 @@ function ContactCardSurface({
   contacts: MerchantBusinessCardDraft["contacts"];
   invoice: MerchantBusinessCardDraft["invoice"];
   contactFieldOrder: MerchantBusinessCardDraft["contactFieldOrder"];
+  sectionOrder?: MerchantBusinessCardDraft["contactPageSectionOrder"];
+  showContactSaveButton?: boolean;
+  showContactWebsiteButton?: boolean;
+  customContactLinks?: MerchantBusinessCardCustomContactLink[];
   introVideoUrl?: string;
   introVideoPosterUrl?: string;
   introVideoMuted?: boolean;
   imageUrl?: string;
   imageHeight: number;
 }) {
-  const rows = buildContactPreviewRows(name, contacts, contactFieldOrder);
+  const rows = buildContactPreviewRows(name, contacts, contactFieldOrder, customContactLinks);
   const invoiceRows = buildInvoicePreviewRows(invoice);
+  const normalizedSectionOrder = normalizeMerchantBusinessCardContactSectionOrder(sectionOrder);
   const displayName = normalizeText(name);
   const hasImage = Boolean(normalizeText(imageUrl));
   const normalizedIntroVideoUrl = normalizeText(introVideoUrl);
   const normalizedIntroVideoPosterUrl = normalizeText(introVideoPosterUrl);
   const hasIntroVideo = Boolean(normalizedIntroVideoUrl);
   const domainLabel = normalizeText(targetUrl).replace(/^https?:\/\//i, "");
+  const shouldShowActions = showContactSaveButton || showContactWebsiteButton;
+
+  const renderContactSection = (sectionKey: MerchantBusinessCardContactSectionKey) => {
+    if (sectionKey === "image") {
+      return hasImage ? (
+        <div
+          className="overflow-hidden rounded-[28px] border border-slate-200 bg-slate-50 shadow-[0_16px_42px_rgba(15,23,42,.08)]"
+          style={{ height: `${imageHeight}px` }}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={imageUrl} alt={displayName || "联系卡展示图"} className="block h-full w-full object-contain" />
+        </div>
+      ) : null;
+    }
+    if (sectionKey === "coupons") {
+      return (
+        <div className="rounded-[28px] border border-dashed border-slate-200 bg-white p-5 text-center text-xs font-medium text-slate-400">
+          优惠券展示位置
+        </div>
+      );
+    }
+    if (rows.length === 0 && invoiceRows.length === 0) return null;
+    return (
+      <div className="space-y-5">
+        {rows.length > 0 ? (
+          <div className="rounded-[28px] border border-slate-200 bg-slate-50 p-5 shadow-[0_16px_42px_rgba(15,23,42,.08)]">
+            <div className="space-y-4 text-slate-800">
+              {rows.map((row) => (
+                <div key={`${row.label}-${row.value}`} className="text-sm leading-7 text-slate-700">
+                  <span className="font-semibold text-slate-900">{row.label}：</span>
+                  <span className="break-words">{row.value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        {invoiceRows.length > 0 ? (
+          <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_16px_42px_rgba(15,23,42,.08)]">
+            <div className="mb-3 text-sm font-semibold text-slate-900">开票信息</div>
+            <div className="space-y-4 text-slate-800">
+              {invoiceRows.map((row) => (
+                <div key={`${row.label}-${row.value}`} className="text-sm leading-7 text-slate-700">
+                  <span className="font-semibold text-slate-900">{row.label}：</span>
+                  <span className="break-words">{row.value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    );
+  };
 
   return (
     <div className="mx-auto w-full max-w-[430px] rounded-[32px] border border-white/70 bg-white/95 p-5 shadow-[0_28px_90px_rgba(15,23,42,.12)]">
@@ -1138,61 +1259,40 @@ function ContactCardSurface({
             poster={normalizedIntroVideoPosterUrl || undefined}
             className="block aspect-video w-full bg-black object-contain"
             muted={introVideoMuted}
+            autoPlay={false}
           />
         </div>
       ) : null}
 
-      {hasImage ? (
-        <div
-          className="overflow-hidden rounded-[28px] border border-slate-200 bg-slate-50 shadow-[0_16px_42px_rgba(15,23,42,.08)]"
-          style={{ height: `${imageHeight}px` }}
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={imageUrl} alt={displayName || "联系卡展示图"} className="block h-full w-full object-contain" />
-        </div>
-      ) : null}
-
-      {rows.length > 0 ? (
-        <div className={`rounded-[28px] border border-slate-200 bg-slate-50 p-5 shadow-[0_16px_42px_rgba(15,23,42,.08)] ${hasImage ? "mt-5" : ""}`}>
-          <div className="space-y-4 text-slate-800">
-            {rows.map((row) => (
-              <div key={`${row.label}-${row.value}`} className="text-sm leading-7 text-slate-700">
-                <span className="font-semibold text-slate-900">{row.label}：</span>
-                <span className="break-words">{row.value}</span>
-              </div>
-            ))}
+      {normalizedSectionOrder.map((sectionKey) => {
+        const section = renderContactSection(sectionKey);
+        return section ? (
+          <div key={sectionKey} className={hasIntroVideo || sectionKey !== normalizedSectionOrder[0] ? "mt-5" : ""}>
+            {section}
           </div>
+        ) : null;
+      })}
+
+      {shouldShowActions ? (
+        <div className="mt-5 flex gap-3">
+          {showContactSaveButton ? (
+            <button
+              type="button"
+              className="flex-1 cursor-default rounded-full bg-slate-900 px-5 py-3 text-base font-semibold text-white"
+            >
+              一键保存到通讯录
+            </button>
+          ) : null}
+          {showContactWebsiteButton ? (
+            <button
+              type="button"
+              className="rounded-full border border-slate-300 bg-white px-5 py-3 text-base font-medium text-slate-900"
+            >
+              进入官网
+            </button>
+          ) : null}
         </div>
       ) : null}
-
-      {invoiceRows.length > 0 ? (
-        <div className="mt-5 rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_16px_42px_rgba(15,23,42,.08)]">
-          <div className="mb-3 text-sm font-semibold text-slate-900">开票信息</div>
-          <div className="space-y-4 text-slate-800">
-            {invoiceRows.map((row) => (
-              <div key={`${row.label}-${row.value}`} className="text-sm leading-7 text-slate-700">
-                <span className="font-semibold text-slate-900">{row.label}：</span>
-                <span className="break-words">{row.value}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : null}
-
-      <div className="mt-5 flex gap-3">
-        <button
-          type="button"
-          className="flex-1 cursor-default rounded-full bg-slate-900 px-5 py-3 text-base font-semibold text-white"
-        >
-          一键保存到通讯录
-        </button>
-        <button
-          type="button"
-          className="rounded-full border border-slate-300 bg-white px-5 py-3 text-base font-medium text-slate-900"
-        >
-          进入官网
-        </button>
-      </div>
 
       <div className="mt-5 border-t border-slate-200 pt-4 text-center text-xs text-slate-500">
         名片服务由 <span className="font-semibold text-slate-900">{domainLabel || "www.faolla.com"}</span> 提供
@@ -1520,6 +1620,9 @@ export default function MerchantBusinessCardManager({
       introVideoUrl: canUseIntroVideo ? normalizeText(draft.contactIntroVideoUrl) : "",
       introPosterUrl: canUseIntroVideo ? normalizeText(draft.contactIntroVideoPosterUrl) : "",
       introVideoMuted: draft.contactIntroVideoMuted,
+      contactPageSectionOrder: draft.contactPageSectionOrder,
+      showContactSaveButton: draft.showContactSaveButton,
+      showContactWebsiteButton: draft.showContactWebsiteButton,
       contact: buildShareContactPayload({
         name: draft.name,
         title: draft.title,
@@ -1527,6 +1630,7 @@ export default function MerchantBusinessCardManager({
         invoice: draft.invoice,
         contactFieldOrder: draft.contactFieldOrder,
         contactOnlyFields: draft.contactOnlyFields,
+        customContactLinks: draft.customContactLinks,
         targetUrl: websiteUrl,
       }),
     });
@@ -1538,10 +1642,14 @@ export default function MerchantBusinessCardManager({
     draft.contactIntroVideoMuted,
     draft.contactIntroVideoUrl,
     draft.contactOnlyFields,
+    draft.contactPageSectionOrder,
     draft.contacts,
+    draft.customContactLinks,
     draft.invoice,
     draft.mode,
     draft.name,
+    draft.showContactSaveButton,
+    draft.showContactWebsiteButton,
     draft.title,
     websiteUrl,
   ]);
@@ -2001,6 +2109,80 @@ export default function MerchantBusinessCardManager({
     }));
   };
 
+  const moveContactPageSection = (key: MerchantBusinessCardContactSectionKey, direction: "up" | "down") => {
+    applyDraft((current) => {
+      const currentOrder = normalizeMerchantBusinessCardContactSectionOrder(current.contactPageSectionOrder);
+      const currentIndex = currentOrder.indexOf(key);
+      const nextIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+      if (currentIndex < 0 || nextIndex < 0 || nextIndex >= currentOrder.length) return current;
+      const nextOrder = [...currentOrder];
+      [nextOrder[currentIndex], nextOrder[nextIndex]] = [nextOrder[nextIndex], nextOrder[currentIndex]];
+      return {
+        ...current,
+        contactPageSectionOrder: nextOrder,
+      };
+    });
+  };
+
+  const addCustomContactLink = () => {
+    applyDraft((current) => ({
+      ...current,
+      customContactLinks: [
+        ...current.customContactLinks,
+        {
+          id: createId("custom-contact"),
+          label: "自定义",
+          displayText: "",
+          url: "",
+          iconPreset: "link",
+          iconUrl: "",
+          bgColor: "#0f172a",
+        },
+      ],
+    }));
+  };
+
+  const updateCustomContactLink = (
+    id: string,
+    recipe: (current: MerchantBusinessCardCustomContactLink) => MerchantBusinessCardCustomContactLink,
+  ) => {
+    applyDraft((current) => ({
+      ...current,
+      customContactLinks: current.customContactLinks.map((item) => (item.id === id ? recipe(item) : item)),
+    }));
+  };
+
+  const removeCustomContactLink = (id: string) => {
+    applyDraft((current) => ({
+      ...current,
+      customContactLinks: current.customContactLinks.filter((item) => item.id !== id),
+    }));
+  };
+
+  async function handleCustomContactIconUpload(id: string, event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    const shareOrigin = resolveMerchantBusinessCardShareOrigin(undefined, websiteUrl);
+    const uploadedAsset = await uploadFileToPublicStorageWithMetadata(file, {
+      merchantHint: sanitizeShareAssetHint(`${normalizeText(profile.domainPrefix) || normalizeText(draft.name) || "business-card"}-contact-icon`),
+      folder: "merchant-assets",
+      usage: "business-card-contact",
+      operation: {
+        operationModule: "经营中心 > 名片夹",
+        operationAction: "上传自定义联系方式图标",
+        operationSummary: `在经营中心 > 名片夹上传自定义联系方式图标：${draft.name || profile.merchantName || "未命名名片"}`,
+      },
+    });
+    const iconUrl = normalizeMerchantBusinessCardShareImageUrl(normalizeText(uploadedAsset?.url), shareOrigin);
+    if (!iconUrl) {
+      setTip("图标上传失败，请重试");
+      return;
+    }
+    updateCustomContactLink(id, (current) => ({ ...current, iconUrl }));
+    setTip("自定义图标已上传");
+  }
+
   function buildLegacySharePayload(card: MerchantBusinessCardAsset) {
     const targetUrl = normalizeText(card.targetUrl);
     if (card.mode !== "link" || !targetUrl) {
@@ -2015,6 +2197,9 @@ export default function MerchantBusinessCardManager({
       introVideoUrl: normalizeText(card.contactIntroVideoUrl),
       introPosterUrl: normalizeText(card.contactIntroVideoPosterUrl),
       introVideoMuted: card.contactIntroVideoMuted,
+      contactPageSectionOrder: card.contactPageSectionOrder,
+      showContactSaveButton: card.showContactSaveButton,
+      showContactWebsiteButton: card.showContactWebsiteButton,
       targetUrl,
       imageWidth: card.width,
       imageHeight: card.height,
@@ -2025,6 +2210,7 @@ export default function MerchantBusinessCardManager({
         invoice: card.invoice,
         contactFieldOrder: card.contactFieldOrder,
         contactOnlyFields: card.contactOnlyFields,
+        customContactLinks: card.customContactLinks,
         targetUrl,
       }),
     };
@@ -2149,6 +2335,10 @@ export default function MerchantBusinessCardManager({
   const previewTitle = normalizeText(previewAsset?.title) || normalizeText(draft.title);
   const previewContacts = previewAsset?.contacts || draft.contacts;
   const previewContactFieldOrder = previewAsset?.contactFieldOrder || draft.contactFieldOrder;
+  const previewContactSectionOrder = previewAsset?.contactPageSectionOrder || draft.contactPageSectionOrder;
+  const previewShowContactSaveButton = previewAsset?.showContactSaveButton ?? draft.showContactSaveButton;
+  const previewShowContactWebsiteButton = previewAsset?.showContactWebsiteButton ?? draft.showContactWebsiteButton;
+  const previewCustomContactLinks = previewAsset?.customContactLinks || draft.customContactLinks;
   const previewContactImageUrl =
     normalizeText(previewAsset?.contactPagePublicImageUrl) ||
     normalizeText(previewAsset?.contactPageImageUrl) ||
@@ -2260,8 +2450,6 @@ export default function MerchantBusinessCardManager({
                       >
                         预览
                       </button>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
                       <button
                         type="button"
                         className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
@@ -2277,8 +2465,6 @@ export default function MerchantBusinessCardManager({
                       >
                         复制名片图片
                       </button>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
                       <button
                         type="button"
                         className={`rounded border px-3 py-2 text-sm ${
@@ -2696,6 +2882,7 @@ export default function MerchantBusinessCardManager({
                             src={draft.contactIntroVideoUrl}
                             poster={normalizeText(draft.contactIntroVideoPosterUrl) || undefined}
                             muted={draft.contactIntroVideoMuted}
+                            autoPlay={false}
                           />
                         ) : null}
                       </div>
@@ -2764,6 +2951,70 @@ export default function MerchantBusinessCardManager({
                               }}
                             />
                           </label>
+                        </div>
+                      </div>
+                    ) : null}
+                    {draft.mode === "link" ? (
+                      <div className="rounded-xl border bg-white px-3 py-3">
+                        <div className="text-xs font-semibold text-slate-700">联系卡展示设置</div>
+                        <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+                          <div>
+                            <div className="mb-2 text-xs text-slate-500">联系卡内容顺序</div>
+                            <div className="space-y-2">
+                              {normalizeMerchantBusinessCardContactSectionOrder(draft.contactPageSectionOrder).map((key, index, order) => (
+                                <div key={key} className="flex items-center gap-2 rounded-xl border bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                                  <div className="min-w-0 flex-1 font-medium">{CONTACT_CARD_SECTION_LABELS[key]}</div>
+                                  <button
+                                    type="button"
+                                    className="rounded border bg-white px-2 py-1 text-[11px] hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                    onClick={() => moveContactPageSection(key, "up")}
+                                    disabled={index === 0}
+                                  >
+                                    上移
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="rounded border bg-white px-2 py-1 text-[11px] hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                    onClick={() => moveContactPageSection(key, "down")}
+                                    disabled={index === order.length - 1}
+                                  >
+                                    下移
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                          <div>
+                            <div className="mb-2 text-xs text-slate-500">底部按钮</div>
+                            <div className="space-y-2">
+                              <label className="flex items-center gap-2 rounded-xl border bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                                <input
+                                  type="checkbox"
+                                  checked={draft.showContactSaveButton}
+                                  onChange={(event) =>
+                                    applyDraft((current) => ({
+                                      ...current,
+                                      showContactSaveButton: event.target.checked,
+                                    }))
+                                  }
+                                />
+                                显示保存通讯录
+                              </label>
+                              <label className="flex items-center gap-2 rounded-xl border bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                                <input
+                                  type="checkbox"
+                                  checked={draft.showContactWebsiteButton}
+                                  onChange={(event) =>
+                                    applyDraft((current) => ({
+                                      ...current,
+                                      showContactWebsiteButton: event.target.checked,
+                                    }))
+                                  }
+                                />
+                                显示进入官网
+                              </label>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     ) : null}
@@ -2961,6 +3212,135 @@ export default function MerchantBusinessCardManager({
                           </div>
                         );
                       })}
+                    </div>
+                    <div className="mt-4 rounded-xl border bg-white px-3 py-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <div className="text-xs font-semibold text-slate-700">自定义联系方式</div>
+                          <div className="mt-1 text-[11px] text-slate-500">可填写跳转链接和显示内容，适合评价链接、菜单链接或第三方页面。</div>
+                        </div>
+                        <button type="button" className="rounded border bg-white px-3 py-2 text-xs hover:bg-slate-50" onClick={addCustomContactLink}>
+                          新增自定义项
+                        </button>
+                      </div>
+                      {draft.customContactLinks.length > 0 ? (
+                        <div className="mt-3 space-y-3">
+                          {draft.customContactLinks.map((item, index) => (
+                            <div key={item.id} className="rounded-xl border bg-slate-50 p-3">
+                              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                                <div className="text-xs font-medium text-slate-700">{normalizeText(item.label) || `自定义${index + 1}`}</div>
+                                <button
+                                  type="button"
+                                  className="rounded border border-rose-200 bg-white px-2 py-1 text-xs text-rose-600 hover:bg-rose-50"
+                                  onClick={() => removeCustomContactLink(item.id)}
+                                >
+                                  删除
+                                </button>
+                              </div>
+                              <div className="grid gap-3 md:grid-cols-2">
+                                <label className="block text-xs text-slate-600">
+                                  标签
+                                  <input
+                                    className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm"
+                                    value={item.label}
+                                    onChange={(event) => updateCustomContactLink(item.id, (current) => ({ ...current, label: event.target.value }))}
+                                    placeholder="例如 Google"
+                                  />
+                                </label>
+                                <label className="block text-xs text-slate-600">
+                                  显示内容
+                                  <input
+                                    className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm"
+                                    value={item.displayText}
+                                    onChange={(event) =>
+                                      updateCustomContactLink(item.id, (current) => ({ ...current, displayText: event.target.value }))
+                                    }
+                                    placeholder="例如 欢迎评价"
+                                  />
+                                </label>
+                                <label className="block text-xs text-slate-600 md:col-span-2">
+                                  跳转链接
+                                  <input
+                                    className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm"
+                                    value={item.url}
+                                    onChange={(event) => updateCustomContactLink(item.id, (current) => ({ ...current, url: event.target.value }))}
+                                    placeholder="https://..."
+                                  />
+                                </label>
+                                <label className="block text-xs text-slate-600">
+                                  预设图标
+                                  <select
+                                    className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm"
+                                    value={item.iconPreset}
+                                    onChange={(event) =>
+                                      updateCustomContactLink(item.id, (current) => ({
+                                        ...current,
+                                        iconPreset: event.target.value,
+                                      }))
+                                    }
+                                  >
+                                    {MERCHANT_BUSINESS_CARD_CUSTOM_CONTACT_ICON_PRESETS.map((preset) => (
+                                      <option key={preset} value={preset}>
+                                        {CUSTOM_CONTACT_ICON_PRESET_LABELS[preset]}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label className="block text-xs text-slate-600">
+                                  按钮底色
+                                  <div className="mt-1 flex items-center gap-2 rounded border bg-white px-3 py-2">
+                                    <input
+                                      type="color"
+                                      className="h-8 w-10 shrink-0 border-0 bg-transparent p-0"
+                                      value={/^#[0-9a-f]{6}$/i.test(item.bgColor) ? item.bgColor : "#0f172a"}
+                                      onChange={(event) => updateCustomContactLink(item.id, (current) => ({ ...current, bgColor: event.target.value }))}
+                                    />
+                                    <input
+                                      className="min-w-0 flex-1 text-sm outline-none"
+                                      value={item.bgColor}
+                                      onChange={(event) => updateCustomContactLink(item.id, (current) => ({ ...current, bgColor: event.target.value }))}
+                                      placeholder="#0f172a"
+                                    />
+                                  </div>
+                                </label>
+                              </div>
+                              <div className="mt-3 flex flex-wrap items-center gap-2">
+                                <div
+                                  className="flex h-9 w-9 items-center justify-center rounded-full text-sm font-semibold text-white"
+                                  style={{ backgroundColor: normalizeText(item.bgColor) || "#0f172a" }}
+                                >
+                                  {normalizeText(item.iconUrl) ? (
+                                    // eslint-disable-next-line @next/next/no-img-element
+                                    <img src={item.iconUrl} alt="" className="h-5 w-5 object-contain" />
+                                  ) : (
+                                    CUSTOM_CONTACT_ICON_PRESET_SYMBOLS[
+                                      (MERCHANT_BUSINESS_CARD_CUSTOM_CONTACT_ICON_PRESETS as readonly string[]).includes(item.iconPreset)
+                                        ? (item.iconPreset as (typeof MERCHANT_BUSINESS_CARD_CUSTOM_CONTACT_ICON_PRESETS)[number])
+                                        : "link"
+                                    ]
+                                  )}
+                                </div>
+                                <label className="rounded border bg-white px-3 py-2 text-xs hover:bg-slate-50">
+                                  上传图标
+                                  <input type="file" accept="image/*" className="hidden" onChange={(event) => void handleCustomContactIconUpload(item.id, event)} />
+                                </label>
+                                <button
+                                  type="button"
+                                  className="rounded border bg-white px-3 py-2 text-xs hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                  onClick={() => updateCustomContactLink(item.id, (current) => ({ ...current, iconUrl: "" }))}
+                                  disabled={!normalizeText(item.iconUrl)}
+                                >
+                                  使用预设
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="mt-3 rounded border border-dashed bg-slate-50 px-3 py-4 text-xs text-slate-500">
+                          还没有自定义联系方式。
+                        </div>
+                      )}
                     </div>
                   </section>
                   <section className="space-y-2.5 rounded-xl border bg-slate-50 p-3 xl:col-span-2">
@@ -3251,6 +3631,10 @@ export default function MerchantBusinessCardManager({
                           contacts={draft.contacts}
                           invoice={draft.invoice}
                           contactFieldOrder={draft.contactFieldOrder}
+                          sectionOrder={draft.contactPageSectionOrder}
+                          showContactSaveButton={draft.showContactSaveButton}
+                          showContactWebsiteButton={draft.showContactWebsiteButton}
+                          customContactLinks={draft.customContactLinks}
                           introVideoUrl={canUseIntroVideo ? normalizeText(draft.contactIntroVideoUrl) || undefined : undefined}
                           introVideoPosterUrl={
                             canUseIntroVideo ? normalizeText(draft.contactIntroVideoPosterUrl) || undefined : undefined
@@ -3336,6 +3720,10 @@ export default function MerchantBusinessCardManager({
                         contacts={previewContacts}
                         invoice={previewAsset?.invoice || draft.invoice}
                         contactFieldOrder={previewContactFieldOrder}
+                        sectionOrder={previewContactSectionOrder}
+                        showContactSaveButton={previewShowContactSaveButton}
+                        showContactWebsiteButton={previewShowContactWebsiteButton}
+                        customContactLinks={previewCustomContactLinks}
                         introVideoUrl={previewIntroVideoUrl || undefined}
                         introVideoPosterUrl={previewIntroVideoPosterUrl || undefined}
                         introVideoMuted={previewAsset?.contactIntroVideoMuted ?? draft.contactIntroVideoMuted}
@@ -3833,6 +4221,9 @@ export default function MerchantBusinessCardManager({
     introVideoUrl?: string;
     introVideoPosterUrl?: string;
     introVideoMuted?: boolean;
+    contactPageSectionOrder?: MerchantBusinessCardDraft["contactPageSectionOrder"];
+    showContactSaveButton?: boolean;
+    showContactWebsiteButton?: boolean;
     imageWidth?: number;
     imageHeight?: number;
     contact?: MerchantBusinessCardShareContact;
@@ -3869,6 +4260,9 @@ export default function MerchantBusinessCardManager({
       introVideoUrl,
       introPosterUrl,
       introVideoMuted: input.introVideoMuted,
+      contactPageSectionOrder: input.contactPageSectionOrder,
+      showContactSaveButton: input.showContactSaveButton,
+      showContactWebsiteButton: input.showContactWebsiteButton,
       targetUrl,
       name: input.cardName,
       contact: input.contact,
@@ -3912,6 +4306,9 @@ export default function MerchantBusinessCardManager({
             introVideoUrl: introVideoUrl || undefined,
             introPosterUrl: introPosterUrl || undefined,
             introVideoMuted: input.introVideoMuted,
+            contactPageSectionOrder: input.contactPageSectionOrder,
+            showContactSaveButton: input.showContactSaveButton,
+            showContactWebsiteButton: input.showContactWebsiteButton,
             targetUrl,
             imageWidth: typeof input.imageWidth === "number" ? Math.round(input.imageWidth) : undefined,
             imageHeight: typeof input.imageHeight === "number" ? Math.round(input.imageHeight) : undefined,
@@ -4059,6 +4456,7 @@ export default function MerchantBusinessCardManager({
             invoice: nextDraft.invoice,
             contactFieldOrder: nextDraft.contactFieldOrder,
             contactOnlyFields: nextDraft.contactOnlyFields,
+            customContactLinks: nextDraft.customContactLinks,
             targetUrl: websiteUrl,
           })
         : undefined;
@@ -4075,6 +4473,9 @@ export default function MerchantBusinessCardManager({
             introVideoUrl: normalizeText(nextDraft.contactIntroVideoUrl),
             introVideoPosterUrl: normalizeText(nextDraft.contactIntroVideoPosterUrl),
             introVideoMuted: nextDraft.contactIntroVideoMuted,
+            contactPageSectionOrder: nextDraft.contactPageSectionOrder,
+            showContactSaveButton: nextDraft.showContactSaveButton,
+            showContactWebsiteButton: nextDraft.showContactWebsiteButton,
             imageWidth: nextDraft.width,
             imageHeight: nextDraft.height,
             contact: shareContactPayload,
@@ -4135,6 +4536,7 @@ export default function MerchantBusinessCardManager({
             invoice: nextDraft.invoice,
             contactFieldOrder: nextDraft.contactFieldOrder,
             contactOnlyFields: nextDraft.contactOnlyFields,
+            customContactLinks: nextDraft.customContactLinks,
             targetUrl: websiteUrl,
           })
         : undefined;
@@ -4151,6 +4553,9 @@ export default function MerchantBusinessCardManager({
             introVideoUrl: normalizeText(nextDraft.contactIntroVideoUrl),
             introVideoPosterUrl: normalizeText(nextDraft.contactIntroVideoPosterUrl),
             introVideoMuted: nextDraft.contactIntroVideoMuted,
+            contactPageSectionOrder: nextDraft.contactPageSectionOrder,
+            showContactSaveButton: nextDraft.showContactSaveButton,
+            showContactWebsiteButton: nextDraft.showContactWebsiteButton,
             imageWidth: nextDraft.width,
             imageHeight: nextDraft.height,
             contact: shareContactPayload,
@@ -4222,9 +4627,13 @@ export default function MerchantBusinessCardManager({
         allowLegacyFallback: false,
         card,
         contactPageImageUrl: normalizeText(card.contactPageImageUrl),
+        contactPageImageHeight: card.contactPageImageHeight,
         introVideoUrl: normalizeText(card.contactIntroVideoUrl),
         introVideoPosterUrl: normalizeText(card.contactIntroVideoPosterUrl),
         introVideoMuted: card.contactIntroVideoMuted,
+        contactPageSectionOrder: card.contactPageSectionOrder,
+        showContactSaveButton: card.showContactSaveButton,
+        showContactWebsiteButton: card.showContactWebsiteButton,
         imageWidth: card.width,
         imageHeight: card.height,
         contact: buildShareContactPayload({
@@ -4234,6 +4643,7 @@ export default function MerchantBusinessCardManager({
           invoice: card.invoice,
           contactFieldOrder: card.contactFieldOrder,
           contactOnlyFields: card.contactOnlyFields,
+          customContactLinks: card.customContactLinks,
           targetUrl,
         }),
       });
@@ -4266,6 +4676,7 @@ export default function MerchantBusinessCardManager({
     invoice: MerchantBusinessCardDraft["invoice"];
     contactFieldOrder: MerchantBusinessCardDraft["contactFieldOrder"];
     contactOnlyFields: MerchantBusinessCardDraft["contactOnlyFields"];
+    customContactLinks?: MerchantBusinessCardCustomContactLink[];
     targetUrl: string;
   }) {
     const orderedKeys = normalizeMerchantBusinessCardContactFieldOrder(input.contactFieldOrder);
@@ -4311,6 +4722,7 @@ export default function MerchantBusinessCardManager({
       xiaohongshu: normalizeText(input.contacts.xiaohongshu),
       googleReview: normalizeText(input.contacts.googleReview),
       contactFieldOrder: orderedKeys,
+      customLinks: input.customContactLinks ?? [],
       ...(Object.keys(contactOnlyFields).length > 0 ? { contactOnlyFields } : {}),
       websiteUrl: normalizeText(input.targetUrl),
       note: [...extraPhoneLines, ...socialLines].join("\n"),

@@ -116,6 +116,46 @@ test("share helpers preserve non-muted intro video setting", () => {
   assert.equal(parsed?.introVideoMuted, false);
 });
 
+test("share helpers preserve contact card layout controls and custom links", () => {
+  const shareUrl = buildMerchantBusinessCardShareUrl({
+    origin: "https://faolla.com",
+    name: "fafona",
+    imageUrl: "https://faolla.com/storage/v1/object/public/page-assets/card.png",
+    detailImageUrl: "https://faolla.com/storage/v1/object/public/page-assets/contact.png",
+    contactPageSectionOrder: ["contacts", "image", "coupons"],
+    showContactSaveButton: false,
+    showContactWebsiteButton: false,
+    targetUrl: "https://fafona.faolla.com",
+    contact: {
+      displayName: "Felix",
+      customLinks: [
+        {
+          id: "google-review",
+          label: "Google",
+          displayText: "欢迎评价",
+          url: "https://g.page/r/example/review",
+          iconPreset: "google",
+          iconUrl: "https://faolla.com/storage/v1/object/public/page-assets/google.png",
+          bgColor: "#15803d",
+        },
+      ],
+    },
+  });
+
+  const url = new URL(shareUrl);
+  assert.equal(url.searchParams.get("contactSections"), "contacts,image,coupons");
+  assert.equal(url.searchParams.get("showContactSave"), "0");
+  assert.equal(url.searchParams.get("showContactWebsite"), "0");
+  assert.ok(url.searchParams.get("customLinks")?.includes("欢迎评价"));
+
+  const parsed = parseMerchantBusinessCardShareParams(url.searchParams, "https://faolla.com");
+  assert.deepEqual(parsed?.contactPageSectionOrder, ["contacts", "image", "coupons"]);
+  assert.equal(parsed?.showContactSaveButton, false);
+  assert.equal(parsed?.showContactWebsiteButton, false);
+  assert.equal(parsed?.contact?.customLinks?.[0]?.displayText, "欢迎评价");
+  assert.equal(parsed?.contact?.customLinks?.[0]?.iconPreset, "google");
+});
+
 test("resolveMerchantBusinessCardShareOrigin prefers target root domain over localhost", () => {
   assert.equal(
     resolveMerchantBusinessCardShareOrigin("http://localhost:3000", "https://fafona.faolla.com"),

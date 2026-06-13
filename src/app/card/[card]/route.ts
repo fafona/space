@@ -17,8 +17,11 @@ import {
   type MerchantBusinessCardSharePayload,
 } from "@/lib/merchantBusinessCardShare";
 import {
+  normalizeMerchantBusinessCardContactSectionOrder,
   normalizeMerchantBusinessCardContactFieldOrder,
   type MerchantBusinessCardAsset,
+  type MerchantBusinessCardContactSectionKey,
+  type MerchantBusinessCardCustomContactLink,
   type MerchantBusinessCardContactDisplayKey,
 } from "@/lib/merchantBusinessCards";
 import { DEFAULT_LOCALE, I18N_STORAGE_KEY, LANGUAGE_OPTIONS } from "@/lib/i18n";
@@ -206,12 +209,30 @@ function buildGoogleReviewHref(rawValue?: string) {
   return `https://www.google.com/search?q=${encodeURIComponent(value)}`;
 }
 
-function buildInlineSvgIcon(kind: "phone" | "map" | "copy") {
+function buildInlineSvgIcon(kind: "phone" | "map" | "copy" | "link" | "star" | "heart" | "chat" | "gift" | "google") {
   if (kind === "phone") {
     return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.62 10.79a15.53 15.53 0 0 0 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C10.4 21 3 13.6 3 4c0-.55.45-1 1-1h3.49c.55 0 1 .45 1 1 0 1.24.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.19 2.2z"/></svg>`;
   }
   if (kind === "map") {
     return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a7 7 0 0 0-7 7c0 4.74 6.14 11.84 6.4 12.14a.8.8 0 0 0 1.2 0C12.86 20.84 19 13.74 19 9a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z"/></svg>`;
+  }
+  if (kind === "link") {
+    return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.59 13.41a2 2 0 0 0 2.82 0l3.54-3.54a2 2 0 1 0-2.83-2.83l-.7.7-1.42-1.41.71-.71a4 4 0 0 1 5.66 5.66l-3.54 3.54a4 4 0 0 1-5.66 0 4 4 0 0 1 0-5.66l.71-.71 1.41 1.42-.7.7a2 2 0 0 0 0 2.84z"/><path d="M13.41 10.59a2 2 0 0 0-2.82 0l-3.54 3.54a2 2 0 1 0 2.83 2.83l.7-.7 1.42 1.41-.71.71a4 4 0 0 1-5.66-5.66l3.54-3.54a4 4 0 0 1 5.66 0 4 4 0 0 1 0 5.66l-.71.71-1.41-1.42.7-.7a2 2 0 0 0 0-2.84z"/></svg>`;
+  }
+  if (kind === "star") {
+    return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2.7 2.82 5.72 6.31.92-4.57 4.45 1.08 6.29L12 17.11l-5.64 2.97 1.08-6.29-4.57-4.45 6.31-.92L12 2.7z"/></svg>`;
+  }
+  if (kind === "heart") {
+    return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-7.2-4.35-9.4-8.7C.72 8.58 2.8 4.5 6.8 4.5c2.08 0 3.4 1.12 4.2 2.18.8-1.06 2.12-2.18 4.2-2.18 4 0 6.08 4.08 4.2 7.8C19.2 16.65 12 21 12 21z"/></svg>`;
+  }
+  if (kind === "chat") {
+    return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H8l-5 4v-4H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm3 5h10V7H7v2zm0 4h7v-2H7v2z"/></svg>`;
+  }
+  if (kind === "gift") {
+    return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7h-2.18A3 3 0 0 0 12 5.83 3 3 0 0 0 6.18 7H4a2 2 0 0 0-2 2v3h20V9a2 2 0 0 0-2-2zM9 5a1 1 0 0 1 1 1v1H8a1 1 0 0 1 1-2zm6 0a1 1 0 0 1 1 2h-2V6a1 1 0 0 1 1-1zM4 14v6a2 2 0 0 0 2 2h5v-8H4zm9 8h5a2 2 0 0 0 2-2v-6h-7v8z"/></svg>`;
+  }
+  if (kind === "google") {
+    return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.6 12.23c0-.74-.07-1.45-.19-2.14H12v4.05h5.38a4.6 4.6 0 0 1-1.99 3.02v2.51h3.23c1.89-1.74 2.98-4.3 2.98-7.44z"/><path d="M12 22c2.7 0 4.96-.89 6.62-2.33l-3.23-2.51c-.9.6-2.04.95-3.39.95-2.6 0-4.8-1.76-5.59-4.12H3.08v2.59A10 10 0 0 0 12 22z"/><path d="M6.41 13.99a6 6 0 0 1 0-3.98V7.42H3.08a10 10 0 0 0 0 9.16l3.33-2.59z"/><path d="M12 5.89c1.47 0 2.78.5 3.82 1.5l2.87-2.87C16.95 2.9 14.7 2 12 2a10 10 0 0 0-8.92 5.42l3.33 2.59C7.2 7.65 9.4 5.89 12 5.89z"/></svg>`;
   }
   return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 9a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-7a2 2 0 0 1-2-2V9zm-5 6V6a2 2 0 0 1 2-2h8v2H6v9H4z"/></svg>`;
 }
@@ -479,6 +500,45 @@ function buildSummaryActionHtmlFromKey(key: MerchantBusinessCardContactDisplayKe
     default:
       return "";
   }
+}
+
+function normalizeCustomContactHref(value?: string) {
+  const normalized = normalizeText(value);
+  if (!normalized) return "";
+  if (looksLikeUrl(normalized)) return normalized;
+  if (/^(mailto|tel|sms|weixin):/i.test(normalized)) return normalized;
+  const withProtocol = `https://${normalized.replace(/^\/+/, "")}`;
+  return looksLikeUrl(withProtocol) && /\./.test(normalized) ? withProtocol : "";
+}
+
+function resolveCustomContactIconSvg(iconPreset?: string) {
+  const preset = normalizeText(iconPreset);
+  if (preset === "star" || preset === "heart" || preset === "chat" || preset === "map" || preset === "gift" || preset === "google") {
+    return buildInlineSvgIcon(preset);
+  }
+  return buildInlineSvgIcon("link");
+}
+
+function buildCustomContactLinkRows(customLinks?: MerchantBusinessCardCustomContactLink[]): SummaryRow[] {
+  if (!Array.isArray(customLinks)) return [];
+  return customLinks
+    .map((item, index) => {
+      const label = normalizeText(item.label) || `自定义${index + 1}`;
+      const value = normalizeText(item.displayText) || normalizeText(item.url);
+      if (!value) return null;
+      return {
+        label,
+        value,
+        actionHtml: buildActionButtonHtml({
+          href: normalizeCustomContactHref(item.url),
+          label,
+          iconUrl: normalizeText(item.iconUrl),
+          iconSvg: normalizeText(item.iconUrl) ? undefined : resolveCustomContactIconSvg(item.iconPreset),
+          bgColor: normalizeText(item.bgColor) || "#0f172a",
+        }),
+      } satisfies SummaryRow;
+    })
+    .filter((item): item is SummaryRow => !!item);
 }
 
 function resolveContactNoteKey(label: string): MerchantBusinessCardContactDisplayKey | null {
@@ -1943,6 +2003,9 @@ function buildSharePayloadFromSnapshotMatch(
       introVideoUrl: match.allowIntroVideo ? normalizeText(card.contactIntroVideoUrl) : "",
       introPosterUrl: match.allowIntroVideo ? normalizeText(card.contactIntroVideoPosterUrl) : "",
       introVideoMuted: card.contactIntroVideoMuted,
+      contactPageSectionOrder: card.contactPageSectionOrder,
+      showContactSaveButton: card.showContactSaveButton,
+      showContactWebsiteButton: card.showContactWebsiteButton,
       targetUrl,
       ownerMerchantId: match.siteId,
       imageWidth: typeof card.width === "number" ? Math.round(card.width) : undefined,
@@ -1972,6 +2035,7 @@ function buildSharePayloadFromSnapshotMatch(
         xiaohongshu: normalizeText(card.contacts?.xiaohongshu),
         googleReview: normalizeText(card.contacts?.googleReview),
         contactFieldOrder: normalizeMerchantBusinessCardContactFieldOrder(card.contactFieldOrder),
+        customLinks: card.customContactLinks,
         contactOnlyFields: card.contactOnlyFields,
         websiteUrl: targetUrl,
       },
@@ -2348,6 +2412,7 @@ function buildOrderedContactSummaryHtml(input: {
     }
     rows.push(...mergedRows);
   }
+  rows.push(...buildCustomContactLinkRows(contact.customLinks));
 
   if (rows.length === 0 && invoiceRows.length === 0) {
     return `<div class="summary-row"><span class="summary-value" data-no-translate="1">${escapeHtml(normalizeText(input.name) || "电子名片")}</span></div>`;
@@ -2366,6 +2431,9 @@ function buildShareCardHtml(input: {
   introVideoUrl?: string;
   introPosterUrl?: string;
   introVideoMuted?: boolean;
+  contactPageSectionOrder?: MerchantBusinessCardContactSectionKey[];
+  showContactSaveButton?: boolean;
+  showContactWebsiteButton?: boolean;
   summaryHtml: string;
   imageWidth?: number;
   imageHeight?: number;
@@ -2396,6 +2464,33 @@ function buildShareCardHtml(input: {
   const introDebug = Boolean(input.introDebug);
   const inlineI18nScript = buildInlineI18nScript();
   const languageSwitcherHtml = buildLanguageSwitcherHtml();
+  const contactPageSectionOrder = normalizeMerchantBusinessCardContactSectionOrder(input.contactPageSectionOrder);
+  const contactImageSectionHtml = contentImageUrl
+    ? `<a class="card" href="${targetUrl}">
+          <img src="${contentImageUrl}" alt="${title}"${contentImageHeight ? ` style="height:${contentImageHeight}px;object-fit:contain;"` : ""} />
+        </a>`
+    : "";
+  const contactSummarySectionHtml = input.summaryHtml ? `<div class="summary">${input.summaryHtml}</div>` : "";
+  const contactCouponsSectionHtml = input.couponsHtml || "";
+  const contactSectionHtmlByKey: Record<MerchantBusinessCardContactSectionKey, string> = {
+    image: contactImageSectionHtml,
+    contacts: contactSummarySectionHtml,
+    coupons: contactCouponsSectionHtml,
+  };
+  const orderedContactSectionsHtml = contactPageSectionOrder
+    .map((key) => contactSectionHtmlByKey[key])
+    .filter(Boolean)
+    .join("");
+  const showContactSaveButton = input.showContactSaveButton !== false;
+  const showContactWebsiteButton = input.showContactWebsiteButton !== false;
+  const actionItemsHtml = [
+    showContactSaveButton && input.contactUrl
+      ? `<a class="button" href="${escapeHtml(input.contactUrl)}">一键保存到通讯录</a>`
+      : "",
+    showContactWebsiteButton
+      ? `<button class="button secondary" type="button" data-open-target-url="${targetUrl}">进入官网</button>`
+      : "",
+  ].filter(Boolean).join("");
 
   return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -2966,23 +3061,8 @@ function buildShareCardHtml(input: {
       <article>
         <div class="brandline" data-no-translate="1">FAOLLA CARD</div>
         ${merchantName ? `<h1 data-no-translate="1">${merchantName}</h1>` : ""}
-        ${
-          contentImageUrl
-            ? `<a class="card" href="${targetUrl}">
-          <img src="${contentImageUrl}" alt="${title}"${contentImageHeight ? ` style="height:${contentImageHeight}px;object-fit:contain;"` : ""} />
-        </a>`
-            : ""
-        }
-        <div class="summary">${input.summaryHtml}</div>
-        ${input.couponsHtml || ""}
-        <div class="actions">
-          ${
-            input.contactUrl
-              ? `<a class="button" href="${escapeHtml(input.contactUrl)}">一键保存到通讯录</a>`
-              : ""
-          }
-          <button class="button secondary" type="button" data-open-target-url="${targetUrl}">进入官网</button>
-        </div>
+        ${orderedContactSectionsHtml}
+        ${actionItemsHtml ? `<div class="actions">${actionItemsHtml}</div>` : ""}
         <div class="footer">
           名片服务由 <a href="https://www.faolla.com" target="_blank" rel="noopener noreferrer" data-no-translate="1">www.faolla.com</a> 提供
         </div>
@@ -3559,6 +3639,9 @@ export async function GET(
       introVideoUrl: introVideoUrl || undefined,
       introPosterUrl: introPosterUrl || undefined,
       introVideoMuted: payload.introVideoMuted ?? snapshotCard?.contactIntroVideoMuted,
+      contactPageSectionOrder: payload.contactPageSectionOrder ?? snapshotCard?.contactPageSectionOrder,
+      showContactSaveButton: payload.showContactSaveButton ?? snapshotCard?.showContactSaveButton,
+      showContactWebsiteButton: payload.showContactWebsiteButton ?? snapshotCard?.showContactWebsiteButton,
       summaryHtml: buildContactSummaryHtml({
         name: payload.name,
         contact: payload.contact,

@@ -11,6 +11,7 @@ import {
   readMerchantBusinessCardShareKey,
   resolveMerchantBusinessCardSharePayload,
 } from "@/lib/merchantBusinessCardShare";
+import { normalizeMerchantBusinessCardContactSectionOrder } from "@/lib/merchantBusinessCards";
 import { loadPublishedMerchantServiceStateByTargetUrl } from "@/lib/publishedMerchantService";
 
 type ShareBusinessCardPageProps = {
@@ -52,7 +53,14 @@ function renderContactSummary(payload: NonNullable<Awaited<ReturnType<typeof res
     .split("\n")
     .map((row) => row.trim())
     .filter(Boolean);
-  const mergedExtraRows = [...invoiceRows, ...extraRows].filter((row, index, rows) => rows.indexOf(row) === index);
+  const customRows = (payload.contact?.customLinks ?? [])
+    .map((item, index) => {
+      const label = String(item.label || `自定义${index + 1}`).trim();
+      const value = String(item.displayText || item.url || "").trim();
+      return value ? `${label}: ${value}` : "";
+    })
+    .filter(Boolean);
+  const mergedExtraRows = [...invoiceRows, ...extraRows, ...customRows].filter((row, index, rows) => rows.indexOf(row) === index);
 
   if (primaryRows.length === 0 && mergedExtraRows.length === 0) return null;
 
@@ -239,6 +247,29 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
           errorCorrectionLevel: "M",
         }).catch(() => "")
       : "";
+  const contactSections = normalizeMerchantBusinessCardContactSectionOrder(payload.contactPageSectionOrder);
+  const contactImageSection = payload.detailImageUrl ? (
+    <div
+      className="overflow-hidden rounded-[28px] border border-slate-200 bg-slate-50 shadow-[0_16px_42px_rgba(15,23,42,.08)]"
+      style={payload.detailImageHeight ? { height: `${payload.detailImageHeight}px` } : undefined}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={payload.detailImageUrl}
+        alt={title}
+        className={`block w-full object-contain ${payload.detailImageHeight ? "h-full" : "h-auto"}`}
+      />
+    </div>
+  ) : null;
+  const contactSummarySection = renderContactSummary(payload);
+  const contactSectionMap = {
+    image: contactImageSection,
+    contacts: contactSummarySection,
+    coupons: null,
+  };
+  const orderedContactSections = contactSections
+    .map((sectionKey) => ({ sectionKey, section: contactSectionMap[sectionKey] }))
+    .filter((item) => item.section);
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(255,255,255,.96),_rgba(247,239,227,1)_58%,_rgba(229,218,200,1))] px-5 pb-6 pt-0 text-slate-900 sm:px-6 sm:pb-10 sm:pt-4">
@@ -250,26 +281,16 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
           </h1>
         </div>
 
-        {payload.detailImageUrl ? (
-          <div
-            className="overflow-hidden rounded-[28px] border border-slate-200 bg-slate-50 shadow-[0_16px_42px_rgba(15,23,42,.08)]"
-            style={payload.detailImageHeight ? { height: `${payload.detailImageHeight}px` } : undefined}
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={payload.detailImageUrl}
-              alt={title}
-              className={`block w-full object-contain ${payload.detailImageHeight ? "h-full" : "h-auto"}`}
-            />
+        {orderedContactSections.map(({ sectionKey, section }, index) => (
+          <div key={sectionKey} className={index > 0 ? "mt-5" : ""}>
+            {section}
           </div>
-        ) : (
-          renderContactSummary(payload)
-        )}
+        ))}
 
         {isMobileRequest ? (
           <>
             <div className="mt-5 flex flex-col gap-3 sm:flex-row">
-              {contactUrl ? (
+              {payload.showContactSaveButton !== false && contactUrl ? (
                 <a
                   href={contactUrl}
                   className="flex-1 rounded-full bg-slate-900 px-5 py-3 text-center text-base font-semibold text-white transition hover:bg-slate-700"
@@ -279,7 +300,9 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
               ) : null}
               <a
                 href={payload.targetUrl}
-                className="rounded-full border border-slate-300 bg-white px-5 py-3 text-center text-base font-medium text-slate-900 transition hover:bg-slate-50"
+                className={`rounded-full border border-slate-300 bg-white px-5 py-3 text-center text-base font-medium text-slate-900 transition hover:bg-slate-50 ${
+                  payload.showContactWebsiteButton === false ? "hidden" : ""
+                }`}
               >
                 进入官网
               </a>
@@ -308,7 +331,9 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
             <div className="mt-5 flex flex-col gap-3 sm:flex-row">
               <a
                 href={payload.targetUrl}
-                className="rounded-full bg-slate-900 px-5 py-3 text-center text-base font-semibold text-white transition hover:bg-slate-700"
+                className={`rounded-full bg-slate-900 px-5 py-3 text-center text-base font-semibold text-white transition hover:bg-slate-700 ${
+                  payload.showContactWebsiteButton === false ? "hidden" : ""
+                }`}
               >
                 进入官网
               </a>

@@ -60,6 +60,18 @@ export type MerchantBusinessCardCustomText = {
   typography: TypographyEditableProps;
 };
 
+export type MerchantBusinessCardContactSectionKey = "image" | "contacts" | "coupons";
+
+export type MerchantBusinessCardCustomContactLink = {
+  id: string;
+  label: string;
+  displayText: string;
+  url: string;
+  iconPreset: string;
+  iconUrl: string;
+  bgColor: string;
+};
+
 export type MerchantBusinessCardContacts = {
   contactName: string;
   phone: string;
@@ -136,6 +148,10 @@ export type MerchantBusinessCardDraft = {
   contactIntroVideoMuted: boolean;
   contactPageImageUrl: string;
   contactPageImageHeight: number;
+  contactPageSectionOrder: MerchantBusinessCardContactSectionKey[];
+  showContactSaveButton: boolean;
+  showContactWebsiteButton: boolean;
+  customContactLinks: MerchantBusinessCardCustomContactLink[];
   backgroundImageUrl: string;
   backgroundImageSnapshotOnly: boolean;
   backgroundImageX: number;
@@ -197,6 +213,16 @@ export type MerchantBusinessCardProfileInput = {
 };
 
 export const DEFAULT_MERCHANT_BUSINESS_CARD_WEBSITE_LABEL = "扫码进入网站";
+export const MERCHANT_BUSINESS_CARD_CONTACT_SECTION_KEYS = ["image", "contacts", "coupons"] as const;
+export const MERCHANT_BUSINESS_CARD_CUSTOM_CONTACT_ICON_PRESETS = [
+  "link",
+  "star",
+  "heart",
+  "chat",
+  "map",
+  "gift",
+  "google",
+] as const;
 
 function normalizeText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -214,6 +240,48 @@ function clampOpacity(value: unknown, fallback: number) {
 
 function normalizeBoolean(value: unknown, fallback: boolean) {
   return typeof value === "boolean" ? value : fallback;
+}
+
+export function normalizeMerchantBusinessCardContactSectionOrder(value: unknown): MerchantBusinessCardContactSectionKey[] {
+  const seen = new Set<MerchantBusinessCardContactSectionKey>();
+  const source = Array.isArray(value) ? value : [];
+  const ordered: MerchantBusinessCardContactSectionKey[] = [];
+  for (const item of source) {
+    if (typeof item !== "string") continue;
+    if (!(MERCHANT_BUSINESS_CARD_CONTACT_SECTION_KEYS as readonly string[]).includes(item)) continue;
+    const key = item as MerchantBusinessCardContactSectionKey;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    ordered.push(key);
+  }
+  for (const key of MERCHANT_BUSINESS_CARD_CONTACT_SECTION_KEYS) {
+    if (seen.has(key)) continue;
+    seen.add(key);
+    ordered.push(key);
+  }
+  return ordered;
+}
+
+function normalizeMerchantBusinessCardCustomContactLinks(value: unknown): MerchantBusinessCardCustomContactLink[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item, index) => {
+      if (!item || typeof item !== "object") return null;
+      const source = item as Partial<MerchantBusinessCardCustomContactLink>;
+      const iconPreset = normalizeText(source.iconPreset);
+      return {
+        id: normalizeText(source.id) || `custom-contact-${index + 1}`,
+        label: normalizeText(source.label) || `自定义${index + 1}`,
+        displayText: normalizeText(source.displayText),
+        url: normalizeText(source.url),
+        iconPreset: (MERCHANT_BUSINESS_CARD_CUSTOM_CONTACT_ICON_PRESETS as readonly string[]).includes(iconPreset)
+          ? iconPreset
+          : "link",
+        iconUrl: normalizeText(source.iconUrl),
+        bgColor: normalizeText(source.bgColor) || "#0f172a",
+      } satisfies MerchantBusinessCardCustomContactLink;
+    })
+    .filter((item): item is MerchantBusinessCardCustomContactLink => Boolean(item && (item.url || item.displayText)));
 }
 
 function normalizePhoneList(value: unknown) {
@@ -454,6 +522,10 @@ export function createDefaultMerchantBusinessCardDraft(
     contactIntroVideoMuted: true,
     contactPageImageUrl: "",
     contactPageImageHeight: 346,
+    contactPageSectionOrder: normalizeMerchantBusinessCardContactSectionOrder(undefined),
+    showContactSaveButton: true,
+    showContactWebsiteButton: true,
+    customContactLinks: [],
     backgroundImageUrl: "",
     backgroundImageSnapshotOnly: false,
     backgroundImageX: 0,
@@ -591,6 +663,20 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
       fallback.contactPageImageHeight,
       120,
       1200,
+    ),
+    contactPageSectionOrder: normalizeMerchantBusinessCardContactSectionOrder(
+      (source as { contactPageSectionOrder?: unknown }).contactPageSectionOrder,
+    ),
+    showContactSaveButton: normalizeBoolean(
+      (source as { showContactSaveButton?: unknown }).showContactSaveButton,
+      fallback.showContactSaveButton,
+    ),
+    showContactWebsiteButton: normalizeBoolean(
+      (source as { showContactWebsiteButton?: unknown }).showContactWebsiteButton,
+      fallback.showContactWebsiteButton,
+    ),
+    customContactLinks: normalizeMerchantBusinessCardCustomContactLinks(
+      (source as { customContactLinks?: unknown }).customContactLinks,
     ),
     backgroundImageUrl: normalizeText(source.backgroundImageUrl),
     backgroundImageSnapshotOnly: normalizeBoolean(
@@ -851,6 +937,9 @@ function countMerchantBusinessCardAssetCompleteness(card: MerchantBusinessCardAs
       ]
     : [];
   const invoiceValues = card.invoice ? [card.invoice.name, card.invoice.taxNumber, card.invoice.address] : [];
+  const customContactValues = Array.isArray(card.customContactLinks)
+    ? card.customContactLinks.flatMap((item) => [item.label, item.displayText, item.url, item.iconUrl])
+    : [];
   return [
     card.shareKey,
     card.shareImageUrl,
@@ -861,6 +950,7 @@ function countMerchantBusinessCardAssetCompleteness(card: MerchantBusinessCardAs
     card.backgroundImageUrl,
     ...contactValues,
     ...invoiceValues,
+    ...customContactValues,
   ].filter((value) => normalizeText(value)).length;
 }
 
@@ -917,6 +1007,10 @@ export function mergeMerchantBusinessCardAssets(
     backgroundImageOpacity: preferredHasBackground ? preferred.backgroundImageOpacity : fallback.backgroundImageOpacity,
     contactPageImageUrl: normalizeText(preferred.contactPageImageUrl) || normalizeText(fallback.contactPageImageUrl),
     contactPageImageHeight: preferredHasContactImage ? preferred.contactPageImageHeight : fallback.contactPageImageHeight,
+    contactPageSectionOrder: preferred.contactPageSectionOrder,
+    showContactSaveButton: preferred.showContactSaveButton,
+    showContactWebsiteButton: preferred.showContactWebsiteButton,
+    customContactLinks: preferred.customContactLinks.length ? preferred.customContactLinks : fallback.customContactLinks,
     contactIntroVideoUrl: normalizeText(preferred.contactIntroVideoUrl) || normalizeText(fallback.contactIntroVideoUrl),
     contactIntroVideoPosterUrl:
       normalizeText(preferred.contactIntroVideoPosterUrl) || normalizeText(fallback.contactIntroVideoPosterUrl),

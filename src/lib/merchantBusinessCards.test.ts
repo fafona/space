@@ -5,6 +5,7 @@ import {
   disableMerchantBusinessCardChatDisplay,
   getMerchantBusinessCardRequiredFields,
   mergeMerchantBusinessCardAssets,
+  normalizeMerchantBusinessCardContactSectionOrder,
   normalizeMerchantBusinessCardDraft,
   normalizeMerchantBusinessCards,
   resolveMerchantBusinessCardForChatDisplay,
@@ -124,6 +125,52 @@ test("normalizeMerchantBusinessCardDraft preserves intro video muted setting", (
 
   assert.equal(draft.contactIntroVideoUrl, "https://faolla.com/storage/v1/object/public/page-assets/intro.mp4");
   assert.equal(draft.contactIntroVideoMuted, false);
+});
+
+test("normalizeMerchantBusinessCardDraft preserves contact card section order and buttons", () => {
+  const draft = normalizeMerchantBusinessCardDraft({
+    contactPageSectionOrder: ["contacts", "coupons", "image", "contacts"],
+    showContactSaveButton: false,
+    showContactWebsiteButton: false,
+  });
+
+  assert.deepEqual(draft.contactPageSectionOrder, ["contacts", "coupons", "image"]);
+  assert.equal(draft.showContactSaveButton, false);
+  assert.equal(draft.showContactWebsiteButton, false);
+  assert.deepEqual(normalizeMerchantBusinessCardContactSectionOrder(["coupons"]), ["coupons", "image", "contacts"]);
+});
+
+test("normalizeMerchantBusinessCardDraft keeps custom contact links", () => {
+  const draft = normalizeMerchantBusinessCardDraft({
+    customContactLinks: [
+      {
+        id: "google-review",
+        label: "Google",
+        displayText: "欢迎评价",
+        url: "https://g.page/r/example/review",
+        iconPreset: "google",
+        iconUrl: "https://faolla.com/storage/v1/object/public/page-assets/google.png",
+        bgColor: "#15803d",
+      },
+      {
+        id: "empty",
+        label: "empty",
+        displayText: "",
+        url: "",
+      },
+    ],
+  });
+
+  assert.equal(draft.customContactLinks.length, 1);
+  assert.deepEqual(draft.customContactLinks[0], {
+    id: "google-review",
+    label: "Google",
+    displayText: "欢迎评价",
+    url: "https://g.page/r/example/review",
+    iconPreset: "google",
+    iconUrl: "https://faolla.com/storage/v1/object/public/page-assets/google.png",
+    bgColor: "#15803d",
+  });
 });
 
 test("normalizeMerchantBusinessCardDraft keeps at most two phones", () => {
