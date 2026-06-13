@@ -1082,6 +1082,85 @@ function buildInvoicePreviewRows(invoice: MerchantBusinessCardDraft["invoice"]) 
   return rows;
 }
 
+const videoPosterFrameCache = new Map<string, string>();
+const videoPosterFramePending = new Map<string, Promise<string>>();
+
+function extractVideoPosterFrame(src: string) {
+  const normalizedSrc = normalizeText(src);
+  if (!normalizedSrc || typeof document === "undefined") return Promise.resolve("");
+  const cached = videoPosterFrameCache.get(normalizedSrc);
+  if (cached) return Promise.resolve(cached);
+  const pending = videoPosterFramePending.get(normalizedSrc);
+  if (pending) return pending;
+
+  const promise = new Promise<string>((resolve) => {
+    const video = document.createElement("video");
+    let settled = false;
+
+    const finish = (value: string) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      video.removeAttribute("src");
+      try {
+        video.load();
+      } catch {}
+      if (value) videoPosterFrameCache.set(normalizedSrc, value);
+      videoPosterFramePending.delete(normalizedSrc);
+      resolve(value);
+    };
+
+    const capture = () => {
+      try {
+        const width = Math.max(1, video.videoWidth || 640);
+        const height = Math.max(1, video.videoHeight || 360);
+        const maxWidth = 640;
+        const scale = Math.min(1, maxWidth / width);
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(width * scale));
+        canvas.height = Math.max(1, Math.round(height * scale));
+        const context = canvas.getContext("2d");
+        if (!context) {
+          finish("");
+          return;
+        }
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        finish(canvas.toDataURL("image/jpeg", 0.82));
+      } catch {
+        finish("");
+      }
+    };
+
+    const seekToFirstFrame = () => {
+      try {
+        if (Number.isFinite(video.duration) && video.duration > 0) {
+          video.currentTime = Math.min(0.1, video.duration / 2);
+          return;
+        }
+      } catch {}
+      capture();
+    };
+
+    const timer = window.setTimeout(() => finish(""), 8000);
+    video.crossOrigin = "anonymous";
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = "auto";
+    video.addEventListener("loadedmetadata", seekToFirstFrame, { once: true });
+    video.addEventListener("seeked", capture, { once: true });
+    video.addEventListener("error", () => finish(""), { once: true });
+    video.src = normalizedSrc;
+    try {
+      video.load();
+    } catch {
+      finish("");
+    }
+  });
+
+  videoPosterFramePending.set(normalizedSrc, promise);
+  return promise;
+}
+
 function AutoPlayingVideoPreview({
   src,
   poster,
@@ -1100,6 +1179,22 @@ function AutoPlayingVideoPreview({
   autoPlay?: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const normalizedSrc = normalizeText(src);
+  const normalizedPoster = normalizeText(poster);
+  const [generatedPoster, setGeneratedPoster] = useState<{ src: string; poster: string }>({ src: "", poster: "" });
+  const resolvedPoster =
+    normalizedPoster || (generatedPoster.src === normalizedSrc ? normalizeText(generatedPoster.poster) : "");
+
+  useEffect(() => {
+    if (!normalizedSrc || normalizedPoster) return;
+    let cancelled = false;
+    void extractVideoPosterFrame(normalizedSrc).then((frame) => {
+      if (!cancelled) setGeneratedPoster({ src: normalizedSrc, poster: frame });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [normalizedPoster, normalizedSrc]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -1144,6 +1239,7 @@ function AutoPlayingVideoPreview({
 
   return (
     <video
+      key={autoPlay ? src : `${src}-${resolvedPoster ? "poster" : "video"}`}
       ref={videoRef}
       className={className}
       src={src}
@@ -1151,7 +1247,7 @@ function AutoPlayingVideoPreview({
       autoPlay={autoPlay}
       loop={loop}
       muted={muted}
-      poster={normalizeText(poster) || undefined}
+      poster={resolvedPoster || undefined}
       preload={autoPlay ? "auto" : "metadata"}
       playsInline
     />
@@ -1896,7 +1992,7 @@ export default function MerchantBusinessCardManager({
         : null;
       setTip(savedExistingCard ? "名片已保存并同步联系卡" : "名片草稿已保存");
     } catch {
-      setTip(editingCardId ? "名片设置同步失败，请点保存修改重试" : "草稿保存失败，请重试");
+      setTip(editingCardId ? "名片设置同步失败，请点保存重试" : "草稿保存失败，请重试");
     } finally {
       setIsDraftSaving(false);
     }
@@ -2627,22 +2723,35 @@ export default function MerchantBusinessCardManager({
             <div className="flex flex-wrap items-start justify-between gap-3 border-b px-4 py-3">
               <div><div className="text-lg font-semibold text-slate-900">{editingCardId ? "修改名片" : "生成名片"}</div><div className="text-sm text-slate-500">先选择图片模式或链接模式，再调整样式后生成。</div></div>
               <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  className="min-w-[88px] rounded border bg-white px-4 py-2 text-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                  onClick={() => void handleSaveDraft()}
-                  disabled={isGenerating || isDraftSaving || isContactIntroVideoProcessing}
-                >
-                  {isDraftSaving ? "保存中..." : "保存"}
-                </button>
-                <button
-                  type="button"
-                  className="min-w-[118px] rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-                  onClick={() => void handleGenerate()}
-                  disabled={!websiteUrl || !qrReadyForCurrentDraft || isGenerating || isDraftSaving || isContactIntroVideoProcessing}
-                >
-                  {isGenerating ? (editingCardId ? "保存中..." : "生成中...") : (editingCardId ? "保存修改" : "生成")}
-                </button>
+                {editingCardId ? (
+                  <button
+                    type="button"
+                    className="min-w-[88px] rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                    onClick={() => void handleSaveDraft()}
+                    disabled={isGenerating || isDraftSaving || isContactIntroVideoProcessing}
+                  >
+                    {isDraftSaving ? "保存中..." : "保存"}
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="min-w-[88px] rounded border bg-white px-4 py-2 text-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      onClick={() => void handleSaveDraft()}
+                      disabled={isGenerating || isDraftSaving || isContactIntroVideoProcessing}
+                    >
+                      {isDraftSaving ? "保存中..." : "保存"}
+                    </button>
+                    <button
+                      type="button"
+                      className="min-w-[118px] rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                      onClick={() => void handleGenerate()}
+                      disabled={!websiteUrl || !qrReadyForCurrentDraft || isGenerating || isDraftSaving || isContactIntroVideoProcessing}
+                    >
+                      {isGenerating ? "生成中..." : "生成"}
+                    </button>
+                  </>
+                )}
                 <button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setEditorOpen(false); setEditingCardId(null); }}>关闭</button>
               </div>
             </div>
@@ -3791,22 +3900,35 @@ export default function MerchantBusinessCardManager({
                   >
                     返回编辑
                   </button>
-                  <button
-                    type="button"
-                    className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
-                    onClick={() => void handleSaveDraft()}
-                    disabled={isGenerating || isDraftSaving || isContactIntroVideoProcessing}
-                  >
-                    {isDraftSaving ? "保存中..." : "保存"}
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded bg-black px-3 py-2 text-sm text-white disabled:opacity-50"
-                    onClick={() => void handleGenerate()}
-                    disabled={!websiteUrl || !qrReadyForCurrentDraft || isGenerating || isDraftSaving || isContactIntroVideoProcessing}
-                  >
-                    {isGenerating ? (editingCardId ? "保存中..." : "生成中...") : (editingCardId ? "保存修改" : "生成")}
-                  </button>
+                  {editingCardId ? (
+                    <button
+                      type="button"
+                      className="rounded bg-black px-3 py-2 text-sm text-white disabled:opacity-50"
+                      onClick={() => void handleSaveDraft()}
+                      disabled={isGenerating || isDraftSaving || isContactIntroVideoProcessing}
+                    >
+                      {isDraftSaving ? "保存中..." : "保存"}
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                        onClick={() => void handleSaveDraft()}
+                        disabled={isGenerating || isDraftSaving || isContactIntroVideoProcessing}
+                      >
+                        {isDraftSaving ? "保存中..." : "保存"}
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded bg-black px-3 py-2 text-sm text-white disabled:opacity-50"
+                        onClick={() => void handleGenerate()}
+                        disabled={!websiteUrl || !qrReadyForCurrentDraft || isGenerating || isDraftSaving || isContactIntroVideoProcessing}
+                      >
+                        {isGenerating ? "生成中..." : "生成"}
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
             ) : null}
