@@ -33,6 +33,11 @@ export type MerchantBusinessCardSharePayload = {
   imageUrl?: string;
   detailImageUrl?: string;
   detailImageHeight?: number;
+  detailImageLinkUrl?: string;
+  detailImageX?: number;
+  detailImageY?: number;
+  detailImageScale?: number;
+  detailImageOpacity?: number;
   introVideoUrl?: string;
   introPosterUrl?: string;
   introVideoMuted?: boolean;
@@ -164,6 +169,21 @@ export function createMerchantBusinessCardShareKey(input: {
 function clampImageDimension(value: unknown) {
   const normalized = typeof value === "number" && Number.isFinite(value) ? Math.round(value) : 0;
   return normalized >= 120 && normalized <= 4096 ? normalized : 0;
+}
+
+function clampSignedImageOffset(value: unknown) {
+  const normalized = typeof value === "number" && Number.isFinite(value) ? Math.round(value) : 0;
+  return Math.max(-5000, Math.min(5000, normalized));
+}
+
+function clampImageScale(value: unknown) {
+  const normalized = typeof value === "number" && Number.isFinite(value) ? Math.round(value * 100) / 100 : 1;
+  return Math.max(0.25, Math.min(3, normalized));
+}
+
+function clampImageOpacity(value: unknown) {
+  const normalized = typeof value === "number" && Number.isFinite(value) ? value : 1;
+  return Math.max(0, Math.min(1, Math.round(normalized * 100) / 100));
 }
 
 function clampContactText(value: unknown, maxLength: number) {
@@ -311,6 +331,13 @@ function readSearchParam(searchParams: SearchParamsLike, key: string) {
   return normalizeText(value);
 }
 
+function readNumberSearchParam(searchParams: SearchParamsLike, key: string) {
+  const value = readSearchParam(searchParams, key);
+  if (!value) return undefined;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : undefined;
+}
+
 function parseCustomContactLinksParam(value: string | null | undefined) {
   const normalized = normalizeText(value);
   if (!normalized) return [];
@@ -379,6 +406,11 @@ function normalizeSharePayload(
     imageUrl?: string | null;
     detailImageUrl?: string | null;
     detailImageHeight?: number | null;
+    detailImageLinkUrl?: string | null;
+    detailImageX?: number | null;
+    detailImageY?: number | null;
+    detailImageScale?: number | null;
+    detailImageOpacity?: number | null;
     introVideoUrl?: string | null;
     introPosterUrl?: string | null;
     introVideoMuted?: boolean | string | null;
@@ -397,6 +429,7 @@ function normalizeSharePayload(
   const targetUrl = normalizeMerchantBusinessCardShareTargetUrl(input.targetUrl);
   const imageUrl = normalizeMerchantBusinessCardShareImageUrl(input.imageUrl, preferredOrigin);
   const detailImageUrl = normalizeMerchantBusinessCardShareImageUrl(input.detailImageUrl, preferredOrigin);
+  const detailImageLinkUrl = normalizeMerchantBusinessCardShareTargetUrl(input.detailImageLinkUrl);
   const introVideoUrl = normalizeMerchantBusinessCardShareVideoUrl(input.introVideoUrl, preferredOrigin);
   const introPosterUrl =
     introVideoUrl && input.introPosterUrl
@@ -411,6 +444,10 @@ function normalizeSharePayload(
   const showContactSaveButton = normalizeOptionalBoolean(input.showContactSaveButton, true);
   const showContactWebsiteButton = normalizeOptionalBoolean(input.showContactWebsiteButton, true);
   const detailImageHeight = clampImageDimension(input.detailImageHeight);
+  const detailImageX = clampSignedImageOffset(input.detailImageX);
+  const detailImageY = clampSignedImageOffset(input.detailImageY);
+  const detailImageScale = clampImageScale(input.detailImageScale);
+  const detailImageOpacity = clampImageOpacity(input.detailImageOpacity);
   if (!targetUrl) return null;
   const updatedAt = normalizeUpdatedAt(input.updatedAt);
   const imageWidth = clampImageDimension(input.imageWidth);
@@ -420,6 +457,11 @@ function normalizeSharePayload(
     ...(imageUrl ? { imageUrl } : {}),
     ...(detailImageUrl ? { detailImageUrl } : {}),
     ...(detailImageUrl && detailImageHeight ? { detailImageHeight } : {}),
+    ...(detailImageUrl && detailImageLinkUrl ? { detailImageLinkUrl } : {}),
+    ...(detailImageUrl && detailImageX ? { detailImageX } : {}),
+    ...(detailImageUrl && detailImageY ? { detailImageY } : {}),
+    ...(detailImageUrl && detailImageScale !== 1 ? { detailImageScale } : {}),
+    ...(detailImageUrl && detailImageOpacity !== 1 ? { detailImageOpacity } : {}),
     ...(introVideoUrl ? { introVideoUrl, ...(introPosterUrl ? { introPosterUrl } : {}), introVideoMuted } : {}),
     ...(hasCustomContactPageSectionOrder ? { contactPageSectionOrder } : {}),
     ...(showContactSaveButton === false ? { showContactSaveButton } : {}),
@@ -441,6 +483,11 @@ export function normalizeMerchantBusinessCardSharePayload(
     imageUrl?: string | null;
     detailImageUrl?: string | null;
     detailImageHeight?: number | null;
+    detailImageLinkUrl?: string | null;
+    detailImageX?: number | null;
+    detailImageY?: number | null;
+    detailImageScale?: number | null;
+    detailImageOpacity?: number | null;
     introVideoUrl?: string | null;
     introPosterUrl?: string | null;
     introVideoMuted?: boolean | string | null;
@@ -625,6 +672,11 @@ export function buildMerchantBusinessCardShareLegacyFingerprint(
         imageUrl?: string | null;
         detailImageUrl?: string | null;
         detailImageHeight?: number | null;
+        detailImageLinkUrl?: string | null;
+        detailImageX?: number | null;
+        detailImageY?: number | null;
+        detailImageScale?: number | null;
+        detailImageOpacity?: number | null;
         introVideoUrl?: string | null;
         introPosterUrl?: string | null;
         introVideoMuted?: boolean | string | null;
@@ -649,6 +701,11 @@ export function buildMerchantBusinessCardShareLegacyFingerprint(
     payload.imageUrl ?? "",
     payload.detailImageUrl ?? "",
     String(payload.detailImageHeight ?? 0),
+    payload.detailImageLinkUrl ?? "",
+    String(payload.detailImageX ?? 0),
+    String(payload.detailImageY ?? 0),
+    String(payload.detailImageScale ?? 1),
+    String(payload.detailImageOpacity ?? 1),
     payload.targetUrl,
     String(payload.imageWidth ?? 0),
     String(payload.imageHeight ?? 0),
@@ -710,6 +767,11 @@ export function buildMerchantBusinessCardShareRevocationByLegacyPayloadObjectPat
         imageUrl?: string | null;
         detailImageUrl?: string | null;
         detailImageHeight?: number | null;
+        detailImageLinkUrl?: string | null;
+        detailImageX?: number | null;
+        detailImageY?: number | null;
+        detailImageScale?: number | null;
+        detailImageOpacity?: number | null;
         introVideoUrl?: string | null;
         introPosterUrl?: string | null;
         introVideoMuted?: boolean | string | null;
@@ -766,6 +828,11 @@ export function buildMerchantBusinessCardShareUrl(input: {
   imageUrl?: string | null;
   detailImageUrl?: string | null;
   detailImageHeight?: number | null;
+  detailImageLinkUrl?: string | null;
+  detailImageX?: number | null;
+  detailImageY?: number | null;
+  detailImageScale?: number | null;
+  detailImageOpacity?: number | null;
   introVideoUrl?: string | null;
   introPosterUrl?: string | null;
   introVideoMuted?: boolean | string | null;
@@ -792,6 +859,11 @@ export function buildMerchantBusinessCardShareUrl(input: {
       imageUrl: input.imageUrl,
       detailImageUrl: input.detailImageUrl,
       detailImageHeight: input.detailImageHeight,
+      detailImageLinkUrl: input.detailImageLinkUrl,
+      detailImageX: input.detailImageX,
+      detailImageY: input.detailImageY,
+      detailImageScale: input.detailImageScale,
+      detailImageOpacity: input.detailImageOpacity,
       introVideoUrl: input.introVideoUrl,
       introPosterUrl: input.introPosterUrl,
       introVideoMuted: input.introVideoMuted,
@@ -813,6 +885,21 @@ export function buildMerchantBusinessCardShareUrl(input: {
   }
   if (payload.detailImageHeight) {
     shareUrl.searchParams.set("detailImageHeight", String(payload.detailImageHeight));
+  }
+  if (payload.detailImageLinkUrl) {
+    shareUrl.searchParams.set("detailImageLink", payload.detailImageLinkUrl);
+  }
+  if (payload.detailImageX) {
+    shareUrl.searchParams.set("detailImageX", String(payload.detailImageX));
+  }
+  if (payload.detailImageY) {
+    shareUrl.searchParams.set("detailImageY", String(payload.detailImageY));
+  }
+  if (payload.detailImageScale && payload.detailImageScale !== 1) {
+    shareUrl.searchParams.set("detailImageScale", String(payload.detailImageScale));
+  }
+  if (payload.detailImageOpacity !== undefined && payload.detailImageOpacity !== 1) {
+    shareUrl.searchParams.set("detailImageOpacity", String(payload.detailImageOpacity));
   }
   if (payload.introVideoUrl) {
     shareUrl.searchParams.set("introVideo", payload.introVideoUrl);
@@ -935,7 +1022,12 @@ export function parseMerchantBusinessCardShareParams(
       name: readSearchParam(searchParams, "name"),
       imageUrl: readSearchParam(searchParams, "image"),
       detailImageUrl: readSearchParam(searchParams, "detailImage"),
-      detailImageHeight: Number(readSearchParam(searchParams, "detailImageHeight")),
+      detailImageHeight: readNumberSearchParam(searchParams, "detailImageHeight"),
+      detailImageLinkUrl: readSearchParam(searchParams, "detailImageLink"),
+      detailImageX: readNumberSearchParam(searchParams, "detailImageX"),
+      detailImageY: readNumberSearchParam(searchParams, "detailImageY"),
+      detailImageScale: readNumberSearchParam(searchParams, "detailImageScale"),
+      detailImageOpacity: readNumberSearchParam(searchParams, "detailImageOpacity"),
       introVideoUrl: readSearchParam(searchParams, "introVideo"),
       introPosterUrl: readSearchParam(searchParams, "introPoster"),
       introVideoMuted: readSearchParam(searchParams, "introMuted"),
@@ -947,8 +1039,8 @@ export function parseMerchantBusinessCardShareParams(
       showContactWebsiteButton: readSearchParam(searchParams, "showContactWebsite"),
       updatedAt: readSearchParam(searchParams, "updatedAt"),
       targetUrl: readSearchParam(searchParams, "target"),
-      imageWidth: Number(readSearchParam(searchParams, "imageWidth")),
-      imageHeight: Number(readSearchParam(searchParams, "imageHeight")),
+      imageWidth: readNumberSearchParam(searchParams, "imageWidth"),
+      imageHeight: readNumberSearchParam(searchParams, "imageHeight"),
       contact: {
         displayName: readSearchParam(searchParams, "contactName"),
         organization: readSearchParam(searchParams, "organization"),
@@ -1102,6 +1194,11 @@ export function buildMerchantBusinessCardLegacyContactDownloadUrl(input: {
   imageUrl?: string | null;
   detailImageUrl?: string | null;
   detailImageHeight?: number | null;
+  detailImageLinkUrl?: string | null;
+  detailImageX?: number | null;
+  detailImageY?: number | null;
+  detailImageScale?: number | null;
+  detailImageOpacity?: number | null;
   targetUrl: string;
   contact?: MerchantBusinessCardShareContact | null;
 }) {
@@ -1114,6 +1211,11 @@ export function buildMerchantBusinessCardLegacyContactDownloadUrl(input: {
       imageUrl: input.imageUrl,
       detailImageUrl: input.detailImageUrl,
       detailImageHeight: input.detailImageHeight,
+      detailImageLinkUrl: input.detailImageLinkUrl,
+      detailImageX: input.detailImageX,
+      detailImageY: input.detailImageY,
+      detailImageScale: input.detailImageScale,
+      detailImageOpacity: input.detailImageOpacity,
       targetUrl: input.targetUrl,
       contact: input.contact,
     },
@@ -1128,6 +1230,21 @@ export function buildMerchantBusinessCardLegacyContactDownloadUrl(input: {
   }
   if (payload.detailImageHeight) {
     url.searchParams.set("detailImageHeight", String(payload.detailImageHeight));
+  }
+  if (payload.detailImageLinkUrl) {
+    url.searchParams.set("detailImageLink", payload.detailImageLinkUrl);
+  }
+  if (payload.detailImageX) {
+    url.searchParams.set("detailImageX", String(payload.detailImageX));
+  }
+  if (payload.detailImageY) {
+    url.searchParams.set("detailImageY", String(payload.detailImageY));
+  }
+  if (payload.detailImageScale && payload.detailImageScale !== 1) {
+    url.searchParams.set("detailImageScale", String(payload.detailImageScale));
+  }
+  if (payload.detailImageOpacity !== undefined && payload.detailImageOpacity !== 1) {
+    url.searchParams.set("detailImageOpacity", String(payload.detailImageOpacity));
   }
   url.searchParams.set("target", payload.targetUrl);
   if (payload.name) url.searchParams.set("name", payload.name);

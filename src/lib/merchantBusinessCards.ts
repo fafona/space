@@ -148,6 +148,11 @@ export type MerchantBusinessCardDraft = {
   contactIntroVideoMuted: boolean;
   contactPageImageUrl: string;
   contactPageImageHeight: number;
+  contactPageImageLinkUrl: string;
+  contactPageImageX: number;
+  contactPageImageY: number;
+  contactPageImageScale: number;
+  contactPageImageOpacity: number;
   contactPageSectionOrder: MerchantBusinessCardContactSectionKey[];
   showContactSaveButton: boolean;
   showContactWebsiteButton: boolean;
@@ -526,6 +531,11 @@ export function createDefaultMerchantBusinessCardDraft(
     contactIntroVideoMuted: true,
     contactPageImageUrl: "",
     contactPageImageHeight: 346,
+    contactPageImageLinkUrl: "",
+    contactPageImageX: 0,
+    contactPageImageY: 0,
+    contactPageImageScale: 1,
+    contactPageImageOpacity: 1,
     contactPageSectionOrder: normalizeMerchantBusinessCardContactSectionOrder(undefined),
     showContactSaveButton: true,
     showContactWebsiteButton: true,
@@ -667,6 +677,35 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
       fallback.contactPageImageHeight,
       120,
       1200,
+    ),
+    contactPageImageLinkUrl: normalizeText(
+      (source as { contactPageImageLinkUrl?: unknown }).contactPageImageLinkUrl,
+    ),
+    contactPageImageX: clampInt(
+      (source as { contactPageImageX?: unknown }).contactPageImageX,
+      fallback.contactPageImageX,
+      -5000,
+      5000,
+    ),
+    contactPageImageY: clampInt(
+      (source as { contactPageImageY?: unknown }).contactPageImageY,
+      fallback.contactPageImageY,
+      -5000,
+      5000,
+    ),
+    contactPageImageScale: Math.max(
+      0.25,
+      Math.min(
+        3,
+        typeof (source as { contactPageImageScale?: unknown }).contactPageImageScale === "number" &&
+          Number.isFinite((source as { contactPageImageScale?: unknown }).contactPageImageScale)
+          ? Math.round(Number((source as { contactPageImageScale?: unknown }).contactPageImageScale) * 100) / 100
+          : fallback.contactPageImageScale,
+      ),
+    ),
+    contactPageImageOpacity: clampOpacity(
+      (source as { contactPageImageOpacity?: unknown }).contactPageImageOpacity,
+      fallback.contactPageImageOpacity,
     ),
     contactPageSectionOrder: normalizeMerchantBusinessCardContactSectionOrder(
       (source as { contactPageSectionOrder?: unknown }).contactPageSectionOrder,
@@ -949,6 +988,7 @@ function countMerchantBusinessCardAssetCompleteness(card: MerchantBusinessCardAs
     card.shareImageUrl,
     card.contactPagePublicImageUrl,
     card.contactPageImageUrl,
+    card.contactPageImageLinkUrl,
     card.contactIntroVideoUrl,
     card.contactIntroVideoPosterUrl,
     card.backgroundImageUrl,
@@ -1011,6 +1051,14 @@ export function mergeMerchantBusinessCardAssets(
     backgroundImageOpacity: preferredHasBackground ? preferred.backgroundImageOpacity : fallback.backgroundImageOpacity,
     contactPageImageUrl: normalizeText(preferred.contactPageImageUrl) || normalizeText(fallback.contactPageImageUrl),
     contactPageImageHeight: preferredHasContactImage ? preferred.contactPageImageHeight : fallback.contactPageImageHeight,
+    contactPageImageLinkUrl:
+      normalizeText(preferred.contactPageImageLinkUrl) || normalizeText(fallback.contactPageImageLinkUrl),
+    contactPageImageX: preferredHasContactImage ? preferred.contactPageImageX : fallback.contactPageImageX,
+    contactPageImageY: preferredHasContactImage ? preferred.contactPageImageY : fallback.contactPageImageY,
+    contactPageImageScale: preferredHasContactImage ? preferred.contactPageImageScale : fallback.contactPageImageScale,
+    contactPageImageOpacity: preferredHasContactImage
+      ? preferred.contactPageImageOpacity
+      : fallback.contactPageImageOpacity,
     contactPageSectionOrder: preferred.contactPageSectionOrder,
     showContactSaveButton: preferred.showContactSaveButton,
     showContactWebsiteButton: preferred.showContactWebsiteButton,

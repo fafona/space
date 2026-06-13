@@ -2038,6 +2038,15 @@ function buildSharePayloadFromSnapshotMatch(
       detailImageUrl: normalizeText(card.contactPagePublicImageUrl) || normalizeText(card.contactPageImageUrl),
       detailImageHeight:
         typeof card.contactPageImageHeight === "number" ? Math.round(card.contactPageImageHeight) : undefined,
+      detailImageLinkUrl: normalizeText(card.contactPageImageLinkUrl),
+      detailImageX: typeof card.contactPageImageX === "number" ? Math.round(card.contactPageImageX) : undefined,
+      detailImageY: typeof card.contactPageImageY === "number" ? Math.round(card.contactPageImageY) : undefined,
+      detailImageScale:
+        typeof card.contactPageImageScale === "number" ? Math.round(card.contactPageImageScale * 100) / 100 : undefined,
+      detailImageOpacity:
+        typeof card.contactPageImageOpacity === "number"
+          ? Math.round(Math.max(0, Math.min(1, card.contactPageImageOpacity)) * 100) / 100
+          : undefined,
       introVideoUrl: match.allowIntroVideo ? normalizeText(card.contactIntroVideoUrl) : "",
       introPosterUrl: match.allowIntroVideo ? normalizeText(card.contactIntroVideoPosterUrl) : "",
       introVideoMuted: card.contactIntroVideoMuted,
@@ -2466,6 +2475,11 @@ function buildShareCardHtml(input: {
   previewImageUrl?: string;
   contentImageUrl?: string;
   contentImageHeight?: number;
+  contentImageLinkUrl?: string;
+  contentImageX?: number;
+  contentImageY?: number;
+  contentImageScale?: number;
+  contentImageOpacity?: number;
   introVideoUrl?: string;
   introPosterUrl?: string;
   introVideoMuted?: boolean;
@@ -2493,6 +2507,19 @@ function buildShareCardHtml(input: {
   const merchantName = escapeHtml(input.merchantName);
   const previewImageUrl = input.previewImageUrl ? escapeHtml(input.previewImageUrl) : "";
   const contentImageUrl = input.contentImageUrl ? escapeHtml(input.contentImageUrl) : "";
+  const contentImageLinkUrl = escapeHtml(input.contentImageLinkUrl || input.targetUrl);
+  const contentImageX = Number.isFinite(input.contentImageX) ? Math.round(input.contentImageX ?? 0) : 0;
+  const contentImageY = Number.isFinite(input.contentImageY) ? Math.round(input.contentImageY ?? 0) : 0;
+  const normalizedContentImageScale =
+    typeof input.contentImageScale === "number" && Number.isFinite(input.contentImageScale)
+      ? input.contentImageScale
+      : 1;
+  const normalizedContentImageOpacity =
+    typeof input.contentImageOpacity === "number" && Number.isFinite(input.contentImageOpacity)
+      ? input.contentImageOpacity
+      : 1;
+  const contentImageScale = Math.max(0.25, Math.min(3, normalizedContentImageScale));
+  const contentImageOpacity = Math.max(0, Math.min(1, normalizedContentImageOpacity));
   const introVideoUrl = input.introVideoUrl ? escapeHtml(resolveIntroPlaybackVideoUrl(input.introVideoUrl)) : "";
   const introPosterUrl = input.introPosterUrl ? escapeHtml(input.introPosterUrl) : contentImageUrl || previewImageUrl;
   const introVideoMuted = input.introVideoMuted !== false;
@@ -2504,8 +2531,10 @@ function buildShareCardHtml(input: {
   const languageSwitcherHtml = buildLanguageSwitcherHtml();
   const contactPageSectionOrder = normalizeMerchantBusinessCardContactSectionOrder(input.contactPageSectionOrder);
   const contactImageSectionHtml = contentImageUrl
-    ? `<a class="card" href="${targetUrl}">
-          <img src="${contentImageUrl}" alt="${title}"${contentImageHeight ? ` style="height:${contentImageHeight}px;object-fit:contain;"` : ""} />
+    ? `<a class="card contact-image-card" href="${contentImageLinkUrl}"${contentImageHeight ? ` style="height:${contentImageHeight}px;"` : ""}>
+          <img src="${contentImageUrl}" alt="${title}" style="left:calc(50% + ${contentImageX}px);top:calc(50% + ${contentImageY}px);opacity:${contentImageOpacity.toFixed(
+            2,
+          )};transform:translate(-50%,-50%) scale(${contentImageScale.toFixed(2)});" />
         </a>`
     : "";
   const contactSummarySectionHtml = input.summaryHtml ? `<div class="summary">${input.summaryHtml}</div>` : "";
@@ -2796,6 +2825,20 @@ function buildShareCardHtml(input: {
         display: block;
         width: 100%;
         height: auto;
+      }
+      .contact-image-card {
+        position: relative;
+        min-height: 180px;
+        background: #f8fafc;
+      }
+      .contact-image-card img {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        max-width: none;
+        object-fit: contain;
+        transform-origin: center;
+        user-select: none;
       }
       .summary {
         margin-top: 16px;
@@ -3632,6 +3675,12 @@ export async function GET(
     shareKey,
     imageUrl: previewImageUrl,
     detailImageUrl,
+    detailImageHeight: payload.detailImageHeight ?? snapshotCard?.contactPageImageHeight,
+    detailImageLinkUrl: payload.detailImageLinkUrl ?? snapshotCard?.contactPageImageLinkUrl,
+    detailImageX: payload.detailImageX ?? snapshotCard?.contactPageImageX,
+    detailImageY: payload.detailImageY ?? snapshotCard?.contactPageImageY,
+    detailImageScale: payload.detailImageScale ?? snapshotCard?.contactPageImageScale,
+    detailImageOpacity: payload.detailImageOpacity ?? snapshotCard?.contactPageImageOpacity,
     targetUrl: payload.targetUrl,
     name: payload.name,
     contact: payload.contact,
@@ -3673,7 +3722,12 @@ export async function GET(
       merchantName: payload.name,
       previewImageUrl: previewImageUrl || undefined,
       contentImageUrl: detailImageUrl || undefined,
-      contentImageHeight: payload.detailImageHeight,
+      contentImageHeight: payload.detailImageHeight ?? snapshotCard?.contactPageImageHeight,
+      contentImageLinkUrl: payload.detailImageLinkUrl ?? snapshotCard?.contactPageImageLinkUrl,
+      contentImageX: payload.detailImageX ?? snapshotCard?.contactPageImageX,
+      contentImageY: payload.detailImageY ?? snapshotCard?.contactPageImageY,
+      contentImageScale: payload.detailImageScale ?? snapshotCard?.contactPageImageScale,
+      contentImageOpacity: payload.detailImageOpacity ?? snapshotCard?.contactPageImageOpacity,
       introVideoUrl: introVideoUrl || undefined,
       introPosterUrl: introPosterUrl || undefined,
       introVideoMuted: payload.introVideoMuted ?? snapshotCard?.contactIntroVideoMuted,

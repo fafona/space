@@ -332,6 +332,11 @@ function resolveCardShortLink(card: MerchantBusinessCardAsset | null | undefined
     imageUrl: normalizeText(card.shareImageUrl) || normalizeText(card.imageUrl),
     detailImageUrl: normalizeText(card.contactPagePublicImageUrl) || normalizeText(card.contactPageImageUrl),
     detailImageHeight: card.contactPageImageHeight,
+    detailImageLinkUrl: normalizeText(card.contactPageImageLinkUrl),
+    detailImageX: card.contactPageImageX,
+    detailImageY: card.contactPageImageY,
+    detailImageScale: card.contactPageImageScale,
+    detailImageOpacity: card.contactPageImageOpacity,
     introVideoUrl: normalizeText(card.contactIntroVideoUrl),
     introPosterUrl: normalizeText(card.contactIntroVideoPosterUrl),
     introVideoMuted: card.contactIntroVideoMuted,
@@ -1297,6 +1302,14 @@ function ContactCardSurface({
   introVideoMuted = true,
   imageUrl,
   imageHeight,
+  imageLinkUrl,
+  imageX = 0,
+  imageY = 0,
+  imageScale = 1,
+  imageOpacity = 1,
+  onContactImagePointerDown,
+  onContactImagePointerMove,
+  onContactImagePointerEnd,
 }: {
   name: string;
   targetUrl: string;
@@ -1312,12 +1325,22 @@ function ContactCardSurface({
   introVideoMuted?: boolean;
   imageUrl?: string;
   imageHeight: number;
+  imageLinkUrl?: string;
+  imageX?: number;
+  imageY?: number;
+  imageScale?: number;
+  imageOpacity?: number;
+  onContactImagePointerDown?: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  onContactImagePointerMove?: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  onContactImagePointerEnd?: (event: ReactPointerEvent<HTMLDivElement>) => void;
 }) {
   const rows = buildContactPreviewRows(name, contacts, contactFieldOrder, customContactLinks);
   const invoiceRows = buildInvoicePreviewRows(invoice);
   const normalizedSectionOrder = normalizeMerchantBusinessCardContactSectionOrder(sectionOrder);
   const displayName = normalizeText(name);
   const hasImage = Boolean(normalizeText(imageUrl));
+  const normalizedImageLinkUrl = normalizeText(imageLinkUrl);
+  const canDragContactImage = hasImage && Boolean(onContactImagePointerDown);
   const normalizedIntroVideoUrl = normalizeText(introVideoUrl);
   const normalizedIntroVideoPosterUrl = normalizeText(introVideoPosterUrl);
   const hasIntroVideo = Boolean(normalizedIntroVideoUrl);
@@ -1326,15 +1349,44 @@ function ContactCardSurface({
 
   const renderContactSection = (sectionKey: MerchantBusinessCardContactSectionKey) => {
     if (sectionKey === "image") {
-      return hasImage ? (
+      if (!hasImage) return null;
+      const imageNode = (
         <div
-          className="overflow-hidden rounded-[28px] border border-slate-200 bg-slate-50 shadow-[0_16px_42px_rgba(15,23,42,.08)]"
+          className={`relative overflow-hidden rounded-[28px] border border-slate-200 bg-slate-50 shadow-[0_16px_42px_rgba(15,23,42,.08)] ${
+            canDragContactImage ? "cursor-grab touch-none" : ""
+          }`}
           style={{ height: `${imageHeight}px` }}
+          onPointerDown={canDragContactImage ? onContactImagePointerDown : undefined}
+          onPointerMove={canDragContactImage ? onContactImagePointerMove : undefined}
+          onPointerUp={canDragContactImage ? onContactImagePointerEnd : undefined}
+          onPointerCancel={canDragContactImage ? onContactImagePointerEnd : undefined}
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={imageUrl} alt={displayName || "联系卡展示图"} className="block h-full w-full object-contain" />
+          <img
+            src={imageUrl}
+            alt={displayName || "联系卡展示图"}
+            className="absolute h-full w-full object-contain"
+            style={{
+              left: `calc(50% + ${Math.round(imageX)}px)`,
+              top: `calc(50% + ${Math.round(imageY)}px)`,
+              maxWidth: "none",
+              opacity: clamp(imageOpacity, 0, 1),
+              pointerEvents: "none",
+              transform: `translate(-50%, -50%) scale(${normalizeBackgroundImageScale(imageScale)})`,
+              transformOrigin: "center",
+              userSelect: "none",
+              willChange: canDragContactImage ? "transform" : undefined,
+            }}
+          />
         </div>
-      ) : null;
+      );
+      return normalizedImageLinkUrl && !canDragContactImage ? (
+        <a href={normalizedImageLinkUrl} className="block" target="_blank" rel="noreferrer">
+          {imageNode}
+        </a>
+      ) : (
+        imageNode
+      );
     }
     if (sectionKey === "coupons") {
       return (
@@ -1535,6 +1587,34 @@ function ImageFilePicker({
   );
 }
 
+function BusinessCardEditorSection({
+  title,
+  children,
+  defaultOpen = true,
+  className = "",
+}: {
+  title: string;
+  children: ReactNode;
+  defaultOpen?: boolean;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <section className={`overflow-hidden rounded-xl border border-slate-200 bg-slate-50 text-sm ${className}`}>
+      <button
+        type="button"
+        className="flex w-full items-start justify-between gap-3 px-3 py-3 text-left"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className="font-semibold text-slate-900">{title}</span>
+        <span className="shrink-0 text-xs font-semibold text-slate-500">{open ? "收起" : "展开"}</span>
+      </button>
+      {open ? <div className="space-y-2.5 border-t border-white/70 p-3">{children}</div> : null}
+    </section>
+  );
+}
+
 export default function MerchantBusinessCardManager({
   merchantId,
   siteBaseDomain,
@@ -1591,6 +1671,13 @@ export default function MerchantBusinessCardManager({
     startY: number;
     scale: number;
   } | null>(null);
+  const contactPageImageDragRef = useRef<{
+    pointerId: number;
+    startClientX: number;
+    startClientY: number;
+    startX: number;
+    startY: number;
+  } | null>(null);
   const normalizedTargetUrlOverride = normalizeText(targetUrlOverride);
 
   const normalizedCards = useMemo(
@@ -1644,7 +1731,9 @@ export default function MerchantBusinessCardManager({
   }, [selectedFieldKeys.length, selectedFieldMeta.label]);
   const selectedTypography = selectedCustomText
     ? selectedCustomText.typography
-    : draft.fieldTypography[primarySelectedFieldKey as MerchantBusinessCardFieldKey];
+    : draft.fieldTypography[primarySelectedFieldKey as MerchantBusinessCardFieldKey] ??
+      draft.fieldTypography.merchantName ??
+      draft.typography.info;
   const selectedTypographyFontSize =
     typeof selectedTypography.fontSize === "number" && Number.isFinite(selectedTypography.fontSize)
       ? normalizeTypographyFontSize(selectedTypography.fontSize)
@@ -2061,6 +2150,39 @@ export default function MerchantBusinessCardManager({
     backgroundImageDragRef.current = null;
   };
 
+  const handleContactPageImagePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!normalizeText(draft.contactPageImageUrl) || event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    contactPageImageDragRef.current = {
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startX: draft.contactPageImageX,
+      startY: draft.contactPageImageY,
+    };
+  };
+
+  const handleContactPageImagePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = contactPageImageDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    const nextX = Math.round(drag.startX + event.clientX - drag.startClientX);
+    const nextY = Math.round(drag.startY + event.clientY - drag.startClientY);
+    applyDraft((current) => ({
+      ...current,
+      contactPageImageX: clamp(nextX, -5000, 5000),
+      contactPageImageY: clamp(nextY, -5000, 5000),
+    }));
+  };
+
+  const handleContactPageImagePointerEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = contactPageImageDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    contactPageImageDragRef.current = null;
+  };
+
   const handleGenerate = async () => {
     if (!websiteUrl || !qrReadyForCurrentDraft) return;
     if (isContactIntroVideoProcessing) {
@@ -2117,7 +2239,14 @@ export default function MerchantBusinessCardManager({
         return;
       }
       const imageUrl = optimized.dataUrl;
-      applyDraft((current) => ({ ...current, contactPageImageUrl: imageUrl }));
+      applyDraft((current) => ({
+        ...current,
+        contactPageImageUrl: imageUrl,
+        contactPageImageX: 0,
+        contactPageImageY: 0,
+        contactPageImageScale: 1,
+        contactPageImageOpacity: 1,
+      }));
       setContactPageImageFileName(fileName || "已上传联系卡图片");
       setContactPageImageFileDetail(`${optimized.compressed ? "压缩后" : "大小"} ${formatImageResultSize(optimized.bytes)}`);
     } catch {
@@ -2347,6 +2476,11 @@ export default function MerchantBusinessCardManager({
       imageUrl: normalizeText(card.shareImageUrl),
       detailImageUrl: normalizeText(card.contactPagePublicImageUrl),
       detailImageHeight: card.contactPageImageHeight,
+      detailImageLinkUrl: normalizeText(card.contactPageImageLinkUrl),
+      detailImageX: card.contactPageImageX,
+      detailImageY: card.contactPageImageY,
+      detailImageScale: card.contactPageImageScale,
+      detailImageOpacity: card.contactPageImageOpacity,
       introVideoUrl: normalizeText(card.contactIntroVideoUrl),
       introPosterUrl: normalizeText(card.contactIntroVideoPosterUrl),
       introVideoMuted: card.contactIntroVideoMuted,
@@ -2497,6 +2631,12 @@ export default function MerchantBusinessCardManager({
     normalizeText(previewAsset?.contactPageImageUrl) ||
     normalizeText(draft.contactPageImageUrl);
   const previewContactImageHeight = previewAsset?.contactPageImageHeight || draft.contactPageImageHeight;
+  const previewContactImageLinkUrl =
+    normalizeText(previewAsset?.contactPageImageLinkUrl) || normalizeText(draft.contactPageImageLinkUrl);
+  const previewContactImageX = previewAsset?.contactPageImageX ?? draft.contactPageImageX;
+  const previewContactImageY = previewAsset?.contactPageImageY ?? draft.contactPageImageY;
+  const previewContactImageScale = previewAsset?.contactPageImageScale ?? draft.contactPageImageScale;
+  const previewContactImageOpacity = previewAsset?.contactPageImageOpacity ?? draft.contactPageImageOpacity;
   const previewIntroVideoUrl = canUseIntroVideo
     ? normalizeText(previewAsset?.contactIntroVideoUrl) || normalizeText(draft.contactIntroVideoUrl)
     : "";
@@ -2807,8 +2947,7 @@ export default function MerchantBusinessCardManager({
             <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_minmax(520px,680px)]">
               <div className="min-h-0 overflow-y-auto px-4 py-4">
                 <div className="grid gap-3 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
-                  <section className="space-y-2.5 rounded-xl border bg-slate-50 p-3 xl:col-span-2">
-                    <div className="text-sm font-semibold text-slate-900">基础设置</div>
+                  <BusinessCardEditorSection title="基础设置" className="xl:col-span-2">
                     <div className="space-y-2">
                       <div className="text-xs text-slate-600">名片模式</div>
                       <div className="grid gap-2 md:grid-cols-2">
@@ -3076,7 +3215,15 @@ export default function MerchantBusinessCardManager({
                               setContactPageImageFileName("");
                               setContactPageImageFileDetail("");
                               setIsContactPageImageProcessing(false);
-                              applyDraft((current) => ({ ...current, contactPageImageUrl: "" }));
+                              applyDraft((current) => ({
+                                ...current,
+                                contactPageImageUrl: "",
+                                contactPageImageLinkUrl: "",
+                                contactPageImageX: 0,
+                                contactPageImageY: 0,
+                                contactPageImageScale: 1,
+                                contactPageImageOpacity: 1,
+                              }));
                             }}
                             disabled={!normalizeText(draft.contactPageImageUrl)}
                           >
@@ -3117,6 +3264,85 @@ export default function MerchantBusinessCardManager({
                             />
                           </label>
                         </div>
+                        <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                          <label className="block text-xs text-slate-600">
+                            点击图片跳转链接
+                            <input
+                              className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm"
+                              value={draft.contactPageImageLinkUrl}
+                              placeholder="https://..."
+                              onChange={(event) =>
+                                applyDraft((current) => ({
+                                  ...current,
+                                  contactPageImageLinkUrl: event.target.value,
+                                }))
+                              }
+                            />
+                          </label>
+                          <label className="block text-xs text-slate-600">
+                            图片透明度
+                            <div className="mt-1 flex items-center gap-3 rounded border bg-white px-3 py-2">
+                              <input
+                                type="range"
+                                min="0"
+                                max="1"
+                                step="0.01"
+                                className="min-w-0 flex-1"
+                                value={draft.contactPageImageOpacity}
+                                onChange={(event) =>
+                                  applyDraft((current) => ({
+                                    ...current,
+                                    contactPageImageOpacity: clamp(Number(event.target.value), 0, 1),
+                                  }))
+                                }
+                              />
+                              <span className="w-12 shrink-0 text-right text-xs text-slate-500">
+                                {formatOpacityPercent(draft.contactPageImageOpacity)}
+                              </span>
+                            </div>
+                          </label>
+                        </div>
+                        {normalizeText(draft.contactPageImageUrl) ? (
+                          <div className="mt-3 flex flex-wrap items-center gap-3">
+                            <label className="min-w-[260px] flex-1 text-xs text-slate-600">
+                              图片缩放
+                              <div className="mt-1 flex items-center gap-3 rounded border bg-white px-3 py-2">
+                                <input
+                                  type="range"
+                                  min={MIN_BACKGROUND_IMAGE_SCALE}
+                                  max={MAX_BACKGROUND_IMAGE_SCALE}
+                                  step="0.01"
+                                  className="min-w-0 flex-1"
+                                  value={normalizeBackgroundImageScale(draft.contactPageImageScale)}
+                                  onChange={(event) =>
+                                    applyDraft((current) => ({
+                                      ...current,
+                                      contactPageImageScale: normalizeBackgroundImageScale(Number(event.target.value)),
+                                    }))
+                                  }
+                                />
+                                <span className="w-12 shrink-0 text-right text-xs text-slate-500">
+                                  {formatScalePercent(draft.contactPageImageScale)}
+                                </span>
+                              </div>
+                            </label>
+                            <button
+                              type="button"
+                              className="self-end rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                              onClick={() =>
+                                applyDraft((current) => ({
+                                  ...current,
+                                  contactPageImageX: 0,
+                                  contactPageImageY: 0,
+                                  contactPageImageScale: 1,
+                                  contactPageImageOpacity: 1,
+                                }))
+                              }
+                            >
+                              重置图片位置
+                            </button>
+                          </div>
+                        ) : null}
                       </div>
                     ) : null}
                     {draft.mode === "link" ? (
@@ -3240,9 +3466,8 @@ export default function MerchantBusinessCardManager({
                         </div>
                       </div>
                     </div>
-                  </section>
-                  <section className="space-y-2.5 rounded-xl border bg-slate-50 p-3 xl:col-span-2">
-                    <div className="text-sm font-semibold text-slate-900">联系方式</div>
+                  </BusinessCardEditorSection>
+                  <BusinessCardEditorSection title="联系方式" className="xl:col-span-2">
                     <div className="space-y-2">
                       {orderedContactFields.map(({ key, label }, index) => {
                         const canMoveUp = index > 0;
@@ -3507,12 +3732,9 @@ export default function MerchantBusinessCardManager({
                         </div>
                       )}
                     </div>
-                  </section>
-                  <section className="space-y-2.5 rounded-xl border bg-slate-50 p-3 xl:col-span-2">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="text-sm font-semibold text-slate-900">开票信息</div>
-                      <div className="text-[11px] text-slate-500">联系卡中会显示复制按钮，方便客户直接复制。</div>
-                    </div>
+                  </BusinessCardEditorSection>
+                  <BusinessCardEditorSection title="开票信息" className="xl:col-span-2">
+                    <div className="text-[11px] text-slate-500">联系卡中会显示复制按钮，方便客户直接复制。</div>
                     <div className="space-y-2">
                       {INVOICE_FIELDS.map(({ key, label, placeholder }) => (
                         <div
@@ -3537,10 +3759,9 @@ export default function MerchantBusinessCardManager({
                         </div>
                       ))}
                     </div>
-                  </section>
-                  <section className="space-y-2.5 rounded-xl border bg-slate-50 p-3 xl:col-span-2">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div className="text-sm font-semibold text-slate-900">自定义文本</div>
+                  </BusinessCardEditorSection>
+                  <BusinessCardEditorSection title="自定义文本" className="xl:col-span-2">
+                    <div className="flex flex-wrap items-center justify-end gap-3">
                       <button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={addCustomText}>新增文本</button>
                     </div>
                     {draft.customTexts.length > 0 ? (
@@ -3557,7 +3778,16 @@ export default function MerchantBusinessCardManager({
                           >
                             <div className="mb-2 flex items-center justify-between gap-3">
                               <div className="text-xs font-medium text-slate-700">{getCustomTextLabel(item.text, index)}</div>
-                              <button type="button" className="rounded border border-rose-200 bg-white px-2 py-1 text-xs text-rose-600 hover:bg-rose-50" onClick={() => removeCustomText(item.id)}>删除</button>
+                              <button
+                                type="button"
+                                className="rounded border border-rose-200 bg-white px-2 py-1 text-xs text-rose-600 hover:bg-rose-50"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  removeCustomText(item.id);
+                                }}
+                              >
+                                删除
+                              </button>
                             </div>
                             <input
                               className="w-full rounded border bg-white px-3 py-2 text-sm"
@@ -3574,11 +3804,10 @@ export default function MerchantBusinessCardManager({
                     ) : (
                       <div className="rounded border border-dashed bg-white px-3 py-4 text-xs text-slate-500">还没有自定义文本，点击“新增文本”即可添加。</div>
                     )}
-                  </section>
-                  <section className="space-y-3 rounded-xl border bg-slate-50 p-3 xl:col-span-2">
+                  </BusinessCardEditorSection>
+                  <BusinessCardEditorSection title="位置与字体样式" className="xl:col-span-2">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                         <div>
-                        <div className="text-sm font-semibold text-slate-900">位置与字体样式</div>
                         <div className="text-xs text-slate-500">{`当前选中：${selectedFieldSummary}`}</div>
                         <div className="text-[11px] text-slate-400">按住 Ctrl 再点击字段，可多选后一起修改字体样式。</div>
                       </div>
@@ -3760,7 +3989,7 @@ export default function MerchantBusinessCardManager({
                         );
                       })}
                     </div>
-                  </section>
+                  </BusinessCardEditorSection>
                 </div>
               </div>
               <aside className="min-h-0 overflow-y-auto border-l bg-slate-50 px-4 py-4">
@@ -3807,6 +4036,14 @@ export default function MerchantBusinessCardManager({
                           introVideoMuted={draft.contactIntroVideoMuted}
                           imageUrl={normalizeText(draft.contactPageImageUrl) || undefined}
                           imageHeight={draft.contactPageImageHeight}
+                          imageLinkUrl={normalizeText(draft.contactPageImageLinkUrl) || undefined}
+                          imageX={draft.contactPageImageX}
+                          imageY={draft.contactPageImageY}
+                          imageScale={draft.contactPageImageScale}
+                          imageOpacity={draft.contactPageImageOpacity}
+                          onContactImagePointerDown={handleContactPageImagePointerDown}
+                          onContactImagePointerMove={handleContactPageImagePointerMove}
+                          onContactImagePointerEnd={handleContactPageImagePointerEnd}
                         />
                       </div>
                     </div>
@@ -3894,6 +4131,11 @@ export default function MerchantBusinessCardManager({
                         introVideoMuted={previewAsset?.contactIntroVideoMuted ?? draft.contactIntroVideoMuted}
                         imageUrl={previewContactImageUrl}
                         imageHeight={previewContactImageHeight}
+                        imageLinkUrl={previewContactImageLinkUrl || undefined}
+                        imageX={previewContactImageX}
+                        imageY={previewContactImageY}
+                        imageScale={previewContactImageScale}
+                        imageOpacity={previewContactImageOpacity}
                       />
                       {resolveCardShortLink(previewAsset) ? (
                         <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 shadow-[0_14px_36px_rgba(15,23,42,0.12)]">
@@ -4128,6 +4370,8 @@ export default function MerchantBusinessCardManager({
   }
 
   function removeCustomText(id: string) {
+    clearNumberInputDraft(`layout-${getCustomTextSelectionKey(id)}-x`);
+    clearNumberInputDraft(`layout-${getCustomTextSelectionKey(id)}-y`);
     applyDraft((current) => ({
       ...current,
       customTexts: current.customTexts.filter((item) => item.id !== id),
@@ -4396,6 +4640,11 @@ export default function MerchantBusinessCardManager({
     renderedImageUrl?: string;
     contactPageImageUrl?: string;
     contactPageImageHeight?: number;
+    contactPageImageLinkUrl?: string;
+    contactPageImageX?: number;
+    contactPageImageY?: number;
+    contactPageImageScale?: number;
+    contactPageImageOpacity?: number;
     introVideoUrl?: string;
     introVideoPosterUrl?: string;
     introVideoMuted?: boolean;
@@ -4435,6 +4684,11 @@ export default function MerchantBusinessCardManager({
       imageUrl: shareImageUrl,
       detailImageUrl,
       detailImageHeight: input.contactPageImageHeight,
+      detailImageLinkUrl: input.contactPageImageLinkUrl,
+      detailImageX: input.contactPageImageX,
+      detailImageY: input.contactPageImageY,
+      detailImageScale: input.contactPageImageScale,
+      detailImageOpacity: input.contactPageImageOpacity,
       introVideoUrl,
       introPosterUrl,
       introVideoMuted: input.introVideoMuted,
@@ -4480,6 +4734,17 @@ export default function MerchantBusinessCardManager({
             detailImageHeight:
               typeof input.contactPageImageHeight === "number"
                 ? Math.round(input.contactPageImageHeight)
+                : undefined,
+            detailImageLinkUrl: normalizeText(input.contactPageImageLinkUrl) || undefined,
+            detailImageX: typeof input.contactPageImageX === "number" ? Math.round(input.contactPageImageX) : undefined,
+            detailImageY: typeof input.contactPageImageY === "number" ? Math.round(input.contactPageImageY) : undefined,
+            detailImageScale:
+              typeof input.contactPageImageScale === "number"
+                ? Math.round(input.contactPageImageScale * 100) / 100
+                : undefined,
+            detailImageOpacity:
+              typeof input.contactPageImageOpacity === "number"
+                ? Math.round(Math.max(0, Math.min(1, input.contactPageImageOpacity)) * 100) / 100
                 : undefined,
             introVideoUrl: introVideoUrl || undefined,
             introPosterUrl: introPosterUrl || undefined,
@@ -4648,6 +4913,11 @@ export default function MerchantBusinessCardManager({
             renderedImageUrl: imageUrl,
             contactPageImageUrl: normalizeText(nextDraft.contactPageImageUrl),
             contactPageImageHeight: nextDraft.contactPageImageHeight,
+            contactPageImageLinkUrl: normalizeText(nextDraft.contactPageImageLinkUrl),
+            contactPageImageX: nextDraft.contactPageImageX,
+            contactPageImageY: nextDraft.contactPageImageY,
+            contactPageImageScale: nextDraft.contactPageImageScale,
+            contactPageImageOpacity: nextDraft.contactPageImageOpacity,
             introVideoUrl: normalizeText(nextDraft.contactIntroVideoUrl),
             introVideoPosterUrl: normalizeText(nextDraft.contactIntroVideoPosterUrl),
             introVideoMuted: nextDraft.contactIntroVideoMuted,
@@ -4728,6 +4998,11 @@ export default function MerchantBusinessCardManager({
             card: existingCard,
             contactPageImageUrl: normalizeText(nextDraft.contactPageImageUrl),
             contactPageImageHeight: nextDraft.contactPageImageHeight,
+            contactPageImageLinkUrl: normalizeText(nextDraft.contactPageImageLinkUrl),
+            contactPageImageX: nextDraft.contactPageImageX,
+            contactPageImageY: nextDraft.contactPageImageY,
+            contactPageImageScale: nextDraft.contactPageImageScale,
+            contactPageImageOpacity: nextDraft.contactPageImageOpacity,
             introVideoUrl: normalizeText(nextDraft.contactIntroVideoUrl),
             introVideoPosterUrl: normalizeText(nextDraft.contactIntroVideoPosterUrl),
             introVideoMuted: nextDraft.contactIntroVideoMuted,
@@ -4806,6 +5081,11 @@ export default function MerchantBusinessCardManager({
         card,
         contactPageImageUrl: normalizeText(card.contactPageImageUrl),
         contactPageImageHeight: card.contactPageImageHeight,
+        contactPageImageLinkUrl: normalizeText(card.contactPageImageLinkUrl),
+        contactPageImageX: card.contactPageImageX,
+        contactPageImageY: card.contactPageImageY,
+        contactPageImageScale: card.contactPageImageScale,
+        contactPageImageOpacity: card.contactPageImageOpacity,
         introVideoUrl: normalizeText(card.contactIntroVideoUrl),
         introVideoPosterUrl: normalizeText(card.contactIntroVideoPosterUrl),
         introVideoMuted: card.contactIntroVideoMuted,

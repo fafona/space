@@ -122,6 +122,11 @@ test("share helpers preserve contact card layout controls and custom links", () 
     name: "fafona",
     imageUrl: "https://faolla.com/storage/v1/object/public/page-assets/card.png",
     detailImageUrl: "https://faolla.com/storage/v1/object/public/page-assets/contact.png",
+    detailImageLinkUrl: "https://menu.example.com",
+    detailImageX: 18,
+    detailImageY: -24,
+    detailImageScale: 1.35,
+    detailImageOpacity: 0.72,
     contactPageSectionOrder: ["contacts", "image", "coupons"],
     showContactSaveButton: false,
     showContactWebsiteButton: false,
@@ -146,12 +151,22 @@ test("share helpers preserve contact card layout controls and custom links", () 
   assert.equal(url.searchParams.get("contactSections"), "contacts,image,coupons");
   assert.equal(url.searchParams.get("showContactSave"), "0");
   assert.equal(url.searchParams.get("showContactWebsite"), "0");
+  assert.equal(url.searchParams.get("detailImageLink"), "https://menu.example.com/");
+  assert.equal(url.searchParams.get("detailImageX"), "18");
+  assert.equal(url.searchParams.get("detailImageY"), "-24");
+  assert.equal(url.searchParams.get("detailImageScale"), "1.35");
+  assert.equal(url.searchParams.get("detailImageOpacity"), "0.72");
   assert.ok(url.searchParams.get("customLinks")?.includes("欢迎评价"));
 
   const parsed = parseMerchantBusinessCardShareParams(url.searchParams, "https://faolla.com");
   assert.deepEqual(parsed?.contactPageSectionOrder, ["contacts", "image", "coupons"]);
   assert.equal(parsed?.showContactSaveButton, false);
   assert.equal(parsed?.showContactWebsiteButton, false);
+  assert.equal(parsed?.detailImageLinkUrl, "https://menu.example.com/");
+  assert.equal(parsed?.detailImageX, 18);
+  assert.equal(parsed?.detailImageY, -24);
+  assert.equal(parsed?.detailImageScale, 1.35);
+  assert.equal(parsed?.detailImageOpacity, 0.72);
   assert.equal(parsed?.contact?.customLinks?.[0]?.displayText, "欢迎评价");
   assert.equal(parsed?.contact?.customLinks?.[0]?.iconPreset, "google");
 });
