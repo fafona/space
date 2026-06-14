@@ -74,6 +74,7 @@ export async function createMerchantCouponRecord(input: MerchantCouponInput) {
     siteId,
     coupons: [coupon, ...current],
     updatedAt: coupon.updatedAt,
+    existingRowId: stored?.existingRowId ?? null,
   });
   if (saved.error) throw new Error(saved.error);
   return coupon;
@@ -104,6 +105,7 @@ export async function updateMerchantCouponRecord(input: {
     siteId,
     coupons: updatedCoupons,
     updatedAt: next.updatedAt,
+    existingRowId: stored?.existingRowId ?? null,
   });
   if (saved.error) throw new Error(saved.error);
   return next;
@@ -123,6 +125,7 @@ export async function archiveMerchantCouponRecord(input: { siteId: string; coupo
     siteId,
     coupons: updatedCoupons,
     updatedAt: new Date().toISOString(),
+    existingRowId: stored?.existingRowId ?? null,
   });
   if (saved.error) throw new Error(saved.error);
   return deletedCoupon;
@@ -149,6 +152,7 @@ export async function claimMerchantCouponRecord(input: {
     siteId,
     coupons: updatedCoupons,
     updatedAt: next.updatedAt,
+    existingRowId: stored?.existingRowId ?? null,
   });
   if (saved.error) throw new Error(saved.error);
   return next;
@@ -261,6 +265,7 @@ export async function redeemMerchantCouponRecords(input: {
     siteId,
     coupons,
     updatedAt: new Date().toISOString(),
+    existingRowId: stored?.existingRowId ?? null,
   });
   if (saved.error) throw new Error(saved.error);
   return redeemedCoupons;

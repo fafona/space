@@ -12,6 +12,7 @@ export type StoredMerchantCoupons = {
   siteId: string;
   coupons: MerchantCouponRecord[];
   updatedAt: string | null;
+  existingRowId: string | number | null;
 };
 
 type StoredMerchantCouponsRow = {
@@ -122,6 +123,7 @@ export function mergeStoredMerchantCouponRows(siteId: string, rows: StoredMercha
     siteId: normalizedSiteId,
     coupons: normalizeMerchantCouponRecords(Array.from(couponMap.values())),
     updatedAt,
+    existingRowId: matchedRows.find((row) => row.id !== undefined && row.id !== null)?.id ?? null,
   };
 }
 
@@ -141,6 +143,7 @@ export async function saveStoredMerchantCoupons(
     siteId: string;
     coupons: MerchantCouponRecord[];
     updatedAt?: string | null;
+    existingRowId?: string | number | null;
   },
 ): Promise<{ error: string | null }> {
   const normalizedSiteId = normalizeText(input.siteId);
@@ -148,7 +151,12 @@ export async function saveStoredMerchantCoupons(
   const slug = buildCouponsSlug(normalizedSiteId);
   const coupons = normalizeMerchantCouponRecords(input.coupons).filter((coupon) => coupon.siteId === normalizedSiteId);
   const updatedAt = normalizeText(input.updatedAt) || new Date().toISOString();
-  const existing = (await queryStoredCouponRows(supabase, normalizedSiteId))[0];
+  const hasKnownExistingRow = Object.prototype.hasOwnProperty.call(input, "existingRowId");
+  const existing = hasKnownExistingRow
+    ? input.existingRowId !== undefined && input.existingRowId !== null
+      ? ({ id: input.existingRowId } as StoredMerchantCouponsRow)
+      : undefined
+    : (await queryStoredCouponRows(supabase, normalizedSiteId))[0];
 
   const updateExisting = async (body: Record<string, unknown>) => {
     if (existing?.id === undefined || existing?.id === null) return { error: "missing_existing_id" };

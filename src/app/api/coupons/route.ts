@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
+import { isCouponWebsiteBlockEnabled } from "@/lib/merchantCouponPermissions.server";
 import { getVisibleMerchantCoupons, type MerchantCouponInput, type MerchantCouponRecord } from "@/lib/merchantCoupons";
 import {
   archiveMerchantCouponRecord,
@@ -7,7 +8,6 @@ import {
   getMerchantCouponsSnapshot,
   updateMerchantCouponRecord,
 } from "@/lib/merchantCoupons.server";
-import { loadCurrentMerchantSnapshotSiteBySiteId } from "@/lib/publishedMerchantService";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 
@@ -20,11 +20,6 @@ async function resolveCouponAdminSession(request: Request, siteId: string) {
   });
   if (!session || session.merchantId !== siteId) return null;
   return session;
-}
-
-async function isCouponWebsiteBlockEnabled(siteId: string) {
-  const site = await loadCurrentMerchantSnapshotSiteBySiteId(siteId).catch(() => null);
-  return Boolean(site?.permissionConfig?.allowCouponModule && site?.permissionConfig?.allowCouponBlock);
 }
 
 function trimText(value: unknown) {

@@ -12,10 +12,10 @@ import {
 } from "@/lib/merchantCoupons";
 import { claimMerchantCouponRecord } from "@/lib/merchantCoupons.server";
 import { listMerchantOrders } from "@/lib/merchantOrders.server";
+import { isCouponWebsiteBlockEnabled } from "@/lib/merchantCouponPermissions.server";
 import { buildPersonalClaimedCoupon, writePersonalClaimedCouponToUserMetadata, type PersonalClaimedCoupon } from "@/lib/personalCoupons";
 import { readPersonalCustomerProfileFromSession } from "@/lib/personalCustomerProfile";
 import { resolvePersonalAccountSessionFromRequest, type PersonalAccountSession } from "@/lib/personalAccountSession.server";
-import { loadCurrentMerchantSnapshotSiteBySiteId } from "@/lib/publishedMerchantService";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { readMerchantAuthAccountTypeCookie } from "@/lib/merchantAuthSession";
 
@@ -154,7 +154,13 @@ function assertCouponPerUserClaimAllowed(coupon: MerchantCouponRecord, session: 
   });
 }
 
-async function assertCouponClaimIdentityAllowed(coupon: MerchantCouponRecord, request: Request, claimCode: string, now: Date) {
+async function assertCouponClaimIdentityAllowed(
+  coupon: MerchantCouponRecord,
+  request: Request,
+  claimCode: string,
+  now: Date,
+  personalSessionTask?: Promise<PersonalAccountSession | null> | null,
+) {
   const requiresPersonal = merchantCouponRequiresPersonalClaim(coupon);
   assertCouponClaimTimeAllowed(coupon, now);
   assertCouponClaimStockAllowed(coupon, now);
@@ -163,7 +169,7 @@ async function assertCouponClaimIdentityAllowed(coupon: MerchantCouponRecord, re
   }
   if (!requiresPersonal) return null;
 
-  const session = await resolvePersonalAccountSessionFromRequest(request);
+  const session = personalSessionTask ? await personalSessionTask : await resolvePersonalAccountSessionFromRequest(request);
   if (!session) throw new Error("coupon_login_required");
   const profile = readPersonalCustomerProfileFromSession({
     authenticated: true,
@@ -253,11 +259,6 @@ async function addFavoriteSite(
   await session.adminSupabase.auth.admin.updateUserById(session.userId, { user_metadata: metadataWithCoupon }).catch(() => null);
 }
 
-async function isCouponWebsiteBlockEnabled(siteId: string) {
-  const site = await loadCurrentMerchantSnapshotSiteBySiteId(siteId).catch(() => null);
-  return Boolean(site?.permissionConfig?.allowCouponModule && site?.permissionConfig?.allowCouponBlock);
-}
-
 export async function POST(request: Request) {
   if (!isTrustedSameOriginMutationRequest(request)) {
     return getTrustedMutationRequestErrorResponse();
@@ -270,6 +271,8 @@ export async function POST(request: Request) {
     if (!isMerchantNumericId(siteId) || !couponId) {
       return NextResponse.json({ error: "invalid_coupon" }, { status: 400 });
     }
+    const optionalPersonalSessionTask = shouldTryOptionalPersonalSession(request) ? resolvePersonalAccountSessionFromRequest(request) : null;
+    optionalPersonalSessionTask?.catch(() => null);
     if (!(await isCouponWebsiteBlockEnabled(siteId))) {
       return NextResponse.json({ error: "coupon_block_disabled" }, { status: 403 });
     }
@@ -283,9 +286,9 @@ export async function POST(request: Request) {
       siteId,
       couponId,
       beforeClaim: async (current) => {
-        claimSession = await assertCouponClaimIdentityAllowed(current, request, claimCode, now);
-        if (!claimSession && shouldTryOptionalPersonalSession(request)) {
-          claimSession = await resolvePersonalAccountSessionFromRequest(request).catch(() => null);
+        claimSession = await assertCouponClaimIdentityAllowed(current, request, claimCode, now, optionalPersonalSessionTask);
+        if (!claimSession && optionalPersonalSessionTask) {
+          claimSession = await optionalPersonalSessionTask.catch(() => null);
         }
         claimEventId = `CE${now.getTime().toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
         settlementType = merchantCouponSupportsUsageScenario(current, "checkout_barcode") && !merchantCouponSupportsUsageScenario(current, "checkout_qr") ? "barcode" : "qr";
