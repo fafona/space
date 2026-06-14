@@ -1281,6 +1281,35 @@ function buildInvoicePreviewRows(invoice: MerchantBusinessCardDraft["invoice"]) 
 const videoPosterFrameCache = new Map<string, string>();
 const videoPosterFramePending = new Map<string, Promise<string>>();
 
+const BUSINESS_CARD_FRONT_RENDER_IGNORED_FIELDS = [
+  "contactIntroVideoUrl",
+  "contactIntroVideoPosterUrl",
+  "contactIntroVideoMuted",
+  "contactPageImageUrl",
+  "contactPageImageHeight",
+  "contactPageImageLinkUrl",
+  "contactPageImageX",
+  "contactPageImageY",
+  "contactPageImageScale",
+  "contactPageImageOpacity",
+  "contactPageSectionOrder",
+  "showContactSaveButton",
+  "showContactWebsiteButton",
+  "customContactLinks",
+  "invoice",
+  "contactOnlyFields",
+] as const;
+
+function buildBusinessCardFrontRenderSignature(value: MerchantBusinessCardDraft | MerchantBusinessCardAsset | null | undefined) {
+  if (!value) return "";
+  const normalized = normalizeMerchantBusinessCardDraft(value);
+  const frontDraft = { ...normalized } as Record<string, unknown>;
+  BUSINESS_CARD_FRONT_RENDER_IGNORED_FIELDS.forEach((key) => {
+    delete frontDraft[key];
+  });
+  return JSON.stringify(frontDraft);
+}
+
 function extractVideoPosterFrame(src: string) {
   const normalizedSrc = normalizeText(src);
   if (!normalizedSrc || typeof document === "undefined") return Promise.resolve("");
@@ -1330,7 +1359,7 @@ function extractVideoPosterFrame(src: string) {
     const seekToFirstFrame = () => {
       try {
         if (Number.isFinite(video.duration) && video.duration > 0) {
-          video.currentTime = Math.min(0.1, video.duration / 2);
+          video.currentTime = Math.min(0.001, video.duration / 2);
           return;
         }
       } catch {}
@@ -1394,11 +1423,12 @@ function AutoPlayingVideoPreview({
   const normalizedSrc = normalizeText(src);
   const normalizedPoster = normalizeText(poster);
   const [generatedPoster, setGeneratedPoster] = useState<{ src: string; poster: string }>({ src: "", poster: "" });
+  const generatedPosterForSrc = generatedPoster.src === normalizedSrc ? normalizeText(generatedPoster.poster) : "";
   const resolvedPoster =
-    normalizedPoster || (generatedPoster.src === normalizedSrc ? normalizeText(generatedPoster.poster) : "");
+    (!autoPlay && generatedPosterForSrc) || normalizedPoster || generatedPosterForSrc;
 
   useEffect(() => {
-    if (!normalizedSrc || normalizedPoster) return;
+    if (!normalizedSrc || autoPlay) return;
     let cancelled = false;
     void extractVideoPosterFrame(normalizedSrc).then((frame) => {
       if (!cancelled) setGeneratedPoster({ src: normalizedSrc, poster: frame });
@@ -1406,7 +1436,7 @@ function AutoPlayingVideoPreview({
     return () => {
       cancelled = true;
     };
-  }, [normalizedPoster, normalizedSrc]);
+  }, [autoPlay, normalizedSrc]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -1429,7 +1459,7 @@ function AutoPlayingVideoPreview({
       const showFirstFrame = () => {
         try {
           if (Number.isFinite(video.duration) && video.duration > 0) {
-            video.currentTime = Math.min(0.05, video.duration);
+            video.currentTime = Math.min(0.001, video.duration);
           }
         } catch {}
       };
@@ -5048,13 +5078,24 @@ export default function MerchantBusinessCardManager({
       existingCard && nextDraft.backgroundImageSnapshotOnly
         ? normalizePublicAssetUrl(normalizeText(existingCard.imageUrl) || normalizeText(existingCard.shareImageUrl))
         : "";
+    const existingFrontImageUrl = existingCard
+      ? normalizeText(existingCard.imageUrl) || normalizePublicAssetUrl(normalizeText(existingCard.shareImageUrl))
+      : "";
+    const reusableUnchangedFrontImageUrl =
+      existingCard &&
+      existingFrontImageUrl &&
+      buildBusinessCardFrontRenderSignature(existingCard) === buildBusinessCardFrontRenderSignature(nextDraft)
+        ? existingFrontImageUrl
+        : "";
     const imageUrl =
       reusableSnapshotImageUrl ||
+      reusableUnchangedFrontImageUrl ||
       (await (async () => {
         const node = hiddenPreviewRef.current;
         if (!node) {
           throw new Error("business_card_preview_unavailable");
         }
+        setTip("正在生成名片图片...");
         const exportedImage = await compressImageDataUrlWithinLimit(
           await renderCardNodeToImage(node),
           normalizedExportImageLimitKb * 1024,
@@ -5085,8 +5126,11 @@ export default function MerchantBusinessCardManager({
             contactDisplayFields: nextDraft.contactDisplayFields,
             customContactLinks: nextDraft.customContactLinks,
             targetUrl: websiteUrl,
-          })
+        })
         : undefined;
+    if (nextDraft.mode === "link") {
+      setTip("正在同步联系卡短链...");
+    }
     const shareBundle =
       nextDraft.mode === "link"
         ? await buildShareBundle({
@@ -5175,8 +5219,11 @@ export default function MerchantBusinessCardManager({
             contactDisplayFields: nextDraft.contactDisplayFields,
             customContactLinks: nextDraft.customContactLinks,
             targetUrl: websiteUrl,
-          })
+        })
         : undefined;
+    if (nextDraft.mode === "link") {
+      setTip("正在同步联系卡短链...");
+    }
     const shareBundle =
       nextDraft.mode === "link"
         ? await buildShareBundle({

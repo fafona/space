@@ -298,16 +298,16 @@ async function extractBusinessCardIntroVideoPoster(input: {
   const representativeFilter = `thumbnail=72,${baseFilter}`;
   const posterAttempts = [
     {
+      outputPath: path.join(workspace, "poster-first.jpg"),
+      args: ["-y", "-i", inputPath, "-frames:v", "1", "-vf", baseFilter, "-q:v", "3"],
+    },
+    {
       outputPath: path.join(workspace, "poster-representative-025.jpg"),
       args: ["-y", "-ss", "0.25", "-i", inputPath, "-frames:v", "1", "-vf", representativeFilter, "-q:v", "3"],
     },
     {
       outputPath: path.join(workspace, "poster-representative-080.jpg"),
       args: ["-y", "-ss", "0.8", "-i", inputPath, "-frames:v", "1", "-vf", representativeFilter, "-q:v", "3"],
-    },
-    {
-      outputPath: path.join(workspace, "poster-first.jpg"),
-      args: ["-y", "-i", inputPath, "-frames:v", "1", "-vf", baseFilter, "-q:v", "3"],
     },
   ];
   try {
