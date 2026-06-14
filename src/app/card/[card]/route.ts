@@ -75,6 +75,7 @@ function normalizeText(value: string | null | undefined) {
 }
 
 const BUSINESS_CARD_SHARE_MANIFEST_BUCKETS = ["page-assets", "assets", "uploads", "public"] as const;
+const CONTACT_CARD_PAYLOAD_CACHE_TTL_MS = 45_000;
 const GOOGLE_REVIEW_DISPLAY_TEXT = "欢迎评价";
 const GOOGLE_REVIEW_DISPLAY_TRANSLATIONS: Record<string, string> = {
   "zh-CN": GOOGLE_REVIEW_DISPLAY_TEXT,
@@ -1971,6 +1972,45 @@ type ContactCardSnapshotMatch = {
   allowIntroVideo: boolean;
 };
 
+const contactCardPayloadCache = new Map<
+  string,
+  {
+    expiresAt: number;
+    payload: MerchantBusinessCardSharePayload;
+  }
+>();
+
+function readCachedContactCardPayload(shareKey: string) {
+  const normalizedShareKey = normalizeMerchantBusinessCardShareKey(shareKey);
+  if (!normalizedShareKey) return null;
+  const cached = contactCardPayloadCache.get(normalizedShareKey);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    contactCardPayloadCache.delete(normalizedShareKey);
+    return null;
+  }
+  return cached.payload;
+}
+
+function writeCachedContactCardPayload(
+  shareKey: string,
+  payload: MerchantBusinessCardSharePayload | null | undefined,
+  preferredOrigin?: string,
+) {
+  const normalizedShareKey = normalizeMerchantBusinessCardShareKey(shareKey);
+  const normalizedPayload = payload ? normalizeMerchantBusinessCardSharePayload(payload, preferredOrigin) : null;
+  if (!normalizedShareKey || !normalizedPayload) return;
+  contactCardPayloadCache.set(normalizedShareKey, {
+    expiresAt: Date.now() + CONTACT_CARD_PAYLOAD_CACHE_TTL_MS,
+    payload: normalizedPayload,
+  });
+}
+
+function clearCachedContactCardPayload(shareKey: string) {
+  const normalizedShareKey = normalizeMerchantBusinessCardShareKey(shareKey);
+  if (normalizedShareKey) contactCardPayloadCache.delete(normalizedShareKey);
+}
+
 function resolveContactCardSnapshotMatchFromSite(
   site: Awaited<ReturnType<typeof loadCurrentMerchantSnapshotSiteBySiteId>>,
   shareKey: string,
@@ -1998,20 +2038,19 @@ async function resolveContactCardSnapshotMatch(shareKey: string, ownerMerchantId
     const currentMatch = resolveContactCardSnapshotMatchFromSite(currentSite, normalizedShareKey);
     if (currentMatch) return currentMatch;
   }
-  const currentSnapshot = await loadCurrentMerchantSnapshotSites().catch(() => []);
-  const currentOwnerSite = currentSnapshot.find((site) =>
-    Array.isArray(site.businessCards) &&
-    site.businessCards.some((card) => normalizeMerchantBusinessCardShareKey(card.shareKey) === normalizedShareKey),
-  );
-  const currentMatch = resolveContactCardSnapshotMatchFromSite(currentOwnerSite ?? null, normalizedShareKey);
-  if (currentMatch) return currentMatch;
   const snapshot = await loadPublishedMerchantSnapshotSites().catch(() => []);
   const ownerSite = snapshot.find((site) =>
     Array.isArray(site.businessCards) &&
     site.businessCards.some((card) => normalizeMerchantBusinessCardShareKey(card.shareKey) === normalizedShareKey),
   );
-  if (!ownerSite || !Array.isArray(ownerSite.businessCards)) return null;
-  return resolveContactCardSnapshotMatchFromSite(ownerSite, normalizedShareKey);
+  const publishedMatch = resolveContactCardSnapshotMatchFromSite(ownerSite ?? null, normalizedShareKey);
+  if (publishedMatch) return publishedMatch;
+  const currentSnapshot = await loadCurrentMerchantSnapshotSites().catch(() => []);
+  const currentOwnerSite = currentSnapshot.find((site) =>
+    Array.isArray(site.businessCards) &&
+    site.businessCards.some((card) => normalizeMerchantBusinessCardShareKey(card.shareKey) === normalizedShareKey),
+  );
+  return resolveContactCardSnapshotMatchFromSite(currentOwnerSite ?? null, normalizedShareKey);
 }
 
 function normalizeSnapshotPhoneList(card: MerchantBusinessCardAsset) {
@@ -3155,7 +3194,8 @@ function buildShareCardHtml(input: {
       introVideoUrl
         ? `<div class="intro-overlay" data-intro-overlay data-no-translate="1">
             <div class="intro-card${introPosterUrl ? " has-intro-poster" : ""}">
-              <video class="intro-video" src="${introVideoUrl}"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay="autoplay"${introVideoMuted ? ` muted="muted"` : ""} playsinline="playsinline" webkit-playsinline="webkit-playsinline" preload="auto" data-intro-src="${introVideoUrl}"></video>
+              ${introPosterUrl ? `<img class="intro-poster" src="${introPosterUrl}" alt="" aria-hidden="true" decoding="async" fetchpriority="high" />` : ""}
+              <video class="intro-video"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay="autoplay"${introVideoMuted ? ` muted="muted"` : ""} playsinline="playsinline" webkit-playsinline="webkit-playsinline" preload="metadata" data-intro-src="${introVideoUrl}"></video>
         <button class="intro-unmute-button" type="button" data-intro-unmute>开启声音</button>
         <button class="intro-skip" type="button" data-intro-skip>跳过</button>
         ${introDebug ? `<pre class="intro-debug-panel" data-intro-debug>intro debug boot</pre>` : ""}
@@ -3223,6 +3263,17 @@ function buildShareCardHtml(input: {
         return;
       }
       debug("init", { ua: String(window.navigator?.userAgent || ""), src: introSrc, introMuted, isWechat });
+      const ensureIntroSource = () => {
+        if (!introSrc) return false;
+        if (video.getAttribute("src") || video.currentSrc) return false;
+        try {
+          video.setAttribute("src", introSrc);
+          debug("source-attached");
+          return true;
+        } catch {
+          return false;
+        }
+      };
       const reloadIntroSource = () => {
         if (!introSrc) return;
         try {
@@ -3300,7 +3351,11 @@ function buildShareCardHtml(input: {
         const forceReload = !isWechat && Boolean(options.reload);
         debug("play-start", { forceMuted, forceReload });
         prepareAutoplay(forceMuted);
+        const sourceAttached = ensureIntroSource();
         if (forceReload) reloadIntroSource();
+        else if (sourceAttached) {
+          try { video.load?.(); debug("source-load-called"); } catch (error) { debug("source-load-error", { message: error?.message || String(error || "") }); }
+        }
         const result = video.play?.();
         if (result && typeof result.then === "function") {
           return result
@@ -3354,10 +3409,10 @@ function buildShareCardHtml(input: {
       };
       prepareAutoplay();
       if (!isWechat) {
-        try { video.load?.(); debug("load-called"); } catch (error) { debug("load-error", { message: error?.message || String(error || "") }); }
+        try { ensureIntroSource(); video.load?.(); debug("load-called"); } catch (error) { debug("load-error", { message: error?.message || String(error || "") }); }
       } else {
         window.setTimeout(() => {
-          try { video.load?.(); debug("wechat-load-called"); } catch (error) { debug("wechat-load-error", { message: error?.message || String(error || "") }); }
+          try { ensureIntroSource(); video.load?.(); debug("wechat-load-called"); } catch (error) { debug("wechat-load-error", { message: error?.message || String(error || "") }); }
         }, 30);
       }
       ["loadstart", "loadedmetadata", "loadeddata", "canplay", "playing", "timeupdate", "pause", "waiting", "stalled", "suspend", "ended", "error"].forEach((name) => {
@@ -3606,17 +3661,24 @@ export async function GET(
     });
   }
 
-  const [revoked, storedPayload] = await Promise.all([
-    withContactCardTimeout(
-      isMerchantBusinessCardShareRevoked({
-        shareKey,
-        preferredOrigin: requestOrigin,
-      }),
-      false,
-    ),
-    withContactCardTimeout(loadMerchantBusinessCardSharePayloadByKey(shareKey, requestOrigin), null),
-  ]);
+  const cachedPayload = readCachedContactCardPayload(shareKey);
+  const storedPayloadPromise = loadMerchantBusinessCardSharePayloadByKey(shareKey, requestOrigin);
+  const storedPayloadTask = withContactCardTimeout(storedPayloadPromise, null, 5_500);
+  const snapshotMatchTask = withContactCardTimeout(
+    resolveContactCardSnapshotMatch(shareKey).catch(() => null),
+    null,
+    6_500,
+  );
+  const revoked = await withContactCardTimeout(
+    isMerchantBusinessCardShareRevoked({
+      shareKey,
+      preferredOrigin: requestOrigin,
+    }),
+    false,
+    1_800,
+  );
   if (revoked) {
+    clearCachedContactCardPayload(shareKey);
     return new NextResponse("Business card not found", {
       status: 404,
       headers: {
@@ -3626,13 +3688,21 @@ export async function GET(
     });
   }
 
-  const snapshotMatch = await withContactCardTimeout(
-    resolveContactCardSnapshotMatch(shareKey, storedPayload?.ownerMerchantId).catch(() => null),
-    null,
-    storedPayload ? 1600 : 3500,
-  );
+  const storedPayload = cachedPayload
+    ? await withContactCardTimeout(storedPayloadPromise, cachedPayload, 1_800)
+    : await storedPayloadTask;
+  let snapshotMatch = storedPayload
+    ? await withContactCardTimeout(snapshotMatchTask, null, 800)
+    : await snapshotMatchTask;
+  if (!snapshotMatch && storedPayload?.ownerMerchantId) {
+    snapshotMatch = await withContactCardTimeout(
+      resolveContactCardSnapshotMatch(shareKey, storedPayload.ownerMerchantId).catch(() => null),
+      null,
+      1_600,
+    );
+  }
   const snapshotPayload = buildSharePayloadFromSnapshotMatch(snapshotMatch, requestOrigin);
-  const payload = storedPayload ?? snapshotPayload;
+  const payload = storedPayload ?? snapshotPayload ?? cachedPayload;
 
   if (!payload) {
     return new NextResponse("Business card not found", {
@@ -3643,6 +3713,7 @@ export async function GET(
       },
     });
   }
+  writeCachedContactCardPayload(shareKey, payload, requestOrigin);
   if (!storedPayload && snapshotPayload) {
     void withContactCardTimeout(hasExistingShareManifestObject(shareKey, requestOrigin), true, 1200).then((exists) => {
       if (exists) return;
@@ -3714,7 +3785,7 @@ export async function GET(
   const serviceState = await withContactCardTimeout(
     loadPublishedMerchantServiceStateByTargetUrl(payload.targetUrl).catch(() => null),
     null,
-    1600,
+    900,
   );
   if (serviceState?.maintenance) {
     return new NextResponse(
@@ -3738,7 +3809,7 @@ export async function GET(
     serviceState?.siteId ||
     "";
   const contactCoupons = contactCouponSiteId
-    ? await withContactCardTimeout(loadContactCardCoupons(contactCouponSiteId), [], 1600)
+    ? await withContactCardTimeout(loadContactCardCoupons(contactCouponSiteId), [], 900)
     : [];
   const shouldShowMerchantName = payload.contact?.contactDisplayFields?.merchantName?.contactCard !== false;
 
