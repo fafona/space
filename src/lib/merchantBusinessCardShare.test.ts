@@ -20,6 +20,7 @@ import {
   normalizeMerchantBusinessCardShareContact,
   normalizeMerchantBusinessCardShareImageUrl,
   normalizeMerchantBusinessCardShareKey,
+  normalizeMerchantBusinessCardShareTargetUrl,
   parseMerchantBusinessCardShareParams,
   readMerchantBusinessCardShareKey,
   resolveMerchantBusinessCardShareOrigin,
@@ -176,6 +177,23 @@ test("share helpers preserve contact card layout controls and custom links", () 
   assert.deepEqual(parsed?.contact?.contactDisplayFields?.googleReview, { businessCard: false, contactCard: true });
   assert.equal(parsed?.contact?.customLinks?.[0]?.displayText, "欢迎评价");
   assert.equal(parsed?.contact?.customLinks?.[0]?.iconPreset, "google");
+});
+
+test("share helpers normalize bare domain click links", () => {
+  assert.equal(normalizeMerchantBusinessCardShareTargetUrl("www.faolla.com"), "https://www.faolla.com/");
+  assert.equal(normalizeMerchantBusinessCardShareTargetUrl("faolla.com/card/felix"), "https://faolla.com/card/felix");
+  const shareUrl = buildMerchantBusinessCardShareUrl({
+    origin: "https://faolla.com",
+    name: "fafona",
+    imageUrl: "https://faolla.com/storage/v1/object/public/page-assets/card.png",
+    detailImageUrl: "https://faolla.com/storage/v1/object/public/page-assets/contact.png",
+    detailImageLinkUrl: "www.faolla.com",
+    targetUrl: "https://fafona.faolla.com",
+  });
+  const url = new URL(shareUrl);
+  assert.equal(url.searchParams.get("detailImageLink"), "https://www.faolla.com/");
+  const parsed = parseMerchantBusinessCardShareParams(url.searchParams, "https://faolla.com");
+  assert.equal(parsed?.detailImageLinkUrl, "https://www.faolla.com/");
 });
 
 test("resolveMerchantBusinessCardShareOrigin prefers target root domain over localhost", () => {

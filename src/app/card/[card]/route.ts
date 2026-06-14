@@ -11,6 +11,7 @@ import {
   normalizeMerchantBusinessCardSharePayload,
   normalizeMerchantBusinessCardShareImageUrl,
   normalizeMerchantBusinessCardShareKey,
+  normalizeMerchantBusinessCardShareTargetUrl,
   normalizeMerchantBusinessCardShareVideoUrl,
   resolveMerchantBusinessCardShareOrigin,
   type MerchantBusinessCardShareContact,
@@ -2516,7 +2517,10 @@ function buildShareCardHtml(input: {
   const merchantName = escapeHtml(input.merchantName);
   const previewImageUrl = input.previewImageUrl ? escapeHtml(input.previewImageUrl) : "";
   const contentImageUrl = input.contentImageUrl ? escapeHtml(input.contentImageUrl) : "";
-  const contentImageLinkUrl = escapeHtml(input.contentImageLinkUrl || input.targetUrl);
+  const contentImageLinkUrl = escapeHtml(
+    normalizeMerchantBusinessCardShareTargetUrl(input.contentImageLinkUrl) ||
+      normalizeMerchantBusinessCardShareTargetUrl(input.targetUrl),
+  );
   const contentImageX = Number.isFinite(input.contentImageX) ? Math.round(input.contentImageX ?? 0) : 0;
   const contentImageY = Number.isFinite(input.contentImageY) ? Math.round(input.contentImageY ?? 0) : 0;
   const normalizedContentImageScale =

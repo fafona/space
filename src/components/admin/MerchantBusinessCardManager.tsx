@@ -45,6 +45,7 @@ import {
   createMerchantBusinessCardShareKey,
   createMerchantBusinessCardShareKeyCode,
   normalizeMerchantBusinessCardShareImageUrl,
+  normalizeMerchantBusinessCardShareTargetUrl,
   resolveMerchantBusinessCardShareOrigin,
   type MerchantBusinessCardShareContact,
 } from "@/lib/merchantBusinessCardShare";
@@ -1562,7 +1563,7 @@ function ContactCardSurface({
   const normalizedSectionOrder = normalizeMerchantBusinessCardContactSectionOrder(sectionOrder);
   const displayName = isContactFieldVisibleOnContactCard(contactDisplayFields, "merchantName") ? normalizeText(name) : "";
   const hasImage = Boolean(normalizeText(imageUrl));
-  const normalizedImageLinkUrl = normalizeText(imageLinkUrl);
+  const normalizedImageLinkUrl = normalizeMerchantBusinessCardShareTargetUrl(imageLinkUrl);
   const canDragContactImage = hasImage && Boolean(onContactImagePointerDown);
   const normalizedIntroVideoUrl = normalizeText(introVideoUrl);
   const normalizedIntroVideoPosterUrl = normalizeText(introVideoPosterUrl);
@@ -3510,6 +3511,15 @@ export default function MerchantBusinessCardManager({
                               className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm"
                               value={draft.contactPageImageLinkUrl}
                               placeholder="https://..."
+                              onBlur={(event) => {
+                                const normalizedUrl = normalizeMerchantBusinessCardShareTargetUrl(event.target.value);
+                                if (normalizedUrl && normalizedUrl !== event.target.value) {
+                                  applyDraft((current) => ({
+                                    ...current,
+                                    contactPageImageLinkUrl: normalizedUrl,
+                                  }));
+                                }
+                              }}
                               onChange={(event) =>
                                 applyDraft((current) => ({
                                   ...current,
@@ -5072,7 +5082,12 @@ export default function MerchantBusinessCardManager({
       throw new Error("business_card_limit_reached");
     }
 
-    const nextDraft = normalizeMerchantBusinessCardDraft(draft);
+    const nextDraftBase = normalizeMerchantBusinessCardDraft(draft);
+    const normalizedContactPageImageLinkUrl = normalizeMerchantBusinessCardShareTargetUrl(nextDraftBase.contactPageImageLinkUrl);
+    const nextDraft =
+      normalizedContactPageImageLinkUrl && normalizedContactPageImageLinkUrl !== nextDraftBase.contactPageImageLinkUrl
+        ? { ...nextDraftBase, contactPageImageLinkUrl: normalizedContactPageImageLinkUrl }
+        : nextDraftBase;
     const existingCard = editingCardId ? normalizedCards.find((card) => card.id === editingCardId) ?? null : null;
     const reusableSnapshotImageUrl =
       existingCard && nextDraft.backgroundImageSnapshotOnly
@@ -5197,7 +5212,12 @@ export default function MerchantBusinessCardManager({
     const existingCard = normalizedCards.find((card) => card.id === editingCardId) ?? null;
     if (!existingCard) return null;
 
-    const nextDraft = normalizeMerchantBusinessCardDraft(draft);
+    const nextDraftBase = normalizeMerchantBusinessCardDraft(draft);
+    const normalizedContactPageImageLinkUrl = normalizeMerchantBusinessCardShareTargetUrl(nextDraftBase.contactPageImageLinkUrl);
+    const nextDraft =
+      normalizedContactPageImageLinkUrl && normalizedContactPageImageLinkUrl !== nextDraftBase.contactPageImageLinkUrl
+        ? { ...nextDraftBase, contactPageImageLinkUrl: normalizedContactPageImageLinkUrl }
+        : nextDraftBase;
     const resolvedShareKey =
       nextDraft.mode === "link"
         ? normalizeText(existingCard.shareKey) ||

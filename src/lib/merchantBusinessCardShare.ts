@@ -356,13 +356,23 @@ function rewriteStorageUrlToOrigin(value: string, preferredOrigin: string) {
 export function normalizeMerchantBusinessCardShareTargetUrl(value: string | null | undefined) {
   const trimmed = normalizeText(value);
   if (!trimmed) return "";
-  try {
-    const parsed = new URL(trimmed);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
-    return parsed.toString();
-  } catch {
-    return "";
+  const candidates = [
+    trimmed,
+    trimmed.startsWith("//") ? `https:${trimmed}` : "",
+    /^[a-z0-9][a-z0-9-]*(?:\.[a-z0-9][a-z0-9-]*)+(?::\d{1,5})?(?:[/?#].*)?$/i.test(trimmed)
+      ? `https://${trimmed}`
+      : "",
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    try {
+      const parsed = new URL(candidate);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") continue;
+      return parsed.toString();
+    } catch {
+      // Try the next candidate.
+    }
   }
+  return "";
 }
 
 function isPublicOrigin(origin: string) {
