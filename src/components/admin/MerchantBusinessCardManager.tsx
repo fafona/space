@@ -1908,6 +1908,10 @@ export default function MerchantBusinessCardManager({
     () => normalizeMerchantBusinessCardChatDisplaySelection(cards),
     [cards],
   );
+  const normalizedCardsRef = useRef<MerchantBusinessCardAsset[]>(normalizedCards);
+  useEffect(() => {
+    normalizedCardsRef.current = normalizedCards;
+  }, [normalizedCards]);
   const missingFields = useMemo(
     () => (normalizedTargetUrlOverride ? [] : getMerchantBusinessCardRequiredFields(profile)),
     [normalizedTargetUrlOverride, profile],
@@ -2327,11 +2331,18 @@ export default function MerchantBusinessCardManager({
     try {
       writeSavedBusinessCardDraft(draftStorageKey, draft);
       const savedExistingCard = editingCardId
-        ? websiteUrl && qrReadyForCurrentDraft
-          ? await saveCurrentDraftToFolder()
-          : await saveCurrentDraftSettingsToExistingCard()
+        ? await saveCurrentDraftSettingsToExistingCard({
+            deferShareSync: true,
+            refreshFrontImage: Boolean(websiteUrl && qrReadyForCurrentDraft),
+          })
         : null;
-      setTip(savedExistingCard ? "名片已保存并同步联系卡" : "名片草稿已保存");
+      setTip(
+        savedExistingCard
+          ? savedExistingCard.mode === "link"
+            ? "名片设置已保存，联系卡后台同步中"
+            : "名片设置已保存"
+          : "名片草稿已保存",
+      );
     } catch (error) {
       if (error instanceof Error && error.message === "share_link_not_ready") {
         setTip("短链还没同步成功，请重试保存");
@@ -4715,20 +4726,34 @@ export default function MerchantBusinessCardManager({
     cardId: string,
     patch: Partial<Pick<MerchantBusinessCardAsset, "shareImageUrl" | "shareKey" | "contactPagePublicImageUrl">>,
   ) {
+    const currentCards = normalizedCardsRef.current.length ? normalizedCardsRef.current : normalizedCards;
     void Promise.resolve(
-      onCardsChange(
-        normalizeMerchantBusinessCardChatDisplaySelection(
-          normalizedCards.map((item) =>
-            item.id === cardId
-              ? {
-                  ...item,
-                  ...patch,
-                }
-              : item,
-          ),
+      persistBusinessCardList(
+        currentCards.map((item) =>
+          item.id === cardId
+            ? {
+                ...item,
+                ...patch,
+              }
+            : item,
         ),
       ),
     ).catch(() => undefined);
+  }
+
+  function persistBusinessCardList(cardsToSave: MerchantBusinessCardAsset[]) {
+    const normalizedNextCards = normalizeMerchantBusinessCardChatDisplaySelection(cardsToSave);
+    normalizedCardsRef.current = normalizedNextCards;
+    return Promise.resolve(onCardsChange(normalizedNextCards));
+  }
+
+  function mergeSavedBusinessCardAsset(asset: MerchantBusinessCardAsset) {
+    const currentCards = normalizedCardsRef.current.length ? normalizedCardsRef.current : normalizedCards;
+    const hasExistingCard = currentCards.some((card) => card.id === asset.id);
+    const nextCards = hasExistingCard
+      ? currentCards.map((card) => (card.id === asset.id ? asset : card))
+      : [asset, ...currentCards];
+    return persistBusinessCardList(nextCards);
   }
 
   async function resolveShareImageUrl(input: {
@@ -5076,6 +5101,119 @@ export default function MerchantBusinessCardManager({
     };
   }
 
+  function buildDraftShareContactPayload(source: MerchantBusinessCardDraft, targetUrl: string) {
+    return buildShareContactPayload({
+      name: source.name,
+      title: source.title,
+      contacts: source.contacts,
+      invoice: source.invoice,
+      contactFieldOrder: source.contactFieldOrder,
+      contactDisplayFields: source.contactDisplayFields,
+      customContactLinks: source.customContactLinks,
+      targetUrl,
+    });
+  }
+
+  async function renderCurrentDraftExportImage() {
+    const node = hiddenPreviewRef.current;
+    if (!node) {
+      throw new Error("business_card_preview_unavailable");
+    }
+    const exportedImage = await compressImageDataUrlWithinLimit(
+      await renderCardNodeToImage(node),
+      normalizedExportImageLimitKb * 1024,
+    );
+    if (exportedImage.bytes > normalizedExportImageLimitKb * 1024) {
+      throw new Error("export_image_limit_exceeded");
+    }
+    return exportedImage.dataUrl;
+  }
+
+  async function syncSavedBusinessCardAssetInBackground(input: {
+    asset: MerchantBusinessCardAsset;
+    refreshFrontImage?: boolean;
+  }) {
+    const asset = input.asset;
+    let nextAsset = asset;
+    let renderedImageUrl = "";
+    let refreshedFrontImage = false;
+
+    if (input.refreshFrontImage) {
+      try {
+        setTip("名片设置已保存，正在后台更新名片图片...");
+        renderedImageUrl = await renderCurrentDraftExportImage();
+        if (renderedImageUrl) {
+          refreshedFrontImage = true;
+          nextAsset = {
+            ...nextAsset,
+            imageUrl: renderedImageUrl,
+          };
+        }
+      } catch {
+        setTip("名片设置已保存，图片后台更新失败，联系卡继续同步");
+      }
+    }
+
+    if (asset.mode === "link") {
+      try {
+        const shareContactPayload = buildDraftShareContactPayload(asset, asset.targetUrl);
+        const shareBundle = await buildShareBundle({
+          targetUrl: asset.targetUrl,
+          cardName: normalizeText(asset.name),
+          shareKey: normalizeText(asset.shareKey),
+          allowLegacyFallback: false,
+          card: asset,
+          renderedImageUrl,
+          contactPageImageUrl: normalizeText(asset.contactPageImageUrl),
+          contactPageImageHeight: asset.contactPageImageHeight,
+          contactPageImageLinkUrl: normalizeText(asset.contactPageImageLinkUrl),
+          contactPageImageX: asset.contactPageImageX,
+          contactPageImageY: asset.contactPageImageY,
+          contactPageImageScale: asset.contactPageImageScale,
+          contactPageImageOpacity: asset.contactPageImageOpacity,
+          introVideoUrl: normalizeText(asset.contactIntroVideoUrl),
+          introVideoPosterUrl: normalizeText(asset.contactIntroVideoPosterUrl),
+          introVideoMuted: asset.contactIntroVideoMuted,
+          contactPageSectionOrder: asset.contactPageSectionOrder,
+          showContactSaveButton: asset.showContactSaveButton,
+          showContactWebsiteButton: asset.showContactWebsiteButton,
+          imageWidth: asset.width,
+          imageHeight: asset.height,
+          contact: shareContactPayload,
+          syncCardMeta: false,
+          preferContactPageImage: true,
+          requireVerifiedShortLink: false,
+          verifyShortLink: false,
+          shareRequestAttempts: 1,
+          shareRequestTimeoutMs: 8_000,
+        });
+        nextAsset = {
+          ...nextAsset,
+          ...(shareBundle.shareImageUrl ? { shareImageUrl: shareBundle.shareImageUrl } : {}),
+          ...(shareBundle.detailImageUrl ? { contactPagePublicImageUrl: shareBundle.detailImageUrl } : {}),
+          ...(normalizeText(shareBundle.shareKey) ? { shareKey: normalizeText(shareBundle.shareKey) } : {}),
+        };
+        await mergeSavedBusinessCardAsset(nextAsset);
+        setPreviewAsset((current) => (current?.id === nextAsset.id ? nextAsset : current));
+        setTip(refreshedFrontImage ? "名片图片和联系卡已后台更新" : "联系卡短链已后台同步");
+        return;
+      } catch {
+        if (refreshedFrontImage) {
+          await mergeSavedBusinessCardAsset(nextAsset);
+          setPreviewAsset((current) => (current?.id === nextAsset.id ? nextAsset : current));
+        }
+        setTip("名片设置已保存，联系卡后台同步失败，稍后可再点保存");
+        return;
+      }
+    }
+
+    if (refreshedFrontImage) {
+      await mergeSavedBusinessCardAsset(nextAsset);
+      setPreviewAsset((current) => (current?.id === nextAsset.id ? nextAsset : current));
+      setTip("名片图片已后台更新");
+    }
+  }
+
   async function saveCurrentDraftToFolder() {
     if (!websiteUrl || !qrReadyForCurrentDraft) return null;
     if (!editingCardId && normalizedCards.length >= normalizedCardLimit) {
@@ -5106,19 +5244,8 @@ export default function MerchantBusinessCardManager({
       reusableSnapshotImageUrl ||
       reusableUnchangedFrontImageUrl ||
       (await (async () => {
-        const node = hiddenPreviewRef.current;
-        if (!node) {
-          throw new Error("business_card_preview_unavailable");
-        }
         setTip("正在生成名片图片...");
-        const exportedImage = await compressImageDataUrlWithinLimit(
-          await renderCardNodeToImage(node),
-          normalizedExportImageLimitKb * 1024,
-        );
-        if (exportedImage.bytes > normalizedExportImageLimitKb * 1024) {
-          throw new Error("export_image_limit_exceeded");
-        }
-        return exportedImage.dataUrl;
+        return renderCurrentDraftExportImage();
       })());
     const resolvedShareKey =
       nextDraft.mode === "link"
@@ -5132,16 +5259,7 @@ export default function MerchantBusinessCardManager({
         : "";
     const shareContactPayload =
       nextDraft.mode === "link"
-        ? buildShareContactPayload({
-            name: nextDraft.name,
-            title: nextDraft.title,
-            contacts: nextDraft.contacts,
-            invoice: nextDraft.invoice,
-            contactFieldOrder: nextDraft.contactFieldOrder,
-            contactDisplayFields: nextDraft.contactDisplayFields,
-            customContactLinks: nextDraft.customContactLinks,
-            targetUrl: websiteUrl,
-        })
+        ? buildDraftShareContactPayload(nextDraft, websiteUrl)
         : undefined;
     if (nextDraft.mode === "link") {
       setTip("正在同步联系卡短链...");
@@ -5202,12 +5320,15 @@ export default function MerchantBusinessCardManager({
     const nextCards = existingCard
       ? normalizedCards.map((card) => (card.id === existingCard.id ? asset : card))
       : [asset, ...normalizedCards];
-    await Promise.resolve(onCardsChange(normalizeMerchantBusinessCardChatDisplaySelection(nextCards)));
+    await persistBusinessCardList(nextCards);
     setEditingCardId(asset.id);
     return asset;
   }
 
-  async function saveCurrentDraftSettingsToExistingCard() {
+  async function saveCurrentDraftSettingsToExistingCard(options?: {
+    deferShareSync?: boolean;
+    refreshFrontImage?: boolean;
+  }) {
     if (!editingCardId || !websiteUrl) return null;
     const existingCard = normalizedCards.find((card) => card.id === editingCardId) ?? null;
     if (!existingCard) return null;
@@ -5230,22 +5351,13 @@ export default function MerchantBusinessCardManager({
         : "";
     const shareContactPayload =
       nextDraft.mode === "link"
-        ? buildShareContactPayload({
-            name: nextDraft.name,
-            title: nextDraft.title,
-            contacts: nextDraft.contacts,
-            invoice: nextDraft.invoice,
-            contactFieldOrder: nextDraft.contactFieldOrder,
-            contactDisplayFields: nextDraft.contactDisplayFields,
-            customContactLinks: nextDraft.customContactLinks,
-            targetUrl: websiteUrl,
-        })
+        ? buildDraftShareContactPayload(nextDraft, websiteUrl)
         : undefined;
-    if (nextDraft.mode === "link") {
+    if (nextDraft.mode === "link" && !options?.deferShareSync) {
       setTip("正在同步联系卡短链...");
     }
     const shareBundle =
-      nextDraft.mode === "link"
+      nextDraft.mode === "link" && !options?.deferShareSync
         ? await buildShareBundle({
             targetUrl: websiteUrl,
             cardName: normalizeText(nextDraft.name),
@@ -5276,9 +5388,14 @@ export default function MerchantBusinessCardManager({
             shareRequestTimeoutMs: 12_000,
           })
         : null;
-    if (nextDraft.mode === "link" && !normalizeText(shareBundle?.shareKey)) {
+    if (nextDraft.mode === "link" && !options?.deferShareSync && !normalizeText(shareBundle?.shareKey)) {
       throw new Error("share_link_unavailable");
     }
+    const savedShareKey = normalizeText(shareBundle?.shareKey) || resolvedShareKey;
+    const shouldRefreshFrontImage =
+      Boolean(options?.refreshFrontImage) &&
+      Boolean(normalizeText(existingCard.imageUrl) || normalizeText(existingCard.shareImageUrl)) &&
+      buildBusinessCardFrontRenderSignature(existingCard) !== buildBusinessCardFrontRenderSignature(nextDraft);
 
     const asset: MerchantBusinessCardAsset = {
       ...existingCard,
@@ -5292,14 +5409,20 @@ export default function MerchantBusinessCardManager({
       ...(nextDraft.mode === "link" && (shareBundle?.detailImageUrl || existingCard.contactPagePublicImageUrl)
         ? { contactPagePublicImageUrl: shareBundle?.detailImageUrl || existingCard.contactPagePublicImageUrl }
         : {}),
-      ...(nextDraft.mode === "link" && normalizeText(shareBundle?.shareKey) ? { shareKey: normalizeText(shareBundle?.shareKey) } : {}),
+      ...(nextDraft.mode === "link" && savedShareKey ? { shareKey: savedShareKey } : {}),
       targetUrl: websiteUrl,
       ...(existingCard.showInChat ? { showInChat: true } : {}),
       ...(existingCard.chatDisplayDisabled ? { chatDisplayDisabled: true } : {}),
     };
     const nextCards = normalizedCards.map((card) => (card.id === existingCard.id ? asset : card));
-    await Promise.resolve(onCardsChange(normalizeMerchantBusinessCardChatDisplaySelection(nextCards)));
+    await persistBusinessCardList(nextCards);
     setPreviewAsset((current) => (current?.id === asset.id ? asset : current));
+    if (options?.deferShareSync) {
+      void syncSavedBusinessCardAssetInBackground({
+        asset,
+        refreshFrontImage: shouldRefreshFrontImage,
+      }).catch(() => undefined);
+    }
     return asset;
   }
 
