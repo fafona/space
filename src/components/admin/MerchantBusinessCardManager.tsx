@@ -2307,7 +2307,7 @@ export default function MerchantBusinessCardManager({
       } else if (error instanceof Error && error.message === "share_auth_unavailable") {
         setTip("登录状态还没准备好，请刷新后台后再试一次");
       } else if (error instanceof Error && error.message === "share_request_timeout") {
-        setTip("生成超时，请稍后重试");
+        setTip("短链保存超时，请重试");
       } else {
         setTip(editingCardId ? "名片设置同步失败，请点保存重试" : "草稿保存失败，请重试");
       }
@@ -2411,7 +2411,7 @@ export default function MerchantBusinessCardManager({
       } else if (error instanceof Error && error.message === "share_auth_unavailable") {
         setTip("登录状态还没准备好，请刷新后台后再试一次");
       } else if (error instanceof Error && error.message === "share_request_timeout") {
-        setTip("生成超时，请稍后重试");
+        setTip("短链保存超时，请重试");
       } else if (error instanceof Error && error.message === "share_link_not_ready") {
         setTip("短链还没同步成功，请重试保存");
       } else if (error instanceof Error && error.message === "business_card_preview_unavailable") {
@@ -4847,6 +4847,9 @@ export default function MerchantBusinessCardManager({
     syncCardMeta?: boolean;
     preferContactPageImage?: boolean;
     requireVerifiedShortLink?: boolean;
+    verifyShortLink?: boolean;
+    shareRequestAttempts?: number;
+    shareRequestTimeoutMs?: number;
   }) {
     const targetUrl = normalizeText(input.targetUrl);
     if (!targetUrl) {
@@ -4904,7 +4907,10 @@ export default function MerchantBusinessCardManager({
     let shareUrl = "";
     let shareKey = "";
     let lastErrorCode = "";
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+    const maxShareRequestAttempts = Math.max(1, Math.min(2, Math.round(input.shareRequestAttempts ?? 2)));
+    const shareRequestTimeoutMs = Math.max(5_000, Math.round(input.shareRequestTimeoutMs ?? 15_000));
+    const shouldVerifyShortLink = input.verifyShortLink !== false;
+    for (let attempt = 0; attempt < maxShareRequestAttempts; attempt += 1) {
       try {
         const headers: Record<string, string> = {
           "content-type": "application/json",
@@ -4948,7 +4954,7 @@ export default function MerchantBusinessCardManager({
             imageHeight: typeof input.imageHeight === "number" ? Math.round(input.imageHeight) : undefined,
             contact: input.contact,
           }),
-        }, attempt === 0 ? 15_000 : 20_000);
+        }, attempt === 0 ? shareRequestTimeoutMs : Math.max(shareRequestTimeoutMs, 20_000));
         const payload = (await response.json().catch(() => null)) as {
           ok?: unknown;
           error?: unknown;
@@ -4959,12 +4965,15 @@ export default function MerchantBusinessCardManager({
         shareKey = typeof payload?.shareKey === "string" ? payload.shareKey.trim() : "";
         lastErrorCode = typeof payload?.error === "string" ? payload.error.trim() : "";
         if (response.ok && shareUrl && shareKey) {
+          if (!shouldVerifyShortLink) {
+            break;
+          }
           const linkReady = await verifyShortBusinessCardShareLink(shareUrl, attempt === 0 ? 8_000 : 12_000);
           if (linkReady) {
             break;
           }
           lastErrorCode = "share_link_not_ready";
-          if (attempt === 0) {
+          if (attempt + 1 < maxShareRequestAttempts) {
             await delay(600);
             continue;
           }
@@ -4974,17 +4983,17 @@ export default function MerchantBusinessCardManager({
           }
           break;
         }
-        if (attempt === 0 && (response.status === 401 || response.status === 503 || lastErrorCode === "unauthorized")) {
+        if (attempt + 1 < maxShareRequestAttempts && (response.status === 401 || response.status === 503 || lastErrorCode === "unauthorized")) {
           await delay(500);
           continue;
         }
-        if (attempt === 0 && response.status >= 500) {
+        if (attempt + 1 < maxShareRequestAttempts && response.status >= 500) {
           await delay(400);
           continue;
         }
       } catch (error) {
         lastErrorCode = error instanceof Error && error.name === "AbortError" ? "share_request_timeout" : "share_link_unavailable";
-        if (attempt === 0) {
+        if (attempt + 1 < maxShareRequestAttempts) {
           await delay(400);
           continue;
         }
@@ -5106,6 +5115,9 @@ export default function MerchantBusinessCardManager({
             syncCardMeta: false,
             preferContactPageImage: true,
             requireVerifiedShortLink: true,
+            verifyShortLink: false,
+            shareRequestAttempts: 1,
+            shareRequestTimeoutMs: 12_000,
           })
         : null;
     if (nextDraft.mode === "link" && !normalizeText(shareBundle?.shareKey)) {
@@ -5192,6 +5204,9 @@ export default function MerchantBusinessCardManager({
             syncCardMeta: false,
             preferContactPageImage: true,
             requireVerifiedShortLink: true,
+            verifyShortLink: false,
+            shareRequestAttempts: 1,
+            shareRequestTimeoutMs: 12_000,
           })
         : null;
     if (nextDraft.mode === "link" && !normalizeText(shareBundle?.shareKey)) {

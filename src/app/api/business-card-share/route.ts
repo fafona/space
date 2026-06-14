@@ -39,6 +39,7 @@ import { createServerSupabaseAuthClient, createServerSupabaseServiceClient } fro
 import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
 
 const BUCKET_CANDIDATES = ["page-assets", "assets", "uploads", "public"] as const;
+const PRIMARY_SHARE_BUCKET = BUCKET_CANDIDATES[0];
 const SNAPSHOT_CONTACT_FIELD_LABELS: Record<MerchantBusinessCardContactDisplayKey, string> = {
   contactName: "联系人",
   phone: "电话",
@@ -693,29 +694,43 @@ export async function POST(request: Request) {
   const blob = createJsonBlob(payload);
   const revocationKeyObjectPath = buildMerchantBusinessCardShareRevocationByKeyObjectPath(shareKey);
   if (revocationKeyObjectPath) {
-    for (const bucket of BUCKET_CANDIDATES) {
-      await supabase.storage.from(bucket).remove([revocationKeyObjectPath]);
-    }
+    await supabase.storage.from(PRIMARY_SHARE_BUCKET).remove([revocationKeyObjectPath]).catch(() => null);
   }
 
-  const succeededBuckets: string[] = [];
-  const failedBuckets: Array<{ bucket: string; message: string }> = [];
-
-  for (const bucket of BUCKET_CANDIDATES) {
+  const uploadManifestToBucket = async (bucket: (typeof BUCKET_CANDIDATES)[number]) => {
     const uploaded = await supabase.storage.from(bucket).upload(objectPath, blob, {
       contentType: "application/json; charset=utf-8",
       cacheControl: "31536000",
       upsert: true,
     });
     if (uploaded.error) {
-      failedBuckets.push({
+      throw {
         bucket,
         message: normalizeText(uploaded.error.message) || "share_manifest_upload_failed",
-      });
-      continue;
+      };
     }
-    succeededBuckets.push(bucket);
+    return { bucket };
+  };
+
+  const uploadPromises = BUCKET_CANDIDATES.map((bucket) => uploadManifestToBucket(bucket));
+  let firstUploadedBucket = "";
+  let failedBuckets: Array<{ bucket: string; message: string }> = [];
+  try {
+    firstUploadedBucket = (await Promise.any(uploadPromises)).bucket;
+  } catch {
+    const uploadResults = await Promise.allSettled(uploadPromises);
+    failedBuckets = uploadResults.flatMap((result) => {
+      if (result.status !== "rejected") return [];
+      const reason = result.reason as { bucket?: unknown; message?: unknown };
+      return [
+        {
+          bucket: normalizeText(reason?.bucket),
+          message: normalizeText(reason?.message) || "share_manifest_upload_failed",
+        },
+      ];
+    });
   }
+  const succeededBuckets = firstUploadedBucket ? [firstUploadedBucket] : [];
 
   const shareUrl = buildMerchantBusinessCardShareUrl({
     origin: shareOrigin,
