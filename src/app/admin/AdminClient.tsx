@@ -122,7 +122,6 @@ import {
   normalizeMerchantBusinessCardChatDisplaySelection,
   mergeMerchantBusinessCardAssets,
   resolveMerchantBusinessCardForChatDisplay,
-  selectMerchantBusinessCardForChat,
   type MerchantBusinessCardAsset,
   type MerchantBusinessCardProfileInput,
 } from "@/lib/merchantBusinessCards";
@@ -6117,101 +6116,6 @@ async function copySupportTextToClipboard(value: string) {
   }
 }
 
-async function normalizeSupportClipboardImageBlob(sourceImageUrl: string) {
-  const response = await fetch(sourceImageUrl);
-  if (!response.ok) {
-    throw new Error("image_clipboard_unavailable");
-  }
-  const sourceBlob = await response.blob();
-  if (sourceBlob.type === "image/png") {
-    return sourceBlob;
-  }
-  return new Blob([await sourceBlob.arrayBuffer()], {
-    type: "image/png",
-  });
-}
-
-async function supportBlobToDataUrl(blob: Blob) {
-  return await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
-    reader.onerror = () => reject(new Error("image_clipboard_unavailable"));
-    reader.readAsDataURL(blob);
-  });
-}
-
-async function copySupportImageViaLegacyClipboard(blob: Blob) {
-  if (typeof document === "undefined") {
-    throw new Error("image_clipboard_unavailable");
-  }
-  const dataUrl = await supportBlobToDataUrl(blob);
-  await new Promise<void>((resolve, reject) => {
-    let handled = false;
-    const cleanup = () => {
-      document.removeEventListener("copy", handleCopy, true);
-    };
-    const fail = () => {
-      cleanup();
-      reject(new Error("image_clipboard_unavailable"));
-    };
-    const succeed = () => {
-      handled = true;
-      cleanup();
-      resolve();
-    };
-    const handleCopy = (event: ClipboardEvent) => {
-      const clipboardData = event.clipboardData;
-      if (!clipboardData) {
-        fail();
-        return;
-      }
-      event.preventDefault();
-      try {
-        clipboardData.setData(
-          "text/html",
-          `<img src="${dataUrl}" alt="business card" style="display:block;max-width:100%;" />`,
-        );
-        clipboardData.setData("text/plain", "");
-        succeed();
-      } catch {
-        fail();
-      }
-    };
-
-    document.addEventListener("copy", handleCopy, true);
-    const copied = document.execCommand("copy");
-    if (!copied && !handled) {
-      fail();
-      return;
-    }
-    window.setTimeout(() => {
-      if (!handled) fail();
-    }, 50);
-  });
-}
-
-async function copySupportImageToClipboard(sourceImageUrl: string) {
-  const blob = await normalizeSupportClipboardImageBlob(sourceImageUrl);
-  if (
-    typeof window !== "undefined" &&
-    typeof navigator !== "undefined" &&
-    navigator.clipboard?.write &&
-    typeof window.ClipboardItem === "function"
-  ) {
-    try {
-      await navigator.clipboard.write([
-        new window.ClipboardItem({
-          "image/png": blob,
-        }),
-      ]);
-      return;
-    } catch {
-      // Fall through to legacy clipboard path.
-    }
-  }
-  await copySupportImageViaLegacyClipboard(blob);
-}
-
 function compareSupportMessages(left: Pick<PlatformSupportMessage, "createdAt" | "id">, right: Pick<PlatformSupportMessage, "createdAt" | "id">) {
   const leftTs = new Date(left.createdAt).getTime();
   const rightTs = new Date(right.createdAt).getTime();
@@ -7124,7 +7028,8 @@ export default function AdminClient({
     });
   }
 
-  function showTip(message: string, _options?: { durationMs?: number | null; dismissOnPointer?: boolean }) {
+  function showTip(message: string, options?: { durationMs?: number | null; dismissOnPointer?: boolean }) {
+    void options;
     setTip(message);
   }
 
@@ -16868,48 +16773,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     }
   }
 
-  async function handleSupportSelfChatDisplayChange(cardId: string) {
-    if (!editingSite?.businessCards?.length) return;
-    await saveSupportSelfSitePatch(
-      {
-        businessCards: selectMerchantBusinessCardForChat(editingSite.businessCards, cardId),
-      },
-      {
-        successTip: "聊天展示已更新",
-        skipProfileSync: true,
-      },
-    );
-  }
-
-  async function handleSupportSelfCopyCardImage(card: MerchantBusinessCardAsset) {
-    try {
-      const cardPreviewUrl = getSupportPreferredBusinessCardPreviewUrl(card);
-      if (!cardPreviewUrl) {
-        showTip("当前名片没有可复制的图片");
-        return;
-      }
-      await copySupportImageToClipboard(cardPreviewUrl);
-      showTip("名片图片已复制，可直接发送");
-    } catch {
-      showTip("复制失败，请稍后重试");
-    }
-  }
-
-  async function handleSupportSelfCopyCardLink(card: MerchantBusinessCardAsset) {
-    const shareBundle = await ensureSupportBusinessCardShareBundle(card);
-    const shareUrl = normalizeSupportDisplayValue(shareBundle.shareUrl);
-    if (!shareUrl) {
-      showTip("当前名片没有可复制的联系卡");
-      return;
-    }
-    try {
-      await copySupportTextToClipboard(shareUrl);
-      showTip("联系卡已复制");
-    } catch {
-      showTip("复制失败，请稍后重试");
-    }
-  }
-
   const shouldUseDesktopEditorSidebar = forceDesktopEditorSidebar || isPlatformEditor || isDesktopEditorSidebar;
   const toggleTopBarCollapsed = useCallback(() => {
     setTopBarCollapsed((prev) => !prev);
@@ -18487,90 +18350,16 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             </section>
           </div>
         ) : supportSelfSectionView === "cards" ? (
-          <div className="space-y-4">
+          merchantBusinessCardManagerCommonProps ? (
+            <MerchantBusinessCardManager {...merchantBusinessCardManagerCommonProps} folderViewMode="page" />
+          ) : (
             <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
-              <div className="border-b border-slate-100 px-5 py-4">
-                <div className="text-sm font-semibold text-slate-900">名片夹</div>
-                <div className="mt-1 text-xs text-slate-500">这里可以调整聊天展示，并复制名片图片或联系卡。</div>
-              </div>
-              <div className="space-y-3 px-4 py-4">
-                {supportSelfBusinessCards.length ? (
-                  supportSelfBusinessCards.map((card) => {
-                    const cardPreviewUrl = getSupportPreferredBusinessCardPreviewUrl(card);
-                    const canCopyCardLink = card.mode === "link" && !!normalizeSupportDisplayValue(card.targetUrl);
-                    return (
-                      <article key={card.id} className="overflow-hidden rounded-[24px] border border-slate-200 bg-slate-50/80">
-                        <div className="flex gap-3 px-3 py-3">
-                          <div className="support-preserve-light-surface support-preserve-light-border flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-white p-1 text-xs font-semibold text-slate-700 shadow-sm">
-                            {cardPreviewUrl ? (
-                              /* eslint-disable-next-line @next/next/no-img-element */
-                              <img src={cardPreviewUrl} alt={card.name} className="support-preserve-light-surface h-full w-full rounded-[14px] bg-white object-contain" />
-                            ) : (
-                              getSupportContactAvatarLabel(card.name || supportSelfDisplayName, "名")
-                            )}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <div className="truncate text-sm font-semibold text-slate-900">{card.name || "未命名名片"}</div>
-                              <span className="shrink-0 rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium text-white">
-                                {card.mode === "link" ? "链接" : "图片"}
-                              </span>
-                              {card.showInChat ? (
-                                <span className="shrink-0 rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] font-medium text-white">
-                                  当前聊天展示
-                                </span>
-                              ) : null}
-                            </div>
-                            <div className="mt-1 text-xs leading-5 text-slate-500">
-                              {card.mode === "link" ? "链接模式，可复制联系卡和名片图片。" : "图片模式，可复制名片图片。"}
-                            </div>
-                            <div className="mt-3 grid grid-cols-2 gap-2">
-                              <button
-                                type="button"
-                                className={`rounded-2xl px-3 py-2 text-xs font-medium transition ${
-                                  card.showInChat
-                                    ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
-                                    : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                                }`}
-                                onClick={() => {
-                                  void handleSupportSelfChatDisplayChange(card.id);
-                                }}
-                              >
-                                {card.showInChat ? "当前聊天展示" : "设为聊天展示"}
-                              </button>
-                              <button
-                                type="button"
-                                className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
-                                onClick={() => {
-                                  void handleSupportSelfCopyCardImage(card);
-                                }}
-                              >
-                                复制名片图片
-                              </button>
-                              <button
-                                type="button"
-                                className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-45"
-                                onClick={() => {
-                                  void handleSupportSelfCopyCardLink(card);
-                                }}
-                                disabled={!canCopyCardLink}
-                              >
-                                复制联系卡
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      </article>
-                    );
-                  })
-                ) : (
-                  <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
-                    还没有可展示的名片，请先在电脑端准备名片内容。
-                  </div>
-                )}
+              <div className="px-5 py-6">
+                <div className="text-sm font-semibold text-slate-900">名片夹暂未准备好</div>
+                <div className="mt-1 text-xs leading-5 text-slate-500">稍后刷新后，手机端这里会直接显示和电脑端同一套名片夹。</div>
               </div>
             </section>
-          </div>
+          )
         ) : supportSelfSectionView === "coupons" ? (
           <div className="space-y-4">
             {canUseCouponModule ? (

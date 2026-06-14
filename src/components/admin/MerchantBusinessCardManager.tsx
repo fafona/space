@@ -2301,8 +2301,16 @@ export default function MerchantBusinessCardManager({
           : await saveCurrentDraftSettingsToExistingCard()
         : null;
       setTip(savedExistingCard ? "名片已保存并同步联系卡" : "名片草稿已保存");
-    } catch {
-      setTip(editingCardId ? "名片设置同步失败，请点保存重试" : "草稿保存失败，请重试");
+    } catch (error) {
+      if (error instanceof Error && error.message === "share_link_not_ready") {
+        setTip("短链还没同步成功，请重试保存");
+      } else if (error instanceof Error && error.message === "share_auth_unavailable") {
+        setTip("登录状态还没准备好，请刷新后台后再试一次");
+      } else if (error instanceof Error && error.message === "share_request_timeout") {
+        setTip("生成超时，请稍后重试");
+      } else {
+        setTip(editingCardId ? "名片设置同步失败，请点保存重试" : "草稿保存失败，请重试");
+      }
     } finally {
       setIsDraftSaving(false);
     }
@@ -2404,6 +2412,8 @@ export default function MerchantBusinessCardManager({
         setTip("登录状态还没准备好，请刷新后台后再试一次");
       } else if (error instanceof Error && error.message === "share_request_timeout") {
         setTip("生成超时，请稍后重试");
+      } else if (error instanceof Error && error.message === "share_link_not_ready") {
+        setTip("短链还没同步成功，请重试保存");
       } else if (error instanceof Error && error.message === "business_card_preview_unavailable") {
         setTip("名片预览还没准备好，请关闭后重新打开再试");
       } else {
@@ -4836,6 +4846,7 @@ export default function MerchantBusinessCardManager({
     contact?: MerchantBusinessCardShareContact;
     syncCardMeta?: boolean;
     preferContactPageImage?: boolean;
+    requireVerifiedShortLink?: boolean;
   }) {
     const targetUrl = normalizeText(input.targetUrl);
     if (!targetUrl) {
@@ -4948,13 +4959,18 @@ export default function MerchantBusinessCardManager({
         shareKey = typeof payload?.shareKey === "string" ? payload.shareKey.trim() : "";
         lastErrorCode = typeof payload?.error === "string" ? payload.error.trim() : "";
         if (response.ok && shareUrl && shareKey) {
-          if (await verifyShortBusinessCardShareLink(shareUrl, attempt === 0 ? 8_000 : 12_000)) {
+          const linkReady = await verifyShortBusinessCardShareLink(shareUrl, attempt === 0 ? 8_000 : 12_000);
+          if (linkReady) {
             break;
           }
           lastErrorCode = "share_link_not_ready";
           if (attempt === 0) {
             await delay(600);
             continue;
+          }
+          if (input.requireVerifiedShortLink) {
+            shareUrl = "";
+            shareKey = "";
           }
           break;
         }
@@ -5011,27 +5027,6 @@ export default function MerchantBusinessCardManager({
     };
   }
 
-  function buildExistingShareBundle(card: MerchantBusinessCardAsset | null | undefined) {
-    const shareKey = normalizeText(card?.shareKey);
-    if (!shareKey) return null;
-    return {
-      shareUrl: resolveCardShortLink(card),
-      shareImageUrl: normalizePublicAssetUrl(normalizeText(card?.shareImageUrl) || normalizeText(card?.imageUrl)),
-      detailImageUrl: normalizePublicAssetUrl(normalizeText(card?.contactPagePublicImageUrl) || normalizeText(card?.contactPageImageUrl)),
-      shareKey,
-    };
-  }
-
-  async function buildShareBundleWithExistingFallback(input: Parameters<typeof buildShareBundle>[0]) {
-    try {
-      return await buildShareBundle(input);
-    } catch (error) {
-      const existingBundle = buildExistingShareBundle(input.card);
-      if (existingBundle) return existingBundle;
-      throw error;
-    }
-  }
-
   async function saveCurrentDraftToFolder() {
     if (!websiteUrl || !qrReadyForCurrentDraft) return null;
     if (!editingCardId && normalizedCards.length >= normalizedCardLimit) {
@@ -5085,10 +5080,11 @@ export default function MerchantBusinessCardManager({
         : undefined;
     const shareBundle =
       nextDraft.mode === "link"
-        ? await buildShareBundleWithExistingFallback({
+        ? await buildShareBundle({
             targetUrl: websiteUrl,
             cardName: normalizeText(nextDraft.name),
             shareKey: resolvedShareKey,
+            allowLegacyFallback: false,
             card: existingCard,
             renderedImageUrl: imageUrl,
             contactPageImageUrl: normalizeText(nextDraft.contactPageImageUrl),
@@ -5109,6 +5105,7 @@ export default function MerchantBusinessCardManager({
             contact: shareContactPayload,
             syncCardMeta: false,
             preferContactPageImage: true,
+            requireVerifiedShortLink: true,
           })
         : null;
     if (nextDraft.mode === "link" && !normalizeText(shareBundle?.shareKey)) {
@@ -5170,7 +5167,7 @@ export default function MerchantBusinessCardManager({
         : undefined;
     const shareBundle =
       nextDraft.mode === "link"
-        ? await buildShareBundleWithExistingFallback({
+        ? await buildShareBundle({
             targetUrl: websiteUrl,
             cardName: normalizeText(nextDraft.name),
             shareKey: resolvedShareKey,
@@ -5194,6 +5191,7 @@ export default function MerchantBusinessCardManager({
             contact: shareContactPayload,
             syncCardMeta: false,
             preferContactPageImage: true,
+            requireVerifiedShortLink: true,
           })
         : null;
     if (nextDraft.mode === "link" && !normalizeText(shareBundle?.shareKey)) {
