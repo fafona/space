@@ -1484,10 +1484,13 @@ function buildInlineI18nScript() {
     const openTargetButtons = Array.from(document.querySelectorAll("[data-open-target-url]"));
     openTargetButtons.forEach((button) => {
       button.addEventListener("click", (event) => {
-        event.preventDefault();
         const target = event.currentTarget;
         if (!(target instanceof HTMLElement)) return;
-        openTargetUrl(String(target.dataset.openTargetUrl || "").trim());
+        const href = String(target.dataset.openTargetUrl || "").trim();
+        if (!href) return;
+        if (!isWechatBrowser() && target instanceof HTMLAnchorElement) return;
+        event.preventDefault();
+        openTargetUrl(href);
       });
     });
 
@@ -2537,7 +2540,16 @@ function buildShareCardHtml(input: {
   const introPosterUrl = input.introPosterUrl ? escapeHtml(input.introPosterUrl) : contentImageUrl || previewImageUrl;
   const introVideoMuted = input.introVideoMuted !== false;
   const contentImageHeight = input.contentImageHeight ?? 0;
-  const targetUrl = escapeHtml(input.targetUrl);
+  const normalizedTargetUrl = normalizeMerchantBusinessCardShareTargetUrl(input.targetUrl) || input.targetUrl;
+  const targetUrl = escapeHtml(normalizedTargetUrl);
+  let targetOrigin = "";
+  try {
+    targetOrigin = new URL(normalizedTargetUrl).origin;
+  } catch {}
+  const targetPreconnectHtml = targetOrigin
+    ? `<link rel="dns-prefetch" href="${escapeHtml(targetOrigin)}" />
+    <link rel="preconnect" href="${escapeHtml(targetOrigin)}" crossorigin />`
+    : "";
   const shareUrl = escapeHtml(input.shareUrl);
   const introDebug = Boolean(input.introDebug);
   const inlineI18nScript = buildInlineI18nScript();
@@ -2568,7 +2580,7 @@ function buildShareCardHtml(input: {
       ? `<a class="button" href="${escapeHtml(input.contactUrl)}">一键保存到通讯录</a>`
       : "",
     showContactWebsiteButton
-      ? `<button class="button secondary" type="button" data-open-target-url="${targetUrl}">进入官网</button>`
+      ? `<a class="button secondary" href="${targetUrl}" data-open-target-url="${targetUrl}">进入官网</a>`
       : "",
   ].filter(Boolean).join("");
 
@@ -2584,6 +2596,7 @@ function buildShareCardHtml(input: {
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Faolla" />
     <meta property="og:url" content="${shareUrl}" />
+    ${targetPreconnectHtml}
     ${previewImageUrl ? `<meta property="og:image:url" content="${previewImageUrl}" />` : ""}
     ${previewImageUrl ? `<meta property="og:image" content="${previewImageUrl}" />` : ""}
     ${previewImageUrl ? `<meta property="og:image:secure_url" content="${previewImageUrl}" />` : ""}
