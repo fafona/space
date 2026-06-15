@@ -96,7 +96,9 @@ function buildFastMerchantSiteUrl(input: { ownerMerchantId?: string | null; orig
   const siteId = normalizeText(input.ownerMerchantId);
   if (!isMerchantSiteId(siteId)) return "";
   try {
-    return new URL(`/site/${siteId}`, `${readPortalRootOrigin(input.origin)}/`).toString();
+    const url = new URL(`/site/${siteId}`, `${readPortalRootOrigin(input.origin)}/`);
+    url.searchParams.set("entry", "card");
+    return url.toString();
   } catch {
     return "";
   }

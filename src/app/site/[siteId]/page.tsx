@@ -19,6 +19,7 @@ type SitePageProps = {
   params: Promise<{
     siteId: string;
   }>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
 const fetchPublishedSitePayloadForRequest = cache((siteId: string) =>
@@ -52,8 +53,19 @@ function escapeJsonForHtml(value: unknown) {
   return JSON.stringify(value).replace(/</g, "\\u003c");
 }
 
-export async function generateMetadata({ params }: SitePageProps): Promise<Metadata> {
+function readSearchParamValue(searchParams: Record<string, string | string[] | undefined> | undefined, key: string) {
+  const value = searchParams?.[key];
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function isContactCardFastEntry(searchParams: Record<string, string | string[] | undefined> | undefined) {
+  return String(readSearchParamValue(searchParams, "entry") ?? "").trim().toLowerCase() === "card";
+}
+
+export async function generateMetadata({ params, searchParams }: SitePageProps): Promise<Metadata> {
   const { siteId } = await params;
+  const resolvedSearchParams = await searchParams;
+  if (isContactCardFastEntry(resolvedSearchParams)) return {};
   const publishedSite = await fetchPublishedSitePayloadForRequest(siteId).catch(() => null);
   const profile = buildProfileForSeo(siteId, publishedSite);
   const publicOrigin = readPublicOrigin();
@@ -90,9 +102,13 @@ export async function generateMetadata({ params }: SitePageProps): Promise<Metad
   };
 }
 
-export default async function SitePage({ params }: SitePageProps) {
+export default async function SitePage({ params, searchParams }: SitePageProps) {
   const { siteId } = await params;
+  const resolvedSearchParams = await searchParams;
   const initialIsMobileViewport = isMobileViewportRequest(await headers());
+  if (isContactCardFastEntry(resolvedSearchParams)) {
+    return <SitePageClient forcedSiteId={siteId} initialIsMobileViewport={initialIsMobileViewport} />;
+  }
   const publishedSite = await fetchPublishedSitePayloadForRequest(siteId).catch(() => null);
   if (publishedSite?.serviceState?.maintenance) {
     return (
