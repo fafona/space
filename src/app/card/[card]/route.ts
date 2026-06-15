@@ -74,6 +74,34 @@ function normalizeText(value: string | null | undefined) {
   return String(value ?? "").trim();
 }
 
+function isMerchantSiteId(value: string | null | undefined) {
+  return /^\d{8}$/.test(normalizeText(value));
+}
+
+function normalizeOrigin(value: string | null | undefined) {
+  const text = normalizeText(value);
+  if (!text) return "";
+  try {
+    return new URL(/^https?:\/\//i.test(text) ? text : `https://${text}`).origin;
+  } catch {
+    return "";
+  }
+}
+
+function readPortalRootOrigin(fallbackOrigin: string) {
+  return normalizeOrigin(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN) || normalizeOrigin(fallbackOrigin) || "https://www.faolla.com";
+}
+
+function buildFastMerchantSiteUrl(input: { ownerMerchantId?: string | null; origin: string }) {
+  const siteId = normalizeText(input.ownerMerchantId);
+  if (!isMerchantSiteId(siteId)) return "";
+  try {
+    return new URL(`/site/${siteId}`, `${readPortalRootOrigin(input.origin)}/`).toString();
+  } catch {
+    return "";
+  }
+}
+
 const BUSINESS_CARD_SHARE_MANIFEST_BUCKETS = ["page-assets", "assets", "uploads", "public"] as const;
 const CONTACT_CARD_PAYLOAD_CACHE_TTL_MS = 45_000;
 const GOOGLE_REVIEW_DISPLAY_TEXT = "欢迎评价";
@@ -2542,6 +2570,7 @@ function buildShareCardHtml(input: {
   imageWidth?: number;
   imageHeight?: number;
   targetUrl: string;
+  openTargetUrl?: string;
   shareUrl: string;
   contactUrl?: string;
   couponsHtml?: string;
@@ -2559,9 +2588,13 @@ function buildShareCardHtml(input: {
   const merchantName = escapeHtml(input.merchantName);
   const previewImageUrl = input.previewImageUrl ? escapeHtml(input.previewImageUrl) : "";
   const contentImageUrl = input.contentImageUrl ? escapeHtml(input.contentImageUrl) : "";
+  const normalizedTargetUrl = normalizeMerchantBusinessCardShareTargetUrl(input.targetUrl) || input.targetUrl;
+  const normalizedOpenTargetUrl = normalizeMerchantBusinessCardShareTargetUrl(input.openTargetUrl) || normalizedTargetUrl;
+  const targetUrl = escapeHtml(normalizedTargetUrl);
+  const openTargetUrl = escapeHtml(normalizedOpenTargetUrl);
   const contentImageLinkUrl = escapeHtml(
     normalizeMerchantBusinessCardShareTargetUrl(input.contentImageLinkUrl) ||
-      normalizeMerchantBusinessCardShareTargetUrl(input.targetUrl),
+      normalizedOpenTargetUrl,
   );
   const contentImageX = Number.isFinite(input.contentImageX) ? Math.round(input.contentImageX ?? 0) : 0;
   const contentImageY = Number.isFinite(input.contentImageY) ? Math.round(input.contentImageY ?? 0) : 0;
@@ -2579,16 +2612,33 @@ function buildShareCardHtml(input: {
   const introPosterUrl = input.introPosterUrl ? escapeHtml(input.introPosterUrl) : contentImageUrl || previewImageUrl;
   const introVideoMuted = input.introVideoMuted !== false;
   const contentImageHeight = input.contentImageHeight ?? 0;
-  const normalizedTargetUrl = normalizeMerchantBusinessCardShareTargetUrl(input.targetUrl) || input.targetUrl;
-  const targetUrl = escapeHtml(normalizedTargetUrl);
-  let targetOrigin = "";
-  try {
-    targetOrigin = new URL(normalizedTargetUrl).origin;
-  } catch {}
-  const targetPreconnectHtml = targetOrigin
-    ? `<link rel="dns-prefetch" href="${escapeHtml(targetOrigin)}" />
-    <link rel="preconnect" href="${escapeHtml(targetOrigin)}" crossorigin />`
-    : "";
+  const getUrlOrigin = (value: string) => {
+    try {
+      return new URL(value).origin;
+    } catch {
+      return "";
+    }
+  };
+  const preconnectOrigins = Array.from(
+    new Set(
+      [normalizedOpenTargetUrl, normalizedTargetUrl, previewImageUrl, contentImageUrl, introPosterUrl, introVideoUrl]
+        .map((value) => getUrlOrigin(value))
+        .filter(Boolean),
+    ),
+  );
+  const preconnectHtml = preconnectOrigins
+    .map(
+      (origin) => `<link rel="dns-prefetch" href="${escapeHtml(origin)}" />
+    <link rel="preconnect" href="${escapeHtml(origin)}" crossorigin />`,
+    )
+    .join("\n    ");
+  const resourcePreloadHtml = [
+    introPosterUrl ? `<link rel="preload" as="image" href="${introPosterUrl}" fetchpriority="high" />` : "",
+    introVideoUrl ? `<link rel="preload" as="video" href="${introVideoUrl}" type="video/mp4" crossorigin="anonymous" />` : "",
+    normalizedOpenTargetUrl && normalizedOpenTargetUrl !== normalizedTargetUrl
+      ? `<link rel="prefetch" href="${openTargetUrl}" as="document" />`
+      : "",
+  ].filter(Boolean).join("\n    ");
   const shareUrl = escapeHtml(input.shareUrl);
   const introDebug = Boolean(input.introDebug);
   const inlineI18nScript = buildInlineI18nScript();
@@ -2619,7 +2669,7 @@ function buildShareCardHtml(input: {
       ? `<a class="button" href="${escapeHtml(input.contactUrl)}">一键保存到通讯录</a>`
       : "",
     showContactWebsiteButton
-      ? `<a class="button secondary" href="${targetUrl}" data-open-target-url="${targetUrl}">进入官网</a>`
+      ? `<a class="button secondary" href="${openTargetUrl}" data-open-target-url="${openTargetUrl}" data-original-target-url="${targetUrl}">进入官网</a>`
       : "",
   ].filter(Boolean).join("");
 
@@ -2635,7 +2685,8 @@ function buildShareCardHtml(input: {
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Faolla" />
     <meta property="og:url" content="${shareUrl}" />
-    ${targetPreconnectHtml}
+    ${preconnectHtml}
+    ${resourcePreloadHtml}
     ${previewImageUrl ? `<meta property="og:image:url" content="${previewImageUrl}" />` : ""}
     ${previewImageUrl ? `<meta property="og:image" content="${previewImageUrl}" />` : ""}
     ${previewImageUrl ? `<meta property="og:image:secure_url" content="${previewImageUrl}" />` : ""}
@@ -3195,7 +3246,7 @@ function buildShareCardHtml(input: {
         ? `<div class="intro-overlay" data-intro-overlay data-no-translate="1">
             <div class="intro-card${introPosterUrl ? " has-intro-poster" : ""}">
               ${introPosterUrl ? `<img class="intro-poster" src="${introPosterUrl}" alt="" aria-hidden="true" decoding="async" fetchpriority="high" />` : ""}
-              <video class="intro-video"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay="autoplay"${introVideoMuted ? ` muted="muted"` : ""} playsinline="playsinline" webkit-playsinline="webkit-playsinline" preload="metadata" data-intro-src="${introVideoUrl}"></video>
+              <video class="intro-video"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay="autoplay"${introVideoMuted ? ` muted="muted"` : ""} playsinline="playsinline" webkit-playsinline="webkit-playsinline" preload="metadata" crossorigin="anonymous" data-intro-src="${introVideoUrl}"></video>
         <button class="intro-unmute-button" type="button" data-intro-unmute>开启声音</button>
         <button class="intro-skip" type="button" data-intro-skip>跳过</button>
         ${introDebug ? `<pre class="intro-debug-panel" data-intro-debug>intro debug boot</pre>` : ""}
@@ -3407,14 +3458,6 @@ function buildShareCardHtml(input: {
         if (isWechat) debug("bridge-missing-direct-play");
         void playIntro(nextOptions);
       };
-      prepareAutoplay();
-      if (!isWechat) {
-        try { ensureIntroSource(); video.load?.(); debug("load-called"); } catch (error) { debug("load-error", { message: error?.message || String(error || "") }); }
-      } else {
-        window.setTimeout(() => {
-          try { ensureIntroSource(); video.load?.(); debug("wechat-load-called"); } catch (error) { debug("wechat-load-error", { message: error?.message || String(error || "") }); }
-        }, 30);
-      }
       ["loadstart", "loadedmetadata", "loadeddata", "canplay", "playing", "timeupdate", "pause", "waiting", "stalled", "suspend", "ended", "error"].forEach((name) => {
         video.addEventListener(name, () => debug("event:" + name));
       });
@@ -3447,6 +3490,14 @@ function buildShareCardHtml(input: {
       video.addEventListener("canplay", () => {
         if (!isWechat) playThroughBridge();
       }, { once: true });
+      prepareAutoplay();
+      if (!isWechat) {
+        try { ensureIntroSource(); video.load?.(); debug("load-called"); } catch (error) { debug("load-error", { message: error?.message || String(error || "") }); }
+      } else {
+        window.setTimeout(() => {
+          try { ensureIntroSource(); video.load?.(); debug("wechat-load-called"); } catch (error) { debug("wechat-load-error", { message: error?.message || String(error || "") }); }
+        }, 30);
+      }
       window.addEventListener("pageshow", () => playThroughBridge(), { once: true });
       document.addEventListener("WeixinJSBridgeReady", () => playThroughBridge(), false);
       document.addEventListener("YixinJSBridgeReady", () => playThroughBridge(), false);
@@ -3730,6 +3781,11 @@ export async function GET(
   const description = buildMerchantBusinessCardShareDescription(payload.name, payload.targetUrl);
   const publicOrigin = resolveMerchantBusinessCardShareOrigin(request.url, payload.targetUrl) || requestOrigin;
   const snapshotCard = snapshotMatch?.card ?? null;
+  const fastOpenTargetUrl =
+    buildFastMerchantSiteUrl({
+      ownerMerchantId: normalizeText(payload.ownerMerchantId) || normalizeText(snapshotMatch?.siteId),
+      origin: publicOrigin,
+    }) || payload.targetUrl;
   const normalizedShareImageUrl = payload.imageUrl
     ? normalizeMerchantBusinessCardShareImageUrl(payload.imageUrl, publicOrigin) || payload.imageUrl
     : "";
@@ -3782,11 +3838,19 @@ export async function GET(
     name: payload.name,
     contact: payload.contact,
   });
-  const serviceState = await withContactCardTimeout(
+  const preliminaryContactCouponSiteId =
+    normalizeText(payload.ownerMerchantId) ||
+    normalizeText(snapshotMatch?.siteId) ||
+    "";
+  const serviceStateTask = withContactCardTimeout(
     loadPublishedMerchantServiceStateByTargetUrl(payload.targetUrl).catch(() => null),
     null,
-    900,
+    450,
   );
+  const contactCouponsTask = preliminaryContactCouponSiteId
+    ? withContactCardTimeout(loadContactCardCoupons(preliminaryContactCouponSiteId), [], 500)
+    : Promise.resolve([] as MerchantCouponRecord[]);
+  const serviceState = await serviceStateTask;
   if (serviceState?.maintenance) {
     return new NextResponse(
       buildServiceMaintenanceCardHtml({
@@ -3804,13 +3868,14 @@ export async function GET(
     );
   }
   const contactCouponSiteId =
-    normalizeText(payload.ownerMerchantId) ||
-    normalizeText(snapshotMatch?.siteId) ||
+    preliminaryContactCouponSiteId ||
     serviceState?.siteId ||
     "";
-  const contactCoupons = contactCouponSiteId
-    ? await withContactCardTimeout(loadContactCardCoupons(contactCouponSiteId), [], 900)
-    : [];
+  const contactCoupons = preliminaryContactCouponSiteId
+    ? await contactCouponsTask
+    : contactCouponSiteId
+      ? await withContactCardTimeout(loadContactCardCoupons(contactCouponSiteId), [], 500)
+      : [];
   const shouldShowMerchantName = payload.contact?.contactDisplayFields?.merchantName?.contactCard !== false;
 
   return new NextResponse(
@@ -3839,6 +3904,7 @@ export async function GET(
       imageWidth: payload.imageWidth,
       imageHeight: payload.imageHeight,
       targetUrl: payload.targetUrl,
+      openTargetUrl: fastOpenTargetUrl,
       shareUrl,
       contactUrl,
       couponsHtml: buildContactCouponsHtml(contactCoupons),

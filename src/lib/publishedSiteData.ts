@@ -28,6 +28,18 @@ export type PublishedSitePayload = {
   orderManagementEnabled: boolean;
 };
 
+const PUBLISHED_SITE_PAYLOAD_CACHE_TTL_MS = 30_000;
+const PUBLISHED_SITE_PAYLOAD_EMPTY_CACHE_TTL_MS = 5_000;
+
+const publishedSitePayloadCache = new Map<
+  string,
+  {
+    expiresAt: number;
+    pending?: Promise<PublishedSitePayload | null>;
+    value?: PublishedSitePayload | null;
+  }
+>();
+
 function readEnv(name: string) {
   return (process.env[name] ?? "").trim();
 }
@@ -84,7 +96,7 @@ export function pickPublishedPageRow(rows: PublishedPageRow[]) {
     .reduce<PublishedPageRow | null>((best, item) => choosePreferredPublishedPageRow(best, item), null);
 }
 
-export async function fetchPublishedSitePayloadFromSupabase(siteId: string): Promise<PublishedSitePayload | null> {
+async function fetchPublishedSitePayloadFromSupabaseUncached(siteId: string): Promise<PublishedSitePayload | null> {
   const normalizedSiteId = String(siteId ?? "").trim();
   if (!isMerchantNumericId(normalizedSiteId)) return null;
 
@@ -170,4 +182,34 @@ export async function fetchPublishedSitePayloadFromSupabase(siteId: string): Pro
     serviceState,
     orderManagementEnabled,
   };
+}
+
+export async function fetchPublishedSitePayloadFromSupabase(siteId: string): Promise<PublishedSitePayload | null> {
+  const normalizedSiteId = String(siteId ?? "").trim();
+  if (!isMerchantNumericId(normalizedSiteId)) return null;
+
+  const cached = publishedSitePayloadCache.get(normalizedSiteId);
+  if (cached && cached.expiresAt > Date.now()) {
+    if (cached.pending) return cached.pending;
+    if ("value" in cached) return cached.value ?? null;
+  }
+
+  const pending = fetchPublishedSitePayloadFromSupabaseUncached(normalizedSiteId);
+  publishedSitePayloadCache.set(normalizedSiteId, {
+    expiresAt: Date.now() + PUBLISHED_SITE_PAYLOAD_CACHE_TTL_MS,
+    pending,
+  });
+
+  try {
+    const value = await pending;
+    publishedSitePayloadCache.set(normalizedSiteId, {
+      expiresAt:
+        Date.now() + (value ? PUBLISHED_SITE_PAYLOAD_CACHE_TTL_MS : PUBLISHED_SITE_PAYLOAD_EMPTY_CACHE_TTL_MS),
+      value,
+    });
+    return value;
+  } catch (error) {
+    publishedSitePayloadCache.delete(normalizedSiteId);
+    throw error;
+  }
 }
