@@ -3741,12 +3741,28 @@ export async function GET(
     });
   }
 
-  const storedPayload = cachedPayload
-    ? await withContactCardTimeout(storedPayloadPromise, cachedPayload, 1_800)
-    : await storedPayloadTask;
-  let snapshotMatch = storedPayload
-    ? await withContactCardTimeout(snapshotMatchTask, null, 800)
-    : await snapshotMatchTask;
+  let storedPayload: MerchantBusinessCardSharePayload | null = null;
+  let snapshotMatch: ContactCardSnapshotMatch | null = null;
+  if (cachedPayload) {
+    storedPayload = await withContactCardTimeout(storedPayloadPromise, cachedPayload, 1_800);
+  } else {
+    storedPayload = await withContactCardTimeout(storedPayloadPromise, null, 1_800);
+    if (!storedPayload) {
+      snapshotMatch = await withContactCardTimeout(snapshotMatchTask, null, 900);
+      if (!snapshotMatch) {
+        storedPayload = await storedPayloadTask;
+      } else {
+        void storedPayloadPromise.then((latePayload) => {
+          if (latePayload) writeCachedContactCardPayload(shareKey, latePayload, requestOrigin);
+        });
+      }
+    }
+  }
+  if (!snapshotMatch) {
+    snapshotMatch = storedPayload
+      ? await withContactCardTimeout(snapshotMatchTask, null, 800)
+      : await snapshotMatchTask;
+  }
   if (!snapshotMatch && storedPayload?.ownerMerchantId) {
     snapshotMatch = await withContactCardTimeout(
       resolveContactCardSnapshotMatch(shareKey, storedPayload.ownerMerchantId).catch(() => null),
