@@ -106,6 +106,7 @@ function buildFastMerchantSiteUrl(input: { ownerMerchantId?: string | null; orig
 
 const BUSINESS_CARD_SHARE_MANIFEST_BUCKETS = ["page-assets", "assets", "uploads", "public"] as const;
 const CONTACT_CARD_PAYLOAD_CACHE_TTL_MS = 45_000;
+const CONTACT_CARD_SUCCESS_CACHE_CONTROL = "public, max-age=0, s-maxage=15, stale-while-revalidate=30";
 const GOOGLE_REVIEW_DISPLAY_TEXT = "欢迎评价";
 const GOOGLE_REVIEW_DISPLAY_TRANSLATIONS: Record<string, string> = {
   "zh-CN": GOOGLE_REVIEW_DISPLAY_TEXT,
@@ -3277,7 +3278,7 @@ function buildShareCardHtml(input: {
         ? `<div class="intro-overlay" data-intro-overlay data-no-translate="1">
             <div class="intro-card${introPosterUrl ? " has-intro-poster" : ""}">
               ${introPosterUrl ? `<img class="intro-poster" src="${introPosterUrl}" alt="" aria-hidden="true" decoding="async" fetchpriority="high" />` : ""}
-              <video class="intro-video"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay="autoplay"${introVideoMuted ? ` muted="muted"` : ""} playsinline="playsinline" webkit-playsinline="webkit-playsinline" preload="metadata" crossorigin="anonymous" data-intro-src="${introVideoUrl}"></video>
+              <video class="intro-video"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay="autoplay"${introVideoMuted ? ` muted="muted"` : ""} playsinline="playsinline" webkit-playsinline="webkit-playsinline" preload="auto" crossorigin="anonymous" data-intro-src="${introVideoUrl}"></video>
         <button class="intro-unmute-button" type="button" data-intro-unmute>开启声音</button>
         <button class="intro-skip" type="button" data-intro-skip>跳过</button>
         ${introDebug ? `<pre class="intro-debug-panel" data-intro-debug>intro debug boot</pre>` : ""}
@@ -3757,7 +3758,7 @@ export async function GET(
       preferredOrigin: requestOrigin,
     }),
     false,
-    1_800,
+    700,
   );
   if (revoked) {
     clearCachedContactCardPayload(shareKey);
@@ -3772,8 +3773,13 @@ export async function GET(
 
   let storedPayload: MerchantBusinessCardSharePayload | null = null;
   let snapshotMatch: ContactCardSnapshotMatch | null = null;
+  let usedCachedPayload = false;
   if (cachedPayload) {
-    storedPayload = await withContactCardTimeout(storedPayloadPromise, cachedPayload, 1_800);
+    storedPayload = cachedPayload;
+    usedCachedPayload = true;
+    void storedPayloadPromise.then((freshPayload) => {
+      if (freshPayload) writeCachedContactCardPayload(shareKey, freshPayload, requestOrigin);
+    });
   } else {
     const firstPayloadSource = await withContactCardTimeout(
       firstResolvedContactCardValue<
@@ -3805,7 +3811,9 @@ export async function GET(
   }
   if (!snapshotMatch) {
     snapshotMatch = storedPayload
-      ? await withContactCardTimeout(snapshotMatchTask, null, 800)
+      ? usedCachedPayload
+        ? null
+        : await withContactCardTimeout(snapshotMatchTask, null, 800)
       : await snapshotMatchTask;
   }
   if (!snapshotMatch && storedPayload?.ownerMerchantId) {
@@ -3977,7 +3985,7 @@ export async function GET(
       status: 200,
       headers: {
         "content-type": "text/html; charset=utf-8",
-        "cache-control": "no-store, max-age=0",
+        "cache-control": introDebug ? "no-store, max-age=0" : CONTACT_CARD_SUCCESS_CACHE_CONTROL,
       },
     },
   );
