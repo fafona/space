@@ -2041,6 +2041,35 @@ function clearCachedContactCardPayload(shareKey: string) {
   if (normalizedShareKey) contactCardPayloadCache.delete(normalizedShareKey);
 }
 
+function firstResolvedContactCardValue<T>(tasks: Array<Promise<T | null>>) {
+  return new Promise<T | null>((resolve) => {
+    if (tasks.length === 0) {
+      resolve(null);
+      return;
+    }
+    let settled = false;
+    let remaining = tasks.length;
+    tasks.forEach((task) => {
+      task
+        .then((value) => {
+          if (settled) return;
+          if (value) {
+            settled = true;
+            resolve(value);
+            return;
+          }
+          remaining -= 1;
+          if (remaining <= 0) resolve(null);
+        })
+        .catch(() => {
+          if (settled) return;
+          remaining -= 1;
+          if (remaining <= 0) resolve(null);
+        });
+    });
+  });
+}
+
 function resolveContactCardSnapshotMatchFromSite(
   site: Awaited<ReturnType<typeof loadCurrentMerchantSnapshotSiteBySiteId>>,
   shareKey: string,
@@ -3746,15 +3775,31 @@ export async function GET(
   if (cachedPayload) {
     storedPayload = await withContactCardTimeout(storedPayloadPromise, cachedPayload, 1_800);
   } else {
-    storedPayload = await withContactCardTimeout(storedPayloadPromise, null, 1_800);
-    if (!storedPayload) {
-      snapshotMatch = await withContactCardTimeout(snapshotMatchTask, null, 900);
-      if (!snapshotMatch) {
+    const firstPayloadSource = await withContactCardTimeout(
+      firstResolvedContactCardValue<
+        | { type: "stored"; payload: MerchantBusinessCardSharePayload }
+        | { type: "snapshot"; match: ContactCardSnapshotMatch }
+      >([
+        storedPayloadPromise.then((payload) => (payload ? { type: "stored", payload } : null)),
+        snapshotMatchTask.then((match) => (match ? { type: "snapshot", match } : null)),
+      ]),
+      null,
+      2_200,
+    );
+    if (firstPayloadSource?.type === "stored") {
+      storedPayload = firstPayloadSource.payload;
+    } else if (firstPayloadSource?.type === "snapshot") {
+      snapshotMatch = firstPayloadSource.match;
+      void storedPayloadPromise.then((latePayload) => {
+        if (latePayload) writeCachedContactCardPayload(shareKey, latePayload, requestOrigin);
+      });
+    } else {
+      storedPayload = await withContactCardTimeout(storedPayloadPromise, null, 1_200);
+      if (!storedPayload) {
+        snapshotMatch = await withContactCardTimeout(snapshotMatchTask, null, 800);
+      }
+      if (!storedPayload && !snapshotMatch) {
         storedPayload = await storedPayloadTask;
-      } else {
-        void storedPayloadPromise.then((latePayload) => {
-          if (latePayload) writeCachedContactCardPayload(shareKey, latePayload, requestOrigin);
-        });
       }
     }
   }
