@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import {
   buildMerchantCouponClaimValidUntil,
@@ -18,9 +18,13 @@ import { readPersonalCustomerProfileFromSession } from "@/lib/personalCustomerPr
 import { resolvePersonalAccountSessionFromRequest, type PersonalAccountSession } from "@/lib/personalAccountSession.server";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { readMerchantAuthAccountTypeCookie } from "@/lib/merchantAuthSession";
+import { createServerTiming } from "@/lib/serverTiming";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+
+const OPTIONAL_PERSONAL_SESSION_INLINE_WAIT_MS = 150;
+const OPTIONAL_PERSONAL_SESSION_TIMEOUT = Symbol("optional_personal_session_timeout");
 
 function trimText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
@@ -53,6 +57,26 @@ function toClaimResponseCoupon(coupon: MerchantCouponRecord): MerchantCouponReco
     claimEvents: [],
     redeemEvents: [],
   };
+}
+
+async function waitForOptionalPersonalSession(
+  task: Promise<PersonalAccountSession | null> | null,
+  timeoutMs = OPTIONAL_PERSONAL_SESSION_INLINE_WAIT_MS,
+) {
+  if (!task) return { session: null, timedOut: false };
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  try {
+    const result = await Promise.race([
+      task,
+      new Promise<typeof OPTIONAL_PERSONAL_SESSION_TIMEOUT>((resolve) => {
+        timeout = setTimeout(() => resolve(OPTIONAL_PERSONAL_SESSION_TIMEOUT), timeoutMs);
+      }),
+    ]);
+    if (result === OPTIONAL_PERSONAL_SESSION_TIMEOUT) return { session: null, timedOut: true };
+    return { session: result, timedOut: false };
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 function parseDateTimeWindow(value: string) {
@@ -259,22 +283,64 @@ async function addFavoriteSite(
   await session.adminSupabase.auth.admin.updateUserById(session.userId, { user_metadata: metadataWithCoupon }).catch(() => null);
 }
 
+function scheduleAccountSaveAfterResponse(input: {
+  claimSession: PersonalAccountSession | null;
+  optionalPersonalSessionTask: Promise<PersonalAccountSession | null> | null;
+  siteId: string;
+  siteName: string;
+  pageUrl: string;
+  coupon: MerchantCouponRecord;
+  claimEvent: MerchantCouponClaimEvent | null;
+  claimedCoupon: PersonalClaimedCoupon | null;
+}) {
+  if (!input.claimSession && !input.optionalPersonalSessionTask) return false;
+  after(async () => {
+    const session = input.claimSession ?? (await input.optionalPersonalSessionTask?.catch(() => null)) ?? null;
+    if (!session) return;
+    const claimedCoupon =
+      input.claimedCoupon ??
+      (input.claimEvent
+        ? buildPersonalClaimedCoupon({
+            coupon: input.coupon,
+            claimEvent: input.claimEvent,
+            siteName: input.siteName,
+            pageUrl: input.pageUrl,
+          })
+        : null);
+    await addFavoriteSite(session, {
+      siteId: input.siteId,
+      siteName: input.siteName,
+      pageUrl: input.pageUrl,
+      claimedCoupon,
+    });
+  });
+  return true;
+}
+
 export async function POST(request: Request) {
+  const timing = createServerTiming();
+  const withTiming = (response: NextResponse) => {
+    timing.apply(response.headers);
+    return response;
+  };
   if (!isTrustedSameOriginMutationRequest(request)) {
-    return getTrustedMutationRequestErrorResponse();
+    return withTiming(getTrustedMutationRequestErrorResponse());
   }
   try {
-    const body = (await request.json()) as { siteId?: unknown; couponId?: unknown; claimCode?: unknown; siteName?: unknown; pageUrl?: unknown } | null;
+    const body = await timing.time("body", async () => (await request.json()) as { siteId?: unknown; couponId?: unknown; claimCode?: unknown; siteName?: unknown; pageUrl?: unknown } | null);
     const siteId = trimText(body?.siteId);
     const couponId = trimText(body?.couponId);
     const claimCode = normalizeMerchantCouponClaimCode(body?.claimCode);
     if (!isMerchantNumericId(siteId) || !couponId) {
-      return NextResponse.json({ error: "invalid_coupon" }, { status: 400 });
+      return withTiming(NextResponse.json({ error: "invalid_coupon" }, { status: 400 }));
     }
-    const optionalPersonalSessionTask = shouldTryOptionalPersonalSession(request) ? resolvePersonalAccountSessionFromRequest(request) : null;
-    optionalPersonalSessionTask?.catch(() => null);
-    if (!(await isCouponWebsiteBlockEnabled(siteId))) {
-      return NextResponse.json({ error: "coupon_block_disabled" }, { status: 403 });
+    const siteName = trimText(body?.siteName);
+    const pageUrl = trimText(body?.pageUrl, 1200);
+    const optionalPersonalSessionTask = shouldTryOptionalPersonalSession(request)
+      ? resolvePersonalAccountSessionFromRequest(request).catch(() => null)
+      : null;
+    if (!(await timing.time("permission", () => isCouponWebsiteBlockEnabled(siteId)))) {
+      return withTiming(NextResponse.json({ error: "coupon_block_disabled" }, { status: 403 }));
     }
     let claimSession: PersonalAccountSession | null = null;
     let claimEventId = "";
@@ -282,13 +348,16 @@ export async function POST(request: Request) {
     let settlementCode = "";
     let claimValidUntil: string | null = null;
     const now = new Date();
-    const coupon = await claimMerchantCouponRecord({
+    let optionalSessionDeferred = false;
+    const coupon = await timing.time("claim_write", () => claimMerchantCouponRecord({
       siteId,
       couponId,
       beforeClaim: async (current) => {
         claimSession = await assertCouponClaimIdentityAllowed(current, request, claimCode, now, optionalPersonalSessionTask);
         if (!claimSession && optionalPersonalSessionTask) {
-          claimSession = await optionalPersonalSessionTask.catch(() => null);
+          const optionalSessionResult = await timing.time("optional_session", () => waitForOptionalPersonalSession(optionalPersonalSessionTask));
+          claimSession = optionalSessionResult.session;
+          optionalSessionDeferred = optionalSessionResult.timedOut;
         }
         claimEventId = `CE${now.getTime().toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
         settlementType = merchantCouponSupportsUsageScenario(current, "checkout_barcode") && !merchantCouponSupportsUsageScenario(current, "checkout_qr") ? "barcode" : "qr";
@@ -319,38 +388,51 @@ export async function POST(request: Request) {
           validUntil: claimValidUntil,
         };
       },
-    });
+    }));
     const claimEvent = coupon.claimEvents.find((event) => event.id === claimEventId) ?? coupon.claimEvents[0] ?? null;
     const claimedCoupon =
       claimSession && claimEvent
         ? buildPersonalClaimedCoupon({
             coupon,
             claimEvent,
-            siteName: trimText(body?.siteName),
-            pageUrl: trimText(body?.pageUrl, 1200),
+            siteName,
+            pageUrl,
           })
         : null;
-    await addFavoriteSite(claimSession, { siteId, siteName: trimText(body?.siteName), pageUrl: trimText(body?.pageUrl, 1200), claimedCoupon });
-    return NextResponse.json({
+    const deferredPersonalSessionTask = optionalSessionDeferred && !claimSession ? optionalPersonalSessionTask : null;
+    const accountSaveScheduled = scheduleAccountSaveAfterResponse({
+      claimSession,
+      optionalPersonalSessionTask: deferredPersonalSessionTask,
+      siteId,
+      siteName,
+      pageUrl,
+      coupon,
+      claimEvent,
+      claimedCoupon,
+    });
+    timing.add("account_save", 0, accountSaveScheduled ? "deferred" : "skipped");
+    if (optionalSessionDeferred) timing.add("optional_session_deferred", 0);
+    return withTiming(NextResponse.json({
       ok: true,
       coupon: toClaimResponseCoupon(coupon),
       claimEventId,
       claimResultUrl: `/coupon/claim/${encodeURIComponent(claimEventId)}?siteId=${encodeURIComponent(siteId)}&couponId=${encodeURIComponent(couponId)}`,
       savedToAccount: Boolean(claimedCoupon),
+      accountSavePending: accountSaveScheduled,
       settlementCodes: {
         checkoutQr: claimEvent?.settlementType === "qr" ? claimEvent.settlementCode : null,
         checkoutBarcode: claimEvent?.settlementType === "barcode" ? claimEvent.settlementCode : null,
       },
-    });
+    }));
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown_error";
     const status = message === "coupon_login_required" ? 401 : message === "coupon_not_claimable" ? 409 : 400;
-    return NextResponse.json(
+    return withTiming(NextResponse.json(
       {
         error: "coupon_claim_failed",
         message,
       },
       { status },
-    );
+    ));
   }
 }
