@@ -4,10 +4,13 @@ import {
   buildMerchantBusinessCardVCardFileName,
   isMerchantBusinessCardShareRevoked,
   loadMerchantBusinessCardSharePayloadByKey,
+  normalizeMerchantBusinessCardSharePayload,
   normalizeMerchantBusinessCardShareKey,
   resolveMerchantBusinessCardShareOrigin,
   type MerchantBusinessCardSharePayload,
 } from "@/lib/merchantBusinessCardShare";
+import { loadCurrentMerchantSnapshotSites, loadPublishedMerchantSnapshotSites } from "@/lib/publishedMerchantService";
+import type { MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
 
 const CONTACT_DOWNLOAD_PAYLOAD_CACHE_TTL_MS = 60_000;
 const CONTACT_DOWNLOAD_REVOCATION_NEGATIVE_CACHE_TTL_MS = 5_000;
@@ -45,6 +48,10 @@ function resolveRequestOrigin(request: Request) {
   return `${protocol}://${host}`;
 }
 
+function normalizeText(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
 async function withContactDownloadTimeout<T>(promise: Promise<T>, fallback: T, timeoutMs: number): Promise<T> {
   let timeout: ReturnType<typeof setTimeout> | null = null;
   try {
@@ -57,6 +64,75 @@ async function withContactDownloadTimeout<T>(promise: Promise<T>, fallback: T, t
   } finally {
     if (timeout) clearTimeout(timeout);
   }
+}
+
+function findContactDownloadSnapshotCard(
+  sites: Awaited<ReturnType<typeof loadPublishedMerchantSnapshotSites>>,
+  shareKey: string,
+) {
+  const normalizedShareKey = normalizeMerchantBusinessCardShareKey(shareKey);
+  for (const site of sites) {
+    const cards = Array.isArray(site.businessCards) ? site.businessCards : [];
+    const card = cards.find((item) => normalizeMerchantBusinessCardShareKey(item.shareKey) === normalizedShareKey);
+    if (card) return { siteId: normalizeText(site.id), card: card as MerchantBusinessCardAsset };
+  }
+  return null;
+}
+
+function buildContactDownloadPayloadFromSnapshot(
+  match: { siteId: string; card: MerchantBusinessCardAsset } | null,
+  origin: string,
+) {
+  if (!match) return null;
+  const card = match.card;
+  const contacts = card.contacts;
+  const phones = Array.isArray(contacts?.phones)
+    ? contacts.phones.map((value) => normalizeText(value)).filter(Boolean)
+    : [];
+  const primaryPhone = phones[0] || normalizeText(contacts?.phone);
+  const targetUrl = normalizeText(card.targetUrl);
+  if (!targetUrl) return null;
+  return normalizeMerchantBusinessCardSharePayload(
+    {
+      name: normalizeText(card.name) || normalizeText(contacts?.contactName),
+      targetUrl,
+      ownerMerchantId: match.siteId,
+      contact: {
+        displayName: normalizeText(contacts?.contactName),
+        organization: normalizeText(card.name),
+        phone: primaryPhone,
+        phones,
+        email: normalizeText(contacts?.email),
+        address: normalizeText(contacts?.address),
+        wechat: normalizeText(contacts?.wechat),
+        whatsapp: normalizeText(contacts?.whatsapp),
+        twitter: normalizeText(contacts?.twitter),
+        weibo: normalizeText(contacts?.weibo),
+        telegram: normalizeText(contacts?.telegram),
+        linkedin: normalizeText(contacts?.linkedin),
+        discord: normalizeText(contacts?.discord),
+        facebook: normalizeText(contacts?.facebook),
+        instagram: normalizeText(contacts?.instagram),
+        tiktok: normalizeText(contacts?.tiktok),
+        douyin: normalizeText(contacts?.douyin),
+        xiaohongshu: normalizeText(contacts?.xiaohongshu),
+        googleReview: normalizeText(contacts?.googleReview),
+        websiteUrl: targetUrl,
+        contactFieldOrder: card.contactFieldOrder,
+        contactOnlyFields: card.contactOnlyFields,
+        contactDisplayFields: card.contactDisplayFields,
+      },
+    },
+    origin,
+  );
+}
+
+async function resolveContactDownloadPayloadFromSnapshot(shareKey: string, origin: string) {
+  const publishedMatch = findContactDownloadSnapshotCard(await loadPublishedMerchantSnapshotSites().catch(() => []), shareKey);
+  const publishedPayload = buildContactDownloadPayloadFromSnapshot(publishedMatch, origin);
+  if (publishedPayload) return publishedPayload;
+  const currentMatch = findContactDownloadSnapshotCard(await loadCurrentMerchantSnapshotSites().catch(() => []), shareKey);
+  return buildContactDownloadPayloadFromSnapshot(currentMatch, origin);
 }
 
 function buildContactDownloadCacheKey(shareKey: string, origin: string) {
@@ -143,6 +219,9 @@ export async function GET(
   const payloadOrigin = resolveMerchantBusinessCardShareOrigin(requestOrigin, requestOrigin) || requestOrigin;
   const cachedPayload = readCachedContactDownloadPayload(shareKey, payloadOrigin);
   const payloadPromise = loadMerchantBusinessCardSharePayloadByKey(shareKey, payloadOrigin);
+  const snapshotPayloadPromise = cachedPayload
+    ? null
+    : resolveContactDownloadPayloadFromSnapshot(shareKey, payloadOrigin).catch(() => null);
   const revoked = await withContactDownloadTimeout(
     readContactDownloadRevocationCached(shareKey, requestOrigin),
     false,
@@ -169,7 +248,10 @@ export async function GET(
       payloadPromise.then((freshPayload) => freshPayload).catch(() => null),
       null,
       2_000,
-    ));
+    )) ||
+    (snapshotPayloadPromise
+      ? await withContactDownloadTimeout(snapshotPayloadPromise, null, 2_000)
+      : null);
   if (!payload) {
     return new NextResponse("Business card contact not found", {
       status: 404,
