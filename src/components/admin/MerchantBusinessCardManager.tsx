@@ -75,6 +75,9 @@ type MerchantBusinessCardManagerProps = {
 
 type MerchantBusinessCardEditableContactFieldKey = MerchantBusinessCardContactDisplayKey;
 type MerchantBusinessCardContactDisplayTargetKey = "businessCard" | "contactCard";
+type MerchantBusinessCardBackgroundPatch = Partial<
+  Pick<MerchantBusinessCardAsset, "imageUrl" | "shareImageUrl" | "contactPagePublicImageUrl" | "shareKey">
+>;
 type ContactPreviewRow = {
   label: string;
   value: string;
@@ -1909,6 +1912,8 @@ export default function MerchantBusinessCardManager({
     [cards],
   );
   const normalizedCardsRef = useRef<MerchantBusinessCardAsset[]>(normalizedCards);
+  const draftRevisionRef = useRef(0);
+  const backgroundSyncGenerationRef = useRef<Record<string, number>>({});
   useEffect(() => {
     normalizedCardsRef.current = normalizedCards;
   }, [normalizedCards]);
@@ -2146,6 +2151,7 @@ export default function MerchantBusinessCardManager({
 
   useEffect(() => {
     if (canUseDraftLinkMode || draft.mode !== "link") return;
+    draftRevisionRef.current += 1;
     setDraft((current) => normalizeMerchantBusinessCardDraft({ ...current, mode: "image" }));
     setPreviewAsset(null);
   }, [canUseDraftLinkMode, draft.mode]);
@@ -2168,7 +2174,13 @@ export default function MerchantBusinessCardManager({
   }, [normalizedCards, onCardsChange]);
 
   const applyDraft = (recipe: (current: MerchantBusinessCardDraft) => MerchantBusinessCardDraft) => {
-    setDraft((current) => recipe(current));
+    setDraft((current) => {
+      const next = recipe(current);
+      if (next !== current) {
+        draftRevisionRef.current += 1;
+      }
+      return next;
+    });
   };
 
   const setSingleSelectedField = (selectionKey: string) => {
@@ -2197,6 +2209,7 @@ export default function MerchantBusinessCardManager({
       return;
     }
     const nextDraft = readSavedBusinessCardDraft(draftStorageKey) ?? createDefaultMerchantBusinessCardDraft(profile);
+    draftRevisionRef.current += 1;
     setDraft(nextDraft);
     setContactPhoneEditorValues(resolveDraftPhoneValues(nextDraft.contacts));
     setBackgroundImageFileName("");
@@ -2219,6 +2232,7 @@ export default function MerchantBusinessCardManager({
   const openEditorForCard = (card: MerchantBusinessCardAsset) => {
     if (!canCreate) return;
     const nextDraft = buildEditableBusinessCardDraftFromAsset(card);
+    draftRevisionRef.current += 1;
     setDraft(nextDraft);
     setContactPhoneEditorValues(resolveDraftPhoneValues(nextDraft.contacts));
     setBackgroundImageFileName("");
@@ -2246,6 +2260,7 @@ export default function MerchantBusinessCardManager({
       return;
     }
     const nextDraft = buildEditableBusinessCardDraftFromAsset(card);
+    draftRevisionRef.current += 1;
     setDraft(nextDraft);
     setContactPhoneEditorValues(resolveDraftPhoneValues(nextDraft.contacts));
     setBackgroundImageFileName("");
@@ -2844,6 +2859,7 @@ export default function MerchantBusinessCardManager({
       if (editingCardId === card.id) {
         setEditingCardId(null);
         setEditorOpen(false);
+        draftRevisionRef.current += 1;
         setDraft(createDefaultMerchantBusinessCardDraft(profile));
       }
       setTip(card.mode === "link" ? "名片已删除，二维码和联系卡链接已失效" : "名片已删除");
@@ -4726,19 +4742,7 @@ export default function MerchantBusinessCardManager({
     cardId: string,
     patch: Partial<Pick<MerchantBusinessCardAsset, "shareImageUrl" | "shareKey" | "contactPagePublicImageUrl">>,
   ) {
-    const currentCards = normalizedCardsRef.current.length ? normalizedCardsRef.current : normalizedCards;
-    void Promise.resolve(
-      persistBusinessCardList(
-        currentCards.map((item) =>
-          item.id === cardId
-            ? {
-                ...item,
-                ...patch,
-              }
-            : item,
-        ),
-      ),
-    ).catch(() => undefined);
+    void mergeSavedBusinessCardAssetPatch({ cardId, patch }).catch(() => undefined);
   }
 
   function persistBusinessCardList(cardsToSave: MerchantBusinessCardAsset[]) {
@@ -4747,13 +4751,67 @@ export default function MerchantBusinessCardManager({
     return Promise.resolve(onCardsChange(normalizedNextCards));
   }
 
-  function mergeSavedBusinessCardAsset(asset: MerchantBusinessCardAsset) {
+  function beginBusinessCardBackgroundSync(cardId: string) {
+    const nextGeneration = (backgroundSyncGenerationRef.current[cardId] ?? 0) + 1;
+    backgroundSyncGenerationRef.current[cardId] = nextGeneration;
+    return nextGeneration;
+  }
+
+  function isCurrentBusinessCardBackgroundSync(cardId: string, syncGeneration?: number) {
+    return syncGeneration === undefined || backgroundSyncGenerationRef.current[cardId] === syncGeneration;
+  }
+
+  async function mergeSavedBusinessCardAssetPatch(input: {
+    cardId: string;
+    patch: MerchantBusinessCardBackgroundPatch;
+    expectedFrontSignature?: string;
+    syncGeneration?: number;
+  }) {
+    if (!isCurrentBusinessCardBackgroundSync(input.cardId, input.syncGeneration)) return false;
     const currentCards = normalizedCardsRef.current.length ? normalizedCardsRef.current : normalizedCards;
-    const hasExistingCard = currentCards.some((card) => card.id === asset.id);
-    const nextCards = hasExistingCard
-      ? currentCards.map((card) => (card.id === asset.id ? asset : card))
-      : [asset, ...currentCards];
-    return persistBusinessCardList(nextCards);
+    const currentCard = currentCards.find((card) => card.id === input.cardId);
+    if (!currentCard) return false;
+
+    const safePatch: MerchantBusinessCardBackgroundPatch = {};
+    const imageUrl = normalizeText(input.patch.imageUrl);
+    if (
+      imageUrl &&
+      normalizeText(currentCard.imageUrl) !== imageUrl &&
+      (!input.expectedFrontSignature || buildBusinessCardFrontRenderSignature(currentCard) === input.expectedFrontSignature)
+    ) {
+      safePatch.imageUrl = imageUrl;
+    }
+
+    const shareImageUrl = normalizeText(input.patch.shareImageUrl);
+    if (shareImageUrl && normalizeText(currentCard.shareImageUrl) !== shareImageUrl) {
+      safePatch.shareImageUrl = shareImageUrl;
+    }
+
+    const contactPagePublicImageUrl = normalizeText(input.patch.contactPagePublicImageUrl);
+    if (contactPagePublicImageUrl && normalizeText(currentCard.contactPagePublicImageUrl) !== contactPagePublicImageUrl) {
+      safePatch.contactPagePublicImageUrl = contactPagePublicImageUrl;
+    }
+
+    const shareKey = normalizeText(input.patch.shareKey);
+    if (shareKey && normalizeText(currentCard.shareKey) !== shareKey) {
+      safePatch.shareKey = shareKey;
+    }
+
+    if (Object.keys(safePatch).length === 0 || !isCurrentBusinessCardBackgroundSync(input.cardId, input.syncGeneration)) {
+      return false;
+    }
+
+    let updatedCard: MerchantBusinessCardAsset | null = null;
+    const nextCards = currentCards.map((card) => {
+      if (card.id !== input.cardId) return card;
+      updatedCard = { ...card, ...safePatch };
+      return updatedCard;
+    });
+    await persistBusinessCardList(nextCards);
+    if (updatedCard) {
+      setPreviewAsset((current) => (current?.id === input.cardId ? updatedCard : current));
+    }
+    return true;
   }
 
   async function resolveShareImageUrl(input: {
@@ -5132,22 +5190,35 @@ export default function MerchantBusinessCardManager({
   async function syncSavedBusinessCardAssetInBackground(input: {
     asset: MerchantBusinessCardAsset;
     refreshFrontImage?: boolean;
+    expectedFrontSignature?: string;
+    syncGeneration?: number;
+    draftRevision?: number;
   }) {
     const asset = input.asset;
-    let nextAsset = asset;
     let renderedImageUrl = "";
     let refreshedFrontImage = false;
+    const patch: MerchantBusinessCardBackgroundPatch = {};
 
     if (input.refreshFrontImage) {
       try {
-        setTip("名片设置已保存，正在后台更新名片图片...");
-        renderedImageUrl = await renderCurrentDraftExportImage();
+        if (
+          isCurrentBusinessCardBackgroundSync(asset.id, input.syncGeneration) &&
+          (input.draftRevision === undefined || draftRevisionRef.current === input.draftRevision)
+        ) {
+          setTip("名片设置已保存，正在后台更新名片图片...");
+          const nextRenderedImageUrl = await renderCurrentDraftExportImage();
+          if (
+            nextRenderedImageUrl &&
+            isCurrentBusinessCardBackgroundSync(asset.id, input.syncGeneration) &&
+            (input.draftRevision === undefined || draftRevisionRef.current === input.draftRevision)
+          ) {
+            renderedImageUrl = nextRenderedImageUrl;
+            patch.imageUrl = renderedImageUrl;
+            refreshedFrontImage = true;
+          }
+        }
         if (renderedImageUrl) {
           refreshedFrontImage = true;
-          nextAsset = {
-            ...nextAsset,
-            imageUrl: renderedImageUrl,
-          };
         }
       } catch {
         setTip("名片设置已保存，图片后台更新失败，联系卡继续同步");
@@ -5156,6 +5227,7 @@ export default function MerchantBusinessCardManager({
 
     if (asset.mode === "link") {
       try {
+        if (!isCurrentBusinessCardBackgroundSync(asset.id, input.syncGeneration)) return;
         const shareContactPayload = buildDraftShareContactPayload(asset, asset.targetUrl);
         const shareBundle = await buildShareBundle({
           targetUrl: asset.targetUrl,
@@ -5187,20 +5259,31 @@ export default function MerchantBusinessCardManager({
           shareRequestAttempts: 1,
           shareRequestTimeoutMs: 8_000,
         });
-        nextAsset = {
-          ...nextAsset,
-          ...(shareBundle.shareImageUrl ? { shareImageUrl: shareBundle.shareImageUrl } : {}),
-          ...(shareBundle.detailImageUrl ? { contactPagePublicImageUrl: shareBundle.detailImageUrl } : {}),
-          ...(normalizeText(shareBundle.shareKey) ? { shareKey: normalizeText(shareBundle.shareKey) } : {}),
-        };
-        await mergeSavedBusinessCardAsset(nextAsset);
-        setPreviewAsset((current) => (current?.id === nextAsset.id ? nextAsset : current));
+        if (shareBundle.shareImageUrl) {
+          patch.shareImageUrl = shareBundle.shareImageUrl;
+        }
+        if (shareBundle.detailImageUrl) {
+          patch.contactPagePublicImageUrl = shareBundle.detailImageUrl;
+        }
+        if (normalizeText(shareBundle.shareKey)) {
+          patch.shareKey = normalizeText(shareBundle.shareKey);
+        }
+        await mergeSavedBusinessCardAssetPatch({
+          cardId: asset.id,
+          patch,
+          expectedFrontSignature: input.expectedFrontSignature,
+          syncGeneration: input.syncGeneration,
+        });
         setTip(refreshedFrontImage ? "名片图片和联系卡已后台更新" : "联系卡短链已后台同步");
         return;
       } catch {
         if (refreshedFrontImage) {
-          await mergeSavedBusinessCardAsset(nextAsset);
-          setPreviewAsset((current) => (current?.id === nextAsset.id ? nextAsset : current));
+          await mergeSavedBusinessCardAssetPatch({
+            cardId: asset.id,
+            patch: { imageUrl: renderedImageUrl },
+            expectedFrontSignature: input.expectedFrontSignature,
+            syncGeneration: input.syncGeneration,
+          });
         }
         setTip("名片设置已保存，联系卡后台同步失败，稍后可再点保存");
         return;
@@ -5208,15 +5291,20 @@ export default function MerchantBusinessCardManager({
     }
 
     if (refreshedFrontImage) {
-      await mergeSavedBusinessCardAsset(nextAsset);
-      setPreviewAsset((current) => (current?.id === nextAsset.id ? nextAsset : current));
+      await mergeSavedBusinessCardAssetPatch({
+        cardId: asset.id,
+        patch: { imageUrl: renderedImageUrl },
+        expectedFrontSignature: input.expectedFrontSignature,
+        syncGeneration: input.syncGeneration,
+      });
       setTip("名片图片已后台更新");
     }
   }
 
   async function saveCurrentDraftToFolder() {
     if (!websiteUrl || !qrReadyForCurrentDraft) return null;
-    if (!editingCardId && normalizedCards.length >= normalizedCardLimit) {
+    const currentCards = normalizedCardsRef.current.length ? normalizedCardsRef.current : normalizedCards;
+    if (!editingCardId && currentCards.length >= normalizedCardLimit) {
       throw new Error("business_card_limit_reached");
     }
 
@@ -5226,7 +5314,10 @@ export default function MerchantBusinessCardManager({
       normalizedContactPageImageLinkUrl && normalizedContactPageImageLinkUrl !== nextDraftBase.contactPageImageLinkUrl
         ? { ...nextDraftBase, contactPageImageLinkUrl: normalizedContactPageImageLinkUrl }
         : nextDraftBase;
-    const existingCard = editingCardId ? normalizedCards.find((card) => card.id === editingCardId) ?? null : null;
+    const existingCard = editingCardId ? currentCards.find((card) => card.id === editingCardId) ?? null : null;
+    if (existingCard) {
+      beginBusinessCardBackgroundSync(existingCard.id);
+    }
     const reusableSnapshotImageUrl =
       existingCard && nextDraft.backgroundImageSnapshotOnly
         ? normalizePublicAssetUrl(normalizeText(existingCard.imageUrl) || normalizeText(existingCard.shareImageUrl))
@@ -5318,8 +5409,8 @@ export default function MerchantBusinessCardManager({
     };
 
     const nextCards = existingCard
-      ? normalizedCards.map((card) => (card.id === existingCard.id ? asset : card))
-      : [asset, ...normalizedCards];
+      ? currentCards.map((card) => (card.id === existingCard.id ? asset : card))
+      : [asset, ...currentCards];
     await persistBusinessCardList(nextCards);
     setEditingCardId(asset.id);
     return asset;
@@ -5330,15 +5421,18 @@ export default function MerchantBusinessCardManager({
     refreshFrontImage?: boolean;
   }) {
     if (!editingCardId || !websiteUrl) return null;
-    const existingCard = normalizedCards.find((card) => card.id === editingCardId) ?? null;
+    const currentCards = normalizedCardsRef.current.length ? normalizedCardsRef.current : normalizedCards;
+    const existingCard = currentCards.find((card) => card.id === editingCardId) ?? null;
     if (!existingCard) return null;
 
     const nextDraftBase = normalizeMerchantBusinessCardDraft(draft);
+    const savedDraftRevision = draftRevisionRef.current;
     const normalizedContactPageImageLinkUrl = normalizeMerchantBusinessCardShareTargetUrl(nextDraftBase.contactPageImageLinkUrl);
     const nextDraft =
       normalizedContactPageImageLinkUrl && normalizedContactPageImageLinkUrl !== nextDraftBase.contactPageImageLinkUrl
         ? { ...nextDraftBase, contactPageImageLinkUrl: normalizedContactPageImageLinkUrl }
         : nextDraftBase;
+    const syncGeneration = beginBusinessCardBackgroundSync(existingCard.id);
     const resolvedShareKey =
       nextDraft.mode === "link"
         ? normalizeText(existingCard.shareKey) ||
@@ -5414,13 +5508,16 @@ export default function MerchantBusinessCardManager({
       ...(existingCard.showInChat ? { showInChat: true } : {}),
       ...(existingCard.chatDisplayDisabled ? { chatDisplayDisabled: true } : {}),
     };
-    const nextCards = normalizedCards.map((card) => (card.id === existingCard.id ? asset : card));
+    const nextCards = currentCards.map((card) => (card.id === existingCard.id ? asset : card));
     await persistBusinessCardList(nextCards);
     setPreviewAsset((current) => (current?.id === asset.id ? asset : current));
     if (options?.deferShareSync) {
       void syncSavedBusinessCardAssetInBackground({
         asset,
         refreshFrontImage: shouldRefreshFrontImage,
+        expectedFrontSignature: buildBusinessCardFrontRenderSignature(asset),
+        syncGeneration,
+        draftRevision: savedDraftRevision,
       }).catch(() => undefined);
     }
     return asset;
