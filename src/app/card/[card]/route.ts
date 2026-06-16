@@ -2755,9 +2755,33 @@ function buildShareCardHtml(input: {
       return "";
     }
   };
+  const buildPublishedSiteWarmupUrl = (value: string) => {
+    try {
+      const parsed = new URL(value);
+      const match = parsed.pathname.match(/^\/site\/(\d{8})(?:\/|$)/);
+      const siteId = match?.[1] ?? "";
+      if (!siteId) return "";
+      parsed.pathname = "/api/site-published";
+      parsed.search = new URLSearchParams({ siteId }).toString();
+      parsed.hash = "";
+      return parsed.toString();
+    } catch {
+      return "";
+    }
+  };
+  const publishedSiteWarmupUrl = buildPublishedSiteWarmupUrl(normalizedOpenTargetUrl);
+  const escapedPublishedSiteWarmupUrl = publishedSiteWarmupUrl ? escapeHtml(publishedSiteWarmupUrl) : "";
   const preconnectOrigins = Array.from(
     new Set(
-      [normalizedOpenTargetUrl, normalizedTargetUrl, previewImageUrl, contentImageUrl, introPosterUrl, introVideoUrl]
+      [
+        normalizedOpenTargetUrl,
+        normalizedTargetUrl,
+        previewImageUrl,
+        contentImageUrl,
+        introPosterUrl,
+        introVideoUrl,
+        publishedSiteWarmupUrl,
+      ]
         .map((value) => getUrlOrigin(value))
         .filter(Boolean),
     ),
@@ -2771,10 +2795,30 @@ function buildShareCardHtml(input: {
   const resourcePreloadHtml = [
     introPosterUrl ? `<link rel="preload" as="image" href="${introPosterUrl}" fetchpriority="high" />` : "",
     introVideoUrl ? `<link rel="preload" as="video" href="${introVideoUrl}" type="video/mp4" crossorigin="anonymous" />` : "",
+    publishedSiteWarmupUrl
+      ? `<link rel="prefetch" as="fetch" href="${escapedPublishedSiteWarmupUrl}" crossorigin="anonymous" />`
+      : "",
     normalizedOpenTargetUrl && normalizedOpenTargetUrl !== normalizedTargetUrl
       ? `<link rel="prefetch" href="${openTargetUrl}" as="document" />`
       : "",
   ].filter(Boolean).join("\n    ");
+  const publishedSiteWarmupScript = publishedSiteWarmupUrl
+    ? `<script>(() => {
+      const url = ${serializeInlineScriptValue(publishedSiteWarmupUrl)};
+      const warm = () => {
+        try {
+          const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+          if (connection && connection.saveData) return;
+          fetch(url, { method: "GET", credentials: "omit", headers: { Accept: "application/json" } }).catch(() => {});
+        } catch {}
+      };
+      if ("requestIdleCallback" in window) {
+        window.requestIdleCallback(warm, { timeout: 1200 });
+      } else {
+        window.setTimeout(warm, 600);
+      }
+    })();</script>`
+    : "";
   const shareUrl = escapeHtml(input.shareUrl);
   const introDebug = Boolean(input.introDebug);
   const inlineI18nScript = buildInlineI18nScript();
@@ -3403,6 +3447,7 @@ function buildShareCardHtml(input: {
       </article>
     </main>
     <script>${inlineI18nScript}</script>
+    ${publishedSiteWarmupScript}
     ${
       introVideoUrl
         ? `<script>(() => {
