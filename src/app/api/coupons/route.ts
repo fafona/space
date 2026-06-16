@@ -54,6 +54,14 @@ function buildCouponSearchText(coupon: MerchantCouponRecord) {
     .toLowerCase();
 }
 
+function toPublicCouponResponse(coupon: MerchantCouponRecord): MerchantCouponRecord {
+  return {
+    ...coupon,
+    claimEvents: [],
+    redeemEvents: [],
+  };
+}
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -72,7 +80,7 @@ export async function GET(request: Request) {
       if (knownVersion && snapshot.updatedAt && knownVersion === snapshot.updatedAt) {
         return NextResponse.json({ ok: true, notModified: true, version: snapshot.updatedAt });
       }
-      const coupons = getVisibleMerchantCoupons(snapshot.coupons);
+      const coupons = getVisibleMerchantCoupons(snapshot.coupons).map(toPublicCouponResponse);
       return NextResponse.json({ ok: true, coupons, version: snapshot.updatedAt });
     }
 
