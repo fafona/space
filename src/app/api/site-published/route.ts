@@ -7,6 +7,24 @@ export const revalidate = 0;
 export { isMissingPublishedSlugColumn, isPublishedBlocksPayload, pickPublishedPageRow } from "@/lib/publishedSiteData";
 
 const SITE_PUBLISHED_SUCCESS_CACHE_CONTROL = "public, max-age=15, s-maxage=30, stale-while-revalidate=120";
+const SITE_PUBLISHED_PAYLOAD_TIMEOUT_MS = 3_500;
+const SITE_PUBLISHED_TIMEOUT = Symbol("site_published_timeout");
+
+type SitePublishedPayloadResult = Awaited<ReturnType<typeof fetchPublishedSitePayloadFromSupabase>>;
+
+async function withSitePublishedTimeout(promise: Promise<SitePublishedPayloadResult>) {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<typeof SITE_PUBLISHED_TIMEOUT>((resolve) => {
+        timeout = setTimeout(() => resolve(SITE_PUBLISHED_TIMEOUT), SITE_PUBLISHED_PAYLOAD_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -23,7 +41,18 @@ export async function GET(request: Request) {
   }
 
   try {
-    const payload = await fetchPublishedSitePayloadFromSupabase(siteId);
+    const payload = await withSitePublishedTimeout(fetchPublishedSitePayloadFromSupabase(siteId));
+    if (payload === SITE_PUBLISHED_TIMEOUT) {
+      return NextResponse.json(
+        { error: "site_published_timeout" },
+        {
+          status: 503,
+          headers: {
+            "cache-control": "no-store, max-age=0",
+          },
+        },
+      );
+    }
     if (!payload || payload.blocks.length === 0) {
       return NextResponse.json({ error: "site_published_not_found" }, { status: 404 });
     }
