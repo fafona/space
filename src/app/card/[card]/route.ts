@@ -27,6 +27,7 @@ import {
 } from "@/lib/merchantBusinessCards";
 import { DEFAULT_LOCALE, I18N_STORAGE_KEY, LANGUAGE_OPTIONS } from "@/lib/i18n";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
+import { createServerTiming } from "@/lib/serverTiming";
 import {
   getContactCardVisibleMerchantCoupons,
   getMerchantCouponDisplayBoxColor,
@@ -3920,48 +3921,60 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ card: string }> },
 ) {
+  const timing = createServerTiming();
+  const withTiming = (response: NextResponse) => {
+    timing.apply(response.headers);
+    return response;
+  };
   const { card } = await params;
   const shareKey = normalizeMerchantBusinessCardShareKey(card);
   const requestUrl = new URL(request.url);
   const introDebug = requestUrl.searchParams.get("introDebug") === "1";
   const requestOrigin = requestUrl.origin;
   if (!shareKey) {
-    return new NextResponse("Invalid business card link", {
+    return withTiming(new NextResponse("Invalid business card link", {
       status: 404,
       headers: {
         "content-type": "text/plain; charset=utf-8",
         "cache-control": "no-store, max-age=0",
       },
-    });
+    }));
   }
 
-  const revoked = await withContactCardTimeout(
-    readContactCardRevocationCached(shareKey, requestOrigin),
-    false,
-    350,
+  const revoked = await timing.time(
+    "revocation",
+    () =>
+      withContactCardTimeout(
+        readContactCardRevocationCached(shareKey, requestOrigin),
+        false,
+        350,
+      ),
   );
   if (revoked) {
     clearCachedContactCardPayload(shareKey);
-    return new NextResponse("Business card not found", {
+    return withTiming(new NextResponse("Business card not found", {
       status: 404,
       headers: {
         "content-type": "text/plain; charset=utf-8",
         "cache-control": "no-store, max-age=0",
       },
-    });
+    }));
   }
 
   const cachedHtml = introDebug ? "" : readCachedContactCardHtml(shareKey, requestOrigin);
   if (cachedHtml) {
-    return new NextResponse(cachedHtml, {
+    timing.add("html_cache", 0, "hit");
+    return withTiming(new NextResponse(cachedHtml, {
       status: 200,
       headers: {
         "content-type": "text/html; charset=utf-8",
         "cache-control": CONTACT_CARD_SUCCESS_CACHE_CONTROL,
       },
-    });
+    }));
   }
 
+  const payloadStartedAt = timing.now();
+  let payloadSource = "none";
   const cachedPayload = readCachedContactCardPayload(shareKey);
   const storedPayloadPromise = loadMerchantBusinessCardSharePayloadByKey(shareKey, requestOrigin);
   const storedPayloadTask = withContactCardTimeout(storedPayloadPromise, null, 5_500);
@@ -3977,6 +3990,7 @@ export async function GET(
   if (cachedPayload) {
     storedPayload = cachedPayload;
     usedCachedPayload = true;
+    payloadSource = "cache";
     void storedPayloadPromise.then((freshPayload) => {
       if (freshPayload) writeCachedContactCardPayload(shareKey, freshPayload, requestOrigin);
     });
@@ -3994,18 +4008,23 @@ export async function GET(
     );
     if (firstPayloadSource?.type === "stored") {
       storedPayload = firstPayloadSource.payload;
+      payloadSource = "manifest";
     } else if (firstPayloadSource?.type === "snapshot") {
       snapshotMatch = firstPayloadSource.match;
+      payloadSource = "snapshot";
       void storedPayloadPromise.then((latePayload) => {
         if (latePayload) writeCachedContactCardPayload(shareKey, latePayload, requestOrigin);
       });
     } else {
       storedPayload = await withContactCardTimeout(storedPayloadPromise, null, 1_200);
+      if (storedPayload) payloadSource = "manifest_wait";
       if (!storedPayload) {
         snapshotMatch = await withContactCardTimeout(snapshotMatchTask, null, 800);
+        if (snapshotMatch) payloadSource = "snapshot_wait";
       }
       if (!storedPayload && !snapshotMatch) {
         storedPayload = await storedPayloadTask;
+        if (storedPayload) payloadSource = "manifest_slow";
       }
     }
   }
@@ -4025,15 +4044,19 @@ export async function GET(
   }
   const snapshotPayload = buildSharePayloadFromSnapshotMatch(snapshotMatch, requestOrigin);
   const payload = storedPayload ?? snapshotPayload ?? cachedPayload;
+  if (payloadSource === "none" && payload) {
+    payloadSource = storedPayload ? "manifest" : snapshotPayload ? "snapshot" : "cache";
+  }
+  timing.mark("payload", payloadStartedAt, payloadSource);
 
   if (!payload) {
-    return new NextResponse("Business card not found", {
+    return withTiming(new NextResponse("Business card not found", {
       status: 404,
       headers: {
         "content-type": "text/plain; charset=utf-8",
         "cache-control": "no-store, max-age=0",
       },
-    });
+    }));
   }
   writeCachedContactCardPayload(shareKey, payload, requestOrigin);
   if (!storedPayload && snapshotPayload) {
@@ -4123,9 +4146,9 @@ export async function GET(
   const contactCouponsTask = preliminaryContactCouponSiteId
     ? withContactCardTimeout(loadContactCardCouponsCached(preliminaryContactCouponSiteId), [], 400)
     : Promise.resolve([] as MerchantCouponRecord[]);
-  const serviceState = await serviceStateTask;
+  const serviceState = await timing.time("service_state", () => serviceStateTask);
   if (serviceState?.maintenance) {
-    return new NextResponse(
+    return withTiming(new NextResponse(
       buildServiceMaintenanceCardHtml({
         merchantName: payload.name || serviceState.merchantName || "FAOLLA CARD",
         shareUrl,
@@ -4138,52 +4161,56 @@ export async function GET(
           "cache-control": "no-store, max-age=0",
         },
       },
-    );
+    ));
   }
   const contactCouponSiteId =
     preliminaryContactCouponSiteId ||
     serviceState?.siteId ||
     "";
-  const contactCoupons = preliminaryContactCouponSiteId
-    ? await contactCouponsTask
-    : contactCouponSiteId
-      ? await withContactCardTimeout(loadContactCardCouponsCached(contactCouponSiteId), [], 400)
-      : [];
+  const contactCoupons = await timing.time("coupons", async () =>
+    preliminaryContactCouponSiteId
+      ? await contactCouponsTask
+      : contactCouponSiteId
+        ? await withContactCardTimeout(loadContactCardCouponsCached(contactCouponSiteId), [], 400)
+        : [],
+  );
   const shouldShowMerchantName = payload.contact?.contactDisplayFields?.merchantName?.contactCard !== false;
-  const html = buildShareCardHtml({
-    title,
-    description,
-    merchantName: shouldShowMerchantName ? payload.name : "",
-    previewImageUrl: previewImageUrl || undefined,
-    contentImageUrl: detailImageUrl || undefined,
-    contentImageHeight: payload.detailImageHeight ?? snapshotCard?.contactPageImageHeight,
-    contentImageLinkUrl: payload.detailImageLinkUrl ?? snapshotCard?.contactPageImageLinkUrl,
-    contentImageX: payload.detailImageX ?? snapshotCard?.contactPageImageX,
-    contentImageY: payload.detailImageY ?? snapshotCard?.contactPageImageY,
-    contentImageScale: payload.detailImageScale ?? snapshotCard?.contactPageImageScale,
-    contentImageOpacity: payload.detailImageOpacity ?? snapshotCard?.contactPageImageOpacity,
-    introVideoUrl: introVideoUrl || undefined,
-    introPosterUrl: introPosterUrl || undefined,
-    introVideoMuted: payload.introVideoMuted ?? snapshotCard?.contactIntroVideoMuted,
-    contactPageSectionOrder: payload.contactPageSectionOrder ?? snapshotCard?.contactPageSectionOrder,
-    showContactSaveButton: payload.showContactSaveButton ?? snapshotCard?.showContactSaveButton,
-    showContactWebsiteButton: payload.showContactWebsiteButton ?? snapshotCard?.showContactWebsiteButton,
-    summaryHtml: buildContactSummaryHtml({
-      name: payload.name,
-      contact: payload.contact,
+  const html = await timing.time("render_html", async () =>
+    buildShareCardHtml({
+      title,
+      description,
+      merchantName: shouldShowMerchantName ? payload.name : "",
+      previewImageUrl: previewImageUrl || undefined,
+      contentImageUrl: detailImageUrl || undefined,
+      contentImageHeight: payload.detailImageHeight ?? snapshotCard?.contactPageImageHeight,
+      contentImageLinkUrl: payload.detailImageLinkUrl ?? snapshotCard?.contactPageImageLinkUrl,
+      contentImageX: payload.detailImageX ?? snapshotCard?.contactPageImageX,
+      contentImageY: payload.detailImageY ?? snapshotCard?.contactPageImageY,
+      contentImageScale: payload.detailImageScale ?? snapshotCard?.contactPageImageScale,
+      contentImageOpacity: payload.detailImageOpacity ?? snapshotCard?.contactPageImageOpacity,
+      introVideoUrl: introVideoUrl || undefined,
+      introPosterUrl: introPosterUrl || undefined,
+      introVideoMuted: payload.introVideoMuted ?? snapshotCard?.contactIntroVideoMuted,
+      contactPageSectionOrder: payload.contactPageSectionOrder ?? snapshotCard?.contactPageSectionOrder,
+      showContactSaveButton: payload.showContactSaveButton ?? snapshotCard?.showContactSaveButton,
+      showContactWebsiteButton: payload.showContactWebsiteButton ?? snapshotCard?.showContactWebsiteButton,
+      summaryHtml: buildContactSummaryHtml({
+        name: payload.name,
+        contact: payload.contact,
+      }),
+      imageWidth: payload.imageWidth,
+      imageHeight: payload.imageHeight,
+      targetUrl: payload.targetUrl,
+      openTargetUrl: fastOpenTargetUrl,
+      shareUrl,
+      contactUrl,
+      couponsHtml: buildContactCouponsHtml(contactCoupons),
+      introDebug,
     }),
-    imageWidth: payload.imageWidth,
-    imageHeight: payload.imageHeight,
-    targetUrl: payload.targetUrl,
-    openTargetUrl: fastOpenTargetUrl,
-    shareUrl,
-    contactUrl,
-    couponsHtml: buildContactCouponsHtml(contactCoupons),
-    introDebug,
-  });
+  );
   if (!introDebug) writeCachedContactCardHtml(shareKey, requestOrigin, html);
 
-  return new NextResponse(
+  return withTiming(new NextResponse(
     html,
     {
       status: 200,
@@ -4192,5 +4219,5 @@ export async function GET(
         "cache-control": introDebug ? "no-store, max-age=0" : CONTACT_CARD_SUCCESS_CACHE_CONTROL,
       },
     },
-  );
+  ));
 }

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { isMerchantNumericId, normalizeDomainPrefix } from "@/lib/merchantIdentity";
+import { createServerTiming } from "@/lib/serverTiming";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -121,22 +122,27 @@ async function resolveSiteIdFromSupabase(prefix: string, supabaseUrl: string, se
 }
 
 export async function GET(request: Request) {
+  const timing = createServerTiming();
+  const withTiming = (response: NextResponse) => {
+    timing.apply(response.headers);
+    return response;
+  };
   const { searchParams } = new URL(request.url);
   const prefix = normalizeDomainPrefix(searchParams.get("prefix"));
   if (!prefix) {
-    return NextResponse.json({ error: "invalid_prefix" }, { status: 400 });
+    return withTiming(NextResponse.json({ error: "invalid_prefix" }, { status: 400 }));
   }
 
   const supabaseUrl = readEnv("NEXT_PUBLIC_SUPABASE_URL");
   const serviceRoleKey = readEnv("SUPABASE_SERVICE_ROLE_KEY") || readEnv("NEXT_SUPABASE_SERVICE_ROLE_KEY");
   if (!supabaseUrl || !serviceRoleKey) {
-    return NextResponse.json({ error: "site_resolve_env_missing" }, { status: 503 });
+    return withTiming(NextResponse.json({ error: "site_resolve_env_missing" }, { status: 503 }));
   }
 
   try {
-    const siteId = await resolveSiteIdFromSupabase(prefix, supabaseUrl, serviceRoleKey);
+    const siteId = await timing.time("resolve", () => resolveSiteIdFromSupabase(prefix, supabaseUrl, serviceRoleKey));
     if (!siteId) {
-      return NextResponse.json(
+      return withTiming(NextResponse.json(
         { error: "site_not_found" },
         {
           status: 404,
@@ -144,10 +150,10 @@ export async function GET(request: Request) {
             "cache-control": SITE_RESOLVE_MISS_CACHE_CONTROL,
           },
         },
-      );
+      ));
     }
 
-    return NextResponse.json(
+    return withTiming(NextResponse.json(
       {
         ok: true,
         prefix,
@@ -158,14 +164,14 @@ export async function GET(request: Request) {
           "cache-control": SITE_RESOLVE_SUCCESS_CACHE_CONTROL,
         },
       },
-    );
+    ));
   } catch (error) {
-    return NextResponse.json(
+    return withTiming(NextResponse.json(
       {
         error: "site_resolve_failed",
         message: error instanceof Error ? error.message : "unknown_error",
       },
       { status: 500 },
-    );
+    ));
   }
 }

@@ -10,6 +10,7 @@ import {
   type MerchantBusinessCardSharePayload,
 } from "@/lib/merchantBusinessCardShare";
 import { loadCurrentMerchantSnapshotSites, loadPublishedMerchantSnapshotSites } from "@/lib/publishedMerchantService";
+import { createServerTiming } from "@/lib/serverTiming";
 import type { MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
 
 const CONTACT_DOWNLOAD_PAYLOAD_CACHE_TTL_MS = 60_000;
@@ -203,16 +204,21 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ card: string }> },
 ) {
+  const timing = createServerTiming();
+  const withTiming = (response: NextResponse) => {
+    timing.apply(response.headers);
+    return response;
+  };
   const { card } = await params;
   const shareKey = normalizeMerchantBusinessCardShareKey(card);
   if (!shareKey) {
-    return new NextResponse("Invalid business card contact", {
+    return withTiming(new NextResponse("Invalid business card contact", {
       status: 404,
       headers: {
         "content-type": "text/plain; charset=utf-8",
         "cache-control": "no-store, max-age=0",
       },
-    });
+    }));
   }
 
   const requestOrigin = resolveRequestOrigin(request);
@@ -222,27 +228,31 @@ export async function GET(
   const snapshotPayloadPromise = cachedPayload
     ? null
     : resolveContactDownloadPayloadFromSnapshot(shareKey, payloadOrigin).catch(() => null);
-  const revoked = await withContactDownloadTimeout(
-    readContactDownloadRevocationCached(shareKey, requestOrigin),
-    false,
-    350,
+  const revoked = await timing.time(
+    "revocation",
+    () =>
+      withContactDownloadTimeout(
+        readContactDownloadRevocationCached(shareKey, requestOrigin),
+        false,
+        350,
+      ),
   );
   if (revoked) {
     clearCachedContactDownloadPayload(shareKey, payloadOrigin);
-    return new NextResponse("Business card contact not found", {
+    return withTiming(new NextResponse("Business card contact not found", {
       status: 404,
       headers: {
         "content-type": "text/plain; charset=utf-8",
         "cache-control": "no-store, max-age=0",
       },
-    });
+    }));
   }
   if (cachedPayload) {
     void payloadPromise
       .then((freshPayload) => writeCachedContactDownloadPayload(shareKey, payloadOrigin, freshPayload))
       .catch(() => null);
   }
-  const payload =
+  const payload = await timing.time("payload", async () =>
     cachedPayload ||
     (await withContactDownloadTimeout(
       payloadPromise.then((freshPayload) => freshPayload).catch(() => null),
@@ -251,26 +261,28 @@ export async function GET(
     )) ||
     (snapshotPayloadPromise
       ? await withContactDownloadTimeout(snapshotPayloadPromise, null, 2_000)
-      : null);
+      : null),
+    cachedPayload ? "cache" : "remote",
+  );
   if (!payload) {
-    return new NextResponse("Business card contact not found", {
+    return withTiming(new NextResponse("Business card contact not found", {
       status: 404,
       headers: {
         "content-type": "text/plain; charset=utf-8",
         "cache-control": "no-store, max-age=0",
       },
-    });
+    }));
   }
   writeCachedContactDownloadPayload(shareKey, payloadOrigin, payload);
 
-  const vcard = buildMerchantBusinessCardVCard(payload);
+  const vcard = await timing.time("render_vcard", async () => buildMerchantBusinessCardVCard(payload));
   const fileName = buildMerchantBusinessCardVCardFileName(payload);
-  return new NextResponse(vcard, {
+  return withTiming(new NextResponse(vcard, {
     status: 200,
     headers: {
       "content-type": "text/vcard; charset=utf-8",
       "content-disposition": buildContentDisposition(fileName),
       "cache-control": "no-store, max-age=0",
     },
-  });
+  }));
 }

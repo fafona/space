@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { fetchPublishedSitePayloadFromSupabase } from "@/lib/publishedSiteData";
+import { createServerTiming } from "@/lib/serverTiming";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -27,23 +28,28 @@ async function withSitePublishedTimeout(promise: Promise<SitePublishedPayloadRes
 }
 
 export async function GET(request: Request) {
+  const timing = createServerTiming();
+  const withTiming = (response: NextResponse) => {
+    timing.apply(response.headers);
+    return response;
+  };
   const { searchParams } = new URL(request.url);
   const siteId = String(searchParams.get("siteId") ?? "").trim();
   if (!isMerchantNumericId(siteId)) {
-    return NextResponse.json({ error: "invalid_site_id" }, { status: 400 });
+    return withTiming(NextResponse.json({ error: "invalid_site_id" }, { status: 400 }));
   }
 
   if (
     !(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim() ||
     !((process.env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim() || (process.env.NEXT_SUPABASE_SERVICE_ROLE_KEY ?? "").trim())
   ) {
-    return NextResponse.json({ error: "site_published_env_missing" }, { status: 503 });
+    return withTiming(NextResponse.json({ error: "site_published_env_missing" }, { status: 503 }));
   }
 
   try {
-    const payload = await withSitePublishedTimeout(fetchPublishedSitePayloadFromSupabase(siteId));
+    const payload = await timing.time("payload", () => withSitePublishedTimeout(fetchPublishedSitePayloadFromSupabase(siteId)));
     if (payload === SITE_PUBLISHED_TIMEOUT) {
-      return NextResponse.json(
+      return withTiming(NextResponse.json(
         { error: "site_published_timeout" },
         {
           status: 503,
@@ -51,13 +57,13 @@ export async function GET(request: Request) {
             "cache-control": "no-store, max-age=0",
           },
         },
-      );
+      ));
     }
     if (!payload || payload.blocks.length === 0) {
-      return NextResponse.json({ error: "site_published_not_found" }, { status: 404 });
+      return withTiming(NextResponse.json({ error: "site_published_not_found" }, { status: 404 }));
     }
 
-    return NextResponse.json(
+    return withTiming(NextResponse.json(
       {
         ok: true,
         siteId: payload.siteId,
@@ -71,14 +77,14 @@ export async function GET(request: Request) {
           "cache-control": SITE_PUBLISHED_SUCCESS_CACHE_CONTROL,
         },
       },
-    );
+    ));
   } catch (error) {
-    return NextResponse.json(
+    return withTiming(NextResponse.json(
       {
         error: "site_published_failed",
         message: error instanceof Error ? error.message : "unknown_error",
       },
       { status: 500 },
-    );
+    ));
   }
 }
