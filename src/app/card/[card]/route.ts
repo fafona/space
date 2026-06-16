@@ -110,6 +110,7 @@ const CONTACT_CARD_REVOCATION_NEGATIVE_CACHE_TTL_MS = 5_000;
 const CONTACT_CARD_REVOCATION_POSITIVE_CACHE_TTL_MS = 60_000;
 const CONTACT_CARD_SERVICE_STATE_CACHE_TTL_MS = 10_000;
 const CONTACT_CARD_COUPONS_CACHE_TTL_MS = 8_000;
+const CONTACT_CARD_HTML_CACHE_TTL_MS = 12_000;
 const CONTACT_CARD_SUCCESS_CACHE_CONTROL = "public, max-age=0, s-maxage=15, stale-while-revalidate=30";
 const CONTACT_CARD_SNAPSHOT_FAST_WAIT_MS = 150;
 const CONTACT_CARD_OWNER_SNAPSHOT_FAST_WAIT_MS = 250;
@@ -2016,6 +2017,14 @@ const contactCardCouponsCache = new Map<
   }
 >();
 
+const contactCardHtmlCache = new Map<
+  string,
+  {
+    expiresAt: number;
+    html: string;
+  }
+>();
+
 async function readContactCardRevocationCached(shareKey: string, preferredOrigin: string) {
   const normalizedShareKey = normalizeMerchantBusinessCardShareKey(shareKey);
   const cacheKey = `${normalizedShareKey}|${normalizeText(preferredOrigin)}`;
@@ -2143,7 +2152,40 @@ function writeCachedContactCardPayload(
 
 function clearCachedContactCardPayload(shareKey: string) {
   const normalizedShareKey = normalizeMerchantBusinessCardShareKey(shareKey);
-  if (normalizedShareKey) contactCardPayloadCache.delete(normalizedShareKey);
+  if (!normalizedShareKey) return;
+  contactCardPayloadCache.delete(normalizedShareKey);
+  for (const key of Array.from(contactCardHtmlCache.keys())) {
+    if (key === normalizedShareKey || key.startsWith(`${normalizedShareKey}|`)) {
+      contactCardHtmlCache.delete(key);
+    }
+  }
+}
+
+function buildContactCardHtmlCacheKey(shareKey: string, requestOrigin: string) {
+  const normalizedShareKey = normalizeMerchantBusinessCardShareKey(shareKey);
+  if (!normalizedShareKey) return "";
+  return `${normalizedShareKey}|${normalizeText(requestOrigin)}`;
+}
+
+function readCachedContactCardHtml(shareKey: string, requestOrigin: string) {
+  const cacheKey = buildContactCardHtmlCacheKey(shareKey, requestOrigin);
+  if (!cacheKey) return "";
+  const cached = contactCardHtmlCache.get(cacheKey);
+  if (!cached) return "";
+  if (cached.expiresAt <= Date.now()) {
+    contactCardHtmlCache.delete(cacheKey);
+    return "";
+  }
+  return cached.html;
+}
+
+function writeCachedContactCardHtml(shareKey: string, requestOrigin: string, html: string) {
+  const cacheKey = buildContactCardHtmlCacheKey(shareKey, requestOrigin);
+  if (!cacheKey || !html) return;
+  contactCardHtmlCache.set(cacheKey, {
+    expiresAt: Date.now() + CONTACT_CARD_HTML_CACHE_TTL_MS,
+    html,
+  });
 }
 
 function firstResolvedContactCardValue<T>(tasks: Array<Promise<T | null>>) {
@@ -3893,14 +3935,6 @@ export async function GET(
     });
   }
 
-  const cachedPayload = readCachedContactCardPayload(shareKey);
-  const storedPayloadPromise = loadMerchantBusinessCardSharePayloadByKey(shareKey, requestOrigin);
-  const storedPayloadTask = withContactCardTimeout(storedPayloadPromise, null, 5_500);
-  const snapshotMatchTask = withContactCardTimeout(
-    resolveContactCardSnapshotMatch(shareKey).catch(() => null),
-    null,
-    6_500,
-  );
   const revoked = await withContactCardTimeout(
     readContactCardRevocationCached(shareKey, requestOrigin),
     false,
@@ -3916,6 +3950,26 @@ export async function GET(
       },
     });
   }
+
+  const cachedHtml = introDebug ? "" : readCachedContactCardHtml(shareKey, requestOrigin);
+  if (cachedHtml) {
+    return new NextResponse(cachedHtml, {
+      status: 200,
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": CONTACT_CARD_SUCCESS_CACHE_CONTROL,
+      },
+    });
+  }
+
+  const cachedPayload = readCachedContactCardPayload(shareKey);
+  const storedPayloadPromise = loadMerchantBusinessCardSharePayloadByKey(shareKey, requestOrigin);
+  const storedPayloadTask = withContactCardTimeout(storedPayloadPromise, null, 5_500);
+  const snapshotMatchTask = withContactCardTimeout(
+    resolveContactCardSnapshotMatch(shareKey).catch(() => null),
+    null,
+    6_500,
+  );
 
   let storedPayload: MerchantBusinessCardSharePayload | null = null;
   let snapshotMatch: ContactCardSnapshotMatch | null = null;
@@ -4096,39 +4150,41 @@ export async function GET(
       ? await withContactCardTimeout(loadContactCardCouponsCached(contactCouponSiteId), [], 400)
       : [];
   const shouldShowMerchantName = payload.contact?.contactDisplayFields?.merchantName?.contactCard !== false;
+  const html = buildShareCardHtml({
+    title,
+    description,
+    merchantName: shouldShowMerchantName ? payload.name : "",
+    previewImageUrl: previewImageUrl || undefined,
+    contentImageUrl: detailImageUrl || undefined,
+    contentImageHeight: payload.detailImageHeight ?? snapshotCard?.contactPageImageHeight,
+    contentImageLinkUrl: payload.detailImageLinkUrl ?? snapshotCard?.contactPageImageLinkUrl,
+    contentImageX: payload.detailImageX ?? snapshotCard?.contactPageImageX,
+    contentImageY: payload.detailImageY ?? snapshotCard?.contactPageImageY,
+    contentImageScale: payload.detailImageScale ?? snapshotCard?.contactPageImageScale,
+    contentImageOpacity: payload.detailImageOpacity ?? snapshotCard?.contactPageImageOpacity,
+    introVideoUrl: introVideoUrl || undefined,
+    introPosterUrl: introPosterUrl || undefined,
+    introVideoMuted: payload.introVideoMuted ?? snapshotCard?.contactIntroVideoMuted,
+    contactPageSectionOrder: payload.contactPageSectionOrder ?? snapshotCard?.contactPageSectionOrder,
+    showContactSaveButton: payload.showContactSaveButton ?? snapshotCard?.showContactSaveButton,
+    showContactWebsiteButton: payload.showContactWebsiteButton ?? snapshotCard?.showContactWebsiteButton,
+    summaryHtml: buildContactSummaryHtml({
+      name: payload.name,
+      contact: payload.contact,
+    }),
+    imageWidth: payload.imageWidth,
+    imageHeight: payload.imageHeight,
+    targetUrl: payload.targetUrl,
+    openTargetUrl: fastOpenTargetUrl,
+    shareUrl,
+    contactUrl,
+    couponsHtml: buildContactCouponsHtml(contactCoupons),
+    introDebug,
+  });
+  if (!introDebug) writeCachedContactCardHtml(shareKey, requestOrigin, html);
 
   return new NextResponse(
-    buildShareCardHtml({
-      title,
-      description,
-      merchantName: shouldShowMerchantName ? payload.name : "",
-      previewImageUrl: previewImageUrl || undefined,
-      contentImageUrl: detailImageUrl || undefined,
-      contentImageHeight: payload.detailImageHeight ?? snapshotCard?.contactPageImageHeight,
-      contentImageLinkUrl: payload.detailImageLinkUrl ?? snapshotCard?.contactPageImageLinkUrl,
-      contentImageX: payload.detailImageX ?? snapshotCard?.contactPageImageX,
-      contentImageY: payload.detailImageY ?? snapshotCard?.contactPageImageY,
-      contentImageScale: payload.detailImageScale ?? snapshotCard?.contactPageImageScale,
-      contentImageOpacity: payload.detailImageOpacity ?? snapshotCard?.contactPageImageOpacity,
-      introVideoUrl: introVideoUrl || undefined,
-      introPosterUrl: introPosterUrl || undefined,
-      introVideoMuted: payload.introVideoMuted ?? snapshotCard?.contactIntroVideoMuted,
-      contactPageSectionOrder: payload.contactPageSectionOrder ?? snapshotCard?.contactPageSectionOrder,
-      showContactSaveButton: payload.showContactSaveButton ?? snapshotCard?.showContactSaveButton,
-      showContactWebsiteButton: payload.showContactWebsiteButton ?? snapshotCard?.showContactWebsiteButton,
-      summaryHtml: buildContactSummaryHtml({
-        name: payload.name,
-        contact: payload.contact,
-      }),
-      imageWidth: payload.imageWidth,
-      imageHeight: payload.imageHeight,
-      targetUrl: payload.targetUrl,
-      openTargetUrl: fastOpenTargetUrl,
-      shareUrl,
-      contactUrl,
-      couponsHtml: buildContactCouponsHtml(contactCoupons),
-      introDebug,
-    }),
+    html,
     {
       status: 200,
       headers: {
