@@ -22,7 +22,6 @@ import { cloneBlocks, getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
 import { PUBLISH_SYNC_STORAGE_KEY, subscribePublishSync } from "@/lib/publishSync";
 import { buildPlatformHomeHref, buildSiteStoreScope } from "@/lib/siteRouting";
 import {
-  canReachSupabaseGateway,
   getResolvedSupabaseUrl,
   isSupabaseEnabled,
   resolvedSupabaseAnonKey,
@@ -36,6 +35,7 @@ const EMPTY_BLOCKS: Block[] = [];
 const MIN_INITIAL_LOADING_MS = 0;
 const SITE_REMOTE_FETCH_TIMEOUT_MS = 3500;
 const SITE_REMOTE_SETTLE_TIMEOUT_MS = 4200;
+const SITE_REMOTE_FALLBACK_DELAY_MS = 650;
 
 function readViewportWidth() {
   if (typeof window === "undefined") return 0;
@@ -123,6 +123,42 @@ async function withTimeout<T>(task: Promise<T>, timeoutMs: number): Promise<T | 
   }
 }
 
+function delayNull(timeoutMs: number) {
+  return new Promise<null>((resolve) => {
+    setTimeout(() => resolve(null), Math.max(0, timeoutMs));
+  });
+}
+
+async function firstNonNullBlockResult(tasks: Promise<Block[] | null>[]) {
+  if (tasks.length === 0) return null;
+  return new Promise<Block[] | null>((resolve) => {
+    let pending = tasks.length;
+    let settled = false;
+    const settleNull = () => {
+      pending -= 1;
+      if (!settled && pending <= 0) {
+        settled = true;
+        resolve(null);
+      }
+    };
+    tasks.forEach((task) => {
+      task
+        .then((value) => {
+          if (settled) return;
+          if (value && value.length > 0) {
+            settled = true;
+            resolve(value);
+            return;
+          }
+          settleNull();
+        })
+        .catch(() => {
+          settleNull();
+        });
+    });
+  });
+}
+
 function getEmbeddedMobilePlanConfig(sourceBlocks: Block[]) {
   const carrier = sourceBlocks.find(
     (block) => !!(block?.props as { pagePlanConfigMobile?: unknown } | undefined)?.pagePlanConfigMobile,
@@ -192,6 +228,7 @@ async function fetchPublishedSiteBlocksViaRest(siteId: string) {
     try {
       const headers: Record<string, string> = {
         apikey: resolvedSupabaseAnonKey,
+        Authorization: `Bearer ${resolvedSupabaseAnonKey}`,
       };
       const response = await fetch(`${base}/rest/v1/pages?${query.toString()}`, {
         method: "GET",
@@ -240,6 +277,34 @@ async function fetchPublishedSiteBlocksViaApi(siteId: string) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function fetchPublishedSiteBlocksViaSdk(siteId: string) {
+  let result = await supabase.from("pages").select("blocks").eq("merchant_id", siteId).eq("slug", "home").limit(1).maybeSingle();
+  if (result.error && isMissingSlugColumn(result.error.message)) {
+    result = await supabase.from("pages").select("blocks").eq("merchant_id", siteId).limit(1).maybeSingle();
+  } else if (!result.error && !Array.isArray(result.data?.blocks)) {
+    result = await supabase.from("pages").select("blocks").eq("merchant_id", siteId).limit(1).maybeSingle();
+  }
+  if (!result.error && Array.isArray(result.data?.blocks)) {
+    const sanitized = sanitizeBlocksForRuntime(result.data.blocks as Block[]).blocks;
+    if (sanitized.length > 0) return sanitized;
+  }
+  return null;
+}
+
+async function fetchPublishedSiteBlocksFast(siteId: string) {
+  const apiTask = withTimeout(fetchPublishedSiteBlocksViaApi(siteId), SITE_REMOTE_FETCH_TIMEOUT_MS);
+  if (!isSupabaseEnabled) return apiTask;
+
+  const fastApiBlocks = await Promise.race([apiTask, delayNull(SITE_REMOTE_FALLBACK_DELAY_MS)]);
+  if (fastApiBlocks) return fastApiBlocks;
+
+  const restTask = withTimeout(fetchPublishedSiteBlocksViaRest(siteId), SITE_REMOTE_FETCH_TIMEOUT_MS);
+  const firstBlocks = await firstNonNullBlockResult([apiTask, restTask]);
+  if (firstBlocks) return firstBlocks;
+
+  return withTimeout(fetchPublishedSiteBlocksViaSdk(siteId), SITE_REMOTE_FETCH_TIMEOUT_MS);
 }
 
 type SitePageClientProps = {
@@ -398,36 +463,7 @@ export function SitePageClient({
 
     (async () => {
       try {
-        let nextBlocks = await withTimeout(fetchPublishedSiteBlocksViaApi(siteId), SITE_REMOTE_FETCH_TIMEOUT_MS);
-
-        if (!nextBlocks && isSupabaseEnabled) {
-          const gatewayReady = await canReachSupabaseGateway(3000);
-          if (!mounted) return;
-          if (gatewayReady) {
-            const anonRestTask = withTimeout(fetchPublishedSiteBlocksViaRest(siteId), SITE_REMOTE_FETCH_TIMEOUT_MS);
-            const sdkTask = withTimeout(
-              (async () => {
-                let result = await supabase.from("pages").select("blocks").eq("merchant_id", siteId).eq("slug", "home").limit(1).maybeSingle();
-                if (result.error && isMissingSlugColumn(result.error.message)) {
-                  result = await supabase.from("pages").select("blocks").eq("merchant_id", siteId).limit(1).maybeSingle();
-                } else if (!result.error && !Array.isArray(result.data?.blocks)) {
-                  result = await supabase.from("pages").select("blocks").eq("merchant_id", siteId).limit(1).maybeSingle();
-                }
-                if (!result.error && Array.isArray(result.data?.blocks)) {
-                  const sanitized = sanitizeBlocksForRuntime(result.data.blocks as Block[]).blocks;
-                  if (sanitized.length > 0) return sanitized;
-                }
-                return null;
-              })(),
-              SITE_REMOTE_FETCH_TIMEOUT_MS,
-            );
-
-            nextBlocks = await anonRestTask;
-            if (!nextBlocks) {
-              nextBlocks = await sdkTask;
-            }
-          }
-        }
+        const nextBlocks = await fetchPublishedSiteBlocksFast(siteId);
         if (!mounted || !nextBlocks) return;
 
         setDbBlocks(nextBlocks);
