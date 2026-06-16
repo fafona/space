@@ -106,6 +106,10 @@ function buildFastMerchantSiteUrl(input: { ownerMerchantId?: string | null; orig
 
 const BUSINESS_CARD_SHARE_MANIFEST_BUCKETS = ["page-assets", "assets", "uploads", "public"] as const;
 const CONTACT_CARD_PAYLOAD_CACHE_TTL_MS = 45_000;
+const CONTACT_CARD_REVOCATION_NEGATIVE_CACHE_TTL_MS = 5_000;
+const CONTACT_CARD_REVOCATION_POSITIVE_CACHE_TTL_MS = 60_000;
+const CONTACT_CARD_SERVICE_STATE_CACHE_TTL_MS = 10_000;
+const CONTACT_CARD_COUPONS_CACHE_TTL_MS = 8_000;
 const CONTACT_CARD_SUCCESS_CACHE_CONTROL = "public, max-age=0, s-maxage=15, stale-while-revalidate=30";
 const CONTACT_CARD_SNAPSHOT_FAST_WAIT_MS = 150;
 const CONTACT_CARD_OWNER_SNAPSHOT_FAST_WAIT_MS = 250;
@@ -1985,6 +1989,104 @@ async function loadContactCardCoupons(siteId: string) {
   return getContactCardVisibleMerchantCoupons(coupons);
 }
 
+const contactCardRevocationCache = new Map<
+  string,
+  {
+    expiresAt: number;
+    pending?: Promise<boolean>;
+    value?: boolean;
+  }
+>();
+
+const contactCardServiceStateCache = new Map<
+  string,
+  {
+    expiresAt: number;
+    pending?: Promise<Awaited<ReturnType<typeof loadPublishedMerchantServiceStateByTargetUrl>> | null>;
+    value?: Awaited<ReturnType<typeof loadPublishedMerchantServiceStateByTargetUrl>> | null;
+  }
+>();
+
+const contactCardCouponsCache = new Map<
+  string,
+  {
+    expiresAt: number;
+    pending?: Promise<MerchantCouponRecord[]>;
+    value?: MerchantCouponRecord[];
+  }
+>();
+
+async function readContactCardRevocationCached(shareKey: string, preferredOrigin: string) {
+  const normalizedShareKey = normalizeMerchantBusinessCardShareKey(shareKey);
+  const cacheKey = `${normalizedShareKey}|${normalizeText(preferredOrigin)}`;
+  if (!normalizedShareKey) return false;
+  const cached = contactCardRevocationCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    if (cached.pending) return cached.pending;
+    return cached.value === true;
+  }
+  const pending = isMerchantBusinessCardShareRevoked({
+    shareKey: normalizedShareKey,
+    preferredOrigin,
+  })
+    .then((value) => value === true)
+    .catch(() => false);
+  contactCardRevocationCache.set(cacheKey, {
+    expiresAt: Date.now() + CONTACT_CARD_REVOCATION_NEGATIVE_CACHE_TTL_MS,
+    pending,
+  });
+  const value = await pending;
+  contactCardRevocationCache.set(cacheKey, {
+    expiresAt:
+      Date.now() +
+      (value ? CONTACT_CARD_REVOCATION_POSITIVE_CACHE_TTL_MS : CONTACT_CARD_REVOCATION_NEGATIVE_CACHE_TTL_MS),
+    value,
+  });
+  return value;
+}
+
+async function loadContactCardServiceStateCached(targetUrl: string) {
+  const normalizedTargetUrl = normalizeText(targetUrl);
+  if (!normalizedTargetUrl) return null;
+  const cached = contactCardServiceStateCache.get(normalizedTargetUrl);
+  if (cached && cached.expiresAt > Date.now()) {
+    if (cached.pending) return cached.pending;
+    return cached.value ?? null;
+  }
+  const pending = loadPublishedMerchantServiceStateByTargetUrl(normalizedTargetUrl).catch(() => null);
+  contactCardServiceStateCache.set(normalizedTargetUrl, {
+    expiresAt: Date.now() + CONTACT_CARD_SERVICE_STATE_CACHE_TTL_MS,
+    pending,
+  });
+  const value = await pending;
+  contactCardServiceStateCache.set(normalizedTargetUrl, {
+    expiresAt: Date.now() + CONTACT_CARD_SERVICE_STATE_CACHE_TTL_MS,
+    value,
+  });
+  return value;
+}
+
+async function loadContactCardCouponsCached(siteId: string) {
+  const normalizedSiteId = normalizeText(siteId);
+  if (!normalizedSiteId) return [];
+  const cached = contactCardCouponsCache.get(normalizedSiteId);
+  if (cached && cached.expiresAt > Date.now()) {
+    if (cached.pending) return cached.pending;
+    return cached.value ?? [];
+  }
+  const pending = loadContactCardCoupons(normalizedSiteId).catch(() => []);
+  contactCardCouponsCache.set(normalizedSiteId, {
+    expiresAt: Date.now() + CONTACT_CARD_COUPONS_CACHE_TTL_MS,
+    pending,
+  });
+  const value = await pending;
+  contactCardCouponsCache.set(normalizedSiteId, {
+    expiresAt: Date.now() + CONTACT_CARD_COUPONS_CACHE_TTL_MS,
+    value,
+  });
+  return value;
+}
+
 async function withContactCardTimeout<T>(promise: Promise<T>, fallback: T, timeoutMs = 3000): Promise<T> {
   let timeout: ReturnType<typeof setTimeout> | null = null;
   try {
@@ -3755,12 +3857,9 @@ export async function GET(
     6_500,
   );
   const revoked = await withContactCardTimeout(
-    isMerchantBusinessCardShareRevoked({
-      shareKey,
-      preferredOrigin: requestOrigin,
-    }),
+    readContactCardRevocationCached(shareKey, requestOrigin),
     false,
-    700,
+    350,
   );
   if (revoked) {
     clearCachedContactCardPayload(shareKey);
@@ -3916,12 +4015,12 @@ export async function GET(
     normalizeText(snapshotMatch?.siteId) ||
     "";
   const serviceStateTask = withContactCardTimeout(
-    loadPublishedMerchantServiceStateByTargetUrl(payload.targetUrl).catch(() => null),
+    loadContactCardServiceStateCached(payload.targetUrl),
     null,
-    450,
+    350,
   );
   const contactCouponsTask = preliminaryContactCouponSiteId
-    ? withContactCardTimeout(loadContactCardCoupons(preliminaryContactCouponSiteId), [], 500)
+    ? withContactCardTimeout(loadContactCardCouponsCached(preliminaryContactCouponSiteId), [], 400)
     : Promise.resolve([] as MerchantCouponRecord[]);
   const serviceState = await serviceStateTask;
   if (serviceState?.maintenance) {
@@ -3947,7 +4046,7 @@ export async function GET(
   const contactCoupons = preliminaryContactCouponSiteId
     ? await contactCouponsTask
     : contactCouponSiteId
-      ? await withContactCardTimeout(loadContactCardCoupons(contactCouponSiteId), [], 500)
+      ? await withContactCardTimeout(loadContactCardCouponsCached(contactCouponSiteId), [], 400)
       : [];
   const shouldShowMerchantName = payload.contact?.contactDisplayFields?.merchantName?.contactCard !== false;
 
