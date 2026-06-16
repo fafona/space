@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { unstable_cache } from "next/cache";
 import type { Block, MerchantListPublishedSite } from "@/data/homeBlocks";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import type { PublishedMerchantServiceState } from "@/lib/publishedMerchantService";
@@ -184,6 +185,12 @@ async function fetchPublishedSitePayloadFromSupabaseUncached(siteId: string): Pr
   };
 }
 
+const fetchPublishedSitePayloadFromNextCache = unstable_cache(
+  fetchPublishedSitePayloadFromSupabaseUncached,
+  ["published-site-payload-v1"],
+  { revalidate: Math.ceil(PUBLISHED_SITE_PAYLOAD_CACHE_TTL_MS / 1000) },
+);
+
 export async function fetchPublishedSitePayloadFromSupabase(siteId: string): Promise<PublishedSitePayload | null> {
   const normalizedSiteId = String(siteId ?? "").trim();
   if (!isMerchantNumericId(normalizedSiteId)) return null;
@@ -194,7 +201,7 @@ export async function fetchPublishedSitePayloadFromSupabase(siteId: string): Pro
     if ("value" in cached) return cached.value ?? null;
   }
 
-  const pending = fetchPublishedSitePayloadFromSupabaseUncached(normalizedSiteId);
+  const pending = fetchPublishedSitePayloadFromNextCache(normalizedSiteId);
   publishedSitePayloadCache.set(normalizedSiteId, {
     expiresAt: Date.now() + PUBLISHED_SITE_PAYLOAD_CACHE_TTL_MS,
     pending,

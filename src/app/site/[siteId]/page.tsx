@@ -1,8 +1,6 @@
 import type { Metadata } from "next";
-import { headers } from "next/headers";
 import { cache } from "react";
 import ServiceMaintenancePage from "@/components/ServiceMaintenancePage";
-import { isMobileViewportRequest } from "@/lib/deviceViewport";
 import {
   buildMerchantLocalBusinessJsonLd,
   buildMerchantSeoCanonicalUrl,
@@ -14,6 +12,8 @@ import {
 } from "@/lib/merchantSeo";
 import { fetchPublishedSitePayloadFromSupabase } from "@/lib/publishedSiteData";
 import SitePageClient from "./SitePageClient";
+
+export const revalidate = 30;
 
 type SitePageProps = {
   params: Promise<{
@@ -130,7 +130,7 @@ export async function generateMetadata({ params, searchParams }: SitePageProps):
 export default async function SitePage({ params, searchParams }: SitePageProps) {
   const { siteId } = await params;
   const resolvedSearchParams = await searchParams;
-  const initialIsMobileViewport = isMobileViewportRequest(await headers());
+  const initialIsMobileViewport = false;
   if (isContactCardFastEntry(resolvedSearchParams)) {
     return <SitePageClient forcedSiteId={siteId} initialIsMobileViewport={initialIsMobileViewport} />;
   }
