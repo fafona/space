@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { cache } from "react";
 import ServiceMaintenancePage from "@/components/ServiceMaintenancePage";
 import SitePageClient from "@/app/site/[siteId]/SitePageClient";
 import { isMobileViewportRequest } from "@/lib/deviceViewport";
@@ -40,8 +41,36 @@ type LooseSupabaseClient = {
   from: (table: string) => LooseQueryBuilder<{ merchant_id?: string | null; slug?: string | null; updated_at?: string | null; created_at?: string | null }>;
 };
 
+const MERCHANT_ENTRY_PREFIX_TIMEOUT_MS = 1_200;
+const MERCHANT_ENTRY_METADATA_PAYLOAD_TIMEOUT_MS = 1_200;
+const MERCHANT_ENTRY_PAGE_PAYLOAD_TIMEOUT_MS = 2_200;
+
+type PublishedSitePayloadResult = Awaited<ReturnType<typeof fetchPublishedSitePayloadFromSupabase>>;
+
 function readEnv(key: string) {
   return String(process.env[key] ?? "").trim();
+}
+
+async function withMerchantEntryTimeout<T>(promise: Promise<T>, fallback: T, timeoutMs: number): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((resolve) => {
+        timeout = setTimeout(() => resolve(fallback), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+function fetchPublishedSitePayloadFast(siteId: string, timeoutMs: number) {
+  return withMerchantEntryTimeout<PublishedSitePayloadResult | null>(
+    fetchPublishedSitePayloadFromSupabase(siteId).catch(() => null),
+    null,
+    timeoutMs,
+  );
 }
 
 function readPublicOrigin() {
@@ -111,7 +140,7 @@ function escapeJsonForHtml(value: unknown) {
   return JSON.stringify(value).replace(/</g, "\\u003c");
 }
 
-async function resolveInitialSiteIdByPrefix(prefix: string) {
+async function resolveInitialSiteIdByPrefixUncached(prefix: string) {
   const normalizedPrefix = normalizeDomainPrefix(prefix);
   if (!normalizedPrefix) return "";
 
@@ -149,12 +178,18 @@ async function resolveInitialSiteIdByPrefix(prefix: string) {
   }
 }
 
+const resolveInitialSiteIdByPrefix = cache(resolveInitialSiteIdByPrefixUncached);
+
+function resolveInitialSiteIdByPrefixFast(prefix: string) {
+  return withMerchantEntryTimeout(resolveInitialSiteIdByPrefix(prefix).catch(() => ""), "", MERCHANT_ENTRY_PREFIX_TIMEOUT_MS);
+}
+
 export async function generateMetadata({ params }: MerchantEntryPageProps): Promise<Metadata> {
   const { merchantEntry } = await params;
   if (isMerchantNumericId(merchantEntry)) return {};
-  const siteId = await resolveInitialSiteIdByPrefix(merchantEntry);
+  const siteId = await resolveInitialSiteIdByPrefixFast(merchantEntry);
   if (!siteId) return {};
-  const publishedSite = await fetchPublishedSitePayloadFromSupabase(siteId).catch(() => null);
+  const publishedSite = await fetchPublishedSitePayloadFast(siteId, MERCHANT_ENTRY_METADATA_PAYLOAD_TIMEOUT_MS);
   const profile = buildProfileForSeo(siteId, publishedSite);
   const publicOrigin = readPublicOrigin();
   const title = buildMerchantSeoTitle(profile);
@@ -237,9 +272,9 @@ export default async function MerchantEntryPage({ params, searchParams }: Mercha
     return <MerchantNumericEntryPageClient />;
   }
 
-  const initialResolvedSiteId = await resolveInitialSiteIdByPrefix(merchantEntry);
+  const initialResolvedSiteId = await resolveInitialSiteIdByPrefixFast(merchantEntry);
   if (initialResolvedSiteId) {
-    const publishedSite = await fetchPublishedSitePayloadFromSupabase(initialResolvedSiteId).catch(() => null);
+    const publishedSite = await fetchPublishedSitePayloadFast(initialResolvedSiteId, MERCHANT_ENTRY_PAGE_PAYLOAD_TIMEOUT_MS);
     if (publishedSite?.blocks?.length) {
       if (publishedSite.serviceState?.maintenance) {
         return (
