@@ -25,6 +25,31 @@ type SitePageProps = {
 const fetchPublishedSitePayloadForRequest = cache((siteId: string) =>
   fetchPublishedSitePayloadFromSupabase(siteId),
 );
+const SITE_METADATA_PAYLOAD_TIMEOUT_MS = 1_200;
+const SITE_PAGE_PAYLOAD_TIMEOUT_MS = 2_200;
+
+type PublishedSitePayloadResult = Awaited<ReturnType<typeof fetchPublishedSitePayloadFromSupabase>>;
+
+async function withPublishedSitePayloadTimeout(
+  promise: Promise<PublishedSitePayloadResult | null>,
+  timeoutMs: number,
+) {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<PublishedSitePayloadResult | null>((resolve) => {
+        timeout = setTimeout(() => resolve(null), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+function fetchPublishedSitePayloadForRequestFast(siteId: string, timeoutMs: number) {
+  return withPublishedSitePayloadTimeout(fetchPublishedSitePayloadForRequest(siteId).catch(() => null), timeoutMs);
+}
 
 function readPublicOrigin() {
   const configured = String(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "").trim();
@@ -66,7 +91,7 @@ export async function generateMetadata({ params, searchParams }: SitePageProps):
   const { siteId } = await params;
   const resolvedSearchParams = await searchParams;
   if (isContactCardFastEntry(resolvedSearchParams)) return {};
-  const publishedSite = await fetchPublishedSitePayloadForRequest(siteId).catch(() => null);
+  const publishedSite = await fetchPublishedSitePayloadForRequestFast(siteId, SITE_METADATA_PAYLOAD_TIMEOUT_MS);
   const profile = buildProfileForSeo(siteId, publishedSite);
   const publicOrigin = readPublicOrigin();
   const title = buildMerchantSeoTitle(profile);
@@ -109,7 +134,7 @@ export default async function SitePage({ params, searchParams }: SitePageProps) 
   if (isContactCardFastEntry(resolvedSearchParams)) {
     return <SitePageClient forcedSiteId={siteId} initialIsMobileViewport={initialIsMobileViewport} />;
   }
-  const publishedSite = await fetchPublishedSitePayloadForRequest(siteId).catch(() => null);
+  const publishedSite = await fetchPublishedSitePayloadForRequestFast(siteId, SITE_PAGE_PAYLOAD_TIMEOUT_MS);
   if (publishedSite?.serviceState?.maintenance) {
     return (
       <ServiceMaintenancePage

@@ -107,6 +107,8 @@ function buildFastMerchantSiteUrl(input: { ownerMerchantId?: string | null; orig
 const BUSINESS_CARD_SHARE_MANIFEST_BUCKETS = ["page-assets", "assets", "uploads", "public"] as const;
 const CONTACT_CARD_PAYLOAD_CACHE_TTL_MS = 45_000;
 const CONTACT_CARD_SUCCESS_CACHE_CONTROL = "public, max-age=0, s-maxage=15, stale-while-revalidate=30";
+const CONTACT_CARD_SNAPSHOT_FAST_WAIT_MS = 150;
+const CONTACT_CARD_OWNER_SNAPSHOT_FAST_WAIT_MS = 250;
 const GOOGLE_REVIEW_DISPLAY_TEXT = "欢迎评价";
 const GOOGLE_REVIEW_DISPLAY_TRANSLATIONS: Record<string, string> = {
   "zh-CN": GOOGLE_REVIEW_DISPLAY_TEXT,
@@ -3813,14 +3815,14 @@ export async function GET(
     snapshotMatch = storedPayload
       ? usedCachedPayload
         ? null
-        : await withContactCardTimeout(snapshotMatchTask, null, 800)
+        : await withContactCardTimeout(snapshotMatchTask, null, CONTACT_CARD_SNAPSHOT_FAST_WAIT_MS)
       : await snapshotMatchTask;
   }
   if (!snapshotMatch && storedPayload?.ownerMerchantId) {
     snapshotMatch = await withContactCardTimeout(
       resolveContactCardSnapshotMatch(shareKey, storedPayload.ownerMerchantId).catch(() => null),
       null,
-      1_600,
+      CONTACT_CARD_OWNER_SNAPSHOT_FAST_WAIT_MS,
     );
   }
   const snapshotPayload = buildSharePayloadFromSnapshotMatch(snapshotMatch, requestOrigin);
