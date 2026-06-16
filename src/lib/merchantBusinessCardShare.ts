@@ -25,6 +25,7 @@ const MERCHANT_BUSINESS_CARD_SHARE_KEY_SLUG_MAX_LENGTH = 18;
 const MERCHANT_BUSINESS_CARD_SHARE_KEY_CODE_LENGTH = 6;
 const MERCHANT_BUSINESS_CARD_SHARE_KEY_CODE_ALPHABET = "23456789abcdefghjkmnpqrstuvwxyz";
 const BUSINESS_CARD_SHARE_STORAGE_FETCH_TIMEOUT_MS = 3500;
+const BUSINESS_CARD_SHARE_MANIFEST_FAST_WAIT_MS = 900;
 
 type SearchParamValue = string | string[] | undefined;
 type SearchParamsLike = URLSearchParams | Record<string, SearchParamValue>;
@@ -1504,34 +1505,7 @@ function countShareContactFields(contact?: MerchantBusinessCardShareContact | nu
   return count;
 }
 
-export async function loadMerchantBusinessCardSharePayloadByKey(
-  key: string | null | undefined,
-  preferredOrigin?: string | null,
-) {
-  const normalizedKey = normalizeMerchantBusinessCardShareKey(key);
-  if (!normalizedKey) return null;
-
-  const candidates = (
-    await Promise.all(
-      buildMerchantBusinessCardShareManifestPublicUrls(normalizedKey, preferredOrigin).map(async (url) => {
-        try {
-          const response = await fetchBusinessCardStorageUrl(buildStorageNoStoreUrl(url), {
-            cache: "no-store",
-            next: { revalidate: 0 },
-          });
-          if (!response.ok) return null;
-          const json = (await response.json().catch(() => null)) as MerchantBusinessCardSharePayload | null;
-          const payload = normalizeSharePayload(json ?? {}, preferredOrigin);
-          return payload;
-        } catch {
-          return null;
-        }
-      }),
-    )
-  ).filter((payload): payload is MerchantBusinessCardSharePayload => !!payload);
-
-  if (candidates.length === 0) return null;
-
+function choosePreferredSharePayload(candidates: MerchantBusinessCardSharePayload[]) {
   const [latest] = [...candidates].sort((left, right) => {
     const leftTs = Date.parse(left.updatedAt ?? "") || 0;
     const rightTs = Date.parse(right.updatedAt ?? "") || 0;
@@ -1545,6 +1519,60 @@ export async function loadMerchantBusinessCardSharePayloadByKey(
     return 0;
   });
   return latest ?? candidates[0] ?? null;
+}
+
+function timeoutNull(timeoutMs: number) {
+  return new Promise<null>((resolve) => {
+    setTimeout(() => resolve(null), Math.max(0, timeoutMs));
+  });
+}
+
+async function collectFastSharePayloads(
+  tasks: Array<Promise<MerchantBusinessCardSharePayload | null>>,
+  timeoutMs: number,
+) {
+  const payloads: MerchantBusinessCardSharePayload[] = [];
+  const collectors = tasks.map((task) =>
+    task
+      .then((payload) => {
+        if (payload) payloads.push(payload);
+      })
+      .catch(() => {}),
+  );
+  await Promise.race([Promise.allSettled(collectors), timeoutNull(timeoutMs)]);
+  return payloads;
+}
+
+export async function loadMerchantBusinessCardSharePayloadByKey(
+  key: string | null | undefined,
+  preferredOrigin?: string | null,
+) {
+  const normalizedKey = normalizeMerchantBusinessCardShareKey(key);
+  if (!normalizedKey) return null;
+
+  const payloadTasks = buildMerchantBusinessCardShareManifestPublicUrls(normalizedKey, preferredOrigin).map(async (url) => {
+    try {
+      const response = await fetchBusinessCardStorageUrl(buildStorageNoStoreUrl(url), {
+        cache: "no-store",
+        next: { revalidate: 0 },
+      });
+      if (!response.ok) return null;
+      const json = (await response.json().catch(() => null)) as MerchantBusinessCardSharePayload | null;
+      return normalizeSharePayload(json ?? {}, preferredOrigin);
+    } catch {
+      return null;
+    }
+  });
+
+  const fastCandidates = await collectFastSharePayloads(payloadTasks, BUSINESS_CARD_SHARE_MANIFEST_FAST_WAIT_MS);
+  const fastPayload = choosePreferredSharePayload(fastCandidates);
+  if (fastPayload) return fastPayload;
+
+  const candidates = (await Promise.all(payloadTasks)).filter(
+    (payload): payload is MerchantBusinessCardSharePayload => !!payload,
+  );
+  if (candidates.length === 0) return null;
+  return choosePreferredSharePayload(candidates);
 }
 
 export async function resolveMerchantBusinessCardSharePayload(
