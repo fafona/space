@@ -3981,6 +3981,8 @@ export async function GET(
       ? ""
       : normalizeText(payload.introPosterUrl) ||
         normalizeText(snapshotCard?.contactIntroVideoPosterUrl) ||
+        detailImageUrl ||
+        imageUrl ||
         deriveIntroPosterUrlFromVideoUrl(introVideoUrl);
   const introPosterUrl =
     introVideoUrl && introPosterSource

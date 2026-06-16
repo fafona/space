@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { NextRequest } from "next/server";
-import { config, isLocalLikeRequestHostname, middleware, resolveHttpsRedirectUrl } from "../middleware";
+import {
+  __clearMiddlewareSiteResolveCacheForTests,
+  config,
+  isLocalLikeRequestHostname,
+  middleware,
+  resolveHttpsRedirectUrl,
+} from "../middleware";
 import {
   MERCHANT_AUTH_ACCOUNT_TYPE_COOKIE,
   MERCHANT_AUTH_COOKIE,
@@ -156,4 +162,45 @@ test("middleware rejects backend Faolla section targets", async () => {
   assert.match(location, /^https:\/\/faolla\.com\/\?/);
   assert.doesNotMatch(location, /\/admin/);
   assert.match(location, /(?:\?|&)appShell=faolla(?:&|$)/);
+});
+
+test("middleware reuses a fresh merchant prefix resolve", async () => {
+  __clearMiddlewareSiteResolveCacheForTests();
+  const originalFetch = globalThis.fetch;
+  const originalSupabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const originalServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  let calls = 0;
+  process.env.NEXT_PUBLIC_SUPABASE_URL = "https://example.supabase.co";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key";
+  globalThis.fetch = (async () => {
+    calls += 1;
+    return new Response(
+      JSON.stringify([{ merchant_id: "10000000", updated_at: "2026-06-16T10:00:00.000Z" }]),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  }) as typeof fetch;
+
+  try {
+    const first = await middleware(new NextRequest("https://fafona.faolla.com/"));
+    const second = await middleware(new NextRequest("https://fafona.faolla.com/"));
+    assert.match(first.headers.get("x-middleware-rewrite") ?? "", /\/site\/10000000$/);
+    assert.match(second.headers.get("x-middleware-rewrite") ?? "", /\/site\/10000000$/);
+    assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalSupabaseUrl === undefined) {
+      delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+    } else {
+      process.env.NEXT_PUBLIC_SUPABASE_URL = originalSupabaseUrl;
+    }
+    if (originalServiceRoleKey === undefined) {
+      delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+    } else {
+      process.env.SUPABASE_SERVICE_ROLE_KEY = originalServiceRoleKey;
+    }
+    __clearMiddlewareSiteResolveCacheForTests();
+  }
 });

@@ -38,6 +38,9 @@ const FAOLLA_INLINE_BUILD_PARAM = "__faollaInlineBuild";
 const FAOLLA_INLINE_BUILD_ID = String(process.env.NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID ?? "").trim();
 const I18N_URL_PARAM = "uiLocale";
 const DEFAULT_LOCALE = "zh-CN";
+const SITE_RESOLVE_QUERY_TIMEOUT_MS = 900;
+const SITE_RESOLVE_CACHE_TTL_MS = 60_000;
+const SITE_RESOLVE_MISS_CACHE_TTL_MS = 5_000;
 const PROXY_HINT_HEADERS = [
   FORWARDED_HOST_HEADER,
   "x-forwarded-for",
@@ -54,6 +57,14 @@ type SiteResolveRow = {
   updated_at?: string | null;
   created_at?: string | null;
 };
+
+type SiteResolveCacheEntry = {
+  expiresAt: number;
+  pending?: Promise<string>;
+  siteId?: string;
+};
+
+const siteResolveCache = new Map<string, SiteResolveCacheEntry>();
 
 function getFallbackPrefixFromHost(host: string) {
   const hostname = String(host ?? "")
@@ -189,6 +200,26 @@ function pickResolvedSiteRow(rows: SiteResolveRow[]) {
     .reduce<SiteResolveRow | null>((best, item) => choosePreferredSiteResolveRow(best, item), null);
 }
 
+export function __clearMiddlewareSiteResolveCacheForTests() {
+  siteResolveCache.clear();
+}
+
+function readCachedSiteResolve(prefix: string) {
+  const cached = siteResolveCache.get(prefix);
+  if (!cached || cached.expiresAt <= Date.now()) {
+    if (cached) siteResolveCache.delete(prefix);
+    return null;
+  }
+  return cached;
+}
+
+function writeSiteResolveCache(prefix: string, siteId: string) {
+  siteResolveCache.set(prefix, {
+    expiresAt: Date.now() + (siteId ? SITE_RESOLVE_CACHE_TTL_MS : SITE_RESOLVE_MISS_CACHE_TTL_MS),
+    siteId,
+  });
+}
+
 function shouldNoStoreAppShellPath(pathname: string) {
   return (
     pathname === "/launch" ||
@@ -319,43 +350,56 @@ async function resolveSiteIdByPrefix(prefix: string, request: NextRequest) {
   const normalizedPrefix = normalizeDomainPrefix(prefix);
   if (!normalizedPrefix) return "";
 
+  const cached = readCachedSiteResolve(normalizedPrefix);
+  if (cached?.pending) return cached.pending;
+  if (cached?.siteId !== undefined) return cached.siteId;
+
   const supabaseUrl = readEnv("NEXT_PUBLIC_SUPABASE_URL").replace(/\/+$/, "");
   const serviceRoleKey = readEnv("SUPABASE_SERVICE_ROLE_KEY") || readEnv("NEXT_SUPABASE_SERVICE_ROLE_KEY");
   if (!supabaseUrl || !serviceRoleKey) return "";
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 2200);
-
-  try {
+  const pending = (async () => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), SITE_RESOLVE_QUERY_TIMEOUT_MS);
     const query = new URLSearchParams({
       select: "merchant_id,updated_at,created_at",
       slug: `eq.${normalizedPrefix}`,
       limit: "20",
     });
-    const response = await fetch(`${supabaseUrl}/rest/v1/pages?${query.toString()}`, {
-      method: "GET",
-      headers: {
-        apikey: serviceRoleKey,
-        Authorization: `Bearer ${serviceRoleKey}`,
-        Accept: "application/json",
-        "x-forwarded-host": request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? "",
-      },
-      cache: "no-store",
-      signal: controller.signal,
-    });
-    if (!response.ok) return "";
+    try {
+      const response = await fetch(`${supabaseUrl}/rest/v1/pages?${query.toString()}`, {
+        method: "GET",
+        headers: {
+          apikey: serviceRoleKey,
+          Authorization: `Bearer ${serviceRoleKey}`,
+          Accept: "application/json",
+          "x-forwarded-host": request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? "",
+        },
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      if (!response.ok) return "";
 
-    const rows = (await response.json().catch(() => null)) as SiteResolveRow[] | null;
-    if (!Array.isArray(rows) || rows.length === 0) return "";
+      const rows = (await response.json().catch(() => null)) as SiteResolveRow[] | null;
+      if (!Array.isArray(rows) || rows.length === 0) return "";
 
-    const chosen = pickResolvedSiteRow(rows);
-    const siteId = String(chosen?.merchant_id ?? "").trim();
-    return isMerchantNumericId(siteId) ? siteId : "";
-  } catch {
-    return "";
-  } finally {
-    clearTimeout(timeout);
-  }
+      const chosen = pickResolvedSiteRow(rows);
+      const siteId = String(chosen?.merchant_id ?? "").trim();
+      return isMerchantNumericId(siteId) ? siteId : "";
+    } catch {
+      return "";
+    } finally {
+      clearTimeout(timeout);
+    }
+  })();
+
+  siteResolveCache.set(normalizedPrefix, {
+    expiresAt: Date.now() + SITE_RESOLVE_QUERY_TIMEOUT_MS,
+    pending,
+  });
+  const siteId = await pending;
+  writeSiteResolveCache(normalizedPrefix, siteId);
+  return siteId;
 }
 
 export async function middleware(request: NextRequest) {
@@ -406,7 +450,7 @@ export async function middleware(request: NextRequest) {
     return withAppShellNoStore((await rewriteToPublishedSite(firstSegment)) ?? NextResponse.next(), request);
   }
 
-  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? "";
+  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? request.nextUrl.host;
   const baseDomain = process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "";
   const domainPrefix = extractMerchantPrefixFromHost(host, baseDomain) || getFallbackPrefixFromHost(host);
   if (!domainPrefix) return withAppShellNoStore(NextResponse.next(), request);

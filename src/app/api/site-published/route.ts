@@ -6,6 +6,8 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 export { isMissingPublishedSlugColumn, isPublishedBlocksPayload, pickPublishedPageRow } from "@/lib/publishedSiteData";
 
+const SITE_PUBLISHED_SUCCESS_CACHE_CONTROL = "public, max-age=15, s-maxage=30, stale-while-revalidate=120";
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const siteId = String(searchParams.get("siteId") ?? "").trim();
@@ -26,14 +28,21 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "site_published_not_found" }, { status: 404 });
     }
 
-    return NextResponse.json({
-      ok: true,
-      siteId: payload.siteId,
-      slug: payload.slug,
-      merchantName: payload.merchantName,
-      serviceState: payload.serviceState,
-      blocks: payload.blocks,
-    });
+    return NextResponse.json(
+      {
+        ok: true,
+        siteId: payload.siteId,
+        slug: payload.slug,
+        merchantName: payload.merchantName,
+        serviceState: payload.serviceState,
+        blocks: payload.blocks,
+      },
+      {
+        headers: {
+          "cache-control": SITE_PUBLISHED_SUCCESS_CACHE_CONTROL,
+        },
+      },
+    );
   } catch (error) {
     return NextResponse.json(
       {

@@ -1,8 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resolvePublishedSiteByPrefix } from "@/lib/publishedSiteLookup";
+import { __clearPublishedSiteLookupCacheForTests, resolvePublishedSiteByPrefix } from "@/lib/publishedSiteLookup";
 
 test("resolvePublishedSiteByPrefix normalizes prefixes and returns resolved numeric site ids", async () => {
+  __clearPublishedSiteLookupCacheForTests();
   const originalFetch = globalThis.fetch;
   let requestedUrl = "";
   globalThis.fetch = (async (input: URL | RequestInfo) => {
@@ -23,6 +24,7 @@ test("resolvePublishedSiteByPrefix normalizes prefixes and returns resolved nume
 });
 
 test("resolvePublishedSiteByPrefix returns null for backend 404 or malformed payloads", async () => {
+  __clearPublishedSiteLookupCacheForTests();
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async () =>
     new Response(JSON.stringify({ ok: true }), {
@@ -39,6 +41,7 @@ test("resolvePublishedSiteByPrefix returns null for backend 404 or malformed pay
 });
 
 test("resolvePublishedSiteByPrefix skips requests for empty normalized prefixes", async () => {
+  __clearPublishedSiteLookupCacheForTests();
   let called = false;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async () => {
@@ -55,3 +58,26 @@ test("resolvePublishedSiteByPrefix skips requests for empty normalized prefixes"
   }
 });
 
+test("resolvePublishedSiteByPrefix reuses a fresh cached lookup", async () => {
+  __clearPublishedSiteLookupCacheForTests();
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    return new Response(JSON.stringify({ siteId: "10000000" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  try {
+    const first = await resolvePublishedSiteByPrefix("fafona");
+    const second = await resolvePublishedSiteByPrefix(" FaFona ");
+    assert.deepEqual(first, { prefix: "fafona", siteId: "10000000" });
+    assert.deepEqual(second, { prefix: "fafona", siteId: "10000000" });
+    assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    __clearPublishedSiteLookupCacheForTests();
+  }
+});

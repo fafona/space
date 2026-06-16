@@ -34,8 +34,8 @@ import usePullToRefresh from "@/lib/usePullToRefresh";
 
 const EMPTY_BLOCKS: Block[] = [];
 const MIN_INITIAL_LOADING_MS = 0;
-const SITE_REMOTE_FETCH_TIMEOUT_MS = 8000;
-const SITE_REMOTE_SETTLE_TIMEOUT_MS = 9000;
+const SITE_REMOTE_FETCH_TIMEOUT_MS = 3500;
+const SITE_REMOTE_SETTLE_TIMEOUT_MS = 4200;
 
 function readViewportWidth() {
   if (typeof window === "undefined") return 0;
@@ -225,8 +225,10 @@ async function fetchPublishedSiteBlocksViaApi(siteId: string) {
   try {
     const response = await fetch(`/api/site-published?siteId=${encodeURIComponent(siteId)}`, {
       method: "GET",
-      cache: "no-store",
       signal: controller.signal,
+      headers: {
+        Accept: "application/json",
+      },
     });
     if (!response.ok) return null;
     const json = (await response.json().catch(() => null)) as { blocks?: unknown } | null;
