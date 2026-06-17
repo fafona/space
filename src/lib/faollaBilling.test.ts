@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   getFaollaPlanEntitlements,
   isFaollaSubscriptionEntitled,
+  mergeFaollaSubscriptionPermissionUpgrade,
   normalizeFaollaMerchantSubscription,
   resolveFaollaSubscriptionPermissionConfig,
 } from "@/lib/faollaBilling";
@@ -69,4 +70,53 @@ test("faolla subscription falls back to basic permissions when not entitled", ()
   const permission = resolveFaollaSubscriptionPermissionConfig(subscription);
   assert.equal(permission.businessCardLimit, 1);
   assert.equal(permission.allowMembershipManagement, false);
+});
+
+test("faolla subscription permission upgrade never downgrades existing manual config", () => {
+  const canceled = normalizeFaollaMerchantSubscription({
+    merchantId: "10000000",
+    planKey: "basic",
+    billingInterval: "month",
+    stripeCustomerId: "cus_123",
+    stripeSubscriptionId: "sub_123",
+    status: "canceled",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-06-10T00:00:00.000Z",
+  });
+  const current = {
+    businessCardLimit: 3,
+    allowMembershipManagement: true,
+    allowPointsRedemption: true,
+    allowProductBlock: true,
+    allowOrderManagement: true,
+  };
+  const unchanged = mergeFaollaSubscriptionPermissionUpgrade(current, canceled);
+  assert.equal(unchanged.businessCardLimit, 3);
+  assert.equal(unchanged.allowMembershipManagement, true);
+  assert.equal(unchanged.allowPointsRedemption, true);
+  assert.equal(unchanged.allowOrderManagement, true);
+});
+
+test("faolla subscription permission upgrade only raises limits and enabled flags", () => {
+  const pro = normalizeFaollaMerchantSubscription({
+    merchantId: "10000000",
+    planKey: "pro",
+    billingInterval: "year",
+    stripeCustomerId: "cus_123",
+    stripeSubscriptionId: "sub_123",
+    status: "active",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-06-10T00:00:00.000Z",
+  });
+  const upgraded = mergeFaollaSubscriptionPermissionUpgrade(
+    {
+      businessCardLimit: 3,
+      allowMembershipManagement: false,
+      allowPointsRedemption: false,
+    },
+    pro,
+  );
+  assert.equal(upgraded.businessCardLimit, 10);
+  assert.equal(upgraded.allowMembershipManagement, true);
+  assert.equal(upgraded.allowPointsRedemption, true);
 });

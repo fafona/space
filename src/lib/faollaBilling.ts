@@ -227,3 +227,55 @@ export function resolveFaollaSubscriptionPermissionConfig(
   }
   return getFaollaPlanEntitlements(subscription?.planKey).permissionConfig;
 }
+
+const NUMERIC_PERMISSION_KEYS = [
+  "planLimit",
+  "pageLimit",
+  "businessCardLimit",
+  "businessCardIntroVideoLimitMb",
+  "businessCardBackgroundImageLimitKb",
+  "businessCardContactImageLimitKb",
+  "businessCardExportImageLimitKb",
+  "commonBlockImageLimitKb",
+  "galleryBlockImageLimitKb",
+  "publishSizeLimitMb",
+] as const;
+
+const BOOLEAN_PERMISSION_KEYS = [
+  "allowBusinessCardLinkMode",
+  "allowBusinessCardIntroVideo",
+  "allowBookingEmailPrefill",
+  "allowBookingAutoEmail",
+  "allowInsertBackground",
+  "allowThemeEffects",
+  "allowButtonBlock",
+  "allowGalleryBlock",
+  "allowMusicBlock",
+  "allowProductBlock",
+  "allowOrderManagement",
+  "allowCouponModule",
+  "allowCouponBlock",
+  "allowMembershipManagement",
+  "allowPointsRedemption",
+  "allowBookingBlock",
+] as const;
+
+export function mergeFaollaSubscriptionPermissionUpgrade(
+  currentPermissionInput: unknown,
+  subscription: FaollaMerchantSubscription | null | undefined,
+  nowInput: Date | string = new Date(),
+): MerchantServicePermissionConfig {
+  const current = normalizeMerchantPermissionConfig(currentPermissionInput);
+  if (!isFaollaSubscriptionEntitled(subscription, nowInput)) return current;
+  const planPermission = getFaollaPlanEntitlements(subscription?.planKey).permissionConfig;
+  const merged: Partial<MerchantServicePermissionConfig> = { ...current };
+
+  NUMERIC_PERMISSION_KEYS.forEach((key) => {
+    merged[key] = Math.max(current[key], planPermission[key]);
+  });
+  BOOLEAN_PERMISSION_KEYS.forEach((key) => {
+    merged[key] = Boolean(current[key] || planPermission[key]);
+  });
+
+  return normalizeMerchantPermissionConfig(merged);
+}

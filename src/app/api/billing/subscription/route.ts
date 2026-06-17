@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   getFaollaPlanEntitlements,
   isFaollaSubscriptionEntitled,
+  mergeFaollaSubscriptionPermissionUpgrade,
   resolveFaollaSubscriptionPermissionConfig,
 } from "@/lib/faollaBilling";
 import { loadStoredFaollaMerchantSubscription } from "@/lib/faollaBillingStore";
@@ -33,7 +34,8 @@ export async function GET(request: Request) {
     entitled,
     planKey,
     billingInterval: subscription?.billingInterval ?? "month",
-    permissionConfig: resolveFaollaSubscriptionPermissionConfig(subscription),
+    planPermissionConfig: resolveFaollaSubscriptionPermissionConfig(subscription),
+    suggestedPermissionUpgrade: mergeFaollaSubscriptionPermissionUpgrade({}, subscription),
     paymentFeatures: {
       allowPaymentModule: entitled && entitlements.allowPaymentModule,
       allowMerchantConnectPayments: entitled && entitlements.allowMerchantConnectPayments,
