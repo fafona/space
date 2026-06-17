@@ -119,6 +119,7 @@ const EMPTY_MEMBER_INSIGHT: MerchantMembershipInsight = {
 
 const MERCHANT_REDEMPTION_ITEM_RENDER_LIMIT = 300;
 const MERCHANT_POINT_REDEMPTION_REQUEST_TIMEOUT_MS = 12_000;
+const MEMBER_SEARCH_REQUEST_TIMEOUT_MS = 4_500;
 const MEMBER_REMOTE_SEARCH_LIMIT = 20;
 
 function trimText(value: unknown, maxLength = 4096) {
@@ -129,9 +130,13 @@ function readPayloadMessage(value: unknown, fallback: string) {
   return trimText(value, 1000) || fallback;
 }
 
-async function fetchPointRedemptionJson(input: RequestInfo | URL, init: RequestInit = {}) {
+async function fetchPointRedemptionJson(
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+  timeoutMs = MERCHANT_POINT_REDEMPTION_REQUEST_TIMEOUT_MS,
+) {
   const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), MERCHANT_POINT_REDEMPTION_REQUEST_TIMEOUT_MS);
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(input, {
       ...init,
@@ -495,6 +500,8 @@ export default function MerchantPointRedemptionCashier({
   const [remoteMemberSearchKeyword, setRemoteMemberSearchKeyword] = useState("");
   const [remoteMemberSearchResults, setRemoteMemberSearchResults] = useState<MerchantMembershipListItem[]>([]);
   const [memberSearchLoading, setMemberSearchLoading] = useState(false);
+  const [memberSearchSkippedKeyword, setMemberSearchSkippedKeyword] = useState("");
+  const [memberSearchFailedKeyword, setMemberSearchFailedKeyword] = useState("");
   const [rechargeDialogOpen, setRechargeDialogOpen] = useState(false);
   const [selectedRechargePlanId, setSelectedRechargePlanId] = useState("");
   const [quickRedeemDialogOpen, setQuickRedeemDialogOpen] = useState(false);
@@ -519,6 +526,7 @@ export default function MerchantPointRedemptionCashier({
   const memberInsightRequestIdsRef = useRef<Set<string>>(new Set());
   const cashierLoadRequestIdRef = useRef(0);
   const memberSearchRequestIdRef = useRef(0);
+  const memberSearchCacheRef = useRef<Map<string, MerchantMembershipListItem[]>>(new Map());
   const deferredMemberKeyword = useDeferredValue(memberKeyword);
   const deferredItemKeyword = useDeferredValue(itemKeyword);
   const deferredRecordsKeyword = useDeferredValue(recordsKeyword);
@@ -887,9 +895,45 @@ export default function MerchantPointRedemptionCashier({
       setRemoteMemberSearchKeyword("");
       setRemoteMemberSearchResults([]);
       setMemberSearchLoading(false);
+      setMemberSearchSkippedKeyword("");
+      setMemberSearchFailedKeyword("");
+      return;
+    }
+    const cacheKey = `${normalizedSiteId}:${normalizedKeyword}`;
+    const cachedSearchResults = memberSearchCacheRef.current.get(cacheKey);
+    if (cachedSearchResults) {
+      setRemoteMemberSearchKeyword(normalizedKeyword);
+      setRemoteMemberSearchResults(cachedSearchResults);
+      setMemberSearchLoading(false);
+      setMemberSearchSkippedKeyword("");
+      setMemberSearchFailedKeyword("");
+      return;
+    }
+    const localMatches = membershipsRef.current.filter(
+      (membership) =>
+        membership.profileVisible &&
+        membership.status === "active" &&
+        buildMemberSearchText(membership).includes(normalizedKeyword),
+    );
+    if (normalizedKeyword.length < 2 && localMatches.length > 0) {
+      setRemoteMemberSearchKeyword("");
+      setRemoteMemberSearchResults([]);
+      setMemberSearchLoading(false);
+      setMemberSearchSkippedKeyword("");
+      setMemberSearchFailedKeyword("");
+      return;
+    }
+    if (normalizedKeyword.length < 2) {
+      setRemoteMemberSearchKeyword("");
+      setRemoteMemberSearchResults([]);
+      setMemberSearchLoading(false);
+      setMemberSearchSkippedKeyword(normalizedKeyword);
+      setMemberSearchFailedKeyword("");
       return;
     }
     setMemberSearchLoading(true);
+    setMemberSearchSkippedKeyword("");
+    setMemberSearchFailedKeyword("");
     const timeoutId = window.setTimeout(() => {
       const params = new URLSearchParams({
         siteId: normalizedSiteId,
@@ -903,7 +947,7 @@ export default function MerchantPointRedemptionCashier({
         cache: "no-store",
         credentials: "same-origin",
         headers: { accept: "application/json" },
-      })
+      }, MEMBER_SEARCH_REQUEST_TIMEOUT_MS)
         .then(async (response) => {
           const payload = (await response.json().catch(() => null)) as MembershipsPayload | null;
           if (memberSearchRequestIdRef.current !== requestId) return;
@@ -915,17 +959,19 @@ export default function MerchantPointRedemptionCashier({
               : [];
           setRemoteMemberSearchKeyword(normalizedKeyword);
           setRemoteMemberSearchResults(nextMemberships);
+          memberSearchCacheRef.current.set(cacheKey, nextMemberships);
           setMemberships((current) => mergeMemberLists(current, nextMemberships));
         })
         .catch(() => {
           if (memberSearchRequestIdRef.current !== requestId) return;
-          setRemoteMemberSearchKeyword(normalizedKeyword);
+          setRemoteMemberSearchKeyword("");
           setRemoteMemberSearchResults([]);
+          setMemberSearchFailedKeyword(normalizedKeyword);
         })
         .finally(() => {
           if (memberSearchRequestIdRef.current === requestId) setMemberSearchLoading(false);
         });
-    }, 180);
+    }, 220);
     return () => window.clearTimeout(timeoutId);
   }, [deferredMemberKeyword, normalizedSiteId]);
 
@@ -1268,6 +1314,8 @@ export default function MerchantPointRedemptionCashier({
     setRemoteMemberSearchKeyword("");
     setRemoteMemberSearchResults([]);
     setMemberSearchLoading(false);
+    setMemberSearchSkippedKeyword("");
+    setMemberSearchFailedKeyword("");
     setNotice("");
     setError("");
   }
@@ -1320,6 +1368,8 @@ export default function MerchantPointRedemptionCashier({
     setRemoteMemberSearchKeyword("");
     setRemoteMemberSearchResults([]);
     setMemberSearchLoading(false);
+    setMemberSearchSkippedKeyword("");
+    setMemberSearchFailedKeyword("");
     setCouponWalletOpen(false);
   }
 
@@ -3749,6 +3799,7 @@ export default function MerchantPointRedemptionCashier({
                     const nextKeyword = event.target.value;
                     setMemberKeyword(nextKeyword);
                     setMemberPickerOpen(nextKeyword.trim().length > 0);
+                    setError("");
                   }}
                   onFocus={() => setMemberPickerOpen(memberKeyword.trim().length > 0)}
                   onKeyDown={(event) => {
@@ -3775,6 +3826,18 @@ export default function MerchantPointRedemptionCashier({
                 ) : memberPickerOpen && memberSearchLoading ? (
                   <div className="member-suggestions">
                     <div className="member-suggestion-note">正在搜索会员...</div>
+                  </div>
+                ) : memberPickerOpen &&
+                  deferredMemberKeyword.trim() &&
+                  memberSearchFailedKeyword === deferredMemberKeyword.trim().toLowerCase() ? (
+                  <div className="member-suggestions">
+                    <div className="member-suggestion-note">搜索较慢，请继续输入更多姓名 / 手机 / 卡号。</div>
+                  </div>
+                ) : memberPickerOpen &&
+                  deferredMemberKeyword.trim() &&
+                  memberSearchSkippedKeyword === deferredMemberKeyword.trim().toLowerCase() ? (
+                  <div className="member-suggestions">
+                    <div className="member-suggestion-note">继续输入至少 2 位，可搜索全部会员。</div>
                   </div>
                 ) : memberPickerOpen &&
                   deferredMemberKeyword.trim() &&
