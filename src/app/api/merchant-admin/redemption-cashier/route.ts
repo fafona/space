@@ -39,7 +39,7 @@ export async function GET(request: Request) {
     const knownSettingsVersion = trimText(url.searchParams.get("knownSettingsVersion"), 128);
     const knownCouponVersion = trimText(url.searchParams.get("knownCouponVersion"), 128);
     const [membershipsSnapshot, settings, couponsSnapshot] = await Promise.all([
-      getMerchantMembershipsSnapshot(siteId),
+      getMerchantMembershipsSnapshot(siteId, { applyScheduledRules: false }),
       getMerchantMembershipSettings(siteId),
       getMerchantCouponsSnapshot(siteId).catch(() => ({ coupons: [], updatedAt: null })),
     ]);

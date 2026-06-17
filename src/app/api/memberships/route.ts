@@ -316,7 +316,9 @@ export async function GET(request: Request) {
   const includeInsights = shouldIncludeMembershipInsights(url.searchParams.get("includeInsights"));
   const offset = normalizeListOffset(url.searchParams.get("offset"));
   const limit = normalizeListLimit(url.searchParams.get("limit"));
-  const membershipsSnapshot = await getMerchantMembershipsSnapshot(siteId);
+  const membershipsSnapshot = await getMerchantMembershipsSnapshot(siteId, {
+    applyScheduledRules: includeInsights || Boolean(membershipId) || !keyword,
+  });
   const knownVersion = trimText(url.searchParams.get("knownVersion"), 128);
   if (!includeInsights && knownVersion && membershipsSnapshot.updatedAt && knownVersion === membershipsSnapshot.updatedAt) {
     return NextResponse.json({ ok: true, notModified: true, version: membershipsSnapshot.updatedAt });

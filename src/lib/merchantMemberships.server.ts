@@ -488,14 +488,17 @@ function resolveMerchantMembershipsVersion(memberships: MerchantMembershipRecord
   }, fallback);
 }
 
-export async function getMerchantMembershipsSnapshot(siteId: string): Promise<{
+export async function getMerchantMembershipsSnapshot(
+  siteId: string,
+  options: { applyScheduledRules?: boolean } = {},
+): Promise<{
   memberships: MerchantMembershipListItem[];
   updatedAt: string | null;
 }> {
   const supabase = requireMembershipsStoreClient();
   const stored = await loadStoredMerchantMemberships(supabase, siteId);
   const memberships = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
-  const nextMemberships = await applyScheduledPointRules(siteId, memberships);
+  const nextMemberships = options.applyScheduledRules === false ? memberships : await applyScheduledPointRules(siteId, memberships);
   return {
     memberships: nextMemberships.map(toMerchantMembershipListItem),
     updatedAt: resolveMerchantMembershipsVersion(nextMemberships, stored?.updatedAt ?? null),
