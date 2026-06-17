@@ -27,6 +27,7 @@ export type FaollaPlanEntitlements = {
   permissionConfig: MerchantServicePermissionConfig;
   allowPaymentModule: boolean;
   allowMerchantConnectPayments: boolean;
+  rulesFinalized: boolean;
 };
 
 export type FaollaMerchantSubscription = {
@@ -86,79 +87,26 @@ export const FAOLLA_PLAN_ENTITLEMENTS: Record<FaollaSubscriptionPlanKey, FaollaP
   basic: {
     planKey: "basic",
     label: "Basic",
-    permissionConfig: withPermissionPatch({
-      planLimit: 1,
-      pageLimit: 3,
-      businessCardLimit: 1,
-      allowBusinessCardLinkMode: true,
-      allowButtonBlock: true,
-      allowGalleryBlock: true,
-      commonBlockImageLimitKb: 300,
-      publishSizeLimitMb: 5,
-    }),
+    permissionConfig: withPermissionPatch({}),
     allowPaymentModule: false,
     allowMerchantConnectPayments: false,
+    rulesFinalized: false,
   },
   advanced: {
     planKey: "advanced",
     label: "Advanced",
-    permissionConfig: withPermissionPatch({
-      planLimit: 3,
-      pageLimit: 8,
-      businessCardLimit: 3,
-      allowBusinessCardLinkMode: true,
-      allowBusinessCardIntroVideo: true,
-      businessCardIntroVideoLimitMb: 20,
-      allowBookingEmailPrefill: true,
-      allowBookingAutoEmail: true,
-      allowInsertBackground: true,
-      allowThemeEffects: true,
-      allowButtonBlock: true,
-      allowGalleryBlock: true,
-      allowMusicBlock: true,
-      allowProductBlock: true,
-      allowOrderManagement: true,
-      allowCouponModule: true,
-      allowCouponBlock: true,
-      allowBookingBlock: true,
-      publishSizeLimitMb: 20,
-    }),
+    permissionConfig: withPermissionPatch({}),
     allowPaymentModule: false,
     allowMerchantConnectPayments: false,
+    rulesFinalized: false,
   },
   pro: {
     planKey: "pro",
     label: "Pro",
-    permissionConfig: withPermissionPatch({
-      planLimit: 10,
-      pageLimit: 30,
-      businessCardLimit: 10,
-      allowBusinessCardLinkMode: true,
-      allowBusinessCardIntroVideo: true,
-      businessCardIntroVideoLimitMb: 80,
-      businessCardBackgroundImageLimitKb: 1000,
-      businessCardContactImageLimitKb: 1000,
-      businessCardExportImageLimitKb: 1200,
-      commonBlockImageLimitKb: 1000,
-      galleryBlockImageLimitKb: 1000,
-      allowBookingEmailPrefill: true,
-      allowBookingAutoEmail: true,
-      allowInsertBackground: true,
-      allowThemeEffects: true,
-      allowButtonBlock: true,
-      allowGalleryBlock: true,
-      allowMusicBlock: true,
-      allowProductBlock: true,
-      allowOrderManagement: true,
-      allowCouponModule: true,
-      allowCouponBlock: true,
-      allowMembershipManagement: true,
-      allowPointsRedemption: true,
-      allowBookingBlock: true,
-      publishSizeLimitMb: 80,
-    }),
-    allowPaymentModule: true,
-    allowMerchantConnectPayments: true,
+    permissionConfig: withPermissionPatch({}),
+    allowPaymentModule: false,
+    allowMerchantConnectPayments: false,
+    rulesFinalized: false,
   },
 };
 
@@ -226,56 +174,4 @@ export function resolveFaollaSubscriptionPermissionConfig(
     return getFaollaPlanEntitlements("basic").permissionConfig;
   }
   return getFaollaPlanEntitlements(subscription?.planKey).permissionConfig;
-}
-
-const NUMERIC_PERMISSION_KEYS = [
-  "planLimit",
-  "pageLimit",
-  "businessCardLimit",
-  "businessCardIntroVideoLimitMb",
-  "businessCardBackgroundImageLimitKb",
-  "businessCardContactImageLimitKb",
-  "businessCardExportImageLimitKb",
-  "commonBlockImageLimitKb",
-  "galleryBlockImageLimitKb",
-  "publishSizeLimitMb",
-] as const;
-
-const BOOLEAN_PERMISSION_KEYS = [
-  "allowBusinessCardLinkMode",
-  "allowBusinessCardIntroVideo",
-  "allowBookingEmailPrefill",
-  "allowBookingAutoEmail",
-  "allowInsertBackground",
-  "allowThemeEffects",
-  "allowButtonBlock",
-  "allowGalleryBlock",
-  "allowMusicBlock",
-  "allowProductBlock",
-  "allowOrderManagement",
-  "allowCouponModule",
-  "allowCouponBlock",
-  "allowMembershipManagement",
-  "allowPointsRedemption",
-  "allowBookingBlock",
-] as const;
-
-export function mergeFaollaSubscriptionPermissionUpgrade(
-  currentPermissionInput: unknown,
-  subscription: FaollaMerchantSubscription | null | undefined,
-  nowInput: Date | string = new Date(),
-): MerchantServicePermissionConfig {
-  const current = normalizeMerchantPermissionConfig(currentPermissionInput);
-  if (!isFaollaSubscriptionEntitled(subscription, nowInput)) return current;
-  const planPermission = getFaollaPlanEntitlements(subscription?.planKey).permissionConfig;
-  const merged: Partial<MerchantServicePermissionConfig> = { ...current };
-
-  NUMERIC_PERMISSION_KEYS.forEach((key) => {
-    merged[key] = Math.max(current[key], planPermission[key]);
-  });
-  BOOLEAN_PERMISSION_KEYS.forEach((key) => {
-    merged[key] = Boolean(current[key] || planPermission[key]);
-  });
-
-  return normalizeMerchantPermissionConfig(merged);
 }

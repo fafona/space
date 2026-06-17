@@ -415,6 +415,7 @@ function formatSuperAdminMenuLabel(key: string) {
   if (key === "merchant_id_rules") return "禁用ID设置";
   if (key === "trusted_devices") return "白名单设备";
   if (key === "stats") return "数据统计";
+  if (key === "online_payments") return "线上支付";
   if (key === "logs") return "日志";
   return key || "-";
 }
@@ -426,6 +427,35 @@ function buildSuperAdminAuditDetail(detail: string, menuKey: string) {
 
 function formatPlatformAdminBackupSourceLabel(source: "manual" | "auto") {
   return source === "auto" ? "自动备份" : "手动备份";
+}
+
+function formatFaollaBillingIntervalLabel(value: string) {
+  if (value === "year") return "按年";
+  if (value === "month") return "按月";
+  return value || "-";
+}
+
+function formatFaollaSubscriptionStatusLabel(value: string) {
+  if (value === "active") return "生效中";
+  if (value === "trialing") return "试用中";
+  if (value === "past_due") return "逾期宽限";
+  if (value === "canceled") return "已取消";
+  if (value === "unpaid") return "未支付";
+  if (value === "paused") return "已暂停";
+  if (value === "incomplete") return "未完成";
+  if (value === "incomplete_expired") return "未完成已过期";
+  return value || "-";
+}
+
+function formatOnlinePaymentAvailability(value: boolean) {
+  return value ? "已具备" : "未具备";
+}
+
+function formatMerchantCollectionStatusLabel(value: string) {
+  if (value === "pending_setup") return "待接入";
+  if (value === "not_available") return "未开放";
+  if (value === "not_configured") return "未配置";
+  return value || "-";
 }
 
 function isSameSupportCalendarDay(left: string | null | undefined, right: string | null | undefined) {
@@ -1911,6 +1941,162 @@ type MerchantTableSortField =
   | "expireAt"
   | "status";
 
+type SuperAdminMenuKey =
+  | "site_editor"
+  | "user_manage"
+  | "support_messages"
+  | "merchant_id_rules"
+  | "trusted_devices"
+  | "stats"
+  | "online_payments"
+  | "logs";
+
+type OnlinePaymentTab = "subscriptions" | "merchant_collections";
+
+type OnlinePaymentSubscriptionRow = {
+  merchantId: string;
+  merchantName: string;
+  merchantEmail: string;
+  domainPrefix: string;
+  planKey: string;
+  planLabel: string;
+  billingInterval: string;
+  status: string;
+  entitled: boolean;
+  currentPeriodStart: string | null;
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+  stripeCustomerId: string;
+  stripeSubscriptionId: string;
+  stripeCheckoutSessionId: string;
+  stripePriceId: string;
+  updatedAt: string;
+  rulesFinalized: boolean;
+  paymentFeatures: {
+    allowPaymentModule: boolean;
+    allowMerchantConnectPayments: boolean;
+  };
+};
+
+type OnlinePaymentBillingEventRow = {
+  id: string;
+  type: string;
+  merchantId: string;
+  processedAt: string;
+};
+
+type OnlinePaymentMerchantCollectionRow = {
+  merchantId: string;
+  merchantName: string;
+  merchantEmail: string;
+  domainPrefix: string;
+  connectStatus: string;
+  splitStatus: string;
+  collectionItems: {
+    booking: boolean;
+    order: boolean;
+    membershipRecharge: boolean;
+  };
+  updatedAt: string;
+};
+
+type OnlinePaymentDashboardPayload = {
+  loadedAt: string;
+  subscriptionRulesFinalized: boolean;
+  subscriptions: OnlinePaymentSubscriptionRow[];
+  billingEvents: OnlinePaymentBillingEventRow[];
+  merchantCollections: OnlinePaymentMerchantCollectionRow[];
+};
+
+const EMPTY_ONLINE_PAYMENT_DASHBOARD: OnlinePaymentDashboardPayload = {
+  loadedAt: "",
+  subscriptionRulesFinalized: false,
+  subscriptions: [],
+  billingEvents: [],
+  merchantCollections: [],
+};
+
+function normalizeOnlinePaymentDashboardPayload(value: unknown): OnlinePaymentDashboardPayload {
+  const input = value && typeof value === "object" ? (value as Partial<OnlinePaymentDashboardPayload>) : {};
+  const normalizeSubscription = (row: unknown): OnlinePaymentSubscriptionRow | null => {
+    if (!row || typeof row !== "object") return null;
+    const item = row as Partial<OnlinePaymentSubscriptionRow>;
+    const merchantId = String(item.merchantId ?? "").trim();
+    if (!merchantId) return null;
+    return {
+      merchantId,
+      merchantName: String(item.merchantName ?? "").trim(),
+      merchantEmail: String(item.merchantEmail ?? "").trim(),
+      domainPrefix: String(item.domainPrefix ?? "").trim(),
+      planKey: String(item.planKey ?? "").trim(),
+      planLabel: String(item.planLabel ?? "").trim(),
+      billingInterval: String(item.billingInterval ?? "").trim(),
+      status: String(item.status ?? "").trim(),
+      entitled: item.entitled === true,
+      currentPeriodStart: item.currentPeriodStart ?? null,
+      currentPeriodEnd: item.currentPeriodEnd ?? null,
+      cancelAtPeriodEnd: item.cancelAtPeriodEnd === true,
+      stripeCustomerId: String(item.stripeCustomerId ?? "").trim(),
+      stripeSubscriptionId: String(item.stripeSubscriptionId ?? "").trim(),
+      stripeCheckoutSessionId: String(item.stripeCheckoutSessionId ?? "").trim(),
+      stripePriceId: String(item.stripePriceId ?? "").trim(),
+      updatedAt: String(item.updatedAt ?? "").trim(),
+      rulesFinalized: item.rulesFinalized === true,
+      paymentFeatures: {
+        allowPaymentModule: item.paymentFeatures?.allowPaymentModule === true,
+        allowMerchantConnectPayments: item.paymentFeatures?.allowMerchantConnectPayments === true,
+      },
+    };
+  };
+  const normalizeEvent = (row: unknown): OnlinePaymentBillingEventRow | null => {
+    if (!row || typeof row !== "object") return null;
+    const item = row as Partial<OnlinePaymentBillingEventRow>;
+    const id = String(item.id ?? "").trim();
+    if (!id) return null;
+    return {
+      id,
+      type: String(item.type ?? "").trim(),
+      merchantId: String(item.merchantId ?? "").trim(),
+      processedAt: String(item.processedAt ?? "").trim(),
+    };
+  };
+  const normalizeCollection = (row: unknown): OnlinePaymentMerchantCollectionRow | null => {
+    if (!row || typeof row !== "object") return null;
+    const item = row as Partial<OnlinePaymentMerchantCollectionRow>;
+    const merchantId = String(item.merchantId ?? "").trim();
+    if (!merchantId) return null;
+    return {
+      merchantId,
+      merchantName: String(item.merchantName ?? "").trim(),
+      merchantEmail: String(item.merchantEmail ?? "").trim(),
+      domainPrefix: String(item.domainPrefix ?? "").trim(),
+      connectStatus: String(item.connectStatus ?? "").trim(),
+      splitStatus: String(item.splitStatus ?? "").trim(),
+      collectionItems: {
+        booking: item.collectionItems?.booking === true,
+        order: item.collectionItems?.order === true,
+        membershipRecharge: item.collectionItems?.membershipRecharge === true,
+      },
+      updatedAt: String(item.updatedAt ?? "").trim(),
+    };
+  };
+  return {
+    loadedAt: String(input.loadedAt ?? "").trim(),
+    subscriptionRulesFinalized: input.subscriptionRulesFinalized === true,
+    subscriptions: Array.isArray(input.subscriptions)
+      ? input.subscriptions.map(normalizeSubscription).filter((item): item is OnlinePaymentSubscriptionRow => !!item)
+      : [],
+    billingEvents: Array.isArray(input.billingEvents)
+      ? input.billingEvents.map(normalizeEvent).filter((item): item is OnlinePaymentBillingEventRow => !!item)
+      : [],
+    merchantCollections: Array.isArray(input.merchantCollections)
+      ? input.merchantCollections
+          .map(normalizeCollection)
+          .filter((item): item is OnlinePaymentMerchantCollectionRow => !!item)
+      : [],
+  };
+}
+
 function sortPlanTemplatesByUpdatedAt(planTemplates: PlanTemplate[]) {
   return [...planTemplates].sort((left, right) => {
     const leftTime = new Date(left.updatedAt).getTime();
@@ -1949,7 +2135,7 @@ export default function SuperAdminClient() {
     const next = `${window.location.pathname}${window.location.search}`;
     window.location.href = buildSuperAdminLoginHref(next);
   }, [authChecked, authed, hydrated]);
-  const [activeMenu, setActiveMenu] = useState<"site_editor" | "user_manage" | "support_messages" | "merchant_id_rules" | "trusted_devices" | "stats" | "logs">("site_editor");
+  const [activeMenu, setActiveMenu] = useState<SuperAdminMenuKey>("site_editor");
   const [isMobileSupportOnlyMode, setIsMobileSupportOnlyMode] = useState(false);
   const [supportMobileView, setSupportMobileView] = useState<"list" | "thread">("list");
   const [state, setState] = useState<PlatformState>(() => loadPlatformState());
@@ -2028,6 +2214,13 @@ export default function SuperAdminClient() {
   const [configIndustryCountryRank, setConfigIndustryCountryRank] = useState("");
   const [configIndustryProvinceRank, setConfigIndustryProvinceRank] = useState("");
   const [configIndustryCityRank, setConfigIndustryCityRank] = useState("");
+  const [onlinePaymentTab, setOnlinePaymentTab] = useState<OnlinePaymentTab>("subscriptions");
+  const [onlinePaymentKeyword, setOnlinePaymentKeyword] = useState("");
+  const [onlinePaymentLoading, setOnlinePaymentLoading] = useState(false);
+  const [onlinePaymentError, setOnlinePaymentError] = useState("");
+  const [onlinePaymentData, setOnlinePaymentData] = useState<OnlinePaymentDashboardPayload>(
+    EMPTY_ONLINE_PAYMENT_DASHBOARD,
+  );
   const [configCardPreviewWidth, setConfigCardPreviewWidth] = useState("280");
   const [configCardPreviewHeight, setConfigCardPreviewHeight] = useState("150");
   const [sortPreviewFilter, setSortPreviewFilter] = useState<SortPreviewFilter>("all");
@@ -2406,6 +2599,36 @@ export default function SuperAdminClient() {
     [],
   );
 
+  const loadOnlinePaymentsAction = useCallback(async () => {
+    setOnlinePaymentLoading(true);
+    setOnlinePaymentError("");
+    try {
+      const response = await fetch("/api/super-admin/online-payments", {
+        method: "GET",
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      const raw = (await response.json().catch(() => null)) as
+        | {
+            payload?: unknown;
+            error?: string;
+            message?: string;
+          }
+        | null;
+      if (!response.ok) {
+        throw new Error(raw?.message || raw?.error || "online_payments_load_failed");
+      }
+      setOnlinePaymentData(normalizeOnlinePaymentDashboardPayload(raw?.payload ?? {}));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "online_payments_load_failed";
+      setOnlinePaymentError(message);
+      setOnlinePaymentData(EMPTY_ONLINE_PAYMENT_DASHBOARD);
+      setTip(`线上支付数据加载失败：${message}`);
+    } finally {
+      setOnlinePaymentLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (!hydrated || !authed) return;
     if (isMobileSupportOnlyMode) return;
@@ -2429,6 +2652,11 @@ export default function SuperAdminClient() {
     void run();
     return () => controller.abort();
   }, [authed, hydrated, isMobileSupportOnlyMode, loadPlatformMerchantSnapshotFromServer]);
+
+  useEffect(() => {
+    if (!hydrated || !authed || activeMenu !== "online_payments") return;
+    void loadOnlinePaymentsAction();
+  }, [activeMenu, authed, hydrated, loadOnlinePaymentsAction]);
 
   useEffect(() => {
     if (!hydrated || !authed) return;
@@ -3057,6 +3285,49 @@ export default function SuperAdminClient() {
     });
     return logFilterActive ? rows : rows.slice(0, 12);
   }, [logEndMs, logFilterActive, logStartMs, logTimeRangeActive, normalizedLogKeyword, state.alerts]);
+  const normalizedOnlinePaymentKeyword = onlinePaymentKeyword.trim().toLowerCase();
+  const filteredOnlinePaymentSubscriptions = useMemo(
+    () =>
+      onlinePaymentData.subscriptions.filter((row) => {
+        if (!normalizedOnlinePaymentKeyword) return true;
+        return [
+          row.merchantId,
+          row.merchantName,
+          row.merchantEmail,
+          row.domainPrefix,
+          row.planKey,
+          row.planLabel,
+          row.billingInterval,
+          row.status,
+          row.stripeCustomerId,
+          row.stripeSubscriptionId,
+          row.stripeCheckoutSessionId,
+          row.stripePriceId,
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(normalizedOnlinePaymentKeyword);
+      }),
+    [normalizedOnlinePaymentKeyword, onlinePaymentData.subscriptions],
+  );
+  const filteredOnlinePaymentCollections = useMemo(
+    () =>
+      onlinePaymentData.merchantCollections.filter((row) => {
+        if (!normalizedOnlinePaymentKeyword) return true;
+        return [
+          row.merchantId,
+          row.merchantName,
+          row.merchantEmail,
+          row.domainPrefix,
+          row.connectStatus,
+          row.splitStatus,
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(normalizedOnlinePaymentKeyword);
+      }),
+    [normalizedOnlinePaymentKeyword, onlinePaymentData.merchantCollections],
+  );
   const currentMadridDateKey = useMemo(() => getMadridDateKey(new Date(nowMs)), [nowMs]);
   const latestAutoDataBackup = useMemo(
     () => dataBackups.find((item) => item.source === "auto") ?? null,
@@ -7040,12 +7311,13 @@ export default function SuperAdminClient() {
     );
   }
 
-  const sidebarMenus: Array<{ key: "site_editor" | "user_manage" | "support_messages" | "merchant_id_rules" | "trusted_devices" | "stats" | "logs"; label: string; hint: string }> = [
+  const sidebarMenus: Array<{ key: SuperAdminMenuKey; label: string; hint: string }> = [
     { key: "site_editor", label: "网站编辑", hint: "总站页面与站点配置" },
     { key: "user_manage", label: "用户管理", hint: "用户列表与权限服务" },
     { key: "support_messages", label: "信息处理", hint: "会话留言与回复" },
     { key: "merchant_id_rules", label: "禁用ID设置", hint: "注册跳号与规则管理" },
     { key: "trusted_devices", label: "白名单设备", hint: "超级后台登录设备管理" },
+    { key: "online_payments", label: "线上支付", hint: "订阅与商户收款" },
     { key: "stats", label: "数据统计", hint: "平台关键指标" },
     { key: "logs", label: "日志", hint: "审计与告警记录" },
   ];
@@ -10365,9 +10637,241 @@ export default function SuperAdminClient() {
                       placeholder: "例如：10000000 或 owner@example.com",
                       onForward: (query) => forwardSupportAttachmentToSpecifiedMerchant(query, supportImagePreview.rawText),
                     }
-                  : null
+                : null
               }
             />
+
+            {activeMenu === "online_payments" ? (
+              <section className="space-y-4">
+                <div className="rounded-lg border bg-white p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h2 className="font-semibold">线上支付</h2>
+                      <div className="mt-1 text-xs text-slate-500">
+                        最近加载：{onlinePaymentData.loadedAt ? fmt(onlinePaymentData.loadedAt) : "-"}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="rounded border px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                      onClick={() => void loadOnlinePaymentsAction()}
+                      disabled={onlinePaymentLoading}
+                    >
+                      {onlinePaymentLoading ? "刷新中..." : "刷新"}
+                    </button>
+                  </div>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      className={`rounded border px-3 py-2 text-sm ${
+                        onlinePaymentTab === "subscriptions" ? "bg-black text-white" : "hover:bg-slate-50"
+                      }`}
+                      onClick={() => setOnlinePaymentTab("subscriptions")}
+                    >
+                      订阅管理
+                    </button>
+                    <button
+                      type="button"
+                      className={`rounded border px-3 py-2 text-sm ${
+                        onlinePaymentTab === "merchant_collections" ? "bg-black text-white" : "hover:bg-slate-50"
+                      }`}
+                      onClick={() => setOnlinePaymentTab("merchant_collections")}
+                    >
+                      商户收款管理
+                    </button>
+                    <input
+                      className="min-w-[280px] flex-1 rounded border px-3 py-2 text-sm"
+                      value={onlinePaymentKeyword}
+                      onChange={(event) => setOnlinePaymentKeyword(event.target.value)}
+                      placeholder="搜索商户ID / 邮箱 / 域名前缀 / Stripe ID / 状态"
+                    />
+                  </div>
+                  {onlinePaymentError ? (
+                    <div className="mt-3 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                      {onlinePaymentError}
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-4">
+                  <div className="rounded-lg border bg-white p-4 text-sm">
+                    订阅记录：{onlinePaymentData.subscriptions.length}
+                  </div>
+                  <div className="rounded-lg border bg-white p-4 text-sm">
+                    生效订阅：{onlinePaymentData.subscriptions.filter((row) => row.entitled).length}
+                  </div>
+                  <div className="rounded-lg border bg-white p-4 text-sm">
+                    收款商户：{onlinePaymentData.merchantCollections.length}
+                  </div>
+                  <div className="rounded-lg border bg-white p-4 text-sm">
+                    套餐规则：{onlinePaymentData.subscriptionRulesFinalized ? "已定稿" : "未定稿"}
+                  </div>
+                </div>
+
+                {onlinePaymentTab === "subscriptions" ? (
+                  <div className="rounded-lg border bg-white p-4">
+                    <div className="mb-3 flex items-center justify-between">
+                      <h3 className="font-semibold">订阅管理</h3>
+                      <span className="text-xs text-slate-500">{filteredOnlinePaymentSubscriptions.length} 条</span>
+                    </div>
+                    <div className="overflow-x-auto rounded border">
+                      <table className="w-full min-w-[1180px] text-left text-xs">
+                        <thead className="bg-slate-50 text-slate-600">
+                          <tr>
+                            <th className="px-3 py-2">商户</th>
+                            <th className="px-3 py-2">套餐</th>
+                            <th className="px-3 py-2">状态</th>
+                            <th className="px-3 py-2">周期</th>
+                            <th className="px-3 py-2">配置同步</th>
+                            <th className="px-3 py-2">支付能力</th>
+                            <th className="px-3 py-2">当前周期</th>
+                            <th className="px-3 py-2">Stripe</th>
+                            <th className="px-3 py-2">更新</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredOnlinePaymentSubscriptions.length === 0 ? (
+                            <tr>
+                              <td colSpan={9} className="px-3 py-6 text-center text-slate-500">
+                                {onlinePaymentLoading ? "正在加载订阅记录..." : "暂无订阅记录"}
+                              </td>
+                            </tr>
+                          ) : (
+                            filteredOnlinePaymentSubscriptions.map((row) => (
+                              <tr
+                                key={`${row.merchantId}:${row.stripeSubscriptionId || row.stripeCheckoutSessionId}`}
+                                className="border-t"
+                              >
+                                <td className="px-3 py-2">
+                                  <div className="font-medium text-slate-900">{row.merchantName || row.merchantId}</div>
+                                  <div className="break-all text-slate-500">
+                                    {row.merchantId} | {row.merchantEmail || "-"} | {row.domainPrefix || "-"}
+                                  </div>
+                                </td>
+                                <td className="px-3 py-2">
+                                  <div>{row.planLabel || row.planKey || "-"}</div>
+                                  <div className="text-slate-500">{row.planKey || "-"}</div>
+                                </td>
+                                <td className="px-3 py-2">
+                                  <span
+                                    className={`rounded border px-2 py-0.5 ${
+                                      row.entitled
+                                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                        : "border-slate-200 bg-slate-50 text-slate-600"
+                                    }`}
+                                  >
+                                    {formatFaollaSubscriptionStatusLabel(row.status)}
+                                  </span>
+                                  {row.cancelAtPeriodEnd ? <div className="mt-1 text-amber-600">周期结束取消</div> : null}
+                                </td>
+                                <td className="px-3 py-2">{formatFaollaBillingIntervalLabel(row.billingInterval)}</td>
+                                <td className="px-3 py-2">
+                                  <span
+                                    className={`rounded border px-2 py-0.5 ${
+                                      row.rulesFinalized
+                                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                        : "border-amber-200 bg-amber-50 text-amber-700"
+                                    }`}
+                                  >
+                                    {row.rulesFinalized ? "规则已定" : "规则未定"}
+                                  </span>
+                                  <div className="mt-1 text-slate-500">写配置需记录历史</div>
+                                </td>
+                                <td className="px-3 py-2">
+                                  <div>支付模块：{formatOnlinePaymentAvailability(row.paymentFeatures.allowPaymentModule)}</div>
+                                  <div>商户分账：{formatOnlinePaymentAvailability(row.paymentFeatures.allowMerchantConnectPayments)}</div>
+                                </td>
+                                <td className="px-3 py-2">
+                                  <div>{fmt(row.currentPeriodStart)}</div>
+                                  <div className="text-slate-500">至 {fmt(row.currentPeriodEnd)}</div>
+                                </td>
+                                <td className="px-3 py-2">
+                                  <div className="break-all">sub {row.stripeSubscriptionId || "-"}</div>
+                                  <div className="break-all text-slate-500">cus {row.stripeCustomerId || "-"}</div>
+                                  <div className="break-all text-slate-500">price {row.stripePriceId || "-"}</div>
+                                </td>
+                                <td className="px-3 py-2">{fmt(row.updatedAt)}</td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-lg border bg-white p-4">
+                    <div className="mb-3 flex items-center justify-between">
+                      <h3 className="font-semibold">商户收款管理</h3>
+                      <span className="text-xs text-slate-500">{filteredOnlinePaymentCollections.length} 条</span>
+                    </div>
+                    <div className="overflow-x-auto rounded border">
+                      <table className="w-full min-w-[980px] text-left text-xs">
+                        <thead className="bg-slate-50 text-slate-600">
+                          <tr>
+                            <th className="px-3 py-2">商户</th>
+                            <th className="px-3 py-2">Connect</th>
+                            <th className="px-3 py-2">分账</th>
+                            <th className="px-3 py-2">收款项目</th>
+                            <th className="px-3 py-2">更新</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredOnlinePaymentCollections.length === 0 ? (
+                            <tr>
+                              <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                                {onlinePaymentLoading ? "正在加载商户收款记录..." : "暂无商户收款记录"}
+                              </td>
+                            </tr>
+                          ) : (
+                            filteredOnlinePaymentCollections.map((row) => (
+                              <tr key={row.merchantId} className="border-t">
+                                <td className="px-3 py-2">
+                                  <div className="font-medium text-slate-900">{row.merchantName || row.merchantId}</div>
+                                  <div className="break-all text-slate-500">
+                                    {row.merchantId} | {row.merchantEmail || "-"} | {row.domainPrefix || "-"}
+                                  </div>
+                                </td>
+                                <td className="px-3 py-2">{formatMerchantCollectionStatusLabel(row.connectStatus)}</td>
+                                <td className="px-3 py-2">{formatMerchantCollectionStatusLabel(row.splitStatus)}</td>
+                                <td className="px-3 py-2">
+                                  <div>预约金额：{row.collectionItems.booking ? "开启" : "未配置"}</div>
+                                  <div>订单金额：{row.collectionItems.order ? "开启" : "未配置"}</div>
+                                  <div>会员充值：{row.collectionItems.membershipRecharge ? "开启" : "未配置"}</div>
+                                </td>
+                                <td className="px-3 py-2">{fmt(row.updatedAt)}</td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                <div className="rounded-lg border bg-white p-4">
+                  <div className="mb-3 flex items-center justify-between">
+                    <h3 className="font-semibold">最近支付事件</h3>
+                    <span className="text-xs text-slate-500">{onlinePaymentData.billingEvents.length} 条</span>
+                  </div>
+                  <div className="space-y-1">
+                    {onlinePaymentData.billingEvents.length === 0 ? (
+                      <div className="rounded border border-dashed px-3 py-6 text-center text-xs text-slate-500">
+                        暂无支付事件。
+                      </div>
+                    ) : (
+                      onlinePaymentData.billingEvents.slice(0, 20).map((event) => (
+                        <div key={event.id} className="rounded border px-3 py-2 text-xs">
+                          <div className="font-medium text-slate-900">{event.type || "-"}</div>
+                          <div className="break-all text-slate-500">
+                            {fmt(event.processedAt)} | merchant:{event.merchantId || "-"} | {event.id}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </section>
+            ) : null}
 
             {activeMenu === "merchant_id_rules" ? (
               <section className="space-y-4">

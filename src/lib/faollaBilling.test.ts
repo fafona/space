@@ -3,23 +3,25 @@ import test from "node:test";
 import {
   getFaollaPlanEntitlements,
   isFaollaSubscriptionEntitled,
-  mergeFaollaSubscriptionPermissionUpgrade,
   normalizeFaollaMerchantSubscription,
   resolveFaollaSubscriptionPermissionConfig,
 } from "@/lib/faollaBilling";
 
-test("faolla subscription plans map to expected permission tiers", () => {
+test("faolla subscription plans are available but rules are not finalized", () => {
   const basic = getFaollaPlanEntitlements("basic");
   const advanced = getFaollaPlanEntitlements("advanced");
   const pro = getFaollaPlanEntitlements("pro");
 
   assert.equal(basic.permissionConfig.businessCardLimit, 1);
   assert.equal(basic.permissionConfig.allowOrderManagement, false);
-  assert.equal(advanced.permissionConfig.businessCardLimit, 3);
-  assert.equal(advanced.permissionConfig.allowOrderManagement, true);
-  assert.equal(pro.permissionConfig.allowMembershipManagement, true);
-  assert.equal(pro.permissionConfig.allowPointsRedemption, true);
-  assert.equal(pro.allowMerchantConnectPayments, true);
+  assert.equal(advanced.permissionConfig.businessCardLimit, 1);
+  assert.equal(advanced.permissionConfig.allowOrderManagement, false);
+  assert.equal(pro.permissionConfig.allowMembershipManagement, false);
+  assert.equal(pro.permissionConfig.allowPointsRedemption, false);
+  assert.equal(pro.allowMerchantConnectPayments, false);
+  assert.equal(basic.rulesFinalized, false);
+  assert.equal(advanced.rulesFinalized, false);
+  assert.equal(pro.rulesFinalized, false);
 });
 
 test("faolla subscription entitlement allows active and trialing statuses", () => {
@@ -35,7 +37,7 @@ test("faolla subscription entitlement allows active and trialing statuses", () =
   });
   assert.ok(base);
   assert.equal(isFaollaSubscriptionEntitled(base), true);
-  assert.equal(resolveFaollaSubscriptionPermissionConfig(base).allowMembershipManagement, true);
+  assert.equal(resolveFaollaSubscriptionPermissionConfig(base).allowMembershipManagement, false);
 });
 
 test("faolla subscription entitlement grants a bounded past_due grace period", () => {
@@ -72,51 +74,21 @@ test("faolla subscription falls back to basic permissions when not entitled", ()
   assert.equal(permission.allowMembershipManagement, false);
 });
 
-test("faolla subscription permission upgrade never downgrades existing manual config", () => {
-  const canceled = normalizeFaollaMerchantSubscription({
-    merchantId: "10000000",
-    planKey: "basic",
-    billingInterval: "month",
-    stripeCustomerId: "cus_123",
-    stripeSubscriptionId: "sub_123",
-    status: "canceled",
-    createdAt: "2026-01-01T00:00:00.000Z",
-    updatedAt: "2026-06-10T00:00:00.000Z",
-  });
-  const current = {
-    businessCardLimit: 3,
-    allowMembershipManagement: true,
-    allowPointsRedemption: true,
-    allowProductBlock: true,
-    allowOrderManagement: true,
-  };
-  const unchanged = mergeFaollaSubscriptionPermissionUpgrade(current, canceled);
-  assert.equal(unchanged.businessCardLimit, 3);
-  assert.equal(unchanged.allowMembershipManagement, true);
-  assert.equal(unchanged.allowPointsRedemption, true);
-  assert.equal(unchanged.allowOrderManagement, true);
-});
-
-test("faolla subscription permission upgrade only raises limits and enabled flags", () => {
-  const pro = normalizeFaollaMerchantSubscription({
+test("faolla subscription permission config stays conservative until plan rules are finalized", () => {
+  const basic = normalizeFaollaMerchantSubscription({
     merchantId: "10000000",
     planKey: "pro",
-    billingInterval: "year",
+    billingInterval: "month",
     stripeCustomerId: "cus_123",
     stripeSubscriptionId: "sub_123",
     status: "active",
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-06-10T00:00:00.000Z",
   });
-  const upgraded = mergeFaollaSubscriptionPermissionUpgrade(
-    {
-      businessCardLimit: 3,
-      allowMembershipManagement: false,
-      allowPointsRedemption: false,
-    },
-    pro,
-  );
-  assert.equal(upgraded.businessCardLimit, 10);
-  assert.equal(upgraded.allowMembershipManagement, true);
-  assert.equal(upgraded.allowPointsRedemption, true);
+  assert.ok(basic);
+  const permission = resolveFaollaSubscriptionPermissionConfig(basic);
+  assert.equal(permission.businessCardLimit, 1);
+  assert.equal(permission.allowOrderManagement, false);
+  assert.equal(permission.allowMembershipManagement, false);
+  assert.equal(permission.allowPointsRedemption, false);
 });
