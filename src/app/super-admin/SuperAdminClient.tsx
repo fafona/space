@@ -1091,6 +1091,9 @@ function describeBackendMerchantAccountsWarning(message: string) {
       if (item === "merchant_rows_unavailable") {
         return "商户表读取暂时不可用，已先显示快照/认证账号数据；列表可能暂时不完整。";
       }
+      if (item === "merchant_rows_empty_fallback") {
+        return "商户表暂时返回空列表，已使用发布快照显示商户账号。";
+      }
       return item;
     });
   return descriptions.join(" ");
@@ -2784,6 +2787,7 @@ export default function SuperAdminClient() {
           items?: BackendMerchantAccount[];
           authUsersUnavailable?: boolean;
           merchantRowsUnavailable?: boolean;
+          merchantRowsEmptyFallback?: boolean;
           message?: string;
         } | null;
         if (!response.ok) {
@@ -2794,6 +2798,7 @@ export default function SuperAdminClient() {
         setBackendMerchantAccountsWarning(
           [
             payload?.merchantRowsUnavailable ? "merchant_rows_unavailable" : "",
+            payload?.merchantRowsEmptyFallback ? "merchant_rows_empty_fallback" : "",
             payload?.authUsersUnavailable ? "auth_users_unavailable" : "",
           ]
             .filter(Boolean)

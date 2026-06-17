@@ -624,6 +624,10 @@ function readMerchantAccountsCache(scope: MerchantAccountsScope) {
     merchantAccountsCache.delete(scope);
     return null;
   }
+  if (scope === "full" && cached.items.length === 0) {
+    merchantAccountsCache.delete(scope);
+    return null;
+  }
   return cached.items;
 }
 
@@ -808,7 +812,11 @@ export async function GET(request: Request) {
         .filter(([email]) => Boolean(email)),
     );
 
-    const merchantItems: MerchantAccountItem[] = merchantRowsResult.errorMessage
+    const shouldUseSnapshotMerchantFallback =
+      Boolean(merchantRowsResult.errorMessage) ||
+      (merchantRowsResult.rows.length === 0 && snapshotByMerchantId.size > 0);
+
+    const merchantItems: MerchantAccountItem[] = shouldUseSnapshotMerchantFallback
       ? buildSnapshotMerchantAccountItems([...snapshotByMerchantId.values()], configHistoryByMerchantId)
       : merchantRowsResult.rows.map((merchant) => {
           const email = normalizeEmail(
@@ -1001,12 +1009,13 @@ export async function GET(request: Request) {
       }),
     );
 
-    if (!merchantRowsResult.errorMessage && !authUsersResult.errorMessage) {
+    if (!authUsersResult.errorMessage && (!merchantRowsResult.errorMessage || shouldUseSnapshotMerchantFallback)) {
       writeMerchantAccountsCache(scope, items);
     }
     return NextResponse.json({
       items,
       merchantRowsUnavailable: Boolean(merchantRowsResult.errorMessage),
+      merchantRowsEmptyFallback: !merchantRowsResult.errorMessage && shouldUseSnapshotMerchantFallback,
       merchantRowsError: merchantRowsResult.errorMessage,
       authUsersUnavailable: Boolean(authUsersResult.errorMessage),
       authUsersError: authUsersResult.errorMessage,
