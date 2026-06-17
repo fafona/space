@@ -314,17 +314,23 @@ export async function savePlatformMerchantSnapshot(
     expectedRevision?: string | null;
   } = {},
 ): Promise<PlatformMerchantSnapshotSaveResult> {
-  const [primaryEntry, backupEntry, historyEntry, historyBackupEntry] = await Promise.all([
+  const [primaryEntry, historyEntry] = await Promise.all([
     loadStoredPlatformMerchantSnapshotEntryBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_SLUG),
-    loadStoredPlatformMerchantSnapshotEntryBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_BACKUP_SLUG),
     loadStoredPlatformMerchantSnapshotEntryBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_HISTORY_SLUG),
-    loadStoredPlatformMerchantSnapshotEntryBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_HISTORY_BACKUP_SLUG),
   ]);
+  const backupEntry =
+    primaryEntry.payload || primaryEntry.error
+      ? null
+      : await loadStoredPlatformMerchantSnapshotEntryBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_BACKUP_SLUG);
+  const historyBackupEntry =
+    historyEntry.payload || historyEntry.error
+      ? null
+      : await loadStoredPlatformMerchantSnapshotEntryBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_HISTORY_BACKUP_SLUG);
   const existingPayload = mergeSnapshotPayloadHistory(
     primaryEntry.payload,
-    backupEntry.payload,
     historyEntry.payload,
-    historyBackupEntry.payload,
+    backupEntry?.payload ?? null,
+    historyBackupEntry?.payload ?? null,
   );
   const expectedRevision = String(options.expectedRevision ?? "").trim();
   const currentRevision = String(existingPayload?.revision ?? "").trim();
@@ -392,18 +398,23 @@ export async function savePlatformMerchantSnapshot(
     return { error: primarySave.error };
   }
 
+  const historySave = await persistBySlug(PLATFORM_MERCHANT_SNAPSHOT_HISTORY_SLUG, historyEntry);
+  if (historySave.error) {
+    return { error: `platform_merchant_snapshot_history_save_failed:${historySave.error}` };
+  }
+
+  const persistAuxiliaryBySlug = async (slug: string, loadedEntry: SnapshotStoredPayloadEntry | null) => {
+    const entry = loadedEntry ?? (await loadStoredPlatformMerchantSnapshotEntryBySlug(supabase, slug));
+    return persistBySlug(slug, entry);
+  };
+
   const auxiliarySaves = [
-    persistBySlug(PLATFORM_MERCHANT_SNAPSHOT_BACKUP_SLUG, backupEntry).then((backupSave) => {
+    persistAuxiliaryBySlug(PLATFORM_MERCHANT_SNAPSHOT_BACKUP_SLUG, backupEntry).then((backupSave) => {
       if (backupSave.error && typeof console !== "undefined") {
         console.error("[platform-merchant-snapshot] backup save failed", backupSave.error);
       }
     }),
-    persistBySlug(PLATFORM_MERCHANT_SNAPSHOT_HISTORY_SLUG, historyEntry).then((historySave) => {
-      if (historySave.error && typeof console !== "undefined") {
-        console.error("[platform-merchant-snapshot] history save failed", historySave.error);
-      }
-    }),
-    persistBySlug(PLATFORM_MERCHANT_SNAPSHOT_HISTORY_BACKUP_SLUG, historyBackupEntry).then((historyBackupSave) => {
+    persistAuxiliaryBySlug(PLATFORM_MERCHANT_SNAPSHOT_HISTORY_BACKUP_SLUG, historyBackupEntry).then((historyBackupSave) => {
       if (historyBackupSave.error && typeof console !== "undefined") {
         console.error("[platform-merchant-snapshot] history backup save failed", historyBackupSave.error);
       }
