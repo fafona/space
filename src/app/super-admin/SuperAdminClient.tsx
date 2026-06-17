@@ -2431,14 +2431,17 @@ export default function SuperAdminClient() {
     [state.sites, state.homeLayout.merchantDefaultSortRule],
   );
   const buildPlatformMerchantSnapshotSyncPayload = useCallback(
-    (nextState: PlatformState) =>
-      normalizePlatformMerchantSnapshotPayload({
+    (nextState: PlatformState, options: { siteIds?: string[] } = {}) => {
+      const siteIdSet = new Set((options.siteIds ?? []).map((item) => String(item ?? "").trim()).filter(Boolean));
+      const sites = siteIdSet.size > 0 ? nextState.sites.filter((site) => siteIdSet.has(site.id)) : nextState.sites;
+      return normalizePlatformMerchantSnapshotPayload({
         ...buildPlatformMerchantSnapshotPayloadFromSites(
-          nextState.sites,
+          sites,
           nextState.homeLayout.merchantDefaultSortRule,
         ),
         revision: platformSnapshotRevisionRef.current,
-      }),
+      });
+    },
     [],
   );
 
@@ -4336,9 +4339,10 @@ export default function SuperAdminClient() {
       nextState: PlatformState,
       options: {
         conflictTip?: string;
+        siteIds?: string[];
       } = {},
     ) => {
-      const payload = buildPlatformMerchantSnapshotSyncPayload(nextState);
+      const payload = buildPlatformMerchantSnapshotSyncPayload(nextState, { siteIds: options.siteIds });
       if (payload.snapshot.length === 0) {
         throw new Error("empty_snapshot");
       }
@@ -6852,7 +6856,7 @@ export default function SuperAdminClient() {
     let stateToPersist = buildAuditedConfigState(stateRef.current, "配置已更新");
     let mergedAfterConflict = false;
     try {
-      await syncPlatformMerchantSnapshotToServer(stateToPersist);
+      await syncPlatformMerchantSnapshotToServer(stateToPersist, { siteIds: [selectedMerchantSite.id] });
     } catch (error) {
       const message = describePlatformMerchantSnapshotRequestError(error, "unknown_error");
       if (message === "platform_merchant_snapshot_conflict") {
@@ -6865,7 +6869,7 @@ export default function SuperAdminClient() {
         }
         stateToPersist = buildAuditedConfigState(stateRef.current, "配置已更新（合并服务端最新版本）");
         try {
-          await syncPlatformMerchantSnapshotToServer(stateToPersist);
+          await syncPlatformMerchantSnapshotToServer(stateToPersist, { siteIds: [selectedMerchantSite.id] });
           mergedAfterConflict = true;
         } catch (retryError) {
           const retryMessage = describePlatformMerchantSnapshotRequestError(retryError, "unknown_error");
@@ -7001,7 +7005,7 @@ export default function SuperAdminClient() {
       `商户:${getSiteDisplayName(selectedMerchantSite) || selectedMerchantSite.id}；回滚到:${fmt(targetHistory.at)}；historyId:${targetHistory.id}；变更:${rollbackDiffLines.join("；") || "无"}`,
     );
     try {
-      await syncPlatformMerchantSnapshotToServer(auditedNextState);
+      await syncPlatformMerchantSnapshotToServer(auditedNextState, { siteIds: [selectedMerchantSite.id] });
     } catch (error) {
       const message = describePlatformMerchantSnapshotRequestError(error, "unknown_error");
       setTip(
@@ -7131,7 +7135,7 @@ export default function SuperAdminClient() {
       `商户:${getSiteDisplayName(selectedSite) || selectedSite.id}；恢复备份:${fmt(targetBackup.at)}；backupId:${targetBackup.id}；sourceHistory:${targetBackup.sourceHistoryEntryId || "-"}；变更:${restoreDiffLines.join("；") || "无"}`,
     );
     try {
-      await syncPlatformMerchantSnapshotToServer(auditedNextState);
+      await syncPlatformMerchantSnapshotToServer(auditedNextState, { siteIds: [selectedSite.id] });
     } catch (error) {
       const message = describePlatformMerchantSnapshotRequestError(error, "unknown_error");
       setTip(
