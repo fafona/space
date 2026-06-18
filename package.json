@@ -11,6 +11,7 @@
     "check:supabase": "node scripts/check-supabase-health.mjs",
     "check:publish-stack": "node scripts/check-publish-stack.mjs",
     "audit:inline-assets": "node scripts/audit-inline-page-assets.mjs",
+    "print-helper": "node scripts/faolla-print-helper.mjs",
     "migrate:inline-images": "node scripts/externalize-inline-page-images.mjs",
     "gen:china-locations": "node scripts/generate-china-location-options.mjs",
     "repair:platform-home-mojibake": "node scripts/repair-platform-home-mojibake.mjs",

@@ -418,6 +418,7 @@ export async function PATCH(request: Request) {
       type?: unknown;
       siteId?: unknown;
       membershipId?: unknown;
+      memberNo?: unknown;
       allergens?: unknown;
       points?: unknown;
       balanceAmount?: unknown;
@@ -456,6 +457,7 @@ export async function PATCH(request: Request) {
       const membership = await applyMerchantMembershipAccountOperation({
         siteId,
         membershipId: trimText(body?.membershipId, 160),
+        memberNo: trimText(body?.memberNo, 120),
         type: trimText(body?.type, 80) === "recharge" ? "recharge" : "redeem",
         points: body?.points,
         balanceAmount: body?.balanceAmount,
@@ -476,6 +478,7 @@ export async function PATCH(request: Request) {
       const membership = await applyMerchantMembershipRedemptionCart({
         siteId,
         membershipId: trimText(body?.membershipId, 160),
+        memberNo: trimText(body?.memberNo, 120),
         items: body?.redemptionItems,
         note: body?.note,
         operatorId: merchantSession.merchantId,

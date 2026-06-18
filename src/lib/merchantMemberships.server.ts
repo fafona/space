@@ -86,6 +86,23 @@ function readProfileAvatarUrl(session: PersonalAccountSession) {
   return trimText(profile.avatarUrl) || trimText(profile.avatar_url) || trimText(metadata?.avatarUrl) || trimText(metadata?.avatar_url);
 }
 
+function findMerchantMembershipIndexByIdentity(
+  memberships: MerchantMembershipRecord[],
+  input: { membershipId?: unknown; memberNo?: unknown },
+) {
+  const membershipId = trimText(input.membershipId, 160);
+  if (membershipId) {
+    const index = memberships.findIndex((membership) => membership.id === membershipId);
+    if (index >= 0) return index;
+  }
+  const memberNo = trimText(input.memberNo, 120);
+  if (!memberNo) return -1;
+  const memberNoMatches = memberships
+    .map((membership, index) => ({ membership, index }))
+    .filter((entry) => entry.membership.memberNo === memberNo);
+  return memberNoMatches.find((entry) => entry.membership.status === "active")?.index ?? memberNoMatches[0]?.index ?? -1;
+}
+
 export function readPersonalMembershipProfileFromSession(session: PersonalAccountSession): MerchantMembershipProfileDraft {
   const metadata = readRecord(session.user.user_metadata);
   const profile = readRecord(metadata?.personal_profile) ?? {};
@@ -648,6 +665,7 @@ export async function awardMerchantMembershipRulePoints(input: {
 export async function applyMerchantMembershipAccountOperation(input: {
   siteId: string;
   membershipId: string;
+  memberNo?: unknown;
   type: MerchantMemberAccountTransactionType;
   points?: unknown;
   balanceAmount?: unknown;
@@ -661,10 +679,11 @@ export async function applyMerchantMembershipAccountOperation(input: {
   const supabase = requireMembershipsStoreClient();
   const siteId = trimText(input.siteId, 64);
   const membershipId = trimText(input.membershipId, 160);
-  if (!siteId || !membershipId) throw new Error("membership_not_found");
+  const memberNo = trimText(input.memberNo, 120);
+  if (!siteId || (!membershipId && !memberNo)) throw new Error("membership_not_found");
   const stored = await loadStoredMerchantMemberships(supabase, siteId);
   const current = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
-  const index = current.findIndex((membership) => membership.id === membershipId);
+  const index = findMerchantMembershipIndexByIdentity(current, { membershipId, memberNo });
   if (index < 0) throw new Error("membership_not_found");
   const currentMembership = current[index];
   const operationMarker = buildMutationOperationMarker("member-operation", input.operationId);
@@ -774,6 +793,7 @@ export async function applyMerchantMembershipAccountOperation(input: {
 export async function applyMerchantMembershipRedemptionCart(input: {
   siteId: string;
   membershipId: string;
+  memberNo?: unknown;
   items?: unknown;
   note?: unknown;
   operatorId?: unknown;
@@ -782,7 +802,8 @@ export async function applyMerchantMembershipRedemptionCart(input: {
   const supabase = requireMembershipsStoreClient();
   const siteId = trimText(input.siteId, 64);
   const membershipId = trimText(input.membershipId, 160);
-  if (!siteId || !membershipId) throw new Error("membership_not_found");
+  const memberNo = trimText(input.memberNo, 120);
+  if (!siteId || (!membershipId && !memberNo)) throw new Error("membership_not_found");
   const settings = await getMerchantMembershipSettings(siteId).catch(() => null);
   if (!settings) throw new Error("membership_settings_unavailable");
   const requestedItems = Array.isArray(input.items)
@@ -885,7 +906,7 @@ export async function applyMerchantMembershipRedemptionCart(input: {
 
   const stored = await loadStoredMerchantMemberships(supabase, siteId);
   const current = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
-  const index = current.findIndex((membership) => membership.id === membershipId);
+  const index = findMerchantMembershipIndexByIdentity(current, { membershipId, memberNo });
   if (index < 0) throw new Error("membership_not_found");
   const currentMembership = current[index];
   const operationMarker = buildMutationOperationMarker("member-redemption-checkout", input.operationId);

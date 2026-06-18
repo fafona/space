@@ -258,7 +258,13 @@ function mergeMemberLists(
   const merged = new Map(current.map((membership) => [membership.id, membership]));
   let changed = false;
   incoming.forEach((membership) => {
-    const existing = merged.get(membership.id);
+    const sameMemberNoId =
+      trimText(membership.memberNo, 120) &&
+      Array.from(merged.values()).find((entry) => entry.memberNo === membership.memberNo)?.id;
+    const existing = merged.get(membership.id) ?? (sameMemberNoId ? merged.get(sameMemberNoId) : undefined);
+    if (sameMemberNoId && sameMemberNoId !== membership.id) {
+      merged.delete(sameMemberNoId);
+    }
     if (existing) {
       merged.set(membership.id, {
         ...existing,
@@ -275,6 +281,13 @@ function mergeMemberLists(
     changed = true;
   });
   return changed ? Array.from(merged.values()) : current;
+}
+
+function isSameMembershipRecord(left: MerchantMembershipListItem, right: MerchantMembershipListItem) {
+  if (left.id && right.id && left.id === right.id) return true;
+  const leftMemberNo = trimText(left.memberNo, 120);
+  const rightMemberNo = trimText(right.memberNo, 120);
+  return Boolean(leftMemberNo && rightMemberNo && leftMemberNo === rightMemberNo);
 }
 
 function categoryName(categories: MerchantMemberRedemptionCategory[], categoryId: string) {
@@ -315,6 +328,7 @@ function shouldShowStock(settings: MerchantMembershipSettings | null) {
 
 function operationErrorMessage(message: unknown, fallback: string, operationType: "redeem" | "recharge" = "redeem") {
   const text = trimText(message, 1000);
+  if (text === "membership_not_found") return "会员不存在或数据已更新，请刷新后重新选择会员。";
   if (text === "membership_balance_insufficient") return "会员积分不足，不能兑换。";
   if (text === "membership_redemption_stock_insufficient") return "兑换项目库存不足。";
   if (text === "membership_operation_empty") {
@@ -1524,6 +1538,7 @@ export default function MerchantPointRedemptionCashier({
           action: "member_operation",
           type: "recharge",
           membershipId: selectedMember.id,
+          memberNo: selectedMember.memberNo,
           rechargePlanId: plan.id,
           operationId,
           note: `积分兑换充值：${plan.title}`,
@@ -1533,12 +1548,17 @@ export default function MerchantPointRedemptionCashier({
       if (!response.ok || !payload?.ok || !payload.membership) {
         throw new Error(operationErrorMessage(payload?.message, "充值失败，请稍后重试", "recharge"));
       }
+      const updatedMembership = payload.membership;
       setMemberships((current) =>
-        current.map((membership) => (membership.id === payload.membership?.id ? payload.membership : membership)),
+        current.map((membership) => (isSameMembershipRecord(membership, updatedMembership) ? updatedMembership : membership)),
       );
+      setSelectedMemberId(updatedMembership.id);
       invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-memberships", normalizedSiteId));
       invalidateMerchantAdminDataCachePrefix(
         makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, selectedMember.id),
+      );
+      invalidateMerchantAdminDataCachePrefix(
+        makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, updatedMembership.id),
       );
       setRechargeDialogOpen(false);
       setNotice(`充值完成，余额增加 €${formatMoney(plan.rechargeAmount + plan.giftAmount)}，积分增加 ${formatPoints(plan.giftPoints)}。`);
@@ -1684,6 +1704,7 @@ export default function MerchantPointRedemptionCashier({
           siteId: normalizedSiteId,
           action: "member_redemption_checkout",
           membershipId: selectedMember.id,
+          memberNo: selectedMember.memberNo,
           redemptionItems: cartRows.map((row) => ({
             redemptionItemId: row.item?.id,
             customName: row.custom ? row.name : undefined,
@@ -1705,14 +1726,15 @@ export default function MerchantPointRedemptionCashier({
       if (!response.ok || !payload?.ok || !payload.membership) {
         throw new Error(operationErrorMessage(payload?.message, "积分兑换失败，请稍后重试"));
       }
+      const updatedMembership = payload.membership;
       const receiptData: MerchantRedemptionReceiptData = {
         receiptNo: operationId.slice(-12).toUpperCase(),
         siteId: normalizedSiteId,
         siteName: trimText(siteName, 120) || normalizedSiteId,
-        memberName: getMemberDisplayName(payload.membership),
-        memberNo: payload.membership.memberNo,
+        memberName: getMemberDisplayName(updatedMembership),
+        memberNo: updatedMembership.memberNo,
         beforePointBalance: receiptBeforePointBalance,
-        afterPointBalance: payload.membership.pointBalance,
+        afterPointBalance: updatedMembership.pointBalance,
         totalQuantity,
         grossPoints,
         couponPointDiscountTotal,
@@ -1722,13 +1744,17 @@ export default function MerchantPointRedemptionCashier({
         lines: receiptLines,
       };
       setMemberships((current) =>
-        current.map((membership) => (membership.id === payload.membership?.id ? payload.membership : membership)),
+        current.map((membership) => (isSameMembershipRecord(membership, updatedMembership) ? updatedMembership : membership)),
       );
+      setSelectedMemberId(updatedMembership.id);
       invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-memberships", normalizedSiteId));
       invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-membership-settings", normalizedSiteId));
       invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-coupons", normalizedSiteId));
       invalidateMerchantAdminDataCachePrefix(
         makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, selectedMember.id),
+      );
+      invalidateMerchantAdminDataCachePrefix(
+        makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, updatedMembership.id),
       );
       setCart([]);
       setNote("");

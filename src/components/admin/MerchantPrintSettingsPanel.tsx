@@ -6,14 +6,22 @@ import {
   createEmptyMerchantMembershipSettings,
   normalizeMerchantMembershipSettings,
   type MerchantMembershipSettings,
+  type MerchantReceiptContentField,
+  type MerchantReceiptFieldSection,
   type MerchantReceiptPrintSettings,
 } from "@/lib/merchantMembershipSettings";
 import {
-  buildRedemptionReceiptHtml,
-  formatReceiptDateTime,
-  formatReceiptPoints,
+  checkLocalPrintBridge,
+  getReceiptFieldValue,
+  getReceiptFieldsBySection,
+  getReceiptLineFieldValue,
+  getVisibleReceiptFields,
+  isReceiptFieldVisible,
+  listLocalPrintBridgePrinters,
+  printRedemptionReceipt,
+  printRedemptionReceiptWithLocalBridge,
   normalizeReceiptPrintSettingsForClient,
-  printHtmlDocument,
+  type LocalPrintBridgePrinter,
   type MerchantRedemptionReceiptData,
 } from "@/lib/merchantReceiptPrint";
 import { runWithMerchantOperationContext } from "@/lib/merchantOperationContext";
@@ -33,6 +41,20 @@ type MembershipSettingsPayload = {
   settings?: MerchantMembershipSettings;
   message?: unknown;
 };
+
+const RECEIPT_FIELD_SECTIONS: Array<{ id: MerchantReceiptFieldSection; label: string; hint: string }> = [
+  { id: "header", label: "页头", hint: "商户、站点等居中显示内容" },
+  { id: "meta", label: "单据信息", hint: "小票号、时间、会员信息" },
+  { id: "items", label: "项目明细", hint: "商品/项目行里的内容" },
+  { id: "summary", label: "汇总", hint: "积分、抵扣和结算后余额" },
+  { id: "footer", label: "页脚", hint: "备注和底部文字" },
+];
+
+const RECEIPT_FIELD_WIDTH_OPTIONS = [
+  { value: "full", label: "整行" },
+  { value: "half", label: "半行" },
+  { value: "third", label: "三分之一" },
+] as const;
 
 function trimText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
@@ -76,6 +98,12 @@ function parseInteger(value: string, min: number, max: number, fallback: number)
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(max, Math.max(min, Math.round(parsed)));
+}
+
+function receiptPreviewWidthClass(field: MerchantReceiptContentField) {
+  if (field.width === "half") return "col-span-3";
+  if (field.width === "third") return "col-span-2";
+  return "col-span-6";
 }
 
 function buildPreviewReceipt(siteId: string, siteName: string): MerchantRedemptionReceiptData {
@@ -131,6 +159,9 @@ export default function MerchantPrintSettingsPanel({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [bridgeChecking, setBridgeChecking] = useState(false);
+  const [bridgeStatus, setBridgeStatus] = useState<"unknown" | "online" | "offline">("unknown");
+  const [bridgePrinters, setBridgePrinters] = useState<LocalPrintBridgePrinter[]>([]);
 
   const activeSettings = useMemo(
     () => normalizeMerchantMembershipSettings(normalizedSiteId, settings),
@@ -156,6 +187,22 @@ export default function MerchantPrintSettingsPanel({
     setNotice("");
     setError("");
   }, []);
+
+  const patchReceiptField = useCallback(
+    (key: string, patch: Partial<MerchantReceiptContentField>) => {
+      patchPrintSettings({
+        receiptFields: printSettings.receiptFields.map((field) =>
+          field.key === key
+            ? {
+                ...field,
+                ...patch,
+              }
+            : field,
+        ),
+      });
+    },
+    [patchPrintSettings, printSettings.receiptFields],
+  );
 
   const loadSettings = useCallback(async () => {
     if (!/^\d{8}$/.test(normalizedSiteId)) {
@@ -229,8 +276,55 @@ export default function MerchantPrintSettingsPanel({
     }
   }
 
-  function testPrint() {
-    printHtmlDocument(buildRedemptionReceiptHtml(printSettings, previewReceipt));
+  async function checkBridge() {
+    setBridgeChecking(true);
+    setError("");
+    setNotice("");
+    try {
+      const online = await checkLocalPrintBridge(printSettings);
+      setBridgeStatus(online ? "online" : "offline");
+      setNotice(online ? "本机打印助手已连接。" : "没有连接到本机打印助手，请先在收银电脑运行 print-helper。");
+    } finally {
+      setBridgeChecking(false);
+    }
+  }
+
+  async function refreshBridgePrinters() {
+    setBridgeChecking(true);
+    setError("");
+    setNotice("");
+    try {
+      const printers = await listLocalPrintBridgePrinters(printSettings);
+      setBridgePrinters(printers);
+      setBridgeStatus(printers.length ? "online" : "offline");
+      setNotice(printers.length ? `已读取 ${printers.length} 台本机打印机。` : "未读取到打印机，请确认打印助手正在运行。");
+    } finally {
+      setBridgeChecking(false);
+    }
+  }
+
+  async function testPrint() {
+    setError("");
+    setNotice("");
+    if (printSettings.silentPrintEnabled) {
+      setBridgeChecking(true);
+      try {
+        const printed = await printRedemptionReceiptWithLocalBridge(printSettings, previewReceipt);
+        setBridgeStatus(printed ? "online" : "offline");
+        if (printed) {
+          setNotice("测试小票已发送到本机打印助手。");
+          return;
+        }
+        if (!printSettings.fallbackToBrowserPrint) {
+          setError("本机打印助手不可用，且未开启浏览器打印回退。");
+          return;
+        }
+      } finally {
+        setBridgeChecking(false);
+      }
+    }
+    printRedemptionReceipt({ ...printSettings, silentPrintEnabled: false }, previewReceipt);
+    setNotice("已打开浏览器测试打印。");
   }
 
   useEffect(() => {
@@ -343,6 +437,85 @@ export default function MerchantPrintSettingsPanel({
           </section>
 
           <section className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="text-base font-semibold text-slate-950">本机静默打印助手</h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  收银电脑运行本地助手后，小票会直接发给指定打印机；助手不可用时可回退到浏览器打印。
+                </p>
+              </div>
+              <span
+                className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                  bridgeStatus === "online"
+                    ? "bg-emerald-50 text-emerald-700"
+                    : bridgeStatus === "offline"
+                      ? "bg-rose-50 text-rose-700"
+                      : "bg-slate-100 text-slate-600"
+                }`}
+              >
+                {bridgeStatus === "online" ? "已连接" : bridgeStatus === "offline" ? "未连接" : "未检测"}
+              </span>
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <SwitchField
+                label="启用本机助手静默打印"
+                checked={printSettings.silentPrintEnabled}
+                onChange={(checked) => patchPrintSettings({ silentPrintEnabled: checked })}
+              />
+              <SwitchField
+                label="助手不可用时回退到浏览器打印"
+                checked={printSettings.fallbackToBrowserPrint}
+                onChange={(checked) => patchPrintSettings({ fallbackToBrowserPrint: checked })}
+              />
+              <Field label="助手地址">
+                <input
+                  className={inputClassName()}
+                  value={printSettings.localPrintBridgeUrl}
+                  onChange={(event) => {
+                    setBridgeStatus("unknown");
+                    patchPrintSettings({ localPrintBridgeUrl: event.target.value });
+                  }}
+                  placeholder="http://127.0.0.1:17658"
+                />
+              </Field>
+              <Field label="打印机名称">
+                <input
+                  list="faolla-local-printers"
+                  className={inputClassName()}
+                  value={printSettings.localPrinterName}
+                  onChange={(event) => patchPrintSettings({ localPrinterName: event.target.value })}
+                  placeholder="留空使用系统默认打印机"
+                />
+                <datalist id="faolla-local-printers">
+                  {bridgePrinters.map((printer) => (
+                    <option key={printer.name} value={printer.name}>
+                      {printer.isDefault ? `${printer.name}（默认）` : printer.name}
+                    </option>
+                  ))}
+                </datalist>
+              </Field>
+              <div className="flex flex-wrap gap-2 md:col-span-2">
+                <button
+                  type="button"
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                  onClick={() => void checkBridge()}
+                  disabled={bridgeChecking}
+                >
+                  {bridgeChecking ? "检测中..." : "检测助手"}
+                </button>
+                <button
+                  type="button"
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                  onClick={() => void refreshBridgePrinters()}
+                  disabled={bridgeChecking}
+                >
+                  读取本机打印机
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <section className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]">
             <h3 className="text-base font-semibold text-slate-950">票面文字</h3>
             <div className="mt-4 grid gap-3 md:grid-cols-2">
               <Field label="标题">
@@ -370,27 +543,67 @@ export default function MerchantPrintSettingsPanel({
           </section>
 
           <section className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]">
-            <h3 className="text-base font-semibold text-slate-950">显示内容</h3>
-            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {([
-                ["商户名称", "showMerchantName"],
-                ["站点ID", "showSiteId"],
-                ["会员姓名", "showMemberName"],
-                ["会员卡号", "showMemberNo"],
-                ["项目编号", "showItemCode"],
-                ["项目分类", "showItemCategory"],
-                ["单项积分", "showUnitPoints"],
-                ["卡券抵扣", "showCouponDiscount"],
-                ["备注", "showNote"],
-                ["时间", "showTimestamp"],
-              ] as Array<[string, keyof MerchantReceiptPrintSettings]>).map(([label, key]) => (
-                <SwitchField
-                  key={key}
-                  label={label}
-                  checked={Boolean(printSettings[key])}
-                  onChange={(checked) => patchPrintSettings({ [key]: checked })}
-                />
-              ))}
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="text-base font-semibold text-slate-950">小票内容</h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  按老版本小票模板的分段逻辑配置，每一项可以控制是否打印、显示名称和宽度。
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 space-y-4">
+              {RECEIPT_FIELD_SECTIONS.map((section) => {
+                const fields = getReceiptFieldsBySection(printSettings, section.id);
+                if (!fields.length) return null;
+                return (
+                  <div key={section.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <h4 className="text-sm font-semibold text-slate-900">{section.label}</h4>
+                        <p className="mt-0.5 text-xs text-slate-500">{section.hint}</p>
+                      </div>
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      {fields.map((field) => (
+                        <div
+                          key={field.key}
+                          className="grid gap-2 rounded-xl border border-slate-200 bg-white p-2 md:grid-cols-[120px_minmax(0,1fr)_120px]"
+                        >
+                          <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                            <input
+                              type="checkbox"
+                              checked={field.visible}
+                              onChange={(event) => patchReceiptField(field.key, { visible: event.target.checked })}
+                            />
+                            打印
+                          </label>
+                          <input
+                            className={inputClassName("h-9")}
+                            value={field.label}
+                            onChange={(event) => patchReceiptField(field.key, { label: event.target.value })}
+                            placeholder="显示名称"
+                          />
+                          <select
+                            className={inputClassName("h-9")}
+                            value={field.width}
+                            onChange={(event) =>
+                              patchReceiptField(field.key, {
+                                width: event.target.value as MerchantReceiptContentField["width"],
+                              })
+                            }
+                          >
+                            {RECEIPT_FIELD_WIDTH_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </section>
         </div>
@@ -409,72 +622,81 @@ export default function MerchantPrintSettingsPanel({
               <div className="border-b border-dashed border-black pb-2 text-center">
                 <div className="text-lg font-bold">{printSettings.title}</div>
                 {printSettings.subtitle ? <div className="text-xs text-slate-700">{printSettings.subtitle}</div> : null}
-                {printSettings.showMerchantName ? <div>{previewReceipt.siteName}</div> : null}
-                {printSettings.showSiteId ? <div className="text-xs text-slate-700">site:{previewReceipt.siteId}</div> : null}
+                {getVisibleReceiptFields(printSettings, "header").map((field) => {
+                  const value = getReceiptFieldValue(field.key, previewReceipt);
+                  return value ? (
+                    <div key={field.key} className={field.key === "siteId" ? "text-xs text-slate-700" : ""}>
+                      {value}
+                    </div>
+                  ) : null;
+                })}
               </div>
-              <div className="space-y-1 border-b border-dashed border-black py-2">
-                <div className="flex justify-between gap-3">
-                  <span>小票号</span>
-                  <strong>{previewReceipt.receiptNo}</strong>
-                </div>
-                {printSettings.showTimestamp ? (
-                  <div className="flex justify-between gap-3">
-                    <span>时间</span>
-                    <strong>{formatReceiptDateTime(previewReceipt.createdAt)}</strong>
-                  </div>
-                ) : null}
-                {printSettings.showMemberName || printSettings.showMemberNo ? (
-                  <div className="flex justify-between gap-3">
-                    <span>会员</span>
-                    <strong>
-                      {[
-                        printSettings.showMemberName ? previewReceipt.memberName : "",
-                        printSettings.showMemberNo ? previewReceipt.memberNo : "",
-                      ]
-                        .filter(Boolean)
-                        .join(" / ")}
-                    </strong>
-                  </div>
-                ) : null}
+              <div className="grid grid-cols-6 gap-x-2 gap-y-1 border-b border-dashed border-black py-2">
+                {getVisibleReceiptFields(printSettings, "meta").map((field) => {
+                  const value = getReceiptFieldValue(field.key, previewReceipt);
+                  return value ? (
+                    <div key={field.key} className={`flex justify-between gap-3 ${receiptPreviewWidthClass(field)}`}>
+                      <span>{field.label}</span>
+                      <strong className="text-right">{value}</strong>
+                    </div>
+                  ) : null;
+                })}
               </div>
               <div className="py-2">
                 {previewReceipt.lines.map((line) => (
                   <div key={line.code} className="border-b border-dashed border-slate-300 py-1">
                     <div className="flex justify-between gap-2">
-                      <strong>{line.name}</strong>
-                      <span>{line.couponPointDiscount > 0 ? `-${line.couponPointDiscount}` : line.subtotalPoints}</span>
+                      <strong>{getReceiptLineFieldValue("itemName", line)}</strong>
+                      {isReceiptFieldVisible(printSettings, "itemSubtotal") ? (
+                        <span>{getReceiptLineFieldValue("itemSubtotal", line)}</span>
+                      ) : null}
                     </div>
                     <div className="text-xs text-slate-700">
-                      {[
-                        printSettings.showItemCode ? `编号 ${line.code}` : "",
-                        printSettings.showItemCategory ? line.categoryName : "",
-                        printSettings.showUnitPoints ? `${line.unitPoints} x ${line.quantity}` : `数量 ${line.quantity}`,
-                        line.couponDiscountLabel,
-                      ]
+                      {getVisibleReceiptFields(printSettings, "items")
+                        .filter((field) => field.key !== "itemName" && field.key !== "itemSubtotal")
+                        .map((field) => {
+                          const value = getReceiptLineFieldValue(field.key, line);
+                          return value ? `${field.label} ${value}` : "";
+                        })
                         .filter(Boolean)
                         .join(" / ")}
                     </div>
                   </div>
                 ))}
               </div>
-              <div className="space-y-1 border-t border-dashed border-black pt-2">
-                <div className="flex justify-between gap-3">
-                  <span>原始积分</span>
-                  <strong>{formatReceiptPoints(previewReceipt.grossPoints)}</strong>
-                </div>
-                {printSettings.showCouponDiscount ? (
-                  <div className="flex justify-between gap-3">
-                    <span>卡券抵扣</span>
-                    <strong>-{formatReceiptPoints(previewReceipt.couponPointDiscountTotal)}</strong>
-                  </div>
-                ) : null}
-                <div className="flex justify-between gap-3 border-t border-black pt-1 text-base font-bold">
-                  <span>扣减积分</span>
-                  <strong>{formatReceiptPoints(previewReceipt.totalPoints)}</strong>
-                </div>
+              <div className="grid grid-cols-6 gap-x-2 gap-y-1 border-t border-dashed border-black pt-2">
+                {getVisibleReceiptFields(printSettings, "summary").map((field) => {
+                  const value = getReceiptFieldValue(field.key, previewReceipt);
+                  return value ? (
+                    <div
+                      key={field.key}
+                      className={`flex justify-between gap-3 ${receiptPreviewWidthClass(field)} ${
+                        field.key === "totalPoints" ? "border-t border-black pt-1 text-base font-bold" : ""
+                      }`}
+                    >
+                      <span>{field.label}</span>
+                      <strong>{value}</strong>
+                    </div>
+                  ) : null;
+                })}
               </div>
-              {printSettings.showNote ? <div className="mt-2 border-t border-dashed border-black pt-2">备注：{previewReceipt.note}</div> : null}
-              {printSettings.footer ? <div className="mt-3 text-center font-bold">{printSettings.footer}</div> : null}
+              {getVisibleReceiptFields(printSettings, "footer").map((field) => {
+                if (field.key === "note" && previewReceipt.note) {
+                  return (
+                    <div key={field.key} className="mt-2 border-t border-dashed border-black pt-2">
+                      {field.label}：{previewReceipt.note}
+                    </div>
+                  );
+                }
+                if (field.key === "footerText" && printSettings.footer) {
+                  return (
+                    <div key={field.key} className="mt-3 text-center font-bold">
+                      {printSettings.footer}
+                    </div>
+                  );
+                }
+                return null;
+              })}
             </div>
           </div>
         </aside>

@@ -133,9 +133,24 @@ export type MerchantMemberPointsRules = {
   pointsValidDays: number;
 };
 
+export type MerchantReceiptFieldSection = "header" | "meta" | "items" | "summary" | "footer";
+export type MerchantReceiptFieldWidth = "full" | "half" | "third";
+
+export type MerchantReceiptContentField = {
+  key: string;
+  section: MerchantReceiptFieldSection;
+  label: string;
+  visible: boolean;
+  width: MerchantReceiptFieldWidth;
+};
+
 export type MerchantReceiptPrintSettings = {
   enabled: boolean;
   autoPrintRedemptionReceipt: boolean;
+  silentPrintEnabled: boolean;
+  localPrintBridgeUrl: string;
+  localPrinterName: string;
+  fallbackToBrowserPrint: boolean;
   title: string;
   subtitle: string;
   footer: string;
@@ -152,6 +167,7 @@ export type MerchantReceiptPrintSettings = {
   showCouponDiscount: boolean;
   showNote: boolean;
   showTimestamp: boolean;
+  receiptFields: MerchantReceiptContentField[];
 };
 
 export type MerchantMembershipSettings = {
@@ -390,6 +406,44 @@ function normalizeId(value: unknown, prefix: string, index: number) {
   return trimText(value, 120) || `${prefix}-${Date.now().toString(36)}-${index}`;
 }
 
+export function createDefaultMerchantReceiptFields(legacy?: Partial<MerchantReceiptPrintSettings>): MerchantReceiptContentField[] {
+  return [
+    {
+      key: "merchantName",
+      section: "header",
+      label: "商户名称",
+      visible: legacy?.showMerchantName ?? true,
+      width: "full",
+    },
+    { key: "siteId", section: "header", label: "站点ID", visible: legacy?.showSiteId ?? false, width: "full" },
+    { key: "receiptNo", section: "meta", label: "小票号", visible: true, width: "full" },
+    { key: "timestamp", section: "meta", label: "时间", visible: legacy?.showTimestamp ?? true, width: "full" },
+    { key: "memberName", section: "meta", label: "会员姓名", visible: legacy?.showMemberName ?? true, width: "half" },
+    { key: "memberNo", section: "meta", label: "会员卡号", visible: legacy?.showMemberNo ?? true, width: "half" },
+    { key: "itemName", section: "items", label: "项目", visible: true, width: "full" },
+    { key: "itemCode", section: "items", label: "编号", visible: legacy?.showItemCode ?? true, width: "third" },
+    { key: "itemCategory", section: "items", label: "分类", visible: legacy?.showItemCategory ?? false, width: "third" },
+    { key: "unitPoints", section: "items", label: "单价", visible: legacy?.showUnitPoints ?? true, width: "third" },
+    { key: "itemQuantity", section: "items", label: "数量", visible: true, width: "third" },
+    { key: "itemSubtotal", section: "items", label: "小计", visible: true, width: "third" },
+    { key: "couponLineDiscount", section: "items", label: "卡券", visible: legacy?.showCouponDiscount ?? true, width: "third" },
+    { key: "totalQuantity", section: "summary", label: "项目数", visible: true, width: "full" },
+    { key: "grossPoints", section: "summary", label: "原始积分", visible: true, width: "full" },
+    {
+      key: "couponDiscountTotal",
+      section: "summary",
+      label: "卡券抵扣",
+      visible: legacy?.showCouponDiscount ?? true,
+      width: "full",
+    },
+    { key: "totalPoints", section: "summary", label: "扣减积分", visible: true, width: "full" },
+    { key: "beforePointBalance", section: "summary", label: "结算前积分", visible: true, width: "full" },
+    { key: "afterPointBalance", section: "summary", label: "结算后积分", visible: true, width: "full" },
+    { key: "note", section: "footer", label: "备注", visible: legacy?.showNote ?? true, width: "full" },
+    { key: "footerText", section: "footer", label: "页脚", visible: true, width: "full" },
+  ];
+}
+
 export function createEmptyMerchantMembershipSettings(siteId: string): MerchantMembershipSettings {
   return {
     siteId: trimText(siteId, 64),
@@ -400,6 +454,10 @@ export function createEmptyMerchantMembershipSettings(siteId: string): MerchantM
     printSettings: {
       enabled: true,
       autoPrintRedemptionReceipt: true,
+      silentPrintEnabled: false,
+      localPrintBridgeUrl: "http://127.0.0.1:17658",
+      localPrinterName: "",
+      fallbackToBrowserPrint: true,
       title: "积分兑换小票",
       subtitle: "",
       footer: "谢谢惠顾",
@@ -416,6 +474,7 @@ export function createEmptyMerchantMembershipSettings(siteId: string): MerchantM
       showCouponDiscount: true,
       showNote: true,
       showTimestamp: true,
+      receiptFields: createDefaultMerchantReceiptFields(),
     },
     growthRules: {
       spendAmountGrowth: 0,
@@ -644,14 +703,57 @@ function normalizePointsRules(value: unknown): MerchantMemberPointsRules {
   };
 }
 
+function normalizeReceiptFieldWidth(value: unknown, fallback: MerchantReceiptFieldWidth): MerchantReceiptFieldWidth {
+  const width = trimText(value, 20);
+  return width === "full" || width === "half" || width === "third" ? width : fallback;
+}
+
+function normalizeReceiptContentFields(value: unknown, legacy: Partial<MerchantReceiptPrintSettings>) {
+  const defaults = createDefaultMerchantReceiptFields(legacy);
+  if (!Array.isArray(value)) return defaults;
+  const defaultsByKey = new Map(defaults.map((field) => [field.key, field]));
+  const seen = new Set<string>();
+  const normalized: MerchantReceiptContentField[] = [];
+  value.forEach((item) => {
+    const record = readRecord(item);
+    if (!record) return;
+    const key = trimText(record.key, 80);
+    const fallback = defaultsByKey.get(key);
+    if (!fallback || seen.has(key)) return;
+    seen.add(key);
+    normalized.push({
+      key,
+      section: fallback.section,
+      label: trimText(record.label ?? record.name, 80) || fallback.label,
+      visible: normalizeBoolean(record.visible ?? record.status, fallback.visible),
+      width: normalizeReceiptFieldWidth(record.width, fallback.width),
+    });
+  });
+  defaults.forEach((field) => {
+    if (!seen.has(field.key)) normalized.push(field);
+  });
+  return normalized;
+}
+
 function normalizeReceiptPrintSettings(value: unknown): MerchantReceiptPrintSettings {
   const fallback = createEmptyMerchantMembershipSettings("").printSettings;
   const record = readRecord(value) ?? {};
-  return {
+  const normalized = {
     enabled: normalizeBoolean(record.enabled ?? record.receiptEnabled, fallback.enabled),
     autoPrintRedemptionReceipt: normalizeBoolean(
       record.autoPrintRedemptionReceipt ?? record.redemptionAutoPrint ?? record.autoPrintCheckout,
       fallback.autoPrintRedemptionReceipt,
+    ),
+    silentPrintEnabled: normalizeBoolean(
+      record.silentPrintEnabled ?? record.localPrintBridgeEnabled ?? record.directPrintEnabled,
+      fallback.silentPrintEnabled,
+    ),
+    localPrintBridgeUrl:
+      trimText(record.localPrintBridgeUrl ?? record.printBridgeUrl, 240) || fallback.localPrintBridgeUrl,
+    localPrinterName: trimText(record.localPrinterName ?? record.printerName, 160),
+    fallbackToBrowserPrint: normalizeBoolean(
+      record.fallbackToBrowserPrint ?? record.browserPrintFallback,
+      fallback.fallbackToBrowserPrint,
     ),
     title: trimText(record.title, 120) || fallback.title,
     subtitle: trimText(record.subtitle, 160),
@@ -669,6 +771,10 @@ function normalizeReceiptPrintSettings(value: unknown): MerchantReceiptPrintSett
     showCouponDiscount: normalizeBoolean(record.showCouponDiscount, fallback.showCouponDiscount),
     showNote: normalizeBoolean(record.showNote, fallback.showNote),
     showTimestamp: normalizeBoolean(record.showTimestamp, fallback.showTimestamp),
+  };
+  return {
+    ...normalized,
+    receiptFields: normalizeReceiptContentFields(record.receiptFields ?? record.contentFields, normalized),
   };
 }
 
