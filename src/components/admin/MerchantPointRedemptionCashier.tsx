@@ -25,8 +25,10 @@ import type {
   MerchantMemberRedemptionCategory,
   MerchantMemberRedemptionItem,
   MerchantMembershipSettings,
+  MerchantReceiptPrintSettings,
 } from "@/lib/merchantMembershipSettings";
 import { parseMerchantMemberPointDiscountRate } from "@/lib/merchantMembershipSettings";
+import { printRedemptionReceipt, type MerchantRedemptionReceiptData } from "@/lib/merchantReceiptPrint";
 
 type MerchantPointRedemptionCashierProps = {
   siteId: string;
@@ -477,6 +479,7 @@ function IconX() {
 
 export default function MerchantPointRedemptionCashier({
   siteId,
+  siteName = "",
   className = "",
   view = "cashier",
 }: MerchantPointRedemptionCashierProps) {
@@ -1657,6 +1660,19 @@ export default function MerchantPointRedemptionCashier({
       setError("会员积分不足，不能兑换。");
       return;
     }
+    const receiptCreatedAt = new Date();
+    const receiptBeforePointBalance = selectedInsight.pointBalance;
+    const receiptLines = cartRows.map((row) => ({
+      code: row.code || row.itemId,
+      name: row.name,
+      categoryName: row.categoryId ? categoryName(enabledCategories, row.categoryId) : "",
+      quantity: row.quantity,
+      unitPoints: row.unitPoints,
+      subtotalPoints: row.subtotalPoints,
+      couponDiscountLabel: row.couponDiscountLabel,
+      couponPointDiscount: row.couponPointDiscount,
+    }));
+    const receiptNote = note.trim();
     setSaving(true);
     try {
       const operationId = createClientMutationOperationId("member-redemption-checkout");
@@ -1689,6 +1705,22 @@ export default function MerchantPointRedemptionCashier({
       if (!response.ok || !payload?.ok || !payload.membership) {
         throw new Error(operationErrorMessage(payload?.message, "积分兑换失败，请稍后重试"));
       }
+      const receiptData: MerchantRedemptionReceiptData = {
+        receiptNo: operationId.slice(-12).toUpperCase(),
+        siteId: normalizedSiteId,
+        siteName: trimText(siteName, 120) || normalizedSiteId,
+        memberName: getMemberDisplayName(payload.membership),
+        memberNo: payload.membership.memberNo,
+        beforePointBalance: receiptBeforePointBalance,
+        afterPointBalance: payload.membership.pointBalance,
+        totalQuantity,
+        grossPoints,
+        couponPointDiscountTotal,
+        totalPoints,
+        note: receiptNote,
+        createdAt: receiptCreatedAt,
+        lines: receiptLines,
+      };
       setMemberships((current) =>
         current.map((membership) => (membership.id === payload.membership?.id ? payload.membership : membership)),
       );
@@ -1711,6 +1743,7 @@ export default function MerchantPointRedemptionCashier({
           ? `兑换完成，已扣减 ${formatPoints(totalPoints)} 积分。`
           : `兑换完成，已核销 ${couponLineCount} 张卡券。`,
       );
+      printRedemptionReceipt(settings?.printSettings as MerchantReceiptPrintSettings | undefined, receiptData);
       void loadData(true, { silent: true });
     } catch (checkoutError) {
       setError(checkoutError instanceof Error ? checkoutError.message : "积分兑换失败，请稍后重试");

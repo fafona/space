@@ -388,6 +388,11 @@ const MerchantRedemptionSettingsPanel = dynamic(() => import("@/components/admin
   loading: () => <DeferredAdminPanelLoading label="项目配置加载中..." />,
 });
 
+const MerchantPrintSettingsPanel = dynamic(() => import("@/components/admin/MerchantPrintSettingsPanel"), {
+  ssr: false,
+  loading: () => <DeferredAdminPanelLoading label="打印配置加载中..." />,
+});
+
 const MerchantBookingManagerDialog = dynamic(() => import("@/components/admin/MerchantBookingManagerDialog"), {
   ssr: false,
   loading: () => <DeferredAdminPanelLoading label="预约管理加载中..." />,
@@ -1502,6 +1507,7 @@ type MerchantDesktopSection =
   | "booking"
   | "orders"
   | "logs"
+  | "printer"
   | "business"
   | "members"
   | "support"
@@ -19706,7 +19712,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     merchantDesktopSection === "editor" ||
     merchantDesktopSection === "business" ||
     merchantDesktopSection === "cards" ||
-    merchantDesktopSection === "logs";
+    merchantDesktopSection === "logs" ||
+    merchantDesktopSection === "printer";
   const merchantDesktopCouponCenterActive =
     merchantDesktopSection === "coupons" ||
     merchantDesktopSection === "couponRedeemWorkbench" ||
@@ -20609,6 +20616,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             <MerchantBusinessCardManager {...merchantBusinessCardManagerCommonProps} folderViewMode="page" />
           ) : merchantDesktopCouponCenterActive && merchantCouponManagerCommonProps ? (
             <MerchantCouponManager {...merchantCouponManagerCommonProps} view={merchantCouponManagerView} />
+          ) : merchantDesktopSection === "printer" ? (
+            <MerchantPrintSettingsPanel
+              siteId={editingSiteId || merchantSiteIdOverride || ""}
+              siteName={effectiveMerchantDisplayName || merchantDisplayName}
+              className="min-h-[calc(100vh-14rem)]"
+            />
           ) : merchantDesktopSection === "pointRedemption" && canUsePointsRedemption ? (
             <MerchantPointRedemptionCashier
               siteId={editingSiteId || merchantSiteIdOverride || ""}
@@ -21227,6 +21240,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         onClick={openMerchantLogsPanel}
                       >
                         日志
+                      </button>
+                      <button
+                        type="button"
+                        className={getMerchantDesktopSubmenuButtonClassName(merchantDesktopSection === "printer")}
+                        onClick={() => setMerchantDesktopSection("printer")}
+                      >
+                        打印机
                       </button>
                       <button
                         type="button"

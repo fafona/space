@@ -133,12 +133,34 @@ export type MerchantMemberPointsRules = {
   pointsValidDays: number;
 };
 
+export type MerchantReceiptPrintSettings = {
+  enabled: boolean;
+  autoPrintRedemptionReceipt: boolean;
+  title: string;
+  subtitle: string;
+  footer: string;
+  paperWidthMm: number;
+  fontSizePx: number;
+  copies: number;
+  showMerchantName: boolean;
+  showSiteId: boolean;
+  showMemberName: boolean;
+  showMemberNo: boolean;
+  showItemCode: boolean;
+  showItemCategory: boolean;
+  showUnitPoints: boolean;
+  showCouponDiscount: boolean;
+  showNote: boolean;
+  showTimestamp: boolean;
+};
+
 export type MerchantMembershipSettings = {
   siteId: string;
   rechargePlans: MerchantMemberRechargePlan[];
   redemptionCategories: MerchantMemberRedemptionCategory[];
   redemptionItems: MerchantMemberRedemptionItem[];
   redemptionShowStock: boolean;
+  printSettings: MerchantReceiptPrintSettings;
   growthRules: MerchantMemberGrowthRules;
   levels: MerchantMemberLevel[];
   pointsRules: MerchantMemberPointsRules;
@@ -331,6 +353,12 @@ function normalizeInteger(value: unknown, fallback = 0) {
   return Math.max(0, Math.round(numberValue));
 }
 
+function normalizeIntegerRange(value: unknown, min: number, max: number, fallback: number) {
+  const numberValue = typeof value === "number" ? value : Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(numberValue)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(numberValue)));
+}
+
 function normalizeOptionalMoney(value: unknown) {
   if (value === null || value === undefined || (typeof value === "string" && value.trim() === "")) return null;
   return normalizeMoney(value);
@@ -369,6 +397,26 @@ export function createEmptyMerchantMembershipSettings(siteId: string): MerchantM
     redemptionCategories: [],
     redemptionItems: [],
     redemptionShowStock: true,
+    printSettings: {
+      enabled: true,
+      autoPrintRedemptionReceipt: true,
+      title: "积分兑换小票",
+      subtitle: "",
+      footer: "谢谢惠顾",
+      paperWidthMm: 58,
+      fontSizePx: 12,
+      copies: 1,
+      showMerchantName: true,
+      showSiteId: false,
+      showMemberName: true,
+      showMemberNo: true,
+      showItemCode: true,
+      showItemCategory: false,
+      showUnitPoints: true,
+      showCouponDiscount: true,
+      showNote: true,
+      showTimestamp: true,
+    },
     growthRules: {
       spendAmountGrowth: 0,
       rechargeAmountGrowth: 0,
@@ -596,6 +644,34 @@ function normalizePointsRules(value: unknown): MerchantMemberPointsRules {
   };
 }
 
+function normalizeReceiptPrintSettings(value: unknown): MerchantReceiptPrintSettings {
+  const fallback = createEmptyMerchantMembershipSettings("").printSettings;
+  const record = readRecord(value) ?? {};
+  return {
+    enabled: normalizeBoolean(record.enabled ?? record.receiptEnabled, fallback.enabled),
+    autoPrintRedemptionReceipt: normalizeBoolean(
+      record.autoPrintRedemptionReceipt ?? record.redemptionAutoPrint ?? record.autoPrintCheckout,
+      fallback.autoPrintRedemptionReceipt,
+    ),
+    title: trimText(record.title, 120) || fallback.title,
+    subtitle: trimText(record.subtitle, 160),
+    footer: trimText(record.footer, 240) || fallback.footer,
+    paperWidthMm: normalizeIntegerRange(record.paperWidthMm ?? record.paperWidth, 40, 120, fallback.paperWidthMm),
+    fontSizePx: normalizeIntegerRange(record.fontSizePx ?? record.fontSize, 9, 18, fallback.fontSizePx),
+    copies: normalizeIntegerRange(record.copies, 1, 3, fallback.copies),
+    showMerchantName: normalizeBoolean(record.showMerchantName, fallback.showMerchantName),
+    showSiteId: normalizeBoolean(record.showSiteId, fallback.showSiteId),
+    showMemberName: normalizeBoolean(record.showMemberName, fallback.showMemberName),
+    showMemberNo: normalizeBoolean(record.showMemberNo, fallback.showMemberNo),
+    showItemCode: normalizeBoolean(record.showItemCode, fallback.showItemCode),
+    showItemCategory: normalizeBoolean(record.showItemCategory, fallback.showItemCategory),
+    showUnitPoints: normalizeBoolean(record.showUnitPoints, fallback.showUnitPoints),
+    showCouponDiscount: normalizeBoolean(record.showCouponDiscount, fallback.showCouponDiscount),
+    showNote: normalizeBoolean(record.showNote, fallback.showNote),
+    showTimestamp: normalizeBoolean(record.showTimestamp, fallback.showTimestamp),
+  };
+}
+
 export function normalizeMerchantMembershipSettings(siteId: string, value: unknown): MerchantMembershipSettings {
   const fallback = createEmptyMerchantMembershipSettings(siteId);
   const record = readRecord(value) ?? {};
@@ -617,6 +693,7 @@ export function normalizeMerchantMembershipSettings(siteId: string, value: unkno
       record.redemptionShowStock ?? record.showRedemptionStock ?? record.redemptionStockVisible,
       legacyRedemptionShowStock,
     ),
+    printSettings: normalizeReceiptPrintSettings(record.printSettings ?? record.receiptPrintSettings),
     growthRules: normalizeGrowthRules(record.growthRules),
     levels: normalizeLevels(record.levels),
     pointsRules: normalizePointsRules(record.pointsRules),
