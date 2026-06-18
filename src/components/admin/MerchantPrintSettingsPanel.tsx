@@ -162,6 +162,7 @@ export default function MerchantPrintSettingsPanel({
   const [bridgeChecking, setBridgeChecking] = useState(false);
   const [bridgeStatus, setBridgeStatus] = useState<"unknown" | "online" | "offline">("unknown");
   const [bridgePrinters, setBridgePrinters] = useState<LocalPrintBridgePrinter[]>([]);
+  const [activeReceiptSection, setActiveReceiptSection] = useState<MerchantReceiptFieldSection>("meta");
 
   const activeSettings = useMemo(
     () => normalizeMerchantMembershipSettings(normalizedSiteId, settings),
@@ -174,6 +175,12 @@ export default function MerchantPrintSettingsPanel({
   const previewReceipt = useMemo(
     () => buildPreviewReceipt(normalizedSiteId, siteName),
     [normalizedSiteId, siteName],
+  );
+  const activeReceiptSectionInfo =
+    RECEIPT_FIELD_SECTIONS.find((section) => section.id === activeReceiptSection) ?? RECEIPT_FIELD_SECTIONS[0];
+  const activeReceiptFields = useMemo(
+    () => getReceiptFieldsBySection(printSettings, activeReceiptSectionInfo.id),
+    [activeReceiptSectionInfo.id, printSettings],
   );
 
   const patchPrintSettings = useCallback((patch: Partial<MerchantReceiptPrintSettings>) => {
@@ -196,6 +203,22 @@ export default function MerchantPrintSettingsPanel({
             ? {
                 ...field,
                 ...patch,
+              }
+            : field,
+        ),
+      });
+    },
+    [patchPrintSettings, printSettings.receiptFields],
+  );
+
+  const patchReceiptSectionVisible = useCallback(
+    (section: MerchantReceiptFieldSection, visible: boolean) => {
+      patchPrintSettings({
+        receiptFields: printSettings.receiptFields.map((field) =>
+          field.section === section
+            ? {
+                ...field,
+                visible,
               }
             : field,
         ),
@@ -546,45 +569,88 @@ export default function MerchantPrintSettingsPanel({
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h3 className="text-base font-semibold text-slate-950">小票内容</h3>
-                <p className="mt-1 text-sm text-slate-500">
-                  按老版本小票模板的分段逻辑配置，每一项可以控制是否打印、显示名称和宽度。
-                </p>
+                <p className="mt-1 text-sm text-slate-500">按旧版分段方式编辑，切换分区后在表格里批量设置打印项。</p>
               </div>
             </div>
-            <div className="mt-4 space-y-4">
+            <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
               {RECEIPT_FIELD_SECTIONS.map((section) => {
                 const fields = getReceiptFieldsBySection(printSettings, section.id);
-                if (!fields.length) return null;
+                const visibleCount = fields.filter((field) => field.visible).length;
                 return (
-                  <div key={section.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <h4 className="text-sm font-semibold text-slate-900">{section.label}</h4>
-                        <p className="mt-0.5 text-xs text-slate-500">{section.hint}</p>
-                      </div>
-                    </div>
-                    <div className="mt-3 space-y-2">
-                      {fields.map((field) => (
-                        <div
-                          key={field.key}
-                          className="grid gap-2 rounded-xl border border-slate-200 bg-white p-2 md:grid-cols-[120px_minmax(0,1fr)_120px]"
-                        >
-                          <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-                            <input
-                              type="checkbox"
-                              checked={field.visible}
-                              onChange={(event) => patchReceiptField(field.key, { visible: event.target.checked })}
-                            />
-                            打印
-                          </label>
+                  <button
+                    key={section.id}
+                    type="button"
+                    className={`h-11 shrink-0 rounded-xl border px-3 text-left text-sm transition ${
+                      activeReceiptSectionInfo.id === section.id
+                        ? "border-slate-950 bg-slate-950 text-white"
+                        : "border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 hover:bg-white"
+                    }`}
+                    onClick={() => setActiveReceiptSection(section.id)}
+                    aria-pressed={activeReceiptSectionInfo.id === section.id}
+                  >
+                    <span className="block font-semibold leading-4">{section.label}</span>
+                    <span className={activeReceiptSectionInfo.id === section.id ? "text-xs text-slate-200" : "text-xs text-slate-500"}>
+                      {visibleCount}/{fields.length}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="mt-3 overflow-hidden rounded-2xl border border-slate-200">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2">
+                <div>
+                  <h4 className="text-sm font-semibold text-slate-900">{activeReceiptSectionInfo.label}</h4>
+                  <p className="mt-0.5 text-xs text-slate-500">{activeReceiptSectionInfo.hint}</p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                    onClick={() => patchReceiptSectionVisible(activeReceiptSectionInfo.id, true)}
+                  >
+                    全部打印
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                    onClick={() => patchReceiptSectionVisible(activeReceiptSectionInfo.id, false)}
+                  >
+                    全部隐藏
+                  </button>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[620px] border-collapse text-sm">
+                  <thead className="bg-white text-xs text-slate-500">
+                    <tr>
+                      <th className="w-20 border-b border-slate-200 px-3 py-2 text-left font-semibold">打印</th>
+                      <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold">显示名称</th>
+                      <th className="w-40 border-b border-slate-200 px-3 py-2 text-left font-semibold">宽度</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activeReceiptFields.map((field) => (
+                      <tr key={field.key} className="border-b border-slate-100 last:border-b-0">
+                        <td className="px-3 py-2 align-middle">
                           <input
-                            className={inputClassName("h-9")}
+                            type="checkbox"
+                            checked={field.visible}
+                            onChange={(event) => patchReceiptField(field.key, { visible: event.target.checked })}
+                            aria-label={`${field.label} 是否打印`}
+                          />
+                        </td>
+                        <td className="px-3 py-2 align-middle">
+                          <input
+                            className={inputClassName("h-8 rounded-lg text-xs")}
                             value={field.label}
                             onChange={(event) => patchReceiptField(field.key, { label: event.target.value })}
                             placeholder="显示名称"
                           />
+                          <div className="mt-0.5 text-[11px] text-slate-400">{field.key}</div>
+                        </td>
+                        <td className="px-3 py-2 align-middle">
                           <select
-                            className={inputClassName("h-9")}
+                            className={inputClassName("h-8 rounded-lg text-xs")}
                             value={field.width}
                             onChange={(event) =>
                               patchReceiptField(field.key, {
@@ -598,12 +664,12 @@ export default function MerchantPrintSettingsPanel({
                               </option>
                             ))}
                           </select>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </section>
         </div>
