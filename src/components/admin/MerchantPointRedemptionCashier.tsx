@@ -44,6 +44,7 @@ type MembershipsPayload = {
 type RedemptionCashierPayload = {
   ok?: unknown;
   memberships?: MerchantMembershipListItem[];
+  searchMemberships?: MerchantMembershipListItem[];
   settings?: MerchantMembershipSettings;
   coupons?: MerchantCouponRecord[];
   membershipsNotModified?: unknown;
@@ -261,6 +262,10 @@ function mergeMemberLists(
         ...existing,
         ...membership,
         insight: membership.insight ?? existing.insight,
+        transactions:
+          membership.transactions.length > 0 || existing.transactions.length === 0
+            ? membership.transactions
+            : existing.transactions,
       });
     } else {
       merged.set(membership.id, membership);
@@ -980,7 +985,7 @@ export default function MerchantPointRedemptionCashier({
       setError("当前商户资料还没准备好，请稍后重试。");
       return;
     }
-    const membersCacheKey = makeMerchantAdminDataCacheKey("merchant-memberships", normalizedSiteId, "cashier-active", 0, 300);
+    const membersCacheKey = makeMerchantAdminDataCacheKey("merchant-memberships", normalizedSiteId, "cashier-active-v2", 0, 300);
     const settingsCacheKey = makeMerchantAdminDataCacheKey(
       "merchant-membership-settings",
       normalizedSiteId,
@@ -1051,6 +1056,13 @@ export default function MerchantPointRedemptionCashier({
           : Array.isArray(payload.memberships)
             ? payload.memberships
             : [];
+      const nextSearchMemberships =
+        payload.membershipsNotModified === true && cachedMemberships
+          ? []
+          : Array.isArray(payload.searchMemberships)
+            ? payload.searchMemberships
+            : [];
+      const mergedMemberships = mergeMemberLists(nextMemberships, nextSearchMemberships);
       const nextSettings =
         payload.settingsNotModified === true && cachedSettings ? cachedSettings.data : payload.settings;
       if (!nextSettings) {
@@ -1063,7 +1075,7 @@ export default function MerchantPointRedemptionCashier({
             ? payload.coupons
             : [];
       if (cashierLoadRequestIdRef.current !== requestId) return;
-      writeMerchantAdminDataCache(membersCacheKey, nextMemberships, {
+      writeMerchantAdminDataCache(membersCacheKey, mergedMemberships, {
         version: membershipVersion ?? cachedMemberships?.version ?? null,
       });
       writeMerchantAdminDataCache(settingsCacheKey, nextSettings, {
@@ -1072,7 +1084,7 @@ export default function MerchantPointRedemptionCashier({
       writeMerchantAdminDataCache(couponsCacheKey, nextCoupons, {
         version: couponVersion ?? cachedCoupons?.version ?? null,
       });
-      applyLoadedData(nextMemberships, nextSettings, nextCoupons);
+      applyLoadedData(mergedMemberships, nextSettings, nextCoupons);
     };
     if (cachedMemberships && cachedSettings && cachedCoupons) {
       setError("");

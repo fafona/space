@@ -11,6 +11,8 @@ import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+const MAX_CASHIER_SEARCH_MEMBERSHIPS = 2000;
+
 function trimText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
@@ -19,6 +21,14 @@ function normalizeLimit(value: unknown) {
   const numberValue = Number(trimText(value, 32));
   if (!Number.isFinite(numberValue) || numberValue <= 0) return 300;
   return Math.min(300, Math.max(1, Math.floor(numberValue)));
+}
+
+function buildCashierMembershipSearchItem<T extends { transactions?: unknown[]; insight?: unknown }>(membership: T): T {
+  return {
+    ...membership,
+    transactions: [],
+    insight: undefined,
+  };
 }
 
 export async function GET(request: Request) {
@@ -52,6 +62,10 @@ export async function GET(request: Request) {
     const memberships = membershipsSnapshot.memberships
       .filter((membership) => membership.status === "active")
       .slice(0, limit);
+    const searchMemberships = membershipsSnapshot.memberships
+      .filter((membership) => membership.profileVisible && membership.status === "active")
+      .slice(0, MAX_CASHIER_SEARCH_MEMBERSHIPS)
+      .map(buildCashierMembershipSearchItem);
     const couponCatalog = couponsSnapshot.coupons.map((coupon) => ({
       ...coupon,
       claimEvents: [],
@@ -61,6 +75,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       ok: true,
       memberships: membershipsNotModified ? undefined : memberships,
+      searchMemberships: membershipsNotModified ? undefined : searchMemberships,
       membershipsNotModified,
       membershipVersion,
       settings: settingsNotModified ? undefined : buildRedemptionCashierSettings(settings),
