@@ -4,6 +4,7 @@ import {
   buildRedemptionCashierSettings,
   getMerchantMembershipSettings,
   updateMerchantMembershipSettings,
+  updateMerchantMembershipPrintSettings,
 } from "@/lib/merchantMembershipSettings.server";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
@@ -65,6 +66,35 @@ export async function PUT(request: Request) {
     return NextResponse.json(
       {
         error: "membership_settings_save_failed",
+        message: error instanceof Error ? error.message : "unknown_error",
+      },
+      { status: 400 },
+    );
+  }
+}
+
+export async function PATCH(request: Request) {
+  if (!isTrustedSameOriginMutationRequest(request)) {
+    return getTrustedMutationRequestErrorResponse();
+  }
+  try {
+    const body = (await request.json().catch(() => null)) as { siteId?: unknown; printSettings?: unknown } | null;
+    const siteId = trimText(body?.siteId, 64);
+    if (!isMerchantNumericId(siteId)) {
+      return NextResponse.json({ error: "invalid_site_id", message: "商户 ID 无效，请刷新后重试。" }, { status: 400 });
+    }
+    if (!(await requireMerchant(siteId, request))) {
+      return NextResponse.json({ error: "unauthorized", message: "登录状态已失效，请重新登录后再保存。" }, { status: 401 });
+    }
+    const settings = await updateMerchantMembershipPrintSettings({
+      siteId,
+      printSettings: body?.printSettings,
+    });
+    return NextResponse.json({ ok: true, settings });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error: "membership_print_settings_save_failed",
         message: error instanceof Error ? error.message : "unknown_error",
       },
       { status: 400 },

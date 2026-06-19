@@ -98,3 +98,36 @@ export async function updateMerchantMembershipSettings(input: {
   if (saved.error) throw new Error(saved.error);
   return settings;
 }
+
+export async function updateMerchantMembershipPrintSettings(input: {
+  siteId: string;
+  printSettings: unknown;
+}): Promise<MerchantMembershipSettings> {
+  const normalizedSiteId = trimText(input.siteId, 64);
+  if (!normalizedSiteId) throw new Error("invalid_site_id");
+  const supabase = requireMembershipSettingsStoreClient();
+  const now = new Date().toISOString();
+  const current =
+    (await loadStoredMerchantMembershipSettings(supabase, normalizedSiteId)) ??
+    createEmptyMerchantMembershipSettings(normalizedSiteId);
+  const incomingPrintSettings =
+    input.printSettings && typeof input.printSettings === "object" && !Array.isArray(input.printSettings)
+      ? (input.printSettings as Record<string, unknown>)
+      : {};
+  const settings = normalizeMerchantMembershipSettings(normalizedSiteId, {
+    ...current,
+    siteId: normalizedSiteId,
+    printSettings: {
+      ...current.printSettings,
+      ...incomingPrintSettings,
+    },
+    updatedAt: now,
+  });
+  const saved = await saveStoredMerchantMembershipSettings(supabase, {
+    siteId: normalizedSiteId,
+    settings,
+    updatedAt: now,
+  });
+  if (saved.error) throw new Error(saved.error);
+  return settings;
+}

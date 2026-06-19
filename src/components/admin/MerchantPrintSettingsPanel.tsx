@@ -47,6 +47,7 @@ type MembershipSettingsPayload = {
   ok?: unknown;
   settings?: MerchantMembershipSettings;
   message?: unknown;
+  error?: unknown;
 };
 
 const RECEIPT_FIELD_SECTIONS: Array<{ id: MerchantReceiptFieldSection; label: string; hint: string }> = [
@@ -237,6 +238,22 @@ async function uploadReceiptLogoBlob(input: {
 
 function readPayloadMessage(value: unknown, fallback: string) {
   return trimText(value, 1000) || fallback;
+}
+
+function isNetworkFetchError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /failed to fetch|fetch failed|networkerror|network request failed|load failed/i.test(message);
+}
+
+function readPrintSettingsSaveErrorMessage(error: unknown) {
+  if (isNetworkFetchError(error)) return "保存请求没有成功发送，请检查网络后重试。";
+  return error instanceof Error ? error.message : "打印配置保存失败，请稍后重试";
+}
+
+function wait(ms: number) {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
 }
 
 function inputClassName(extra = "") {
@@ -537,33 +554,46 @@ export default function MerchantPrintSettingsPanel({
     setNotice("");
     try {
       const normalized = normalizeMerchantMembershipSettings(normalizedSiteId, activeSettings);
-      const response = await runWithMerchantOperationContext(
-        {
-          operationModule: "经营中心 > 打印机",
-          operationAction: "保存打印样式",
-          operationSummary: "在经营中心 > 打印机保存小票打印样式",
-        },
-        () =>
-          fetch("/api/membership-settings", {
-            method: "PUT",
-            cache: "no-store",
-            credentials: "same-origin",
-            headers: {
-              "Content-Type": "application/json",
-              accept: "application/json",
+      let response: Response | null = null;
+      let lastNetworkError: unknown = null;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          response = await runWithMerchantOperationContext(
+            {
+              operationModule: "经营中心 > 打印机",
+              operationAction: "保存打印样式",
+              operationSummary: "在经营中心 > 打印机保存小票打印样式",
             },
-            body: JSON.stringify({ siteId: normalizedSiteId, settings: normalized }),
-          }),
-      );
+            () =>
+              fetch("/api/membership-settings", {
+                method: "PATCH",
+                cache: "no-store",
+                credentials: "same-origin",
+                headers: {
+                  "Content-Type": "application/json",
+                  accept: "application/json",
+                },
+                body: JSON.stringify({ siteId: normalizedSiteId, printSettings: normalized.printSettings }),
+              }),
+          );
+          lastNetworkError = null;
+          break;
+        } catch (fetchError) {
+          lastNetworkError = fetchError;
+          if (!isNetworkFetchError(fetchError) || attempt > 0) break;
+          await wait(500);
+        }
+      }
+      if (!response) throw lastNetworkError;
       const payload = (await response.json().catch(() => null)) as MembershipSettingsPayload | null;
       if (!response.ok || payload?.ok !== true || !payload.settings) {
-        throw new Error(readPayloadMessage(payload?.message, "打印配置保存失败，请稍后重试"));
+        throw new Error(readPayloadMessage(payload?.message ?? payload?.error, `打印配置保存失败（${response.status}），请稍后重试`));
       }
       setSettings(normalizeMerchantMembershipSettings(normalizedSiteId, payload.settings));
       invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-membership-settings", normalizedSiteId));
       setNotice("打印配置已保存");
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "打印配置保存失败，请稍后重试");
+      setError(readPrintSettingsSaveErrorMessage(saveError));
     } finally {
       setSaving(false);
     }
