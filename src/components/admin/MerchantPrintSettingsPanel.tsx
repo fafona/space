@@ -28,7 +28,6 @@ import {
   type MerchantRedemptionReceiptData,
 } from "@/lib/merchantReceiptPrint";
 import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
-import { uploadDataUrlToPublicStorage } from "@/lib/publicAssetUpload";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import { runWithMerchantOperationContext } from "@/lib/merchantOperationContext";
 import {
@@ -155,8 +154,8 @@ async function compressReceiptLogoDataUrl(file: File, dataUrl: string) {
   if (mime === "image/svg+xml" || mime === "image/gif") return dataUrl;
   try {
     const image = await loadImageElement(dataUrl);
-    const maxWidth = 720;
-    const maxHeight = 360;
+    const maxWidth = 480;
+    const maxHeight = 240;
     const sourceWidth = image.naturalWidth || image.width || 1;
     const sourceHeight = image.naturalHeight || image.height || 1;
     const scale = Math.min(1, maxWidth / sourceWidth, maxHeight / sourceHeight);
@@ -169,10 +168,71 @@ async function compressReceiptLogoDataUrl(file: File, dataUrl: string) {
     if (!context) return dataUrl;
     context.clearRect(0, 0, width, height);
     context.drawImage(image, 0, 0, width, height);
-    return canvas.toDataURL("image/webp", 0.82);
+    return canvas.toDataURL("image/webp", 0.72);
   } catch {
     return dataUrl;
   }
+}
+
+function dataUrlToBlob(dataUrl: string) {
+  const matched = dataUrl.match(/^data:([^;]+);base64,(.*)$/i);
+  if (!matched) return null;
+  const mime = matched[1]?.toLowerCase() || "application/octet-stream";
+  const binary = window.atob(matched[2] ?? "");
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return new Blob([bytes], { type: mime });
+}
+
+function getReceiptLogoUploadFileName(file: File, dataUrl: string) {
+  const mime = dataUrl.match(/^data:([^;]+);base64,/i)?.[1]?.toLowerCase() || file.type.toLowerCase();
+  const extension =
+    mime === "image/png"
+      ? "png"
+      : mime === "image/jpeg"
+        ? "jpg"
+        : mime === "image/gif"
+          ? "gif"
+          : mime === "image/svg+xml"
+            ? "svg"
+            : "webp";
+  const baseName = file.name.replace(/\.[^.]+$/, "").replace(/[^a-zA-Z0-9_-]+/g, "-") || "receipt-logo";
+  return `${baseName}.${extension}`;
+}
+
+async function uploadReceiptLogoBlob(input: {
+  blob: Blob;
+  fileName: string;
+  merchantHint: string;
+  operationSummary: string;
+}) {
+  const formData = new FormData();
+  formData.append("file", input.blob, input.fileName);
+  formData.append("folder", "merchant-assets");
+  formData.append("merchantHint", input.merchantHint);
+  formData.append("usage", "generic-image");
+  const response = await runWithMerchantOperationContext(
+    {
+      operationModule: "经营中心 > 打印机",
+      operationAction: "上传小票Logo",
+      operationSummary: input.operationSummary,
+    },
+    () =>
+      fetch("/api/assets/upload", {
+        method: "POST",
+        credentials: "same-origin",
+        body: formData,
+      }),
+  );
+  const payload = (await response.json().catch(() => null)) as { url?: unknown; message?: unknown; error?: unknown } | null;
+  const url = typeof payload?.url === "string" ? payload.url.trim() : "";
+  if (!response.ok || !url) {
+    const message = typeof payload?.message === "string" ? payload.message : typeof payload?.error === "string" ? payload.error : "";
+    throw new Error(message || `Logo 上传失败（${response.status}），请重新选择图片。`);
+  }
+  return url;
 }
 
 function readPayloadMessage(value: unknown, fallback: string) {
@@ -577,15 +637,15 @@ export default function MerchantPrintSettingsPanel({
         setLogoPreviewUrl(localPreviewUrl);
       }
       const uploadDataUrl = await compressReceiptLogoDataUrl(file, localPreviewUrl);
-      const uploadedUrl = await uploadDataUrlToPublicStorage(uploadDataUrl, {
+      const uploadBlob = dataUrlToBlob(uploadDataUrl);
+      if (!uploadBlob) {
+        throw new Error("Logo 文件解析失败，请重新选择图片。");
+      }
+      const uploadedUrl = await uploadReceiptLogoBlob({
+        blob: uploadBlob,
+        fileName: getReceiptLogoUploadFileName(file, uploadDataUrl),
         merchantHint: normalizedSiteId || "receipt-logo",
-        folder: "merchant-assets",
-        usage: "generic-image",
-        operation: {
-          operationModule: "经营中心 > 打印机",
-          operationAction: "上传小票Logo",
-          operationSummary: "在打印机设置中上传页头Logo",
-        },
+        operationSummary: "在打印机设置中上传页头Logo",
       });
       if (!uploadedUrl) {
         throw new Error("Logo 上传失败，请重新选择图片。");
