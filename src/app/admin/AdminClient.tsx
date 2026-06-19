@@ -20620,6 +20620,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             <MerchantPrintSettingsPanel
               siteId={editingSiteId || merchantSiteIdOverride || ""}
               siteName={effectiveMerchantDisplayName || merchantDisplayName}
+              siteCountryCode={effectiveEditingSite?.location?.countryCode || editingSite?.location?.countryCode || ""}
+              siteCountry={effectiveEditingSite?.location?.country || editingSite?.location?.country || ""}
               className="min-h-[calc(100vh-14rem)]"
             />
           ) : merchantDesktopSection === "pointRedemption" && canUsePointsRedemption ? (

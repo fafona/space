@@ -143,6 +143,210 @@ export type MerchantReceiptContentField = {
   label: string;
   visible: boolean;
   width: MerchantReceiptFieldWidth;
+  fontSizePx: number;
+  letterSpacingPx: number;
+};
+
+type MerchantReceiptLocaleCopy = {
+  title: string;
+  footer: string;
+  fieldLabels: Record<string, string>;
+};
+
+export const MERCHANT_RECEIPT_AUTO_LOCALE = "auto";
+
+const ZH_RECEIPT_COPY: MerchantReceiptLocaleCopy = {
+  title: "积分兑换小票",
+  footer: "谢谢惠顾",
+  fieldLabels: {
+    merchantName: "商户名称",
+    siteId: "站点ID",
+    receiptNo: "小票号",
+    timestamp: "时间",
+    memberName: "会员姓名",
+    memberNo: "会员卡号",
+    itemName: "项目",
+    itemCode: "编号",
+    itemCategory: "分类",
+    unitPoints: "单价",
+    itemQuantity: "数量",
+    itemSubtotal: "小计",
+    couponLineDiscount: "卡券",
+    totalQuantity: "项目数",
+    grossPoints: "原始积分",
+    couponDiscountTotal: "卡券抵扣",
+    totalPoints: "扣减积分",
+    beforePointBalance: "结算前积分",
+    afterPointBalance: "结算后积分",
+    note: "备注",
+    footerText: "页脚",
+  },
+};
+
+const RECEIPT_LOCALE_COPY: Record<string, MerchantReceiptLocaleCopy> = {
+  zh: ZH_RECEIPT_COPY,
+  en: {
+    title: "Points redemption receipt",
+    footer: "Thank you",
+    fieldLabels: {
+      merchantName: "Merchant",
+      siteId: "Site ID",
+      receiptNo: "Receipt No.",
+      timestamp: "Time",
+      memberName: "Member",
+      memberNo: "Member No.",
+      itemName: "Item",
+      itemCode: "Code",
+      itemCategory: "Category",
+      unitPoints: "Unit",
+      itemQuantity: "Qty",
+      itemSubtotal: "Subtotal",
+      couponLineDiscount: "Coupon",
+      totalQuantity: "Items",
+      grossPoints: "Original points",
+      couponDiscountTotal: "Coupon discount",
+      totalPoints: "Redeemed points",
+      beforePointBalance: "Before balance",
+      afterPointBalance: "After balance",
+      note: "Note",
+      footerText: "Footer",
+    },
+  },
+  es: {
+    title: "Recibo de canje de puntos",
+    footer: "Gracias por su visita",
+    fieldLabels: {
+      merchantName: "Comercio",
+      siteId: "ID del sitio",
+      receiptNo: "Recibo",
+      timestamp: "Hora",
+      memberName: "Socio",
+      memberNo: "No. de socio",
+      itemName: "Articulo",
+      itemCode: "Codigo",
+      itemCategory: "Categoria",
+      unitPoints: "Unidad",
+      itemQuantity: "Cant.",
+      itemSubtotal: "Subtotal",
+      couponLineDiscount: "Cupon",
+      totalQuantity: "Articulos",
+      grossPoints: "Puntos originales",
+      couponDiscountTotal: "Descuento cupon",
+      totalPoints: "Puntos canjeados",
+      beforePointBalance: "Puntos antes",
+      afterPointBalance: "Puntos despues",
+      note: "Nota",
+      footerText: "Pie",
+    },
+  },
+  fr: {
+    title: "Recu d'echange de points",
+    footer: "Merci de votre visite",
+    fieldLabels: {
+      merchantName: "Commerce",
+      siteId: "ID du site",
+      receiptNo: "Recu",
+      timestamp: "Heure",
+      memberName: "Membre",
+      memberNo: "No. membre",
+      itemName: "Article",
+      itemCode: "Code",
+      itemCategory: "Categorie",
+      unitPoints: "Unite",
+      itemQuantity: "Qte",
+      itemSubtotal: "Sous-total",
+      couponLineDiscount: "Coupon",
+      totalQuantity: "Articles",
+      grossPoints: "Points initiaux",
+      couponDiscountTotal: "Remise coupon",
+      totalPoints: "Points deduits",
+      beforePointBalance: "Solde avant",
+      afterPointBalance: "Solde apres",
+      note: "Note",
+      footerText: "Pied",
+    },
+  },
+  de: {
+    title: "Bon fur Punkteinlosung",
+    footer: "Vielen Dank",
+    fieldLabels: {
+      merchantName: "Handler",
+      siteId: "Standort-ID",
+      receiptNo: "Beleg",
+      timestamp: "Zeit",
+      memberName: "Mitglied",
+      memberNo: "Mitglieds-Nr.",
+      itemName: "Artikel",
+      itemCode: "Code",
+      itemCategory: "Kategorie",
+      unitPoints: "Einheit",
+      itemQuantity: "Menge",
+      itemSubtotal: "Zwischensumme",
+      couponLineDiscount: "Coupon",
+      totalQuantity: "Artikel",
+      grossPoints: "Ursprungspunkte",
+      couponDiscountTotal: "Couponrabatt",
+      totalPoints: "Eingeloste Punkte",
+      beforePointBalance: "Punkte vorher",
+      afterPointBalance: "Punkte nachher",
+      note: "Notiz",
+      footerText: "Fusszeile",
+    },
+  },
+  it: {
+    title: "Ricevuta riscatto punti",
+    footer: "Grazie",
+    fieldLabels: {
+      merchantName: "Esercente",
+      siteId: "ID sito",
+      receiptNo: "Ricevuta",
+      timestamp: "Ora",
+      memberName: "Socio",
+      memberNo: "No. socio",
+      itemName: "Articolo",
+      itemCode: "Codice",
+      itemCategory: "Categoria",
+      unitPoints: "Unita",
+      itemQuantity: "Qta",
+      itemSubtotal: "Subtotale",
+      couponLineDiscount: "Coupon",
+      totalQuantity: "Articoli",
+      grossPoints: "Punti originali",
+      couponDiscountTotal: "Sconto coupon",
+      totalPoints: "Punti riscattati",
+      beforePointBalance: "Punti prima",
+      afterPointBalance: "Punti dopo",
+      note: "Nota",
+      footerText: "Pie",
+    },
+  },
+  pt: {
+    title: "Recibo de troca de pontos",
+    footer: "Obrigado",
+    fieldLabels: {
+      merchantName: "Comerciante",
+      siteId: "ID do site",
+      receiptNo: "Recibo",
+      timestamp: "Hora",
+      memberName: "Membro",
+      memberNo: "No. membro",
+      itemName: "Item",
+      itemCode: "Codigo",
+      itemCategory: "Categoria",
+      unitPoints: "Unidade",
+      itemQuantity: "Qtd",
+      itemSubtotal: "Subtotal",
+      couponLineDiscount: "Cupao",
+      totalQuantity: "Itens",
+      grossPoints: "Pontos originais",
+      couponDiscountTotal: "Desconto cupao",
+      totalPoints: "Pontos trocados",
+      beforePointBalance: "Pontos antes",
+      afterPointBalance: "Pontos depois",
+      note: "Nota",
+      footerText: "Rodape",
+    },
+  },
 };
 
 export type MerchantReceiptPrintSettings = {
@@ -155,6 +359,9 @@ export type MerchantReceiptPrintSettings = {
   cutPaperAfterPrint: boolean;
   cutPaperMode: MerchantReceiptCutMode;
   feedLinesBeforeCut: number;
+  receiptLocale: string;
+  headerLogoUrl: string;
+  headerLogoWidthPercent: number;
   title: string;
   subtitle: string;
   footer: string;
@@ -379,6 +586,13 @@ function normalizeIntegerRange(value: unknown, min: number, max: number, fallbac
   return Math.min(max, Math.max(min, Math.round(numberValue)));
 }
 
+function normalizeNumberRange(value: unknown, min: number, max: number, fallback: number, precision = 1) {
+  const numberValue = typeof value === "number" ? value : Number.parseFloat(String(value ?? ""));
+  if (!Number.isFinite(numberValue)) return fallback;
+  const clamped = Math.min(max, Math.max(min, numberValue));
+  return Number(clamped.toFixed(precision));
+}
+
 function normalizeOptionalMoney(value: unknown) {
   if (value === null || value === undefined || (typeof value === "string" && value.trim() === "")) return null;
   return normalizeMoney(value);
@@ -410,42 +624,147 @@ function normalizeId(value: unknown, prefix: string, index: number) {
   return trimText(value, 120) || `${prefix}-${Date.now().toString(36)}-${index}`;
 }
 
-export function createDefaultMerchantReceiptFields(legacy?: Partial<MerchantReceiptPrintSettings>): MerchantReceiptContentField[] {
-  return [
+function normalizeReceiptLocaleLanguage(locale: string | null | undefined) {
+  const normalized = trimText(locale, 40).toLowerCase();
+  if (!normalized || normalized === MERCHANT_RECEIPT_AUTO_LOCALE) return "zh";
+  const language = normalized.split("-")[0] || "";
+  return Object.prototype.hasOwnProperty.call(RECEIPT_LOCALE_COPY, language) ? language : "en";
+}
+
+export function getMerchantReceiptLocaleCopy(locale: string | null | undefined) {
+  return RECEIPT_LOCALE_COPY[normalizeReceiptLocaleLanguage(locale)] ?? ZH_RECEIPT_COPY;
+}
+
+function getMerchantReceiptFieldLabel(locale: string | null | undefined, key: string) {
+  const copy = getMerchantReceiptLocaleCopy(locale);
+  return copy.fieldLabels[key] ?? ZH_RECEIPT_COPY.fieldLabels[key] ?? key;
+}
+
+export function createDefaultMerchantReceiptFields(
+  legacy?: Partial<MerchantReceiptPrintSettings>,
+  locale?: string | null,
+): MerchantReceiptContentField[] {
+  const defaultFontSizePx = normalizeIntegerRange(legacy?.fontSizePx, 8, 28, 12);
+  return ([
     {
       key: "merchantName",
       section: "header",
-      label: "商户名称",
+      label: getMerchantReceiptFieldLabel(locale, "merchantName"),
       visible: legacy?.showMerchantName ?? true,
       width: "full",
     },
-    { key: "siteId", section: "header", label: "站点ID", visible: legacy?.showSiteId ?? false, width: "full" },
-    { key: "receiptNo", section: "meta", label: "小票号", visible: true, width: "full" },
-    { key: "timestamp", section: "meta", label: "时间", visible: legacy?.showTimestamp ?? true, width: "full" },
-    { key: "memberName", section: "meta", label: "会员姓名", visible: legacy?.showMemberName ?? true, width: "half" },
-    { key: "memberNo", section: "meta", label: "会员卡号", visible: legacy?.showMemberNo ?? true, width: "half" },
-    { key: "itemName", section: "items", label: "项目", visible: true, width: "full" },
-    { key: "itemCode", section: "items", label: "编号", visible: legacy?.showItemCode ?? true, width: "third" },
-    { key: "itemCategory", section: "items", label: "分类", visible: legacy?.showItemCategory ?? false, width: "third" },
-    { key: "unitPoints", section: "items", label: "单价", visible: legacy?.showUnitPoints ?? true, width: "third" },
-    { key: "itemQuantity", section: "items", label: "数量", visible: true, width: "third" },
-    { key: "itemSubtotal", section: "items", label: "小计", visible: true, width: "third" },
-    { key: "couponLineDiscount", section: "items", label: "卡券", visible: legacy?.showCouponDiscount ?? true, width: "third" },
-    { key: "totalQuantity", section: "summary", label: "项目数", visible: true, width: "full" },
-    { key: "grossPoints", section: "summary", label: "原始积分", visible: true, width: "full" },
+    {
+      key: "siteId",
+      section: "header",
+      label: getMerchantReceiptFieldLabel(locale, "siteId"),
+      visible: legacy?.showSiteId ?? false,
+      width: "full",
+    },
+    { key: "receiptNo", section: "meta", label: getMerchantReceiptFieldLabel(locale, "receiptNo"), visible: true, width: "full" },
+    {
+      key: "timestamp",
+      section: "meta",
+      label: getMerchantReceiptFieldLabel(locale, "timestamp"),
+      visible: legacy?.showTimestamp ?? true,
+      width: "full",
+    },
+    {
+      key: "memberName",
+      section: "meta",
+      label: getMerchantReceiptFieldLabel(locale, "memberName"),
+      visible: legacy?.showMemberName ?? true,
+      width: "half",
+    },
+    {
+      key: "memberNo",
+      section: "meta",
+      label: getMerchantReceiptFieldLabel(locale, "memberNo"),
+      visible: legacy?.showMemberNo ?? true,
+      width: "half",
+    },
+    { key: "itemName", section: "items", label: getMerchantReceiptFieldLabel(locale, "itemName"), visible: true, width: "full" },
+    {
+      key: "itemCode",
+      section: "items",
+      label: getMerchantReceiptFieldLabel(locale, "itemCode"),
+      visible: legacy?.showItemCode ?? true,
+      width: "third",
+    },
+    {
+      key: "itemCategory",
+      section: "items",
+      label: getMerchantReceiptFieldLabel(locale, "itemCategory"),
+      visible: legacy?.showItemCategory ?? false,
+      width: "third",
+    },
+    {
+      key: "unitPoints",
+      section: "items",
+      label: getMerchantReceiptFieldLabel(locale, "unitPoints"),
+      visible: legacy?.showUnitPoints ?? true,
+      width: "third",
+    },
+    { key: "itemQuantity", section: "items", label: getMerchantReceiptFieldLabel(locale, "itemQuantity"), visible: true, width: "third" },
+    { key: "itemSubtotal", section: "items", label: getMerchantReceiptFieldLabel(locale, "itemSubtotal"), visible: true, width: "third" },
+    {
+      key: "couponLineDiscount",
+      section: "items",
+      label: getMerchantReceiptFieldLabel(locale, "couponLineDiscount"),
+      visible: legacy?.showCouponDiscount ?? true,
+      width: "third",
+    },
+    { key: "totalQuantity", section: "summary", label: getMerchantReceiptFieldLabel(locale, "totalQuantity"), visible: true, width: "full" },
+    { key: "grossPoints", section: "summary", label: getMerchantReceiptFieldLabel(locale, "grossPoints"), visible: true, width: "full" },
     {
       key: "couponDiscountTotal",
       section: "summary",
-      label: "卡券抵扣",
+      label: getMerchantReceiptFieldLabel(locale, "couponDiscountTotal"),
       visible: legacy?.showCouponDiscount ?? true,
       width: "full",
     },
-    { key: "totalPoints", section: "summary", label: "扣减积分", visible: true, width: "full" },
-    { key: "beforePointBalance", section: "summary", label: "结算前积分", visible: true, width: "full" },
-    { key: "afterPointBalance", section: "summary", label: "结算后积分", visible: true, width: "full" },
-    { key: "note", section: "footer", label: "备注", visible: legacy?.showNote ?? true, width: "full" },
-    { key: "footerText", section: "footer", label: "页脚", visible: true, width: "full" },
-  ];
+    { key: "totalPoints", section: "summary", label: getMerchantReceiptFieldLabel(locale, "totalPoints"), visible: true, width: "full" },
+    {
+      key: "beforePointBalance",
+      section: "summary",
+      label: getMerchantReceiptFieldLabel(locale, "beforePointBalance"),
+      visible: true,
+      width: "full",
+    },
+    {
+      key: "afterPointBalance",
+      section: "summary",
+      label: getMerchantReceiptFieldLabel(locale, "afterPointBalance"),
+      visible: true,
+      width: "full",
+    },
+    { key: "note", section: "footer", label: getMerchantReceiptFieldLabel(locale, "note"), visible: legacy?.showNote ?? true, width: "full" },
+    { key: "footerText", section: "footer", label: getMerchantReceiptFieldLabel(locale, "footerText"), visible: true, width: "full" },
+  ] satisfies Array<Omit<MerchantReceiptContentField, "fontSizePx" | "letterSpacingPx">>).map((field) => ({
+    ...field,
+    fontSizePx: defaultFontSizePx,
+    letterSpacingPx: 0,
+  }));
+}
+
+export function applyMerchantReceiptLocaleDefaults<T extends Partial<MerchantReceiptPrintSettings>>(
+  settings: T,
+  locale: string | null | undefined,
+): T & Pick<MerchantReceiptPrintSettings, "receiptLocale" | "title" | "footer" | "receiptFields"> {
+  const effectiveLocale = trimText(locale, 40) || MERCHANT_RECEIPT_AUTO_LOCALE;
+  const copy = getMerchantReceiptLocaleCopy(effectiveLocale);
+  const defaults = createDefaultMerchantReceiptFields(settings, effectiveLocale);
+  const defaultsByKey = new Map(defaults.map((field) => [field.key, field]));
+  const sourceFields = Array.isArray(settings.receiptFields) ? settings.receiptFields : defaults;
+  return {
+    ...settings,
+    receiptLocale: effectiveLocale,
+    title: copy.title,
+    footer: copy.footer,
+    receiptFields: sourceFields.map((field) => {
+      const defaultField = defaultsByKey.get(field.key);
+      return defaultField ? { ...field, label: defaultField.label } : field;
+    }),
+  };
 }
 
 export function createEmptyMerchantMembershipSettings(siteId: string): MerchantMembershipSettings {
@@ -465,6 +784,9 @@ export function createEmptyMerchantMembershipSettings(siteId: string): MerchantM
       cutPaperAfterPrint: false,
       cutPaperMode: "partial",
       feedLinesBeforeCut: 4,
+      receiptLocale: MERCHANT_RECEIPT_AUTO_LOCALE,
+      headerLogoUrl: "",
+      headerLogoWidthPercent: 42,
       title: "积分兑换小票",
       subtitle: "",
       footer: "谢谢惠顾",
@@ -715,8 +1037,12 @@ function normalizeReceiptFieldWidth(value: unknown, fallback: MerchantReceiptFie
   return width === "full" || width === "half" || width === "third" ? width : fallback;
 }
 
+function normalizeReceiptFieldLabel(value: unknown, fallback: string) {
+  return value === null || value === undefined ? fallback : trimText(value, 80);
+}
+
 function normalizeReceiptContentFields(value: unknown, legacy: Partial<MerchantReceiptPrintSettings>) {
-  const defaults = createDefaultMerchantReceiptFields(legacy);
+  const defaults = createDefaultMerchantReceiptFields(legacy, legacy.receiptLocale);
   if (!Array.isArray(value)) return defaults;
   const defaultsByKey = new Map(defaults.map((field) => [field.key, field]));
   const seen = new Set<string>();
@@ -731,9 +1057,16 @@ function normalizeReceiptContentFields(value: unknown, legacy: Partial<MerchantR
     normalized.push({
       key,
       section: fallback.section,
-      label: trimText(record.label ?? record.name, 80) || fallback.label,
+      label: normalizeReceiptFieldLabel(record.label ?? record.name, fallback.label),
       visible: normalizeBoolean(record.visible ?? record.status, fallback.visible),
       width: normalizeReceiptFieldWidth(record.width, fallback.width),
+      fontSizePx: normalizeIntegerRange(record.fontSizePx ?? record.fontSize, 8, 28, fallback.fontSizePx),
+      letterSpacingPx: normalizeNumberRange(
+        record.letterSpacingPx ?? record.letterSpacing,
+        0,
+        8,
+        fallback.letterSpacingPx,
+      ),
     });
   });
   defaults.forEach((field) => {
@@ -772,6 +1105,14 @@ function normalizeReceiptPrintSettings(value: unknown): MerchantReceiptPrintSett
       0,
       10,
       fallback.feedLinesBeforeCut,
+    ),
+    receiptLocale: trimText(record.receiptLocale ?? record.receiptLanguage ?? record.locale, 40) || fallback.receiptLocale,
+    headerLogoUrl: trimText(record.headerLogoUrl ?? record.receiptLogoUrl ?? record.logoUrl, 1000),
+    headerLogoWidthPercent: normalizeIntegerRange(
+      record.headerLogoWidthPercent ?? record.receiptLogoWidthPercent ?? record.logoWidthPercent,
+      20,
+      80,
+      fallback.headerLogoWidthPercent,
     ),
     title: trimText(record.title, 120) || fallback.title,
     subtitle: trimText(record.subtitle, 160),

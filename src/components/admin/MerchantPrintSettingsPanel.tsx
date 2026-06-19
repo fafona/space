@@ -1,8 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "react";
 import { showGlobalToast } from "@/lib/globalToast";
 import {
+  MERCHANT_RECEIPT_AUTO_LOCALE,
+  applyMerchantReceiptLocaleDefaults,
   createEmptyMerchantMembershipSettings,
   normalizeMerchantMembershipSettings,
   type MerchantMembershipSettings,
@@ -22,8 +24,12 @@ import {
   printRedemptionReceiptWithLocalBridge,
   normalizeReceiptPrintSettingsForClient,
   type LocalPrintBridgePrinter,
+  type MerchantRedemptionReceiptLine,
   type MerchantRedemptionReceiptData,
 } from "@/lib/merchantReceiptPrint";
+import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
+import { uploadDataUrlToPublicStorage } from "@/lib/publicAssetUpload";
+import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import { runWithMerchantOperationContext } from "@/lib/merchantOperationContext";
 import {
   invalidateMerchantAdminDataCachePrefix,
@@ -33,6 +39,8 @@ import {
 type MerchantPrintSettingsPanelProps = {
   siteId: string;
   siteName?: string;
+  siteCountryCode?: string;
+  siteCountry?: string;
   className?: string;
 };
 
@@ -56,8 +64,115 @@ const RECEIPT_FIELD_WIDTH_OPTIONS = [
   { value: "third", label: "三分之一" },
 ] as const;
 
+const RECEIPT_PAPER_WIDTH_OPTIONS = [
+  { value: 58, label: "58mm（常用小票，驱动常显示 57mm）" },
+  { value: 80, label: "80mm（XP-80C / 餐饮常用）" },
+  { value: 76, label: "76mm（旧款或厨房票据）" },
+  { value: 110, label: "110mm（宽票据，少用）" },
+] as const;
+
+const RECEIPT_COUNTRY_LOCALE_BY_NAME: Record<string, string> = {
+  spain: "es-ES",
+  espana: "es-ES",
+  "españa": "es-ES",
+  西班牙: "es-ES",
+  china: "zh-CN",
+  中国: "zh-CN",
+  taiwan: "zh-TW",
+  台湾: "zh-TW",
+  japan: "ja-JP",
+  日本: "ja-JP",
+  korea: "ko-KR",
+  韩国: "ko-KR",
+};
+
+const RECEIPT_SUPPORTED_LOCALE_CODES = ["zh-CN", "en-GB", "es-ES", "fr-FR", "de-DE", "it-IT", "pt-PT"] as const;
+const RECEIPT_SUPPORTED_LOCALE_SET = new Set<string>(RECEIPT_SUPPORTED_LOCALE_CODES);
+const RECEIPT_LANGUAGE_OPTIONS = RECEIPT_SUPPORTED_LOCALE_CODES.map(
+  (code) => LANGUAGE_OPTIONS.find((item) => item.code === code) ?? { code, label: code, region: "europe", countryCode: "" },
+);
+
 function trimText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+function normalizeCountryName(value: unknown) {
+  return trimText(value, 120)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function resolveDefaultReceiptLocale(countryCode?: string, country?: string) {
+  const code = trimText(countryCode, 8).toUpperCase();
+  if (code === "ES") return "es-ES";
+  if (code) {
+    const matched = LANGUAGE_OPTIONS.find((item) => item.countryCode.toUpperCase() === code);
+    if (matched) return resolveReceiptSupportedLocale(matched.code);
+  }
+  const countryKey = normalizeCountryName(country);
+  if (countryKey && RECEIPT_COUNTRY_LOCALE_BY_NAME[countryKey]) {
+    return resolveReceiptSupportedLocale(RECEIPT_COUNTRY_LOCALE_BY_NAME[countryKey]);
+  }
+  return "zh-CN";
+}
+
+function resolveReceiptSupportedLocale(locale: string) {
+  const resolved = resolveSupportedLocale(locale);
+  if (RECEIPT_SUPPORTED_LOCALE_SET.has(resolved)) return resolved;
+  const language = resolved.split("-")[0]?.toLowerCase();
+  const sameLanguage = RECEIPT_SUPPORTED_LOCALE_CODES.find((item) => item.toLowerCase().startsWith(`${language}-`));
+  return sameLanguage ?? "en-GB";
+}
+
+function getLanguageOptionLabel(locale: string) {
+  const resolved = resolveReceiptSupportedLocale(locale);
+  const option = RECEIPT_LANGUAGE_OPTIONS.find((item) => item.code === resolved);
+  return option ? option.label : resolved;
+}
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+    reader.onerror = () => reject(reader.error ?? new Error("file_read_failed"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function loadImageElement(src: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("image_decode_failed"));
+    image.src = src;
+  });
+}
+
+async function compressReceiptLogoDataUrl(file: File, dataUrl: string) {
+  if (typeof document === "undefined") return dataUrl;
+  const mime = String(file.type ?? "").toLowerCase();
+  if (mime === "image/svg+xml" || mime === "image/gif") return dataUrl;
+  try {
+    const image = await loadImageElement(dataUrl);
+    const maxWidth = 720;
+    const maxHeight = 360;
+    const sourceWidth = image.naturalWidth || image.width || 1;
+    const sourceHeight = image.naturalHeight || image.height || 1;
+    const scale = Math.min(1, maxWidth / sourceWidth, maxHeight / sourceHeight);
+    const width = Math.max(1, Math.round(sourceWidth * scale));
+    const height = Math.max(1, Math.round(sourceHeight * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) return dataUrl;
+    context.clearRect(0, 0, width, height);
+    context.drawImage(image, 0, 0, width, height);
+    return canvas.toDataURL("image/webp", 0.82);
+  } catch {
+    return dataUrl;
+  }
 }
 
 function readPayloadMessage(value: unknown, fallback: string) {
@@ -100,10 +215,30 @@ function parseInteger(value: string, min: number, max: number, fallback: number)
   return Math.min(max, Math.max(min, Math.round(parsed)));
 }
 
+function parseNumberRange(value: string, min: number, max: number, fallback: number, precision = 1) {
+  const parsed = Number.parseFloat(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Number(Math.min(max, Math.max(min, parsed)).toFixed(precision));
+}
+
 function receiptPreviewWidthClass(field: MerchantReceiptContentField) {
   if (field.width === "half") return "col-span-3";
   if (field.width === "third") return "col-span-2";
   return "col-span-6";
+}
+
+function receiptFieldPreviewStyle(field: MerchantReceiptContentField) {
+  return {
+    fontSize: `${field.fontSizePx}px`,
+    letterSpacing: `${field.letterSpacingPx}px`,
+  };
+}
+
+function formatPreviewLabelValue(label: string, value: unknown, separator = " ") {
+  const text = String(value ?? "");
+  if (!text) return "";
+  const normalizedLabel = label.trim();
+  return normalizedLabel ? `${normalizedLabel}${separator}${text}` : text;
 }
 
 function buildPreviewReceipt(siteId: string, siteName: string): MerchantRedemptionReceiptData {
@@ -149,6 +284,8 @@ function buildPreviewReceipt(siteId: string, siteName: string): MerchantRedempti
 export default function MerchantPrintSettingsPanel({
   siteId,
   siteName = "",
+  siteCountryCode = "",
+  siteCountry = "",
   className = "",
 }: MerchantPrintSettingsPanelProps) {
   const normalizedSiteId = siteId.trim();
@@ -162,6 +299,8 @@ export default function MerchantPrintSettingsPanel({
   const [bridgeChecking, setBridgeChecking] = useState(false);
   const [bridgeStatus, setBridgeStatus] = useState<"unknown" | "online" | "offline">("unknown");
   const [bridgePrinters, setBridgePrinters] = useState<LocalPrintBridgePrinter[]>([]);
+  const [logoUploading, setLogoUploading] = useState(false);
+  const [logoPreviewUrl, setLogoPreviewUrl] = useState("");
   const [activeReceiptSection, setActiveReceiptSection] = useState<MerchantReceiptFieldSection>("meta");
 
   const activeSettings = useMemo(
@@ -172,15 +311,55 @@ export default function MerchantPrintSettingsPanel({
     () => normalizeReceiptPrintSettingsForClient(activeSettings.printSettings),
     [activeSettings.printSettings],
   );
+  const defaultReceiptLocale = useMemo(
+    () => resolveDefaultReceiptLocale(siteCountryCode, siteCountry),
+    [siteCountry, siteCountryCode],
+  );
+  const selectedReceiptLocale =
+    printSettings.receiptLocale === MERCHANT_RECEIPT_AUTO_LOCALE
+      ? MERCHANT_RECEIPT_AUTO_LOCALE
+      : resolveReceiptSupportedLocale(printSettings.receiptLocale);
+  const autoReceiptLocaleLabel = `自动（按所在国家：${getLanguageOptionLabel(defaultReceiptLocale)}）`;
   const previewReceipt = useMemo(
     () => buildPreviewReceipt(normalizedSiteId, siteName),
     [normalizedSiteId, siteName],
   );
+  const headerLogoDisplayUrl = logoPreviewUrl || normalizePublicAssetUrl(printSettings.headerLogoUrl);
   const activeReceiptSectionInfo =
     RECEIPT_FIELD_SECTIONS.find((section) => section.id === activeReceiptSection) ?? RECEIPT_FIELD_SECTIONS[0];
   const activeReceiptFields = useMemo(
     () => getReceiptFieldsBySection(printSettings, activeReceiptSectionInfo.id),
     [activeReceiptSectionInfo.id, printSettings],
+  );
+  const receiptFieldByKey = useMemo(
+    () => new Map(printSettings.receiptFields.map((field) => [field.key, field])),
+    [printSettings.receiptFields],
+  );
+
+  const renderPreviewItemMeta = useCallback(
+    (line: MerchantRedemptionReceiptLine) => {
+      const nodes: ReactNode[] = [];
+      getVisibleReceiptFields(printSettings, "items")
+        .filter((field) => field.key !== "itemName" && field.key !== "itemSubtotal")
+        .forEach((field) => {
+          const value = getReceiptLineFieldValue(field.key, line);
+          if (!value) return;
+          if (nodes.length) {
+            nodes.push(
+              <span key={`${field.key}-separator`} className="text-slate-400">
+                {" / "}
+              </span>,
+            );
+          }
+          nodes.push(
+            <span key={field.key} style={receiptFieldPreviewStyle(field)}>
+              {formatPreviewLabelValue(field.label, value)}
+            </span>,
+          );
+        });
+      return nodes;
+    },
+    [printSettings],
   );
 
   const patchPrintSettings = useCallback((patch: Partial<MerchantReceiptPrintSettings>) => {
@@ -194,6 +373,25 @@ export default function MerchantPrintSettingsPanel({
     setNotice("");
     setError("");
   }, []);
+
+  const applyReceiptLocale = useCallback(
+    (nextLocale: string) => {
+      const shouldUseAuto = nextLocale === MERCHANT_RECEIPT_AUTO_LOCALE;
+      const effectiveLocale = shouldUseAuto ? defaultReceiptLocale : resolveReceiptSupportedLocale(nextLocale);
+      const localized = applyMerchantReceiptLocaleDefaults(
+        {
+          ...printSettings,
+          receiptLocale: shouldUseAuto ? MERCHANT_RECEIPT_AUTO_LOCALE : effectiveLocale,
+        },
+        effectiveLocale,
+      );
+      patchPrintSettings({
+        ...localized,
+        receiptLocale: shouldUseAuto ? MERCHANT_RECEIPT_AUTO_LOCALE : effectiveLocale,
+      });
+    },
+    [defaultReceiptLocale, patchPrintSettings, printSettings],
+  );
 
   const patchReceiptField = useCallback(
     (key: string, patch: Partial<MerchantReceiptContentField>) => {
@@ -229,7 +427,11 @@ export default function MerchantPrintSettingsPanel({
 
   const loadSettings = useCallback(async () => {
     if (!/^\d{8}$/.test(normalizedSiteId)) {
-      setSettings(createEmptyMerchantMembershipSettings(normalizedSiteId));
+      const emptySettings = createEmptyMerchantMembershipSettings(normalizedSiteId);
+      setSettings({
+        ...emptySettings,
+        printSettings: applyMerchantReceiptLocaleDefaults(emptySettings.printSettings, defaultReceiptLocale),
+      });
       setError("当前商户资料还没准备好，请稍后重试。");
       return;
     }
@@ -248,13 +450,21 @@ export default function MerchantPrintSettingsPanel({
       if (!response.ok || payload?.ok !== true || !payload.settings) {
         throw new Error(readPayloadMessage(payload?.message, "打印配置加载失败，请稍后重试"));
       }
-      setSettings(normalizeMerchantMembershipSettings(normalizedSiteId, payload.settings));
+      const normalized = normalizeMerchantMembershipSettings(normalizedSiteId, payload.settings);
+      setSettings(
+        !normalized.updatedAt && normalized.printSettings.receiptLocale === MERCHANT_RECEIPT_AUTO_LOCALE
+          ? {
+              ...normalized,
+              printSettings: applyMerchantReceiptLocaleDefaults(normalized.printSettings, defaultReceiptLocale),
+            }
+          : normalized,
+      );
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "打印配置加载失败，请稍后重试");
     } finally {
       setLoading(false);
     }
-  }, [normalizedSiteId]);
+  }, [defaultReceiptLocale, normalizedSiteId]);
 
   async function saveSettings() {
     if (saving) return;
@@ -350,9 +560,54 @@ export default function MerchantPrintSettingsPanel({
     setNotice("已打开浏览器测试打印。");
   }
 
+  async function handleReceiptLogoUpload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || logoUploading) return;
+    if (!file.type.toLowerCase().startsWith("image/")) {
+      setError("仅支持上传图片文件。");
+      return;
+    }
+    setLogoUploading(true);
+    setError("");
+    setNotice("");
+    try {
+      const localPreviewUrl = await readFileAsDataUrl(file);
+      if (localPreviewUrl) {
+        setLogoPreviewUrl(localPreviewUrl);
+      }
+      const uploadDataUrl = await compressReceiptLogoDataUrl(file, localPreviewUrl);
+      const uploadedUrl = await uploadDataUrlToPublicStorage(uploadDataUrl, {
+        merchantHint: normalizedSiteId || "receipt-logo",
+        folder: "merchant-assets",
+        usage: "generic-image",
+        operation: {
+          operationModule: "经营中心 > 打印机",
+          operationAction: "上传小票Logo",
+          operationSummary: "在打印机设置中上传页头Logo",
+        },
+      });
+      if (!uploadedUrl) {
+        throw new Error("Logo 上传失败，请重新选择图片。");
+      }
+      const normalizedUrl = normalizePublicAssetUrl(uploadedUrl);
+      patchPrintSettings({ headerLogoUrl: normalizedUrl });
+      setLogoPreviewUrl("");
+      setNotice("页头 Logo 已上传，请保存配置。");
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : "Logo 上传失败，请重新选择图片。");
+    } finally {
+      setLogoUploading(false);
+    }
+  }
+
   useEffect(() => {
     void loadSettings();
   }, [loadSettings]);
+
+  useEffect(() => {
+    setLogoPreviewUrl("");
+  }, [printSettings.headerLogoUrl]);
 
   useEffect(() => {
     if (!error && !notice) return;
@@ -403,8 +658,8 @@ export default function MerchantPrintSettingsPanel({
       {notice ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{notice}</div> : null}
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-        <div className="space-y-4">
-          <section className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]">
+        <div className="flex flex-col gap-4">
+          <section className="order-3 rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]">
             <h3 className="text-base font-semibold text-slate-950">打印行为</h3>
             <div className="mt-4 grid gap-3 md:grid-cols-2">
               <SwitchField
@@ -417,18 +672,37 @@ export default function MerchantPrintSettingsPanel({
                 checked={printSettings.autoPrintRedemptionReceipt}
                 onChange={(checked) => patchPrintSettings({ autoPrintRedemptionReceipt: checked })}
               />
+              <Field label="小票语言">
+                <select
+                  className={inputClassName()}
+                  value={selectedReceiptLocale}
+                  onChange={(event) => applyReceiptLocale(event.target.value)}
+                >
+                  <option value={MERCHANT_RECEIPT_AUTO_LOCALE}>{autoReceiptLocaleLabel}</option>
+                  {RECEIPT_LANGUAGE_OPTIONS.map((option) => (
+                    <option key={option.code} value={option.code}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
               <Field label="纸宽(mm)">
-                <input
-                  type="number"
-                  min={40}
-                  max={120}
-                  step={1}
+                <select
                   className={inputClassName()}
                   value={printSettings.paperWidthMm}
                   onChange={(event) =>
                     patchPrintSettings({ paperWidthMm: parseInteger(event.target.value, 40, 120, printSettings.paperWidthMm) })
                   }
-                />
+                >
+                  {!RECEIPT_PAPER_WIDTH_OPTIONS.some((option) => option.value === printSettings.paperWidthMm) ? (
+                    <option value={printSettings.paperWidthMm}>{printSettings.paperWidthMm}mm（当前自定义值）</option>
+                  ) : null}
+                  {RECEIPT_PAPER_WIDTH_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
               </Field>
               <Field label="字体(px)">
                 <input
@@ -459,7 +733,7 @@ export default function MerchantPrintSettingsPanel({
             </div>
           </section>
 
-          <section className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]">
+          <section className="order-4 rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h3 className="text-base font-semibold text-slate-950">本机静默打印助手</h3>
@@ -573,9 +847,72 @@ export default function MerchantPrintSettingsPanel({
             </div>
           </section>
 
-          <section className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]">
+          <section className="order-1 rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]">
             <h3 className="text-base font-semibold text-slate-950">票面文字</h3>
             <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 md:col-span-2">
+                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_180px]">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-800">页头 Logo</div>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">
+                      建议使用横向透明 PNG 或清晰黑白图，静默打印会自动转换为热敏打印机可识别的单色位图。
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <label className="inline-flex h-10 cursor-pointer items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                        <span>{logoUploading ? "上传中..." : headerLogoDisplayUrl ? "重新上传" : "上传 Logo"}</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="sr-only"
+                          onChange={(event) => void handleReceiptLogoUpload(event)}
+                          disabled={logoUploading}
+                        />
+                      </label>
+                      {headerLogoDisplayUrl ? (
+                        <button
+                          type="button"
+                          className="h-10 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                          onClick={() => {
+                            setLogoPreviewUrl("");
+                            patchPrintSettings({ headerLogoUrl: "" });
+                          }}
+                          disabled={logoUploading}
+                        >
+                          清除 Logo
+                        </button>
+                      ) : null}
+                    </div>
+                    <Field label={`Logo 宽度：${printSettings.headerLogoWidthPercent}%`} className="mt-3">
+                      <input
+                        type="range"
+                        min={20}
+                        max={80}
+                        step={1}
+                        className="w-full accent-slate-900"
+                        value={printSettings.headerLogoWidthPercent}
+                        onChange={(event) =>
+                          patchPrintSettings({
+                            headerLogoWidthPercent: parseInteger(event.target.value, 20, 80, printSettings.headerLogoWidthPercent),
+                          })
+                        }
+                      />
+                    </Field>
+                  </div>
+                  <div className="grid min-h-28 place-items-center rounded-2xl border border-dashed border-slate-300 bg-white p-3">
+                    {headerLogoDisplayUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={headerLogoDisplayUrl}
+                        alt="小票页头 Logo"
+                        className="max-h-24 max-w-full object-contain"
+                        style={{ width: `${printSettings.headerLogoWidthPercent}%` }}
+                      />
+                    ) : (
+                      <span className="text-center text-xs text-slate-400">未设置 Logo</span>
+                    )}
+                  </div>
+                </div>
+              </div>
               <Field label="标题">
                 <input
                   className={inputClassName()}
@@ -600,7 +937,7 @@ export default function MerchantPrintSettingsPanel({
             </div>
           </section>
 
-          <section className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]">
+          <section className="order-2 rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h3 className="text-base font-semibold text-slate-950">小票内容</h3>
@@ -655,11 +992,13 @@ export default function MerchantPrintSettingsPanel({
                 </div>
               </div>
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[620px] border-collapse text-sm">
+                <table className="w-full min-w-[860px] border-collapse text-sm">
                   <thead className="bg-white text-xs text-slate-500">
                     <tr>
-                      <th className="w-20 border-b border-slate-200 px-3 py-2 text-left font-semibold">打印</th>
+                      <th className="w-16 border-b border-slate-200 px-3 py-2 text-left font-semibold">打印</th>
                       <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold">显示名称</th>
+                      <th className="w-28 border-b border-slate-200 px-3 py-2 text-left font-semibold">字体(px)</th>
+                      <th className="w-32 border-b border-slate-200 px-3 py-2 text-left font-semibold">字间距(px)</th>
                       <th className="w-40 border-b border-slate-200 px-3 py-2 text-left font-semibold">宽度</th>
                     </tr>
                   </thead>
@@ -671,7 +1010,7 @@ export default function MerchantPrintSettingsPanel({
                             type="checkbox"
                             checked={field.visible}
                             onChange={(event) => patchReceiptField(field.key, { visible: event.target.checked })}
-                            aria-label={`${field.label} 是否打印`}
+                            aria-label={`${field.label || field.key} 是否打印`}
                           />
                         </td>
                         <td className="px-3 py-2 align-middle">
@@ -682,6 +1021,36 @@ export default function MerchantPrintSettingsPanel({
                             placeholder="显示名称"
                           />
                           <div className="mt-0.5 text-[11px] text-slate-400">{field.key}</div>
+                        </td>
+                        <td className="px-3 py-2 align-middle">
+                          <input
+                            type="number"
+                            min={8}
+                            max={28}
+                            step={1}
+                            className={inputClassName("h-8 rounded-lg text-xs")}
+                            value={field.fontSizePx}
+                            onChange={(event) =>
+                              patchReceiptField(field.key, {
+                                fontSizePx: parseInteger(event.target.value, 8, 28, field.fontSizePx),
+                              })
+                            }
+                          />
+                        </td>
+                        <td className="px-3 py-2 align-middle">
+                          <input
+                            type="number"
+                            min={0}
+                            max={8}
+                            step={0.5}
+                            className={inputClassName("h-8 rounded-lg text-xs")}
+                            value={field.letterSpacingPx}
+                            onChange={(event) =>
+                              patchReceiptField(field.key, {
+                                letterSpacingPx: parseNumberRange(event.target.value, 0, 8, field.letterSpacingPx),
+                              })
+                            }
+                          />
                         </td>
                         <td className="px-3 py-2 align-middle">
                           <select
@@ -721,12 +1090,25 @@ export default function MerchantPrintSettingsPanel({
               }}
             >
               <div className="border-b border-dashed border-black pb-2 text-center">
+                {headerLogoDisplayUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={headerLogoDisplayUrl}
+                    alt="小票页头 Logo"
+                    className="mx-auto mb-2 max-h-16 object-contain"
+                    style={{ width: `${printSettings.headerLogoWidthPercent}%` }}
+                  />
+                ) : null}
                 <div className="text-lg font-bold">{printSettings.title}</div>
                 {printSettings.subtitle ? <div className="text-xs text-slate-700">{printSettings.subtitle}</div> : null}
                 {getVisibleReceiptFields(printSettings, "header").map((field) => {
                   const value = getReceiptFieldValue(field.key, previewReceipt);
                   return value ? (
-                    <div key={field.key} className={field.key === "siteId" ? "text-xs text-slate-700" : ""}>
+                    <div
+                      key={field.key}
+                      className={field.key === "siteId" ? "text-xs text-slate-700" : ""}
+                      style={receiptFieldPreviewStyle(field)}
+                    >
                       {value}
                     </div>
                   ) : null;
@@ -736,34 +1118,37 @@ export default function MerchantPrintSettingsPanel({
                 {getVisibleReceiptFields(printSettings, "meta").map((field) => {
                   const value = getReceiptFieldValue(field.key, previewReceipt);
                   return value ? (
-                    <div key={field.key} className={`flex justify-between gap-3 ${receiptPreviewWidthClass(field)}`}>
-                      <span>{field.label}</span>
+                    <div
+                      key={field.key}
+                      className={`flex justify-between gap-3 ${receiptPreviewWidthClass(field)}`}
+                      style={receiptFieldPreviewStyle(field)}
+                    >
+                      {field.label ? <span>{field.label}</span> : null}
                       <strong className="text-right">{value}</strong>
                     </div>
                   ) : null;
                 })}
               </div>
               <div className="py-2">
-                {previewReceipt.lines.map((line) => (
-                  <div key={line.code} className="border-b border-dashed border-slate-300 py-1">
-                    <div className="flex justify-between gap-2">
-                      <strong>{getReceiptLineFieldValue("itemName", line)}</strong>
-                      {isReceiptFieldVisible(printSettings, "itemSubtotal") ? (
-                        <span>{getReceiptLineFieldValue("itemSubtotal", line)}</span>
-                      ) : null}
+                {previewReceipt.lines.map((line) => {
+                  const itemNameField = receiptFieldByKey.get("itemName");
+                  const itemSubtotalField = receiptFieldByKey.get("itemSubtotal");
+                  return (
+                    <div key={line.code} className="border-b border-dashed border-slate-300 py-1">
+                      <div className="flex justify-between gap-2">
+                        <strong style={itemNameField ? receiptFieldPreviewStyle(itemNameField) : undefined}>
+                          {getReceiptLineFieldValue("itemName", line)}
+                        </strong>
+                        {isReceiptFieldVisible(printSettings, "itemSubtotal") ? (
+                          <span style={itemSubtotalField ? receiptFieldPreviewStyle(itemSubtotalField) : undefined}>
+                            {getReceiptLineFieldValue("itemSubtotal", line)}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="text-xs text-slate-700">{renderPreviewItemMeta(line)}</div>
                     </div>
-                    <div className="text-xs text-slate-700">
-                      {getVisibleReceiptFields(printSettings, "items")
-                        .filter((field) => field.key !== "itemName" && field.key !== "itemSubtotal")
-                        .map((field) => {
-                          const value = getReceiptLineFieldValue(field.key, line);
-                          return value ? `${field.label} ${value}` : "";
-                        })
-                        .filter(Boolean)
-                        .join(" / ")}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
               <div className="grid grid-cols-6 gap-x-2 gap-y-1 border-t border-dashed border-black pt-2">
                 {getVisibleReceiptFields(printSettings, "summary").map((field) => {
@@ -774,8 +1159,9 @@ export default function MerchantPrintSettingsPanel({
                       className={`flex justify-between gap-3 ${receiptPreviewWidthClass(field)} ${
                         field.key === "totalPoints" ? "border-t border-black pt-1 text-base font-bold" : ""
                       }`}
+                      style={receiptFieldPreviewStyle(field)}
                     >
-                      <span>{field.label}</span>
+                      {field.label ? <span>{field.label}</span> : null}
                       <strong>{value}</strong>
                     </div>
                   ) : null;
@@ -784,14 +1170,18 @@ export default function MerchantPrintSettingsPanel({
               {getVisibleReceiptFields(printSettings, "footer").map((field) => {
                 if (field.key === "note" && previewReceipt.note) {
                   return (
-                    <div key={field.key} className="mt-2 border-t border-dashed border-black pt-2">
-                      {field.label}：{previewReceipt.note}
+                    <div
+                      key={field.key}
+                      className="mt-2 border-t border-dashed border-black pt-2"
+                      style={receiptFieldPreviewStyle(field)}
+                    >
+                      {formatPreviewLabelValue(field.label, previewReceipt.note, "：")}
                     </div>
                   );
                 }
                 if (field.key === "footerText" && printSettings.footer) {
                   return (
-                    <div key={field.key} className="mt-3 text-center font-bold">
+                    <div key={field.key} className="mt-3 text-center font-bold" style={receiptFieldPreviewStyle(field)}>
                       {printSettings.footer}
                     </div>
                   );

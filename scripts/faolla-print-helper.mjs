@@ -7,7 +7,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const VERSION = "1.1.0";
+const VERSION = "1.2.0";
 const DEFAULT_PORT = 17658;
 const DEFAULT_HOST = "127.0.0.1";
 const MAX_BODY_BYTES = 256 * 1024;
@@ -109,6 +109,35 @@ function normalizeCutMode(value) {
   return value === "full" ? "full" : "partial";
 }
 
+function normalizeUrl(value) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed || trimmed.length > 1000) return "";
+  return /^https?:\/\//i.test(trimmed) ? trimmed : "";
+}
+
+function readSafeErrorMessage(error, fallback) {
+  const raw = [error?.stderr, error?.stdout, error?.message]
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean)
+    .join("\n");
+  if (!raw) return fallback;
+  if (/default_printer_not_found/i.test(raw)) return "default_printer_not_found";
+  if (/OpenPrinter failed/i.test(raw)) return "OpenPrinter failed";
+  if (/StartDocPrinter failed/i.test(raw)) return "StartDocPrinter failed";
+  if (/StartPagePrinter failed/i.test(raw)) return "StartPagePrinter failed";
+  if (/WritePrinter failed/i.test(raw)) return "WritePrinter failed";
+  if (/timeout|timed out|operation timed out/i.test(raw)) return "print_timeout";
+  if (/request_too_large/i.test(raw)) return "request_too_large";
+  if (/invalid_json/i.test(raw)) return "invalid_json";
+  if (/EncodedCommand|Command failed: powershell\.exe/i.test(raw)) return fallback;
+  const firstUsefulLine =
+    raw
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line && !/EncodedCommand|Command failed: powershell\.exe/i.test(line)) || "";
+  return firstUsefulLine.slice(0, 200) || fallback;
+}
+
 async function listPrinters() {
   const stdout = await runPowerShell(`
 $ErrorActionPreference = 'Stop'
@@ -164,6 +193,10 @@ async function printEscPosJob({
   jobName = "FAOLLA receipt",
   feedLinesBeforeCut = 4,
   cutPaperMode = "partial",
+  cutPaperAfterPrint = true,
+  paperWidthMm = 58,
+  headerLogoUrl = "",
+  headerLogoWidthPercent = 42,
 }) {
   const normalizedContent = `${String(content || "")
     .slice(0, MAX_CONTENT_CHARS)
@@ -172,6 +205,10 @@ async function printEscPosJob({
   if (!normalizedContent.trim()) throw new Error("empty_print_content");
   const safeFeedLines = normalizeIntegerRange(feedLinesBeforeCut, 0, 10, 4);
   const safeCutMode = normalizeCutMode(cutPaperMode);
+  const safePaperWidthMm = normalizeIntegerRange(paperWidthMm, 40, 120, 58);
+  const safeHeaderLogoWidthPercent = normalizeIntegerRange(headerLogoWidthPercent, 20, 80, 42);
+  const safeHeaderLogoUrl = normalizeUrl(headerLogoUrl);
+  const shouldCutPaper = Boolean(cutPaperAfterPrint);
   const workDir = path.join(tmpdir(), "faolla-print-helper");
   await mkdir(workDir, { recursive: true });
   const filePath = path.join(workDir, `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
@@ -180,6 +217,8 @@ async function printEscPosJob({
     const stdout = await runPowerShell(
       `
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$InformationPreference = 'SilentlyContinue'
 $printerName = ${psString(printerName)}
 if (-not $printerName) {
   $printerName = Get-CimInstance Win32_Printer | Where-Object { $_.Default } | Select-Object -First 1 -ExpandProperty Name
@@ -190,6 +229,10 @@ if (-not $printerName) {
 $jobName = ${psString(jobName)}
 $feedLines = ${safeFeedLines}
 $cutMode = ${psString(safeCutMode)}
+$cutPaperAfterPrint = ${shouldCutPaper ? "$true" : "$false"}
+$paperWidthMm = ${safePaperWidthMm}
+$headerLogoUrl = ${psString(safeHeaderLogoUrl)}
+$headerLogoWidthPercent = ${safeHeaderLogoWidthPercent}
 $content = Get-Content -LiteralPath ${psString(filePath)} -Raw -Encoding UTF8
 Add-Type -TypeDefinition @'
 using System;
@@ -278,22 +321,106 @@ public class FaollaRawPrinter
   }
 }
 '@
+function Add-ReceiptLogoBytes {
+  param(
+    [System.Collections.Generic.List[byte]] $TargetBytes,
+    [string] $LogoUrl,
+    [int] $PaperWidthMm,
+    [int] $LogoWidthPercent
+  )
+  if (-not $LogoUrl) { return }
+  try {
+    $null = Add-Type -AssemblyName System.Drawing
+    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+    $client = New-Object System.Net.WebClient
+    $client.Headers.Add('User-Agent', 'FAOLLA Print Helper')
+    $downloadedBytes = $client.DownloadData($LogoUrl)
+    $stream = New-Object System.IO.MemoryStream(,$downloadedBytes)
+    $image = [System.Drawing.Image]::FromStream($stream)
+    try {
+      $paperDots = if ($PaperWidthMm -ge 76) { 576 } else { 384 }
+      $targetWidth = [Math]::Round($paperDots * ([Math]::Max(20, [Math]::Min(80, $LogoWidthPercent)) / 100.0))
+      $targetWidth = [Math]::Max(64, [Math]::Min($paperDots, $targetWidth))
+      if (($targetWidth % 8) -ne 0) {
+        $targetWidth = [Math]::Min($paperDots, [Math]::Ceiling($targetWidth / 8.0) * 8)
+      }
+      $scale = $targetWidth / [double]$image.Width
+      $targetHeight = [Math]::Max(1, [Math]::Round($image.Height * $scale))
+      $maxHeight = if ($PaperWidthMm -ge 76) { 240 } else { 180 }
+      if ($targetHeight -gt $maxHeight) {
+        $heightScale = $maxHeight / [double]$targetHeight
+        $targetHeight = $maxHeight
+        $targetWidth = [Math]::Max(64, [Math]::Round($targetWidth * $heightScale))
+        if (($targetWidth % 8) -ne 0) {
+          $targetWidth = [Math]::Ceiling($targetWidth / 8.0) * 8
+        }
+      }
+      $bitmap = New-Object System.Drawing.Bitmap($targetWidth, $targetHeight)
+      $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+      try {
+        $graphics.Clear([System.Drawing.Color]::White)
+        $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+        $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+        $graphics.DrawImage($image, 0, 0, $targetWidth, $targetHeight)
+      } finally {
+        $graphics.Dispose()
+      }
+      $widthBytes = [Math]::Ceiling($targetWidth / 8.0)
+      $rasterBytes = New-Object 'System.Collections.Generic.List[byte]'
+      for ($y = 0; $y -lt $targetHeight; $y++) {
+        for ($byteX = 0; $byteX -lt $widthBytes; $byteX++) {
+          $value = 0
+          for ($bit = 0; $bit -lt 8; $bit++) {
+            $x = ($byteX * 8) + $bit
+            if ($x -lt $targetWidth) {
+              $pixel = $bitmap.GetPixel($x, $y)
+              $luminance = ($pixel.R * 0.299) + ($pixel.G * 0.587) + ($pixel.B * 0.114)
+              if ($pixel.A -gt 30 -and $luminance -lt 190) {
+                $value = $value -bor (0x80 -shr $bit)
+              }
+            }
+          }
+          $rasterBytes.Add([byte]$value)
+        }
+      }
+      $xL = [byte]($widthBytes % 256)
+      $xH = [byte]([Math]::Floor($widthBytes / 256))
+      $yL = [byte]($targetHeight % 256)
+      $yH = [byte]([Math]::Floor($targetHeight / 256))
+      $TargetBytes.AddRange([byte[]](0x1B, 0x61, 0x01))
+      $TargetBytes.AddRange([byte[]](0x1D, 0x76, 0x30, 0x00, $xL, $xH, $yL, $yH))
+      $TargetBytes.AddRange($rasterBytes.ToArray())
+      $TargetBytes.Add([byte]0x0A)
+      $TargetBytes.AddRange([byte[]](0x1B, 0x61, 0x00))
+      $bitmap.Dispose()
+    } finally {
+      $image.Dispose()
+      $stream.Dispose()
+      $client.Dispose()
+    }
+  } catch {
+    # Logo failures must not block receipt printing.
+  }
+}
 $encoding = [System.Text.Encoding]::GetEncoding(936)
 $textBytes = $encoding.GetBytes($content)
 $bytes = New-Object 'System.Collections.Generic.List[byte]'
 $bytes.AddRange([byte[]](0x1B, 0x40))
+$null = Add-ReceiptLogoBytes -TargetBytes $bytes -LogoUrl $headerLogoUrl -PaperWidthMm $paperWidthMm -LogoWidthPercent $headerLogoWidthPercent
 $bytes.AddRange($textBytes)
-for ($i = 0; $i -lt $feedLines; $i++) {
-  $bytes.Add([byte]0x0A)
-}
-if ($cutMode -eq 'full') {
-  $bytes.AddRange([byte[]](0x1D, 0x56, 0x41, 0x00))
-} else {
-  $bytes.AddRange([byte[]](0x1D, 0x56, 0x42, 0x00))
+if ($cutPaperAfterPrint) {
+  for ($i = 0; $i -lt $feedLines; $i++) {
+    $bytes.Add([byte]0x0A)
+  }
+  if ($cutMode -eq 'full') {
+    $bytes.AddRange([byte[]](0x1D, 0x56, 0x41, 0x00))
+  } else {
+    $bytes.AddRange([byte[]](0x1D, 0x56, 0x42, 0x00))
+  }
 }
 $rawBytes = $bytes.ToArray()
 [FaollaRawPrinter]::SendBytesToPrinter($printerName, $jobName, $rawBytes)
-@{ printerName = $printerName; bytes = $rawBytes.Length; mode = 'escpos'; feedLinesBeforeCut = $feedLines; cutPaperMode = $cutMode } | ConvertTo-Json -Compress
+@{ printerName = $printerName; bytes = $rawBytes.Length; mode = 'escpos'; feedLinesBeforeCut = $feedLines; cutPaperMode = $cutMode; cutPaperAfterPrint = $cutPaperAfterPrint; headerLogo = [bool]$headerLogoUrl } | ConvertTo-Json -Compress
 `,
       30000,
     );
@@ -305,6 +432,8 @@ $rawBytes = $bytes.ToArray()
       bytes: Number(result.bytes || Buffer.byteLength(normalizedContent, "utf8")),
       feedLinesBeforeCut: safeFeedLines,
       cutPaperMode: safeCutMode,
+      cutPaperAfterPrint: shouldCutPaper,
+      headerLogo: Boolean(safeHeaderLogoUrl),
     };
   } finally {
     void rm(filePath, { force: true });
@@ -330,7 +459,10 @@ async function handlePrint(request, response) {
   }
   try {
     const shouldUseEscPos =
-      payload.printMode === "escpos" || payload.cutPaperAfterPrint === true || payload.rawEscpos === true;
+      payload.printMode === "escpos" ||
+      payload.cutPaperAfterPrint === true ||
+      payload.rawEscpos === true ||
+      Boolean(normalizeUrl(payload.headerLogoUrl));
     const result = shouldUseEscPos
       ? await printEscPosJob({
           content: payload.content,
@@ -338,6 +470,10 @@ async function handlePrint(request, response) {
           jobName: payload.jobName,
           feedLinesBeforeCut: payload.feedLinesBeforeCut,
           cutPaperMode: payload.cutPaperMode,
+          cutPaperAfterPrint: payload.cutPaperAfterPrint === true,
+          paperWidthMm: payload.paperWidthMm,
+          headerLogoUrl: payload.headerLogoUrl,
+          headerLogoWidthPercent: payload.headerLogoWidthPercent,
         })
       : await printTextJob({
           content: payload.content,
@@ -346,7 +482,7 @@ async function handlePrint(request, response) {
         });
     sendJson(response, 200, { ok: true, result }, origin);
   } catch (error) {
-    sendJson(response, 500, { ok: false, message: error instanceof Error ? error.message : "print_failed" }, origin);
+    sendJson(response, 500, { ok: false, message: readSafeErrorMessage(error, "print_failed") }, origin);
   }
 }
 
@@ -369,7 +505,7 @@ const server = createServer(async (request, response) => {
     try {
       sendJson(response, 200, { ok: true, printers: await listPrinters() }, origin);
     } catch (error) {
-      sendJson(response, 500, { ok: false, message: error instanceof Error ? error.message : "printer_list_failed" }, origin);
+      sendJson(response, 500, { ok: false, message: readSafeErrorMessage(error, "printer_list_failed") }, origin);
     }
     return;
   }

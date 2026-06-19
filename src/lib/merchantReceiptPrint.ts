@@ -4,6 +4,7 @@ import {
   type MerchantReceiptFieldSection,
   type MerchantReceiptPrintSettings,
 } from "@/lib/merchantMembershipSettings";
+import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 
 export type MerchantRedemptionReceiptLine = {
   code: string;
@@ -43,6 +44,9 @@ const FALLBACK_PRINT_SETTINGS: MerchantReceiptPrintSettings = {
   cutPaperAfterPrint: false,
   cutPaperMode: "partial",
   feedLinesBeforeCut: 4,
+  receiptLocale: "auto",
+  headerLogoUrl: "",
+  headerLogoWidthPercent: 42,
   title: "积分兑换小票",
   subtitle: "",
   footer: "谢谢惠顾",
@@ -81,11 +85,21 @@ function clampInteger(value: unknown, min: number, max: number, fallback: number
   return Math.min(max, Math.max(min, Math.round(numberValue)));
 }
 
+function clampNumber(value: unknown, min: number, max: number, fallback: number, precision = 1) {
+  const numberValue = normalizeFiniteNumber(value, fallback);
+  const clamped = Math.min(max, Math.max(min, numberValue));
+  return Number(clamped.toFixed(precision));
+}
+
+function normalizeReceiptFieldLabel(value: unknown, fallback: string) {
+  return value === null || value === undefined ? fallback : String(value).trim().slice(0, 80);
+}
+
 function normalizeReceiptFieldsForClient(
   value: MerchantReceiptContentField[] | null | undefined,
   legacy: Partial<MerchantReceiptPrintSettings>,
 ) {
-  const defaults = createDefaultMerchantReceiptFields(legacy);
+  const defaults = createDefaultMerchantReceiptFields(legacy, legacy.receiptLocale);
   if (!Array.isArray(value)) return defaults;
   const defaultsByKey = new Map(defaults.map((field) => [field.key, field]));
   const seen = new Set<string>();
@@ -93,13 +107,16 @@ function normalizeReceiptFieldsForClient(
   value.forEach((field) => {
     const fallback = defaultsByKey.get(field?.key);
     if (!fallback || seen.has(field.key)) return;
+    const fieldRecord = field as MerchantReceiptContentField & { fontSize?: unknown; letterSpacing?: unknown };
     seen.add(field.key);
     fields.push({
       key: fallback.key,
       section: fallback.section,
-      label: field.label?.trim() || fallback.label,
+      label: normalizeReceiptFieldLabel(field.label, fallback.label),
       visible: typeof field.visible === "boolean" ? field.visible : fallback.visible,
       width: field.width === "full" || field.width === "half" || field.width === "third" ? field.width : fallback.width,
+      fontSizePx: clampInteger(fieldRecord.fontSizePx ?? fieldRecord.fontSize, 8, 28, fallback.fontSizePx),
+      letterSpacingPx: clampNumber(fieldRecord.letterSpacingPx ?? fieldRecord.letterSpacing, 0, 8, fallback.letterSpacingPx),
     });
   });
   defaults.forEach((field) => {
@@ -128,6 +145,14 @@ export function normalizeReceiptPrintSettingsForClient(settings: MerchantReceipt
       0,
       10,
       FALLBACK_PRINT_SETTINGS.feedLinesBeforeCut,
+    ),
+    receiptLocale: settings?.receiptLocale?.trim() || FALLBACK_PRINT_SETTINGS.receiptLocale,
+    headerLogoUrl: normalizePublicAssetUrl(settings?.headerLogoUrl?.trim() || ""),
+    headerLogoWidthPercent: clampInteger(
+      settings?.headerLogoWidthPercent,
+      20,
+      80,
+      FALLBACK_PRINT_SETTINGS.headerLogoWidthPercent,
     ),
   };
   return {
@@ -170,7 +195,8 @@ export function isReceiptFieldVisible(settings: MerchantReceiptPrintSettings, ke
 }
 
 export function getReceiptFieldLabel(settings: MerchantReceiptPrintSettings, key: string, fallback: string) {
-  return getReceiptField(settings, key)?.label || fallback;
+  const field = getReceiptField(settings, key);
+  return field ? field.label : fallback;
 }
 
 export function getReceiptFieldValue(key: string, receipt: MerchantRedemptionReceiptData) {
@@ -211,13 +237,31 @@ function getReceiptFieldWidthClass(field: MerchantReceiptContentField) {
   return "full";
 }
 
+function getReceiptFieldStyleAttribute(field: MerchantReceiptContentField) {
+  const fontSizePx = clampInteger(field.fontSizePx, 8, 28, 12);
+  const letterSpacingPx = clampNumber(field.letterSpacingPx, 0, 8, 0);
+  return ` style="font-size: ${fontSizePx}px; letter-spacing: ${letterSpacingPx}px;"`;
+}
+
+function formatReceiptLabelValue(label: string, value: unknown, separator = " ") {
+  const text = String(value ?? "");
+  if (!text) return "";
+  const normalizedLabel = String(label ?? "").trim();
+  return normalizedLabel ? `${normalizedLabel}${separator}${text}` : text;
+}
+
 function renderReceiptKeyValue(field: MerchantReceiptContentField, value: unknown, className = "") {
   const text = String(value ?? "");
   if (!text) return "";
-  return `<div class="receipt-field ${getReceiptFieldWidthClass(field)} ${className}"><span>${escapeHtml(field.label)}</span><strong>${escapeHtml(text)}</strong></div>`;
+  const labelHtml = field.label ? `<span>${escapeHtml(field.label)}</span>` : "";
+  return `<div class="receipt-field ${getReceiptFieldWidthClass(field)} ${className}"${getReceiptFieldStyleAttribute(field)}>${labelHtml}<strong>${escapeHtml(text)}</strong></div>`;
 }
 
 function buildReceiptLinesHtml(settings: MerchantReceiptPrintSettings, receipt: MerchantRedemptionReceiptData) {
+  const itemNameField = getReceiptField(settings, "itemName") ?? createDefaultMerchantReceiptFields(settings).find((field) => field.key === "itemName");
+  const unitPointsField = getReceiptField(settings, "unitPoints");
+  const itemQuantityField = getReceiptField(settings, "itemQuantity");
+  const itemSubtotalField = getReceiptField(settings, "itemSubtotal");
   const itemNameLabel = getReceiptFieldLabel(settings, "itemName", "项目");
   const showUnitPoints = isReceiptFieldVisible(settings, "unitPoints");
   const showQuantity = isReceiptFieldVisible(settings, "itemQuantity");
@@ -234,18 +278,20 @@ function buildReceiptLinesHtml(settings: MerchantReceiptPrintSettings, receipt: 
       const meta = metaFields
         .map((field) => {
           const value = getReceiptLineFieldValue(field.key, line);
-          return value ? `${field.label} ${value}` : "";
+          return value
+            ? `<span${getReceiptFieldStyleAttribute(field)}>${escapeHtml(formatReceiptLabelValue(field.label, value))}</span>`
+            : "";
         })
         .filter(Boolean);
       return `
         <tr>
           <td>
-            <div class="item-name">${escapeHtml(getReceiptLineFieldValue("itemName", line) || itemNameLabel)}</div>
-            ${meta.length ? `<div class="muted">${escapeHtml(meta.join(" / "))}</div>` : ""}
+            <div class="item-name"${itemNameField ? getReceiptFieldStyleAttribute(itemNameField) : ""}>${escapeHtml(getReceiptLineFieldValue("itemName", line) || itemNameLabel)}</div>
+            ${meta.length ? `<div class="muted">${meta.join('<span class="receipt-meta-separator"> / </span>')}</div>` : ""}
           </td>
-          ${showUnitPoints ? `<td class="num">${escapeHtml(getReceiptLineFieldValue("unitPoints", line))}</td>` : ""}
-          ${showQuantity ? `<td class="num">${escapeHtml(getReceiptLineFieldValue("itemQuantity", line))}</td>` : ""}
-          ${showSubtotal ? `<td class="num strong">${escapeHtml(getReceiptLineFieldValue("itemSubtotal", line) || pointText)}</td>` : ""}
+          ${showUnitPoints ? `<td class="num"${unitPointsField ? getReceiptFieldStyleAttribute(unitPointsField) : ""}>${escapeHtml(getReceiptLineFieldValue("unitPoints", line))}</td>` : ""}
+          ${showQuantity ? `<td class="num"${itemQuantityField ? getReceiptFieldStyleAttribute(itemQuantityField) : ""}>${escapeHtml(getReceiptLineFieldValue("itemQuantity", line))}</td>` : ""}
+          ${showSubtotal ? `<td class="num strong"${itemSubtotalField ? getReceiptFieldStyleAttribute(itemSubtotalField) : ""}>${escapeHtml(getReceiptLineFieldValue("itemSubtotal", line) || pointText)}</td>` : ""}
         </tr>
       `;
     })
@@ -253,10 +299,16 @@ function buildReceiptLinesHtml(settings: MerchantReceiptPrintSettings, receipt: 
 }
 
 function buildReceiptPageHtml(settings: MerchantReceiptPrintSettings, receipt: MerchantRedemptionReceiptData) {
+  const headerLogoUrl = normalizePublicAssetUrl(settings.headerLogoUrl);
+  const headerLogoHtml = headerLogoUrl
+    ? `<img class="receipt-logo" src="${escapeHtml(headerLogoUrl)}" alt="" />`
+    : "";
   const headerFieldsHtml = getVisibleReceiptFields(settings, "header")
     .map((field) => {
       const value = getReceiptFieldValue(field.key, receipt);
-      return value ? `<div class="${field.key === "siteId" ? "muted" : ""}">${escapeHtml(value)}</div>` : "";
+      return value
+        ? `<div class="${field.key === "siteId" ? "muted" : ""}"${getReceiptFieldStyleAttribute(field)}>${escapeHtml(value)}</div>`
+        : "";
     })
     .join("");
   const metaFieldsHtml = getVisibleReceiptFields(settings, "meta")
@@ -273,12 +325,17 @@ function buildReceiptPageHtml(settings: MerchantReceiptPrintSettings, receipt: M
   const noteField = footerFields.find((field) => field.key === "note");
   const footerTextField = footerFields.find((field) => field.key === "footerText");
   const itemNameLabel = getReceiptFieldLabel(settings, "itemName", "项目");
+  const itemNameField = getReceiptField(settings, "itemName");
+  const unitPointsField = getReceiptField(settings, "unitPoints");
+  const itemQuantityField = getReceiptField(settings, "itemQuantity");
+  const itemSubtotalField = getReceiptField(settings, "itemSubtotal");
   const showUnitPoints = isReceiptFieldVisible(settings, "unitPoints");
   const showQuantity = isReceiptFieldVisible(settings, "itemQuantity");
   const showSubtotal = isReceiptFieldVisible(settings, "itemSubtotal");
   return `
     <section class="receipt-page">
       <header class="receipt-header">
+        ${headerLogoHtml}
         <h1>${escapeHtml(settings.title)}</h1>
         ${settings.subtitle ? `<div class="subtitle">${escapeHtml(settings.subtitle)}</div>` : ""}
         ${headerFieldsHtml}
@@ -287,17 +344,17 @@ function buildReceiptPageHtml(settings: MerchantReceiptPrintSettings, receipt: M
       <table class="receipt-lines">
         <thead>
           <tr>
-            <th>${escapeHtml(itemNameLabel)}</th>
-            ${showUnitPoints ? `<th>${escapeHtml(getReceiptFieldLabel(settings, "unitPoints", "单价"))}</th>` : ""}
-            ${showQuantity ? `<th>${escapeHtml(getReceiptFieldLabel(settings, "itemQuantity", "数量"))}</th>` : ""}
-            ${showSubtotal ? `<th>${escapeHtml(getReceiptFieldLabel(settings, "itemSubtotal", "小计"))}</th>` : ""}
+            <th${itemNameField ? getReceiptFieldStyleAttribute(itemNameField) : ""}>${escapeHtml(itemNameLabel)}</th>
+            ${showUnitPoints ? `<th${unitPointsField ? getReceiptFieldStyleAttribute(unitPointsField) : ""}>${escapeHtml(getReceiptFieldLabel(settings, "unitPoints", "单价"))}</th>` : ""}
+            ${showQuantity ? `<th${itemQuantityField ? getReceiptFieldStyleAttribute(itemQuantityField) : ""}>${escapeHtml(getReceiptFieldLabel(settings, "itemQuantity", "数量"))}</th>` : ""}
+            ${showSubtotal ? `<th${itemSubtotalField ? getReceiptFieldStyleAttribute(itemSubtotalField) : ""}>${escapeHtml(getReceiptFieldLabel(settings, "itemSubtotal", "小计"))}</th>` : ""}
           </tr>
         </thead>
         <tbody>${buildReceiptLinesHtml(settings, receipt)}</tbody>
       </table>
       ${summaryFieldsHtml ? `<div class="receipt-total">${summaryFieldsHtml}</div>` : ""}
-      ${noteField && receipt.note ? `<div class="receipt-note">${escapeHtml(noteField.label)}：${escapeHtml(receipt.note)}</div>` : ""}
-      ${footerTextField && settings.footer ? `<footer>${escapeHtml(settings.footer)}</footer>` : ""}
+      ${noteField && receipt.note ? `<div class="receipt-note"${getReceiptFieldStyleAttribute(noteField)}>${escapeHtml(formatReceiptLabelValue(noteField.label, receipt.note, "："))}</div>` : ""}
+      ${footerTextField && settings.footer ? `<footer${getReceiptFieldStyleAttribute(footerTextField)}>${escapeHtml(settings.footer)}</footer>` : ""}
     </section>
   `;
 }
@@ -335,6 +392,13 @@ export function buildRedemptionReceiptHtml(
       border-bottom: 1px dashed #000;
       padding-bottom: 6px;
       margin-bottom: 6px;
+    }
+    .receipt-logo {
+      display: block;
+      width: ${settings.headerLogoWidthPercent}%;
+      max-height: 18mm;
+      object-fit: contain;
+      margin: 0 auto 5px;
     }
     h1 {
       margin: 0 0 4px;
@@ -478,6 +542,7 @@ function centerByWidth(value: unknown, width: number) {
 }
 
 function splitReceiptLine(left: unknown, right: unknown, width: number) {
+  if (!String(left ?? "").trim()) return clipText(right, width);
   const rightText = clipText(right, Math.max(8, Math.floor(width * 0.45)));
   const leftWidth = Math.max(4, width - textWidth(rightText) - 1);
   const leftText = clipText(left, leftWidth);
@@ -521,13 +586,17 @@ export function buildRedemptionReceiptText(
       const meta = itemMetaFields
         .map((field) => {
           const value = getReceiptLineFieldValue(field.key, line);
-          return value ? `${field.label} ${value}` : "";
+          return formatReceiptLabelValue(field.label, value);
         })
         .filter(Boolean);
       if (meta.length) lines.push(`  ${clipText(meta.join(" / "), Math.max(0, width - 2))}`);
       const unitParts = [
-        showUnitPoints ? `${getReceiptFieldLabel(settings, "unitPoints", "单价")} ${getReceiptLineFieldValue("unitPoints", line)}` : "",
-        showQuantity ? `${getReceiptFieldLabel(settings, "itemQuantity", "数量")} ${getReceiptLineFieldValue("itemQuantity", line)}` : "",
+        showUnitPoints
+          ? formatReceiptLabelValue(getReceiptFieldLabel(settings, "unitPoints", "单价"), getReceiptLineFieldValue("unitPoints", line))
+          : "",
+        showQuantity
+          ? formatReceiptLabelValue(getReceiptFieldLabel(settings, "itemQuantity", "数量"), getReceiptLineFieldValue("itemQuantity", line))
+          : "",
       ].filter(Boolean);
       if (showSubtotal) {
         lines.push(splitReceiptLine(unitParts.join(" / "), getReceiptLineFieldValue("itemSubtotal", line), width));
@@ -545,7 +614,7 @@ export function buildRedemptionReceiptText(
     const footerTextField = footerFields.find((field) => field.key === "footerText");
     if (noteField && receipt.note) {
       lines.push(receiptDivider(width));
-      lines.push(`${noteField.label}：${clipText(receipt.note, Math.max(0, width - textWidth(noteField.label) - 2))}`);
+      lines.push(clipText(formatReceiptLabelValue(noteField.label, receipt.note, "："), width));
     }
     if (footerTextField && settings.footer) {
       lines.push(receiptDivider(width));
@@ -579,10 +648,12 @@ export async function printRedemptionReceiptWithLocalBridge(
         jobName: `FAOLLA-${receipt.receiptNo}`,
         printerName: settings.localPrinterName,
         paperWidthMm: settings.paperWidthMm,
-        printMode: settings.cutPaperAfterPrint ? "escpos" : "text",
+        printMode: settings.cutPaperAfterPrint || settings.headerLogoUrl ? "escpos" : "text",
         cutPaperAfterPrint: settings.cutPaperAfterPrint,
         cutPaperMode: settings.cutPaperMode,
         feedLinesBeforeCut: settings.feedLinesBeforeCut,
+        headerLogoUrl: settings.headerLogoUrl,
+        headerLogoWidthPercent: settings.headerLogoWidthPercent,
         content: buildRedemptionReceiptText(settings, receipt),
       }),
       signal: controller.signal,
