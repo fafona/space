@@ -674,9 +674,9 @@ export default function MerchantPrintSettingsPanel({
           </section>
         </div>
 
-        <aside className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]">
+        <aside className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)] xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:self-start xl:overflow-hidden">
           <h3 className="text-base font-semibold text-slate-950">小票预览</h3>
-          <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="mt-4 overflow-auto rounded-2xl border border-slate-200 bg-slate-50 p-4 xl:max-h-[calc(100vh-6rem)]">
             <div
               className="mx-auto bg-white p-4 text-black shadow-sm"
               style={{
