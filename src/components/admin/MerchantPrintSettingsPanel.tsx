@@ -904,7 +904,7 @@ export default function MerchantPrintSettingsPanel({
                       <img
                         src={headerLogoDisplayUrl}
                         alt="小票页头 Logo"
-                        className="max-h-24 max-w-full object-contain"
+                        className="h-auto max-w-full object-contain"
                         style={{ width: `${printSettings.headerLogoWidthPercent}%` }}
                       />
                     ) : (
@@ -1095,7 +1095,7 @@ export default function MerchantPrintSettingsPanel({
                   <img
                     src={headerLogoDisplayUrl}
                     alt="小票页头 Logo"
-                    className="mx-auto mb-2 max-h-16 object-contain"
+                    className="mx-auto mb-2 h-auto object-contain"
                     style={{ width: `${printSettings.headerLogoWidthPercent}%` }}
                   />
                 ) : null}

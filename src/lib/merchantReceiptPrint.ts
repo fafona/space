@@ -396,7 +396,7 @@ export function buildRedemptionReceiptHtml(
     .receipt-logo {
       display: block;
       width: ${settings.headerLogoWidthPercent}%;
-      max-height: 18mm;
+      height: auto;
       object-fit: contain;
       margin: 0 auto 5px;
     }
