@@ -490,6 +490,11 @@ export default function MerchantPrintSettingsPanel({
                 checked={printSettings.fallbackToBrowserPrint}
                 onChange={(checked) => patchPrintSettings({ fallbackToBrowserPrint: checked })}
               />
+              <SwitchField
+                label="结尾自动切纸（需要 ESC/POS 热敏打印机）"
+                checked={printSettings.cutPaperAfterPrint}
+                onChange={(checked) => patchPrintSettings({ cutPaperAfterPrint: checked })}
+              />
               <Field label="助手地址">
                 <input
                   className={inputClassName()}
@@ -517,6 +522,36 @@ export default function MerchantPrintSettingsPanel({
                   ))}
                 </datalist>
               </Field>
+              <Field label="切纸前走纸行数">
+                <input
+                  type="number"
+                  min={0}
+                  max={10}
+                  step={1}
+                  className={inputClassName()}
+                  value={printSettings.feedLinesBeforeCut}
+                  onChange={(event) =>
+                    patchPrintSettings({
+                      feedLinesBeforeCut: parseInteger(event.target.value, 0, 10, printSettings.feedLinesBeforeCut),
+                    })
+                  }
+                />
+              </Field>
+              <Field label="切纸方式">
+                <select
+                  className={inputClassName()}
+                  value={printSettings.cutPaperMode}
+                  onChange={(event) =>
+                    patchPrintSettings({ cutPaperMode: event.target.value === "full" ? "full" : "partial" })
+                  }
+                >
+                  <option value="partial">半切（推荐）</option>
+                  <option value="full">全切</option>
+                </select>
+              </Field>
+              <p className="text-xs leading-5 text-slate-500 md:col-span-2">
+                切纸只在本机助手 1.1.0 及以上、并且打印机支持 ESC/POS RAW 指令时生效；普通浏览器打印由系统驱动控制纸张和切纸。
+              </p>
               <div className="flex flex-wrap gap-2 md:col-span-2">
                 <button
                   type="button"

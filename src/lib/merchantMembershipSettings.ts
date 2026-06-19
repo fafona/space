@@ -135,6 +135,7 @@ export type MerchantMemberPointsRules = {
 
 export type MerchantReceiptFieldSection = "header" | "meta" | "items" | "summary" | "footer";
 export type MerchantReceiptFieldWidth = "full" | "half" | "third";
+export type MerchantReceiptCutMode = "partial" | "full";
 
 export type MerchantReceiptContentField = {
   key: string;
@@ -151,6 +152,9 @@ export type MerchantReceiptPrintSettings = {
   localPrintBridgeUrl: string;
   localPrinterName: string;
   fallbackToBrowserPrint: boolean;
+  cutPaperAfterPrint: boolean;
+  cutPaperMode: MerchantReceiptCutMode;
+  feedLinesBeforeCut: number;
   title: string;
   subtitle: string;
   footer: string;
@@ -458,6 +462,9 @@ export function createEmptyMerchantMembershipSettings(siteId: string): MerchantM
       localPrintBridgeUrl: "http://127.0.0.1:17658",
       localPrinterName: "",
       fallbackToBrowserPrint: true,
+      cutPaperAfterPrint: false,
+      cutPaperMode: "partial",
+      feedLinesBeforeCut: 4,
       title: "积分兑换小票",
       subtitle: "",
       footer: "谢谢惠顾",
@@ -754,6 +761,17 @@ function normalizeReceiptPrintSettings(value: unknown): MerchantReceiptPrintSett
     fallbackToBrowserPrint: normalizeBoolean(
       record.fallbackToBrowserPrint ?? record.browserPrintFallback,
       fallback.fallbackToBrowserPrint,
+    ),
+    cutPaperAfterPrint: normalizeBoolean(
+      record.cutPaperAfterPrint ?? record.autoCutAfterPrint ?? record.cutPaperEnabled,
+      fallback.cutPaperAfterPrint,
+    ),
+    cutPaperMode: record.cutPaperMode === "full" ? "full" : fallback.cutPaperMode,
+    feedLinesBeforeCut: normalizeIntegerRange(
+      record.feedLinesBeforeCut ?? record.cutFeedLines ?? record.feedBeforeCut,
+      0,
+      10,
+      fallback.feedLinesBeforeCut,
     ),
     title: trimText(record.title, 120) || fallback.title,
     subtitle: trimText(record.subtitle, 160),

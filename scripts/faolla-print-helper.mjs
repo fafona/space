@@ -7,7 +7,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const VERSION = "1.0.0";
+const VERSION = "1.1.0";
 const DEFAULT_PORT = 17658;
 const DEFAULT_HOST = "127.0.0.1";
 const MAX_BODY_BYTES = 256 * 1024;
@@ -99,6 +99,16 @@ function psString(value) {
   return `'${String(value ?? "").replace(/'/g, "''")}'`;
 }
 
+function normalizeIntegerRange(value, min, max, fallback) {
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(numberValue)));
+}
+
+function normalizeCutMode(value) {
+  return value === "full" ? "full" : "partial";
+}
+
 async function listPrinters() {
   const stdout = await runPowerShell(`
 $ErrorActionPreference = 'Stop'
@@ -148,6 +158,159 @@ if ($printerName) {
   }
 }
 
+async function printEscPosJob({
+  content,
+  printerName = "",
+  jobName = "FAOLLA receipt",
+  feedLinesBeforeCut = 4,
+  cutPaperMode = "partial",
+}) {
+  const normalizedContent = `${String(content || "")
+    .slice(0, MAX_CONTENT_CHARS)
+    .replace(/\r?\n/g, "\n")
+    .trimEnd()}\n`;
+  if (!normalizedContent.trim()) throw new Error("empty_print_content");
+  const safeFeedLines = normalizeIntegerRange(feedLinesBeforeCut, 0, 10, 4);
+  const safeCutMode = normalizeCutMode(cutPaperMode);
+  const workDir = path.join(tmpdir(), "faolla-print-helper");
+  await mkdir(workDir, { recursive: true });
+  const filePath = path.join(workDir, `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
+  await writeFile(filePath, normalizedContent, "utf8");
+  try {
+    const stdout = await runPowerShell(
+      `
+$ErrorActionPreference = 'Stop'
+$printerName = ${psString(printerName)}
+if (-not $printerName) {
+  $printerName = Get-CimInstance Win32_Printer | Where-Object { $_.Default } | Select-Object -First 1 -ExpandProperty Name
+}
+if (-not $printerName) {
+  throw 'default_printer_not_found'
+}
+$jobName = ${psString(jobName)}
+$feedLines = ${safeFeedLines}
+$cutMode = ${psString(safeCutMode)}
+$content = Get-Content -LiteralPath ${psString(filePath)} -Raw -Encoding UTF8
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public class FaollaRawPrinter
+{
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
+  public class DOCINFOA
+  {
+    [MarshalAs(UnmanagedType.LPStr)]
+    public string pDocName;
+    [MarshalAs(UnmanagedType.LPStr)]
+    public string pOutputFile;
+    [MarshalAs(UnmanagedType.LPStr)]
+    public string pDataType;
+  }
+
+  [DllImport("winspool.Drv", EntryPoint = "OpenPrinterA", SetLastError = true, CharSet = CharSet.Ansi, ExactSpelling = true)]
+  public static extern bool OpenPrinter(string szPrinter, out IntPtr hPrinter, IntPtr pd);
+
+  [DllImport("winspool.Drv", EntryPoint = "ClosePrinter", SetLastError = true, ExactSpelling = true)]
+  public static extern bool ClosePrinter(IntPtr hPrinter);
+
+  [DllImport("winspool.Drv", EntryPoint = "StartDocPrinterA", SetLastError = true, CharSet = CharSet.Ansi, ExactSpelling = true)]
+  public static extern bool StartDocPrinter(IntPtr hPrinter, int level, [In] DOCINFOA di);
+
+  [DllImport("winspool.Drv", EntryPoint = "EndDocPrinter", SetLastError = true, ExactSpelling = true)]
+  public static extern bool EndDocPrinter(IntPtr hPrinter);
+
+  [DllImport("winspool.Drv", EntryPoint = "StartPagePrinter", SetLastError = true, ExactSpelling = true)]
+  public static extern bool StartPagePrinter(IntPtr hPrinter);
+
+  [DllImport("winspool.Drv", EntryPoint = "EndPagePrinter", SetLastError = true, ExactSpelling = true)]
+  public static extern bool EndPagePrinter(IntPtr hPrinter);
+
+  [DllImport("winspool.Drv", EntryPoint = "WritePrinter", SetLastError = true, ExactSpelling = true)]
+  public static extern bool WritePrinter(IntPtr hPrinter, IntPtr pBytes, int dwCount, out int dwWritten);
+
+  public static void SendBytesToPrinter(string printerName, string docName, byte[] bytes)
+  {
+    IntPtr hPrinter = IntPtr.Zero;
+    IntPtr unmanagedBytes = IntPtr.Zero;
+    int written = 0;
+    bool success = false;
+    DOCINFOA docInfo = new DOCINFOA();
+    docInfo.pDocName = docName;
+    docInfo.pDataType = "RAW";
+    try
+    {
+      unmanagedBytes = Marshal.AllocCoTaskMem(bytes.Length);
+      Marshal.Copy(bytes, 0, unmanagedBytes, bytes.Length);
+      if (!OpenPrinter(printerName, out hPrinter, IntPtr.Zero)) {
+        throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "OpenPrinter failed");
+      }
+      if (!StartDocPrinter(hPrinter, 1, docInfo)) {
+        throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "StartDocPrinter failed");
+      }
+      try
+      {
+        if (!StartPagePrinter(hPrinter)) {
+          throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "StartPagePrinter failed");
+        }
+        try
+        {
+          success = WritePrinter(hPrinter, unmanagedBytes, bytes.Length, out written);
+        }
+        finally
+        {
+          EndPagePrinter(hPrinter);
+        }
+      }
+      finally
+      {
+        EndDocPrinter(hPrinter);
+      }
+    }
+    finally
+    {
+      if (hPrinter != IntPtr.Zero) ClosePrinter(hPrinter);
+      if (unmanagedBytes != IntPtr.Zero) Marshal.FreeCoTaskMem(unmanagedBytes);
+    }
+    if (!success || written != bytes.Length) {
+      throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "WritePrinter failed");
+    }
+  }
+}
+'@
+$encoding = [System.Text.Encoding]::GetEncoding(936)
+$textBytes = $encoding.GetBytes($content)
+$bytes = New-Object 'System.Collections.Generic.List[byte]'
+$bytes.AddRange([byte[]](0x1B, 0x40))
+$bytes.AddRange($textBytes)
+for ($i = 0; $i -lt $feedLines; $i++) {
+  $bytes.Add([byte]0x0A)
+}
+if ($cutMode -eq 'full') {
+  $bytes.AddRange([byte[]](0x1D, 0x56, 0x41, 0x00))
+} else {
+  $bytes.AddRange([byte[]](0x1D, 0x56, 0x42, 0x00))
+}
+$rawBytes = $bytes.ToArray()
+[FaollaRawPrinter]::SendBytesToPrinter($printerName, $jobName, $rawBytes)
+@{ printerName = $printerName; bytes = $rawBytes.Length; mode = 'escpos'; feedLinesBeforeCut = $feedLines; cutPaperMode = $cutMode } | ConvertTo-Json -Compress
+`,
+      30000,
+    );
+    const result = stdout ? JSON.parse(stdout) : {};
+    return {
+      mode: "escpos",
+      jobName,
+      printerName: String(result.printerName || printerName || ""),
+      bytes: Number(result.bytes || Buffer.byteLength(normalizedContent, "utf8")),
+      feedLinesBeforeCut: safeFeedLines,
+      cutPaperMode: safeCutMode,
+    };
+  } finally {
+    void rm(filePath, { force: true });
+  }
+}
+
 async function handlePrint(request, response) {
   const origin = request.headers.origin || "";
   if (!isAllowedOrigin(origin)) {
@@ -166,11 +329,21 @@ async function handlePrint(request, response) {
     return;
   }
   try {
-    const result = await printTextJob({
-      content: payload.content,
-      printerName: payload.printerName,
-      jobName: payload.jobName,
-    });
+    const shouldUseEscPos =
+      payload.printMode === "escpos" || payload.cutPaperAfterPrint === true || payload.rawEscpos === true;
+    const result = shouldUseEscPos
+      ? await printEscPosJob({
+          content: payload.content,
+          printerName: payload.printerName,
+          jobName: payload.jobName,
+          feedLinesBeforeCut: payload.feedLinesBeforeCut,
+          cutPaperMode: payload.cutPaperMode,
+        })
+      : await printTextJob({
+          content: payload.content,
+          printerName: payload.printerName,
+          jobName: payload.jobName,
+        });
     sendJson(response, 200, { ok: true, result }, origin);
   } catch (error) {
     sendJson(response, 500, { ok: false, message: error instanceof Error ? error.message : "print_failed" }, origin);
