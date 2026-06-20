@@ -99,6 +99,13 @@ type ProductImageSize = "large" | "medium" | "small";
 type CatalogFilterTab = "hot" | "category" | "recommend";
 type CatalogSortMode = "code" | "name";
 type RecordsTimeFilter = "today" | "yesterday" | "week" | "month" | "all";
+type CashierShortcutKey = "enter" | "minus" | "plus";
+type CashierShortcutActions = {
+  blocked: () => boolean;
+  openQuickRedeem: () => void;
+  openRecharge: () => void;
+  openCheckout: () => void;
+};
 
 function flagImageUrl(countryCode: string) {
   return `https://flagcdn.com/${countryCode.toLowerCase()}.svg`;
@@ -210,6 +217,20 @@ function isInRecordsTimeFilter(dateValue: string, filter: RecordsTimeFilter) {
   }
   const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
   return date >= monthStart && date <= now;
+}
+
+function isEditableShortcutTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  const tagName = target.tagName.toLowerCase();
+  return tagName === "input" || tagName === "textarea" || tagName === "select";
+}
+
+function normalizeCashierShortcutKey(event: KeyboardEvent): CashierShortcutKey | "" {
+  if (event.key === "Enter" || event.code === "NumpadEnter") return "enter";
+  if (event.key === "+" || event.code === "NumpadAdd") return "plus";
+  if (event.key === "-" || event.key === "−" || event.code === "Minus" || event.code === "NumpadSubtract") return "minus";
+  return "";
 }
 
 function getMemberDisplayName(membership: MerchantMembershipListItem) {
@@ -549,6 +570,14 @@ export default function MerchantPointRedemptionCashier({
   const cashierLoadRequestIdRef = useRef(0);
   const memberSearchRequestIdRef = useRef(0);
   const memberSearchCacheRef = useRef<Map<string, MerchantMembershipListItem[]>>(new Map());
+  const cashierShortcutPressedKeysRef = useRef<Set<CashierShortcutKey>>(new Set());
+  const cashierShortcutEnterTimerRef = useRef<number | null>(null);
+  const cashierShortcutActionsRef = useRef<CashierShortcutActions>({
+    blocked: () => true,
+    openQuickRedeem: () => undefined,
+    openRecharge: () => undefined,
+    openCheckout: () => undefined,
+  });
   const deferredMemberKeyword = useDeferredValue(memberKeyword);
   const deferredItemKeyword = useDeferredValue(itemKeyword);
   const deferredRecordsKeyword = useDeferredValue(recordsKeyword);
@@ -1777,6 +1806,119 @@ export default function MerchantPointRedemptionCashier({
       setSaving(false);
     }
   }
+
+  useEffect(() => {
+    cashierShortcutActionsRef.current = {
+      blocked: () =>
+        view !== "cashier" ||
+        saving ||
+        rechargeDialogOpen ||
+        quickRedeemDialogOpen ||
+        checkoutConfirmOpen ||
+        couponWalletOpen ||
+        languageMenuOpen ||
+        categoryMenuOpen ||
+        imageSizeMenuOpen ||
+        heldOpen ||
+        Boolean(selectedRecordId),
+      openQuickRedeem: () => {
+        setError("");
+        setNotice("");
+        setQuickRedeemDialogOpen(true);
+      },
+      openRecharge: () => {
+        setError("");
+        setNotice("");
+        if (!selectedMember) {
+          setError("请先选择会员。");
+          setMemberPickerOpen(true);
+          return;
+        }
+        setSelectedRechargePlanId((current) => current || enabledRechargePlans[0]?.id || "");
+        setRechargeDialogOpen(true);
+      },
+      openCheckout: () => {
+        if (canCheckout) setCheckoutConfirmOpen(true);
+      },
+    };
+  }, [
+    canCheckout,
+    categoryMenuOpen,
+    checkoutConfirmOpen,
+    couponWalletOpen,
+    enabledRechargePlans,
+    heldOpen,
+    imageSizeMenuOpen,
+    languageMenuOpen,
+    quickRedeemDialogOpen,
+    rechargeDialogOpen,
+    saving,
+    selectedMember,
+    selectedRecordId,
+    view,
+  ]);
+
+  useEffect(() => {
+    if (view !== "cashier" || typeof document === "undefined") return;
+    const pressedKeys = cashierShortcutPressedKeysRef.current;
+    const clearEnterTimer = () => {
+      if (cashierShortcutEnterTimerRef.current === null) return;
+      window.clearTimeout(cashierShortcutEnterTimerRef.current);
+      cashierShortcutEnterTimerRef.current = null;
+    };
+    const clearShortcutState = () => {
+      clearEnterTimer();
+      pressedKeys.clear();
+    };
+    const runShortcutAction = (event: KeyboardEvent, action: () => void) => {
+      event.preventDefault();
+      event.stopPropagation();
+      clearShortcutState();
+      action();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || event.repeat) return;
+      const shortcutKey = normalizeCashierShortcutKey(event);
+      if (!shortcutKey || isEditableShortcutTarget(event.target)) return;
+      pressedKeys.add(shortcutKey);
+      const actions = cashierShortcutActionsRef.current;
+      if (actions.blocked()) {
+        clearEnterTimer();
+        return;
+      }
+      if ((shortcutKey === "minus" && pressedKeys.has("enter")) || (shortcutKey === "enter" && pressedKeys.has("minus"))) {
+        runShortcutAction(event, actions.openQuickRedeem);
+        return;
+      }
+      if ((shortcutKey === "plus" && pressedKeys.has("enter")) || (shortcutKey === "enter" && pressedKeys.has("plus"))) {
+        runShortcutAction(event, actions.openRecharge);
+        return;
+      }
+      if (shortcutKey !== "enter") return;
+      event.preventDefault();
+      event.stopPropagation();
+      clearEnterTimer();
+      cashierShortcutEnterTimerRef.current = window.setTimeout(() => {
+        cashierShortcutEnterTimerRef.current = null;
+        pressedKeys.delete("enter");
+        const latestActions = cashierShortcutActionsRef.current;
+        if (!latestActions.blocked()) latestActions.openCheckout();
+      }, 120);
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      const shortcutKey = normalizeCashierShortcutKey(event);
+      if (shortcutKey) pressedKeys.delete(shortcutKey);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", clearShortcutState);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", clearShortcutState);
+      clearShortcutState();
+    };
+  }, [view]);
 
   return (
     <section className={`merchant-pos-cashier ${className}`}>
