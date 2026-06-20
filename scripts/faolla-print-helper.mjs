@@ -7,7 +7,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const VERSION = "1.2.0";
+const VERSION = "1.3.0";
 const DEFAULT_PORT = 17658;
 const DEFAULT_HOST = "127.0.0.1";
 const MAX_BODY_BYTES = 256 * 1024;
@@ -105,6 +105,39 @@ function normalizeIntegerRange(value, min, max, fallback) {
   return Math.min(max, Math.max(min, Math.round(numberValue)));
 }
 
+function normalizeNumberRange(value, min, max, fallback, precision = 1) {
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue)) return fallback;
+  const clamped = Math.min(max, Math.max(min, numberValue));
+  return Number(clamped.toFixed(precision));
+}
+
+function getTextBaseColumns(paperWidthMm) {
+  return paperWidthMm >= 76 ? 48 : 32;
+}
+
+function getMarginTextLayout({ paperWidthMm = 58, contentMarginTopMm = 0, contentMarginBottomMm = 0, contentMarginLeftMm = 0 }) {
+  const safePaperWidthMm = normalizeIntegerRange(paperWidthMm, 40, 120, 58);
+  const baseColumns = getTextBaseColumns(safePaperWidthMm);
+  const leftColumns = Math.max(0, Math.round((normalizeNumberRange(contentMarginLeftMm, 0, 20, 0) / safePaperWidthMm) * baseColumns));
+  return {
+    topLines: Math.max(0, Math.round(normalizeNumberRange(contentMarginTopMm, 0, 20, 0) / 4)),
+    bottomLines: Math.max(0, Math.round(normalizeNumberRange(contentMarginBottomMm, 0, 20, 0) / 4)),
+    leftPrefix: " ".repeat(Math.min(12, leftColumns)),
+  };
+}
+
+function applyTextMargins(content, margins) {
+  const layout = getMarginTextLayout(margins);
+  const normalizedContent = String(content || "").slice(0, MAX_CONTENT_CHARS).replace(/\r?\n/g, "\n").trimEnd();
+  const lines = normalizedContent.split("\n").map((line) => (line ? `${layout.leftPrefix}${line}` : line));
+  return [
+    ...Array.from({ length: layout.topLines }, () => ""),
+    ...lines,
+    ...Array.from({ length: layout.bottomLines }, () => ""),
+  ].join("\n");
+}
+
 function normalizeCutMode(value) {
   return value === "full" ? "full" : "partial";
 }
@@ -156,8 +189,21 @@ $printers | ConvertTo-Json -Depth 3
   }));
 }
 
-async function printTextJob({ content, printerName = "", jobName = "FAOLLA receipt" }) {
-  const normalizedContent = String(content || "").slice(0, MAX_CONTENT_CHARS).replace(/\r?\n/g, "\r\n");
+async function printTextJob({
+  content,
+  printerName = "",
+  jobName = "FAOLLA receipt",
+  paperWidthMm = 58,
+  contentMarginTopMm = 0,
+  contentMarginBottomMm = 0,
+  contentMarginLeftMm = 0,
+}) {
+  const normalizedContent = `${applyTextMargins(content, {
+    paperWidthMm,
+    contentMarginTopMm,
+    contentMarginBottomMm,
+    contentMarginLeftMm,
+  })}\n`.replace(/\r?\n/g, "\r\n");
   if (!normalizedContent.trim()) throw new Error("empty_print_content");
   const workDir = path.join(tmpdir(), "faolla-print-helper");
   await mkdir(workDir, { recursive: true });
@@ -195,6 +241,10 @@ async function printEscPosJob({
   cutPaperMode = "partial",
   cutPaperAfterPrint = true,
   paperWidthMm = 58,
+  contentMarginTopMm = 0,
+  contentMarginRightMm = 0,
+  contentMarginBottomMm = 0,
+  contentMarginLeftMm = 0,
   headerLogoUrl = "",
   headerLogoWidthPercent = 42,
 }) {
@@ -206,6 +256,10 @@ async function printEscPosJob({
   const safeFeedLines = normalizeIntegerRange(feedLinesBeforeCut, 0, 10, 4);
   const safeCutMode = normalizeCutMode(cutPaperMode);
   const safePaperWidthMm = normalizeIntegerRange(paperWidthMm, 40, 120, 58);
+  const safeContentMarginTopMm = normalizeNumberRange(contentMarginTopMm, 0, 20, 0);
+  const safeContentMarginRightMm = normalizeNumberRange(contentMarginRightMm, 0, 20, 0);
+  const safeContentMarginBottomMm = normalizeNumberRange(contentMarginBottomMm, 0, 20, 0);
+  const safeContentMarginLeftMm = normalizeNumberRange(contentMarginLeftMm, 0, 20, 0);
   const safeHeaderLogoWidthPercent = normalizeIntegerRange(headerLogoWidthPercent, 20, 80, 42);
   const safeHeaderLogoUrl = normalizeUrl(headerLogoUrl);
   const shouldCutPaper = Boolean(cutPaperAfterPrint);
@@ -231,6 +285,10 @@ $feedLines = ${safeFeedLines}
 $cutMode = ${psString(safeCutMode)}
 $cutPaperAfterPrint = ${shouldCutPaper ? "$true" : "$false"}
 $paperWidthMm = ${safePaperWidthMm}
+$contentMarginTopMm = ${safeContentMarginTopMm}
+$contentMarginRightMm = ${safeContentMarginRightMm}
+$contentMarginBottomMm = ${safeContentMarginBottomMm}
+$contentMarginLeftMm = ${safeContentMarginLeftMm}
 $headerLogoUrl = ${psString(safeHeaderLogoUrl)}
 $headerLogoWidthPercent = ${safeHeaderLogoWidthPercent}
 $content = Get-Content -LiteralPath ${psString(filePath)} -Raw -Encoding UTF8
@@ -326,6 +384,8 @@ function Add-ReceiptLogoBytes {
     [System.Collections.Generic.List[byte]] $TargetBytes,
     [string] $LogoUrl,
     [int] $PaperWidthMm,
+    [double] $ContentMarginRightMm,
+    [double] $ContentMarginLeftMm,
     [int] $LogoWidthPercent
   )
   if (-not $LogoUrl) { return }
@@ -339,8 +399,10 @@ function Add-ReceiptLogoBytes {
     $image = [System.Drawing.Image]::FromStream($stream)
     try {
       $paperDots = if ($PaperWidthMm -ge 76) { 576 } else { 384 }
-      $targetWidth = [Math]::Round($paperDots * ([Math]::Max(20, [Math]::Min(80, $LogoWidthPercent)) / 100.0))
-      $targetWidth = [Math]::Max(64, [Math]::Min($paperDots, $targetWidth))
+      $dotsPerMm = $paperDots / [double]$PaperWidthMm
+      $usableDots = [Math]::Max(128, $paperDots - [Math]::Round(([Math]::Max(0, $ContentMarginLeftMm) + [Math]::Max(0, $ContentMarginRightMm)) * $dotsPerMm))
+      $targetWidth = [Math]::Round($usableDots * ([Math]::Max(20, [Math]::Min(80, $LogoWidthPercent)) / 100.0))
+      $targetWidth = [Math]::Max(64, [Math]::Min($usableDots, $targetWidth))
       if (($targetWidth % 8) -ne 0) {
         $targetWidth = [Math]::Min($paperDots, [Math]::Ceiling($targetWidth / 8.0) * 8)
       }
@@ -406,8 +468,27 @@ $encoding = [System.Text.Encoding]::GetEncoding(936)
 $textBytes = $encoding.GetBytes($content)
 $bytes = New-Object 'System.Collections.Generic.List[byte]'
 $bytes.AddRange([byte[]](0x1B, 0x40))
-$null = Add-ReceiptLogoBytes -TargetBytes $bytes -LogoUrl $headerLogoUrl -PaperWidthMm $paperWidthMm -LogoWidthPercent $headerLogoWidthPercent
+$paperDots = if ($paperWidthMm -ge 76) { 576 } else { 384 }
+$dotsPerMm = $paperDots / [double]$paperWidthMm
+$leftMarginDots = [Math]::Max(0, [Math]::Round($contentMarginLeftMm * $dotsPerMm))
+$rightMarginDots = [Math]::Max(0, [Math]::Round($contentMarginRightMm * $dotsPerMm))
+$printAreaDots = [Math]::Max(128, $paperDots - $leftMarginDots - $rightMarginDots)
+$leftMarginL = [byte]($leftMarginDots % 256)
+$leftMarginH = [byte]([Math]::Floor($leftMarginDots / 256))
+$printAreaL = [byte]($printAreaDots % 256)
+$printAreaH = [byte]([Math]::Floor($printAreaDots / 256))
+$topMarginLines = [Math]::Max(0, [Math]::Round($contentMarginTopMm / 4.0))
+$bottomMarginLines = [Math]::Max(0, [Math]::Round($contentMarginBottomMm / 4.0))
+$bytes.AddRange([byte[]](0x1D, 0x4C, $leftMarginL, $leftMarginH))
+$bytes.AddRange([byte[]](0x1D, 0x57, $printAreaL, $printAreaH))
+for ($i = 0; $i -lt $topMarginLines; $i++) {
+  $bytes.Add([byte]0x0A)
+}
+$null = Add-ReceiptLogoBytes -TargetBytes $bytes -LogoUrl $headerLogoUrl -PaperWidthMm $paperWidthMm -ContentMarginRightMm $contentMarginRightMm -ContentMarginLeftMm $contentMarginLeftMm -LogoWidthPercent $headerLogoWidthPercent
 $bytes.AddRange($textBytes)
+for ($i = 0; $i -lt $bottomMarginLines; $i++) {
+  $bytes.Add([byte]0x0A)
+}
 if ($cutPaperAfterPrint) {
   for ($i = 0; $i -lt $feedLines; $i++) {
     $bytes.Add([byte]0x0A)
@@ -433,6 +514,10 @@ $rawBytes = $bytes.ToArray()
       feedLinesBeforeCut: safeFeedLines,
       cutPaperMode: safeCutMode,
       cutPaperAfterPrint: shouldCutPaper,
+      contentMarginTopMm: safeContentMarginTopMm,
+      contentMarginRightMm: safeContentMarginRightMm,
+      contentMarginBottomMm: safeContentMarginBottomMm,
+      contentMarginLeftMm: safeContentMarginLeftMm,
       headerLogo: Boolean(safeHeaderLogoUrl),
     };
   } finally {
@@ -472,6 +557,10 @@ async function handlePrint(request, response) {
           cutPaperMode: payload.cutPaperMode,
           cutPaperAfterPrint: payload.cutPaperAfterPrint === true,
           paperWidthMm: payload.paperWidthMm,
+          contentMarginTopMm: payload.contentMarginTopMm,
+          contentMarginRightMm: payload.contentMarginRightMm,
+          contentMarginBottomMm: payload.contentMarginBottomMm,
+          contentMarginLeftMm: payload.contentMarginLeftMm,
           headerLogoUrl: payload.headerLogoUrl,
           headerLogoWidthPercent: payload.headerLogoWidthPercent,
         })
@@ -479,6 +568,10 @@ async function handlePrint(request, response) {
           content: payload.content,
           printerName: payload.printerName,
           jobName: payload.jobName,
+          paperWidthMm: payload.paperWidthMm,
+          contentMarginTopMm: payload.contentMarginTopMm,
+          contentMarginBottomMm: payload.contentMarginBottomMm,
+          contentMarginLeftMm: payload.contentMarginLeftMm,
         });
     sendJson(response, 200, { ok: true, result }, origin);
   } catch (error) {

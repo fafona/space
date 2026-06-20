@@ -51,6 +51,10 @@ const FALLBACK_PRINT_SETTINGS: MerchantReceiptPrintSettings = {
   subtitle: "",
   footer: "谢谢惠顾",
   paperWidthMm: 58,
+  contentMarginTopMm: 4,
+  contentMarginRightMm: 3.5,
+  contentMarginBottomMm: 5,
+  contentMarginLeftMm: 3.5,
   fontSizePx: 12,
   copies: 1,
   showMerchantName: true,
@@ -136,6 +140,30 @@ export function normalizeReceiptPrintSettingsForClient(settings: MerchantReceipt
       settings?.localPrintBridgeUrl?.trim().replace(/\/+$/, "") || FALLBACK_PRINT_SETTINGS.localPrintBridgeUrl,
     localPrinterName: settings?.localPrinterName?.trim() || "",
     paperWidthMm: clampInteger(settings?.paperWidthMm, 40, 120, FALLBACK_PRINT_SETTINGS.paperWidthMm),
+    contentMarginTopMm: clampNumber(
+      settings?.contentMarginTopMm,
+      0,
+      20,
+      FALLBACK_PRINT_SETTINGS.contentMarginTopMm,
+    ),
+    contentMarginRightMm: clampNumber(
+      settings?.contentMarginRightMm,
+      0,
+      20,
+      FALLBACK_PRINT_SETTINGS.contentMarginRightMm,
+    ),
+    contentMarginBottomMm: clampNumber(
+      settings?.contentMarginBottomMm,
+      0,
+      20,
+      FALLBACK_PRINT_SETTINGS.contentMarginBottomMm,
+    ),
+    contentMarginLeftMm: clampNumber(
+      settings?.contentMarginLeftMm,
+      0,
+      20,
+      FALLBACK_PRINT_SETTINGS.contentMarginLeftMm,
+    ),
     fontSizePx: clampInteger(settings?.fontSizePx, 9, 18, FALLBACK_PRINT_SETTINGS.fontSizePx),
     copies: clampInteger(settings?.copies, 1, 3, FALLBACK_PRINT_SETTINGS.copies),
     cutPaperAfterPrint: Boolean(settings?.cutPaperAfterPrint ?? FALLBACK_PRINT_SETTINGS.cutPaperAfterPrint),
@@ -383,7 +411,7 @@ export function buildRedemptionReceiptHtml(
     }
     .receipt-page {
       width: ${settings.paperWidthMm}mm;
-      padding: 4mm 3.5mm 5mm;
+      padding: ${settings.contentMarginTopMm}mm ${settings.contentMarginRightMm}mm ${settings.contentMarginBottomMm}mm ${settings.contentMarginLeftMm}mm;
       break-after: page;
     }
     .receipt-page:last-child { break-after: auto; }
@@ -553,12 +581,23 @@ function receiptDivider(width: number, char = "-") {
   return char.repeat(width);
 }
 
+function getReceiptTextBaseColumns(paperWidthMm: number) {
+  return paperWidthMm >= 76 ? 48 : 32;
+}
+
+function getReceiptTextColumns(settings: MerchantReceiptPrintSettings) {
+  const baseWidth = getReceiptTextBaseColumns(settings.paperWidthMm);
+  const leftColumns = Math.round((settings.contentMarginLeftMm / settings.paperWidthMm) * baseWidth);
+  const rightColumns = Math.round((settings.contentMarginRightMm / settings.paperWidthMm) * baseWidth);
+  return Math.max(18, baseWidth - Math.max(0, leftColumns) - Math.max(0, rightColumns));
+}
+
 export function buildRedemptionReceiptText(
   inputSettings: MerchantReceiptPrintSettings | null | undefined,
   receipt: MerchantRedemptionReceiptData,
 ) {
   const settings = normalizeReceiptPrintSettingsForClient(inputSettings);
-  const width = settings.paperWidthMm >= 76 ? 48 : 32;
+  const width = getReceiptTextColumns(settings);
   const itemFields = getVisibleReceiptFields(settings, "items");
   const itemMetaFields = itemFields.filter(
     (field) => !["itemName", "unitPoints", "itemQuantity", "itemSubtotal"].includes(field.key),
@@ -652,6 +691,10 @@ export async function printRedemptionReceiptWithLocalBridge(
         cutPaperAfterPrint: settings.cutPaperAfterPrint,
         cutPaperMode: settings.cutPaperMode,
         feedLinesBeforeCut: settings.feedLinesBeforeCut,
+        contentMarginTopMm: settings.contentMarginTopMm,
+        contentMarginRightMm: settings.contentMarginRightMm,
+        contentMarginBottomMm: settings.contentMarginBottomMm,
+        contentMarginLeftMm: settings.contentMarginLeftMm,
         headerLogoUrl: settings.headerLogoUrl,
         headerLogoWidthPercent: settings.headerLogoWidthPercent,
         content: buildRedemptionReceiptText(settings, receipt),

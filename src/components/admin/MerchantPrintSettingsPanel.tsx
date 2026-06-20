@@ -794,6 +794,91 @@ export default function MerchantPrintSettingsPanel({
                   ))}
                 </select>
               </Field>
+              <div className="md:col-span-2">
+                <div className="text-sm font-medium text-slate-700">内容边距(mm)</div>
+                <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <Field label="上">
+                    <input
+                      type="number"
+                      min={0}
+                      max={20}
+                      step={0.5}
+                      className={inputClassName()}
+                      value={printSettings.contentMarginTopMm}
+                      onChange={(event) =>
+                        patchPrintSettings({
+                          contentMarginTopMm: parseNumberRange(
+                            event.target.value,
+                            0,
+                            20,
+                            printSettings.contentMarginTopMm,
+                          ),
+                        })
+                      }
+                    />
+                  </Field>
+                  <Field label="右">
+                    <input
+                      type="number"
+                      min={0}
+                      max={20}
+                      step={0.5}
+                      className={inputClassName()}
+                      value={printSettings.contentMarginRightMm}
+                      onChange={(event) =>
+                        patchPrintSettings({
+                          contentMarginRightMm: parseNumberRange(
+                            event.target.value,
+                            0,
+                            20,
+                            printSettings.contentMarginRightMm,
+                          ),
+                        })
+                      }
+                    />
+                  </Field>
+                  <Field label="下">
+                    <input
+                      type="number"
+                      min={0}
+                      max={20}
+                      step={0.5}
+                      className={inputClassName()}
+                      value={printSettings.contentMarginBottomMm}
+                      onChange={(event) =>
+                        patchPrintSettings({
+                          contentMarginBottomMm: parseNumberRange(
+                            event.target.value,
+                            0,
+                            20,
+                            printSettings.contentMarginBottomMm,
+                          ),
+                        })
+                      }
+                    />
+                  </Field>
+                  <Field label="左">
+                    <input
+                      type="number"
+                      min={0}
+                      max={20}
+                      step={0.5}
+                      className={inputClassName()}
+                      value={printSettings.contentMarginLeftMm}
+                      onChange={(event) =>
+                        patchPrintSettings({
+                          contentMarginLeftMm: parseNumberRange(
+                            event.target.value,
+                            0,
+                            20,
+                            printSettings.contentMarginLeftMm,
+                          ),
+                        })
+                      }
+                    />
+                  </Field>
+                </div>
+              </div>
               <Field label="字体(px)">
                 <input
                   type="number"
@@ -1172,9 +1257,10 @@ export default function MerchantPrintSettingsPanel({
           <h3 className="text-base font-semibold text-slate-950">小票预览</h3>
           <div className="mt-4 overflow-auto rounded-2xl border border-slate-200 bg-slate-50 p-4 xl:max-h-[calc(100vh-6rem)]">
             <div
-              className="mx-auto bg-white p-4 text-black shadow-sm"
+              className="mx-auto bg-white text-black shadow-sm"
               style={{
                 width: `${Math.min(320, Math.max(220, printSettings.paperWidthMm * 3.2))}px`,
+                padding: `${printSettings.contentMarginTopMm * 3.2}px ${printSettings.contentMarginRightMm * 3.2}px ${printSettings.contentMarginBottomMm * 3.2}px ${printSettings.contentMarginLeftMm * 3.2}px`,
                 fontSize: `${printSettings.fontSizePx}px`,
                 lineHeight: 1.35,
               }}

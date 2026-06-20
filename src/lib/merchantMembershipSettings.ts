@@ -366,6 +366,10 @@ export type MerchantReceiptPrintSettings = {
   subtitle: string;
   footer: string;
   paperWidthMm: number;
+  contentMarginTopMm: number;
+  contentMarginRightMm: number;
+  contentMarginBottomMm: number;
+  contentMarginLeftMm: number;
   fontSizePx: number;
   copies: number;
   showMerchantName: boolean;
@@ -791,6 +795,10 @@ export function createEmptyMerchantMembershipSettings(siteId: string): MerchantM
       subtitle: "",
       footer: "谢谢惠顾",
       paperWidthMm: 58,
+      contentMarginTopMm: 4,
+      contentMarginRightMm: 3.5,
+      contentMarginBottomMm: 5,
+      contentMarginLeftMm: 3.5,
       fontSizePx: 12,
       copies: 1,
       showMerchantName: true,
@@ -1118,6 +1126,30 @@ function normalizeReceiptPrintSettings(value: unknown): MerchantReceiptPrintSett
     subtitle: trimText(record.subtitle, 160),
     footer: trimText(record.footer, 240) || fallback.footer,
     paperWidthMm: normalizeIntegerRange(record.paperWidthMm ?? record.paperWidth, 40, 120, fallback.paperWidthMm),
+    contentMarginTopMm: normalizeNumberRange(
+      record.contentMarginTopMm ?? record.receiptMarginTopMm ?? record.paddingTopMm,
+      0,
+      20,
+      fallback.contentMarginTopMm,
+    ),
+    contentMarginRightMm: normalizeNumberRange(
+      record.contentMarginRightMm ?? record.receiptMarginRightMm ?? record.paddingRightMm,
+      0,
+      20,
+      fallback.contentMarginRightMm,
+    ),
+    contentMarginBottomMm: normalizeNumberRange(
+      record.contentMarginBottomMm ?? record.receiptMarginBottomMm ?? record.paddingBottomMm,
+      0,
+      20,
+      fallback.contentMarginBottomMm,
+    ),
+    contentMarginLeftMm: normalizeNumberRange(
+      record.contentMarginLeftMm ?? record.receiptMarginLeftMm ?? record.paddingLeftMm,
+      0,
+      20,
+      fallback.contentMarginLeftMm,
+    ),
     fontSizePx: normalizeIntegerRange(record.fontSizePx ?? record.fontSize, 9, 18, fallback.fontSizePx),
     copies: normalizeIntegerRange(record.copies, 1, 3, fallback.copies),
     showMerchantName: normalizeBoolean(record.showMerchantName, fallback.showMerchantName),
