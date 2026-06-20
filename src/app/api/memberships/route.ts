@@ -295,6 +295,19 @@ function shouldIncludeMembershipInsights(value: unknown) {
   return normalized === "1" || normalized === "true" || normalized === "yes";
 }
 
+function shouldReturnLeanMemberships(value: unknown) {
+  const normalized = trimText(value, 32).toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
+function buildLeanMembershipListItem(membership: MerchantMembershipListItem): MerchantMembershipListItem {
+  return {
+    ...membership,
+    transactions: [],
+    insight: undefined,
+  };
+}
+
 async function resolveSiteName(siteId: string, fallback: string) {
   const snapshot = await loadCurrentMerchantSnapshotSiteBySiteId(siteId).catch(() => null);
   return trimText(snapshot?.merchantName, 120) || trimText(snapshot?.name, 120) || trimText(fallback, 120) || siteId;
@@ -314,6 +327,7 @@ export async function GET(request: Request) {
   const keyword = trimText(url.searchParams.get("query") ?? url.searchParams.get("keyword"), 200).toLowerCase();
   const membershipId = trimText(url.searchParams.get("membershipId"), 160);
   const includeInsights = shouldIncludeMembershipInsights(url.searchParams.get("includeInsights"));
+  const leanMemberships = !includeInsights && shouldReturnLeanMemberships(url.searchParams.get("lean"));
   const offset = normalizeListOffset(url.searchParams.get("offset"));
   const limit = normalizeListLimit(url.searchParams.get("limit"));
   const membershipsSnapshot = await getMerchantMembershipsSnapshot(siteId, {
@@ -358,7 +372,9 @@ export async function GET(request: Request) {
               now,
             ),
           }
-        : membership,
+        : leanMemberships
+          ? buildLeanMembershipListItem(membership)
+          : membership,
     ),
     total: filteredMemberships.length,
     allTotal: memberships.length,

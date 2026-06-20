@@ -578,6 +578,8 @@ export default function MerchantPointRedemptionCashier({
     openRecharge: () => undefined,
     openCheckout: () => undefined,
   });
+  const submitCheckoutRef = useRef<() => Promise<void>>(async () => undefined);
+  const selectedMemberIdRef = useRef("");
   const deferredMemberKeyword = useDeferredValue(memberKeyword);
   const deferredItemKeyword = useDeferredValue(itemKeyword);
   const deferredRecordsKeyword = useDeferredValue(recordsKeyword);
@@ -939,6 +941,10 @@ export default function MerchantPointRedemptionCashier({
   }, [memberships]);
 
   useEffect(() => {
+    selectedMemberIdRef.current = selectedMemberId;
+  }, [selectedMemberId]);
+
+  useEffect(() => {
     const keyword = deferredMemberKeyword.trim();
     const normalizedKeyword = keyword.toLowerCase();
     const requestId = ++memberSearchRequestIdRef.current;
@@ -992,6 +998,7 @@ export default function MerchantPointRedemptionCashier({
         query: keyword,
         limit: String(MEMBER_REMOTE_SEARCH_LIMIT),
         includeInsights: "0",
+        lean: "1",
       });
       void fetchPointRedemptionJson(`/api/memberships?${params.toString()}`, {
         method: "GET",
@@ -1060,7 +1067,21 @@ export default function MerchantPointRedemptionCashier({
             .map((membership) => [membership.id, membership.insight] as const)
             .filter((entry): entry is readonly [string, MerchantMembershipInsight] => Boolean(entry[1])),
         );
-        return nextMemberships.map((membership) => {
+        const selectedMembershipId = selectedMemberIdRef.current;
+        const currentSelectedMembership = selectedMembershipId
+          ? current.find(
+              (membership) =>
+                membership.id === selectedMembershipId &&
+                membership.profileVisible &&
+                membership.status === "active",
+            )
+          : undefined;
+        const safeMemberships =
+          currentSelectedMembership &&
+          !nextMemberships.some((membership) => isSameMembershipRecord(membership, currentSelectedMembership))
+            ? mergeMemberLists(nextMemberships, [currentSelectedMembership])
+            : nextMemberships;
+        return safeMemberships.map((membership) => {
           const insight = membership.insight ?? insightById.get(membership.id);
           return insight ? { ...membership, insight } : membership;
         });
@@ -1366,6 +1387,7 @@ export default function MerchantPointRedemptionCashier({
 
   function selectMember(membership: MerchantMembershipListItem) {
     setMemberships((current) => mergeMemberLists(current, [membership]));
+    selectedMemberIdRef.current = membership.id;
     setSelectedMemberId(membership.id);
     setMemberKeyword("");
     setMemberPickerOpen(false);
@@ -1420,6 +1442,7 @@ export default function MerchantPointRedemptionCashier({
   }
 
   function clearMember() {
+    selectedMemberIdRef.current = "";
     setSelectedMemberId("");
     setMemberKeyword("");
     setMemberPickerOpen(false);
@@ -1581,6 +1604,7 @@ export default function MerchantPointRedemptionCashier({
       setMemberships((current) =>
         current.map((membership) => (isSameMembershipRecord(membership, updatedMembership) ? updatedMembership : membership)),
       );
+      selectedMemberIdRef.current = updatedMembership.id;
       setSelectedMemberId(updatedMembership.id);
       invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-memberships", normalizedSiteId));
       invalidateMerchantAdminDataCachePrefix(
@@ -1653,6 +1677,7 @@ export default function MerchantPointRedemptionCashier({
   }
 
   function restoreHeldSale(sale: HeldSale) {
+    selectedMemberIdRef.current = sale.selectedMemberId;
     setSelectedMemberId(sale.selectedMemberId);
     setMemberKeyword(sale.memberKeyword);
     setItemKeyword(sale.itemKeyword);
@@ -1775,6 +1800,7 @@ export default function MerchantPointRedemptionCashier({
       setMemberships((current) =>
         current.map((membership) => (isSameMembershipRecord(membership, updatedMembership) ? updatedMembership : membership)),
       );
+      selectedMemberIdRef.current = updatedMembership.id;
       setSelectedMemberId(updatedMembership.id);
       invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-memberships", normalizedSiteId));
       invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-membership-settings", normalizedSiteId));
@@ -1806,6 +1832,23 @@ export default function MerchantPointRedemptionCashier({
       setSaving(false);
     }
   }
+
+  useEffect(() => {
+    submitCheckoutRef.current = submitCheckout;
+  });
+
+  useEffect(() => {
+    if (!checkoutConfirmOpen || typeof document === "undefined") return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || event.repeat || isEditableShortcutTarget(event.target)) return;
+      if (event.key !== "Enter" && event.code !== "NumpadEnter") return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (!saving) void submitCheckoutRef.current();
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+  }, [checkoutConfirmOpen, saving]);
 
   useEffect(() => {
     cashierShortcutActionsRef.current = {
