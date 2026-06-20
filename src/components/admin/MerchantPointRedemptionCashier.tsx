@@ -1813,7 +1813,6 @@ export default function MerchantPointRedemptionCashier({
       );
       setCart([]);
       setNote("");
-      setCheckoutConfirmOpen(false);
       const couponLineCount = cartRows.filter((row) => row.couponSettlementCode).length;
       setNotice(
         totalPoints > 0 && couponLineCount > 0
@@ -1838,26 +1837,12 @@ export default function MerchantPointRedemptionCashier({
   });
 
   useEffect(() => {
-    if (!checkoutConfirmOpen || typeof document === "undefined") return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.isComposing || event.repeat || isEditableShortcutTarget(event.target)) return;
-      if (event.key !== "Enter" && event.code !== "NumpadEnter") return;
-      event.preventDefault();
-      event.stopPropagation();
-      if (!saving) void submitCheckoutRef.current();
-    };
-    document.addEventListener("keydown", onKeyDown, true);
-    return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [checkoutConfirmOpen, saving]);
-
-  useEffect(() => {
     cashierShortcutActionsRef.current = {
       blocked: () =>
         view !== "cashier" ||
         saving ||
         rechargeDialogOpen ||
         quickRedeemDialogOpen ||
-        checkoutConfirmOpen ||
         couponWalletOpen ||
         languageMenuOpen ||
         categoryMenuOpen ||
@@ -1881,13 +1866,12 @@ export default function MerchantPointRedemptionCashier({
         setRechargeDialogOpen(true);
       },
       openCheckout: () => {
-        if (canCheckout) setCheckoutConfirmOpen(true);
+        if (canCheckout) void submitCheckoutRef.current();
       },
     };
   }, [
     canCheckout,
     categoryMenuOpen,
-    checkoutConfirmOpen,
     couponWalletOpen,
     enabledRechargePlans,
     heldOpen,
@@ -1922,7 +1906,7 @@ export default function MerchantPointRedemptionCashier({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing || event.repeat) return;
       const shortcutKey = normalizeCashierShortcutKey(event);
-      if (!shortcutKey || isEditableShortcutTarget(event.target)) return;
+      if (!shortcutKey) return;
       pressedKeys.add(shortcutKey);
       const actions = cashierShortcutActionsRef.current;
       if (actions.blocked()) {
@@ -1938,6 +1922,7 @@ export default function MerchantPointRedemptionCashier({
         return;
       }
       if (shortcutKey !== "enter") return;
+      if (isEditableShortcutTarget(event.target)) return;
       event.preventDefault();
       event.stopPropagation();
       clearEnterTimer();
@@ -4233,7 +4218,7 @@ export default function MerchantPointRedemptionCashier({
                   <strong>-{formatPoints(couponPointDiscountTotal)}</strong>
                 </div>
               ) : null}
-              <button type="button" className="checkout-button" disabled={!canCheckout} onClick={() => setCheckoutConfirmOpen(true)}>
+              <button type="button" className="checkout-button" disabled={!canCheckout} onClick={() => void submitCheckoutRef.current()}>
                 {saving ? "结算中" : "结算"}
               </button>
             </div>
