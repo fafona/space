@@ -136,6 +136,8 @@ export type MerchantMemberPointsRules = {
 export type MerchantReceiptFieldSection = "header" | "meta" | "items" | "summary" | "footer";
 export type MerchantReceiptFieldWidth = "full" | "half" | "third";
 export type MerchantReceiptCutMode = "partial" | "full";
+export type MerchantReceiptWatermarkMode = "text" | "pattern";
+export type MerchantReceiptWatermarkPattern = "diamond" | "dot" | "star" | "slash";
 
 export type MerchantReceiptContentField = {
   key: string;
@@ -370,6 +372,14 @@ export type MerchantReceiptPrintSettings = {
   contentMarginRightMm: number;
   contentMarginBottomMm: number;
   contentMarginLeftMm: number;
+  watermarkEnabled: boolean;
+  watermarkMode: MerchantReceiptWatermarkMode;
+  watermarkText: string;
+  watermarkPattern: MerchantReceiptWatermarkPattern;
+  watermarkOpacity: number;
+  watermarkFontSizePx: number;
+  watermarkGapMm: number;
+  watermarkRotateDeg: number;
   fontSizePx: number;
   copies: number;
   showMerchantName: boolean;
@@ -799,6 +809,14 @@ export function createEmptyMerchantMembershipSettings(siteId: string): MerchantM
       contentMarginRightMm: 3.5,
       contentMarginBottomMm: 5,
       contentMarginLeftMm: 3.5,
+      watermarkEnabled: false,
+      watermarkMode: "text",
+      watermarkText: "FAOLLA",
+      watermarkPattern: "diamond",
+      watermarkOpacity: 0.08,
+      watermarkFontSizePx: 18,
+      watermarkGapMm: 28,
+      watermarkRotateDeg: -35,
       fontSizePx: 12,
       copies: 1,
       showMerchantName: true,
@@ -1045,6 +1063,19 @@ function normalizeReceiptFieldWidth(value: unknown, fallback: MerchantReceiptFie
   return width === "full" || width === "half" || width === "third" ? width : fallback;
 }
 
+function normalizeReceiptWatermarkMode(value: unknown, fallback: MerchantReceiptWatermarkMode): MerchantReceiptWatermarkMode {
+  const mode = trimText(value, 20);
+  return mode === "pattern" || mode === "text" ? mode : fallback;
+}
+
+function normalizeReceiptWatermarkPattern(
+  value: unknown,
+  fallback: MerchantReceiptWatermarkPattern,
+): MerchantReceiptWatermarkPattern {
+  const pattern = trimText(value, 20);
+  return pattern === "dot" || pattern === "star" || pattern === "slash" || pattern === "diamond" ? pattern : fallback;
+}
+
 function normalizeReceiptFieldLabel(value: unknown, fallback: string) {
   return value === null || value === undefined ? fallback : trimText(value, 80);
 }
@@ -1149,6 +1180,19 @@ function normalizeReceiptPrintSettings(value: unknown): MerchantReceiptPrintSett
       0,
       20,
       fallback.contentMarginLeftMm,
+    ),
+    watermarkEnabled: normalizeBoolean(record.watermarkEnabled ?? record.receiptWatermarkEnabled, fallback.watermarkEnabled),
+    watermarkMode: normalizeReceiptWatermarkMode(record.watermarkMode, fallback.watermarkMode),
+    watermarkText: trimText(record.watermarkText ?? record.receiptWatermarkText, 80) || fallback.watermarkText,
+    watermarkPattern: normalizeReceiptWatermarkPattern(record.watermarkPattern, fallback.watermarkPattern),
+    watermarkOpacity: normalizeNumberRange(record.watermarkOpacity, 0.02, 0.35, fallback.watermarkOpacity, 2),
+    watermarkFontSizePx: normalizeIntegerRange(record.watermarkFontSizePx ?? record.watermarkFontSize, 10, 36, fallback.watermarkFontSizePx),
+    watermarkGapMm: normalizeIntegerRange(record.watermarkGapMm ?? record.watermarkGap, 12, 60, fallback.watermarkGapMm),
+    watermarkRotateDeg: normalizeIntegerRange(
+      record.watermarkRotateDeg ?? record.watermarkRotate,
+      -60,
+      60,
+      fallback.watermarkRotateDeg,
     ),
     fontSizePx: normalizeIntegerRange(record.fontSizePx ?? record.fontSize, 9, 18, fallback.fontSizePx),
     copies: normalizeIntegerRange(record.copies, 1, 3, fallback.copies),

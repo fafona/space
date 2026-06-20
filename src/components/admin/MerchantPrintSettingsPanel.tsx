@@ -71,6 +71,20 @@ const RECEIPT_PAPER_WIDTH_OPTIONS = [
   { value: 110, label: "110mm（宽票据，少用）" },
 ] as const;
 
+const RECEIPT_WATERMARK_MODE_OPTIONS = [
+  { value: "text", label: "文字" },
+  { value: "pattern", label: "图形符号" },
+] as const;
+
+const RECEIPT_WATERMARK_PATTERN_OPTIONS = [
+  { value: "diamond", label: "菱形", glyph: "◆" },
+  { value: "dot", label: "圆点", glyph: "•" },
+  { value: "star", label: "星标", glyph: "✦" },
+  { value: "slash", label: "斜线", glyph: "／" },
+] as const;
+
+const RECEIPT_WATERMARK_PREVIEW_ITEMS = Array.from({ length: 80 }, (_, index) => index);
+
 const RECEIPT_COUNTRY_LOCALE_BY_NAME: Record<string, string> = {
   spain: "es-ES",
   espana: "es-ES",
@@ -311,6 +325,14 @@ function receiptFieldPreviewStyle(field: MerchantReceiptContentField) {
   };
 }
 
+function getReceiptWatermarkText(settings: MerchantReceiptPrintSettings) {
+  if (!settings.watermarkEnabled) return "";
+  if (settings.watermarkMode === "pattern") {
+    return RECEIPT_WATERMARK_PATTERN_OPTIONS.find((option) => option.value === settings.watermarkPattern)?.glyph ?? "◆";
+  }
+  return settings.watermarkText.trim();
+}
+
 function formatPreviewLabelValue(label: string, value: unknown, separator = " ") {
   const text = String(value ?? "");
   if (!text) return "";
@@ -412,6 +434,7 @@ export default function MerchantPrintSettingsPanel({
     () => new Map(printSettings.receiptFields.map((field) => [field.key, field])),
     [printSettings.receiptFields],
   );
+  const watermarkPreviewText = useMemo(() => getReceiptWatermarkText(printSettings), [printSettings]);
 
   const renderPreviewItemMeta = useCallback(
     (line: MerchantRedemptionReceiptLine) => {
@@ -1109,6 +1132,150 @@ export default function MerchantPrintSettingsPanel({
                   onChange={(event) => patchPrintSettings({ footer: event.target.value })}
                 />
               </Field>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 md:col-span-2">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-800">小票水印</div>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">
+                      以浅色斜向重复出现在票面下层，适合品牌名、门店名或简单符号。
+                    </p>
+                  </div>
+                  <SwitchField
+                    label="启用水印"
+                    checked={printSettings.watermarkEnabled}
+                    onChange={(checked) => patchPrintSettings({ watermarkEnabled: checked })}
+                  />
+                </div>
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <Field label="水印形式">
+                    <select
+                      className={inputClassName()}
+                      value={printSettings.watermarkMode}
+                      onChange={(event) =>
+                        patchPrintSettings({
+                          watermarkMode: event.target.value === "pattern" ? "pattern" : "text",
+                        })
+                      }
+                    >
+                      {RECEIPT_WATERMARK_MODE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  {printSettings.watermarkMode === "pattern" ? (
+                    <Field label="图形符号">
+                      <select
+                        className={inputClassName()}
+                        value={printSettings.watermarkPattern}
+                        onChange={(event) =>
+                          patchPrintSettings({
+                            watermarkPattern:
+                              event.target.value === "dot" ||
+                              event.target.value === "star" ||
+                              event.target.value === "slash"
+                                ? event.target.value
+                                : "diamond",
+                          })
+                        }
+                      >
+                        {RECEIPT_WATERMARK_PATTERN_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.glyph} {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  ) : (
+                    <Field label="水印文字">
+                      <input
+                        className={inputClassName()}
+                        value={printSettings.watermarkText}
+                        onChange={(event) => patchPrintSettings({ watermarkText: event.target.value })}
+                        placeholder="例如：fafona"
+                      />
+                    </Field>
+                  )}
+                  <Field label={`透明度：${Math.round(printSettings.watermarkOpacity * 100)}%`}>
+                    <input
+                      type="range"
+                      min={2}
+                      max={35}
+                      step={1}
+                      className="w-full accent-slate-900"
+                      value={Math.round(printSettings.watermarkOpacity * 100)}
+                      onChange={(event) =>
+                        patchPrintSettings({
+                          watermarkOpacity:
+                            parseNumberRange(
+                              event.target.value,
+                              2,
+                              35,
+                              Math.round(printSettings.watermarkOpacity * 100),
+                              0,
+                            ) / 100,
+                        })
+                      }
+                    />
+                  </Field>
+                  <Field label="字号(px)">
+                    <input
+                      type="number"
+                      min={10}
+                      max={36}
+                      step={1}
+                      className={inputClassName()}
+                      value={printSettings.watermarkFontSizePx}
+                      onChange={(event) =>
+                        patchPrintSettings({
+                          watermarkFontSizePx: parseInteger(
+                            event.target.value,
+                            10,
+                            36,
+                            printSettings.watermarkFontSizePx,
+                          ),
+                        })
+                      }
+                    />
+                  </Field>
+                  <Field label="重复间距(mm)">
+                    <input
+                      type="number"
+                      min={12}
+                      max={60}
+                      step={1}
+                      className={inputClassName()}
+                      value={printSettings.watermarkGapMm}
+                      onChange={(event) =>
+                        patchPrintSettings({
+                          watermarkGapMm: parseInteger(event.target.value, 12, 60, printSettings.watermarkGapMm),
+                        })
+                      }
+                    />
+                  </Field>
+                  <Field label="倾斜角度">
+                    <input
+                      type="number"
+                      min={-60}
+                      max={60}
+                      step={1}
+                      className={inputClassName()}
+                      value={printSettings.watermarkRotateDeg}
+                      onChange={(event) =>
+                        patchPrintSettings({
+                          watermarkRotateDeg: parseInteger(
+                            event.target.value,
+                            -60,
+                            60,
+                            printSettings.watermarkRotateDeg,
+                          ),
+                        })
+                      }
+                    />
+                  </Field>
+                </div>
+              </div>
             </div>
           </section>
 
@@ -1257,7 +1424,7 @@ export default function MerchantPrintSettingsPanel({
           <h3 className="text-base font-semibold text-slate-950">小票预览</h3>
           <div className="mt-4 overflow-auto rounded-2xl border border-slate-200 bg-slate-50 p-4 xl:max-h-[calc(100vh-6rem)]">
             <div
-              className="mx-auto bg-white text-black shadow-sm"
+              className="relative mx-auto overflow-hidden bg-white text-black shadow-sm"
               style={{
                 width: `${Math.min(320, Math.max(220, printSettings.paperWidthMm * 3.2))}px`,
                 padding: `${printSettings.contentMarginTopMm * 3.2}px ${printSettings.contentMarginRightMm * 3.2}px ${printSettings.contentMarginBottomMm * 3.2}px ${printSettings.contentMarginLeftMm * 3.2}px`,
@@ -1265,6 +1432,31 @@ export default function MerchantPrintSettingsPanel({
                 lineHeight: 1.35,
               }}
             >
+              {watermarkPreviewText ? (
+                <div
+                  className="pointer-events-none absolute inset-0 z-0 grid overflow-hidden font-extrabold leading-none text-black"
+                  style={{
+                    gridTemplateColumns: `repeat(auto-fill, minmax(${printSettings.watermarkGapMm * 3.2}px, 1fr))`,
+                    gridAutoRows: `${printSettings.watermarkGapMm * 3.2}px`,
+                    alignItems: "center",
+                    justifyItems: "center",
+                    opacity: printSettings.watermarkOpacity,
+                    fontSize: `${printSettings.watermarkFontSizePx}px`,
+                  }}
+                  aria-hidden="true"
+                >
+                  {RECEIPT_WATERMARK_PREVIEW_ITEMS.map((item) => (
+                    <span
+                      key={item}
+                      className="whitespace-nowrap"
+                      style={{ transform: `rotate(${printSettings.watermarkRotateDeg}deg)` }}
+                    >
+                      {watermarkPreviewText}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              <div className="relative z-10">
               <div className="border-b border-dashed border-black pb-2 text-center">
                 {headerLogoDisplayUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
@@ -1364,6 +1556,7 @@ export default function MerchantPrintSettingsPanel({
                 }
                 return null;
               })}
+              </div>
             </div>
           </div>
         </aside>

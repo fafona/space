@@ -55,6 +55,14 @@ const FALLBACK_PRINT_SETTINGS: MerchantReceiptPrintSettings = {
   contentMarginRightMm: 3.5,
   contentMarginBottomMm: 5,
   contentMarginLeftMm: 3.5,
+  watermarkEnabled: false,
+  watermarkMode: "text",
+  watermarkText: "FAOLLA",
+  watermarkPattern: "diamond",
+  watermarkOpacity: 0.08,
+  watermarkFontSizePx: 18,
+  watermarkGapMm: 28,
+  watermarkRotateDeg: -35,
   fontSizePx: 12,
   copies: 1,
   showMerchantName: true,
@@ -163,6 +171,30 @@ export function normalizeReceiptPrintSettingsForClient(settings: MerchantReceipt
       0,
       20,
       FALLBACK_PRINT_SETTINGS.contentMarginLeftMm,
+    ),
+    watermarkEnabled: Boolean(settings?.watermarkEnabled ?? FALLBACK_PRINT_SETTINGS.watermarkEnabled),
+    watermarkMode: settings?.watermarkMode === "pattern" ? "pattern" : FALLBACK_PRINT_SETTINGS.watermarkMode,
+    watermarkText: settings?.watermarkText?.trim().slice(0, 80) || FALLBACK_PRINT_SETTINGS.watermarkText,
+    watermarkPattern:
+      settings?.watermarkPattern === "dot" ||
+      settings?.watermarkPattern === "star" ||
+      settings?.watermarkPattern === "slash" ||
+      settings?.watermarkPattern === "diamond"
+        ? settings.watermarkPattern
+        : FALLBACK_PRINT_SETTINGS.watermarkPattern,
+    watermarkOpacity: clampNumber(settings?.watermarkOpacity, 0.02, 0.35, FALLBACK_PRINT_SETTINGS.watermarkOpacity, 2),
+    watermarkFontSizePx: clampInteger(
+      settings?.watermarkFontSizePx,
+      10,
+      36,
+      FALLBACK_PRINT_SETTINGS.watermarkFontSizePx,
+    ),
+    watermarkGapMm: clampInteger(settings?.watermarkGapMm, 12, 60, FALLBACK_PRINT_SETTINGS.watermarkGapMm),
+    watermarkRotateDeg: clampInteger(
+      settings?.watermarkRotateDeg,
+      -60,
+      60,
+      FALLBACK_PRINT_SETTINGS.watermarkRotateDeg,
     ),
     fontSizePx: clampInteger(settings?.fontSizePx, 9, 18, FALLBACK_PRINT_SETTINGS.fontSizePx),
     copies: clampInteger(settings?.copies, 1, 3, FALLBACK_PRINT_SETTINGS.copies),
@@ -326,6 +358,26 @@ function buildReceiptLinesHtml(settings: MerchantReceiptPrintSettings, receipt: 
     .join("");
 }
 
+function getReceiptWatermarkText(settings: MerchantReceiptPrintSettings) {
+  if (!settings.watermarkEnabled) return "";
+  if (settings.watermarkMode === "pattern") {
+    if (settings.watermarkPattern === "dot") return "•";
+    if (settings.watermarkPattern === "star") return "✦";
+    if (settings.watermarkPattern === "slash") return "／";
+    return "◆";
+  }
+  return settings.watermarkText.trim();
+}
+
+function buildReceiptWatermarkHtml(settings: MerchantReceiptPrintSettings) {
+  const text = getReceiptWatermarkText(settings);
+  if (!text) return "";
+  return `<div class="receipt-watermark" aria-hidden="true">${Array.from(
+    { length: 120 },
+    () => `<span>${escapeHtml(text)}</span>`,
+  ).join("")}</div>`;
+}
+
 function buildReceiptPageHtml(settings: MerchantReceiptPrintSettings, receipt: MerchantRedemptionReceiptData) {
   const headerLogoUrl = normalizePublicAssetUrl(settings.headerLogoUrl);
   const headerLogoHtml = headerLogoUrl
@@ -362,27 +414,30 @@ function buildReceiptPageHtml(settings: MerchantReceiptPrintSettings, receipt: M
   const showSubtotal = isReceiptFieldVisible(settings, "itemSubtotal");
   return `
     <section class="receipt-page">
-      <header class="receipt-header">
-        ${headerLogoHtml}
-        <h1>${escapeHtml(settings.title)}</h1>
-        ${settings.subtitle ? `<div class="subtitle">${escapeHtml(settings.subtitle)}</div>` : ""}
-        ${headerFieldsHtml}
-      </header>
-      ${metaFieldsHtml ? `<div class="receipt-meta">${metaFieldsHtml}</div>` : ""}
-      <table class="receipt-lines">
-        <thead>
-          <tr>
-            <th${itemNameField ? getReceiptFieldStyleAttribute(itemNameField) : ""}>${escapeHtml(itemNameLabel)}</th>
-            ${showUnitPoints ? `<th${unitPointsField ? getReceiptFieldStyleAttribute(unitPointsField) : ""}>${escapeHtml(getReceiptFieldLabel(settings, "unitPoints", "单价"))}</th>` : ""}
-            ${showQuantity ? `<th${itemQuantityField ? getReceiptFieldStyleAttribute(itemQuantityField) : ""}>${escapeHtml(getReceiptFieldLabel(settings, "itemQuantity", "数量"))}</th>` : ""}
-            ${showSubtotal ? `<th${itemSubtotalField ? getReceiptFieldStyleAttribute(itemSubtotalField) : ""}>${escapeHtml(getReceiptFieldLabel(settings, "itemSubtotal", "小计"))}</th>` : ""}
-          </tr>
-        </thead>
-        <tbody>${buildReceiptLinesHtml(settings, receipt)}</tbody>
-      </table>
-      ${summaryFieldsHtml ? `<div class="receipt-total">${summaryFieldsHtml}</div>` : ""}
-      ${noteField && receipt.note ? `<div class="receipt-note"${getReceiptFieldStyleAttribute(noteField)}>${escapeHtml(formatReceiptLabelValue(noteField.label, receipt.note, "："))}</div>` : ""}
-      ${footerTextField && settings.footer ? `<footer${getReceiptFieldStyleAttribute(footerTextField)}>${escapeHtml(settings.footer)}</footer>` : ""}
+      ${buildReceiptWatermarkHtml(settings)}
+      <div class="receipt-content">
+        <header class="receipt-header">
+          ${headerLogoHtml}
+          <h1>${escapeHtml(settings.title)}</h1>
+          ${settings.subtitle ? `<div class="subtitle">${escapeHtml(settings.subtitle)}</div>` : ""}
+          ${headerFieldsHtml}
+        </header>
+        ${metaFieldsHtml ? `<div class="receipt-meta">${metaFieldsHtml}</div>` : ""}
+        <table class="receipt-lines">
+          <thead>
+            <tr>
+              <th${itemNameField ? getReceiptFieldStyleAttribute(itemNameField) : ""}>${escapeHtml(itemNameLabel)}</th>
+              ${showUnitPoints ? `<th${unitPointsField ? getReceiptFieldStyleAttribute(unitPointsField) : ""}>${escapeHtml(getReceiptFieldLabel(settings, "unitPoints", "单价"))}</th>` : ""}
+              ${showQuantity ? `<th${itemQuantityField ? getReceiptFieldStyleAttribute(itemQuantityField) : ""}>${escapeHtml(getReceiptFieldLabel(settings, "itemQuantity", "数量"))}</th>` : ""}
+              ${showSubtotal ? `<th${itemSubtotalField ? getReceiptFieldStyleAttribute(itemSubtotalField) : ""}>${escapeHtml(getReceiptFieldLabel(settings, "itemSubtotal", "小计"))}</th>` : ""}
+            </tr>
+          </thead>
+          <tbody>${buildReceiptLinesHtml(settings, receipt)}</tbody>
+        </table>
+        ${summaryFieldsHtml ? `<div class="receipt-total">${summaryFieldsHtml}</div>` : ""}
+        ${noteField && receipt.note ? `<div class="receipt-note"${getReceiptFieldStyleAttribute(noteField)}>${escapeHtml(formatReceiptLabelValue(noteField.label, receipt.note, "："))}</div>` : ""}
+        ${footerTextField && settings.footer ? `<footer${getReceiptFieldStyleAttribute(footerTextField)}>${escapeHtml(settings.footer)}</footer>` : ""}
+      </div>
     </section>
   `;
 }
@@ -410,11 +465,40 @@ export function buildRedemptionReceiptHtml(
       line-height: 1.35;
     }
     .receipt-page {
+      position: relative;
+      overflow: hidden;
       width: ${settings.paperWidthMm}mm;
       padding: ${settings.contentMarginTopMm}mm ${settings.contentMarginRightMm}mm ${settings.contentMarginBottomMm}mm ${settings.contentMarginLeftMm}mm;
       break-after: page;
     }
     .receipt-page:last-child { break-after: auto; }
+    .receipt-content {
+      position: relative;
+      z-index: 1;
+    }
+    .receipt-watermark {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(${settings.watermarkGapMm}mm, 1fr));
+      grid-auto-rows: ${settings.watermarkGapMm}mm;
+      align-items: center;
+      justify-items: center;
+      overflow: hidden;
+      color: #000;
+      opacity: ${settings.watermarkOpacity};
+      font-size: ${settings.watermarkFontSizePx}px;
+      font-weight: 800;
+      line-height: 1;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .receipt-watermark span {
+      transform: rotate(${settings.watermarkRotateDeg}deg);
+      white-space: nowrap;
+    }
     .receipt-header {
       text-align: center;
       border-bottom: 1px dashed #000;
