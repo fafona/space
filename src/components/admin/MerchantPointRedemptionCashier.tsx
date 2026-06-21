@@ -58,6 +58,12 @@ type RedemptionCashierPayload = {
   message?: unknown;
 };
 
+type MembershipSettingsPayload = {
+  ok?: unknown;
+  settings?: MerchantMembershipSettings;
+  message?: unknown;
+};
+
 type MembershipPatchPayload = {
   ok?: unknown;
   membership?: MerchantMembershipListItem;
@@ -160,6 +166,27 @@ async function fetchPointRedemptionJson(
   } finally {
     window.clearTimeout(timeoutId);
   }
+}
+
+async function fetchLatestCashierPrintSettings(siteId: string) {
+  const params = new URLSearchParams({
+    siteId,
+    scope: "redemption-cashier",
+    t: Date.now().toString(),
+  });
+  const response = await fetchPointRedemptionJson(
+    `/api/membership-settings?${params.toString()}`,
+    {
+      method: "GET",
+      cache: "no-store",
+      credentials: "same-origin",
+      headers: { accept: "application/json" },
+    },
+    3500,
+  );
+  const payload = (await response.json().catch(() => null)) as MembershipSettingsPayload | null;
+  if (!response.ok || payload?.ok !== true || !payload.settings?.printSettings) return null;
+  return payload.settings;
 }
 
 function formatDateYmd(date = new Date()) {
@@ -1797,6 +1824,16 @@ export default function MerchantPointRedemptionCashier({
         createdAt: receiptCreatedAt,
         lines: receiptLines,
       };
+      let latestPrintSettings = settings?.printSettings as MerchantReceiptPrintSettings | undefined;
+      try {
+        const latestSettings = await fetchLatestCashierPrintSettings(normalizedSiteId);
+        if (latestSettings?.printSettings) {
+          latestPrintSettings = latestSettings.printSettings as MerchantReceiptPrintSettings;
+          setSettings(latestSettings);
+        }
+      } catch {
+        latestPrintSettings = settings?.printSettings as MerchantReceiptPrintSettings | undefined;
+      }
       setMemberships((current) =>
         current.map((membership) => (isSameMembershipRecord(membership, updatedMembership) ? updatedMembership : membership)),
       );
@@ -1823,7 +1860,7 @@ export default function MerchantPointRedemptionCashier({
           ? `兑换完成，已扣减 ${formatPoints(totalPoints)} 积分。`
           : `兑换完成，已核销 ${couponLineCount} 张卡券。`,
       );
-      printRedemptionReceipt(settings?.printSettings as MerchantReceiptPrintSettings | undefined, receiptData);
+      printRedemptionReceipt(latestPrintSettings, receiptData);
       void loadData(true, { silent: true });
     } catch (checkoutError) {
       setError(checkoutError instanceof Error ? checkoutError.message : "积分兑换失败，请稍后重试");
