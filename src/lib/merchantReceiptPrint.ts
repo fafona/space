@@ -853,14 +853,13 @@ export function printRedemptionReceipt(
   receipt: MerchantRedemptionReceiptData,
 ) {
   const normalizedSettings = normalizeReceiptPrintSettingsForClient(settings);
-  if (!normalizedSettings.enabled || !normalizedSettings.autoPrintRedemptionReceipt) return false;
-  if (normalizedSettings.silentPrintEnabled) {
-    void printRedemptionReceiptWithLocalBridge(normalizedSettings, receipt).then((printed) => {
-      if (!printed && normalizedSettings.fallbackToBrowserPrint) {
-        printHtmlDocument(buildRedemptionReceiptHtml(normalizedSettings, receipt));
-      }
-    });
-    return true;
+  if (
+    !normalizedSettings.enabled ||
+    !normalizedSettings.autoPrintRedemptionReceipt ||
+    !normalizedSettings.silentPrintEnabled
+  ) {
+    return false;
   }
-  return printHtmlDocument(buildRedemptionReceiptHtml(normalizedSettings, receipt));
+  void printRedemptionReceiptWithLocalBridge(normalizedSettings, receipt);
+  return true;
 }
