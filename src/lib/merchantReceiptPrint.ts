@@ -5,6 +5,7 @@ import {
   type MerchantReceiptPrintSettings,
 } from "@/lib/merchantMembershipSettings";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
+import { toPng } from "html-to-image";
 
 export type MerchantRedemptionReceiptLine = {
   code: string;
@@ -105,6 +106,92 @@ function clampNumber(value: unknown, min: number, max: number, fallback: number,
 
 function normalizeReceiptFieldLabel(value: unknown, fallback: string) {
   return value === null || value === undefined ? fallback : String(value).trim().slice(0, 80);
+}
+
+function normalizePrintAssetUrl(value: string) {
+  const normalized = normalizePublicAssetUrl(value);
+  if (!normalized || /^(data|blob):/i.test(normalized) || /^https?:\/\//i.test(normalized)) return normalized;
+  if (typeof window === "undefined" || !window.location?.origin) return normalized;
+  try {
+    return new URL(normalized, window.location.origin).toString();
+  } catch {
+    return normalized;
+  }
+}
+
+function loadPrintableLogoImage(src: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    const timer = window.setTimeout(() => reject(new Error("logo_image_load_timeout")), 2500);
+    image.crossOrigin = "anonymous";
+    image.onload = () => {
+      window.clearTimeout(timer);
+      resolve(image);
+    };
+    image.onerror = () => {
+      window.clearTimeout(timer);
+      reject(new Error("logo_image_load_failed"));
+    };
+    image.src = src;
+  });
+}
+
+async function buildPrintableLogoDataUrl(src: string) {
+  if (typeof document === "undefined" || !src) return "";
+  if (/^data:image\/(png|jpe?g);base64,/i.test(src)) return src;
+  try {
+    const image = await loadPrintableLogoImage(src);
+    const sourceWidth = image.naturalWidth || image.width || 1;
+    const sourceHeight = image.naturalHeight || image.height || 1;
+    const scale = Math.min(1, 480 / sourceWidth, 240 / sourceHeight);
+    const width = Math.max(1, Math.round(sourceWidth * scale));
+    const height = Math.max(1, Math.round(sourceHeight * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) return "";
+    context.clearRect(0, 0, width, height);
+    context.drawImage(image, 0, 0, width, height);
+    return canvas.toDataURL("image/png");
+  } catch {
+    return "";
+  }
+}
+
+async function buildReceiptImageDataUrl(html: string) {
+  if (typeof document === "undefined" || !html) return "";
+  const host = document.createElement("div");
+  host.setAttribute("aria-hidden", "true");
+  host.style.position = "fixed";
+  host.style.left = "-10000px";
+  host.style.top = "0";
+  host.style.zIndex = "-1";
+  host.style.background = "#fff";
+  try {
+    const parsed = new DOMParser().parseFromString(html, "text/html");
+    const styleText = Array.from(parsed.head.querySelectorAll("style"))
+      .map((style) => style.textContent ?? "")
+      .join("\n");
+    const style = document.createElement("style");
+    style.textContent = `${styleText}\n.receipt-page { break-after: auto !important; page-break-after: auto !important; }`;
+    host.appendChild(style);
+    const content = document.createElement("div");
+    content.innerHTML = parsed.body.innerHTML;
+    host.appendChild(content);
+    document.body.appendChild(host);
+    await document.fonts?.ready;
+    return await toPng(content, {
+      backgroundColor: "#ffffff",
+      cacheBust: true,
+      pixelRatio: 2,
+      skipAutoScale: true,
+    });
+  } catch {
+    return "";
+  } finally {
+    host.remove();
+  }
 }
 
 function normalizeReceiptFieldsForClient(
@@ -379,7 +466,7 @@ function buildReceiptWatermarkHtml(settings: MerchantReceiptPrintSettings) {
 }
 
 function buildReceiptPageHtml(settings: MerchantReceiptPrintSettings, receipt: MerchantRedemptionReceiptData) {
-  const headerLogoUrl = normalizePublicAssetUrl(settings.headerLogoUrl);
+  const headerLogoUrl = normalizePrintAssetUrl(settings.headerLogoUrl);
   const headerLogoHtml = headerLogoUrl
     ? `<img class="receipt-logo" src="${escapeHtml(headerLogoUrl)}" alt="" />`
     : "";
@@ -751,13 +838,23 @@ export function buildRedemptionReceiptText(
 export async function printRedemptionReceiptWithLocalBridge(
   settings: MerchantReceiptPrintSettings,
   receipt: MerchantRedemptionReceiptData,
-  timeoutMs = 2500,
+  timeoutMs = 8000,
 ) {
   if (typeof window === "undefined") return false;
+  const normalizedSettings = normalizeReceiptPrintSettingsForClient(settings);
+  const headerLogoUrl = normalizePrintAssetUrl(normalizedSettings.headerLogoUrl);
+  const helperSettings = {
+    ...normalizedSettings,
+    headerLogoUrl,
+  };
+  const headerLogoDataUrl = headerLogoUrl ? await buildPrintableLogoDataUrl(headerLogoUrl) : "";
+  const renderSettings = headerLogoDataUrl ? { ...helperSettings, headerLogoUrl: headerLogoDataUrl } : helperSettings;
+  const contentHtml = buildRedemptionReceiptHtml(renderSettings, receipt);
+  const receiptImageDataUrl = await buildReceiptImageDataUrl(contentHtml);
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(`${settings.localPrintBridgeUrl}/print`, {
+    const response = await fetch(`${helperSettings.localPrintBridgeUrl}/print`, {
       method: "POST",
       mode: "cors",
       cache: "no-store",
@@ -769,19 +866,24 @@ export async function printRedemptionReceiptWithLocalBridge(
         source: "faolla-web",
         jobType: "redemption-receipt",
         jobName: `FAOLLA-${receipt.receiptNo}`,
-        printerName: settings.localPrinterName,
-        paperWidthMm: settings.paperWidthMm,
-        printMode: settings.cutPaperAfterPrint || settings.headerLogoUrl ? "escpos" : "text",
-        cutPaperAfterPrint: settings.cutPaperAfterPrint,
-        cutPaperMode: settings.cutPaperMode,
-        feedLinesBeforeCut: settings.feedLinesBeforeCut,
-        contentMarginTopMm: settings.contentMarginTopMm,
-        contentMarginRightMm: settings.contentMarginRightMm,
-        contentMarginBottomMm: settings.contentMarginBottomMm,
-        contentMarginLeftMm: settings.contentMarginLeftMm,
-        headerLogoUrl: settings.headerLogoUrl,
-        headerLogoWidthPercent: settings.headerLogoWidthPercent,
-        content: buildRedemptionReceiptText(settings, receipt),
+        printerName: helperSettings.localPrinterName,
+        paperWidthMm: helperSettings.paperWidthMm,
+        printMode: "escpos",
+        cutPaperAfterPrint: helperSettings.cutPaperAfterPrint,
+        cutPaperMode: helperSettings.cutPaperMode,
+        feedLinesBeforeCut: helperSettings.feedLinesBeforeCut,
+        contentMarginTopMm: helperSettings.contentMarginTopMm,
+        contentMarginRightMm: helperSettings.contentMarginRightMm,
+        contentMarginBottomMm: helperSettings.contentMarginBottomMm,
+        contentMarginLeftMm: helperSettings.contentMarginLeftMm,
+        headerLogoUrl: helperSettings.headerLogoUrl,
+        headerLogoDataUrl,
+        headerLogoWidthPercent: helperSettings.headerLogoWidthPercent,
+        fontSizePx: helperSettings.fontSizePx,
+        receiptFields: helperSettings.receiptFields,
+        receiptImageDataUrl,
+        contentHtml,
+        content: buildRedemptionReceiptText(helperSettings, receipt),
       }),
       signal: controller.signal,
     });

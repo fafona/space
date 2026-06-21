@@ -184,7 +184,7 @@ async function compressReceiptLogoDataUrl(file: File, dataUrl: string) {
     if (!context) return dataUrl;
     context.clearRect(0, 0, width, height);
     context.drawImage(image, 0, 0, width, height);
-    return canvas.toDataURL("image/webp", 0.72);
+    return canvas.toDataURL("image/png");
   } catch {
     return dataUrl;
   }

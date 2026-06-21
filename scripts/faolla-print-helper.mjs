@@ -7,10 +7,10 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const VERSION = "1.3.0";
+const VERSION = "1.4.0";
 const DEFAULT_PORT = 17658;
 const DEFAULT_HOST = "127.0.0.1";
-const MAX_BODY_BYTES = 256 * 1024;
+const MAX_BODY_BYTES = 4 * 1024 * 1024;
 const MAX_CONTENT_CHARS = 120_000;
 
 const args = new Map(
@@ -148,6 +148,12 @@ function normalizeUrl(value) {
   return /^https?:\/\//i.test(trimmed) ? trimmed : "";
 }
 
+function normalizeDataImage(value) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed || trimmed.length > 3_500_000) return "";
+  return /^data:image\/(png|jpe?g|gif|bmp);base64,[a-z0-9+/=\s]+$/i.test(trimmed) ? trimmed : "";
+}
+
 function readSafeErrorMessage(error, fallback) {
   const raw = [error?.stderr, error?.stdout, error?.message]
     .map((value) => String(value ?? "").trim())
@@ -246,7 +252,9 @@ async function printEscPosJob({
   contentMarginBottomMm = 0,
   contentMarginLeftMm = 0,
   headerLogoUrl = "",
+  headerLogoDataUrl = "",
   headerLogoWidthPercent = 42,
+  receiptImageDataUrl = "",
 }) {
   const normalizedContent = `${String(content || "")
     .slice(0, MAX_CONTENT_CHARS)
@@ -262,11 +270,21 @@ async function printEscPosJob({
   const safeContentMarginLeftMm = normalizeNumberRange(contentMarginLeftMm, 0, 20, 0);
   const safeHeaderLogoWidthPercent = normalizeIntegerRange(headerLogoWidthPercent, 20, 80, 42);
   const safeHeaderLogoUrl = normalizeUrl(headerLogoUrl);
+  const safeHeaderLogoDataUrl = normalizeDataImage(headerLogoDataUrl);
+  const safeReceiptImageDataUrl = normalizeDataImage(receiptImageDataUrl);
   const shouldCutPaper = Boolean(cutPaperAfterPrint);
   const workDir = path.join(tmpdir(), "faolla-print-helper");
   await mkdir(workDir, { recursive: true });
   const filePath = path.join(workDir, `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
+  const logoDataPath = safeHeaderLogoDataUrl
+    ? path.join(workDir, `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-logo.txt`)
+    : "";
+  const receiptImageDataPath = safeReceiptImageDataUrl
+    ? path.join(workDir, `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-receipt-image.txt`)
+    : "";
   await writeFile(filePath, normalizedContent, "utf8");
+  if (logoDataPath) await writeFile(logoDataPath, safeHeaderLogoDataUrl, "utf8");
+  if (receiptImageDataPath) await writeFile(receiptImageDataPath, safeReceiptImageDataUrl, "utf8");
   try {
     const stdout = await runPowerShell(
       `
@@ -290,6 +308,10 @@ $contentMarginRightMm = ${safeContentMarginRightMm}
 $contentMarginBottomMm = ${safeContentMarginBottomMm}
 $contentMarginLeftMm = ${safeContentMarginLeftMm}
 $headerLogoUrl = ${psString(safeHeaderLogoUrl)}
+$headerLogoDataPath = ${psString(logoDataPath)}
+$receiptImageDataPath = ${psString(receiptImageDataPath)}
+$headerLogoDataUrl = if ($headerLogoDataPath -and (Test-Path -LiteralPath $headerLogoDataPath)) { Get-Content -LiteralPath $headerLogoDataPath -Raw -Encoding UTF8 } else { '' }
+$receiptImageDataUrl = if ($receiptImageDataPath -and (Test-Path -LiteralPath $receiptImageDataPath)) { Get-Content -LiteralPath $receiptImageDataPath -Raw -Encoding UTF8 } else { '' }
 $headerLogoWidthPercent = ${safeHeaderLogoWidthPercent}
 $content = Get-Content -LiteralPath ${psString(filePath)} -Raw -Encoding UTF8
 Add-Type -TypeDefinition @'
@@ -383,18 +405,24 @@ function Add-ReceiptLogoBytes {
   param(
     [System.Collections.Generic.List[byte]] $TargetBytes,
     [string] $LogoUrl,
+    [string] $LogoDataUrl,
     [int] $PaperWidthMm,
     [double] $ContentMarginRightMm,
     [double] $ContentMarginLeftMm,
     [int] $LogoWidthPercent
   )
-  if (-not $LogoUrl) { return }
+  if (-not $LogoUrl -and -not $LogoDataUrl) { return }
   try {
     $null = Add-Type -AssemblyName System.Drawing
-    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
-    $client = New-Object System.Net.WebClient
-    $client.Headers.Add('User-Agent', 'FAOLLA Print Helper')
-    $downloadedBytes = $client.DownloadData($LogoUrl)
+    $client = $null
+    if ($LogoDataUrl -match '^data:image/[^;]+;base64,(.+)$') {
+      $downloadedBytes = [Convert]::FromBase64String($matches[1])
+    } else {
+      [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+      $client = New-Object System.Net.WebClient
+      $client.Headers.Add('User-Agent', 'FAOLLA Print Helper')
+      $downloadedBytes = $client.DownloadData($LogoUrl)
+    }
     $stream = New-Object System.IO.MemoryStream(,$downloadedBytes)
     $image = [System.Drawing.Image]::FromStream($stream)
     try {
@@ -458,10 +486,84 @@ function Add-ReceiptLogoBytes {
     } finally {
       $image.Dispose()
       $stream.Dispose()
-      $client.Dispose()
+      if ($client) { $client.Dispose() }
     }
   } catch {
     # Logo failures must not block receipt printing.
+  }
+}
+
+function Add-ReceiptRasterImageBytes {
+  param(
+    [System.Collections.Generic.List[byte]] $TargetBytes,
+    [string] $ImageDataUrl,
+    [int] $PaperWidthMm
+  )
+  if (-not $ImageDataUrl) { return $false }
+  try {
+    $null = Add-Type -AssemblyName System.Drawing
+    if ($ImageDataUrl -notmatch '^data:image/[^;]+;base64,(.+)$') { return $false }
+    $downloadedBytes = [Convert]::FromBase64String($matches[1])
+    $stream = New-Object System.IO.MemoryStream(,$downloadedBytes)
+    $image = [System.Drawing.Image]::FromStream($stream)
+    try {
+      $paperDots = if ($PaperWidthMm -ge 76) { 576 } else { 384 }
+      $targetWidth = $paperDots
+      $scale = $targetWidth / [double]$image.Width
+      $targetHeight = [Math]::Max(1, [Math]::Round($image.Height * $scale))
+      $maxHeight = 8000
+      if ($targetHeight -gt $maxHeight) {
+        $heightScale = $maxHeight / [double]$targetHeight
+        $targetHeight = $maxHeight
+        $targetWidth = [Math]::Max(64, [Math]::Round($targetWidth * $heightScale))
+        if (($targetWidth % 8) -ne 0) {
+          $targetWidth = [Math]::Ceiling($targetWidth / 8.0) * 8
+        }
+      }
+      $bitmap = New-Object System.Drawing.Bitmap($targetWidth, $targetHeight)
+      $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+      try {
+        $graphics.Clear([System.Drawing.Color]::White)
+        $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+        $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+        $graphics.DrawImage($image, 0, 0, $targetWidth, $targetHeight)
+      } finally {
+        $graphics.Dispose()
+      }
+      $widthBytes = [Math]::Ceiling($targetWidth / 8.0)
+      $rasterBytes = New-Object 'System.Collections.Generic.List[byte]'
+      for ($y = 0; $y -lt $targetHeight; $y++) {
+        for ($byteX = 0; $byteX -lt $widthBytes; $byteX++) {
+          $value = 0
+          for ($bit = 0; $bit -lt 8; $bit++) {
+            $x = ($byteX * 8) + $bit
+            if ($x -lt $targetWidth) {
+              $pixel = $bitmap.GetPixel($x, $y)
+              $luminance = ($pixel.R * 0.299) + ($pixel.G * 0.587) + ($pixel.B * 0.114)
+              if ($pixel.A -gt 30 -and $luminance -lt 190) {
+                $value = $value -bor (0x80 -shr $bit)
+              }
+            }
+          }
+          $rasterBytes.Add([byte]$value)
+        }
+      }
+      $xL = [byte]($widthBytes % 256)
+      $xH = [byte]([Math]::Floor($widthBytes / 256))
+      $yL = [byte]($targetHeight % 256)
+      $yH = [byte]([Math]::Floor($targetHeight / 256))
+      $TargetBytes.AddRange([byte[]](0x1B, 0x61, 0x00))
+      $TargetBytes.AddRange([byte[]](0x1D, 0x76, 0x30, 0x00, $xL, $xH, $yL, $yH))
+      $TargetBytes.AddRange($rasterBytes.ToArray())
+      $TargetBytes.Add([byte]0x0A)
+      $bitmap.Dispose()
+      return $true
+    } finally {
+      $image.Dispose()
+      $stream.Dispose()
+    }
+  } catch {
+    return $false
   }
 }
 $encoding = [System.Text.Encoding]::GetEncoding(936)
@@ -470,24 +572,27 @@ $bytes = New-Object 'System.Collections.Generic.List[byte]'
 $bytes.AddRange([byte[]](0x1B, 0x40))
 $paperDots = if ($paperWidthMm -ge 76) { 576 } else { 384 }
 $dotsPerMm = $paperDots / [double]$paperWidthMm
-$leftMarginDots = [Math]::Max(0, [Math]::Round($contentMarginLeftMm * $dotsPerMm))
-$rightMarginDots = [Math]::Max(0, [Math]::Round($contentMarginRightMm * $dotsPerMm))
-$printAreaDots = [Math]::Max(128, $paperDots - $leftMarginDots - $rightMarginDots)
-$leftMarginL = [byte]($leftMarginDots % 256)
-$leftMarginH = [byte]([Math]::Floor($leftMarginDots / 256))
-$printAreaL = [byte]($printAreaDots % 256)
-$printAreaH = [byte]([Math]::Floor($printAreaDots / 256))
-$topMarginLines = [Math]::Max(0, [Math]::Round($contentMarginTopMm / 4.0))
-$bottomMarginLines = [Math]::Max(0, [Math]::Round($contentMarginBottomMm / 4.0))
-$bytes.AddRange([byte[]](0x1D, 0x4C, $leftMarginL, $leftMarginH))
-$bytes.AddRange([byte[]](0x1D, 0x57, $printAreaL, $printAreaH))
-for ($i = 0; $i -lt $topMarginLines; $i++) {
-  $bytes.Add([byte]0x0A)
-}
-$null = Add-ReceiptLogoBytes -TargetBytes $bytes -LogoUrl $headerLogoUrl -PaperWidthMm $paperWidthMm -ContentMarginRightMm $contentMarginRightMm -ContentMarginLeftMm $contentMarginLeftMm -LogoWidthPercent $headerLogoWidthPercent
-$bytes.AddRange($textBytes)
-for ($i = 0; $i -lt $bottomMarginLines; $i++) {
-  $bytes.Add([byte]0x0A)
+$receiptImagePrinted = Add-ReceiptRasterImageBytes -TargetBytes $bytes -ImageDataUrl $receiptImageDataUrl -PaperWidthMm $paperWidthMm
+if (-not $receiptImagePrinted) {
+  $leftMarginDots = [Math]::Max(0, [Math]::Round($contentMarginLeftMm * $dotsPerMm))
+  $rightMarginDots = [Math]::Max(0, [Math]::Round($contentMarginRightMm * $dotsPerMm))
+  $printAreaDots = [Math]::Max(128, $paperDots - $leftMarginDots - $rightMarginDots)
+  $leftMarginL = [byte]($leftMarginDots % 256)
+  $leftMarginH = [byte]([Math]::Floor($leftMarginDots / 256))
+  $printAreaL = [byte]($printAreaDots % 256)
+  $printAreaH = [byte]([Math]::Floor($printAreaDots / 256))
+  $topMarginLines = [Math]::Max(0, [Math]::Round($contentMarginTopMm / 4.0))
+  $bottomMarginLines = [Math]::Max(0, [Math]::Round($contentMarginBottomMm / 4.0))
+  $bytes.AddRange([byte[]](0x1D, 0x4C, $leftMarginL, $leftMarginH))
+  $bytes.AddRange([byte[]](0x1D, 0x57, $printAreaL, $printAreaH))
+  for ($i = 0; $i -lt $topMarginLines; $i++) {
+    $bytes.Add([byte]0x0A)
+  }
+  $null = Add-ReceiptLogoBytes -TargetBytes $bytes -LogoUrl $headerLogoUrl -LogoDataUrl $headerLogoDataUrl -PaperWidthMm $paperWidthMm -ContentMarginRightMm $contentMarginRightMm -ContentMarginLeftMm $contentMarginLeftMm -LogoWidthPercent $headerLogoWidthPercent
+  $bytes.AddRange($textBytes)
+  for ($i = 0; $i -lt $bottomMarginLines; $i++) {
+    $bytes.Add([byte]0x0A)
+  }
 }
 if ($cutPaperAfterPrint) {
   for ($i = 0; $i -lt $feedLines; $i++) {
@@ -501,7 +606,7 @@ if ($cutPaperAfterPrint) {
 }
 $rawBytes = $bytes.ToArray()
 [FaollaRawPrinter]::SendBytesToPrinter($printerName, $jobName, $rawBytes)
-@{ printerName = $printerName; bytes = $rawBytes.Length; mode = 'escpos'; feedLinesBeforeCut = $feedLines; cutPaperMode = $cutMode; cutPaperAfterPrint = $cutPaperAfterPrint; headerLogo = [bool]$headerLogoUrl } | ConvertTo-Json -Compress
+@{ printerName = $printerName; bytes = $rawBytes.Length; mode = 'escpos'; feedLinesBeforeCut = $feedLines; cutPaperMode = $cutMode; cutPaperAfterPrint = $cutPaperAfterPrint; headerLogo = [bool]($headerLogoUrl -or $headerLogoDataUrl); receiptImage = [bool]$receiptImagePrinted } | ConvertTo-Json -Compress
 `,
       30000,
     );
@@ -518,10 +623,13 @@ $rawBytes = $bytes.ToArray()
       contentMarginRightMm: safeContentMarginRightMm,
       contentMarginBottomMm: safeContentMarginBottomMm,
       contentMarginLeftMm: safeContentMarginLeftMm,
-      headerLogo: Boolean(safeHeaderLogoUrl),
+      headerLogo: Boolean(safeHeaderLogoUrl || safeHeaderLogoDataUrl),
+      receiptImage: Boolean(result.receiptImage),
     };
   } finally {
     void rm(filePath, { force: true });
+    if (logoDataPath) void rm(logoDataPath, { force: true });
+    if (receiptImageDataPath) void rm(receiptImageDataPath, { force: true });
   }
 }
 
@@ -547,7 +655,9 @@ async function handlePrint(request, response) {
       payload.printMode === "escpos" ||
       payload.cutPaperAfterPrint === true ||
       payload.rawEscpos === true ||
-      Boolean(normalizeUrl(payload.headerLogoUrl));
+      Boolean(normalizeDataImage(payload.receiptImageDataUrl)) ||
+      Boolean(normalizeUrl(payload.headerLogoUrl)) ||
+      Boolean(normalizeDataImage(payload.headerLogoDataUrl));
     const result = shouldUseEscPos
       ? await printEscPosJob({
           content: payload.content,
@@ -562,7 +672,9 @@ async function handlePrint(request, response) {
           contentMarginBottomMm: payload.contentMarginBottomMm,
           contentMarginLeftMm: payload.contentMarginLeftMm,
           headerLogoUrl: payload.headerLogoUrl,
+          headerLogoDataUrl: payload.headerLogoDataUrl,
           headerLogoWidthPercent: payload.headerLogoWidthPercent,
+          receiptImageDataUrl: payload.receiptImageDataUrl,
         })
       : await printTextJob({
           content: payload.content,
