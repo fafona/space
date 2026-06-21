@@ -20,7 +20,6 @@ import {
   getVisibleReceiptFields,
   isReceiptFieldVisible,
   listLocalPrintBridgePrinters,
-  printRedemptionReceipt,
   printRedemptionReceiptWithLocalBridge,
   normalizeReceiptPrintSettingsForClient,
   type LocalPrintBridgePrinter,
@@ -49,6 +48,8 @@ type MembershipSettingsPayload = {
   message?: unknown;
   error?: unknown;
 };
+
+type PrintSettingsPanelTab = "text" | "content" | "print";
 
 const RECEIPT_FIELD_SECTIONS: Array<{ id: MerchantReceiptFieldSection; label: string; hint: string }> = [
   { id: "header", label: "页头", hint: "商户、站点等居中显示内容" },
@@ -400,6 +401,7 @@ export default function MerchantPrintSettingsPanel({
   const [bridgePrinters, setBridgePrinters] = useState<LocalPrintBridgePrinter[]>([]);
   const [logoUploading, setLogoUploading] = useState(false);
   const [logoPreviewUrl, setLogoPreviewUrl] = useState("");
+  const [activeSettingsPanel, setActiveSettingsPanel] = useState<PrintSettingsPanelTab>("text");
   const [activeReceiptSection, setActiveReceiptSection] = useState<MerchantReceiptFieldSection>("meta");
 
   const activeSettings = useMemo(
@@ -435,6 +437,12 @@ export default function MerchantPrintSettingsPanel({
     [printSettings.receiptFields],
   );
   const watermarkPreviewText = useMemo(() => getReceiptWatermarkText(printSettings), [printSettings]);
+  const settingsPanelTabClassName = (tab: PrintSettingsPanelTab) =>
+    `rounded-2xl border px-4 py-3 text-left text-sm transition ${
+      activeSettingsPanel === tab
+        ? "border-slate-950 bg-slate-950 text-white shadow-sm"
+        : "border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 hover:bg-white"
+    }`;
 
   const renderPreviewItemMeta = useCallback(
     (line: MerchantRedemptionReceiptLine) => {
@@ -656,25 +664,22 @@ export default function MerchantPrintSettingsPanel({
   async function testPrint() {
     setError("");
     setNotice("");
-    if (printSettings.silentPrintEnabled) {
-      setBridgeChecking(true);
-      try {
-        const printed = await printRedemptionReceiptWithLocalBridge(printSettings, previewReceipt);
-        setBridgeStatus(printed ? "online" : "offline");
-        if (printed) {
-          setNotice("测试小票已发送到本机打印助手。");
-          return;
-        }
-        if (!printSettings.fallbackToBrowserPrint) {
-          setError("本机打印助手不可用，且未开启浏览器打印回退。");
-          return;
-        }
-      } finally {
-        setBridgeChecking(false);
-      }
+    if (!printSettings.silentPrintEnabled) {
+      setError("请先启用本机打印助手静默打印，再测试打印。");
+      return;
     }
-    printRedemptionReceipt({ ...printSettings, silentPrintEnabled: false }, previewReceipt);
-    setNotice("已打开浏览器测试打印。");
+    setBridgeChecking(true);
+    try {
+      const printed = await printRedemptionReceiptWithLocalBridge(printSettings, previewReceipt);
+      setBridgeStatus(printed ? "online" : "offline");
+      if (printed) {
+        setNotice("测试小票已发送到本机打印助手。");
+      } else {
+        setError("本机打印助手不可用，请确认助手已运行并选择正确打印机。");
+      }
+    } finally {
+      setBridgeChecking(false);
+    }
   }
 
   async function handleReceiptLogoUpload(event: ChangeEvent<HTMLInputElement>) {
@@ -776,6 +781,47 @@ export default function MerchantPrintSettingsPanel({
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="flex flex-col gap-4">
+          <div className="rounded-[20px] border border-slate-200 bg-white p-2 shadow-[0_10px_28px_rgba(15,23,42,0.04)]">
+            <div className="grid gap-2 md:grid-cols-3">
+              <button
+                type="button"
+                className={settingsPanelTabClassName("text")}
+                onClick={() => setActiveSettingsPanel("text")}
+                aria-pressed={activeSettingsPanel === "text"}
+              >
+                <span className="block font-semibold">票面文字</span>
+                <span className={activeSettingsPanel === "text" ? "mt-1 block text-xs text-slate-200" : "mt-1 block text-xs text-slate-500"}>
+                  标题、Logo、水印
+                </span>
+              </button>
+              <button
+                type="button"
+                className={settingsPanelTabClassName("content")}
+                onClick={() => setActiveSettingsPanel("content")}
+                aria-pressed={activeSettingsPanel === "content"}
+              >
+                <span className="block font-semibold">小票内容</span>
+                <span
+                  className={activeSettingsPanel === "content" ? "mt-1 block text-xs text-slate-200" : "mt-1 block text-xs text-slate-500"}
+                >
+                  字段、字号、宽度
+                </span>
+              </button>
+              <button
+                type="button"
+                className={settingsPanelTabClassName("print")}
+                onClick={() => setActiveSettingsPanel("print")}
+                aria-pressed={activeSettingsPanel === "print"}
+              >
+                <span className="block font-semibold">打印设置</span>
+                <span className={activeSettingsPanel === "print" ? "mt-1 block text-xs text-slate-200" : "mt-1 block text-xs text-slate-500"}>
+                  纸宽、边距、助手
+                </span>
+              </button>
+            </div>
+          </div>
+          {activeSettingsPanel === "print" ? (
+            <>
           <section className="order-3 rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]">
             <h3 className="text-base font-semibold text-slate-950">打印行为</h3>
             <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -940,7 +986,7 @@ export default function MerchantPrintSettingsPanel({
               <div>
                 <h3 className="text-base font-semibold text-slate-950">本机静默打印助手</h3>
                 <p className="mt-1 text-sm text-slate-500">
-                  收银电脑运行本地助手后，小票会直接发给指定打印机；助手不可用时可回退到浏览器打印。
+                  收银电脑运行本地助手后，小票会直接发给指定打印机；测试打印和结算打印都按这里的助手配置执行。
                 </p>
               </div>
               <span
@@ -960,11 +1006,6 @@ export default function MerchantPrintSettingsPanel({
                 label="启用本机助手静默打印"
                 checked={printSettings.silentPrintEnabled}
                 onChange={(checked) => patchPrintSettings({ silentPrintEnabled: checked })}
-              />
-              <SwitchField
-                label="助手不可用时回退到浏览器打印"
-                checked={printSettings.fallbackToBrowserPrint}
-                onChange={(checked) => patchPrintSettings({ fallbackToBrowserPrint: checked })}
               />
               <SwitchField
                 label="结尾自动切纸（需要 ESC/POS 热敏打印机）"
@@ -1026,7 +1067,7 @@ export default function MerchantPrintSettingsPanel({
                 </select>
               </Field>
               <p className="text-xs leading-5 text-slate-500 md:col-span-2">
-                切纸只在本机助手 1.1.0 及以上、并且打印机支持 ESC/POS RAW 指令时生效；普通浏览器打印由系统驱动控制纸张和切纸。
+                切纸只在本机助手 1.1.0 及以上、并且打印机支持 ESC/POS RAW 指令时生效。
               </p>
               <div className="flex flex-wrap gap-2 md:col-span-2">
                 <button
@@ -1048,7 +1089,10 @@ export default function MerchantPrintSettingsPanel({
               </div>
             </div>
           </section>
+            </>
+          ) : null}
 
+          {activeSettingsPanel === "text" ? (
           <section className="order-1 rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]">
             <h3 className="text-base font-semibold text-slate-950">票面文字</h3>
             <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -1282,7 +1326,9 @@ export default function MerchantPrintSettingsPanel({
               </div>
             </div>
           </section>
+          ) : null}
 
+          {activeSettingsPanel === "content" ? (
           <section className="order-2 rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
@@ -1422,6 +1468,7 @@ export default function MerchantPrintSettingsPanel({
               </div>
             </div>
           </section>
+          ) : null}
         </div>
 
         <aside className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)] xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:self-start xl:overflow-hidden">
