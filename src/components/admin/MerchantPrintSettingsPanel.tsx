@@ -568,6 +568,10 @@ export default function MerchantPrintSettingsPanel({
 
   async function saveSettings() {
     if (saving) return;
+    if (logoUploading) {
+      setError("Logo 正在上传，请等上传完成后再保存配置。");
+      return;
+    }
     if (!/^\d{8}$/.test(normalizedSiteId)) {
       setError("当前商户资料还没准备好，请稍后重试。");
       return;
@@ -744,7 +748,7 @@ export default function MerchantPrintSettingsPanel({
             type="button"
             className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
             onClick={() => void loadSettings()}
-            disabled={loading || saving}
+            disabled={loading || saving || logoUploading}
           >
             {loading ? "刷新中..." : "刷新"}
           </button>
@@ -752,7 +756,7 @@ export default function MerchantPrintSettingsPanel({
             type="button"
             className="rounded-xl border border-slate-900 bg-white px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-slate-50 disabled:opacity-60"
             onClick={testPrint}
-            disabled={saving}
+            disabled={saving || logoUploading}
           >
             测试打印
           </button>
@@ -760,9 +764,9 @@ export default function MerchantPrintSettingsPanel({
             type="button"
             className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:bg-slate-400"
             onClick={() => void saveSettings()}
-            disabled={saving}
+            disabled={saving || logoUploading}
           >
-            {saving ? "保存中..." : "保存配置"}
+            {saving ? "保存中..." : logoUploading ? "Logo 上传中..." : "保存配置"}
           </button>
         </div>
       </div>
@@ -1063,7 +1067,7 @@ export default function MerchantPrintSettingsPanel({
                           accept="image/*"
                           className="sr-only"
                           onChange={(event) => void handleReceiptLogoUpload(event)}
-                          disabled={logoUploading}
+                          disabled={logoUploading || saving}
                         />
                       </label>
                       {headerLogoDisplayUrl ? (
@@ -1074,7 +1078,7 @@ export default function MerchantPrintSettingsPanel({
                             setLogoPreviewUrl("");
                             patchPrintSettings({ headerLogoUrl: "" });
                           }}
-                          disabled={logoUploading}
+                          disabled={logoUploading || saving}
                         >
                           清除 Logo
                         </button>
