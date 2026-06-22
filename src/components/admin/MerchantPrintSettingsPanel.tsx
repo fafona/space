@@ -1,12 +1,22 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
 import { showGlobalToast } from "@/lib/globalToast";
 import {
   MERCHANT_RECEIPT_AUTO_LOCALE,
   applyMerchantReceiptLocaleDefaults,
   applyMerchantReceiptResolvedLocaleDefaults,
   createEmptyMerchantMembershipSettings,
+  getMerchantReceiptSystemText,
   normalizeMerchantMembershipSettings,
   type MerchantMembershipSettings,
   type MerchantReceiptContentField,
@@ -60,6 +70,11 @@ type MembershipSettingsPayload = {
 
 type PrintSettingsPanelTab = "text" | "content" | "print";
 type LocalPrintBridgePanelStatus = "unknown" | "online" | "offline" | "outdated" | "updating";
+type ReceiptMarginSide = "top" | "right" | "bottom" | "left";
+
+const RECEIPT_PREVIEW_MM_SCALE = 3.2;
+const RECEIPT_MARGIN_MIN_MM = 0;
+const RECEIPT_MARGIN_MAX_MM = 20;
 
 const RECEIPT_FIELD_SECTIONS: Array<{ id: MerchantReceiptFieldSection; label: string; hint: string }> = [
   { id: "header", label: "页头", hint: "商户、站点等居中显示内容" },
@@ -355,6 +370,25 @@ function parseNumberRange(value: string, min: number, max: number, fallback: num
   return Number(Math.min(max, Math.max(min, parsed)).toFixed(precision));
 }
 
+function clampReceiptMarginMm(value: number) {
+  return Number(Math.min(RECEIPT_MARGIN_MAX_MM, Math.max(RECEIPT_MARGIN_MIN_MM, value)).toFixed(1));
+}
+
+function readReceiptMarginValue(settings: MerchantReceiptPrintSettings, side: ReceiptMarginSide) {
+  if (side === "top") return settings.contentMarginTopMm;
+  if (side === "right") return settings.contentMarginRightMm;
+  if (side === "bottom") return settings.contentMarginBottomMm;
+  return settings.contentMarginLeftMm;
+}
+
+function buildReceiptMarginPatch(side: ReceiptMarginSide, value: number): Partial<MerchantReceiptPrintSettings> {
+  const margin = clampReceiptMarginMm(value);
+  if (side === "top") return { contentMarginTopMm: margin };
+  if (side === "right") return { contentMarginRightMm: margin };
+  if (side === "bottom") return { contentMarginBottomMm: margin };
+  return { contentMarginLeftMm: margin };
+}
+
 function receiptPreviewWidthClass(field: MerchantReceiptContentField) {
   if (field.width === "half") return "col-span-3";
   if (field.width === "third") return "col-span-2";
@@ -383,7 +417,7 @@ function formatPreviewLabelValue(label: string, value: unknown, separator = " ")
   return normalizedLabel ? `${normalizedLabel}${separator}${text}` : text;
 }
 
-function buildPreviewReceipt(siteId: string, siteName: string): MerchantRedemptionReceiptData {
+function buildPreviewReceipt(siteId: string, siteName: string, receiptLocale: string): MerchantRedemptionReceiptData {
   return {
     receiptNo: "PREVIEW",
     siteId,
@@ -396,13 +430,13 @@ function buildPreviewReceipt(siteId: string, siteName: string): MerchantRedempti
     grossPoints: 260,
     couponPointDiscountTotal: 60,
     totalPoints: 200,
-    note: "前台积分兑换",
+    note: getMerchantReceiptSystemText(receiptLocale, "previewNote"),
     createdAt: new Date(),
     lines: [
       {
         code: "A001",
-        name: "会员兑换项目",
-        categoryName: "推荐",
+        name: getMerchantReceiptSystemText(receiptLocale, "previewItemName"),
+        categoryName: getMerchantReceiptSystemText(receiptLocale, "previewItemCategory"),
         quantity: 1,
         unitPoints: 160,
         subtotalPoints: 160,
@@ -411,12 +445,12 @@ function buildPreviewReceipt(siteId: string, siteName: string): MerchantRedempti
       },
       {
         code: "COUPON",
-        name: "积分券抵扣",
-        categoryName: "优惠券",
+        name: getMerchantReceiptSystemText(receiptLocale, "previewCouponName"),
+        categoryName: getMerchantReceiptSystemText(receiptLocale, "previewCouponCategory"),
         quantity: 1,
         unitPoints: 100,
         subtotalPoints: 100,
-        couponDiscountLabel: "积分券",
+        couponDiscountLabel: getMerchantReceiptSystemText(receiptLocale, "previewCouponDiscountLabel"),
         couponPointDiscount: 60,
       },
     ],
@@ -448,6 +482,13 @@ export default function MerchantPrintSettingsPanel({
   const [logoPreviewUrl, setLogoPreviewUrl] = useState("");
   const [activeSettingsPanel, setActiveSettingsPanel] = useState<PrintSettingsPanelTab>("text");
   const [activeReceiptSection, setActiveReceiptSection] = useState<MerchantReceiptFieldSection>("meta");
+  const [draggingReceiptMargin, setDraggingReceiptMargin] = useState<ReceiptMarginSide | null>(null);
+  const receiptMarginDragRef = useRef<{
+    side: ReceiptMarginSide;
+    startX: number;
+    startY: number;
+    startValue: number;
+  } | null>(null);
 
   const activeSettings = useMemo(
     () => normalizeMerchantMembershipSettings(normalizedSiteId, settings),
@@ -467,8 +508,8 @@ export default function MerchantPrintSettingsPanel({
       : resolveReceiptSupportedLocale(printSettings.receiptLocale);
   const autoReceiptLocaleLabel = `自动（按所在国家：${getLanguageOptionLabel(defaultReceiptLocale)}）`;
   const previewReceipt = useMemo(
-    () => buildPreviewReceipt(normalizedSiteId, siteName),
-    [normalizedSiteId, siteName],
+    () => buildPreviewReceipt(normalizedSiteId, siteName, selectedReceiptLocale),
+    [normalizedSiteId, selectedReceiptLocale, siteName],
   );
   const headerLogoDisplayUrl = logoPreviewUrl || normalizePublicAssetUrl(printSettings.headerLogoUrl);
   const activeReceiptSectionInfo =
@@ -492,6 +533,13 @@ export default function MerchantPrintSettingsPanel({
   const printHelperMinimumVersion = getPrintHelperManifestMinimumVersion(printHelperManifest);
   const printHelperPackageUrl = resolvePrintHelperPackageUrl(printHelperManifest);
   const bridgeCurrentVersion = bridgeInspection?.version || "";
+  const receiptPreviewPaperWidthPx = Math.min(320, Math.max(220, printSettings.paperWidthMm * RECEIPT_PREVIEW_MM_SCALE));
+  const receiptPreviewMarginPx = {
+    top: printSettings.contentMarginTopMm * RECEIPT_PREVIEW_MM_SCALE,
+    right: printSettings.contentMarginRightMm * RECEIPT_PREVIEW_MM_SCALE,
+    bottom: printSettings.contentMarginBottomMm * RECEIPT_PREVIEW_MM_SCALE,
+    left: printSettings.contentMarginLeftMm * RECEIPT_PREVIEW_MM_SCALE,
+  };
   const bridgeOutdated =
     Boolean(bridgeInspection?.online) && isPrintHelperVersionOutdated(bridgeCurrentVersion, printHelperManifest);
   const bridgeCanSelfUpdate = Boolean(bridgeInspection?.online && bridgeInspection.updateSupported);
@@ -553,6 +601,66 @@ export default function MerchantPrintSettingsPanel({
     setNotice("");
     setError("");
   }, []);
+
+  const patchReceiptMargin = useCallback(
+    (side: ReceiptMarginSide, value: number) => {
+      patchPrintSettings(buildReceiptMarginPatch(side, value));
+    },
+    [patchPrintSettings],
+  );
+
+  const handleReceiptMarginInputChange = useCallback(
+    (side: ReceiptMarginSide, value: string) => {
+      patchReceiptMargin(side, parseNumberRange(value, RECEIPT_MARGIN_MIN_MM, RECEIPT_MARGIN_MAX_MM, readReceiptMarginValue(printSettings, side)));
+    },
+    [patchReceiptMargin, printSettings],
+  );
+
+  const startReceiptMarginDrag = useCallback(
+    (side: ReceiptMarginSide, event: ReactPointerEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      receiptMarginDragRef.current = {
+        side,
+        startX: event.clientX,
+        startY: event.clientY,
+        startValue: readReceiptMarginValue(printSettings, side),
+      };
+      setDraggingReceiptMargin(side);
+    },
+    [printSettings],
+  );
+
+  useEffect(() => {
+    if (!draggingReceiptMargin) return;
+    function handlePointerMove(event: PointerEvent) {
+      const drag = receiptMarginDragRef.current;
+      if (!drag) return;
+      const deltaX = (event.clientX - drag.startX) / RECEIPT_PREVIEW_MM_SCALE;
+      const deltaY = (event.clientY - drag.startY) / RECEIPT_PREVIEW_MM_SCALE;
+      const nextValue =
+        drag.side === "top"
+          ? drag.startValue + deltaY
+          : drag.side === "bottom"
+            ? drag.startValue - deltaY
+            : drag.side === "left"
+              ? drag.startValue + deltaX
+              : drag.startValue - deltaX;
+      patchReceiptMargin(drag.side, nextValue);
+    }
+    function stopDragging() {
+      receiptMarginDragRef.current = null;
+      setDraggingReceiptMargin(null);
+    }
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", stopDragging);
+    window.addEventListener("pointercancel", stopDragging);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", stopDragging);
+      window.removeEventListener("pointercancel", stopDragging);
+    };
+  }, [draggingReceiptMargin, patchReceiptMargin]);
 
   const applyReceiptLocale = useCallback(
     (nextLocale: string) => {
@@ -1036,91 +1144,6 @@ export default function MerchantPrintSettingsPanel({
                   ))}
                 </select>
               </Field>
-              <div className="md:col-span-2">
-                <div className="text-sm font-medium text-slate-700">内容边距(mm)</div>
-                <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  <Field label="上">
-                    <input
-                      type="number"
-                      min={0}
-                      max={20}
-                      step={0.5}
-                      className={inputClassName()}
-                      value={printSettings.contentMarginTopMm}
-                      onChange={(event) =>
-                        patchPrintSettings({
-                          contentMarginTopMm: parseNumberRange(
-                            event.target.value,
-                            0,
-                            20,
-                            printSettings.contentMarginTopMm,
-                          ),
-                        })
-                      }
-                    />
-                  </Field>
-                  <Field label="右">
-                    <input
-                      type="number"
-                      min={0}
-                      max={20}
-                      step={0.5}
-                      className={inputClassName()}
-                      value={printSettings.contentMarginRightMm}
-                      onChange={(event) =>
-                        patchPrintSettings({
-                          contentMarginRightMm: parseNumberRange(
-                            event.target.value,
-                            0,
-                            20,
-                            printSettings.contentMarginRightMm,
-                          ),
-                        })
-                      }
-                    />
-                  </Field>
-                  <Field label="下">
-                    <input
-                      type="number"
-                      min={0}
-                      max={20}
-                      step={0.5}
-                      className={inputClassName()}
-                      value={printSettings.contentMarginBottomMm}
-                      onChange={(event) =>
-                        patchPrintSettings({
-                          contentMarginBottomMm: parseNumberRange(
-                            event.target.value,
-                            0,
-                            20,
-                            printSettings.contentMarginBottomMm,
-                          ),
-                        })
-                      }
-                    />
-                  </Field>
-                  <Field label="左">
-                    <input
-                      type="number"
-                      min={0}
-                      max={20}
-                      step={0.5}
-                      className={inputClassName()}
-                      value={printSettings.contentMarginLeftMm}
-                      onChange={(event) =>
-                        patchPrintSettings({
-                          contentMarginLeftMm: parseNumberRange(
-                            event.target.value,
-                            0,
-                            20,
-                            printSettings.contentMarginLeftMm,
-                          ),
-                        })
-                      }
-                    />
-                  </Field>
-                </div>
-              </div>
               <Field label="字体(px)">
                 <input
                   type="number"
@@ -1681,12 +1704,120 @@ export default function MerchantPrintSettingsPanel({
             <div
               className="relative mx-auto overflow-hidden bg-white text-black shadow-sm"
               style={{
-                width: `${Math.min(320, Math.max(220, printSettings.paperWidthMm * 3.2))}px`,
-                padding: `${printSettings.contentMarginTopMm * 3.2}px ${printSettings.contentMarginRightMm * 3.2}px ${printSettings.contentMarginBottomMm * 3.2}px ${printSettings.contentMarginLeftMm * 3.2}px`,
+                width: `${receiptPreviewPaperWidthPx}px`,
+                padding: `${receiptPreviewMarginPx.top}px ${receiptPreviewMarginPx.right}px ${receiptPreviewMarginPx.bottom}px ${receiptPreviewMarginPx.left}px`,
                 fontSize: `${printSettings.fontSizePx}px`,
                 lineHeight: 1.35,
               }}
             >
+              <button
+                type="button"
+                aria-label="拖动调整上边距"
+                title="拖动调整上边距"
+                className={`absolute left-0 right-0 z-30 h-3 -translate-y-1/2 cursor-row-resize border-t border-dashed ${
+                  draggingReceiptMargin === "top" ? "border-sky-500 bg-sky-500/15" : "border-sky-400 bg-transparent hover:bg-sky-500/10"
+                }`}
+                style={{ top: `${receiptPreviewMarginPx.top}px`, touchAction: "none" }}
+                onPointerDown={(event) => startReceiptMarginDrag("top", event)}
+              />
+              <button
+                type="button"
+                aria-label="拖动调整下边距"
+                title="拖动调整下边距"
+                className={`absolute left-0 right-0 z-30 h-3 translate-y-1/2 cursor-row-resize border-b border-dashed ${
+                  draggingReceiptMargin === "bottom" ? "border-sky-500 bg-sky-500/15" : "border-sky-400 bg-transparent hover:bg-sky-500/10"
+                }`}
+                style={{ bottom: `${receiptPreviewMarginPx.bottom}px`, touchAction: "none" }}
+                onPointerDown={(event) => startReceiptMarginDrag("bottom", event)}
+              />
+              <button
+                type="button"
+                aria-label="拖动调整左边距"
+                title="拖动调整左边距"
+                className={`absolute bottom-0 top-0 z-30 w-3 -translate-x-1/2 cursor-col-resize border-l border-dashed ${
+                  draggingReceiptMargin === "left" ? "border-sky-500 bg-sky-500/15" : "border-sky-400 bg-transparent hover:bg-sky-500/10"
+                }`}
+                style={{ left: `${receiptPreviewMarginPx.left}px`, touchAction: "none" }}
+                onPointerDown={(event) => startReceiptMarginDrag("left", event)}
+              />
+              <button
+                type="button"
+                aria-label="拖动调整右边距"
+                title="拖动调整右边距"
+                className={`absolute bottom-0 top-0 z-30 w-3 translate-x-1/2 cursor-col-resize border-r border-dashed ${
+                  draggingReceiptMargin === "right" ? "border-sky-500 bg-sky-500/15" : "border-sky-400 bg-transparent hover:bg-sky-500/10"
+                }`}
+                style={{ right: `${receiptPreviewMarginPx.right}px`, touchAction: "none" }}
+                onPointerDown={(event) => startReceiptMarginDrag("right", event)}
+              />
+              <label
+                className="absolute z-40 flex h-6 items-center gap-0.5 rounded-md bg-slate-950 px-1.5 text-[11px] font-semibold text-white shadow-lg"
+                style={{ top: `${Math.max(2, receiptPreviewMarginPx.top + 4)}px`, left: "50%", transform: "translateX(-50%)" }}
+                onPointerDown={(event) => event.stopPropagation()}
+              >
+                <span className="sr-only">上边距(mm)</span>
+                <input
+                  type="number"
+                  min={RECEIPT_MARGIN_MIN_MM}
+                  max={RECEIPT_MARGIN_MAX_MM}
+                  step={0.5}
+                  className="w-8 bg-transparent text-center text-white outline-none"
+                  value={printSettings.contentMarginTopMm}
+                  onChange={(event) => handleReceiptMarginInputChange("top", event.target.value)}
+                />
+                <span>mm</span>
+              </label>
+              <label
+                className="absolute z-40 flex h-6 items-center gap-0.5 rounded-md bg-slate-950 px-1.5 text-[11px] font-semibold text-white shadow-lg"
+                style={{ right: `${Math.max(2, receiptPreviewMarginPx.right + 4)}px`, top: "50%", transform: "translateY(-50%)" }}
+                onPointerDown={(event) => event.stopPropagation()}
+              >
+                <span className="sr-only">右边距(mm)</span>
+                <input
+                  type="number"
+                  min={RECEIPT_MARGIN_MIN_MM}
+                  max={RECEIPT_MARGIN_MAX_MM}
+                  step={0.5}
+                  className="w-8 bg-transparent text-center text-white outline-none"
+                  value={printSettings.contentMarginRightMm}
+                  onChange={(event) => handleReceiptMarginInputChange("right", event.target.value)}
+                />
+                <span>mm</span>
+              </label>
+              <label
+                className="absolute z-40 flex h-6 items-center gap-0.5 rounded-md bg-slate-950 px-1.5 text-[11px] font-semibold text-white shadow-lg"
+                style={{ bottom: `${Math.max(2, receiptPreviewMarginPx.bottom + 4)}px`, left: "50%", transform: "translateX(-50%)" }}
+                onPointerDown={(event) => event.stopPropagation()}
+              >
+                <span className="sr-only">下边距(mm)</span>
+                <input
+                  type="number"
+                  min={RECEIPT_MARGIN_MIN_MM}
+                  max={RECEIPT_MARGIN_MAX_MM}
+                  step={0.5}
+                  className="w-8 bg-transparent text-center text-white outline-none"
+                  value={printSettings.contentMarginBottomMm}
+                  onChange={(event) => handleReceiptMarginInputChange("bottom", event.target.value)}
+                />
+                <span>mm</span>
+              </label>
+              <label
+                className="absolute z-40 flex h-6 items-center gap-0.5 rounded-md bg-slate-950 px-1.5 text-[11px] font-semibold text-white shadow-lg"
+                style={{ left: `${Math.max(2, receiptPreviewMarginPx.left + 4)}px`, top: "50%", transform: "translateY(-50%)" }}
+                onPointerDown={(event) => event.stopPropagation()}
+              >
+                <span className="sr-only">左边距(mm)</span>
+                <input
+                  type="number"
+                  min={RECEIPT_MARGIN_MIN_MM}
+                  max={RECEIPT_MARGIN_MAX_MM}
+                  step={0.5}
+                  className="w-8 bg-transparent text-center text-white outline-none"
+                  value={printSettings.contentMarginLeftMm}
+                  onChange={(event) => handleReceiptMarginInputChange("left", event.target.value)}
+                />
+                <span>mm</span>
+              </label>
               {watermarkPreviewText ? (
                 <div
                   className="pointer-events-none absolute inset-0 z-0 grid overflow-hidden font-extrabold leading-none text-black"

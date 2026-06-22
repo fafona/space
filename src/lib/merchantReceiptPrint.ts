@@ -1,8 +1,10 @@
 import {
   createDefaultMerchantReceiptFields,
+  getMerchantReceiptSystemTextForSettings,
   type MerchantReceiptContentField,
   type MerchantReceiptFieldSection,
   type MerchantReceiptPrintSettings,
+  type MerchantReceiptSystemTextKey,
 } from "@/lib/merchantMembershipSettings";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import { toPng } from "html-to-image";
@@ -77,6 +79,19 @@ const FALLBACK_PRINT_SETTINGS: MerchantReceiptPrintSettings = {
   showNote: true,
   showTimestamp: true,
   receiptFields: createDefaultMerchantReceiptFields(),
+};
+
+const RECEIPT_SYSTEM_TEXT_ALIASES: Record<string, MerchantReceiptSystemTextKey> = {
+  会员兑换项目: "previewItemName",
+  推荐: "previewItemCategory",
+  积分券抵扣: "previewCouponName",
+  优惠券: "previewCouponCategory",
+  积分券: "pointsVoucherCode",
+  积分抵扣: "pointsDeductionName",
+  临时项目: "quickRedeemName",
+  快捷兑换: "quickRedeemCode",
+  卡券: "couponCode",
+  前台积分兑换: "previewNote",
 };
 
 export const PRINT_HELPER_MANIFEST_PATH = "/downloads/print-helper/latest.json";
@@ -400,6 +415,49 @@ function formatReceiptLabelValue(label: string, value: unknown, separator = " ")
   return normalizedLabel ? `${normalizedLabel}${separator}${text}` : text;
 }
 
+function localizedReceiptSystemText(settings: MerchantReceiptPrintSettings, value: unknown) {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  const aliasKey = RECEIPT_SYSTEM_TEXT_ALIASES[text];
+  if (aliasKey) return getMerchantReceiptSystemTextForSettings(settings, aliasKey);
+
+  const pointsVoucherDiscountMatch = text.match(/^积分券[：:]\s*抵扣\s*(\d+)\s*积分$/);
+  if (pointsVoucherDiscountMatch) {
+    return `${getMerchantReceiptSystemTextForSettings(settings, "pointsVoucherCode")}: ${getMerchantReceiptSystemTextForSettings(
+      settings,
+      "pointsDeductionName",
+    )} ${pointsVoucherDiscountMatch[1]}`;
+  }
+
+  const couponPrefix = "卡券兑换：";
+  if (text.startsWith(couponPrefix)) {
+    const suffix = text.slice(couponPrefix.length).trim();
+    const label = getMerchantReceiptSystemTextForSettings(settings, "couponExchangeNote");
+    return suffix ? `${label}: ${suffix}` : label;
+  }
+
+  const couponUsagePrefix = "积分兑换使用卡券：";
+  if (text.startsWith(couponUsagePrefix)) {
+    const suffix = text.slice(couponUsagePrefix.length).trim();
+    const label = getMerchantReceiptSystemTextForSettings(settings, "couponExchangeNote");
+    return suffix ? `${label}: ${suffix}` : label;
+  }
+
+  return text;
+}
+
+function getLocalizedReceiptFieldValue(settings: MerchantReceiptPrintSettings, key: string, receipt: MerchantRedemptionReceiptData) {
+  const value = getReceiptFieldValue(key, receipt);
+  return key === "note" ? localizedReceiptSystemText(settings, value) : value;
+}
+
+function getLocalizedReceiptLineFieldValue(settings: MerchantReceiptPrintSettings, key: string, line: MerchantRedemptionReceiptLine) {
+  const value = getReceiptLineFieldValue(key, line);
+  return key === "itemName" || key === "itemCode" || key === "itemCategory" || key === "couponLineDiscount"
+    ? localizedReceiptSystemText(settings, value)
+    : value;
+}
+
 function renderReceiptKeyValue(field: MerchantReceiptContentField, value: unknown, className = "") {
   const text = String(value ?? "");
   if (!text) return "";
@@ -427,7 +485,7 @@ function buildReceiptLinesHtml(settings: MerchantReceiptPrintSettings, receipt: 
           : formatReceiptPoints(line.subtotalPoints);
       const meta = metaFields
         .map((field) => {
-          const value = getReceiptLineFieldValue(field.key, line);
+          const value = getLocalizedReceiptLineFieldValue(settings, field.key, line);
           return value
             ? `<span${getReceiptFieldStyleAttribute(field)}>${escapeHtml(formatReceiptLabelValue(field.label, value))}</span>`
             : "";
@@ -436,12 +494,12 @@ function buildReceiptLinesHtml(settings: MerchantReceiptPrintSettings, receipt: 
       return `
         <tr>
           <td>
-            <div class="item-name"${itemNameField ? getReceiptFieldStyleAttribute(itemNameField) : ""}>${escapeHtml(getReceiptLineFieldValue("itemName", line) || itemNameLabel)}</div>
+            <div class="item-name"${itemNameField ? getReceiptFieldStyleAttribute(itemNameField) : ""}>${escapeHtml(getLocalizedReceiptLineFieldValue(settings, "itemName", line) || itemNameLabel)}</div>
             ${meta.length ? `<div class="muted">${meta.join('<span class="receipt-meta-separator"> / </span>')}</div>` : ""}
           </td>
-          ${showUnitPoints ? `<td class="num"${unitPointsField ? getReceiptFieldStyleAttribute(unitPointsField) : ""}>${escapeHtml(getReceiptLineFieldValue("unitPoints", line))}</td>` : ""}
-          ${showQuantity ? `<td class="num"${itemQuantityField ? getReceiptFieldStyleAttribute(itemQuantityField) : ""}>${escapeHtml(getReceiptLineFieldValue("itemQuantity", line))}</td>` : ""}
-          ${showSubtotal ? `<td class="num strong"${itemSubtotalField ? getReceiptFieldStyleAttribute(itemSubtotalField) : ""}>${escapeHtml(getReceiptLineFieldValue("itemSubtotal", line) || pointText)}</td>` : ""}
+          ${showUnitPoints ? `<td class="num"${unitPointsField ? getReceiptFieldStyleAttribute(unitPointsField) : ""}>${escapeHtml(getLocalizedReceiptLineFieldValue(settings, "unitPoints", line))}</td>` : ""}
+          ${showQuantity ? `<td class="num"${itemQuantityField ? getReceiptFieldStyleAttribute(itemQuantityField) : ""}>${escapeHtml(getLocalizedReceiptLineFieldValue(settings, "itemQuantity", line))}</td>` : ""}
+          ${showSubtotal ? `<td class="num strong"${itemSubtotalField ? getReceiptFieldStyleAttribute(itemSubtotalField) : ""}>${escapeHtml(getLocalizedReceiptLineFieldValue(settings, "itemSubtotal", line) || pointText)}</td>` : ""}
         </tr>
       `;
     })
@@ -475,18 +533,18 @@ function buildReceiptPageHtml(settings: MerchantReceiptPrintSettings, receipt: M
     : "";
   const headerFieldsHtml = getVisibleReceiptFields(settings, "header")
     .map((field) => {
-      const value = getReceiptFieldValue(field.key, receipt);
+      const value = getLocalizedReceiptFieldValue(settings, field.key, receipt);
       return value
         ? `<div class="${field.key === "siteId" ? "muted" : ""}"${getReceiptFieldStyleAttribute(field)}>${escapeHtml(value)}</div>`
         : "";
     })
     .join("");
   const metaFieldsHtml = getVisibleReceiptFields(settings, "meta")
-    .map((field) => renderReceiptKeyValue(field, getReceiptFieldValue(field.key, receipt)))
+    .map((field) => renderReceiptKeyValue(field, getLocalizedReceiptFieldValue(settings, field.key, receipt)))
     .join("");
   const summaryFieldsHtml = getVisibleReceiptFields(settings, "summary")
     .map((field) => {
-      const value = getReceiptFieldValue(field.key, receipt);
+      const value = getLocalizedReceiptFieldValue(settings, field.key, receipt);
       const isGrand = field.key === "totalPoints";
       return renderReceiptKeyValue(field, value, isGrand ? "grand" : "");
     })
@@ -525,7 +583,7 @@ function buildReceiptPageHtml(settings: MerchantReceiptPrintSettings, receipt: M
           <tbody>${buildReceiptLinesHtml(settings, receipt)}</tbody>
         </table>
         ${summaryFieldsHtml ? `<div class="receipt-total">${summaryFieldsHtml}</div>` : ""}
-        ${noteField && receipt.note ? `<div class="receipt-note"${getReceiptFieldStyleAttribute(noteField)}>${escapeHtml(formatReceiptLabelValue(noteField.label, receipt.note, "："))}</div>` : ""}
+        ${noteField && receipt.note ? `<div class="receipt-note"${getReceiptFieldStyleAttribute(noteField)}>${escapeHtml(formatReceiptLabelValue(noteField.label, getLocalizedReceiptFieldValue(settings, "note", receipt), "："))}</div>` : ""}
         ${footerTextField && settings.footer ? `<footer${getReceiptFieldStyleAttribute(footerTextField)}>${escapeHtml(settings.footer)}</footer>` : ""}
       </div>
     </section>
@@ -784,42 +842,42 @@ export function buildRedemptionReceiptText(
     lines.push(centerByWidth(settings.title, width));
     if (settings.subtitle) lines.push(centerByWidth(settings.subtitle, width));
     getVisibleReceiptFields(settings, "header").forEach((field) => {
-      const value = getReceiptFieldValue(field.key, receipt);
+      const value = getLocalizedReceiptFieldValue(settings, field.key, receipt);
       if (value) lines.push(centerByWidth(value, width));
     });
     lines.push(receiptDivider(width));
     getVisibleReceiptFields(settings, "meta").forEach((field) => {
-      const value = getReceiptFieldValue(field.key, receipt);
+      const value = getLocalizedReceiptFieldValue(settings, field.key, receipt);
       if (value) lines.push(splitReceiptLine(field.label, value, width));
     });
     lines.push(receiptDivider(width));
     receipt.lines.forEach((line) => {
-      const itemName = getReceiptLineFieldValue("itemName", line);
+      const itemName = getLocalizedReceiptLineFieldValue(settings, "itemName", line);
       if (itemName) lines.push(clipText(itemName, width));
       const meta = itemMetaFields
         .map((field) => {
-          const value = getReceiptLineFieldValue(field.key, line);
+          const value = getLocalizedReceiptLineFieldValue(settings, field.key, line);
           return formatReceiptLabelValue(field.label, value);
         })
         .filter(Boolean);
       if (meta.length) lines.push(`  ${clipText(meta.join(" / "), Math.max(0, width - 2))}`);
       const unitParts = [
         showUnitPoints
-          ? formatReceiptLabelValue(getReceiptFieldLabel(settings, "unitPoints", "单价"), getReceiptLineFieldValue("unitPoints", line))
+          ? formatReceiptLabelValue(getReceiptFieldLabel(settings, "unitPoints", "单价"), getLocalizedReceiptLineFieldValue(settings, "unitPoints", line))
           : "",
         showQuantity
-          ? formatReceiptLabelValue(getReceiptFieldLabel(settings, "itemQuantity", "数量"), getReceiptLineFieldValue("itemQuantity", line))
+          ? formatReceiptLabelValue(getReceiptFieldLabel(settings, "itemQuantity", "数量"), getLocalizedReceiptLineFieldValue(settings, "itemQuantity", line))
           : "",
       ].filter(Boolean);
       if (showSubtotal) {
-        lines.push(splitReceiptLine(unitParts.join(" / "), getReceiptLineFieldValue("itemSubtotal", line), width));
+        lines.push(splitReceiptLine(unitParts.join(" / "), getLocalizedReceiptLineFieldValue(settings, "itemSubtotal", line), width));
       } else if (unitParts.length) {
         lines.push(clipText(unitParts.join(" / "), width));
       }
     });
     lines.push(receiptDivider(width));
     getVisibleReceiptFields(settings, "summary").forEach((field) => {
-      const value = getReceiptFieldValue(field.key, receipt);
+      const value = getLocalizedReceiptFieldValue(settings, field.key, receipt);
       if (value) lines.push(splitReceiptLine(field.label, value, width));
     });
     const footerFields = getVisibleReceiptFields(settings, "footer");
@@ -827,7 +885,7 @@ export function buildRedemptionReceiptText(
     const footerTextField = footerFields.find((field) => field.key === "footerText");
     if (noteField && receipt.note) {
       lines.push(receiptDivider(width));
-      lines.push(clipText(formatReceiptLabelValue(noteField.label, receipt.note, "："), width));
+      lines.push(clipText(formatReceiptLabelValue(noteField.label, getLocalizedReceiptFieldValue(settings, "note", receipt), "："), width));
     }
     if (footerTextField && settings.footer) {
       lines.push(receiptDivider(width));

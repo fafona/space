@@ -153,9 +153,23 @@ type MerchantReceiptLocaleCopy = {
   title: string;
   footer: string;
   fieldLabels: Record<string, string>;
+  systemText: Record<MerchantReceiptSystemTextKey, string>;
 };
 
 export const MERCHANT_RECEIPT_AUTO_LOCALE = "auto";
+export type MerchantReceiptSystemTextKey =
+  | "previewItemName"
+  | "previewItemCategory"
+  | "previewCouponName"
+  | "previewCouponCategory"
+  | "previewCouponDiscountLabel"
+  | "previewNote"
+  | "quickRedeemName"
+  | "quickRedeemCode"
+  | "couponCode"
+  | "pointsVoucherCode"
+  | "pointsDeductionName"
+  | "couponExchangeNote";
 
 const ZH_RECEIPT_COPY: MerchantReceiptLocaleCopy = {
   title: "积分兑换小票",
@@ -182,6 +196,20 @@ const ZH_RECEIPT_COPY: MerchantReceiptLocaleCopy = {
     afterPointBalance: "结算后积分",
     note: "备注",
     footerText: "页脚",
+  },
+  systemText: {
+    previewItemName: "会员兑换项目",
+    previewItemCategory: "推荐",
+    previewCouponName: "积分券抵扣",
+    previewCouponCategory: "优惠券",
+    previewCouponDiscountLabel: "积分券",
+    previewNote: "前台积分兑换",
+    quickRedeemName: "临时项目",
+    quickRedeemCode: "快捷兑换",
+    couponCode: "卡券",
+    pointsVoucherCode: "积分券",
+    pointsDeductionName: "积分抵扣",
+    couponExchangeNote: "卡券兑换",
   },
 };
 
@@ -213,6 +241,20 @@ const RECEIPT_LOCALE_COPY: Record<string, MerchantReceiptLocaleCopy> = {
       note: "Note",
       footerText: "Footer",
     },
+    systemText: {
+      previewItemName: "Member redemption item",
+      previewItemCategory: "Recommended",
+      previewCouponName: "Points voucher discount",
+      previewCouponCategory: "Coupons",
+      previewCouponDiscountLabel: "Points voucher",
+      previewNote: "Front desk points redemption",
+      quickRedeemName: "Temporary item",
+      quickRedeemCode: "Quick redeem",
+      couponCode: "Coupon",
+      pointsVoucherCode: "Points voucher",
+      pointsDeductionName: "Points deduction",
+      couponExchangeNote: "Coupon redemption",
+    },
   },
   es: {
     title: "Recibo de canje de puntos",
@@ -239,6 +281,20 @@ const RECEIPT_LOCALE_COPY: Record<string, MerchantReceiptLocaleCopy> = {
       afterPointBalance: "Puntos despues",
       note: "Nota",
       footerText: "Pie",
+    },
+    systemText: {
+      previewItemName: "Articulo de canje",
+      previewItemCategory: "Recomendado",
+      previewCouponName: "Vale de puntos",
+      previewCouponCategory: "Cupones",
+      previewCouponDiscountLabel: "Vale de puntos",
+      previewNote: "Canje de puntos en caja",
+      quickRedeemName: "Articulo temporal",
+      quickRedeemCode: "Canje rapido",
+      couponCode: "Cupon",
+      pointsVoucherCode: "Vale de puntos",
+      pointsDeductionName: "Descuento de puntos",
+      couponExchangeNote: "Canje de cupon",
     },
   },
   fr: {
@@ -267,6 +323,20 @@ const RECEIPT_LOCALE_COPY: Record<string, MerchantReceiptLocaleCopy> = {
       note: "Note",
       footerText: "Pied",
     },
+    systemText: {
+      previewItemName: "Article d'echange",
+      previewItemCategory: "Recommande",
+      previewCouponName: "Bon de points",
+      previewCouponCategory: "Coupons",
+      previewCouponDiscountLabel: "Bon de points",
+      previewNote: "Echange de points en caisse",
+      quickRedeemName: "Article temporaire",
+      quickRedeemCode: "Echange rapide",
+      couponCode: "Coupon",
+      pointsVoucherCode: "Bon de points",
+      pointsDeductionName: "Deduction de points",
+      couponExchangeNote: "Echange de coupon",
+    },
   },
   de: {
     title: "Bon fur Punkteinlosung",
@@ -293,6 +363,20 @@ const RECEIPT_LOCALE_COPY: Record<string, MerchantReceiptLocaleCopy> = {
       afterPointBalance: "Punkte nachher",
       note: "Notiz",
       footerText: "Fusszeile",
+    },
+    systemText: {
+      previewItemName: "Einloseartikel",
+      previewItemCategory: "Empfohlen",
+      previewCouponName: "Punktegutschein",
+      previewCouponCategory: "Coupons",
+      previewCouponDiscountLabel: "Punktegutschein",
+      previewNote: "Punkteeinlosung an der Kasse",
+      quickRedeemName: "Temporarer Artikel",
+      quickRedeemCode: "Schnelleinlosung",
+      couponCode: "Coupon",
+      pointsVoucherCode: "Punktegutschein",
+      pointsDeductionName: "Punkteabzug",
+      couponExchangeNote: "Coupon-Einlosung",
     },
   },
   it: {
@@ -321,6 +405,20 @@ const RECEIPT_LOCALE_COPY: Record<string, MerchantReceiptLocaleCopy> = {
       note: "Nota",
       footerText: "Pie",
     },
+    systemText: {
+      previewItemName: "Articolo riscatto",
+      previewItemCategory: "Consigliato",
+      previewCouponName: "Buono punti",
+      previewCouponCategory: "Coupon",
+      previewCouponDiscountLabel: "Buono punti",
+      previewNote: "Riscatto punti in cassa",
+      quickRedeemName: "Articolo temporaneo",
+      quickRedeemCode: "Riscatto rapido",
+      couponCode: "Coupon",
+      pointsVoucherCode: "Buono punti",
+      pointsDeductionName: "Detrazione punti",
+      couponExchangeNote: "Riscatto coupon",
+    },
   },
   pt: {
     title: "Recibo de troca de pontos",
@@ -347,6 +445,20 @@ const RECEIPT_LOCALE_COPY: Record<string, MerchantReceiptLocaleCopy> = {
       afterPointBalance: "Pontos depois",
       note: "Nota",
       footerText: "Rodape",
+    },
+    systemText: {
+      previewItemName: "Item de troca",
+      previewItemCategory: "Recomendado",
+      previewCouponName: "Vale de pontos",
+      previewCouponCategory: "Cupons",
+      previewCouponDiscountLabel: "Vale de pontos",
+      previewNote: "Troca de pontos no caixa",
+      quickRedeemName: "Item temporario",
+      quickRedeemCode: "Troca rapida",
+      couponCode: "Cupom",
+      pointsVoucherCode: "Vale de pontos",
+      pointsDeductionName: "Desconto de pontos",
+      couponExchangeNote: "Troca de cupom",
     },
   },
 };
@@ -645,8 +757,55 @@ function normalizeReceiptLocaleLanguage(locale: string | null | undefined) {
   return Object.prototype.hasOwnProperty.call(RECEIPT_LOCALE_COPY, language) ? language : "en";
 }
 
+export function getMerchantReceiptLocaleLanguage(locale: string | null | undefined) {
+  return normalizeReceiptLocaleLanguage(locale);
+}
+
 export function getMerchantReceiptLocaleCopy(locale: string | null | undefined) {
   return RECEIPT_LOCALE_COPY[normalizeReceiptLocaleLanguage(locale)] ?? ZH_RECEIPT_COPY;
+}
+
+export function resolveMerchantReceiptSettingsLocale(
+  settings: Partial<MerchantReceiptPrintSettings> | null | undefined,
+  fallbackLocale?: string | null,
+) {
+  const explicitLocale = trimText(settings?.receiptLocale, 40);
+  if (explicitLocale && explicitLocale !== MERCHANT_RECEIPT_AUTO_LOCALE) return normalizeReceiptLocaleLanguage(explicitLocale);
+
+  const title = trimText(settings?.title, 120);
+  const footer = trimText(settings?.footer, 240);
+  const directMatch = Object.entries(RECEIPT_LOCALE_COPY).find(([, copy]) => copy.title === title || copy.footer === footer);
+  if (directMatch) return directMatch[0];
+
+  const fieldLabels = Array.isArray(settings?.receiptFields)
+    ? settings.receiptFields.map((field) => trimText(field.label, 80)).filter(Boolean)
+    : [];
+  let bestLanguage = "";
+  let bestScore = 0;
+  Object.entries(RECEIPT_LOCALE_COPY).forEach(([language, copy]) => {
+    const labels = new Set(Object.values(copy.fieldLabels));
+    const score = fieldLabels.filter((label) => labels.has(label)).length;
+    if (score > bestScore) {
+      bestLanguage = language;
+      bestScore = score;
+    }
+  });
+  if (bestLanguage && bestScore >= 2) return bestLanguage;
+
+  return normalizeReceiptLocaleLanguage(fallbackLocale || explicitLocale);
+}
+
+export function getMerchantReceiptSystemText(locale: string | null | undefined, key: MerchantReceiptSystemTextKey) {
+  const copy = getMerchantReceiptLocaleCopy(locale);
+  return copy.systemText[key] ?? ZH_RECEIPT_COPY.systemText[key] ?? key;
+}
+
+export function getMerchantReceiptSystemTextForSettings(
+  settings: Partial<MerchantReceiptPrintSettings> | null | undefined,
+  key: MerchantReceiptSystemTextKey,
+  fallbackLocale?: string | null,
+) {
+  return getMerchantReceiptSystemText(resolveMerchantReceiptSettingsLocale(settings, fallbackLocale), key);
 }
 
 function getMerchantReceiptFieldLabel(locale: string | null | undefined, key: string) {
