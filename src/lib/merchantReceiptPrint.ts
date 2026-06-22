@@ -838,12 +838,26 @@ export function buildRedemptionReceiptText(
   return Array.from({ length: settings.copies }, () => buildOneCopy()).join("\n\n\n");
 }
 
-export async function printRedemptionReceiptWithLocalBridge(
+export type LocalPrintBridgePrintResult = {
+  ok: boolean;
+  status: number;
+  message: string;
+  result?: unknown;
+};
+
+function normalizeLocalPrintBridgePrintMessage(value: unknown, fallback: string) {
+  const message = String(value ?? "").trim();
+  return message ? message.slice(0, 200) : fallback;
+}
+
+export async function sendRedemptionReceiptToLocalBridge(
   settings: MerchantReceiptPrintSettings,
   receipt: MerchantRedemptionReceiptData,
-  timeoutMs = 8000,
+  timeoutMs = 20000,
 ) {
-  if (typeof window === "undefined") return false;
+  if (typeof window === "undefined") {
+    return { ok: false, status: 0, message: "browser_window_unavailable" } satisfies LocalPrintBridgePrintResult;
+  }
   const normalizedSettings = normalizeReceiptPrintSettingsForClient(settings);
   const headerLogoUrl = normalizePrintAssetUrl(normalizedSettings.headerLogoUrl);
   const helperSettings = {
@@ -890,13 +904,44 @@ export async function printRedemptionReceiptWithLocalBridge(
       }),
       signal: controller.signal,
     });
-    const payload = (await response.json().catch(() => null)) as { ok?: unknown } | null;
-    return response.ok && payload?.ok === true;
-  } catch {
-    return false;
+    const payload = (await response.json().catch(() => null)) as
+      | { ok?: unknown; message?: unknown; error?: unknown; result?: unknown }
+      | null;
+    if (response.ok && payload?.ok === true) {
+      return {
+        ok: true,
+        status: response.status,
+        message: "",
+        result: payload.result,
+      } satisfies LocalPrintBridgePrintResult;
+    }
+    return {
+      ok: false,
+      status: response.status,
+      message: normalizeLocalPrintBridgePrintMessage(payload?.message ?? payload?.error, "local_print_bridge_print_failed"),
+      result: payload?.result,
+    } satisfies LocalPrintBridgePrintResult;
+  } catch (error) {
+    const isAbortError = error instanceof DOMException && error.name === "AbortError";
+    return {
+      ok: false,
+      status: 0,
+      message: isAbortError
+        ? "local_print_bridge_timeout"
+        : normalizeLocalPrintBridgePrintMessage(error instanceof Error ? error.message : "", "local_print_bridge_unreachable"),
+    } satisfies LocalPrintBridgePrintResult;
   } finally {
     window.clearTimeout(timeoutId);
   }
+}
+
+export async function printRedemptionReceiptWithLocalBridge(
+  settings: MerchantReceiptPrintSettings,
+  receipt: MerchantRedemptionReceiptData,
+  timeoutMs = 20000,
+) {
+  const result = await sendRedemptionReceiptToLocalBridge(settings, receipt, timeoutMs);
+  return result.ok;
 }
 
 export async function checkLocalPrintBridge(inputSettings: MerchantReceiptPrintSettings | null | undefined) {

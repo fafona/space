@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const VERSION = "1.5.0";
+const VERSION = "1.5.1";
 const PROTOCOL_VERSION = 2;
 const MINIMUM_WEB_VERSION = "1.5.0";
 const DEFAULT_UPDATE_MANIFEST_URL = "https://faolla.com/downloads/print-helper/latest.json";
@@ -130,17 +130,24 @@ function readRequestBody(request) {
 }
 
 async function runPowerShell(script, timeout = 15000) {
-  const encoded = Buffer.from(script, "utf16le").toString("base64");
-  const { stdout } = await execFileAsync(
-    "powershell.exe",
-    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded],
-    {
-      timeout,
-      windowsHide: true,
-      maxBuffer: 1024 * 1024,
-    },
-  );
-  return stdout.trim();
+  const workDir = path.join(tmpdir(), "faolla-print-helper");
+  await mkdir(workDir, { recursive: true });
+  const scriptPath = path.join(workDir, `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.ps1`);
+  await writeFile(scriptPath, `\ufeff${script}`, "utf8");
+  try {
+    const { stdout } = await execFileAsync(
+      "powershell.exe",
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath],
+      {
+        timeout,
+        windowsHide: true,
+        maxBuffer: 1024 * 1024,
+      },
+    );
+    return stdout.trim();
+  } finally {
+    void rm(scriptPath, { force: true });
+  }
 }
 
 function psString(value) {

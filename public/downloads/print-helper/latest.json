@@ -1,20 +1,21 @@
 {
   "ok": true,
   "name": "faolla-print-helper",
-  "version": "1.5.0",
-  "latestVersion": "1.5.0",
-  "minimumVersion": "1.5.0",
+  "version": "1.5.1",
+  "latestVersion": "1.5.1",
+  "minimumVersion": "1.5.1",
   "minimumWebVersion": "1.5.0",
   "mandatory": true,
   "publishedAt": "2026-06-22T00:00:00Z",
   "package": {
-    "url": "/downloads/print-helper/FAOLLA-print-helper-1.5.0.zip",
-    "sha256": "9e5b295d0a1b6e17fbf37893bf9e09599900e35b9bfe3a5122db5c31b27b7bd0",
-    "sizeBytes": 34100637
+    "url": "/downloads/print-helper/FAOLLA-print-helper-1.5.1.zip",
+    "sha256": "caaa4f3d394790fb821bf7b3d2747bad5a1c0b66af7143f2c104bfc919d9b534",
+    "sizeBytes": 34100760
   },
   "releaseNotes": [
     "新增 /health 和 /version 版本能力检测。",
     "新增 /update 自更新：下载 latest.json 指向的安装包，校验 SHA256 后替换并重启。",
+    "修复 ESC/POS 图片小票打印时可能触发 Windows 命令长度限制的问题。",
     "后台会识别未安装、版本旧、可自动更新和已连接状态。"
   ]
 }

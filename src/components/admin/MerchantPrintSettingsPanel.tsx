@@ -24,10 +24,10 @@ import {
   isPrintHelperVersionOutdated,
   isReceiptFieldVisible,
   listLocalPrintBridgePrinters,
-  printRedemptionReceiptWithLocalBridge,
   normalizeReceiptPrintSettingsForClient,
   requestLocalPrintBridgeUpdate,
   resolvePrintHelperPackageUrl,
+  sendRedemptionReceiptToLocalBridge,
   type LocalPrintBridgeInspection,
   type LocalPrintBridgePrinter,
   type MerchantRedemptionReceiptLine,
@@ -272,6 +272,38 @@ function isNetworkFetchError(error: unknown) {
 function readPrintSettingsSaveErrorMessage(error: unknown) {
   if (isNetworkFetchError(error)) return "保存请求没有成功发送，请检查网络后重试。";
   return error instanceof Error ? error.message : "打印配置保存失败，请稍后重试";
+}
+
+function readLocalPrintBridgePrintErrorMessage(message: string, bridgeOutdated: boolean) {
+  const normalized = message.trim();
+  if (bridgeOutdated) {
+    return "本机打印助手版本偏旧，请先自动更新或下载安装最新版，再测试打印。";
+  }
+  if (/ENAMETOOLONG/i.test(normalized)) {
+    return "本机打印助手执行小票图片打印时触发命令长度限制，请更新到 1.5.1 或以上版本。";
+  }
+  if (/default_printer_not_found/i.test(normalized)) {
+    return "本机没有默认打印机，请读取本机打印机后选择 XP-80C，或在 Windows 中设置默认打印机。";
+  }
+  if (/OpenPrinter failed/i.test(normalized)) {
+    return "打印机无法打开，请确认打印机名称正确、驱动已安装，并且打印机未离线。";
+  }
+  if (/StartDocPrinter failed|StartPagePrinter failed/i.test(normalized)) {
+    return "打印任务无法进入 Windows 打印队列，请检查打印机驱动和队列状态。";
+  }
+  if (/WritePrinter failed/i.test(normalized)) {
+    return "小票数据写入打印机失败，请检查 USB 连接、驱动端口和打印机状态。";
+  }
+  if (/timeout|timed out|local_print_bridge_timeout|print_timeout/i.test(normalized)) {
+    return "本机打印助手处理超时，请确认打印机没有卡住，并稍后重试。";
+  }
+  if (/request_too_large/i.test(normalized)) {
+    return "小票图片数据过大，请减小 Logo 或水印图片后重试。";
+  }
+  if (/Failed to fetch|fetch failed|local_print_bridge_unreachable/i.test(normalized)) {
+    return "无法连接本机打印助手，请确认助手正在运行。";
+  }
+  return normalized ? `测试打印失败：${normalized}` : "测试打印失败，请确认打印机和本机助手状态。";
 }
 
 function wait(ms: number) {
@@ -787,12 +819,27 @@ export default function MerchantPrintSettingsPanel({
     }
     setBridgeChecking(true);
     try {
-      const printed = await printRedemptionReceiptWithLocalBridge(printSettings, previewReceipt);
-      setBridgeStatus(printed ? (bridgeOutdated ? "outdated" : "online") : "offline");
-      if (printed) {
+      const [inspection, manifest] = await Promise.all([
+        inspectLocalPrintBridge(printSettings),
+        refreshPrintHelperManifest(),
+      ]);
+      const nextStatus = readBridgePanelStatus(inspection, manifest);
+      setBridgeInspection(inspection);
+      setBridgeStatus(nextStatus);
+      if (!inspection.online) {
+        setError("无法连接本机打印助手，请确认助手已运行。");
+        return;
+      }
+      if (nextStatus === "outdated") {
+        setError(readLocalPrintBridgePrintErrorMessage("", true));
+        return;
+      }
+      const result = await sendRedemptionReceiptToLocalBridge(printSettings, previewReceipt);
+      setBridgeStatus(nextStatus);
+      if (result.ok) {
         setNotice("测试小票已发送到本机打印助手。");
       } else {
-        setError("本机打印助手不可用，请确认助手已运行并选择正确打印机。");
+        setError(readLocalPrintBridgePrintErrorMessage(result.message, false));
       }
     } finally {
       setBridgeChecking(false);
