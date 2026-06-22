@@ -506,10 +506,12 @@ export default function MerchantPrintSettingsPanel({
     printSettings.receiptLocale === MERCHANT_RECEIPT_AUTO_LOCALE
       ? MERCHANT_RECEIPT_AUTO_LOCALE
       : resolveReceiptSupportedLocale(printSettings.receiptLocale);
+  const effectiveReceiptLocale =
+    selectedReceiptLocale === MERCHANT_RECEIPT_AUTO_LOCALE ? defaultReceiptLocale : selectedReceiptLocale;
   const autoReceiptLocaleLabel = `自动（按所在国家：${getLanguageOptionLabel(defaultReceiptLocale)}）`;
   const previewReceipt = useMemo(
-    () => buildPreviewReceipt(normalizedSiteId, siteName, selectedReceiptLocale),
-    [normalizedSiteId, selectedReceiptLocale, siteName],
+    () => buildPreviewReceipt(normalizedSiteId, siteName, effectiveReceiptLocale),
+    [effectiveReceiptLocale, normalizedSiteId, siteName],
   );
   const headerLogoDisplayUrl = logoPreviewUrl || normalizePublicAssetUrl(printSettings.headerLogoUrl);
   const activeReceiptSectionInfo =
