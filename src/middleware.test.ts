@@ -136,6 +136,17 @@ test("middleware redirects numeric Faolla section to the public app shell before
   assert.match(response.headers.get("cache-control") ?? "", /no-store/);
 });
 
+test("middleware lets unauthenticated numeric merchant entries render the client login guard", async () => {
+  const request = new NextRequest("https://faolla.com/10000000");
+
+  const response = await middleware(request);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("location"), null);
+  assert.equal(response.headers.get("x-middleware-rewrite"), null);
+  assert.match(response.headers.get("cache-control") ?? "", /no-store/);
+});
+
 test("middleware keeps an authenticated merchant on their backend Faolla section", async () => {
   const request = new NextRequest("https://faolla.com/10000000?section=faolla&faollaUrl=https%3A%2F%2Ffaolla.com%2F", {
     headers: {

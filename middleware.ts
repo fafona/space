@@ -427,6 +427,9 @@ export async function middleware(request: NextRequest) {
   const segments = pathname.split("/").filter(Boolean);
 
   if (segments.length === 1 && isMerchantNumericId(segments[0] ?? "")) {
+    if (!isAuthenticatedOwnMerchantRequest(request, segments[0] ?? "")) {
+      return withAppShellNoStore(NextResponse.next(), request);
+    }
     const rewriteUrl = request.nextUrl.clone();
     rewriteUrl.pathname = "/admin";
     rewriteUrl.searchParams.set("scope", `site-${segments[0]}`);
