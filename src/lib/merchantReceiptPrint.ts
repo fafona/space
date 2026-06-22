@@ -93,6 +93,8 @@ const RECEIPT_SYSTEM_TEXT_ALIASES: Record<string, MerchantReceiptSystemTextKey> 
   卡券: "couponCode",
   前台积分兑换: "previewNote",
 };
+const RECEIPT_WATERMARK_PRINT_ROWS = Array.from({ length: 18 }, (_, index) => index);
+const RECEIPT_WATERMARK_PRINT_COLUMNS = Array.from({ length: 7 }, (_, index) => index);
 
 export const PRINT_HELPER_MANIFEST_PATH = "/downloads/print-helper/latest.json";
 export const PRINT_HELPER_MINIMUM_VERSION = "1.5.0";
@@ -520,9 +522,11 @@ function getReceiptWatermarkText(settings: MerchantReceiptPrintSettings) {
 function buildReceiptWatermarkHtml(settings: MerchantReceiptPrintSettings) {
   const text = getReceiptWatermarkText(settings);
   if (!text) return "";
-  return `<div class="receipt-watermark" aria-hidden="true">${Array.from(
-    { length: 120 },
-    () => `<span>${escapeHtml(text)}</span>`,
+  return `<div class="receipt-watermark" aria-hidden="true">${RECEIPT_WATERMARK_PRINT_ROWS.map(
+    (rowIndex) =>
+      `<div class="receipt-watermark-row receipt-watermark-row-${rowIndex % 4}">${RECEIPT_WATERMARK_PRINT_COLUMNS.map(
+        () => `<span>${escapeHtml(text)}</span>`,
+      ).join("")}</div>`,
   ).join("")}</div>`;
 }
 
@@ -629,11 +633,8 @@ export function buildRedemptionReceiptHtml(
       inset: 0;
       z-index: 0;
       pointer-events: none;
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(${settings.watermarkGapMm}mm, 1fr));
-      grid-auto-rows: ${settings.watermarkGapMm}mm;
-      align-items: center;
-      justify-items: center;
+      display: flex;
+      flex-direction: column;
       overflow: hidden;
       color: #000;
       opacity: ${settings.watermarkOpacity};
@@ -643,7 +644,21 @@ export function buildRedemptionReceiptHtml(
       -webkit-print-color-adjust: exact;
       print-color-adjust: exact;
     }
+    .receipt-watermark-row {
+      display: flex;
+      align-items: center;
+      flex: 0 0 ${settings.watermarkGapMm}mm;
+      height: ${settings.watermarkGapMm}mm;
+      width: max-content;
+    }
+    .receipt-watermark-row-0 { transform: translateX(-${settings.watermarkGapMm * 0.22}mm); }
+    .receipt-watermark-row-1 { transform: translateX(${settings.watermarkGapMm * 0.34}mm); }
+    .receipt-watermark-row-2 { transform: translateX(${settings.watermarkGapMm * 0.08}mm); }
+    .receipt-watermark-row-3 { transform: translateX(${settings.watermarkGapMm * 0.52}mm); }
     .receipt-watermark span {
+      display: inline-block;
+      min-width: ${settings.watermarkGapMm}mm;
+      text-align: center;
       transform: rotate(${settings.watermarkRotateDeg}deg);
       white-space: nowrap;
     }

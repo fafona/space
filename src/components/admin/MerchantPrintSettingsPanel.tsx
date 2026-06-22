@@ -109,7 +109,8 @@ const RECEIPT_WATERMARK_PATTERN_OPTIONS = [
   { value: "slash", label: "斜线", glyph: "／" },
 ] as const;
 
-const RECEIPT_WATERMARK_PREVIEW_ITEMS = Array.from({ length: 80 }, (_, index) => index);
+const RECEIPT_WATERMARK_PREVIEW_ROWS = Array.from({ length: 18 }, (_, index) => index);
+const RECEIPT_WATERMARK_PREVIEW_COLUMNS = Array.from({ length: 7 }, (_, index) => index);
 
 const RECEIPT_COUNTRY_LOCALE_BY_NAME: Record<string, string> = {
   spain: "es-ES",
@@ -408,6 +409,11 @@ function getReceiptWatermarkText(settings: MerchantReceiptPrintSettings) {
     return RECEIPT_WATERMARK_PATTERN_OPTIONS.find((option) => option.value === settings.watermarkPattern)?.glyph ?? "◆";
   }
   return settings.watermarkText.trim();
+}
+
+function getReceiptWatermarkPreviewRowOffsetPx(rowIndex: number, gapPx: number) {
+  const offsets = [-0.22, 0.34, 0.08, 0.52];
+  return offsets[rowIndex % offsets.length] * gapPx;
 }
 
 function formatPreviewLabelValue(label: string, value: unknown, separator = " ") {
@@ -1822,25 +1828,38 @@ export default function MerchantPrintSettingsPanel({
               </label>
               {watermarkPreviewText ? (
                 <div
-                  className="pointer-events-none absolute inset-0 z-0 grid overflow-hidden font-extrabold leading-none text-black"
+                  className="pointer-events-none absolute inset-0 z-0 flex flex-col overflow-hidden font-extrabold leading-none text-black"
                   style={{
-                    gridTemplateColumns: `repeat(auto-fill, minmax(${printSettings.watermarkGapMm * 3.2}px, 1fr))`,
-                    gridAutoRows: `${printSettings.watermarkGapMm * 3.2}px`,
-                    alignItems: "center",
-                    justifyItems: "center",
                     opacity: printSettings.watermarkOpacity,
                     fontSize: `${printSettings.watermarkFontSizePx}px`,
                   }}
                   aria-hidden="true"
                 >
-                  {RECEIPT_WATERMARK_PREVIEW_ITEMS.map((item) => (
-                    <span
-                      key={item}
-                      className="whitespace-nowrap"
-                      style={{ transform: `rotate(${printSettings.watermarkRotateDeg}deg)` }}
+                  {RECEIPT_WATERMARK_PREVIEW_ROWS.map((rowIndex) => (
+                    <div
+                      key={rowIndex}
+                      className="flex shrink-0 items-center"
+                      style={{
+                        height: `${printSettings.watermarkGapMm * RECEIPT_PREVIEW_MM_SCALE}px`,
+                        transform: `translateX(${getReceiptWatermarkPreviewRowOffsetPx(
+                          rowIndex,
+                          printSettings.watermarkGapMm * RECEIPT_PREVIEW_MM_SCALE,
+                        )}px)`,
+                      }}
                     >
-                      {watermarkPreviewText}
-                    </span>
+                      {RECEIPT_WATERMARK_PREVIEW_COLUMNS.map((columnIndex) => (
+                        <span
+                          key={`${rowIndex}-${columnIndex}`}
+                          className="shrink-0 whitespace-nowrap text-center"
+                          style={{
+                            minWidth: `${printSettings.watermarkGapMm * RECEIPT_PREVIEW_MM_SCALE}px`,
+                            transform: `rotate(${printSettings.watermarkRotateDeg}deg)`,
+                          }}
+                        >
+                          {watermarkPreviewText}
+                        </span>
+                      ))}
+                    </div>
                   ))}
                 </div>
               ) : null}
