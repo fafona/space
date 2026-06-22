@@ -79,6 +79,9 @@ const FALLBACK_PRINT_SETTINGS: MerchantReceiptPrintSettings = {
   receiptFields: createDefaultMerchantReceiptFields(),
 };
 
+export const PRINT_HELPER_MANIFEST_PATH = "/downloads/print-helper/latest.json";
+export const PRINT_HELPER_MINIMUM_VERSION = "1.5.0";
+
 function escapeHtml(value: unknown) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -897,16 +900,208 @@ export async function printRedemptionReceiptWithLocalBridge(
 }
 
 export async function checkLocalPrintBridge(inputSettings: MerchantReceiptPrintSettings | null | undefined) {
-  if (typeof window === "undefined") return false;
+  return (await inspectLocalPrintBridge(inputSettings)).online;
+}
+
+export type LocalPrintBridgePrinter = {
+  name: string;
+  driverName: string;
+  portName: string;
+  isDefault: boolean;
+  status: string;
+};
+
+export type LocalPrintBridgeHealth = {
+  ok?: unknown;
+  name?: unknown;
+  version?: unknown;
+  protocolVersion?: unknown;
+  minimumWebVersion?: unknown;
+  capabilities?: {
+    printers?: unknown;
+    print?: unknown;
+    textPrint?: unknown;
+    escpos?: unknown;
+    cutPaper?: unknown;
+    bitmapReceipt?: unknown;
+    headerLogoUrl?: unknown;
+    headerLogoDataUrl?: unknown;
+    selfUpdate?: unknown;
+  };
+  update?: {
+    supported?: unknown;
+    endpoint?: unknown;
+    manifestUrl?: unknown;
+    disabledReason?: unknown;
+  };
+};
+
+export type PrintHelperUpdateManifest = {
+  ok?: unknown;
+  name?: unknown;
+  version?: unknown;
+  latestVersion?: unknown;
+  minimumVersion?: unknown;
+  minimumWebVersion?: unknown;
+  mandatory?: unknown;
+  publishedAt?: unknown;
+  releaseNotes?: unknown;
+  package?: {
+    url?: unknown;
+    sha256?: unknown;
+    sizeBytes?: unknown;
+  };
+};
+
+export type LocalPrintBridgeInspection = {
+  online: boolean;
+  health: LocalPrintBridgeHealth | null;
+  version: string;
+  protocolVersion: number;
+  updateSupported: boolean;
+  updateEndpoint: string;
+};
+
+function normalizeVersionPart(value: string) {
+  const parsed = Number.parseInt(value.replace(/[^0-9].*$/, ""), 10);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export function comparePrintHelperVersions(left: string, right: string) {
+  const leftParts = left.split(".").map(normalizeVersionPart);
+  const rightParts = right.split(".").map(normalizeVersionPart);
+  const length = Math.max(leftParts.length, rightParts.length, 3);
+  for (let index = 0; index < length; index += 1) {
+    const leftValue = leftParts[index] ?? 0;
+    const rightValue = rightParts[index] ?? 0;
+    if (leftValue !== rightValue) return leftValue > rightValue ? 1 : -1;
+  }
+  return 0;
+}
+
+export function getPrintHelperManifestMinimumVersion(manifest: PrintHelperUpdateManifest | null | undefined) {
+  const minimumVersion =
+    typeof manifest?.minimumVersion === "string"
+      ? manifest.minimumVersion.trim()
+      : typeof manifest?.minimumWebVersion === "string"
+        ? manifest.minimumWebVersion.trim()
+        : "";
+  return minimumVersion || PRINT_HELPER_MINIMUM_VERSION;
+}
+
+export function getPrintHelperManifestLatestVersion(manifest: PrintHelperUpdateManifest | null | undefined) {
+  const latestVersion =
+    typeof manifest?.version === "string"
+      ? manifest.version.trim()
+      : typeof manifest?.latestVersion === "string"
+        ? manifest.latestVersion.trim()
+        : "";
+  return latestVersion || getPrintHelperManifestMinimumVersion(manifest);
+}
+
+export function isPrintHelperVersionOutdated(
+  version: string,
+  manifest: PrintHelperUpdateManifest | null | undefined,
+) {
+  const normalizedVersion = version.trim();
+  if (!normalizedVersion) return true;
+  return comparePrintHelperVersions(normalizedVersion, getPrintHelperManifestMinimumVersion(manifest)) < 0;
+}
+
+export function resolvePrintHelperManifestUrl() {
+  if (typeof window === "undefined") return PRINT_HELPER_MANIFEST_PATH;
+  return new URL(PRINT_HELPER_MANIFEST_PATH, window.location.origin).toString();
+}
+
+export function resolvePrintHelperPackageUrl(manifest: PrintHelperUpdateManifest | null | undefined) {
+  const packageUrl = typeof manifest?.package?.url === "string" ? manifest.package.url.trim() : "";
+  if (!packageUrl) return "";
+  if (typeof window === "undefined") return packageUrl;
+  try {
+    return new URL(packageUrl, window.location.origin).toString();
+  } catch {
+    return packageUrl;
+  }
+}
+
+export async function fetchPrintHelperUpdateManifest() {
+  if (typeof window === "undefined") return null as PrintHelperUpdateManifest | null;
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), 3000);
+  try {
+    const response = await fetch(resolvePrintHelperManifestUrl(), {
+      method: "GET",
+      cache: "no-store",
+      headers: { accept: "application/json" },
+      signal: controller.signal,
+    });
+    const payload = (await response.json().catch(() => null)) as PrintHelperUpdateManifest | null;
+    return response.ok && payload ? payload : null;
+  } catch {
+    return null as PrintHelperUpdateManifest | null;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+export async function inspectLocalPrintBridge(inputSettings: MerchantReceiptPrintSettings | null | undefined) {
+  const offline: LocalPrintBridgeInspection = {
+    online: false,
+    health: null,
+    version: "",
+    protocolVersion: 0,
+    updateSupported: false,
+    updateEndpoint: "",
+  };
+  if (typeof window === "undefined") return offline;
   const settings = normalizeReceiptPrintSettingsForClient(inputSettings);
   const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), 2000);
+  const timeoutId = window.setTimeout(() => controller.abort(), 2200);
   try {
     const response = await fetch(`${settings.localPrintBridgeUrl}/health`, {
       method: "GET",
       mode: "cors",
       cache: "no-store",
       headers: { accept: "application/json" },
+      signal: controller.signal,
+    });
+    const payload = (await response.json().catch(() => null)) as LocalPrintBridgeHealth | null;
+    if (!response.ok || payload?.ok !== true) return offline;
+    const version = typeof payload.version === "string" ? payload.version.trim() : "";
+    const protocolVersion = Number(payload.protocolVersion);
+    const updateEndpoint = typeof payload.update?.endpoint === "string" ? payload.update.endpoint.trim() : "";
+    return {
+      online: true,
+      health: payload,
+      version,
+      protocolVersion: Number.isFinite(protocolVersion) ? protocolVersion : 1,
+      updateSupported: payload.capabilities?.selfUpdate === true || payload.update?.supported === true,
+      updateEndpoint,
+    };
+  } catch {
+    return offline;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+export async function requestLocalPrintBridgeUpdate(inputSettings: MerchantReceiptPrintSettings | null | undefined) {
+  if (typeof window === "undefined") return false;
+  const settings = normalizeReceiptPrintSettingsForClient(inputSettings);
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), 5000);
+  try {
+    const response = await fetch(`${settings.localPrintBridgeUrl}/update`, {
+      method: "POST",
+      mode: "cors",
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json",
+        accept: "application/json",
+      },
+      body: JSON.stringify({
+        manifestUrl: resolvePrintHelperManifestUrl(),
+      }),
       signal: controller.signal,
     });
     const payload = (await response.json().catch(() => null)) as { ok?: unknown } | null;
@@ -917,14 +1112,6 @@ export async function checkLocalPrintBridge(inputSettings: MerchantReceiptPrintS
     window.clearTimeout(timeoutId);
   }
 }
-
-export type LocalPrintBridgePrinter = {
-  name: string;
-  driverName: string;
-  portName: string;
-  isDefault: boolean;
-  status: string;
-};
 
 export async function listLocalPrintBridgePrinters(inputSettings: MerchantReceiptPrintSettings | null | undefined) {
   if (typeof window === "undefined") return [] as LocalPrintBridgePrinter[];

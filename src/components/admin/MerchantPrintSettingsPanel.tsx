@@ -13,18 +13,26 @@ import {
   type MerchantReceiptPrintSettings,
 } from "@/lib/merchantMembershipSettings";
 import {
-  checkLocalPrintBridge,
+  fetchPrintHelperUpdateManifest,
   getReceiptFieldValue,
   getReceiptFieldsBySection,
   getReceiptLineFieldValue,
   getVisibleReceiptFields,
+  getPrintHelperManifestLatestVersion,
+  getPrintHelperManifestMinimumVersion,
+  inspectLocalPrintBridge,
+  isPrintHelperVersionOutdated,
   isReceiptFieldVisible,
   listLocalPrintBridgePrinters,
   printRedemptionReceiptWithLocalBridge,
   normalizeReceiptPrintSettingsForClient,
+  requestLocalPrintBridgeUpdate,
+  resolvePrintHelperPackageUrl,
+  type LocalPrintBridgeInspection,
   type LocalPrintBridgePrinter,
   type MerchantRedemptionReceiptLine,
   type MerchantRedemptionReceiptData,
+  type PrintHelperUpdateManifest,
 } from "@/lib/merchantReceiptPrint";
 import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
@@ -50,6 +58,7 @@ type MembershipSettingsPayload = {
 };
 
 type PrintSettingsPanelTab = "text" | "content" | "print";
+type LocalPrintBridgePanelStatus = "unknown" | "online" | "offline" | "outdated" | "updating";
 
 const RECEIPT_FIELD_SECTIONS: Array<{ id: MerchantReceiptFieldSection; label: string; hint: string }> = [
   { id: "header", label: "页头", hint: "商户、站点等居中显示内容" },
@@ -397,7 +406,10 @@ export default function MerchantPrintSettingsPanel({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [bridgeChecking, setBridgeChecking] = useState(false);
-  const [bridgeStatus, setBridgeStatus] = useState<"unknown" | "online" | "offline">("unknown");
+  const [bridgeUpdating, setBridgeUpdating] = useState(false);
+  const [bridgeStatus, setBridgeStatus] = useState<LocalPrintBridgePanelStatus>("unknown");
+  const [bridgeInspection, setBridgeInspection] = useState<LocalPrintBridgeInspection | null>(null);
+  const [printHelperManifest, setPrintHelperManifest] = useState<PrintHelperUpdateManifest | null>(null);
   const [bridgePrinters, setBridgePrinters] = useState<LocalPrintBridgePrinter[]>([]);
   const [logoUploading, setLogoUploading] = useState(false);
   const [logoPreviewUrl, setLogoPreviewUrl] = useState("");
@@ -443,6 +455,33 @@ export default function MerchantPrintSettingsPanel({
         ? "border-slate-950 bg-slate-950 text-white shadow-sm"
         : "border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 hover:bg-white"
     }`;
+  const printHelperLatestVersion = getPrintHelperManifestLatestVersion(printHelperManifest);
+  const printHelperMinimumVersion = getPrintHelperManifestMinimumVersion(printHelperManifest);
+  const printHelperPackageUrl = resolvePrintHelperPackageUrl(printHelperManifest);
+  const bridgeCurrentVersion = bridgeInspection?.version || "";
+  const bridgeOutdated =
+    Boolean(bridgeInspection?.online) && isPrintHelperVersionOutdated(bridgeCurrentVersion, printHelperManifest);
+  const bridgeCanSelfUpdate = Boolean(bridgeInspection?.online && bridgeInspection.updateSupported);
+  const bridgeStatusLabel =
+    bridgeStatus === "online"
+      ? "已连接"
+      : bridgeStatus === "outdated"
+        ? "版本旧"
+        : bridgeStatus === "updating"
+          ? "更新中"
+          : bridgeStatus === "offline"
+            ? "未连接"
+            : "未检测";
+  const bridgeStatusClassName =
+    bridgeStatus === "online"
+      ? "bg-emerald-50 text-emerald-700"
+      : bridgeStatus === "outdated"
+        ? "bg-amber-50 text-amber-700"
+        : bridgeStatus === "updating"
+          ? "bg-blue-50 text-blue-700"
+          : bridgeStatus === "offline"
+            ? "bg-rose-50 text-rose-700"
+            : "bg-slate-100 text-slate-600";
 
   const renderPreviewItemMeta = useCallback(
     (line: MerchantRedemptionReceiptLine) => {
@@ -532,6 +571,20 @@ export default function MerchantPrintSettingsPanel({
     },
     [patchPrintSettings, printSettings.receiptFields],
   );
+
+  const readBridgePanelStatus = useCallback(
+    (inspection: LocalPrintBridgeInspection, manifest: PrintHelperUpdateManifest | null) => {
+      if (!inspection.online) return "offline" as const;
+      return isPrintHelperVersionOutdated(inspection.version, manifest) ? ("outdated" as const) : ("online" as const);
+    },
+    [],
+  );
+
+  const refreshPrintHelperManifest = useCallback(async () => {
+    const manifest = await fetchPrintHelperUpdateManifest();
+    setPrintHelperManifest(manifest);
+    return manifest;
+  }, []);
 
   const loadSettings = useCallback(async () => {
     if (!/^\d{8}$/.test(normalizedSiteId)) {
@@ -639,9 +692,20 @@ export default function MerchantPrintSettingsPanel({
     setError("");
     setNotice("");
     try {
-      const online = await checkLocalPrintBridge(printSettings);
-      setBridgeStatus(online ? "online" : "offline");
-      setNotice(online ? "本机打印助手已连接。" : "没有连接到本机打印助手，请先在收银电脑运行 print-helper。");
+      const [inspection, manifest] = await Promise.all([
+        inspectLocalPrintBridge(printSettings),
+        refreshPrintHelperManifest(),
+      ]);
+      const nextStatus = readBridgePanelStatus(inspection, manifest);
+      setBridgeInspection(inspection);
+      setBridgeStatus(nextStatus);
+      if (!inspection.online) {
+        setNotice("没有连接到本机打印助手，请先在收银电脑安装并运行 FAOLLA 打印助手。");
+      } else if (nextStatus === "outdated") {
+        setNotice(`本机打印助手版本 ${inspection.version || "未知"} 偏旧，请更新到 ${getPrintHelperManifestLatestVersion(manifest)}。`);
+      } else {
+        setNotice(`本机打印助手已连接，版本 ${inspection.version || "未知"}。`);
+      }
     } finally {
       setBridgeChecking(false);
     }
@@ -652,11 +716,64 @@ export default function MerchantPrintSettingsPanel({
     setError("");
     setNotice("");
     try {
+      const [inspection, manifest] = await Promise.all([
+        inspectLocalPrintBridge(printSettings),
+        refreshPrintHelperManifest(),
+      ]);
+      const nextStatus = readBridgePanelStatus(inspection, manifest);
+      setBridgeInspection(inspection);
+      setBridgeStatus(nextStatus);
+      if (!inspection.online) {
+        setBridgePrinters([]);
+        setNotice("没有连接到本机打印助手，请先运行助手后再读取打印机。");
+        return;
+      }
       const printers = await listLocalPrintBridgePrinters(printSettings);
       setBridgePrinters(printers);
-      setBridgeStatus(printers.length ? "online" : "offline");
-      setNotice(printers.length ? `已读取 ${printers.length} 台本机打印机。` : "未读取到打印机，请确认打印助手正在运行。");
+      setNotice(printers.length ? `已读取 ${printers.length} 台本机打印机。` : "未读取到打印机，请确认 Windows 已安装打印机驱动。");
     } finally {
+      setBridgeChecking(false);
+    }
+  }
+
+  async function updateBridgeHelper() {
+    if (bridgeUpdating) return;
+    setBridgeUpdating(true);
+    setBridgeChecking(true);
+    setBridgeStatus("updating");
+    setError("");
+    setNotice("");
+    try {
+      const manifest = printHelperManifest ?? (await refreshPrintHelperManifest());
+      if (!manifest) {
+        setError("没有读取到打印助手更新清单，请稍后重试。");
+        setBridgeStatus(bridgeInspection?.online ? (bridgeOutdated ? "outdated" : "online") : "offline");
+        return;
+      }
+      const inspection = bridgeInspection?.online ? bridgeInspection : await inspectLocalPrintBridge(printSettings);
+      setBridgeInspection(inspection);
+      if (!inspection.online) {
+        setError("没有连接到本机打印助手，无法自动更新。请先下载安装最新版。");
+        setBridgeStatus("offline");
+        return;
+      }
+      if (!inspection.updateSupported) {
+        setError("当前打印助手版本太旧，不支持自动更新。请下载最新版安装一次，之后即可自动更新。");
+        setBridgeStatus("outdated");
+        return;
+      }
+      const started = await requestLocalPrintBridgeUpdate(printSettings);
+      if (!started) {
+        setError("打印助手自动更新未启动，请下载安装最新版。");
+        setBridgeStatus("outdated");
+        return;
+      }
+      setNotice("打印助手正在自动更新并重启，请等待 10 秒后重新检测。");
+      window.setTimeout(() => {
+        void checkBridge();
+      }, 10_000);
+    } finally {
+      setBridgeUpdating(false);
       setBridgeChecking(false);
     }
   }
@@ -671,7 +788,7 @@ export default function MerchantPrintSettingsPanel({
     setBridgeChecking(true);
     try {
       const printed = await printRedemptionReceiptWithLocalBridge(printSettings, previewReceipt);
-      setBridgeStatus(printed ? "online" : "offline");
+      setBridgeStatus(printed ? (bridgeOutdated ? "outdated" : "online") : "offline");
       if (printed) {
         setNotice("测试小票已发送到本机打印助手。");
       } else {
@@ -726,6 +843,10 @@ export default function MerchantPrintSettingsPanel({
   useEffect(() => {
     void loadSettings();
   }, [loadSettings]);
+
+  useEffect(() => {
+    void refreshPrintHelperManifest();
+  }, [refreshPrintHelperManifest]);
 
   useEffect(() => {
     setLogoPreviewUrl("");
@@ -990,16 +1111,29 @@ export default function MerchantPrintSettingsPanel({
                 </p>
               </div>
               <span
-                className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                  bridgeStatus === "online"
-                    ? "bg-emerald-50 text-emerald-700"
-                    : bridgeStatus === "offline"
-                      ? "bg-rose-50 text-rose-700"
-                      : "bg-slate-100 text-slate-600"
-                }`}
+                className={`rounded-full px-3 py-1 text-xs font-semibold ${bridgeStatusClassName}`}
               >
-                {bridgeStatus === "online" ? "已连接" : bridgeStatus === "offline" ? "未连接" : "未检测"}
+                {bridgeStatusLabel}
               </span>
+            </div>
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600">
+              <div className="font-semibold text-slate-800">
+                {bridgeInspection?.online
+                  ? `当前助手版本：${bridgeCurrentVersion || "未知"}`
+                  : "当前未检测到本机助手"}
+                <span className="ml-3 text-xs font-medium text-slate-500">
+                  最新版本：{printHelperLatestVersion} / 最低要求：{printHelperMinimumVersion}
+                </span>
+              </div>
+              <div className="mt-1">
+                {!bridgeInspection?.online
+                  ? "如果收银电脑还没有安装打印助手，请先下载最新版并安装；安装后点击“检测助手”。"
+                  : bridgeOutdated
+                    ? bridgeCanSelfUpdate
+                      ? "当前助手版本偏旧，可以直接自动更新。更新时助手会短暂断开并自动重启。"
+                      : "当前助手版本偏旧且不支持自动更新，请下载最新版手动安装一次；之后即可自动更新。"
+                    : "助手版本满足当前打印要求，可以读取打印机并静默打印。"}
+              </div>
             </div>
             <div className="mt-4 grid gap-3 md:grid-cols-2">
               <SwitchField
@@ -1018,6 +1152,8 @@ export default function MerchantPrintSettingsPanel({
                   value={printSettings.localPrintBridgeUrl}
                   onChange={(event) => {
                     setBridgeStatus("unknown");
+                    setBridgeInspection(null);
+                    setBridgePrinters([]);
                     patchPrintSettings({ localPrintBridgeUrl: event.target.value });
                   }}
                   placeholder="http://127.0.0.1:17658"
@@ -1074,7 +1210,7 @@ export default function MerchantPrintSettingsPanel({
                   type="button"
                   className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
                   onClick={() => void checkBridge()}
-                  disabled={bridgeChecking}
+                  disabled={bridgeChecking || bridgeUpdating}
                 >
                   {bridgeChecking ? "检测中..." : "检测助手"}
                 </button>
@@ -1082,10 +1218,30 @@ export default function MerchantPrintSettingsPanel({
                   type="button"
                   className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
                   onClick={() => void refreshBridgePrinters()}
-                  disabled={bridgeChecking}
+                  disabled={bridgeChecking || bridgeUpdating}
                 >
                   读取本机打印机
                 </button>
+                {bridgeOutdated && bridgeCanSelfUpdate ? (
+                  <button
+                    type="button"
+                    className="rounded-xl border border-blue-200 bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                    onClick={() => void updateBridgeHelper()}
+                    disabled={bridgeChecking || bridgeUpdating}
+                  >
+                    {bridgeUpdating ? "更新中..." : "自动更新助手"}
+                  </button>
+                ) : null}
+                {printHelperPackageUrl ? (
+                  <a
+                    className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                    href={printHelperPackageUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    下载最新版
+                  </a>
+                ) : null}
               </div>
             </div>
           </section>

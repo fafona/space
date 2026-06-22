@@ -1,17 +1,23 @@
 #!/usr/bin/env node
 import { createServer } from "node:http";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const VERSION = "1.4.0";
+const VERSION = "1.5.0";
+const PROTOCOL_VERSION = 2;
+const MINIMUM_WEB_VERSION = "1.5.0";
+const DEFAULT_UPDATE_MANIFEST_URL = "https://faolla.com/downloads/print-helper/latest.json";
 const DEFAULT_PORT = 17658;
 const DEFAULT_HOST = "127.0.0.1";
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
 const MAX_CONTENT_CHARS = 120_000;
+const INSTALL_DIR = path.dirname(fileURLToPath(import.meta.url));
+const IS_SOURCE_CHECKOUT = /(^|[\\/])scripts$/i.test(INSTALL_DIR);
 
 const args = new Map(
   process.argv
@@ -35,6 +41,48 @@ function isAllowedOrigin(origin) {
     .map((item) => item.trim())
     .filter(Boolean);
   return extra.includes(origin);
+}
+
+function isAllowedUpdateUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    if (url.protocol === "https:" && /^([a-z0-9-]+\.)?faolla\.com$/i.test(url.hostname)) return true;
+    if (url.protocol === "http:" && /^(localhost|127\.0\.0\.1)$/i.test(url.hostname)) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function buildHealthPayload() {
+  const selfUpdateSupported = !IS_SOURCE_CHECKOUT;
+  return {
+    ok: true,
+    name: "faolla-print-helper",
+    version: VERSION,
+    protocolVersion: PROTOCOL_VERSION,
+    minimumWebVersion: MINIMUM_WEB_VERSION,
+    pid: process.pid,
+    installDir: INSTALL_DIR,
+    packaged: selfUpdateSupported,
+    capabilities: {
+      printers: true,
+      print: true,
+      textPrint: true,
+      escpos: true,
+      cutPaper: true,
+      bitmapReceipt: true,
+      headerLogoUrl: true,
+      headerLogoDataUrl: true,
+      selfUpdate: selfUpdateSupported,
+    },
+    update: {
+      supported: selfUpdateSupported,
+      endpoint: selfUpdateSupported ? "/update" : "",
+      manifestUrl: DEFAULT_UPDATE_MANIFEST_URL,
+      disabledReason: selfUpdateSupported ? "" : "source_checkout",
+    },
+  };
 }
 
 function sendJson(response, statusCode, payload, origin = "") {
@@ -97,6 +145,123 @@ async function runPowerShell(script, timeout = 15000) {
 
 function psString(value) {
   return `'${String(value ?? "").replace(/'/g, "''")}'`;
+}
+
+async function startSelfUpdate(manifestUrl) {
+  if (IS_SOURCE_CHECKOUT) {
+    throw new Error("self_update_disabled_for_source_checkout");
+  }
+  const normalizedManifestUrl = String(manifestUrl || DEFAULT_UPDATE_MANIFEST_URL).trim() || DEFAULT_UPDATE_MANIFEST_URL;
+  if (!isAllowedUpdateUrl(normalizedManifestUrl)) {
+    throw new Error("update_manifest_url_not_allowed");
+  }
+
+  const updateId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const workDir = path.join(tmpdir(), `faolla-print-helper-update-${updateId}`);
+  await mkdir(workDir, { recursive: true });
+  const scriptPath = path.join(workDir, "apply-update.ps1");
+  const logPath = path.join(INSTALL_DIR, "faolla-print-helper-update.log");
+  const script = `
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$installDir = ${psString(INSTALL_DIR)}
+$manifestUrl = ${psString(normalizedManifestUrl)}
+$pidToStop = ${process.pid}
+$logPath = ${psString(logPath)}
+function Write-UpdateLog([string]$Message) {
+  $line = ((Get-Date).ToString('s') + ' ' + $Message)
+  Add-Content -LiteralPath $logPath -Value $line -Encoding UTF8
+}
+function Assert-FaollaUrl([Uri]$Uri, [string]$Name) {
+  if ($Uri.Scheme -ne 'https' -and -not ($Uri.Scheme -eq 'http' -and ($Uri.Host -eq 'localhost' -or $Uri.Host -eq '127.0.0.1'))) {
+    throw ($Name + '_scheme_not_allowed')
+  }
+  if ($Uri.Scheme -eq 'https' -and -not ($Uri.Host -eq 'faolla.com' -or $Uri.Host.EndsWith('.faolla.com'))) {
+    throw ($Name + '_host_not_allowed')
+  }
+}
+try {
+  Write-UpdateLog 'update started'
+  $workDir = Join-Path $env:TEMP ('faolla-print-helper-update-apply-' + [Guid]::NewGuid().ToString('N'))
+  New-Item -ItemType Directory -Force -Path $workDir | Out-Null
+  $manifestUri = [Uri]::new($manifestUrl)
+  Assert-FaollaUrl $manifestUri 'manifest'
+  $manifestPath = Join-Path $workDir 'latest.json'
+  Invoke-WebRequest -Uri $manifestUri -OutFile $manifestPath -UseBasicParsing
+  $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+  $packageUrlText = [string]$manifest.package.url
+  if (-not $packageUrlText) { $packageUrlText = [string]$manifest.packageUrl }
+  if (-not $packageUrlText) { throw 'package_url_missing' }
+  $packageUri = $null
+  if ([Uri]::IsWellFormedUriString($packageUrlText, [UriKind]::Absolute)) {
+    $packageUri = [Uri]::new($packageUrlText)
+  } else {
+    $packageUri = [Uri]::new($manifestUri, $packageUrlText)
+  }
+  Assert-FaollaUrl $packageUri 'package'
+  $expectedSha = ([string]$manifest.package.sha256).Trim().ToLowerInvariant()
+  if (-not $expectedSha) { $expectedSha = ([string]$manifest.sha256).Trim().ToLowerInvariant() }
+  if (-not $expectedSha) { throw 'package_sha256_missing' }
+  $zipPath = Join-Path $workDir 'faolla-print-helper.zip'
+  Invoke-WebRequest -Uri $packageUri -OutFile $zipPath -UseBasicParsing
+  $actualSha = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+  if ($actualSha -ne $expectedSha) { throw 'package_sha256_mismatch' }
+  $extractDir = Join-Path $workDir 'extract'
+  Expand-Archive -LiteralPath $zipPath -DestinationPath $extractDir -Force
+  $sourceDir = $extractDir
+  if (-not (Test-Path -LiteralPath (Join-Path $sourceDir 'faolla-print-helper.mjs'))) {
+    $candidate = Get-ChildItem -LiteralPath $extractDir -Directory -Force | Where-Object {
+      Test-Path -LiteralPath (Join-Path $_.FullName 'faolla-print-helper.mjs')
+    } | Select-Object -First 1
+    if ($candidate) { $sourceDir = $candidate.FullName }
+  }
+  if (-not (Test-Path -LiteralPath (Join-Path $sourceDir 'faolla-print-helper.mjs'))) {
+    throw 'package_layout_invalid'
+  }
+  $deadline = (Get-Date).AddSeconds(20)
+  while ((Get-Date) -lt $deadline -and (Get-Process -Id $pidToStop -ErrorAction SilentlyContinue)) {
+    Start-Sleep -Milliseconds 300
+  }
+  Get-ChildItem -LiteralPath $sourceDir -Force | ForEach-Object {
+    Copy-Item -LiteralPath $_.FullName -Destination $installDir -Recurse -Force
+  }
+  $version = [string]$manifest.version
+  if (-not $version) { $version = [string]$manifest.latestVersion }
+  Write-UpdateLog ('files replaced; version=' + $version)
+  $hiddenScript = Join-Path $installDir 'run-hidden.vbs'
+  if (Test-Path -LiteralPath $hiddenScript) {
+    Start-Process -FilePath 'wscript.exe' -ArgumentList @($hiddenScript) -WorkingDirectory $installDir -WindowStyle Hidden
+  } else {
+    $nodePath = Join-Path $installDir 'runtime\\node.exe'
+    $helperPath = Join-Path $installDir 'faolla-print-helper.mjs'
+    if (Test-Path -LiteralPath $nodePath) {
+      Start-Process -FilePath $nodePath -ArgumentList @($helperPath) -WorkingDirectory $installDir -WindowStyle Hidden
+    }
+  }
+  Write-UpdateLog 'update finished'
+} catch {
+  Write-UpdateLog ('update failed: ' + $_.Exception.Message)
+  exit 1
+}
+`;
+  await writeFile(scriptPath, script, "utf8");
+  const child = spawn(
+    "powershell.exe",
+    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath],
+    {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    },
+  );
+  child.unref();
+  setTimeout(() => {
+    process.exit(0);
+  }, 900);
+  return {
+    updateId,
+    manifestUrl: normalizedManifestUrl,
+  };
 }
 
 function normalizeIntegerRange(value, min, max, fallback) {
@@ -698,8 +863,25 @@ const server = createServer(async (request, response) => {
     return;
   }
   const url = new URL(request.url || "/", `http://${host}:${port}`);
-  if (url.pathname === "/health" && request.method === "GET") {
-    sendJson(response, 200, { ok: true, name: "faolla-print-helper", version: VERSION }, origin);
+  if ((url.pathname === "/health" || url.pathname === "/version") && request.method === "GET") {
+    sendJson(response, 200, buildHealthPayload(), origin);
+    return;
+  }
+  if (url.pathname === "/update" && request.method === "POST") {
+    if (!isAllowedOrigin(origin)) {
+      sendJson(response, 403, { ok: false, message: "origin_not_allowed" }, origin);
+      return;
+    }
+    try {
+      const rawBody = await readRequestBody(request);
+      const payload = rawBody ? JSON.parse(rawBody) : {};
+      const result = await startSelfUpdate(
+        typeof payload?.manifestUrl === "string" ? payload.manifestUrl : DEFAULT_UPDATE_MANIFEST_URL,
+      );
+      sendJson(response, 202, { ok: true, status: "update_started", ...result }, origin);
+    } catch (error) {
+      sendJson(response, 500, { ok: false, message: readSafeErrorMessage(error, "update_failed") }, origin);
+    }
     return;
   }
   if (url.pathname === "/printers" && request.method === "GET") {
@@ -721,7 +903,7 @@ const server = createServer(async (request, response) => {
   sendJson(response, 404, {
     ok: false,
     message: "not_found",
-    routes: ["/health", "/printers", "/print"],
+    routes: ["/health", "/version", "/printers", "/print", "/update"],
   }, origin);
 });
 
