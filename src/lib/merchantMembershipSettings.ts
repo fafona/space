@@ -654,6 +654,24 @@ function getMerchantReceiptFieldLabel(locale: string | null | undefined, key: st
   return copy.fieldLabels[key] ?? ZH_RECEIPT_COPY.fieldLabels[key] ?? key;
 }
 
+function isDefaultMerchantReceiptTitle(value: unknown) {
+  const normalized = trimText(value, 120);
+  if (!normalized) return true;
+  return Object.values(RECEIPT_LOCALE_COPY).some((copy) => copy.title === normalized);
+}
+
+function isDefaultMerchantReceiptFooter(value: unknown) {
+  const normalized = trimText(value, 240);
+  if (!normalized) return true;
+  return Object.values(RECEIPT_LOCALE_COPY).some((copy) => copy.footer === normalized);
+}
+
+function isDefaultMerchantReceiptFieldLabel(key: string, value: unknown) {
+  const normalized = trimText(value, 80);
+  if (!normalized) return false;
+  return Object.values(RECEIPT_LOCALE_COPY).some((copy) => copy.fieldLabels[key] === normalized);
+}
+
 export function createDefaultMerchantReceiptFields(
   legacy?: Partial<MerchantReceiptPrintSettings>,
   locale?: string | null,
@@ -777,6 +795,30 @@ export function applyMerchantReceiptLocaleDefaults<T extends Partial<MerchantRec
     receiptFields: sourceFields.map((field) => {
       const defaultField = defaultsByKey.get(field.key);
       return defaultField ? { ...field, label: defaultField.label } : field;
+    }),
+  };
+}
+
+export function applyMerchantReceiptResolvedLocaleDefaults<T extends Partial<MerchantReceiptPrintSettings>>(
+  settings: T,
+  locale: string | null | undefined,
+): T & Pick<MerchantReceiptPrintSettings, "receiptLocale" | "title" | "footer" | "receiptFields"> {
+  const effectiveLocale = trimText(locale, 40) || MERCHANT_RECEIPT_AUTO_LOCALE;
+  const copy = getMerchantReceiptLocaleCopy(effectiveLocale);
+  const defaults = createDefaultMerchantReceiptFields(settings, effectiveLocale);
+  const defaultsByKey = new Map(defaults.map((field) => [field.key, field]));
+  const sourceFields = Array.isArray(settings.receiptFields) ? settings.receiptFields : defaults;
+  return {
+    ...settings,
+    receiptLocale: trimText(settings.receiptLocale, 40) || effectiveLocale,
+    title: isDefaultMerchantReceiptTitle(settings.title) ? copy.title : trimText(settings.title, 120),
+    footer: isDefaultMerchantReceiptFooter(settings.footer) ? copy.footer : trimText(settings.footer, 240),
+    receiptFields: sourceFields.map((field) => {
+      const defaultField = defaultsByKey.get(field.key);
+      if (!defaultField) return field;
+      return isDefaultMerchantReceiptFieldLabel(field.key, field.label)
+        ? { ...field, label: defaultField.label }
+        : field;
     }),
   };
 }

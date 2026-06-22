@@ -5,6 +5,7 @@ import { showGlobalToast } from "@/lib/globalToast";
 import {
   MERCHANT_RECEIPT_AUTO_LOCALE,
   applyMerchantReceiptLocaleDefaults,
+  applyMerchantReceiptResolvedLocaleDefaults,
   createEmptyMerchantMembershipSettings,
   normalizeMerchantMembershipSettings,
   type MerchantMembershipSettings,
@@ -645,10 +646,10 @@ export default function MerchantPrintSettingsPanel({
       }
       const normalized = normalizeMerchantMembershipSettings(normalizedSiteId, payload.settings);
       setSettings(
-        !normalized.updatedAt && normalized.printSettings.receiptLocale === MERCHANT_RECEIPT_AUTO_LOCALE
+        normalized.printSettings.receiptLocale === MERCHANT_RECEIPT_AUTO_LOCALE
           ? {
               ...normalized,
-              printSettings: applyMerchantReceiptLocaleDefaults(normalized.printSettings, defaultReceiptLocale),
+              printSettings: applyMerchantReceiptResolvedLocaleDefaults(normalized.printSettings, defaultReceiptLocale),
             }
           : normalized,
       );
