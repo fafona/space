@@ -1709,6 +1709,71 @@ export default function MerchantPrintSettingsPanel({
         <aside className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)] xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:self-start xl:overflow-hidden">
           <h3 className="text-base font-semibold text-slate-950">小票预览</h3>
           <div className="mt-4 overflow-auto rounded-2xl border border-slate-200 bg-slate-50 p-4 xl:max-h-[calc(100vh-6rem)]">
+            <div className="relative mx-auto w-fit px-16 py-9">
+              <label
+                className="absolute left-1/2 top-1 z-40 flex h-6 -translate-x-1/2 items-center gap-0.5 rounded-md bg-slate-950 px-1.5 text-[11px] font-semibold text-white shadow-lg"
+                onPointerDown={(event) => event.stopPropagation()}
+              >
+                <span className="sr-only">上边距(mm)</span>
+                <input
+                  type="number"
+                  min={RECEIPT_MARGIN_MIN_MM}
+                  max={RECEIPT_MARGIN_MAX_MM}
+                  step={0.5}
+                  className="w-8 bg-transparent text-center text-white outline-none"
+                  value={printSettings.contentMarginTopMm}
+                  onChange={(event) => handleReceiptMarginInputChange("top", event.target.value)}
+                />
+                <span>mm</span>
+              </label>
+              <label
+                className="absolute right-1 top-1/2 z-40 flex h-6 -translate-y-1/2 items-center gap-0.5 rounded-md bg-slate-950 px-1.5 text-[11px] font-semibold text-white shadow-lg"
+                onPointerDown={(event) => event.stopPropagation()}
+              >
+                <span className="sr-only">右边距(mm)</span>
+                <input
+                  type="number"
+                  min={RECEIPT_MARGIN_MIN_MM}
+                  max={RECEIPT_MARGIN_MAX_MM}
+                  step={0.5}
+                  className="w-8 bg-transparent text-center text-white outline-none"
+                  value={printSettings.contentMarginRightMm}
+                  onChange={(event) => handleReceiptMarginInputChange("right", event.target.value)}
+                />
+                <span>mm</span>
+              </label>
+              <label
+                className="absolute bottom-1 left-1/2 z-40 flex h-6 -translate-x-1/2 items-center gap-0.5 rounded-md bg-slate-950 px-1.5 text-[11px] font-semibold text-white shadow-lg"
+                onPointerDown={(event) => event.stopPropagation()}
+              >
+                <span className="sr-only">下边距(mm)</span>
+                <input
+                  type="number"
+                  min={RECEIPT_MARGIN_MIN_MM}
+                  max={RECEIPT_MARGIN_MAX_MM}
+                  step={0.5}
+                  className="w-8 bg-transparent text-center text-white outline-none"
+                  value={printSettings.contentMarginBottomMm}
+                  onChange={(event) => handleReceiptMarginInputChange("bottom", event.target.value)}
+                />
+                <span>mm</span>
+              </label>
+              <label
+                className="absolute left-1 top-1/2 z-40 flex h-6 -translate-y-1/2 items-center gap-0.5 rounded-md bg-slate-950 px-1.5 text-[11px] font-semibold text-white shadow-lg"
+                onPointerDown={(event) => event.stopPropagation()}
+              >
+                <span className="sr-only">左边距(mm)</span>
+                <input
+                  type="number"
+                  min={RECEIPT_MARGIN_MIN_MM}
+                  max={RECEIPT_MARGIN_MAX_MM}
+                  step={0.5}
+                  className="w-8 bg-transparent text-center text-white outline-none"
+                  value={printSettings.contentMarginLeftMm}
+                  onChange={(event) => handleReceiptMarginInputChange("left", event.target.value)}
+                />
+                <span>mm</span>
+              </label>
             <div
               className="relative mx-auto overflow-hidden bg-white text-black shadow-sm"
               style={{
@@ -1758,74 +1823,6 @@ export default function MerchantPrintSettingsPanel({
                 style={{ right: `${receiptPreviewMarginPx.right}px`, touchAction: "none" }}
                 onPointerDown={(event) => startReceiptMarginDrag("right", event)}
               />
-              <label
-                className="absolute z-40 flex h-6 items-center gap-0.5 rounded-md bg-slate-950 px-1.5 text-[11px] font-semibold text-white shadow-lg"
-                style={{ top: `${Math.max(2, receiptPreviewMarginPx.top + 4)}px`, left: "50%", transform: "translateX(-50%)" }}
-                onPointerDown={(event) => event.stopPropagation()}
-              >
-                <span className="sr-only">上边距(mm)</span>
-                <input
-                  type="number"
-                  min={RECEIPT_MARGIN_MIN_MM}
-                  max={RECEIPT_MARGIN_MAX_MM}
-                  step={0.5}
-                  className="w-8 bg-transparent text-center text-white outline-none"
-                  value={printSettings.contentMarginTopMm}
-                  onChange={(event) => handleReceiptMarginInputChange("top", event.target.value)}
-                />
-                <span>mm</span>
-              </label>
-              <label
-                className="absolute z-40 flex h-6 items-center gap-0.5 rounded-md bg-slate-950 px-1.5 text-[11px] font-semibold text-white shadow-lg"
-                style={{ right: `${Math.max(2, receiptPreviewMarginPx.right + 4)}px`, top: "50%", transform: "translateY(-50%)" }}
-                onPointerDown={(event) => event.stopPropagation()}
-              >
-                <span className="sr-only">右边距(mm)</span>
-                <input
-                  type="number"
-                  min={RECEIPT_MARGIN_MIN_MM}
-                  max={RECEIPT_MARGIN_MAX_MM}
-                  step={0.5}
-                  className="w-8 bg-transparent text-center text-white outline-none"
-                  value={printSettings.contentMarginRightMm}
-                  onChange={(event) => handleReceiptMarginInputChange("right", event.target.value)}
-                />
-                <span>mm</span>
-              </label>
-              <label
-                className="absolute z-40 flex h-6 items-center gap-0.5 rounded-md bg-slate-950 px-1.5 text-[11px] font-semibold text-white shadow-lg"
-                style={{ bottom: `${Math.max(2, receiptPreviewMarginPx.bottom + 4)}px`, left: "50%", transform: "translateX(-50%)" }}
-                onPointerDown={(event) => event.stopPropagation()}
-              >
-                <span className="sr-only">下边距(mm)</span>
-                <input
-                  type="number"
-                  min={RECEIPT_MARGIN_MIN_MM}
-                  max={RECEIPT_MARGIN_MAX_MM}
-                  step={0.5}
-                  className="w-8 bg-transparent text-center text-white outline-none"
-                  value={printSettings.contentMarginBottomMm}
-                  onChange={(event) => handleReceiptMarginInputChange("bottom", event.target.value)}
-                />
-                <span>mm</span>
-              </label>
-              <label
-                className="absolute z-40 flex h-6 items-center gap-0.5 rounded-md bg-slate-950 px-1.5 text-[11px] font-semibold text-white shadow-lg"
-                style={{ left: `${Math.max(2, receiptPreviewMarginPx.left + 4)}px`, top: "50%", transform: "translateY(-50%)" }}
-                onPointerDown={(event) => event.stopPropagation()}
-              >
-                <span className="sr-only">左边距(mm)</span>
-                <input
-                  type="number"
-                  min={RECEIPT_MARGIN_MIN_MM}
-                  max={RECEIPT_MARGIN_MAX_MM}
-                  step={0.5}
-                  className="w-8 bg-transparent text-center text-white outline-none"
-                  value={printSettings.contentMarginLeftMm}
-                  onChange={(event) => handleReceiptMarginInputChange("left", event.target.value)}
-                />
-                <span>mm</span>
-              </label>
               {watermarkPreviewText ? (
                 <div
                   className="pointer-events-none absolute inset-0 z-0 flex flex-col overflow-hidden font-extrabold leading-none text-black"
@@ -1964,6 +1961,7 @@ export default function MerchantPrintSettingsPanel({
                 return null;
               })}
               </div>
+            </div>
             </div>
           </div>
         </aside>
