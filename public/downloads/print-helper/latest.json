@@ -1,20 +1,20 @@
-﻿{
-    "ok":  true,
-    "name":  "faolla-print-helper",
-    "version":  "1.5.0",
-    "latestVersion":  "1.5.0",
-    "minimumVersion":  "1.5.0",
-    "minimumWebVersion":  "1.5.0",
-    "mandatory":  true,
-    "publishedAt":  "2026-06-22T00:00:00Z",
-    "package":  {
-                    "url":  "/downloads/print-helper/FAOLLA-print-helper-1.5.0.zip",
-                    "sha256":  "9e5b295d0a1b6e17fbf37893bf9e09599900e35b9bfe3a5122db5c31b27b7bd0",
-                    "sizeBytes":  34100637
-                },
-    "releaseNotes":  [
-                         "新增 /health 和 /version 版本能力检测。",
-                         "新增 /update 自更新：下载 latest.json 指向的安装包，校验 SHA256 后替换并重启。",
-                         "后台会识别未安装、版本旧、可自动更新和已连接状态。"
-                     ]
+{
+  "ok": true,
+  "name": "faolla-print-helper",
+  "version": "1.5.0",
+  "latestVersion": "1.5.0",
+  "minimumVersion": "1.5.0",
+  "minimumWebVersion": "1.5.0",
+  "mandatory": true,
+  "publishedAt": "2026-06-22T00:00:00Z",
+  "package": {
+    "url": "/downloads/print-helper/FAOLLA-print-helper-1.5.0.zip",
+    "sha256": "9e5b295d0a1b6e17fbf37893bf9e09599900e35b9bfe3a5122db5c31b27b7bd0",
+    "sizeBytes": 34100637
+  },
+  "releaseNotes": [
+    "新增 /health 和 /version 版本能力检测。",
+    "新增 /update 自更新：下载 latest.json 指向的安装包，校验 SHA256 后替换并重启。",
+    "后台会识别未安装、版本旧、可自动更新和已连接状态。"
+  ]
 }
