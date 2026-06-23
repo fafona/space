@@ -1720,7 +1720,7 @@ export default function MerchantPrintSettingsPanel({
                   min={RECEIPT_MARGIN_MIN_MM}
                   max={RECEIPT_MARGIN_MAX_MM}
                   step={0.5}
-                  className="w-7 bg-transparent text-center text-white outline-none"
+                  className="w-9 bg-transparent text-center text-white outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                   value={printSettings.contentMarginTopMm}
                   onChange={(event) => handleReceiptMarginInputChange("top", event.target.value)}
                 />
@@ -1735,7 +1735,7 @@ export default function MerchantPrintSettingsPanel({
                   min={RECEIPT_MARGIN_MIN_MM}
                   max={RECEIPT_MARGIN_MAX_MM}
                   step={0.5}
-                  className="w-7 bg-transparent text-center text-white outline-none"
+                  className="w-9 bg-transparent text-center text-white outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                   value={printSettings.contentMarginRightMm}
                   onChange={(event) => handleReceiptMarginInputChange("right", event.target.value)}
                 />
@@ -1750,7 +1750,7 @@ export default function MerchantPrintSettingsPanel({
                   min={RECEIPT_MARGIN_MIN_MM}
                   max={RECEIPT_MARGIN_MAX_MM}
                   step={0.5}
-                  className="w-7 bg-transparent text-center text-white outline-none"
+                  className="w-9 bg-transparent text-center text-white outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                   value={printSettings.contentMarginBottomMm}
                   onChange={(event) => handleReceiptMarginInputChange("bottom", event.target.value)}
                 />
@@ -1765,7 +1765,7 @@ export default function MerchantPrintSettingsPanel({
                   min={RECEIPT_MARGIN_MIN_MM}
                   max={RECEIPT_MARGIN_MAX_MM}
                   step={0.5}
-                  className="w-7 bg-transparent text-center text-white outline-none"
+                  className="w-9 bg-transparent text-center text-white outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                   value={printSettings.contentMarginLeftMm}
                   onChange={(event) => handleReceiptMarginInputChange("left", event.target.value)}
                 />
