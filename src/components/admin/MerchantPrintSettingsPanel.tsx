@@ -1064,7 +1064,7 @@ export default function MerchantPrintSettingsPanel({
       {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
       {notice ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{notice}</div> : null}
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_480px]">
         <div className="flex flex-col gap-4">
           <div className="rounded-[20px] border border-slate-200 bg-white p-2 shadow-[0_10px_28px_rgba(15,23,42,0.04)]">
             <div className="grid gap-2 md:grid-cols-3">
@@ -1708,10 +1708,10 @@ export default function MerchantPrintSettingsPanel({
 
         <aside className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)] xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:self-start xl:overflow-hidden">
           <h3 className="text-base font-semibold text-slate-950">小票预览</h3>
-          <div className="mt-4 overflow-auto rounded-2xl border border-slate-200 bg-slate-50 p-4 xl:max-h-[calc(100vh-6rem)]">
+          <div className="mt-4 overflow-x-hidden overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50 p-4 xl:max-h-[calc(100vh-6rem)]">
             <div className="relative mx-auto w-fit px-10 py-9">
               <label
-                className="absolute left-1/2 top-1 z-40 flex h-6 -translate-x-1/2 items-center rounded-md bg-slate-950 px-2 text-[11px] font-semibold text-white shadow-lg"
+                className="absolute left-1/2 top-1 z-50 flex h-6 -translate-x-1/2 items-center rounded-md bg-slate-950 px-2 text-[11px] font-semibold text-white shadow-lg"
                 onPointerDown={(event) => event.stopPropagation()}
               >
                 <span className="sr-only">上边距</span>
@@ -1726,7 +1726,7 @@ export default function MerchantPrintSettingsPanel({
                 />
               </label>
               <label
-                className="absolute right-1 top-1/2 z-40 flex h-6 -translate-y-1/2 items-center rounded-md bg-slate-950 px-2 text-[11px] font-semibold text-white shadow-lg"
+                className="absolute right-1 top-1/2 z-50 flex h-6 -translate-y-1/2 items-center rounded-md bg-slate-950 px-2 text-[11px] font-semibold text-white shadow-lg"
                 onPointerDown={(event) => event.stopPropagation()}
               >
                 <span className="sr-only">右边距</span>
@@ -1741,7 +1741,7 @@ export default function MerchantPrintSettingsPanel({
                 />
               </label>
               <label
-                className="absolute bottom-1 left-1/2 z-40 flex h-6 -translate-x-1/2 items-center rounded-md bg-slate-950 px-2 text-[11px] font-semibold text-white shadow-lg"
+                className="absolute bottom-1 left-1/2 z-50 flex h-6 -translate-x-1/2 items-center rounded-md bg-slate-950 px-2 text-[11px] font-semibold text-white shadow-lg"
                 onPointerDown={(event) => event.stopPropagation()}
               >
                 <span className="sr-only">下边距</span>
@@ -1756,7 +1756,7 @@ export default function MerchantPrintSettingsPanel({
                 />
               </label>
               <label
-                className="absolute left-1 top-1/2 z-40 flex h-6 -translate-y-1/2 items-center rounded-md bg-slate-950 px-2 text-[11px] font-semibold text-white shadow-lg"
+                className="absolute left-1 top-1/2 z-50 flex h-6 -translate-y-1/2 items-center rounded-md bg-slate-950 px-2 text-[11px] font-semibold text-white shadow-lg"
                 onPointerDown={(event) => event.stopPropagation()}
               >
                 <span className="sr-only">左边距</span>
@@ -1783,7 +1783,7 @@ export default function MerchantPrintSettingsPanel({
                 type="button"
                 aria-label="拖动调整上边距"
                 title="拖动调整上边距"
-                className={`absolute left-0 right-0 z-30 h-3 -translate-y-1/2 cursor-row-resize border-t border-dashed ${
+                className={`absolute left-0 right-0 z-20 h-3 -translate-y-1/2 cursor-row-resize border-t border-dashed ${
                   draggingReceiptMargin === "top" ? "border-sky-500 bg-sky-500/15" : "border-sky-400 bg-transparent hover:bg-sky-500/10"
                 }`}
                 style={{ top: `${receiptPreviewMarginPx.top}px`, touchAction: "none" }}
@@ -1793,7 +1793,7 @@ export default function MerchantPrintSettingsPanel({
                 type="button"
                 aria-label="拖动调整下边距"
                 title="拖动调整下边距"
-                className={`absolute left-0 right-0 z-30 h-3 translate-y-1/2 cursor-row-resize border-b border-dashed ${
+                className={`absolute left-0 right-0 z-20 h-3 translate-y-1/2 cursor-row-resize border-b border-dashed ${
                   draggingReceiptMargin === "bottom" ? "border-sky-500 bg-sky-500/15" : "border-sky-400 bg-transparent hover:bg-sky-500/10"
                 }`}
                 style={{ bottom: `${receiptPreviewMarginPx.bottom}px`, touchAction: "none" }}
@@ -1801,12 +1801,12 @@ export default function MerchantPrintSettingsPanel({
               />
               <div
                 aria-hidden="true"
-                className="absolute bottom-0 top-0 z-30 w-0 border-l border-dashed border-sky-400"
+                className="absolute bottom-0 top-0 z-20 w-0 border-l border-dashed border-sky-400"
                 style={{ left: `${receiptPreviewMarginPx.left}px` }}
               />
               <div
                 aria-hidden="true"
-                className="absolute bottom-0 top-0 z-30 w-0 border-r border-dashed border-sky-400"
+                className="absolute bottom-0 top-0 z-20 w-0 border-r border-dashed border-sky-400"
                 style={{ right: `${receiptPreviewMarginPx.right}px` }}
               />
               {watermarkPreviewText ? (
