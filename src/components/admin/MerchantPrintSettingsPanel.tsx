@@ -1799,15 +1799,25 @@ export default function MerchantPrintSettingsPanel({
                 style={{ bottom: `${receiptPreviewMarginPx.bottom}px`, touchAction: "none" }}
                 onPointerDown={(event) => startReceiptMarginDrag("bottom", event)}
               />
-              <div
-                aria-hidden="true"
-                className="absolute bottom-0 top-0 z-20 w-0 border-l border-dashed border-sky-400"
-                style={{ left: `${receiptPreviewMarginPx.left}px` }}
+              <button
+                type="button"
+                aria-label="拖动调整左边距"
+                title="拖动调整左边距"
+                className={`absolute bottom-0 top-0 z-20 w-3 -translate-x-1/2 cursor-col-resize border-l border-dashed ${
+                  draggingReceiptMargin === "left" ? "border-sky-500 bg-sky-500/15" : "border-sky-400 bg-transparent hover:bg-sky-500/10"
+                }`}
+                style={{ left: `${receiptPreviewMarginPx.left}px`, touchAction: "none" }}
+                onPointerDown={(event) => startReceiptMarginDrag("left", event)}
               />
-              <div
-                aria-hidden="true"
-                className="absolute bottom-0 top-0 z-20 w-0 border-r border-dashed border-sky-400"
-                style={{ right: `${receiptPreviewMarginPx.right}px` }}
+              <button
+                type="button"
+                aria-label="拖动调整右边距"
+                title="拖动调整右边距"
+                className={`absolute bottom-0 top-0 z-20 w-3 translate-x-1/2 cursor-col-resize border-r border-dashed ${
+                  draggingReceiptMargin === "right" ? "border-sky-500 bg-sky-500/15" : "border-sky-400 bg-transparent hover:bg-sky-500/10"
+                }`}
+                style={{ right: `${receiptPreviewMarginPx.right}px`, touchAction: "none" }}
+                onPointerDown={(event) => startReceiptMarginDrag("right", event)}
               />
               {watermarkPreviewText ? (
                 <div
