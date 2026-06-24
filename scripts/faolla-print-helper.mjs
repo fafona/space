@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const VERSION = "1.5.1";
+const VERSION = "1.5.2";
 const PROTOCOL_VERSION = 2;
 const MINIMUM_WEB_VERSION = "1.5.0";
 const DEFAULT_UPDATE_MANIFEST_URL = "https://faolla.com/downloads/print-helper/latest.json";
@@ -16,8 +16,13 @@ const DEFAULT_PORT = 17658;
 const DEFAULT_HOST = "127.0.0.1";
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
 const MAX_CONTENT_CHARS = 120_000;
+const MAX_PRINT_QUEUE_SIZE = 30;
 const INSTALL_DIR = path.dirname(fileURLToPath(import.meta.url));
 const IS_SOURCE_CHECKOUT = /(^|[\\/])scripts$/i.test(INSTALL_DIR);
+const STARTUP_SHORTCUT_NAME = "FAOLLA-Print-Helper.lnk";
+let printQueue = Promise.resolve();
+let activePrintJobs = 0;
+let printJobSequence = 0;
 
 const args = new Map(
   process.argv
@@ -74,7 +79,13 @@ function buildHealthPayload() {
       bitmapReceipt: true,
       headerLogoUrl: true,
       headerLogoDataUrl: true,
+      printQueue: true,
+      autostart: !IS_SOURCE_CHECKOUT,
       selfUpdate: selfUpdateSupported,
+    },
+    queue: {
+      active: activePrintJobs,
+      max: MAX_PRINT_QUEUE_SIZE,
     },
     update: {
       supported: selfUpdateSupported,
@@ -152,6 +163,114 @@ async function runPowerShell(script, timeout = 15000) {
 
 function psString(value) {
   return `'${String(value ?? "").replace(/'/g, "''")}'`;
+}
+
+function enqueuePrintJob(task) {
+  if (activePrintJobs >= MAX_PRINT_QUEUE_SIZE) {
+    throw new Error("print_queue_full");
+  }
+  const jobId = ++printJobSequence;
+  const queuedAhead = activePrintJobs;
+  const queuedAt = Date.now();
+  activePrintJobs += 1;
+  const run = printQueue
+    .catch(() => undefined)
+    .then(async () => {
+      const startedAt = Date.now();
+      try {
+        const result = await task();
+        return {
+          ...result,
+          queue: {
+            jobId,
+            queuedAhead,
+            waitMs: startedAt - queuedAt,
+            durationMs: Date.now() - startedAt,
+          },
+        };
+      } finally {
+        activePrintJobs = Math.max(0, activePrintJobs - 1);
+      }
+    });
+  printQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+async function inspectAutoStart() {
+  if (IS_SOURCE_CHECKOUT) {
+    return {
+      supported: false,
+      enabled: false,
+      shortcutPath: "",
+      message: "source_checkout",
+    };
+  }
+  const stdout = await runPowerShell(
+    `
+$startup = [Environment]::GetFolderPath('Startup')
+$shortcutName = ${psString(STARTUP_SHORTCUT_NAME)}
+$target = Join-Path $startup $shortcutName
+$exists = Test-Path -LiteralPath $target
+$targetPath = ''
+$arguments = ''
+if ($exists) {
+  $shell = New-Object -ComObject WScript.Shell
+  $shortcut = $shell.CreateShortcut($target)
+  $targetPath = [string]$shortcut.TargetPath
+  $arguments = [string]$shortcut.Arguments
+}
+@{ supported = $true; enabled = $exists; shortcutPath = $target; targetPath = $targetPath; arguments = $arguments } | ConvertTo-Json -Compress
+`,
+    5000,
+  );
+  return stdout
+    ? JSON.parse(stdout)
+    : {
+        supported: true,
+        enabled: false,
+        shortcutPath: "",
+      };
+}
+
+async function setAutoStart(enabled) {
+  if (IS_SOURCE_CHECKOUT) {
+    throw new Error("autostart_disabled_for_source_checkout");
+  }
+  const stdout = await runPowerShell(
+    `
+$ErrorActionPreference = 'Stop'
+$installDir = ${psString(INSTALL_DIR)}
+$shortcutName = ${psString(STARTUP_SHORTCUT_NAME)}
+$startup = [Environment]::GetFolderPath('Startup')
+$target = Join-Path $startup $shortcutName
+$enabled = ${enabled ? "$true" : "$false"}
+if ($enabled) {
+  $hiddenScript = Join-Path $installDir 'run-hidden.vbs'
+  if (-not (Test-Path -LiteralPath $hiddenScript)) { throw 'run_hidden_script_missing' }
+  $shell = New-Object -ComObject WScript.Shell
+  $shortcut = $shell.CreateShortcut($target)
+  $shortcut.TargetPath = 'wscript.exe'
+  $shortcut.Arguments = ('"' + $hiddenScript + '"')
+  $shortcut.WorkingDirectory = $installDir
+  $shortcut.Description = 'FAOLLA local silent print helper'
+  $shortcut.Save()
+  Start-Process -FilePath 'wscript.exe' -ArgumentList @($hiddenScript) -WorkingDirectory $installDir -WindowStyle Hidden
+} elseif (Test-Path -LiteralPath $target) {
+  Remove-Item -LiteralPath $target -Force
+}
+@{ supported = $true; enabled = (Test-Path -LiteralPath $target); shortcutPath = $target } | ConvertTo-Json -Compress
+`,
+    8000,
+  );
+  return stdout
+    ? JSON.parse(stdout)
+    : {
+        supported: true,
+        enabled,
+      };
 }
 
 async function startSelfUpdate(manifestUrl) {
@@ -830,36 +949,39 @@ async function handlePrint(request, response) {
       Boolean(normalizeDataImage(payload.receiptImageDataUrl)) ||
       Boolean(normalizeUrl(payload.headerLogoUrl)) ||
       Boolean(normalizeDataImage(payload.headerLogoDataUrl));
-    const result = shouldUseEscPos
-      ? await printEscPosJob({
-          content: payload.content,
-          printerName: payload.printerName,
-          jobName: payload.jobName,
-          feedLinesBeforeCut: payload.feedLinesBeforeCut,
-          cutPaperMode: payload.cutPaperMode,
-          cutPaperAfterPrint: payload.cutPaperAfterPrint === true,
-          paperWidthMm: payload.paperWidthMm,
-          contentMarginTopMm: payload.contentMarginTopMm,
-          contentMarginRightMm: payload.contentMarginRightMm,
-          contentMarginBottomMm: payload.contentMarginBottomMm,
-          contentMarginLeftMm: payload.contentMarginLeftMm,
-          headerLogoUrl: payload.headerLogoUrl,
-          headerLogoDataUrl: payload.headerLogoDataUrl,
-          headerLogoWidthPercent: payload.headerLogoWidthPercent,
-          receiptImageDataUrl: payload.receiptImageDataUrl,
-        })
-      : await printTextJob({
-          content: payload.content,
-          printerName: payload.printerName,
-          jobName: payload.jobName,
-          paperWidthMm: payload.paperWidthMm,
-          contentMarginTopMm: payload.contentMarginTopMm,
-          contentMarginBottomMm: payload.contentMarginBottomMm,
-          contentMarginLeftMm: payload.contentMarginLeftMm,
-        });
+    const result = await enqueuePrintJob(() =>
+      shouldUseEscPos
+        ? printEscPosJob({
+            content: payload.content,
+            printerName: payload.printerName,
+            jobName: payload.jobName,
+            feedLinesBeforeCut: payload.feedLinesBeforeCut,
+            cutPaperMode: payload.cutPaperMode,
+            cutPaperAfterPrint: payload.cutPaperAfterPrint === true,
+            paperWidthMm: payload.paperWidthMm,
+            contentMarginTopMm: payload.contentMarginTopMm,
+            contentMarginRightMm: payload.contentMarginRightMm,
+            contentMarginBottomMm: payload.contentMarginBottomMm,
+            contentMarginLeftMm: payload.contentMarginLeftMm,
+            headerLogoUrl: payload.headerLogoUrl,
+            headerLogoDataUrl: payload.headerLogoDataUrl,
+            headerLogoWidthPercent: payload.headerLogoWidthPercent,
+            receiptImageDataUrl: payload.receiptImageDataUrl,
+          })
+        : printTextJob({
+            content: payload.content,
+            printerName: payload.printerName,
+            jobName: payload.jobName,
+            paperWidthMm: payload.paperWidthMm,
+            contentMarginTopMm: payload.contentMarginTopMm,
+            contentMarginBottomMm: payload.contentMarginBottomMm,
+            contentMarginLeftMm: payload.contentMarginLeftMm,
+          }),
+    );
     sendJson(response, 200, { ok: true, result }, origin);
   } catch (error) {
-    sendJson(response, 500, { ok: false, message: readSafeErrorMessage(error, "print_failed") }, origin);
+    const message = readSafeErrorMessage(error, "print_failed");
+    sendJson(response, message === "print_queue_full" ? 503 : 500, { ok: false, message }, origin);
   }
 }
 
@@ -903,6 +1025,33 @@ const server = createServer(async (request, response) => {
     }
     return;
   }
+  if (url.pathname === "/autostart" && request.method === "GET") {
+    if (!isAllowedOrigin(origin)) {
+      sendJson(response, 403, { ok: false, message: "origin_not_allowed" }, origin);
+      return;
+    }
+    try {
+      sendJson(response, 200, { ok: true, autostart: await inspectAutoStart() }, origin);
+    } catch (error) {
+      sendJson(response, 500, { ok: false, message: readSafeErrorMessage(error, "autostart_inspect_failed") }, origin);
+    }
+    return;
+  }
+  if (url.pathname === "/autostart" && request.method === "POST") {
+    if (!isAllowedOrigin(origin)) {
+      sendJson(response, 403, { ok: false, message: "origin_not_allowed" }, origin);
+      return;
+    }
+    try {
+      const rawBody = await readRequestBody(request);
+      const payload = rawBody ? JSON.parse(rawBody) : {};
+      const enabled = payload?.enabled !== false && payload?.action !== "disable";
+      sendJson(response, 200, { ok: true, autostart: await setAutoStart(enabled) }, origin);
+    } catch (error) {
+      sendJson(response, 500, { ok: false, message: readSafeErrorMessage(error, "autostart_update_failed") }, origin);
+    }
+    return;
+  }
   if (url.pathname === "/print" && request.method === "POST") {
     await handlePrint(request, response);
     return;
@@ -910,7 +1059,7 @@ const server = createServer(async (request, response) => {
   sendJson(response, 404, {
     ok: false,
     message: "not_found",
-    routes: ["/health", "/version", "/printers", "/print", "/update"],
+    routes: ["/health", "/version", "/printers", "/print", "/update", "/autostart"],
   }, origin);
 });
 

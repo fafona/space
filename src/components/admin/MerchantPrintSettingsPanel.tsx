@@ -34,11 +34,14 @@ import {
   inspectLocalPrintBridge,
   isPrintHelperVersionOutdated,
   isReceiptFieldVisible,
+  inspectLocalPrintBridgeAutoStart,
   listLocalPrintBridgePrinters,
   normalizeReceiptPrintSettingsForClient,
   requestLocalPrintBridgeUpdate,
   resolvePrintHelperPackageUrl,
   sendRedemptionReceiptToLocalBridge,
+  setLocalPrintBridgeAutoStart,
+  type LocalPrintBridgeAutoStartState,
   type LocalPrintBridgeInspection,
   type LocalPrintBridgePrinter,
   type MerchantRedemptionReceiptLine,
@@ -482,6 +485,8 @@ export default function MerchantPrintSettingsPanel({
   const [bridgeUpdating, setBridgeUpdating] = useState(false);
   const [bridgeStatus, setBridgeStatus] = useState<LocalPrintBridgePanelStatus>("unknown");
   const [bridgeInspection, setBridgeInspection] = useState<LocalPrintBridgeInspection | null>(null);
+  const [bridgeAutoStart, setBridgeAutoStart] = useState<LocalPrintBridgeAutoStartState | null>(null);
+  const [bridgeAutoStartChanging, setBridgeAutoStartChanging] = useState(false);
   const [printHelperManifest, setPrintHelperManifest] = useState<PrintHelperUpdateManifest | null>(null);
   const [bridgePrinters, setBridgePrinters] = useState<LocalPrintBridgePrinter[]>([]);
   const [logoUploading, setLogoUploading] = useState(false);
@@ -873,10 +878,14 @@ export default function MerchantPrintSettingsPanel({
       setBridgeInspection(inspection);
       setBridgeStatus(nextStatus);
       if (!inspection.online) {
+        setBridgeAutoStart(null);
         setNotice("没有连接到本机打印助手，请先在收银电脑安装并运行 FAOLLA 打印助手。");
       } else if (nextStatus === "outdated") {
+        setBridgeAutoStart(null);
         setNotice(`本机打印助手版本 ${inspection.version || "未知"} 偏旧，请更新到 ${getPrintHelperManifestLatestVersion(manifest)}。`);
       } else {
+        const autostart = await inspectLocalPrintBridgeAutoStart(printSettings);
+        setBridgeAutoStart(autostart);
         setNotice(`本机打印助手已连接，版本 ${inspection.version || "未知"}。`);
       }
     } finally {
@@ -948,6 +957,32 @@ export default function MerchantPrintSettingsPanel({
     } finally {
       setBridgeUpdating(false);
       setBridgeChecking(false);
+    }
+  }
+
+  async function updateBridgeAutoStart(enabled: boolean) {
+    if (bridgeAutoStartChanging) return;
+    setBridgeAutoStartChanging(true);
+    setError("");
+    setNotice("");
+    try {
+      const inspection = bridgeInspection?.online ? bridgeInspection : await inspectLocalPrintBridge(printSettings);
+      setBridgeInspection(inspection);
+      if (!inspection.online) {
+        setBridgeStatus("offline");
+        setBridgeAutoStart(null);
+        setError("没有连接到本机打印助手，无法设置开机自启动。");
+        return;
+      }
+      const nextAutoStart = await setLocalPrintBridgeAutoStart(printSettings, enabled);
+      setBridgeAutoStart(nextAutoStart);
+      if (!nextAutoStart.supported) {
+        setError("当前打印助手版本不支持网页设置开机自启动，请下载最新版或使用安装包里的自启动脚本。");
+        return;
+      }
+      setNotice(nextAutoStart.enabled ? "已启用当前 Windows 用户开机自启动。" : "已取消当前 Windows 用户开机自启动。");
+    } finally {
+      setBridgeAutoStartChanging(false);
     }
   }
 
@@ -1237,6 +1272,18 @@ export default function MerchantPrintSettingsPanel({
                       : "当前助手版本偏旧且不支持自动更新，请下载最新版手动安装一次；之后即可自动更新。"
                     : "助手版本满足当前打印要求，可以读取打印机并静默打印。"}
               </div>
+              {bridgeInspection?.online ? (
+                <div className="mt-1 text-xs text-slate-500">
+                  开机自启动：
+                  {bridgeAutoStart
+                    ? bridgeAutoStart.supported
+                      ? bridgeAutoStart.enabled
+                        ? "已启用"
+                        : "未启用"
+                      : "当前助手不支持网页设置"
+                    : "未检测"}
+                </div>
+              ) : null}
             </div>
             <div className="mt-4 grid gap-3 md:grid-cols-2">
               <SwitchField
@@ -1256,6 +1303,7 @@ export default function MerchantPrintSettingsPanel({
                   onChange={(event) => {
                     setBridgeStatus("unknown");
                     setBridgeInspection(null);
+                    setBridgeAutoStart(null);
                     setBridgePrinters([]);
                     patchPrintSettings({ localPrintBridgeUrl: event.target.value });
                   }}
@@ -1333,6 +1381,20 @@ export default function MerchantPrintSettingsPanel({
                     disabled={bridgeChecking || bridgeUpdating}
                   >
                     {bridgeUpdating ? "更新中..." : "自动更新助手"}
+                  </button>
+                ) : null}
+                {bridgeInspection?.online && !bridgeOutdated ? (
+                  <button
+                    type="button"
+                    className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                    onClick={() => void updateBridgeAutoStart(!(bridgeAutoStart?.supported && bridgeAutoStart.enabled))}
+                    disabled={bridgeChecking || bridgeUpdating || bridgeAutoStartChanging}
+                  >
+                    {bridgeAutoStartChanging
+                      ? "设置中..."
+                      : bridgeAutoStart?.supported && bridgeAutoStart.enabled
+                        ? "取消开机自启动"
+                        : "启用开机自启动"}
                   </button>
                 ) : null}
                 {printHelperPackageUrl ? (

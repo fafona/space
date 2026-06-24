@@ -95,9 +95,12 @@ const RECEIPT_SYSTEM_TEXT_ALIASES: Record<string, MerchantReceiptSystemTextKey> 
 };
 const RECEIPT_WATERMARK_PRINT_ROWS = Array.from({ length: 18 }, (_, index) => index);
 const RECEIPT_WATERMARK_PRINT_COLUMNS = Array.from({ length: 7 }, (_, index) => index);
+const LOCAL_PRINT_BRIDGE_MAX_DATA_IMAGE_CHARS = 3_500_000;
+const PRINTABLE_LOGO_DATA_URL_CACHE_LIMIT = 24;
+const printableLogoDataUrlCache = new Map<string, Promise<string>>();
 
 export const PRINT_HELPER_MANIFEST_PATH = "/downloads/print-helper/latest.json";
-export const PRINT_HELPER_MINIMUM_VERSION = "1.5.0";
+export const PRINT_HELPER_MINIMUM_VERSION = "1.5.2";
 
 function escapeHtml(value: unknown) {
   return String(value ?? "")
@@ -139,6 +142,26 @@ function normalizePrintAssetUrl(value: string) {
   }
 }
 
+function normalizeReceiptDisplayText(value: unknown, fallback: string, maxLength: number) {
+  if (value === null || value === undefined) return fallback;
+  return String(value ?? "").trim().slice(0, maxLength);
+}
+
+function limitLocalPrintBridgeDataImage(value: string) {
+  return value.length <= LOCAL_PRINT_BRIDGE_MAX_DATA_IMAGE_CHARS ? value : "";
+}
+
+function shouldUseReceiptImageForLocalBridge(settings: MerchantReceiptPrintSettings) {
+  if (settings.watermarkEnabled) return true;
+  const baseFontSizePx = clampInteger(settings.fontSizePx, 9, 18, FALLBACK_PRINT_SETTINGS.fontSizePx);
+  return settings.receiptFields.some((field) => {
+    if (!field.visible) return false;
+    const fieldFontSizePx = clampInteger(field.fontSizePx, 8, 28, baseFontSizePx);
+    const fieldLetterSpacingPx = clampNumber(field.letterSpacingPx, 0, 8, 0);
+    return fieldFontSizePx !== baseFontSizePx || fieldLetterSpacingPx !== 0;
+  });
+}
+
 function loadPrintableLogoImage(src: string) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
     const image = new Image();
@@ -159,7 +182,10 @@ function loadPrintableLogoImage(src: string) {
 async function buildPrintableLogoDataUrl(src: string) {
   if (typeof document === "undefined" || !src) return "";
   if (/^data:image\/(png|jpe?g);base64,/i.test(src)) return src;
-  try {
+  const cacheKey = src.slice(0, 1200);
+  const cached = printableLogoDataUrlCache.get(cacheKey);
+  if (cached) return cached;
+  const promise = (async () => {
     const image = await loadPrintableLogoImage(src);
     const sourceWidth = image.naturalWidth || image.width || 1;
     const sourceHeight = image.naturalHeight || image.height || 1;
@@ -174,7 +200,19 @@ async function buildPrintableLogoDataUrl(src: string) {
     context.clearRect(0, 0, width, height);
     context.drawImage(image, 0, 0, width, height);
     return canvas.toDataURL("image/png");
+  })();
+  printableLogoDataUrlCache.set(cacheKey, promise);
+  while (printableLogoDataUrlCache.size > PRINTABLE_LOGO_DATA_URL_CACHE_LIMIT) {
+    const oldestKey = printableLogoDataUrlCache.keys().next().value;
+    if (!oldestKey) break;
+    printableLogoDataUrlCache.delete(oldestKey);
+  }
+  try {
+    const result = await promise;
+    if (!result) printableLogoDataUrlCache.delete(cacheKey);
+    return result;
   } catch {
+    printableLogoDataUrlCache.delete(cacheKey);
     return "";
   }
 }
@@ -248,9 +286,9 @@ export function normalizeReceiptPrintSettingsForClient(settings: MerchantReceipt
   const normalized = {
     ...FALLBACK_PRINT_SETTINGS,
     ...(settings ?? {}),
-    title: settings?.title?.trim() || FALLBACK_PRINT_SETTINGS.title,
+    title: normalizeReceiptDisplayText(settings?.title, FALLBACK_PRINT_SETTINGS.title, 120),
     subtitle: settings?.subtitle?.trim() || "",
-    footer: settings?.footer?.trim() || FALLBACK_PRINT_SETTINGS.footer,
+    footer: normalizeReceiptDisplayText(settings?.footer, FALLBACK_PRINT_SETTINGS.footer, 240),
     localPrintBridgeUrl:
       settings?.localPrintBridgeUrl?.trim().replace(/\/+$/, "") || FALLBACK_PRINT_SETTINGS.localPrintBridgeUrl,
     localPrinterName: settings?.localPrinterName?.trim() || "",
@@ -918,6 +956,14 @@ export type LocalPrintBridgePrintResult = {
   result?: unknown;
 };
 
+export type RedemptionReceiptPrintOutcome = {
+  ok: boolean;
+  skipped: boolean;
+  method: "none" | "local_bridge" | "browser_fallback";
+  message: string;
+  bridgeResult?: LocalPrintBridgePrintResult;
+};
+
 function normalizeLocalPrintBridgePrintMessage(value: unknown, fallback: string) {
   const message = String(value ?? "").trim();
   return message ? message.slice(0, 200) : fallback;
@@ -939,8 +985,11 @@ export async function sendRedemptionReceiptToLocalBridge(
   };
   const headerLogoDataUrl = headerLogoUrl ? await buildPrintableLogoDataUrl(headerLogoUrl) : "";
   const renderSettings = headerLogoDataUrl ? { ...helperSettings, headerLogoUrl: headerLogoDataUrl } : helperSettings;
-  const contentHtml = buildRedemptionReceiptHtml(renderSettings, receipt);
-  const receiptImageDataUrl = await buildReceiptImageDataUrl(contentHtml);
+  const shouldUseImage = shouldUseReceiptImageForLocalBridge(helperSettings);
+  const contentHtml = shouldUseImage ? buildRedemptionReceiptHtml(renderSettings, receipt) : "";
+  const receiptImageDataUrl = shouldUseImage
+    ? limitLocalPrintBridgeDataImage(await buildReceiptImageDataUrl(contentHtml))
+    : "";
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -1044,7 +1093,13 @@ export type LocalPrintBridgeHealth = {
     bitmapReceipt?: unknown;
     headerLogoUrl?: unknown;
     headerLogoDataUrl?: unknown;
+    printQueue?: unknown;
+    autostart?: unknown;
     selfUpdate?: unknown;
+  };
+  queue?: {
+    active?: unknown;
+    max?: unknown;
   };
   update?: {
     supported?: unknown;
@@ -1078,6 +1133,15 @@ export type LocalPrintBridgeInspection = {
   protocolVersion: number;
   updateSupported: boolean;
   updateEndpoint: string;
+};
+
+export type LocalPrintBridgeAutoStartState = {
+  supported: boolean;
+  enabled: boolean;
+  shortcutPath: string;
+  targetPath?: string;
+  arguments?: string;
+  message?: string;
 };
 
 function normalizeVersionPart(value: string) {
@@ -1231,6 +1295,67 @@ export async function requestLocalPrintBridgeUpdate(inputSettings: MerchantRecei
   }
 }
 
+export async function inspectLocalPrintBridgeAutoStart(inputSettings: MerchantReceiptPrintSettings | null | undefined) {
+  const fallback: LocalPrintBridgeAutoStartState = {
+    supported: false,
+    enabled: false,
+    shortcutPath: "",
+  };
+  if (typeof window === "undefined") return fallback;
+  const settings = normalizeReceiptPrintSettingsForClient(inputSettings);
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), 3000);
+  try {
+    const response = await fetch(`${settings.localPrintBridgeUrl}/autostart`, {
+      method: "GET",
+      mode: "cors",
+      cache: "no-store",
+      headers: { accept: "application/json" },
+      signal: controller.signal,
+    });
+    const payload = (await response.json().catch(() => null)) as { ok?: unknown; autostart?: LocalPrintBridgeAutoStartState } | null;
+    return response.ok && payload?.ok === true && payload.autostart ? payload.autostart : fallback;
+  } catch {
+    return fallback;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+export async function setLocalPrintBridgeAutoStart(
+  inputSettings: MerchantReceiptPrintSettings | null | undefined,
+  enabled: boolean,
+) {
+  const fallback: LocalPrintBridgeAutoStartState = {
+    supported: false,
+    enabled: false,
+    shortcutPath: "",
+  };
+  if (typeof window === "undefined") return fallback;
+  const settings = normalizeReceiptPrintSettingsForClient(inputSettings);
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), 6000);
+  try {
+    const response = await fetch(`${settings.localPrintBridgeUrl}/autostart`, {
+      method: "POST",
+      mode: "cors",
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json",
+        accept: "application/json",
+      },
+      body: JSON.stringify({ enabled }),
+      signal: controller.signal,
+    });
+    const payload = (await response.json().catch(() => null)) as { ok?: unknown; autostart?: LocalPrintBridgeAutoStartState } | null;
+    return response.ok && payload?.ok === true && payload.autostart ? payload.autostart : fallback;
+  } catch {
+    return fallback;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
 export async function listLocalPrintBridgePrinters(inputSettings: MerchantReceiptPrintSettings | null | undefined) {
   if (typeof window === "undefined") return [] as LocalPrintBridgePrinter[];
   const settings = normalizeReceiptPrintSettingsForClient(inputSettings);
@@ -1255,18 +1380,55 @@ export async function listLocalPrintBridgePrinters(inputSettings: MerchantReceip
   }
 }
 
-export function printRedemptionReceipt(
+export async function printRedemptionReceipt(
   settings: MerchantReceiptPrintSettings | null | undefined,
   receipt: MerchantRedemptionReceiptData,
 ) {
   const normalizedSettings = normalizeReceiptPrintSettingsForClient(settings);
-  if (
-    !normalizedSettings.enabled ||
-    !normalizedSettings.autoPrintRedemptionReceipt ||
-    !normalizedSettings.silentPrintEnabled
-  ) {
-    return false;
+  if (!normalizedSettings.enabled || !normalizedSettings.autoPrintRedemptionReceipt) {
+    return {
+      ok: true,
+      skipped: true,
+      method: "none",
+      message: "receipt_print_disabled",
+    } satisfies RedemptionReceiptPrintOutcome;
   }
-  void printRedemptionReceiptWithLocalBridge(normalizedSettings, receipt);
-  return true;
+  if (!normalizedSettings.silentPrintEnabled) {
+    return {
+      ok: true,
+      skipped: true,
+      method: "none",
+      message: "silent_print_disabled",
+    } satisfies RedemptionReceiptPrintOutcome;
+  }
+
+  const bridgeResult = await sendRedemptionReceiptToLocalBridge(normalizedSettings, receipt);
+  if (bridgeResult.ok) {
+    return {
+      ok: true,
+      skipped: false,
+      method: "local_bridge",
+      message: "",
+      bridgeResult,
+    } satisfies RedemptionReceiptPrintOutcome;
+  }
+
+  if (normalizedSettings.fallbackToBrowserPrint) {
+    const fallbackPrinted = printHtmlDocument(buildRedemptionReceiptHtml(normalizedSettings, receipt));
+    return {
+      ok: fallbackPrinted,
+      skipped: false,
+      method: "browser_fallback",
+      message: fallbackPrinted ? bridgeResult.message : `${bridgeResult.message || "local_print_bridge_print_failed"}; browser_print_failed`,
+      bridgeResult,
+    } satisfies RedemptionReceiptPrintOutcome;
+  }
+
+  return {
+    ok: false,
+    skipped: false,
+    method: "local_bridge",
+    message: bridgeResult.message,
+    bridgeResult,
+  } satisfies RedemptionReceiptPrintOutcome;
 }

@@ -1,21 +1,21 @@
 {
   "ok": true,
   "name": "faolla-print-helper",
-  "version": "1.5.1",
-  "latestVersion": "1.5.1",
-  "minimumVersion": "1.5.1",
+  "version": "1.5.2",
+  "latestVersion": "1.5.2",
+  "minimumVersion": "1.5.2",
   "minimumWebVersion": "1.5.0",
   "mandatory": true,
-  "publishedAt": "2026-06-22T00:00:00Z",
+  "publishedAt": "2026-06-24T00:00:00Z",
   "package": {
-    "url": "/downloads/print-helper/FAOLLA-print-helper-1.5.1.zip",
-    "sha256": "caaa4f3d394790fb821bf7b3d2747bad5a1c0b66af7143f2c104bfc919d9b534",
-    "sizeBytes": 34100760
+    "url": "/downloads/print-helper/FAOLLA-print-helper-1.5.2.zip",
+    "sha256": "cce963ec19e806fb24ca0de586484fe305f564c28b65ada7b2f61434fc94f38e",
+    "sizeBytes": 34101281
   },
   "releaseNotes": [
-    "新增 /health 和 /version 版本能力检测。",
-    "新增 /update 自更新：下载 latest.json 指向的安装包，校验 SHA256 后替换并重启。",
-    "修复 ESC/POS 图片小票打印时可能触发 Windows 命令长度限制的问题。",
-    "后台会识别未安装、版本旧、可自动更新和已连接状态。"
+    "新增打印任务队列，连续结算会按顺序打印，避免同时抢占打印机。",
+    "新增 /autostart 接口，可检测、启用或取消当前 Windows 用户开机自启动。",
+    "/health 返回队列和自启动能力，便于后台诊断。",
+    "网页端减少普通小票的大图生成等待，并记录更详细的打印结果日志。"
   ]
 }

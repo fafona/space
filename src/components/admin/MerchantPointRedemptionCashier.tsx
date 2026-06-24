@@ -28,7 +28,15 @@ import type {
   MerchantReceiptPrintSettings,
 } from "@/lib/merchantMembershipSettings";
 import { parseMerchantMemberPointDiscountRate } from "@/lib/merchantMembershipSettings";
-import { printRedemptionReceipt, type MerchantRedemptionReceiptData } from "@/lib/merchantReceiptPrint";
+import { recordMerchantOperationLog } from "@/lib/merchantOperationLogs";
+import {
+  fetchPrintHelperUpdateManifest,
+  inspectLocalPrintBridge,
+  isPrintHelperVersionOutdated,
+  printRedemptionReceipt,
+  type MerchantRedemptionReceiptData,
+  type RedemptionReceiptPrintOutcome,
+} from "@/lib/merchantReceiptPrint";
 
 type MerchantPointRedemptionCashierProps = {
   siteId: string;
@@ -106,6 +114,7 @@ type CatalogFilterTab = "hot" | "category" | "recommend";
 type CatalogSortMode = "code" | "name";
 type RecordsTimeFilter = "today" | "yesterday" | "week" | "month" | "all";
 type CashierShortcutKey = "enter" | "minus" | "plus";
+type CashierPrintBridgeStatus = "idle" | "disabled" | "checking" | "online" | "offline" | "outdated" | "error";
 type CashierShortcutActions = {
   blocked: () => boolean;
   openQuickRedeem: () => void;
@@ -397,6 +406,123 @@ function operationErrorMessage(message: unknown, fallback: string, operationType
   return text || fallback;
 }
 
+function redemptionReceiptPrintNotice(outcome: RedemptionReceiptPrintOutcome) {
+  if (outcome.skipped) return "";
+  if (outcome.ok && outcome.method === "browser_fallback") {
+    return "本机打印助手未完成打印，已回退到浏览器打印窗口。";
+  }
+  if (!outcome.ok && outcome.method === "browser_fallback") {
+    return "小票打印失败，本机助手和浏览器打印都不可用，请检查打印助手和浏览器权限。";
+  }
+  if (!outcome.ok) {
+    return "小票打印失败，请检查本机打印助手和打印机连接。";
+  }
+  return "";
+}
+
+function getCashierPrintBridgeStatusLabel(status: CashierPrintBridgeStatus, version: string) {
+  if (status === "checking") return "打印检测中";
+  if (status === "online") return version ? `打印已连接 ${version}` : "打印已连接";
+  if (status === "outdated") return version ? `助手需更新 ${version}` : "助手需更新";
+  if (status === "offline") return "打印未连接";
+  if (status === "error") return "打印异常";
+  if (status === "disabled") return "打印未启用";
+  return "打印未检测";
+}
+
+function getCashierPrintBridgeStatusTitle(status: CashierPrintBridgeStatus, version: string, checkedAt: number) {
+  const checkedText = checkedAt ? `上次检测 ${new Date(checkedAt).toLocaleTimeString("zh-CN", { hour12: false })}` : "尚未检测";
+  const versionText = version ? `，助手版本 ${version}` : "";
+  if (status === "disabled") return `当前配置未启用静默自动打印。${checkedText}`;
+  if (status === "outdated") return `本机打印助手版本低于网页要求${versionText}，请更新后再静默打印。${checkedText}`;
+  if (status === "offline") return `未检测到本机打印助手，请确认助手已启动。${checkedText}`;
+  if (status === "error") return `本机打印助手已响应，但打印机或打印任务异常${versionText}。${checkedText}`;
+  if (status === "online") return `本机打印助手可用${versionText}。${checkedText}`;
+  if (status === "checking") return "正在检测本机打印助手。";
+  return `点击检测本机打印助手。${checkedText}`;
+}
+
+function resolveCashierPrintBridgeStatusFromOutcome(outcome: RedemptionReceiptPrintOutcome): CashierPrintBridgeStatus | "" {
+  if (outcome.skipped) return "";
+  if (outcome.ok && outcome.method === "local_bridge") return "online";
+  const bridgeStatus = Number(outcome.bridgeResult?.status);
+  return Number.isFinite(bridgeStatus) && bridgeStatus > 0 ? "error" : "offline";
+}
+
+function buildCashierPrintBridgeCheckKey(settings: MerchantReceiptPrintSettings | null | undefined) {
+  if (!settings) return "none";
+  return [
+    settings.enabled ? "1" : "0",
+    settings.autoPrintRedemptionReceipt ? "1" : "0",
+    settings.silentPrintEnabled ? "1" : "0",
+    settings.localPrintBridgeUrl || "",
+    settings.localPrinterName || "",
+  ].join("|");
+}
+
+function readPrintBridgeResultField(result: unknown, key: string) {
+  if (!result || typeof result !== "object") return "";
+  const value = (result as Record<string, unknown>)[key];
+  if (value === null || value === undefined) return "";
+  if (typeof value === "boolean") return value ? "1" : "0";
+  return String(value).trim().slice(0, 80);
+}
+
+function recordRedemptionReceiptPrintOutcome(
+  siteId: string,
+  receipt: MerchantRedemptionReceiptData,
+  outcome: RedemptionReceiptPrintOutcome,
+) {
+  try {
+    const bridgeStatus = outcome.bridgeResult?.status;
+    const bridgeResult = outcome.bridgeResult?.result;
+    const queue = bridgeResult && typeof bridgeResult === "object" ? (bridgeResult as { queue?: unknown }).queue : null;
+    const detail = [
+      `receipt:${receipt.receiptNo}`,
+      `member:${receipt.memberNo}`,
+      `items:${receipt.totalQuantity}`,
+      `points:${formatPoints(receipt.totalPoints)}`,
+      `method:${outcome.method}`,
+      outcome.skipped ? `skip:${outcome.message}` : "",
+      bridgeStatus !== undefined ? `bridgeStatus:${bridgeStatus}` : "",
+      readPrintBridgeResultField(bridgeResult, "printerName")
+        ? `printer:${readPrintBridgeResultField(bridgeResult, "printerName")}`
+        : "",
+      readPrintBridgeResultField(bridgeResult, "mode") ? `mode:${readPrintBridgeResultField(bridgeResult, "mode")}` : "",
+      readPrintBridgeResultField(bridgeResult, "bytes") ? `bytes:${readPrintBridgeResultField(bridgeResult, "bytes")}` : "",
+      readPrintBridgeResultField(bridgeResult, "receiptImage")
+        ? `image:${readPrintBridgeResultField(bridgeResult, "receiptImage")}`
+        : "",
+      readPrintBridgeResultField(bridgeResult, "headerLogo")
+        ? `logo:${readPrintBridgeResultField(bridgeResult, "headerLogo")}`
+        : "",
+      readPrintBridgeResultField(bridgeResult, "cutPaperAfterPrint")
+        ? `cut:${readPrintBridgeResultField(bridgeResult, "cutPaperAfterPrint")}`
+        : "",
+      readPrintBridgeResultField(queue, "waitMs") ? `queueWait:${readPrintBridgeResultField(queue, "waitMs")}ms` : "",
+      outcome.message ? `message:${outcome.message}` : "",
+    ]
+      .filter(Boolean)
+      .join(" | ");
+    recordMerchantOperationLog({
+      siteId,
+      module: "经营中心 > 积分兑换",
+      action: outcome.skipped ? "跳过积分兑换小票打印" : "打印积分兑换小票",
+      summary: outcome.skipped
+        ? `小票打印已跳过：${receipt.receiptNo}`
+        : outcome.ok
+          ? `小票打印成功：${receipt.receiptNo}`
+          : `小票打印失败：${receipt.receiptNo}`,
+      status: outcome.ok ? "success" : "failed",
+      method: outcome.method === "local_bridge" ? "LOCAL" : outcome.method === "browser_fallback" ? "BROWSER" : "NONE",
+      endpoint: outcome.method === "local_bridge" ? "local-print-bridge" : outcome.method === "browser_fallback" ? "browser-print" : undefined,
+      detail,
+    });
+  } catch {
+    // Operation logs must not affect checkout or printing.
+  }
+}
+
 function couponStatusLabel(status: MerchantMembershipInsight["couponHistory"][number]["status"]) {
   if (status === "available") return "可用";
   if (status === "used") return "已核销";
@@ -585,6 +711,9 @@ export default function MerchantPointRedemptionCashier({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [printBridgeStatus, setPrintBridgeStatus] = useState<CashierPrintBridgeStatus>("idle");
+  const [printBridgeVersion, setPrintBridgeVersion] = useState("");
+  const [printBridgeCheckedAt, setPrintBridgeCheckedAt] = useState(0);
   const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
   const [recordsKeyword, setRecordsKeyword] = useState("");
   const [recordsTimeFilter, setRecordsTimeFilter] = useState<RecordsTimeFilter>("today");
@@ -597,6 +726,7 @@ export default function MerchantPointRedemptionCashier({
   const cashierLoadRequestIdRef = useRef(0);
   const memberSearchRequestIdRef = useRef(0);
   const memberSearchCacheRef = useRef<Map<string, MerchantMembershipListItem[]>>(new Map());
+  const printBridgeCheckRef = useRef<{ key: string; at: number }>({ key: "", at: 0 });
   const cashierShortcutPressedKeysRef = useRef<Set<CashierShortcutKey>>(new Set());
   const cashierShortcutEnterTimerRef = useRef<number | null>(null);
   const cashierShortcutActionsRef = useRef<CashierShortcutActions>({
@@ -615,6 +745,33 @@ export default function MerchantPointRedemptionCashier({
     () => LANGUAGE_OPTIONS.find((item) => item.code === resolvedLocale) ?? LANGUAGE_OPTIONS[0],
     [resolvedLocale],
   );
+  const cashierPrintSettings = settings?.printSettings ?? null;
+
+  const checkCashierPrintBridge = useCallback(async (options?: { force?: boolean }) => {
+    if (view !== "cashier") return;
+    const printSettings = cashierPrintSettings as MerchantReceiptPrintSettings | null;
+    const checkKey = buildCashierPrintBridgeCheckKey(printSettings);
+    const now = Date.now();
+    if (!options?.force && printBridgeCheckRef.current.key === checkKey && now - printBridgeCheckRef.current.at < 60_000) {
+      return;
+    }
+    printBridgeCheckRef.current = { key: checkKey, at: now };
+    if (!printSettings?.enabled || !printSettings.autoPrintRedemptionReceipt || !printSettings.silentPrintEnabled) {
+      setPrintBridgeStatus("disabled");
+      setPrintBridgeVersion("");
+      setPrintBridgeCheckedAt(now);
+      return;
+    }
+    setPrintBridgeStatus("checking");
+    const [inspection, manifest] = await Promise.all([inspectLocalPrintBridge(printSettings), fetchPrintHelperUpdateManifest()]);
+    setPrintBridgeVersion(inspection.version || "");
+    setPrintBridgeCheckedAt(Date.now());
+    if (!inspection.online) {
+      setPrintBridgeStatus("offline");
+      return;
+    }
+    setPrintBridgeStatus(isPrintHelperVersionOutdated(inspection.version, manifest) ? "outdated" : "online");
+  }, [cashierPrintSettings, view]);
 
   const enabledCategories = useMemo(
     () => (settings?.redemptionCategories ?? []).filter((category) => category.enabled),
@@ -1326,6 +1483,17 @@ export default function MerchantPointRedemptionCashier({
   }, [selectedMemberId]);
 
   useEffect(() => {
+    if (view !== "cashier") return;
+    if (!settings) {
+      setPrintBridgeStatus("idle");
+      setPrintBridgeVersion("");
+      setPrintBridgeCheckedAt(0);
+      return;
+    }
+    void checkCashierPrintBridge();
+  }, [checkCashierPrintBridge, settings, view]);
+
+  useEffect(() => {
     if (!quickRedeemDialogOpen) return;
     setQuickRedeemName((current) => (current.trim() ? current : "临时项目"));
     const timer = window.setTimeout(() => {
@@ -1860,7 +2028,34 @@ export default function MerchantPointRedemptionCashier({
           ? `兑换完成，已扣减 ${formatPoints(totalPoints)} 积分。`
           : `兑换完成，已核销 ${couponLineCount} 张卡券。`,
       );
-      printRedemptionReceipt(latestPrintSettings, receiptData);
+      void printRedemptionReceipt(latestPrintSettings, receiptData)
+        .then((printOutcome) => {
+          recordRedemptionReceiptPrintOutcome(normalizedSiteId, receiptData, printOutcome);
+          const nextPrintBridgeStatus = resolveCashierPrintBridgeStatusFromOutcome(printOutcome);
+          if (nextPrintBridgeStatus) {
+            setPrintBridgeStatus(nextPrintBridgeStatus);
+            setPrintBridgeCheckedAt(Date.now());
+          }
+          const printNotice = redemptionReceiptPrintNotice(printOutcome);
+          if (!printNotice) return;
+          if (printOutcome.ok) {
+            setNotice((current) => (current ? `${current} ${printNotice}` : printNotice));
+            return;
+          }
+          setError(`兑换已完成，但${printNotice}`);
+        })
+        .catch((printError) => {
+          const printOutcome: RedemptionReceiptPrintOutcome = {
+            ok: false,
+            skipped: false,
+            method: "local_bridge",
+            message: printError instanceof Error ? printError.message : "receipt_print_failed",
+          };
+          recordRedemptionReceiptPrintOutcome(normalizedSiteId, receiptData, printOutcome);
+          setPrintBridgeStatus("error");
+          setPrintBridgeCheckedAt(Date.now());
+          setError("兑换已完成，但小票打印失败，请检查本机打印助手和打印机连接。");
+        });
       void loadData(true, { silent: true });
     } catch (checkoutError) {
       setError(checkoutError instanceof Error ? checkoutError.message : "积分兑换失败，请稍后重试");
@@ -2333,6 +2528,77 @@ export default function MerchantPointRedemptionCashier({
           gap: 10px;
           min-width: 0;
           width: 100%;
+        }
+
+        .merchant-pos-cashier .print-bridge-badge {
+          display: inline-flex;
+          flex: 0 0 auto;
+          align-items: center;
+          gap: 7px;
+          height: 32px;
+          max-width: 164px;
+          overflow: hidden;
+          border: 1px solid var(--pos-line);
+          border-radius: 999px;
+          background: var(--pos-surface-soft);
+          padding: 0 10px;
+          color: var(--pos-muted);
+          font-size: 12px;
+          font-weight: 840;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .merchant-pos-cashier .print-bridge-badge:hover:not(:disabled) {
+          border-color: #9ecfc4;
+          background: var(--pos-primary-soft);
+          color: var(--pos-primary-dark);
+        }
+
+        .merchant-pos-cashier .print-bridge-badge:disabled {
+          opacity: 0.72;
+        }
+
+        .merchant-pos-cashier .print-bridge-dot {
+          flex: 0 0 auto;
+          width: 8px;
+          height: 8px;
+          border-radius: 999px;
+          background: #94a3b8;
+        }
+
+        .merchant-pos-cashier .print-bridge-badge span:last-child {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .merchant-pos-cashier .print-bridge-badge.online {
+          border-color: rgba(22, 163, 74, 0.24);
+          background: #ecfdf3;
+          color: #087443;
+        }
+
+        .merchant-pos-cashier .print-bridge-badge.online .print-bridge-dot {
+          background: #16a34a;
+        }
+
+        .merchant-pos-cashier .print-bridge-badge.checking .print-bridge-dot {
+          background: var(--pos-primary);
+        }
+
+        .merchant-pos-cashier .print-bridge-badge.offline,
+        .merchant-pos-cashier .print-bridge-badge.error,
+        .merchant-pos-cashier .print-bridge-badge.outdated {
+          border-color: rgba(217, 45, 32, 0.22);
+          background: var(--pos-danger-soft);
+          color: var(--pos-danger);
+        }
+
+        .merchant-pos-cashier .print-bridge-badge.offline .print-bridge-dot,
+        .merchant-pos-cashier .print-bridge-badge.error .print-bridge-dot,
+        .merchant-pos-cashier .print-bridge-badge.outdated .print-bridge-dot {
+          background: var(--pos-danger);
         }
 
         .merchant-pos-cashier .member-search {
@@ -4070,6 +4336,16 @@ export default function MerchantPointRedemptionCashier({
                   <IconX />
                 </button>
               ) : null}
+              <button
+                type="button"
+                className={`print-bridge-badge ${printBridgeStatus}`}
+                onClick={() => void checkCashierPrintBridge({ force: true })}
+                disabled={printBridgeStatus === "checking"}
+                title={getCashierPrintBridgeStatusTitle(printBridgeStatus, printBridgeVersion, printBridgeCheckedAt)}
+              >
+                <span className="print-bridge-dot" aria-hidden="true" />
+                <span>{getCashierPrintBridgeStatusLabel(printBridgeStatus, printBridgeVersion)}</span>
+              </button>
               <div className="member-search">
                 <input
                   value={memberKeyword}

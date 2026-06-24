@@ -814,14 +814,16 @@ function getMerchantReceiptFieldLabel(locale: string | null | undefined, key: st
 }
 
 function isDefaultMerchantReceiptTitle(value: unknown) {
+  if (value === null || value === undefined) return true;
   const normalized = trimText(value, 120);
-  if (!normalized) return true;
+  if (!normalized) return false;
   return Object.values(RECEIPT_LOCALE_COPY).some((copy) => copy.title === normalized);
 }
 
 function isDefaultMerchantReceiptFooter(value: unknown) {
+  if (value === null || value === undefined) return true;
   const normalized = trimText(value, 240);
-  if (!normalized) return true;
+  if (!normalized) return false;
   return Object.values(RECEIPT_LOCALE_COPY).some((copy) => copy.footer === normalized);
 }
 
@@ -1281,6 +1283,10 @@ function normalizeReceiptFieldLabel(value: unknown, fallback: string) {
   return value === null || value === undefined ? fallback : trimText(value, 80);
 }
 
+function normalizeOptionalReceiptText(record: Record<string, unknown>, key: string, maxLength: number, fallback: string) {
+  return Object.prototype.hasOwnProperty.call(record, key) ? trimText(record[key], maxLength) : fallback;
+}
+
 function normalizeReceiptContentFields(value: unknown, legacy: Partial<MerchantReceiptPrintSettings>) {
   const defaults = createDefaultMerchantReceiptFields(legacy, legacy.receiptLocale);
   if (!Array.isArray(value)) return defaults;
@@ -1354,9 +1360,9 @@ function normalizeReceiptPrintSettings(value: unknown): MerchantReceiptPrintSett
       80,
       fallback.headerLogoWidthPercent,
     ),
-    title: trimText(record.title, 120) || fallback.title,
+    title: normalizeOptionalReceiptText(record, "title", 120, fallback.title),
     subtitle: trimText(record.subtitle, 160),
-    footer: trimText(record.footer, 240) || fallback.footer,
+    footer: normalizeOptionalReceiptText(record, "footer", 240, fallback.footer),
     paperWidthMm: normalizeIntegerRange(record.paperWidthMm ?? record.paperWidth, 40, 120, fallback.paperWidthMm),
     contentMarginTopMm: normalizeNumberRange(
       record.contentMarginTopMm ?? record.receiptMarginTopMm ?? record.paddingTopMm,
