@@ -489,6 +489,7 @@ export default function MerchantPrintSettingsPanel({
   const [activeSettingsPanel, setActiveSettingsPanel] = useState<PrintSettingsPanelTab>("text");
   const [activeReceiptSection, setActiveReceiptSection] = useState<MerchantReceiptFieldSection>("meta");
   const [draggingReceiptMargin, setDraggingReceiptMargin] = useState<ReceiptMarginSide | null>(null);
+  const [receiptMarginInputDraft, setReceiptMarginInputDraft] = useState<Partial<Record<ReceiptMarginSide, string>>>({});
   const receiptMarginDragRef = useRef<{
     side: ReceiptMarginSide;
     startX: number;
@@ -617,17 +618,40 @@ export default function MerchantPrintSettingsPanel({
     [patchPrintSettings],
   );
 
+  const clearReceiptMarginInputDraft = useCallback((side: ReceiptMarginSide) => {
+    setReceiptMarginInputDraft((current) => {
+      if (!(side in current)) return current;
+      const next = { ...current };
+      delete next[side];
+      return next;
+    });
+  }, []);
+
+  const getReceiptMarginInputValue = useCallback(
+    (side: ReceiptMarginSide) => receiptMarginInputDraft[side] ?? String(readReceiptMarginValue(printSettings, side)),
+    [printSettings, receiptMarginInputDraft],
+  );
+
   const handleReceiptMarginInputChange = useCallback(
     (side: ReceiptMarginSide, value: string) => {
-      patchReceiptMargin(side, parseNumberRange(value, RECEIPT_MARGIN_MIN_MM, RECEIPT_MARGIN_MAX_MM, readReceiptMarginValue(printSettings, side)));
+      setReceiptMarginInputDraft((current) => ({ ...current, [side]: value }));
+      const normalizedValue = value.trim();
+      if (!normalizedValue) {
+        patchReceiptMargin(side, 0);
+        return;
+      }
+      const parsed = Number.parseFloat(normalizedValue);
+      if (!Number.isFinite(parsed)) return;
+      patchReceiptMargin(side, parsed);
     },
-    [patchReceiptMargin, printSettings],
+    [patchReceiptMargin],
   );
 
   const startReceiptMarginDrag = useCallback(
     (side: ReceiptMarginSide, event: ReactPointerEvent<HTMLButtonElement>) => {
       event.preventDefault();
       event.stopPropagation();
+      clearReceiptMarginInputDraft(side);
       receiptMarginDragRef.current = {
         side,
         startX: event.clientX,
@@ -636,7 +660,7 @@ export default function MerchantPrintSettingsPanel({
       };
       setDraggingReceiptMargin(side);
     },
-    [printSettings],
+    [clearReceiptMarginInputDraft, printSettings],
   );
 
   useEffect(() => {
@@ -1721,8 +1745,9 @@ export default function MerchantPrintSettingsPanel({
                   max={RECEIPT_MARGIN_MAX_MM}
                   step={0.5}
                   className="w-9 bg-transparent text-center text-white outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                  value={printSettings.contentMarginTopMm}
+                  value={getReceiptMarginInputValue("top")}
                   onChange={(event) => handleReceiptMarginInputChange("top", event.target.value)}
+                  onBlur={() => clearReceiptMarginInputDraft("top")}
                 />
               </label>
               <label
@@ -1736,8 +1761,9 @@ export default function MerchantPrintSettingsPanel({
                   max={RECEIPT_MARGIN_MAX_MM}
                   step={0.5}
                   className="w-9 bg-transparent text-center text-white outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                  value={printSettings.contentMarginRightMm}
+                  value={getReceiptMarginInputValue("right")}
                   onChange={(event) => handleReceiptMarginInputChange("right", event.target.value)}
+                  onBlur={() => clearReceiptMarginInputDraft("right")}
                 />
               </label>
               <label
@@ -1751,8 +1777,9 @@ export default function MerchantPrintSettingsPanel({
                   max={RECEIPT_MARGIN_MAX_MM}
                   step={0.5}
                   className="w-9 bg-transparent text-center text-white outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                  value={printSettings.contentMarginBottomMm}
+                  value={getReceiptMarginInputValue("bottom")}
                   onChange={(event) => handleReceiptMarginInputChange("bottom", event.target.value)}
+                  onBlur={() => clearReceiptMarginInputDraft("bottom")}
                 />
               </label>
               <label
@@ -1766,8 +1793,9 @@ export default function MerchantPrintSettingsPanel({
                   max={RECEIPT_MARGIN_MAX_MM}
                   step={0.5}
                   className="w-9 bg-transparent text-center text-white outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                  value={printSettings.contentMarginLeftMm}
+                  value={getReceiptMarginInputValue("left")}
                   onChange={(event) => handleReceiptMarginInputChange("left", event.target.value)}
+                  onBlur={() => clearReceiptMarginInputDraft("left")}
                 />
               </label>
             <div
