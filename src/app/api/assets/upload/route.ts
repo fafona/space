@@ -205,10 +205,10 @@ async function transcodeBusinessCardIntroVideo(input: {
   const extension = input.extension.replace(/[^a-z0-9]+/gi, "") || "video";
   const inputPath = path.join(workspace, `source.${extension}`);
   const profiles = [
-    { width: 540, crf: 26, audio: "96k" },
-    { width: 540, crf: 30, audio: "80k" },
-    { width: 480, crf: 32, audio: "64k" },
-    { width: 360, crf: 34, audio: "64k" },
+    { width: 540, crf: 26, audio: "96k", maxrate: "900k", bufsize: "1800k" },
+    { width: 540, crf: 30, audio: "80k", maxrate: "700k", bufsize: "1400k" },
+    { width: 480, crf: 32, audio: "64k", maxrate: "520k", bufsize: "1040k" },
+    { width: 360, crf: 34, audio: "64k", maxrate: "360k", bufsize: "720k" },
   ];
   try {
     const buffer = Buffer.from(await input.blob.arrayBuffer());
@@ -236,6 +236,10 @@ async function transcodeBusinessCardIntroVideo(input: {
           "fastdecode",
           "-crf",
           `${profile.crf}`,
+          "-maxrate",
+          profile.maxrate,
+          "-bufsize",
+          profile.bufsize,
           "-pix_fmt",
           "yuv420p",
           "-profile:v",

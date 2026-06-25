@@ -2838,27 +2838,39 @@ function buildShareCardHtml(input: {
   const resourcePreloadHtml = [
     introPosterUrl ? `<link rel="preload" as="image" href="${introPosterUrl}" fetchpriority="high" />` : "",
     introVideoUrl ? `<link rel="preload" as="video" href="${introVideoUrl}" type="video/mp4" crossorigin="anonymous" />` : "",
-    publishedSiteWarmupUrl
+    publishedSiteWarmupUrl && !introVideoUrl
       ? `<link rel="prefetch" as="fetch" href="${escapedPublishedSiteWarmupUrl}" crossorigin="anonymous" />`
       : "",
-    normalizedOpenTargetUrl && normalizedOpenTargetUrl !== normalizedTargetUrl
+    normalizedOpenTargetUrl && normalizedOpenTargetUrl !== normalizedTargetUrl && !introVideoUrl
       ? `<link rel="prefetch" href="${openTargetUrl}" as="document" />`
       : "",
   ].filter(Boolean).join("\n    ");
   const publishedSiteWarmupScript = publishedSiteWarmupUrl
     ? `<script>(() => {
       const url = ${serializeInlineScriptValue(publishedSiteWarmupUrl)};
+      const hasIntroVideo = ${introVideoUrl ? "true" : "false"};
+      let warmed = false;
       const warm = () => {
+        if (warmed) return;
+        warmed = true;
         try {
           const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
           if (connection && connection.saveData) return;
           fetch(url, { method: "GET", credentials: "omit", headers: { Accept: "application/json" } }).catch(() => {});
         } catch {}
       };
-      if ("requestIdleCallback" in window) {
-        window.requestIdleCallback(warm, { timeout: 1200 });
+      const scheduleWarm = () => {
+        if ("requestIdleCallback" in window) {
+          window.requestIdleCallback(warm, { timeout: 1200 });
+        } else {
+          window.setTimeout(warm, 600);
+        }
+      };
+      if (hasIntroVideo) {
+        window.addEventListener("faolla:intro-complete", scheduleWarm, { once: true });
+        window.setTimeout(scheduleWarm, 12000);
       } else {
-        window.setTimeout(warm, 600);
+        scheduleWarm();
       }
     })();</script>`
     : "";
@@ -3469,7 +3481,7 @@ function buildShareCardHtml(input: {
         ? `<div class="intro-overlay" data-intro-overlay data-no-translate="1">
             <div class="intro-card${introPosterUrl ? " has-intro-poster" : ""}">
               ${introPosterUrl ? `<img class="intro-poster" src="${introPosterUrl}" alt="" aria-hidden="true" decoding="async" fetchpriority="high" />` : ""}
-              <video class="intro-video"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} autoplay="autoplay"${introVideoMuted ? ` muted="muted"` : ""} playsinline="playsinline" webkit-playsinline="webkit-playsinline" preload="auto" crossorigin="anonymous" data-intro-src="${introVideoUrl}"></video>
+              <video class="intro-video"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} src="${introVideoUrl}" autoplay="autoplay"${introVideoMuted ? ` muted="muted"` : ""} playsinline="playsinline" webkit-playsinline="webkit-playsinline" preload="auto" crossorigin="anonymous" data-intro-src="${introVideoUrl}"></video>
         <button class="intro-unmute-button" type="button" data-intro-unmute>开启声音</button>
         <button class="intro-skip" type="button" data-intro-skip>跳过</button>
         ${introDebug ? `<pre class="intro-debug-panel" data-intro-debug>intro debug boot</pre>` : ""}
@@ -3525,12 +3537,38 @@ function buildShareCardHtml(input: {
         };
         debugPanel.textContent = [debugPanel.textContent, JSON.stringify(snapshot)].join(String.fromCharCode(10)).slice(-5000);
       };
+      const getBufferedAhead = () => {
+        try {
+          const currentTime = Number(video?.currentTime || 0);
+          const ranges = video?.buffered;
+          if (!ranges) return 0;
+          for (let index = 0; index < ranges.length; index += 1) {
+            const start = ranges.start(index);
+            const end = ranges.end(index);
+            if (currentTime + 0.05 >= start && currentTime <= end) {
+              return Math.max(0, end - currentTime);
+            }
+          }
+        } catch {}
+        return 0;
+      };
+      const hasSmoothStartBuffer = () => {
+        if (!video) return false;
+        if (video.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA) return true;
+        const bufferedAhead = getBufferedAhead();
+        const targetAhead = isWechat ? 0.45 : 0.75;
+        if (bufferedAhead >= targetAhead) return true;
+        if (video.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA && video.currentTime > (isWechat ? 0.2 : 0.05)) return true;
+        if (Number.isFinite(video.duration) && video.duration > 0 && video.duration - video.currentTime <= 0.35) return true;
+        return false;
+      };
       const closeIntro = () => {
         debug("close");
         closed = true;
         overlay.classList.remove("show-unmute-action");
         overlay.classList.add("is-hidden");
         try { video && video.pause(); } catch {}
+        try { window.dispatchEvent(new Event("faolla:intro-complete")); } catch {}
       };
       if (!video) {
         debug("no-video");
@@ -3601,9 +3639,11 @@ function buildShareCardHtml(input: {
       };
       const markPlaying = () => {
         if (closed) return;
-        const revealAt = isWechat ? 0.35 : 0.05;
-        debug("mark-check", { revealAt });
-        if (video.currentTime <= revealAt) return;
+        const revealAt = isWechat ? 0.25 : 0.03;
+        const bufferedAhead = getBufferedAhead();
+        debug("mark-check", { revealAt, bufferedAhead });
+        if (video.currentTime <= revealAt && video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) return;
+        if (!hasSmoothStartBuffer()) return;
         progressed = true;
         overlay.classList.add("is-playing", "has-video-progress");
         overlay.classList.remove("needs-manual-play");
@@ -3643,7 +3683,7 @@ function buildShareCardHtml(input: {
               debug("play-fail", { name: error?.name || "", message: error?.message || String(error || "") });
               if (isWechat) return false;
               if (!introMuted && !forceMuted) {
-                return playIntro({ forceMuted: true, reload: true });
+                return playIntro({ forceMuted: true });
               }
               return false;
             });
@@ -3669,7 +3709,7 @@ function buildShareCardHtml(input: {
                 debug("bridge-play-result", { ok });
                 if (!isWechat && !ok && !introMuted && !forceMuted && !closed && !progressed) {
                   window.setTimeout(() => {
-                    if (!closed && !progressed) void playThroughBridge({ forceMuted: true, reload: true });
+                    if (!closed && !progressed) void playThroughBridge({ forceMuted: true });
                   }, 80);
                 }
               });
@@ -3744,7 +3784,7 @@ function buildShareCardHtml(input: {
           }, delay);
         });
         window.setTimeout(() => {
-          if (!closed && !progressed && !introMuted) playThroughBridge({ forceMuted: true, reload: true });
+          if (!closed && !progressed && !introMuted) playThroughBridge({ forceMuted: true });
         }, 1800);
         window.setTimeout(() => {
           if (closed || progressed) return;
