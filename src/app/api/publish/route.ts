@@ -8,7 +8,7 @@ import { saveMerchantBookingRulesSnapshotForSites } from "@/lib/merchantBookingR
 import { saveStoredMerchantDraft, type MerchantDraftStoreClient } from "@/lib/merchantDraftStore";
 import { normalizeDomainPrefix } from "@/lib/merchantIdentity";
 import { getMerchantPublishPermissionViolation } from "@/lib/merchantPermissionGuards";
-import { loadPublishedMerchantServiceStatesBySiteIds } from "@/lib/publishedMerchantService";
+import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
 import { getInlinePublishPayloadViolation } from "@/lib/publishPayloadValidation";
 import {
   loadStoredPlatformMerchantSnapshot,
@@ -669,11 +669,19 @@ export async function POST(request: Request) {
     }
 
     if (!isPlatformEditor && merchantIds.length > 0) {
-      const serviceStates = await loadPublishedMerchantServiceStatesBySiteIds(merchantIds).catch(
-        () => new Map<string, { maintenance?: boolean; reason?: "expired" | "paused" | null }>(),
+      const snapshotPayload = await loadStoredPlatformMerchantSnapshot(
+        supabase as unknown as PlatformMerchantSnapshotStoreClient,
+        { bypassCache: true, includeHistory: false },
+      ).catch(() => null);
+      const snapshotByMerchantId = new Map(
+        (snapshotPayload?.snapshot ?? []).map((site) => [site.id, site] as const),
       );
       const blockedState = merchantIds
-        .map((merchantId) => serviceStates.get(merchantId) ?? null)
+        .map((merchantId) => {
+          const snapshotSite = snapshotByMerchantId.get(merchantId) ?? null;
+          if (!snapshotSite) return null;
+          return getMerchantServiceState(snapshotSite.status, snapshotSite.serviceExpiresAt);
+        })
         .find((item) => item?.maintenance) ?? null;
       if (blockedState) {
         const status = 409;
@@ -687,12 +695,6 @@ export async function POST(request: Request) {
         return makeCachedResponse(status, responseBody);
       }
 
-      const snapshotPayload = await loadStoredPlatformMerchantSnapshot(
-        supabase as unknown as PlatformMerchantSnapshotStoreClient,
-      ).catch(() => null);
-      const snapshotByMerchantId = new Map(
-        (snapshotPayload?.snapshot ?? []).map((site) => [site.id, site] as const),
-      );
       const violation = merchantIds
         .map((merchantId) => {
           const snapshotSite = snapshotByMerchantId.get(merchantId) ?? null;
