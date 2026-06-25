@@ -30980,6 +30980,15 @@ type GalleryEditorImage = {
     const addReviewItem = () => {
       commitReviewItems([...reviewItems, createEditorGoogleReviewItem(reviewItems.length)]);
     };
+    const googleReviewsPreviewProps = {
+      ...block.props,
+      blockWidth: undefined,
+      blockHeight: undefined,
+      blockOffsetX: undefined,
+      blockOffsetY: undefined,
+      blockLayer: undefined,
+      mobileFitScreenWidth: false,
+    };
 
     return (
       <section
@@ -31010,7 +31019,7 @@ type GalleryEditorImage = {
           data-block-visual-boundary
           className={`${cardClass} relative`}
           onClick={onSelect}
-          style={{ ...blockBackgroundStyle, ...blockSizeStyle, ...previewBorderInlineStyle }}
+          style={blockPreviewShellStyle}
         >
           {imageDialog}
           {imageSettingsDialog}
@@ -31285,10 +31294,10 @@ type GalleryEditorImage = {
                   </div>
                 )}
               </div>
-              <GoogleReviewsBlock {...block.props} googleReviewItems={reviewItems} />
+              <GoogleReviewsBlock {...googleReviewsPreviewProps} googleReviewItems={reviewItems} />
             </div>,
           ) : (
-            <GoogleReviewsBlock {...block.props} />
+            <GoogleReviewsBlock {...googleReviewsPreviewProps} />
           )}
           {resizeHandles}
         </div>

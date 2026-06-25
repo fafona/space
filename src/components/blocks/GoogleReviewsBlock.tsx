@@ -197,22 +197,34 @@ export default function GoogleReviewsBlock({
   };
   const borderClass = getBlockBorderClass(backgroundProps.blockBorderStyle);
   const borderInlineStyle = getBlockBorderInlineStyle(backgroundProps.blockBorderStyle, backgroundProps.blockBorderColor);
+  const isTightBlock = typeof blockWidth === "number" && blockWidth < 430;
+  const cardPaddingClass = isTightBlock ? "p-4" : "p-6";
+  const headerGridStyle: CSSProperties = {
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(260px, 100%), 1fr))",
+  };
+  const reviewMinColumnWidth = displayMode === "compact" ? 220 : 300;
+  const reviewGridStyle: CSSProperties = {
+    gridTemplateColumns:
+      displayMode === "list"
+        ? "minmax(0, 1fr)"
+        : `repeat(auto-fit, minmax(min(${reviewMinColumnWidth}px, 100%), 1fr))`,
+  };
   const gridClass =
     displayMode === "list"
       ? "grid gap-3"
       : displayMode === "compact"
-        ? "grid gap-3 sm:grid-cols-2 lg:grid-cols-3"
-        : "grid gap-4 md:grid-cols-2";
+        ? "grid gap-3"
+        : "grid gap-4";
   const syncedLabel = formatReviewDate(googleReviewSyncedAt);
   const sourceLabel = googleReviewSourceLabel.trim() || "Google";
 
   return (
     <section className={resolveMobileFitSectionClass("max-w-6xl mx-auto px-6 py-6", mobileFitScreenWidth)} style={offsetStyle}>
       <div
-        className={resolveMobileFitCardClass(`bg-white rounded-xl shadow-sm p-6 overflow-hidden ${borderClass}`, mobileFitScreenWidth)}
+        className={resolveMobileFitCardClass(`bg-white rounded-xl shadow-sm ${cardPaddingClass} overflow-hidden ${borderClass}`, mobileFitScreenWidth)}
         style={{ ...cardStyle, ...sizeStyle, ...borderInlineStyle }}
       >
-        <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="grid items-start gap-4" style={headerGridStyle}>
           <div className="min-w-0 flex-1">
             <h2 className="text-xl font-bold whitespace-pre-wrap break-words" dangerouslySetInnerHTML={{ __html: toRichHtml(heading, "Google 评论") }} />
             <div
@@ -220,12 +232,12 @@ export default function GoogleReviewsBlock({
               dangerouslySetInnerHTML={{ __html: toRichHtml(text, "来自 Google 的客户评价。") }}
             />
           </div>
-          <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-right">
-            <div className="flex items-center justify-end gap-2">
+          <div className="min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-right">
+            <div className="flex flex-wrap items-center justify-end gap-2">
               <span className="text-2xl font-bold text-slate-950">{averageRating > 0 ? averageRating.toFixed(1) : "-"}</span>
               {averageRating > 0 ? <StarRating rating={averageRating} /> : null}
             </div>
-            <div className="mt-1 text-xs text-slate-500">
+            <div className="mt-1 break-words text-xs text-slate-500">
               {totalCount > 0 ? `${totalCount} 条${sourceLabel}评论` : sourceLabel}
             </div>
             {syncedLabel ? <div className="mt-1 text-[11px] text-slate-400">更新于 {syncedLabel}</div> : null}
@@ -256,7 +268,7 @@ export default function GoogleReviewsBlock({
         </div>
 
         {items.length > 0 ? (
-          <div className={`mt-5 ${gridClass}`}>
+          <div className={`mt-5 ${gridClass}`} style={reviewGridStyle}>
             {items.map((item, index) => (
               <ReviewCard
                 key={item.id || `google-review-${index}`}
