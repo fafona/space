@@ -1,5 +1,4 @@
 ﻿import type { CustomGalleryLayout, GalleryLayoutPreset } from "@/lib/galleryLayout";
-import { BLOCKS_SCHEMA_VERSION } from "../lib/blocksSchema";
 import type { MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
 import type {
   MerchantContactVisibility,
@@ -18,6 +17,7 @@ import type {
   ProductPriceAlign,
   ProductTagPosition,
 } from "@/lib/productBlock";
+import { faollaHomeBlocks } from "./faollaHomeLayout";
 
 export type ImageFillMode = "cover" | "contain" | "fill" | "repeat" | "repeat-x" | "repeat-y";
 export type BlockBorderStyle = "none" | "glass" | "soft" | "solid" | "dashed" | "double" | "accent";
@@ -373,6 +373,38 @@ export type CouponProps = BackgroundEditableProps &
     couponSelectedIds?: string[];
     couponEmptyText?: string;
   };
+export type GoogleReviewDisplayMode = "cards" | "list" | "compact";
+export type GoogleReviewItem = {
+  id?: string;
+  reviewerName?: string;
+  reviewerPhotoUrl?: string;
+  reviewerProfileUrl?: string;
+  rating?: number;
+  comment?: string;
+  createTime?: string;
+  updateTime?: string;
+  languageCode?: string;
+  replyComment?: string;
+  replyTime?: string;
+};
+export type GoogleReviewsProps = BackgroundEditableProps &
+  TypographyEditableProps & {
+    heading?: string;
+    text?: string;
+    googleReviewItems?: GoogleReviewItem[];
+    googleReviewAverageRating?: number;
+    googleReviewTotalCount?: number;
+    googleReviewUrl?: string;
+    googleReviewWriteUrl?: string;
+    googleReviewSourceLabel?: string;
+    googleReviewDisplayMode?: GoogleReviewDisplayMode;
+    googleReviewMaxItems?: number;
+    googleReviewShowAuthorPhoto?: boolean;
+    googleReviewShowDates?: boolean;
+    googleReviewShowReplies?: boolean;
+    googleReviewEmptyText?: string;
+    googleReviewSyncedAt?: string;
+  };
 export type BookingProps = BackgroundEditableProps &
   TypographyEditableProps & {
     heading?: string;
@@ -436,50 +468,11 @@ export type Block =
   | { id: string; type: "contact"; props: ContactProps }
   | { id: string; type: "product"; props: ProductProps }
   | { id: string; type: "coupon"; props: CouponProps }
+  | { id: string; type: "google-reviews"; props: GoogleReviewsProps }
   | { id: string; type: "booking"; props: BookingProps }
   | { id: string; type: "music"; props: MusicProps };
 
-export const homeBlocks: Block[] = [
-  {
-    id: "b-common",
-    type: "common",
-    props: {
-      schemaVersion: BLOCKS_SCHEMA_VERSION,
-      commonTextBoxes: [],
-    },
-  },
-  {
-    id: "b-gallery",
-    type: "gallery",
-    props: {
-      heading: "相册展示",
-      images: [],
-      autoplayMs: 3000,
-      galleryFrameHeight: 260,
-      galleryLayoutPreset: "three-wide",
-    },
-  },
-  {
-    id: "b-nav",
-    type: "nav",
-    props: {
-      heading: "页面导航",
-      navOrientation: "horizontal",
-      navItems: [{ id: "b-nav-item-1", label: "页面1", pageId: "page-1" }],
-    },
-  },
-  {
-    id: "b-chart",
-    type: "chart",
-    props: {
-      heading: "数据图表",
-      text: "支持图表与文字混排展示。",
-      chartType: "bar",
-      labels: ["一月", "二月", "三月", "四月"],
-      values: [12, 18, 9, 24],
-    },
-  },
-];
+export const homeBlocks: Block[] = faollaHomeBlocks;
 
 
 

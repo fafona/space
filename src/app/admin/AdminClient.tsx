@@ -30,6 +30,8 @@ import {
   type CommonProps,
   type CouponActionMode,
   type CouponDisplayMode,
+  type GoogleReviewDisplayMode,
+  type GoogleReviewItem,
   type ImageFillMode,
   type MerchantCardTextLayoutConfig,
   type MerchantCardTextRole,
@@ -255,6 +257,13 @@ import {
   type ProductPriceAlign,
   type ProductTagPosition,
 } from "@/lib/productBlock";
+import {
+  createGoogleReviewItemId,
+  normalizeGoogleReviewAverage,
+  normalizeGoogleReviewItems,
+  normalizeGoogleReviewRating,
+  normalizeGoogleReviewTotalCount,
+} from "@/lib/googleReviews";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
   buildDefaultBookingItemOptions,
@@ -308,6 +317,7 @@ import {
 import BlockRenderer from "@/components/blocks/BlockRenderer";
 import BookingBlock from "@/components/blocks/BookingBlock";
 import CouponBlock from "@/components/blocks/CouponBlock";
+import GoogleReviewsBlock from "@/components/blocks/GoogleReviewsBlock";
 import { useI18n } from "@/components/I18nProvider";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import NoMercyFlagIcon from "@/components/NoMercyFlagIcon";
@@ -703,9 +713,16 @@ const BLOCK_TYPE_LABELS: Record<Block["type"], string> = {
   "merchant-list": "商户列表",
   product: "产品",
   coupon: "优惠券",
+  "google-reviews": "Google 评论",
   booking: "预约",
   contact: "联系方式",
 };
+
+const GOOGLE_REVIEW_DISPLAY_MODE_OPTIONS: Array<{ value: GoogleReviewDisplayMode; label: string }> = [
+  { value: "cards", label: "卡片" },
+  { value: "list", label: "列表" },
+  { value: "compact", label: "紧凑" },
+];
 
 type PlanTemplatePreviewOption = {
   planId: string;
@@ -1845,6 +1862,35 @@ function normalizeBlockWidth(value?: number, type: Block["type"] = "common") {
 function normalizeBlockHeight(value?: number, type: Block["type"] = "common") {
   if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
   return Math.max(getBlockMinHeight(type), Math.round(value));
+}
+
+function toDateInputValue(value?: string) {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  const date = new Date(text);
+  if (!Number.isFinite(date.getTime())) return "";
+  return date.toISOString().slice(0, 10);
+}
+
+function fromDateInputValue(value: string) {
+  const text = value.trim();
+  return text ? `${text}T00:00:00.000Z` : "";
+}
+
+function clampGoogleReviewMaxItemsInput(value: unknown) {
+  const numericValue = typeof value === "string" ? Number.parseInt(value, 10) : Number(value);
+  if (!Number.isFinite(numericValue)) return 6;
+  return Math.max(1, Math.min(12, Math.round(numericValue)));
+}
+
+function createEditorGoogleReviewItem(index: number): GoogleReviewItem {
+  return {
+    id: createGoogleReviewItemId(),
+    reviewerName: `客户${index + 1}`,
+    rating: 5,
+    comment: "",
+    createTime: new Date().toISOString(),
+  };
 }
 
 function getBlockTypeLabel(type: string) {
@@ -10340,6 +10386,37 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           couponShowExpiresAt: true,
           couponSelectedIds: [],
           couponEmptyText: "暂无可领取优惠券",
+        },
+      };
+    }
+
+    if (type === "google-reviews") {
+      return {
+        id,
+        type,
+        props: {
+          heading: "Google 评论",
+          text: "展示客户在 Google 上留下的真实评价。",
+          googleReviewItems: [
+            {
+              id: createGoogleReviewItemId(),
+              reviewerName: "客户",
+              rating: 5,
+              comment: "服务很好，体验很顺畅。",
+              createTime: new Date().toISOString(),
+            },
+          ],
+          googleReviewAverageRating: 5,
+          googleReviewTotalCount: 1,
+          googleReviewUrl: "",
+          googleReviewWriteUrl: "",
+          googleReviewSourceLabel: "Google",
+          googleReviewDisplayMode: "cards",
+          googleReviewMaxItems: 6,
+          googleReviewShowAuthorPhoto: true,
+          googleReviewShowDates: true,
+          googleReviewShowReplies: true,
+          googleReviewEmptyText: "暂无可展示的 Google 评论",
         },
       };
     }
@@ -21629,6 +21706,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         <option value="music" disabled={!canUseMusicBlock}>{"音乐"}{!canUseMusicBlock ? "（未开通）" : ""}</option>
                         <option value="product" disabled={!canUseProductBlock}>{"产品"}{!canUseProductBlock ? "（未开通）" : ""}</option>
                         <option value="coupon" disabled={!canUseCouponBlock}>{"优惠券"}{!canUseCouponBlock ? "（未开通）" : ""}</option>
+                        <option value="google-reviews">{"Google 评论"}</option>
                         <option value="booking" disabled={!canUseBookingBlock || isBookingBlockAddLocked}>
                           {"预约"}
                           {!canUseBookingBlock ? "（未开通）" : isBookingBlockAddLocked ? "（已存在）" : ""}
@@ -23809,6 +23887,7 @@ type GalleryEditorImage = {
         block.type === "search-bar" ||
         block.type === "product" ||
         block.type === "coupon" ||
+        block.type === "google-reviews" ||
         block.type === "booking")
     ) {
       return { text: html };
@@ -23827,6 +23906,7 @@ type GalleryEditorImage = {
         block.type === "search-bar" ||
         block.type === "product" ||
         block.type === "coupon" ||
+        block.type === "google-reviews" ||
         block.type === "booking")
     ) {
       return { heading: html };
@@ -25161,7 +25241,7 @@ type GalleryEditorImage = {
       ? "min(400px, calc(100vw - 2rem))"
       : block.type === "merchant-list" || block.type === "search-bar"
         ? "min(980px, calc(100vw - 2rem))"
-        : block.type === "product" || block.type === "coupon" || block.type === "booking"
+        : block.type === "product" || block.type === "coupon" || block.type === "google-reviews" || block.type === "booking"
           ? "min(760px, calc(100vw - 2rem))"
           : "min(760px, calc(100vw - 2rem))";
   const selectedEditorPreferredWidth =
@@ -25169,7 +25249,7 @@ type GalleryEditorImage = {
       ? "min(400px, calc(100vw - 2rem))"
       : block.type === "merchant-list" || block.type === "search-bar"
         ? "min(980px, calc(100vw - 2rem))"
-        : block.type === "product" || block.type === "coupon" || block.type === "booking"
+        : block.type === "product" || block.type === "coupon" || block.type === "google-reviews" || block.type === "booking"
           ? "min(820px, calc(100vw - 2rem))"
           : undefined;
   const blockWidth = draftResize?.width ?? normalizeBlockWidth(block.props.blockWidth, block.type);
@@ -30862,6 +30942,353 @@ type GalleryEditorImage = {
             </div>,
           ) : (
             <CouponBlock {...block.props} previewCoupons={editorPreviewCoupons} interactive={false} />
+          )}
+          {resizeHandles}
+        </div>
+      </section>
+    );
+  }
+
+  if (block.type === "google-reviews") {
+    const reviewItems = normalizeGoogleReviewItems(block.props.googleReviewItems, 24);
+    const googleReviewDisplayMode: GoogleReviewDisplayMode =
+      block.props.googleReviewDisplayMode === "list" || block.props.googleReviewDisplayMode === "compact"
+        ? block.props.googleReviewDisplayMode
+        : "cards";
+    const googleReviewAverageRating = normalizeGoogleReviewAverage(block.props.googleReviewAverageRating, 0);
+    const googleReviewTotalCount = normalizeGoogleReviewTotalCount(block.props.googleReviewTotalCount, reviewItems.length);
+    const googleReviewMaxItems = clampGoogleReviewMaxItemsInput(block.props.googleReviewMaxItems);
+    const commitReviewItems = (nextItems: GoogleReviewItem[]) => {
+      onChange({ googleReviewItems: nextItems });
+    };
+    const updateReviewItem = (itemId: string, patch: Partial<GoogleReviewItem>) => {
+      commitReviewItems(reviewItems.map((item) => ((item.id ?? "") === itemId ? { ...item, ...patch } : item)));
+    };
+    const removeReviewItem = (itemId: string) => {
+      commitReviewItems(reviewItems.filter((item) => (item.id ?? "") !== itemId));
+    };
+    const moveReviewItem = (itemId: string, direction: -1 | 1) => {
+      const currentIndex = reviewItems.findIndex((item) => (item.id ?? "") === itemId);
+      const nextIndex = currentIndex + direction;
+      if (currentIndex < 0 || nextIndex < 0 || nextIndex >= reviewItems.length) return;
+      const nextItems = [...reviewItems];
+      const [movedItem] = nextItems.splice(currentIndex, 1);
+      if (!movedItem) return;
+      nextItems.splice(nextIndex, 0, movedItem);
+      commitReviewItems(nextItems);
+    };
+    const addReviewItem = () => {
+      commitReviewItems([...reviewItems, createEditorGoogleReviewItem(reviewItems.length)]);
+    };
+
+    return (
+      <section
+        data-block-id={block.id}
+        data-jump-target={publicBlockId}
+        data-block-public-id={publicBlockId}
+        className={`${shellClass} pointer-events-none`}
+        style={offsetStyle}
+      >
+        <EditorBlockHeader
+          blockId={publicBlockId}
+          draggingBlockId={draggingBlockId}
+          isSelected={isSelected}
+          onDragHandleMouseDown={onDragHandleMouseDown}
+          onNudge={onNudge}
+          onOpenLayerSettings={openLayerSettings}
+          onEditTypography={editTypography}
+          onInsertImage={insertImage}
+          onEditImageSettings={editImageSettings}
+          onEditBorderStyle={editBorderSettings}
+          isMobileViewport={previewViewport === "mobile"}
+          mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
+          onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
+          onDelete={onDelete}
+        />
+        <div
+          ref={resizeTargetRef}
+          data-block-visual-boundary
+          className={`${cardClass} relative`}
+          onClick={onSelect}
+          style={{ ...blockBackgroundStyle, ...blockSizeStyle, ...previewBorderInlineStyle }}
+        >
+          {imageDialog}
+          {imageSettingsDialog}
+          {borderSettingsDialog}
+          {layerSettingsDialog}
+          {typographyDialog}
+          {isSelected ? renderSelectedEditor(
+            <div className="grid gap-4">
+              <div className="grid gap-3 md:grid-cols-2">
+                <label className="space-y-1 text-sm">
+                  <span className="block text-gray-600">标题</span>
+                  <RichTextEditor
+                    field="heading"
+                    className="border p-2 rounded w-full text-xl font-bold"
+                    value={block.props.heading ?? ""}
+                    onChange={handleRichFieldChange}
+                    onActivate={registerActiveEditor}
+                    onSelectionChange={updateSelectionRange}
+                  />
+                </label>
+                <label className="space-y-1 text-sm">
+                  <span className="block text-gray-600">展示样式</span>
+                  <select
+                    className="w-full rounded border px-3 py-2"
+                    value={googleReviewDisplayMode}
+                    onChange={(event) => onChange({ googleReviewDisplayMode: event.target.value as GoogleReviewDisplayMode })}
+                  >
+                    {GOOGLE_REVIEW_DISPLAY_MODE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <label className="space-y-1 text-sm">
+                <span className="block text-gray-600">说明</span>
+                <RichTextEditor
+                  field="text"
+                  className="border p-2 rounded w-full min-h-[88px] text-gray-700"
+                  value={block.props.text ?? ""}
+                  onChange={handleRichFieldChange}
+                  onActivate={registerActiveEditor}
+                  onSelectionChange={updateSelectionRange}
+                />
+              </label>
+              <div className="grid gap-3 md:grid-cols-3">
+                <label className="space-y-1 text-sm">
+                  <span className="block text-gray-600">平均评分</span>
+                  <input
+                    className="w-full rounded border px-3 py-2"
+                    type="number"
+                    min={0}
+                    max={5}
+                    step={0.1}
+                    value={googleReviewAverageRating || ""}
+                    onChange={(event) => onChange({ googleReviewAverageRating: normalizeGoogleReviewAverage(event.target.value, 0) })}
+                  />
+                </label>
+                <label className="space-y-1 text-sm">
+                  <span className="block text-gray-600">评论总数</span>
+                  <input
+                    className="w-full rounded border px-3 py-2"
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={googleReviewTotalCount || ""}
+                    onChange={(event) => onChange({ googleReviewTotalCount: normalizeGoogleReviewTotalCount(event.target.value, 0) })}
+                  />
+                </label>
+                <label className="space-y-1 text-sm">
+                  <span className="block text-gray-600">最多显示</span>
+                  <input
+                    className="w-full rounded border px-3 py-2"
+                    type="number"
+                    min={1}
+                    max={12}
+                    step={1}
+                    value={googleReviewMaxItems}
+                    onChange={(event) => onChange({ googleReviewMaxItems: clampGoogleReviewMaxItemsInput(event.target.value) })}
+                  />
+                </label>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <label className="space-y-1 text-sm">
+                  <span className="block text-gray-600">Google 评论页链接</span>
+                  <input
+                    className="w-full rounded border px-3 py-2"
+                    value={block.props.googleReviewUrl ?? ""}
+                    placeholder="https://www.google.com/maps/place/..."
+                    onChange={(event) => onChange({ googleReviewUrl: event.target.value })}
+                  />
+                </label>
+                <label className="space-y-1 text-sm">
+                  <span className="block text-gray-600">写评价链接</span>
+                  <input
+                    className="w-full rounded border px-3 py-2"
+                    value={block.props.googleReviewWriteUrl ?? ""}
+                    placeholder="https://g.page/r/..."
+                    onChange={(event) => onChange({ googleReviewWriteUrl: event.target.value })}
+                  />
+                </label>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <label className="space-y-1 text-sm">
+                  <span className="block text-gray-600">来源名称</span>
+                  <input
+                    className="w-full rounded border px-3 py-2"
+                    value={block.props.googleReviewSourceLabel ?? ""}
+                    placeholder="Google"
+                    onChange={(event) => onChange({ googleReviewSourceLabel: event.target.value })}
+                  />
+                </label>
+                <label className="space-y-1 text-sm">
+                  <span className="block text-gray-600">空状态文案</span>
+                  <input
+                    className="w-full rounded border px-3 py-2"
+                    value={block.props.googleReviewEmptyText ?? ""}
+                    onChange={(event) => onChange({ googleReviewEmptyText: event.target.value })}
+                  />
+                </label>
+              </div>
+              <div className="grid gap-3 md:grid-cols-3">
+                <label className="flex items-center gap-2 rounded border px-3 py-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={block.props.googleReviewShowAuthorPhoto !== false}
+                    onChange={(event) => onChange({ googleReviewShowAuthorPhoto: event.target.checked })}
+                  />
+                  显示头像
+                </label>
+                <label className="flex items-center gap-2 rounded border px-3 py-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={block.props.googleReviewShowDates !== false}
+                    onChange={(event) => onChange({ googleReviewShowDates: event.target.checked })}
+                  />
+                  显示日期
+                </label>
+                <label className="flex items-center gap-2 rounded border px-3 py-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={block.props.googleReviewShowReplies !== false}
+                    onChange={(event) => onChange({ googleReviewShowReplies: event.target.checked })}
+                  />
+                  显示商家回复
+                </label>
+              </div>
+              <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">
+                当前版本先保存可展示的 Google 评论快照。后续接 Google Business Profile API 时，会把官方返回的评论同步到同一组字段中。
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-white px-4 py-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-900">评论内容</div>
+                    <div className="mt-1 text-xs leading-5 text-slate-500">作者名、评分和评论正文会在网页区块中展示。</div>
+                  </div>
+                  <button
+                    type="button"
+                    className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                    onClick={addReviewItem}
+                  >
+                    新增评论
+                  </button>
+                </div>
+                {reviewItems.length > 0 ? (
+                  <div className="mt-3 grid gap-3">
+                    {reviewItems.map((item, index) => {
+                      const itemId = item.id || `google-review-${index + 1}`;
+                      return (
+                        <div key={itemId} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="text-sm font-semibold text-slate-900">评论 {index + 1}</div>
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                className="rounded border bg-white px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-50"
+                                disabled={index === 0}
+                                onClick={() => moveReviewItem(itemId, -1)}
+                              >
+                                上移
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded border bg-white px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-50"
+                                disabled={index >= reviewItems.length - 1}
+                                onClick={() => moveReviewItem(itemId, 1)}
+                              >
+                                下移
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded border border-rose-200 bg-white px-2 py-1 text-xs text-rose-700 hover:bg-rose-50"
+                                onClick={() => removeReviewItem(itemId)}
+                              >
+                                删除
+                              </button>
+                            </div>
+                          </div>
+                          <div className="mt-3 grid gap-3 md:grid-cols-3">
+                            <label className="space-y-1 text-sm md:col-span-1">
+                              <span className="block text-gray-600">作者名</span>
+                              <input
+                                className="w-full rounded border px-3 py-2"
+                                value={item.reviewerName ?? ""}
+                                onChange={(event) => updateReviewItem(itemId, { reviewerName: event.target.value })}
+                              />
+                            </label>
+                            <label className="space-y-1 text-sm">
+                              <span className="block text-gray-600">评分</span>
+                              <input
+                                className="w-full rounded border px-3 py-2"
+                                type="number"
+                                min={1}
+                                max={5}
+                                step={1}
+                                value={item.rating || 5}
+                                onChange={(event) => updateReviewItem(itemId, { rating: normalizeGoogleReviewRating(event.target.value, 5) })}
+                              />
+                            </label>
+                            <label className="space-y-1 text-sm">
+                              <span className="block text-gray-600">日期</span>
+                              <input
+                                className="w-full rounded border px-3 py-2"
+                                type="date"
+                                value={toDateInputValue(item.createTime)}
+                                onChange={(event) => updateReviewItem(itemId, { createTime: fromDateInputValue(event.target.value) })}
+                              />
+                            </label>
+                          </div>
+                          <div className="mt-3 grid gap-3 md:grid-cols-2">
+                            <label className="space-y-1 text-sm">
+                              <span className="block text-gray-600">头像 URL</span>
+                              <input
+                                className="w-full rounded border px-3 py-2"
+                                value={item.reviewerPhotoUrl ?? ""}
+                                onChange={(event) => updateReviewItem(itemId, { reviewerPhotoUrl: event.target.value })}
+                              />
+                            </label>
+                            <label className="space-y-1 text-sm">
+                              <span className="block text-gray-600">作者主页 URL</span>
+                              <input
+                                className="w-full rounded border px-3 py-2"
+                                value={item.reviewerProfileUrl ?? ""}
+                                onChange={(event) => updateReviewItem(itemId, { reviewerProfileUrl: event.target.value })}
+                              />
+                            </label>
+                          </div>
+                          <label className="mt-3 block space-y-1 text-sm">
+                            <span className="block text-gray-600">评论正文</span>
+                            <textarea
+                              className="min-h-[86px] w-full rounded border px-3 py-2"
+                              value={item.comment ?? ""}
+                              onChange={(event) => updateReviewItem(itemId, { comment: event.target.value })}
+                            />
+                          </label>
+                          <label className="mt-3 block space-y-1 text-sm">
+                            <span className="block text-gray-600">商家回复</span>
+                            <textarea
+                              className="min-h-[68px] w-full rounded border px-3 py-2"
+                              value={item.replyComment ?? ""}
+                              onChange={(event) => updateReviewItem(itemId, { replyComment: event.target.value })}
+                            />
+                          </label>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="mt-3 rounded-lg border border-dashed border-slate-300 px-3 py-4 text-sm text-slate-500">
+                    还没有评论。点击“新增评论”后填写内容。
+                  </div>
+                )}
+              </div>
+              <GoogleReviewsBlock {...block.props} googleReviewItems={reviewItems} />
+            </div>,
+          ) : (
+            <GoogleReviewsBlock {...block.props} />
           )}
           {resizeHandles}
         </div>
