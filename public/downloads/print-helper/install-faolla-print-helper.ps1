@@ -57,10 +57,39 @@ function Enable-Startup([string]$InstallDir) {
   $shortcut.Save()
 }
 
+function Start-InstalledHelper([string]$InstallDir, [string]$NodePath, [string]$HelperPath) {
+  $hiddenScript = Join-Path $InstallDir 'run-hidden.vbs'
+  if (Test-Path -LiteralPath $hiddenScript) {
+    Start-Process -FilePath 'wscript.exe' -ArgumentList @($hiddenScript) -WorkingDirectory $InstallDir -WindowStyle Hidden
+  } else {
+    Start-Process -FilePath $NodePath -ArgumentList @($HelperPath) -WorkingDirectory $InstallDir -WindowStyle Hidden
+  }
+
+  Start-Sleep -Seconds 2
+  try {
+    $health = Invoke-WebRequest -Uri 'http://127.0.0.1:17658/health' -UseBasicParsing -TimeoutSec 3
+    Write-InstallLog ('Helper health: ' + $health.Content)
+  } catch {
+    Write-InstallLog 'Helper files are ready, but health check did not respond yet. The helper may still be starting.'
+  }
+}
+
 try {
   New-Item -ItemType Directory -Force -Path $installDir | Out-Null
   New-Item -ItemType Directory -Force -Path $workDir | Out-Null
   Write-InstallLog ('Install dir: ' + $installDir)
+
+  $existingNodePath = Join-Path $installDir 'runtime\node.exe'
+  $existingHelperPath = Join-Path $installDir 'faolla-print-helper.mjs'
+  if ((Test-Path -LiteralPath $existingNodePath) -and (Test-Path -LiteralPath $existingHelperPath)) {
+    Write-InstallLog 'Existing helper files found. Repairing launch protocol and starting helper without package download.'
+    Stop-ExistingHelper
+    Register-LaunchProtocol $existingNodePath $existingHelperPath
+    Enable-Startup $installDir
+    Start-InstalledHelper $installDir $existingNodePath $existingHelperPath
+    Write-InstallLog 'Existing FAOLLA print helper repaired.'
+    exit 0
+  }
 
   $manifestUri = [Uri]::new($manifestUrl)
   Assert-FaollaUrl $manifestUri 'manifest'
@@ -110,21 +139,7 @@ try {
 
   Register-LaunchProtocol $nodePath $helperPath
   Enable-Startup $installDir
-
-  $hiddenScript = Join-Path $installDir 'run-hidden.vbs'
-  if (Test-Path -LiteralPath $hiddenScript) {
-    Start-Process -FilePath 'wscript.exe' -ArgumentList @($hiddenScript) -WorkingDirectory $installDir -WindowStyle Hidden
-  } else {
-    Start-Process -FilePath $nodePath -ArgumentList @($helperPath) -WorkingDirectory $installDir -WindowStyle Hidden
-  }
-
-  Start-Sleep -Seconds 2
-  try {
-    $health = Invoke-WebRequest -Uri 'http://127.0.0.1:17658/health' -UseBasicParsing -TimeoutSec 3
-    Write-InstallLog ('Helper health: ' + $health.Content)
-  } catch {
-    Write-InstallLog 'Helper installed, but health check did not respond yet. It may still be starting.'
-  }
+  Start-InstalledHelper $installDir $nodePath $helperPath
 
   Write-InstallLog 'FAOLLA print helper install completed.'
   exit 0

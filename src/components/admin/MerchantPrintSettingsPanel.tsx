@@ -772,7 +772,11 @@ export default function MerchantPrintSettingsPanel({
       if (typeof document === "undefined") return false;
       const link = document.createElement("a");
       link.href = url;
-      link.download = url.toLowerCase().endsWith(".cmd") ? "install-faolla-print-helper.cmd" : "";
+      let pathname = url;
+      try {
+        pathname = new URL(url, window.location.href).pathname;
+      } catch {}
+      link.download = pathname.toLowerCase().endsWith(".cmd") ? "install-faolla-print-helper.cmd" : "";
       link.rel = "noreferrer";
       document.body.appendChild(link);
       link.click();
