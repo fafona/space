@@ -179,8 +179,6 @@ async function registerLaunchProtocol() {
 $ErrorActionPreference = 'Stop'
 $installDir = ${psString(INSTALL_DIR)}
 $scheme = 'faolla-print-helper'
-$root = ('HKCU:\\Software\\Classes\\' + $scheme)
-$commandKey = Join-Path $root 'shell\\open\\command'
 $hiddenScript = Join-Path $installDir 'run-hidden.vbs'
 $nodePath = Join-Path $installDir 'runtime\\node.exe'
 $helperPath = Join-Path $installDir 'faolla-print-helper.mjs'
@@ -193,11 +191,21 @@ if (Test-Path -LiteralPath $hiddenScript) {
   if (-not $nodeCommand) { throw 'node_not_found' }
   $command = ('"' + $nodeCommand.Source + '" "' + $helperPath + '" "%1"')
 }
-New-Item -Path $root -Force | Out-Null
-(Get-Item -LiteralPath $root).SetValue('', 'URL:FAOLLA Print Helper')
-New-ItemProperty -Path $root -Name 'URL Protocol' -Value '' -PropertyType String -Force | Out-Null
-New-Item -Path $commandKey -Force | Out-Null
-(Get-Item -LiteralPath $commandKey).SetValue('', $command)
+$protocolKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\\Classes\\' + $scheme)
+if (-not $protocolKey) { throw 'launch_protocol_key_create_failed' }
+try {
+  $protocolKey.SetValue('', 'URL:FAOLLA Print Helper', [Microsoft.Win32.RegistryValueKind]::String)
+  $protocolKey.SetValue('URL Protocol', '', [Microsoft.Win32.RegistryValueKind]::String)
+  $commandSubKey = $protocolKey.CreateSubKey('shell\\open\\command')
+  if (-not $commandSubKey) { throw 'launch_protocol_command_key_create_failed' }
+  try {
+    $commandSubKey.SetValue('', $command, [Microsoft.Win32.RegistryValueKind]::String)
+  } finally {
+    $commandSubKey.Close()
+  }
+} finally {
+  $protocolKey.Close()
+}
 @{ supported = $true; registered = $true; scheme = $scheme; command = $command } | ConvertTo-Json -Compress
 `,
     8000,

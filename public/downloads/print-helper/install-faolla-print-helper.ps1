@@ -34,13 +34,23 @@ function Stop-ExistingHelper {
 }
 
 function Register-LaunchProtocol([string]$NodePath, [string]$HelperPath) {
-  $protocolKey = 'HKCU:\Software\Classes\faolla-print-helper'
-  $commandKey = Join-Path $protocolKey 'shell\open\command'
-  New-Item -Path $commandKey -Force | Out-Null
-  Set-ItemProperty -Path $protocolKey -Name '(default)' -Value 'URL:FAOLLA Print Helper'
-  New-ItemProperty -Path $protocolKey -Name 'URL Protocol' -Value '' -PropertyType String -Force | Out-Null
   $command = '"' + $NodePath + '" "' + $HelperPath + '" "%1"'
-  Set-ItemProperty -Path $commandKey -Name '(default)' -Value $command
+  $protocolKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\Classes\faolla-print-helper')
+  if (-not $protocolKey) { throw 'launch_protocol_key_create_failed' }
+  try {
+    $protocolKey.SetValue('', 'URL:FAOLLA Print Helper', [Microsoft.Win32.RegistryValueKind]::String)
+    $protocolKey.SetValue('URL Protocol', '', [Microsoft.Win32.RegistryValueKind]::String)
+    $commandKey = $protocolKey.CreateSubKey('shell\open\command')
+    if (-not $commandKey) { throw 'launch_protocol_command_key_create_failed' }
+    try {
+      $commandKey.SetValue('', $command, [Microsoft.Win32.RegistryValueKind]::String)
+    } finally {
+      $commandKey.Close()
+    }
+  } finally {
+    $protocolKey.Close()
+  }
+  Write-InstallLog 'Launch protocol registered.'
 }
 
 function Enable-Startup([string]$InstallDir) {

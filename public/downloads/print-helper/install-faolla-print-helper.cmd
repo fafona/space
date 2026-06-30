@@ -1,7 +1,7 @@
 @echo off
 setlocal
-set "SCRIPT_URL=https://faolla.com/downloads/print-helper/install-faolla-print-helper.ps1?v=20260630c"
-set "SCRIPT_SHA256=b093eaec7788b86148bdbba3d3b06b8699935ffa307cd9298813594b0d9ab3f2"
+set "SCRIPT_URL=https://faolla.com/downloads/print-helper/install-faolla-print-helper.ps1?v=20260630e"
+set "SCRIPT_SHA256=0ce6771f648d3fda63a3160d2026035a4bca7f5b49cc8b36c288214290aae810"
 set "SCRIPT_PATH=%TEMP%\install-faolla-print-helper.ps1"
 set "POWERSHELL=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
 
