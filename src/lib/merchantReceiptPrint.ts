@@ -100,7 +100,7 @@ const PRINTABLE_LOGO_DATA_URL_CACHE_LIMIT = 24;
 const printableLogoDataUrlCache = new Map<string, Promise<string>>();
 
 export const PRINT_HELPER_MANIFEST_PATH = "/downloads/print-helper/latest.json";
-export const PRINT_HELPER_MINIMUM_VERSION = "1.5.2";
+export const PRINT_HELPER_MINIMUM_VERSION = "1.5.3";
 
 function escapeHtml(value: unknown) {
   return String(value ?? "")
@@ -1096,6 +1096,7 @@ export type LocalPrintBridgeHealth = {
     printQueue?: unknown;
     autostart?: unknown;
     selfUpdate?: unknown;
+    launchProtocol?: unknown;
   };
   queue?: {
     active?: unknown;
@@ -1264,6 +1265,32 @@ export async function inspectLocalPrintBridge(inputSettings: MerchantReceiptPrin
     return offline;
   } finally {
     window.clearTimeout(timeoutId);
+  }
+}
+
+export function requestLocalPrintBridgeLaunch(inputSettings: MerchantReceiptPrintSettings | null | undefined) {
+  if (typeof window === "undefined" || typeof document === "undefined") return false;
+  const settings = normalizeReceiptPrintSettingsForClient(inputSettings);
+  let port = "17658";
+  try {
+    const bridgeUrl = new URL(settings.localPrintBridgeUrl);
+    port = bridgeUrl.port || (bridgeUrl.protocol === "https:" ? "443" : "80");
+  } catch {
+    // Keep the default helper port when the custom bridge URL is not parseable.
+  }
+  const launchUrl = `faolla-print-helper://start?port=${encodeURIComponent(port)}`;
+  try {
+    const frame = document.createElement("iframe");
+    frame.style.display = "none";
+    frame.setAttribute("aria-hidden", "true");
+    frame.src = launchUrl;
+    document.body.appendChild(frame);
+    window.setTimeout(() => {
+      frame.remove();
+    }, 1500);
+    return true;
+  } catch {
+    return false;
   }
 }
 

@@ -34,6 +34,7 @@ import {
   inspectLocalPrintBridge,
   isPrintHelperVersionOutdated,
   printRedemptionReceipt,
+  requestLocalPrintBridgeLaunch,
   requestLocalPrintBridgeUpdate,
   type MerchantRedemptionReceiptData,
   type RedemptionReceiptPrintOutcome,
@@ -147,6 +148,8 @@ const MERCHANT_REDEMPTION_ITEM_RENDER_LIMIT = 300;
 const MERCHANT_POINT_REDEMPTION_REQUEST_TIMEOUT_MS = 12_000;
 const MEMBER_SEARCH_REQUEST_TIMEOUT_MS = 4_500;
 const MEMBER_REMOTE_SEARCH_LIMIT = 20;
+const PRINT_BRIDGE_LAUNCH_RECHECK_DELAY_MS = 2800;
+const PRINT_BRIDGE_LAUNCH_COOLDOWN_MS = 60_000;
 
 function trimText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
@@ -731,6 +734,7 @@ export default function MerchantPointRedemptionCashier({
   const memberSearchRequestIdRef = useRef(0);
   const memberSearchCacheRef = useRef<Map<string, MerchantMembershipListItem[]>>(new Map());
   const printBridgeCheckRef = useRef<{ key: string; at: number }>({ key: "", at: 0 });
+  const printBridgeLaunchAttemptRef = useRef<{ key: string; at: number }>({ key: "", at: 0 });
   const cashierShortcutPressedKeysRef = useRef<Set<CashierShortcutKey>>(new Set());
   const cashierShortcutEnterTimerRef = useRef<number | null>(null);
   const cashierShortcutActionsRef = useRef<CashierShortcutActions>({
@@ -752,7 +756,6 @@ export default function MerchantPointRedemptionCashier({
   const cashierPrintSettings = settings?.printSettings ?? null;
 
   const checkCashierPrintBridge = useCallback(async (options?: { force?: boolean }) => {
-    if (view !== "cashier") return;
     const printSettings = cashierPrintSettings as MerchantReceiptPrintSettings | null;
     const checkKey = buildCashierPrintBridgeCheckKey(printSettings);
     const now = Date.now();
@@ -771,11 +774,25 @@ export default function MerchantPointRedemptionCashier({
     setPrintBridgeVersion(inspection.version || "");
     setPrintBridgeCheckedAt(Date.now());
     if (!inspection.online) {
+      const launchKey = checkKey;
+      const launchAttempt = printBridgeLaunchAttemptRef.current;
+      if (now - launchAttempt.at > PRINT_BRIDGE_LAUNCH_COOLDOWN_MS || launchAttempt.key !== launchKey) {
+        const launchRequested = requestLocalPrintBridgeLaunch(printSettings);
+        if (launchRequested) {
+          printBridgeLaunchAttemptRef.current = { key: launchKey, at: now };
+          setPrintBridgeStatus("checking");
+          showGlobalToast("未检测到打印助手，正在尝试自动打开。");
+          window.setTimeout(() => {
+            void checkCashierPrintBridge({ force: true });
+          }, PRINT_BRIDGE_LAUNCH_RECHECK_DELAY_MS);
+          return;
+        }
+      }
       setPrintBridgeStatus("offline");
       return;
     }
     setPrintBridgeStatus(isPrintHelperVersionOutdated(inspection.version, manifest) ? "outdated" : "online");
-  }, [cashierPrintSettings, view]);
+  }, [cashierPrintSettings]);
 
   const handlePrintBridgeBadgeClick = useCallback(async () => {
     if (printBridgeStatus === "checking" || printBridgeStatus === "updating" || printBridgeUpdating) return;
@@ -1544,7 +1561,6 @@ export default function MerchantPointRedemptionCashier({
   }, [selectedMemberId]);
 
   useEffect(() => {
-    if (view !== "cashier") return;
     if (!settings) {
       setPrintBridgeStatus("idle");
       setPrintBridgeVersion("");

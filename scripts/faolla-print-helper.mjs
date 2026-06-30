@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const VERSION = "1.5.2";
+const VERSION = "1.5.3";
 const PROTOCOL_VERSION = 2;
 const MINIMUM_WEB_VERSION = "1.5.0";
 const DEFAULT_UPDATE_MANIFEST_URL = "https://faolla.com/downloads/print-helper/latest.json";
@@ -82,6 +82,7 @@ function buildHealthPayload() {
       printQueue: true,
       autostart: !IS_SOURCE_CHECKOUT,
       selfUpdate: selfUpdateSupported,
+      launchProtocol: !IS_SOURCE_CHECKOUT && process.platform === "win32",
     },
     queue: {
       active: activePrintJobs,
@@ -163,6 +164,50 @@ async function runPowerShell(script, timeout = 15000) {
 
 function psString(value) {
   return `'${String(value ?? "").replace(/'/g, "''")}'`;
+}
+
+async function registerLaunchProtocol() {
+  if (IS_SOURCE_CHECKOUT || process.platform !== "win32") {
+    return {
+      supported: false,
+      registered: false,
+      message: "source_checkout_or_non_windows",
+    };
+  }
+  const stdout = await runPowerShell(
+    `
+$ErrorActionPreference = 'Stop'
+$installDir = ${psString(INSTALL_DIR)}
+$scheme = 'faolla-print-helper'
+$root = ('HKCU:\\Software\\Classes\\' + $scheme)
+$commandKey = Join-Path $root 'shell\\open\\command'
+$hiddenScript = Join-Path $installDir 'run-hidden.vbs'
+$nodePath = Join-Path $installDir 'runtime\\node.exe'
+$helperPath = Join-Path $installDir 'faolla-print-helper.mjs'
+if (Test-Path -LiteralPath $hiddenScript) {
+  $command = ('"wscript.exe" "' + $hiddenScript + '" "%1"')
+} elseif (Test-Path -LiteralPath $nodePath) {
+  $command = ('"' + $nodePath + '" "' + $helperPath + '" "%1"')
+} else {
+  $nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
+  if (-not $nodeCommand) { throw 'node_not_found' }
+  $command = ('"' + $nodeCommand.Source + '" "' + $helperPath + '" "%1"')
+}
+New-Item -Path $root -Force | Out-Null
+(Get-Item -LiteralPath $root).SetValue('', 'URL:FAOLLA Print Helper')
+New-ItemProperty -Path $root -Name 'URL Protocol' -Value '' -PropertyType String -Force | Out-Null
+New-Item -Path $commandKey -Force | Out-Null
+(Get-Item -LiteralPath $commandKey).SetValue('', $command)
+@{ supported = $true; registered = $true; scheme = $scheme; command = $command } | ConvertTo-Json -Compress
+`,
+    8000,
+  );
+  return stdout
+    ? JSON.parse(stdout)
+    : {
+        supported: true,
+        registered: true,
+      };
 }
 
 function enqueuePrintJob(task) {
@@ -1065,5 +1110,6 @@ const server = createServer(async (request, response) => {
 
 server.listen(port, host, () => {
   console.log(`FAOLLA print helper ${VERSION} listening on http://${host}:${port}`);
+  void registerLaunchProtocol().catch(() => undefined);
   console.log("Press Ctrl+C to stop.");
 });

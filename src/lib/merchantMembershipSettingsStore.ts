@@ -86,6 +86,17 @@ async function queryStoredSettingsRows(supabase: MerchantMembershipSettingsStore
     }
   }
 
+  if (!error && data.length === 0) {
+    const retry = await supabase.from("pages").select("id,slug,blocks,updated_at").eq("slug", slug);
+    data = (retry.data ?? []) as StoredMerchantMembershipSettingsRow[];
+    error = retry.error;
+    if (error && isMissingUpdatedAtColumn(toErrorMessage(error))) {
+      const retryWithoutUpdatedAt = await supabase.from("pages").select("id,slug,blocks").eq("slug", slug);
+      data = (retryWithoutUpdatedAt.data ?? []) as StoredMerchantMembershipSettingsRow[];
+      error = retryWithoutUpdatedAt.error;
+    }
+  }
+
   if (error) return [];
   return Array.isArray(data) ? data : [];
 }

@@ -90,6 +90,17 @@ async function queryStoredCouponRows(supabase: MerchantCouponsStoreClient, siteI
     }
   }
 
+  if (!error && data.length === 0) {
+    const retry = await supabase.from("pages").select("id,slug,blocks,updated_at").eq("slug", slug);
+    data = (retry.data ?? []) as StoredMerchantCouponsRow[];
+    error = retry.error;
+    if (error && isMissingUpdatedAtColumn(toErrorMessage(error))) {
+      const retryWithoutUpdatedAt = await supabase.from("pages").select("id,slug,blocks").eq("slug", slug);
+      data = (retryWithoutUpdatedAt.data ?? []) as StoredMerchantCouponsRow[];
+      error = retryWithoutUpdatedAt.error;
+    }
+  }
+
   if (error) return [];
   return Array.isArray(data) ? data : [];
 }

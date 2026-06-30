@@ -110,6 +110,17 @@ async function queryStoredOperationLogRows(supabase: MerchantOperationLogsStoreC
     }
   }
 
+  if (!error && data.length === 0) {
+    const retry = await supabase.from("pages").select("id,slug,blocks,updated_at").eq("slug", slug);
+    data = (retry.data ?? []) as StoredMerchantOperationLogsRow[];
+    error = retry.error;
+    if (error && isMissingUpdatedAtColumn(toErrorMessage(error))) {
+      const retryWithoutUpdatedAt = await supabase.from("pages").select("id,slug,blocks").eq("slug", slug);
+      data = (retryWithoutUpdatedAt.data ?? []) as StoredMerchantOperationLogsRow[];
+      error = retryWithoutUpdatedAt.error;
+    }
+  }
+
   if (error) return [];
   return Array.isArray(data) ? data : [];
 }

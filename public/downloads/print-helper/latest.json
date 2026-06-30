@@ -1,21 +1,20 @@
 {
   "ok": true,
   "name": "faolla-print-helper",
-  "version": "1.5.2",
-  "latestVersion": "1.5.2",
-  "minimumVersion": "1.5.2",
+  "version": "1.5.3",
+  "latestVersion": "1.5.3",
+  "minimumVersion": "1.5.3",
   "minimumWebVersion": "1.5.0",
   "mandatory": true,
-  "publishedAt": "2026-06-24T00:00:00Z",
+  "publishedAt": "2026-06-30T00:00:00Z",
   "package": {
-    "url": "/downloads/print-helper/FAOLLA-print-helper-1.5.2.zip",
-    "sha256": "cce963ec19e806fb24ca0de586484fe305f564c28b65ada7b2f61434fc94f38e",
-    "sizeBytes": 34101281
+    "url": "/downloads/print-helper/FAOLLA-print-helper-1.5.3.zip",
+    "sha256": "01b45c45e494220c47218dff7ce78b1812a37d03628e1a9f6f0b77140335d13c",
+    "sizeBytes": 34101520
   },
   "releaseNotes": [
-    "新增打印任务队列，连续结算会按顺序打印，避免同时抢占打印机。",
-    "新增 /autostart 接口，可检测、启用或取消当前 Windows 用户开机自启动。",
-    "/health 返回队列和自启动能力，便于后台诊断。",
-    "网页端减少普通小票的大图生成等待，并记录更详细的打印结果日志。"
+    "检测到本机打印助手未打开时，网页会尝试通过 faolla-print-helper:// 自动拉起已安装的助手。",
+    "新版助手启动时会为当前 Windows 用户注册 faolla-print-helper:// 启动协议。",
+    "保留 1.5.2 的打印队列、开机自启动、自动更新和小票图片打印优化。"
   ]
 }
