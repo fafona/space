@@ -12,13 +12,18 @@
     "sha256": "50daa1a26727a388efb7523a042d5038bc0c26e3e4391628680d371f9d9be8ad",
     "sizeBytes": 34104558
   },
+  "existingInstallUpdate": {
+    "helperScriptUrl": "/downloads/print-helper/faolla-print-helper-1.5.4.mjs?v=20260630c",
+    "helperScriptSha256": "2239abea4a0d3082c964056af4b6f7f9bb5209ed7fb7bb9ec17e5ba638961075",
+    "helperScriptSizeBytes": 43741
+  },
   "installer": {
-    "url": "/downloads/print-helper/install-faolla-print-helper.cmd?v=20260630b",
-    "sha256": "978d781aae91a87d4f6515bdaf2226d609f302e56067ce2a882aa8fdc4b2ac36",
+    "url": "/downloads/print-helper/install-faolla-print-helper.cmd?v=20260630c",
+    "sha256": "e65cab59553d3b1b8685e3e2ea7340781a858b525eb8bff094ce8de8f8ddbe60",
     "sizeBytes": 1056,
-    "scriptUrl": "/downloads/print-helper/install-faolla-print-helper.ps1?v=20260630b",
-    "scriptSha256": "d866b201866c042c8b5480785bf4b95ab5ac3907bdf560533d250edb369037d8",
-    "scriptSizeBytes": 6899
+    "scriptUrl": "/downloads/print-helper/install-faolla-print-helper.ps1?v=20260630c",
+    "scriptSha256": "b093eaec7788b86148bdbba3d3b06b8699935ffa307cd9298813594b0d9ab3f2",
+    "scriptSizeBytes": 8688
   },
   "releaseNotes": [
     "Added a one-click installer that installs to C:\\FAOLLA\\打印助手.",

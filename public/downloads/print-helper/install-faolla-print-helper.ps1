@@ -74,6 +74,41 @@ function Start-InstalledHelper([string]$InstallDir, [string]$NodePath, [string]$
   }
 }
 
+function Update-ExistingHelperScript([string]$HelperPath) {
+  try {
+    $manifestUri = [Uri]::new($manifestUrl)
+    Assert-FaollaUrl $manifestUri 'manifest'
+    $manifestPath = Join-Path $workDir 'latest-existing.json'
+    Invoke-WebRequest -Uri $manifestUri -OutFile $manifestPath -UseBasicParsing -TimeoutSec 30
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+
+    $helperUrlText = [string]$manifest.existingInstallUpdate.helperScriptUrl
+    $expectedSha = ([string]$manifest.existingInstallUpdate.helperScriptSha256).Trim().ToLowerInvariant()
+    if (-not $helperUrlText -or -not $expectedSha) {
+      Write-InstallLog 'No lightweight existing-helper update is listed in the manifest.'
+      return $false
+    }
+    if ([Uri]::IsWellFormedUriString($helperUrlText, [UriKind]::Absolute)) {
+      $helperUri = [Uri]::new($helperUrlText)
+    } else {
+      $helperUri = [Uri]::new($manifestUri, $helperUrlText)
+    }
+    Assert-FaollaUrl $helperUri 'helper_script'
+
+    $helperDownloadPath = Join-Path $workDir 'faolla-print-helper.mjs'
+    Write-InstallLog ('Downloading helper script update: ' + $helperUri.AbsoluteUri)
+    Invoke-WebRequest -Uri $helperUri -OutFile $helperDownloadPath -UseBasicParsing -TimeoutSec 60
+    $actualSha = (Get-FileHash -LiteralPath $helperDownloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actualSha -ne $expectedSha) { throw 'helper_script_sha256_mismatch' }
+    Copy-Item -LiteralPath $helperDownloadPath -Destination $HelperPath -Force
+    Write-InstallLog 'Existing helper script updated.'
+    return $true
+  } catch {
+    Write-InstallLog ('Existing helper script update skipped: ' + $_.Exception.Message)
+    return $false
+  }
+}
+
 try {
   New-Item -ItemType Directory -Force -Path $installDir | Out-Null
   New-Item -ItemType Directory -Force -Path $workDir | Out-Null
@@ -84,6 +119,7 @@ try {
   if ((Test-Path -LiteralPath $existingNodePath) -and (Test-Path -LiteralPath $existingHelperPath)) {
     Write-InstallLog 'Existing helper files found. Repairing launch protocol and starting helper without package download.'
     Stop-ExistingHelper
+    [void](Update-ExistingHelperScript $existingHelperPath)
     Register-LaunchProtocol $existingNodePath $existingHelperPath
     Enable-Startup $installDir
     Start-InstalledHelper $installDir $existingNodePath $existingHelperPath
