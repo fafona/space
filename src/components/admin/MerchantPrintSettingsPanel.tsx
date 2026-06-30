@@ -916,7 +916,6 @@ export default function MerchantPrintSettingsPanel({
       setBridgeStatus(nextStatus);
       if (!inspection.online) {
         setBridgeAutoStart(null);
-        await confirmPrintHelperInstallerDownload();
         setNotice("没有连接到本机打印助手，请先在收银电脑安装并运行 FAOLLA 打印助手。");
       } else if (nextStatus === "outdated") {
         setBridgeAutoStart(null);
@@ -936,7 +935,7 @@ export default function MerchantPrintSettingsPanel({
     setNotice("");
     const launched = requestLocalPrintBridgeLaunch(printSettings, { direct: true });
     if (!launched) {
-      await confirmPrintHelperInstallerDownload();
+      setError("无法请求打开打印助手。请先点击“安装/修复助手”安装或修复启动协议。");
       return;
     }
     setNotice("已请求打开打印助手。若浏览器弹出提示，请允许打开 FAOLLA 打印助手；几秒后会自动重新检测。");
