@@ -1,7 +1,10 @@
 import type { Block } from "@/data/homeBlocks";
 import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
+import { saveMerchantSnapshotHistory } from "@/lib/merchantSnapshotHistoryStore";
 
 const MERCHANT_DRAFT_SLUG_PREFIX = "__merchant_draft__:";
+const MERCHANT_DRAFT_HISTORY_SLUG_PREFIX = "__merchant_draft_history__:";
+const MERCHANT_DRAFT_HISTORY_BACKUP_SLUG_PREFIX = "__merchant_draft_history_backup__:";
 
 type DraftErrorLike = { message?: string } | null;
 
@@ -62,6 +65,14 @@ function isMissingUpdatedAtColumn(message: string) {
 
 function buildMerchantDraftSlug(siteId: string) {
   return `${MERCHANT_DRAFT_SLUG_PREFIX}${siteId}`;
+}
+
+function buildMerchantDraftHistorySlug(siteId: string) {
+  return `${MERCHANT_DRAFT_HISTORY_SLUG_PREFIX}${siteId}`;
+}
+
+function buildMerchantDraftHistoryBackupSlug(siteId: string) {
+  return `${MERCHANT_DRAFT_HISTORY_BACKUP_SLUG_PREFIX}${siteId}`;
 }
 
 export async function loadStoredMerchantDraft(
@@ -128,6 +139,19 @@ export async function saveStoredMerchantDraft(
     blocks: sanitizedBlocks,
     updated_at: updatedAt,
   };
+  const beforeDraft = await loadStoredMerchantDraft(supabase, normalizedSiteId);
+  const history = await saveMerchantSnapshotHistory(supabase, {
+    siteId: normalizedSiteId,
+    slug: buildMerchantDraftHistorySlug(normalizedSiteId),
+    backupSlug: buildMerchantDraftHistoryBackupSlug(normalizedSiteId),
+    source: "merchant-draft",
+    before: beforeDraft?.blocks ?? null,
+    after: sanitizedBlocks,
+    at: updatedAt,
+    maxEntries: 20,
+    merchantId: null,
+  });
+  if (history.error) return { error: `merchant_draft_history_save_failed:${history.error}` };
 
   const queryExisting = async () => {
     const scoped = await supabase

@@ -1,10 +1,10 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   createDefaultMerchantBookingWorkbenchSettings,
   normalizeMerchantBookingWorkbenchSettings,
   type MerchantBookingWorkbenchSettings,
 } from "./merchantBookingWorkbench";
+import { readJsonFileWithBackup, writeJsonFileWithBackup } from "./resilientJsonFileStore";
 
 type MerchantBookingWorkbenchStoreFile = {
   version: 1;
@@ -41,36 +41,28 @@ async function withBookingWorkbenchStoreLock<T>(task: () => Promise<T>) {
   }
 }
 
-async function ensureBookingWorkbenchStoreFile() {
-  await mkdir(path.dirname(BOOKING_WORKBENCH_STORE_PATH), { recursive: true });
-}
-
 async function readBookingWorkbenchStore(): Promise<MerchantBookingWorkbenchStoreFile> {
-  await ensureBookingWorkbenchStoreFile();
-  try {
-    const raw = await readFile(BOOKING_WORKBENCH_STORE_PATH, "utf8");
-    const parsed = JSON.parse(raw) as Partial<MerchantBookingWorkbenchStoreFile>;
-    const settingsBySiteId: Record<string, MerchantBookingWorkbenchSettings> = {};
-    Object.entries(parsed.settingsBySiteId ?? {}).forEach(([siteId, settings]) => {
-      const normalizedSiteId = trimText(siteId);
-      if (!normalizedSiteId) return;
-      settingsBySiteId[normalizedSiteId] = normalizeMerchantBookingWorkbenchSettings(settings);
-    });
-    return {
-      version: STORE_VERSION,
-      settingsBySiteId,
-    };
-  } catch {
-    return {
-      version: STORE_VERSION,
-      settingsBySiteId: {},
-    };
-  }
+  return readJsonFileWithBackup<MerchantBookingWorkbenchStoreFile>(
+    BOOKING_WORKBENCH_STORE_PATH,
+    { version: STORE_VERSION, settingsBySiteId: {} },
+    (value) => {
+      const parsed = value as Partial<MerchantBookingWorkbenchStoreFile>;
+      const settingsBySiteId: Record<string, MerchantBookingWorkbenchSettings> = {};
+      Object.entries(parsed.settingsBySiteId ?? {}).forEach(([siteId, settings]) => {
+        const normalizedSiteId = trimText(siteId);
+        if (!normalizedSiteId) return;
+        settingsBySiteId[normalizedSiteId] = normalizeMerchantBookingWorkbenchSettings(settings);
+      });
+      return {
+        version: STORE_VERSION,
+        settingsBySiteId,
+      };
+    },
+  );
 }
 
 async function writeBookingWorkbenchStore(store: MerchantBookingWorkbenchStoreFile) {
-  await ensureBookingWorkbenchStoreFile();
-  await writeFile(BOOKING_WORKBENCH_STORE_PATH, JSON.stringify(store, null, 2), "utf8");
+  await writeJsonFileWithBackup(BOOKING_WORKBENCH_STORE_PATH, store);
 }
 
 export async function loadMerchantBookingWorkbenchSettings(siteId: string) {

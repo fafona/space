@@ -1,6 +1,9 @@
 import { normalizeMerchantBusinessCards, type MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
+import { saveMerchantSnapshotHistory } from "@/lib/merchantSnapshotHistoryStore";
 
 const PERSONAL_BUSINESS_CARD_SLUG_PREFIX = "__personal_business_cards__:";
+const PERSONAL_BUSINESS_CARD_HISTORY_SLUG_PREFIX = "__personal_business_cards_history__:";
+const PERSONAL_BUSINESS_CARD_HISTORY_BACKUP_SLUG_PREFIX = "__personal_business_cards_history_backup__:";
 
 export type PersonalBusinessCardStoreClient = {
   from: (table: string) => {
@@ -69,6 +72,14 @@ function isMissingUpdatedAtColumn(message: string) {
 
 function buildPersonalBusinessCardSlug(accountId: string) {
   return `${PERSONAL_BUSINESS_CARD_SLUG_PREFIX}${accountId}`;
+}
+
+function buildPersonalBusinessCardHistorySlug(accountId: string) {
+  return `${PERSONAL_BUSINESS_CARD_HISTORY_SLUG_PREFIX}${accountId}`;
+}
+
+function buildPersonalBusinessCardHistoryBackupSlug(accountId: string) {
+  return `${PERSONAL_BUSINESS_CARD_HISTORY_BACKUP_SLUG_PREFIX}${accountId}`;
 }
 
 function readCardsFromBlocks(value: unknown) {
@@ -141,6 +152,19 @@ export async function saveStoredPersonalBusinessCards(
     blocks,
     updated_at: updatedAt,
   };
+  const beforeCards = (await loadStoredPersonalBusinessCards(supabase, normalizedAccountId))?.cards ?? null;
+  const history = await saveMerchantSnapshotHistory(supabase, {
+    siteId: normalizedAccountId,
+    slug: buildPersonalBusinessCardHistorySlug(normalizedAccountId),
+    backupSlug: buildPersonalBusinessCardHistoryBackupSlug(normalizedAccountId),
+    source: "personal-business-cards",
+    before: beforeCards,
+    after: normalizedCards,
+    at: updatedAt,
+    maxEntries: 20,
+    merchantId: null,
+  });
+  if (history.error) return { error: `personal_business_cards_history_save_failed:${history.error}` };
 
   const queryExisting = async () => {
     const scoped = await supabase

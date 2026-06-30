@@ -5,6 +5,11 @@ import {
   readMerchantSupportReadStateFromBlocks,
   type MerchantSupportReadStatePayload,
 } from "@/lib/merchantSupportReadState";
+import { saveMerchantSnapshotHistory } from "@/lib/merchantSnapshotHistoryStore";
+
+const MERCHANT_SUPPORT_READ_STATE_HISTORY_SLUG = "__merchant_support_read_state_history__";
+const MERCHANT_SUPPORT_READ_STATE_HISTORY_BACKUP_SLUG = "__merchant_support_read_state_history_backup__";
+const MERCHANT_SUPPORT_READ_STATE_HISTORY_SITE_ID = "merchant-support-read-state";
 
 type StoreErrorLike = { message?: string } | null;
 
@@ -106,12 +111,25 @@ export async function saveMerchantSupportReadState(
   supabase: MerchantSupportReadStateStoreClient,
   payload: MerchantSupportReadStatePayload,
 ): Promise<{ error: string | null }> {
+  const beforePayload = await loadStoredMerchantSupportReadState(supabase);
   const normalizedPayload = normalizeMerchantSupportReadStatePayload(payload);
   const blocks = buildMerchantSupportReadStateBlocks(normalizedPayload);
   const basePayload = {
     blocks,
     updated_at: new Date().toISOString(),
   };
+  const history = await saveMerchantSnapshotHistory(supabase, {
+    siteId: MERCHANT_SUPPORT_READ_STATE_HISTORY_SITE_ID,
+    slug: MERCHANT_SUPPORT_READ_STATE_HISTORY_SLUG,
+    backupSlug: MERCHANT_SUPPORT_READ_STATE_HISTORY_BACKUP_SLUG,
+    source: "merchant-support-read-state",
+    before: beforePayload,
+    after: normalizedPayload,
+    at: basePayload.updated_at,
+    maxEntries: 20,
+    merchantId: null,
+  });
+  if (history.error) return { error: `merchant_support_read_state_history_save_failed:${history.error}` };
 
   const queryExisting = async () => {
     const scoped = await supabase

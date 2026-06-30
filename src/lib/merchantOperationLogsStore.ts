@@ -5,8 +5,11 @@ import {
   type MerchantOperationLogEntry,
   type MerchantOperationLogStatus,
 } from "@/lib/merchantOperationLogs";
+import { saveMerchantSnapshotHistory } from "@/lib/merchantSnapshotHistoryStore";
 
 const MERCHANT_OPERATION_LOGS_SLUG_PREFIX = "__merchant_operation_logs__:";
+const MERCHANT_OPERATION_LOGS_HISTORY_SLUG_PREFIX = "__merchant_operation_logs_history__:";
+const MERCHANT_OPERATION_LOGS_HISTORY_BACKUP_SLUG_PREFIX = "__merchant_operation_logs_history_backup__:";
 
 export type MerchantOperationLogsStoreClient = {
   // Supabase query builders are heavily generic; this store only relies on runtime chaining.
@@ -75,6 +78,14 @@ function isMissingUpdatedAtColumn(message: string) {
 
 function buildOperationLogsSlug(siteId: string) {
   return `${MERCHANT_OPERATION_LOGS_SLUG_PREFIX}${siteId}`;
+}
+
+function buildOperationLogsHistorySlug(siteId: string) {
+  return `${MERCHANT_OPERATION_LOGS_HISTORY_SLUG_PREFIX}${siteId}`;
+}
+
+function buildOperationLogsHistoryBackupSlug(siteId: string) {
+  return `${MERCHANT_OPERATION_LOGS_HISTORY_BACKUP_SLUG_PREFIX}${siteId}`;
 }
 
 async function queryStoredOperationLogRows(supabase: MerchantOperationLogsStoreClient, siteId: string) {
@@ -172,6 +183,18 @@ export async function saveStoredMerchantOperationLogs(
   const slug = buildOperationLogsSlug(normalizedSiteId);
   const logs = normalizeStoredLogs(normalizedSiteId, input.logs).slice(0, MAX_MERCHANT_OPERATION_LOGS);
   const updatedAt = normalizeText(input.updatedAt) || new Date().toISOString();
+  const beforeLogs = await loadStoredMerchantOperationLogs(supabase, normalizedSiteId);
+  const history = await saveMerchantSnapshotHistory(supabase, {
+    siteId: normalizedSiteId,
+    slug: buildOperationLogsHistorySlug(normalizedSiteId),
+    backupSlug: buildOperationLogsHistoryBackupSlug(normalizedSiteId),
+    source: "merchant-operation-logs",
+    before: beforeLogs,
+    after: logs,
+    at: updatedAt,
+    maxEntries: 10,
+  });
+  if (history.error) return { error: `merchant_operation_logs_history_save_failed:${history.error}` };
   const existing = (await queryStoredOperationLogRows(supabase, normalizedSiteId))[0];
 
   const updateExisting = async (body: Record<string, unknown>) => {

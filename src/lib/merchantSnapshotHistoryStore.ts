@@ -99,11 +99,10 @@ async function querySnapshotHistoryRow(
   siteId: string,
   slug: string,
   columns: string,
+  merchantId: string | null = siteId,
 ): Promise<{ row: StoredSnapshotHistoryRow | null; error: string | null; supportsMerchantId: boolean }> {
-  const byMerchant = await supabase
-    .from("pages")
-    .select(columns)
-    .eq("merchant_id", siteId)
+  const merchantQuery = supabase.from("pages").select(columns);
+  const byMerchant = await (merchantId === null ? merchantQuery.is("merchant_id", null) : merchantQuery.eq("merchant_id", merchantId))
     .eq("slug", slug)
     .limit(1);
 
@@ -117,7 +116,13 @@ async function querySnapshotHistoryRow(
       return { row: null, error: message, supportsMerchantId: true };
     }
     if (isMissingUpdatedAtColumn(message) && columns.includes("updated_at")) {
-      return querySnapshotHistoryRow(supabase, siteId, slug, columns.replace(/,?updated_at,?/g, ",").replace(/,+/g, ",").replace(/^,|,$/g, ""));
+      return querySnapshotHistoryRow(
+        supabase,
+        siteId,
+        slug,
+        columns.replace(/,?updated_at,?/g, ",").replace(/,+/g, ",").replace(/^,|,$/g, ""),
+        merchantId,
+      );
     }
   }
 
@@ -128,7 +133,13 @@ async function querySnapshotHistoryRow(
   }
   const message = toErrorMessage(bySlug.error);
   if (isMissingUpdatedAtColumn(message) && columns.includes("updated_at")) {
-    return querySnapshotHistoryRow(supabase, siteId, slug, columns.replace(/,?updated_at,?/g, ",").replace(/,+/g, ",").replace(/^,|,$/g, ""));
+    return querySnapshotHistoryRow(
+      supabase,
+      siteId,
+      slug,
+      columns.replace(/,?updated_at,?/g, ",").replace(/,+/g, ",").replace(/^,|,$/g, ""),
+      merchantId,
+    );
   }
   return { row: null, error: isMissingSlugColumn(message) ? "pages_slug_column_missing" : message, supportsMerchantId: false };
 }
@@ -138,8 +149,9 @@ async function persistSnapshotHistoryPayload(
   siteId: string,
   slug: string,
   payload: MerchantSnapshotHistoryPayload,
+  merchantId: string | null = siteId,
 ): Promise<{ error: string | null }> {
-  const existing = await querySnapshotHistoryRow(supabase, siteId, slug, "id");
+  const existing = await querySnapshotHistoryRow(supabase, siteId, slug, "id", merchantId);
   if (existing.error) return { error: existing.error };
 
   const updatedAt = payload.updatedAt || new Date().toISOString();
@@ -153,7 +165,7 @@ async function persistSnapshotHistoryPayload(
     const inserted = await supabase.from("pages").insert({
       ...body,
       slug,
-      ...(existing.supportsMerchantId ? { merchant_id: siteId } : {}),
+      ...(existing.supportsMerchantId ? { merchant_id: merchantId } : {}),
     });
     return inserted.error ? { error: toErrorMessage(inserted.error) } : { error: null };
   };
@@ -175,6 +187,7 @@ export async function saveMerchantSnapshotHistory(
     after: unknown;
     at?: string | null;
     maxEntries?: number;
+    merchantId?: string | null;
   },
 ): Promise<{ error: string | null }> {
   const siteId = normalizeText(input.siteId);
@@ -184,10 +197,14 @@ export async function saveMerchantSnapshotHistory(
 
   const at = normalizeText(input.at) || new Date().toISOString();
   const id = `${siteId}:${at}:${normalizeText(input.source) || "save"}:${Math.random().toString(36).slice(2, 8)}`;
-  const current = await querySnapshotHistoryRow(supabase, siteId, slug, "blocks,updated_at");
+  const merchantId =
+    Object.prototype.hasOwnProperty.call(input, "merchantId") && input.merchantId === null
+      ? null
+      : normalizeText(input.merchantId) || siteId;
+  const current = await querySnapshotHistoryRow(supabase, siteId, slug, "blocks,updated_at", merchantId);
   if (current.error) return { error: current.error };
   const currentPayload = normalizeHistoryPayload(current.row?.blocks, siteId);
-  const maxEntries = Math.max(20, Math.min(1000, input.maxEntries ?? 240));
+  const maxEntries = Math.max(1, Math.min(1000, input.maxEntries ?? 240));
   const nextPayload = normalizeHistoryPayload(
     {
       siteId,
@@ -207,9 +224,9 @@ export async function saveMerchantSnapshotHistory(
     siteId,
   );
 
-  const primary = await persistSnapshotHistoryPayload(supabase, siteId, slug, nextPayload);
+  const primary = await persistSnapshotHistoryPayload(supabase, siteId, slug, nextPayload, merchantId);
   if (primary.error) return primary;
-  const backup = await persistSnapshotHistoryPayload(supabase, siteId, backupSlug, nextPayload);
+  const backup = await persistSnapshotHistoryPayload(supabase, siteId, backupSlug, nextPayload, merchantId);
   if (backup.error && typeof console !== "undefined") {
     console.error("[merchant-snapshot-history] backup save failed", backup.error);
   }

@@ -4,6 +4,11 @@ import {
   readPlatformSupportInboxFromBlocks,
   type PlatformSupportInboxPayload,
 } from "@/lib/platformSupportInbox";
+import { saveMerchantSnapshotHistory } from "@/lib/merchantSnapshotHistoryStore";
+
+const PLATFORM_SUPPORT_INBOX_HISTORY_SLUG = "__platform_support_inbox_history__";
+const PLATFORM_SUPPORT_INBOX_HISTORY_BACKUP_SLUG = "__platform_support_inbox_history_backup__";
+const PLATFORM_SUPPORT_INBOX_HISTORY_SITE_ID = "platform-support-inbox";
 
 type StoreErrorLike = { message?: string } | null;
 
@@ -105,11 +110,24 @@ export async function savePlatformSupportInbox(
   supabase: PlatformSupportInboxStoreClient,
   payload: PlatformSupportInboxPayload,
 ): Promise<{ error: string | null }> {
+  const beforePayload = await loadStoredPlatformSupportInbox(supabase);
   const blocks = buildPlatformSupportInboxBlocks(payload);
   const basePayload = {
     blocks,
     updated_at: new Date().toISOString(),
   };
+  const history = await saveMerchantSnapshotHistory(supabase, {
+    siteId: PLATFORM_SUPPORT_INBOX_HISTORY_SITE_ID,
+    slug: PLATFORM_SUPPORT_INBOX_HISTORY_SLUG,
+    backupSlug: PLATFORM_SUPPORT_INBOX_HISTORY_BACKUP_SLUG,
+    source: "platform-support-inbox",
+    before: beforePayload,
+    after: payload,
+    at: basePayload.updated_at,
+    maxEntries: 20,
+    merchantId: null,
+  });
+  if (history.error) return { error: `platform_support_inbox_history_save_failed:${history.error}` };
 
   const queryExisting = async () => {
     const scoped = await supabase

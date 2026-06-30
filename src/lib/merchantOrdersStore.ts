@@ -1,6 +1,9 @@
 import { normalizeMerchantOrderRecords, type MerchantOrderRecord } from "@/lib/merchantOrders";
+import { saveMerchantSnapshotHistory } from "@/lib/merchantSnapshotHistoryStore";
 
 const MERCHANT_ORDER_SLUG_PREFIX = "__merchant_orders__:";
+const MERCHANT_ORDER_HISTORY_SLUG_PREFIX = "__merchant_orders_history__:";
+const MERCHANT_ORDER_HISTORY_BACKUP_SLUG_PREFIX = "__merchant_orders_history_backup__:";
 const MERCHANT_ORDER_CHUNK_SIZE = 100;
 
 export type MerchantOrdersStoreClient = {
@@ -58,6 +61,14 @@ function isMissingUpdatedAtColumn(message: string) {
 
 function buildOrdersSlug(siteId: string) {
   return `${MERCHANT_ORDER_SLUG_PREFIX}${siteId}`;
+}
+
+function buildOrdersHistorySlug(siteId: string) {
+  return `${MERCHANT_ORDER_HISTORY_SLUG_PREFIX}${siteId}`;
+}
+
+function buildOrdersHistoryBackupSlug(siteId: string) {
+  return `${MERCHANT_ORDER_HISTORY_BACKUP_SLUG_PREFIX}${siteId}`;
 }
 
 function buildOrdersChunkSlug(siteId: string, index: number) {
@@ -454,6 +465,18 @@ export async function saveStoredMerchantOrders(
   const normalizedOrders = normalizeMerchantOrderRecords(input.orders);
   const updatedAt = normalizeText(input.updatedAt) || new Date().toISOString();
   const existingRows = await listStoredMerchantOrdersRows(supabase, normalizedSiteId);
+  const beforeOrders = mergeStoredMerchantOrdersRows(normalizedSiteId, existingRows)?.orders ?? null;
+  const history = await saveMerchantSnapshotHistory(supabase, {
+    siteId: normalizedSiteId,
+    slug: buildOrdersHistorySlug(normalizedSiteId),
+    backupSlug: buildOrdersHistoryBackupSlug(normalizedSiteId),
+    source: "merchant-orders",
+    before: beforeOrders,
+    after: normalizedOrders,
+    at: updatedAt,
+    maxEntries: 8,
+  });
+  if (history.error) return { error: `merchant_orders_history_save_failed:${history.error}` };
   const existingBySlug = new Map(
     existingRows
       .map((row) => [normalizeText(row.slug), row] as const)

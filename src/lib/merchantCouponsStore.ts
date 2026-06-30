@@ -1,6 +1,9 @@
 import { normalizeMerchantCouponRecords, type MerchantCouponRecord } from "@/lib/merchantCoupons";
+import { saveMerchantSnapshotHistory } from "@/lib/merchantSnapshotHistoryStore";
 
 const MERCHANT_COUPON_SLUG_PREFIX = "__merchant_coupons__:";
+const MERCHANT_COUPON_HISTORY_SLUG_PREFIX = "__merchant_coupons_history__:";
+const MERCHANT_COUPON_HISTORY_BACKUP_SLUG_PREFIX = "__merchant_coupons_history_backup__:";
 
 export type MerchantCouponsStoreClient = {
   // Supabase query builders are heavily generic; this store only relies on runtime chaining.
@@ -55,6 +58,14 @@ function isMissingUpdatedAtColumn(message: string) {
 
 function buildCouponsSlug(siteId: string) {
   return `${MERCHANT_COUPON_SLUG_PREFIX}${siteId}`;
+}
+
+function buildCouponsHistorySlug(siteId: string) {
+  return `${MERCHANT_COUPON_HISTORY_SLUG_PREFIX}${siteId}`;
+}
+
+function buildCouponsHistoryBackupSlug(siteId: string) {
+  return `${MERCHANT_COUPON_HISTORY_BACKUP_SLUG_PREFIX}${siteId}`;
 }
 
 async function queryStoredCouponRows(supabase: MerchantCouponsStoreClient, siteId: string) {
@@ -163,6 +174,18 @@ export async function saveStoredMerchantCoupons(
   const coupons = normalizeMerchantCouponRecords(input.coupons).filter((coupon) => coupon.siteId === normalizedSiteId);
   const updatedAt = normalizeText(input.updatedAt) || new Date().toISOString();
   const hasKnownExistingRow = Object.prototype.hasOwnProperty.call(input, "existingRowId");
+  const beforeCoupons = (await loadStoredMerchantCoupons(supabase, normalizedSiteId))?.coupons ?? null;
+  const history = await saveMerchantSnapshotHistory(supabase, {
+    siteId: normalizedSiteId,
+    slug: buildCouponsHistorySlug(normalizedSiteId),
+    backupSlug: buildCouponsHistoryBackupSlug(normalizedSiteId),
+    source: "merchant-coupons",
+    before: beforeCoupons,
+    after: coupons,
+    at: updatedAt,
+    maxEntries: 30,
+  });
+  if (history.error) return { error: `merchant_coupons_history_save_failed:${history.error}` };
   const existing = hasKnownExistingRow
     ? input.existingRowId !== undefined && input.existingRowId !== null
       ? ({ id: input.existingRowId } as StoredMerchantCouponsRow)

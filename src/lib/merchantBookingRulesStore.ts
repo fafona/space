@@ -1,4 +1,3 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Block } from "@/data/homeBlocks";
 import {
@@ -6,6 +5,7 @@ import {
   normalizeMerchantBookingRulesSnapshot,
   type MerchantBookingRulesSnapshot,
 } from "./merchantBookingRules";
+import { readJsonFileWithBackup, writeJsonFileWithBackup } from "./resilientJsonFileStore";
 
 type MerchantBookingRulesStoreFile = {
   version: 1;
@@ -38,33 +38,28 @@ async function withBookingRulesStoreLock<T>(task: () => Promise<T>) {
   }
 }
 
-async function ensureBookingRulesStoreFile() {
-  await mkdir(path.dirname(BOOKING_RULES_STORE_PATH), { recursive: true });
-}
-
 async function readBookingRulesStore(): Promise<MerchantBookingRulesStoreFile> {
-  await ensureBookingRulesStoreFile();
-  try {
-    const raw = await readFile(BOOKING_RULES_STORE_PATH, "utf8");
-    const parsed = JSON.parse(raw) as Partial<MerchantBookingRulesStoreFile>;
-    const nextSnapshots: Record<string, MerchantBookingRulesSnapshot> = {};
-    Object.entries(parsed.snapshots ?? {}).forEach(([siteId, snapshot]) => {
-      const normalized = normalizeMerchantBookingRulesSnapshot(snapshot);
-      if (!normalized) return;
-      nextSnapshots[siteId.trim()] = normalized;
-    });
-    return {
-      version: STORE_VERSION,
-      snapshots: nextSnapshots,
-    };
-  } catch {
-    return { version: STORE_VERSION, snapshots: {} };
-  }
+  return readJsonFileWithBackup<MerchantBookingRulesStoreFile>(
+    BOOKING_RULES_STORE_PATH,
+    { version: STORE_VERSION, snapshots: {} },
+    (value) => {
+      const parsed = value as Partial<MerchantBookingRulesStoreFile>;
+      const nextSnapshots: Record<string, MerchantBookingRulesSnapshot> = {};
+      Object.entries(parsed.snapshots ?? {}).forEach(([siteId, snapshot]) => {
+        const normalized = normalizeMerchantBookingRulesSnapshot(snapshot);
+        if (!normalized) return;
+        nextSnapshots[siteId.trim()] = normalized;
+      });
+      return {
+        version: STORE_VERSION,
+        snapshots: nextSnapshots,
+      };
+    },
+  );
 }
 
 async function writeBookingRulesStore(store: MerchantBookingRulesStoreFile) {
-  await ensureBookingRulesStoreFile();
-  await writeFile(BOOKING_RULES_STORE_PATH, JSON.stringify(store, null, 2), "utf8");
+  await writeJsonFileWithBackup(BOOKING_RULES_STORE_PATH, store);
 }
 
 export async function loadMerchantBookingRulesSnapshot(siteId: string) {

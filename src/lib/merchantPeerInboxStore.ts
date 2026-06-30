@@ -5,6 +5,11 @@ import {
   readMerchantPeerInboxFromBlocks,
   type MerchantPeerInboxPayload,
 } from "@/lib/merchantPeerInbox";
+import { saveMerchantSnapshotHistory } from "@/lib/merchantSnapshotHistoryStore";
+
+const MERCHANT_PEER_INBOX_HISTORY_SLUG = "__merchant_peer_inbox_history__";
+const MERCHANT_PEER_INBOX_HISTORY_BACKUP_SLUG = "__merchant_peer_inbox_history_backup__";
+const MERCHANT_PEER_INBOX_HISTORY_SITE_ID = "merchant-peer-inbox";
 
 type StoreErrorLike = { message?: string } | null;
 
@@ -106,12 +111,25 @@ export async function saveMerchantPeerInbox(
   supabase: MerchantPeerInboxStoreClient,
   payload: MerchantPeerInboxPayload,
 ): Promise<{ error: string | null }> {
+  const beforePayload = await loadStoredMerchantPeerInbox(supabase);
   const normalizedPayload = normalizeMerchantPeerInboxPayload(payload);
   const blocks = buildMerchantPeerInboxBlocks(normalizedPayload);
   const basePayload = {
     blocks,
     updated_at: new Date().toISOString(),
   };
+  const history = await saveMerchantSnapshotHistory(supabase, {
+    siteId: MERCHANT_PEER_INBOX_HISTORY_SITE_ID,
+    slug: MERCHANT_PEER_INBOX_HISTORY_SLUG,
+    backupSlug: MERCHANT_PEER_INBOX_HISTORY_BACKUP_SLUG,
+    source: "merchant-peer-inbox",
+    before: beforePayload,
+    after: normalizedPayload,
+    at: basePayload.updated_at,
+    maxEntries: 20,
+    merchantId: null,
+  });
+  if (history.error) return { error: `merchant_peer_inbox_history_save_failed:${history.error}` };
 
   const queryExisting = async () => {
     const scoped = await supabase

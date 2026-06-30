@@ -1,5 +1,4 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   buildMerchantBookingId,
@@ -43,6 +42,7 @@ import { resolveMerchantBookingRuleEntry, type MerchantBookingRuleLocator } from
 import { loadMerchantBookingRulesSnapshot } from "./merchantBookingRulesStore";
 import { loadCurrentMerchantSnapshotSiteBySiteId } from "./publishedMerchantService";
 import type { MerchantPushSubscriptionStoreClient } from "./merchantPushSubscriptionStore";
+import { readJsonFileWithBackup, writeJsonFileWithBackup } from "./resilientJsonFileStore";
 import { createServerSupabaseServiceClient } from "./superAdminServer";
 import { notifyMerchantPushSubscribers } from "./webPush";
 
@@ -94,30 +94,25 @@ async function withBookingStoreLock<T>(task: () => Promise<T>) {
   }
 }
 
-async function ensureBookingStoreFile() {
-  await mkdir(path.dirname(BOOKING_STORE_PATH), { recursive: true });
-}
-
 async function readMerchantBookingStore(): Promise<MerchantBookingStoreFile> {
-  await ensureBookingStoreFile();
-  try {
-    const raw = await readFile(BOOKING_STORE_PATH, "utf8");
-    const parsed = JSON.parse(raw) as Partial<MerchantBookingStoreFile>;
-    if (!Array.isArray(parsed.records)) {
-      return { version: STORE_VERSION, records: [] };
-    }
-    return {
-      version: STORE_VERSION,
-      records: parsed.records.filter((item) => item && typeof item === "object") as MerchantBookingStoredRecord[],
-    };
-  } catch {
-    return { version: STORE_VERSION, records: [] };
-  }
+  return readJsonFileWithBackup<MerchantBookingStoreFile>(
+    BOOKING_STORE_PATH,
+    { version: STORE_VERSION, records: [] },
+    (value) => {
+      const parsed = value as Partial<MerchantBookingStoreFile>;
+      if (!Array.isArray(parsed.records)) {
+        return { version: STORE_VERSION, records: [] };
+      }
+      return {
+        version: STORE_VERSION,
+        records: parsed.records.filter((item) => item && typeof item === "object") as MerchantBookingStoredRecord[],
+      };
+    },
+  );
 }
 
 async function writeMerchantBookingStore(store: MerchantBookingStoreFile) {
-  await ensureBookingStoreFile();
-  await writeFile(BOOKING_STORE_PATH, JSON.stringify(store, null, 2), "utf8");
+  await writeJsonFileWithBackup(BOOKING_STORE_PATH, store);
 }
 
 function createEditToken() {
