@@ -6286,6 +6286,10 @@ export default function AdminClient({
     () => !isSupabaseEnabled || isSupabaseFallbackMode || hasRemoteContentVerifiedStamp([storeScope]),
   );
   const [publishing, setPublishing] = useState(false);
+  const publishingRef = useRef(false);
+  const [editorUploadBusy, setEditorUploadBusy] = useState(false);
+  const [editorUploadMessage, setEditorUploadMessage] = useState("");
+  const editorUploadBusyCountRef = useRef(0);
   const [loggingOut, setLoggingOut] = useState(false);
   const [accountSwitcherOpen, setAccountSwitcherOpen] = useState(false);
   const [accountSwitchEntries, setAccountSwitchEntries] = useState<AccountSwitchEntry[]>(() => readAccountSwitchEntries());
@@ -7085,12 +7089,44 @@ export default function AdminClient({
     setTip(message);
   }
 
+  function isPublishTerminalTip(message: string) {
+    const normalized = message.trim();
+    return (
+      normalized.startsWith("已发布") ||
+      normalized.startsWith("发布失败") ||
+      normalized.startsWith("发布超时") ||
+      normalized.startsWith("发布没有完成") ||
+      normalized.startsWith("草稿已保存，发布失败") ||
+      normalized.startsWith("无变更")
+    );
+  }
+
   function showSavePublishTip(message: string) {
+    if (publishingRef.current && !isPublishTerminalTip(message)) {
+      showTip("发布中，请稍候...");
+      return;
+    }
     showTip(message);
   }
 
   function showPublishFailedTip(message: string) {
     showTip(message);
+  }
+
+  function beginEditorUpload(message = "正在上传图片，请稍候...") {
+    editorUploadBusyCountRef.current += 1;
+    setEditorUploadMessage(message);
+    setEditorUploadBusy(true);
+    let completed = false;
+    return () => {
+      if (completed) return;
+      completed = true;
+      editorUploadBusyCountRef.current = Math.max(0, editorUploadBusyCountRef.current - 1);
+      if (editorUploadBusyCountRef.current === 0) {
+        setEditorUploadBusy(false);
+        setEditorUploadMessage("");
+      }
+    };
   }
 
   function applyMerchantSessionIdentityPayload(payload: Awaited<ReturnType<typeof readMerchantSessionPayload>> | null) {
@@ -7547,68 +7583,78 @@ export default function AdminClient({
     file: File,
     options?: { purpose?: EditorImageUploadPurpose; viewport?: ViewportKey },
   ): Promise<PersistedEditorAssetResult> {
-    let dataUrl: string;
-    const limitKb =
-      !isPlatformEditor && options?.purpose === "common"
-        ? Math.max(50, Math.round(merchantPermissionConfig?.commonBlockImageLimitKb ?? 300))
-        : !isPlatformEditor && options?.purpose === "gallery"
-          ? Math.max(50, Math.round(merchantPermissionConfig?.galleryBlockImageLimitKb ?? 300))
-          : null;
-    if (options?.purpose === "page-background") {
-      const viewport = options.viewport === "mobile" ? "mobile" : "desktop";
-      const backgroundOptions =
-        viewport === "mobile" ? PAGE_BACKGROUND_IMAGE_COMPRESSION_OPTIONS.mobile : PAGE_BACKGROUND_IMAGE_COMPRESSION_OPTIONS.desktop;
-      dataUrl = await fileToLimitedOptimizedImageDataUrl(
-        file,
-        backgroundOptions,
-        PAGE_BACKGROUND_IMAGE_LIMIT_BYTES[viewport],
-      );
-    } else if (limitKb) {
-      const limitBytes = limitKb * 1024;
-      const compressed = await compressImageFileWithinLimit(file, limitBytes, imageCompressionOptions);
-      if (compressed.bytes > limitBytes) {
-        throw new Error(`图片已自动压缩，但仍超过当前上传上限 ${limitKb}KB`);
+    const endUpload = beginEditorUpload(options?.purpose === "page-background" ? "正在上传背景图片，请稍候..." : "正在上传图片，请稍候...");
+    try {
+      let dataUrl: string;
+      const limitKb =
+        !isPlatformEditor && options?.purpose === "common"
+          ? Math.max(50, Math.round(merchantPermissionConfig?.commonBlockImageLimitKb ?? 300))
+          : !isPlatformEditor && options?.purpose === "gallery"
+            ? Math.max(50, Math.round(merchantPermissionConfig?.galleryBlockImageLimitKb ?? 300))
+            : null;
+      if (options?.purpose === "page-background") {
+        const viewport = options.viewport === "mobile" ? "mobile" : "desktop";
+        const backgroundOptions =
+          viewport === "mobile" ? PAGE_BACKGROUND_IMAGE_COMPRESSION_OPTIONS.mobile : PAGE_BACKGROUND_IMAGE_COMPRESSION_OPTIONS.desktop;
+        dataUrl = await fileToLimitedOptimizedImageDataUrl(
+          file,
+          backgroundOptions,
+          PAGE_BACKGROUND_IMAGE_LIMIT_BYTES[viewport],
+        );
+      } else if (limitKb) {
+        const limitBytes = limitKb * 1024;
+        const compressed = await compressImageFileWithinLimit(file, limitBytes, imageCompressionOptions);
+        if (compressed.bytes > limitBytes) {
+          throw new Error(`图片已自动压缩，但仍超过当前上传上限 ${limitKb}KB`);
+        }
+        dataUrl = compressed.dataUrl;
+      } else {
+        dataUrl = await fileToOriginalImageDataUrl(file, imageCompressionOptions);
       }
-      dataUrl = compressed.dataUrl;
-    } else {
-      dataUrl = await fileToOriginalImageDataUrl(file, imageCompressionOptions);
-    }
-    const usage =
-      options?.purpose === "gallery" ? "gallery-block-image" : options?.purpose === "common" ? "common-block-image" : "generic-image";
-    const operation =
-      options?.purpose === "gallery"
-        ? {
-            operationModule: "网站编辑 > 相册区块",
-            operationAction: "上传相册图片",
-            operationSummary: "在网站编辑 > 相册区块上传图片",
-          }
-        : options?.purpose === "common"
+      const usage =
+        options?.purpose === "gallery" ? "gallery-block-image" : options?.purpose === "common" ? "common-block-image" : "generic-image";
+      const operation =
+        options?.purpose === "gallery"
           ? {
-              operationModule: "网站编辑 > 区块编辑",
-              operationAction: "上传通用区块图片",
-              operationSummary: "在网站编辑 > 区块编辑上传通用区块图片",
+              operationModule: "网站编辑 > 相册区块",
+              operationAction: "上传相册图片",
+              operationSummary: "在网站编辑 > 相册区块上传图片",
             }
-          : options?.purpose === "page-background"
+          : options?.purpose === "common"
             ? {
-                operationModule: "网站编辑 > 背景设置",
-                operationAction: "上传页面背景图",
-                operationSummary: "在网站编辑 > 背景设置上传页面背景图",
+                operationModule: "网站编辑 > 区块编辑",
+                operationAction: "上传通用区块图片",
+                operationSummary: "在网站编辑 > 区块编辑上传通用区块图片",
               }
-            : {
-                operationModule: "网站编辑 > 图片素材",
-                operationAction: "上传图片",
-                operationSummary: "在网站编辑上传图片素材",
-              };
-    return persistInlineImageForEditor(dataUrl, usage, operation);
+            : options?.purpose === "page-background"
+              ? {
+                  operationModule: "网站编辑 > 背景设置",
+                  operationAction: "上传页面背景图",
+                  operationSummary: "在网站编辑 > 背景设置上传页面背景图",
+                }
+              : {
+                  operationModule: "网站编辑 > 图片素材",
+                  operationAction: "上传图片",
+                  operationSummary: "在网站编辑上传图片素材",
+                };
+      return persistInlineImageForEditor(dataUrl, usage, operation);
+    } finally {
+      endUpload();
+    }
   }
 
   async function persistProductImageFileForEditor(file: File): Promise<PersistedEditorAssetResult> {
-    const dataUrl = await fileToOptimizedImageDataUrl(file, PRODUCT_IMAGE_UPLOAD_OPTIONS);
-    return persistInlineImageForEditor(dataUrl, "generic-image", {
-      operationModule: "网站编辑 > 产品/预约",
-      operationAction: "上传产品图片",
-      operationSummary: "在网站编辑 > 产品/预约上传产品或项目图片",
-    });
+    const endUpload = beginEditorUpload("正在上传产品图片，请稍候...");
+    try {
+      const dataUrl = await fileToOptimizedImageDataUrl(file, PRODUCT_IMAGE_UPLOAD_OPTIONS);
+      return persistInlineImageForEditor(dataUrl, "generic-image", {
+        operationModule: "网站编辑 > 产品/预约",
+        operationAction: "上传产品图片",
+        operationSummary: "在网站编辑 > 产品/预约上传产品或项目图片",
+      });
+    } finally {
+      endUpload();
+    }
   }
 
   async function persistInlineAudioForEditor(dataUrl: string, operation?: MerchantAssetUploadOperationContext) {
@@ -9586,6 +9632,7 @@ export default function AdminClient({
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (publishingRef.current) return;
       if (event.defaultPrevented) return;
       if (!selectedIdRef.current) return;
       if (event.ctrlKey || event.metaKey || event.altKey) return;
@@ -9602,6 +9649,10 @@ export default function AdminClient({
       window.removeEventListener("keydown", onKeyDown, true);
     };
   }, []);
+
+  useEffect(() => {
+    publishingRef.current = publishing;
+  }, [publishing]);
 
   useEffect(() => {
     setRecentColors(loadRecentColors());
@@ -10795,7 +10846,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       const result = await persistImageFileForEditor(file, { purpose: "page-background", viewport: previewViewport });
       updatePageBackground({ pageBgImageUrl: result.value });
       setPageImageDialogOpen(false);
-      setTip(result.externalized ? "页面背景图片已上传" : "页面背景图片已更");
+      setTip(result.externalized ? "页面背景图片已上传" : "页面背景图片已更新");
       setTimeout(() => setTip(""), 1200);
     } catch (error) {
       setTip(error instanceof Error ? error.message : "上传失败，请重试");
@@ -11106,8 +11157,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (!gatewayReady) {
       setBackendNotice("后端连接不稳定，正在尝试发布...");
     }
+    publishingRef.current = true;
     setPublishing(true);
-    showSavePublishTip("发布中...");
+    showSavePublishTip("发布中，请稍候...");
 
     try {
       const scopedSiteId = getSiteIdFromStoreScope(storeScope).trim();
@@ -11203,6 +11255,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
       const preflightPassed = await runPublishPreflightDialog(payload.blocks, payloadBytes);
       if (!preflightPassed) {
+        showPublishFailedTip("发布没有完成：发布体检未通过或已取消");
         recordPublishEvent({
           success: false,
           bytes: payloadBytes,
@@ -11351,6 +11404,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         );
       }
     } finally {
+      publishingRef.current = false;
       setPublishing(false);
     }
   }
@@ -16882,6 +16936,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
+      if (publishingRef.current) return;
       if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
       if (event.key.toLowerCase() !== "s") return;
       if (isTypingTarget(event.target)) return;
@@ -17445,6 +17500,35 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 {"确定"}
               </button>
             </div>
+          </div>
+        </div>,
+      )
+    : null;
+  const editorUploadBusyOverlay = editorUploadBusy
+    ? renderTopMostOverlay(
+        <div
+          data-editor-upload-busy
+          className="fixed inset-0 z-[2147483640] flex items-center justify-center bg-black/30 p-4"
+        >
+          <div className="rounded-2xl border bg-white px-5 py-4 text-sm font-semibold text-slate-900 shadow-2xl">
+            <div className="flex items-center gap-3">
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-950" />
+              <span>{editorUploadMessage || "正在上传图片，请稍候..."}</span>
+            </div>
+          </div>
+        </div>,
+      )
+    : null;
+  const publishBusyOverlay = publishing
+    ? renderTopMostOverlay(
+        <div
+          data-editor-publish-busy
+          className="fixed inset-0 z-[2147483641] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-[1px]"
+        >
+          <div className="max-w-sm rounded-2xl border border-white/20 bg-white px-5 py-4 text-center shadow-2xl">
+            <div className="mx-auto h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-slate-950" />
+            <div className="mt-3 text-sm font-semibold text-slate-950">发布中，请稍候...</div>
+            <div className="mt-1 text-xs leading-5 text-slate-500">发布完成或失败前已暂时锁定编辑操作。</div>
           </div>
         </div>,
       )
@@ -19738,6 +19822,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             void addAccountFromSwitcher();
           }}
         />
+        {editorUploadBusyOverlay}
+        {publishBusyOverlay}
         {dialogOverlay}
       </>
     );
@@ -22046,20 +22132,27 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 value={pageImageUrlInput}
                 placeholder="https://example.com/bg.jpg"
                 onChange={(e) => setPageImageUrlInput(e.target.value)}
+                disabled={editorUploadBusy}
               />
             </div>
             <div className="flex flex-wrap gap-2">
-              <label className="px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm cursor-pointer">
-                {"上传背景"}
+              <label
+                className={`px-3 py-2 rounded border bg-white text-sm ${
+                  editorUploadBusy ? "cursor-wait opacity-60" : "cursor-pointer hover:bg-gray-50"
+                }`}
+              >
+                {editorUploadBusy ? "正在上传..." : "上传背景"}
                 <input
                   className="hidden"
                   type="file"
                   accept="image/*"
+                  disabled={editorUploadBusy}
                   onChange={handlePageImageUpload}
                 />
               </label>
               <button
-                className="px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm"
+                className="px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={editorUploadBusy}
                 onClick={clearPageImage}
               >
                 {"清除背景"}
@@ -22067,17 +22160,22 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             </div>
             <div className="flex flex-wrap gap-2">
               <button
-                className="px-3 py-2 rounded bg-black text-white text-sm"
+                className="px-3 py-2 rounded bg-black text-white text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={editorUploadBusy}
                 onClick={applyPageImageFromInput}
               >
                 {"应用"}
               </button>
               <button
-                className="px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm"
+                className="px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={editorUploadBusy}
                 onClick={() => setPageImageDialogOpen(false)}
               >
                 {"取消"}
               </button>
+            </div>
+            <div className="text-xs text-gray-500">
+              {editorUploadBusy ? "正在上传背景图片，请勿关闭窗口。" : "选择文件后会立即上传并应用为页面背景。"}
             </div>
           </div>
         </div>,
@@ -22755,6 +22853,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           )
         : null}
 
+      {editorUploadBusyOverlay}
+      {publishBusyOverlay}
       {dialogOverlay}
     </main>
   );
@@ -22903,6 +23003,9 @@ type GalleryEditorImage = {
   const typographyPreviewAppliedRef = useRef(false);
   const [imageDialogOpen, setImageDialogOpen] = useState(false);
   const [imageUrlInput, setImageUrlInput] = useState("");
+  const [imageUploading, setImageUploading] = useState(false);
+  const [galleryUploading, setGalleryUploading] = useState(false);
+  const [productImageUploading, setProductImageUploading] = useState(false);
   const [typographyDialogOpen, setTypographyDialogOpen] = useState(false);
   const [typoFontFamily, setTypoFontFamily] = useState("");
   const [typoFontSize, setTypoFontSize] = useState("16");
@@ -24380,9 +24483,11 @@ type GalleryEditorImage = {
   }
 
   async function onUploadImage(event: ChangeEvent<HTMLInputElement>) {
+    if (imageUploading) return;
     const inputEl = event.currentTarget;
     const file = event.target.files?.[0];
     if (!file) return;
+    setImageUploading(true);
     try {
       const result = await onPersistImageFile(file, block.type === "common" ? { purpose: "common" } : undefined);
       onChange({
@@ -24407,15 +24512,17 @@ type GalleryEditorImage = {
     } catch (error) {
       onAlert(error instanceof Error ? error.message : "上传失败，请重试");
     } finally {
+      setImageUploading(false);
       inputEl.value = "";
     }
   }
 
   async function onUploadGalleryImages(event: ChangeEvent<HTMLInputElement>) {
-    if (block.type !== "gallery") return;
+    if (block.type !== "gallery" || galleryUploading) return;
     const inputEl = event.currentTarget;
     const files = Array.from(event.target.files ?? []);
     if (files.length === 0) return;
+    setGalleryUploading(true);
     try {
       const uploaded = await Promise.all(files.map((file) => onPersistImageFile(file, { purpose: "gallery" })));
       const existing = getGalleryImages();
@@ -24438,15 +24545,17 @@ type GalleryEditorImage = {
     } catch (error) {
       onAlert(error instanceof Error ? error.message : "上传失败，请重试");
     } finally {
+      setGalleryUploading(false);
       inputEl.value = "";
     }
   }
 
   async function onReplaceGalleryImage(id: string, event: ChangeEvent<HTMLInputElement>) {
-    if (block.type !== "gallery") return;
+    if (block.type !== "gallery" || galleryUploading) return;
     const inputEl = event.currentTarget;
     const file = event.target.files?.[0];
     if (!file) return;
+    setGalleryUploading(true);
     try {
       const result = await onPersistImageFile(file, { purpose: "gallery" });
       updateGalleryImage(id, { url: result.value });
@@ -24456,6 +24565,7 @@ type GalleryEditorImage = {
     } catch (error) {
       onAlert(error instanceof Error ? error.message : "上传失败，请重试");
     } finally {
+      setGalleryUploading(false);
       inputEl.value = "";
     }
   }
@@ -24479,9 +24589,11 @@ type GalleryEditorImage = {
   }
 
   async function persistProductImageUpload(event: ChangeEvent<HTMLInputElement>) {
+    if (productImageUploading) return null;
     const inputEl = event.currentTarget;
     const file = event.target.files?.[0];
     if (!file) return null;
+    setProductImageUploading(true);
     try {
       const result = await onPersistProductImageFile(file);
       if (!result.externalized) {
@@ -24492,6 +24604,7 @@ type GalleryEditorImage = {
       onAlert(error instanceof Error ? error.message : "上传失败，请重试");
       return null;
     } finally {
+      setProductImageUploading(false);
       inputEl.value = "";
     }
   }
@@ -24520,10 +24633,11 @@ type GalleryEditorImage = {
   }
 
   async function onImportProductImages(event: ChangeEvent<HTMLInputElement>) {
-    if (block.type !== "product") return;
+    if (block.type !== "product" || productImageUploading) return;
     const inputEl = event.currentTarget;
     const files = Array.from(event.target.files ?? []);
     if (files.length === 0) return;
+    setProductImageUploading(true);
     try {
       const uploaded = await Promise.all(files.map(async (file) => ({
         fileName: file.name,
@@ -24547,6 +24661,7 @@ type GalleryEditorImage = {
     } catch (error) {
       onAlert(error instanceof Error ? error.message : "图片导入失败，请重试");
     } finally {
+      setProductImageUploading(false);
       inputEl.value = "";
     }
   }
@@ -25353,39 +25468,50 @@ type GalleryEditorImage = {
             value={imageUrlInput}
             placeholder="https://example.com/bg.jpg"
             onChange={(e) => setImageUrlInput(e.target.value)}
+            disabled={imageUploading}
           />
         </div>
         <div className="flex flex-wrap gap-2">
-          <label className="px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm cursor-pointer">
-            {"上传图片"}
+          <label
+            className={`px-3 py-2 rounded border bg-white text-sm ${
+              imageUploading ? "cursor-wait opacity-60" : "cursor-pointer hover:bg-gray-50"
+            }`}
+          >
+            {imageUploading ? "正在上传..." : "上传图片"}
             <input
               ref={imageInputRef}
               className="hidden"
               type="file"
               accept="image/*"
+              disabled={imageUploading}
               onChange={onUploadImage}
             />
           </label>
           <button
-            className="px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm"
+            className="px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={imageUploading}
             onClick={clearImage}
           >
             {"清除图片"}
           </button>
           <button
-            className="px-3 py-2 rounded bg-black text-white text-sm"
+            className="px-3 py-2 rounded bg-black text-white text-sm disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={imageUploading}
             onClick={applyImageUrl}
           >
             {"应用"}
           </button>
           <button
-            className="px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm"
+            className="px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={imageUploading}
             onClick={() => setImageDialogOpen(false)}
           >
             {"取消"}
           </button>
         </div>
-        <div className="text-xs text-gray-500">{"选择文件后会立即读取，不会自动盖原图片"}</div>
+        <div className="text-xs text-gray-500">
+          {imageUploading ? "正在上传图片，请勿关闭窗口。" : "选择文件后会立即上传并应用到区块背景。"}
+        </div>
       </div>
     </div>
   ) : null;
@@ -26909,17 +27035,20 @@ type GalleryEditorImage = {
               </button>
             </div>
             <label
-              className="absolute right-[56px] top-2 pointer-events-auto px-2 py-1 text-[11px] rounded border bg-white hover:bg-gray-50 cursor-pointer"
+              className={`absolute right-[56px] top-2 pointer-events-auto px-2 py-1 text-[11px] rounded border bg-white ${
+                galleryUploading ? "cursor-wait opacity-60" : "cursor-pointer hover:bg-gray-50"
+              }`}
               onMouseDown={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
               }}
             >
-              {"更改"}
+              {galleryUploading ? "上传中" : "更改"}
               <input
                 className="hidden"
                 type="file"
                 accept="image/*"
+                disabled={galleryUploading}
                 onChange={(event) => {
                   void onReplaceGalleryImage(item.id, event);
                 }}
@@ -27138,14 +27267,19 @@ type GalleryEditorImage = {
                             >
                               {"布局"}
                             </button>
-                            <label className="inline-flex items-center px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm cursor-pointer">
-                              {"上传图片"}
+                            <label
+                              className={`inline-flex items-center px-3 py-2 rounded border bg-white text-sm ${
+                                galleryUploading ? "cursor-wait opacity-60" : "cursor-pointer hover:bg-gray-50"
+                              }`}
+                            >
+                              {galleryUploading ? "正在上传..." : "上传图片"}
                               <input
                                 ref={galleryInputRef}
                                 className="hidden"
                                 type="file"
                                 accept="image/*"
                                 multiple
+                                disabled={galleryUploading}
                                 onChange={onUploadGalleryImages}
                               />
                             </label>
@@ -29462,12 +29596,17 @@ type GalleryEditorImage = {
                           <div className="flex h-full items-center justify-center text-sm text-slate-400">暂无图片</div>
                         )}
                       </div>
-                      <label className="mt-3 inline-flex cursor-pointer items-center rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50">
-                        上传图片
+                      <label
+                        className={`mt-3 inline-flex items-center rounded border bg-white px-3 py-2 text-sm ${
+                          productImageUploading ? "cursor-wait opacity-60" : "cursor-pointer hover:bg-gray-50"
+                        }`}
+                      >
+                        {productImageUploading ? "正在上传..." : "上传图片"}
                         <input
                           className="hidden"
                           type="file"
                           accept="image/*"
+                          disabled={productImageUploading}
                           onChange={async (event) => {
                             const nextImageUrl = await persistProductImageUpload(event);
                             if (!nextImageUrl) return;
@@ -29606,6 +29745,7 @@ type GalleryEditorImage = {
                 type="file"
                 accept="image/*"
                 multiple
+                disabled={productImageUploading}
                 onChange={(event) => {
                   void onImportProductImages(event);
                 }}
@@ -30089,10 +30229,11 @@ type GalleryEditorImage = {
                     </button>
                     <button
                       type="button"
-                      className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50"
+                      className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      disabled={productImageUploading}
                       onClick={() => productImageBatchInputRef.current?.click()}
                     >
-                      {"按编号导入图片"}
+                      {productImageUploading ? "正在上传..." : "按编号导入图片"}
                     </button>
                     <button
                       type="button"
@@ -30579,10 +30720,11 @@ type GalleryEditorImage = {
                     </button>
                     <button
                       type="button"
-                      className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50"
+                      className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      disabled={productImageUploading}
                       onClick={() => productImageBatchInputRef.current?.click()}
                     >
-                      {"按编号导入图片"}
+                      {productImageUploading ? "正在上传..." : "按编号导入图片"}
                     </button>
                     <button
                       type="button"
@@ -30989,6 +31131,13 @@ type GalleryEditorImage = {
       blockLayer: undefined,
       mobileFitScreenWidth: false,
     };
+    const googleReviewsPreviewShellStyle = {
+      ...blockSizeStyle,
+      ...blockPreviewOverflowStyle,
+    };
+    const googleReviewsPreviewShellClass = `relative pointer-events-auto ${
+      isSelected ? "overflow-visible" : blockHeight ? "overflow-auto" : "overflow-visible"
+    }`;
 
     return (
       <section
@@ -31017,9 +31166,9 @@ type GalleryEditorImage = {
         <div
           ref={resizeTargetRef}
           data-block-visual-boundary
-          className={`${cardClass} relative`}
+          className={googleReviewsPreviewShellClass}
           onClick={onSelect}
-          style={blockPreviewShellStyle}
+          style={googleReviewsPreviewShellStyle}
         >
           {imageDialog}
           {imageSettingsDialog}
