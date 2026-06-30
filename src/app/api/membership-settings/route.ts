@@ -49,7 +49,11 @@ export async function PUT(request: Request) {
     return getTrustedMutationRequestErrorResponse();
   }
   try {
-    const body = (await request.json().catch(() => null)) as { siteId?: unknown; settings?: unknown } | null;
+    const body = (await request.json().catch(() => null)) as {
+      siteId?: unknown;
+      settings?: unknown;
+      view?: unknown;
+    } | null;
     const siteId = trimText(body?.siteId, 64);
     if (!isMerchantNumericId(siteId)) {
       return NextResponse.json({ error: "invalid_site_id" }, { status: 400 });
@@ -60,6 +64,7 @@ export async function PUT(request: Request) {
     const settings = await updateMerchantMembershipSettings({
       siteId,
       settings: body?.settings,
+      view: body?.view,
     });
     return NextResponse.json({ ok: true, settings });
   } catch (error) {

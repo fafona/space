@@ -788,6 +788,9 @@ export default function MerchantPointRedemptionCashier({
           return;
         }
       }
+      if (launchAttempt.key === launchKey && now - launchAttempt.at <= PRINT_BRIDGE_LAUNCH_RECHECK_DELAY_MS + 5000) {
+        showGlobalToast("未能自动打开打印助手。请点击打印助手提示手动启动，或下载运行最新版助手。");
+      }
       setPrintBridgeStatus("offline");
       return;
     }
@@ -796,15 +799,26 @@ export default function MerchantPointRedemptionCashier({
 
   const handlePrintBridgeBadgeClick = useCallback(async () => {
     if (printBridgeStatus === "checking" || printBridgeStatus === "updating" || printBridgeUpdating) return;
-    if (printBridgeStatus !== "outdated") {
-      await checkCashierPrintBridge({ force: true });
-      return;
-    }
-
     const printSettings = cashierPrintSettings as MerchantReceiptPrintSettings | null;
     if (!printSettings?.enabled || !printSettings.autoPrintRedemptionReceipt || !printSettings.silentPrintEnabled) {
       setPrintBridgeStatus("disabled");
       showGlobalToast("当前未启用静默自动打印，无法自动更新助手。");
+      return;
+    }
+
+    if (printBridgeStatus === "offline" || printBridgeStatus === "idle") {
+      const launchRequested = requestLocalPrintBridgeLaunch(printSettings, { direct: true });
+      if (launchRequested) {
+        setPrintBridgeStatus("checking");
+        showGlobalToast("正在请求打开打印助手，请在浏览器提示中允许打开。");
+        window.setTimeout(() => {
+          void checkCashierPrintBridge({ force: true });
+        }, PRINT_BRIDGE_LAUNCH_RECHECK_DELAY_MS);
+        return;
+      }
+    }
+    if (printBridgeStatus !== "outdated") {
+      await checkCashierPrintBridge({ force: true });
       return;
     }
 

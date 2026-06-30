@@ -1,6 +1,7 @@
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import {
   createEmptyMerchantMembershipSettings,
+  type MerchantMemberSettingsView,
   normalizeMerchantMembershipSettings,
   type MerchantMembershipSettings,
 } from "@/lib/merchantMembershipSettings";
@@ -19,6 +20,39 @@ function requireMembershipSettingsStoreClient() {
 
 function trimText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+function normalizeSettingsView(value: unknown): MerchantMemberSettingsView | "" {
+  const text = trimText(value, 64);
+  return text === "list" ||
+    text === "rechargePlans" ||
+    text === "redemptionCategories" ||
+    text === "redemptionItems" ||
+    text === "levels" ||
+    text === "pointsRules"
+    ? text
+    : "";
+}
+
+function mergeSettingsWithExisting(
+  incoming: MerchantMembershipSettings,
+  existing: MerchantMembershipSettings,
+  view: MerchantMemberSettingsView | "",
+): MerchantMembershipSettings {
+  if (!existing.redemptionItems.length && !existing.redemptionCategories.length) return incoming;
+  return {
+    ...incoming,
+    redemptionItems:
+      view !== "redemptionItems" && incoming.redemptionItems.length === 0 && existing.redemptionItems.length > 0
+        ? existing.redemptionItems
+        : incoming.redemptionItems,
+    redemptionCategories:
+      view !== "redemptionCategories" &&
+      incoming.redemptionCategories.length === 0 &&
+      existing.redemptionCategories.length > 0
+        ? existing.redemptionCategories
+        : incoming.redemptionCategories,
+  };
 }
 
 export async function getMerchantMembershipSettings(siteId: string): Promise<MerchantMembershipSettings> {
@@ -78,18 +112,26 @@ export function buildRedemptionCashierSettings(settings: MerchantMembershipSetti
 export async function updateMerchantMembershipSettings(input: {
   siteId: string;
   settings: unknown;
+  view?: unknown;
 }): Promise<MerchantMembershipSettings> {
   const normalizedSiteId = trimText(input.siteId, 64);
   if (!normalizedSiteId) throw new Error("invalid_site_id");
   const supabase = requireMembershipSettingsStoreClient();
   const now = new Date().toISOString();
-  const settings = normalizeMerchantMembershipSettings(normalizedSiteId, {
+  const existing =
+    (await loadStoredMerchantMembershipSettings(supabase, normalizedSiteId)) ??
+    createEmptyMerchantMembershipSettings(normalizedSiteId);
+  const incomingSettings = normalizeMerchantMembershipSettings(normalizedSiteId, {
     ...((input.settings && typeof input.settings === "object" && !Array.isArray(input.settings)
       ? input.settings
       : {}) as Record<string, unknown>),
     siteId: normalizedSiteId,
     updatedAt: now,
   });
+  const settings = normalizeMerchantMembershipSettings(
+    normalizedSiteId,
+    mergeSettingsWithExisting(incomingSettings, existing, normalizeSettingsView(input.view)),
+  );
   const saved = await saveStoredMerchantMembershipSettings(supabase, {
     siteId: normalizedSiteId,
     settings,

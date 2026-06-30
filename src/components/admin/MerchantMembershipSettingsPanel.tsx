@@ -527,7 +527,7 @@ export default function MerchantMembershipSettingsPanel({
                 "Content-Type": "application/json",
                 accept: "application/json",
               },
-              body: JSON.stringify({ siteId: normalizedSiteId, settings: normalized }),
+              body: JSON.stringify({ siteId: normalizedSiteId, settings: normalized, view }),
             }),
           );
           lastNetworkError = null;

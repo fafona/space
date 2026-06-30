@@ -1268,7 +1268,10 @@ export async function inspectLocalPrintBridge(inputSettings: MerchantReceiptPrin
   }
 }
 
-export function requestLocalPrintBridgeLaunch(inputSettings: MerchantReceiptPrintSettings | null | undefined) {
+export function requestLocalPrintBridgeLaunch(
+  inputSettings: MerchantReceiptPrintSettings | null | undefined,
+  options: { direct?: boolean } = {},
+) {
   if (typeof window === "undefined" || typeof document === "undefined") return false;
   const settings = normalizeReceiptPrintSettingsForClient(inputSettings);
   let port = "17658";
@@ -1280,6 +1283,10 @@ export function requestLocalPrintBridgeLaunch(inputSettings: MerchantReceiptPrin
   }
   const launchUrl = `faolla-print-helper://start?port=${encodeURIComponent(port)}`;
   try {
+    if (options.direct) {
+      window.location.href = launchUrl;
+      return true;
+    }
     const frame = document.createElement("iframe");
     frame.style.display = "none";
     frame.setAttribute("aria-hidden", "true");
