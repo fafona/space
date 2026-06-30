@@ -2272,7 +2272,7 @@ export default function MerchantPointRedemptionCashier({
   }, [view]);
 
   const printBridgeBadge =
-    view === "cashier" ? (
+    view === "cashier" && printBridgeStatus !== "online" ? (
       <button
         type="button"
         className={`print-bridge-badge ${printBridgeStatus}`}
