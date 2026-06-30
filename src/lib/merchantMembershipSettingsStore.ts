@@ -2,8 +2,11 @@ import {
   normalizeMerchantMembershipSettings,
   type MerchantMembershipSettings,
 } from "@/lib/merchantMembershipSettings";
+import { saveMerchantSnapshotHistory } from "@/lib/merchantSnapshotHistoryStore";
 
 const MERCHANT_MEMBERSHIP_SETTINGS_SLUG_PREFIX = "__merchant_membership_settings__:";
+const MERCHANT_MEMBERSHIP_SETTINGS_HISTORY_SLUG_PREFIX = "__merchant_membership_settings_history__:";
+const MERCHANT_MEMBERSHIP_SETTINGS_HISTORY_BACKUP_SLUG_PREFIX = "__merchant_membership_settings_history_backup__:";
 
 export type MerchantMembershipSettingsStoreClient = {
   // Supabase query builders are heavily generic; this store only relies on runtime chaining.
@@ -51,6 +54,14 @@ function isMissingUpdatedAtColumn(message: string) {
 
 function buildSettingsSlug(siteId: string) {
   return `${MERCHANT_MEMBERSHIP_SETTINGS_SLUG_PREFIX}${siteId}`;
+}
+
+function buildSettingsHistorySlug(siteId: string) {
+  return `${MERCHANT_MEMBERSHIP_SETTINGS_HISTORY_SLUG_PREFIX}${siteId}`;
+}
+
+function buildSettingsHistoryBackupSlug(siteId: string) {
+  return `${MERCHANT_MEMBERSHIP_SETTINGS_HISTORY_BACKUP_SLUG_PREFIX}${siteId}`;
 }
 
 async function queryStoredSettingsRows(supabase: MerchantMembershipSettingsStoreClient, siteId: string) {
@@ -123,6 +134,7 @@ export async function saveStoredMerchantMembershipSettings(
     siteId: string;
     settings: MerchantMembershipSettings;
     updatedAt?: string | null;
+    view?: unknown;
   },
 ): Promise<{ error: string | null }> {
   const normalizedSiteId = normalizeText(input.siteId);
@@ -135,6 +147,17 @@ export async function saveStoredMerchantMembershipSettings(
     updatedAt,
   });
   const existing = (await queryStoredSettingsRows(supabase, normalizedSiteId))[0];
+  const beforeSettings = existing ? normalizeMerchantMembershipSettings(normalizedSiteId, existing.blocks) : null;
+  const history = await saveMerchantSnapshotHistory(supabase, {
+    siteId: normalizedSiteId,
+    slug: buildSettingsHistorySlug(normalizedSiteId),
+    backupSlug: buildSettingsHistoryBackupSlug(normalizedSiteId),
+    source: normalizeText(input.view) || "membership-settings",
+    before: beforeSettings,
+    after: settings,
+    at: updatedAt,
+  });
+  if (history.error) return { error: `membership_settings_history_save_failed:${history.error}` };
 
   const updateExisting = async (body: Record<string, unknown>) => {
     if (existing?.id === undefined || existing?.id === null) return { error: "missing_existing_id" };

@@ -1,6 +1,9 @@
 import { normalizeMerchantMembershipRecords, type MerchantMembershipRecord } from "@/lib/merchantMemberships";
+import { saveMerchantSnapshotHistory } from "@/lib/merchantSnapshotHistoryStore";
 
 const MERCHANT_MEMBERSHIP_SLUG_PREFIX = "__merchant_memberships__:";
+const MERCHANT_MEMBERSHIP_HISTORY_SLUG_PREFIX = "__merchant_memberships_history__:";
+const MERCHANT_MEMBERSHIP_HISTORY_BACKUP_SLUG_PREFIX = "__merchant_memberships_history_backup__:";
 
 export type MerchantMembershipsStoreClient = {
   // Supabase query builders are heavily generic; this store only relies on runtime chaining.
@@ -54,6 +57,14 @@ function isMissingUpdatedAtColumn(message: string) {
 
 function buildMembershipsSlug(siteId: string) {
   return `${MERCHANT_MEMBERSHIP_SLUG_PREFIX}${siteId}`;
+}
+
+function buildMembershipsHistorySlug(siteId: string) {
+  return `${MERCHANT_MEMBERSHIP_HISTORY_SLUG_PREFIX}${siteId}`;
+}
+
+function buildMembershipsHistoryBackupSlug(siteId: string) {
+  return `${MERCHANT_MEMBERSHIP_HISTORY_BACKUP_SLUG_PREFIX}${siteId}`;
 }
 
 async function queryStoredMembershipRows(supabase: MerchantMembershipsStoreClient, siteId: string) {
@@ -160,6 +171,17 @@ export async function saveStoredMerchantMemberships(
   const memberships = normalizeMerchantMembershipRecords(input.memberships).filter((membership) => membership.siteId === normalizedSiteId);
   const updatedAt = normalizeText(input.updatedAt) || new Date().toISOString();
   const existing = (await queryStoredMembershipRows(supabase, normalizedSiteId))[0];
+  const beforeMemberships = existing ? normalizeMerchantMembershipRecords(existing.blocks) : null;
+  const history = await saveMerchantSnapshotHistory(supabase, {
+    siteId: normalizedSiteId,
+    slug: buildMembershipsHistorySlug(normalizedSiteId),
+    backupSlug: buildMembershipsHistoryBackupSlug(normalizedSiteId),
+    source: "merchant-memberships",
+    before: beforeMemberships,
+    after: memberships,
+    at: updatedAt,
+  });
+  if (history.error) return { error: `merchant_memberships_history_save_failed:${history.error}` };
 
   const updateExisting = async (body: Record<string, unknown>) => {
     if (existing?.id === undefined || existing?.id === null) return { error: "missing_existing_id" };

@@ -136,6 +136,7 @@ export async function updateMerchantMembershipSettings(input: {
     siteId: normalizedSiteId,
     settings,
     updatedAt: now,
+    view: normalizeSettingsView(input.view) || "membership-settings",
   });
   if (saved.error) throw new Error(saved.error);
   return settings;
@@ -169,6 +170,7 @@ export async function updateMerchantMembershipPrintSettings(input: {
     siteId: normalizedSiteId,
     settings,
     updatedAt: now,
+    view: "print-settings",
   });
   if (saved.error) throw new Error(saved.error);
   return settings;
