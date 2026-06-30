@@ -1125,6 +1125,11 @@ export type PrintHelperUpdateManifest = {
     sha256?: unknown;
     sizeBytes?: unknown;
   };
+  installer?: {
+    url?: unknown;
+    sha256?: unknown;
+    sizeBytes?: unknown;
+  };
 };
 
 export type LocalPrintBridgeInspection = {
@@ -1204,6 +1209,17 @@ export function resolvePrintHelperPackageUrl(manifest: PrintHelperUpdateManifest
     return new URL(packageUrl, window.location.origin).toString();
   } catch {
     return packageUrl;
+  }
+}
+
+export function resolvePrintHelperInstallerUrl(manifest: PrintHelperUpdateManifest | null | undefined) {
+  const installerUrl = typeof manifest?.installer?.url === "string" ? manifest.installer.url.trim() : "";
+  if (!installerUrl) return "";
+  if (typeof window === "undefined") return installerUrl;
+  try {
+    return new URL(installerUrl, window.location.origin).toString();
+  } catch {
+    return installerUrl;
   }
 }
 

@@ -1,20 +1,28 @@
 {
   "ok": true,
   "name": "faolla-print-helper",
-  "version": "1.5.3",
-  "latestVersion": "1.5.3",
+  "version": "1.5.4",
+  "latestVersion": "1.5.4",
   "minimumVersion": "1.5.3",
   "minimumWebVersion": "1.5.0",
-  "mandatory": true,
+  "mandatory": false,
   "publishedAt": "2026-06-30T00:00:00Z",
   "package": {
-    "url": "/downloads/print-helper/FAOLLA-print-helper-1.5.3.zip",
-    "sha256": "01b45c45e494220c47218dff7ce78b1812a37d03628e1a9f6f0b77140335d13c",
-    "sizeBytes": 34101520
+    "url": "/downloads/print-helper/FAOLLA-print-helper-1.5.4.zip",
+    "sha256": "50daa1a26727a388efb7523a042d5038bc0c26e3e4391628680d371f9d9be8ad",
+    "sizeBytes": 34104558
+  },
+  "installer": {
+    "url": "/downloads/print-helper/install-faolla-print-helper.cmd",
+    "sha256": "2513f3cda35d9ec9f972e442fa6d8435f73015ac2f99f0b1a9039ca18ce4da48",
+    "sizeBytes": 1044,
+    "scriptUrl": "/downloads/print-helper/install-faolla-print-helper.ps1",
+    "scriptSha256": "b3c3f58095c4e49aae3da71d60eec17bcfe0a065337389075b8b5df6ae0a00e5",
+    "scriptSizeBytes": 6095
   },
   "releaseNotes": [
-    "检测到本机打印助手未打开时，网页会尝试通过 faolla-print-helper:// 自动拉起已安装的助手。",
-    "新版助手启动时会为当前 Windows 用户注册 faolla-print-helper:// 启动协议。",
-    "保留 1.5.2 的打印队列、开机自启动、自动更新和小票图片打印优化。"
+    "Added a one-click installer that installs to C:\\FAOLLA\\打印助手.",
+    "The installer registers faolla-print-helper://, enables current-user startup, and starts the helper.",
+    "The installer verifies the official package SHA256 before replacing files."
   ]
 }

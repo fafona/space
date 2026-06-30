@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const VERSION = "1.5.3";
+const VERSION = "1.5.4";
 const PROTOCOL_VERSION = 2;
 const MINIMUM_WEB_VERSION = "1.5.0";
 const DEFAULT_UPDATE_MANIFEST_URL = "https://faolla.com/downloads/print-helper/latest.json";

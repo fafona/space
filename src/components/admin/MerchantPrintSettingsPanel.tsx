@@ -37,7 +37,9 @@ import {
   inspectLocalPrintBridgeAutoStart,
   listLocalPrintBridgePrinters,
   normalizeReceiptPrintSettingsForClient,
+  requestLocalPrintBridgeLaunch,
   requestLocalPrintBridgeUpdate,
+  resolvePrintHelperInstallerUrl,
   resolvePrintHelperPackageUrl,
   sendRedemptionReceiptToLocalBridge,
   setLocalPrintBridgeAutoStart,
@@ -546,6 +548,7 @@ export default function MerchantPrintSettingsPanel({
   const printHelperLatestVersion = getPrintHelperManifestLatestVersion(printHelperManifest);
   const printHelperMinimumVersion = getPrintHelperManifestMinimumVersion(printHelperManifest);
   const printHelperPackageUrl = resolvePrintHelperPackageUrl(printHelperManifest);
+  const printHelperInstallerUrl = resolvePrintHelperInstallerUrl(printHelperManifest);
   const bridgeCurrentVersion = bridgeInspection?.version || "";
   const receiptPreviewPaperWidthPx = Math.min(320, Math.max(220, printSettings.paperWidthMm * RECEIPT_PREVIEW_MM_SCALE));
   const receiptPreviewMarginPx = {
@@ -764,6 +767,40 @@ export default function MerchantPrintSettingsPanel({
     return manifest;
   }, []);
 
+  const downloadPrintHelperInstaller = useCallback(
+    (url: string) => {
+      if (typeof document === "undefined") return false;
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = url.toLowerCase().endsWith(".cmd") ? "install-faolla-print-helper.cmd" : "";
+      link.rel = "noreferrer";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      return true;
+    },
+    [],
+  );
+
+  const confirmPrintHelperInstallerDownload = useCallback(async () => {
+    const manifest = printHelperManifest ?? (await refreshPrintHelperManifest());
+    const installerUrl = resolvePrintHelperInstallerUrl(manifest);
+    const packageUrl = resolvePrintHelperPackageUrl(manifest);
+    const downloadUrl = installerUrl || packageUrl;
+    if (!downloadUrl) {
+      setError("没有读取到打印助手下载地址，请稍后重试。");
+      return false;
+    }
+    const confirmed = window.confirm(
+      "没有连接到本机打印助手。网页不能直接读取或执行 C:\\FAOLLA\\打印助手 中的文件。\n\n是否下载 FAOLLA 打印助手一键安装器？下载后请运行它，安装器会自动安装到固定位置、注册启动协议并启动助手。",
+    );
+    if (!confirmed) return false;
+    downloadPrintHelperInstaller(downloadUrl);
+    setNotice("已开始下载打印助手安装器。下载完成后请运行它，安装器会自动安装到 C:\\FAOLLA\\打印助手 并启动助手。");
+    showGlobalToast("已开始下载打印助手安装器。下载完成后请运行它完成安装。");
+    return true;
+  }, [downloadPrintHelperInstaller, printHelperManifest, refreshPrintHelperManifest]);
+
   const loadSettings = useCallback(async () => {
     if (!/^\d{8}$/.test(normalizedSiteId)) {
       const emptySettings = createEmptyMerchantMembershipSettings(normalizedSiteId);
@@ -879,6 +916,7 @@ export default function MerchantPrintSettingsPanel({
       setBridgeStatus(nextStatus);
       if (!inspection.online) {
         setBridgeAutoStart(null);
+        await confirmPrintHelperInstallerDownload();
         setNotice("没有连接到本机打印助手，请先在收银电脑安装并运行 FAOLLA 打印助手。");
       } else if (nextStatus === "outdated") {
         setBridgeAutoStart(null);
@@ -891,6 +929,20 @@ export default function MerchantPrintSettingsPanel({
     } finally {
       setBridgeChecking(false);
     }
+  }
+
+  async function startBridgeHelper() {
+    setError("");
+    setNotice("");
+    const launched = requestLocalPrintBridgeLaunch(printSettings, { direct: true });
+    if (!launched) {
+      await confirmPrintHelperInstallerDownload();
+      return;
+    }
+    setNotice("已请求打开打印助手。若浏览器弹出提示，请允许打开 FAOLLA 打印助手；几秒后会自动重新检测。");
+    window.setTimeout(() => {
+      void checkBridge();
+    }, 3500);
   }
 
   async function refreshBridgePrinters() {
@@ -1367,6 +1419,14 @@ export default function MerchantPrintSettingsPanel({
                 </button>
                 <button
                   type="button"
+                  className="rounded-xl border border-emerald-200 bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                  onClick={() => void startBridgeHelper()}
+                  disabled={bridgeChecking || bridgeUpdating}
+                >
+                  启动助手
+                </button>
+                <button
+                  type="button"
                   className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
                   onClick={() => void refreshBridgePrinters()}
                   disabled={bridgeChecking || bridgeUpdating}
@@ -1406,6 +1466,16 @@ export default function MerchantPrintSettingsPanel({
                   >
                     下载最新版
                   </a>
+                ) : null}
+                {printHelperInstallerUrl ? (
+                  <button
+                    type="button"
+                    className="rounded-xl border border-amber-200 bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-600 disabled:opacity-60"
+                    onClick={() => void confirmPrintHelperInstallerDownload()}
+                    disabled={bridgeChecking || bridgeUpdating}
+                  >
+                    安装/修复助手
+                  </button>
                 ) : null}
               </div>
             </div>
