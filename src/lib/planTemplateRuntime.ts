@@ -135,8 +135,13 @@ const BUTTON_STYLE_KEYS: Partial<Record<Block["type"], readonly string[]>> = {
     "productTagBgOpacity",
     "productTagActiveBgColor",
     "productTagActiveBgOpacity",
+    "productTagBorderStyle",
     "productTagFontSize",
+    "productTagTextAlign",
     "productTagWidth",
+    "productTagRowGap",
+    "productItemGap",
+    "productCartQuantityMode",
   ],
 };
 

@@ -11,10 +11,12 @@ import type {
 } from "./platformControlStore";
 import type {
   ProductContainerMode,
+  ProductCartQuantityMode,
   ProductImageAspectRatio,
   ProductItemInput,
   ProductLayoutPreset,
   ProductPriceAlign,
+  ProductTagBorderStyle,
   ProductTagPosition,
 } from "@/lib/productBlock";
 import { faollaHomeBlocks } from "./faollaHomeLayout";
@@ -335,14 +337,19 @@ type ProductProps = BackgroundEditableProps &
     productPriceAlign?: ProductPriceAlign;
     productTagOptions?: string[];
     productTagPosition?: ProductTagPosition;
+    productTagBorderStyle?: ProductTagBorderStyle;
+    productTagTextAlign?: ProductPriceAlign;
     productTagFontSize?: number;
     productTagWidth?: number;
+    productTagRowGap?: number;
     productTagHideUnselected?: boolean;
     productGroupByTag?: boolean;
     productTagBgColor?: string;
     productTagBgOpacity?: number;
     productTagActiveBgColor?: string;
     productTagActiveBgOpacity?: number;
+    productItemGap?: number;
+    productCartQuantityMode?: ProductCartQuantityMode;
     productContainerMode?: ProductContainerMode;
     productItemsPerPage?: number;
     productDetailImageSize?: number;

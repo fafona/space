@@ -9,23 +9,28 @@ import {
   filterProductItemsByKeyword,
   groupArrangedProductItemsByTag,
   isMeaningfulProductItem,
+  normalizeProductCartQuantityMode,
   normalizeProductContainerMode,
   normalizeProductImageAspectRatio,
   normalizeProductItems,
   normalizeProductItemsPerPage,
   normalizeProductLayoutPreset,
   normalizeProductPriceAlign,
+  normalizeProductSpacing,
+  normalizeProductTagBorderStyle,
   normalizeProductTagOptions,
   normalizeProductTagPosition,
   productContainerViewportHeight,
   productGridClass,
   productPriceText,
+  type ProductCartQuantityMode,
   type ProductContainerMode,
   type ProductImageAspectRatio,
   type ProductItem,
   type ProductItemInput,
   type ProductLayoutPreset,
   type ProductPriceAlign,
+  type ProductTagBorderStyle,
   type ProductTagPosition,
 } from "@/lib/productBlock";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
@@ -60,14 +65,19 @@ type ProductBlockProps = BackgroundEditableProps &
     productPriceAlign?: ProductPriceAlign;
     productTagOptions?: string[];
     productTagPosition?: ProductTagPosition;
+    productTagBorderStyle?: ProductTagBorderStyle;
+    productTagTextAlign?: ProductPriceAlign;
     productTagFontSize?: number;
     productTagWidth?: number;
+    productTagRowGap?: number;
     productTagHideUnselected?: boolean;
     productGroupByTag?: boolean;
     productTagBgColor?: string;
     productTagBgOpacity?: number;
     productTagActiveBgColor?: string;
     productTagActiveBgOpacity?: number;
+    productItemGap?: number;
+    productCartQuantityMode?: ProductCartQuantityMode;
     productContainerMode?: ProductContainerMode;
     productItemsPerPage?: number;
     productDetailImageSize?: number;
@@ -207,6 +217,111 @@ function getReadableTagTextColor(value: string) {
   return luminance > 0.68 ? "#0f172a" : "#ffffff";
 }
 
+function getFirstHexColor(value: string, fallback: string) {
+  const trimmed = value.trim();
+  if (/^#([0-9a-fA-F]{6})$/.test(trimmed)) return trimmed;
+  const firstHex = trimmed.match(/#([0-9a-fA-F]{6})/);
+  return firstHex ? `#${firstHex[1]}` : fallback;
+}
+
+function getProductTagBorderColor(value: string, opacity = 0.5) {
+  return toRgba(getFirstHexColor(value, "#ffffff"), opacity);
+}
+
+function getProductTagTextColor(borderStyle: ProductTagBorderStyle, value: string) {
+  if (borderStyle === "none" || borderStyle === "divider") {
+    return getFirstHexColor(value, "#0f172a");
+  }
+  return getReadableTagTextColor(value);
+}
+
+function getProductTagJustifyContent(align: ProductPriceAlign) {
+  if (align === "center") return "center";
+  if (align === "right") return "flex-end";
+  return "flex-start";
+}
+
+function getProductTagButtonStyle(options: {
+  borderStyle: ProductTagBorderStyle;
+  active: boolean;
+  bgColor: string;
+  bgOpacity: number;
+  activeBgColor: string;
+  activeBgOpacity: number;
+  fontSize: number;
+  textAlign: ProductPriceAlign;
+  width: number;
+}): CSSProperties {
+  const color = options.active ? options.activeBgColor : options.bgColor;
+  const opacity = options.active ? options.activeBgOpacity : options.bgOpacity;
+  const base: CSSProperties = {
+    width: `${options.width}px`,
+    color: getProductTagTextColor(options.borderStyle, color),
+    fontSize: `${options.fontSize}px`,
+    justifyContent: getProductTagJustifyContent(options.textAlign),
+    textAlign: options.textAlign,
+  };
+
+  if (options.borderStyle === "none") {
+    return {
+      ...base,
+      backgroundColor: "transparent",
+      backgroundImage: "none",
+      border: "1px solid transparent",
+      boxShadow: "none",
+    };
+  }
+
+  if (options.borderStyle === "divider") {
+    return {
+      ...base,
+      backgroundColor: "transparent",
+      backgroundImage: "none",
+      border: "0",
+      borderRadius: 0,
+      boxShadow: "none",
+      paddingLeft: "0.5rem",
+      paddingRight: "0.5rem",
+    };
+  }
+
+  const layerStyle = getColorLayerStyle(color, opacity);
+  const borderColor = getProductTagBorderColor(color, options.active ? 0.72 : 0.5);
+  const borderStyle = options.borderStyle === "dashed" ? "dashed" : options.borderStyle === "double" ? "double" : "solid";
+  return {
+    ...base,
+    ...layerStyle,
+    border: `${options.borderStyle === "double" ? 3 : 1}px ${borderStyle} ${
+      options.borderStyle === "glass" ? "rgba(255,255,255,0.36)" : borderColor
+    }`,
+    borderRadius: options.borderStyle === "rectangle" ? "6px" : "9999px",
+    backdropFilter: options.borderStyle === "glass" ? "blur(12px)" : undefined,
+  };
+}
+
+function getProductTagDividerStyle(
+  borderStyle: ProductTagBorderStyle,
+  color: string,
+  position: ProductTagPosition,
+  index: number,
+  total: number,
+): CSSProperties {
+  if (borderStyle !== "divider" || index >= total - 1) return {};
+  const borderColor = getProductTagBorderColor(color, 0.44);
+  if (position === "top") {
+    return {
+      borderRight: `1px solid ${borderColor}`,
+      marginRight: "2px",
+      paddingRight: "12px",
+    };
+  }
+  return {
+    borderBottom: `1px solid ${borderColor}`,
+    marginBottom: "2px",
+    paddingBottom: "8px",
+  };
+}
+
 function getProductCardDomId(id: string) {
   return `product-card-${id}`;
 }
@@ -322,6 +437,7 @@ function renderProductCard(
     priceTextStyle: CSSProperties;
     onOpen: (id: string) => void;
     cartEnabled?: boolean;
+    cartQuantityMode?: ProductCartQuantityMode;
     quantity?: number;
     onIncreaseQuantity?: (item: ReturnType<typeof normalizeProductItems>[number]) => void;
     onDecreaseQuantity?: (item: ReturnType<typeof normalizeProductItems>[number]) => void;
@@ -378,24 +494,10 @@ function renderProductCard(
       style={{ ...cardBackgroundStyle, ...cardBorderInlineStyle, ...listCardStyle }}
     >
       {options.cartEnabled ? (
-        <div className="absolute right-3 top-3 z-[2] flex items-center gap-1 rounded-full border border-slate-200 bg-white/95 px-1.5 py-1 shadow-sm backdrop-blur">
+        options.cartQuantityMode === "plus-only" ? (
           <button
             type="button"
-            className="flex h-7 w-7 items-center justify-center rounded-full text-base font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-35"
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              options.onDecreaseQuantity?.(item);
-            }}
-            disabled={!options.quantity}
-            aria-label="减少购买数量"
-          >
-            -
-          </button>
-          <div className="min-w-[1.5rem] text-center text-xs font-semibold text-slate-700">{options.quantity ?? 0}</div>
-          <button
-            type="button"
-            className="flex h-7 w-7 items-center justify-center rounded-full text-base font-semibold text-slate-700 transition hover:bg-slate-100"
+            className="absolute right-3 top-3 z-[2] flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-lg font-semibold text-slate-700 shadow-sm backdrop-blur transition hover:bg-slate-100"
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
@@ -405,7 +507,36 @@ function renderProductCard(
           >
             +
           </button>
-        </div>
+        ) : (
+          <div className="absolute right-3 top-3 z-[2] flex items-center gap-1 rounded-full border border-slate-200 bg-white/95 px-1.5 py-1 shadow-sm backdrop-blur">
+            <button
+              type="button"
+              className="flex h-7 w-7 items-center justify-center rounded-full text-base font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-35"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                options.onDecreaseQuantity?.(item);
+              }}
+              disabled={!options.quantity}
+              aria-label="减少购买数量"
+            >
+              -
+            </button>
+            <div className="min-w-[1.5rem] text-center text-xs font-semibold text-slate-700">{options.quantity ?? 0}</div>
+            <button
+              type="button"
+              className="flex h-7 w-7 items-center justify-center rounded-full text-base font-semibold text-slate-700 transition hover:bg-slate-100"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                options.onIncreaseQuantity?.(item);
+              }}
+              aria-label="增加购买数量"
+            >
+              +
+            </button>
+          </div>
+        )
       ) : null}
       <div
         className={`relative overflow-hidden bg-slate-100 ${options.list ? "shrink-0 self-start rounded-xl" : ""}`}
@@ -479,6 +610,8 @@ export default function ProductBlock(props: ProductBlockProps) {
   const showDescription = props.productShowDescription !== false;
   const priceAlign = normalizeProductPriceAlign(props.productPriceAlign);
   const tagPosition = normalizeProductTagPosition(props.productTagPosition);
+  const tagBorderStyle = normalizeProductTagBorderStyle(props.productTagBorderStyle);
+  const tagTextAlign = normalizeProductPriceAlign(props.productTagTextAlign);
   const tagFontSize =
     typeof props.productTagFontSize === "number" && Number.isFinite(props.productTagFontSize)
       ? Math.max(10, Math.min(28, Math.round(props.productTagFontSize)))
@@ -487,6 +620,7 @@ export default function ProductBlock(props: ProductBlockProps) {
     typeof props.productTagWidth === "number" && Number.isFinite(props.productTagWidth)
       ? Math.max(56, Math.min(220, Math.round(props.productTagWidth)))
       : 92;
+  const tagRowGap = normalizeProductSpacing(props.productTagRowGap, 8, 0, 48);
   const tagHideUnselected = props.productTagHideUnselected !== false;
   const tagBgColor = (props.productTagBgColor ?? "#0f172a").trim() || "#0f172a";
   const tagBgOpacity =
@@ -498,6 +632,8 @@ export default function ProductBlock(props: ProductBlockProps) {
     typeof props.productTagActiveBgOpacity === "number" && Number.isFinite(props.productTagActiveBgOpacity)
       ? Math.max(0, Math.min(1, props.productTagActiveBgOpacity))
       : 0.94;
+  const productItemGap = normalizeProductSpacing(props.productItemGap, 16, 0, 48);
+  const cartQuantityMode = normalizeProductCartQuantityMode(props.productCartQuantityMode);
   const detailImageSize =
     typeof props.productDetailImageSize === "number" && Number.isFinite(props.productDetailImageSize)
       ? Math.max(180, Math.min(720, Math.round(props.productDetailImageSize)))
@@ -589,7 +725,7 @@ export default function ProductBlock(props: ProductBlockProps) {
   const pageStart = normalizedPageIndex * itemsPerPage;
   const pagedProducts = containerMode === "paged" ? filteredProducts.slice(pageStart, pageStart + itemsPerPage) : filteredProducts;
   const scrollViewportHeight =
-    containerMode === "scroll" ? productContainerViewportHeight(layoutPreset, imageSize, itemsPerPage) : null;
+    containerMode === "scroll" ? productContainerViewportHeight(layoutPreset, imageSize, itemsPerPage, productItemGap) : null;
   const activeProduct = arrangedProducts.find((item) => item.id === activeProductId) ?? products.find((item) => item.id === activeProductId) ?? null;
   const placeholderCount =
     containerMode === "paged" && layoutPreset !== "spotlight" ? Math.max(0, itemsPerPage - pagedProducts.length) : 0;
@@ -931,6 +1067,7 @@ export default function ProductBlock(props: ProductBlockProps) {
       priceTextStyle: productPriceTextStyle,
       onOpen: setActiveProductId,
       cartEnabled,
+      cartQuantityMode,
       quantity: cartQuantities[item.id] ?? 0,
       onIncreaseQuantity: handleIncreaseQuantity,
       onDecreaseQuantity: handleDecreaseQuantity,
@@ -969,56 +1106,58 @@ export default function ProductBlock(props: ProductBlockProps) {
       </div>
     ) : null;
 
-  const renderTagFilters = () =>
-    productTags.length > 0 ? (
+  const renderTagFilters = () => {
+    if (productTags.length === 0) return null;
+    const filterItems = [
+      ...(tagHideUnselected ? [{ key: "__all__", label: "全部", value: null as string | null }] : []),
+      ...productTags.map((tag) => ({ key: tag, label: tag, value: tag })),
+    ];
+    return (
       <div
         className={
           tagPosition === "top"
-            ? "mt-5 flex flex-wrap gap-2"
+            ? "mt-5 flex flex-wrap"
             : tagPosition === "left"
-              ? "mt-5 mr-4 flex float-left w-max flex-col items-start gap-2"
-              : "mt-5 ml-4 flex float-right w-max flex-col items-end gap-2"
+              ? "mt-5 mr-4 flex float-left w-max flex-col items-start"
+              : "mt-5 ml-4 flex float-right w-max flex-col items-end"
         }
+        style={{ gap: `${tagRowGap}px` }}
       >
-        {tagHideUnselected ? (
-          <button
-            type="button"
-            className={`truncate rounded-full border border-white/30 px-3 py-1.5 transition-opacity ${
-              selectedTag === null ? "ring-2 ring-slate-900/30 shadow-sm" : ""
-            }`}
-            style={{
-              width: `${tagWidth}px`,
-              ...(selectedTag === null
-                ? getColorLayerStyle(tagActiveBgColor, tagActiveBgOpacity)
-                : getColorLayerStyle(tagBgColor, tagBgOpacity)),
-              color: getReadableTagTextColor(selectedTag === null ? tagActiveBgColor : tagBgColor),
-              fontSize: `${tagFontSize}px`,
-            }}
-            onClick={() => handleSelectTag(null)}
-          >
-            全部
-          </button>
-        ) : null}
-        {productTags.map((tag) => (
-          <button
-            key={tag}
-            type="button"
-            className={`truncate rounded-full border border-white/30 px-3 py-1.5 transition-opacity ${selectedTag === tag ? "ring-2 ring-slate-900/30 shadow-sm" : ""}`}
-            style={{
-              width: `${tagWidth}px`,
-              ...(selectedTag === tag
-                ? getColorLayerStyle(tagActiveBgColor, tagActiveBgOpacity)
-                : getColorLayerStyle(tagBgColor, tagBgOpacity)),
-              color: getReadableTagTextColor(selectedTag === tag ? tagActiveBgColor : tagBgColor),
-              fontSize: `${tagFontSize}px`,
-            }}
-            onClick={() => handleSelectTag(tag)}
-          >
-            {tag}
-          </button>
-        ))}
+        {filterItems.map((filter, index) => {
+          const active = filter.value === null ? selectedTag === null : selectedTag === filter.value;
+          const color = active ? tagActiveBgColor : tagBgColor;
+          return (
+            <button
+              key={filter.key}
+              type="button"
+              className={`inline-flex min-h-[2.25rem] items-center truncate px-3 py-1.5 transition-opacity ${
+                active ? "ring-2 ring-slate-900/30 shadow-sm" : ""
+              }`}
+              style={{
+                ...getProductTagButtonStyle({
+                  borderStyle: tagBorderStyle,
+                  active,
+                  bgColor: tagBgColor,
+                  bgOpacity: tagBgOpacity,
+                  activeBgColor: tagActiveBgColor,
+                  activeBgOpacity: tagActiveBgOpacity,
+                  fontSize: tagFontSize,
+                  textAlign: tagTextAlign,
+                  width: tagWidth,
+                }),
+                ...getProductTagDividerStyle(tagBorderStyle, color, tagPosition, index, filterItems.length),
+              }}
+              onClick={() => handleSelectTag(filter.value)}
+            >
+              <span className="min-w-0 truncate" style={{ width: "100%", textAlign: tagTextAlign }}>
+                {filter.label}
+              </span>
+            </button>
+          );
+        })}
       </div>
-    ) : null;
+    );
+  };
 
   const renderProductGroupHeading = (label: string, key: string) => (
     <div key={key} data-product-group-key={getProductGroupTagKey(label)} className="flex items-center gap-3">
@@ -1036,19 +1175,21 @@ export default function ProductBlock(props: ProductBlockProps) {
       const featured = items[0];
       const secondary = items.slice(1);
       return (
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+        <div className="grid lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]" style={{ gap: `${productItemGap}px` }}>
           {renderCard(featured, {
             spotlight: true,
             imageAspectRatio: imageAspectRatio === "portrait" ? "landscape" : imageAspectRatio,
           })}
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">{secondary.map((item) => renderCard(item))}</div>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-1" style={{ gap: `${productItemGap}px` }}>
+            {secondary.map((item) => renderCard(item))}
+          </div>
         </div>
       );
     }
 
     if (layoutPreset === "list") {
       return (
-        <div className="space-y-4">
+        <div className="flex flex-col" style={{ gap: `${productItemGap}px` }}>
           {items.map((item) => renderCard(item, { list: true }))}
           {options.includePlaceholders
             ? Array.from({ length: placeholderCount }, (_, index) =>
@@ -1060,7 +1201,7 @@ export default function ProductBlock(props: ProductBlockProps) {
     }
 
     return (
-      <div className={productGridClass(layoutPreset)}>
+      <div className={productGridClass(layoutPreset)} style={{ gap: `${productItemGap}px` }}>
         {items.map((item) => renderCard(item))}
         {options.includePlaceholders
           ? Array.from({ length: placeholderCount }, (_, index) =>
@@ -1228,6 +1369,7 @@ export default function ProductBlock(props: ProductBlockProps) {
           <button
             type="button"
             className="absolute bottom-5 left-5 z-20 inline-flex items-center gap-2 rounded-full bg-slate-950/95 px-3.5 py-2.5 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(15,23,42,0.18)] transition hover:bg-slate-800"
+            aria-label="打开购物车"
             onClick={() => {
               setCartError("");
               setCartNotice("");
@@ -1249,7 +1391,6 @@ export default function ProductBlock(props: ProductBlockProps) {
                 <path d="M3 4h2l2.2 9.2a1 1 0 0 0 1 .8h8.9a1 1 0 0 0 1-.76L20 7H7.2" />
               </svg>
             </span>
-            <span>Cart</span>
             <span className="inline-flex min-w-[1.45rem] items-center justify-center rounded-full bg-emerald-400 px-1.5 py-0.5 text-[11px] font-bold text-slate-950">
               {checkedCartTotalQuantity}
             </span>

@@ -230,31 +230,38 @@ import { buildPlatformMerchantSnapshotPayloadFromState } from "@/lib/platformMer
 import {
   arrangeProductItemsByTag,
   groupArrangedProductItemsByTag,
+  PRODUCT_CART_QUANTITY_MODE_OPTIONS,
   PRODUCT_CONTAINER_MODE_OPTIONS,
   PRODUCT_IMAGE_ASPECT_OPTIONS,
   PRODUCT_LAYOUT_OPTIONS,
   PRODUCT_PRICE_ALIGN_OPTIONS,
   PRODUCT_PRICE_PREFIX_OPTIONS,
+  PRODUCT_TAG_BORDER_STYLE_OPTIONS,
   PRODUCT_TAG_POSITION_OPTIONS,
   createProductItemId,
   defaultProductItemsPerPage,
   filterProductItemsByKeyword,
+  normalizeProductCartQuantityMode,
   normalizeProductContainerMode,
   normalizeProductImageAspectRatio,
   normalizeProductItems,
   normalizeProductItemsPerPage,
   normalizeProductLayoutPreset,
   normalizeProductPriceAlign,
+  normalizeProductSpacing,
+  normalizeProductTagBorderStyle,
   normalizeProductTagOptions,
   normalizeProductTagPosition,
   productContainerViewportHeight,
   productGridClass,
   productPriceText,
+  type ProductCartQuantityMode,
   type ProductContainerMode,
   type ProductImageAspectRatio,
   type ProductItem,
   type ProductLayoutPreset,
   type ProductPriceAlign,
+  type ProductTagBorderStyle,
   type ProductTagPosition,
 } from "@/lib/productBlock";
 import {
@@ -1590,6 +1597,13 @@ const PRODUCT_THEME_COPY_KEYS = [
   "productTagBgOpacity",
   "productTagActiveBgColor",
   "productTagActiveBgOpacity",
+  "productTagBorderStyle",
+  "productTagTextAlign",
+  "productTagFontSize",
+  "productTagWidth",
+  "productTagRowGap",
+  "productItemGap",
+  "productCartQuantityMode",
   "productCodeTypography",
   "productNameTypography",
   "productDescriptionTypography",
@@ -2204,6 +2218,119 @@ function getColorLayerStyle(value: string, opacity: number) {
   }
   return {
     backgroundColor: toRgba(trimmed, opacity),
+  };
+}
+
+function getProductStyleFirstHexColor(value: string, fallback: string) {
+  const trimmed = value.trim();
+  if (/^#([0-9a-fA-F]{6})$/.test(trimmed)) return trimmed;
+  const firstHex = trimmed.match(/#([0-9a-fA-F]{6})/);
+  return firstHex ? `#${firstHex[1]}` : fallback;
+}
+
+function getProductStyleBorderColor(value: string, opacity = 0.5) {
+  return toRgba(getProductStyleFirstHexColor(value, "#ffffff"), opacity);
+}
+
+function getProductStyleReadableTextColor(value: string) {
+  const trimmed = value.trim();
+  if (!/^#([0-9a-fA-F]{6})$/.test(trimmed)) return "#ffffff";
+  const r = Number.parseInt(trimmed.slice(1, 3), 16);
+  const g = Number.parseInt(trimmed.slice(3, 5), 16);
+  const b = Number.parseInt(trimmed.slice(5, 7), 16);
+  const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  return luminance > 0.68 ? "#0f172a" : "#ffffff";
+}
+
+function getProductStyleTagTextColor(borderStyle: ProductTagBorderStyle, value: string) {
+  if (borderStyle === "none" || borderStyle === "divider") {
+    return getProductStyleFirstHexColor(value, "#0f172a");
+  }
+  return getProductStyleReadableTextColor(value);
+}
+
+function getProductStyleTagJustifyContent(align: ProductPriceAlign) {
+  if (align === "center") return "center";
+  if (align === "right") return "flex-end";
+  return "flex-start";
+}
+
+function buildProductTagButtonStyle(options: {
+  borderStyle: ProductTagBorderStyle;
+  active: boolean;
+  bgColor: string;
+  bgOpacity: number;
+  activeBgColor: string;
+  activeBgOpacity: number;
+  fontSize: number;
+  textAlign: ProductPriceAlign;
+  width: number;
+}): CSSProperties {
+  const color = options.active ? options.activeBgColor : options.bgColor;
+  const opacity = options.active ? options.activeBgOpacity : options.bgOpacity;
+  const base: CSSProperties = {
+    width: `${options.width}px`,
+    color: getProductStyleTagTextColor(options.borderStyle, color),
+    fontSize: `${options.fontSize}px`,
+    justifyContent: getProductStyleTagJustifyContent(options.textAlign),
+    textAlign: options.textAlign,
+  };
+
+  if (options.borderStyle === "none") {
+    return {
+      ...base,
+      backgroundColor: "transparent",
+      backgroundImage: "none",
+      border: "1px solid transparent",
+      boxShadow: "none",
+    };
+  }
+
+  if (options.borderStyle === "divider") {
+    return {
+      ...base,
+      backgroundColor: "transparent",
+      backgroundImage: "none",
+      border: "0",
+      borderRadius: 0,
+      boxShadow: "none",
+      paddingLeft: "0.5rem",
+      paddingRight: "0.5rem",
+    };
+  }
+
+  const borderStyle = options.borderStyle === "dashed" ? "dashed" : options.borderStyle === "double" ? "double" : "solid";
+  return {
+    ...base,
+    ...getColorLayerStyle(color, opacity),
+    border: `${options.borderStyle === "double" ? 3 : 1}px ${borderStyle} ${
+      options.borderStyle === "glass" ? "rgba(255,255,255,0.36)" : getProductStyleBorderColor(color, options.active ? 0.72 : 0.5)
+    }`,
+    borderRadius: options.borderStyle === "rectangle" ? "6px" : "9999px",
+    backdropFilter: options.borderStyle === "glass" ? "blur(12px)" : undefined,
+  };
+}
+
+function buildProductTagDividerStyle(
+  borderStyle: ProductTagBorderStyle,
+  color: string,
+  position: ProductTagPosition,
+  index: number,
+  total: number,
+): CSSProperties {
+  if (borderStyle !== "divider" || index >= total - 1) return {};
+  const borderColor = getProductStyleBorderColor(color, 0.44);
+  if (position === "top") {
+    return {
+      borderRight: `1px solid ${borderColor}`,
+      marginRight: "2px",
+      paddingRight: "12px",
+    };
+  }
+  return {
+    borderBottom: `1px solid ${borderColor}`,
+    marginBottom: "2px",
+    paddingBottom: "8px",
   };
 }
 
@@ -10385,14 +10512,19 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           productPriceAlign: "left",
           productTagOptions: ["推荐"],
           productTagPosition: "top",
+          productTagBorderStyle: "glass",
+          productTagTextAlign: "center",
           productTagFontSize: 12,
           productTagWidth: 92,
+          productTagRowGap: 8,
           productTagHideUnselected: true,
           productGroupByTag: false,
           productTagBgColor: "#0f172a",
           productTagBgOpacity: 0.82,
           productTagActiveBgColor: "#1d4ed8",
           productTagActiveBgOpacity: 0.94,
+          productItemGap: 16,
+          productCartQuantityMode: "stepper",
           productContainerMode: "auto",
           productItemsPerPage: 3,
           productDetailImageSize: 420,
@@ -28547,6 +28679,8 @@ type GalleryEditorImage = {
     const productShowDescription = block.props.productShowDescription !== false;
     const productPriceAlign = normalizeProductPriceAlign(block.props.productPriceAlign);
     const productTagPosition = normalizeProductTagPosition(block.props.productTagPosition);
+    const productTagBorderStyle = normalizeProductTagBorderStyle(block.props.productTagBorderStyle);
+    const productTagTextAlign = normalizeProductPriceAlign(block.props.productTagTextAlign);
     const productTagFontSize =
       typeof block.props.productTagFontSize === "number" && Number.isFinite(block.props.productTagFontSize)
         ? Math.max(10, Math.min(28, Math.round(block.props.productTagFontSize)))
@@ -28555,6 +28689,7 @@ type GalleryEditorImage = {
       typeof block.props.productTagWidth === "number" && Number.isFinite(block.props.productTagWidth)
         ? Math.max(56, Math.min(220, Math.round(block.props.productTagWidth)))
         : 92;
+    const productTagRowGap = normalizeProductSpacing(block.props.productTagRowGap, 8, 0, 48);
     const productTagHideUnselected = block.props.productTagHideUnselected !== false;
     const productGroupByTag = block.props.productGroupByTag === true;
     const productTagBgColor = (block.props.productTagBgColor ?? "#0f172a").trim() || "#0f172a";
@@ -28567,6 +28702,8 @@ type GalleryEditorImage = {
       typeof block.props.productTagActiveBgOpacity === "number" && Number.isFinite(block.props.productTagActiveBgOpacity)
         ? Math.max(0, Math.min(1, block.props.productTagActiveBgOpacity))
         : 0.94;
+    const productItemGap = normalizeProductSpacing(block.props.productItemGap, 16, 0, 48);
+    const productCartQuantityMode = normalizeProductCartQuantityMode(block.props.productCartQuantityMode);
     const productDetailImageSize =
       typeof block.props.productDetailImageSize === "number" && Number.isFinite(block.props.productDetailImageSize)
         ? Math.max(180, Math.min(720, Math.round(block.props.productDetailImageSize)))
@@ -28684,7 +28821,7 @@ type GalleryEditorImage = {
         : filteredProductItems;
     const previewScrollViewportHeight =
       productContainerMode === "scroll"
-        ? productContainerViewportHeight(productLayoutPreset, productImageSize, productItemsPerPage)
+        ? productContainerViewportHeight(productLayoutPreset, productImageSize, productItemsPerPage, productItemGap)
         : null;
     const detailPreviewProduct =
       productDetailPreview?.blockId === block.id
@@ -28721,15 +28858,6 @@ type GalleryEditorImage = {
           ? "justify-end text-right"
           : "justify-start text-left";
     const productDetailPriceAlignClass = productPriceAlignClass;
-    const getReadableProductTagTextColor = (value: string) => {
-      const trimmed = value.trim();
-      if (!/^#([0-9a-fA-F]{6})$/.test(trimmed)) return "#ffffff";
-      const r = Number.parseInt(trimmed.slice(1, 3), 16);
-      const g = Number.parseInt(trimmed.slice(3, 5), 16);
-      const b = Number.parseInt(trimmed.slice(5, 7), 16);
-      const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
-      return luminance > 0.68 ? "#0f172a" : "#ffffff";
-    };
     const applyProductTagOptions = (rawValue: string) => {
       const nextOptions = Array.from(new Set(rawValue.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)));
       const allowed = new Set(nextOptions);
@@ -28950,6 +29078,46 @@ type GalleryEditorImage = {
           style={{ ...productCardBackgroundStyle, ...productCardBorderInlineStyle, ...productListCardStyle }}
           onClick={options.editable ? () => openProductItemEditor(item.id) : undefined}
         >
+          {productCartQuantityMode === "plus-only" ? (
+              <button
+                type="button"
+                className="absolute right-3 top-3 z-[2] flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-lg font-semibold text-slate-700 shadow-sm backdrop-blur transition hover:bg-slate-100"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                }}
+                aria-label="增加购买数量"
+              >
+                +
+              </button>
+            ) : (
+              <div className="absolute right-3 top-3 z-[2] flex items-center gap-1 rounded-full border border-slate-200 bg-white/95 px-1.5 py-1 shadow-sm backdrop-blur">
+                <button
+                  type="button"
+                  className="flex h-7 w-7 items-center justify-center rounded-full text-base font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-35"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                  }}
+                  disabled
+                  aria-label="减少购买数量"
+                >
+                  -
+                </button>
+                <div className="min-w-[1.5rem] text-center text-xs font-semibold text-slate-700">0</div>
+                <button
+                  type="button"
+                  className="flex h-7 w-7 items-center justify-center rounded-full text-base font-semibold text-slate-700 transition hover:bg-slate-100"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                  }}
+                  aria-label="增加购买数量"
+                >
+                  +
+                </button>
+              </div>
+            )}
           <div
             className={`relative overflow-hidden bg-slate-100 ${options.list ? "shrink-0 self-start rounded-lg" : ""}`}
             style={getProductImageFrameStyle(options)}
@@ -29039,9 +29207,9 @@ type GalleryEditorImage = {
         const featured = items[0];
         const secondary = items.slice(1);
         return (
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+          <div className="grid lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]" style={{ gap: `${productItemGap}px` }}>
             {renderProductCard(featured, { featured: true, editable: true })}
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
+            <div className="grid sm:grid-cols-2 lg:grid-cols-1" style={{ gap: `${productItemGap}px` }}>
               {secondary.map((item) => renderProductCard(item, { editable: true }))}
             </div>
           </div>
@@ -29049,7 +29217,7 @@ type GalleryEditorImage = {
       }
       if (productLayoutPreset === "list") {
         return (
-          <div className="space-y-4">
+          <div className="flex flex-col" style={{ gap: `${productItemGap}px` }}>
             {items.map((item) => renderProductCard(item, { list: true, editable: true }))}
             {options.includePlaceholders
               ? Array.from({ length: productPlaceholderCount }, (_, index) =>
@@ -29060,7 +29228,7 @@ type GalleryEditorImage = {
         );
       }
       return (
-        <div className={productGridClass(productLayoutPreset)}>
+        <div className={productGridClass(productLayoutPreset)} style={{ gap: `${productItemGap}px` }}>
           {items.map((item) => renderProductCard(item, { editable: true }))}
           {options.includePlaceholders
             ? Array.from({ length: productPlaceholderCount }, (_, index) =>
@@ -29168,56 +29336,58 @@ type GalleryEditorImage = {
       );
     };
 
-    const renderProductTagFilters = () =>
-      productTags.length > 0 ? (
+    const renderProductTagFilters = () => {
+      if (productTags.length === 0) return null;
+      const filterItems = [
+        ...(productTagHideUnselected ? [{ key: "__all__", label: "全部", value: null as string | null }] : []),
+        ...productTags.map((tag) => ({ key: tag, label: tag, value: tag })),
+      ];
+      return (
         <div
           className={
             productTagPosition === "top"
-              ? "mt-4 flex flex-wrap gap-2"
+              ? "mt-4 flex flex-wrap"
               : productTagPosition === "left"
-                ? "mt-4 mr-4 flex float-left w-max flex-col items-start gap-2"
-                : "mt-4 ml-4 flex float-right w-max flex-col items-end gap-2"
+                ? "mt-4 mr-4 flex float-left w-max flex-col items-start"
+                : "mt-4 ml-4 flex float-right w-max flex-col items-end"
           }
+          style={{ gap: `${productTagRowGap}px` }}
         >
-          {productTagHideUnselected ? (
-            <button
-              type="button"
-              className={`truncate rounded-full border border-white/30 px-3 py-1.5 transition-opacity ${
-                activeProductTag === null ? "ring-2 ring-slate-900/30 shadow-sm" : ""
-              }`}
-              style={{
-                width: `${productTagWidth}px`,
-                ...(activeProductTag === null
-                  ? getColorLayerStyle(productTagActiveBgColor, productTagActiveBgOpacity)
-                  : getColorLayerStyle(productTagBgColor, productTagBgOpacity)),
-                color: getReadableProductTagTextColor(activeProductTag === null ? productTagActiveBgColor : productTagBgColor),
-                fontSize: `${productTagFontSize}px`,
-              }}
-              onClick={() => handlePreviewTagSelect(null)}
-            >
-              全部
-            </button>
-          ) : null}
-          {productTags.map((tag) => (
-            <button
-              key={tag}
-              type="button"
-              className={`truncate rounded-full border border-white/30 px-3 py-1.5 transition-opacity ${activeProductTag === tag ? "ring-2 ring-slate-900/30 shadow-sm" : ""}`}
-              style={{
-                width: `${productTagWidth}px`,
-                ...(activeProductTag === tag
-                  ? getColorLayerStyle(productTagActiveBgColor, productTagActiveBgOpacity)
-                  : getColorLayerStyle(productTagBgColor, productTagBgOpacity)),
-                color: getReadableProductTagTextColor(activeProductTag === tag ? productTagActiveBgColor : productTagBgColor),
-                fontSize: `${productTagFontSize}px`,
-              }}
-              onClick={() => handlePreviewTagSelect(tag)}
-            >
-              {tag}
-            </button>
-          ))}
+          {filterItems.map((filter, index) => {
+            const active = filter.value === null ? activeProductTag === null : activeProductTag === filter.value;
+            const color = active ? productTagActiveBgColor : productTagBgColor;
+            return (
+              <button
+                key={filter.key}
+                type="button"
+                className={`inline-flex min-h-[2.25rem] items-center truncate px-3 py-1.5 transition-opacity ${
+                  active ? "ring-2 ring-slate-900/30 shadow-sm" : ""
+                }`}
+                style={{
+                  ...buildProductTagButtonStyle({
+                    borderStyle: productTagBorderStyle,
+                    active,
+                    bgColor: productTagBgColor,
+                    bgOpacity: productTagBgOpacity,
+                    activeBgColor: productTagActiveBgColor,
+                    activeBgOpacity: productTagActiveBgOpacity,
+                    fontSize: productTagFontSize,
+                    textAlign: productTagTextAlign,
+                    width: productTagWidth,
+                  }),
+                  ...buildProductTagDividerStyle(productTagBorderStyle, color, productTagPosition, index, filterItems.length),
+                }}
+                onClick={() => handlePreviewTagSelect(filter.value)}
+              >
+                <span className="min-w-0 truncate" style={{ width: "100%", textAlign: productTagTextAlign }}>
+                  {filter.label}
+                </span>
+              </button>
+            );
+          })}
         </div>
-      ) : null;
+      );
+    };
 
     const renderProductSettingsSection = (
       section: ProductSettingsSectionKey,
@@ -29846,7 +30016,7 @@ type GalleryEditorImage = {
                   </div>
                   <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
                     <div className="text-sm font-medium text-slate-700">分类标签样式</div>
-                    <div className="grid gap-3 md:grid-cols-[180px_minmax(0,1fr)_minmax(0,1fr)]">
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                     <label className="space-y-1 text-sm">
                       <span className="block text-gray-600">标签位置</span>
                       <select
@@ -29855,6 +30025,34 @@ type GalleryEditorImage = {
                         onChange={(event) => onChange({ productTagPosition: event.target.value as ProductTagPosition })}
                       >
                         {PRODUCT_TAG_POSITION_OPTIONS.map((item) => (
+                          <option key={item.value} value={item.value}>
+                            {item.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="space-y-1 text-sm">
+                      <span className="block text-gray-600">底框样式</span>
+                      <select
+                        className="w-full rounded border px-3 py-2 bg-white"
+                        value={productTagBorderStyle}
+                        onChange={(event) => onChange({ productTagBorderStyle: event.target.value as ProductTagBorderStyle })}
+                      >
+                        {PRODUCT_TAG_BORDER_STYLE_OPTIONS.map((item) => (
+                          <option key={item.value} value={item.value}>
+                            {item.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="space-y-1 text-sm">
+                      <span className="block text-gray-600">文字对齐</span>
+                      <select
+                        className="w-full rounded border px-3 py-2 bg-white"
+                        value={productTagTextAlign}
+                        onChange={(event) => onChange({ productTagTextAlign: event.target.value as ProductPriceAlign })}
+                      >
+                        {PRODUCT_PRICE_ALIGN_OPTIONS.map((item) => (
                           <option key={item.value} value={item.value}>
                             {item.label}
                           </option>
@@ -29905,6 +30103,30 @@ type GalleryEditorImage = {
                           value={productTagWidth}
                           onChange={(event) =>
                             onChange({ productTagWidth: Math.max(56, Math.min(220, Number(event.target.value) || 56)) })
+                          }
+                        />
+                      </div>
+                    </label>
+                    <label className="block space-y-2 text-sm">
+                      <span className="block text-gray-600">分类行距</span>
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="range"
+                          min={0}
+                          max={48}
+                          step={1}
+                          className="flex-1"
+                          value={productTagRowGap}
+                          onChange={(event) => onChange({ productTagRowGap: Number(event.target.value) })}
+                        />
+                        <input
+                          type="number"
+                          min={0}
+                          max={48}
+                          className="w-20 rounded border px-2 py-2"
+                          value={productTagRowGap}
+                          onChange={(event) =>
+                            onChange({ productTagRowGap: Math.max(0, Math.min(48, Number(event.target.value) || 0)) })
                           }
                         />
                       </div>
@@ -30015,6 +30237,44 @@ type GalleryEditorImage = {
                         value={productCardBgOpacity}
                         onChange={(event) => onChange({ productCardBgOpacity: Number(event.target.value) })}
                       />
+                    </label>
+                    <label className="block space-y-2 text-sm">
+                      <span className="block text-gray-600">产品行距</span>
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="range"
+                          min={0}
+                          max={48}
+                          step={1}
+                          className="flex-1"
+                          value={productItemGap}
+                          onChange={(event) => onChange({ productItemGap: Number(event.target.value) })}
+                        />
+                        <input
+                          type="number"
+                          min={0}
+                          max={48}
+                          className="w-20 rounded border px-2 py-2"
+                          value={productItemGap}
+                          onChange={(event) =>
+                            onChange({ productItemGap: Math.max(0, Math.min(48, Number(event.target.value) || 0)) })
+                          }
+                        />
+                      </div>
+                    </label>
+                    <label className="block space-y-1 text-sm">
+                      <span className="block text-gray-600">数量按钮</span>
+                      <select
+                        className="w-full rounded border bg-white px-3 py-2"
+                        value={productCartQuantityMode}
+                        onChange={(event) => onChange({ productCartQuantityMode: event.target.value as ProductCartQuantityMode })}
+                      >
+                        {PRODUCT_CART_QUANTITY_MODE_OPTIONS.map((item) => (
+                          <option key={item.value} value={item.value}>
+                            {item.label}
+                          </option>
+                        ))}
+                      </select>
                     </label>
                     <div className="space-y-1">
                       <div className="text-xs text-gray-600">边框样式</div>
@@ -30430,7 +30690,7 @@ type GalleryEditorImage = {
                     "tags",
                     "分类标签样式",
                     <div className="space-y-4">
-                    <div className="grid gap-4 lg:grid-cols-[180px_220px_220px]">
+                    <div className="grid gap-4 lg:grid-cols-3">
                     <label className="space-y-1 text-sm">
                       <span className="block text-gray-600">标签位置</span>
                       <select
@@ -30439,6 +30699,34 @@ type GalleryEditorImage = {
                         onChange={(event) => onChange({ productTagPosition: event.target.value as ProductTagPosition })}
                       >
                         {PRODUCT_TAG_POSITION_OPTIONS.map((item) => (
+                          <option key={item.value} value={item.value}>
+                            {item.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="space-y-1 text-sm">
+                      <span className="block text-gray-600">底框样式</span>
+                      <select
+                        className="w-full rounded border px-3 py-2 bg-white"
+                        value={productTagBorderStyle}
+                        onChange={(event) => onChange({ productTagBorderStyle: event.target.value as ProductTagBorderStyle })}
+                      >
+                        {PRODUCT_TAG_BORDER_STYLE_OPTIONS.map((item) => (
+                          <option key={item.value} value={item.value}>
+                            {item.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="space-y-1 text-sm">
+                      <span className="block text-gray-600">文字对齐</span>
+                      <select
+                        className="w-full rounded border px-3 py-2 bg-white"
+                        value={productTagTextAlign}
+                        onChange={(event) => onChange({ productTagTextAlign: event.target.value as ProductPriceAlign })}
+                      >
+                        {PRODUCT_PRICE_ALIGN_OPTIONS.map((item) => (
                           <option key={item.value} value={item.value}>
                             {item.label}
                           </option>
@@ -30489,6 +30777,30 @@ type GalleryEditorImage = {
                           value={productTagWidth}
                           onChange={(event) =>
                             onChange({ productTagWidth: Math.max(56, Math.min(220, Number(event.target.value) || 56)) })
+                          }
+                        />
+                      </div>
+                    </label>
+                    <label className="space-y-2 text-sm">
+                      <span className="block text-gray-600">分类行距</span>
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="range"
+                          min={0}
+                          max={48}
+                          step={1}
+                          className="flex-1"
+                          value={productTagRowGap}
+                          onChange={(event) => onChange({ productTagRowGap: Number(event.target.value) })}
+                        />
+                        <input
+                          type="number"
+                          min={0}
+                          max={48}
+                          className="w-20 rounded border px-2 py-2"
+                          value={productTagRowGap}
+                          onChange={(event) =>
+                            onChange({ productTagRowGap: Math.max(0, Math.min(48, Number(event.target.value) || 0)) })
                           }
                         />
                       </div>
@@ -30614,6 +30926,46 @@ type GalleryEditorImage = {
                           selectedValue={productCardBorderColor}
                         />
                       </div>
+                    </div>
+                    <div className="grid gap-4 lg:grid-cols-2">
+                      <label className="space-y-2 rounded-lg border border-slate-200 bg-white p-3 text-sm">
+                        <span className="block text-gray-600">产品行距</span>
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="range"
+                            min={0}
+                            max={48}
+                            step={1}
+                            className="flex-1"
+                            value={productItemGap}
+                            onChange={(event) => onChange({ productItemGap: Number(event.target.value) })}
+                          />
+                          <input
+                            type="number"
+                            min={0}
+                            max={48}
+                            className="w-20 rounded border px-2 py-2"
+                            value={productItemGap}
+                            onChange={(event) =>
+                              onChange({ productItemGap: Math.max(0, Math.min(48, Number(event.target.value) || 0)) })
+                            }
+                          />
+                        </div>
+                      </label>
+                      <label className="space-y-1 rounded-lg border border-slate-200 bg-white p-3 text-sm">
+                        <span className="block text-gray-600">数量按钮</span>
+                        <select
+                          className="w-full rounded border bg-white px-3 py-2"
+                          value={productCartQuantityMode}
+                          onChange={(event) => onChange({ productCartQuantityMode: event.target.value as ProductCartQuantityMode })}
+                        >
+                          {PRODUCT_CART_QUANTITY_MODE_OPTIONS.map((item) => (
+                            <option key={item.value} value={item.value}>
+                              {item.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
                     </div>
                     <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
                       <div className="text-sm font-medium text-slate-700">产品框边框</div>

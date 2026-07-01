@@ -3,6 +3,8 @@ export type ProductImageAspectRatio = "square" | "landscape" | "portrait";
 export type ProductPriceAlign = "left" | "center" | "right";
 export type ProductContainerMode = "auto" | "paged" | "scroll";
 export type ProductTagPosition = "top" | "left" | "right";
+export type ProductTagBorderStyle = "none" | "glass" | "solid" | "dashed" | "double" | "divider" | "rectangle";
+export type ProductCartQuantityMode = "stepper" | "plus-only";
 
 export type ProductItemInput = {
   id?: string;
@@ -71,6 +73,21 @@ export const PRODUCT_TAG_POSITION_OPTIONS: Array<{ value: ProductTagPosition; la
   { value: "top", label: "上侧" },
   { value: "left", label: "左侧" },
   { value: "right", label: "右侧" },
+];
+
+export const PRODUCT_TAG_BORDER_STYLE_OPTIONS: Array<{ value: ProductTagBorderStyle; label: string }> = [
+  { value: "none", label: "无底框" },
+  { value: "glass", label: "玻璃状" },
+  { value: "solid", label: "实线" },
+  { value: "dashed", label: "虚线" },
+  { value: "double", label: "双线" },
+  { value: "divider", label: "分割线" },
+  { value: "rectangle", label: "长方形" },
+];
+
+export const PRODUCT_CART_QUANTITY_MODE_OPTIONS: Array<{ value: ProductCartQuantityMode; label: string }> = [
+  { value: "stepper", label: "加减与数量" },
+  { value: "plus-only", label: "仅一个 +" },
 ];
 
 export function normalizeProductTagOptions(source: unknown): string[] {
@@ -234,6 +251,19 @@ export function normalizeProductTagPosition(value: unknown): ProductTagPosition 
   return "top";
 }
 
+export function normalizeProductTagBorderStyle(value: unknown): ProductTagBorderStyle {
+  return PRODUCT_TAG_BORDER_STYLE_OPTIONS.some((item) => item.value === value) ? (value as ProductTagBorderStyle) : "glass";
+}
+
+export function normalizeProductCartQuantityMode(value: unknown): ProductCartQuantityMode {
+  return PRODUCT_CART_QUANTITY_MODE_OPTIONS.some((item) => item.value === value) ? (value as ProductCartQuantityMode) : "stepper";
+}
+
+export function normalizeProductSpacing(value: unknown, fallback: number, min = 0, max = 48) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(value)));
+}
+
 export function defaultProductItemsPerPage(layout: ProductLayoutPreset) {
   if (layout === "list") return 3;
   if (layout === "grid-2") return 4;
@@ -252,9 +282,10 @@ export function productContainerViewportHeight(
   layout: ProductLayoutPreset,
   imageSize: number,
   visibleItems: number,
+  itemGap = 16,
 ) {
   const safeVisibleItems = Math.max(1, Math.min(24, Math.round(visibleItems)));
-  const gap = 16;
+  const gap = Math.max(0, Math.min(48, Math.round(itemGap)));
 
   if (layout === "list") {
     const listCardHeight = imageSize + 32;
