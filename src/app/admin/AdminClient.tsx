@@ -3024,7 +3024,17 @@ function isMissingMerchantIdColumn(message: string) {
 }
 
 function normalizeSaveErrorMessage(message: string) {
-  return message.replace(/^保存失败[:：]\s*/u, "");
+  const normalized = message.replace(/^保存失败[:：]\s*/u, "").trim();
+  if (normalized === "publish_backend_request_timeout") {
+    return "发布服务连接后端超时，请重试；若连续失败，请检查存储桶和服务端配置";
+  }
+  if (normalized === "publish_request_deadline_exceeded") {
+    return "发布处理超过安全时间，请重试；系统已避免网关超时";
+  }
+  if (normalized === "publish_request_failed") {
+    return "发布服务异常，请稍后重试";
+  }
+  return normalized;
 }
 
 async function queryGlobalPageRecord(columns: string): Promise<{ record: GlobalPageRecord; error: SaveErrorLike }> {

@@ -80,6 +80,9 @@ type PublishCachedResult = {
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_RETRY_ATTEMPTS = 3;
+const PUBLISH_ROUTE_DEADLINE_MS = 52_000;
+const SUPABASE_REQUEST_TIMEOUT_MS = 14_000;
+const OPTIONAL_PUBLISH_SYNC_TIMEOUT_MS = 8_000;
 
 const globalState = globalThis as typeof globalThis & {
   __merchantPublishResultCache?: Map<string, PublishCachedResult>;
@@ -131,6 +134,51 @@ function toErrorMessage(input: unknown) {
   const record = input as { message?: unknown };
   if (typeof record.message === "string" && record.message.trim()) return record.message.trim();
   return "未知错误";
+}
+
+function toPublishErrorMessage(input: unknown) {
+  if (input instanceof Error && input.message.trim()) return input.message.trim();
+  if (typeof input === "string" && input.trim()) return input.trim();
+  return "publish_request_failed";
+}
+
+function createDeadlineFetch(deadlineAt: number): typeof fetch {
+  return async (input, init) => {
+    const remainingMs = deadlineAt - Date.now();
+    if (remainingMs <= 250) throw new Error("publish_request_deadline_exceeded");
+    const timeoutMs = Math.max(250, Math.min(SUPABASE_REQUEST_TIMEOUT_MS, remainingMs - 250));
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const upstreamSignal = init?.signal;
+    const abortFromUpstream = () => controller.abort();
+    if (upstreamSignal) {
+      if (upstreamSignal.aborted) controller.abort();
+      upstreamSignal.addEventListener("abort", abortFromUpstream, { once: true });
+    }
+    try {
+      return await fetch(input, { ...init, signal: controller.signal });
+    } catch (error) {
+      if (controller.signal.aborted) throw new Error("publish_backend_request_timeout");
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+      upstreamSignal?.removeEventListener("abort", abortFromUpstream);
+    }
+  };
+}
+
+async function withTimeout<T>(task: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      task,
+      new Promise<T>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 function normalizeMerchantIds(merchantIds: unknown, isPlatformEditor: boolean) {
@@ -538,7 +586,9 @@ async function saveWithRetry(
 ) {
   let lastError: SaveErrorLike = null;
   for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt += 1) {
-    const error = await saveBlocksToPagesTable(supabase, payload, merchantIds, merchantSlug);
+    const error = await saveBlocksToPagesTable(supabase, payload, merchantIds, merchantSlug).catch((saveError: unknown) => ({
+      message: toPublishErrorMessage(saveError),
+    }));
     if (!error) return null;
     lastError = error;
     if (!isTransientSaveError(error.message) || attempt === MAX_RETRY_ATTEMPTS) break;
@@ -556,6 +606,7 @@ export async function POST(request: Request) {
     return getTrustedMutationRequestErrorResponse();
   }
   const now = Date.now();
+  const deadlineAt = now + PUBLISH_ROUTE_DEADLINE_MS;
   for (const [key, value] of resultCache.entries()) {
     if (now - value.at > CACHE_TTL_MS) resultCache.delete(key);
   }
@@ -590,6 +641,7 @@ export async function POST(request: Request) {
   if (inflight) return inflight;
 
   const task = (async () => {
+    try {
     const payloadBlocks = Array.isArray(body.payload?.blocks) ? body.payload?.blocks : null;
     const updatedAtRaw = String(body.payload?.updated_at ?? "").trim();
     if (!payloadBlocks || !updatedAtRaw) {
@@ -637,9 +689,10 @@ export async function POST(request: Request) {
         detectSessionInUrl: false,
       },
       global: {
-        fetch: fetch.bind(globalThis),
+        fetch: createDeadlineFetch(deadlineAt),
       },
     }) as unknown as LooseSupabaseClient;
+    const publishWarnings: string[] = [];
 
     if (isPlatformEditor) {
       if (!isSuperAdminRequestAuthorized(request)) {
@@ -740,28 +793,38 @@ export async function POST(request: Request) {
     }
 
     if (!isPlatformEditor && merchantIds.length > 0) {
-      try {
-        await saveMerchantBookingRulesSnapshotForSites(merchantIds, sanitizedPublishedBlocks, normalizedUpdatedAt);
-      } catch (error) {
-        const status = 409;
-        const responseBody = {
-          ok: false,
-          code: "booking_rules_snapshot_failed",
-          message: error instanceof Error ? error.message : "预约规则快照保存失败，请重新发布",
-          requestId,
-        };
-        resultCache.set(requestId, { at: Date.now(), status, body: responseBody });
-        return makeCachedResponse(status, responseBody);
-      }
-      await Promise.allSettled(
-        merchantIds.map((merchantId) =>
-          saveStoredMerchantDraft(supabase as unknown as MerchantDraftStoreClient, {
-            siteId: merchantId,
-            blocks: sanitizedPublishedBlocks,
-            updatedAt: normalizedUpdatedAt,
-          }),
+      await withTimeout(
+        saveMerchantBookingRulesSnapshotForSites(merchantIds, sanitizedPublishedBlocks, normalizedUpdatedAt),
+        OPTIONAL_PUBLISH_SYNC_TIMEOUT_MS,
+        "booking_rules_snapshot_timeout",
+      ).catch((error: unknown) => {
+        publishWarnings.push(`booking_rules_snapshot:${toPublishErrorMessage(error)}`);
+      });
+      await withTimeout(
+        Promise.allSettled(
+          merchantIds.map((merchantId) =>
+            saveStoredMerchantDraft(supabase as unknown as MerchantDraftStoreClient, {
+              siteId: merchantId,
+              blocks: sanitizedPublishedBlocks,
+              updatedAt: normalizedUpdatedAt,
+            }),
+          ),
         ),
-      );
+        OPTIONAL_PUBLISH_SYNC_TIMEOUT_MS,
+        "merchant_draft_backup_timeout",
+      )
+        .then((results) => {
+          results.forEach((result) => {
+            if (result.status === "rejected") {
+              publishWarnings.push(`merchant_draft_backup:${toPublishErrorMessage(result.reason)}`);
+              return;
+            }
+            if (result.value.error) publishWarnings.push(`merchant_draft_backup:${result.value.error}`);
+          });
+        })
+        .catch((error: unknown) => {
+          publishWarnings.push(`merchant_draft_backup:${toPublishErrorMessage(error)}`);
+        });
     }
 
     const status = 200;
@@ -771,9 +834,21 @@ export async function POST(request: Request) {
       updatedAt: normalizedUpdatedAt,
       merchantCount: merchantIds.length,
       mode: isPlatformEditor ? "platform" : "merchant",
+      ...(publishWarnings.length > 0 ? { warnings: publishWarnings } : {}),
     };
     resultCache.set(requestId, { at: Date.now(), status, body: responseBody });
     return makeCachedResponse(status, responseBody);
+    } catch (error) {
+      const status = 503;
+      const responseBody = {
+        ok: false,
+        code: "publish_request_failed",
+        message: toPublishErrorMessage(error),
+        requestId,
+      };
+      resultCache.set(requestId, { at: Date.now(), status, body: responseBody });
+      return makeCachedResponse(status, responseBody);
+    }
   })().finally(() => {
     inflightCache.delete(requestId);
   });
