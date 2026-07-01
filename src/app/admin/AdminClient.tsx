@@ -1536,7 +1536,7 @@ type MerchantDesktopSection =
   | "members"
   | "support"
   | "faolla";
-type ProductSettingsSectionKey = "basic" | "typography" | "tags" | "card" | "detail";
+type ProductSettingsSectionKey = "basic" | "behavior" | "typography" | "tags" | "card" | "detail";
 type ProductTypographyRole = "code" | "name" | "description" | "price";
 const MOBILE_SIZE_SCALE = 0.82;
 const MOBILE_CONTENT_MAX_WIDTH = 340;
@@ -28801,6 +28801,15 @@ type GalleryEditorImage = {
     const productSectionCollapsed = productSettingsCollapsedByBlockId[block.id] ?? {};
     const isProductSectionCollapsed = (section: ProductSettingsSectionKey) =>
       productSectionCollapsed[section] ?? (section !== "basic");
+    const toggleProductSettingsSection = (section: ProductSettingsSectionKey) => {
+      setProductSettingsCollapsedByBlockId((current) => ({
+        ...current,
+        [block.id]: {
+          ...(current[block.id] ?? {}),
+          [section]: !(current[block.id]?.[section] === true),
+        },
+      }));
+    };
     const rawActiveProductTag = productPreviewTagByBlockId[block.id] ?? null;
     const activeProductTag = rawActiveProductTag && productTags.includes(rawActiveProductTag) ? rawActiveProductTag : null;
     const searchMatchedProductItems = productSearchEnabled
@@ -29389,6 +29398,20 @@ type GalleryEditorImage = {
       );
     };
 
+    const renderProductSettingsHeader = (section: ProductSettingsSectionKey, title: string) => {
+      const collapsed = isProductSectionCollapsed(section);
+      return (
+        <button
+          type="button"
+          className="flex w-full items-center justify-between text-left"
+          onClick={() => toggleProductSettingsSection(section)}
+        >
+          <div className="text-sm font-medium text-slate-700">{title}</div>
+          <div className="text-xs text-slate-500">{collapsed ? "展开" : "收起"}</div>
+        </button>
+      );
+    };
+
     const renderProductSettingsSection = (
       section: ProductSettingsSectionKey,
       title: string,
@@ -29398,22 +29421,7 @@ type GalleryEditorImage = {
       const collapsed = isProductSectionCollapsed(section);
       return (
         <div className={options.wrapperClassName ?? "rounded-lg border border-slate-200 bg-slate-50 p-4"}>
-          <button
-            type="button"
-            className="flex w-full items-center justify-between text-left"
-            onClick={() =>
-              setProductSettingsCollapsedByBlockId((current) => ({
-                ...current,
-                [block.id]: {
-                  ...(current[block.id] ?? {}),
-                  [section]: !(current[block.id]?.[section] === true),
-                },
-              }))
-            }
-          >
-            <div className="text-sm font-medium text-slate-700">{title}</div>
-            <div className="text-xs text-slate-500">{collapsed ? "展开" : "收起"}</div>
-          </button>
+          {renderProductSettingsHeader(section, title)}
           {!collapsed ? <div className={options.bodyClassName ?? "mt-3"}>{content}</div> : null}
         </div>
       );
@@ -29942,6 +29950,10 @@ type GalleryEditorImage = {
               </div>
               {compactProductEditor ? (
                 <div className="mt-4 space-y-4">
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    {renderProductSettingsHeader("basic", "基础展示")}
+                    {!isProductSectionCollapsed("basic") ? (
+                      <div className="mt-3 space-y-3">
                   <div className="grid gap-3 md:grid-cols-4">
                     <label className="space-y-1 text-sm">
                       <span className="block text-gray-600">排列方式</span>
@@ -30014,8 +30026,13 @@ type GalleryEditorImage = {
                       <span>显示介绍</span>
                     </label>
                   </div>
+                      </div>
+                    ) : null}
+                  </div>
                   <div className="space-y-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
-                    <div className="text-sm font-medium text-slate-700">分类标签样式</div>
+                    {renderProductSettingsHeader("tags", "分类标签样式")}
+                    {!isProductSectionCollapsed("tags") ? (
+                      <div className="space-y-4">
                     <div className="grid gap-4 md:grid-cols-3">
                     <label className="space-y-1 text-sm">
                       <span className="block text-gray-600">标签位置</span>
@@ -30212,9 +30229,13 @@ type GalleryEditorImage = {
                       />
                       <div className="text-xs text-gray-500">产品编辑卡里会从这里下拉选择分类。</div>
                     </label>
+                      </div>
+                    ) : null}
                   </div>
                   <div className="space-y-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
-                    <div className="text-sm font-medium text-slate-700">产品框样式</div>
+                    {renderProductSettingsHeader("card", "产品框样式")}
+                    {!isProductSectionCollapsed("card") ? (
+                      <div className="space-y-4">
                     <div className="grid gap-4 md:grid-cols-2">
                       <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
                         <div className="text-xs font-medium text-slate-700">底色</div>
@@ -30300,11 +30321,17 @@ type GalleryEditorImage = {
                         onChange({ productCardBorderStyle: style }),
                       )}
                     </div>
+                      </div>
+                    ) : null}
                   </div>
                   <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
-                    <div className="text-sm font-medium text-slate-700">文字样式</div>
-                    {renderProductTypographyControls(true)}
+                    {renderProductSettingsHeader("typography", "文字样式")}
+                    {!isProductSectionCollapsed("typography") ? <div className="mt-3">{renderProductTypographyControls(true)}</div> : null}
                   </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    {renderProductSettingsHeader("behavior", "价格与搜索")}
+                    {!isProductSectionCollapsed("behavior") ? (
+                      <div className="mt-3 grid gap-3 md:grid-cols-2">
                   <label className="space-y-1 text-sm">
                     <span className="block text-gray-600">价格前缀</span>
                     <div className="grid grid-cols-[minmax(0,1fr)_96px] gap-3">
@@ -30407,8 +30434,13 @@ type GalleryEditorImage = {
                       />
                     </label>
                   ) : null}
-                  <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
-                    <div className="text-sm font-medium text-slate-700">详情页设置</div>
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    {renderProductSettingsHeader("detail", "详情页设置")}
+                    {!isProductSectionCollapsed("detail") ? (
+                      <div className="mt-3 space-y-3">
                     <label className="block space-y-2 text-sm">
                       <span className="block text-gray-600">详情图尺寸</span>
                       <div className="flex items-center gap-3">
@@ -30482,6 +30514,8 @@ type GalleryEditorImage = {
                     >
                       预览详情
                     </button>
+                      </div>
+                    ) : null}
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <button
