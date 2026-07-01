@@ -25485,7 +25485,7 @@ type GalleryEditorImage = {
   });
   const selectedEditorMinWidth =
     isMobileInlineEditorViewport
-      ? "min(400px, calc(100vw - 2rem))"
+      ? "min(760px, calc(100vw - 2rem))"
       : block.type === "merchant-list" || block.type === "search-bar"
         ? "min(980px, calc(100vw - 2rem))"
         : block.type === "product" || block.type === "coupon" || block.type === "google-reviews" || block.type === "booking"
@@ -25493,7 +25493,7 @@ type GalleryEditorImage = {
           : "min(760px, calc(100vw - 2rem))";
   const selectedEditorPreferredWidth =
     isMobileInlineEditorViewport
-      ? "min(400px, calc(100vw - 2rem))"
+      ? "min(840px, calc(100vw - 2rem))"
       : block.type === "merchant-list" || block.type === "search-bar"
         ? "min(980px, calc(100vw - 2rem))"
         : block.type === "product" || block.type === "coupon" || block.type === "google-reviews" || block.type === "booking"
@@ -29941,8 +29941,8 @@ type GalleryEditorImage = {
                 />
               </div>
               {compactProductEditor ? (
-                <div className="mt-4 space-y-2.5">
-                  <div className="grid grid-cols-2 gap-2.5">
+                <div className="mt-4 space-y-4">
+                  <div className="grid gap-3 md:grid-cols-4">
                     <label className="space-y-1 text-sm">
                       <span className="block text-gray-600">排列方式</span>
                       <select
@@ -30014,9 +30014,9 @@ type GalleryEditorImage = {
                       <span>显示介绍</span>
                     </label>
                   </div>
-                  <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <div className="space-y-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
                     <div className="text-sm font-medium text-slate-700">分类标签样式</div>
-                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    <div className="grid gap-4 md:grid-cols-3">
                     <label className="space-y-1 text-sm">
                       <span className="block text-gray-600">标签位置</span>
                       <select
@@ -30150,7 +30150,7 @@ type GalleryEditorImage = {
                         <span>按分类排列</span>
                       </label>
                     </div>
-                    <div className="grid gap-3 md:grid-cols-2">
+                    <div className="grid gap-4 md:grid-cols-2">
                       <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
                         <div className="text-xs font-medium text-slate-700">默认样式</div>
                         <ColorOrGradientPicker value={productTagBgColor} onChange={(value) => onChange({ productTagBgColor: value })} />
@@ -30213,91 +30213,95 @@ type GalleryEditorImage = {
                       <div className="text-xs text-gray-500">产品编辑卡里会从这里下拉选择分类。</div>
                     </label>
                   </div>
-                  <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <div className="space-y-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
                     <div className="text-sm font-medium text-slate-700">产品框样式</div>
-                    <div className="space-y-1">
-                      <div className="text-xs text-gray-600">底色</div>
-                      <ColorOrGradientPicker value={productCardBgColor} onChange={(value) => onChange({ productCardBgColor: value })} />
-                      <RecentColorBar
-                        colors={recentColors}
-                        onClear={onClearRecentColors}
-                        onPick={(color) => onChange({ productCardBgColor: color })}
-                        allowGradients
-                        selectedValue={productCardBgColor}
-                      />
-                    </div>
-                    <label className="block space-y-2 text-sm">
-                      <span className="block text-gray-600">透明度：{productCardBgOpacity.toFixed(2)}</span>
-                      <input
-                        type="range"
-                        min={0}
-                        max={1}
-                        step={0.01}
-                        className="w-full"
-                        value={productCardBgOpacity}
-                        onChange={(event) => onChange({ productCardBgOpacity: Number(event.target.value) })}
-                      />
-                    </label>
-                    <label className="block space-y-2 text-sm">
-                      <span className="block text-gray-600">产品行距</span>
-                      <div className="flex items-center gap-3">
-                        <input
-                          type="range"
-                          min={0}
-                          max={48}
-                          step={1}
-                          className="flex-1"
-                          value={productItemGap}
-                          onChange={(event) => onChange({ productItemGap: Number(event.target.value) })}
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
+                        <div className="text-xs font-medium text-slate-700">底色</div>
+                        <ColorOrGradientPicker value={productCardBgColor} onChange={(value) => onChange({ productCardBgColor: value })} />
+                        <RecentColorBar
+                          colors={recentColors}
+                          onClear={onClearRecentColors}
+                          onPick={(color) => onChange({ productCardBgColor: color })}
+                          allowGradients
+                          selectedValue={productCardBgColor}
                         />
-                        <input
-                          type="number"
-                          min={0}
-                          max={48}
-                          className="w-20 rounded border px-2 py-2"
-                          value={productItemGap}
-                          onChange={(event) =>
-                            onChange({ productItemGap: Math.max(0, Math.min(48, Number(event.target.value) || 0)) })
-                          }
+                        <label className="block space-y-2 text-sm">
+                          <span className="block text-gray-600">透明度：{productCardBgOpacity.toFixed(2)}</span>
+                          <input
+                            type="range"
+                            min={0}
+                            max={1}
+                            step={0.01}
+                            className="w-full"
+                            value={productCardBgOpacity}
+                            onChange={(event) => onChange({ productCardBgOpacity: Number(event.target.value) })}
+                          />
+                        </label>
+                      </div>
+                      <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
+                        <div className="text-xs font-medium text-slate-700">边框颜色</div>
+                        <ColorOrGradientPicker
+                          value={productCardBorderColor}
+                          onChange={(value) => onChange({ productCardBorderColor: value })}
+                        />
+                        <RecentColorBar
+                          colors={recentColors}
+                          onClear={onClearRecentColors}
+                          onPick={(color) => onChange({ productCardBorderColor: color })}
+                          allowGradients
+                          selectedValue={productCardBorderColor}
                         />
                       </div>
-                    </label>
-                    <label className="block space-y-1 text-sm">
-                      <span className="block text-gray-600">数量按钮</span>
-                      <select
-                        className="w-full rounded border bg-white px-3 py-2"
-                        value={productCartQuantityMode}
-                        onChange={(event) => onChange({ productCartQuantityMode: event.target.value as ProductCartQuantityMode })}
-                      >
-                        {PRODUCT_CART_QUANTITY_MODE_OPTIONS.map((item) => (
-                          <option key={item.value} value={item.value}>
-                            {item.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <div className="space-y-1">
-                      <div className="text-xs text-gray-600">边框样式</div>
+                    </div>
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <label className="space-y-2 rounded-lg border border-slate-200 bg-white p-3 text-sm">
+                        <span className="block text-gray-600">产品行距</span>
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="range"
+                            min={0}
+                            max={48}
+                            step={1}
+                            className="flex-1"
+                            value={productItemGap}
+                            onChange={(event) => onChange({ productItemGap: Number(event.target.value) })}
+                          />
+                          <input
+                            type="number"
+                            min={0}
+                            max={48}
+                            className="w-20 rounded border px-2 py-2"
+                            value={productItemGap}
+                            onChange={(event) =>
+                              onChange({ productItemGap: Math.max(0, Math.min(48, Number(event.target.value) || 0)) })
+                            }
+                          />
+                        </div>
+                      </label>
+                      <label className="space-y-1 rounded-lg border border-slate-200 bg-white p-3 text-sm">
+                        <span className="block text-gray-600">数量按钮</span>
+                        <select
+                          className="w-full rounded border bg-white px-3 py-2"
+                          value={productCartQuantityMode}
+                          onChange={(event) => onChange({ productCartQuantityMode: event.target.value as ProductCartQuantityMode })}
+                        >
+                          {PRODUCT_CART_QUANTITY_MODE_OPTIONS.map((item) => (
+                            <option key={item.value} value={item.value}>
+                              {item.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                    <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
+                      <div className="text-xs font-medium text-slate-700">边框样式</div>
                       {renderCompactBorderStyleOptions(productCardBorderStyle, productCardBorderColor, (style) =>
                         onChange({ productCardBorderStyle: style }),
                       )}
                     </div>
-                    <div className="space-y-1">
-                      <div className="text-xs text-gray-600">边框颜色</div>
-                      <ColorOrGradientPicker
-                        value={productCardBorderColor}
-                        onChange={(value) => onChange({ productCardBorderColor: value })}
-                      />
-                      <RecentColorBar
-                        colors={recentColors}
-                        onClear={onClearRecentColors}
-                        onPick={(color) => onChange({ productCardBorderColor: color })}
-                        allowGradients
-                        selectedValue={productCardBorderColor}
-                      />
-                    </div>
                   </div>
-                  <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
                     <div className="text-sm font-medium text-slate-700">文字样式</div>
                     {renderProductTypographyControls(true)}
                   </div>
