@@ -98,6 +98,7 @@ type ProductBlockProps = BackgroundEditableProps &
     runtimeSiteName?: string;
     runtimeBlockId?: string;
     runtimeOrderManagementEnabled?: boolean;
+    runtimeInteractiveOverlayWithinBlock?: boolean;
   };
 
 type ProductCartItemState = {
@@ -163,14 +164,6 @@ function getColorLayerStyle(value: string, opacity: number): CSSProperties {
   }
   return {
     backgroundColor: toRgba(trimmed, opacity),
-  };
-}
-
-function getSingleLineClampStyle(): CSSProperties {
-  return {
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
   };
 }
 
@@ -447,8 +440,6 @@ function renderProductCard(
 ) {
   const priceText = productPriceText(item.price, options.pricePrefix);
   const textWrapStyle = { overflowWrap: "anywhere" as const, wordBreak: "break-word" as const };
-  const codeClampStyle = getSingleLineClampStyle();
-  const nameClampStyle = getMultiLineClampStyle(2);
   const descriptionClampStyle = getMultiLineClampStyle(options.spotlight ? 5 : options.list ? 4 : 3);
   const ratio = getProductAspectRatioPair(options.imageAspectRatio);
   const listImageWidth = Math.max(1, Math.round((options.imageSize * ratio.width) / ratio.height));
@@ -488,7 +479,7 @@ function renderProductCard(
       }}
       className={`relative overflow-hidden rounded-2xl shadow-sm ${cardBorderClass} ${
         options.list
-          ? "flex w-full cursor-pointer flex-col gap-4 p-4 text-left transition-shadow hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 sm:h-[var(--product-list-card-height)] sm:max-h-[var(--product-list-card-height)] sm:flex-row"
+          ? "flex w-full cursor-pointer flex-col gap-4 p-4 text-left transition-shadow hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 sm:min-h-[var(--product-list-card-height)] sm:flex-row"
           : "flex h-full w-full cursor-pointer flex-col text-left transition-shadow hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60"
       } ${options.spotlight ? "lg:min-h-[420px]" : ""}`}
       style={{ ...cardBackgroundStyle, ...cardBorderInlineStyle, ...listCardStyle }}
@@ -548,16 +539,16 @@ function renderProductCard(
           <div className="flex h-full items-center justify-center text-sm text-slate-400">暂无图片</div>
         )}
       </div>
-      <div className={options.list ? "flex min-w-0 flex-1 flex-col overflow-hidden" : "flex min-h-[180px] flex-1 flex-col overflow-hidden p-4"}>
+      <div className={options.list ? "flex min-w-0 flex-1 flex-col" : "flex min-h-[180px] flex-1 flex-col p-4"}>
         {options.showCode && item.code ? (
           <div
             className="text-xs uppercase tracking-[0.24em] text-slate-500"
-            style={{ ...textWrapStyle, ...codeClampStyle, ...options.codeTextStyle }}
+            style={{ ...textWrapStyle, ...options.codeTextStyle }}
           >
             {item.code}
           </div>
         ) : null}
-        <h3 className="mt-2 text-lg font-semibold text-slate-900" style={{ ...textWrapStyle, ...nameClampStyle, ...options.nameTextStyle }}>
+        <h3 className="mt-2 text-lg font-semibold text-slate-900" style={{ ...textWrapStyle, ...options.nameTextStyle }}>
           {item.name || "未命名产品"}
         </h3>
         {options.showDescription && item.description ? (
@@ -1321,7 +1312,7 @@ export default function ProductBlock(props: ProductBlockProps) {
         style={listCardStyle}
       >
         <div className={`relative overflow-hidden bg-slate-100 ${extra.list ? "shrink-0 self-start rounded-xl" : ""}`} style={frameStyle} />
-        <div className={extra.list ? "flex min-w-0 flex-1 flex-col overflow-hidden" : "flex min-h-[180px] flex-1 flex-col overflow-hidden p-4"} />
+        <div className={extra.list ? "flex min-w-0 flex-1 flex-col" : "flex min-h-[180px] flex-1 flex-col p-4"} />
       </div>
     );
   };
@@ -1348,6 +1339,37 @@ export default function ProductBlock(props: ProductBlockProps) {
         </button>
       </div>
     ) : null;
+
+  const overlayWithinBlock = props.runtimeInteractiveOverlayWithinBlock === true;
+  const cartOverlayClassName = overlayWithinBlock
+    ? "absolute inset-0 z-[120] flex items-center justify-center bg-black/55 p-3"
+    : "fixed inset-0 z-[1100] flex items-center justify-center bg-black/55 p-4";
+  const cartPanelClassName = overlayWithinBlock
+    ? "relative flex max-h-[calc(100%-1.5rem)] w-full max-w-full flex-col overflow-hidden rounded-[24px] bg-white shadow-2xl"
+    : "relative flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-[28px] bg-white shadow-2xl";
+  const cartBodyGridClassName = overlayWithinBlock
+    ? "grid min-h-0 flex-1 gap-0 overflow-hidden"
+    : "grid min-h-0 flex-1 gap-0 overflow-hidden lg:grid-cols-[minmax(0,1.15fr)_minmax(300px,0.85fr)]";
+  const cartSummaryClassName = overlayWithinBlock
+    ? "border-t border-slate-200 bg-slate-50/70 px-6 py-5"
+    : "border-t border-slate-200 bg-slate-50/70 px-6 py-5 lg:border-l lg:border-t-0";
+  const customerOverlayClassName = overlayWithinBlock
+    ? "absolute inset-0 z-[130] flex items-center justify-center bg-black/50 p-3"
+    : "fixed inset-0 z-[1110] flex items-center justify-center bg-black/50 p-4";
+  const productDetailOverlayClassName = overlayWithinBlock
+    ? "absolute inset-0 z-[115] flex items-center justify-center bg-black/60 p-3"
+    : "fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 p-4";
+  const productDetailDialogClassName = `relative w-full overflow-auto rounded-3xl shadow-2xl ${
+    detailFullImage
+      ? `${overlayWithinBlock ? "max-w-full" : "max-w-6xl"} bg-white p-3 sm:p-4`
+      : `${overlayWithinBlock ? "max-h-[calc(100%-1.5rem)] max-w-full" : "max-h-[90vh] max-w-4xl"} bg-white p-5 sm:p-6`
+  }`;
+  const productDetailGridClassName = overlayWithinBlock
+    ? "grid gap-5"
+    : "grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]";
+  const productDetailFullImageFrameStyle: CSSProperties = overlayWithinBlock
+    ? { height: "min(72vh, 720px)", minHeight: "320px" }
+    : { height: "min(88vh, 960px)", minHeight: "min(88vh, 960px)" };
 
   return (
     <section ref={rootRef} className={resolveMobileFitSectionClass("mx-auto max-w-6xl px-6 py-6", mobileFitScreenWidth)} style={offsetStyle}>
@@ -1399,14 +1421,14 @@ export default function ProductBlock(props: ProductBlockProps) {
       </div>
       {cartOpen ? (
         <div
-          className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/55 p-4"
+          className={cartOverlayClassName}
           onClick={() => {
             setCartCustomerOpen(false);
             setCartOpen(false);
           }}
         >
           <div
-            className="relative flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-[28px] bg-white shadow-2xl"
+            className={cartPanelClassName}
             onClick={(event) => event.stopPropagation()}
           >
             <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
@@ -1430,7 +1452,7 @@ export default function ProductBlock(props: ProductBlockProps) {
                 ×
               </button>
             </div>
-            <div className="grid min-h-0 flex-1 gap-0 overflow-hidden lg:grid-cols-[minmax(0,1.15fr)_minmax(300px,0.85fr)]">
+            <div className={cartBodyGridClassName}>
               <div className="min-h-0 overflow-y-auto px-6 py-5">
                 {cartItems.length > 0 ? (
                   <div className="space-y-4">
@@ -1462,8 +1484,8 @@ export default function ProductBlock(props: ProductBlockProps) {
                             <div className="min-w-0 flex-1">
                               <div className="flex items-start justify-between gap-3">
                                 <div className="min-w-0">
-                                  <div className="truncate text-base font-semibold text-slate-900">{item.product.name || "未命名产品"}</div>
-                                  {item.product.code ? <div className="mt-1 text-xs uppercase tracking-[0.18em] text-slate-400">{item.product.code}</div> : null}
+                                  <div className="break-words text-base font-semibold text-slate-900">{item.product.name || "未命名产品"}</div>
+                                  {item.product.code ? <div className="mt-1 break-words text-xs uppercase tracking-[0.18em] text-slate-400">{item.product.code}</div> : null}
                                 </div>
                                 <button
                                   type="button"
@@ -1516,7 +1538,7 @@ export default function ProductBlock(props: ProductBlockProps) {
                   </div>
                 )}
               </div>
-              <div className="border-t border-slate-200 bg-slate-50/70 px-6 py-5 lg:border-l lg:border-t-0">
+              <div className={cartSummaryClassName}>
                 <div className="rounded-2xl border border-slate-200 bg-white p-4">
                   <div className="text-lg font-semibold text-slate-900">客户信息</div>
                   {hasCartCustomerIdentity ? (
@@ -1573,9 +1595,9 @@ export default function ProductBlock(props: ProductBlockProps) {
         </div>
       ) : null}
       {cartOpen && cartCustomerOpen ? (
-        <div className="fixed inset-0 z-[1110] flex items-center justify-center bg-black/50 p-4" onClick={() => setCartCustomerOpen(false)}>
+        <div className={customerOverlayClassName} onClick={() => setCartCustomerOpen(false)}>
           <div
-            className="w-full max-w-lg rounded-[28px] bg-white p-6 shadow-2xl"
+            className="max-h-[calc(100%-1.5rem)] w-full max-w-lg overflow-auto rounded-[28px] bg-white p-6 shadow-2xl"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="flex items-start justify-between gap-4">
@@ -1644,9 +1666,9 @@ export default function ProductBlock(props: ProductBlockProps) {
         </div>
       ) : null}
       {activeProduct ? (
-        <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 p-4" onClick={() => setActiveProductId(null)}>
+        <div className={productDetailOverlayClassName} onClick={() => setActiveProductId(null)}>
           <div
-            className={`relative w-full overflow-auto rounded-3xl shadow-2xl ${detailFullImage ? "max-w-6xl bg-white p-3 sm:p-4" : "max-h-[90vh] max-w-4xl bg-white p-5 sm:p-6"}`}
+            className={productDetailDialogClassName}
             onClick={(event) => event.stopPropagation()}
           >
             <button
@@ -1658,7 +1680,7 @@ export default function ProductBlock(props: ProductBlockProps) {
               ×
             </button>
             {detailFullImage ? (
-              <div className="relative overflow-hidden rounded-[1.25rem] bg-slate-100" style={{ height: "min(88vh, 960px)", minHeight: "min(88vh, 960px)" }}>
+              <div className="relative overflow-hidden rounded-[1.25rem] bg-slate-100" style={productDetailFullImageFrameStyle}>
                 {activeProduct.imageUrl ? (
                   <Image src={activeProduct.imageUrl} alt={activeProduct.name || activeProduct.code || "产品图片"} fill unoptimized sizes="100vw" className="object-cover" />
                 ) : (
@@ -1697,7 +1719,7 @@ export default function ProductBlock(props: ProductBlockProps) {
                 ) : null}
               </div>
             ) : (
-              <div className="grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
+              <div className={productDetailGridClassName}>
                 <div
                   className="relative overflow-hidden rounded-2xl bg-slate-100"
                   style={{

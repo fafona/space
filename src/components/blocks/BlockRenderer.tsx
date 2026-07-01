@@ -128,6 +128,7 @@ export default function BlockRenderer({
                 runtimeSiteName={bookingSiteName}
                 runtimeBlockId={b.id}
                 runtimeOrderManagementEnabled={productCartEnabled}
+                runtimeInteractiveOverlayWithinBlock={forceMobileViewport}
               />
             );
             break;

@@ -29003,11 +29003,6 @@ type GalleryEditorImage = {
         productPreviewScrollViewportRefs.current[block.id]?.scrollTo({ top: 0, behavior: "auto" });
       });
     };
-    const productCodeClampStyle = {
-      overflow: "hidden" as const,
-      textOverflow: "ellipsis" as const,
-      whiteSpace: "nowrap" as const,
-    };
     const getProductLineClampStyle = (lines: number) =>
       ({
         display: "-webkit-box",
@@ -29048,7 +29043,7 @@ type GalleryEditorImage = {
           aria-hidden="true"
           className={
             options.list
-              ? "invisible flex w-full flex-col gap-4 p-4 sm:h-[var(--product-list-card-height)] sm:max-h-[var(--product-list-card-height)] sm:flex-row"
+              ? "invisible flex w-full flex-col gap-4 p-4 sm:min-h-[var(--product-list-card-height)] sm:flex-row"
               : "invisible flex h-full w-full flex-col"
           }
           style={placeholderCardStyle}
@@ -29057,7 +29052,7 @@ type GalleryEditorImage = {
             className={`relative overflow-hidden bg-slate-100 ${options.list ? "shrink-0 self-start rounded-lg" : ""}`}
             style={getProductImageFrameStyle(options)}
           />
-          <div className={options.list ? "flex min-w-0 flex-1 flex-col overflow-hidden" : "flex min-h-[170px] flex-1 flex-col overflow-hidden p-4"} />
+          <div className={options.list ? "flex min-w-0 flex-1 flex-col" : "flex min-h-[170px] flex-1 flex-col p-4"} />
         </div>
       );
     };
@@ -29068,7 +29063,6 @@ type GalleryEditorImage = {
     ) => {
       const priceText = productPriceText(item.price, productPricePrefix);
       const textWrapStyle = { overflowWrap: "anywhere" as const, wordBreak: "break-word" as const };
-      const productNameClampStyle = getProductLineClampStyle(options.list ? 2 : 2);
       const productDescriptionClampStyle = getProductLineClampStyle(options.featured ? 5 : options.list ? 4 : 3);
       const productListCardStyle = options.list
         ? ({
@@ -29081,7 +29075,7 @@ type GalleryEditorImage = {
           data-product-preview-item-id={item.id}
           className={`relative overflow-hidden rounded-xl shadow-sm ${productCardBorderClass} ${
             options.list
-              ? "flex flex-col gap-4 p-4 sm:h-[var(--product-list-card-height)] sm:max-h-[var(--product-list-card-height)] sm:flex-row"
+              ? "flex flex-col gap-4 p-4 sm:min-h-[var(--product-list-card-height)] sm:flex-row"
               : "flex h-full flex-col"
           } ${options.featured ? "lg:min-h-[360px]" : ""} ${options.editable ? "cursor-pointer transition hover:-translate-y-0.5 hover:shadow-md" : ""}`}
           style={{ ...productCardBackgroundStyle, ...productCardBorderInlineStyle, ...productListCardStyle }}
@@ -29144,16 +29138,16 @@ type GalleryEditorImage = {
               <div className="flex h-full items-center justify-center text-sm text-slate-400">{"暂无图片"}</div>
             )}
           </div>
-          <div className={options.list ? "flex min-w-0 flex-1 flex-col overflow-hidden" : "flex min-h-[170px] flex-1 flex-col p-4 overflow-hidden"}>
+          <div className={options.list ? "flex min-w-0 flex-1 flex-col" : "flex min-h-[170px] flex-1 flex-col p-4"}>
             {productShowCode && item.code ? (
               <div
                 className="text-[11px] uppercase tracking-[0.2em] text-slate-500"
-                style={{ ...textWrapStyle, ...productCodeClampStyle, ...productCodeTextStyle }}
+                style={{ ...textWrapStyle, ...productCodeTextStyle }}
               >
                 {item.code}
               </div>
             ) : null}
-            <div className="mt-2 text-lg font-semibold text-slate-900" style={{ ...textWrapStyle, ...productNameClampStyle, ...productNameTextStyle }}>
+            <div className="mt-2 text-lg font-semibold text-slate-900" style={{ ...textWrapStyle, ...productNameTextStyle }}>
               {item.name || "未命名产品"}
             </div>
             {productShowDescription && item.description ? (
