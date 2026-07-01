@@ -1536,7 +1536,7 @@ type MerchantDesktopSection =
   | "members"
   | "support"
   | "faolla";
-type ProductSettingsSectionKey = "basic" | "behavior" | "typography" | "tags" | "card" | "detail";
+type ProductSettingsSectionKey = "basic" | "behavior" | "typography" | "tags" | "card" | "detail" | "products";
 type ProductTypographyRole = "code" | "name" | "description" | "price";
 const MOBILE_SIZE_SCALE = 0.82;
 const MOBILE_CONTENT_MAX_WIDTH = 340;
@@ -29421,6 +29421,49 @@ type GalleryEditorImage = {
       );
     };
 
+    const renderProductInventorySection = (compact = false) =>
+      renderProductSettingsSection(
+        "products",
+        "产品",
+        <div className="space-y-3">
+          <div className={compact ? "grid grid-cols-2 gap-3" : "grid grid-cols-3 gap-3"}>
+            <button
+              type="button"
+              className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50"
+              onClick={() => productExcelInputRef.current?.click()}
+            >
+              {"导入 Excel"}
+            </button>
+            <button
+              type="button"
+              className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={productImageUploading}
+              onClick={() => productImageBatchInputRef.current?.click()}
+            >
+              {productImageUploading ? "正在上传..." : "按编号导入图片"}
+            </button>
+            <button
+              type="button"
+              className={`${compact ? "col-span-2 " : ""}rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50`}
+              onClick={addProductItem}
+            >
+              {"新增产品"}
+            </button>
+          </div>
+          <div className="text-xs text-gray-500">
+            {"图片批量导入会按文件名匹配产品编号，例如 SKU-001.jpg -> SKU-001。Excel 支持列名：编号、名称、介绍、价格、分类/标签。"}
+          </div>
+          {renderProductPreviewWithFilters()}
+          {renderProductPager()}
+          <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+            {productItems.length === 0
+              ? "暂无产品，点击“新增产品”后会直接打开编辑弹窗。"
+              : "点击上方产品预览中的任意产品，可直接弹窗编辑该产品；新增产品也会直接打开编辑弹窗。"}
+          </div>
+        </div>,
+        { bodyClassName: "mt-3" },
+      );
+
     const getProductTypographyPreviewClassName = (role: ProductTypographyRole) => {
       switch (role) {
         case "code":
@@ -30511,30 +30554,7 @@ type GalleryEditorImage = {
                       </div>
                     ) : null}
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <button
-                      type="button"
-                      className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50"
-                      onClick={() => productExcelInputRef.current?.click()}
-                    >
-                      {"导入 Excel"}
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-                      disabled={productImageUploading}
-                      onClick={() => productImageBatchInputRef.current?.click()}
-                    >
-                      {productImageUploading ? "正在上传..." : "按编号导入图片"}
-                    </button>
-                    <button
-                      type="button"
-                      className="col-span-2 rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50"
-                      onClick={addProductItem}
-                    >
-                      {"新增产品"}
-                    </button>
-                  </div>
+                  {renderProductInventorySection(true)}
                 </div>
               ) : (
                 <div className="mt-4 grid gap-4">
@@ -31094,44 +31114,11 @@ type GalleryEditorImage = {
                     </div>,
                     { bodyClassName: "mt-3" },
                   )}
-                  <div className="mt-4 grid grid-cols-3 gap-3">
-                    <button
-                      type="button"
-                      className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50"
-                      onClick={() => productExcelInputRef.current?.click()}
-                    >
-                      {"导入 Excel"}
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-                      disabled={productImageUploading}
-                      onClick={() => productImageBatchInputRef.current?.click()}
-                    >
-                      {productImageUploading ? "正在上传..." : "按编号导入图片"}
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50"
-                      onClick={addProductItem}
-                    >
-                      {"新增产品"}
-                    </button>
-                  </div>
+                  {renderProductInventorySection(false)}
                 </div>
               )}
-              <div className="mt-2 text-xs text-gray-500">
-                {"图片批量导入会按文件名匹配产品编号，例如 SKU-001.jpg -> SKU-001。Excel 支持列名：编号、名称、介绍、价格、分类/标签。"}
-              </div>
-              {renderProductPreviewWithFilters()}
-              {renderProductPager()}
               {productDetailPreviewDialog}
               {productItemEditorDialog}
-              <div className="mt-5 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-500">
-                {productItems.length === 0
-                  ? "暂无产品，点击“新增产品”后会直接打开编辑弹窗。"
-                  : "点击上方产品预览中的任意产品，可直接弹窗编辑该产品；新增产品也会直接打开编辑弹窗。"}
-              </div>
             </div>
           ) : (
             <>
