@@ -333,6 +333,7 @@ type ProductProps = BackgroundEditableProps &
     productLayoutPreset?: ProductLayoutPreset;
     productImageAspectRatio?: ProductImageAspectRatio;
     productImageSize?: number;
+    productCardHeight?: number;
     productPricePrefix?: string;
     productShowCode?: boolean;
     productShowDescription?: boolean;

@@ -11,6 +11,7 @@ import {
   groupArrangedProductItemsByTag,
   isMeaningfulProductItem,
   normalizeProductCartQuantityMode,
+  normalizeProductCardHeight,
   normalizeProductContainerMode,
   normalizeProductImageAspectRatio,
   normalizeProductItems,
@@ -60,6 +61,7 @@ type ProductBlockProps = BackgroundEditableProps &
     productLayoutPreset?: ProductLayoutPreset;
     productImageAspectRatio?: ProductImageAspectRatio;
     productImageSize?: number;
+    productCardHeight?: number;
     productPricePrefix?: string;
     productShowCode?: boolean;
     productShowDescription?: boolean;
@@ -427,6 +429,7 @@ function renderProductCard(
   options: {
     imageAspectRatio: ProductImageAspectRatio;
     imageSize: number;
+    cardHeight: number;
     pricePrefix: string;
     showCode: boolean;
     showDescription: boolean;
@@ -461,7 +464,7 @@ function renderProductCard(
     options.priceAlign === "center" ? "justify-center text-center" : options.priceAlign === "right" ? "justify-end text-right" : "justify-start text-left";
   const listCardStyle = options.list
     ? ({
-        "--product-list-card-height": `${options.imageSize + 32}px`,
+        "--product-list-card-height": `${options.cardHeight}px`,
       } as CSSProperties)
     : undefined;
   const frameStyle = options.list
@@ -490,7 +493,7 @@ function renderProductCard(
       }}
       className={`relative overflow-hidden rounded-2xl shadow-sm ${cardBorderClass} ${
         options.list
-          ? "flex min-h-[var(--product-list-card-height)] w-full cursor-pointer flex-row gap-4 p-4 text-left transition-shadow hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60"
+          ? "flex h-[var(--product-list-card-height)] max-h-[var(--product-list-card-height)] w-full cursor-pointer flex-row gap-4 p-4 text-left transition-shadow hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60"
           : "flex h-full w-full cursor-pointer flex-col text-left transition-shadow hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60"
       } ${options.spotlight ? "lg:min-h-[420px]" : ""}`}
       style={{ ...cardBackgroundStyle, ...cardBorderInlineStyle, ...listCardStyle }}
@@ -602,6 +605,7 @@ export default function ProductBlock(props: ProductBlockProps) {
     typeof props.productImageSize === "number" && Number.isFinite(props.productImageSize)
       ? Math.max(40, Math.min(420, Math.round(props.productImageSize)))
       : 220;
+  const productCardHeight = normalizeProductCardHeight(props.productCardHeight, imageSize + 32);
   const pricePrefix = (props.productPricePrefix ?? "").trim();
   const productSearchEnabled = props.productSearchEnabled !== false;
   const productSearchPlaceholder = resolveLocalizedSystemDefaultText(
@@ -736,7 +740,7 @@ export default function ProductBlock(props: ProductBlockProps) {
   const pageStart = normalizedPageIndex * itemsPerPage;
   const pagedProducts = containerMode === "paged" ? filteredProducts.slice(pageStart, pageStart + itemsPerPage) : filteredProducts;
   const scrollViewportHeight =
-    containerMode === "scroll" ? productContainerViewportHeight(layoutPreset, imageSize, itemsPerPage, productItemGap) : null;
+    containerMode === "scroll" ? productContainerViewportHeight(layoutPreset, imageSize, itemsPerPage, productItemGap, productCardHeight) : null;
   const productScrollSpyEnabled =
     groupedByTag && containerMode === "scroll" && !tagHideUnselected && productTags.length > 0;
   const activeProduct = arrangedProducts.find((item) => item.id === activeProductId) ?? products.find((item) => item.id === activeProductId) ?? null;
@@ -1186,6 +1190,7 @@ export default function ProductBlock(props: ProductBlockProps) {
     renderProductCard(item, {
       imageAspectRatio: extra.imageAspectRatio ?? imageAspectRatio,
       imageSize,
+      cardHeight: productCardHeight,
       pricePrefix,
       showCode,
       showDescription,
@@ -1446,7 +1451,7 @@ export default function ProductBlock(props: ProductBlockProps) {
     const listImageWidth = Math.max(1, Math.round((imageSize * ratio.width) / ratio.height));
     const listCardStyle = extra.list
       ? ({
-          "--product-list-card-height": `${imageSize + 32}px`,
+          "--product-list-card-height": `${productCardHeight}px`,
         } as CSSProperties)
       : undefined;
     const frameStyle = extra.list

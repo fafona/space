@@ -140,6 +140,7 @@ const BUTTON_STYLE_KEYS: Partial<Record<Block["type"], readonly string[]>> = {
     "productTagTextAlign",
     "productTagWidth",
     "productTagRowGap",
+    "productCardHeight",
     "productItemGap",
     "productCartQuantityMode",
   ],

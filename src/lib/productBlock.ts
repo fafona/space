@@ -264,6 +264,12 @@ export function normalizeProductSpacing(value: unknown, fallback: number, min = 
   return Math.max(min, Math.min(max, Math.round(value)));
 }
 
+export function normalizeProductCardHeight(value: unknown, fallback: number) {
+  const safeFallback = Math.max(64, Math.min(640, Math.round(fallback)));
+  if (typeof value !== "number" || !Number.isFinite(value)) return safeFallback;
+  return Math.max(64, Math.min(640, Math.round(value)));
+}
+
 export function defaultProductItemsPerPage(layout: ProductLayoutPreset) {
   if (layout === "list") return 3;
   if (layout === "grid-2") return 4;
@@ -283,12 +289,13 @@ export function productContainerViewportHeight(
   imageSize: number,
   visibleItems: number,
   itemGap = 16,
+  cardHeight?: number,
 ) {
   const safeVisibleItems = Math.max(1, Math.min(24, Math.round(visibleItems)));
   const gap = Math.max(0, Math.min(48, Math.round(itemGap)));
 
   if (layout === "list") {
-    const listCardHeight = imageSize + 32;
+    const listCardHeight = normalizeProductCardHeight(cardHeight, imageSize + 32);
     return safeVisibleItems * listCardHeight + Math.max(0, safeVisibleItems - 1) * gap;
   }
 
