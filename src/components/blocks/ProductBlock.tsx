@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import Image from "next/image";
@@ -590,6 +590,7 @@ export default function ProductBlock(props: ProductBlockProps) {
   const productTags = Array.from(
     new Set([...normalizeProductTagOptions(props.productTagOptions), ...products.map((item) => item.tag).filter(Boolean)]),
   );
+  const productTagKey = productTags.join("\u0001");
   const groupedByTag = props.productGroupByTag === true;
   const arrangedProducts = arrangeProductItemsByTag(products, productTags, groupedByTag);
   const layoutPreset = normalizeProductLayoutPreset(props.productLayoutPreset);
@@ -718,6 +719,7 @@ export default function ProductBlock(props: ProductBlockProps) {
   const cartCustomerNameRef = useRef<HTMLInputElement | null>(null);
   const cartButtonRef = useRef<HTMLButtonElement | null>(null);
   const cartAnimationTimersRef = useRef<number[]>([]);
+  const productScrollSpyFrameRef = useRef<number | null>(null);
   const cartStorageKey =
     props.runtimeSiteId && props.runtimeBlockId ? getProductCartStorageKey(props.runtimeSiteId, props.runtimeBlockId) : "";
   const cartEnabled = Boolean(props.runtimeOrderManagementEnabled && props.runtimeSiteId && props.runtimeBlockId);
@@ -733,6 +735,8 @@ export default function ProductBlock(props: ProductBlockProps) {
   const pagedProducts = containerMode === "paged" ? filteredProducts.slice(pageStart, pageStart + itemsPerPage) : filteredProducts;
   const scrollViewportHeight =
     containerMode === "scroll" ? productContainerViewportHeight(layoutPreset, imageSize, itemsPerPage, productItemGap) : null;
+  const productScrollSpyEnabled =
+    groupedByTag && containerMode === "scroll" && !tagHideUnselected && productTags.length > 0;
   const activeProduct = arrangedProducts.find((item) => item.id === activeProductId) ?? products.find((item) => item.id === activeProductId) ?? null;
   const placeholderCount =
     containerMode === "paged" && layoutPreset !== "spotlight" ? Math.max(0, itemsPerPage - pagedProducts.length) : 0;
@@ -774,6 +778,10 @@ export default function ProductBlock(props: ProductBlockProps) {
     () => () => {
       cartAnimationTimersRef.current.forEach((timer) => window.clearTimeout(timer));
       cartAnimationTimersRef.current = [];
+      if (productScrollSpyFrameRef.current !== null) {
+        window.cancelAnimationFrame(productScrollSpyFrameRef.current);
+        productScrollSpyFrameRef.current = null;
+      }
     },
     [],
   );
@@ -843,6 +851,45 @@ export default function ProductBlock(props: ProductBlockProps) {
     }, 80);
     return () => window.clearTimeout(timer);
   }, [cartCustomerOpen]);
+
+  const syncActiveTagFromScroll = useCallback(() => {
+    const viewport = scrollViewportRef.current;
+    if (!productScrollSpyEnabled || !viewport) return;
+
+    const viewportRect = viewport.getBoundingClientRect();
+    const activationLine = viewport.scrollTop + Math.max(8, viewport.clientHeight * 0.18);
+    const productTagValues = productTagKey ? productTagKey.split("\u0001") : [];
+    const headings = Array.from(viewport.querySelectorAll<HTMLElement>("[data-product-group-tag]"));
+    let nextTag = headings[0]?.dataset.productGroupTag ?? null;
+
+    for (const heading of headings) {
+      const tag = heading.dataset.productGroupTag ?? "";
+      if (!tag || !productTagValues.includes(tag)) continue;
+      const headingTop = heading.getBoundingClientRect().top - viewportRect.top + viewport.scrollTop;
+      if (headingTop <= activationLine) {
+        nextTag = tag;
+      } else {
+        break;
+      }
+    }
+
+    if (!nextTag) return;
+    setActiveTag((current) => (current === nextTag ? current : nextTag));
+  }, [productScrollSpyEnabled, productTagKey]);
+
+  const handleProductViewportScroll = () => {
+    if (!productScrollSpyEnabled || productScrollSpyFrameRef.current !== null) return;
+    productScrollSpyFrameRef.current = window.requestAnimationFrame(() => {
+      productScrollSpyFrameRef.current = null;
+      syncActiveTagFromScroll();
+    });
+  };
+
+  useEffect(() => {
+    if (!productScrollSpyEnabled) return;
+    const frame = window.requestAnimationFrame(syncActiveTagFromScroll);
+    return () => window.cancelAnimationFrame(frame);
+  }, [productScrollSpyEnabled, productTagKey, searchKeyword, normalizedPageIndex, pagedProducts.length, syncActiveTagFromScroll]);
 
   const scrollToProductCard = (targetId: string | null) => {
     if (!targetId) return;
@@ -1233,7 +1280,12 @@ export default function ProductBlock(props: ProductBlockProps) {
   };
 
   const renderProductGroupHeading = (label: string, key: string) => (
-    <div key={key} data-product-group-key={getProductGroupTagKey(label)} className="flex items-center gap-3">
+    <div
+      key={key}
+      data-product-group-key={getProductGroupTagKey(label)}
+      data-product-group-tag={label}
+      className="flex items-center gap-3"
+    >
       <div className="h-px flex-1 bg-slate-200" />
       <div className="shrink-0 text-sm font-semibold tracking-[0.08em] text-slate-700">{label || "未分类"}</div>
       <div className="h-px flex-1 bg-slate-200" />
@@ -1334,7 +1386,12 @@ export default function ProductBlock(props: ProductBlockProps) {
 
   const renderProductsWithFilters = () => {
     const content = containerMode === "scroll" && scrollViewportHeight ? (
-      <div ref={scrollViewportRef} className="min-w-0 overflow-y-auto pr-1" style={{ maxHeight: `${scrollViewportHeight}px` }}>
+      <div
+        ref={scrollViewportRef}
+        className="min-w-0 overflow-y-auto pr-1"
+        style={{ maxHeight: `${scrollViewportHeight}px` }}
+        onScroll={productScrollSpyEnabled ? handleProductViewportScroll : undefined}
+      >
         {renderProductContent()}
       </div>
     ) : (
