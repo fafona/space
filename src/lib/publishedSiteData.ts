@@ -37,6 +37,8 @@ export type PublishedSiteBlocksPayload = {
 
 const PUBLISHED_SITE_PAYLOAD_CACHE_TTL_MS = 1_500;
 const PUBLISHED_SITE_PAYLOAD_EMPTY_CACHE_TTL_MS = 1_000;
+const PUBLISHED_SITE_BLOCKS_CACHE_TTL_MS = 15_000;
+const PUBLISHED_SITE_BLOCKS_EMPTY_CACHE_TTL_MS = 2_000;
 const ORDER_MANAGEMENT_PERMISSION_TIMEOUT_MS = 1_500;
 
 const publishedSitePayloadCache = new Map<
@@ -45,6 +47,14 @@ const publishedSitePayloadCache = new Map<
     expiresAt: number;
     pending?: Promise<PublishedSitePayload | null>;
     value?: PublishedSitePayload | null;
+  }
+>();
+const publishedSiteBlocksCache = new Map<
+  string,
+  {
+    expiresAt: number;
+    pending?: Promise<PublishedSiteBlocksPayload | null>;
+    value?: PublishedSiteBlocksPayload | null;
   }
 >();
 
@@ -216,7 +226,7 @@ async function queryPublishedPageRows(supabase: PublishedSiteDataClient, normali
   };
 }
 
-export async function fetchPublishedSiteBlocksFromSupabase(siteId: string): Promise<PublishedSiteBlocksPayload | null> {
+async function fetchPublishedSiteBlocksFromSupabaseUncached(siteId: string): Promise<PublishedSiteBlocksPayload | null> {
   const normalizedSiteId = String(siteId ?? "").trim();
   if (!isMerchantNumericId(normalizedSiteId)) return null;
 
@@ -246,6 +256,36 @@ export async function fetchPublishedSiteBlocksFromSupabase(siteId: string): Prom
       blocksContainProductBlock(chosen.blocks),
     ),
   };
+}
+
+export async function fetchPublishedSiteBlocksFromSupabase(siteId: string): Promise<PublishedSiteBlocksPayload | null> {
+  const normalizedSiteId = String(siteId ?? "").trim();
+  if (!isMerchantNumericId(normalizedSiteId)) return null;
+
+  const cached = publishedSiteBlocksCache.get(normalizedSiteId);
+  if (cached && cached.expiresAt > Date.now()) {
+    if (cached.pending) return cached.pending;
+    if ("value" in cached) return cached.value ?? null;
+  }
+
+  const pending = fetchPublishedSiteBlocksFromSupabaseUncached(normalizedSiteId);
+  publishedSiteBlocksCache.set(normalizedSiteId, {
+    expiresAt: Date.now() + PUBLISHED_SITE_BLOCKS_CACHE_TTL_MS,
+    pending,
+  });
+
+  try {
+    const value = await pending;
+    publishedSiteBlocksCache.set(normalizedSiteId, {
+      expiresAt:
+        Date.now() + (value ? PUBLISHED_SITE_BLOCKS_CACHE_TTL_MS : PUBLISHED_SITE_BLOCKS_EMPTY_CACHE_TTL_MS),
+      value,
+    });
+    return value;
+  } catch (error) {
+    publishedSiteBlocksCache.delete(normalizedSiteId);
+    throw error;
+  }
 }
 
 async function fetchPublishedSitePayloadFromSupabaseUncached(siteId: string): Promise<PublishedSitePayload | null> {
