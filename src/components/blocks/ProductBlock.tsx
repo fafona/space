@@ -116,6 +116,15 @@ type ProductCartStorageState = {
   items?: ProductCartItemState[];
 };
 
+type ProductCartFlyItem = {
+  id: string;
+  imageUrl: string;
+  fromX: number;
+  fromY: number;
+  deltaX: number;
+  deltaY: number;
+};
+
 const PRODUCT_CART_STORAGE_PREFIX = "merchant-space:product-cart:v1:";
 
 function getProductAspectRatioPair(value: ProductImageAspectRatio) {
@@ -433,7 +442,7 @@ function renderProductCard(
     cartEnabled?: boolean;
     cartQuantityMode?: ProductCartQuantityMode;
     quantity?: number;
-    onIncreaseQuantity?: (item: ReturnType<typeof normalizeProductItems>[number]) => void;
+    onIncreaseQuantity?: (item: ReturnType<typeof normalizeProductItems>[number], sourceElement?: HTMLElement) => void;
     onDecreaseQuantity?: (item: ReturnType<typeof normalizeProductItems>[number]) => void;
     list?: boolean;
     spotlight?: boolean;
@@ -489,11 +498,11 @@ function renderProductCard(
         options.cartQuantityMode === "plus-only" ? (
           <button
             type="button"
-            className="absolute right-3 top-3 z-[2] flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-lg font-semibold text-slate-700 shadow-sm backdrop-blur transition hover:bg-slate-100"
+            className="absolute right-3 top-3 z-[2] flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-lg font-semibold text-slate-700 shadow-sm backdrop-blur transition hover:bg-slate-100 active:scale-95"
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
-              options.onIncreaseQuantity?.(item);
+              options.onIncreaseQuantity?.(item, event.currentTarget);
             }}
             aria-label="增加购买数量"
           >
@@ -517,11 +526,11 @@ function renderProductCard(
             <div className="min-w-[1.5rem] text-center text-xs font-semibold text-slate-700">{options.quantity ?? 0}</div>
             <button
               type="button"
-              className="flex h-7 w-7 items-center justify-center rounded-full text-base font-semibold text-slate-700 transition hover:bg-slate-100"
+              className="flex h-7 w-7 items-center justify-center rounded-full text-base font-semibold text-slate-700 transition hover:bg-slate-100 active:scale-95"
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                options.onIncreaseQuantity?.(item);
+                options.onIncreaseQuantity?.(item, event.currentTarget);
               }}
               aria-label="增加购买数量"
             >
@@ -702,9 +711,13 @@ export default function ProductBlock(props: ProductBlockProps) {
   const [cartError, setCartError] = useState("");
   const [cartNotice, setCartNotice] = useState("");
   const [cartCustomerShakeKey, setCartCustomerShakeKey] = useState(0);
+  const [cartFlyItems, setCartFlyItems] = useState<ProductCartFlyItem[]>([]);
+  const [cartPulse, setCartPulse] = useState(false);
   const rootRef = useRef<HTMLElement | null>(null);
   const scrollViewportRef = useRef<HTMLDivElement | null>(null);
   const cartCustomerNameRef = useRef<HTMLInputElement | null>(null);
+  const cartButtonRef = useRef<HTMLButtonElement | null>(null);
+  const cartAnimationTimersRef = useRef<number[]>([]);
   const cartStorageKey =
     props.runtimeSiteId && props.runtimeBlockId ? getProductCartStorageKey(props.runtimeSiteId, props.runtimeBlockId) : "";
   const cartEnabled = Boolean(props.runtimeOrderManagementEnabled && props.runtimeSiteId && props.runtimeBlockId);
@@ -756,6 +769,21 @@ export default function ProductBlock(props: ProductBlockProps) {
     }
     setCartPortalTarget(document.body);
   }, [overlayWithinBlock]);
+
+  useEffect(
+    () => () => {
+      cartAnimationTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+      cartAnimationTimersRef.current = [];
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!cartEnabled) {
+      setCartFlyItems([]);
+      setCartPulse(false);
+    }
+  }, [cartEnabled]);
 
   useEffect(() => {
     if (!cartEnabled) {
@@ -890,14 +918,57 @@ export default function ProductBlock(props: ProductBlockProps) {
     }
   };
 
+  const queueCartAnimationTimer = (callback: () => void, delayMs: number) => {
+    const timer = window.setTimeout(() => {
+      cartAnimationTimersRef.current = cartAnimationTimersRef.current.filter((item) => item !== timer);
+      callback();
+    }, delayMs);
+    cartAnimationTimersRef.current.push(timer);
+  };
+
+  const triggerCartPulse = () => {
+    setCartPulse(false);
+    requestAnimationFrame(() => {
+      setCartPulse(true);
+      queueCartAnimationTimer(() => setCartPulse(false), 380);
+    });
+  };
+
+  const triggerAddToCartAnimation = (
+    item: ReturnType<typeof normalizeProductItems>[number],
+    sourceElement?: HTMLElement,
+  ) => {
+    if (typeof window === "undefined" || !sourceElement) return;
+    const sourceRect = sourceElement.getBoundingClientRect();
+    const cartRect = cartButtonRef.current?.getBoundingClientRect();
+    const fromX = sourceRect.left + sourceRect.width / 2;
+    const fromY = sourceRect.top + sourceRect.height / 2;
+    const toX = cartRect ? cartRect.left + cartRect.width / 2 : 64;
+    const toY = cartRect ? cartRect.top + cartRect.height / 2 : window.innerHeight - 56;
+    const flyItem: ProductCartFlyItem = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      imageUrl: item.imageUrl || "",
+      fromX,
+      fromY,
+      deltaX: toX - fromX,
+      deltaY: toY - fromY,
+    };
+    setCartFlyItems((current) => [...current.slice(-5), flyItem]);
+    queueCartAnimationTimer(() => {
+      setCartFlyItems((current) => current.filter((entry) => entry.id !== flyItem.id));
+    }, 720);
+    queueCartAnimationTimer(triggerCartPulse, 440);
+  };
+
   const updateCartItems = (updater: (items: ProductCartItemState[]) => ProductCartItemState[]) => {
     setCartItems((current) => normalizeCartItems(updater(current), pricePrefix));
   };
 
-  const handleIncreaseQuantity = (item: ReturnType<typeof normalizeProductItems>[number]) => {
+  const handleIncreaseQuantity = (item: ReturnType<typeof normalizeProductItems>[number], sourceElement?: HTMLElement) => {
     if (!cartEnabled) return;
     setCartError("");
     setCartNotice("");
+    triggerAddToCartAnimation(item, sourceElement);
     updateCartItems((current) => {
       const nextIndex = current.findIndex((entry) => entry.productId === item.id);
       if (nextIndex < 0) {
@@ -1386,8 +1457,11 @@ export default function ProductBlock(props: ProductBlockProps) {
   const renderCartButton = () =>
     cartEnabled ? (
       <button
+        ref={cartButtonRef}
         type="button"
-        className={cartButtonClassName}
+        className={`${cartButtonClassName} ${
+          cartPulse ? "animate-[productCartButtonPulse_380ms_cubic-bezier(0.22,1,0.36,1)]" : ""
+        }`}
         aria-label="打开购物车"
         onClick={() => {
           setCartError("");
@@ -1415,6 +1489,32 @@ export default function ProductBlock(props: ProductBlockProps) {
         </span>
       </button>
     ) : null;
+  const renderCartFlyItems = () =>
+    cartFlyItems.map((item) => {
+      const flyStyle = {
+        left: `${item.fromX}px`,
+        top: `${item.fromY}px`,
+        "--product-cart-fly-x": `${item.deltaX}px`,
+        "--product-cart-fly-y": `${item.deltaY}px`,
+      } as CSSProperties & {
+        "--product-cart-fly-x": string;
+        "--product-cart-fly-y": string;
+      };
+      return (
+        <div
+          key={item.id}
+          aria-hidden="true"
+          className="pointer-events-none fixed z-[22000] flex h-11 w-11 items-center justify-center overflow-hidden rounded-full border border-white/80 bg-white text-xs font-bold text-slate-900 shadow-[0_12px_28px_rgba(15,23,42,0.24)] animate-[productCartFly_680ms_cubic-bezier(0.22,1,0.36,1)_forwards]"
+          style={flyStyle}
+        >
+          {item.imageUrl ? (
+            <Image src={item.imageUrl} alt="" fill unoptimized sizes="44px" className="object-cover" />
+          ) : (
+            <span>+1</span>
+          )}
+        </div>
+      );
+    });
 
   return (
     <section ref={rootRef} className={resolveMobileFitSectionClass("mx-auto max-w-6xl px-6 py-6", mobileFitScreenWidth)} style={offsetStyle}>
@@ -1434,6 +1534,7 @@ export default function ProductBlock(props: ProductBlockProps) {
         {renderProductsWithFilters()}
         {overlayWithinBlock || !cartPortalTarget ? renderCartButton() : null}
       </div>
+      {overlayWithinBlock || !cartPortalTarget ? renderCartFlyItems() : null}
       {cartOpen ? (
         <div
           className={cartOverlayClassName}
@@ -1778,8 +1879,45 @@ export default function ProductBlock(props: ProductBlockProps) {
           </div>
         </div>
       ) : null}
-      {!overlayWithinBlock && cartPortalTarget ? createPortal(renderCartButton(), cartPortalTarget) : null}
+      {!overlayWithinBlock && cartPortalTarget ? (
+        createPortal(
+          <>
+            {renderCartButton()}
+            {renderCartFlyItems()}
+          </>,
+          cartPortalTarget,
+        )
+      ) : null}
       <style jsx global>{`
+        @keyframes productCartFly {
+          0% {
+            opacity: 0;
+            transform: translate(-50%, -50%) scale(0.45);
+          }
+          16% {
+            opacity: 1;
+            transform: translate(-50%, -50%) scale(1);
+          }
+          78% {
+            opacity: 1;
+          }
+          100% {
+            opacity: 0;
+            transform: translate(calc(-50% + var(--product-cart-fly-x)), calc(-50% + var(--product-cart-fly-y))) scale(0.35);
+          }
+        }
+        @keyframes productCartButtonPulse {
+          0%,
+          100% {
+            transform: scale(1);
+          }
+          38% {
+            transform: scale(1.08);
+          }
+          64% {
+            transform: scale(0.98);
+          }
+        }
         @keyframes cartCustomerButtonShake {
           0%,
           100% {
