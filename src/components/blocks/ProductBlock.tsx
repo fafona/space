@@ -740,9 +740,17 @@ export default function ProductBlock(props: ProductBlockProps) {
   const cartButtonRef = useRef<HTMLButtonElement | null>(null);
   const cartAnimationTimersRef = useRef<number[]>([]);
   const productScrollSpyFrameRef = useRef<number | null>(null);
-  const cartStorageKey =
-    props.runtimeSiteId && props.runtimeBlockId ? getProductCartStorageKey(props.runtimeSiteId, props.runtimeBlockId) : "";
-  const cartEnabled = Boolean(props.runtimeOrderManagementEnabled && props.runtimeSiteId && props.runtimeBlockId);
+  const stableRuntimeSiteIdRef = useRef("");
+  const runtimeSiteId = String(props.runtimeSiteId ?? "").trim();
+  const runtimeBlockId = String(props.runtimeBlockId ?? "").trim();
+  if (runtimeSiteId) stableRuntimeSiteIdRef.current = runtimeSiteId;
+  const effectiveRuntimeSiteId = runtimeSiteId || stableRuntimeSiteIdRef.current;
+  const [cartRuntimeEnabled, setCartRuntimeEnabled] = useState(() =>
+    Boolean(props.runtimeOrderManagementEnabled && runtimeBlockId),
+  );
+  const cartEnabled = Boolean(cartRuntimeEnabled && runtimeBlockId);
+  const cartRuntimeReady = Boolean(cartEnabled && effectiveRuntimeSiteId && runtimeBlockId);
+  const cartStorageKey = cartRuntimeReady ? getProductCartStorageKey(effectiveRuntimeSiteId, runtimeBlockId) : "";
   const overlayWithinBlock = props.runtimeInteractiveOverlayWithinBlock === true;
   const disableCartPortal = props.runtimeDisableCartPortal === true;
   const [cartPortalTarget, setCartPortalTarget] = useState<HTMLElement | null>(null);
@@ -777,13 +785,24 @@ export default function ProductBlock(props: ProductBlockProps) {
   );
 
   useEffect(() => {
-    if (!cartEnabled || !cartStorageKey) {
+    if (props.runtimeOrderManagementEnabled && runtimeBlockId) {
+      setCartRuntimeEnabled(true);
+      return;
+    }
+    if (!runtimeBlockId) {
+      setCartRuntimeEnabled(false);
+    }
+  }, [props.runtimeOrderManagementEnabled, runtimeBlockId]);
+
+  useEffect(() => {
+    if (!cartEnabled) {
       setCartItems([]);
       setCartCustomer({});
       setCartCustomerDefaults({});
       setCartCustomerAuthProof("");
       return;
     }
+    if (!cartStorageKey) return;
     const stored = loadProductCartStorageState(cartStorageKey, pricePrefix);
     setCartItems(stored.items ?? []);
     setCartCustomer(stored.customer ?? {});
@@ -802,7 +821,20 @@ export default function ProductBlock(props: ProductBlockProps) {
       setOpenedToolbarTarget(null);
       return;
     }
-    setOpenedToolbarTarget(document.getElementById(openedToolbarTargetId));
+    let frameId = 0;
+    let attempts = 0;
+    const syncTarget = () => {
+      const target = document.getElementById(openedToolbarTargetId);
+      setOpenedToolbarTarget(target);
+      if (!target && attempts < 12) {
+        attempts += 1;
+        frameId = window.requestAnimationFrame(syncTarget);
+      }
+    };
+    syncTarget();
+    return () => {
+      if (frameId) window.cancelAnimationFrame(frameId);
+    };
   }, [openedToolbarTargetId, openedView]);
 
   useEffect(() => {
@@ -810,7 +842,20 @@ export default function ProductBlock(props: ProductBlockProps) {
       setOpenedCartTarget(null);
       return;
     }
-    setOpenedCartTarget(document.getElementById(openedCartTargetId));
+    let frameId = 0;
+    let attempts = 0;
+    const syncTarget = () => {
+      const target = document.getElementById(openedCartTargetId);
+      setOpenedCartTarget(target);
+      if (!target && attempts < 12) {
+        attempts += 1;
+        frameId = window.requestAnimationFrame(syncTarget);
+      }
+    };
+    syncTarget();
+    return () => {
+      if (frameId) window.cancelAnimationFrame(frameId);
+    };
   }, [openedCartTargetId, openedView]);
 
   useEffect(
@@ -1136,7 +1181,11 @@ export default function ProductBlock(props: ProductBlockProps) {
   };
 
   const handleSubmitOrder = async () => {
-    if (!cartEnabled || !props.runtimeSiteId || !props.runtimeBlockId) return;
+    if (!cartEnabled || !runtimeBlockId) return;
+    if (!effectiveRuntimeSiteId) {
+      setCartError("订单服务正在准备中，请稍后再提交。");
+      return;
+    }
     if (checkedCartItems.length === 0) {
       setCartError("请先勾选要提交的产品。");
       return;
@@ -1160,9 +1209,9 @@ export default function ProductBlock(props: ProductBlockProps) {
           "content-type": "application/json",
         },
         body: JSON.stringify({
-          siteId: props.runtimeSiteId,
+          siteId: effectiveRuntimeSiteId,
           siteName: props.runtimeSiteName,
-          blockId: props.runtimeBlockId,
+          blockId: runtimeBlockId,
           pricePrefix,
           frontendAuthProof,
           customer: cartCustomer,

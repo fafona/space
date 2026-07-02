@@ -134,6 +134,19 @@ type PublishedSiteBlocksFetchResult = {
   orderManagementEnabled?: boolean;
 };
 
+function blocksContainProductBlock(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some((item) => blocksContainProductBlock(item));
+  if (!value || typeof value !== "object") return false;
+  const record = value as { type?: unknown; blocks?: unknown; pages?: unknown; plans?: unknown; props?: unknown };
+  return (
+    record.type === "product" ||
+    blocksContainProductBlock(record.blocks) ||
+    blocksContainProductBlock(record.pages) ||
+    blocksContainProductBlock(record.plans) ||
+    blocksContainProductBlock(record.props)
+  );
+}
+
 function toPublishedSiteBlocksFetchResult(
   blocks: Block[] | null,
   orderManagementEnabled?: boolean,
@@ -414,7 +427,8 @@ export function SitePageClient({
   const localOrderManagementEnabled = hasResolvedOrderManagementPermission
     ? Boolean(site?.permissionConfig?.allowProductBlock && site?.permissionConfig?.allowOrderManagement)
     : false;
-  const orderManagementEnabled = Boolean(remoteOrderManagementEnabled || localOrderManagementEnabled);
+  const sourceContainsProductBlock = useMemo(() => blocksContainProductBlock(sourceBlocks), [sourceBlocks]);
+  const orderManagementEnabled = Boolean(remoteOrderManagementEnabled || localOrderManagementEnabled || sourceContainsProductBlock);
   useEffect(() => {
     if (!hydrated || !site || !resolvedPageId) return;
     void import("@/lib/analytics").then(({ trackPageView }) => {
@@ -496,7 +510,7 @@ export function SitePageClient({
         if (!mounted || !nextPublished) return;
 
         setDbBlocks(nextPublished.blocks);
-        if (nextPublished.orderManagementEnabled === true) {
+        if (nextPublished.orderManagementEnabled === true || blocksContainProductBlock(nextPublished.blocks)) {
           setRemoteOrderManagementEnabled(true);
         }
         savePublishedBlocksToStorage(nextPublished.blocks, siteScope);
