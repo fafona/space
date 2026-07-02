@@ -152,7 +152,7 @@ export default function BlockRenderer({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [closeOpenedBlock, openedBlockEntry]);
 
-  function renderBlockContent(b: Block, options: { openedView?: boolean } = {}): ReactNode {
+  function renderBlockContent(b: Block, options: { openedView?: boolean; openedToolbarTargetId?: string } = {}): ReactNode {
     let content: ReactNode = null;
     switch (b.type) {
       case "common":
@@ -216,6 +216,8 @@ export default function BlockRenderer({
             runtimeOrderManagementEnabled={productCartEnabled}
             runtimeInteractiveOverlayWithinBlock={forceMobileViewport}
             runtimeDisableCartPortal={options.openedView === true}
+            runtimeOpenedView={options.openedView === true}
+            runtimeOpenedToolbarTargetId={options.openedToolbarTargetId}
           />
         );
         break;
@@ -254,11 +256,16 @@ export default function BlockRenderer({
     : "sticky top-0 z-20 border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur";
   const openedBlockHeaderInnerClassName = forceMobileViewport
     ? "flex w-full items-center gap-2"
-    : "mx-auto flex max-w-6xl items-center gap-3";
+    : "mx-auto flex w-full max-w-6xl items-center gap-3";
   const openedBlockBackButtonClassName = forceMobileViewport
-    ? "inline-flex min-h-9 items-center rounded-full border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-900 shadow-sm hover:bg-slate-50"
-    : "inline-flex min-h-10 items-center rounded-full border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-900 shadow-sm hover:bg-slate-50";
+    ? "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-900 shadow-sm hover:bg-slate-50"
+    : "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-900 shadow-sm hover:bg-slate-50";
   const openedBlockBodyClassName = "faolla-hide-scrollbar min-h-0 flex-1 overflow-y-auto";
+  const openedToolbarTargetId = openedBlockEntry ? `faolla-opened-block-toolbar-${openedBlockEntry.block.id}` : "";
+  const openedBlockHasToolbar = openedBlockEntry?.block.type === "product";
+  const openedBlockTitleClassName = openedBlockHasToolbar
+    ? "min-w-0 max-w-[34%] shrink-0 truncate text-xs font-semibold text-slate-700 sm:text-sm"
+    : "min-w-0 flex-1 truncate text-xs font-semibold text-slate-700 sm:text-sm";
 
   return (
     <div className={forceMobileViewport ? "relative min-h-[780px]" : "contents"}>
@@ -296,12 +303,27 @@ export default function BlockRenderer({
                 type="button"
                 className={openedBlockBackButtonClassName}
                 onClick={closeOpenedBlock}
+                aria-label="返回"
               >
-                返回
+                <svg
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                  className={forceMobileViewport ? "h-4.5 w-4.5" : "h-5 w-5"}
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M15 18l-6-6 6-6" />
+                </svg>
               </button>
-              <div className="min-w-0 truncate text-xs font-semibold text-slate-700 sm:text-sm">
+              <div className={openedBlockTitleClassName}>
                 {openedBlockEntry.title}
               </div>
+              {openedBlockHasToolbar ? (
+                <div id={openedToolbarTargetId} className="ml-auto flex min-w-0 flex-1 justify-end" />
+              ) : null}
             </div>
           </div>
           <div
@@ -312,7 +334,10 @@ export default function BlockRenderer({
             className={openedBlockBodyClassName}
           >
             <BlockRuntimeBoundary blockId={openedBlockEntry.block.id}>
-              {renderBlockContent(openedBlockEntry.block, { openedView: true })}
+              {renderBlockContent(openedBlockEntry.block, {
+                openedView: true,
+                openedToolbarTargetId,
+              })}
             </BlockRuntimeBoundary>
           </div>
         </div>

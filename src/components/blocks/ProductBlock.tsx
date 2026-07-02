@@ -108,6 +108,8 @@ type ProductBlockProps = BackgroundEditableProps &
     runtimeOrderManagementEnabled?: boolean;
     runtimeInteractiveOverlayWithinBlock?: boolean;
     runtimeDisableCartPortal?: boolean;
+    runtimeOpenedView?: boolean;
+    runtimeOpenedToolbarTargetId?: string;
   };
 
 type ProductCartItemState = {
@@ -739,7 +741,10 @@ export default function ProductBlock(props: ProductBlockProps) {
   const cartEnabled = Boolean(props.runtimeOrderManagementEnabled && props.runtimeSiteId && props.runtimeBlockId);
   const overlayWithinBlock = props.runtimeInteractiveOverlayWithinBlock === true;
   const disableCartPortal = props.runtimeDisableCartPortal === true;
+  const openedView = props.runtimeOpenedView === true;
+  const openedToolbarTargetId = typeof props.runtimeOpenedToolbarTargetId === "string" ? props.runtimeOpenedToolbarTargetId : "";
   const [cartPortalTarget, setCartPortalTarget] = useState<HTMLElement | null>(null);
+  const [openedToolbarTarget, setOpenedToolbarTarget] = useState<HTMLElement | null>(null);
   const selectedTag = activeTag && productTags.includes(activeTag) ? activeTag : null;
   const searchMatchedProducts = productSearchEnabled ? filterProductItemsByKeyword(arrangedProducts, searchKeyword) : arrangedProducts;
   const filteredProducts =
@@ -788,6 +793,14 @@ export default function ProductBlock(props: ProductBlockProps) {
     }
     setCartPortalTarget(document.body);
   }, [disableCartPortal, overlayWithinBlock]);
+
+  useEffect(() => {
+    if (!openedView || !openedToolbarTargetId || typeof document === "undefined") {
+      setOpenedToolbarTarget(null);
+      return;
+    }
+    setOpenedToolbarTarget(document.getElementById(openedToolbarTargetId));
+  }, [openedToolbarTargetId, openedView]);
 
   useEffect(
     () => () => {
@@ -1229,8 +1242,34 @@ export default function ProductBlock(props: ProductBlockProps) {
     });
   };
 
-  const renderSearchBar = () =>
-    productSearchEnabled && products.length > 0 ? (
+  const renderSearchBar = (mode: "content" | "toolbar" = "content") => {
+    if (!productSearchEnabled || products.length === 0) return null;
+    if (mode === "toolbar") {
+      return (
+        <div className="w-full max-w-[min(62vw,360px)]">
+          <div className="relative">
+            <input
+              type="search"
+              value={searchKeyword}
+              onChange={(event) => handleSearchKeywordChange(event.target.value)}
+              placeholder={productSearchPlaceholder}
+              className="h-9 w-full rounded-full border border-slate-300 bg-white pl-3 pr-9 text-[13px] text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-sky-400 focus:ring-2 focus:ring-sky-200"
+            />
+            {searchKeyword.trim() ? (
+              <button
+                type="button"
+                className="absolute right-1 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full text-lg leading-none text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                onClick={() => handleSearchKeywordChange("")}
+                aria-label="清空搜索"
+              >
+                ×
+              </button>
+            ) : null}
+          </div>
+        </div>
+      );
+    }
+    return (
       <div className="mt-5">
         <div className="flex flex-wrap items-center gap-3">
           <input
@@ -1251,7 +1290,8 @@ export default function ProductBlock(props: ProductBlockProps) {
           ) : null}
         </div>
       </div>
-    ) : null;
+    );
+  };
 
   const renderTagFilters = () => {
     if (productTags.length === 0) return null;
@@ -1427,7 +1467,7 @@ export default function ProductBlock(props: ProductBlockProps) {
     if (tagPosition === "left") {
       return (
         <>
-          {renderSearchBar()}
+          {openedView ? null : renderSearchBar()}
           <div className="mt-5 grid grid-cols-[auto_minmax(0,1fr)] gap-4">
             {renderTagFilters()}
             <div className="min-w-0">{content}</div>
@@ -1438,7 +1478,7 @@ export default function ProductBlock(props: ProductBlockProps) {
     if (tagPosition === "right") {
       return (
         <>
-          {renderSearchBar()}
+          {openedView ? null : renderSearchBar()}
           <div className="mt-5 grid grid-cols-[minmax(0,1fr)_auto] gap-4">
             <div className="min-w-0">{content}</div>
             {renderTagFilters()}
@@ -1448,7 +1488,7 @@ export default function ProductBlock(props: ProductBlockProps) {
     }
     return (
       <>
-        {renderSearchBar()}
+        {openedView ? null : renderSearchBar()}
         {renderTagFilters()}
         {content}
       </>
@@ -1599,14 +1639,16 @@ export default function ProductBlock(props: ProductBlockProps) {
         </div>
       );
     });
+  const openedSearchToolbar = openedView && openedToolbarTarget ? createPortal(renderSearchBar("toolbar"), openedToolbarTarget) : null;
 
   return (
     <section ref={rootRef} className={resolveMobileFitSectionClass("mx-auto max-w-6xl px-6 py-6", mobileFitScreenWidth)} style={offsetStyle}>
+      {openedSearchToolbar}
       <div
         className={resolveMobileFitCardClass(`relative overflow-hidden rounded-2xl bg-white p-6 shadow-sm ${borderClass}`, mobileFitScreenWidth)}
         style={{ ...cardStyle, ...sizeStyle, ...borderInlineStyle }}
       >
-        {hasHeading ? (
+        {hasHeading && !openedView ? (
           <h2
             className="break-words whitespace-pre-wrap text-2xl font-bold"
             dangerouslySetInnerHTML={{ __html: toRichHtml(props.heading, resolveLocalizedSystemDefaultText(props.heading, "产品展示", locale)) }}
