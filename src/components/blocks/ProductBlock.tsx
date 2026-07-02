@@ -24,6 +24,7 @@ import {
   normalizeProductTagOptions,
   normalizeProductTagPosition,
   PRODUCT_LIST_CARD_VERTICAL_PADDING,
+  productListImageEdgeGap,
   productListImageMaxSize,
   productContainerViewportHeight,
   productGridClass,
@@ -460,6 +461,7 @@ function renderProductCard(
   const descriptionClampStyle = getMultiLineClampStyle(options.spotlight ? 5 : options.list ? 4 : 3);
   const ratio = getProductAspectRatioPair(options.imageAspectRatio);
   const frameImageSize = options.list ? Math.min(options.imageSize, productListImageMaxSize(options.cardHeight)) : options.imageSize;
+  const listImageEdgeGap = options.list ? productListImageEdgeGap(options.cardHeight, frameImageSize) : 0;
   const listImageWidth = Math.max(1, Math.round((frameImageSize * ratio.width) / ratio.height));
   const cardBackgroundStyle = getColorLayerStyle(options.cardBgColor, options.cardBgOpacity);
   const cardBorderClass = getBlockBorderClass(options.cardBorderStyle);
@@ -469,6 +471,9 @@ function renderProductCard(
   const listCardStyle = options.list
     ? ({
         "--product-list-card-height": `${options.cardHeight}px`,
+        paddingTop: `${listImageEdgeGap}px`,
+        paddingBottom: `${listImageEdgeGap}px`,
+        paddingLeft: `${listImageEdgeGap}px`,
       } as CSSProperties)
     : undefined;
   const frameStyle = options.list
@@ -1451,10 +1456,14 @@ export default function ProductBlock(props: ProductBlockProps) {
   const renderPlaceholderCard = (key: string, extra: { list?: boolean } = {}) => {
     const ratio = getProductAspectRatioPair(imageAspectRatio);
     const frameImageSize = extra.list ? Math.min(imageSize, productListImageMaxSize(productCardHeight)) : imageSize;
+    const listImageEdgeGap = extra.list ? productListImageEdgeGap(productCardHeight, frameImageSize) : 0;
     const listImageWidth = Math.max(1, Math.round((frameImageSize * ratio.width) / ratio.height));
     const listCardStyle = extra.list
       ? ({
           "--product-list-card-height": `${productCardHeight}px`,
+          paddingTop: `${listImageEdgeGap}px`,
+          paddingBottom: `${listImageEdgeGap}px`,
+          paddingLeft: `${listImageEdgeGap}px`,
         } as CSSProperties)
       : undefined;
     const frameStyle = extra.list

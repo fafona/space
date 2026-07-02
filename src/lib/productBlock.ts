@@ -287,6 +287,12 @@ export function normalizeProductImageSize(value: unknown, max = PRODUCT_IMAGE_SI
   return Math.max(PRODUCT_IMAGE_SIZE_MIN, Math.min(safeMax, Math.round(value)));
 }
 
+export function productListImageEdgeGap(cardHeight: unknown, imageSize: unknown) {
+  const safeCardHeight = normalizeProductCardHeight(cardHeight, 252);
+  const safeImageSize = normalizeProductImageSize(imageSize, productListImageMaxSize(safeCardHeight));
+  return Math.max(0, Math.round((safeCardHeight - safeImageSize) / 2));
+}
+
 export function defaultProductItemsPerPage(layout: ProductLayoutPreset) {
   if (layout === "list") return 3;
   if (layout === "grid-2") return 4;

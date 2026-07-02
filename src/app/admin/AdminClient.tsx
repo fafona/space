@@ -259,6 +259,7 @@ import {
   normalizeProductTagBorderStyle,
   normalizeProductTagOptions,
   normalizeProductTagPosition,
+  productListImageEdgeGap,
   productListImageMaxSize,
   productContainerViewportHeight,
   productGridClass,
@@ -28986,6 +28987,7 @@ type GalleryEditorImage = {
       Math.round((productDetailImageSize * productRatioPair.width) / productRatioPair.height),
     );
     const productListImageWidth = Math.max(1, Math.round((productImageSize * productRatioPair.width) / productRatioPair.height));
+    const productListImageEdgeInset = productListImageEdgeGap(productCardHeight, productImageSize);
     const productCardBackgroundStyle = getColorLayerStyle(productCardBgColor, productCardBgOpacity);
     const productCardBorderClass = getBlockBorderClass(productCardBorderStyle);
     const productCardBorderInlineStyle = getBlockBorderInlineStyle(productCardBorderStyle, productCardBorderColor);
@@ -29164,6 +29166,9 @@ type GalleryEditorImage = {
       const placeholderCardStyle = options.list
         ? ({
             "--product-list-card-height": `${productCardHeight}px`,
+            paddingTop: `${productListImageEdgeInset}px`,
+            paddingBottom: `${productListImageEdgeInset}px`,
+            paddingLeft: `${productListImageEdgeInset}px`,
           } as CSSProperties)
         : undefined;
       return (
@@ -29196,6 +29201,9 @@ type GalleryEditorImage = {
       const productListCardStyle = options.list
         ? ({
             "--product-list-card-height": `${productCardHeight}px`,
+            paddingTop: `${productListImageEdgeInset}px`,
+            paddingBottom: `${productListImageEdgeInset}px`,
+            paddingLeft: `${productListImageEdgeInset}px`,
           } as CSSProperties)
         : undefined;
       return (
