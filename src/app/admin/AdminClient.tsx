@@ -3025,6 +3025,9 @@ function isMissingMerchantIdColumn(message: string) {
 
 function normalizeSaveErrorMessage(message: string) {
   const normalized = message.replace(/^保存失败[:：]\s*/u, "").trim();
+  if (/^\?+$/.test(normalized)) {
+    return "发布接口返回了不可读错误，请刷新页面后重试；若继续失败，请重新登录后台";
+  }
   if (normalized === "publish_backend_request_timeout") {
     return "发布服务连接后端超时，请重试；若连续失败，请检查存储桶和服务端配置";
   }
@@ -3035,6 +3038,20 @@ function normalizeSaveErrorMessage(message: string) {
     return "发布服务异常，请稍后重试";
   }
   return normalized;
+}
+
+function normalizePublishApiErrorMessage(code: string, message: string, status: number) {
+  const normalized = String(message ?? "").trim();
+  const hasReadableMessage = normalized.length > 0 && !/^\?+$/.test(normalized);
+  if (code === "unauthorized") {
+    return hasReadableMessage ? normalized : "发布未授权，请重新登录后台后再发布";
+  }
+  if (code === "invalid_merchant_scope") {
+    return hasReadableMessage ? normalized : "发布缺少有效商户站点，请重新进入后台后再发布";
+  }
+  if (hasReadableMessage) return normalized;
+  if (code) return `发布接口错误（${code}）`;
+  return `发布接口错误（HTTP ${status}）`;
 }
 
 async function queryGlobalPageRecord(columns: string): Promise<{ record: GlobalPageRecord; error: SaveErrorLike }> {
@@ -3111,8 +3128,13 @@ function shouldOfferCompressionPresetForPublishError(message: string) {
   if (normalized.includes("service_role_key")) return false;
   if (normalized.includes("发布通道未配置")) return false;
   if (normalized.includes("登录会话")) return false;
+  if (normalized.includes("重新登录")) return false;
+  if (normalized.includes("未授权")) return false;
+  if (normalized.includes("有效商户站点")) return false;
   if (normalized.includes("会话")) return false;
   if (normalized.includes("auth")) return false;
+  if (normalized.includes("unauthorized")) return false;
+  if (normalized.includes("invalid_merchant_scope")) return false;
   if (normalized.includes("permission")) return false;
   return true;
 }
@@ -8526,7 +8548,7 @@ export default function AdminClient({
             ? { handled: false, error: null }
             : { handled: true, error: { message: "发布服务暂不可用，请稍后重试" } };
         }
-        return { handled: true, error: { message } };
+        return { handled: true, error: { message: normalizePublishApiErrorMessage(code, message, response.status) } };
       }
       return { handled: true, error: null };
     } catch {

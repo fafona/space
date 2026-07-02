@@ -675,7 +675,7 @@ export async function POST(request: Request) {
       const responseBody = {
         ok: false,
         code: "invalid_merchant_scope",
-        message: "???????????",
+        message: "发布缺少有效商户站点，请重新进入后台后再发布",
         requestId,
       };
       resultCache.set(requestId, { at: Date.now(), status, body: responseBody });
@@ -700,7 +700,7 @@ export async function POST(request: Request) {
         const responseBody = {
           ok: false,
           code: "unauthorized",
-          message: "?????????????",
+          message: "发布未授权，请重新登录超级管理员后再发布",
           requestId,
         };
         resultCache.set(requestId, { at: Date.now(), status, body: responseBody });
@@ -713,7 +713,7 @@ export async function POST(request: Request) {
         const responseBody = {
           ok: false,
           code: "unauthorized",
-          message: "??????????????",
+          message: "发布未授权，请重新登录商户账号后再发布",
           requestId,
         };
         resultCache.set(requestId, { at: Date.now(), status, body: responseBody });
