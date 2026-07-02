@@ -28,8 +28,8 @@ export type PublishedSitePayload = {
   orderManagementEnabled: boolean;
 };
 
-const PUBLISHED_SITE_PAYLOAD_CACHE_TTL_MS = 30_000;
-const PUBLISHED_SITE_PAYLOAD_EMPTY_CACHE_TTL_MS = 5_000;
+const PUBLISHED_SITE_PAYLOAD_CACHE_TTL_MS = 1_500;
+const PUBLISHED_SITE_PAYLOAD_EMPTY_CACHE_TTL_MS = 1_000;
 
 const publishedSitePayloadCache = new Map<
   string,

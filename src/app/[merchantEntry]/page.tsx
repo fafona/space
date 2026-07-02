@@ -45,6 +45,9 @@ const MERCHANT_ENTRY_PREFIX_TIMEOUT_MS = 700;
 const MERCHANT_ENTRY_METADATA_PAYLOAD_TIMEOUT_MS = 800;
 const MERCHANT_ENTRY_PAGE_PAYLOAD_TIMEOUT_MS = 1_200;
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 type PublishedSitePayloadResult = Awaited<ReturnType<typeof fetchPublishedSitePayloadFromSupabase>>;
 
 function readEnv(key: string) {

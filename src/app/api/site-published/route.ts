@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 export { isMissingPublishedSlugColumn, isPublishedBlocksPayload, pickPublishedPageRow } from "@/lib/publishedSiteData";
 
-const SITE_PUBLISHED_SUCCESS_CACHE_CONTROL = "public, max-age=15, s-maxage=30, stale-while-revalidate=120";
+const SITE_PUBLISHED_SUCCESS_CACHE_CONTROL = "no-store, max-age=0";
 const SITE_PUBLISHED_PAYLOAD_TIMEOUT_MS = 3_500;
 const SITE_PUBLISHED_TIMEOUT = Symbol("site_published_timeout");
 

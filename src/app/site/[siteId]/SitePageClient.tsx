@@ -260,8 +260,13 @@ async function fetchPublishedSiteBlocksViaApi(siteId: string) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), SITE_REMOTE_FETCH_TIMEOUT_MS);
   try {
-    const response = await fetch(`/api/site-published?siteId=${encodeURIComponent(siteId)}`, {
+    const query = new URLSearchParams({
+      siteId,
+      t: String(Date.now()),
+    });
+    const response = await fetch(`/api/site-published?${query.toString()}`, {
       method: "GET",
+      cache: "no-store",
       signal: controller.signal,
       headers: {
         Accept: "application/json",

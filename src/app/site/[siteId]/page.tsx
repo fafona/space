@@ -13,7 +13,8 @@ import {
 import { fetchPublishedSitePayloadFromSupabase } from "@/lib/publishedSiteData";
 import SitePageClient from "./SitePageClient";
 
-export const revalidate = 30;
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 type SitePageProps = {
   params: Promise<{
