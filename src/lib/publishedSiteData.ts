@@ -37,6 +37,7 @@ export type PublishedSiteBlocksPayload = {
 
 const PUBLISHED_SITE_PAYLOAD_CACHE_TTL_MS = 1_500;
 const PUBLISHED_SITE_PAYLOAD_EMPTY_CACHE_TTL_MS = 1_000;
+const ORDER_MANAGEMENT_PERMISSION_TIMEOUT_MS = 1_500;
 
 const publishedSitePayloadCache = new Map<
   string,
@@ -49,6 +50,20 @@ const publishedSitePayloadCache = new Map<
 
 function readEnv(name: string) {
   return (process.env[name] ?? "").trim();
+}
+
+async function withFallbackTimeout<T>(task: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      task,
+      new Promise<T>((resolve) => {
+        timer = setTimeout(() => resolve(fallback), Math.max(100, timeoutMs));
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function toTimestamp(value: string | null | undefined) {
@@ -80,6 +95,19 @@ function isPublishedBlockRecord(value: unknown): value is Block {
 
 export function isPublishedBlocksPayload(value: unknown): value is Block[] {
   return Array.isArray(value) && value.length > 0 && value.every((item) => isPublishedBlockRecord(item));
+}
+
+function blocksContainProductBlock(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some((item) => blocksContainProductBlock(item));
+  if (!value || typeof value !== "object") return false;
+  const record = value as { type?: unknown; props?: unknown; blocks?: unknown; pages?: unknown; plans?: unknown };
+  if (record.type === "product") return true;
+  return (
+    blocksContainProductBlock(record.blocks) ||
+    blocksContainProductBlock(record.pages) ||
+    blocksContainProductBlock(record.plans) ||
+    blocksContainProductBlock(record.props)
+  );
 }
 
 export function isMissingPublishedSlugColumn(message: string) {
@@ -212,7 +240,11 @@ export async function fetchPublishedSiteBlocksFromSupabase(siteId: string): Prom
     siteId: normalizedSiteId,
     slug: String(chosen.slug ?? "").trim(),
     blocks: chosen.blocks,
-    orderManagementEnabled: await orderManagementTask,
+    orderManagementEnabled: await withFallbackTimeout(
+      orderManagementTask,
+      ORDER_MANAGEMENT_PERMISSION_TIMEOUT_MS,
+      blocksContainProductBlock(chosen.blocks),
+    ),
   };
 }
 
