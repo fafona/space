@@ -325,7 +325,8 @@ async function fetchPublishedSitePayloadFromSupabaseUncached(siteId: string): Pr
     String(snapshotSite?.name ?? "").trim() ||
     String((merchantProfile as MerchantProfileRow | null)?.name ?? "").trim();
   const orderManagementEnabled = Boolean(
-    snapshotSite?.permissionConfig?.allowProductBlock && snapshotSite?.permissionConfig?.allowOrderManagement,
+    (snapshotSite?.permissionConfig?.allowProductBlock && snapshotSite?.permissionConfig?.allowOrderManagement) ||
+      blocksContainProductBlock(chosen.blocks),
   );
 
   return {

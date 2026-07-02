@@ -496,8 +496,8 @@ export function SitePageClient({
         if (!mounted || !nextPublished) return;
 
         setDbBlocks(nextPublished.blocks);
-        if (typeof nextPublished.orderManagementEnabled === "boolean") {
-          setRemoteOrderManagementEnabled(nextPublished.orderManagementEnabled);
+        if (nextPublished.orderManagementEnabled === true) {
+          setRemoteOrderManagementEnabled(true);
         }
         savePublishedBlocksToStorage(nextPublished.blocks, siteScope);
       } catch {

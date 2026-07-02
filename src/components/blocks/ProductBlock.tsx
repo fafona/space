@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import Image from "next/image";
 import type { BackgroundEditableProps, BlockBorderStyle, TypographyEditableProps } from "@/data/homeBlocks";
 import {
@@ -707,6 +708,8 @@ export default function ProductBlock(props: ProductBlockProps) {
   const cartStorageKey =
     props.runtimeSiteId && props.runtimeBlockId ? getProductCartStorageKey(props.runtimeSiteId, props.runtimeBlockId) : "";
   const cartEnabled = Boolean(props.runtimeOrderManagementEnabled && props.runtimeSiteId && props.runtimeBlockId);
+  const overlayWithinBlock = props.runtimeInteractiveOverlayWithinBlock === true;
+  const [cartPortalTarget, setCartPortalTarget] = useState<HTMLElement | null>(null);
   const selectedTag = activeTag && productTags.includes(activeTag) ? activeTag : null;
   const searchMatchedProducts = productSearchEnabled ? filterProductItemsByKeyword(arrangedProducts, searchKeyword) : arrangedProducts;
   const filteredProducts =
@@ -745,6 +748,14 @@ export default function ProductBlock(props: ProductBlockProps) {
     setCartItems(stored.items ?? []);
     setCartCustomer(stored.customer ?? {});
   }, [cartEnabled, cartStorageKey, pricePrefix]);
+
+  useEffect(() => {
+    if (overlayWithinBlock || typeof document === "undefined") {
+      setCartPortalTarget(null);
+      return;
+    }
+    setCartPortalTarget(document.body);
+  }, [overlayWithinBlock]);
 
   useEffect(() => {
     if (!cartEnabled) {
@@ -1340,7 +1351,6 @@ export default function ProductBlock(props: ProductBlockProps) {
       </div>
     ) : null;
 
-  const overlayWithinBlock = props.runtimeInteractiveOverlayWithinBlock === true;
   const cartOverlayClassName = overlayWithinBlock
     ? "absolute inset-0 z-[120] flex items-center justify-center bg-black/55 p-3"
     : "fixed inset-0 z-[1100] flex items-center justify-center bg-black/55 p-4";
@@ -1372,7 +1382,39 @@ export default function ProductBlock(props: ProductBlockProps) {
     : { height: "min(88vh, 960px)", minHeight: "min(88vh, 960px)" };
   const cartButtonClassName = overlayWithinBlock
     ? "absolute bottom-5 left-5 z-20 inline-flex items-center gap-2 rounded-full bg-slate-950/95 px-3.5 py-2.5 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(15,23,42,0.18)] transition hover:bg-slate-800"
-    : "fixed bottom-[calc(env(safe-area-inset-bottom)+1rem)] left-5 z-[20000] inline-flex items-center gap-2 rounded-full bg-slate-950/95 px-3.5 py-2.5 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(15,23,42,0.18)] transition hover:bg-slate-800 md:absolute md:bottom-5 md:left-5 md:z-20";
+    : "fixed bottom-[calc(env(safe-area-inset-bottom)+1rem)] left-5 z-[20000] inline-flex items-center gap-2 rounded-full bg-slate-950/95 px-3.5 py-2.5 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(15,23,42,0.18)] transition hover:bg-slate-800";
+  const renderCartButton = () =>
+    cartEnabled ? (
+      <button
+        type="button"
+        className={cartButtonClassName}
+        aria-label="打开购物车"
+        onClick={() => {
+          setCartError("");
+          setCartNotice("");
+          setCartOpen(true);
+        }}
+      >
+        <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-white/10">
+          <svg
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            className="h-4.5 w-4.5 stroke-current text-white"
+            fill="none"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <circle cx="9" cy="20" r="1.5" />
+            <circle cx="18" cy="20" r="1.5" />
+            <path d="M3 4h2l2.2 9.2a1 1 0 0 0 1 .8h8.9a1 1 0 0 0 1-.76L20 7H7.2" />
+          </svg>
+        </span>
+        <span className="inline-flex min-w-[1.45rem] items-center justify-center rounded-full bg-emerald-400 px-1.5 py-0.5 text-[11px] font-bold text-slate-950">
+          {checkedCartTotalQuantity}
+        </span>
+      </button>
+    ) : null;
 
   return (
     <section ref={rootRef} className={resolveMobileFitSectionClass("mx-auto max-w-6xl px-6 py-6", mobileFitScreenWidth)} style={offsetStyle}>
@@ -1390,37 +1432,7 @@ export default function ProductBlock(props: ProductBlockProps) {
           <div className="mt-2 break-words whitespace-pre-wrap text-sm leading-6 text-slate-600" dangerouslySetInnerHTML={{ __html: toRichHtml(props.text, "") }} />
         ) : null}
         {renderProductsWithFilters()}
-        {cartEnabled ? (
-          <button
-            type="button"
-            className={cartButtonClassName}
-            aria-label="打开购物车"
-            onClick={() => {
-              setCartError("");
-              setCartNotice("");
-              setCartOpen(true);
-            }}
-          >
-            <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-white/10">
-              <svg
-                viewBox="0 0 24 24"
-                aria-hidden="true"
-                className="h-4.5 w-4.5 stroke-current text-white"
-                fill="none"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <circle cx="9" cy="20" r="1.5" />
-                <circle cx="18" cy="20" r="1.5" />
-                <path d="M3 4h2l2.2 9.2a1 1 0 0 0 1 .8h8.9a1 1 0 0 0 1-.76L20 7H7.2" />
-              </svg>
-            </span>
-            <span className="inline-flex min-w-[1.45rem] items-center justify-center rounded-full bg-emerald-400 px-1.5 py-0.5 text-[11px] font-bold text-slate-950">
-              {checkedCartTotalQuantity}
-            </span>
-          </button>
-        ) : null}
+        {overlayWithinBlock || !cartPortalTarget ? renderCartButton() : null}
       </div>
       {cartOpen ? (
         <div
@@ -1766,6 +1778,7 @@ export default function ProductBlock(props: ProductBlockProps) {
           </div>
         </div>
       ) : null}
+      {!overlayWithinBlock && cartPortalTarget ? createPortal(renderCartButton(), cartPortalTarget) : null}
       <style jsx global>{`
         @keyframes cartCustomerButtonShake {
           0%,
