@@ -1299,15 +1299,21 @@ export default function ProductBlock(props: ProductBlockProps) {
       ...(tagHideUnselected ? [{ key: "__all__", label: "全部", value: null as string | null }] : []),
       ...productTags.map((tag) => ({ key: tag, label: tag, value: tag })),
     ];
+    const tagFilterClassName =
+      tagPosition === "top"
+        ? openedView
+          ? "sticky top-0 z-10 flex flex-wrap bg-white/95 py-1 backdrop-blur"
+          : "mt-5 flex flex-wrap"
+        : tagPosition === "left"
+          ? openedView
+            ? "sticky top-1 z-10 flex w-max shrink-0 flex-col items-start self-start"
+            : "flex w-max flex-col items-start"
+          : openedView
+            ? "sticky top-1 z-10 flex w-max shrink-0 flex-col items-end self-start"
+            : "flex w-max flex-col items-end";
     return (
       <div
-        className={
-          tagPosition === "top"
-            ? "mt-5 flex flex-wrap"
-            : tagPosition === "left"
-              ? "flex w-max flex-col items-start"
-              : "flex w-max flex-col items-end"
-        }
+        className={tagFilterClassName}
         style={{ gap: `${tagRowGap}px` }}
       >
         {filterItems.map((filter, index) => {
@@ -1409,8 +1415,8 @@ export default function ProductBlock(props: ProductBlockProps) {
   const productGroupItemClassName = openedView ? "space-y-2" : "space-y-4";
   const productFilterGridClassName =
     tagPosition === "left"
-      ? `${openedView ? "mt-1 gap-2" : "mt-5 gap-4"} grid grid-cols-[auto_minmax(0,1fr)]`
-      : `${openedView ? "mt-1 gap-2" : "mt-5 gap-4"} grid grid-cols-[minmax(0,1fr)_auto]`;
+      ? `${openedView ? "mt-1 gap-2" : "mt-5 gap-4"} grid grid-cols-[auto_minmax(0,1fr)] items-start`
+      : `${openedView ? "mt-1 gap-2" : "mt-5 gap-4"} grid grid-cols-[minmax(0,1fr)_auto] items-start`;
 
   const renderProductContent = () => {
     if (filteredProducts.length === 0) {
