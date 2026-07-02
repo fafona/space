@@ -33,8 +33,8 @@ import usePullToRefresh from "@/lib/usePullToRefresh";
 
 const EMPTY_BLOCKS: Block[] = [];
 const MIN_INITIAL_LOADING_MS = 0;
-const SITE_REMOTE_FETCH_TIMEOUT_MS = 8000;
-const SITE_REMOTE_SETTLE_TIMEOUT_MS = 8800;
+const SITE_REMOTE_FETCH_TIMEOUT_MS = 25000;
+const SITE_REMOTE_SETTLE_TIMEOUT_MS = 26000;
 const SITE_REMOTE_FALLBACK_DELAY_MS = 650;
 
 function readViewportWidth() {
@@ -129,9 +129,22 @@ function delayNull(timeoutMs: number) {
   });
 }
 
-async function firstNonNullBlockResult(tasks: Promise<Block[] | null>[]) {
+type PublishedSiteBlocksFetchResult = {
+  blocks: Block[];
+  orderManagementEnabled?: boolean;
+};
+
+function toPublishedSiteBlocksFetchResult(
+  blocks: Block[] | null,
+  orderManagementEnabled?: boolean,
+): PublishedSiteBlocksFetchResult | null {
+  if (!blocks || blocks.length === 0) return null;
+  return typeof orderManagementEnabled === "boolean" ? { blocks, orderManagementEnabled } : { blocks };
+}
+
+async function firstNonNullPublishedSiteResult(tasks: Promise<PublishedSiteBlocksFetchResult | null>[]) {
   if (tasks.length === 0) return null;
-  return new Promise<Block[] | null>((resolve) => {
+  return new Promise<PublishedSiteBlocksFetchResult | null>((resolve) => {
     let pending = tasks.length;
     let settled = false;
     const settleNull = () => {
@@ -145,7 +158,7 @@ async function firstNonNullBlockResult(tasks: Promise<Block[] | null>[]) {
       task
         .then((value) => {
           if (settled) return;
-          if (value && value.length > 0) {
+          if (value?.blocks?.length) {
             settled = true;
             resolve(value);
             return;
@@ -255,7 +268,7 @@ async function fetchPublishedSiteBlocksViaRest(siteId: string) {
   return queryOne();
 }
 
-async function fetchPublishedSiteBlocksViaApi(siteId: string) {
+async function fetchPublishedSiteBlocksViaApi(siteId: string): Promise<PublishedSiteBlocksFetchResult | null> {
   if (!siteId) return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), SITE_REMOTE_FETCH_TIMEOUT_MS);
@@ -273,10 +286,13 @@ async function fetchPublishedSiteBlocksViaApi(siteId: string) {
       },
     });
     if (!response.ok) return null;
-    const json = (await response.json().catch(() => null)) as { blocks?: unknown } | null;
+    const json = (await response.json().catch(() => null)) as { blocks?: unknown; orderManagementEnabled?: unknown } | null;
     if (!Array.isArray(json?.blocks)) return null;
     const sanitized = sanitizeBlocksForRuntime(json.blocks as Block[]).blocks;
-    return sanitized.length > 0 ? sanitized : null;
+    return toPublishedSiteBlocksFetchResult(
+      sanitized,
+      typeof json.orderManagementEnabled === "boolean" ? json.orderManagementEnabled : undefined,
+    );
   } catch {
     return null;
   } finally {
@@ -298,18 +314,22 @@ async function fetchPublishedSiteBlocksViaSdk(siteId: string) {
   return null;
 }
 
-async function fetchPublishedSiteBlocksFast(siteId: string) {
+async function fetchPublishedSiteBlocksFast(siteId: string): Promise<PublishedSiteBlocksFetchResult | null> {
   const apiTask = withTimeout(fetchPublishedSiteBlocksViaApi(siteId), SITE_REMOTE_FETCH_TIMEOUT_MS);
   if (!isSupabaseEnabled) return apiTask;
 
   const fastApiBlocks = await Promise.race([apiTask, delayNull(SITE_REMOTE_FALLBACK_DELAY_MS)]);
   if (fastApiBlocks) return fastApiBlocks;
 
-  const restTask = withTimeout(fetchPublishedSiteBlocksViaRest(siteId), SITE_REMOTE_FETCH_TIMEOUT_MS);
-  const firstBlocks = await firstNonNullBlockResult([apiTask, restTask]);
+  const restTask = withTimeout(fetchPublishedSiteBlocksViaRest(siteId), SITE_REMOTE_FETCH_TIMEOUT_MS).then((blocks) =>
+    toPublishedSiteBlocksFetchResult(blocks),
+  );
+  const firstBlocks = await firstNonNullPublishedSiteResult([apiTask, restTask]);
   if (firstBlocks) return firstBlocks;
 
-  return withTimeout(fetchPublishedSiteBlocksViaSdk(siteId), SITE_REMOTE_FETCH_TIMEOUT_MS);
+  return withTimeout(fetchPublishedSiteBlocksViaSdk(siteId), SITE_REMOTE_FETCH_TIMEOUT_MS).then((blocks) =>
+    toPublishedSiteBlocksFetchResult(blocks),
+  );
 }
 
 type SitePageClientProps = {
@@ -325,7 +345,7 @@ export function SitePageClient({
   initialIsMobileViewport = false,
   initialPublishedBlocks = EMPTY_BLOCKS,
   initialMerchantName = "",
-  initialOrderManagementEnabled = false,
+  initialOrderManagementEnabled,
 }: SitePageClientProps = {}) {
   const params = useParams<{ siteId?: string }>();
   const routeSiteId = typeof params?.siteId === "string" ? params.siteId : "";
@@ -340,6 +360,9 @@ export function SitePageClient({
   const [dbBlocks, setDbBlocks] = useState<Block[] | null>(() => (hasInitialPublishedBlocks ? initialPublishedBlocks : null));
   const [scopedPublishedBlocksLocal, setScopedPublishedBlocksLocal] = useState<Block[] | null>(() =>
     hasInitialPublishedBlocks ? initialPublishedBlocks : null,
+  );
+  const [remoteOrderManagementEnabled, setRemoteOrderManagementEnabled] = useState<boolean | null>(() =>
+    typeof initialOrderManagementEnabled === "boolean" ? initialOrderManagementEnabled : null,
   );
   const [remoteResolved, setRemoteResolved] = useState(hasInitialPublishedBlocks);
   const faollaAppShell = hydrated ? isFaollaAppShell() : false;
@@ -388,9 +411,10 @@ export function SitePageClient({
   const site = useMemo(() => platformState.sites.find((item) => item.id === siteId) ?? null, [platformState.sites, siteId]);
   const effectiveMerchantName = (site?.merchantName ?? site?.name ?? initialMerchantName).trim();
   const hasResolvedOrderManagementPermission = typeof site?.permissionConfig?.allowOrderManagement === "boolean";
-  const orderManagementEnabled = hasResolvedOrderManagementPermission
+  const localOrderManagementEnabled = hasResolvedOrderManagementPermission
     ? Boolean(site?.permissionConfig?.allowProductBlock && site?.permissionConfig?.allowOrderManagement)
-    : initialOrderManagementEnabled;
+    : false;
+  const orderManagementEnabled = Boolean(remoteOrderManagementEnabled || localOrderManagementEnabled);
   useEffect(() => {
     if (!hydrated || !site || !resolvedPageId) return;
     void import("@/lib/analytics").then(({ trackPageView }) => {
@@ -468,11 +492,14 @@ export function SitePageClient({
 
     (async () => {
       try {
-        const nextBlocks = await fetchPublishedSiteBlocksFast(siteId);
-        if (!mounted || !nextBlocks) return;
+        const nextPublished = await fetchPublishedSiteBlocksFast(siteId);
+        if (!mounted || !nextPublished) return;
 
-        setDbBlocks(nextBlocks);
-        savePublishedBlocksToStorage(nextBlocks, siteScope);
+        setDbBlocks(nextPublished.blocks);
+        if (typeof nextPublished.orderManagementEnabled === "boolean") {
+          setRemoteOrderManagementEnabled(nextPublished.orderManagementEnabled);
+        }
+        savePublishedBlocksToStorage(nextPublished.blocks, siteScope);
       } catch {
         // Keep local rendered content when backend is unavailable.
       } finally {

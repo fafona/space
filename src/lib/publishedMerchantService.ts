@@ -14,7 +14,7 @@ import {
   PLATFORM_MERCHANT_SNAPSHOT_SLUG,
   readPlatformMerchantSnapshotFromBlocks,
 } from "@/lib/platformMerchantSnapshot";
-import { collectPublishedMerchantSnapshotsFromBlocks, mergePublishedMerchantSnapshots, loadPublishedPlatformHomeBlocks } from "@/lib/platformPublished";
+import { collectPublishedMerchantSnapshotsFromBlocks, loadPublishedPlatformHomeBlocks } from "@/lib/platformPublished";
 
 type QueryErrorLike = { message?: string } | null;
 type QueryResult<T> = { data: T | null; error: QueryErrorLike };
@@ -131,20 +131,15 @@ async function loadSnapshotBlocks() {
 }
 
 async function loadSnapshotSitesUncached() {
-  const [homeResult, blocks] = await Promise.all([
-    loadPublishedPlatformHomeBlocks().catch(() => ({ blocks: null as SnapshotRow["blocks"] | null, error: "home_snapshot_load_failed" })),
-    loadSnapshotBlocks(),
-  ]);
+  const blocks = await loadSnapshotBlocks();
   const storedSnapshot = readPlatformMerchantSnapshotFromBlocks(blocks)?.snapshot ?? [];
-  const homeSnapshot = Array.isArray(homeResult.blocks) ? collectPublishedMerchantSnapshotsFromBlocks(homeResult.blocks) : [];
+  if (storedSnapshot.length > 0) return storedSnapshot;
 
-  if (homeSnapshot.length === 0) return storedSnapshot;
-  if (storedSnapshot.length === 0) return homeSnapshot;
-
-  const mergedCurrent = mergePublishedMerchantSnapshots(homeSnapshot, storedSnapshot);
-  const mergedIds = new Set(mergedCurrent.map((site) => site.id));
-  const appendedStored = storedSnapshot.filter((site) => !mergedIds.has(site.id));
-  return [...mergedCurrent, ...appendedStored];
+  const homeResult = await loadPublishedPlatformHomeBlocks().catch(() => ({
+    blocks: null as SnapshotRow["blocks"] | null,
+    error: "home_snapshot_load_failed",
+  }));
+  return Array.isArray(homeResult.blocks) ? collectPublishedMerchantSnapshotsFromBlocks(homeResult.blocks) : [];
 }
 
 async function loadSnapshotSites() {

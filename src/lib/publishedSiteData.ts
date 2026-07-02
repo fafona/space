@@ -32,6 +32,7 @@ export type PublishedSiteBlocksPayload = {
   siteId: string;
   slug: string;
   blocks: Block[];
+  orderManagementEnabled: boolean;
 };
 
 const PUBLISHED_SITE_PAYLOAD_CACHE_TTL_MS = 1_500;
@@ -120,17 +121,59 @@ function createPublishedSiteDataClient() {
 
 type PublishedSiteDataClient = NonNullable<ReturnType<typeof createPublishedSiteDataClient>>;
 
+type PublishedPageMetaRow = Omit<PublishedPageRow, "blocks">;
+
+function sortPublishedPageMetaRows(rows: PublishedPageMetaRow[]) {
+  return [...rows].sort((left, right) => {
+    const delta =
+      Math.max(toTimestamp(right.updated_at), toTimestamp(right.created_at)) -
+      Math.max(toTimestamp(left.updated_at), toTimestamp(left.created_at));
+    if (delta !== 0) return delta;
+    return normalizeSlug(left.slug).localeCompare(normalizeSlug(right.slug), "zh-CN");
+  });
+}
+
 async function queryPublishedPageRows(supabase: PublishedSiteDataClient, normalizedSiteId: string) {
-  const initialQuery = await supabase
+  const metadataQuery = await supabase
     .from("pages")
-    .select("blocks,slug,updated_at,created_at")
+    .select("slug,updated_at,created_at")
     .eq("merchant_id", normalizedSiteId)
     .limit(20);
 
-  if (!initialQuery.error || !isMissingPublishedSlugColumn(initialQuery.error.message)) {
+  if (!metadataQuery.error) {
+    const candidates = sortPublishedPageMetaRows(
+      ((metadataQuery.data ?? []) as PublishedPageMetaRow[]).filter((item) => !isInternalPagesSlug(item.slug)),
+    );
+
+    for (const candidate of candidates) {
+      const slug = normalizeSlug(candidate.slug);
+      let rowQuery = supabase
+        .from("pages")
+        .select("blocks,slug,updated_at,created_at")
+        .eq("merchant_id", normalizedSiteId)
+        .limit(1);
+      rowQuery = slug ? rowQuery.eq("slug", slug) : rowQuery.is("slug", null);
+      const rowResult = await rowQuery.maybeSingle();
+      if (rowResult.error) continue;
+      const row = rowResult.data as PublishedPageRow | null;
+      if (row && isPublishedBlocksPayload(row.blocks)) {
+        return {
+          data: [row],
+          error: null,
+        };
+      }
+    }
+  }
+
+  if (!metadataQuery.error || !isMissingPublishedSlugColumn(metadataQuery.error.message)) {
+    const fallbackQuery = await supabase
+      .from("pages")
+      .select("blocks,slug,updated_at,created_at")
+      .eq("merchant_id", normalizedSiteId)
+      .limit(20);
     return {
-      data: initialQuery.data as PublishedPageRow[] | null,
-      error: initialQuery.error,
+      data: fallbackQuery.data as PublishedPageRow[] | null,
+      error: fallbackQuery.error,
     };
   }
 
@@ -152,6 +195,9 @@ export async function fetchPublishedSiteBlocksFromSupabase(siteId: string): Prom
   const supabase = createPublishedSiteDataClient();
   if (!supabase) return null;
 
+  const orderManagementTask = loadPublishedMerchantSnapshotSiteBySiteId(normalizedSiteId)
+    .then((site) => Boolean(site?.permissionConfig?.allowProductBlock && site?.permissionConfig?.allowOrderManagement))
+    .catch(() => false);
   const { data, error } = await queryPublishedPageRows(supabase, normalizedSiteId);
   if (error) {
     throw error;
@@ -166,6 +212,7 @@ export async function fetchPublishedSiteBlocksFromSupabase(siteId: string): Prom
     siteId: normalizedSiteId,
     slug: String(chosen.slug ?? "").trim(),
     blocks: chosen.blocks,
+    orderManagementEnabled: await orderManagementTask,
   };
 }
 

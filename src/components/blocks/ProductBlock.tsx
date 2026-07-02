@@ -1370,6 +1370,9 @@ export default function ProductBlock(props: ProductBlockProps) {
   const productDetailFullImageFrameStyle: CSSProperties = overlayWithinBlock
     ? { height: "min(72vh, 720px)", minHeight: "320px" }
     : { height: "min(88vh, 960px)", minHeight: "min(88vh, 960px)" };
+  const cartButtonClassName = overlayWithinBlock
+    ? "absolute bottom-5 left-5 z-20 inline-flex items-center gap-2 rounded-full bg-slate-950/95 px-3.5 py-2.5 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(15,23,42,0.18)] transition hover:bg-slate-800"
+    : "fixed bottom-[calc(env(safe-area-inset-bottom)+1rem)] left-5 z-[20000] inline-flex items-center gap-2 rounded-full bg-slate-950/95 px-3.5 py-2.5 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(15,23,42,0.18)] transition hover:bg-slate-800 md:absolute md:bottom-5 md:left-5 md:z-20";
 
   return (
     <section ref={rootRef} className={resolveMobileFitSectionClass("mx-auto max-w-6xl px-6 py-6", mobileFitScreenWidth)} style={offsetStyle}>
@@ -1390,7 +1393,7 @@ export default function ProductBlock(props: ProductBlockProps) {
         {cartEnabled ? (
           <button
             type="button"
-            className="absolute bottom-5 left-5 z-20 inline-flex items-center gap-2 rounded-full bg-slate-950/95 px-3.5 py-2.5 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(15,23,42,0.18)] transition hover:bg-slate-800"
+            className={cartButtonClassName}
             aria-label="打开购物车"
             onClick={() => {
               setCartError("");
