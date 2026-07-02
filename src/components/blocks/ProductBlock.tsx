@@ -100,6 +100,7 @@ type ProductBlockProps = BackgroundEditableProps &
     runtimeBlockId?: string;
     runtimeOrderManagementEnabled?: boolean;
     runtimeInteractiveOverlayWithinBlock?: boolean;
+    runtimeDisableCartPortal?: boolean;
   };
 
 type ProductCartItemState = {
@@ -724,6 +725,7 @@ export default function ProductBlock(props: ProductBlockProps) {
     props.runtimeSiteId && props.runtimeBlockId ? getProductCartStorageKey(props.runtimeSiteId, props.runtimeBlockId) : "";
   const cartEnabled = Boolean(props.runtimeOrderManagementEnabled && props.runtimeSiteId && props.runtimeBlockId);
   const overlayWithinBlock = props.runtimeInteractiveOverlayWithinBlock === true;
+  const disableCartPortal = props.runtimeDisableCartPortal === true;
   const [cartPortalTarget, setCartPortalTarget] = useState<HTMLElement | null>(null);
   const selectedTag = activeTag && productTags.includes(activeTag) ? activeTag : null;
   const searchMatchedProducts = productSearchEnabled ? filterProductItemsByKeyword(arrangedProducts, searchKeyword) : arrangedProducts;
@@ -767,12 +769,12 @@ export default function ProductBlock(props: ProductBlockProps) {
   }, [cartEnabled, cartStorageKey, pricePrefix]);
 
   useEffect(() => {
-    if (overlayWithinBlock || typeof document === "undefined") {
+    if (overlayWithinBlock || disableCartPortal || typeof document === "undefined") {
       setCartPortalTarget(null);
       return;
     }
     setCartPortalTarget(document.body);
-  }, [overlayWithinBlock]);
+  }, [disableCartPortal, overlayWithinBlock]);
 
   useEffect(
     () => () => {

@@ -152,7 +152,7 @@ export default function BlockRenderer({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [closeOpenedBlock, openedBlockEntry]);
 
-  function renderBlockContent(b: Block): ReactNode {
+  function renderBlockContent(b: Block, options: { openedView?: boolean } = {}): ReactNode {
     let content: ReactNode = null;
     switch (b.type) {
       case "common":
@@ -215,6 +215,7 @@ export default function BlockRenderer({
             runtimeBlockId={b.id}
             runtimeOrderManagementEnabled={productCartEnabled}
             runtimeInteractiveOverlayWithinBlock={forceMobileViewport}
+            runtimeDisableCartPortal={options.openedView === true}
           />
         );
         break;
@@ -296,7 +297,7 @@ export default function BlockRenderer({
             data-block-public-id={openedBlockEntry.publicBlockId}
           >
             <BlockRuntimeBoundary blockId={openedBlockEntry.block.id}>
-              {renderBlockContent(openedBlockEntry.block)}
+              {renderBlockContent(openedBlockEntry.block, { openedView: true })}
             </BlockRuntimeBoundary>
           </div>
         </div>
