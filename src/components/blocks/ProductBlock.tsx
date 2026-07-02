@@ -595,6 +595,8 @@ function renderProductCard(
 }
 
 export default function ProductBlock(props: ProductBlockProps) {
+  const openedView = props.runtimeOpenedView === true;
+  const openedToolbarTargetId = typeof props.runtimeOpenedToolbarTargetId === "string" ? props.runtimeOpenedToolbarTargetId : "";
   const mobileFitScreenWidth = props.mobileFitScreenWidth === true;
   const { locale } = useI18n();
   const products = normalizeProductItems(props.products)
@@ -693,7 +695,7 @@ export default function ProductBlock(props: ProductBlockProps) {
     typeof props.blockHeight === "number" && Number.isFinite(props.blockHeight)
       ? Math.max(120, Math.round(props.blockHeight))
       : undefined;
-  const sizeStyle = {
+  const sizeStyle = openedView ? {} : {
     width: blockWidth ? `${blockWidth}px` : undefined,
     height: blockHeight ? `${blockHeight}px` : undefined,
     overflow: blockHeight ? ("auto" as const) : undefined,
@@ -704,7 +706,7 @@ export default function ProductBlock(props: ProductBlockProps) {
     typeof props.blockOffsetY === "number" && Number.isFinite(props.blockOffsetY) ? Math.round(props.blockOffsetY) : 0;
   const blockLayer =
     typeof props.blockLayer === "number" && Number.isFinite(props.blockLayer) ? Math.max(1, Math.round(props.blockLayer)) : 1;
-  const offsetStyle = {
+  const offsetStyle = openedView ? { position: "relative" as const, zIndex: blockLayer } : {
     position: "relative" as const,
     transform: offsetX || offsetY ? `translate(${offsetX}px, ${offsetY}px)` : undefined,
     zIndex: blockLayer,
@@ -741,8 +743,6 @@ export default function ProductBlock(props: ProductBlockProps) {
   const cartEnabled = Boolean(props.runtimeOrderManagementEnabled && props.runtimeSiteId && props.runtimeBlockId);
   const overlayWithinBlock = props.runtimeInteractiveOverlayWithinBlock === true;
   const disableCartPortal = props.runtimeDisableCartPortal === true;
-  const openedView = props.runtimeOpenedView === true;
-  const openedToolbarTargetId = typeof props.runtimeOpenedToolbarTargetId === "string" ? props.runtimeOpenedToolbarTargetId : "";
   const [cartPortalTarget, setCartPortalTarget] = useState<HTMLElement | null>(null);
   const [openedToolbarTarget, setOpenedToolbarTarget] = useState<HTMLElement | null>(null);
   const selectedTag = activeTag && productTags.includes(activeTag) ? activeTag : null;
@@ -1404,11 +1404,19 @@ export default function ProductBlock(props: ProductBlockProps) {
     );
   };
 
+  const productContentTopClassName = openedView ? "mt-0" : "mt-5";
+  const productGroupListClassName = openedView ? "mt-0 space-y-3" : "mt-5 space-y-6";
+  const productGroupItemClassName = openedView ? "space-y-2" : "space-y-4";
+  const productFilterGridClassName =
+    tagPosition === "left"
+      ? `${openedView ? "mt-1 gap-2" : "mt-5 gap-4"} grid grid-cols-[auto_minmax(0,1fr)]`
+      : `${openedView ? "mt-1 gap-2" : "mt-5 gap-4"} grid grid-cols-[minmax(0,1fr)_auto]`;
+
   const renderProductContent = () => {
     if (filteredProducts.length === 0) {
       return (
         <>
-          <div className="mt-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-500">
+          <div className={`${openedView ? "mt-1" : "mt-4"} rounded-xl border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-500`}>
             {searchKeyword.trim()
               ? `未找到与“${searchKeyword.trim()}”匹配的产品。`
               : "暂无产品，请在后台添加产品信息。"}
@@ -1422,9 +1430,9 @@ export default function ProductBlock(props: ProductBlockProps) {
       const groups = groupArrangedProductItemsByTag(pagedProducts);
       return (
         <>
-          <div className="mt-5 space-y-6">
+          <div className={productGroupListClassName}>
             {groups.map((group, index) => (
-              <div key={`${group.tag || "untagged"}-${index}`} className="space-y-4">
+              <div key={`${group.tag || "untagged"}-${index}`} className={productGroupItemClassName}>
                 {renderProductGroupHeading(group.tag, `product-group-${group.tag || "untagged"}-${index}`)}
                 {renderProductCollection(group.items, {
                   placeholderPrefix: `product-group-${group.tag || "untagged"}-${index}`,
@@ -1440,7 +1448,7 @@ export default function ProductBlock(props: ProductBlockProps) {
 
     return (
       <>
-        <div className="mt-5">
+        <div className={productContentTopClassName}>
           {renderProductCollection(pagedProducts, {
             placeholderPrefix: "product",
             includePlaceholders: true,
@@ -1468,7 +1476,7 @@ export default function ProductBlock(props: ProductBlockProps) {
       return (
         <>
           {openedView ? null : renderSearchBar()}
-          <div className="mt-5 grid grid-cols-[auto_minmax(0,1fr)] gap-4">
+          <div className={productFilterGridClassName}>
             {renderTagFilters()}
             <div className="min-w-0">{content}</div>
           </div>
@@ -1479,7 +1487,7 @@ export default function ProductBlock(props: ProductBlockProps) {
       return (
         <>
           {openedView ? null : renderSearchBar()}
-          <div className="mt-5 grid grid-cols-[minmax(0,1fr)_auto] gap-4">
+          <div className={productFilterGridClassName}>
             <div className="min-w-0">{content}</div>
             {renderTagFilters()}
           </div>
@@ -1559,22 +1567,25 @@ export default function ProductBlock(props: ProductBlockProps) {
     : "relative flex max-h-[min(78dvh,720px)] w-[calc(100vw-0.75rem)] max-w-[calc(100vw-0.75rem)] flex-col overflow-hidden rounded-[22px] bg-white shadow-2xl sm:w-full sm:max-w-3xl sm:rounded-[28px]";
   const cartBodyGridClassName = "flex min-h-0 flex-1 flex-col overflow-hidden";
   const customerOverlayClassName = overlayWithinBlock
-    ? "absolute inset-0 z-[130] flex items-center justify-center bg-black/50 p-3"
-    : "fixed inset-0 z-[1110] flex items-center justify-center bg-black/50 p-4";
+    ? "absolute inset-0 z-[130] flex items-start justify-center overflow-y-auto bg-black/50 px-2 py-2"
+    : "fixed inset-0 z-[1110] flex items-start justify-center overflow-y-auto bg-black/50 px-2 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-[calc(env(safe-area-inset-bottom)+1rem)]";
+  const customerPanelClassName = overlayWithinBlock
+    ? "relative my-2 max-h-[calc(100%-1rem)] w-[calc(100%-0.5rem)] max-w-lg overflow-y-auto rounded-[24px] bg-white p-4 shadow-2xl sm:p-6"
+    : "relative max-h-[calc(100dvh-2rem)] w-[calc(100vw-1rem)] max-w-lg overflow-y-auto rounded-[24px] bg-white p-4 shadow-2xl sm:p-6";
   const productDetailOverlayClassName = overlayWithinBlock
-    ? "absolute inset-0 z-[115] flex items-center justify-center bg-black/60 p-3"
-    : "fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 p-4";
-  const productDetailDialogClassName = `relative w-full overflow-auto rounded-3xl shadow-2xl ${
+    ? "absolute inset-0 z-[115] flex items-start justify-center overflow-y-auto bg-black/60 px-1.5 py-2"
+    : "fixed inset-0 z-[1000] flex items-start justify-center overflow-y-auto bg-black/60 px-1.5 pt-[calc(env(safe-area-inset-top)+0.5rem)] pb-[calc(env(safe-area-inset-bottom)+1rem)]";
+  const productDetailDialogClassName = `relative rounded-3xl shadow-2xl ${
     detailFullImage
-      ? `${overlayWithinBlock ? "max-w-full" : "max-w-6xl"} bg-white p-3 sm:p-4`
-      : `${overlayWithinBlock ? "max-h-[calc(100%-1.5rem)] max-w-full" : "max-h-[90vh] max-w-4xl"} bg-white p-5 sm:p-6`
+      ? `${overlayWithinBlock ? "max-h-[calc(100%-0.75rem)] w-[calc(100%-0.5rem)] max-w-full" : "max-h-[calc(100dvh-2rem)] w-[calc(100vw-0.75rem)] max-w-5xl"} overflow-hidden rounded-[22px] bg-black p-0`
+      : `w-full overflow-auto ${overlayWithinBlock ? "max-h-[calc(100%-1rem)] max-w-full" : "max-h-[calc(100dvh-2rem)] max-w-4xl"} bg-white p-5 sm:p-6`
   }`;
   const productDetailGridClassName = overlayWithinBlock
     ? "grid gap-5"
     : "grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]";
   const productDetailFullImageFrameStyle: CSSProperties = overlayWithinBlock
-    ? { height: "min(72vh, 720px)", minHeight: "320px" }
-    : { height: "min(88vh, 960px)", minHeight: "min(88vh, 960px)" };
+    ? { height: "min(74dvh, 760px)", minHeight: "240px", maxHeight: "calc(100dvh - 7rem)" }
+    : { height: "min(74dvh, 860px)", minHeight: "240px", maxHeight: "calc(100dvh - 7rem)" };
   const cartButtonClassName = overlayWithinBlock
     ? "absolute bottom-5 left-5 z-20 inline-flex items-center gap-2 rounded-full bg-slate-950/95 px-3.5 py-2.5 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(15,23,42,0.18)] transition hover:bg-slate-800"
     : "fixed bottom-[calc(env(safe-area-inset-bottom)+1rem)] left-5 z-[20000] inline-flex items-center gap-2 rounded-full bg-slate-950/95 px-3.5 py-2.5 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(15,23,42,0.18)] transition hover:bg-slate-800";
@@ -1640,13 +1651,20 @@ export default function ProductBlock(props: ProductBlockProps) {
       );
     });
   const openedSearchToolbar = openedView && openedToolbarTarget ? createPortal(renderSearchBar("toolbar"), openedToolbarTarget) : null;
+  const sectionClassName = openedView
+    ? "relative mx-auto min-h-full w-full px-1.5 py-0"
+    : resolveMobileFitSectionClass("mx-auto max-w-6xl px-6 py-6", mobileFitScreenWidth);
+  const cardClassName = openedView
+    ? `relative min-h-full overflow-visible bg-white px-1.5 py-0 shadow-none ${borderClass}`
+    : resolveMobileFitCardClass(`relative overflow-hidden rounded-2xl bg-white p-6 shadow-sm ${borderClass}`, mobileFitScreenWidth);
+  const cardContainerStyle = openedView ? { ...cardStyle, ...borderInlineStyle } : { ...cardStyle, ...sizeStyle, ...borderInlineStyle };
 
   return (
-    <section ref={rootRef} className={resolveMobileFitSectionClass("mx-auto max-w-6xl px-6 py-6", mobileFitScreenWidth)} style={offsetStyle}>
+    <section ref={rootRef} className={sectionClassName} style={offsetStyle}>
       {openedSearchToolbar}
       <div
-        className={resolveMobileFitCardClass(`relative overflow-hidden rounded-2xl bg-white p-6 shadow-sm ${borderClass}`, mobileFitScreenWidth)}
-        style={{ ...cardStyle, ...sizeStyle, ...borderInlineStyle }}
+        className={cardClassName}
+        style={cardContainerStyle}
       >
         {hasHeading && !openedView ? (
           <h2
@@ -1809,7 +1827,7 @@ export default function ProductBlock(props: ProductBlockProps) {
       {cartOpen && cartCustomerOpen ? (
         <div className={customerOverlayClassName} onClick={() => setCartCustomerOpen(false)}>
           <div
-            className="max-h-[calc(100%-1.5rem)] w-full max-w-lg overflow-auto rounded-[28px] bg-white p-6 shadow-2xl"
+            className={customerPanelClassName}
             onClick={(event) => event.stopPropagation()}
           >
             <div className="flex items-start justify-between gap-4">
@@ -1894,23 +1912,27 @@ export default function ProductBlock(props: ProductBlockProps) {
             {detailFullImage ? (
               <div className="relative overflow-hidden rounded-[1.25rem] bg-slate-100" style={productDetailFullImageFrameStyle}>
                 {activeProduct.imageUrl ? (
-                  <Image src={activeProduct.imageUrl} alt={activeProduct.name || activeProduct.code || "产品图片"} fill unoptimized sizes="100vw" className="object-cover" />
+                  <Image src={activeProduct.imageUrl} alt={activeProduct.name || activeProduct.code || "产品图片"} fill unoptimized sizes="100vw" className="object-contain" />
                 ) : (
                   <div className="flex h-full items-center justify-center text-sm text-slate-400">暂无图片</div>
                 )}
-                {detailShowCode || detailShowName || detailShowDescription || detailShowPrice ? (
+                {detailShowCode || detailShowName ? (
+                  <div className="absolute left-3 top-3 z-10 max-w-[calc(100%-4.5rem)] rounded-2xl bg-black/45 px-3 py-2 text-white backdrop-blur-sm sm:left-4 sm:top-4 sm:px-4">
+                    {detailShowCode && activeProduct.code ? (
+                      <div className="text-[11px] uppercase tracking-[0.22em] text-white/75" style={productCodeTextStyle}>
+                        {activeProduct.code}
+                      </div>
+                    ) : null}
+                    {detailShowName ? (
+                      <h3 className="break-words text-lg font-semibold text-white sm:text-2xl" style={productNameTextStyle}>
+                        {activeProduct.name || "未命名产品"}
+                      </h3>
+                    ) : null}
+                  </div>
+                ) : null}
+                {detailShowDescription || detailShowPrice ? (
                   <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/45 to-transparent p-5 text-white sm:p-7">
                     <div className="mx-auto max-w-3xl">
-                      {detailShowCode && activeProduct.code ? (
-                        <div className="text-xs uppercase tracking-[0.24em] text-white/75" style={productCodeTextStyle}>
-                          {activeProduct.code}
-                        </div>
-                      ) : null}
-                      {detailShowName ? (
-                        <h3 className="mt-2 break-words text-2xl font-semibold text-white sm:text-3xl" style={productNameTextStyle}>
-                          {activeProduct.name || "未命名产品"}
-                        </h3>
-                      ) : null}
                       {detailShowDescription && activeProduct.description ? (
                         <div
                           className="mt-3 break-words whitespace-pre-wrap text-sm leading-7 text-white/90 sm:text-base"
