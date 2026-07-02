@@ -33,8 +33,8 @@ import usePullToRefresh from "@/lib/usePullToRefresh";
 
 const EMPTY_BLOCKS: Block[] = [];
 const MIN_INITIAL_LOADING_MS = 0;
-const SITE_REMOTE_FETCH_TIMEOUT_MS = 3500;
-const SITE_REMOTE_SETTLE_TIMEOUT_MS = 4200;
+const SITE_REMOTE_FETCH_TIMEOUT_MS = 8000;
+const SITE_REMOTE_SETTLE_TIMEOUT_MS = 8800;
 const SITE_REMOTE_FALLBACK_DELAY_MS = 650;
 
 function readViewportWidth() {

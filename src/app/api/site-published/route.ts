@@ -8,7 +8,7 @@ export const revalidate = 0;
 export { isMissingPublishedSlugColumn, isPublishedBlocksPayload, pickPublishedPageRow } from "@/lib/publishedSiteData";
 
 const SITE_PUBLISHED_SUCCESS_CACHE_CONTROL = "no-store, max-age=0";
-const SITE_PUBLISHED_PAYLOAD_TIMEOUT_MS = 3_500;
+const SITE_PUBLISHED_PAYLOAD_TIMEOUT_MS = 8_000;
 const SITE_PUBLISHED_TIMEOUT = Symbol("site_published_timeout");
 
 type SitePublishedPayloadResult = Awaited<ReturnType<typeof fetchPublishedSitePayloadFromSupabase>>;
