@@ -6,6 +6,7 @@ import {
   DEFAULT_BUTTON_LABEL,
   getButtonHoverAnimationClassName,
   normalizeButtonHoverAnimation,
+  resolveButtonJumpBlockId,
   resolveButtonJumpPageId,
   resolveButtonLabel,
 } from "./buttonBlock";
@@ -39,6 +40,17 @@ test("resolveButtonJumpPageId matches page names and front page aliases", () => 
   ];
   assert.equal(resolveButtonJumpPageId("front page", pages), "page-1");
   assert.equal(resolveButtonJumpPageId("page:Offers", pages), "page-177");
+});
+
+test("resolveButtonJumpBlockId matches block ids and public ids", () => {
+  const blocks = [
+    { id: "product-abc", publicId: "0102", label: "产品" },
+    { id: "coupon-def", publicId: "0103", label: "优惠券" },
+  ];
+  assert.equal(resolveButtonJumpBlockId("product-abc", blocks), "product-abc");
+  assert.equal(resolveButtonJumpBlockId("#0103", blocks), "coupon-def");
+  assert.equal(resolveButtonJumpBlockId("block:0102", blocks), "product-abc");
+  assert.equal(resolveButtonJumpBlockId("block:missing", blocks), null);
 });
 
 test("button hover animation values are normalized for legacy data", () => {

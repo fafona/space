@@ -4,8 +4,10 @@ import {
   BUTTON_BLOCK_MIN_WIDTH,
   getButtonHoverAnimationClassName,
   resolveButtonContentPadding,
+  resolveButtonJumpBlockId,
   resolveButtonJumpPageId,
   resolveButtonLabel,
+  type ButtonJumpBlock,
   type ButtonJumpPage,
 } from "@/lib/buttonBlock";
 import { getBackgroundStyle } from "./backgroundStyle";
@@ -17,12 +19,16 @@ import { getTypographyStyle } from "./typographyStyle";
 type ButtonBlockRuntimeProps = ButtonProps & {
   onNavigatePage?: (pageId: string) => void;
   availablePages?: ButtonJumpPage[];
+  onOpenBlock?: (blockId: string) => void;
+  availableBlocks?: ButtonJumpBlock[];
 };
 
 function performJump(
   target: string,
   onNavigatePage?: (pageId: string) => void,
   availablePages: ButtonJumpPage[] = [],
+  onOpenBlock?: (blockId: string) => void,
+  availableBlocks: ButtonJumpBlock[] = [],
 ) {
   const trimmed = target.trim();
   if (!trimmed || typeof window === "undefined") return;
@@ -32,6 +38,14 @@ function performJump(
     onNavigatePage(pageId);
     return;
   }
+
+  const blockId = resolveButtonJumpBlockId(trimmed, availableBlocks);
+  if (blockId && onOpenBlock) {
+    onOpenBlock(blockId);
+    return;
+  }
+
+  if (/^block:/i.test(trimmed)) return;
 
   const anchorId = trimmed.startsWith("#") ? trimmed.slice(1).trim() : trimmed;
   if (anchorId) {
@@ -113,7 +127,15 @@ export default function ButtonBlock(props: ButtonBlockRuntimeProps) {
           <button
             type="button"
             className="relative h-full min-h-0 w-full appearance-none border-0 bg-transparent p-0 text-center"
-            onClick={() => performJump(jumpTarget, props.onNavigatePage, props.availablePages)}
+            onClick={() =>
+              performJump(
+                jumpTarget,
+                props.onNavigatePage,
+                props.availablePages,
+                props.onOpenBlock,
+                props.availableBlocks,
+              )
+            }
           >
             <div className="absolute inset-0 box-border flex min-h-0 min-w-0 items-center justify-center overflow-hidden text-center" style={resolveButtonContentPadding(blockWidth, blockHeight)}>
               <div

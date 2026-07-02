@@ -302,6 +302,7 @@ import {
   normalizeButtonHoverAnimation,
   resolveButtonContentPadding,
   resolveButtonLabel,
+  type ButtonJumpBlock,
 } from "@/lib/buttonBlock";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import {
@@ -1560,6 +1561,7 @@ const STYLE_SYNC_KEYS = [
   "blockOffsetX",
   "blockOffsetY",
   "blockLayer",
+  "blockOpenMode",
   "blockBorderStyle",
   "blockBorderColor",
   "galleryFrameWidth",
@@ -17140,6 +17142,19 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     editorAvailablePagesRef.current = editingPages.map((page) => ({ id: page.id, name: toPlainText(page.name, page.id) }));
   }
   const editorAvailablePages = editorAvailablePagesRef.current;
+  const editorAvailableBlocks = useMemo<ButtonJumpBlock[]>(
+    () =>
+      blocks.map((block, index) => {
+        const publicId = buildPublicBlockId(editingPageIndex, index);
+        return {
+          id: block.id,
+          publicId,
+          label: `${buildPageCopyBlockLabel(block, index)} · ID ${publicId}`,
+          openByButton: block.props.blockOpenMode === "button",
+        };
+      }),
+    [blocks, editingPageIndex],
+  );
   const pageCopyTargetPages = editingPages.filter((page) => page.id !== editingPageId);
   const pageCopyBlockOptions = blocks.map((block, index) => ({
     id: buildPageCopyItemIdForBlock(block.id),
@@ -22193,6 +22208,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                                 void openAlert(message);
                               }}
                               availablePages={editorAvailablePages}
+                              availableBlocks={editorAvailableBlocks}
                               currentPageId={editingPageId}
                               maxNavItems={merchantPageLimit}
                               recentColors={recentColors}
@@ -22260,6 +22276,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         void openAlert(message);
                       }}
                       availablePages={editorAvailablePages}
+                      availableBlocks={editorAvailableBlocks}
                       currentPageId={editingPageId}
                       maxNavItems={merchantPageLimit}
                       recentColors={recentColors}
@@ -23043,6 +23060,7 @@ function InlineEditorBlock({
   onDelete,
   onAlert,
   availablePages,
+  availableBlocks,
   currentPageId,
   maxNavItems = 12,
   recentColors,
@@ -23077,6 +23095,7 @@ function InlineEditorBlock({
   onDelete: () => void;
   onAlert: (message: string) => void;
   availablePages: Array<{ id: string; name: string }>;
+  availableBlocks: ButtonJumpBlock[];
   currentPageId: string;
   maxNavItems?: number;
   recentColors: string[];
@@ -25576,6 +25595,12 @@ type GalleryEditorImage = {
       ...(nextValue ? { blockOffsetX: 0 } : {}),
     });
   };
+  const blockOpenByButton = block.props.blockOpenMode === "button";
+  const toggleBlockOpenMode = () => {
+    onChange({
+      blockOpenMode: blockOpenByButton ? undefined : "button",
+    });
+  };
   function renderSelectedEditor(content: ReactNode) {
     return (
       <div
@@ -26659,6 +26684,10 @@ type GalleryEditorImage = {
 
   const currentButtonHoverAnimation =
     block.type === "button" ? normalizeButtonHoverAnimation(block.props.buttonHoverAnimation) : "none";
+  const buttonOpenTargetBlocks =
+    block.type === "button"
+      ? availableBlocks.filter((item) => item.openByButton === true && item.id !== block.id)
+      : [];
 
   const buttonJumpDialog =
     buttonJumpDialogOpen && block.type === "button"
@@ -26678,10 +26707,33 @@ type GalleryEditorImage = {
               </div>
               <div className="rounded-lg border bg-slate-50 p-3 text-xs text-slate-600 space-y-2">
                 <div>{"区块 ID 规则：页面两位 + 区块两位，例如页面1的第1个区块是 `0101`。"}</div>
-                <div>{"锚点：滚动到当前页面某个区块。填写 `#0101`，也可以直接填 `0101`。"}</div>
+                <div>{"按钮打开：目标区块开启“按钮打开”后，填写 `block:0101` 或直接点击下方目标。"}</div>
+                <div>{"锚点：滚动到当前页面某个直接展示区块。填写 `#0101`，也可以直接填 `0101`。"}</div>
                 <div>{"页面：切换到本站其他页面，格式是 `page:页面ID`，这里的页面不是链接地址。"}</div>
                 <div>{"路径：打开站内地址或完整网址。站内路径来源就是浏览器地址栏里域名后面的部分，例如 `/site/10000000`。"}</div>
               </div>
+              {buttonOpenTargetBlocks.length > 0 ? (
+                <div className="space-y-2">
+                  <div className="text-xs text-gray-600">{"可通过按钮打开的区块"}</div>
+                  <div className="flex flex-wrap gap-2">
+                    {buttonOpenTargetBlocks.map((targetBlock) => (
+                      <button
+                        key={targetBlock.id}
+                        type="button"
+                        className="rounded border bg-white px-2 py-1 text-xs hover:bg-gray-50"
+                        onClick={() => setButtonJumpTargetInput(`block:${targetBlock.publicId ?? targetBlock.id}`)}
+                        title={targetBlock.id}
+                      >
+                        {targetBlock.label ?? targetBlock.publicId ?? targetBlock.id}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-xs text-slate-500">
+                  当前页还没有开启“按钮打开”的其他区块。
+                </div>
+              )}
               {availablePages.length > 0 ? (
                 <div className="space-y-2">
                   <div className="text-xs text-gray-600">{"本站页面 ID"}</div>
@@ -26811,6 +26863,8 @@ type GalleryEditorImage = {
           isMobileViewport={previewViewport === "mobile"}
           mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
           onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
+          blockOpenByButton={blockOpenByButton}
+          onToggleBlockOpenMode={toggleBlockOpenMode}
           onDelete={onDelete}
         />
         <div
@@ -26885,6 +26939,8 @@ type GalleryEditorImage = {
           isMobileViewport={previewViewport === "mobile"}
           mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
           onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
+          blockOpenByButton={blockOpenByButton}
+          onToggleBlockOpenMode={toggleBlockOpenMode}
           onDelete={onDelete}
         />
         <div
@@ -27324,6 +27380,8 @@ type GalleryEditorImage = {
           isMobileViewport={previewViewport === "mobile"}
           mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
           onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
+          blockOpenByButton={blockOpenByButton}
+          onToggleBlockOpenMode={toggleBlockOpenMode}
           onDelete={onDelete}
         />
         <div
@@ -28004,6 +28062,8 @@ type GalleryEditorImage = {
           isMobileViewport={previewViewport === "mobile"}
           mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
           onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
+          blockOpenByButton={blockOpenByButton}
+          onToggleBlockOpenMode={toggleBlockOpenMode}
           onDelete={onDelete}
         />
         <div
@@ -28187,6 +28247,8 @@ type GalleryEditorImage = {
           isMobileViewport={previewViewport === "mobile"}
           mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
           onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
+          blockOpenByButton={blockOpenByButton}
+          onToggleBlockOpenMode={toggleBlockOpenMode}
           onDelete={onDelete}
         />
         <div
@@ -28357,6 +28419,8 @@ type GalleryEditorImage = {
           isMobileViewport={previewViewport === "mobile"}
           mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
           onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
+          blockOpenByButton={blockOpenByButton}
+          onToggleBlockOpenMode={toggleBlockOpenMode}
           onDelete={onDelete}
         />
         <div
@@ -28484,6 +28548,8 @@ type GalleryEditorImage = {
           isMobileViewport={previewViewport === "mobile"}
           mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
           onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
+          blockOpenByButton={blockOpenByButton}
+          onToggleBlockOpenMode={toggleBlockOpenMode}
           onDelete={onDelete}
         />
         <div className={cardClass} onClick={onSelect}>
@@ -28554,6 +28620,8 @@ type GalleryEditorImage = {
           isMobileViewport={previewViewport === "mobile"}
           mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
           onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
+          blockOpenByButton={blockOpenByButton}
+          onToggleBlockOpenMode={toggleBlockOpenMode}
           onDelete={onDelete}
         />
         <div
@@ -28634,6 +28702,8 @@ type GalleryEditorImage = {
           isMobileViewport={previewViewport === "mobile"}
           mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
           onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
+          blockOpenByButton={blockOpenByButton}
+          onToggleBlockOpenMode={toggleBlockOpenMode}
           onDelete={onDelete}
         />
         <div
@@ -29961,6 +30031,8 @@ type GalleryEditorImage = {
           isMobileViewport={previewViewport === "mobile"}
           mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
           onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
+          blockOpenByButton={blockOpenByButton}
+          onToggleBlockOpenMode={toggleBlockOpenMode}
           onDelete={onDelete}
         />
         <div
@@ -31323,6 +31395,8 @@ type GalleryEditorImage = {
           isMobileViewport={previewViewport === "mobile"}
           mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
           onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
+          blockOpenByButton={blockOpenByButton}
+          onToggleBlockOpenMode={toggleBlockOpenMode}
           onDelete={onDelete}
         />
         <div
@@ -31564,6 +31638,8 @@ type GalleryEditorImage = {
           isMobileViewport={previewViewport === "mobile"}
           mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
           onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
+          blockOpenByButton={blockOpenByButton}
+          onToggleBlockOpenMode={toggleBlockOpenMode}
           onDelete={onDelete}
         />
         <div
@@ -32357,6 +32433,8 @@ type GalleryEditorImage = {
           isMobileViewport={previewViewport === "mobile"}
           mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
           onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
+          blockOpenByButton={blockOpenByButton}
+          onToggleBlockOpenMode={toggleBlockOpenMode}
           onDelete={onDelete}
         />
         <div
@@ -33310,6 +33388,8 @@ type GalleryEditorImage = {
           isMobileViewport={previewViewport === "mobile"}
           mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
           onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
+          blockOpenByButton={blockOpenByButton}
+          onToggleBlockOpenMode={toggleBlockOpenMode}
           onDelete={onDelete}
         />
         <div
@@ -33762,6 +33842,8 @@ type GalleryEditorImage = {
           isMobileViewport={previewViewport === "mobile"}
           mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
           onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
+          blockOpenByButton={blockOpenByButton}
+          onToggleBlockOpenMode={toggleBlockOpenMode}
           onDelete={onDelete}
         />
         <div
@@ -34434,6 +34516,8 @@ type GalleryEditorImage = {
           isMobileViewport={previewViewport === "mobile"}
           mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
           onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
+          blockOpenByButton={blockOpenByButton}
+          onToggleBlockOpenMode={toggleBlockOpenMode}
           onDelete={onDelete}
         />
         <div
@@ -34858,6 +34942,7 @@ const MemoizedInlineEditorBlock = memo(InlineEditorBlock, (previousProps, nextPr
     previousProps.isSelected === nextProps.isSelected &&
     previousProps.previewOffsetY === nextProps.previewOffsetY &&
     previousProps.availablePages === nextProps.availablePages &&
+    previousProps.availableBlocks === nextProps.availableBlocks &&
     previousProps.currentPageId === nextProps.currentPageId &&
     previousProps.maxNavItems === nextProps.maxNavItems &&
     previousProps.recentColors === nextProps.recentColors &&
@@ -35316,6 +35401,8 @@ function EditorBlockHeader({
   isMobileViewport,
   mobileFitScreenWidth,
   onToggleMobileFitScreenWidth,
+  blockOpenByButton,
+  onToggleBlockOpenMode,
   onDelete,
   toolbarAnchorClassName,
   toolbarAnchorStyle,
@@ -35336,6 +35423,8 @@ function EditorBlockHeader({
   isMobileViewport?: boolean;
   mobileFitScreenWidth?: boolean;
   onToggleMobileFitScreenWidth?: (() => void) | undefined;
+  blockOpenByButton?: boolean;
+  onToggleBlockOpenMode?: (() => void) | undefined;
   onDelete: () => void;
   toolbarAnchorClassName?: string;
   toolbarAnchorStyle?: React.CSSProperties;
@@ -35470,6 +35559,20 @@ function EditorBlockHeader({
                 }}
               >
                 {mobileFitScreenWidth ? "取消适应屏宽" : "适应屏宽"}
+              </button>
+            ) : null}
+            {onToggleBlockOpenMode ? (
+              <button
+                className={`px-2 py-1 text-xs rounded border shrink-0 whitespace-nowrap ${
+                  blockOpenByButton ? "border-black bg-black text-white" : "bg-white hover:bg-gray-50"
+                }`}
+                title={blockOpenByButton ? "前台隐藏，通过按钮区块打开" : "前台直接展示在页面中"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleBlockOpenMode();
+                }}
+              >
+                {blockOpenByButton ? "按钮打开" : "直接展示"}
               </button>
             ) : null}
             <button

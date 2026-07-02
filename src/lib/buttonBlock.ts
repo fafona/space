@@ -6,6 +6,13 @@ export type ButtonJumpPage = {
   id: string;
   name?: string;
 };
+
+export type ButtonJumpBlock = {
+  id: string;
+  publicId?: string;
+  label?: string;
+  openByButton?: boolean;
+};
 export const BUTTON_BLOCK_MIN_WIDTH = 18;
 export const BUTTON_BLOCK_MIN_HEIGHT = 18;
 
@@ -124,6 +131,24 @@ export function resolveButtonJumpPageId(target: string, pages: ButtonJumpPage[])
   const ordinalIndex = resolveOrdinalPageIndex(candidate);
   if (!ordinalIndex || ordinalIndex > pages.length) return null;
   return pages[ordinalIndex - 1]?.id ?? null;
+}
+
+export function resolveButtonJumpBlockId(target: string, blocks: ButtonJumpBlock[]) {
+  const trimmed = target.trim();
+  if (!trimmed || !Array.isArray(blocks) || blocks.length === 0) return null;
+
+  const withoutHash = trimmed.startsWith("#") ? trimmed.slice(1).trim() : trimmed;
+  const candidate = withoutHash.replace(/^block:/i, "").trim();
+  if (!candidate) return null;
+
+  const normalizedCandidate = candidate.toLowerCase();
+  const byId = blocks.find((block) => block.id.trim().toLowerCase() === normalizedCandidate);
+  if (byId) return byId.id;
+
+  const byPublicId = blocks.find((block) => (block.publicId ?? "").trim().toLowerCase() === normalizedCandidate);
+  if (byPublicId) return byPublicId.id;
+
+  return null;
 }
 
 export function resolveButtonContentPadding(width?: number, height?: number) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { Component, type ReactNode } from "react";
+import { Component, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import dynamic from "next/dynamic";
 import type { Block } from "@/data/homeBlocks";
 import HeroBlock from "./HeroBlock";
@@ -13,6 +13,7 @@ import NavBlock from "./NavBlock";
 import ButtonBlock from "./ButtonBlock";
 import { getBlockRenderStackOrder } from "@/lib/blockStacking";
 import { buildPublicBlockId } from "@/lib/blockPublicId";
+import type { ButtonJumpBlock } from "@/lib/buttonBlock";
 import type { MerchantBookingRuleViewport } from "@/lib/merchantBookingRules";
 
 const GalleryBlock = dynamic(() => import("./GalleryBlock"), { ssr: false, loading: () => null });
@@ -44,6 +45,30 @@ class BlockRuntimeBoundary extends Component<{ blockId: string; children: ReactN
   }
 }
 
+function isButtonOpenedBlock(block: Block) {
+  return block.props.blockOpenMode === "button";
+}
+
+function stripInlineText(value: unknown) {
+  if (typeof value !== "string") return "";
+  return value
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function resolveOpenBlockTitle(block: Block, publicBlockId: string) {
+  const props = block.props as Record<string, unknown>;
+  const text =
+    stripInlineText(props.heading) ||
+    stripInlineText(props.title) ||
+    stripInlineText(props.buttonLabel) ||
+    stripInlineText(props.text);
+  return text || `区块 ${publicBlockId}`;
+}
+
 export default function BlockRenderer({
   blocks,
   currentPageId,
@@ -69,91 +94,163 @@ export default function BlockRenderer({
   bookingInteractive?: boolean;
   bookingViewport?: MerchantBookingRuleViewport;
 }) {
-  if (!blocks || blocks.length === 0) return null;
+  const safeBlocks = useMemo(() => (Array.isArray(blocks) ? blocks : []), [blocks]);
+  const [openedBlockId, setOpenedBlockId] = useState<string | null>(null);
+  const openableBlocks = useMemo<ButtonJumpBlock[]>(
+    () =>
+      safeBlocks
+        .map((block, index) => ({
+          id: block.id,
+          publicId: buildPublicBlockId(currentPageIndex, index),
+          label: resolveOpenBlockTitle(block, buildPublicBlockId(currentPageIndex, index)),
+          openByButton: isButtonOpenedBlock(block),
+        }))
+        .filter((block) => block.openByButton),
+    [safeBlocks, currentPageIndex],
+  );
+  const openedBlockEntry = useMemo(() => {
+    if (!openedBlockId) return null;
+    const index = safeBlocks.findIndex((block) => block.id === openedBlockId && isButtonOpenedBlock(block));
+    if (index < 0) return null;
+    const block = safeBlocks[index];
+    if (!block) return null;
+    const publicBlockId = buildPublicBlockId(currentPageIndex, index);
+    return {
+      block,
+      index,
+      publicBlockId,
+      title: resolveOpenBlockTitle(block, publicBlockId),
+    };
+  }, [safeBlocks, currentPageIndex, openedBlockId]);
+  const openBlock = useCallback(
+    (blockId: string) => {
+      if (!openableBlocks.some((block) => block.id === blockId)) return;
+      setOpenedBlockId(blockId);
+    },
+    [openableBlocks],
+  );
+  const closeOpenedBlock = useCallback(() => {
+    setOpenedBlockId(null);
+  }, []);
+
+  useEffect(() => {
+    if (!openedBlockEntry || typeof document === "undefined") return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [openedBlockEntry]);
+
+  useEffect(() => {
+    if (!openedBlockEntry || typeof window === "undefined") return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      closeOpenedBlock();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [closeOpenedBlock, openedBlockEntry]);
+
+  function renderBlockContent(b: Block): ReactNode {
+    let content: ReactNode = null;
+    switch (b.type) {
+      case "common":
+        content = <CommonBlock {...b.props} />;
+        break;
+      case "button":
+        content = (
+          <ButtonBlock
+            {...b.props}
+            availablePages={availablePages}
+            onNavigatePage={onNavigatePage}
+            availableBlocks={openableBlocks}
+            onOpenBlock={openBlock}
+          />
+        );
+        break;
+      case "gallery":
+        content = <GalleryBlock {...b.props} />;
+        break;
+      case "chart":
+        content = <ChartBlock {...b.props} />;
+        break;
+      case "nav":
+        content = (
+          <NavBlock
+            {...b.props}
+            currentPageId={currentPageId}
+            onNavigatePage={onNavigatePage}
+            forceMobileViewport={forceMobileViewport}
+          />
+        );
+        break;
+      case "hero":
+        content = <HeroBlock {...b.props} />;
+        break;
+      case "text":
+        content = <TextBlock {...b.props} />;
+        break;
+      case "list":
+        content = <ListBlock {...b.props} />;
+        break;
+      case "search-bar":
+        content = <SearchBarBlock {...b.props} />;
+        break;
+      case "merchant-list":
+        content = <MerchantListBlock {...b.props} />;
+        break;
+      case "contact":
+        content = <ContactBlock {...b.props} />;
+        break;
+      case "music":
+        content = <MusicBlock {...b.props} />;
+        break;
+      case "product":
+        content = (
+          <ProductBlock
+            {...b.props}
+            runtimeSiteId={bookingSiteId}
+            runtimeSiteName={bookingSiteName}
+            runtimeBlockId={b.id}
+            runtimeOrderManagementEnabled={productCartEnabled}
+            runtimeInteractiveOverlayWithinBlock={forceMobileViewport}
+          />
+        );
+        break;
+      case "coupon":
+        content = <CouponBlock {...b.props} runtimeSiteId={bookingSiteId} />;
+        break;
+      case "google-reviews":
+        content = <GoogleReviewsBlock {...b.props} />;
+        break;
+      case "booking":
+        content = (
+          <BookingBlock
+            {...b.props}
+            runtimeSiteId={bookingSiteId}
+            runtimeSiteName={bookingSiteName}
+            interactive={bookingInteractive}
+            runtimeBlockId={b.id}
+            runtimeViewport={bookingViewport}
+          />
+        );
+        break;
+      default:
+        content = null;
+        break;
+    }
+    return content;
+  }
+
+  if (safeBlocks.length === 0) return null;
 
   return (
     <>
-      {blocks.map((b, index) => {
+      {safeBlocks.map((b, index) => {
+        if (isButtonOpenedBlock(b)) return null;
         const publicBlockId = buildPublicBlockId(currentPageIndex, index);
-        let content: ReactNode = null;
-        switch (b.type) {
-          case "common":
-            content = <CommonBlock {...b.props} />;
-            break;
-          case "button":
-            content = <ButtonBlock {...b.props} availablePages={availablePages} onNavigatePage={onNavigatePage} />;
-            break;
-          case "gallery":
-            content = <GalleryBlock {...b.props} />;
-            break;
-          case "chart":
-            content = <ChartBlock {...b.props} />;
-            break;
-          case "nav":
-            content = (
-              <NavBlock
-                {...b.props}
-                currentPageId={currentPageId}
-                onNavigatePage={onNavigatePage}
-                forceMobileViewport={forceMobileViewport}
-              />
-            );
-            break;
-          case "hero":
-            content = <HeroBlock {...b.props} />;
-            break;
-          case "text":
-            content = <TextBlock {...b.props} />;
-            break;
-          case "list":
-            content = <ListBlock {...b.props} />;
-            break;
-          case "search-bar":
-            content = <SearchBarBlock {...b.props} />;
-            break;
-          case "merchant-list":
-            content = <MerchantListBlock {...b.props} />;
-            break;
-          case "contact":
-            content = <ContactBlock {...b.props} />;
-            break;
-          case "music":
-            content = <MusicBlock {...b.props} />;
-            break;
-          case "product":
-            content = (
-              <ProductBlock
-                {...b.props}
-                runtimeSiteId={bookingSiteId}
-                runtimeSiteName={bookingSiteName}
-                runtimeBlockId={b.id}
-                runtimeOrderManagementEnabled={productCartEnabled}
-                runtimeInteractiveOverlayWithinBlock={forceMobileViewport}
-              />
-            );
-            break;
-          case "coupon":
-            content = <CouponBlock {...b.props} runtimeSiteId={bookingSiteId} />;
-            break;
-          case "google-reviews":
-            content = <GoogleReviewsBlock {...b.props} />;
-            break;
-          case "booking":
-            content = (
-              <BookingBlock
-                {...b.props}
-                runtimeSiteId={bookingSiteId}
-                runtimeSiteName={bookingSiteName}
-                interactive={bookingInteractive}
-                runtimeBlockId={b.id}
-                runtimeViewport={bookingViewport}
-              />
-            );
-            break;
-          default:
-            content = null;
-            break;
-        }
+        const content = renderBlockContent(b);
         if (!content) return null;
         return (
           <div
@@ -171,6 +268,39 @@ export default function BlockRenderer({
           </div>
         );
       })}
+      {openedBlockEntry ? (
+        <div
+          className="fixed inset-0 z-[2147482000] overflow-y-auto bg-white text-slate-950"
+          role="dialog"
+          aria-modal="true"
+          aria-label={openedBlockEntry.title}
+        >
+          <div className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur">
+            <div className="mx-auto flex max-w-6xl items-center gap-3">
+              <button
+                type="button"
+                className="inline-flex min-h-10 items-center rounded-full border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-900 shadow-sm hover:bg-slate-50"
+                onClick={closeOpenedBlock}
+              >
+                返回
+              </button>
+              <div className="min-w-0 truncate text-sm font-semibold text-slate-700">
+                {openedBlockEntry.title}
+              </div>
+            </div>
+          </div>
+          <div
+            id={openedBlockEntry.publicBlockId}
+            data-block-id={openedBlockEntry.block.id}
+            data-jump-target={openedBlockEntry.publicBlockId}
+            data-block-public-id={openedBlockEntry.publicBlockId}
+          >
+            <BlockRuntimeBoundary blockId={openedBlockEntry.block.id}>
+              {renderBlockContent(openedBlockEntry.block)}
+            </BlockRuntimeBoundary>
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }

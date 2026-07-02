@@ -24,6 +24,7 @@ import { faollaHomeBlocks } from "./faollaHomeLayout";
 export type ImageFillMode = "cover" | "contain" | "fill" | "repeat" | "repeat-x" | "repeat-y";
 export type BlockBorderStyle = "none" | "glass" | "soft" | "solid" | "dashed" | "double" | "accent";
 export type ButtonHoverAnimation = "none" | "lift" | "grow" | "press" | "glow" | "pulse" | "wiggle";
+export type BlockOpenMode = "inline" | "button";
 
 export type BackgroundEditableProps = {
   schemaVersion?: number;
@@ -40,6 +41,7 @@ export type BackgroundEditableProps = {
   blockOffsetY?: number;
   blockLayer?: number;
   blockLocked?: boolean;
+  blockOpenMode?: BlockOpenMode;
   blockBorderStyle?: BlockBorderStyle;
   blockBorderColor?: string;
   mobileFitScreenWidth?: boolean;
