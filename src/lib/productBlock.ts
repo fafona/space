@@ -278,7 +278,7 @@ export function normalizeProductCardHeight(value: unknown, fallback: number) {
 }
 
 export function productListImageMaxSize(cardHeight: unknown) {
-  return Math.max(PRODUCT_IMAGE_SIZE_MIN, normalizeProductCardHeight(cardHeight, 252) - PRODUCT_LIST_CARD_VERTICAL_PADDING);
+  return Math.max(PRODUCT_IMAGE_SIZE_MIN, normalizeProductCardHeight(cardHeight, 252));
 }
 
 export function normalizeProductImageSize(value: unknown, max = PRODUCT_IMAGE_SIZE_MAX) {
