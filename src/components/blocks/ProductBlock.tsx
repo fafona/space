@@ -873,6 +873,17 @@ export default function ProductBlock(props: ProductBlockProps) {
       }
     }
 
+    const atScrollEnd = viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 2;
+    if (atScrollEnd) {
+      const lastHeading = [...headings]
+        .reverse()
+        .find((heading) => {
+          const tag = heading.dataset.productGroupTag ?? "";
+          return tag && productTagValues.includes(tag);
+        });
+      nextTag = lastHeading?.dataset.productGroupTag ?? nextTag;
+    }
+
     if (!nextTag) return;
     setActiveTag((current) => (current === nextTag ? current : nextTag));
   }, [productScrollSpyEnabled, productTagKey]);
