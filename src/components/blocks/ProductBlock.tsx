@@ -1450,7 +1450,7 @@ export default function ProductBlock(props: ProductBlockProps) {
     ? "absolute bottom-5 left-5 z-20 inline-flex items-center gap-2 rounded-full bg-slate-950/95 px-3.5 py-2.5 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(15,23,42,0.18)] transition hover:bg-slate-800"
     : "fixed bottom-[calc(env(safe-area-inset-bottom)+1rem)] left-5 z-[20000] inline-flex items-center gap-2 rounded-full bg-slate-950/95 px-3.5 py-2.5 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(15,23,42,0.18)] transition hover:bg-slate-800";
   const renderCartButton = () =>
-    cartEnabled ? (
+    cartEnabled && !cartOpen ? (
       <button
         ref={cartButtonRef}
         type="button"
