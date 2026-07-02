@@ -6,6 +6,13 @@ export type ProductTagPosition = "top" | "left" | "right";
 export type ProductTagBorderStyle = "none" | "glass" | "solid" | "dashed" | "double" | "divider" | "rectangle";
 export type ProductCartQuantityMode = "stepper" | "plus-only";
 
+export const PRODUCT_IMAGE_SIZE_MIN = 40;
+export const PRODUCT_IMAGE_SIZE_MAX = 420;
+export const PRODUCT_LIST_CARD_PADDING = 16;
+export const PRODUCT_LIST_CARD_VERTICAL_PADDING = PRODUCT_LIST_CARD_PADDING * 2;
+export const PRODUCT_CARD_HEIGHT_MIN = PRODUCT_IMAGE_SIZE_MIN + PRODUCT_LIST_CARD_VERTICAL_PADDING;
+export const PRODUCT_CARD_HEIGHT_MAX = 640;
+
 export type ProductItemInput = {
   id?: string;
   code?: string;
@@ -265,9 +272,19 @@ export function normalizeProductSpacing(value: unknown, fallback: number, min = 
 }
 
 export function normalizeProductCardHeight(value: unknown, fallback: number) {
-  const safeFallback = Math.max(64, Math.min(640, Math.round(fallback)));
+  const safeFallback = Math.max(PRODUCT_CARD_HEIGHT_MIN, Math.min(PRODUCT_CARD_HEIGHT_MAX, Math.round(fallback)));
   if (typeof value !== "number" || !Number.isFinite(value)) return safeFallback;
-  return Math.max(64, Math.min(640, Math.round(value)));
+  return Math.max(PRODUCT_CARD_HEIGHT_MIN, Math.min(PRODUCT_CARD_HEIGHT_MAX, Math.round(value)));
+}
+
+export function productListImageMaxSize(cardHeight: unknown) {
+  return Math.max(PRODUCT_IMAGE_SIZE_MIN, normalizeProductCardHeight(cardHeight, 252) - PRODUCT_LIST_CARD_VERTICAL_PADDING);
+}
+
+export function normalizeProductImageSize(value: unknown, max = PRODUCT_IMAGE_SIZE_MAX) {
+  const safeMax = Math.max(PRODUCT_IMAGE_SIZE_MIN, Math.min(PRODUCT_IMAGE_SIZE_MAX, Math.round(max)));
+  if (typeof value !== "number" || !Number.isFinite(value)) return Math.min(220, safeMax);
+  return Math.max(PRODUCT_IMAGE_SIZE_MIN, Math.min(safeMax, Math.round(value)));
 }
 
 export function defaultProductItemsPerPage(layout: ProductLayoutPreset) {

@@ -13,6 +13,7 @@ import {
   normalizeProductCartQuantityMode,
   normalizeProductCardHeight,
   normalizeProductContainerMode,
+  normalizeProductImageSize,
   normalizeProductImageAspectRatio,
   normalizeProductItems,
   normalizeProductItemsPerPage,
@@ -22,6 +23,8 @@ import {
   normalizeProductTagBorderStyle,
   normalizeProductTagOptions,
   normalizeProductTagPosition,
+  PRODUCT_LIST_CARD_VERTICAL_PADDING,
+  productListImageMaxSize,
   productContainerViewportHeight,
   productGridClass,
   productPriceText,
@@ -456,7 +459,8 @@ function renderProductCard(
   const textWrapStyle = { overflowWrap: "anywhere" as const, wordBreak: "break-word" as const };
   const descriptionClampStyle = getMultiLineClampStyle(options.spotlight ? 5 : options.list ? 4 : 3);
   const ratio = getProductAspectRatioPair(options.imageAspectRatio);
-  const listImageWidth = Math.max(1, Math.round((options.imageSize * ratio.width) / ratio.height));
+  const frameImageSize = options.list ? Math.min(options.imageSize, productListImageMaxSize(options.cardHeight)) : options.imageSize;
+  const listImageWidth = Math.max(1, Math.round((frameImageSize * ratio.width) / ratio.height));
   const cardBackgroundStyle = getColorLayerStyle(options.cardBgColor, options.cardBgOpacity);
   const cardBorderClass = getBlockBorderClass(options.cardBorderStyle);
   const cardBorderInlineStyle = getBlockBorderInlineStyle(options.cardBorderStyle, options.cardBorderColor);
@@ -471,7 +475,7 @@ function renderProductCard(
     ? {
         width: `${listImageWidth}px`,
         maxWidth: "100%",
-        height: `${options.imageSize}px`,
+        height: `${frameImageSize}px`,
       }
     : {
         width: "100%",
@@ -544,7 +548,7 @@ function renderProductCard(
         )
       ) : null}
       <div
-        className={`relative overflow-hidden bg-slate-100 ${options.list ? "shrink-0 self-start rounded-xl" : ""}`}
+        className={`relative overflow-hidden bg-slate-100 ${options.list ? "shrink-0 self-center rounded-xl" : ""}`}
         style={frameStyle}
       >
         {item.imageUrl ? (
@@ -601,11 +605,9 @@ export default function ProductBlock(props: ProductBlockProps) {
   const containerMode = normalizeProductContainerMode(props.productContainerMode);
   const itemsPerPage = normalizeProductItemsPerPage(props.productItemsPerPage, layoutPreset);
   const imageAspectRatio = normalizeProductImageAspectRatio(props.productImageAspectRatio);
-  const imageSize =
-    typeof props.productImageSize === "number" && Number.isFinite(props.productImageSize)
-      ? Math.max(40, Math.min(420, Math.round(props.productImageSize)))
-      : 220;
-  const productCardHeight = normalizeProductCardHeight(props.productCardHeight, imageSize + 32);
+  const rawImageSize = typeof props.productImageSize === "number" && Number.isFinite(props.productImageSize) ? Math.round(props.productImageSize) : 220;
+  const productCardHeight = normalizeProductCardHeight(props.productCardHeight, rawImageSize + PRODUCT_LIST_CARD_VERTICAL_PADDING);
+  const imageSize = normalizeProductImageSize(rawImageSize, layoutPreset === "list" ? productListImageMaxSize(productCardHeight) : undefined);
   const pricePrefix = (props.productPricePrefix ?? "").trim();
   const productSearchEnabled = props.productSearchEnabled !== false;
   const productSearchPlaceholder = resolveLocalizedSystemDefaultText(
@@ -1448,14 +1450,15 @@ export default function ProductBlock(props: ProductBlockProps) {
 
   const renderPlaceholderCard = (key: string, extra: { list?: boolean } = {}) => {
     const ratio = getProductAspectRatioPair(imageAspectRatio);
-    const listImageWidth = Math.max(1, Math.round((imageSize * ratio.width) / ratio.height));
+    const frameImageSize = extra.list ? Math.min(imageSize, productListImageMaxSize(productCardHeight)) : imageSize;
+    const listImageWidth = Math.max(1, Math.round((frameImageSize * ratio.width) / ratio.height));
     const listCardStyle = extra.list
       ? ({
           "--product-list-card-height": `${productCardHeight}px`,
         } as CSSProperties)
       : undefined;
     const frameStyle = extra.list
-      ? { width: `${listImageWidth}px`, maxWidth: "100%", height: `${imageSize}px` }
+      ? { width: `${listImageWidth}px`, maxWidth: "100%", height: `${frameImageSize}px` }
       : { width: "100%", height: `${imageSize}px` };
     return (
       <div
@@ -1468,7 +1471,7 @@ export default function ProductBlock(props: ProductBlockProps) {
         }
         style={listCardStyle}
       >
-        <div className={`relative overflow-hidden bg-slate-100 ${extra.list ? "shrink-0 self-start rounded-xl" : ""}`} style={frameStyle} />
+        <div className={`relative overflow-hidden bg-slate-100 ${extra.list ? "shrink-0 self-center rounded-xl" : ""}`} style={frameStyle} />
         <div className={extra.list ? "flex min-w-0 flex-1 flex-col" : "flex min-h-[180px] flex-1 flex-col p-4"} />
       </div>
     );

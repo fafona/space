@@ -232,6 +232,11 @@ import {
   groupArrangedProductItemsByTag,
   PRODUCT_CART_QUANTITY_MODE_OPTIONS,
   PRODUCT_CONTAINER_MODE_OPTIONS,
+  PRODUCT_CARD_HEIGHT_MAX,
+  PRODUCT_CARD_HEIGHT_MIN,
+  PRODUCT_IMAGE_SIZE_MAX,
+  PRODUCT_IMAGE_SIZE_MIN,
+  PRODUCT_LIST_CARD_VERTICAL_PADDING,
   PRODUCT_IMAGE_ASPECT_OPTIONS,
   PRODUCT_LAYOUT_OPTIONS,
   PRODUCT_PRICE_ALIGN_OPTIONS,
@@ -244,6 +249,7 @@ import {
   normalizeProductCartQuantityMode,
   normalizeProductCardHeight,
   normalizeProductContainerMode,
+  normalizeProductImageSize,
   normalizeProductImageAspectRatio,
   normalizeProductItems,
   normalizeProductItemsPerPage,
@@ -253,6 +259,7 @@ import {
   normalizeProductTagBorderStyle,
   normalizeProductTagOptions,
   normalizeProductTagPosition,
+  productListImageMaxSize,
   productContainerViewportHeight,
   productGridClass,
   productPriceText,
@@ -28775,11 +28782,13 @@ type GalleryEditorImage = {
     const productContainerMode = normalizeProductContainerMode(block.props.productContainerMode);
     const productItemsPerPage = normalizeProductItemsPerPage(block.props.productItemsPerPage, productLayoutPreset);
     const productImageAspectRatio = normalizeProductImageAspectRatio(block.props.productImageAspectRatio);
-    const productImageSize =
+    const rawProductImageSize =
       typeof block.props.productImageSize === "number" && Number.isFinite(block.props.productImageSize)
-        ? Math.max(40, Math.min(420, Math.round(block.props.productImageSize)))
+        ? Math.round(block.props.productImageSize)
         : 220;
-    const productCardHeight = normalizeProductCardHeight(block.props.productCardHeight, productImageSize + 32);
+    const productCardHeight = normalizeProductCardHeight(block.props.productCardHeight, rawProductImageSize + PRODUCT_LIST_CARD_VERTICAL_PADDING);
+    const productImageMaxSize = productLayoutPreset === "list" ? productListImageMaxSize(productCardHeight) : PRODUCT_IMAGE_SIZE_MAX;
+    const productImageSize = normalizeProductImageSize(rawProductImageSize, productImageMaxSize);
     const productPricePrefix = (block.props.productPricePrefix ?? "").trim();
     const productShowCode = block.props.productShowCode !== false;
     const productShowDescription = block.props.productShowDescription !== false;
@@ -28886,12 +28895,17 @@ type GalleryEditorImage = {
     const productPriceTextStyle = buildTypographyInlineStyle(block.props.productPriceTypography);
     const updateProductImageSize = (nextValue: number) => {
       onChange({
-        productImageSize: Math.max(40, Math.min(420, Math.round(nextValue) || 40)),
+        productImageSize: normalizeProductImageSize(nextValue, productImageMaxSize),
         productCardHeight,
       });
     };
     const updateProductCardHeight = (nextValue: number) => {
-      onChange({ productCardHeight: normalizeProductCardHeight(nextValue, productImageSize + 32) });
+      const nextCardHeight = normalizeProductCardHeight(nextValue, productImageSize + PRODUCT_LIST_CARD_VERTICAL_PADDING);
+      const nextImageMaxSize = productLayoutPreset === "list" ? productListImageMaxSize(nextCardHeight) : PRODUCT_IMAGE_SIZE_MAX;
+      onChange({
+        productCardHeight: nextCardHeight,
+        productImageSize: normalizeProductImageSize(productImageSize, nextImageMaxSize),
+      });
     };
     const productPricePrefixMode = PRODUCT_PRICE_PREFIX_OPTIONS.some((item) => item.value === productPricePrefix)
       ? productPricePrefix
@@ -29164,7 +29178,7 @@ type GalleryEditorImage = {
           style={placeholderCardStyle}
         >
           <div
-            className={`relative overflow-hidden bg-slate-100 ${options.list ? "shrink-0 self-start rounded-lg" : ""}`}
+            className={`relative overflow-hidden bg-slate-100 ${options.list ? "shrink-0 self-center rounded-lg" : ""}`}
             style={getProductImageFrameStyle(options)}
           />
           <div className={options.list ? "flex min-w-0 flex-1 flex-col" : "flex min-h-[170px] flex-1 flex-col p-4"} />
@@ -29237,7 +29251,7 @@ type GalleryEditorImage = {
               </div>
             )}
           <div
-            className={`relative overflow-hidden bg-slate-100 ${options.list ? "shrink-0 self-start rounded-lg" : ""}`}
+            className={`relative overflow-hidden bg-slate-100 ${options.list ? "shrink-0 self-center rounded-lg" : ""}`}
             style={getProductImageFrameStyle(options)}
           >
             {item.imageUrl ? (
@@ -30143,17 +30157,17 @@ type GalleryEditorImage = {
                     <div className="flex items-center gap-2.5">
                       <input
                         type="range"
-                        min={40}
-                        max={420}
-                        step={10}
+                        min={PRODUCT_IMAGE_SIZE_MIN}
+                        max={productImageMaxSize}
+                        step={1}
                         className="flex-1"
                         value={productImageSize}
                         onChange={(event) => updateProductImageSize(Number(event.target.value))}
                       />
                       <input
                         type="number"
-                        min={40}
-                        max={420}
+                        min={PRODUCT_IMAGE_SIZE_MIN}
+                        max={productImageMaxSize}
                         className="w-20 rounded border px-2 py-1.5"
                         value={productImageSize}
                         onChange={(event) =>
@@ -30435,8 +30449,8 @@ type GalleryEditorImage = {
                         <div className="flex items-center gap-3">
                           <input
                             type="range"
-                            min={64}
-                            max={640}
+                            min={PRODUCT_CARD_HEIGHT_MIN}
+                            max={PRODUCT_CARD_HEIGHT_MAX}
                             step={4}
                             className="flex-1"
                             value={productCardHeight}
@@ -30444,8 +30458,8 @@ type GalleryEditorImage = {
                           />
                           <input
                             type="number"
-                            min={64}
-                            max={640}
+                            min={PRODUCT_CARD_HEIGHT_MIN}
+                            max={PRODUCT_CARD_HEIGHT_MAX}
                             className="w-20 rounded border px-2 py-2"
                             value={productCardHeight}
                             onChange={(event) => updateProductCardHeight(Number(event.target.value))}
@@ -30734,17 +30748,17 @@ type GalleryEditorImage = {
                       <div className="flex items-center gap-2.5">
                         <input
                           type="range"
-                          min={40}
-                          max={420}
-                          step={10}
+                          min={PRODUCT_IMAGE_SIZE_MIN}
+                          max={productImageMaxSize}
+                          step={1}
                           className="flex-1"
                           value={productImageSize}
                           onChange={(event) => updateProductImageSize(Number(event.target.value))}
                         />
                         <input
                           type="number"
-                          min={40}
-                          max={420}
+                          min={PRODUCT_IMAGE_SIZE_MIN}
+                          max={productImageMaxSize}
                           className="w-20 rounded border px-2 py-1.5"
                           value={productImageSize}
                           onChange={(event) =>
@@ -31124,8 +31138,8 @@ type GalleryEditorImage = {
                         <div className="flex items-center gap-3">
                           <input
                             type="range"
-                            min={64}
-                            max={640}
+                            min={PRODUCT_CARD_HEIGHT_MIN}
+                            max={PRODUCT_CARD_HEIGHT_MAX}
                             step={4}
                             className="flex-1"
                             value={productCardHeight}
@@ -31133,8 +31147,8 @@ type GalleryEditorImage = {
                           />
                           <input
                             type="number"
-                            min={64}
-                            max={640}
+                            min={PRODUCT_CARD_HEIGHT_MIN}
+                            max={PRODUCT_CARD_HEIGHT_MAX}
                             className="w-20 rounded border px-2 py-2"
                             value={productCardHeight}
                             onChange={(event) => updateProductCardHeight(Number(event.target.value))}
