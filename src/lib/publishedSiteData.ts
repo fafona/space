@@ -250,11 +250,9 @@ async function fetchPublishedSiteBlocksFromSupabaseUncached(siteId: string): Pro
     siteId: normalizedSiteId,
     slug: String(chosen.slug ?? "").trim(),
     blocks: chosen.blocks,
-    orderManagementEnabled: await withFallbackTimeout(
-      orderManagementTask,
-      ORDER_MANAGEMENT_PERMISSION_TIMEOUT_MS,
+    orderManagementEnabled:
+      (await withFallbackTimeout(orderManagementTask, ORDER_MANAGEMENT_PERMISSION_TIMEOUT_MS, false)) ||
       blocksContainProductBlock(chosen.blocks),
-    ),
   };
 }
 
