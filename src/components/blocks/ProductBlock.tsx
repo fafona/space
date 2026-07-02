@@ -479,7 +479,7 @@ function renderProductCard(
       }}
       className={`relative overflow-hidden rounded-2xl shadow-sm ${cardBorderClass} ${
         options.list
-          ? "flex w-full cursor-pointer flex-col gap-4 p-4 text-left transition-shadow hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 sm:min-h-[var(--product-list-card-height)] sm:flex-row"
+          ? "flex min-h-[var(--product-list-card-height)] w-full cursor-pointer flex-row gap-4 p-4 text-left transition-shadow hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60"
           : "flex h-full w-full cursor-pointer flex-col text-left transition-shadow hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60"
       } ${options.spotlight ? "lg:min-h-[420px]" : ""}`}
       style={{ ...cardBackgroundStyle, ...cardBorderInlineStyle, ...listCardStyle }}
@@ -1109,8 +1109,8 @@ export default function ProductBlock(props: ProductBlockProps) {
           tagPosition === "top"
             ? "mt-5 flex flex-wrap"
             : tagPosition === "left"
-              ? "mt-5 mr-4 flex float-left w-max flex-col items-start"
-              : "mt-5 ml-4 flex float-right w-max flex-col items-end"
+              ? "flex w-max flex-col items-start"
+              : "flex w-max flex-col items-end"
         }
         style={{ gap: `${tagRowGap}px` }}
       >
@@ -1262,7 +1262,7 @@ export default function ProductBlock(props: ProductBlockProps) {
       return (
         <>
           {renderSearchBar()}
-          <div className="mt-5 grid gap-4 lg:grid-cols-[auto_minmax(0,1fr)]">
+          <div className="mt-5 grid grid-cols-[auto_minmax(0,1fr)] gap-4">
             {renderTagFilters()}
             <div className="min-w-0">{content}</div>
           </div>
@@ -1273,7 +1273,7 @@ export default function ProductBlock(props: ProductBlockProps) {
       return (
         <>
           {renderSearchBar()}
-          <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto]">
+          <div className="mt-5 grid grid-cols-[minmax(0,1fr)_auto] gap-4">
             <div className="min-w-0">{content}</div>
             {renderTagFilters()}
           </div>
@@ -1306,7 +1306,7 @@ export default function ProductBlock(props: ProductBlockProps) {
         aria-hidden="true"
         className={
           extra.list
-            ? "invisible flex w-full flex-col gap-4 p-4 sm:h-[var(--product-list-card-height)] sm:max-h-[var(--product-list-card-height)] sm:flex-row"
+            ? "invisible flex h-[var(--product-list-card-height)] max-h-[var(--product-list-card-height)] w-full flex-row gap-4 p-4"
             : "invisible flex h-full w-full flex-col"
         }
         style={listCardStyle}
