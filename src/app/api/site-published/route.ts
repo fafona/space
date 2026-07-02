@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
-import { fetchPublishedSitePayloadFromSupabase } from "@/lib/publishedSiteData";
+import { fetchPublishedSiteBlocksFromSupabase } from "@/lib/publishedSiteData";
 import { createServerTiming } from "@/lib/serverTiming";
 
 export const dynamic = "force-dynamic";
@@ -11,7 +11,7 @@ const SITE_PUBLISHED_SUCCESS_CACHE_CONTROL = "no-store, max-age=0";
 const SITE_PUBLISHED_PAYLOAD_TIMEOUT_MS = 8_000;
 const SITE_PUBLISHED_TIMEOUT = Symbol("site_published_timeout");
 
-type SitePublishedPayloadResult = Awaited<ReturnType<typeof fetchPublishedSitePayloadFromSupabase>>;
+type SitePublishedPayloadResult = Awaited<ReturnType<typeof fetchPublishedSiteBlocksFromSupabase>>;
 
 async function withSitePublishedTimeout(promise: Promise<SitePublishedPayloadResult>) {
   let timeout: ReturnType<typeof setTimeout> | null = null;
@@ -47,7 +47,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    const payload = await timing.time("payload", () => withSitePublishedTimeout(fetchPublishedSitePayloadFromSupabase(siteId)));
+    const payload = await timing.time("payload", () => withSitePublishedTimeout(fetchPublishedSiteBlocksFromSupabase(siteId)));
     if (payload === SITE_PUBLISHED_TIMEOUT) {
       return withTiming(NextResponse.json(
         { error: "site_published_timeout" },
@@ -68,8 +68,8 @@ export async function GET(request: Request) {
         ok: true,
         siteId: payload.siteId,
         slug: payload.slug,
-        merchantName: payload.merchantName,
-        serviceState: payload.serviceState,
+        merchantName: "",
+        serviceState: null,
         blocks: payload.blocks,
       },
       {

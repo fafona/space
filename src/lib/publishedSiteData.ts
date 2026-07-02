@@ -28,6 +28,12 @@ export type PublishedSitePayload = {
   orderManagementEnabled: boolean;
 };
 
+export type PublishedSiteBlocksPayload = {
+  siteId: string;
+  slug: string;
+  blocks: Block[];
+};
+
 const PUBLISHED_SITE_PAYLOAD_CACHE_TTL_MS = 1_500;
 const PUBLISHED_SITE_PAYLOAD_EMPTY_CACHE_TTL_MS = 1_000;
 
@@ -96,15 +102,11 @@ export function pickPublishedPageRow(rows: PublishedPageRow[]) {
     .reduce<PublishedPageRow | null>((best, item) => choosePreferredPublishedPageRow(best, item), null);
 }
 
-async function fetchPublishedSitePayloadFromSupabaseUncached(siteId: string): Promise<PublishedSitePayload | null> {
-  const normalizedSiteId = String(siteId ?? "").trim();
-  if (!isMerchantNumericId(normalizedSiteId)) return null;
-
+function createPublishedSiteDataClient() {
   const supabaseUrl = readEnv("NEXT_PUBLIC_SUPABASE_URL");
   const serviceRoleKey = readEnv("SUPABASE_SERVICE_ROLE_KEY") || readEnv("NEXT_SUPABASE_SERVICE_ROLE_KEY");
   if (!supabaseUrl || !serviceRoleKey) return null;
-
-  const supabase = createClient(supabaseUrl, serviceRoleKey, {
+  return createClient(supabaseUrl, serviceRoleKey, {
     auth: {
       persistSession: false,
       autoRefreshToken: false,
@@ -114,31 +116,67 @@ async function fetchPublishedSitePayloadFromSupabaseUncached(siteId: string): Pr
       fetch: (input, init) => fetch(input, { ...init, cache: "no-store" }),
     },
   });
+}
 
-  const publishedPagesTask = (async () => {
-    const initialQuery = await supabase
-      .from("pages")
-      .select("blocks,slug,updated_at,created_at")
-      .eq("merchant_id", normalizedSiteId)
-      .limit(20);
+type PublishedSiteDataClient = NonNullable<ReturnType<typeof createPublishedSiteDataClient>>;
 
-    if (!initialQuery.error || !isMissingPublishedSlugColumn(initialQuery.error.message)) {
-      return {
-        data: initialQuery.data as PublishedPageRow[] | null,
-        error: initialQuery.error,
-      };
-    }
+async function queryPublishedPageRows(supabase: PublishedSiteDataClient, normalizedSiteId: string) {
+  const initialQuery = await supabase
+    .from("pages")
+    .select("blocks,slug,updated_at,created_at")
+    .eq("merchant_id", normalizedSiteId)
+    .limit(20);
 
-    const fallbackQuery = await supabase
-      .from("pages")
-      .select("blocks,updated_at,created_at")
-      .eq("merchant_id", normalizedSiteId)
-      .limit(20);
+  if (!initialQuery.error || !isMissingPublishedSlugColumn(initialQuery.error.message)) {
     return {
-      data: fallbackQuery.data as PublishedPageRow[] | null,
-      error: fallbackQuery.error,
+      data: initialQuery.data as PublishedPageRow[] | null,
+      error: initialQuery.error,
     };
-  })();
+  }
+
+  const fallbackQuery = await supabase
+    .from("pages")
+    .select("blocks,updated_at,created_at")
+    .eq("merchant_id", normalizedSiteId)
+    .limit(20);
+  return {
+    data: fallbackQuery.data as PublishedPageRow[] | null,
+    error: fallbackQuery.error,
+  };
+}
+
+export async function fetchPublishedSiteBlocksFromSupabase(siteId: string): Promise<PublishedSiteBlocksPayload | null> {
+  const normalizedSiteId = String(siteId ?? "").trim();
+  if (!isMerchantNumericId(normalizedSiteId)) return null;
+
+  const supabase = createPublishedSiteDataClient();
+  if (!supabase) return null;
+
+  const { data, error } = await queryPublishedPageRows(supabase, normalizedSiteId);
+  if (error) {
+    throw error;
+  }
+
+  const chosen = pickPublishedPageRow((data ?? []) as PublishedPageRow[]);
+  if (!chosen || !isPublishedBlocksPayload(chosen.blocks)) {
+    return null;
+  }
+
+  return {
+    siteId: normalizedSiteId,
+    slug: String(chosen.slug ?? "").trim(),
+    blocks: chosen.blocks,
+  };
+}
+
+async function fetchPublishedSitePayloadFromSupabaseUncached(siteId: string): Promise<PublishedSitePayload | null> {
+  const normalizedSiteId = String(siteId ?? "").trim();
+  if (!isMerchantNumericId(normalizedSiteId)) return null;
+
+  const supabase = createPublishedSiteDataClient();
+  if (!supabase) return null;
+
+  const publishedPagesTask = queryPublishedPageRows(supabase, normalizedSiteId);
   const merchantProfileTask = supabase
     .from("merchants")
     .select("name")
