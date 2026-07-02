@@ -152,7 +152,10 @@ export default function BlockRenderer({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [closeOpenedBlock, openedBlockEntry]);
 
-  function renderBlockContent(b: Block, options: { openedView?: boolean; openedToolbarTargetId?: string } = {}): ReactNode {
+  function renderBlockContent(
+    b: Block,
+    options: { openedView?: boolean; openedToolbarTargetId?: string; openedCartTargetId?: string } = {},
+  ): ReactNode {
     let content: ReactNode = null;
     switch (b.type) {
       case "common":
@@ -218,6 +221,7 @@ export default function BlockRenderer({
             runtimeDisableCartPortal={options.openedView === true}
             runtimeOpenedView={options.openedView === true}
             runtimeOpenedToolbarTargetId={options.openedToolbarTargetId}
+            runtimeOpenedCartTargetId={options.openedCartTargetId}
           />
         );
         break;
@@ -267,6 +271,7 @@ export default function BlockRenderer({
     : "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-900 shadow-sm hover:bg-slate-50";
   const openedBlockBodyClassName = "faolla-hide-scrollbar min-h-0 flex-1 overflow-y-auto";
   const openedToolbarTargetId = openedBlockEntry ? `faolla-opened-block-toolbar-${openedBlockEntry.block.id}` : "";
+  const openedCartTargetId = openedBlockEntry ? `faolla-opened-block-cart-${openedBlockEntry.block.id}` : "";
   const openedBlockTitleClassName = openedBlockHasToolbar
     ? "min-w-0 max-w-[34%] shrink-0 truncate text-xs font-semibold text-slate-700 sm:text-sm"
     : "min-w-0 flex-1 truncate text-xs font-semibold text-slate-700 sm:text-sm";
@@ -341,9 +346,16 @@ export default function BlockRenderer({
               {renderBlockContent(openedBlockEntry.block, {
                 openedView: true,
                 openedToolbarTargetId,
+                openedCartTargetId,
               })}
             </BlockRuntimeBoundary>
           </div>
+          {openedBlockHasToolbar ? (
+            <div
+              id={openedCartTargetId}
+              className="pointer-events-none absolute inset-x-0 bottom-4 z-[2147482100] px-4"
+            />
+          ) : null}
         </div>
       ) : null}
     </div>

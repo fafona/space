@@ -110,6 +110,7 @@ type ProductBlockProps = BackgroundEditableProps &
     runtimeDisableCartPortal?: boolean;
     runtimeOpenedView?: boolean;
     runtimeOpenedToolbarTargetId?: string;
+    runtimeOpenedCartTargetId?: string;
   };
 
 type ProductCartItemState = {
@@ -514,7 +515,7 @@ function renderProductCard(
         options.cartQuantityMode === "plus-only" ? (
           <button
             type="button"
-            className="absolute right-3 top-3 z-[2] flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-lg font-semibold text-slate-700 shadow-sm backdrop-blur transition hover:bg-slate-100 active:scale-95"
+            className="absolute right-3 top-3 z-30 flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-lg font-semibold text-slate-700 shadow-sm backdrop-blur transition hover:bg-slate-100 active:scale-95"
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
@@ -525,7 +526,7 @@ function renderProductCard(
             +
           </button>
         ) : (
-          <div className="absolute right-3 top-3 z-[2] flex items-center gap-1 rounded-full border border-slate-200 bg-white/95 px-1.5 py-1 shadow-sm backdrop-blur">
+          <div className="absolute right-3 top-3 z-30 flex items-center gap-1 rounded-full border border-slate-200 bg-white/95 px-1.5 py-1 shadow-sm backdrop-blur">
             <button
               type="button"
               className="flex h-7 w-7 items-center justify-center rounded-full text-base font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-35"
@@ -597,6 +598,7 @@ function renderProductCard(
 export default function ProductBlock(props: ProductBlockProps) {
   const openedView = props.runtimeOpenedView === true;
   const openedToolbarTargetId = typeof props.runtimeOpenedToolbarTargetId === "string" ? props.runtimeOpenedToolbarTargetId : "";
+  const openedCartTargetId = typeof props.runtimeOpenedCartTargetId === "string" ? props.runtimeOpenedCartTargetId : "";
   const mobileFitScreenWidth = props.mobileFitScreenWidth === true;
   const { locale } = useI18n();
   const products = normalizeProductItems(props.products)
@@ -745,6 +747,7 @@ export default function ProductBlock(props: ProductBlockProps) {
   const disableCartPortal = props.runtimeDisableCartPortal === true;
   const [cartPortalTarget, setCartPortalTarget] = useState<HTMLElement | null>(null);
   const [openedToolbarTarget, setOpenedToolbarTarget] = useState<HTMLElement | null>(null);
+  const [openedCartTarget, setOpenedCartTarget] = useState<HTMLElement | null>(null);
   const selectedTag = activeTag && productTags.includes(activeTag) ? activeTag : null;
   const searchMatchedProducts = productSearchEnabled ? filterProductItemsByKeyword(arrangedProducts, searchKeyword) : arrangedProducts;
   const filteredProducts =
@@ -801,6 +804,14 @@ export default function ProductBlock(props: ProductBlockProps) {
     }
     setOpenedToolbarTarget(document.getElementById(openedToolbarTargetId));
   }, [openedToolbarTargetId, openedView]);
+
+  useEffect(() => {
+    if (!openedView || !openedCartTargetId || typeof document === "undefined") {
+      setOpenedCartTarget(null);
+      return;
+    }
+    setOpenedCartTarget(document.getElementById(openedCartTargetId));
+  }, [openedCartTargetId, openedView]);
 
   useEffect(
     () => () => {
@@ -1592,9 +1603,11 @@ export default function ProductBlock(props: ProductBlockProps) {
   const productDetailFullImageFrameStyle: CSSProperties = overlayWithinBlock
     ? { height: "min(74dvh, 760px)", minHeight: "240px", maxHeight: "calc(100dvh - 7rem)" }
     : { height: "min(74dvh, 860px)", minHeight: "240px", maxHeight: "calc(100dvh - 7rem)" };
-  const cartButtonClassName = overlayWithinBlock
-    ? "absolute bottom-5 left-5 z-20 inline-flex items-center gap-2 rounded-full bg-slate-950/95 px-3.5 py-2.5 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(15,23,42,0.18)] transition hover:bg-slate-800"
-    : "fixed bottom-[calc(env(safe-area-inset-bottom)+1rem)] left-5 z-[20000] inline-flex items-center gap-2 rounded-full bg-slate-950/95 px-3.5 py-2.5 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(15,23,42,0.18)] transition hover:bg-slate-800";
+  const cartButtonClassName = openedView
+    ? "pointer-events-auto inline-flex items-center gap-2 rounded-full bg-slate-950/95 px-3.5 py-2.5 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(15,23,42,0.18)] transition hover:bg-slate-800"
+    : overlayWithinBlock
+      ? "absolute bottom-5 left-5 z-20 inline-flex items-center gap-2 rounded-full bg-slate-950/95 px-3.5 py-2.5 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(15,23,42,0.18)] transition hover:bg-slate-800"
+      : "fixed bottom-[calc(env(safe-area-inset-bottom)+1rem)] left-5 z-[20000] inline-flex items-center gap-2 rounded-full bg-slate-950/95 px-3.5 py-2.5 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(15,23,42,0.18)] transition hover:bg-slate-800";
   const renderCartButton = () =>
     cartEnabled && !cartOpen ? (
       <button
@@ -1657,6 +1670,7 @@ export default function ProductBlock(props: ProductBlockProps) {
       );
     });
   const openedSearchToolbar = openedView && openedToolbarTarget ? createPortal(renderSearchBar("toolbar"), openedToolbarTarget) : null;
+  const openedCartPortal = openedView && openedCartTarget ? createPortal(renderCartButton(), openedCartTarget) : null;
   const sectionClassName = openedView
     ? "relative mx-auto min-h-full w-full px-1.5 py-0"
     : resolveMobileFitSectionClass("mx-auto max-w-6xl px-6 py-6", mobileFitScreenWidth);
@@ -1682,8 +1696,9 @@ export default function ProductBlock(props: ProductBlockProps) {
           <div className="mt-2 break-words whitespace-pre-wrap text-sm leading-6 text-slate-600" dangerouslySetInnerHTML={{ __html: toRichHtml(props.text, "") }} />
         ) : null}
         {renderProductsWithFilters()}
-        {overlayWithinBlock || !cartPortalTarget ? renderCartButton() : null}
+        {!openedCartTarget && (overlayWithinBlock || !cartPortalTarget) ? renderCartButton() : null}
       </div>
+      {openedCartPortal}
       {overlayWithinBlock || !cartPortalTarget ? renderCartFlyItems() : null}
       {cartOpen ? (
         <div
