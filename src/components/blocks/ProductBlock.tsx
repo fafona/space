@@ -1424,16 +1424,11 @@ export default function ProductBlock(props: ProductBlockProps) {
 
   const cartOverlayClassName = overlayWithinBlock
     ? "absolute inset-0 z-[120] flex items-center justify-center bg-black/55 p-3"
-    : "fixed inset-0 z-[1100] flex items-center justify-center bg-black/55 p-4";
+    : "fixed inset-0 z-[1100] flex items-center justify-center bg-black/55 px-1.5 py-[calc(env(safe-area-inset-top)+0.75rem)] sm:p-4";
   const cartPanelClassName = overlayWithinBlock
     ? "relative flex max-h-[calc(100%-1.5rem)] w-full max-w-full flex-col overflow-hidden rounded-[24px] bg-white shadow-2xl"
-    : "relative flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-[28px] bg-white shadow-2xl";
-  const cartBodyGridClassName = overlayWithinBlock
-    ? "grid min-h-0 flex-1 gap-0 overflow-hidden"
-    : "grid min-h-0 flex-1 gap-0 overflow-hidden lg:grid-cols-[minmax(0,1.15fr)_minmax(300px,0.85fr)]";
-  const cartSummaryClassName = overlayWithinBlock
-    ? "border-t border-slate-200 bg-slate-50/70 px-6 py-5"
-    : "border-t border-slate-200 bg-slate-50/70 px-6 py-5 lg:border-l lg:border-t-0";
+    : "relative flex max-h-[min(78dvh,720px)] w-[calc(100vw-0.75rem)] max-w-[calc(100vw-0.75rem)] flex-col overflow-hidden rounded-[22px] bg-white shadow-2xl sm:w-full sm:max-w-3xl sm:rounded-[28px]";
+  const cartBodyGridClassName = "flex min-h-0 flex-1 flex-col overflow-hidden";
   const customerOverlayClassName = overlayWithinBlock
     ? "absolute inset-0 z-[130] flex items-center justify-center bg-black/50 p-3"
     : "fixed inset-0 z-[1110] flex items-center justify-center bg-black/50 p-4";
@@ -1547,10 +1542,10 @@ export default function ProductBlock(props: ProductBlockProps) {
             className={cartPanelClassName}
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-4 py-3 sm:px-6 sm:py-4">
               <div>
-                <div className="text-2xl font-semibold text-slate-900">购物车</div>
-                <div className="mt-1 text-sm text-slate-500">
+                <div className="text-xl font-semibold text-slate-900 sm:text-2xl">购物车</div>
+                <div className="mt-0.5 text-xs text-slate-500 sm:text-sm">
                   已选 {checkedCartTotalQuantity} 件，合计 {formatMerchantOrderAmount(checkedCartTotalAmount, pricePrefix)}
                 </div>
                 {cartNotice ? <div className="mt-2 text-sm text-emerald-600">{cartNotice}</div> : null}
@@ -1558,7 +1553,7 @@ export default function ProductBlock(props: ProductBlockProps) {
               </div>
               <button
                 type="button"
-                className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 text-xl text-slate-500 transition hover:bg-slate-50"
+                className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-xl text-slate-500 transition hover:bg-slate-50 sm:h-10 sm:w-10"
                 onClick={() => {
                   setCartCustomerOpen(false);
                   setCartOpen(false);
@@ -1569,28 +1564,28 @@ export default function ProductBlock(props: ProductBlockProps) {
               </button>
             </div>
             <div className={cartBodyGridClassName}>
-              <div className="min-h-0 overflow-y-auto px-6 py-5">
+              <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 sm:px-6 sm:py-4">
                 {cartItems.length > 0 ? (
-                  <div className="space-y-4">
+                  <div className="space-y-2 sm:space-y-3">
                     {cartItems.map((item) => {
                       const subtotal = item.unitPrice * item.quantity;
                       return (
-                        <div key={item.productId} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
-                          <div className="flex items-start gap-4">
+                        <div key={item.productId} className="rounded-xl border border-slate-200 bg-slate-50/70 p-2.5 sm:p-3">
+                          <div className="flex items-center gap-2.5 sm:gap-3">
                             <input
                               type="checkbox"
                               checked={item.checked}
                               onChange={(event) => handleToggleCartItemChecked(item.productId, event.target.checked)}
-                              className="mt-1 h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
+                              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
                             />
-                            <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-2xl bg-slate-100">
+                            <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-xl bg-slate-100 sm:h-14 sm:w-14">
                               {item.product.imageUrl ? (
                                 <Image
                                   src={item.product.imageUrl}
                                   alt={item.product.name || item.product.code || "产品图片"}
                                   fill
                                   unoptimized
-                                  sizes="96px"
+                                  sizes="64px"
                                   className="object-cover"
                                 />
                               ) : (
@@ -1600,22 +1595,22 @@ export default function ProductBlock(props: ProductBlockProps) {
                             <div className="min-w-0 flex-1">
                               <div className="flex items-start justify-between gap-3">
                                 <div className="min-w-0">
-                                  <div className="break-words text-base font-semibold text-slate-900">{item.product.name || "未命名产品"}</div>
-                                  {item.product.code ? <div className="mt-1 break-words text-xs uppercase tracking-[0.18em] text-slate-400">{item.product.code}</div> : null}
+                                  <div className="line-clamp-1 break-words text-sm font-semibold text-slate-900 sm:text-base">{item.product.name || "未命名产品"}</div>
+                                  {item.product.code ? <div className="mt-0.5 line-clamp-1 break-words text-[11px] uppercase tracking-[0.12em] text-slate-400">{item.product.code}</div> : null}
                                 </div>
                                 <button
                                   type="button"
-                                  className="rounded-full border border-slate-200 px-3 py-1 text-xs font-medium text-slate-500 transition hover:bg-white"
+                                  className="rounded-full border border-slate-200 px-2.5 py-0.5 text-xs font-medium text-slate-500 transition hover:bg-white"
                                   onClick={() => handleRemoveCartItem(item.productId)}
                                 >
                                   删除
                                 </button>
                               </div>
-                              <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                                <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2 py-1">
+                              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                                <div className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-1.5 py-0.5">
                                   <button
                                     type="button"
-                                    className="flex h-8 w-8 items-center justify-center rounded-full text-lg font-semibold text-slate-700 transition hover:bg-slate-100"
+                                    className="flex h-7 w-7 items-center justify-center rounded-full text-base font-semibold text-slate-700 transition hover:bg-slate-100"
                                     onClick={() => handleDecreaseQuantity(item.product)}
                                   >
                                     -
@@ -1624,22 +1619,19 @@ export default function ProductBlock(props: ProductBlockProps) {
                                     type="text"
                                     value={String(item.quantity)}
                                     onChange={(event) => handleSetCartItemQuantity(item.productId, event.target.value)}
-                                    className="w-12 border-0 bg-transparent p-0 text-center text-sm font-semibold text-slate-800 outline-none"
+                                    className="w-9 border-0 bg-transparent p-0 text-center text-sm font-semibold text-slate-800 outline-none"
                                     inputMode="numeric"
                                   />
                                   <button
                                     type="button"
-                                    className="flex h-8 w-8 items-center justify-center rounded-full text-lg font-semibold text-slate-700 transition hover:bg-slate-100"
+                                    className="flex h-7 w-7 items-center justify-center rounded-full text-base font-semibold text-slate-700 transition hover:bg-slate-100"
                                     onClick={() => handleIncreaseQuantity(item.product)}
                                   >
                                     +
                                   </button>
                                 </div>
-                                <div className="text-right">
-                                  <div className="text-xs text-slate-400">小计</div>
-                                  <div className="text-base font-semibold text-sky-700">
-                                    {formatMerchantOrderAmount(subtotal, pricePrefix)}
-                                  </div>
+                                <div className="text-right text-sm font-semibold text-sky-700 sm:text-base">
+                                  {formatMerchantOrderAmount(subtotal, pricePrefix)}
                                 </div>
                               </div>
                             </div>
@@ -1654,57 +1646,30 @@ export default function ProductBlock(props: ProductBlockProps) {
                   </div>
                 )}
               </div>
-              <div className={cartSummaryClassName}>
-                <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                  <div className="text-lg font-semibold text-slate-900">客户信息</div>
-                  {hasCartCustomerIdentity ? (
-                    <div className="mt-4 space-y-2 text-sm text-slate-600">
-                      {cartCustomer.name ? <div>姓名：{cartCustomer.name}</div> : null}
-                      {cartCustomer.phone ? <div>电话：{cartCustomer.phone}</div> : null}
-                      {cartCustomer.email ? <div>邮箱：{cartCustomer.email}</div> : null}
-                      {cartCustomer.note ? (
-                        <div className="line-clamp-2 break-words text-slate-500">备注：{cartCustomer.note}</div>
-                      ) : null}
-                    </div>
-                  ) : (
-                    <div className="mt-4 text-sm text-slate-400">暂未填写客户信息</div>
-                  )}
-                </div>
-                <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-4">
-                  <div className="flex items-center justify-between text-sm text-slate-500">
-                    <span>已勾选商品</span>
-                    <span>{checkedCartTotalQuantity} 件</span>
-                  </div>
-                  <div className="mt-3 flex items-center justify-between text-lg font-semibold text-slate-900">
-                    <span>合计</span>
-                    <span>{formatMerchantOrderAmount(checkedCartTotalAmount, pricePrefix)}</span>
-                  </div>
-                </div>
-                <div className="mt-5 flex flex-wrap gap-3">
-                  <button
-                    key={cartCustomerShakeKey}
-                    type="button"
-                    className={`rounded-full border px-5 py-3 text-sm font-medium transition ${
-                      hasCartCustomerIdentity
-                        ? "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                        : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
-                    } ${!hasCartCustomerIdentity && cartCustomerShakeKey > 0 ? "animate-[cartCustomerButtonShake_0.42s_ease-in-out_2]" : ""}`}
-                    onClick={() => {
-                      setCartError("");
-                      setCartCustomerOpen(true);
-                    }}
-                  >
-                    {hasCartCustomerIdentity ? "客户信息 已填写" : "客户信息"}
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
-                    onClick={() => void handleSubmitOrder()}
-                    disabled={cartSubmitting || checkedCartItems.length === 0}
-                  >
-                    {cartSubmitting ? "提交中..." : "提交订单"}
-                  </button>
-                </div>
+              <div className="flex shrink-0 items-center gap-2 border-t border-slate-200 bg-white px-3 py-3 sm:px-6 sm:py-4">
+                <button
+                  key={cartCustomerShakeKey}
+                  type="button"
+                  className={`min-w-0 flex-1 rounded-full border px-4 py-2.5 text-sm font-medium transition ${
+                    hasCartCustomerIdentity
+                      ? "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                      : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                  } ${!hasCartCustomerIdentity && cartCustomerShakeKey > 0 ? "animate-[cartCustomerButtonShake_0.42s_ease-in-out_2]" : ""}`}
+                  onClick={() => {
+                    setCartError("");
+                    setCartCustomerOpen(true);
+                  }}
+                >
+                  {hasCartCustomerIdentity ? "客户信息 已填写" : "客户信息"}
+                </button>
+                <button
+                  type="button"
+                  className="min-w-0 flex-1 rounded-full bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+                  onClick={() => void handleSubmitOrder()}
+                  disabled={cartSubmitting || checkedCartItems.length === 0}
+                >
+                  {cartSubmitting ? "提交中..." : "提交订单"}
+                </button>
               </div>
             </div>
           </div>
@@ -1723,7 +1688,7 @@ export default function ProductBlock(props: ProductBlockProps) {
               </div>
               <button
                 type="button"
-                className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 text-xl text-slate-500 transition hover:bg-slate-50"
+                className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-xl text-slate-500 transition hover:bg-slate-50 sm:h-10 sm:w-10"
                 onClick={() => setCartCustomerOpen(false)}
                 aria-label="关闭客户信息"
               >
