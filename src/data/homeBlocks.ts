@@ -354,6 +354,7 @@ type ProductProps = BackgroundEditableProps &
     productItemGap?: number;
     productCartQuantityMode?: ProductCartQuantityMode;
     productContainerMode?: ProductContainerMode;
+    productHideScrollbar?: boolean;
     productItemsPerPage?: number;
     productDetailImageSize?: number;
     productDetailShowCode?: boolean;

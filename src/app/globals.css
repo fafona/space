@@ -65,6 +65,17 @@ input[type="reset"]:disabled,
   cursor: default !important;
 }
 
+.faolla-hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.faolla-hide-scrollbar::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 /* Hide Google Translate banner/tooltip and reset forced top offset. */
 html {
   margin-top: 0 !important;

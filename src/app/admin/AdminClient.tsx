@@ -1616,6 +1616,7 @@ const PRODUCT_THEME_COPY_KEYS = [
   "productCardHeight",
   "productItemGap",
   "productCartQuantityMode",
+  "productHideScrollbar",
   "productCodeTypography",
   "productNameTypography",
   "productDescriptionTypography",
@@ -10571,6 +10572,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           productItemGap: 16,
           productCartQuantityMode: "stepper",
           productContainerMode: "auto",
+          productHideScrollbar: false,
           productItemsPerPage: 3,
           productDetailImageSize: 420,
           productDetailShowCode: true,
@@ -28820,6 +28822,7 @@ type GalleryEditorImage = {
         : 0.94;
     const productItemGap = normalizeProductSpacing(block.props.productItemGap, 16, 0, 48);
     const productCartQuantityMode = normalizeProductCartQuantityMode(block.props.productCartQuantityMode);
+    const productHideScrollbar = block.props.productHideScrollbar === true;
     const productDetailImageSize =
       typeof block.props.productDetailImageSize === "number" && Number.isFinite(block.props.productDetailImageSize)
         ? Math.max(180, Math.min(720, Math.round(block.props.productDetailImageSize)))
@@ -29434,7 +29437,7 @@ type GalleryEditorImage = {
           ref={(node) => {
             productPreviewScrollViewportRefs.current[block.id] = node;
           }}
-          className="min-w-0 overflow-y-auto pr-1"
+          className={`min-w-0 overflow-y-auto ${productHideScrollbar ? "faolla-hide-scrollbar pr-0" : "pr-1"}`}
           style={{ maxHeight: `${previewScrollViewportHeight}px` }}
         >
           {contentBody}
@@ -30632,6 +30635,16 @@ type GalleryEditorImage = {
                       />
                     </label>
                   ) : null}
+                  {productContainerMode === "scroll" ? (
+                    <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-gray-700">
+                      <input
+                        type="checkbox"
+                        checked={productHideScrollbar}
+                        onChange={(event) => onChange({ productHideScrollbar: event.target.checked })}
+                      />
+                      <span>隐藏产品滚动条</span>
+                    </label>
+                  ) : null}
                       </div>
                     ) : null}
                   </div>
@@ -30875,6 +30888,18 @@ type GalleryEditorImage = {
                             onChange({ productItemsPerPage: Math.max(1, Math.min(24, Number(event.target.value) || 1)) })
                           }
                         />
+                      </label>
+                    ) : (
+                      <div />
+                    )}
+                    {productContainerMode === "scroll" ? (
+                      <label className="flex items-center gap-2 rounded border border-slate-200 bg-white px-3 py-1.5 text-sm text-gray-700">
+                        <input
+                          type="checkbox"
+                          checked={productHideScrollbar}
+                          onChange={(event) => onChange({ productHideScrollbar: event.target.checked })}
+                        />
+                        <span>隐藏产品滚动条</span>
                       </label>
                     ) : (
                       <div />

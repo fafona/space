@@ -86,6 +86,7 @@ type ProductBlockProps = BackgroundEditableProps &
     productItemGap?: number;
     productCartQuantityMode?: ProductCartQuantityMode;
     productContainerMode?: ProductContainerMode;
+    productHideScrollbar?: boolean;
     productItemsPerPage?: number;
     productDetailImageSize?: number;
     productDetailShowCode?: boolean;
@@ -608,6 +609,7 @@ export default function ProductBlock(props: ProductBlockProps) {
   const arrangedProducts = arrangeProductItemsByTag(products, productTags, groupedByTag);
   const layoutPreset = normalizeProductLayoutPreset(props.productLayoutPreset);
   const containerMode = normalizeProductContainerMode(props.productContainerMode);
+  const hideProductScrollbar = props.productHideScrollbar === true;
   const itemsPerPage = normalizeProductItemsPerPage(props.productItemsPerPage, layoutPreset);
   const imageAspectRatio = normalizeProductImageAspectRatio(props.productImageAspectRatio);
   const rawImageSize = typeof props.productImageSize === "number" && Number.isFinite(props.productImageSize) ? Math.round(props.productImageSize) : 220;
@@ -1413,7 +1415,7 @@ export default function ProductBlock(props: ProductBlockProps) {
     const content = containerMode === "scroll" && scrollViewportHeight ? (
       <div
         ref={scrollViewportRef}
-        className="min-w-0 overflow-y-auto pr-1"
+        className={`min-w-0 overflow-y-auto ${hideProductScrollbar ? "faolla-hide-scrollbar pr-0" : "pr-1"}`}
         style={{ maxHeight: `${scrollViewportHeight}px` }}
         onScroll={productScrollSpyEnabled ? handleProductViewportScroll : undefined}
       >
