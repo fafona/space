@@ -82,9 +82,10 @@ type PublishCachedResult = {
 };
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
-const MAX_RETRY_ATTEMPTS = 3;
-const PUBLISH_ROUTE_DEADLINE_MS = 52_000;
-const SUPABASE_REQUEST_TIMEOUT_MS = 14_000;
+const MAX_RETRY_ATTEMPTS = 2;
+const PUBLISH_ROUTE_DEADLINE_MS = 24_000;
+const SUPABASE_REQUEST_TIMEOUT_MS = 6_000;
+const PUBLISH_PERMISSION_SNAPSHOT_TIMEOUT_MS = 3_500;
 const OPTIONAL_PUBLISH_SYNC_TIMEOUT_MS = 8_000;
 
 const globalState = globalThis as typeof globalThis & {
@@ -763,12 +764,58 @@ export async function POST(request: Request) {
     }
 
     if (!isPlatformEditor && merchantIds.length > 0) {
-      const snapshotPayload = await loadStoredPlatformMerchantSnapshot(
-        supabase as unknown as PlatformMerchantSnapshotStoreClient,
-        { bypassCache: true, includeHistory: false },
+      const snapshotPayload = await withTimeout(
+        loadStoredPlatformMerchantSnapshot(
+          supabase as unknown as PlatformMerchantSnapshotStoreClient,
+          { bypassCache: true, includeHistory: false },
+        ),
+        PUBLISH_PERMISSION_SNAPSHOT_TIMEOUT_MS,
+        "merchant_permission_snapshot_timeout",
       ).catch(() => null);
+      if (!snapshotPayload) {
+        const saveError = await saveWithRetry(
+          supabase,
+          {
+            blocks: sanitizedPublishedBlocks,
+            updated_at: normalizedUpdatedAt,
+          },
+          merchantIds,
+          merchantSlug,
+        );
+
+        if (saveError) {
+          const transient = isTransientSaveError(saveError.message);
+          const status = transient ? 503 : 409;
+          const responseBody = {
+            ok: false,
+            code: transient ? "publish_backend_request_timeout" : "publish_failed",
+            message: saveError.message || "鍙戝竷澶辫触",
+            requestId,
+          };
+          resultCache.set(requestId, { at: Date.now(), status, body: responseBody });
+          return makeCachedResponse(status, responseBody);
+        }
+
+        const status = 200;
+        const responseBody = {
+          ok: true,
+          requestId,
+          updatedAt: normalizedUpdatedAt,
+          merchantCount: merchantIds.length,
+          mode: "merchant",
+          postPublishSyncScheduled: scheduleOptionalPostPublishSync({
+            supabase,
+            merchantIds,
+            blocks: sanitizedPublishedBlocks,
+            updatedAt: normalizedUpdatedAt,
+          }),
+          permissionSnapshotSkipped: true,
+        };
+        resultCache.set(requestId, { at: Date.now(), status, body: responseBody });
+        return makeCachedResponse(status, responseBody);
+      }
       const snapshotByMerchantId = new Map(
-        (snapshotPayload?.snapshot ?? []).map((site) => [site.id, site] as const),
+        snapshotPayload.snapshot.map((site) => [site.id, site] as const),
       );
       const blockedState = merchantIds
         .map((merchantId) => {
@@ -822,10 +869,11 @@ export async function POST(request: Request) {
     );
 
     if (saveError) {
-      const status = 409;
+      const transient = isTransientSaveError(saveError.message);
+      const status = transient ? 503 : 409;
       const responseBody = {
         ok: false,
-        code: "publish_failed",
+        code: transient ? "publish_backend_request_timeout" : "publish_failed",
         message: saveError.message || "发布失败",
         requestId,
       };

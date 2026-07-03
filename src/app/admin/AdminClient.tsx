@@ -8582,10 +8582,12 @@ export default function AdminClient({
             await waitBeforeRetry();
             continue;
           }
+          if (!isPlatformEditor && isRetriablePublishFailure(response.status, code)) {
+            showSavePublishTip("发布接口仍超时，正在切换备用发布通道...");
+            return { handled: false, error: null };
+          }
           if (code === "publish_service_unavailable") {
-            return isPlatformEditor
-              ? { handled: false, error: null }
-              : { handled: true, error: { message: "发布服务暂不可用，请稍后重试" } };
+            return { handled: false, error: null };
           }
           return { handled: true, error: { message: normalizePublishApiErrorMessage(code, message, response.status) } };
         }
@@ -8596,14 +8598,11 @@ export default function AdminClient({
           await waitBeforeRetry();
           continue;
         }
-        return isPlatformEditor
-          ? { handled: false, error: null }
-          : { handled: true, error: { message: "发布服务暂不可用，请稍后重试" } };
+        if (!isPlatformEditor) showSavePublishTip("发布接口仍中断，正在切换备用发布通道...");
+        return { handled: false, error: null };
       }
     }
-    return isPlatformEditor
-      ? { handled: false, error: null }
-      : { handled: true, error: { message: "发布服务暂不可用，请稍后重试" } };
+    return { handled: false, error: null };
   }
 
   function openAlert(message: string, title = "提示"): Promise<void> {
