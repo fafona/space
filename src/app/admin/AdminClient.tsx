@@ -11254,7 +11254,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   async function publishToFrontend() {
-    if (publishing) return;
+    if (publishing || publishingRef.current) return;
+    publishingRef.current = true;
+    setPublishing(true);
+    showSavePublishTip("发布中，请稍候...");
+    try {
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
     const scopedSiteIdForGuard = getSiteIdFromStoreScope(storeScope).trim();
     if (!isPlatformEditor && !scopedSiteIdForGuard) {
       showTip("当前不是商户站点作用域（缺少 site-xxx），已止发布以防写错", {
@@ -11369,9 +11374,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (!gatewayReady) {
       setBackendNotice("后端连接不稳定，正在尝试发布...");
     }
-    publishingRef.current = true;
-    setPublishing(true);
-    showSavePublishTip("发布中，请稍候...");
 
     try {
       const scopedSiteId = getSiteIdFromStoreScope(storeScope).trim();
@@ -11615,6 +11617,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           "发布失败",
         );
       }
+    } finally {
+      publishingRef.current = false;
+      setPublishing(false);
+    }
     } finally {
       publishingRef.current = false;
       setPublishing(false);
