@@ -1644,11 +1644,11 @@ export default function ProductBlock(props: ProductBlockProps) {
   const productDetailDialogClassName = `relative rounded-3xl shadow-2xl ${
     detailFullImage
       ? `${overlayWithinBlock ? "max-h-[calc(100%-0.75rem)] w-[calc(100%-0.5rem)] max-w-full" : "max-h-[calc(100dvh-2rem)] w-[calc(100vw-0.75rem)] max-w-5xl"} overflow-hidden rounded-[22px] bg-black p-0`
-      : `w-full overflow-auto ${overlayWithinBlock ? "max-h-[calc(100%-1rem)] max-w-full" : "max-h-[calc(100dvh-2rem)] max-w-4xl"} bg-white p-5 sm:p-6`
+      : `w-full min-w-0 overflow-y-auto overflow-x-hidden ${overlayWithinBlock ? "max-h-[calc(100%-1rem)] max-w-full" : "max-h-[calc(100dvh-2rem)] max-w-4xl"} bg-white p-5 sm:p-6`
   }`;
   const productDetailGridClassName = overlayWithinBlock
-    ? "grid gap-5"
-    : "grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]";
+    ? "grid min-w-0 max-w-full gap-5 overflow-x-hidden"
+    : "grid min-w-0 max-w-full gap-6 overflow-x-hidden lg:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]";
   const productDetailFullImageFrameStyle: CSSProperties = overlayWithinBlock
     ? { height: "min(74dvh, 760px)", minHeight: "240px", maxHeight: "calc(100dvh - 7rem)" }
     : { height: "min(74dvh, 860px)", minHeight: "240px", maxHeight: "calc(100dvh - 7rem)" };
@@ -2025,9 +2025,10 @@ export default function ProductBlock(props: ProductBlockProps) {
             ) : (
               <div className={productDetailGridClassName}>
                 <div
-                  className="relative overflow-hidden rounded-2xl bg-slate-100"
+                  className="relative min-w-0 max-w-full overflow-hidden rounded-2xl bg-slate-100"
                   style={{
-                    width: "100%",
+                    width: `min(100%, ${detailImageWidth}px)`,
+                    minWidth: 0,
                     maxWidth: `${detailImageWidth}px`,
                     aspectRatio: `${detailRatioPair.width} / ${detailRatioPair.height}`,
                   }}
@@ -2038,25 +2039,25 @@ export default function ProductBlock(props: ProductBlockProps) {
                     <div className="flex h-full items-center justify-center text-sm text-slate-400">暂无图片</div>
                   )}
                 </div>
-                <div className="flex min-h-full flex-col">
+                <div className="flex min-h-full min-w-0 max-w-full flex-col overflow-x-hidden">
                   {detailShowCode && activeProduct.code ? (
-                    <div className="text-xs uppercase tracking-[0.24em] text-slate-500" style={productCodeTextStyle}>
+                    <div className="min-w-0 max-w-full break-words text-xs uppercase tracking-[0.24em] text-slate-500" style={productCodeTextStyle}>
                       {activeProduct.code}
                     </div>
                   ) : null}
                   {detailShowName ? (
-                    <h3 className="mt-2 break-words text-2xl font-semibold text-slate-900" style={productNameTextStyle}>
+                    <h3 className="mt-2 min-w-0 max-w-full break-words text-2xl font-semibold text-slate-900" style={productNameTextStyle}>
                       {activeProduct.name || "未命名产品"}
                     </h3>
                   ) : null}
                   {detailShowDescription && activeProduct.description ? (
-                    <div className="mt-4 break-words whitespace-pre-wrap text-sm leading-7 text-slate-600" style={productDescriptionTextStyle}>
+                    <div className="mt-4 min-w-0 max-w-full break-words whitespace-pre-wrap text-sm leading-7 text-slate-600" style={{ overflowWrap: "anywhere", wordBreak: "break-word", ...productDescriptionTextStyle }}>
                       {activeProduct.description}
                     </div>
                   ) : null}
                   {detailShowPrice && productPriceText(activeProduct.price, pricePrefix) ? (
-                    <div className={`mt-auto flex w-full pt-6 text-2xl font-semibold text-sky-700 ${detailPriceAlignClass}`}>
-                      <div className="w-full" style={productPriceTextStyle}>
+                    <div className={`mt-auto flex min-w-0 max-w-full pt-6 text-2xl font-semibold text-sky-700 ${detailPriceAlignClass}`}>
+                      <div className="min-w-0 max-w-full break-words" style={productPriceTextStyle}>
                         {productPriceText(activeProduct.price, pricePrefix)}
                       </div>
                     </div>
