@@ -8530,51 +8530,80 @@ export default function AdminClient({
     timeoutMs = 65000,
   ): Promise<{ handled: boolean; error: SaveErrorLike }> {
     const requestId = `publish-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const controller = new AbortController();
-    const timer = setTimeout(() => {
-      controller.abort();
-    }, Math.max(3000, timeoutMs));
-
-    try {
-      const merchantIds = isPlatformEditor
-        ? []
-        : mergePreferredMerchantIds(preferredMerchantIds, merchantIdsRef.current);
-      const response = await fetch("/api/publish", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-        },
-        signal: controller.signal,
-        body: JSON.stringify({
-          requestId,
-          payload,
-          merchantIds,
-          merchantSlug,
-          isPlatformEditor,
-        }),
-      });
-      const data = (await response.json().catch(() => null)) as
-        | { ok?: boolean; code?: string; message?: string }
-        | null;
-
-      if (!response.ok) {
-        const code = typeof data?.code === "string" ? data.code : "";
-        const message = typeof data?.message === "string" ? data.message : `发布接口错误（HTTP ${response.status}）`;
-        if (code === "publish_service_unavailable") {
-          return isPlatformEditor
-            ? { handled: false, error: null }
-            : { handled: true, error: { message: "发布服务暂不可用，请稍后重试" } };
-        }
-        return { handled: true, error: { message: normalizePublishApiErrorMessage(code, message, response.status) } };
+    const merchantIds = isPlatformEditor
+      ? []
+      : mergePreferredMerchantIds(preferredMerchantIds, merchantIdsRef.current);
+    const requestBody = JSON.stringify({
+      requestId,
+      payload,
+      merchantIds,
+      merchantSlug,
+      isPlatformEditor,
+    });
+    const waitBeforeRetry = () => new Promise<void>((resolve) => window.setTimeout(resolve, 1200));
+    const isRetriablePublishFailure = (status: number, code: string) =>
+      status === 502 ||
+      status === 503 ||
+      status === 504 ||
+      code === "publish_backend_request_timeout" ||
+      code === "publish_request_deadline_exceeded" ||
+      code === "publish_request_failed";
+    const sendRequest = async () => {
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => {
+        controller.abort();
+      }, Math.max(3000, timeoutMs));
+      try {
+        const response = await fetch("/api/publish", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+          },
+          signal: controller.signal,
+          body: requestBody,
+        });
+        const data = (await response.json().catch(() => null)) as
+          | { ok?: boolean; code?: string; message?: string }
+          | null;
+        return { response, data };
+      } finally {
+        window.clearTimeout(timer);
       }
-      return { handled: true, error: null };
-    } catch {
-      return isPlatformEditor
-        ? { handled: false, error: null }
-        : { handled: true, error: { message: "发布服务暂不可用，请稍后重试" } };
-    } finally {
-      clearTimeout(timer);
+    };
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const { response, data } = await sendRequest();
+        if (!response.ok) {
+          const code = typeof data?.code === "string" ? data.code : "";
+          const message = typeof data?.message === "string" ? data.message : `发布接口错误（HTTP ${response.status}）`;
+          if (attempt === 0 && isRetriablePublishFailure(response.status, code)) {
+            showSavePublishTip("发布接口响应超时，正在自动确认结果...");
+            await waitBeforeRetry();
+            continue;
+          }
+          if (code === "publish_service_unavailable") {
+            return isPlatformEditor
+              ? { handled: false, error: null }
+              : { handled: true, error: { message: "发布服务暂不可用，请稍后重试" } };
+          }
+          return { handled: true, error: { message: normalizePublishApiErrorMessage(code, message, response.status) } };
+        }
+        return { handled: true, error: null };
+      } catch {
+        if (attempt === 0) {
+          showSavePublishTip("发布接口连接中断，正在自动确认结果...");
+          await waitBeforeRetry();
+          continue;
+        }
+        return isPlatformEditor
+          ? { handled: false, error: null }
+          : { handled: true, error: { message: "发布服务暂不可用，请稍后重试" } };
+      }
     }
+    return isPlatformEditor
+      ? { handled: false, error: null }
+      : { handled: true, error: { message: "发布服务暂不可用，请稍后重试" } };
   }
 
   function openAlert(message: string, title = "提示"): Promise<void> {
