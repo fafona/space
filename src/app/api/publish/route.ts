@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import type { Block } from "@/data/homeBlocks";
 import { createDefaultMerchantPermissionConfig } from "@/data/platformControlStore";
@@ -18,6 +18,9 @@ import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 
 type SaveErrorLike = { message: string } | null;
+
+export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 type PublishRequestBody = {
   requestId?: string;
@@ -277,6 +280,9 @@ async function isAuthorizedForMerchantIds(
     readMetadataMerchantIds(authResult.data.user).forEach((merchantId) => {
       authorizedMerchantIds.add(merchantId);
     });
+    if (targetMerchantIds.every((merchantId) => authorizedMerchantIds.has(merchantId))) {
+      return true;
+    }
 
     const linkedMerchantIds = await getAuthorizedMerchantIds(
       supabase,
@@ -286,6 +292,9 @@ async function isAuthorizedForMerchantIds(
     linkedMerchantIds.forEach((merchantId) => {
       authorizedMerchantIds.add(merchantId);
     });
+    if (targetMerchantIds.every((merchantId) => authorizedMerchantIds.has(merchantId))) {
+      return true;
+    }
   }
 
   if (authorizedMerchantIds.size === 0) {
@@ -601,6 +610,39 @@ function makeCachedResponse(status: number, body: Record<string, unknown>) {
   return NextResponse.json(body, { status });
 }
 
+function scheduleOptionalPostPublishSync(input: {
+  supabase: LooseSupabaseClient;
+  merchantIds: string[];
+  blocks: Block[];
+  updatedAt: string;
+}) {
+  const merchantIds = [...new Set(input.merchantIds.map((merchantId) => merchantId.trim()).filter(Boolean))];
+  if (merchantIds.length === 0) return false;
+  after(async () => {
+    await Promise.allSettled([
+      withTimeout(
+        saveMerchantBookingRulesSnapshotForSites(merchantIds, input.blocks, input.updatedAt),
+        OPTIONAL_PUBLISH_SYNC_TIMEOUT_MS,
+        "booking_rules_snapshot_timeout",
+      ),
+      withTimeout(
+        Promise.allSettled(
+          merchantIds.map((merchantId) =>
+            saveStoredMerchantDraft(input.supabase as unknown as MerchantDraftStoreClient, {
+              siteId: merchantId,
+              blocks: input.blocks,
+              updatedAt: input.updatedAt,
+            }),
+          ),
+        ),
+        OPTIONAL_PUBLISH_SYNC_TIMEOUT_MS,
+        "merchant_draft_backup_timeout",
+      ),
+    ]).catch(() => null);
+  });
+  return true;
+}
+
 export async function POST(request: Request) {
   if (!isTrustedSameOriginMutationRequest(request)) {
     return getTrustedMutationRequestErrorResponse();
@@ -692,7 +734,6 @@ export async function POST(request: Request) {
         fetch: createDeadlineFetch(deadlineAt),
       },
     }) as unknown as LooseSupabaseClient;
-    const publishWarnings: string[] = [];
 
     if (isPlatformEditor) {
       if (!isSuperAdminRequestAuthorized(request)) {
@@ -792,40 +833,14 @@ export async function POST(request: Request) {
       return makeCachedResponse(status, responseBody);
     }
 
-    if (!isPlatformEditor && merchantIds.length > 0) {
-      await withTimeout(
-        saveMerchantBookingRulesSnapshotForSites(merchantIds, sanitizedPublishedBlocks, normalizedUpdatedAt),
-        OPTIONAL_PUBLISH_SYNC_TIMEOUT_MS,
-        "booking_rules_snapshot_timeout",
-      ).catch((error: unknown) => {
-        publishWarnings.push(`booking_rules_snapshot:${toPublishErrorMessage(error)}`);
+    const postPublishSyncScheduled =
+      !isPlatformEditor &&
+      scheduleOptionalPostPublishSync({
+        supabase,
+        merchantIds,
+        blocks: sanitizedPublishedBlocks,
+        updatedAt: normalizedUpdatedAt,
       });
-      await withTimeout(
-        Promise.allSettled(
-          merchantIds.map((merchantId) =>
-            saveStoredMerchantDraft(supabase as unknown as MerchantDraftStoreClient, {
-              siteId: merchantId,
-              blocks: sanitizedPublishedBlocks,
-              updatedAt: normalizedUpdatedAt,
-            }),
-          ),
-        ),
-        OPTIONAL_PUBLISH_SYNC_TIMEOUT_MS,
-        "merchant_draft_backup_timeout",
-      )
-        .then((results) => {
-          results.forEach((result) => {
-            if (result.status === "rejected") {
-              publishWarnings.push(`merchant_draft_backup:${toPublishErrorMessage(result.reason)}`);
-              return;
-            }
-            if (result.value.error) publishWarnings.push(`merchant_draft_backup:${result.value.error}`);
-          });
-        })
-        .catch((error: unknown) => {
-          publishWarnings.push(`merchant_draft_backup:${toPublishErrorMessage(error)}`);
-        });
-    }
 
     const status = 200;
     const responseBody = {
@@ -834,7 +849,7 @@ export async function POST(request: Request) {
       updatedAt: normalizedUpdatedAt,
       merchantCount: merchantIds.length,
       mode: isPlatformEditor ? "platform" : "merchant",
-      ...(publishWarnings.length > 0 ? { warnings: publishWarnings } : {}),
+      ...(postPublishSyncScheduled ? { postPublishSyncScheduled } : {}),
     };
     resultCache.set(requestId, { at: Date.now(), status, body: responseBody });
     return makeCachedResponse(status, responseBody);
