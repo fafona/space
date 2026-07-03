@@ -5,6 +5,7 @@ export type ProductContainerMode = "auto" | "paged" | "scroll";
 export type ProductTagPosition = "top" | "left" | "right";
 export type ProductTagBorderStyle = "none" | "glass" | "solid" | "dashed" | "double" | "divider" | "rectangle";
 export type ProductCartQuantityMode = "stepper" | "plus-only";
+export type ProductCartButtonPosition = "top" | "bottom";
 
 export const PRODUCT_IMAGE_SIZE_MIN = 40;
 export const PRODUCT_IMAGE_SIZE_MAX = 420;
@@ -95,6 +96,11 @@ export const PRODUCT_TAG_BORDER_STYLE_OPTIONS: Array<{ value: ProductTagBorderSt
 export const PRODUCT_CART_QUANTITY_MODE_OPTIONS: Array<{ value: ProductCartQuantityMode; label: string }> = [
   { value: "stepper", label: "加减与数量" },
   { value: "plus-only", label: "仅一个 +" },
+];
+
+export const PRODUCT_CART_BUTTON_POSITION_OPTIONS: Array<{ value: ProductCartButtonPosition; label: string }> = [
+  { value: "top", label: "上" },
+  { value: "bottom", label: "下" },
 ];
 
 export function normalizeProductTagOptions(source: unknown): string[] {
@@ -264,6 +270,10 @@ export function normalizeProductTagBorderStyle(value: unknown): ProductTagBorder
 
 export function normalizeProductCartQuantityMode(value: unknown): ProductCartQuantityMode {
   return PRODUCT_CART_QUANTITY_MODE_OPTIONS.some((item) => item.value === value) ? (value as ProductCartQuantityMode) : "stepper";
+}
+
+export function normalizeProductCartButtonPosition(value: unknown): ProductCartButtonPosition {
+  return PRODUCT_CART_BUTTON_POSITION_OPTIONS.some((item) => item.value === value) ? (value as ProductCartButtonPosition) : "top";
 }
 
 export function normalizeProductSpacing(value: unknown, fallback: number, min = 0, max = 48) {

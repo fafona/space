@@ -11,6 +11,7 @@ import {
   groupArrangedProductItemsByTag,
   isMeaningfulProductItem,
   normalizeProductCartQuantityMode,
+  normalizeProductCartButtonPosition,
   normalizeProductCardHeight,
   normalizeProductContainerMode,
   normalizeProductImageSize,
@@ -30,6 +31,7 @@ import {
   productGridClass,
   productPriceText,
   type ProductCartQuantityMode,
+  type ProductCartButtonPosition,
   type ProductContainerMode,
   type ProductImageAspectRatio,
   type ProductItem,
@@ -85,6 +87,7 @@ type ProductBlockProps = BackgroundEditableProps &
     productTagActiveBgOpacity?: number;
     productItemGap?: number;
     productCartQuantityMode?: ProductCartQuantityMode;
+    productCartButtonPosition?: ProductCartButtonPosition;
     productContainerMode?: ProductContainerMode;
     productHideScrollbar?: boolean;
     productItemsPerPage?: number;
@@ -453,6 +456,7 @@ function renderProductCard(
     onOpen: (id: string) => void;
     cartEnabled?: boolean;
     cartQuantityMode?: ProductCartQuantityMode;
+    cartButtonPosition?: ProductCartButtonPosition;
     quantity?: number;
     onIncreaseQuantity?: (item: ReturnType<typeof normalizeProductItems>[number], sourceElement?: HTMLElement) => void;
     onDecreaseQuantity?: (item: ReturnType<typeof normalizeProductItems>[number]) => void;
@@ -472,6 +476,7 @@ function renderProductCard(
   const cardBorderInlineStyle = getBlockBorderInlineStyle(options.cardBorderStyle, options.cardBorderColor);
   const priceAlignClass =
     options.priceAlign === "center" ? "justify-center text-center" : options.priceAlign === "right" ? "justify-end text-right" : "justify-start text-left";
+  const cartButtonPositionClass = options.cartButtonPosition === "bottom" ? "bottom-3" : "top-3";
   const listCardStyle = options.list
     ? ({
         "--product-list-card-height": `${options.cardHeight}px`,
@@ -515,7 +520,7 @@ function renderProductCard(
         options.cartQuantityMode === "plus-only" ? (
           <button
             type="button"
-            className="absolute right-3 top-3 z-30 flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-lg font-semibold text-slate-700 shadow-sm backdrop-blur transition hover:bg-slate-100 active:scale-95"
+            className={`absolute right-3 ${cartButtonPositionClass} z-30 flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-lg font-semibold text-slate-700 shadow-sm backdrop-blur transition hover:bg-slate-100 active:scale-95`}
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
@@ -526,7 +531,7 @@ function renderProductCard(
             +
           </button>
         ) : (
-          <div className="absolute right-3 top-3 z-30 flex items-center gap-1 rounded-full border border-slate-200 bg-white/95 px-1.5 py-1 shadow-sm backdrop-blur">
+          <div className={`absolute right-3 ${cartButtonPositionClass} z-30 flex items-center gap-1 rounded-full border border-slate-200 bg-white/95 px-1.5 py-1 shadow-sm backdrop-blur`}>
             <button
               type="button"
               className="flex h-7 w-7 items-center justify-center rounded-full text-base font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-35"
@@ -656,6 +661,7 @@ export default function ProductBlock(props: ProductBlockProps) {
       : 0.94;
   const productItemGap = normalizeProductSpacing(props.productItemGap, 16, 0, 48);
   const cartQuantityMode = normalizeProductCartQuantityMode(props.productCartQuantityMode);
+  const cartButtonPosition = normalizeProductCartButtonPosition(props.productCartButtonPosition);
   const detailImageSize =
     typeof props.productDetailImageSize === "number" && Number.isFinite(props.productDetailImageSize)
       ? Math.max(180, Math.min(720, Math.round(props.productDetailImageSize)))
@@ -1288,6 +1294,7 @@ export default function ProductBlock(props: ProductBlockProps) {
       onOpen: setActiveProductId,
       cartEnabled,
       cartQuantityMode,
+      cartButtonPosition,
       quantity: cartQuantities[item.id] ?? 0,
       onIncreaseQuantity: handleIncreaseQuantity,
       onDecreaseQuantity: handleDecreaseQuantity,

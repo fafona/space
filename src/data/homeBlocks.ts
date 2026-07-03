@@ -12,6 +12,7 @@ import type {
 import type {
   ProductContainerMode,
   ProductCartQuantityMode,
+  ProductCartButtonPosition,
   ProductImageAspectRatio,
   ProductItemInput,
   ProductLayoutPreset,
@@ -353,6 +354,7 @@ type ProductProps = BackgroundEditableProps &
     productTagActiveBgOpacity?: number;
     productItemGap?: number;
     productCartQuantityMode?: ProductCartQuantityMode;
+    productCartButtonPosition?: ProductCartButtonPosition;
     productContainerMode?: ProductContainerMode;
     productHideScrollbar?: boolean;
     productItemsPerPage?: number;

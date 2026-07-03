@@ -143,6 +143,7 @@ const BUTTON_STYLE_KEYS: Partial<Record<Block["type"], readonly string[]>> = {
     "productCardHeight",
     "productItemGap",
     "productCartQuantityMode",
+    "productCartButtonPosition",
     "productHideScrollbar",
   ],
 };

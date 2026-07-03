@@ -230,6 +230,7 @@ import { buildPlatformMerchantSnapshotPayloadFromState } from "@/lib/platformMer
 import {
   arrangeProductItemsByTag,
   groupArrangedProductItemsByTag,
+  PRODUCT_CART_BUTTON_POSITION_OPTIONS,
   PRODUCT_CART_QUANTITY_MODE_OPTIONS,
   PRODUCT_CONTAINER_MODE_OPTIONS,
   PRODUCT_CARD_HEIGHT_MAX,
@@ -247,6 +248,7 @@ import {
   defaultProductItemsPerPage,
   filterProductItemsByKeyword,
   normalizeProductCartQuantityMode,
+  normalizeProductCartButtonPosition,
   normalizeProductCardHeight,
   normalizeProductContainerMode,
   normalizeProductImageSize,
@@ -265,6 +267,7 @@ import {
   productGridClass,
   productPriceText,
   type ProductCartQuantityMode,
+  type ProductCartButtonPosition,
   type ProductContainerMode,
   type ProductImageAspectRatio,
   type ProductItem,
@@ -1616,6 +1619,7 @@ const PRODUCT_THEME_COPY_KEYS = [
   "productCardHeight",
   "productItemGap",
   "productCartQuantityMode",
+  "productCartButtonPosition",
   "productHideScrollbar",
   "productCodeTypography",
   "productNameTypography",
@@ -10571,6 +10575,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           productTagActiveBgOpacity: 0.94,
           productItemGap: 16,
           productCartQuantityMode: "stepper",
+          productCartButtonPosition: "top",
           productContainerMode: "auto",
           productHideScrollbar: false,
           productItemsPerPage: 3,
@@ -28822,6 +28827,7 @@ type GalleryEditorImage = {
         : 0.94;
     const productItemGap = normalizeProductSpacing(block.props.productItemGap, 16, 0, 48);
     const productCartQuantityMode = normalizeProductCartQuantityMode(block.props.productCartQuantityMode);
+    const productCartButtonPosition = normalizeProductCartButtonPosition(block.props.productCartButtonPosition);
     const productHideScrollbar = block.props.productHideScrollbar === true;
     const productDetailImageSize =
       typeof block.props.productDetailImageSize === "number" && Number.isFinite(block.props.productDetailImageSize)
@@ -29201,6 +29207,7 @@ type GalleryEditorImage = {
       const priceText = productPriceText(item.price, productPricePrefix);
       const textWrapStyle = { overflowWrap: "anywhere" as const, wordBreak: "break-word" as const };
       const productDescriptionClampStyle = getProductLineClampStyle(options.featured ? 5 : options.list ? 4 : 3);
+      const productCartButtonPositionClass = productCartButtonPosition === "bottom" ? "bottom-3" : "top-3";
       const productListCardStyle = options.list
         ? ({
             "--product-list-card-height": `${productCardHeight}px`,
@@ -29224,7 +29231,7 @@ type GalleryEditorImage = {
           {productCartQuantityMode === "plus-only" ? (
               <button
                 type="button"
-                className="absolute right-3 top-3 z-[2] flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-lg font-semibold text-slate-700 shadow-sm backdrop-blur transition hover:bg-slate-100"
+                className={`absolute right-3 ${productCartButtonPositionClass} z-[2] flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-lg font-semibold text-slate-700 shadow-sm backdrop-blur transition hover:bg-slate-100`}
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
@@ -29234,7 +29241,7 @@ type GalleryEditorImage = {
                 +
               </button>
             ) : (
-              <div className="absolute right-3 top-3 z-[2] flex items-center gap-1 rounded-full border border-slate-200 bg-white/95 px-1.5 py-1 shadow-sm backdrop-blur">
+              <div className={`absolute right-3 ${productCartButtonPositionClass} z-[2] flex items-center gap-1 rounded-full border border-slate-200 bg-white/95 px-1.5 py-1 shadow-sm backdrop-blur`}>
                 <button
                   type="button"
                   className="flex h-7 w-7 items-center justify-center rounded-full text-base font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-35"
@@ -30515,6 +30522,20 @@ type GalleryEditorImage = {
                           ))}
                         </select>
                       </label>
+                      <label className="space-y-1 rounded-lg border border-slate-200 bg-white p-3 text-sm">
+                        <span className="block text-gray-600">按钮位置</span>
+                        <select
+                          className="w-full rounded border bg-white px-3 py-2"
+                          value={productCartButtonPosition}
+                          onChange={(event) => onChange({ productCartButtonPosition: event.target.value as ProductCartButtonPosition })}
+                        >
+                          {PRODUCT_CART_BUTTON_POSITION_OPTIONS.map((item) => (
+                            <option key={item.value} value={item.value}>
+                              {item.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
                     </div>
                     <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
                       <div className="text-xs font-medium text-slate-700">边框样式</div>
@@ -31220,6 +31241,20 @@ type GalleryEditorImage = {
                           onChange={(event) => onChange({ productCartQuantityMode: event.target.value as ProductCartQuantityMode })}
                         >
                           {PRODUCT_CART_QUANTITY_MODE_OPTIONS.map((item) => (
+                            <option key={item.value} value={item.value}>
+                              {item.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="space-y-1 rounded-lg border border-slate-200 bg-white p-3 text-sm">
+                        <span className="block text-gray-600">按钮位置</span>
+                        <select
+                          className="w-full rounded border bg-white px-3 py-2"
+                          value={productCartButtonPosition}
+                          onChange={(event) => onChange({ productCartButtonPosition: event.target.value as ProductCartButtonPosition })}
+                        >
+                          {PRODUCT_CART_BUTTON_POSITION_OPTIONS.map((item) => (
                             <option key={item.value} value={item.value}>
                               {item.label}
                             </option>
