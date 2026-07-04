@@ -52,10 +52,12 @@ import {
   formatMerchantOrderAmount,
   parseMerchantOrderPriceValue,
   type MerchantOrderCustomerInput,
+  type MerchantOrderRecord,
 } from "@/lib/merchantOrders";
 import { resolveFrontendAuthPayload } from "@/lib/authSessionRecovery";
 import { readPersonalCustomerProfileFromSession, type PersonalCustomerProfile } from "@/lib/personalCustomerProfile";
 import { notifyPersonalConsumptionChanged } from "@/lib/personalConsumptionBridge";
+import { upsertPersonalGuestOrder } from "@/lib/personalGuestSession";
 
 type ProductBlockProps = BackgroundEditableProps &
   TypographyEditableProps & {
@@ -1248,11 +1250,16 @@ export default function ProductBlock(props: ProductBlockProps) {
           })),
         }),
       });
-      const payload = (await response.json().catch(() => null)) as { order?: { id?: string }; message?: string; error?: string } | null;
+      const payload = (await response.json().catch(() => null)) as
+        | { order?: MerchantOrderRecord; message?: string; error?: string }
+        | null;
       if (!response.ok) {
         throw new Error(payload?.message || payload?.error || "order_create_failed");
       }
       const nextOrderId = String(payload?.order?.id ?? "").trim();
+      if (payload?.order && (latestAuthPayload?.authenticated !== true || latestAuthPayload?.accountType !== "personal")) {
+        upsertPersonalGuestOrder(payload.order);
+      }
       setCartItems((current) => current.filter((item) => !item.checked));
       setCartCustomer(mergeCartCustomerDefaults({}, cartCustomerDefaults));
       setCartCustomerOpen(false);

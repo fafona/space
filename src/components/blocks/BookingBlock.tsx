@@ -43,6 +43,7 @@ import { resolveFrontendAuthPayload } from "@/lib/authSessionRecovery";
 import { MOBILE_SWIPE_BACK_EVENT } from "@/lib/mobileSwipeBack";
 import { readPersonalCustomerProfileFromSession, type PersonalCustomerProfile } from "@/lib/personalCustomerProfile";
 import { notifyPersonalConsumptionChanged } from "@/lib/personalConsumptionBridge";
+import { upsertPersonalGuestBooking } from "@/lib/personalGuestSession";
 
 type BookingBlockComponentProps = BookingProps & {
   runtimeSiteId?: string;
@@ -537,6 +538,9 @@ export default function BookingBlock({
       if (!response.ok || !json?.ok || !json.booking) {
         throw new Error(json?.message || "预约提交失败，请稍后重试");
       }
+      if (latestAuthPayload?.authenticated !== true || latestAuthPayload?.accountType !== "personal") {
+        upsertPersonalGuestBooking(json.booking);
+      }
       const nextState: SubmittedBookingState = {
         booking: json.booking,
         editToken: submittedState?.editToken ?? String(json.editToken ?? ""),
@@ -576,6 +580,10 @@ export default function BookingBlock({
         | null;
       if (!response.ok || !json?.ok || !json.booking) {
         throw new Error(json?.message || "预约取消失败，请稍后重试");
+      }
+      const latestAuthPayload = await resolveFrontendAuthPayload(1200).catch(() => null);
+      if (latestAuthPayload?.authenticated !== true || latestAuthPayload?.accountType !== "personal") {
+        upsertPersonalGuestBooking(json.booking);
       }
       setSubmittedState((current) => (current ? { ...current, booking: json.booking as MerchantBookingRecord } : current));
     } catch (cancelError) {

@@ -67,6 +67,19 @@ import { buildMerchantFrontendHref } from "@/lib/siteRouting";
 import { clearTankBattleLobbyReturnTarget, readTankBattleLobbyReturnTarget } from "@/lib/tankBattleLobbyReturn";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
+  PERSONAL_GUEST_STORAGE_EVENT,
+  appendPersonalGuestSupportMessage,
+  buildPersonalGuestSessionPayload,
+  ensurePersonalGuestIdentity,
+  readPersonalGuestBookings,
+  readPersonalGuestFavoriteSites,
+  readPersonalGuestOrders,
+  readPersonalGuestProfile,
+  readPersonalGuestSupportThread,
+  savePersonalGuestFavoriteSites,
+  savePersonalGuestProfile,
+} from "@/lib/personalGuestSession";
+import {
   normalizeMerchantBusinessCards,
   type MerchantBusinessCardAsset,
   type MerchantBusinessCardProfileInput,
@@ -132,6 +145,7 @@ type MeSessionPayload = {
   frontendAuthProof?: unknown;
   personalServiceConfig?: unknown;
   personalServicePaused?: unknown;
+  guest?: unknown;
   user?: {
     email?: string | null;
     user_metadata?: Record<string, unknown> | null;
@@ -549,6 +563,36 @@ async function fetchPersonalConsumptionPayload<T extends { ok?: unknown; message
     }
   }
   throw lastError ?? new Error(fallbackMessage);
+}
+
+function mergePersonalRecordsById<T extends { id: string }>(primary: T[], secondary: T[]) {
+  const seen = new Set<string>();
+  const output: T[] = [];
+  [...primary, ...secondary].forEach((record) => {
+    const id = trimText(record.id);
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    output.push(record);
+  });
+  return output;
+}
+
+function buildGuestMerchantContacts(
+  bookings: MerchantBookingRecord[],
+  orders: MerchantOrderRecord[],
+): Record<string, PersonalMerchantContact> {
+  const contacts: Record<string, PersonalMerchantContact> = {};
+  [...bookings, ...orders].forEach((record) => {
+    const siteId = trimText(record.siteId);
+    if (!siteId || contacts[siteId]) return;
+    contacts[siteId] = {
+      siteId,
+      name: trimText(record.siteName) || siteId,
+      email: "",
+      phone: "",
+    };
+  });
+  return contacts;
 }
 
 function readMetadataString(metadata: Record<string, unknown> | null | undefined, ...keys: string[]) {
@@ -2467,18 +2511,20 @@ export default function MePage() {
       try {
         const nextPayload = (await resolveFrontendAuthPayload(7200).catch(() => null)) as MeSessionPayload | null;
         if (cancelled) return;
-        if (nextPayload?.authenticated !== true || !nextPayload?.user) {
-          window.location.replace("/login?redirect=/me");
-          return;
-        }
-        if (nextPayload.accountType !== "personal") {
+        if (nextPayload?.authenticated === true && nextPayload.accountType !== "personal") {
           window.location.replace("/admin");
           return;
         }
-        setPayload(nextPayload);
+        if (nextPayload?.authenticated === true && nextPayload.accountType === "personal" && nextPayload.user) {
+          setPayload(nextPayload);
+          return;
+        }
+        const identity = ensurePersonalGuestIdentity();
+        setPayload(buildPersonalGuestSessionPayload(identity, readPersonalGuestProfile()));
       } catch {
         if (!cancelled) {
-          window.location.replace("/login?redirect=/me");
+          const identity = ensurePersonalGuestIdentity();
+          setPayload(buildPersonalGuestSessionPayload(identity, readPersonalGuestProfile()));
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -2490,6 +2536,8 @@ export default function MePage() {
     };
   }, []);
 
+  const isGuestSession = payload?.guest === true;
+
   useEffect(() => {
     if (payload?.authenticated !== true || payload.accountType !== "personal") return;
     return startMerchantSessionKeepAlive({
@@ -2498,6 +2546,7 @@ export default function MePage() {
   }, [payload?.accountId, payload?.accountType, payload?.authenticated]);
 
   const ensurePersonalSessionReady = useCallback(async () => {
+    if (payload?.guest === true) return payload;
     if (personalSessionRecoveryInFlightRef.current) return personalSessionRecoveryInFlightRef.current;
     const task = (async (): Promise<MeSessionPayload | null> => {
       const acceptPayload = (candidate: unknown) => {
@@ -2531,7 +2580,7 @@ export default function MePage() {
         personalSessionRecoveryInFlightRef.current = null;
       }
     }
-  }, []);
+  }, [payload]);
 
   useEffect(() => {
     if (!mobileSelfLanguageMenuOpen || typeof document === "undefined") return;
@@ -2618,6 +2667,12 @@ export default function MePage() {
     return undefined;
   }, [conversationInfoOpen, isMobileViewport, mobileConversationView, mobileSelfSection, mobileTab]);
 
+  useEffect(() => {
+    if (isGuestSession && mobileSelfSection === "qr") {
+      setMobileSelfSection("home");
+    }
+  }, [isGuestSession, mobileSelfSection]);
+
   const accountId =
     payload && typeof payload.accountId === "string" && /^\d{8}$/.test(payload.accountId.trim())
       ? payload.accountId.trim()
@@ -2629,7 +2684,7 @@ export default function MePage() {
   const [personalQrToken, setPersonalQrToken] = useState("");
   const personalAccountSwitchCurrentKey = getAccountSwitchEntryKey("personal", accountId);
   useEffect(() => {
-    if (mobileTab !== "self" || mobileSelfSection !== "qr" || !accountId) {
+    if (isGuestSession || mobileTab !== "self" || mobileSelfSection !== "qr" || !accountId) {
       setPersonalQrToken("");
       return;
     }
@@ -2647,7 +2702,7 @@ export default function MePage() {
     return () => {
       cancelled = true;
     };
-  }, [accountId, mobileSelfSection, mobileTab]);
+  }, [accountId, isGuestSession, mobileSelfSection, mobileTab]);
   useEffect(() => {
     if (payload?.authenticated !== true || payload.accountType !== "personal" || !accountId) return;
     let cancelled = false;
@@ -2733,6 +2788,14 @@ export default function MePage() {
   );
   const persistPersonalFavoriteSites = useCallback(
     async (sites: PersonalFavoriteSite[]) => {
+      if (isGuestSession) {
+        const normalizedSites = normalizePersonalFavoriteSites(sites);
+        personalFavoriteSitesRef.current = normalizedSites;
+        setPersonalFavoriteSites(normalizedSites);
+        savePersonalGuestFavoriteSites(normalizedSites);
+        setPersonalProfileMessage("");
+        return;
+      }
       if (!accountId) return;
       const normalizedSites = normalizePersonalFavoriteSites(sites);
       const previousSites = personalFavoriteSitesRef.current;
@@ -2772,7 +2835,7 @@ export default function MePage() {
         throw error;
       }
     },
-    [accountId],
+    [accountId, isGuestSession],
   );
 
   const loadPersonalCoupons = useCallback(async () => {
@@ -2968,7 +3031,7 @@ export default function MePage() {
   }, [accountId]);
   const personalBusinessCardManagerCommonProps = useMemo(
     () =>
-      accountId
+      accountId && !isGuestSession
         ? {
             merchantId: accountId,
             siteBaseDomain:
@@ -2988,6 +3051,7 @@ export default function MePage() {
         : null,
     [
       accountId,
+      isGuestSession,
       personalBusinessCardPermissionConfig.allowBusinessCardLinkMode,
       personalBusinessCardPermissionConfig.allowBusinessCardIntroVideo,
       personalBusinessCardPermissionConfig.businessCardBackgroundImageLimitKb,
@@ -3003,6 +3067,16 @@ export default function MePage() {
   );
   useEffect(() => {
     if (loading) return;
+    if (isGuestSession) {
+      const nextProfile = readPersonalGuestProfile();
+      setPersonalProfileDraft(nextProfile);
+      personalBusinessCardsRef.current = [];
+      setPersonalBusinessCards([]);
+      const nextFavoriteSites = normalizePersonalFavoriteSites(readPersonalGuestFavoriteSites<PersonalFavoriteSite>());
+      personalFavoriteSitesRef.current = nextFavoriteSites;
+      setPersonalFavoriteSites(nextFavoriteSites);
+      return;
+    }
     if (!accountId) {
       setPersonalBusinessCards([]);
       setPersonalFavoriteSites([]);
@@ -3052,7 +3126,7 @@ export default function MePage() {
     return () => {
       cancelled = true;
     };
-  }, [accountId, loading]);
+  }, [accountId, isGuestSession, loading]);
   const avatarLabel = getInitialLabel(profileName);
   const personalAvatarImageUrl = personalProfileDraft.avatarUrl || personalProfile.avatarUrl;
   const personalQrUrl = useMemo(() => {
@@ -3111,9 +3185,11 @@ export default function MePage() {
     const handleLocalChange = () => refreshPersonalConsumption();
     window.addEventListener("message", handleMessage);
     window.addEventListener(PERSONAL_CONSUMPTION_CHANGED_MESSAGE, handleLocalChange);
+    window.addEventListener(PERSONAL_GUEST_STORAGE_EVENT, handleLocalChange);
     return () => {
       window.removeEventListener("message", handleMessage);
       window.removeEventListener(PERSONAL_CONSUMPTION_CHANGED_MESSAGE, handleLocalChange);
+      window.removeEventListener(PERSONAL_GUEST_STORAGE_EVENT, handleLocalChange);
     };
   }, [refreshPersonalConsumption]);
 
@@ -3125,6 +3201,17 @@ export default function MePage() {
   }, [accountId, consumptionSection, desktopSection, mobileTab, refreshPersonalConsumption]);
 
   useEffect(() => {
+    if (isGuestSession) {
+      const guestBookings = readPersonalGuestBookings();
+      const guestOrders = readPersonalGuestOrders();
+      setPersonalBookings(guestBookings);
+      setPersonalOrders(guestOrders);
+      setPersonalMerchantContacts(buildGuestMerchantContacts(guestBookings, guestOrders));
+      setPersonalBookingLoadError("");
+      setPersonalOrderLoadError("");
+      setPersonalConsumptionLoading(false);
+      return;
+    }
     if (!accountId) {
       setPersonalBookings([]);
       setPersonalOrders([]);
@@ -3154,7 +3241,12 @@ export default function MePage() {
       const nextContacts: Record<string, PersonalMerchantContact> = {};
       if (bookingsResult.status === "fulfilled") {
         const bookingsPayload = bookingsResult.value;
-        setPersonalBookings(Array.isArray(bookingsPayload.bookings) ? bookingsPayload.bookings : []);
+        setPersonalBookings(
+          mergePersonalRecordsById(
+            Array.isArray(bookingsPayload.bookings) ? bookingsPayload.bookings : [],
+            readPersonalGuestBookings(),
+          ),
+        );
         Object.assign(
           nextContacts,
           bookingsPayload.merchantContacts && typeof bookingsPayload.merchantContacts === "object"
@@ -3169,7 +3261,12 @@ export default function MePage() {
 
       if (ordersResult.status === "fulfilled") {
         const ordersPayload = ordersResult.value;
-        setPersonalOrders(Array.isArray(ordersPayload.orders) ? ordersPayload.orders : []);
+        setPersonalOrders(
+          mergePersonalRecordsById(
+            Array.isArray(ordersPayload.orders) ? ordersPayload.orders : [],
+            readPersonalGuestOrders(),
+          ),
+        );
         Object.assign(
           nextContacts,
           ordersPayload.merchantContacts && typeof ordersPayload.merchantContacts === "object"
@@ -3182,6 +3279,7 @@ export default function MePage() {
         );
       }
 
+      Object.assign(nextContacts, buildGuestMerchantContacts(readPersonalGuestBookings(), readPersonalGuestOrders()));
       setPersonalMerchantContacts(nextContacts);
       setPersonalConsumptionLoading(false);
     };
@@ -3190,7 +3288,7 @@ export default function MePage() {
     return () => {
       cancelled = true;
     };
-  }, [accountId, ensurePersonalSessionReady, personalConsumptionReloadKey]);
+  }, [accountId, ensurePersonalSessionReady, isGuestSession, personalConsumptionReloadKey]);
 
   const personalBookingCounts = useMemo(() => {
     const counts: Record<PersonalBookingFilter, number> = { all: personalBookings.length, active: 0, confirmed: 0, cancelled: 0 };
@@ -3977,6 +4075,11 @@ export default function MePage() {
 
   const loadSupportThread = useCallback(async (options?: { silent?: boolean }) => {
     if (!accountId) return;
+    if (isGuestSession) {
+      setSupportThread(readPersonalGuestSupportThread(ensurePersonalGuestIdentity(), readPersonalGuestProfile()));
+      setSupportError("");
+      return;
+    }
     if (!options?.silent) setSupportLoading(true);
     setSupportError("");
     try {
@@ -4004,10 +4107,16 @@ export default function MePage() {
     } finally {
       if (!options?.silent) setSupportLoading(false);
     }
-  }, [accountId, email, ensurePersonalSessionReady, profileName]);
+  }, [accountId, email, ensurePersonalSessionReady, isGuestSession, profileName]);
 
   const loadPeerInbox = useCallback(async (options?: { silent?: boolean }) => {
     if (!accountId) return;
+    if (isGuestSession) {
+      setPeerContacts([]);
+      setPeerThreads([]);
+      setSupportError("");
+      return;
+    }
     if (!options?.silent) setPeerLoading(true);
     setSupportError("");
     try {
@@ -4046,7 +4155,7 @@ export default function MePage() {
     } finally {
       if (!options?.silent) setPeerLoading(false);
     }
-  }, [accountId, email, ensurePersonalSessionReady, profileName]);
+  }, [accountId, email, ensurePersonalSessionReady, isGuestSession, profileName]);
 
   async function searchConversation() {
     const query = supportContactKeyword.trim();
@@ -4059,6 +4168,11 @@ export default function MePage() {
 
     if (supportContactMatchesSearch) {
       setSelectedConversationKey(OFFICIAL_CONVERSATION_KEY);
+      return;
+    }
+
+    if (isGuestSession) {
+      setSupportSearchError("\u6e38\u5ba2\u4f1a\u8bdd\u53ea\u6682\u65f6\u4fdd\u5b58 Faolla \u672c\u5730\u7559\u8a00\uff0c\u767b\u5f55\u540e\u53ef\u4ee5\u4e0e\u5546\u6237\u5efa\u7acb\u4f1a\u8bdd\u3002");
       return;
     }
 
@@ -4108,6 +4222,30 @@ export default function MePage() {
     if (!accountId) {
       setSupportError("个人账号信息还没准备好，请刷新后重试。");
       return false;
+    }
+    if (isGuestSession) {
+      if (!selectedConversationIsOfficial) {
+        setSupportError("\u767b\u5f55\u540e\u53ef\u4ee5\u4e0e\u5546\u6237\u53d1\u9001\u4f1a\u8bdd\u3002");
+        return false;
+      }
+      supportSendingRef.current = true;
+      setSupportSending(true);
+      setSupportError("");
+      setSupportAttachmentMenuOpen(false);
+      if (options?.clearDraft) setSupportDraft("");
+      try {
+        const nextThread = appendPersonalGuestSupportMessage(
+          text,
+          ensurePersonalGuestIdentity(),
+          readPersonalGuestProfile(),
+        );
+        setSupportThread(nextThread);
+        if (!options?.clearDraft) setSupportDraft("");
+        return true;
+      } finally {
+        supportSendingRef.current = false;
+        setSupportSending(false);
+      }
     }
     if (!selectedConversationIsOfficial && !selectedPeerMerchantId) {
       setSupportError("请先选择要聊天的商户。");
@@ -4200,6 +4338,14 @@ export default function MePage() {
     const merchantEmail = trimText(target.email).toLowerCase();
     const merchantName = trimText(target.name) || merchantId || "商户";
     if (!merchantId && !merchantEmail) return;
+    if (isGuestSession) {
+      const message = "\u767b\u5f55\u540e\u53ef\u4ee5\u4e0e\u5546\u6237\u5efa\u7acb\u4f1a\u8bdd\u3002";
+      setSupportError(message);
+      setSupportSearchError(message);
+      setDesktopSection("conversations");
+      setMobileTab("conversations");
+      return;
+    }
 
     setSupportError("");
     setSupportSearchError("");
@@ -4280,7 +4426,7 @@ export default function MePage() {
       setSupportSearching(false);
     }
     },
-    [accountId, email, peerContacts, profileName, supportSearching],
+    [accountId, email, isGuestSession, peerContacts, profileName, supportSearching],
   );
 
   useEffect(() => {
@@ -4500,6 +4646,14 @@ export default function MePage() {
     if (personalProfileSaving) return false;
     setPersonalProfileSaving(true);
     setPersonalProfileMessage("");
+    if (isGuestSession) {
+      const nextProfile = savePersonalGuestProfile(targetProfile);
+      setPersonalProfileDraft(nextProfile);
+      setPayload(buildPersonalGuestSessionPayload(ensurePersonalGuestIdentity(), nextProfile));
+      setPersonalProfileMessage(successMessage);
+      setPersonalProfileSaving(false);
+      return true;
+    }
     try {
       const response = await fetch("/api/personal-profile", {
         method: "POST",
@@ -4596,6 +4750,16 @@ export default function MePage() {
     setPersonalProfileMessage("");
     try {
       const avatarDataUrl = await compressPersonalAvatarFile(file);
+      if (isGuestSession) {
+        await savePersonalProfile(
+          {
+            ...personalProfileDraft,
+            avatarUrl: avatarDataUrl,
+          },
+          "\u5934\u50cf\u5df2\u66f4\u65b0",
+        );
+        return;
+      }
       const uploadResult = await uploadSupportAssetDataUrl(avatarDataUrl, "merchant-assets");
       if (!uploadResult.ok || !uploadResult.url) {
         throw new Error(uploadResult.message || "头像上传失败，请稍后重试");
@@ -4776,6 +4940,10 @@ export default function MePage() {
 
   async function performLogout() {
     if (loggingOut) return;
+    if (isGuestSession) {
+      window.location.href = "/login?accountType=personal&redirect=/me";
+      return;
+    }
     setLoggingOut(true);
     try {
       await fetch("/api/auth/merchant-logout", {
@@ -4789,10 +4957,18 @@ export default function MePage() {
 
   function requestLogout() {
     if (loggingOut) return;
+    if (isGuestSession) {
+      window.location.href = "/login?accountType=personal&redirect=/me";
+      return;
+    }
     setLogoutConfirmOpen(true);
   }
 
   async function openAccountSwitcher() {
+    if (isGuestSession) {
+      window.location.href = "/login?accountType=personal&redirect=/me";
+      return;
+    }
     setAccountSwitchError("");
     const entries = await recordCurrentAccountSwitchSession({
       displayName: profileName,
@@ -5804,14 +5980,14 @@ export default function MePage() {
           filteredPersonalBookings.map((booking) => {
             const status = getPersonalBookingStatus(booking);
             const contact = resolvePersonalMerchantContact(booking.siteId, booking.siteName);
-            const canCancel = canCancelPersonalBooking(booking);
-            const canEdit = canEditPersonalBooking(booking);
-            const canRestore = canRestorePersonalBooking(booking);
+            const canCancel = !isGuestSession && canCancelPersonalBooking(booking);
+            const canEdit = !isGuestSession && canEditPersonalBooking(booking);
+            const canRestore = !isGuestSession && canRestorePersonalBooking(booking);
             const cancelBusyKey = `booking:${booking.id}:cancel`;
             const restoreBusyKey = `booking:${booking.id}:restore`;
             const contactEmail = contact.email;
             const contactPhone = contact.phone;
-            const canOpenConversation = Boolean(contact.siteId || contactEmail);
+            const canOpenConversation = !isGuestSession && Boolean(contact.siteId || contactEmail);
             if (compact) {
               return (
                 <article
@@ -5857,7 +6033,7 @@ export default function MePage() {
                     >
                       详情
                     </button>
-                    {status !== "cancelled" ? (
+                    {!isGuestSession && status !== "cancelled" ? (
                       <button
                         type="button"
                         className={compactActionButtonClassName}
@@ -5993,7 +6169,7 @@ export default function MePage() {
                   </div>
 
                   <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
-                    {status !== "cancelled" ? (
+                    {!isGuestSession && status !== "cancelled" ? (
                       <button
                         type="button"
                         className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50"
@@ -6083,11 +6259,11 @@ export default function MePage() {
           filteredPersonalOrders.map((order) => {
             const status = getPersonalOrderStatus(order);
             const contact = resolvePersonalMerchantContact(order.siteId, order.siteName);
-            const canCancel = canCancelPersonalOrder(order);
+            const canCancel = !isGuestSession && canCancelPersonalOrder(order);
             const busyKey = `order:${order.id}:cancel`;
             const contactEmail = contact.email;
             const contactPhone = contact.phone;
-            const canOpenConversation = Boolean(contact.siteId || contactEmail);
+            const canOpenConversation = !isGuestSession && Boolean(contact.siteId || contactEmail);
             if (compact) {
               return (
                 <article
@@ -6903,7 +7079,7 @@ export default function MePage() {
       return (
         <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
           <div className="faolla-mobile-self-header relative shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(var(--faolla-mobile-safe-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
-            {mobileSelfSection === "home" ? (
+            {mobileSelfSection === "home" && !isGuestSession ? (
               <button
                 type="button"
                 className="absolute left-4 top-[calc(var(--faolla-mobile-safe-top)+0.7rem)] z-20 flex h-11 w-11 items-center justify-center rounded-full bg-white text-slate-900 shadow-[0_10px_24px_rgba(15,23,42,0.10)]"
