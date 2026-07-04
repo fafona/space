@@ -29250,6 +29250,13 @@ type GalleryEditorImage = {
             paddingLeft: `${productListImageEdgeInset}px`,
           } as CSSProperties)
         : undefined;
+      const productListPricePositionStyle = options.list
+        ? ({
+            left: `${productListImageEdgeInset + productListImageWidth + 16}px`,
+            right: productCartButtonPosition === "bottom" ? "4rem" : "0.75rem",
+            bottom: `${Math.max(8, productListImageEdgeInset)}px`,
+          } as CSSProperties)
+        : undefined;
       return (
         <article
           key={item.id}
@@ -29319,7 +29326,7 @@ type GalleryEditorImage = {
               <div className="flex h-full items-center justify-center text-sm text-slate-400">{"暂无图片"}</div>
             )}
           </div>
-          <div className={options.list ? "flex min-w-0 flex-1 flex-col" : "flex min-h-[170px] flex-1 flex-col p-4"}>
+          <div className={options.list ? "flex min-w-0 flex-1 flex-col pb-10" : "flex min-h-[170px] flex-1 flex-col p-4"}>
             {productShowCode && item.code ? (
               <div
                 className="text-[11px] uppercase tracking-[0.2em] text-slate-500"
@@ -29340,7 +29347,14 @@ type GalleryEditorImage = {
               </div>
             ) : null}
             {priceText ? (
-              <div className={`mt-auto flex min-h-[2.75rem] w-full shrink-0 items-end pt-4 text-lg font-semibold text-sky-700 ${productPriceAlignClass}`}>
+              <div
+                className={`${
+                  options.list
+                    ? "absolute z-[1] flex min-h-[2rem] items-end text-lg font-semibold text-sky-700"
+                    : "mt-auto flex min-h-[2.75rem] w-full shrink-0 items-end pt-4 text-lg font-semibold text-sky-700"
+                } ${productPriceAlignClass}`}
+                style={productListPricePositionStyle}
+              >
                 <div className="w-full" style={productPriceTextStyle}>
                   {priceText}
                 </div>

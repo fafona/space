@@ -477,6 +477,13 @@ function renderProductCard(
   const priceAlignClass =
     options.priceAlign === "center" ? "justify-center text-center" : options.priceAlign === "right" ? "justify-end text-right" : "justify-start text-left";
   const cartButtonPositionClass = options.cartButtonPosition === "bottom" ? "bottom-3" : "top-3";
+  const listPricePositionStyle = options.list
+    ? ({
+        left: `${listImageEdgeGap + listImageWidth + 16}px`,
+        right: options.cartEnabled && options.cartButtonPosition === "bottom" ? "4rem" : "0.75rem",
+        bottom: `${Math.max(8, listImageEdgeGap)}px`,
+      } as CSSProperties)
+    : undefined;
   const listCardStyle = options.list
     ? ({
         "--product-list-card-height": `${options.cardHeight}px`,
@@ -571,7 +578,7 @@ function renderProductCard(
           <div className="flex h-full items-center justify-center text-sm text-slate-400">暂无图片</div>
         )}
       </div>
-      <div className={options.list ? "flex min-w-0 flex-1 flex-col" : "flex min-h-[180px] flex-1 flex-col p-4"}>
+      <div className={options.list ? "flex min-w-0 flex-1 flex-col pb-10" : "flex min-h-[180px] flex-1 flex-col p-4"}>
         {options.showCode && item.code ? (
           <div
             className="text-xs uppercase tracking-[0.24em] text-slate-500"
@@ -589,7 +596,14 @@ function renderProductCard(
           </p>
         ) : null}
         {priceText ? (
-          <div className={`mt-auto flex min-h-[2.75rem] w-full shrink-0 items-end pt-4 text-lg font-semibold text-sky-700 ${priceAlignClass}`}>
+          <div
+            className={`${
+              options.list
+                ? "absolute z-10 flex min-h-[2rem] items-end text-lg font-semibold text-sky-700"
+                : "mt-auto flex min-h-[2.75rem] w-full shrink-0 items-end pt-4 text-lg font-semibold text-sky-700"
+            } ${priceAlignClass}`}
+            style={listPricePositionStyle}
+          >
             <div className="w-full" style={options.priceTextStyle}>
               {priceText}
             </div>
