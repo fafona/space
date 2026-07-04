@@ -69,6 +69,7 @@ import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
   PERSONAL_GUEST_STORAGE_EVENT,
   appendPersonalGuestSupportMessage,
+  archiveAndClearPersonalGuestData,
   buildPersonalGuestMigrationFingerprint,
   buildPersonalGuestSessionPayload,
   ensurePersonalGuestIdentity,
@@ -4282,15 +4283,53 @@ export default function MePage() {
             supportMessages: guestSupportMessages,
           }),
         });
-        const result = (await response.json().catch(() => null)) as { ok?: boolean; message?: string; error?: string } | null;
+        const result = (await response.json().catch(() => null)) as
+          | {
+              ok?: boolean;
+              message?: string;
+              error?: string;
+              orders?: MerchantOrderRecord[];
+              bookings?: MerchantBookingRecord[];
+              supportMessageCount?: number;
+            }
+          | null;
         if (!response.ok || !result || result.ok !== true) {
           throw new Error(readPayloadMessage(result?.message || result?.error, "游客记录合并失败"));
         }
         if (cancelled) return;
+        const attachedOrderKeys = new Set(
+          (Array.isArray(result.orders) ? result.orders : []).map((order) => `${order.siteId}:${order.id}`),
+        );
+        const attachedBookingKeys = new Set(
+          (Array.isArray(result.bookings) ? result.bookings : []).map((booking) => `${booking.siteId}:${booking.id}`),
+        );
+        const unmergedOrderCount = guestOrders.filter(
+          (order) => !trimText(order.customerGuestHash) || !attachedOrderKeys.has(`${order.siteId}:${order.id}`),
+        ).length;
+        const unmergedBookingCount = guestBookings.filter(
+          (booking) => !trimText(booking.customerGuestHash) || !attachedBookingKeys.has(`${booking.siteId}:${booking.id}`),
+        ).length;
         markPersonalGuestMigrationCompleted(accountId, fingerprint);
+        archiveAndClearPersonalGuestData({
+          accountId,
+          fingerprint,
+          clearProfile: true,
+          clearFavorites: true,
+          clearSupport: true,
+          clearOrders: unmergedOrderCount === 0,
+          clearBookings: unmergedBookingCount === 0,
+        });
         setPersonalConsumptionReloadKey((current) => current + 1);
         void loadSupportThread({ silent: true });
-        setPersonalProfileMessage("游客记录已合并到当前账号。");
+        const localOnlyNotes = [
+          unmergedOrderCount > 0 ? `${unmergedOrderCount} 个旧订单缺少安全凭证，仅保留在本机展示` : "",
+          unmergedBookingCount > 0 ? `${unmergedBookingCount} 个旧预约缺少安全凭证，仅保留在本机展示` : "",
+        ].filter(Boolean);
+        setPersonalProfileMessage(
+          localOnlyNotes.length > 0
+            ? `已同步可验证的游客资料、收藏、订单、预约和留言；${localOnlyNotes.join("，")}。`
+            : "已同步游客资料、收藏、订单、预约和留言到当前账号。",
+        );
       } catch (error) {
         if (!cancelled) {
           setPersonalProfileMessage(error instanceof Error ? error.message : "游客记录合并失败，稍后会自动重试。");

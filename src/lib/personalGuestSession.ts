@@ -12,6 +12,7 @@ const GUEST_BOOKINGS_STORAGE_KEY = "faolla:personal-guest-bookings:v1";
 const GUEST_SUPPORT_STORAGE_KEY = "faolla:personal-guest-support:v1";
 const GUEST_FAVORITES_STORAGE_KEY = "faolla:personal-guest-favorites:v1";
 const GUEST_MIGRATIONS_STORAGE_KEY = "faolla:personal-guest-migrations:v1";
+const GUEST_ARCHIVES_STORAGE_KEY = "faolla:personal-guest-archives:v1";
 
 export type PersonalGuestIdentity = {
   id: string;
@@ -81,6 +82,15 @@ function writeStorageJson(key: string, value: unknown) {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Guest data is best-effort local state.
+  }
+}
+
+function removeStorageItem(key: string) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(key);
   } catch {
     // Guest data is best-effort local state.
   }
@@ -411,4 +421,50 @@ export function markPersonalGuestMigrationCompleted(accountId: string, fingerpri
     [normalizedAccountId]: fingerprint,
   };
   writeStorageJson(GUEST_MIGRATIONS_STORAGE_KEY, next);
+}
+
+function readGuestArchives(): unknown[] {
+  const source = readStorageJson(GUEST_ARCHIVES_STORAGE_KEY);
+  return Array.isArray(source) ? source : [];
+}
+
+export function archiveAndClearPersonalGuestData(input: {
+  accountId: string;
+  fingerprint: string;
+  clearProfile?: boolean;
+  clearFavorites?: boolean;
+  clearOrders?: boolean;
+  clearBookings?: boolean;
+  clearSupport?: boolean;
+}) {
+  const normalizedAccountId = trimText(input.accountId, 32);
+  const fingerprint = trimText(input.fingerprint, 12000);
+  if (!normalizedAccountId || !fingerprint) return;
+
+  const archiveEntry = {
+    accountId: normalizedAccountId,
+    fingerprint,
+    archivedAt: new Date().toISOString(),
+    identity: readPersonalGuestIdentity(),
+    profile: readPersonalGuestProfile(),
+    favoriteSites: readPersonalGuestFavoriteSites(),
+    orders: readPersonalGuestOrders(),
+    bookings: readPersonalGuestBookings(),
+    supportMessages: readPersonalGuestSupportMessages(),
+    cleared: {
+      profile: input.clearProfile === true,
+      favorites: input.clearFavorites === true,
+      orders: input.clearOrders === true,
+      bookings: input.clearBookings === true,
+      support: input.clearSupport === true,
+    },
+  };
+  writeStorageJson(GUEST_ARCHIVES_STORAGE_KEY, [archiveEntry, ...readGuestArchives()].slice(0, 20));
+
+  if (input.clearProfile === true) removeStorageItem(GUEST_PROFILE_STORAGE_KEY);
+  if (input.clearFavorites === true) removeStorageItem(GUEST_FAVORITES_STORAGE_KEY);
+  if (input.clearOrders === true) removeStorageItem(GUEST_ORDERS_STORAGE_KEY);
+  if (input.clearBookings === true) removeStorageItem(GUEST_BOOKINGS_STORAGE_KEY);
+  if (input.clearSupport === true) removeStorageItem(GUEST_SUPPORT_STORAGE_KEY);
+  emitGuestStorageChanged();
 }
