@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  appendPersonalGuestPeerMessage,
   appendPersonalGuestSupportMessage,
   archiveAndClearPersonalGuestData,
   buildPersonalGuestMigrationFingerprint,
@@ -12,10 +13,13 @@ import {
   readPersonalGuestFavoriteSites,
   readPersonalGuestMergeToken,
   readPersonalGuestOrders,
+  readPersonalGuestPeerContacts,
+  readPersonalGuestPeerThreads,
   readPersonalGuestProfile,
   readPersonalGuestSupportMessages,
   savePersonalGuestFavoriteSites,
   savePersonalGuestProfile,
+  upsertPersonalGuestPeerContact,
   upsertPersonalGuestBooking,
   upsertPersonalGuestOrder,
 } from "@/lib/personalGuestSession";
@@ -184,10 +188,26 @@ test("archiving clears only requested guest caches and keeps a local archive sna
     upsertPersonalGuestOrder(createOrder());
     upsertPersonalGuestBooking(createBooking());
     appendPersonalGuestSupportMessage("hello Faolla", identity, readPersonalGuestProfile());
+    upsertPersonalGuestPeerContact({
+      identity,
+      contactMerchantId: "87654321",
+      contactName: "Peer merchant",
+      contactEmail: "peer@example.com",
+    });
+    appendPersonalGuestPeerMessage({
+      identity,
+      profile: readPersonalGuestProfile(),
+      recipientMerchantId: "87654321",
+      recipientMerchantName: "Peer merchant",
+      recipientMerchantEmail: "peer@example.com",
+      text: "hello merchant",
+    });
 
     const ordersBefore = readPersonalGuestOrders();
     const bookingsBefore = readPersonalGuestBookings();
     const supportBefore = readPersonalGuestSupportMessages();
+    const peerContactsBefore = readPersonalGuestPeerContacts(identity);
+    const peerThreadsBefore = readPersonalGuestPeerThreads(identity);
     const fingerprint = buildPersonalGuestMigrationFingerprint({
       identity,
       profile: readPersonalGuestProfile(),
@@ -195,6 +215,8 @@ test("archiving clears only requested guest caches and keeps a local archive sna
       orders: ordersBefore,
       bookings: bookingsBefore,
       supportMessages: supportBefore,
+      peerContacts: peerContactsBefore,
+      peerThreads: peerThreadsBefore,
     });
 
     archiveAndClearPersonalGuestData({
@@ -205,6 +227,7 @@ test("archiving clears only requested guest caches and keeps a local archive sna
       clearOrders: false,
       clearBookings: true,
       clearSupport: true,
+      clearPeer: false,
     });
 
     assert.equal(readPersonalGuestProfile().displayName, "");
@@ -212,6 +235,8 @@ test("archiving clears only requested guest caches and keeps a local archive sna
     assert.equal(readPersonalGuestBookings().length, 0);
     assert.equal(readPersonalGuestSupportMessages().length, 0);
     assert.equal(readPersonalGuestOrders().length, 1);
+    assert.equal(readPersonalGuestPeerContacts(identity).length, 1);
+    assert.equal(readPersonalGuestPeerThreads(identity).length, 1);
 
     const archives = JSON.parse(String(harness.localStorage.getItem("faolla:personal-guest-archives:v1")));
     assert.equal(Array.isArray(archives), true);
@@ -220,12 +245,15 @@ test("archiving clears only requested guest caches and keeps a local archive sna
     assert.equal(archives[0].orders.length, 1);
     assert.equal(archives[0].bookings.length, 1);
     assert.equal(archives[0].supportMessages.length, 1);
+    assert.equal(archives[0].peerInbox.contacts.length, 2);
+    assert.equal(archives[0].peerInbox.threads.length, 1);
     assert.deepEqual(archives[0].cleared, {
       profile: true,
       favorites: true,
       orders: false,
       bookings: true,
       support: true,
+      peer: false,
     });
   } finally {
     harness.restore();

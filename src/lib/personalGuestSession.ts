@@ -1,5 +1,16 @@
 import type { MerchantBookingRecord, MerchantBookingStatus } from "@/lib/merchantBookings";
 import { normalizeMerchantOrderRecords, type MerchantOrderRecord } from "@/lib/merchantOrders";
+import {
+  createMerchantPeerMessage,
+  listMerchantPeerContactsForMerchant,
+  listMerchantPeerThreadsForMerchant,
+  normalizeMerchantPeerInboxPayload,
+  upsertMerchantPeerContact,
+  upsertMerchantPeerMessage,
+  type MerchantPeerContactSummary,
+  type MerchantPeerInboxPayload,
+  type MerchantPeerThread,
+} from "@/lib/merchantPeerInbox";
 import type { PlatformSupportThread } from "@/lib/platformSupportInbox";
 
 export const PERSONAL_GUEST_STORAGE_EVENT = "faolla:personal-guest-storage-changed";
@@ -10,6 +21,7 @@ const GUEST_PROFILE_STORAGE_KEY = "faolla:personal-guest-profile:v1";
 const GUEST_ORDERS_STORAGE_KEY = "faolla:personal-guest-orders:v1";
 const GUEST_BOOKINGS_STORAGE_KEY = "faolla:personal-guest-bookings:v1";
 const GUEST_SUPPORT_STORAGE_KEY = "faolla:personal-guest-support:v1";
+const GUEST_PEER_STORAGE_KEY = "faolla:personal-guest-peer-inbox:v1";
 const GUEST_FAVORITES_STORAGE_KEY = "faolla:personal-guest-favorites:v1";
 const GUEST_MIGRATIONS_STORAGE_KEY = "faolla:personal-guest-migrations:v1";
 const GUEST_ARCHIVES_STORAGE_KEY = "faolla:personal-guest-archives:v1";
@@ -370,6 +382,73 @@ export function appendPersonalGuestSupportMessage(
   return readPersonalGuestSupportThread(identity, profile);
 }
 
+export function readPersonalGuestPeerInbox(): MerchantPeerInboxPayload {
+  return normalizeMerchantPeerInboxPayload(readStorageJson(GUEST_PEER_STORAGE_KEY));
+}
+
+function writePersonalGuestPeerInbox(payload: MerchantPeerInboxPayload) {
+  writeStorageJson(GUEST_PEER_STORAGE_KEY, normalizeMerchantPeerInboxPayload(payload));
+  emitGuestStorageChanged();
+}
+
+export function readPersonalGuestPeerContacts(
+  identity = ensurePersonalGuestIdentity(),
+): MerchantPeerContactSummary[] {
+  return listMerchantPeerContactsForMerchant(readPersonalGuestPeerInbox(), identity.accountId);
+}
+
+export function readPersonalGuestPeerThreads(identity = ensurePersonalGuestIdentity()): MerchantPeerThread[] {
+  return listMerchantPeerThreadsForMerchant(readPersonalGuestPeerInbox(), identity.accountId);
+}
+
+export function upsertPersonalGuestPeerContact(input: {
+  contactMerchantId?: unknown;
+  contactName?: unknown;
+  contactEmail?: unknown;
+  identity?: PersonalGuestIdentity | null;
+}) {
+  const identity = input.identity ?? ensurePersonalGuestIdentity();
+  const next = upsertMerchantPeerContact(readPersonalGuestPeerInbox(), {
+    ownerMerchantId: identity.accountId,
+    contactMerchantId: trimText(input.contactMerchantId, 32),
+    contactName: trimText(input.contactName, 160),
+    contactEmail: trimText(input.contactEmail, 320).toLowerCase(),
+  });
+  writePersonalGuestPeerInbox(next);
+  return next;
+}
+
+export function appendPersonalGuestPeerMessage(input: {
+  recipientMerchantId?: unknown;
+  recipientMerchantName?: unknown;
+  recipientMerchantEmail?: unknown;
+  text?: unknown;
+  identity?: PersonalGuestIdentity | null;
+  profile?: PersonalGuestProfile | null;
+}) {
+  const text = trimText(input.text, 5000);
+  const identity = input.identity ?? ensurePersonalGuestIdentity();
+  const profile = normalizePersonalGuestProfile(input.profile ?? readPersonalGuestProfile());
+  const recipientMerchantId = trimText(input.recipientMerchantId, 32);
+  const message = text
+    ? createMerchantPeerMessage({
+        senderMerchantId: identity.accountId,
+        text,
+      })
+    : null;
+  const next = upsertMerchantPeerMessage(readPersonalGuestPeerInbox(), {
+    senderMerchantId: identity.accountId,
+    senderMerchantName: profile.displayName || "\u6e38\u5ba2",
+    senderMerchantEmail: profile.email,
+    recipientMerchantId,
+    recipientMerchantName: trimText(input.recipientMerchantName, 160),
+    recipientMerchantEmail: trimText(input.recipientMerchantEmail, 320).toLowerCase(),
+    message,
+  });
+  writePersonalGuestPeerInbox(next);
+  return next;
+}
+
 export function readPersonalGuestFavoriteSites<T = unknown>(): T[] {
   const source = readStorageJson(GUEST_FAVORITES_STORAGE_KEY);
   return Array.isArray(source) ? (source as T[]) : [];
@@ -394,6 +473,8 @@ export function buildPersonalGuestMigrationFingerprint(input: {
   orders?: MerchantOrderRecord[];
   bookings?: MerchantBookingRecord[];
   supportMessages?: PersonalGuestSupportMessage[];
+  peerContacts?: MerchantPeerContactSummary[];
+  peerThreads?: MerchantPeerThread[];
 }) {
   const identityId = trimText(input.identity?.id, 180);
   const profile = normalizePersonalGuestProfile(input.profile ?? null);
@@ -404,7 +485,13 @@ export function buildPersonalGuestMigrationFingerprint(input: {
   const orderPart = (input.orders ?? []).map((item) => `${item.siteId}:${item.id}:${item.updatedAt}`).join("\u001e");
   const bookingPart = (input.bookings ?? []).map((item) => `${item.siteId}:${item.id}:${item.updatedAt}`).join("\u001e");
   const supportPart = (input.supportMessages ?? []).map((item) => `${item.id}:${item.createdAt}`).join("\u001e");
-  return [identityId, profilePart, favoritePart, orderPart, bookingPart, supportPart].join("\u001d").slice(0, 12000);
+  const peerContactPart = (input.peerContacts ?? []).map((item) => `${item.merchantId}:${item.updatedAt || item.savedAt}`).join("\u001e");
+  const peerThreadPart = (input.peerThreads ?? [])
+    .map((thread) => `${thread.threadKey}:${thread.updatedAt}:${thread.messages.length}`)
+    .join("\u001e");
+  return [identityId, profilePart, favoritePart, orderPart, bookingPart, supportPart, peerContactPart, peerThreadPart]
+    .join("\u001d")
+    .slice(0, 12000);
 }
 
 export function hasPersonalGuestMigrationCompleted(accountId: string, fingerprint: string) {
@@ -436,6 +523,7 @@ export function archiveAndClearPersonalGuestData(input: {
   clearOrders?: boolean;
   clearBookings?: boolean;
   clearSupport?: boolean;
+  clearPeer?: boolean;
 }) {
   const normalizedAccountId = trimText(input.accountId, 32);
   const fingerprint = trimText(input.fingerprint, 12000);
@@ -451,12 +539,14 @@ export function archiveAndClearPersonalGuestData(input: {
     orders: readPersonalGuestOrders(),
     bookings: readPersonalGuestBookings(),
     supportMessages: readPersonalGuestSupportMessages(),
+    peerInbox: readPersonalGuestPeerInbox(),
     cleared: {
       profile: input.clearProfile === true,
       favorites: input.clearFavorites === true,
       orders: input.clearOrders === true,
       bookings: input.clearBookings === true,
       support: input.clearSupport === true,
+      peer: input.clearPeer === true,
     },
   };
   writeStorageJson(GUEST_ARCHIVES_STORAGE_KEY, [archiveEntry, ...readGuestArchives()].slice(0, 20));
@@ -466,5 +556,6 @@ export function archiveAndClearPersonalGuestData(input: {
   if (input.clearOrders === true) removeStorageItem(GUEST_ORDERS_STORAGE_KEY);
   if (input.clearBookings === true) removeStorageItem(GUEST_BOOKINGS_STORAGE_KEY);
   if (input.clearSupport === true) removeStorageItem(GUEST_SUPPORT_STORAGE_KEY);
+  if (input.clearPeer === true) removeStorageItem(GUEST_PEER_STORAGE_KEY);
   emitGuestStorageChanged();
 }

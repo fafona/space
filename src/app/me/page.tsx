@@ -68,6 +68,7 @@ import { clearTankBattleLobbyReturnTarget, readTankBattleLobbyReturnTarget } fro
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
   PERSONAL_GUEST_STORAGE_EVENT,
+  appendPersonalGuestPeerMessage,
   appendPersonalGuestSupportMessage,
   archiveAndClearPersonalGuestData,
   buildPersonalGuestMigrationFingerprint,
@@ -80,11 +81,14 @@ import {
   readPersonalGuestFavoriteSites,
   readPersonalGuestMergeToken,
   readPersonalGuestOrders,
+  readPersonalGuestPeerContacts,
+  readPersonalGuestPeerThreads,
   readPersonalGuestProfile,
   readPersonalGuestSupportMessages,
   readPersonalGuestSupportThread,
   savePersonalGuestFavoriteSites,
   savePersonalGuestProfile,
+  upsertPersonalGuestPeerContact,
 } from "@/lib/personalGuestSession";
 import {
   normalizeMerchantBusinessCards,
@@ -4144,8 +4148,9 @@ export default function MePage() {
   const loadPeerInbox = useCallback(async (options?: { silent?: boolean }) => {
     if (!accountId) return;
     if (isGuestSession) {
-      setPeerContacts([]);
-      setPeerThreads([]);
+      const identity = ensurePersonalGuestIdentity();
+      setPeerContacts(readPersonalGuestPeerContacts(identity));
+      setPeerThreads(readPersonalGuestPeerThreads(identity));
       setSupportError("");
       return;
     }
@@ -4211,12 +4216,16 @@ export default function MePage() {
     const guestOrders = readPersonalGuestOrders();
     const guestBookings = readPersonalGuestBookings();
     const guestSupportMessages = readPersonalGuestSupportMessages().filter((message) => message.sender === "merchant");
+    const guestPeerContacts = readPersonalGuestPeerContacts(identity);
+    const guestPeerThreads = readPersonalGuestPeerThreads(identity);
     const hasGuestData =
       hasNonEmptyPersonalProfileDraft(guestProfile) ||
       guestFavoriteSites.length > 0 ||
       guestOrders.length > 0 ||
       guestBookings.length > 0 ||
-      guestSupportMessages.length > 0;
+      guestSupportMessages.length > 0 ||
+      guestPeerContacts.length > 0 ||
+      guestPeerThreads.length > 0;
     if (!hasGuestData) return;
 
     const fingerprint = buildPersonalGuestMigrationFingerprint({
@@ -4226,6 +4235,8 @@ export default function MePage() {
       orders: guestOrders,
       bookings: guestBookings,
       supportMessages: guestSupportMessages,
+      peerContacts: guestPeerContacts,
+      peerThreads: guestPeerThreads,
     });
     if (hasPersonalGuestMigrationCompleted(accountId, fingerprint)) return;
 
@@ -4318,12 +4329,14 @@ export default function MePage() {
           clearSupport: true,
           clearOrders: unmergedOrderCount === 0,
           clearBookings: unmergedBookingCount === 0,
+          clearPeer: false,
         });
         setPersonalConsumptionReloadKey((current) => current + 1);
         void loadSupportThread({ silent: true });
         const localOnlyNotes = [
           unmergedOrderCount > 0 ? `${unmergedOrderCount} 个旧订单缺少安全凭证，仅保留在本机展示` : "",
           unmergedBookingCount > 0 ? `${unmergedBookingCount} 个旧预约缺少安全凭证，仅保留在本机展示` : "",
+          guestPeerThreads.length > 0 ? "\u6e38\u5ba2\u5546\u6237\u4f1a\u8bdd\u6682\u65f6\u4ec5\u4fdd\u7559\u5728\u672c\u673a" : "",
         ].filter(Boolean);
         setPersonalProfileMessage(
           localOnlyNotes.length > 0
@@ -4369,7 +4382,21 @@ export default function MePage() {
     }
 
     if (isGuestSession) {
-      setSupportSearchError("\u6e38\u5ba2\u4f1a\u8bdd\u53ea\u6682\u65f6\u4fdd\u5b58 Faolla \u672c\u5730\u7559\u8a00\uff0c\u767b\u5f55\u540e\u53ef\u4ee5\u4e0e\u5546\u6237\u5efa\u7acb\u4f1a\u8bdd\u3002");
+      const merchantId = /^\d{8}$/.test(query) ? query : "";
+      if (!merchantId || merchantId === accountId) {
+        setSupportSearchError("\u6e38\u5ba2\u53ef\u4ee5\u5148\u8f93\u5165 8 \u4f4d\u5546\u6237 ID \u5efa\u7acb\u672c\u5730\u4f1a\u8bdd\uff0c\u767b\u5f55\u540e\u53ef\u540c\u6b65\u66f4\u5b8c\u6574\u7684\u4f1a\u8bdd\u80fd\u529b\u3002");
+        return;
+      }
+      const identity = ensurePersonalGuestIdentity();
+      upsertPersonalGuestPeerContact({
+        identity,
+        contactMerchantId: merchantId,
+        contactName: merchantId,
+      });
+      setPeerContacts(readPersonalGuestPeerContacts(identity));
+      setPeerThreads(readPersonalGuestPeerThreads(identity));
+      setSelectedConversationKey(`merchant:${merchantId}`);
+      setMobileConversationView("thread");
       return;
     }
 
@@ -4421,8 +4448,8 @@ export default function MePage() {
       return false;
     }
     if (isGuestSession) {
-      if (!selectedConversationIsOfficial) {
-        setSupportError("\u767b\u5f55\u540e\u53ef\u4ee5\u4e0e\u5546\u6237\u53d1\u9001\u4f1a\u8bdd\u3002");
+      if (!selectedConversationIsOfficial && !selectedPeerMerchantId) {
+        setSupportError("\u8bf7\u5148\u9009\u62e9\u8981\u7559\u8a00\u7684\u5546\u6237\u3002");
         return false;
       }
       supportSendingRef.current = true;
@@ -4431,12 +4458,26 @@ export default function MePage() {
       setSupportAttachmentMenuOpen(false);
       if (options?.clearDraft) setSupportDraft("");
       try {
-        const nextThread = appendPersonalGuestSupportMessage(
-          text,
-          ensurePersonalGuestIdentity(),
-          readPersonalGuestProfile(),
-        );
-        setSupportThread(nextThread);
+        if (selectedConversationIsOfficial) {
+          const nextThread = appendPersonalGuestSupportMessage(
+            text,
+            ensurePersonalGuestIdentity(),
+            readPersonalGuestProfile(),
+          );
+          setSupportThread(nextThread);
+        } else {
+          const identity = ensurePersonalGuestIdentity();
+          appendPersonalGuestPeerMessage({
+            identity,
+            profile: readPersonalGuestProfile(),
+            recipientMerchantId: selectedPeerMerchantId,
+            recipientMerchantName: selectedPeerContactName,
+            recipientMerchantEmail: selectedPeerContactEmail,
+            text,
+          });
+          setPeerContacts(readPersonalGuestPeerContacts(identity));
+          setPeerThreads(readPersonalGuestPeerThreads(identity));
+        }
         if (!options?.clearDraft) setSupportDraft("");
         return true;
       } finally {
@@ -4535,14 +4576,6 @@ export default function MePage() {
     const merchantEmail = trimText(target.email).toLowerCase();
     const merchantName = trimText(target.name) || merchantId || "商户";
     if (!merchantId && !merchantEmail) return;
-    if (isGuestSession) {
-      const message = "\u767b\u5f55\u540e\u53ef\u4ee5\u4e0e\u5546\u6237\u5efa\u7acb\u4f1a\u8bdd\u3002";
-      setSupportError(message);
-      setSupportSearchError(message);
-      setDesktopSection("conversations");
-      setMobileTab("conversations");
-      return;
-    }
 
     setSupportError("");
     setSupportSearchError("");
@@ -4551,6 +4584,27 @@ export default function MePage() {
     setConversationInfoOpen(false);
     setDesktopSection("conversations");
     setMobileTab("conversations");
+
+    if (isGuestSession) {
+      if (!merchantId) {
+        const message = "\u6e38\u5ba2\u53ea\u80fd\u5148\u4f7f\u7528 8 \u4f4d\u5546\u6237 ID \u5efa\u7acb\u672c\u5730\u4f1a\u8bdd\u3002";
+        setSupportError(message);
+        setSupportSearchError(message);
+        return;
+      }
+      const identity = ensurePersonalGuestIdentity();
+      upsertPersonalGuestPeerContact({
+        identity,
+        contactMerchantId: merchantId,
+        contactName: merchantName,
+        contactEmail: merchantEmail,
+      });
+      setPeerContacts(readPersonalGuestPeerContacts(identity));
+      setPeerThreads(readPersonalGuestPeerThreads(identity));
+      setSelectedConversationKey(`merchant:${merchantId}`);
+      setMobileConversationView("thread");
+      return;
+    }
 
     const existingContact = peerContacts.find((contact) => {
       const contactId = trimText(contact.merchantId);
@@ -6184,7 +6238,7 @@ export default function MePage() {
             const restoreBusyKey = `booking:${booking.id}:restore`;
             const contactEmail = contact.email;
             const contactPhone = contact.phone;
-            const canOpenConversation = !isGuestSession && Boolean(contact.siteId || contactEmail);
+            const canOpenConversation = Boolean(contact.siteId || (!isGuestSession && contactEmail));
             if (compact) {
               return (
                 <article
@@ -6460,7 +6514,7 @@ export default function MePage() {
             const busyKey = `order:${order.id}:cancel`;
             const contactEmail = contact.email;
             const contactPhone = contact.phone;
-            const canOpenConversation = !isGuestSession && Boolean(contact.siteId || contactEmail);
+            const canOpenConversation = Boolean(contact.siteId || (!isGuestSession && contactEmail));
             if (compact) {
               return (
                 <article
