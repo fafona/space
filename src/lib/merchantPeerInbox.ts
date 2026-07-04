@@ -378,7 +378,8 @@ export function upsertMerchantPeerMessage(
   const existingIndex = threads.findIndex((thread) => thread.threadKey === participants.threadKey);
   if (existingIndex >= 0) {
     const current = threads[existingIndex];
-    const mergedMessages = nextMessage ? sortMessages([...current.messages, nextMessage]) : current.messages;
+    const hasMessage = nextMessage ? current.messages.some((message) => message.id === nextMessage.id) : false;
+    const mergedMessages = nextMessage && !hasMessage ? sortMessages([...current.messages, nextMessage]) : current.messages;
     const latestMessageAt = mergedMessages[mergedMessages.length - 1]?.createdAt ?? current.updatedAt;
     threads[existingIndex] = {
       ...current,

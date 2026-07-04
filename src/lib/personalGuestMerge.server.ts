@@ -14,3 +14,9 @@ export function hashPersonalGuestMergeToken(value: unknown) {
   if (!token) return "";
   return `sha256:${createHash("sha256").update(token).digest("hex")}`;
 }
+
+export function readPersonalGuestAccountIdFromMergeToken(value: unknown) {
+  const token = normalizePersonalGuestMergeToken(value);
+  const matched = /^guest-(\d{8})(?:-|$)/.exec(token);
+  return matched?.[1] ?? "";
+}

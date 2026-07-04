@@ -1,8 +1,17 @@
 import { NextResponse } from "next/server";
 import { attachPersonalMerchantBookingsByGuestHash } from "@/lib/merchantBookings.server";
 import { attachPersonalMerchantOrdersByGuestHash } from "@/lib/merchantOrders.server";
+import {
+  loadStoredMerchantPeerInbox,
+  saveMerchantPeerInbox,
+  type MerchantPeerInboxStoreClient,
+} from "@/lib/merchantPeerInboxStore";
 import { readPersonalCustomerProfileFromSession } from "@/lib/personalCustomerProfile";
-import { hashPersonalGuestMergeToken } from "@/lib/personalGuestMerge.server";
+import {
+  hashPersonalGuestMergeToken,
+  readPersonalGuestAccountIdFromMergeToken,
+} from "@/lib/personalGuestMerge.server";
+import { mergePersonalGuestPeerDataIntoMerchantPeerInbox } from "@/lib/personalGuestPeerMerge";
 import { resolvePersonalAccountSessionFromRequest } from "@/lib/personalAccountSession.server";
 import { createPlatformSupportMessage, upsertPlatformSupportThread } from "@/lib/platformSupportInbox";
 import {
@@ -105,14 +114,18 @@ export async function POST(request: Request) {
         orders?: unknown;
         bookings?: unknown;
         supportMessages?: unknown;
+        peerContacts?: unknown;
+        peerThreads?: unknown;
       }
     | null;
   const guestHash = hashPersonalGuestMergeToken(body?.guestMergeToken);
   if (!guestHash) return noStoreJson({ ok: false, error: "invalid_guest_merge_token" }, { status: 400 });
+  const guestAccountId = readPersonalGuestAccountIdFromMergeToken(body?.guestMergeToken);
 
   const orderRefs = normalizeOrderRefs(body?.orders);
   const bookingRefs = normalizeBookingRefs(body?.bookings);
   const supportMessages = normalizeSupportMessages(body?.supportMessages);
+  const hasGuestPeerData = Array.isArray(body?.peerContacts) || Array.isArray(body?.peerThreads);
 
   const [attachedOrders, attachedBookings] = await Promise.all([
     attachPersonalMerchantOrdersByGuestHash({
@@ -132,8 +145,13 @@ export async function POST(request: Request) {
   ]);
 
   let supportMessageCount = 0;
+  let peerContactCount = 0;
+  let peerMessageCount = 0;
+  let peerSkippedContactCount = 0;
+  let peerSkippedThreadCount = 0;
+  let peerSkippedMessageCount = 0;
+  const supabase = supportMessages.length > 0 || hasGuestPeerData ? createServerSupabaseServiceClient() : null;
   if (supportMessages.length > 0) {
-    const supabase = createServerSupabaseServiceClient();
     if (supabase) {
       const profile = readPersonalCustomerProfileFromSession({
         authenticated: true,
@@ -174,10 +192,54 @@ export async function POST(request: Request) {
     }
   }
 
+  if (hasGuestPeerData) {
+    if (!supabase) {
+      return noStoreJson({ ok: false, error: "merchant_peer_inbox_env_missing" }, { status: 503 });
+    }
+    const profile = readPersonalCustomerProfileFromSession({
+      authenticated: true,
+      accountType: "personal",
+      accountId: session.accountId,
+      user: session.user,
+    });
+    const currentPeerInbox = await loadStoredMerchantPeerInbox(supabase as unknown as MerchantPeerInboxStoreClient);
+    const peerMergeResult = mergePersonalGuestPeerDataIntoMerchantPeerInbox(currentPeerInbox, {
+      guestAccountId,
+      targetAccountId: session.accountId,
+      targetName: profile.name || session.email || session.accountId,
+      targetEmail: session.email,
+      guestHash,
+      peerContacts: body?.peerContacts,
+      peerThreads: body?.peerThreads,
+    });
+    peerContactCount = peerMergeResult.contactCount;
+    peerMessageCount = peerMergeResult.messageCount;
+    peerSkippedContactCount = peerMergeResult.skippedContactCount;
+    peerSkippedThreadCount = peerMergeResult.skippedThreadCount;
+    peerSkippedMessageCount = peerMergeResult.skippedMessageCount;
+    if (peerContactCount > 0 || peerMessageCount > 0) {
+      const saveResult = await saveMerchantPeerInbox(
+        supabase as unknown as MerchantPeerInboxStoreClient,
+        peerMergeResult.payload,
+      );
+      if (saveResult.error) {
+        return noStoreJson(
+          { ok: false, error: "merchant_peer_inbox_save_failed", message: saveResult.error },
+          { status: 500 },
+        );
+      }
+    }
+  }
+
   return noStoreJson({
     ok: true,
     orders: attachedOrders,
     bookings: attachedBookings,
     supportMessageCount,
+    peerContactCount,
+    peerMessageCount,
+    peerSkippedContactCount,
+    peerSkippedThreadCount,
+    peerSkippedMessageCount,
   });
 }

@@ -58,6 +58,40 @@ test("sending a merchant message creates reciprocal contacts and a shared thread
   assert.equal(contactsForB[0]?.lastMessage?.text, "hello");
 });
 
+test("message ids are idempotent inside an existing thread", () => {
+  let payload = upsertMerchantPeerMessage(
+    { contacts: [], threads: [] },
+    {
+      senderMerchantId: "10000001",
+      senderMerchantName: "Merchant A",
+      recipientMerchantId: "10000002",
+      recipientMerchantName: "Merchant B",
+      message: createMerchantPeerMessage({
+        senderMerchantId: "10000001",
+        text: "hello",
+        createdAt: "2026-04-02T10:00:00.000Z",
+        id: "msg-1",
+      }),
+    },
+  );
+  payload = upsertMerchantPeerMessage(payload, {
+    senderMerchantId: "10000001",
+    senderMerchantName: "Merchant A",
+    recipientMerchantId: "10000002",
+    recipientMerchantName: "Merchant B",
+    message: createMerchantPeerMessage({
+      senderMerchantId: "10000001",
+      text: "hello again",
+      createdAt: "2026-04-02T10:01:00.000Z",
+      id: "msg-1",
+    }),
+  });
+
+  assert.equal(payload.threads.length, 1);
+  assert.equal(payload.threads[0]?.messages.length, 1);
+  assert.equal(payload.threads[0]?.messages[0]?.text, "hello");
+});
+
 test("thread recency drives merchant contact order", () => {
   let payload = upsertMerchantPeerContact(
     { contacts: [], threads: [] },

@@ -4292,6 +4292,8 @@ export default function MePage() {
             orders: guestOrders,
             bookings: guestBookings,
             supportMessages: guestSupportMessages,
+            peerContacts: guestPeerContacts,
+            peerThreads: guestPeerThreads,
           }),
         });
         const result = (await response.json().catch(() => null)) as
@@ -4302,6 +4304,11 @@ export default function MePage() {
               orders?: MerchantOrderRecord[];
               bookings?: MerchantBookingRecord[];
               supportMessageCount?: number;
+              peerContactCount?: number;
+              peerMessageCount?: number;
+              peerSkippedContactCount?: number;
+              peerSkippedThreadCount?: number;
+              peerSkippedMessageCount?: number;
             }
           | null;
         if (!response.ok || !result || result.ok !== true) {
@@ -4320,6 +4327,12 @@ export default function MePage() {
         const unmergedBookingCount = guestBookings.filter(
           (booking) => !trimText(booking.customerGuestHash) || !attachedBookingKeys.has(`${booking.siteId}:${booking.id}`),
         ).length;
+        const peerSkippedCount =
+          Number(result.peerSkippedContactCount ?? 0) +
+          Number(result.peerSkippedThreadCount ?? 0) +
+          Number(result.peerSkippedMessageCount ?? 0);
+        const peerHasLocalData = guestPeerContacts.length > 0 || guestPeerThreads.length > 0;
+        const peerFullyMerged = !peerHasLocalData || peerSkippedCount === 0;
         markPersonalGuestMigrationCompleted(accountId, fingerprint);
         archiveAndClearPersonalGuestData({
           accountId,
@@ -4329,14 +4342,15 @@ export default function MePage() {
           clearSupport: true,
           clearOrders: unmergedOrderCount === 0,
           clearBookings: unmergedBookingCount === 0,
-          clearPeer: false,
+          clearPeer: peerFullyMerged,
         });
         setPersonalConsumptionReloadKey((current) => current + 1);
         void loadSupportThread({ silent: true });
+        void loadPeerInbox({ silent: true });
         const localOnlyNotes = [
           unmergedOrderCount > 0 ? `${unmergedOrderCount} 个旧订单缺少安全凭证，仅保留在本机展示` : "",
           unmergedBookingCount > 0 ? `${unmergedBookingCount} 个旧预约缺少安全凭证，仅保留在本机展示` : "",
-          guestPeerThreads.length > 0 ? "\u6e38\u5ba2\u5546\u6237\u4f1a\u8bdd\u6682\u65f6\u4ec5\u4fdd\u7559\u5728\u672c\u673a" : "",
+          peerHasLocalData && !peerFullyMerged ? `${peerSkippedCount} \u4e2a\u6e38\u5ba2\u5546\u6237\u4f1a\u8bdd\u9879\u76ee\u6682\u65f6\u4ec5\u4fdd\u7559\u5728\u672c\u673a` : "",
         ].filter(Boolean);
         setPersonalProfileMessage(
           localOnlyNotes.length > 0
@@ -4358,6 +4372,7 @@ export default function MePage() {
   }, [
     accountId,
     isGuestSession,
+    loadPeerInbox,
     loadSupportThread,
     loading,
     payload?.accountType,
