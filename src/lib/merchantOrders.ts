@@ -49,6 +49,7 @@ export type MerchantOrderRecord = {
   customerAccountId?: string;
   customerUserId?: string;
   customerLoginEmail?: string;
+  customerGuestHash?: string;
   createdAt: string;
   updatedAt: string;
   merchantTouchedAt?: string;
@@ -72,6 +73,7 @@ export type MerchantOrderCreateInput = {
   customerAccountId?: string;
   customerUserId?: string;
   customerLoginEmail?: string;
+  customerGuestHash?: string;
   pricePrefix?: string;
   customer?: MerchantOrderCustomerInput;
   items?: MerchantOrderLineItemInput[];
@@ -222,6 +224,7 @@ export function normalizeMerchantOrderRecord(input: Partial<MerchantOrderRecord>
     customerAccountId: trimText(input.customerAccountId),
     customerUserId: trimText(input.customerUserId),
     customerLoginEmail: trimText(input.customerLoginEmail).toLowerCase(),
+    customerGuestHash: trimText(input.customerGuestHash),
     createdAt: trimText(input.createdAt) || new Date().toISOString(),
     updatedAt: trimText(input.updatedAt) || new Date().toISOString(),
     merchantTouchedAt: trimText(input.merchantTouchedAt),
@@ -397,6 +400,7 @@ export function createMerchantOrder(
     customerAccountId: trimText(input.customerAccountId),
     customerUserId: trimText(input.customerUserId),
     customerLoginEmail: trimText(input.customerLoginEmail).toLowerCase(),
+    customerGuestHash: trimText(input.customerGuestHash),
     createdAt,
     updatedAt,
     merchantTouchedAt: trimText(options.merchantTouchedAt),

@@ -43,7 +43,7 @@ import { resolveFrontendAuthPayload } from "@/lib/authSessionRecovery";
 import { MOBILE_SWIPE_BACK_EVENT } from "@/lib/mobileSwipeBack";
 import { readPersonalCustomerProfileFromSession, type PersonalCustomerProfile } from "@/lib/personalCustomerProfile";
 import { notifyPersonalConsumptionChanged } from "@/lib/personalConsumptionBridge";
-import { upsertPersonalGuestBooking } from "@/lib/personalGuestSession";
+import { readPersonalGuestMergeToken, upsertPersonalGuestBooking } from "@/lib/personalGuestSession";
 
 type BookingBlockComponentProps = BookingProps & {
   runtimeSiteId?: string;
@@ -509,6 +509,7 @@ export default function BookingBlock({
       const frontendAuthProof =
         (typeof latestAuthPayload?.frontendAuthProof === "string" ? latestAuthPayload.frontendAuthProof.trim() : "") ||
         bookingCustomerAuthProof;
+      const isPersonalAuthenticated = latestAuthPayload?.authenticated === true && latestAuthPayload.accountType === "personal";
       const response = await fetch("/api/bookings", {
         method: submittedState ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
@@ -528,6 +529,7 @@ export default function BookingBlock({
                 bookingBlockId: runtimeBlockId,
                 bookingViewport: runtimeViewport,
                 frontendAuthProof,
+                customerGuestToken: isPersonalAuthenticated ? "" : readPersonalGuestMergeToken(),
                 ...payload,
               },
         ),
@@ -538,7 +540,7 @@ export default function BookingBlock({
       if (!response.ok || !json?.ok || !json.booking) {
         throw new Error(json?.message || "预约提交失败，请稍后重试");
       }
-      if (latestAuthPayload?.authenticated !== true || latestAuthPayload?.accountType !== "personal") {
+      if (!isPersonalAuthenticated) {
         upsertPersonalGuestBooking(json.booking);
       }
       const nextState: SubmittedBookingState = {

@@ -17,6 +17,7 @@ import { readPersonalCustomerProfileFromSession } from "@/lib/personalCustomerPr
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 import { verifyFrontendAuthProof } from "@/lib/frontendAuthProof.server";
 import { buildPersonalMerchantContactMap } from "@/lib/personalMerchantContacts.server";
+import { hashPersonalGuestMergeToken } from "@/lib/personalGuestMerge.server";
 import type { MerchantPushSubscriptionStoreClient } from "@/lib/merchantPushSubscriptionStore";
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import { notifyMerchantPushSubscribers } from "@/lib/webPush";
@@ -127,7 +128,10 @@ export async function POST(request: Request) {
     return getTrustedMutationRequestErrorResponse();
   }
   try {
-    const body = (await request.json()) as Partial<MerchantOrderCreateInput> & { frontendAuthProof?: unknown };
+    const body = (await request.json()) as Partial<MerchantOrderCreateInput> & {
+      frontendAuthProof?: unknown;
+      customerGuestToken?: unknown;
+    };
     const siteId = String(body.siteId ?? "").trim();
     if (!isMerchantNumericId(siteId)) {
       return NextResponse.json({ error: "invalid_site_id" }, { status: 400 });
@@ -166,6 +170,7 @@ export async function POST(request: Request) {
       customerAccountId: personalSession?.accountId ?? personalProof?.accountId ?? "",
       customerUserId: personalSession?.userId ?? personalProof?.userId ?? "",
       customerLoginEmail: personalSession?.email ?? personalProof?.email ?? "",
+      customerGuestHash: personalSession || personalProof ? "" : hashPersonalGuestMergeToken(body.customerGuestToken),
       items: Array.isArray(body.items) ? body.items : [],
     });
 

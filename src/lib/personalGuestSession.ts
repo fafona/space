@@ -11,6 +11,7 @@ const GUEST_ORDERS_STORAGE_KEY = "faolla:personal-guest-orders:v1";
 const GUEST_BOOKINGS_STORAGE_KEY = "faolla:personal-guest-bookings:v1";
 const GUEST_SUPPORT_STORAGE_KEY = "faolla:personal-guest-support:v1";
 const GUEST_FAVORITES_STORAGE_KEY = "faolla:personal-guest-favorites:v1";
+const GUEST_MIGRATIONS_STORAGE_KEY = "faolla:personal-guest-migrations:v1";
 
 export type PersonalGuestIdentity = {
   id: string;
@@ -34,7 +35,7 @@ export type PersonalGuestProfile = {
   address: string;
 };
 
-type PersonalGuestSupportMessage = {
+export type PersonalGuestSupportMessage = {
   id: string;
   sender: "merchant" | "super_admin";
   text: string;
@@ -141,6 +142,10 @@ export function ensurePersonalGuestIdentity(): PersonalGuestIdentity {
   const next = createGuestIdentity();
   writeStorageJson(GUEST_IDENTITY_STORAGE_KEY, next);
   return next;
+}
+
+export function readPersonalGuestMergeToken(identity = ensurePersonalGuestIdentity()) {
+  return trimText(identity?.id, 180);
 }
 
 export function normalizePersonalGuestProfile(value: unknown): PersonalGuestProfile {
@@ -263,6 +268,7 @@ function normalizeGuestBookingRecord(value: unknown): MerchantBookingRecord | nu
     customerAccountId: trimText(record.customerAccountId, 80),
     customerUserId: trimText(record.customerUserId, 160),
     customerLoginEmail: trimText(record.customerLoginEmail, 160).toLowerCase(),
+    customerGuestHash: trimText(record.customerGuestHash, 160),
     status: normalizeBookingStatus(record.status),
     createdAt: normalizeIsoString(record.createdAt, now),
     updatedAt: normalizeIsoString(record.updatedAt, now),
@@ -310,7 +316,7 @@ function normalizeGuestSupportMessage(value: unknown): PersonalGuestSupportMessa
   };
 }
 
-function readPersonalGuestSupportMessages(): PersonalGuestSupportMessage[] {
+export function readPersonalGuestSupportMessages(): PersonalGuestSupportMessage[] {
   const source = readStorageJson(GUEST_SUPPORT_STORAGE_KEY);
   if (!Array.isArray(source)) return [];
   return source
@@ -364,4 +370,45 @@ export function savePersonalGuestFavoriteSites<T>(sites: T[]) {
   writeStorageJson(GUEST_FAVORITES_STORAGE_KEY, next);
   emitGuestStorageChanged();
   return next;
+}
+
+function readMigrationMap(): Record<string, string> {
+  const source = readStorageJson(GUEST_MIGRATIONS_STORAGE_KEY);
+  return source && typeof source === "object" && !Array.isArray(source) ? (source as Record<string, string>) : {};
+}
+
+export function buildPersonalGuestMigrationFingerprint(input: {
+  identity?: PersonalGuestIdentity | null;
+  profile?: PersonalGuestProfile | null;
+  favoriteSites?: unknown[];
+  orders?: MerchantOrderRecord[];
+  bookings?: MerchantBookingRecord[];
+  supportMessages?: PersonalGuestSupportMessage[];
+}) {
+  const identityId = trimText(input.identity?.id, 180);
+  const profile = normalizePersonalGuestProfile(input.profile ?? null);
+  const profilePart = Object.values(profile).join("\u001f");
+  const favoritePart = (Array.isArray(input.favoriteSites) ? input.favoriteSites : [])
+    .map((item) => JSON.stringify(item))
+    .join("\u001e");
+  const orderPart = (input.orders ?? []).map((item) => `${item.siteId}:${item.id}:${item.updatedAt}`).join("\u001e");
+  const bookingPart = (input.bookings ?? []).map((item) => `${item.siteId}:${item.id}:${item.updatedAt}`).join("\u001e");
+  const supportPart = (input.supportMessages ?? []).map((item) => `${item.id}:${item.createdAt}`).join("\u001e");
+  return [identityId, profilePart, favoritePart, orderPart, bookingPart, supportPart].join("\u001d").slice(0, 12000);
+}
+
+export function hasPersonalGuestMigrationCompleted(accountId: string, fingerprint: string) {
+  const normalizedAccountId = trimText(accountId, 32);
+  if (!normalizedAccountId || !fingerprint) return false;
+  return readMigrationMap()[normalizedAccountId] === fingerprint;
+}
+
+export function markPersonalGuestMigrationCompleted(accountId: string, fingerprint: string) {
+  const normalizedAccountId = trimText(accountId, 32);
+  if (!normalizedAccountId || !fingerprint) return;
+  const next = {
+    ...readMigrationMap(),
+    [normalizedAccountId]: fingerprint,
+  };
+  writeStorageJson(GUEST_MIGRATIONS_STORAGE_KEY, next);
 }

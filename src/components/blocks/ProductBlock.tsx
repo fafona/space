@@ -57,7 +57,7 @@ import {
 import { resolveFrontendAuthPayload } from "@/lib/authSessionRecovery";
 import { readPersonalCustomerProfileFromSession, type PersonalCustomerProfile } from "@/lib/personalCustomerProfile";
 import { notifyPersonalConsumptionChanged } from "@/lib/personalConsumptionBridge";
-import { upsertPersonalGuestOrder } from "@/lib/personalGuestSession";
+import { readPersonalGuestMergeToken, upsertPersonalGuestOrder } from "@/lib/personalGuestSession";
 
 type ProductBlockProps = BackgroundEditableProps &
   TypographyEditableProps & {
@@ -1225,6 +1225,7 @@ export default function ProductBlock(props: ProductBlockProps) {
       const frontendAuthProof =
         (typeof latestAuthPayload?.frontendAuthProof === "string" ? latestAuthPayload.frontendAuthProof.trim() : "") ||
         cartCustomerAuthProof;
+      const isPersonalAuthenticated = latestAuthPayload?.authenticated === true && latestAuthPayload.accountType === "personal";
       const response = await fetch("/api/orders", {
         method: "POST",
         headers: {
@@ -1236,6 +1237,7 @@ export default function ProductBlock(props: ProductBlockProps) {
           blockId: runtimeBlockId,
           pricePrefix,
           frontendAuthProof,
+          customerGuestToken: isPersonalAuthenticated ? "" : readPersonalGuestMergeToken(),
           customer: cartCustomer,
           items: checkedCartItems.map((item) => ({
             productId: item.productId,
@@ -1257,7 +1259,7 @@ export default function ProductBlock(props: ProductBlockProps) {
         throw new Error(payload?.message || payload?.error || "order_create_failed");
       }
       const nextOrderId = String(payload?.order?.id ?? "").trim();
-      if (payload?.order && (latestAuthPayload?.authenticated !== true || latestAuthPayload?.accountType !== "personal")) {
+      if (payload?.order && !isPersonalAuthenticated) {
         upsertPersonalGuestOrder(payload.order);
       }
       setCartItems((current) => current.filter((item) => !item.checked));

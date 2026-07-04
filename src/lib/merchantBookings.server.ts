@@ -880,6 +880,60 @@ export async function listPersonalMerchantBookings(
   );
 }
 
+export async function attachPersonalMerchantBookingsByGuestHash(input: {
+  guestHash: string;
+  accountId?: string | null;
+  userId?: string | null;
+  email?: string | null;
+  records: Array<{ siteId?: string | null; bookingId?: string | null }>;
+}) {
+  const guestHash = trimText(input.guestHash);
+  const accountId = trimText(input.accountId);
+  const userId = trimText(input.userId);
+  const email = trimText(input.email).toLowerCase();
+  if (!guestHash || (!accountId && !userId && !email)) return [];
+
+  const targetKeys = new Set<string>();
+  for (const record of Array.isArray(input.records) ? input.records : []) {
+    const siteId = trimText(record?.siteId);
+    const bookingId = trimText(record?.bookingId);
+    if (!siteId || !bookingId) continue;
+    targetKeys.add(`${siteId}:${bookingId}`);
+    if (targetKeys.size >= 200) break;
+  }
+  if (targetKeys.size === 0) return [];
+
+  return withBookingStoreLock(async () => {
+    const store = await readMerchantBookingStore();
+    const attached: MerchantBookingRecord[] = [];
+    let changed = false;
+    store.records = store.records.map((record) => {
+      if (!targetKeys.has(`${record.siteId}:${record.id}`)) return record;
+      if (trimText(record.customerGuestHash) !== guestHash) return record;
+      const existingOwner =
+        trimText(record.customerAccountId) || trimText(record.customerUserId) || trimText(record.customerLoginEmail).toLowerCase();
+      const ownedByCurrent =
+        (accountId && trimText(record.customerAccountId) === accountId) ||
+        (userId && trimText(record.customerUserId) === userId) ||
+        (email && trimText(record.customerLoginEmail).toLowerCase() === email);
+      if (existingOwner && !ownedByCurrent) return record;
+      const next: MerchantBookingStoredRecord = {
+        ...record,
+        customerAccountId: accountId || record.customerAccountId,
+        customerUserId: userId || record.customerUserId,
+        customerLoginEmail: email || record.customerLoginEmail,
+      };
+      changed = true;
+      attached.push(withoutMerchantBookingToken(next, { includeAutomationState: true, includeCustomerEmailLogs: true, includeTimeline: true }));
+      return next;
+    });
+    if (changed) {
+      await writeMerchantBookingStore(store);
+    }
+    return sortNewestFirst(attached);
+  });
+}
+
 export async function cancelPersonalMerchantBooking(input: {
   bookingId: string;
   accountId?: string | null;
@@ -1165,6 +1219,7 @@ export async function createMerchantBooking(input: MerchantBookingCreateInput): 
       customerAccountId: trimText(input.customerAccountId),
       customerUserId: trimText(input.customerUserId),
       customerLoginEmail: trimText(input.customerLoginEmail).toLowerCase(),
+      customerGuestHash: trimText(input.customerGuestHash),
       ...ruleContext.binding,
       ...editable,
       status: "active",

@@ -76,6 +76,7 @@ export type MerchantBookingCreateInput = MerchantBookingEditableInput & Merchant
   customerAccountId?: string;
   customerUserId?: string;
   customerLoginEmail?: string;
+  customerGuestHash?: string;
 };
 
 export type MerchantBookingRecord = MerchantBookingEditableInput &
@@ -87,6 +88,7 @@ export type MerchantBookingRecord = MerchantBookingEditableInput &
     customerAccountId?: string;
     customerUserId?: string;
     customerLoginEmail?: string;
+    customerGuestHash?: string;
     status: MerchantBookingStatus;
     createdAt: string;
     updatedAt: string;

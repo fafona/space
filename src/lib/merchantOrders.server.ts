@@ -154,6 +154,67 @@ export async function cancelPersonalMerchantOrder(input: {
   return next;
 }
 
+export async function attachPersonalMerchantOrdersByGuestHash(input: {
+  guestHash: string;
+  accountId?: string | null;
+  userId?: string | null;
+  email?: string | null;
+  records: Array<{ siteId?: string | null; orderId?: string | null }>;
+}) {
+  const supabase = requireOrdersStoreClient();
+  const guestHash = trimText(input.guestHash);
+  const accountId = trimText(input.accountId);
+  const userId = trimText(input.userId);
+  const email = trimText(input.email).toLowerCase();
+  if (!guestHash || (!accountId && !userId && !email)) return [];
+
+  const siteMap = new Map<string, Set<string>>();
+  for (const record of Array.isArray(input.records) ? input.records : []) {
+    const siteId = trimText(record?.siteId);
+    const orderId = trimText(record?.orderId);
+    if (!siteId || !orderId) continue;
+    const orderIds = siteMap.get(siteId) ?? new Set<string>();
+    orderIds.add(orderId);
+    siteMap.set(siteId, orderIds);
+    if (siteMap.size >= 100) break;
+  }
+  const attached: MerchantOrderRecord[] = [];
+  for (const [siteId, orderIds] of siteMap.entries()) {
+    const stored = await loadStoredMerchantOrders(supabase, siteId);
+    const orders = normalizeMerchantOrderRecords(stored?.orders ?? []);
+    let changed = false;
+    const nextOrders = orders.map((order) => {
+      if (!orderIds.has(order.id)) return order;
+      if (trimText(order.customerGuestHash) !== guestHash) return order;
+      const existingOwner =
+        trimText(order.customerAccountId) || trimText(order.customerUserId) || trimText(order.customerLoginEmail).toLowerCase();
+      const ownedByCurrent =
+        (accountId && trimText(order.customerAccountId) === accountId) ||
+        (userId && trimText(order.customerUserId) === userId) ||
+        (email && trimText(order.customerLoginEmail).toLowerCase() === email);
+      if (existingOwner && !ownedByCurrent) return order;
+      const next: MerchantOrderRecord = {
+        ...order,
+        customerAccountId: accountId || order.customerAccountId,
+        customerUserId: userId || order.customerUserId,
+        customerLoginEmail: email || order.customerLoginEmail,
+      };
+      changed = true;
+      attached.push(next);
+      return next;
+    });
+    if (changed) {
+      const saved = await saveStoredMerchantOrders(supabase, {
+        siteId,
+        orders: nextOrders,
+        updatedAt: new Date().toISOString(),
+      });
+      if (saved.error) throw new Error(saved.error);
+    }
+  }
+  return attached;
+}
+
 export async function updateMerchantOrderBySite(input: {
   siteId: string;
   orderId: string;

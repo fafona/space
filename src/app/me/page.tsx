@@ -69,12 +69,18 @@ import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
   PERSONAL_GUEST_STORAGE_EVENT,
   appendPersonalGuestSupportMessage,
+  buildPersonalGuestMigrationFingerprint,
   buildPersonalGuestSessionPayload,
   ensurePersonalGuestIdentity,
+  hasPersonalGuestMigrationCompleted,
+  markPersonalGuestMigrationCompleted,
+  readPersonalGuestIdentity,
   readPersonalGuestBookings,
   readPersonalGuestFavoriteSites,
+  readPersonalGuestMergeToken,
   readPersonalGuestOrders,
   readPersonalGuestProfile,
+  readPersonalGuestSupportMessages,
   readPersonalGuestSupportThread,
   savePersonalGuestFavoriteSites,
   savePersonalGuestProfile,
@@ -666,6 +672,24 @@ function mergeNonEmptyPersonalProfileDraft(base: PersonalProfileDraft, patch: Pa
     if (typeof value === "string" && value.trim()) next[key] = value;
   });
   return next;
+}
+
+function fillEmptyPersonalProfileDraft(base: PersonalProfileDraft, patch: Partial<PersonalProfileDraft> | null | undefined) {
+  const next = { ...EMPTY_PERSONAL_PROFILE, ...base };
+  if (!patch || typeof patch !== "object") return next;
+  (Object.keys(EMPTY_PERSONAL_PROFILE) as Array<keyof PersonalProfileDraft>).forEach((key) => {
+    const value = patch[key];
+    if (!next[key].trim() && typeof value === "string" && value.trim()) next[key] = value;
+  });
+  return next;
+}
+
+function hasNonEmptyPersonalProfileDraft(profile: Partial<PersonalProfileDraft> | null | undefined) {
+  if (!profile || typeof profile !== "object") return false;
+  return (Object.keys(EMPTY_PERSONAL_PROFILE) as Array<keyof PersonalProfileDraft>).some((key) => {
+    const value = profile[key];
+    return typeof value === "string" && value.trim().length > 0;
+  });
 }
 
 function mergePersonalProfileIntoPayload(
@@ -2450,6 +2474,7 @@ export default function MePage() {
   const [personalFavoritePublishedSites, setPersonalFavoritePublishedSites] = useState<PersonalFavoritePublishedSite[]>([]);
   const [personalProfileSaving, setPersonalProfileSaving] = useState(false);
   const [personalAvatarUploading, setPersonalAvatarUploading] = useState(false);
+  const [personalProfileLoaded, setPersonalProfileLoaded] = useState(false);
   const [personalProfileMessage, setPersonalProfileMessage] = useState("");
   const [faollaFavoriteToast, setFaollaFavoriteToast] = useState<{
     id: number;
@@ -2487,6 +2512,7 @@ export default function MePage() {
   const personalFavoriteSitesRef = useRef<PersonalFavoriteSite[]>([]);
   const personalFavoriteSitesSaveRequestIdRef = useRef(0);
   const personalSessionRecoveryInFlightRef = useRef<Promise<MeSessionPayload | null> | null>(null);
+  const personalGuestMergeInFlightRef = useRef(false);
   const personalDesktopFaollaFrameRef = useRef<HTMLIFrameElement | null>(null);
   const personalMobileFaollaFrameRef = useRef<HTMLIFrameElement | null>(null);
   const personalFaollaBackendResetAtRef = useRef(0);
@@ -3075,14 +3101,17 @@ export default function MePage() {
       const nextFavoriteSites = normalizePersonalFavoriteSites(readPersonalGuestFavoriteSites<PersonalFavoriteSite>());
       personalFavoriteSitesRef.current = nextFavoriteSites;
       setPersonalFavoriteSites(nextFavoriteSites);
+      setPersonalProfileLoaded(true);
       return;
     }
     if (!accountId) {
       setPersonalBusinessCards([]);
       setPersonalFavoriteSites([]);
+      setPersonalProfileLoaded(false);
       return;
     }
     let cancelled = false;
+    setPersonalProfileLoaded(false);
     void (async () => {
       try {
         const response = await fetch("/api/personal-profile", {
@@ -3115,12 +3144,14 @@ export default function MePage() {
         const nextFavoriteSites = normalizePersonalFavoriteSites(result.favoriteSites);
         personalFavoriteSitesRef.current = nextFavoriteSites;
         setPersonalFavoriteSites(nextFavoriteSites);
+        setPersonalProfileLoaded(true);
       } catch {
         if (cancelled) return;
         personalBusinessCardsRef.current = [];
         setPersonalBusinessCards([]);
         personalFavoriteSitesRef.current = [];
         setPersonalFavoriteSites([]);
+        setPersonalProfileLoaded(false);
       }
     })();
     return () => {
@@ -4156,6 +4187,133 @@ export default function MePage() {
       if (!options?.silent) setPeerLoading(false);
     }
   }, [accountId, email, ensurePersonalSessionReady, isGuestSession, profileName]);
+
+  useEffect(() => {
+    if (
+      loading ||
+      isGuestSession ||
+      !personalProfileLoaded ||
+      payload?.authenticated !== true ||
+      payload.accountType !== "personal" ||
+      !accountId ||
+      personalGuestMergeInFlightRef.current
+    ) {
+      return;
+    }
+    const identity = readPersonalGuestIdentity();
+    if (!identity) return;
+    const guestMergeToken = readPersonalGuestMergeToken(identity);
+    if (!guestMergeToken) return;
+
+    const guestProfile = readPersonalGuestProfile();
+    const guestFavoriteSites = normalizePersonalFavoriteSites(readPersonalGuestFavoriteSites<PersonalFavoriteSite>());
+    const guestOrders = readPersonalGuestOrders();
+    const guestBookings = readPersonalGuestBookings();
+    const guestSupportMessages = readPersonalGuestSupportMessages().filter((message) => message.sender === "merchant");
+    const hasGuestData =
+      hasNonEmptyPersonalProfileDraft(guestProfile) ||
+      guestFavoriteSites.length > 0 ||
+      guestOrders.length > 0 ||
+      guestBookings.length > 0 ||
+      guestSupportMessages.length > 0;
+    if (!hasGuestData) return;
+
+    const fingerprint = buildPersonalGuestMigrationFingerprint({
+      identity,
+      profile: guestProfile,
+      favoriteSites: guestFavoriteSites,
+      orders: guestOrders,
+      bookings: guestBookings,
+      supportMessages: guestSupportMessages,
+    });
+    if (hasPersonalGuestMigrationCompleted(accountId, fingerprint)) return;
+
+    let cancelled = false;
+    personalGuestMergeInFlightRef.current = true;
+    setPersonalProfileMessage("正在合并游客记录...");
+
+    void (async () => {
+      try {
+        const mergedProfile = fillEmptyPersonalProfileDraft(personalProfileDraft, guestProfile);
+        const mergedFavoriteSites = normalizePersonalFavoriteSites([...personalFavoriteSitesRef.current, ...guestFavoriteSites]);
+        const shouldSaveProfile =
+          JSON.stringify(mergedProfile) !== JSON.stringify(personalProfileDraft) ||
+          JSON.stringify(mergedFavoriteSites) !== JSON.stringify(personalFavoriteSitesRef.current);
+
+        if (shouldSaveProfile) {
+          const response = await fetch("/api/personal-profile", {
+            method: "POST",
+            cache: "no-store",
+            credentials: "same-origin",
+            headers: {
+              "Content-Type": "application/json",
+              accept: "application/json",
+            },
+            body: JSON.stringify({
+              profile: mergedProfile,
+              favoriteSites: mergedFavoriteSites,
+            }),
+          });
+          const result = (await response.json().catch(() => null)) as PersonalProfileResponsePayload | null;
+          if (!response.ok || !result || result.ok !== true) {
+            throw new Error(readPayloadMessage(result?.message, "游客资料合并失败"));
+          }
+          if (cancelled) return;
+          const nextProfile = mergePersonalProfileDraft(mergedProfile, result.profile);
+          setPersonalProfileDraft(nextProfile);
+          setPayload((current) => mergePersonalProfileIntoPayload(current, nextProfile, result.user));
+          const nextFavoriteSites = normalizePersonalFavoriteSites(result.favoriteSites);
+          personalFavoriteSitesRef.current = nextFavoriteSites;
+          setPersonalFavoriteSites(nextFavoriteSites);
+        }
+
+        const response = await fetch("/api/personal-guest-merge", {
+          method: "POST",
+          cache: "no-store",
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            accept: "application/json",
+          },
+          body: JSON.stringify({
+            guestMergeToken,
+            orders: guestOrders,
+            bookings: guestBookings,
+            supportMessages: guestSupportMessages,
+          }),
+        });
+        const result = (await response.json().catch(() => null)) as { ok?: boolean; message?: string; error?: string } | null;
+        if (!response.ok || !result || result.ok !== true) {
+          throw new Error(readPayloadMessage(result?.message || result?.error, "游客记录合并失败"));
+        }
+        if (cancelled) return;
+        markPersonalGuestMigrationCompleted(accountId, fingerprint);
+        setPersonalConsumptionReloadKey((current) => current + 1);
+        void loadSupportThread({ silent: true });
+        setPersonalProfileMessage("游客记录已合并到当前账号。");
+      } catch (error) {
+        if (!cancelled) {
+          setPersonalProfileMessage(error instanceof Error ? error.message : "游客记录合并失败，稍后会自动重试。");
+        }
+      } finally {
+        personalGuestMergeInFlightRef.current = false;
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    accountId,
+    isGuestSession,
+    loadSupportThread,
+    loading,
+    payload?.accountType,
+    payload?.authenticated,
+    personalFavoriteSites,
+    personalProfileDraft,
+    personalProfileLoaded,
+  ]);
 
   async function searchConversation() {
     const query = supportContactKeyword.trim();

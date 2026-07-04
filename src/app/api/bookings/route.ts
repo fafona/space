@@ -22,6 +22,7 @@ import { resolvePersonalAccountSessionFromRequest } from "@/lib/personalAccountS
 import { readPersonalCustomerProfileFromSession } from "@/lib/personalCustomerProfile";
 import { verifyFrontendAuthProof } from "@/lib/frontendAuthProof.server";
 import { buildPersonalMerchantContactMap } from "@/lib/personalMerchantContacts.server";
+import { hashPersonalGuestMergeToken } from "@/lib/personalGuestMerge.server";
 import type {
   MerchantBookingActionInput,
   MerchantBookingCreateInput,
@@ -125,7 +126,10 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as Partial<MerchantBookingCreateInput> & { frontendAuthProof?: unknown };
+    const body = (await request.json()) as Partial<MerchantBookingCreateInput> & {
+      frontendAuthProof?: unknown;
+      customerGuestToken?: unknown;
+    };
     const siteId = String(body.siteId ?? "").trim();
     if (!isMerchantNumericId(siteId)) {
       return NextResponse.json({ error: "invalid_site_id" }, { status: 400 });
@@ -161,6 +165,7 @@ export async function POST(request: Request) {
       customerAccountId: personalSession?.accountId ?? personalProof?.accountId ?? "",
       customerUserId: personalSession?.userId ?? personalProof?.userId ?? "",
       customerLoginEmail: personalSession?.email ?? personalProof?.email ?? "",
+      customerGuestHash: personalSession || personalProof ? "" : hashPersonalGuestMergeToken(body.customerGuestToken),
     });
 
     const supabase = createServerSupabaseServiceClient();
