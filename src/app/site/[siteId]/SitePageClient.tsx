@@ -19,6 +19,7 @@ import { loadPlatformState, subscribePlatformState } from "@/data/platformContro
 import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
 import { MOBILE_BREAKPOINT } from "@/lib/deviceViewport";
 import { cloneBlocks, getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
+import { ensurePersonalGuestIdentity } from "@/lib/personalGuestSession";
 import { PUBLISH_SYNC_STORAGE_KEY, subscribePublishSync } from "@/lib/publishSync";
 import { buildPlatformHomeHref, buildSiteStoreScope } from "@/lib/siteRouting";
 import {
@@ -551,6 +552,11 @@ export function SitePageClient({
           willChange: faollaPullOffset > 0 ? "transform" : undefined,
         }
       : undefined;
+
+  useEffect(() => {
+    if (!siteId || siteId === "site-main") return;
+    ensurePersonalGuestIdentity();
+  }, [siteId]);
 
   const waitingForPublishedSync = Boolean(siteId) && !dbBlocks && !hasScopedLocalBlocks && !remoteResolved;
   const shouldHoldForHydration = (!hydrated || isInitialLoading) && !hasInitialPublishedBlocks;
