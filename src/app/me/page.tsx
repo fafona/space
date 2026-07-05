@@ -2260,7 +2260,7 @@ function MobileBottomNav({
     { key: "conversations", label: "会话", icon: <Icon name="chat" /> },
     { key: "consumption", label: "消费", icon: <Icon name="shop" /> },
     { key: "faolla", label: "Faolla", icon: <Icon name="shield" /> },
-    { key: "self", label: "自己", icon: <Icon name="user" /> },
+    { key: "self", label: "我的", icon: <Icon name="user" /> },
   ];
 
   return (

@@ -18989,7 +18989,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             },
             {
               key: "self",
-              label: "自己",
+              label: "我的",
               icon: (
                 <>
                   <circle cx="12" cy="8.5" r="3.2" fill="none" stroke="currentColor" strokeWidth="1.8" />
