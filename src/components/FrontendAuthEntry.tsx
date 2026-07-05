@@ -23,20 +23,20 @@ function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function buildLoginHrefFromCurrentUrl(currentUrl: string) {
-  if (!currentUrl) return "/login";
-  let loginFrom = currentUrl;
+function buildPersonalEntryHrefFromCurrentUrl(currentUrl: string) {
+  if (!currentUrl) return "/me";
+  let sourceUrl = currentUrl;
   try {
     const url = new URL(currentUrl, typeof window !== "undefined" ? window.location.origin : "https://www.faolla.com");
     url.searchParams.delete("appShell");
     url.searchParams.delete("__faollaInlineBuild");
     url.searchParams.delete("__faollaWebBuild");
     url.searchParams.delete("nativeBuild");
-    loginFrom = url.toString();
+    sourceUrl = url.toString();
   } catch {
-    loginFrom = currentUrl;
+    sourceUrl = currentUrl;
   }
-  return `/login?loginFrom=${encodeURIComponent(loginFrom)}`;
+  return buildBackendFaollaHref("/me", sourceUrl);
 }
 
 async function resolveDeferredFrontendAuthPayload(timeoutMs: number) {
@@ -116,31 +116,33 @@ export default function FrontendAuthEntry({
     };
   }, [skipAuthResolution]);
 
-  const loginHref = useMemo(() => buildLoginHrefFromCurrentUrl(currentUrl), [currentUrl]);
+  const personalEntryHref = useMemo(() => buildPersonalEntryHrefFromCurrentUrl(currentUrl), [currentUrl]);
+  const workspaceHref = useMemo(() => buildWorkspaceHref(payload, currentUrl), [currentUrl, payload]);
 
   useEffect(() => {
     if (!autoOpenWorkspace || !resolved || payload?.authenticated !== true || typeof window === "undefined") return;
-    const nextHref = buildWorkspaceHref(payload, currentUrl || window.location.href);
-    if (!nextHref) return;
-    window.location.replace(nextHref);
-  }, [autoOpenWorkspace, currentUrl, payload, resolved]);
+    if (!workspaceHref) return;
+    window.location.replace(workspaceHref);
+  }, [autoOpenWorkspace, payload, resolved, workspaceHref]);
 
   if (skipAuthResolution || !resolved) return null;
-  if (payload?.authenticated === true) return null;
   if (hideLogin) return null;
+
+  const entryHref = payload?.authenticated === true ? workspaceHref || personalEntryHref : personalEntryHref;
+  const entryLabel = payload?.authenticated === true && payload.accountType === "merchant" ? "\u540e\u53f0" : "\u6211\u7684";
 
   return (
     <div className={className}>
       <Link
-        href={loginHref}
+        href={entryHref}
         target="_top"
         className={
           loginClassName ||
           "inline-flex items-center rounded-full border border-slate-200/80 bg-white/90 px-4 py-2 text-sm font-semibold text-slate-900 shadow-[0_12px_30px_rgba(15,23,42,0.14)] backdrop-blur transition hover:bg-white"
         }
-        aria-label="登录"
+        aria-label={entryLabel}
       >
-        登录
+        {entryLabel}
       </Link>
     </div>
   );
