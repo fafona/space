@@ -18,6 +18,7 @@ const RESERVED_PATH_SEGMENTS = new Set([
   "connect",
   "icon.svg",
   "industry",
+  "me",
   "login",
   "portal",
   "reset-password",
@@ -242,6 +243,17 @@ function shouldNoStoreRootRequest(request: NextRequest) {
   );
 }
 
+function isMobileRequest(request: NextRequest) {
+  const chMobile = (request.headers.get("sec-ch-ua-mobile") ?? "").trim();
+  if (chMobile === "?1") return true;
+
+  const viewportWidth = Number.parseInt((request.headers.get("viewport-width") ?? "").trim(), 10);
+  if (Number.isFinite(viewportWidth) && viewportWidth > 0) return viewportWidth <= 768;
+
+  const userAgent = request.headers.get("user-agent") ?? "";
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile|Windows Phone/i.test(userAgent);
+}
+
 function isFaollaHostname(hostname: string) {
   const normalized = hostname.trim().toLowerCase();
   return normalized === "faolla.com" || normalized.endsWith(".faolla.com");
@@ -318,10 +330,45 @@ function buildBadOauthStateRedirectUrl(request: NextRequest) {
 
 function withAppShellNoStore(response: NextResponse, request: NextRequest) {
   if (!shouldNoStoreAppShellPath(request.nextUrl.pathname) && !shouldNoStoreRootRequest(request)) return response;
+  return withNoStore(response);
+}
+
+function withNoStore(response: NextResponse) {
   response.headers.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
   response.headers.set("Pragma", "no-cache");
   response.headers.set("Expires", "0");
   return response;
+}
+
+function isAuthenticatedRequest(request: NextRequest) {
+  const sessionToken = String(request.cookies.get(MERCHANT_AUTH_COOKIE)?.value ?? "").trim();
+  const refreshToken = String(request.cookies.get(MERCHANT_AUTH_REFRESH_COOKIE)?.value ?? "").trim();
+  return Boolean(sessionToken || refreshToken);
+}
+
+function buildMobileGuestShellRedirectUrl(request: NextRequest, sourceUrl: URL) {
+  if (!isMobileRequest(request)) return null;
+  if (isAuthenticatedRequest(request)) return null;
+  if ((request.nextUrl.searchParams.get(FAOLLA_APP_SHELL_PARAM) ?? "").trim().toLowerCase() === FAOLLA_APP_SHELL_VALUE) {
+    return null;
+  }
+  if ((request.nextUrl.searchParams.get("entry") ?? "").trim().toLowerCase() === "card") return null;
+  if ((request.nextUrl.searchParams.get("stayPublic") ?? "").trim() === "1") return null;
+
+  const cleanedSource = new URL(sourceUrl.toString());
+  cleanedSource.searchParams.delete(FAOLLA_APP_SHELL_PARAM);
+  cleanedSource.searchParams.delete(FAOLLA_INLINE_BUILD_PARAM);
+  cleanedSource.searchParams.delete("__faollaWebBuild");
+  cleanedSource.searchParams.delete("nativeBuild");
+
+  const redirectUrl = request.nextUrl.clone();
+  redirectUrl.pathname = "/me";
+  redirectUrl.search = "";
+  redirectUrl.searchParams.set(FAOLLA_SECTION_PARAM, FAOLLA_SECTION_VALUE);
+  redirectUrl.searchParams.set(FAOLLA_URL_PARAM, cleanedSource.toString());
+  const locale = (request.nextUrl.searchParams.get(I18N_URL_PARAM) ?? "").trim();
+  if (locale) redirectUrl.searchParams.set(I18N_URL_PARAM, locale);
+  return redirectUrl;
 }
 
 function buildLaunchSessionRedirectUrl(request: NextRequest) {
@@ -442,9 +489,11 @@ export async function middleware(request: NextRequest) {
   const rewriteToPublishedSite = async (prefix: string) => {
     const resolvedSiteId = await resolveSiteIdByPrefix(prefix, request);
     if (!resolvedSiteId) return null;
+    const guestShellRedirectUrl = buildMobileGuestShellRedirectUrl(request, request.nextUrl);
+    if (guestShellRedirectUrl) return withNoStore(NextResponse.redirect(guestShellRedirectUrl));
     const rewriteUrl = request.nextUrl.clone();
     rewriteUrl.pathname = `/site/${encodeURIComponent(resolvedSiteId)}`;
-    return NextResponse.rewrite(rewriteUrl);
+    return withNoStore(NextResponse.rewrite(rewriteUrl));
   };
 
   if (segments.length === 1) {
@@ -463,7 +512,7 @@ export async function middleware(request: NextRequest) {
 
   const rewriteUrl = request.nextUrl.clone();
   rewriteUrl.pathname = `/${encodeURIComponent(domainPrefix)}`;
-  return withAppShellNoStore(NextResponse.rewrite(rewriteUrl), request);
+  return withNoStore(NextResponse.rewrite(rewriteUrl));
 }
 
 export const config = {

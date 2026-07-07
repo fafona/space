@@ -98,14 +98,14 @@ export default function LaunchBootstrap() {
             navigate(buildBackendAppShellHref(buildMerchantBackendHref(recentMerchantId)));
             return;
           }
-          navigate(`/login?launchRetry=1&merchantHint=${encodeURIComponent(recentMerchantId)}`);
+          navigate(buildBackendAppShellHref("/me"));
           return;
         }
 
-        navigate("/login?launchRetry=1");
+        navigate(buildBackendAppShellHref("/me"));
       } catch {
         if (cancelled) return;
-        navigate("/login?launchRetry=1");
+        navigate(buildBackendAppShellHref("/me"));
       }
     })();
 

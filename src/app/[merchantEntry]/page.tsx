@@ -41,9 +41,9 @@ type LooseSupabaseClient = {
   from: (table: string) => LooseQueryBuilder<{ merchant_id?: string | null; slug?: string | null; updated_at?: string | null; created_at?: string | null }>;
 };
 
-const MERCHANT_ENTRY_PREFIX_TIMEOUT_MS = 700;
+const MERCHANT_ENTRY_PREFIX_TIMEOUT_MS = 1_500;
 const MERCHANT_ENTRY_METADATA_PAYLOAD_TIMEOUT_MS = 800;
-const MERCHANT_ENTRY_PAGE_PAYLOAD_TIMEOUT_MS = 1_200;
+const MERCHANT_ENTRY_PAGE_PAYLOAD_TIMEOUT_MS = 4_000;
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;

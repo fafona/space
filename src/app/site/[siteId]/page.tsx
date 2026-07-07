@@ -27,7 +27,7 @@ const fetchPublishedSitePayloadForRequest = cache((siteId: string) =>
   fetchPublishedSitePayloadFromSupabase(siteId),
 );
 const SITE_METADATA_PAYLOAD_TIMEOUT_MS = 800;
-const SITE_PAGE_PAYLOAD_TIMEOUT_MS = 1_200;
+const SITE_PAGE_PAYLOAD_TIMEOUT_MS = 4_000;
 
 type PublishedSitePayloadResult = Awaited<ReturnType<typeof fetchPublishedSitePayloadFromSupabase>>;
 

@@ -18,6 +18,7 @@ import { type Block } from "@/data/homeBlocks";
 import { loadPlatformState, subscribePlatformState } from "@/data/platformControlStore";
 import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
 import { MOBILE_BREAKPOINT } from "@/lib/deviceViewport";
+import { buildBackendFaollaHref } from "@/lib/faollaEntry";
 import { cloneBlocks, getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
 import { ensurePersonalGuestIdentity } from "@/lib/personalGuestSession";
 import { PUBLISH_SYNC_STORAGE_KEY, subscribePublishSync } from "@/lib/publishSync";
@@ -35,8 +36,10 @@ import usePullToRefresh from "@/lib/usePullToRefresh";
 const EMPTY_BLOCKS: Block[] = [];
 const MIN_INITIAL_LOADING_MS = 0;
 const SITE_REMOTE_FETCH_TIMEOUT_MS = 25000;
-const SITE_REMOTE_SETTLE_TIMEOUT_MS = 26000;
+const SITE_REMOTE_SETTLE_TIMEOUT_MS = 60000;
 const SITE_REMOTE_FALLBACK_DELAY_MS = 650;
+const SITE_REMOTE_EMPTY_RETRY_DELAYS_MS = [0, 1200, 3200];
+const PUBLIC_GUEST_SHELL_AUTH_TIMEOUT_MS = 1400;
 
 function readViewportWidth() {
   if (typeof window === "undefined") return 0;
@@ -72,6 +75,12 @@ function reloadCurrentDocumentAfterPull() {
       window.location.reload();
       resolve();
     }, 160);
+  });
+}
+
+function delay(timeoutMs: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, Math.max(0, timeoutMs));
   });
 }
 
@@ -128,6 +137,34 @@ function delayNull(timeoutMs: number) {
   return new Promise<null>((resolve) => {
     setTimeout(() => resolve(null), Math.max(0, timeoutMs));
   });
+}
+
+function isTopLevelWindow() {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.parent === window;
+  } catch {
+    return true;
+  }
+}
+
+function buildPublicGuestShellHref() {
+  if (typeof window === "undefined") return "";
+  try {
+    const sourceUrl = new URL(window.location.href);
+    sourceUrl.searchParams.delete("appShell");
+    sourceUrl.searchParams.delete("__faollaInlineBuild");
+    sourceUrl.searchParams.delete("__faollaWebBuild");
+    sourceUrl.searchParams.delete("nativeBuild");
+
+    const shellHref = buildBackendFaollaHref("/me", sourceUrl.toString(), window.location.origin);
+    const shellUrl = new URL(shellHref, window.location.origin);
+    const locale = sourceUrl.searchParams.get("uiLocale");
+    if (locale) shellUrl.searchParams.set("uiLocale", locale);
+    return shellUrl.toString();
+  } catch {
+    return "";
+  }
 }
 
 type PublishedSiteBlocksFetchResult = {
@@ -346,6 +383,16 @@ async function fetchPublishedSiteBlocksFast(siteId: string): Promise<PublishedSi
   );
 }
 
+async function fetchPublishedSiteBlocksWithRetries(siteId: string): Promise<PublishedSiteBlocksFetchResult | null> {
+  for (let index = 0; index < SITE_REMOTE_EMPTY_RETRY_DELAYS_MS.length; index += 1) {
+    const waitMs = SITE_REMOTE_EMPTY_RETRY_DELAYS_MS[index] ?? 0;
+    if (waitMs > 0) await delay(waitMs);
+    const result = await fetchPublishedSiteBlocksFast(siteId);
+    if (result?.blocks?.length) return result;
+  }
+  return null;
+}
+
 type SitePageClientProps = {
   forcedSiteId?: string;
   initialIsMobileViewport?: boolean;
@@ -507,7 +554,7 @@ export function SitePageClient({
 
     (async () => {
       try {
-        const nextPublished = await fetchPublishedSiteBlocksFast(siteId);
+        const nextPublished = await fetchPublishedSiteBlocksWithRetries(siteId);
         if (!mounted || !nextPublished) return;
 
         setDbBlocks(nextPublished.blocks);
@@ -557,6 +604,37 @@ export function SitePageClient({
     if (!siteId || siteId === "site-main") return;
     ensurePersonalGuestIdentity();
   }, [siteId]);
+
+  useEffect(() => {
+    if (!hydrated || !isMobileViewport || faollaAppShell || !siteId || siteId === "site-main") return;
+    if (typeof window === "undefined" || !isTopLevelWindow()) return;
+    const params = new URLSearchParams(window.location.search || "");
+    if ((params.get("entry") ?? "").trim().toLowerCase() === "card") return;
+    if ((params.get("stayPublic") ?? "").trim() === "1") return;
+
+    let cancelled = false;
+    const redirectToGuestShell = () => {
+      if (cancelled) return;
+      const nextHref = buildPublicGuestShellHref();
+      if (!nextHref || nextHref === window.location.href) return;
+      window.location.replace(nextHref);
+    };
+
+    void import("@/lib/authSessionRecovery")
+      .then(({ resolveFrontendAuthPayload }) => resolveFrontendAuthPayload(PUBLIC_GUEST_SHELL_AUTH_TIMEOUT_MS))
+      .then((payload) => {
+        if (cancelled) return;
+        if (payload?.authenticated === true && payload.accountType === "merchant") return;
+        redirectToGuestShell();
+      })
+      .catch(() => {
+        redirectToGuestShell();
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [faollaAppShell, hydrated, isMobileViewport, siteId]);
 
   const waitingForPublishedSync = Boolean(siteId) && !dbBlocks && !hasScopedLocalBlocks && !remoteResolved;
   const shouldHoldForHydration = (!hydrated || isInitialLoading) && !hasInitialPublishedBlocks;

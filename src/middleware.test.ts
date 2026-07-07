@@ -175,6 +175,50 @@ test("middleware rejects backend Faolla section targets", async () => {
   assert.match(location, /(?:\?|&)appShell=faolla(?:&|$)/);
 });
 
+test("middleware redirects unauthenticated mobile public merchant entries to the guest Faolla shell", async () => {
+  __clearMiddlewareSiteResolveCacheForTests();
+  const originalFetch = globalThis.fetch;
+  const originalSupabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const originalServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  process.env.NEXT_PUBLIC_SUPABASE_URL = "https://example.supabase.co";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key";
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify([{ merchant_id: "10000000", updated_at: "2026-06-16T10:00:00.000Z" }]), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    })) as typeof fetch;
+
+  try {
+    const response = await middleware(
+      new NextRequest("https://fafona.faolla.com/", {
+        headers: {
+          "user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
+        },
+      }),
+    );
+    const location = response.headers.get("location") ?? "";
+
+    assert.equal(response.status, 307);
+    assert.match(location, /^https:\/\/fafona\.faolla\.com\/me\?/);
+    assert.match(location, /(?:\?|&)section=faolla(?:&|$)/);
+    assert.match(location, /(?:\?|&)faollaUrl=https%3A%2F%2Ffafona\.faolla\.com%2F(?:&|$)/);
+    assert.match(response.headers.get("cache-control") ?? "", /no-store/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalSupabaseUrl === undefined) {
+      delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+    } else {
+      process.env.NEXT_PUBLIC_SUPABASE_URL = originalSupabaseUrl;
+    }
+    if (originalServiceRoleKey === undefined) {
+      delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+    } else {
+      process.env.SUPABASE_SERVICE_ROLE_KEY = originalServiceRoleKey;
+    }
+    __clearMiddlewareSiteResolveCacheForTests();
+  }
+});
+
 test("middleware reuses a fresh merchant prefix resolve", async () => {
   __clearMiddlewareSiteResolveCacheForTests();
   const originalFetch = globalThis.fetch;
@@ -199,6 +243,7 @@ test("middleware reuses a fresh merchant prefix resolve", async () => {
     const second = await middleware(new NextRequest("https://fafona.faolla.com/"));
     assert.match(first.headers.get("x-middleware-rewrite") ?? "", /\/site\/10000000$/);
     assert.match(second.headers.get("x-middleware-rewrite") ?? "", /\/site\/10000000$/);
+    assert.match(first.headers.get("cache-control") ?? "", /no-store/);
     assert.equal(calls, 1);
   } finally {
     globalThis.fetch = originalFetch;
