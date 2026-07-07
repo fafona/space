@@ -1,4 +1,4 @@
-const FAOLLA_SW_VERSION = "faolla-pwa-v20260613-1";
+const FAOLLA_SW_VERSION = "faolla-pwa-v20260707-1";
 const FAOLLA_BADGE_CACHE = "faolla-badge-state-v1";
 const FAOLLA_BADGE_STATE_URL = "/__faolla_badge_state__";
 const FAOLLA_VISIBILITY_STATE_URL = "/__faolla_visibility_state__";
@@ -36,13 +36,25 @@ const FAOLLA_SHELL_URLS = [
   "/faolla-logo-f.png",
 ];
 
+function isFaollaMerchantSubdomain(hostname) {
+  const normalized = String(hostname || "").trim().toLowerCase();
+  return normalized.endsWith(".faolla.com") && normalized !== "www.faolla.com";
+}
+
+function resolveShellPrecacheUrls() {
+  if (isFaollaMerchantSubdomain(self.location.hostname)) {
+    return FAOLLA_SHELL_URLS.filter((path) => path !== "/");
+  }
+  return FAOLLA_SHELL_URLS;
+}
+
 self.addEventListener("install", (event) => {
   event.waitUntil(
     (async () => {
       await self.skipWaiting();
       const cache = await caches.open(FAOLLA_SHELL_CACHE);
       await Promise.all(
-        FAOLLA_SHELL_URLS.map(async (path) => {
+        resolveShellPrecacheUrls().map(async (path) => {
           try {
             const response = await fetch(new Request(path, { cache: "reload" }));
             if (response.ok) {
@@ -520,6 +532,7 @@ async function resolveNavigationResponse(event, request) {
 async function handlePublicNavigationRequest(event, request, url) {
   const shellCache = await caches.open(FAOLLA_SHELL_CACHE);
   const cacheKey = normalizeNavigationCacheKey(url);
+  const allowShellHomeFallback = !isFaollaMerchantSubdomain(url.hostname);
   try {
     const response = await resolveNavigationResponse(event, request);
     await persistNavigationResponse(FAOLLA_PUBLIC_PAGE_CACHE, cacheKey, response, FAOLLA_PUBLIC_PAGE_LIMIT);
@@ -528,7 +541,7 @@ async function handlePublicNavigationRequest(event, request, url) {
     const cachedResponse =
       (await caches.match(cacheKey, { cacheName: FAOLLA_PUBLIC_PAGE_CACHE })) ||
       (await shellCache.match(url.pathname)) ||
-      (url.pathname !== "/" ? await shellCache.match("/") : null);
+      (allowShellHomeFallback && url.pathname !== "/" ? await shellCache.match("/") : null);
     if (cachedResponse) return cachedResponse;
     return buildOfflineFallbackResponse(request);
   }
