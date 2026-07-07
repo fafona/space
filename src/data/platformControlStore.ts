@@ -2450,7 +2450,7 @@ function createBuiltinOrganizationStoryboardBlock(variant: BuiltinOrganizationVa
         <div style="display:flex;flex-direction:column;gap:12px;">
           <div style="font-size:14px;line-height:1.7;color:rgba(255,255,255,0.86);">中间主卡更像现代商会首页的大标语屏，强调国际合作、转型支持和组织使命。</div>
           <div style="display:flex;gap:10px;flex-wrap:wrap;">
-            <span style="display:inline-flex;padding:9px 14px;border-radius:999px;background:#ffffff;color:#1670a5;font-size:12px;font-weight:800;">加入会员</span>
+            <span style="display:inline-flex;padding:9px 14px;border-radius:999px;background:#ffffff;color:#1670a5;font-size:12px;font-weight:800;">加入</span>
             <span style="display:inline-flex;padding:9px 14px;border-radius:999px;border:1px solid rgba(255,255,255,0.35);color:#ffffff;font-size:12px;font-weight:700;">查看项目</span>
           </div>
         </div>
@@ -2502,7 +2502,7 @@ function createBuiltinOrganizationStoryboardBlock(variant: BuiltinOrganizationVa
         <div style="font-size:14px;line-height:1.7;color:#5f4b3b;">左侧先把组织身份、双语属性和服务对象讲明白，让桥接感一眼成立。</div>
       </div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;">
-        <span style="display:inline-flex;padding:8px 12px;border-radius:999px;background:#9b1c1f;color:#fff;font-size:12px;font-weight:800;">加入会员</span>
+        <span style="display:inline-flex;padding:8px 12px;border-radius:999px;background:#9b1c1f;color:#fff;font-size:12px;font-weight:800;">加入</span>
         <span style="display:inline-flex;padding:8px 12px;border-radius:999px;border:1px solid #d9b78f;color:#7c1118;font-size:12px;font-weight:700;">查看活动</span>
       </div>
     </div>

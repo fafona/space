@@ -264,8 +264,8 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
   const memberAvatarInitial = useMemo(() => readAvatarInitial(personalProfile), [personalProfile]);
   const buttonLabel = useMemo(() => {
     if (busy) return "处理中...";
-    if (membership?.status === "left") return "重新加入会员";
-    return "加入会员";
+    if (membership?.status === "left") return "重新加入";
+    return "加入";
   }, [busy, membership?.status]);
 
   const applyAuthPayload = useCallback(
@@ -417,16 +417,16 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
       }
       const payload = (await response.json().catch(() => null)) as MembershipMutationPayload | null;
       if (!response.ok || payload?.ok !== true || !payload.membership) {
-        throw new Error(readPayloadMessage(payload?.message, "加入会员失败，请稍后重试"));
+        throw new Error(readPayloadMessage(payload?.message, "加入失败，请稍后重试"));
       }
       setMembership(payload.membership);
       setPersonalProfile(submitProfile);
       setProfileDraft(submitProfile);
       setDialogOpen(false);
-      setMessage("已加入会员");
+      setMessage("已加入");
       notifyMembershipChanged(payload.membership);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "加入会员失败，请稍后重试");
+      setMessage(error instanceof Error ? error.message : "加入失败，请稍后重试");
     } finally {
       setBusy(false);
     }
@@ -477,7 +477,7 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
           >
             <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
               <div>
-                <div className="text-lg font-semibold text-slate-950">加入会员</div>
+                <div className="text-lg font-semibold text-slate-950">加入</div>
                 <div className="mt-1 text-sm text-slate-500">{siteName || normalizedSiteId}</div>
               </div>
               <button

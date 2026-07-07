@@ -933,7 +933,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                       <td colSpan={9} className="px-3 py-8 text-center text-xs text-slate-500">
                         {keyword.trim() || statusFilter !== "all"
                           ? "没有匹配的会员，请调整搜索或筛选条件。"
-                          : "还没有会员。个人用户在商户首页加入会员后会显示在这里。"}
+                          : "还没有会员。个人用户在商户首页加入后会显示在这里。"}
                       </td>
                     </tr>
                   ) : (
