@@ -18439,7 +18439,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   setSupportSelfSectionView("home");
                 }
               }}
-              aria-label="返回自己主页"
+              aria-label="返回我的主页"
             >
               <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" aria-hidden="true">
                 <path

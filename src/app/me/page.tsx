@@ -7489,7 +7489,7 @@ export default function MePage() {
                       setMobileSelfSection("home");
                     }
                   }}
-                  aria-label="返回自己主页"
+                  aria-label="返回我的主页"
                 >
                   <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" aria-hidden="true">
                     <path d="M19 12H7M12 7l-5 5 5 5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="square" strokeLinejoin="miter" />
