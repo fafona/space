@@ -361,7 +361,7 @@ function buildMobileGuestShellRedirectUrl(request: NextRequest, sourceUrl: URL) 
   cleanedSource.searchParams.delete("__faollaWebBuild");
   cleanedSource.searchParams.delete("nativeBuild");
 
-  const redirectUrl = request.nextUrl.clone();
+  const redirectUrl = new URL(sourceUrl.toString());
   redirectUrl.pathname = "/me";
   redirectUrl.search = "";
   redirectUrl.searchParams.set(FAOLLA_SECTION_PARAM, FAOLLA_SECTION_VALUE);
@@ -369,6 +369,27 @@ function buildMobileGuestShellRedirectUrl(request: NextRequest, sourceUrl: URL) 
   const locale = (request.nextUrl.searchParams.get(I18N_URL_PARAM) ?? "").trim();
   if (locale) redirectUrl.searchParams.set(I18N_URL_PARAM, locale);
   return redirectUrl;
+}
+
+function buildPublicRequestUrl(request: NextRequest) {
+  const publicUrl = request.nextUrl.clone();
+  const publicHost = readRequestPublicHost(request.headers, request.nextUrl);
+  if (publicHost) {
+    const { hostname, port } = parseRequestHost(publicHost);
+    if (hostname) publicUrl.hostname = hostname;
+    publicUrl.port = port;
+  }
+
+  const forwardedProto = readForwardedHeaderValue(request.headers, FORWARDED_PROTO_HEADER).toLowerCase();
+  const normalizedProto =
+    forwardedProto ||
+    (publicHost && !isLocalLikeRequestHostname(publicHost) && isLocalLikeRequestHostname(request.nextUrl.host)
+      ? "https"
+      : request.nextUrl.protocol.replace(/:$/, "").trim().toLowerCase());
+  if (normalizedProto === "http" || normalizedProto === "https") {
+    publicUrl.protocol = `${normalizedProto}:`;
+  }
+  return publicUrl;
 }
 
 function buildLaunchSessionRedirectUrl(request: NextRequest) {
@@ -489,7 +510,7 @@ export async function middleware(request: NextRequest) {
   const rewriteToPublishedSite = async (prefix: string) => {
     const resolvedSiteId = await resolveSiteIdByPrefix(prefix, request);
     if (!resolvedSiteId) return null;
-    const guestShellRedirectUrl = buildMobileGuestShellRedirectUrl(request, request.nextUrl);
+    const guestShellRedirectUrl = buildMobileGuestShellRedirectUrl(request, buildPublicRequestUrl(request));
     if (guestShellRedirectUrl) return withNoStore(NextResponse.redirect(guestShellRedirectUrl));
     const rewriteUrl = request.nextUrl.clone();
     rewriteUrl.pathname = `/site/${encodeURIComponent(resolvedSiteId)}`;

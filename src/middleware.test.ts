@@ -190,8 +190,11 @@ test("middleware redirects unauthenticated mobile public merchant entries to the
 
   try {
     const response = await middleware(
-      new NextRequest("https://fafona.faolla.com/", {
+      new NextRequest("http://localhost:3000/", {
         headers: {
+          host: "localhost:3000",
+          "x-forwarded-host": "fafona.faolla.com",
+          "x-forwarded-proto": "https",
           "user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
         },
       }),
