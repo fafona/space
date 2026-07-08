@@ -304,7 +304,7 @@ export default function BlockRenderer({
             type="button"
             className={openedBlockBackButtonClassName}
             onClick={closeOpenedBlock}
-            aria-label="杩斿洖"
+            aria-label="返回"
           >
             <svg
               viewBox="0 0 24 24"
@@ -374,65 +374,6 @@ export default function BlockRenderer({
           </div>
         );
       })}
-      {openedBlockEntry && false ? (
-        <div
-          className={openedBlockOverlayClassName}
-          role="dialog"
-          aria-modal="true"
-          aria-label={openedBlockEntry!.title}
-        >
-          <div className={openedBlockHeaderClassName}>
-            <div className={openedBlockHeaderInnerClassName}>
-              <button
-                type="button"
-                className={openedBlockBackButtonClassName}
-                onClick={closeOpenedBlock}
-                aria-label="返回"
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  aria-hidden="true"
-                  className={forceMobileViewport ? "h-4.5 w-4.5" : "h-5 w-5"}
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M15 18l-6-6 6-6" />
-                </svg>
-              </button>
-              <div className={openedBlockTitleClassName}>
-                {openedBlockEntry!.title}
-              </div>
-              {openedBlockHasToolbar ? (
-                <div id={openedToolbarTargetId} className="faolla-opened-block-toolbar-target ml-auto flex min-w-0 flex-1 justify-end" />
-              ) : null}
-            </div>
-          </div>
-          <div
-            id={openedBlockEntry!.publicBlockId}
-            data-block-id={openedBlockEntry!.block.id}
-            data-jump-target={openedBlockEntry!.publicBlockId}
-            data-block-public-id={openedBlockEntry!.publicBlockId}
-            className={openedBlockBodyClassName}
-          >
-            <BlockRuntimeBoundary blockId={openedBlockEntry!.block.id}>
-              {renderBlockContent(openedBlockEntry!.block, {
-                openedView: true,
-                openedToolbarTargetId,
-                openedCartTargetId,
-              })}
-            </BlockRuntimeBoundary>
-          </div>
-          {openedBlockHasToolbar ? (
-            <div
-              id={openedCartTargetId}
-              className="faolla-opened-block-cart-target pointer-events-none absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+5.85rem)] z-[2147482100] px-4"
-            />
-          ) : null}
-        </div>
-      ) : null}
       {openedBlockOverlay
         ? forceMobileViewport || !openedPortalHost
           ? openedBlockOverlay
