@@ -76,7 +76,8 @@ input[type="reset"]:disabled,
   height: 0;
 }
 
-html[data-faolla-opened-block="true"] .faolla-site-auth-entry {
+html[data-faolla-opened-block="true"] .faolla-site-auth-entry,
+body[data-faolla-opened-block="true"] .faolla-site-auth-entry {
   display: none !important;
 }
 

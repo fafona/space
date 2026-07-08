@@ -349,7 +349,7 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
 
   async function openJoinDialog() {
     if (!joinable || busy || active) return;
-    if (authenticated === false) {
+    if (authenticated !== true) {
       setMessage("正在确认登录状态...");
       const latestAuthPayload = await resolveDeferredFrontendAuthPayload(6200).catch(() => null);
       if (applyAuthPayload(latestAuthPayload)) {
@@ -360,6 +360,8 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
         setDialogOpen(true);
         return;
       }
+      setResolved(true);
+      setAuthenticated(false);
       redirectToPersonalLogin();
       return;
     }
@@ -432,7 +434,7 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
     }
   }
 
-  if (!joinable || !resolved) return null;
+  if (!joinable) return null;
 
   return (
     <div className={className}>
@@ -444,6 +446,7 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
             : "border-slate-200/80 bg-white/90 px-4 py-2 text-slate-900 hover:bg-white"
         }`}
         aria-label={active ? "会员头像" : buttonLabel}
+        aria-busy={!resolved || busy}
         title={active ? "已是会员" : undefined}
         onClick={() => {
           void openJoinDialog();
