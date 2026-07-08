@@ -134,6 +134,16 @@ export default function BlockRenderer({
   }, []);
 
   useEffect(() => {
+    if (!openedBlockEntry || typeof document === "undefined") return;
+    document.documentElement.dataset.faollaOpenedBlock = "true";
+    document.body.dataset.faollaOpenedBlock = "true";
+    return () => {
+      delete document.documentElement.dataset.faollaOpenedBlock;
+      delete document.body.dataset.faollaOpenedBlock;
+    };
+  }, [openedBlockEntry]);
+
+  useEffect(() => {
     if (!openedBlockEntry || forceMobileViewport || typeof document === "undefined") return;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -254,27 +264,29 @@ export default function BlockRenderer({
 
   const openedBlockHasToolbar = openedBlockEntry?.block.type === "product";
   const openedBlockOverlayClassName = forceMobileViewport
-    ? "absolute inset-0 z-[2147482000] flex flex-col overflow-hidden bg-white text-slate-950"
-    : "fixed inset-0 z-[2147482000] flex flex-col overflow-hidden bg-white text-slate-950";
+    ? "faolla-opened-block-overlay absolute inset-0 z-[2147482000] flex flex-col overflow-hidden bg-white text-slate-950"
+    : "faolla-opened-block-overlay fixed inset-0 z-[2147482000] flex flex-col overflow-hidden bg-white text-slate-950";
   const openedBlockHeaderClassName = forceMobileViewport
     ? openedBlockHasToolbar
-      ? "sticky top-0 z-20 border-b border-slate-200 bg-white/95 px-2 py-1.5 shadow-sm backdrop-blur"
-      : "sticky top-0 z-20 border-b border-slate-200 bg-white/95 px-3 py-2 shadow-sm backdrop-blur"
+      ? "faolla-opened-block-header sticky top-0 z-20 border-b border-slate-200 bg-white/95 px-2 py-1.5 shadow-sm backdrop-blur"
+      : "faolla-opened-block-header sticky top-0 z-20 border-b border-slate-200 bg-white/95 px-3 py-2 shadow-sm backdrop-blur"
     : openedBlockHasToolbar
-      ? "sticky top-0 z-20 border-b border-slate-200 bg-white/95 px-2 py-2 shadow-sm backdrop-blur"
-      : "sticky top-0 z-20 border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur";
+      ? "faolla-opened-block-header sticky top-0 z-20 border-b border-slate-200 bg-white/95 px-2 py-2 shadow-sm backdrop-blur"
+      : "faolla-opened-block-header sticky top-0 z-20 border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur";
   const openedBlockHeaderInnerClassName = forceMobileViewport
-    ? "flex w-full items-center gap-2"
-    : "mx-auto flex w-full max-w-6xl items-center gap-3";
+    ? "faolla-opened-block-header-inner flex w-full min-w-0 items-center gap-2"
+    : "faolla-opened-block-header-inner mx-auto flex w-full max-w-6xl items-center gap-3";
   const openedBlockBackButtonClassName = forceMobileViewport
-    ? "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-900 shadow-sm hover:bg-slate-50"
-    : "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-900 shadow-sm hover:bg-slate-50";
-  const openedBlockBodyClassName = "faolla-hide-scrollbar min-h-0 flex-1 overflow-y-auto";
+    ? "faolla-opened-block-back inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-900 shadow-sm hover:bg-slate-50"
+    : "faolla-opened-block-back inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-900 shadow-sm hover:bg-slate-50";
+  const openedBlockBodyClassName = openedBlockHasToolbar
+    ? "faolla-opened-block-body faolla-hide-scrollbar min-h-0 flex-1 overflow-y-auto bg-white pb-[calc(env(safe-area-inset-bottom)+6.5rem)]"
+    : "faolla-opened-block-body faolla-hide-scrollbar min-h-0 flex-1 overflow-y-auto bg-white";
   const openedToolbarTargetId = openedBlockEntry ? `faolla-opened-block-toolbar-${openedBlockEntry.block.id}` : "";
   const openedCartTargetId = openedBlockEntry ? `faolla-opened-block-cart-${openedBlockEntry.block.id}` : "";
   const openedBlockTitleClassName = openedBlockHasToolbar
-    ? "min-w-0 max-w-[34%] shrink-0 truncate text-xs font-semibold text-slate-700 sm:text-sm"
-    : "min-w-0 flex-1 truncate text-xs font-semibold text-slate-700 sm:text-sm";
+    ? "faolla-opened-block-title faolla-opened-block-title-toolbar min-w-[4.5rem] max-w-[6.5rem] shrink-0 truncate text-sm font-semibold text-slate-700"
+    : "faolla-opened-block-title min-w-0 flex-1 truncate text-xs font-semibold text-slate-700 sm:text-sm";
 
   return (
     <div className={forceMobileViewport ? "relative min-h-[780px]" : "contents"}>
@@ -331,7 +343,7 @@ export default function BlockRenderer({
                 {openedBlockEntry.title}
               </div>
               {openedBlockHasToolbar ? (
-                <div id={openedToolbarTargetId} className="ml-auto flex min-w-0 flex-1 justify-end" />
+                <div id={openedToolbarTargetId} className="faolla-opened-block-toolbar-target ml-auto flex min-w-0 flex-1 justify-end" />
               ) : null}
             </div>
           </div>
@@ -353,7 +365,7 @@ export default function BlockRenderer({
           {openedBlockHasToolbar ? (
             <div
               id={openedCartTargetId}
-              className="pointer-events-none absolute inset-x-0 bottom-4 z-[2147482100] px-4"
+              className="faolla-opened-block-cart-target pointer-events-none absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+5.85rem)] z-[2147482100] px-4"
             />
           ) : null}
         </div>

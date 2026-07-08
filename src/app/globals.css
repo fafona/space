@@ -76,6 +76,10 @@ input[type="reset"]:disabled,
   height: 0;
 }
 
+html[data-faolla-opened-block="true"] .faolla-site-auth-entry {
+  display: none !important;
+}
+
 /* Hide Google Translate banner/tooltip and reset forced top offset. */
 html {
   margin-top: 0 !important;
@@ -171,6 +175,52 @@ html[data-i18n-pending="1"] body {
 }
 
 @media (max-width: 767px), (pointer: coarse) and (max-width: 1024px) {
+  .faolla-opened-block-overlay {
+    width: 100vw !important;
+    max-width: 100vw !important;
+    background: #ffffff !important;
+  }
+
+  .faolla-opened-block-header {
+    padding: calc(env(safe-area-inset-top, 0px) + 0.35rem) 0.5rem 0.45rem !important;
+  }
+
+  .faolla-opened-block-header-inner {
+    gap: 0.45rem !important;
+    max-width: 100% !important;
+  }
+
+  .faolla-opened-block-back {
+    width: 2.35rem !important;
+    min-width: 2.35rem !important;
+    height: 2.35rem !important;
+    min-height: 2.35rem !important;
+  }
+
+  .faolla-opened-block-title-toolbar {
+    min-width: 4.75rem !important;
+    max-width: 5.6rem !important;
+    font-size: 0.86rem !important;
+    line-height: 1.1rem !important;
+  }
+
+  .faolla-opened-block-toolbar-target {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+    max-width: calc(100vw - 8.3rem) !important;
+  }
+
+  .faolla-opened-block-body {
+    background: #ffffff !important;
+    padding-bottom: calc(var(--faolla-mobile-safe-bottom, env(safe-area-inset-bottom, 0px)) + 5.8rem) !important;
+  }
+
+  .faolla-opened-block-cart-target {
+    bottom: calc(var(--faolla-mobile-safe-bottom, env(safe-area-inset-bottom, 0px)) + 4.45rem) !important;
+    padding-left: 0.75rem !important;
+    padding-right: 0.75rem !important;
+  }
+
   .faolla-personal-mobile-shell,
   .support-mobile-shell {
     --faolla-whatsapp-radius: 1.9rem;

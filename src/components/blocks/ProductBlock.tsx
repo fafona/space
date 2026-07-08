@@ -1336,7 +1336,7 @@ export default function ProductBlock(props: ProductBlockProps) {
     if (!productSearchEnabled || products.length === 0) return null;
     if (mode === "toolbar") {
       return (
-        <div className="w-full max-w-[min(62vw,360px)]">
+        <div className="w-full min-w-0">
           <div className="relative">
             <input
               type="search"
@@ -1556,11 +1556,21 @@ export default function ProductBlock(props: ProductBlockProps) {
   };
 
   const renderProductsWithFilters = () => {
+    const scrollViewportStyle: CSSProperties =
+      containerMode === "scroll" && scrollViewportHeight
+        ? openedView
+          ? {
+              height: "calc(100dvh - 9.75rem)",
+              maxHeight: "calc(100dvh - 9.75rem)",
+              paddingBottom: "calc(env(safe-area-inset-bottom) + 6rem)",
+            }
+          : { maxHeight: `${scrollViewportHeight}px` }
+        : {};
     const content = containerMode === "scroll" && scrollViewportHeight ? (
       <div
         ref={scrollViewportRef}
-        className={`min-w-0 overflow-y-auto ${hideProductScrollbar ? "faolla-hide-scrollbar pr-0" : "pr-1"}`}
-        style={{ maxHeight: `${scrollViewportHeight}px` }}
+        className={`${openedView ? "h-full" : ""} min-w-0 overflow-y-auto ${hideProductScrollbar ? "faolla-hide-scrollbar pr-0" : "pr-1"}`}
+        style={scrollViewportStyle}
         onScroll={productScrollSpyEnabled ? handleProductViewportScroll : undefined}
       >
         {renderProductContent()}
@@ -1656,20 +1666,20 @@ export default function ProductBlock(props: ProductBlockProps) {
     ) : null;
 
   const cartOverlayClassName = overlayWithinBlock
-    ? "absolute inset-0 z-[120] flex items-center justify-center bg-black/55 p-3"
+    ? "absolute inset-0 z-[120] flex items-center justify-center bg-black/55 px-2 pt-2 pb-[calc(env(safe-area-inset-bottom)+6rem)]"
     : "fixed inset-0 z-[1100] flex items-center justify-center bg-black/55 px-1.5 py-[calc(env(safe-area-inset-top)+0.75rem)] sm:p-4";
   const cartPanelClassName = overlayWithinBlock
-    ? "relative flex max-h-[calc(100%-1.5rem)] w-full max-w-full flex-col overflow-hidden rounded-[24px] bg-white shadow-2xl"
+    ? "relative flex max-h-[calc(100%-0.75rem)] w-full max-w-full flex-col overflow-hidden rounded-[24px] bg-white shadow-2xl"
     : "relative flex max-h-[min(78dvh,720px)] w-[calc(100vw-0.75rem)] max-w-[calc(100vw-0.75rem)] flex-col overflow-hidden rounded-[22px] bg-white shadow-2xl sm:w-full sm:max-w-3xl sm:rounded-[28px]";
   const cartBodyGridClassName = "flex min-h-0 flex-1 flex-col overflow-hidden";
   const customerOverlayClassName = overlayWithinBlock
-    ? "absolute inset-0 z-[130] flex items-start justify-center overflow-y-auto bg-black/50 px-2 py-2"
+    ? "absolute inset-0 z-[130] flex items-start justify-center overflow-y-auto bg-black/50 px-2 pt-2 pb-[calc(env(safe-area-inset-bottom)+6rem)]"
     : "fixed inset-0 z-[1110] flex items-start justify-center overflow-y-auto bg-black/50 px-2 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-[calc(env(safe-area-inset-bottom)+1rem)]";
   const customerPanelClassName = overlayWithinBlock
-    ? "relative my-2 max-h-[calc(100%-1rem)] w-[calc(100%-0.5rem)] max-w-lg overflow-y-auto rounded-[24px] bg-white p-4 shadow-2xl sm:p-6"
+    ? "relative my-1 max-h-[calc(100%-0.5rem)] w-[calc(100%-0.5rem)] max-w-lg overflow-y-auto rounded-[24px] bg-white p-4 shadow-2xl sm:p-6"
     : "relative max-h-[calc(100dvh-2rem)] w-[calc(100vw-1rem)] max-w-lg overflow-y-auto rounded-[24px] bg-white p-4 shadow-2xl sm:p-6";
   const productDetailOverlayClassName = overlayWithinBlock
-    ? "absolute inset-0 z-[115] flex items-start justify-center overflow-y-auto bg-black/60 px-1.5 py-2"
+    ? "absolute inset-0 z-[115] flex items-start justify-center overflow-y-auto bg-black/60 px-1.5 pt-2 pb-[calc(env(safe-area-inset-bottom)+6rem)]"
     : "fixed inset-0 z-[1000] flex items-start justify-center overflow-y-auto bg-black/60 px-1.5 pt-[calc(env(safe-area-inset-top)+0.5rem)] pb-[calc(env(safe-area-inset-bottom)+1rem)]";
   const productDetailDialogClassName = `relative rounded-3xl shadow-2xl ${
     detailFullImage
@@ -1680,7 +1690,7 @@ export default function ProductBlock(props: ProductBlockProps) {
     ? "grid min-w-0 max-w-full gap-5 overflow-x-hidden"
     : "grid min-w-0 max-w-full gap-6 overflow-x-hidden lg:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]";
   const productDetailFullImageFrameStyle: CSSProperties = overlayWithinBlock
-    ? { height: "min(74dvh, 760px)", minHeight: "240px", maxHeight: "calc(100dvh - 7rem)" }
+    ? { height: "min(68dvh, 760px)", minHeight: "240px", maxHeight: "calc(100dvh - 10rem)" }
     : { height: "min(74dvh, 860px)", minHeight: "240px", maxHeight: "calc(100dvh - 7rem)" };
   const cartButtonClassName = openedView
     ? "pointer-events-auto inline-flex items-center gap-2 rounded-full bg-slate-950/95 px-3.5 py-2.5 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(15,23,42,0.18)] transition hover:bg-slate-800"
@@ -1751,12 +1761,12 @@ export default function ProductBlock(props: ProductBlockProps) {
   const openedSearchToolbar = openedView && openedToolbarTarget ? createPortal(renderSearchBar("toolbar"), openedToolbarTarget) : null;
   const openedCartPortal = openedView && openedCartTarget ? createPortal(renderCartButton(), openedCartTarget) : null;
   const sectionClassName = openedView
-    ? "relative mx-auto min-h-full w-full px-1.5 py-0"
+    ? "relative mx-auto min-h-full w-full bg-white px-1.5 py-0"
     : resolveMobileFitSectionClass("mx-auto max-w-6xl px-6 py-6", mobileFitScreenWidth);
   const cardClassName = openedView
-    ? `relative min-h-full overflow-visible bg-white px-1.5 py-0 shadow-none ${borderClass}`
+    ? `relative min-h-full overflow-visible bg-white px-1.5 pt-0 pb-[calc(env(safe-area-inset-bottom)+6.75rem)] shadow-none ${borderClass}`
     : resolveMobileFitCardClass(`relative overflow-hidden rounded-2xl bg-white p-6 shadow-sm ${borderClass}`, mobileFitScreenWidth);
-  const cardContainerStyle = openedView ? { ...cardStyle, ...borderInlineStyle } : { ...cardStyle, ...sizeStyle, ...borderInlineStyle };
+  const cardContainerStyle = openedView ? { ...borderInlineStyle, background: "#ffffff" } : { ...cardStyle, ...sizeStyle, ...borderInlineStyle };
 
   return (
     <section ref={rootRef} className={sectionClassName} style={offsetStyle}>

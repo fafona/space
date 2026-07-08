@@ -7821,12 +7821,6 @@ export default function MePage() {
       <main className="faolla-personal-mobile-shell fixed inset-x-0 top-0 bottom-0 z-[120] flex min-h-0 flex-col overflow-hidden overscroll-none bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)] touch-manipulation md:hidden">
         {renderMobileContent()}
         <div className={`support-preserve-light-surface relative min-h-0 flex-1 overflow-hidden bg-white ${mobileTab === "faolla" ? "" : "hidden"}`}>
-          <div className="pointer-events-none absolute left-4 top-[calc(var(--faolla-mobile-safe-top)+0.75rem)] z-10">
-            <FaollaHomeButton className="pointer-events-auto h-11 w-11" onClick={navigatePersonalFaollaHome} />
-          </div>
-          <div className="pointer-events-none absolute right-4 top-[calc(var(--faolla-mobile-safe-top)+0.75rem)] z-20 flex items-center gap-2">
-            {renderFaollaFavoriteButton("pointer-events-auto h-10 w-10")}
-          </div>
           {faollaFavoriteToast ? (
             <div className="pointer-events-none absolute left-1/2 top-[calc(var(--faolla-mobile-safe-top)+4.25rem)] z-30 -translate-x-1/2 px-4">
               <div

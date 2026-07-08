@@ -691,7 +691,7 @@ export function SitePageClient({
   const showMerchantLoginButton = Boolean(siteId && siteId !== "site-main" && !faollaAppShell);
   const showMembershipEntry = Boolean(siteId && siteId !== "site-main");
   const authEntryClassName = faollaAppShell
-    ? "fixed right-16 top-[calc(env(safe-area-inset-top)+0.75rem)] z-[2147483000] md:right-16 md:top-5"
+    ? "fixed right-4 top-[calc(env(safe-area-inset-top)+0.75rem)] z-[2147481200] md:right-16 md:top-5"
     : "fixed right-16 top-3 z-[20000] md:right-20 md:top-5";
 
   return (
@@ -707,7 +707,7 @@ export function SitePageClient({
       />
       <div style={faollaPullContentStyle}>
         {showMembershipEntry || showMerchantLoginButton ? (
-          <div className={`${authEntryClassName} flex items-start gap-2`}>
+          <div className={`faolla-site-auth-entry ${authEntryClassName} flex items-start gap-2`}>
             {showMembershipEntry ? (
               <MerchantMembershipEntry
                 siteId={site?.id ?? siteId}
