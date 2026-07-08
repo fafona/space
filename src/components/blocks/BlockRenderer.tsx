@@ -2,6 +2,7 @@
 
 import { Component, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import dynamic from "next/dynamic";
+import { createPortal } from "react-dom";
 import type { Block } from "@/data/homeBlocks";
 import HeroBlock from "./HeroBlock";
 import TextBlock from "./TextBlock";
@@ -122,6 +123,7 @@ export default function BlockRenderer({
       title: resolveOpenBlockTitle(block, publicBlockId),
     };
   }, [safeBlocks, currentPageIndex, openedBlockId]);
+
   const openBlock = useCallback(
     (blockId: string) => {
       if (!openableBlocks.some((block) => block.id === blockId)) return;
@@ -287,6 +289,67 @@ export default function BlockRenderer({
   const openedBlockTitleClassName = openedBlockHasToolbar
     ? "faolla-opened-block-title faolla-opened-block-title-toolbar min-w-[4.5rem] max-w-[6.5rem] shrink-0 truncate text-sm font-semibold text-slate-700"
     : "faolla-opened-block-title min-w-0 flex-1 truncate text-xs font-semibold text-slate-700 sm:text-sm";
+  const openedPortalHost = typeof document !== "undefined" ? document.body : null;
+
+  const openedBlockOverlay = openedBlockEntry ? (
+    <div
+      className={openedBlockOverlayClassName}
+      role="dialog"
+      aria-modal="true"
+      aria-label={openedBlockEntry.title}
+    >
+      <div className={openedBlockHeaderClassName}>
+        <div className={openedBlockHeaderInnerClassName}>
+          <button
+            type="button"
+            className={openedBlockBackButtonClassName}
+            onClick={closeOpenedBlock}
+            aria-label="杩斿洖"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+              className={forceMobileViewport ? "h-4.5 w-4.5" : "h-5 w-5"}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M15 18l-6-6 6-6" />
+            </svg>
+          </button>
+          <div className={openedBlockTitleClassName}>
+            {openedBlockEntry.title}
+          </div>
+          {openedBlockHasToolbar ? (
+            <div id={openedToolbarTargetId} className="faolla-opened-block-toolbar-target ml-auto flex min-w-0 flex-1 justify-end" />
+          ) : null}
+        </div>
+      </div>
+      <div
+        id={openedBlockEntry.publicBlockId}
+        data-block-id={openedBlockEntry.block.id}
+        data-jump-target={openedBlockEntry.publicBlockId}
+        data-block-public-id={openedBlockEntry.publicBlockId}
+        className={openedBlockBodyClassName}
+      >
+        <BlockRuntimeBoundary blockId={openedBlockEntry.block.id}>
+          {renderBlockContent(openedBlockEntry.block, {
+            openedView: true,
+            openedToolbarTargetId,
+            openedCartTargetId,
+          })}
+        </BlockRuntimeBoundary>
+      </div>
+      {openedBlockHasToolbar ? (
+        <div
+          id={openedCartTargetId}
+          className="faolla-opened-block-cart-target pointer-events-none absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+5.85rem)] z-[2147482100] px-4"
+        />
+      ) : null}
+    </div>
+  ) : null;
 
   return (
     <div className={forceMobileViewport ? "relative min-h-[780px]" : "contents"}>
@@ -311,12 +374,12 @@ export default function BlockRenderer({
           </div>
         );
       })}
-      {openedBlockEntry ? (
+      {openedBlockEntry && false ? (
         <div
           className={openedBlockOverlayClassName}
           role="dialog"
           aria-modal="true"
-          aria-label={openedBlockEntry.title}
+          aria-label={openedBlockEntry!.title}
         >
           <div className={openedBlockHeaderClassName}>
             <div className={openedBlockHeaderInnerClassName}>
@@ -340,7 +403,7 @@ export default function BlockRenderer({
                 </svg>
               </button>
               <div className={openedBlockTitleClassName}>
-                {openedBlockEntry.title}
+                {openedBlockEntry!.title}
               </div>
               {openedBlockHasToolbar ? (
                 <div id={openedToolbarTargetId} className="faolla-opened-block-toolbar-target ml-auto flex min-w-0 flex-1 justify-end" />
@@ -348,14 +411,14 @@ export default function BlockRenderer({
             </div>
           </div>
           <div
-            id={openedBlockEntry.publicBlockId}
-            data-block-id={openedBlockEntry.block.id}
-            data-jump-target={openedBlockEntry.publicBlockId}
-            data-block-public-id={openedBlockEntry.publicBlockId}
+            id={openedBlockEntry!.publicBlockId}
+            data-block-id={openedBlockEntry!.block.id}
+            data-jump-target={openedBlockEntry!.publicBlockId}
+            data-block-public-id={openedBlockEntry!.publicBlockId}
             className={openedBlockBodyClassName}
           >
-            <BlockRuntimeBoundary blockId={openedBlockEntry.block.id}>
-              {renderBlockContent(openedBlockEntry.block, {
+            <BlockRuntimeBoundary blockId={openedBlockEntry!.block.id}>
+              {renderBlockContent(openedBlockEntry!.block, {
                 openedView: true,
                 openedToolbarTargetId,
                 openedCartTargetId,
@@ -370,6 +433,11 @@ export default function BlockRenderer({
           ) : null}
         </div>
       ) : null}
+      {openedBlockOverlay
+        ? forceMobileViewport || !openedPortalHost
+          ? openedBlockOverlay
+          : createPortal(openedBlockOverlay, openedPortalHost)
+        : null}
     </div>
   );
 }
