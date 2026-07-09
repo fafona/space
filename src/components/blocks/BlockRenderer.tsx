@@ -1,6 +1,6 @@
 "use client";
 
-import { Component, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type TouchEvent } from "react";
 import dynamic from "next/dynamic";
 import { createPortal } from "react-dom";
 import type { Block } from "@/data/homeBlocks";
@@ -97,6 +97,7 @@ export default function BlockRenderer({
 }) {
   const safeBlocks = useMemo(() => (Array.isArray(blocks) ? blocks : []), [blocks]);
   const [openedBlockId, setOpenedBlockId] = useState<string | null>(null);
+  const openedBlockTouchStartYRef = useRef<number | null>(null);
   const openableBlocks = useMemo<ButtonJumpBlock[]>(
     () =>
       safeBlocks
@@ -133,6 +134,28 @@ export default function BlockRenderer({
   );
   const closeOpenedBlock = useCallback(() => {
     setOpenedBlockId(null);
+  }, []);
+  const handleOpenedBlockTouchStart = useCallback((event: TouchEvent<HTMLDivElement>) => {
+    openedBlockTouchStartYRef.current = event.touches[0]?.clientY ?? null;
+  }, []);
+  const handleOpenedBlockTouchMove = useCallback((event: TouchEvent<HTMLDivElement>) => {
+    const startY = openedBlockTouchStartYRef.current;
+    const touch = event.touches[0];
+    if (startY === null || !touch) return;
+    event.stopPropagation();
+
+    const target = event.currentTarget;
+    const maxScrollTop = Math.max(0, target.scrollHeight - target.clientHeight);
+    const deltaY = touch.clientY - startY;
+    const pullingDownPastTop = target.scrollTop <= 0 && deltaY > 0;
+    const pullingUpPastBottom = target.scrollTop >= maxScrollTop - 1 && deltaY < 0;
+
+    if (maxScrollTop <= 0 || pullingDownPastTop || pullingUpPastBottom) {
+      if (event.cancelable) event.preventDefault();
+    }
+  }, []);
+  const handleOpenedBlockTouchEnd = useCallback(() => {
+    openedBlockTouchStartYRef.current = null;
   }, []);
 
   useEffect(() => {
@@ -333,6 +356,10 @@ export default function BlockRenderer({
         data-jump-target={openedBlockEntry.publicBlockId}
         data-block-public-id={openedBlockEntry.publicBlockId}
         className={openedBlockBodyClassName}
+        onTouchStart={handleOpenedBlockTouchStart}
+        onTouchMove={handleOpenedBlockTouchMove}
+        onTouchEnd={handleOpenedBlockTouchEnd}
+        onTouchCancel={handleOpenedBlockTouchEnd}
       >
         <BlockRuntimeBoundary blockId={openedBlockEntry.block.id}>
           {renderBlockContent(openedBlockEntry.block, {
