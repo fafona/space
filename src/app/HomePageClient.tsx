@@ -68,6 +68,14 @@ function reloadCurrentDocumentAfterPull() {
   });
 }
 
+function isOpenedBlockActive() {
+  if (typeof document === "undefined") return false;
+  return (
+    document.documentElement.dataset.faollaOpenedBlock === "true" ||
+    document.body.dataset.faollaOpenedBlock === "true"
+  );
+}
+
 function getEmbeddedMobilePlanConfig(sourceBlocks: Block[]) {
   const carrier = sourceBlocks.find(
     (block) => !!(block?.props as { pagePlanConfigMobile?: unknown } | undefined)?.pagePlanConfigMobile,
@@ -226,6 +234,7 @@ export default function HomePageClient({
     disabled: !faollaPullRefreshEnabled,
     getScrollElement: getDocumentScrollElement,
     onRefresh: reloadCurrentDocumentAfterPull,
+    shouldStart: () => !isOpenedBlockActive(),
     threshold: 64,
     maxPull: 104,
     resistance: 0.5,

@@ -78,6 +78,14 @@ function reloadCurrentDocumentAfterPull() {
   });
 }
 
+function isOpenedBlockActive() {
+  if (typeof document === "undefined") return false;
+  return (
+    document.documentElement.dataset.faollaOpenedBlock === "true" ||
+    document.body.dataset.faollaOpenedBlock === "true"
+  );
+}
+
 function delay(timeoutMs: number) {
   return new Promise<void>((resolve) => {
     setTimeout(resolve, Math.max(0, timeoutMs));
@@ -586,6 +594,7 @@ export function SitePageClient({
     disabled: !faollaPullRefreshEnabled,
     getScrollElement: getDocumentScrollElement,
     onRefresh: reloadCurrentDocumentAfterPull,
+    shouldStart: () => !isOpenedBlockActive(),
     threshold: 64,
     maxPull: 104,
     resistance: 0.5,

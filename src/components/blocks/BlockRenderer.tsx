@@ -266,8 +266,8 @@ export default function BlockRenderer({
 
   const openedBlockHasToolbar = openedBlockEntry?.block.type === "product";
   const openedBlockOverlayClassName = forceMobileViewport
-    ? "faolla-opened-block-overlay absolute inset-0 z-[2147482000] flex flex-col overflow-hidden bg-white text-slate-950"
-    : "faolla-opened-block-overlay fixed inset-0 z-[2147482000] flex flex-col overflow-hidden bg-white text-slate-950";
+    ? "faolla-opened-block-overlay absolute inset-0 z-[2147482000] flex flex-col overflow-hidden overscroll-contain bg-white text-slate-950"
+    : "faolla-opened-block-overlay fixed inset-0 z-[2147482000] flex flex-col overflow-hidden overscroll-contain bg-white text-slate-950";
   const openedBlockHeaderClassName = forceMobileViewport
     ? openedBlockHasToolbar
       ? "faolla-opened-block-header sticky top-0 z-20 border-b border-slate-200 bg-white/95 px-2 py-1.5 shadow-sm backdrop-blur"
@@ -282,8 +282,8 @@ export default function BlockRenderer({
     ? "faolla-opened-block-back inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-900 shadow-sm hover:bg-slate-50"
     : "faolla-opened-block-back inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-900 shadow-sm hover:bg-slate-50";
   const openedBlockBodyClassName = openedBlockHasToolbar
-    ? "faolla-opened-block-body faolla-hide-scrollbar min-h-0 flex-1 overflow-y-auto bg-white pb-[calc(env(safe-area-inset-bottom)+6.5rem)]"
-    : "faolla-opened-block-body faolla-hide-scrollbar min-h-0 flex-1 overflow-y-auto bg-white";
+    ? "faolla-opened-block-body faolla-hide-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain bg-white pb-[calc(env(safe-area-inset-bottom)+6.5rem)]"
+    : "faolla-opened-block-body faolla-hide-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain bg-white";
   const openedToolbarTargetId = openedBlockEntry ? `faolla-opened-block-toolbar-${openedBlockEntry.block.id}` : "";
   const openedCartTargetId = openedBlockEntry ? `faolla-opened-block-cart-${openedBlockEntry.block.id}` : "";
   const openedBlockTitleClassName = openedBlockHasToolbar

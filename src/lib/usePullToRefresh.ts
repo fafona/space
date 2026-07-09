@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type TouchEventHandler } from "react";
+import { useCallback, useEffect, useRef, useState, type TouchEvent, type TouchEventHandler } from "react";
 
 type UsePullToRefreshOptions = {
   onRefresh: () => Promise<void> | void;
@@ -9,6 +9,7 @@ type UsePullToRefreshOptions = {
   threshold?: number;
   maxPull?: number;
   resistance?: number;
+  shouldStart?: (event: TouchEvent<HTMLElement>) => boolean;
 };
 
 type PullStartPoint = {
@@ -23,6 +24,7 @@ export default function usePullToRefresh({
   threshold = 56,
   maxPull = 104,
   resistance = 0.45,
+  shouldStart,
 }: UsePullToRefreshOptions) {
   const startPointRef = useRef<PullStartPoint | null>(null);
   const [pullDistance, setPullDistance] = useState(0);
@@ -55,6 +57,10 @@ export default function usePullToRefresh({
   const handleTouchStart = useCallback<TouchEventHandler<HTMLElement>>(
     (event) => {
       if (disabled || refreshing) return;
+      if (shouldStart && !shouldStart(event)) {
+        startPointRef.current = null;
+        return;
+      }
       const scrollElement = getScrollElement();
       if (!scrollElement || scrollElement.scrollTop > 0) {
         startPointRef.current = null;
@@ -66,7 +72,7 @@ export default function usePullToRefresh({
         y: touch.clientY,
       };
     },
-    [disabled, getScrollElement, refreshing],
+    [disabled, getScrollElement, refreshing, shouldStart],
   );
 
   const handleTouchMove = useCallback<TouchEventHandler<HTMLElement>>(
