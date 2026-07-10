@@ -1666,17 +1666,17 @@ export default function ProductBlock(props: ProductBlockProps) {
     ) : null;
 
   const cartOverlayClassName = overlayWithinBlock
-    ? "absolute inset-0 z-[120] flex items-center justify-center bg-black/55 px-2 pt-2 pb-[calc(env(safe-area-inset-bottom)+6rem)]"
-    : "fixed inset-0 z-[1100] flex items-center justify-center bg-black/55 px-1.5 py-[calc(env(safe-area-inset-top)+0.75rem)] sm:p-4";
+    ? "absolute inset-0 z-[120] flex items-end justify-center overflow-hidden bg-black/55 px-2 pt-2 pb-[calc(env(safe-area-inset-bottom)+6.5rem)]"
+    : "fixed inset-0 z-[1100] flex items-end justify-center overflow-hidden bg-black/55 px-1.5 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-[calc(env(safe-area-inset-bottom)+1rem)] sm:items-center sm:p-4";
   const cartPanelClassName = overlayWithinBlock
-    ? "relative flex max-h-[calc(100%-0.75rem)] w-full max-w-full flex-col overflow-hidden rounded-[24px] bg-white shadow-2xl"
+    ? "relative flex max-h-[min(58dvh,30rem)] w-full max-w-full flex-col overflow-hidden rounded-[24px] bg-white shadow-2xl"
     : "relative flex max-h-[min(78dvh,720px)] w-[calc(100vw-0.75rem)] max-w-[calc(100vw-0.75rem)] flex-col overflow-hidden rounded-[22px] bg-white shadow-2xl sm:w-full sm:max-w-3xl sm:rounded-[28px]";
   const cartBodyGridClassName = "flex min-h-0 flex-1 flex-col overflow-hidden";
   const customerOverlayClassName = overlayWithinBlock
-    ? "absolute inset-0 z-[130] flex items-start justify-center overflow-y-auto bg-black/50 px-2 pt-2 pb-[calc(env(safe-area-inset-bottom)+6rem)]"
-    : "fixed inset-0 z-[1110] flex items-start justify-center overflow-y-auto bg-black/50 px-2 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-[calc(env(safe-area-inset-bottom)+1rem)]";
+    ? "absolute inset-0 z-[130] flex items-end justify-center overflow-hidden bg-black/50 px-2 pt-2 pb-[calc(env(safe-area-inset-bottom)+6.5rem)]"
+    : "fixed inset-0 z-[1110] flex items-end justify-center overflow-hidden bg-black/50 px-2 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-[calc(env(safe-area-inset-bottom)+1rem)] sm:items-start sm:overflow-y-auto";
   const customerPanelClassName = overlayWithinBlock
-    ? "relative my-1 max-h-[calc(100%-0.5rem)] w-[calc(100%-0.5rem)] max-w-lg overflow-y-auto rounded-[24px] bg-white p-4 shadow-2xl sm:p-6"
+    ? "relative max-h-[min(72dvh,34rem)] w-[calc(100%-0.5rem)] max-w-lg overflow-y-auto rounded-[24px] bg-white p-4 shadow-2xl sm:p-6"
     : "relative max-h-[calc(100dvh-2rem)] w-[calc(100vw-1rem)] max-w-lg overflow-y-auto rounded-[24px] bg-white p-4 shadow-2xl sm:p-6";
   const productDetailOverlayClassName = overlayWithinBlock
     ? "absolute inset-0 z-[115] flex items-start justify-center overflow-y-auto bg-black/60 px-1.5 pt-2 pb-[calc(env(safe-area-inset-bottom)+6rem)]"
@@ -1905,7 +1905,7 @@ export default function ProductBlock(props: ProductBlockProps) {
                   </div>
                 )}
               </div>
-              <div className="flex shrink-0 items-center gap-2 border-t border-slate-200 bg-white px-3 py-3 sm:px-6 sm:py-4">
+              <div className="flex shrink-0 items-center gap-2 border-t border-slate-200 bg-white px-3 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:px-6 sm:py-4">
                 <button
                   key={cartCustomerShakeKey}
                   type="button"
