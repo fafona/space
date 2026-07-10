@@ -318,9 +318,11 @@ export default function BlockRenderer({
   const openedBlockBackButtonClassName = forceMobileViewport
     ? "faolla-opened-block-back inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-900 shadow-sm hover:bg-slate-50"
     : "faolla-opened-block-back inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-900 shadow-sm hover:bg-slate-50";
-  const openedBlockBodyClassName = openedBlockHasToolbar
-    ? "faolla-opened-block-body faolla-hide-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain bg-white pb-[calc(env(safe-area-inset-bottom)+6.5rem)]"
-    : "faolla-opened-block-body faolla-hide-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain bg-white";
+  const openedBlockBodyClassName = openedProductCartOpen
+    ? "faolla-opened-block-body faolla-hide-scrollbar relative min-h-0 flex-1 overflow-hidden overscroll-contain bg-white"
+    : openedBlockHasToolbar
+      ? "faolla-opened-block-body faolla-hide-scrollbar relative min-h-0 flex-1 overflow-y-auto overscroll-contain bg-white pb-[calc(env(safe-area-inset-bottom)+6.5rem)]"
+      : "faolla-opened-block-body faolla-hide-scrollbar relative min-h-0 flex-1 overflow-y-auto overscroll-contain bg-white";
   const openedToolbarTargetId = openedBlockEntry ? `faolla-opened-block-toolbar-${openedBlockEntry.block.id}` : "";
   const openedCartTargetId = openedBlockEntry ? `faolla-opened-block-cart-${openedBlockEntry.block.id}` : "";
   const openedCartCloseEventName = openedBlockEntry ? `faolla-opened-block-cart-close:${openedBlockEntry.block.id}` : "";

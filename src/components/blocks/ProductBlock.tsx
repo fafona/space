@@ -910,6 +910,12 @@ export default function ProductBlock(props: ProductBlockProps) {
     return () => window.removeEventListener(openedCartCloseEventName, closeCart);
   }, [openedCartCloseEventName, openedView]);
 
+  useEffect(() => {
+    if (!openedView || !cartOpen) return;
+    const openedBody = rootRef.current?.closest<HTMLElement>(".faolla-opened-block-body");
+    if (openedBody) openedBody.scrollTop = 0;
+  }, [cartOpen, openedView]);
+
   useEffect(
     () => () => {
       cartAnimationTimersRef.current.forEach((timer) => window.clearTimeout(timer));
@@ -1791,10 +1797,14 @@ export default function ProductBlock(props: ProductBlockProps) {
   const openedSearchToolbar = openedView && openedToolbarTarget ? createPortal(renderSearchBar("toolbar"), openedToolbarTarget) : null;
   const openedCartPortal = openedView && openedCartTarget ? createPortal(renderCartButton(), openedCartTarget) : null;
   const sectionClassName = openedView
-    ? "relative mx-auto min-h-full w-full bg-white px-1.5 py-0"
+    ? cartOpen
+      ? "relative mx-auto h-full min-h-0 w-full overflow-hidden bg-white px-1.5 py-0"
+      : "relative mx-auto min-h-full w-full bg-white px-1.5 py-0"
     : resolveMobileFitSectionClass("mx-auto max-w-6xl px-6 py-6", mobileFitScreenWidth);
   const cardClassName = openedView
-    ? `relative min-h-full overflow-visible bg-white px-1.5 pt-0 pb-[calc(env(safe-area-inset-bottom)+6.75rem)] shadow-none ${borderClass}`
+    ? cartOpen
+      ? `relative h-full min-h-0 overflow-hidden bg-white px-1.5 pt-0 shadow-none ${borderClass}`
+      : `relative min-h-full overflow-visible bg-white px-1.5 pt-0 pb-[calc(env(safe-area-inset-bottom)+6.75rem)] shadow-none ${borderClass}`
     : resolveMobileFitCardClass(`relative overflow-hidden rounded-2xl bg-white p-6 shadow-sm ${borderClass}`, mobileFitScreenWidth);
   const cardContainerStyle = openedView ? { ...borderInlineStyle, background: "#ffffff" } : { ...cardStyle, ...sizeStyle, ...borderInlineStyle };
 
