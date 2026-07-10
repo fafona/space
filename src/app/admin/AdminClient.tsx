@@ -28979,7 +28979,7 @@ type GalleryEditorImage = {
         ...current,
         [block.id]: {
           ...(current[block.id] ?? {}),
-          [section]: !(current[block.id]?.[section] === true),
+          [section]: !(current[block.id]?.[section] ?? (section !== "basic")),
         },
       }));
     };
