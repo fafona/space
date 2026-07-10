@@ -1702,7 +1702,9 @@ export default function ProductBlock(props: ProductBlockProps) {
     ) : null;
 
   const cartOverlayClassName = overlayWithinBlock
-    ? "absolute inset-0 z-[120] flex flex-col overflow-hidden bg-white pb-[calc(env(safe-area-inset-bottom)+6.5rem)]"
+    ? cartUsesOpenedShellHeader
+      ? "absolute inset-0 z-[120] flex flex-col overflow-hidden bg-white"
+      : "absolute inset-0 z-[120] flex flex-col overflow-hidden bg-white pb-[calc(env(safe-area-inset-bottom)+6.5rem)]"
     : "fixed inset-0 z-[1100] flex flex-col overflow-hidden bg-white sm:items-center sm:justify-center sm:bg-black/55 sm:p-4";
   const cartPanelClassName = overlayWithinBlock
     ? "relative flex min-h-0 flex-1 w-full max-w-full flex-col overflow-hidden bg-white"
