@@ -1666,11 +1666,11 @@ export default function ProductBlock(props: ProductBlockProps) {
     ) : null;
 
   const cartOverlayClassName = overlayWithinBlock
-    ? "absolute inset-0 z-[120] flex items-end justify-center overflow-hidden bg-black/55 px-2 pt-2 pb-[calc(env(safe-area-inset-bottom)+6.5rem)]"
-    : "fixed inset-0 z-[1100] flex items-end justify-center overflow-hidden bg-black/55 px-1.5 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-[calc(env(safe-area-inset-bottom)+1rem)] sm:items-center sm:p-4";
+    ? "absolute inset-0 z-[120] flex flex-col overflow-hidden bg-white pb-[calc(env(safe-area-inset-bottom)+6.5rem)]"
+    : "fixed inset-0 z-[1100] flex flex-col overflow-hidden bg-white sm:items-center sm:justify-center sm:bg-black/55 sm:p-4";
   const cartPanelClassName = overlayWithinBlock
-    ? "relative flex max-h-[min(58dvh,30rem)] w-full max-w-full flex-col overflow-hidden rounded-[24px] bg-white shadow-2xl"
-    : "relative flex max-h-[min(78dvh,720px)] w-[calc(100vw-0.75rem)] max-w-[calc(100vw-0.75rem)] flex-col overflow-hidden rounded-[22px] bg-white shadow-2xl sm:w-full sm:max-w-3xl sm:rounded-[28px]";
+    ? "relative flex min-h-0 flex-1 w-full max-w-full flex-col overflow-hidden bg-white"
+    : "relative flex min-h-0 flex-1 w-full max-w-full flex-col overflow-hidden bg-white sm:flex-none sm:max-h-[min(78dvh,720px)] sm:w-full sm:max-w-3xl sm:rounded-[28px] sm:shadow-2xl";
   const cartBodyGridClassName = "flex min-h-0 flex-1 flex-col overflow-hidden";
   const customerOverlayClassName = overlayWithinBlock
     ? "absolute inset-0 z-[130] flex items-end justify-center overflow-hidden bg-black/50 px-2 pt-2 pb-[calc(env(safe-area-inset-bottom)+6.5rem)]"
@@ -1801,8 +1801,21 @@ export default function ProductBlock(props: ProductBlockProps) {
             className={cartPanelClassName}
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-4 py-3 sm:px-6 sm:py-4">
-              <div>
+            <div className="flex shrink-0 items-center gap-3 border-b border-slate-200 px-3 py-2.5 sm:px-6 sm:py-4">
+              <button
+                type="button"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-900 shadow-sm transition hover:bg-slate-50"
+                onClick={() => {
+                  setCartCustomerOpen(false);
+                  setCartOpen(false);
+                }}
+                aria-label="返回商品列表"
+              >
+                <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+                  <path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+              <div className="min-w-0 flex-1">
                 <div className="text-xl font-semibold text-slate-900 sm:text-2xl">购物车</div>
                 <div className="mt-0.5 text-xs text-slate-500 sm:text-sm">
                   已选 {checkedCartTotalQuantity} 件，合计 {formatMerchantOrderAmount(checkedCartTotalAmount, pricePrefix)}
@@ -1810,17 +1823,6 @@ export default function ProductBlock(props: ProductBlockProps) {
                 {cartNotice ? <div className="mt-2 text-sm text-emerald-600">{cartNotice}</div> : null}
                 {cartError ? <div className="mt-2 text-sm text-rose-600">{cartError}</div> : null}
               </div>
-              <button
-                type="button"
-                className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-xl text-slate-500 transition hover:bg-slate-50 sm:h-10 sm:w-10"
-                onClick={() => {
-                  setCartCustomerOpen(false);
-                  setCartOpen(false);
-                }}
-                aria-label="关闭购物车"
-              >
-                ×
-              </button>
             </div>
             <div className={cartBodyGridClassName}>
               <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 sm:px-6 sm:py-4">
