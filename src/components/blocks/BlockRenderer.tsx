@@ -97,6 +97,7 @@ export default function BlockRenderer({
 }) {
   const safeBlocks = useMemo(() => (Array.isArray(blocks) ? blocks : []), [blocks]);
   const [openedBlockId, setOpenedBlockId] = useState<string | null>(null);
+  const [openedProductCartOpen, setOpenedProductCartOpen] = useState(false);
   const openedBlockTouchStartYRef = useRef<number | null>(null);
   const openableBlocks = useMemo<ButtonJumpBlock[]>(
     () =>
@@ -133,7 +134,11 @@ export default function BlockRenderer({
     [openableBlocks],
   );
   const closeOpenedBlock = useCallback(() => {
+    setOpenedProductCartOpen(false);
     setOpenedBlockId(null);
+  }, []);
+  const handleOpenedProductCartStateChange = useCallback((open: boolean) => {
+    setOpenedProductCartOpen(open);
   }, []);
   const handleOpenedBlockTouchStart = useCallback((event: TouchEvent<HTMLDivElement>) => {
     openedBlockTouchStartYRef.current = event.touches[0]?.clientY ?? null;
@@ -189,7 +194,13 @@ export default function BlockRenderer({
 
   function renderBlockContent(
     b: Block,
-    options: { openedView?: boolean; openedToolbarTargetId?: string; openedCartTargetId?: string } = {},
+    options: {
+      openedView?: boolean;
+      openedToolbarTargetId?: string;
+      openedCartTargetId?: string;
+      openedCartCloseEventName?: string;
+      onOpenedCartStateChange?: (open: boolean) => void;
+    } = {},
   ): ReactNode {
     let content: ReactNode = null;
     switch (b.type) {
@@ -257,6 +268,8 @@ export default function BlockRenderer({
             runtimeOpenedView={options.openedView === true}
             runtimeOpenedToolbarTargetId={options.openedToolbarTargetId}
             runtimeOpenedCartTargetId={options.openedCartTargetId}
+            runtimeOpenedCartCloseEventName={options.openedCartCloseEventName}
+            runtimeOnOpenedCartStateChange={options.onOpenedCartStateChange}
           />
         );
         break;
@@ -287,7 +300,8 @@ export default function BlockRenderer({
 
   if (safeBlocks.length === 0) return null;
 
-  const openedBlockHasToolbar = openedBlockEntry?.block.type === "product";
+  const openedBlockIsProduct = openedBlockEntry?.block.type === "product";
+  const openedBlockHasToolbar = Boolean(openedBlockIsProduct && !openedProductCartOpen);
   const openedBlockOverlayClassName = forceMobileViewport
     ? "faolla-opened-block-overlay absolute inset-0 z-[2147482000] flex flex-col overflow-hidden overscroll-contain bg-white text-slate-950"
     : "faolla-opened-block-overlay fixed inset-0 z-[2147482000] flex flex-col overflow-hidden overscroll-contain bg-white text-slate-950";
@@ -309,24 +323,34 @@ export default function BlockRenderer({
     : "faolla-opened-block-body faolla-hide-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain bg-white";
   const openedToolbarTargetId = openedBlockEntry ? `faolla-opened-block-toolbar-${openedBlockEntry.block.id}` : "";
   const openedCartTargetId = openedBlockEntry ? `faolla-opened-block-cart-${openedBlockEntry.block.id}` : "";
+  const openedCartCloseEventName = openedBlockEntry ? `faolla-opened-block-cart-close:${openedBlockEntry.block.id}` : "";
   const openedBlockTitleClassName = openedBlockHasToolbar
     ? "faolla-opened-block-title faolla-opened-block-title-toolbar min-w-[4.5rem] max-w-[6.5rem] shrink-0 truncate text-sm font-semibold text-slate-700"
     : "faolla-opened-block-title min-w-0 flex-1 truncate text-xs font-semibold text-slate-700 sm:text-sm";
+  const openedBlockTitleText = openedProductCartOpen ? "购物车" : openedBlockEntry?.title;
   const openedPortalHost = typeof document !== "undefined" ? document.body : null;
+  const handleOpenedBlockBackClick = () => {
+    if (openedProductCartOpen && openedCartCloseEventName && typeof window !== "undefined") {
+      window.dispatchEvent(new Event(openedCartCloseEventName));
+      setOpenedProductCartOpen(false);
+      return;
+    }
+    closeOpenedBlock();
+  };
 
   const openedBlockOverlay = openedBlockEntry ? (
     <div
       className={openedBlockOverlayClassName}
       role="dialog"
       aria-modal="true"
-      aria-label={openedBlockEntry.title}
+      aria-label={openedBlockTitleText}
     >
       <div className={openedBlockHeaderClassName}>
         <div className={openedBlockHeaderInnerClassName}>
           <button
             type="button"
             className={openedBlockBackButtonClassName}
-            onClick={closeOpenedBlock}
+            onClick={handleOpenedBlockBackClick}
             aria-label="返回"
           >
             <svg
@@ -343,7 +367,7 @@ export default function BlockRenderer({
             </svg>
           </button>
           <div className={openedBlockTitleClassName}>
-            {openedBlockEntry.title}
+            {openedBlockTitleText}
           </div>
           {openedBlockHasToolbar ? (
             <div id={openedToolbarTargetId} className="faolla-opened-block-toolbar-target ml-auto flex min-w-0 flex-1 justify-end" />
@@ -366,10 +390,12 @@ export default function BlockRenderer({
             openedView: true,
             openedToolbarTargetId,
             openedCartTargetId,
+            openedCartCloseEventName,
+            onOpenedCartStateChange: handleOpenedProductCartStateChange,
           })}
         </BlockRuntimeBoundary>
       </div>
-      {openedBlockHasToolbar ? (
+      {openedBlockIsProduct && !openedProductCartOpen ? (
         <div
           id={openedCartTargetId}
           className="faolla-opened-block-cart-target pointer-events-none absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+5.85rem)] z-[2147482100] px-4"

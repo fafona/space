@@ -116,6 +116,8 @@ type ProductBlockProps = BackgroundEditableProps &
     runtimeOpenedView?: boolean;
     runtimeOpenedToolbarTargetId?: string;
     runtimeOpenedCartTargetId?: string;
+    runtimeOpenedCartCloseEventName?: string;
+    runtimeOnOpenedCartStateChange?: (open: boolean) => void;
   };
 
 type ProductCartItemState = {
@@ -620,6 +622,9 @@ export default function ProductBlock(props: ProductBlockProps) {
   const openedView = props.runtimeOpenedView === true;
   const openedToolbarTargetId = typeof props.runtimeOpenedToolbarTargetId === "string" ? props.runtimeOpenedToolbarTargetId : "";
   const openedCartTargetId = typeof props.runtimeOpenedCartTargetId === "string" ? props.runtimeOpenedCartTargetId : "";
+  const openedCartCloseEventName =
+    typeof props.runtimeOpenedCartCloseEventName === "string" ? props.runtimeOpenedCartCloseEventName : "";
+  const onOpenedCartStateChange = props.runtimeOnOpenedCartStateChange;
   const mobileFitScreenWidth = props.mobileFitScreenWidth === true;
   const { locale } = useI18n();
   const products = normalizeProductItems(props.products)
@@ -775,6 +780,7 @@ export default function ProductBlock(props: ProductBlockProps) {
   const cartStorageKey = cartRuntimeReady ? getProductCartStorageKey(effectiveRuntimeSiteId, runtimeBlockId) : "";
   const overlayWithinBlock = props.runtimeInteractiveOverlayWithinBlock === true;
   const disableCartPortal = props.runtimeDisableCartPortal === true;
+  const cartUsesOpenedShellHeader = openedView && overlayWithinBlock;
   const [cartPortalTarget, setCartPortalTarget] = useState<HTMLElement | null>(null);
   const [openedToolbarTarget, setOpenedToolbarTarget] = useState<HTMLElement | null>(null);
   const [openedCartTarget, setOpenedCartTarget] = useState<HTMLElement | null>(null);
@@ -879,6 +885,30 @@ export default function ProductBlock(props: ProductBlockProps) {
       if (frameId) window.cancelAnimationFrame(frameId);
     };
   }, [openedCartTargetId, openedView]);
+
+  useEffect(() => {
+    if (!openedView || typeof onOpenedCartStateChange !== "function") return;
+    onOpenedCartStateChange(cartOpen);
+  }, [cartOpen, onOpenedCartStateChange, openedView]);
+
+  useEffect(
+    () => () => {
+      if (openedView && typeof onOpenedCartStateChange === "function") {
+        onOpenedCartStateChange(false);
+      }
+    },
+    [onOpenedCartStateChange, openedView],
+  );
+
+  useEffect(() => {
+    if (!openedView || !openedCartCloseEventName || typeof window === "undefined") return;
+    const closeCart = () => {
+      setCartCustomerOpen(false);
+      setCartOpen(false);
+    };
+    window.addEventListener(openedCartCloseEventName, closeCart);
+    return () => window.removeEventListener(openedCartCloseEventName, closeCart);
+  }, [openedCartCloseEventName, openedView]);
 
   useEffect(
     () => () => {
@@ -1801,29 +1831,31 @@ export default function ProductBlock(props: ProductBlockProps) {
             className={cartPanelClassName}
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex shrink-0 items-center gap-3 border-b border-slate-200 px-3 py-2.5 sm:px-6 sm:py-4">
-              <button
-                type="button"
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-900 shadow-sm transition hover:bg-slate-50"
-                onClick={() => {
-                  setCartCustomerOpen(false);
-                  setCartOpen(false);
-                }}
-                aria-label="返回商品列表"
-              >
-                <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
-                  <path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </button>
-              <div className="min-w-0 flex-1">
-                <div className="text-xl font-semibold text-slate-900 sm:text-2xl">购物车</div>
-                <div className="mt-0.5 text-xs text-slate-500 sm:text-sm">
-                  已选 {checkedCartTotalQuantity} 件，合计 {formatMerchantOrderAmount(checkedCartTotalAmount, pricePrefix)}
+            {cartUsesOpenedShellHeader ? null : (
+              <div className="flex shrink-0 items-center gap-3 border-b border-slate-200 px-3 py-2.5 sm:px-6 sm:py-4">
+                <button
+                  type="button"
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-900 shadow-sm transition hover:bg-slate-50"
+                  onClick={() => {
+                    setCartCustomerOpen(false);
+                    setCartOpen(false);
+                  }}
+                  aria-label="返回商品列表"
+                >
+                  <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+                    <path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+                <div className="min-w-0 flex-1">
+                  <div className="text-xl font-semibold text-slate-900 sm:text-2xl">购物车</div>
+                  <div className="mt-0.5 text-xs text-slate-500 sm:text-sm">
+                    已选 {checkedCartTotalQuantity} 件，合计 {formatMerchantOrderAmount(checkedCartTotalAmount, pricePrefix)}
+                  </div>
+                  {cartNotice ? <div className="mt-2 text-sm text-emerald-600">{cartNotice}</div> : null}
+                  {cartError ? <div className="mt-2 text-sm text-rose-600">{cartError}</div> : null}
                 </div>
-                {cartNotice ? <div className="mt-2 text-sm text-emerald-600">{cartNotice}</div> : null}
-                {cartError ? <div className="mt-2 text-sm text-rose-600">{cartError}</div> : null}
               </div>
-            </div>
+            )}
             <div className={cartBodyGridClassName}>
               <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 sm:px-6 sm:py-4">
                 {cartItems.length > 0 ? (
@@ -1907,30 +1939,44 @@ export default function ProductBlock(props: ProductBlockProps) {
                   </div>
                 )}
               </div>
-              <div className="flex shrink-0 items-center gap-2 border-t border-slate-200 bg-white px-3 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:px-6 sm:py-4">
-                <button
-                  key={cartCustomerShakeKey}
-                  type="button"
-                  className={`min-w-0 flex-1 rounded-full border px-4 py-2.5 text-sm font-medium transition ${
-                    hasCartCustomerIdentity
-                      ? "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                      : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
-                  } ${!hasCartCustomerIdentity && cartCustomerShakeKey > 0 ? "animate-[cartCustomerButtonShake_0.42s_ease-in-out_2]" : ""}`}
-                  onClick={() => {
-                    setCartError("");
-                    setCartCustomerOpen(true);
-                  }}
-                >
-                  {hasCartCustomerIdentity ? "客户信息 已填写" : "客户信息"}
-                </button>
-                <button
-                  type="button"
-                  className="min-w-0 flex-1 rounded-full bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
-                  onClick={() => void handleSubmitOrder()}
-                  disabled={cartSubmitting || checkedCartItems.length === 0}
-                >
-                  {cartSubmitting ? "提交中..." : "提交订单"}
-                </button>
+              <div className="shrink-0 border-t border-slate-200 bg-white px-3 pt-2.5 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:px-6 sm:py-4">
+                {cartUsesOpenedShellHeader ? (
+                  <div className="mb-2 flex items-center justify-between gap-3 text-xs text-slate-500 sm:text-sm">
+                    <span>已选 {checkedCartTotalQuantity} 件</span>
+                    <span className="font-semibold text-slate-900">{formatMerchantOrderAmount(checkedCartTotalAmount, pricePrefix)}</span>
+                  </div>
+                ) : null}
+                {(cartUsesOpenedShellHeader && cartNotice) || cartError ? (
+                  <div className="mb-2 space-y-1">
+                    {cartUsesOpenedShellHeader && cartNotice ? <div className="text-sm text-emerald-600">{cartNotice}</div> : null}
+                    {cartError ? <div className="text-sm text-rose-600">{cartError}</div> : null}
+                  </div>
+                ) : null}
+                <div className="flex items-center gap-2">
+                  <button
+                    key={cartCustomerShakeKey}
+                    type="button"
+                    className={`min-w-0 flex-1 rounded-full border px-4 py-2.5 text-sm font-medium transition ${
+                      hasCartCustomerIdentity
+                        ? "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                        : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                    } ${!hasCartCustomerIdentity && cartCustomerShakeKey > 0 ? "animate-[cartCustomerButtonShake_0.42s_ease-in-out_2]" : ""}`}
+                    onClick={() => {
+                      setCartError("");
+                      setCartCustomerOpen(true);
+                    }}
+                  >
+                    {hasCartCustomerIdentity ? "客户信息 已填写" : "客户信息"}
+                  </button>
+                  <button
+                    type="button"
+                    className="min-w-0 flex-1 rounded-full bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+                    onClick={() => void handleSubmitOrder()}
+                    disabled={cartSubmitting || checkedCartItems.length === 0}
+                  >
+                    {cartSubmitting ? "提交中..." : "提交订单"}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
