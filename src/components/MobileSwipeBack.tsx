@@ -33,6 +33,19 @@ const INTERACTIVE_SWIPE_START_SELECTOR = [
   ".support-mobile-nav-shell",
 ].join(",");
 
+const OPENED_BLOCK_INTERACTIVE_SWIPE_START_SELECTOR = [
+  "input",
+  "textarea",
+  "select",
+  "option",
+  "summary",
+  "[contenteditable='true']",
+  "[role='slider']",
+  "[role='switch']",
+  "[data-mobile-swipe-back-ignore]",
+  ".support-mobile-nav-shell",
+].join(",");
+
 const VISIBLE_BACK_CONTROL_SELECTOR = [
   "[data-mobile-swipe-back-control]",
   "button[aria-label*='返回']",
@@ -59,7 +72,13 @@ function getTargetElement(target: EventTarget | null) {
 
 function isInteractiveSwipeStart(target: EventTarget | null) {
   const element = getTargetElement(target);
-  return Boolean(element?.closest(INTERACTIVE_SWIPE_START_SELECTOR));
+  if (!element) return false;
+  const openedBlockActive =
+    document.documentElement.dataset.faollaOpenedBlock === "true" ||
+    document.body.dataset.faollaOpenedBlock === "true";
+  return Boolean(
+    element.closest(openedBlockActive ? OPENED_BLOCK_INTERACTIVE_SWIPE_START_SELECTOR : INTERACTIVE_SWIPE_START_SELECTOR),
+  );
 }
 
 function hasHorizontalScrollAncestor(target: EventTarget | null) {

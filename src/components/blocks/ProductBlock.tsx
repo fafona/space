@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CSSProperties } from "react";
+import type { CSSProperties, FocusEvent } from "react";
 import { createPortal } from "react-dom";
 import Image from "next/image";
 import type { BackgroundEditableProps, BlockBorderStyle, TypographyEditableProps } from "@/data/homeBlocks";
@@ -55,6 +55,7 @@ import {
   type MerchantOrderRecord,
 } from "@/lib/merchantOrders";
 import type { PersonalCustomerProfile } from "@/lib/personalCustomerProfile";
+import { MOBILE_SWIPE_BACK_EVENT } from "@/lib/mobileSwipeBack";
 
 type ProductBlockProps = BackgroundEditableProps &
   TypographyEditableProps & {
@@ -979,6 +980,30 @@ export default function ProductBlock(props: ProductBlockProps) {
   }, [openedCartCloseSignal, openedView]);
 
   useEffect(() => {
+    if (!openedView || typeof window === "undefined") return;
+    const handleMobileSwipeBack = (event: Event) => {
+      if (event.defaultPrevented) return;
+      if (cartCustomerOpen) {
+        event.preventDefault();
+        setCartCustomerOpen(false);
+        return;
+      }
+      if (activeProductId) {
+        event.preventDefault();
+        setActiveProductId(null);
+        return;
+      }
+      if (cartOpen) {
+        event.preventDefault();
+        setCartCustomerOpen(false);
+        setCartOpen(false);
+      }
+    };
+    window.addEventListener(MOBILE_SWIPE_BACK_EVENT, handleMobileSwipeBack);
+    return () => window.removeEventListener(MOBILE_SWIPE_BACK_EVENT, handleMobileSwipeBack);
+  }, [activeProductId, cartCustomerOpen, cartOpen, openedView]);
+
+  useEffect(() => {
     if (!openedView || !cartOpen) return;
     const openedBody = rootRef.current?.closest<HTMLElement>(".faolla-opened-block-body");
     if (openedBody) openedBody.scrollTop = 0;
@@ -1066,14 +1091,6 @@ export default function ProductBlock(props: ProductBlockProps) {
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [activeProductId]);
-
-  useEffect(() => {
-    if (!cartCustomerOpen) return;
-    const timer = window.setTimeout(() => {
-      cartCustomerNameRef.current?.focus();
-    }, 80);
-    return () => window.clearTimeout(timer);
-  }, [cartCustomerOpen]);
 
   const syncActiveTagFromScroll = useCallback(() => {
     const viewport = scrollViewportRef.current;
@@ -1319,6 +1336,13 @@ export default function ProductBlock(props: ProductBlockProps) {
       [field]: value,
     }));
   };
+
+  const handleCartCustomerFieldFocus = useCallback((event: FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const target = event.currentTarget;
+    window.setTimeout(() => {
+      target.scrollIntoView({ block: "center", inline: "nearest" });
+    }, 120);
+  }, []);
 
   const handleSubmitOrder = async () => {
     if (!cartEnabled || !runtimeBlockId) return;
@@ -1803,11 +1827,11 @@ export default function ProductBlock(props: ProductBlockProps) {
     : "relative flex min-h-0 flex-1 w-full max-w-full flex-col overflow-hidden bg-white sm:flex-none sm:max-h-[min(78dvh,720px)] sm:w-full sm:max-w-3xl sm:rounded-[28px] sm:shadow-2xl";
   const cartBodyGridClassName = "flex min-h-0 flex-1 flex-col overflow-hidden";
   const customerOverlayClassName = overlayWithinBlock
-    ? "absolute inset-0 z-[130] flex items-end justify-center overflow-hidden bg-black/50 px-2 pt-2 pb-[calc(env(safe-area-inset-bottom)+6.5rem)]"
-    : "fixed inset-0 z-[1110] flex items-end justify-center overflow-hidden bg-black/50 px-2 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-[calc(env(safe-area-inset-bottom)+1rem)] sm:items-start sm:overflow-y-auto";
+    ? "absolute inset-0 z-[130] flex items-start justify-center overflow-y-auto overscroll-contain bg-black/50 px-2 py-2 pb-[calc(env(safe-area-inset-bottom)+1rem)]"
+    : "fixed inset-0 z-[1110] flex items-start justify-center overflow-y-auto overscroll-contain bg-black/50 px-2 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-[calc(env(safe-area-inset-bottom)+1rem)]";
   const customerPanelClassName = overlayWithinBlock
-    ? "relative max-h-[min(72dvh,34rem)] w-[calc(100%-0.5rem)] max-w-lg overflow-y-auto rounded-[24px] bg-white p-4 shadow-2xl sm:p-6"
-    : "relative max-h-[calc(100dvh-2rem)] w-[calc(100vw-1rem)] max-w-lg overflow-y-auto rounded-[24px] bg-white p-4 shadow-2xl sm:p-6";
+    ? "relative max-h-[calc(100%-1rem)] w-[calc(100%-0.5rem)] max-w-lg overflow-y-auto rounded-[22px] bg-white p-4 shadow-2xl sm:p-6"
+    : "relative max-h-[calc(100dvh-2rem)] w-[calc(100vw-1rem)] max-w-lg overflow-y-auto rounded-[22px] bg-white p-4 shadow-2xl sm:p-6";
   const productDetailOverlayClassName = overlayWithinBlock
     ? "absolute inset-0 z-[115] flex items-start justify-center overflow-y-auto bg-black/60 px-1.5 pt-2 pb-[calc(env(safe-area-inset-bottom)+6rem)]"
     : "fixed inset-0 z-[1000] flex items-start justify-center overflow-y-auto bg-black/60 px-1.5 pt-[calc(env(safe-area-inset-top)+0.5rem)] pb-[calc(env(safe-area-inset-bottom)+1rem)]";
@@ -2095,7 +2119,11 @@ export default function ProductBlock(props: ProductBlockProps) {
         </div>
       ) : null}
       {cartOpen && cartCustomerOpen ? (
-        <div className={customerOverlayClassName} onClick={() => setCartCustomerOpen(false)}>
+        <div
+          className={customerOverlayClassName}
+          data-faolla-product-customer-panel="true"
+          onClick={() => setCartCustomerOpen(false)}
+        >
           <div
             className={customerPanelClassName}
             onClick={(event) => event.stopPropagation()}
@@ -2122,6 +2150,7 @@ export default function ProductBlock(props: ProductBlockProps) {
                   type="text"
                   value={cartCustomer.name ?? ""}
                   onChange={(event) => handleCartCustomerChange("name", event.target.value)}
+                  onFocus={handleCartCustomerFieldFocus}
                   className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-200"
                 />
               </label>
@@ -2131,6 +2160,7 @@ export default function ProductBlock(props: ProductBlockProps) {
                   type="tel"
                   value={cartCustomer.phone ?? ""}
                   onChange={(event) => handleCartCustomerChange("phone", event.target.value)}
+                  onFocus={handleCartCustomerFieldFocus}
                   className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-200"
                 />
               </label>
@@ -2140,6 +2170,7 @@ export default function ProductBlock(props: ProductBlockProps) {
                   type="email"
                   value={cartCustomer.email ?? ""}
                   onChange={(event) => handleCartCustomerChange("email", event.target.value)}
+                  onFocus={handleCartCustomerFieldFocus}
                   className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-200"
                 />
               </label>
@@ -2149,6 +2180,7 @@ export default function ProductBlock(props: ProductBlockProps) {
                   rows={4}
                   value={cartCustomer.note ?? ""}
                   onChange={(event) => handleCartCustomerChange("note", event.target.value)}
+                  onFocus={handleCartCustomerFieldFocus}
                   className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-200"
                 />
               </label>
@@ -2166,7 +2198,11 @@ export default function ProductBlock(props: ProductBlockProps) {
         </div>
       ) : null}
       {activeProduct ? (
-        <div className={productDetailOverlayClassName} onClick={() => setActiveProductId(null)}>
+        <div
+          className={productDetailOverlayClassName}
+          data-faolla-product-detail="true"
+          onClick={() => setActiveProductId(null)}
+        >
           <div
             className={productDetailDialogClassName}
             onClick={(event) => event.stopPropagation()}

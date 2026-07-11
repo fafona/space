@@ -15,6 +15,7 @@ import ButtonBlock from "./ButtonBlock";
 import { getBlockRenderStackOrder } from "@/lib/blockStacking";
 import { buildPublicBlockId } from "@/lib/blockPublicId";
 import type { ButtonJumpBlock } from "@/lib/buttonBlock";
+import { MOBILE_SWIPE_BACK_EVENT } from "@/lib/mobileSwipeBack";
 import type { MerchantBookingRuleViewport } from "@/lib/merchantBookingRules";
 
 const GalleryBlock = dynamic(() => import("./GalleryBlock"), { ssr: false, loading: () => null });
@@ -193,6 +194,37 @@ export default function BlockRenderer({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [closeOpenedBlock, openedBlockEntry]);
 
+  const openedCartCloseEventName = openedBlockEntry ? `faolla-opened-block-cart-close:${openedBlockEntry.block.id}` : "";
+  const closeOpenedProductCart = useCallback(() => {
+    if (openedCartCloseEventName && typeof window !== "undefined") {
+      setOpenedProductCartCloseSignal((value) => value + 1);
+      window.dispatchEvent(new Event(openedCartCloseEventName));
+    }
+    setOpenedProductCartOpen(false);
+  }, [openedCartCloseEventName]);
+
+  useEffect(() => {
+    if (!openedBlockEntry || typeof window === "undefined") return;
+    const handleMobileSwipeBack = (event: Event) => {
+      if (event.defaultPrevented) return;
+      if (
+        openedBlockEntry.block.type === "product" &&
+        typeof document !== "undefined" &&
+        document.querySelector("[data-faolla-product-customer-panel='true'], [data-faolla-product-detail='true']")
+      ) {
+        return;
+      }
+      event.preventDefault();
+      if (openedProductCartOpen) {
+        closeOpenedProductCart();
+        return;
+      }
+      closeOpenedBlock();
+    };
+    window.addEventListener(MOBILE_SWIPE_BACK_EVENT, handleMobileSwipeBack);
+    return () => window.removeEventListener(MOBILE_SWIPE_BACK_EVENT, handleMobileSwipeBack);
+  }, [closeOpenedBlock, closeOpenedProductCart, openedBlockEntry, openedProductCartOpen]);
+
   function renderBlockContent(
     b: Block,
     options: {
@@ -328,17 +360,14 @@ export default function BlockRenderer({
       : "faolla-opened-block-body faolla-hide-scrollbar relative min-h-0 flex-1 overflow-y-auto overscroll-contain bg-white";
   const openedToolbarTargetId = openedBlockEntry ? `faolla-opened-block-toolbar-${openedBlockEntry.block.id}` : "";
   const openedCartTargetId = openedBlockEntry ? `faolla-opened-block-cart-${openedBlockEntry.block.id}` : "";
-  const openedCartCloseEventName = openedBlockEntry ? `faolla-opened-block-cart-close:${openedBlockEntry.block.id}` : "";
   const openedBlockTitleClassName = openedBlockHasToolbar
     ? "faolla-opened-block-title faolla-opened-block-title-toolbar min-w-[4.5rem] max-w-[6.5rem] shrink-0 truncate text-sm font-semibold text-slate-700"
     : "faolla-opened-block-title min-w-0 flex-1 truncate text-xs font-semibold text-slate-700 sm:text-sm";
   const openedBlockTitleText = openedProductCartOpen ? "购物车" : openedBlockEntry?.title;
   const openedPortalHost = typeof document !== "undefined" ? document.body : null;
   const handleOpenedBlockBackClick = () => {
-    if (openedProductCartOpen && openedCartCloseEventName && typeof window !== "undefined") {
-      setOpenedProductCartCloseSignal((value) => value + 1);
-      window.dispatchEvent(new Event(openedCartCloseEventName));
-      setOpenedProductCartOpen(false);
+    if (openedProductCartOpen) {
+      closeOpenedProductCart();
       return;
     }
     closeOpenedBlock();
