@@ -54,10 +54,7 @@ import {
   type MerchantOrderCustomerInput,
   type MerchantOrderRecord,
 } from "@/lib/merchantOrders";
-import { resolveFrontendAuthPayload } from "@/lib/authSessionRecovery";
-import { readPersonalCustomerProfileFromSession, type PersonalCustomerProfile } from "@/lib/personalCustomerProfile";
-import { notifyPersonalConsumptionChanged } from "@/lib/personalConsumptionBridge";
-import { readPersonalGuestMergeToken, upsertPersonalGuestOrder } from "@/lib/personalGuestSession";
+import type { PersonalCustomerProfile } from "@/lib/personalCustomerProfile";
 
 type ProductBlockProps = BackgroundEditableProps &
   TypographyEditableProps & {
@@ -144,6 +141,7 @@ type ProductCartFlyItem = {
 };
 
 const PRODUCT_CART_STORAGE_PREFIX = "merchant-space:product-cart:v1:";
+const PRODUCT_INITIAL_EAGER_IMAGE_LIMIT = 2;
 
 function getProductAspectRatioPair(value: ProductImageAspectRatio) {
   if (value === "landscape") return { width: 4, height: 3 };
@@ -374,6 +372,7 @@ function normalizeCartItems(items: ProductCartItemState[] | undefined, pricePref
           name: String(item?.product?.name ?? "").trim(),
           description: String(item?.product?.description ?? "").trim(),
           imageUrl: normalizePublicAssetUrl(String(item?.product?.imageUrl ?? "").trim()),
+          thumbnailUrl: normalizePublicAssetUrl(String(item?.product?.thumbnailUrl ?? "").trim()),
           tag: String(item?.product?.tag ?? "").trim(),
           price: String(item?.product?.price ?? "").trim(),
         },
@@ -439,6 +438,43 @@ function saveProductCartStorageState(storageKey: string, next: ProductCartStorag
   }
 }
 
+function isOptimizableProductImageHost(hostname: string) {
+  const normalized = hostname.toLowerCase();
+  return (
+    normalized === "faolla.com" ||
+    normalized.endsWith(".faolla.com") ||
+    normalized.endsWith(".supabase.co") ||
+    normalized === "localhost" ||
+    normalized === "127.0.0.1"
+  );
+}
+
+function normalizeProductImageSource(value: string) {
+  const trimmed = String(value ?? "").trim();
+  return trimmed;
+}
+
+function shouldBypassProductImageOptimization(value: string) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed || /^(data|blob):/i.test(trimmed)) return true;
+  if (trimmed.startsWith("/")) return false;
+
+  try {
+    const url = new URL(trimmed);
+    return !(
+      (url.protocol === "https:" || url.protocol === "http:") &&
+      url.pathname.startsWith("/storage/v1/object/public/") &&
+      isOptimizableProductImageHost(url.hostname)
+    );
+  } catch {
+    return true;
+  }
+}
+
+function getProductPreviewImageUrl(item: Pick<ProductItem, "imageUrl" | "thumbnailUrl">) {
+  return item.thumbnailUrl || item.imageUrl;
+}
+
 function renderProductCard(
   item: ReturnType<typeof normalizeProductItems>[number],
   options: {
@@ -464,17 +500,20 @@ function renderProductCard(
     quantity?: number;
     onIncreaseQuantity?: (item: ReturnType<typeof normalizeProductItems>[number], sourceElement?: HTMLElement) => void;
     onDecreaseQuantity?: (item: ReturnType<typeof normalizeProductItems>[number]) => void;
+    imagePriority?: boolean;
     list?: boolean;
     spotlight?: boolean;
   },
 ) {
   const priceText = productPriceText(item.price, options.pricePrefix);
+  const previewImageUrl = getProductPreviewImageUrl(item);
   const textWrapStyle = { overflowWrap: "anywhere" as const, wordBreak: "break-word" as const };
   const descriptionClampStyle = getMultiLineClampStyle(options.spotlight ? 5 : options.list ? 4 : 3);
   const ratio = getProductAspectRatioPair(options.imageAspectRatio);
   const frameImageSize = options.list ? Math.min(options.imageSize, productListImageMaxSize(options.cardHeight)) : options.imageSize;
   const listImageEdgeGap = options.list ? productListImageEdgeGap(options.cardHeight, frameImageSize) : 0;
   const listImageWidth = Math.max(1, Math.round((frameImageSize * ratio.width) / ratio.height));
+  const productImageSizes = options.list ? `${Math.min(360, Math.max(48, listImageWidth))}px` : "(max-width: 768px) 70vw, 360px";
   const cardBackgroundStyle = getColorLayerStyle(options.cardBgColor, options.cardBgOpacity);
   const cardBorderClass = getBlockBorderClass(options.cardBorderStyle);
   const cardBorderInlineStyle = getBlockBorderInlineStyle(options.cardBorderStyle, options.cardBorderColor);
@@ -576,8 +615,16 @@ function renderProductCard(
         className={`relative overflow-hidden bg-slate-100 ${options.list ? "shrink-0 self-center rounded-xl" : ""}`}
         style={frameStyle}
       >
-        {item.imageUrl ? (
-          <Image src={item.imageUrl} alt={item.name || item.code || "产品图片"} fill unoptimized sizes="100vw" className="object-cover" />
+        {previewImageUrl ? (
+          <Image
+            src={previewImageUrl}
+            alt={item.name || item.code || "产品图片"}
+            fill
+            priority={options.imagePriority === true}
+            unoptimized={shouldBypassProductImageOptimization(previewImageUrl)}
+            sizes={productImageSizes}
+            className="object-cover"
+          />
         ) : (
           <div className="flex h-full items-center justify-center text-sm text-slate-400">暂无图片</div>
         )}
@@ -630,7 +677,8 @@ export default function ProductBlock(props: ProductBlockProps) {
   const products = normalizeProductItems(props.products)
     .map((item) => ({
       ...item,
-      imageUrl: normalizePublicAssetUrl(item.imageUrl),
+      imageUrl: normalizeProductImageSource(normalizePublicAssetUrl(item.imageUrl)),
+      thumbnailUrl: normalizeProductImageSource(normalizePublicAssetUrl(item.thumbnailUrl)),
     }))
     .filter((item) => isMeaningfulProductItem(item));
   const productTags = Array.from(
@@ -792,6 +840,9 @@ export default function ProductBlock(props: ProductBlockProps) {
   const normalizedPageIndex = Math.min(pageIndex, Math.max(0, totalPages - 1));
   const pageStart = normalizedPageIndex * itemsPerPage;
   const pagedProducts = containerMode === "paged" ? filteredProducts.slice(pageStart, pageStart + itemsPerPage) : filteredProducts;
+  const eagerProductImageIds = new Set(
+    pagedProducts.slice(0, PRODUCT_INITIAL_EAGER_IMAGE_LIMIT).map((item) => item.id),
+  );
   const scrollViewportHeight =
     containerMode === "scroll" ? productContainerViewportHeight(layoutPreset, imageSize, itemsPerPage, productItemGap, productCardHeight) : null;
   const productScrollSpyEnabled =
@@ -941,23 +992,36 @@ export default function ProductBlock(props: ProductBlockProps) {
       setCartCustomerAuthProof("");
       return;
     }
+    if (!cartOpen) return;
     let cancelled = false;
     const loadCustomerDefaults = async () => {
-      const payload = await resolveFrontendAuthPayload(4200).catch(() => null);
-      if (cancelled) return;
-      if (payload?.authenticated !== true || !payload.user) {
-        setCartCustomerDefaults({});
-        setCartCustomerAuthProof("");
-        return;
+      try {
+        const [{ resolveFrontendAuthPayload }, { readPersonalCustomerProfileFromSession }] = await Promise.all([
+          import("@/lib/authSessionRecovery"),
+          import("@/lib/personalCustomerProfile"),
+        ]);
+        if (cancelled) return;
+        const payload = await resolveFrontendAuthPayload(4200).catch(() => null);
+        if (cancelled) return;
+        if (payload?.authenticated !== true || !payload.user) {
+          setCartCustomerDefaults({});
+          setCartCustomerAuthProof("");
+          return;
+        }
+        setCartCustomerAuthProof(typeof payload.frontendAuthProof === "string" ? payload.frontendAuthProof.trim() : "");
+        setCartCustomerDefaults(buildCartCustomerDefaults(readPersonalCustomerProfileFromSession(payload)));
+      } catch {
+        if (!cancelled) {
+          setCartCustomerDefaults({});
+          setCartCustomerAuthProof("");
+        }
       }
-      setCartCustomerAuthProof(typeof payload.frontendAuthProof === "string" ? payload.frontendAuthProof.trim() : "");
-      setCartCustomerDefaults(buildCartCustomerDefaults(readPersonalCustomerProfileFromSession(payload)));
     };
     void loadCustomerDefaults();
     return () => {
       cancelled = true;
     };
-  }, [cartEnabled]);
+  }, [cartEnabled, cartOpen]);
 
   useEffect(() => {
     if (!cartEnabled) return;
@@ -1145,9 +1209,10 @@ export default function ProductBlock(props: ProductBlockProps) {
     const fromY = sourceRect.top + sourceRect.height / 2;
     const toX = cartRect ? cartRect.left + cartRect.width / 2 : 64;
     const toY = cartRect ? cartRect.top + cartRect.height / 2 : window.innerHeight - 56;
+    const previewImageUrl = getProductPreviewImageUrl(item);
     const flyItem: ProductCartFlyItem = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      imageUrl: item.imageUrl || "",
+      imageUrl: previewImageUrl || "",
       fromX,
       fromY,
       deltaX: toX - fromX,
@@ -1257,6 +1322,15 @@ export default function ProductBlock(props: ProductBlockProps) {
     setCartError("");
     setCartNotice("");
     try {
+      const [
+        { resolveFrontendAuthPayload },
+        { readPersonalGuestMergeToken, upsertPersonalGuestOrder },
+        { notifyPersonalConsumptionChanged },
+      ] = await Promise.all([
+        import("@/lib/authSessionRecovery"),
+        import("@/lib/personalGuestSession"),
+        import("@/lib/personalConsumptionBridge"),
+      ]);
       const latestAuthPayload = await resolveFrontendAuthPayload(2600).catch(() => null);
       const frontendAuthProof =
         (typeof latestAuthPayload?.frontendAuthProof === "string" ? latestAuthPayload.frontendAuthProof.trim() : "") ||
@@ -1332,7 +1406,7 @@ export default function ProductBlock(props: ProductBlockProps) {
 
   const renderCard = (
     item: ReturnType<typeof normalizeProductItems>[number],
-    extra: { list?: boolean; spotlight?: boolean; imageAspectRatio?: ProductImageAspectRatio } = {},
+    extra: { list?: boolean; spotlight?: boolean; imageAspectRatio?: ProductImageAspectRatio; imagePriority?: boolean } = {},
   ) =>
     renderProductCard(item, {
       imageAspectRatio: extra.imageAspectRatio ?? imageAspectRatio,
@@ -1357,6 +1431,7 @@ export default function ProductBlock(props: ProductBlockProps) {
       quantity: cartQuantities[item.id] ?? 0,
       onIncreaseQuantity: handleIncreaseQuantity,
       onDecreaseQuantity: handleDecreaseQuantity,
+      imagePriority: extra.imagePriority ?? eagerProductImageIds.has(item.id),
       ...extra,
     });
 
@@ -1789,7 +1864,14 @@ export default function ProductBlock(props: ProductBlockProps) {
           style={flyStyle}
         >
           {item.imageUrl ? (
-            <Image src={item.imageUrl} alt="" fill unoptimized sizes="44px" className="object-cover" />
+            <Image
+              src={item.imageUrl}
+              alt=""
+              fill
+              unoptimized={shouldBypassProductImageOptimization(item.imageUrl)}
+              sizes="44px"
+              className="object-cover"
+            />
           ) : (
             <span>+1</span>
           )}
@@ -1874,6 +1956,7 @@ export default function ProductBlock(props: ProductBlockProps) {
                   <div className="space-y-2 sm:space-y-3">
                     {cartItems.map((item) => {
                       const subtotal = item.unitPrice * item.quantity;
+                      const previewImageUrl = getProductPreviewImageUrl(item.product);
                       return (
                         <div key={item.productId} className="rounded-xl border border-slate-200 bg-slate-50/70 p-2.5 sm:p-3">
                           <div className="flex items-center gap-2.5 sm:gap-3">
@@ -1884,12 +1967,12 @@ export default function ProductBlock(props: ProductBlockProps) {
                               className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
                             />
                             <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-xl bg-slate-100 sm:h-14 sm:w-14">
-                              {item.product.imageUrl ? (
+                              {previewImageUrl ? (
                                 <Image
-                                  src={item.product.imageUrl}
+                                  src={previewImageUrl}
                                   alt={item.product.name || item.product.code || "产品图片"}
                                   fill
-                                  unoptimized
+                                  unoptimized={shouldBypassProductImageOptimization(previewImageUrl)}
                                   sizes="64px"
                                   className="object-cover"
                                 />
@@ -2082,7 +2165,14 @@ export default function ProductBlock(props: ProductBlockProps) {
             {detailFullImage ? (
               <div className="relative overflow-hidden rounded-[1.25rem] bg-slate-100" style={productDetailFullImageFrameStyle}>
                 {activeProduct.imageUrl ? (
-                  <Image src={activeProduct.imageUrl} alt={activeProduct.name || activeProduct.code || "产品图片"} fill unoptimized sizes="100vw" className="object-contain" />
+                  <Image
+                    src={activeProduct.imageUrl}
+                    alt={activeProduct.name || activeProduct.code || "产品图片"}
+                    fill
+                    unoptimized={shouldBypassProductImageOptimization(activeProduct.imageUrl)}
+                    sizes="100vw"
+                    className="object-contain"
+                  />
                 ) : (
                   <div className="flex h-full items-center justify-center text-sm text-slate-400">暂无图片</div>
                 )}
@@ -2134,7 +2224,14 @@ export default function ProductBlock(props: ProductBlockProps) {
                   }}
                 >
                   {activeProduct.imageUrl ? (
-                    <Image src={activeProduct.imageUrl} alt={activeProduct.name || activeProduct.code || "产品图片"} fill unoptimized sizes="100vw" className="object-cover" />
+                    <Image
+                      src={activeProduct.imageUrl}
+                      alt={activeProduct.name || activeProduct.code || "产品图片"}
+                      fill
+                      unoptimized={shouldBypassProductImageOptimization(activeProduct.imageUrl)}
+                      sizes={`(max-width: 768px) 92vw, ${Math.max(160, Math.round(detailImageWidth))}px`}
+                      className="object-cover"
+                    />
                   ) : (
                     <div className="flex h-full items-center justify-center text-sm text-slate-400">暂无图片</div>
                   )}

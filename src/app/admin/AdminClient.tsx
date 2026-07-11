@@ -921,9 +921,20 @@ const EXTERNALIZE_MIN_IMAGE_BYTES = 300_000;
 type UploadCompressionPreset = "high" | "balanced" | "compact";
 type ImageCompressionOption = { label: string; maxSide: number; quality: number };
 type EditorImageUploadPurpose = "common" | "gallery" | "page-background";
+type EditorImageUploadUsage = "common-block-image" | "gallery-block-image" | "product-image" | "generic-image";
 type PersistedEditorAssetResult = {
   value: string;
+  thumbnailUrl?: string;
   externalized: boolean;
+};
+type UploadedAssetMetadata = {
+  url: string;
+  thumbnailUrl?: string;
+  posterUrl?: string;
+  bucket?: string;
+  objectPath?: string;
+  thumbnailObjectPath?: string;
+  posterObjectPath?: string;
 };
 const IMAGE_COMPRESSION_OPTIONS: Record<UploadCompressionPreset, ImageCompressionOption> = {
   high: { label: "高质量", maxSide: 3200, quality: 0.92 },
@@ -2895,13 +2906,13 @@ function parseDataUrlMeta(dataUrl: string) {
   return { mime, extension };
 }
 
-async function uploadDataUrlViaServerApi(
+async function uploadDataUrlViaServerApiWithMetadata(
   dataUrl: string,
   merchantHint = "public",
   folder = "merchant-assets",
   usage = folder === "merchant-audio" ? "audio" : folder === "merchant-files" ? "support-file" : "generic-image",
   operation?: MerchantAssetUploadOperationContext,
-): Promise<string | null> {
+): Promise<UploadedAssetMetadata | null> {
   try {
     const response = await runWithMerchantOperationContext(operation, () =>
       fetch("/api/assets/upload", {
@@ -2919,8 +2930,88 @@ async function uploadDataUrlViaServerApi(
       }),
     );
     if (!response.ok) return null;
-    const payload = (await response.json().catch(() => null)) as { url?: unknown } | null;
-    return typeof payload?.url === "string" && payload.url.trim() ? payload.url.trim() : null;
+    const payload = (await response.json().catch(() => null)) as {
+      url?: unknown;
+      thumbnailUrl?: unknown;
+      posterUrl?: unknown;
+      bucket?: unknown;
+      objectPath?: unknown;
+      thumbnailObjectPath?: unknown;
+      posterObjectPath?: unknown;
+    } | null;
+    const url = typeof payload?.url === "string" ? payload.url.trim() : "";
+    if (!url) return null;
+    return {
+      url,
+      ...(typeof payload?.thumbnailUrl === "string" && payload.thumbnailUrl.trim()
+        ? { thumbnailUrl: payload.thumbnailUrl.trim() }
+        : {}),
+      ...(typeof payload?.posterUrl === "string" && payload.posterUrl.trim() ? { posterUrl: payload.posterUrl.trim() } : {}),
+      ...(typeof payload?.bucket === "string" && payload.bucket.trim() ? { bucket: payload.bucket.trim() } : {}),
+      ...(typeof payload?.objectPath === "string" && payload.objectPath.trim() ? { objectPath: payload.objectPath.trim() } : {}),
+      ...(typeof payload?.thumbnailObjectPath === "string" && payload.thumbnailObjectPath.trim()
+        ? { thumbnailObjectPath: payload.thumbnailObjectPath.trim() }
+        : {}),
+      ...(typeof payload?.posterObjectPath === "string" && payload.posterObjectPath.trim()
+        ? { posterObjectPath: payload.posterObjectPath.trim() }
+        : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function uploadDataUrlViaServerApi(
+  dataUrl: string,
+  merchantHint = "public",
+  folder = "merchant-assets",
+  usage = folder === "merchant-audio" ? "audio" : folder === "merchant-files" ? "support-file" : "generic-image",
+  operation?: MerchantAssetUploadOperationContext,
+): Promise<string | null> {
+  return (await uploadDataUrlViaServerApiWithMetadata(dataUrl, merchantHint, folder, usage, operation))?.url ?? null;
+}
+
+async function uploadSourceUrlViaServerApiWithMetadata(
+  sourceUrl: string,
+  merchantHint = "public",
+  folder = "merchant-assets",
+  usage = "product-image",
+  operation?: MerchantAssetUploadOperationContext,
+): Promise<UploadedAssetMetadata | null> {
+  try {
+    const response = await runWithMerchantOperationContext(operation, () =>
+      fetch("/api/assets/upload", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          sourceUrl,
+          merchantHint,
+          folder,
+          usage,
+        }),
+      }),
+    );
+    if (!response.ok) return null;
+    const payload = (await response.json().catch(() => null)) as {
+      url?: unknown;
+      thumbnailUrl?: unknown;
+      bucket?: unknown;
+      thumbnailObjectPath?: unknown;
+    } | null;
+    const url = typeof payload?.url === "string" ? payload.url.trim() : "";
+    const thumbnailUrl = typeof payload?.thumbnailUrl === "string" ? payload.thumbnailUrl.trim() : "";
+    if (!url && !thumbnailUrl) return null;
+    return {
+      url,
+      ...(thumbnailUrl ? { thumbnailUrl } : {}),
+      ...(typeof payload?.bucket === "string" && payload.bucket.trim() ? { bucket: payload.bucket.trim() } : {}),
+      ...(typeof payload?.thumbnailObjectPath === "string" && payload.thumbnailObjectPath.trim()
+        ? { thumbnailObjectPath: payload.thumbnailObjectPath.trim() }
+        : {}),
+    };
   } catch {
     return null;
   }
@@ -2939,6 +3030,19 @@ async function uploadDataUrlToSupabase(
   return uploadDataUrlViaServerApi(dataUrl, merchantHint, folder, usage, operation);
 }
 
+async function uploadDataUrlToSupabaseWithMetadata(
+  dataUrl: string,
+  merchantHint = "public",
+  folder = "merchant-assets",
+  usage = folder === "merchant-audio" ? "audio" : folder === "merchant-files" ? "support-file" : "generic-image",
+  operation?: MerchantAssetUploadOperationContext,
+): Promise<UploadedAssetMetadata | null> {
+  const meta = parseDataUrlMeta(dataUrl);
+  if (!meta) return null;
+  void meta;
+  return uploadDataUrlViaServerApiWithMetadata(dataUrl, merchantHint, folder, usage, operation);
+}
+
 async function uploadImageDataUrlToSupabase(
   dataUrl: string,
   merchantHint = "public",
@@ -2946,6 +3050,15 @@ async function uploadImageDataUrlToSupabase(
   operation?: MerchantAssetUploadOperationContext,
 ): Promise<string | null> {
   return uploadDataUrlToSupabase(dataUrl, merchantHint, "merchant-assets", usage, operation);
+}
+
+async function uploadImageDataUrlToSupabaseWithMetadata(
+  dataUrl: string,
+  merchantHint = "public",
+  usage = "generic-image",
+  operation?: MerchantAssetUploadOperationContext,
+): Promise<UploadedAssetMetadata | null> {
+  return uploadDataUrlToSupabaseWithMetadata(dataUrl, merchantHint, "merchant-assets", usage, operation);
 }
 
 async function uploadAudioDataUrlToSupabase(
@@ -4061,6 +4174,199 @@ type ExternalizeStats = {
   beforeBytes: number;
   afterBytes: number;
 };
+
+type ProductThumbnailBackfillStats = {
+  visited: number;
+  generated: number;
+  failed: number;
+  skipped: number;
+  limited: number;
+};
+
+type ProductThumbnailBackfillContext = {
+  merchantHint: string;
+  operation: MerchantAssetUploadOperationContext;
+  stats: ProductThumbnailBackfillStats;
+  cache: Map<string, string | null>;
+  startedAt: number;
+  maxGenerated: number;
+  maxDurationMs: number;
+};
+
+function isRecordValue(input: unknown): input is Record<string, unknown> {
+  return Boolean(input && typeof input === "object" && !Array.isArray(input));
+}
+
+function isPotentialPublicStorageProductImageUrl(value: string) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed || /^(data|blob):/i.test(trimmed)) return false;
+  try {
+    const url = new URL(trimmed, typeof window === "undefined" ? "https://faolla.com" : window.location.origin);
+    const hostname = url.hostname.toLowerCase();
+    const allowedHost =
+      hostname === "faolla.com" ||
+      hostname.endsWith(".faolla.com") ||
+      hostname.endsWith(".supabase.co") ||
+      hostname === "localhost" ||
+      hostname === "127.0.0.1";
+    return allowedHost && url.pathname.startsWith("/storage/v1/object/public/");
+  } catch {
+    return false;
+  }
+}
+
+async function generateProductThumbnailForExistingImage(
+  imageUrl: string,
+  context: ProductThumbnailBackfillContext,
+) {
+  const sourceUrl = normalizePublicAssetUrl(String(imageUrl ?? "").trim());
+  if (!isPotentialPublicStorageProductImageUrl(sourceUrl)) {
+    return null;
+  }
+  if (context.cache.has(sourceUrl)) {
+    return context.cache.get(sourceUrl) ?? null;
+  }
+  const uploaded = await uploadSourceUrlViaServerApiWithMetadata(
+    sourceUrl,
+    context.merchantHint || "public",
+    "merchant-assets",
+    "product-image",
+    context.operation,
+  );
+  const thumbnailUrl = String(uploaded?.thumbnailUrl ?? "").trim();
+  context.cache.set(sourceUrl, thumbnailUrl || null);
+  return thumbnailUrl || null;
+}
+
+async function backfillProductThumbnailsInProductList(
+  products: unknown[],
+  context: ProductThumbnailBackfillContext,
+) {
+  let changed = false;
+  const nextProducts: unknown[] = [];
+
+  for (const product of products) {
+    if (!isRecordValue(product)) {
+      nextProducts.push(product);
+      continue;
+    }
+
+    const imageUrl = String(product.imageUrl ?? "").trim();
+    const thumbnailUrl = String(product.thumbnailUrl ?? "").trim();
+    if (!imageUrl || thumbnailUrl) {
+      nextProducts.push(product);
+      continue;
+    }
+
+    context.stats.visited += 1;
+    if (!isPotentialPublicStorageProductImageUrl(normalizePublicAssetUrl(imageUrl))) {
+      context.stats.skipped += 1;
+      nextProducts.push(product);
+      continue;
+    }
+    if (context.stats.generated >= context.maxGenerated || Date.now() - context.startedAt > context.maxDurationMs) {
+      context.stats.limited += 1;
+      nextProducts.push(product);
+      continue;
+    }
+
+    try {
+      const generatedThumbnailUrl = await generateProductThumbnailForExistingImage(imageUrl, context);
+      if (generatedThumbnailUrl) {
+        context.stats.generated += 1;
+        changed = true;
+        nextProducts.push({
+          ...product,
+          thumbnailUrl: generatedThumbnailUrl,
+        });
+      } else {
+        context.stats.failed += 1;
+        nextProducts.push(product);
+      }
+    } catch {
+      context.stats.failed += 1;
+      nextProducts.push(product);
+    }
+  }
+
+  return { products: changed ? nextProducts : products, changed };
+}
+
+async function backfillProductThumbnailsUnknown(
+  input: unknown,
+  context: ProductThumbnailBackfillContext,
+): Promise<{ value: unknown; changed: boolean }> {
+  if (Array.isArray(input)) {
+    let changed = false;
+    const value: unknown[] = [];
+    for (const item of input) {
+      const next = await backfillProductThumbnailsUnknown(item, context);
+      changed ||= next.changed;
+      value.push(next.value);
+    }
+    return { value: changed ? value : input, changed };
+  }
+
+  if (!isRecordValue(input)) return { value: input, changed: false };
+
+  let changed = false;
+  let nextRecord: Record<string, unknown> = input;
+  if (input.type === "product" && isRecordValue(input.props) && Array.isArray(input.props.products)) {
+    const nextProducts = await backfillProductThumbnailsInProductList(input.props.products, context);
+    if (nextProducts.changed) {
+      changed = true;
+      nextRecord = {
+        ...nextRecord,
+        props: {
+          ...input.props,
+          products: nextProducts.products,
+        },
+      };
+    }
+  }
+
+  const output: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(nextRecord)) {
+    const next = await backfillProductThumbnailsUnknown(value, context);
+    changed ||= next.changed;
+    output[key] = next.value;
+  }
+
+  return { value: changed ? output : input, changed };
+}
+
+async function backfillProductThumbnailsInBlocks(
+  blocks: Block[],
+  merchantHint: string,
+  cache: Map<string, string | null>,
+) {
+  const operation = {
+    operationModule: "网站编辑 > 发布",
+    operationAction: "补齐产品缩略图",
+    operationSummary: "发布网站时为旧产品图片生成缩略图",
+  };
+  const context: ProductThumbnailBackfillContext = {
+    merchantHint,
+    operation,
+    stats: {
+      visited: 0,
+      generated: 0,
+      failed: 0,
+      skipped: 0,
+      limited: 0,
+    },
+    cache,
+    startedAt: Date.now(),
+    maxGenerated: 12,
+    maxDurationMs: 6_000,
+  };
+  const next = await backfillProductThumbnailsUnknown(blocks, context);
+  return {
+    blocks: (Array.isArray(next.value) ? next.value : blocks) as Block[],
+    changed: next.changed,
+    stats: context.stats,
+  };
+}
 
 async function recompressInlineImagesUnknown(
   input: unknown,
@@ -7740,7 +8046,7 @@ export default function AdminClient({
 
   async function persistInlineImageForEditor(
     dataUrl: string,
-    usage: "common-block-image" | "gallery-block-image" | "generic-image" = "generic-image",
+    usage: EditorImageUploadUsage = "generic-image",
     operation?: MerchantAssetUploadOperationContext,
   ): Promise<PersistedEditorAssetResult> {
     const safeValue = ensureSafeImageUrlSize(dataUrl);
@@ -7748,9 +8054,9 @@ export default function AdminClient({
       return { value: safeValue ?? "", externalized: false };
     }
     const merchantHint = ((isPlatformEditor ? "platform" : await resolveFirstMerchantHint()) || "public").trim() || "public";
-    const uploadedUrl = await uploadImageDataUrlToSupabase(safeValue, merchantHint, usage, operation);
-    if (uploadedUrl) {
-      return { value: uploadedUrl, externalized: true };
+    const uploadedAsset = await uploadImageDataUrlToSupabaseWithMetadata(safeValue, merchantHint, usage, operation);
+    if (uploadedAsset?.url) {
+      return { value: uploadedAsset.url, thumbnailUrl: uploadedAsset.thumbnailUrl, externalized: true };
     }
     return { value: safeValue, externalized: false };
   }
@@ -7823,7 +8129,7 @@ export default function AdminClient({
     const endUpload = beginEditorUpload("正在上传产品图片，请稍候...");
     try {
       const dataUrl = await fileToOptimizedImageDataUrl(file, PRODUCT_IMAGE_UPLOAD_OPTIONS);
-      return persistInlineImageForEditor(dataUrl, "generic-image", {
+      return persistInlineImageForEditor(dataUrl, "product-image", {
         operationModule: "网站编辑 > 产品/预约",
         operationAction: "上传产品图片",
         operationSummary: "在网站编辑 > 产品/预约上传产品或项目图片",
@@ -11407,6 +11713,33 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           applyPersistedBlocksToEditorRef.current(combinedBlocks, { resetHistory: false });
         }
         if (optimization.summary) showSavePublishTip(optimization.summary);
+      }
+      const productThumbnailCache = new Map<string, string | null>();
+      const productThumbnailBackfill = await backfillProductThumbnailsInBlocks(
+        combinedBlocks,
+        merchantHint,
+        productThumbnailCache,
+      );
+      if (productThumbnailBackfill.changed) {
+        combinedBlocks = productThumbnailBackfill.blocks;
+        if (isPlatformEditor) {
+          draftBlocks = combinedBlocks;
+          applyPersistedBlocksToEditorRef.current(combinedBlocks, { resetHistory: false });
+        }
+      }
+      if (!isPlatformEditor) {
+        const draftThumbnailBackfill = await backfillProductThumbnailsInBlocks(
+          draftBlocks,
+          merchantHint,
+          productThumbnailCache,
+        );
+        if (draftThumbnailBackfill.changed) {
+          draftBlocks = draftThumbnailBackfill.blocks;
+        }
+      }
+      if (productThumbnailBackfill.stats.generated > 0) {
+        const limitedText = productThumbnailBackfill.stats.limited > 0 ? "，剩余旧图下次发布继续处理" : "";
+        showSavePublishTip(`已补齐产品缩略图 ${productThumbnailBackfill.stats.generated} 张${limitedText}`);
       }
       const payload = {
         blocks: combinedBlocks,
@@ -23522,6 +23855,7 @@ type GalleryEditorImage = {
         description: item.description,
         price: item.price,
         imageUrl: item.imageUrl,
+        thumbnailUrl: item.thumbnailUrl,
         tag: item.tag,
       })),
     });
@@ -23536,6 +23870,7 @@ type GalleryEditorImage = {
       description: "",
       price: "",
       imageUrl: "",
+      thumbnailUrl: "",
       tag: "",
     };
     setProductEditorDraft(nextItem);
@@ -24834,7 +25169,7 @@ type GalleryEditorImage = {
       if (!result.externalized) {
         onAlert("产品图片已写入草稿，但未上传到存储；发布前会再次尝试外链化。");
       }
-      return result.value;
+      return result;
     } catch (error) {
       onAlert(error instanceof Error ? error.message : "上传失败，请重试");
       return null;
@@ -24884,6 +25219,7 @@ type GalleryEditorImage = {
         uploaded.map((entry) => ({
           fileName: entry.fileName,
           imageUrl: entry.uploaded.value,
+          thumbnailUrl: entry.uploaded.thumbnailUrl,
         })),
       );
       commitProductItems(merged.items);
@@ -30018,9 +30354,12 @@ type GalleryEditorImage = {
                           accept="image/*"
                           disabled={productImageUploading}
                           onChange={async (event) => {
-                            const nextImageUrl = await persistProductImageUpload(event);
-                            if (!nextImageUrl) return;
-                            updateProductEditorDraft({ imageUrl: nextImageUrl });
+                            const uploadedImage = await persistProductImageUpload(event);
+                            if (!uploadedImage?.value) return;
+                            updateProductEditorDraft({
+                              imageUrl: uploadedImage.value,
+                              thumbnailUrl: uploadedImage.thumbnailUrl ?? "",
+                            });
                           }}
                         />
                       </label>

@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { arrangeProductItemsByTag, filterProductItemsByKeyword, groupArrangedProductItemsByTag } from "./productBlock";
+import {
+  arrangeProductItemsByTag,
+  filterProductItemsByKeyword,
+  groupArrangedProductItemsByTag,
+  normalizeProductItems,
+} from "./productBlock";
 
 test("groupArrangedProductItemsByTag keeps contiguous categories together", () => {
   const groups = groupArrangedProductItemsByTag([
@@ -73,4 +78,17 @@ test("filterProductItemsByKeyword matches code, text, tag and ignores accents", 
     filterProductItemsByKeyword(items, "").map((item) => item.id),
     ["1", "2", "3"],
   );
+});
+
+test("normalizeProductItems preserves product thumbnail urls", () => {
+  const [item] = normalizeProductItems([
+    {
+      code: "SKU-001",
+      imageUrl: " https://example.com/full.jpg ",
+      thumbnailUrl: " https://example.com/thumb.webp ",
+    },
+  ]);
+
+  assert.equal(item?.imageUrl, "https://example.com/full.jpg");
+  assert.equal(item?.thumbnailUrl, "https://example.com/thumb.webp");
 });

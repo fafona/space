@@ -20,7 +20,6 @@ import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
 import { MOBILE_BREAKPOINT } from "@/lib/deviceViewport";
 import { buildBackendFaollaHref } from "@/lib/faollaEntry";
 import { cloneBlocks, getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
-import { ensurePersonalGuestIdentity } from "@/lib/personalGuestSession";
 import { PUBLISH_SYNC_STORAGE_KEY, subscribePublishSync } from "@/lib/publishSync";
 import { buildPlatformHomeHref, buildSiteStoreScope } from "@/lib/siteRouting";
 import {
@@ -38,6 +37,7 @@ const MIN_INITIAL_LOADING_MS = 0;
 const SITE_REMOTE_FETCH_TIMEOUT_MS = 25000;
 const SITE_REMOTE_SETTLE_TIMEOUT_MS = 60000;
 const SITE_REMOTE_FALLBACK_DELAY_MS = 650;
+const SITE_REMOTE_INITIAL_REVALIDATE_DELAY_MS = 6000;
 const SITE_REMOTE_EMPTY_RETRY_DELAYS_MS = [0, 1200, 3200];
 const PUBLIC_GUEST_SHELL_AUTH_TIMEOUT_MS = 1400;
 
@@ -487,9 +487,14 @@ export function SitePageClient({
   const orderManagementEnabled = Boolean(remoteOrderManagementEnabled || localOrderManagementEnabled || sourceContainsProductBlock);
   useEffect(() => {
     if (!hydrated || !site || !resolvedPageId) return;
-    void import("@/lib/analytics").then(({ trackPageView }) => {
-      trackPageView(`site:${site.id}:${resolvedPageId}`);
-    });
+    const timer = setTimeout(() => {
+      void import("@/lib/analytics")
+        .then(({ trackPageView }) => {
+          trackPageView(`site:${site.id}:${resolvedPageId}`);
+        })
+        .catch(() => undefined);
+    }, 900);
+    return () => clearTimeout(timer);
   }, [hydrated, site, resolvedPageId]);
 
   useEffect(() => {
@@ -555,14 +560,14 @@ export function SitePageClient({
       return;
     }
     let mounted = true;
-    setRemoteResolved(false);
-    const settleTimer = setTimeout(() => {
-      if (mounted) setRemoteResolved(true);
-    }, SITE_REMOTE_SETTLE_TIMEOUT_MS);
+    let settleTimer: ReturnType<typeof setTimeout> | null = null;
+    let startTimer: ReturnType<typeof setTimeout> | null = null;
 
-    (async () => {
+    const refreshPublished = async () => {
       try {
-        const nextPublished = await fetchPublishedSiteBlocksWithRetries(siteId);
+        const nextPublished = hasInitialPublishedBlocks
+          ? await fetchPublishedSiteBlocksFast(siteId)
+          : await fetchPublishedSiteBlocksWithRetries(siteId);
         if (!mounted || !nextPublished) return;
 
         setDbBlocks(nextPublished.blocks);
@@ -573,16 +578,30 @@ export function SitePageClient({
       } catch {
         // Keep local rendered content when backend is unavailable.
       } finally {
-        clearTimeout(settleTimer);
+        if (settleTimer) clearTimeout(settleTimer);
         if (mounted) setRemoteResolved(true);
       }
-    })();
+    };
+
+    if (hasInitialPublishedBlocks) {
+      setRemoteResolved(true);
+      startTimer = setTimeout(() => {
+        void refreshPublished();
+      }, SITE_REMOTE_INITIAL_REVALIDATE_DELAY_MS);
+    } else {
+      setRemoteResolved(false);
+      settleTimer = setTimeout(() => {
+        if (mounted) setRemoteResolved(true);
+      }, SITE_REMOTE_SETTLE_TIMEOUT_MS);
+      void refreshPublished();
+    }
 
     return () => {
       mounted = false;
-      clearTimeout(settleTimer);
+      if (startTimer) clearTimeout(startTimer);
+      if (settleTimer) clearTimeout(settleTimer);
     };
-  }, [hydrated, siteId, siteScope]);
+  }, [hasInitialPublishedBlocks, hydrated, siteId, siteScope]);
 
   const faollaPullRefreshEnabled = hydrated && isMobileViewport && faollaAppShell;
   const {
@@ -610,9 +629,20 @@ export function SitePageClient({
       : undefined;
 
   useEffect(() => {
-    if (!siteId || siteId === "site-main") return;
-    ensurePersonalGuestIdentity();
-  }, [siteId]);
+    if (!hydrated || !siteId || siteId === "site-main") return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void import("@/lib/personalGuestSession")
+        .then(({ ensurePersonalGuestIdentity }) => {
+          if (!cancelled) ensurePersonalGuestIdentity();
+        })
+        .catch(() => undefined);
+    }, 900);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [hydrated, siteId]);
 
   useEffect(() => {
     if (!hydrated || !isMobileViewport || faollaAppShell || !siteId || siteId === "site-main") return;

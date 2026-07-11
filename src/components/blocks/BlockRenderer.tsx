@@ -21,7 +21,7 @@ const GalleryBlock = dynamic(() => import("./GalleryBlock"), { ssr: false, loadi
 const ChartBlock = dynamic(() => import("./ChartBlock"), { ssr: false, loading: () => null });
 const MusicBlock = dynamic(() => import("./MusicBlock"), { ssr: false, loading: () => null });
 const ContactBlock = dynamic(() => import("./ContactBlock"), { ssr: false, loading: () => null });
-const ProductBlock = dynamic(() => import("./ProductBlock"), { ssr: false, loading: () => null });
+const ProductBlock = dynamic(() => import("./ProductBlock"), { loading: () => null });
 const CouponBlock = dynamic(() => import("./CouponBlock"), { ssr: false, loading: () => null });
 const GoogleReviewsBlock = dynamic(() => import("./GoogleReviewsBlock"), { ssr: false, loading: () => null });
 const BookingBlock = dynamic(() => import("./BookingBlock"), { ssr: false, loading: () => null });

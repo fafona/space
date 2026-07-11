@@ -130,7 +130,7 @@ export function buildProductImageFileCode(fileName: string) {
 
 export function mergeImportedProductImages(
   existing: ProductItemInput[],
-  uploadedImages: Array<{ fileName: string; imageUrl: string }>,
+  uploadedImages: Array<{ fileName: string; imageUrl: string; thumbnailUrl?: string }>,
 ) {
   const items = normalizeProductItems(existing);
   const itemByCode = new Map(items.map((item) => [normalizeProductCode(item.code), item]));
@@ -145,6 +145,7 @@ export function mergeImportedProductImages(
       return;
     }
     found.imageUrl = entry.imageUrl;
+    found.thumbnailUrl = String(entry.thumbnailUrl ?? "").trim();
     matched += 1;
   });
 

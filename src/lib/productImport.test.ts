@@ -53,3 +53,26 @@ test("mergeImportedProductImages matches file name to product code", () => {
   assert.equal(result.unmatched, 1);
   assert.equal(result.items[0]?.imageUrl, "https://example.com/1.jpg");
 });
+
+test("mergeImportedProductImages stores thumbnail url with matched image", () => {
+  const result = mergeImportedProductImages(
+    [{ code: "SKU-001", name: "Product A" }],
+    [{ fileName: "sku001.webp", imageUrl: "https://example.com/full.jpg", thumbnailUrl: "https://example.com/thumb.webp" }],
+  );
+
+  assert.equal(result.matched, 1);
+  assert.equal(result.items[0]?.imageUrl, "https://example.com/full.jpg");
+  assert.equal(result.items[0]?.thumbnailUrl, "https://example.com/thumb.webp");
+});
+
+test("mergeImportedProductRows preserves existing thumbnail url", () => {
+  const merged = mergeImportedProductRows(
+    [{ code: "A-01", name: "Old product", imageUrl: "https://example.com/full.jpg", thumbnailUrl: "https://example.com/thumb.webp" }],
+    [{ code: "A01", name: "New product", price: "20.00" }],
+  );
+
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0]?.name, "New product");
+  assert.equal(merged[0]?.imageUrl, "https://example.com/full.jpg");
+  assert.equal(merged[0]?.thumbnailUrl, "https://example.com/thumb.webp");
+});

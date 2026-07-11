@@ -10,6 +10,7 @@ import { normalizeDomainPrefix } from "@/lib/merchantIdentity";
 import { getMerchantPublishPermissionViolation } from "@/lib/merchantPermissionGuards";
 import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
 import { getInlinePublishPayloadViolation } from "@/lib/publishPayloadValidation";
+import { clearPublishedSiteDataCache } from "@/lib/publishedSiteData";
 import {
   loadStoredPlatformMerchantSnapshot,
   type PlatformMerchantSnapshotStoreClient,
@@ -796,6 +797,8 @@ export async function POST(request: Request) {
           return makeCachedResponse(status, responseBody);
         }
 
+        clearPublishedSiteDataCache(merchantIds);
+
         const status = 200;
         const responseBody = {
           ok: true,
@@ -880,6 +883,8 @@ export async function POST(request: Request) {
       resultCache.set(requestId, { at: Date.now(), status, body: responseBody });
       return makeCachedResponse(status, responseBody);
     }
+
+    clearPublishedSiteDataCache(merchantIds);
 
     const postPublishSyncScheduled =
       !isPlatformEditor &&

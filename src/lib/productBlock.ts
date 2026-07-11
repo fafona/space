@@ -21,6 +21,7 @@ export type ProductItemInput = {
   description?: string;
   price?: string;
   imageUrl?: string;
+  thumbnailUrl?: string;
   tag?: string;
 };
 
@@ -31,6 +32,7 @@ export type ProductItem = {
   description: string;
   price: string;
   imageUrl: string;
+  thumbnailUrl: string;
   tag: string;
 };
 
@@ -170,6 +172,7 @@ export function isMeaningfulProductItem(item: ProductItemInput | ProductItem | u
       String(item.description ?? "").trim() ||
       String(item.price ?? "").trim() ||
       String(item.imageUrl ?? "").trim() ||
+      String(item.thumbnailUrl ?? "").trim() ||
       String(item.tag ?? "").trim(),
   );
 }
@@ -225,6 +228,7 @@ export function normalizeProductItems(source: ProductItemInput[] | undefined): P
     description: (item?.description ?? "").trim(),
     price: (item?.price ?? "").trim(),
     imageUrl: (item?.imageUrl ?? "").trim(),
+    thumbnailUrl: (item?.thumbnailUrl ?? "").trim(),
     tag: (item?.tag ?? "").trim(),
   }));
 }

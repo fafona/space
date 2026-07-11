@@ -35,8 +35,8 @@ export type PublishedSiteBlocksPayload = {
   orderManagementEnabled: boolean;
 };
 
-const PUBLISHED_SITE_PAYLOAD_CACHE_TTL_MS = 1_500;
-const PUBLISHED_SITE_PAYLOAD_EMPTY_CACHE_TTL_MS = 1_000;
+const PUBLISHED_SITE_PAYLOAD_CACHE_TTL_MS = 15_000;
+const PUBLISHED_SITE_PAYLOAD_EMPTY_CACHE_TTL_MS = 2_000;
 const PUBLISHED_SITE_BLOCKS_CACHE_TTL_MS = 15_000;
 const PUBLISHED_SITE_BLOCKS_EMPTY_CACHE_TTL_MS = 2_000;
 const ORDER_MANAGEMENT_PERMISSION_TIMEOUT_MS = 1_500;
@@ -57,6 +57,21 @@ const publishedSiteBlocksCache = new Map<
     value?: PublishedSiteBlocksPayload | null;
   }
 >();
+
+export function clearPublishedSiteDataCache(siteIds?: Iterable<string>) {
+  if (!siteIds) {
+    publishedSitePayloadCache.clear();
+    publishedSiteBlocksCache.clear();
+    return;
+  }
+
+  for (const siteId of siteIds) {
+    const normalizedSiteId = String(siteId ?? "").trim();
+    if (!normalizedSiteId) continue;
+    publishedSitePayloadCache.delete(normalizedSiteId);
+    publishedSiteBlocksCache.delete(normalizedSiteId);
+  }
+}
 
 function readEnv(name: string) {
   return (process.env[name] ?? "").trim();

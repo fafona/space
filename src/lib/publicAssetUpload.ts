@@ -21,6 +21,7 @@ export type PublicAssetUploadUsage =
   | "business-card-contact"
   | "business-card-export"
   | "business-card-intro-video"
+  | "product-image"
   | "audio"
   | "generic-image";
 
@@ -28,9 +29,11 @@ export type PublicAssetUploadOperationContext = MerchantOperationContext;
 
 export type PublicAssetUploadResult = {
   url: string;
+  thumbnailUrl?: string;
   posterUrl?: string;
   bucket?: string;
   objectPath?: string;
+  thumbnailObjectPath?: string;
   posterObjectPath?: string;
 };
 
@@ -117,21 +120,29 @@ async function uploadDataUrlViaServerApi(
       if (response.ok) {
         const payload = (await response.json().catch(() => null)) as {
           url?: unknown;
+          thumbnailUrl?: unknown;
           posterUrl?: unknown;
           bucket?: unknown;
           objectPath?: unknown;
+          thumbnailObjectPath?: unknown;
           posterObjectPath?: unknown;
         } | null;
         const url = typeof payload?.url === "string" ? payload.url.trim() : "";
         return url
-          ? {
+            ? {
               url,
+              ...(typeof payload?.thumbnailUrl === "string" && payload.thumbnailUrl.trim()
+                ? { thumbnailUrl: payload.thumbnailUrl.trim() }
+                : {}),
               ...(typeof payload?.posterUrl === "string" && payload.posterUrl.trim()
                 ? { posterUrl: payload.posterUrl.trim() }
                 : {}),
               ...(typeof payload?.bucket === "string" && payload.bucket.trim() ? { bucket: payload.bucket.trim() } : {}),
               ...(typeof payload?.objectPath === "string" && payload.objectPath.trim()
                 ? { objectPath: payload.objectPath.trim() }
+                : {}),
+              ...(typeof payload?.thumbnailObjectPath === "string" && payload.thumbnailObjectPath.trim()
+                ? { thumbnailObjectPath: payload.thumbnailObjectPath.trim() }
                 : {}),
               ...(typeof payload?.posterObjectPath === "string" && payload.posterObjectPath.trim()
                 ? { posterObjectPath: payload.posterObjectPath.trim() }
@@ -197,21 +208,29 @@ async function uploadFileViaServerApi(
       if (response.ok) {
         const payload = (await response.json().catch(() => null)) as {
           url?: unknown;
+          thumbnailUrl?: unknown;
           posterUrl?: unknown;
           bucket?: unknown;
           objectPath?: unknown;
+          thumbnailObjectPath?: unknown;
           posterObjectPath?: unknown;
         } | null;
         const url = typeof payload?.url === "string" ? payload.url.trim() : "";
         return url
-          ? {
+            ? {
               url,
+              ...(typeof payload?.thumbnailUrl === "string" && payload.thumbnailUrl.trim()
+                ? { thumbnailUrl: payload.thumbnailUrl.trim() }
+                : {}),
               ...(typeof payload?.posterUrl === "string" && payload.posterUrl.trim()
                 ? { posterUrl: payload.posterUrl.trim() }
                 : {}),
               ...(typeof payload?.bucket === "string" && payload.bucket.trim() ? { bucket: payload.bucket.trim() } : {}),
               ...(typeof payload?.objectPath === "string" && payload.objectPath.trim()
                 ? { objectPath: payload.objectPath.trim() }
+                : {}),
+              ...(typeof payload?.thumbnailObjectPath === "string" && payload.thumbnailObjectPath.trim()
+                ? { thumbnailObjectPath: payload.thumbnailObjectPath.trim() }
                 : {}),
               ...(typeof payload?.posterObjectPath === "string" && payload.posterObjectPath.trim()
                 ? { posterObjectPath: payload.posterObjectPath.trim() }

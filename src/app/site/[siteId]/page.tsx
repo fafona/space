@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { cache } from "react";
+import PublicSiteResourceHints from "@/components/PublicSiteResourceHints";
 import ServiceMaintenancePage from "@/components/ServiceMaintenancePage";
 import {
   buildMerchantLocalBusinessJsonLd,
@@ -146,10 +147,12 @@ export default async function SitePage({ params, searchParams }: SitePageProps) 
     );
   }
   const profile = buildProfileForSeo(siteId, publishedSite);
-  const jsonLd = publishedSite?.blocks?.length ? buildMerchantLocalBusinessJsonLd(profile, readPublicOrigin()) : null;
+  const publicOrigin = readPublicOrigin();
+  const jsonLd = publishedSite?.blocks?.length ? buildMerchantLocalBusinessJsonLd(profile, publicOrigin) : null;
 
   return (
     <>
+      <PublicSiteResourceHints blocks={publishedSite?.blocks} preferredOrigin={publicOrigin} />
       {jsonLd ? (
         <script
           type="application/ld+json"

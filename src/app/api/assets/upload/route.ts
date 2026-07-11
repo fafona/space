@@ -30,6 +30,7 @@ const BUSINESS_CARD_INTRO_VIDEO_SOURCE_LIMIT_BYTES = 80 * 1024 * 1024;
 
 type AssetUploadRequestBody = {
   dataUrl?: string;
+  sourceUrl?: string;
   merchantHint?: string;
   folder?: string;
   usage?: unknown;
@@ -42,6 +43,7 @@ type AssetUsage =
   | "business-card-contact"
   | "business-card-export"
   | "business-card-intro-video"
+  | "product-image"
   | "support-image"
   | "support-file"
   | "audio"
@@ -131,6 +133,66 @@ function dataUrlToBlob(dataUrl: string, mime: string) {
   const base64 = dataUrl.split(",")[1] ?? "";
   const bytes = Buffer.from(base64, "base64");
   return new Blob([new Uint8Array(bytes)], { type: mime });
+}
+
+function isAllowedPublicStorageImageSourceUrl(value: string, requestUrl: string) {
+  try {
+    const url = new URL(value, requestUrl);
+    const hostname = url.hostname.toLowerCase();
+    const allowedHost =
+      hostname === "faolla.com" ||
+      hostname.endsWith(".faolla.com") ||
+      hostname.endsWith(".supabase.co") ||
+      hostname === "localhost" ||
+      hostname === "127.0.0.1";
+    if (!allowedHost) return null;
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    if (!url.pathname.startsWith("/storage/v1/object/public/")) return null;
+    return url;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchPublicStorageImageSource(input: { sourceUrl: string; requestUrl: string; maxBytes: number }) {
+  const url = isAllowedPublicStorageImageSourceUrl(input.sourceUrl, input.requestUrl);
+  if (!url) {
+    throw new Error("unsupported_source_url");
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      throw new Error(`source_fetch_failed_${response.status}`);
+    }
+    const mime = String(response.headers.get("content-type") ?? "").split(";")[0]?.trim().toLowerCase() || "application/octet-stream";
+    if (!mime.startsWith("image/") || mime === "image/svg+xml") {
+      throw new Error("unsupported_source_mime");
+    }
+    const contentLength = Number(response.headers.get("content-length") ?? 0);
+    if (Number.isFinite(contentLength) && contentLength > input.maxBytes) {
+      throw new Error("source_size_limit_exceeded");
+    }
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.byteLength <= 0) {
+      throw new Error("empty_source_image");
+    }
+    if (buffer.byteLength > input.maxBytes) {
+      throw new Error("source_size_limit_exceeded");
+    }
+    const extension = parseDataUrlMeta(`data:${mime};base64,`)?.extension || "img";
+    return {
+      sourceUrl: normalizeStoragePublicUrl(url.toString()),
+      blob: new Blob([new Uint8Array(buffer)], { type: mime }),
+      meta: { mime, extension },
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function runFfmpegBinary(binaryPath: string, args: string[], timeoutMs: number) {
@@ -335,6 +397,47 @@ async function extractBusinessCardIntroVideoPoster(input: {
   }
 }
 
+async function createImageThumbnail(input: {
+  blob: Blob;
+  extension: string;
+}) {
+  const workspace = await mkdtemp(path.join(tmpdir(), "faolla-image-thumb-"));
+  const extension = input.extension.replace(/[^a-z0-9]+/gi, "") || "image";
+  const inputPath = path.join(workspace, `source.${extension}`);
+  const outputPath = path.join(workspace, "thumbnail.webp");
+  try {
+    const buffer = Buffer.from(await input.blob.arrayBuffer());
+    await writeFile(inputPath, buffer);
+    await runFfmpeg(
+      [
+        "-y",
+        "-i",
+        inputPath,
+        "-frames:v",
+        "1",
+        "-vf",
+        "scale=640:640:force_original_aspect_ratio=decrease",
+        "-an",
+        "-c:v",
+        "libwebp",
+        "-quality",
+        "78",
+        "-compression_level",
+        "4",
+        outputPath,
+      ],
+      60_000,
+    );
+    const outputBuffer = await readFile(outputPath);
+    if (outputBuffer.byteLength > 0) {
+      return new Blob([new Uint8Array(outputBuffer)], { type: "image/webp" });
+    }
+    throw new Error("empty_image_thumbnail");
+  } finally {
+    await rm(workspace, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
 function sanitizeMerchantHint(input: string) {
   const normalized = String(input ?? "")
     .trim()
@@ -366,6 +469,7 @@ function normalizeAssetUsage(value: unknown, folder: string, mime: string): Asse
     normalized === "business-card-contact" ||
     normalized === "business-card-export" ||
     normalized === "business-card-intro-video" ||
+    normalized === "product-image" ||
     normalized === "support-image" ||
     normalized === "support-file" ||
     normalized === "audio"
@@ -398,6 +502,7 @@ function getAssetUploadLimitBytes(input: {
       ) * 1024 * 1024;
     case "support-image":
       return 512 * 1024;
+    case "product-image":
     case "support-file":
       return 8 * 1024 * 1024;
     case "audio":
@@ -488,6 +593,7 @@ export async function POST(request: Request) {
   let folder = "";
   let merchantHint = "public";
   let usageInput: unknown = undefined;
+  let sourceAssetUrl = "";
   const contentType = request.headers.get("content-type") ?? "";
 
   if (contentType.toLowerCase().includes("multipart/form-data")) {
@@ -539,13 +645,15 @@ export async function POST(request: Request) {
     meta = parseDataUrlMeta(dataUrl);
     if (meta) {
       originalBlob = dataUrlToBlob(dataUrl, meta.mime);
+    } else {
+      sourceAssetUrl = String(body.sourceUrl ?? "").trim();
     }
     folder = String(body.folder ?? "").trim();
     merchantHint = sanitizeMerchantHint(String(body.merchantHint ?? "public"));
     usageInput = body.usage;
   }
 
-  if (!originalBlob || !FOLDER_CANDIDATES.has(folder)) {
+  if ((!originalBlob && !sourceAssetUrl) || !FOLDER_CANDIDATES.has(folder)) {
     return NextResponse.json(
       {
         ok: false,
@@ -556,12 +664,23 @@ export async function POST(request: Request) {
     );
   }
 
-  if (!meta) {
+  if (!meta && !sourceAssetUrl) {
     return NextResponse.json(
       {
         ok: false,
         code: "unsupported_asset",
         message: "Only supported image, audio, video, and common document data URLs can be uploaded.",
+      },
+      { status: 400 },
+    );
+  }
+
+  if (sourceAssetUrl && String(usageInput ?? "").trim().toLowerCase() !== "product-image") {
+    return NextResponse.json(
+      {
+        ok: false,
+        code: "unsupported_source_usage",
+        message: "Source image thumbnail generation is only available for product images.",
       },
       { status: 400 },
     );
@@ -584,6 +703,39 @@ export async function POST(request: Request) {
         message: "Unauthorized asset upload request.",
       },
       { status: 401 },
+    );
+  }
+
+  if (!meta && sourceAssetUrl) {
+    try {
+      const source = await fetchPublicStorageImageSource({
+        sourceUrl: sourceAssetUrl,
+        requestUrl: request.url,
+        maxBytes: 8 * 1024 * 1024,
+      });
+      originalBlob = source.blob;
+      meta = source.meta;
+      sourceAssetUrl = source.sourceUrl;
+    } catch (error) {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: error instanceof Error ? error.message : "unsupported_source_url",
+          message: "Source image cannot be used for thumbnail generation.",
+        },
+        { status: 400 },
+      );
+    }
+  }
+
+  if (!originalBlob || !meta) {
+    return NextResponse.json(
+      {
+        ok: false,
+        code: "unsupported_asset",
+        message: "Only supported image, audio, video, and common document data URLs can be uploaded.",
+      },
+      { status: 400 },
     );
   }
 
@@ -673,10 +825,70 @@ export async function POST(request: Request) {
     }
   }
 
+  let imageThumbnailBlob: Blob | null = null;
+  if (usage === "product-image" && uploadMime.startsWith("image/") && uploadMime !== "image/svg+xml") {
+    try {
+      imageThumbnailBlob = await createImageThumbnail({
+        blob: uploadBlob,
+        extension: uploadExtension,
+      });
+    } catch (error) {
+      console.warn("[asset-upload] image thumbnail generation failed", error instanceof Error ? error.message : error);
+    }
+  }
+
   const now = new Date();
   const yyyy = `${now.getFullYear()}`;
   const mm = `${now.getMonth() + 1}`.padStart(2, "0");
   const uploadErrors: string[] = [];
+
+  if (sourceAssetUrl) {
+    if (!imageThumbnailBlob) {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "thumbnail_generation_failed",
+          message: "Source image thumbnail could not be generated.",
+        },
+        { status: 422 },
+      );
+    }
+
+    for (const bucket of BUCKET_CANDIDATES) {
+      const objectBasePath = `${folder}/${actor.effectiveMerchantHint}/${yyyy}/${mm}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const thumbnailObjectPath = `${objectBasePath}-thumb.webp`;
+      const uploadedThumbnail = await supabase.storage.from(bucket).upload(thumbnailObjectPath, imageThumbnailBlob, {
+        contentType: "image/webp",
+        upsert: false,
+      });
+      if (uploadedThumbnail.error) {
+        uploadErrors.push(`${bucket}: thumbnail ${uploadedThumbnail.error.message}`);
+        continue;
+      }
+      const { data: thumbnailData } = supabase.storage.from(bucket).getPublicUrl(thumbnailObjectPath);
+      const thumbnailPublicUrl = thumbnailData?.publicUrl ? normalizeStoragePublicUrl(thumbnailData.publicUrl) : "";
+      if (!thumbnailPublicUrl) {
+        uploadErrors.push(`${bucket}: failed to resolve thumbnail public url`);
+        continue;
+      }
+      return NextResponse.json({
+        ok: true,
+        bucket,
+        url: sourceAssetUrl,
+        thumbnailUrl: thumbnailPublicUrl,
+        thumbnailObjectPath,
+      });
+    }
+
+    return NextResponse.json(
+      {
+        ok: false,
+        code: "thumbnail_upload_failed",
+        message: uploadErrors.join(" | ") || "Thumbnail upload failed.",
+      },
+      { status: 409 },
+    );
+  }
 
   for (const bucket of BUCKET_CANDIDATES) {
     const objectBasePath = `${folder}/${actor.effectiveMerchantHint}/${yyyy}/${mm}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -710,6 +922,26 @@ export async function POST(request: Request) {
         continue;
       }
     }
+    let thumbnailObjectPath = "";
+    let thumbnailPublicUrl = "";
+    if (imageThumbnailBlob) {
+      thumbnailObjectPath = `${objectBasePath}-thumb.webp`;
+      const uploadedThumbnail = await supabase.storage.from(bucket).upload(thumbnailObjectPath, imageThumbnailBlob, {
+        contentType: "image/webp",
+        upsert: false,
+      });
+      if (uploadedThumbnail.error) {
+        console.warn("[asset-upload] image thumbnail upload failed", `${bucket}: ${uploadedThumbnail.error.message}`);
+        thumbnailObjectPath = "";
+      } else {
+        const { data: thumbnailData } = supabase.storage.from(bucket).getPublicUrl(thumbnailObjectPath);
+        thumbnailPublicUrl = thumbnailData?.publicUrl ? normalizeStoragePublicUrl(thumbnailData.publicUrl) : "";
+        if (!thumbnailPublicUrl) {
+          console.warn("[asset-upload] image thumbnail public url unavailable", `${bucket}: ${thumbnailObjectPath}`);
+          thumbnailObjectPath = "";
+        }
+      }
+    }
     const { data } = supabase.storage.from(bucket).getPublicUrl(objectPath);
     if (data?.publicUrl) {
       return NextResponse.json({
@@ -718,6 +950,7 @@ export async function POST(request: Request) {
         objectPath,
         url: normalizeStoragePublicUrl(data.publicUrl),
         ...(posterPublicUrl ? { posterUrl: posterPublicUrl, posterObjectPath } : {}),
+        ...(thumbnailPublicUrl ? { thumbnailUrl: thumbnailPublicUrl, thumbnailObjectPath } : {}),
       });
     }
     uploadErrors.push(`${bucket}: failed to resolve public url`);

@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
+import PublicSiteResourceHints from "@/components/PublicSiteResourceHints";
 import ServiceMaintenancePage from "@/components/ServiceMaintenancePage";
 import SitePageClient from "@/app/site/[siteId]/SitePageClient";
 import { isMobileViewportRequest } from "@/lib/deviceViewport";
@@ -289,9 +290,11 @@ export default async function MerchantEntryPage({ params, searchParams }: Mercha
         );
       }
       const profile = buildProfileForSeo(initialResolvedSiteId, publishedSite);
-      const jsonLd = buildMerchantLocalBusinessJsonLd(profile, readPublicOrigin());
+      const publicOrigin = readPublicOrigin();
+      const jsonLd = buildMerchantLocalBusinessJsonLd(profile, publicOrigin);
       return (
         <>
+          <PublicSiteResourceHints blocks={publishedSite.blocks} preferredOrigin={publicOrigin} />
           {jsonLd ? (
             <script
               type="application/ld+json"
