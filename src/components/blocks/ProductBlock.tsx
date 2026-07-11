@@ -802,6 +802,7 @@ export default function ProductBlock(props: ProductBlockProps) {
   const [pageIndex, setPageIndex] = useState(0);
   const [activeProductId, setActiveProductId] = useState<string | null>(null);
   const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [scrollActiveTag, setScrollActiveTag] = useState<string | null>(null);
   const [searchKeyword, setSearchKeyword] = useState("");
   const [cartOpen, setCartOpen] = useState(false);
   const [cartItems, setCartItems] = useState<ProductCartItemState[]>([]);
@@ -853,7 +854,7 @@ export default function ProductBlock(props: ProductBlockProps) {
   const scrollViewportHeight =
     containerMode === "scroll" ? productContainerViewportHeight(layoutPreset, imageSize, itemsPerPage, productItemGap, productCardHeight) : null;
   const productScrollSpyEnabled =
-    groupedByTag && containerMode === "scroll" && !tagHideUnselected && productTags.length > 0;
+    groupedByTag && containerMode === "scroll" && productTags.length > 0;
   const activeProduct = arrangedProducts.find((item) => item.id === activeProductId) ?? products.find((item) => item.id === activeProductId) ?? null;
   const placeholderCount =
     containerMode === "paged" && layoutPreset !== "spotlight" ? Math.max(0, itemsPerPage - pagedProducts.length) : 0;
@@ -869,6 +870,8 @@ export default function ProductBlock(props: ProductBlockProps) {
       String(cartCustomer.phone ?? "").trim() ||
       String(cartCustomer.email ?? "").trim(),
   );
+  const visibleTag =
+    productScrollSpyEnabled && scrollActiveTag && productTags.includes(scrollActiveTag) ? scrollActiveTag : selectedTag;
 
   useEffect(() => {
     if (props.runtimeOrderManagementEnabled && runtimeBlockId) {
@@ -1092,20 +1095,34 @@ export default function ProductBlock(props: ProductBlockProps) {
     };
   }, [activeProductId]);
 
+  const resolveProductScrollSpyViewport = useCallback(() => {
+    const explicitViewport = scrollViewportRef.current;
+    if (explicitViewport && explicitViewport.scrollHeight > explicitViewport.clientHeight + 2) {
+      return explicitViewport;
+    }
+    if (openedView) {
+      const openedBody = rootRef.current?.closest<HTMLElement>(".faolla-opened-block-body");
+      if (openedBody && openedBody.scrollHeight > openedBody.clientHeight + 2) {
+        return openedBody;
+      }
+    }
+    return explicitViewport;
+  }, [openedView]);
+
   const syncActiveTagFromScroll = useCallback(() => {
-    const viewport = scrollViewportRef.current;
+    const viewport = resolveProductScrollSpyViewport();
     if (!productScrollSpyEnabled || !viewport) return;
 
     const viewportRect = viewport.getBoundingClientRect();
-    const activationLine = viewport.scrollTop + Math.max(8, viewport.clientHeight * 0.18);
+    const activationLine = viewportRect.top + Math.max(8, viewport.clientHeight * 0.18);
     const productTagValues = productTagKey ? productTagKey.split("\u0001") : [];
-    const headings = Array.from(viewport.querySelectorAll<HTMLElement>("[data-product-group-tag]"));
+    const headings = Array.from((rootRef.current ?? viewport).querySelectorAll<HTMLElement>("[data-product-group-tag]"));
     let nextTag = headings[0]?.dataset.productGroupTag ?? null;
 
     for (const heading of headings) {
       const tag = heading.dataset.productGroupTag ?? "";
       if (!tag || !productTagValues.includes(tag)) continue;
-      const headingTop = heading.getBoundingClientRect().top - viewportRect.top + viewport.scrollTop;
+      const headingTop = heading.getBoundingClientRect().top;
       if (headingTop <= activationLine) {
         nextTag = tag;
       } else {
@@ -1125,16 +1142,16 @@ export default function ProductBlock(props: ProductBlockProps) {
     }
 
     if (!nextTag) return;
-    setActiveTag((current) => (current === nextTag ? current : nextTag));
-  }, [productScrollSpyEnabled, productTagKey]);
+    setScrollActiveTag((current) => (current === nextTag ? current : nextTag));
+  }, [productScrollSpyEnabled, productTagKey, resolveProductScrollSpyViewport]);
 
-  const handleProductViewportScroll = () => {
+  const handleProductViewportScroll = useCallback(() => {
     if (!productScrollSpyEnabled || productScrollSpyFrameRef.current !== null) return;
     productScrollSpyFrameRef.current = window.requestAnimationFrame(() => {
       productScrollSpyFrameRef.current = null;
       syncActiveTagFromScroll();
     });
-  };
+  }, [productScrollSpyEnabled, syncActiveTagFromScroll]);
 
   useEffect(() => {
     if (!productScrollSpyEnabled) return;
@@ -1142,17 +1159,33 @@ export default function ProductBlock(props: ProductBlockProps) {
     return () => window.cancelAnimationFrame(frame);
   }, [productScrollSpyEnabled, productTagKey, searchKeyword, normalizedPageIndex, pagedProducts.length, syncActiveTagFromScroll]);
 
+  useEffect(() => {
+    if (!productScrollSpyEnabled || typeof window === "undefined") return;
+    const targets = new Set<HTMLElement>();
+    if (scrollViewportRef.current) targets.add(scrollViewportRef.current);
+    if (openedView) {
+      const openedBody = rootRef.current?.closest<HTMLElement>(".faolla-opened-block-body");
+      if (openedBody) targets.add(openedBody);
+    }
+    targets.forEach((target) => target.addEventListener("scroll", handleProductViewportScroll, { passive: true }));
+    window.addEventListener("resize", handleProductViewportScroll);
+    return () => {
+      targets.forEach((target) => target.removeEventListener("scroll", handleProductViewportScroll));
+      window.removeEventListener("resize", handleProductViewportScroll);
+    };
+  }, [handleProductViewportScroll, openedView, productScrollSpyEnabled]);
+
   const scrollToProductCard = (targetId: string | null) => {
     if (!targetId) return;
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        const viewport = scrollViewportRef.current;
+        const viewport = resolveProductScrollSpyViewport();
         const target =
           rootRef.current?.querySelector<HTMLElement>(`#${getProductCardDomId(targetId)}`) ??
           document.getElementById(getProductCardDomId(targetId));
         if (!target) return;
         if (viewport && viewport.contains(target)) {
-          const offset = target.offsetTop - viewport.offsetTop;
+          const offset = target.getBoundingClientRect().top - viewport.getBoundingClientRect().top + viewport.scrollTop;
           viewport.scrollTo({ top: Math.max(0, offset), behavior: "smooth" });
           return;
         }
@@ -1166,13 +1199,13 @@ export default function ProductBlock(props: ProductBlockProps) {
     const targetKey = getProductGroupTagKey(targetTag);
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        const viewport = scrollViewportRef.current;
+        const viewport = resolveProductScrollSpyViewport();
         const target =
           rootRef.current?.querySelector<HTMLElement>(`[data-product-group-key="${targetKey}"]`) ??
           document.querySelector<HTMLElement>(`[data-product-group-key="${targetKey}"]`);
         if (!target) return;
         if (viewport && viewport.contains(target)) {
-          const offset = target.offsetTop - viewport.offsetTop;
+          const offset = target.getBoundingClientRect().top - viewport.getBoundingClientRect().top + viewport.scrollTop;
           viewport.scrollTo({ top: Math.max(0, offset), behavior: "smooth" });
           return;
         }
@@ -1183,10 +1216,11 @@ export default function ProductBlock(props: ProductBlockProps) {
 
   const handleSelectTag = (tag: string | null) => {
     setActiveTag(tag);
+    setScrollActiveTag(tag);
     if (tag == null) {
       setPageIndex(0);
       requestAnimationFrame(() => {
-        scrollViewportRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+        resolveProductScrollSpyViewport()?.scrollTo({ top: 0, behavior: "smooth" });
       });
       return;
     }
@@ -1559,7 +1593,7 @@ export default function ProductBlock(props: ProductBlockProps) {
         style={{ gap: `${tagRowGap}px` }}
       >
         {filterItems.map((filter, index) => {
-          const active = filter.value === null ? selectedTag === null : selectedTag === filter.value;
+          const active = filter.value === null ? visibleTag === null : visibleTag === filter.value;
           const color = active ? tagActiveBgColor : tagBgColor;
           return (
             <button
@@ -2079,7 +2113,9 @@ export default function ProductBlock(props: ProductBlockProps) {
                 {cartUsesOpenedShellHeader ? (
                   <div className="mb-2 flex items-center justify-between gap-3 text-xs text-slate-500 sm:text-sm">
                     <span>已选 {checkedCartTotalQuantity} 件</span>
-                    <span className="font-semibold text-slate-900">{formatMerchantOrderAmount(checkedCartTotalAmount, pricePrefix)}</span>
+                    <span className="text-base font-semibold text-slate-900 sm:text-lg">
+                      {formatMerchantOrderAmount(checkedCartTotalAmount, pricePrefix)}
+                    </span>
                   </div>
                 ) : null}
                 {(cartUsesOpenedShellHeader && cartNotice) || cartError ? (
