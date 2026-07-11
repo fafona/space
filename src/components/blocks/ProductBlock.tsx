@@ -114,6 +114,7 @@ type ProductBlockProps = BackgroundEditableProps &
     runtimeOpenedToolbarTargetId?: string;
     runtimeOpenedCartTargetId?: string;
     runtimeOpenedCartCloseEventName?: string;
+    runtimeOpenedCartCloseSignal?: number;
     runtimeOnOpenedCartStateChange?: (open: boolean) => void;
   };
 
@@ -671,6 +672,10 @@ export default function ProductBlock(props: ProductBlockProps) {
   const openedCartTargetId = typeof props.runtimeOpenedCartTargetId === "string" ? props.runtimeOpenedCartTargetId : "";
   const openedCartCloseEventName =
     typeof props.runtimeOpenedCartCloseEventName === "string" ? props.runtimeOpenedCartCloseEventName : "";
+  const openedCartCloseSignal =
+    typeof props.runtimeOpenedCartCloseSignal === "number" && Number.isFinite(props.runtimeOpenedCartCloseSignal)
+      ? props.runtimeOpenedCartCloseSignal
+      : 0;
   const onOpenedCartStateChange = props.runtimeOnOpenedCartStateChange;
   const mobileFitScreenWidth = props.mobileFitScreenWidth === true;
   const { locale } = useI18n();
@@ -816,6 +821,7 @@ export default function ProductBlock(props: ProductBlockProps) {
   const cartAnimationTimersRef = useRef<number[]>([]);
   const productScrollSpyFrameRef = useRef<number | null>(null);
   const stableRuntimeSiteIdRef = useRef("");
+  const openedCartCloseSignalRef = useRef(openedCartCloseSignal);
   const runtimeSiteId = String(props.runtimeSiteId ?? "").trim();
   const runtimeBlockId = String(props.runtimeBlockId ?? "").trim();
   if (runtimeSiteId) stableRuntimeSiteIdRef.current = runtimeSiteId;
@@ -896,7 +902,7 @@ export default function ProductBlock(props: ProductBlockProps) {
   }, [disableCartPortal, overlayWithinBlock]);
 
   useEffect(() => {
-    if (!openedView || !openedToolbarTargetId || typeof document === "undefined") {
+    if (!openedView || cartOpen || !openedToolbarTargetId || typeof document === "undefined") {
       setOpenedToolbarTarget(null);
       return;
     }
@@ -914,10 +920,10 @@ export default function ProductBlock(props: ProductBlockProps) {
     return () => {
       if (frameId) window.cancelAnimationFrame(frameId);
     };
-  }, [openedToolbarTargetId, openedView]);
+  }, [cartOpen, openedToolbarTargetId, openedView]);
 
   useEffect(() => {
-    if (!openedView || !openedCartTargetId || typeof document === "undefined") {
+    if (!openedView || cartOpen || !openedCartTargetId || typeof document === "undefined") {
       setOpenedCartTarget(null);
       return;
     }
@@ -935,7 +941,7 @@ export default function ProductBlock(props: ProductBlockProps) {
     return () => {
       if (frameId) window.cancelAnimationFrame(frameId);
     };
-  }, [openedCartTargetId, openedView]);
+  }, [cartOpen, openedCartTargetId, openedView]);
 
   useEffect(() => {
     if (!openedView || typeof onOpenedCartStateChange !== "function") return;
@@ -960,6 +966,17 @@ export default function ProductBlock(props: ProductBlockProps) {
     window.addEventListener(openedCartCloseEventName, closeCart);
     return () => window.removeEventListener(openedCartCloseEventName, closeCart);
   }, [openedCartCloseEventName, openedView]);
+
+  useEffect(() => {
+    if (!openedView) {
+      openedCartCloseSignalRef.current = openedCartCloseSignal;
+      return;
+    }
+    if (openedCartCloseSignalRef.current === openedCartCloseSignal) return;
+    openedCartCloseSignalRef.current = openedCartCloseSignal;
+    setCartCustomerOpen(false);
+    setCartOpen(false);
+  }, [openedCartCloseSignal, openedView]);
 
   useEffect(() => {
     if (!openedView || !cartOpen) return;

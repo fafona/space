@@ -98,6 +98,7 @@ export default function BlockRenderer({
   const safeBlocks = useMemo(() => (Array.isArray(blocks) ? blocks : []), [blocks]);
   const [openedBlockId, setOpenedBlockId] = useState<string | null>(null);
   const [openedProductCartOpen, setOpenedProductCartOpen] = useState(false);
+  const [openedProductCartCloseSignal, setOpenedProductCartCloseSignal] = useState(0);
   const openedBlockTouchStartYRef = useRef<number | null>(null);
   const openableBlocks = useMemo<ButtonJumpBlock[]>(
     () =>
@@ -199,6 +200,7 @@ export default function BlockRenderer({
       openedToolbarTargetId?: string;
       openedCartTargetId?: string;
       openedCartCloseEventName?: string;
+      openedCartCloseSignal?: number;
       onOpenedCartStateChange?: (open: boolean) => void;
     } = {},
   ): ReactNode {
@@ -269,6 +271,7 @@ export default function BlockRenderer({
             runtimeOpenedToolbarTargetId={options.openedToolbarTargetId}
             runtimeOpenedCartTargetId={options.openedCartTargetId}
             runtimeOpenedCartCloseEventName={options.openedCartCloseEventName}
+            runtimeOpenedCartCloseSignal={options.openedCartCloseSignal}
             runtimeOnOpenedCartStateChange={options.onOpenedCartStateChange}
           />
         );
@@ -333,6 +336,7 @@ export default function BlockRenderer({
   const openedPortalHost = typeof document !== "undefined" ? document.body : null;
   const handleOpenedBlockBackClick = () => {
     if (openedProductCartOpen && openedCartCloseEventName && typeof window !== "undefined") {
+      setOpenedProductCartCloseSignal((value) => value + 1);
       window.dispatchEvent(new Event(openedCartCloseEventName));
       setOpenedProductCartOpen(false);
       return;
@@ -393,6 +397,7 @@ export default function BlockRenderer({
             openedToolbarTargetId,
             openedCartTargetId,
             openedCartCloseEventName,
+            openedCartCloseSignal: openedProductCartCloseSignal,
             onOpenedCartStateChange: handleOpenedProductCartStateChange,
           })}
         </BlockRuntimeBoundary>
