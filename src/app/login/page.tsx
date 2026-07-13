@@ -419,6 +419,13 @@ function LoginPageInner() {
   );
   const [entryAccountType, setEntryAccountType] = useState<LoginEntryAccountType>(requestedEntryAccountType);
   const [authView, setAuthView] = useState<AuthView>("signin");
+  const requestedAuthView = useMemo<AuthView | "">(() => {
+    const raw = (searchParams.get("authView") ?? searchParams.get("view") ?? "").trim().toLowerCase();
+    if (raw === "signup_personal" || raw === "personal_signup") return "signup_personal";
+    if (raw === "signup_merchant" || raw === "merchant_signup") return "signup_merchant";
+    if (raw === "signin" || raw === "login") return "signin";
+    return "";
+  }, [searchParams]);
   const [pendingAction, setPendingAction] = useState<
     | "signin"
     | "signup"
@@ -465,6 +472,10 @@ function LoginPageInner() {
     writeStoredLoginEntryAccountType(requestedEntryAccountType);
     setEntryAccountType(requestedEntryAccountType);
   }, [requestedEntryAccountType]);
+  useEffect(() => {
+    if (!requestedAuthView) return;
+    setAuthView(requestedAuthView);
+  }, [requestedAuthView]);
   useEffect(() => {
     if (!googleOAuthStateExpired) return;
     const storedAttempt = readGoogleOAuthAttempt();

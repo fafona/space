@@ -2699,10 +2699,10 @@ export default function MePage() {
   }, [conversationInfoOpen, isMobileViewport, mobileConversationView, mobileSelfSection, mobileTab]);
 
   useEffect(() => {
-    if (isGuestSession && mobileSelfSection === "qr") {
+    if (isGuestSession && mobileTab === "self" && mobileSelfSection !== "home") {
       setMobileSelfSection("home");
     }
-  }, [isGuestSession, mobileSelfSection]);
+  }, [isGuestSession, mobileSelfSection, mobileTab]);
 
   const accountId =
     payload && typeof payload.accountId === "string" && /^\d{8}$/.test(payload.accountId.trim())
@@ -2768,6 +2768,14 @@ export default function MePage() {
       ),
     [payload?.personalServiceConfig],
   );
+
+  function buildPersonalSelfAuthHref(mode: "signin" | "signup" = "signin") {
+    const params = new URLSearchParams();
+    params.set("accountType", "personal");
+    params.set("redirect", "/me?mobileTab=self");
+    if (mode === "signup") params.set("authView", "signup_personal");
+    return `/login?${params.toString()}`;
+  }
   const personalBusinessCardPermissionConfig = useMemo(
     () => buildPersonalAccountPermissionConfig(personalServiceConfig),
     [personalServiceConfig],
@@ -5207,7 +5215,7 @@ export default function MePage() {
   async function performLogout() {
     if (loggingOut) return;
     if (isGuestSession) {
-      window.location.href = "/login?accountType=personal&redirect=/me";
+      window.location.href = buildPersonalSelfAuthHref("signin");
       return;
     }
     setLoggingOut(true);
@@ -5224,7 +5232,7 @@ export default function MePage() {
   function requestLogout() {
     if (loggingOut) return;
     if (isGuestSession) {
-      window.location.href = "/login?accountType=personal&redirect=/me";
+      window.location.href = buildPersonalSelfAuthHref("signin");
       return;
     }
     setLogoutConfirmOpen(true);
@@ -5232,7 +5240,7 @@ export default function MePage() {
 
   async function openAccountSwitcher() {
     if (isGuestSession) {
-      window.location.href = "/login?accountType=personal&redirect=/me";
+      window.location.href = buildPersonalSelfAuthHref("signin");
       return;
     }
     setAccountSwitchError("");
@@ -7258,10 +7266,171 @@ export default function MePage() {
     );
   }
 
+  function renderMobileGuestSelfGate() {
+    const temporaryOrderCount = personalOrders.length;
+    const temporaryBookingCount = personalBookings.length;
+    const temporaryConversationCount = peerContacts.length + (supportThread?.messages?.length ? 1 : 0);
+    const guestStats = [
+      { label: "会话", value: temporaryConversationCount },
+      { label: "订单", value: temporaryOrderCount },
+      { label: "预约", value: temporaryBookingCount },
+    ];
+
+    return (
+      <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="faolla-mobile-self-header relative shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-5 pt-[calc(var(--faolla-mobile-safe-top)+0.85rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+          <div className="absolute right-4 top-[calc(var(--faolla-mobile-safe-top)+0.7rem)] z-20">
+            <div ref={mobileSelfLanguageRootRef} className="relative">
+              <button
+                type="button"
+                className="faolla-mobile-language-button block h-6 w-[35px] overflow-hidden rounded-[3px] border border-slate-300/80 bg-transparent p-0 transition hover:brightness-105"
+                onClick={() => setMobileSelfLanguageMenuOpen((current) => !current)}
+                aria-label="切换语言"
+                aria-expanded={mobileSelfLanguageMenuOpen}
+                title={mobileSelfSelectedLanguage.label}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={languageFlagImageUrl(mobileSelfSelectedLanguage.countryCode)}
+                  alt={mobileSelfSelectedLanguage.label}
+                  width={80}
+                  height={60}
+                  className="block h-full w-full object-cover"
+                  loading="eager"
+                />
+              </button>
+              {mobileSelfLanguageMenuOpen ? (
+                <div
+                  ref={mobileSelfLanguageMenuRef}
+                  className="absolute right-0 top-[calc(100%+0.5rem)] max-h-[55vh] w-[220px] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_22px_60px_rgba(15,23,42,0.22)]"
+                >
+                  <div className="space-y-1">
+                    {LANGUAGE_OPTIONS.map((item) => (
+                      <button
+                        key={item.code}
+                        type="button"
+                        className={`flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left text-sm transition ${
+                          item.code === locale ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-100"
+                        }`}
+                        onClick={() => {
+                          setLocale(item.code);
+                          setMobileSelfLanguageMenuOpen(false);
+                        }}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={languageFlagImageUrl(item.countryCode)}
+                          alt={item.label}
+                          width={16}
+                          height={12}
+                          className="rounded-[2px] border border-slate-200 object-cover"
+                          loading="lazy"
+                        />
+                        <span className="truncate">{item.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+          <div className="pr-12">
+            <div className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-950 text-white shadow-[0_14px_32px_rgba(15,23,42,0.18)]">
+              <Icon name="user" className="h-6 w-6" />
+            </div>
+            <div className="mt-4 text-[28px] font-semibold leading-none text-slate-950">游客身份</div>
+            <div className="mt-2 max-w-[19rem] text-sm leading-6 text-slate-500">
+              当前数据暂存在本设备，登录或加入后可同步到个人账号。
+            </div>
+          </div>
+        </div>
+
+        <div className="faolla-mobile-self-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(var(--faolla-mobile-safe-bottom)+5.85rem)] pt-4">
+          <div className="faolla-mobile-card-stack space-y-4">
+            <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+              <div className="grid grid-cols-2 gap-3">
+                <a
+                  href={buildPersonalSelfAuthHref("signup")}
+                  className="flex h-12 items-center justify-center rounded-full bg-slate-950 px-4 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(15,23,42,0.18)] transition active:scale-[0.98]"
+                >
+                  加入
+                </a>
+                <a
+                  href={buildPersonalSelfAuthHref("signin")}
+                  className="flex h-12 items-center justify-center rounded-full border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 shadow-sm transition active:scale-[0.98]"
+                >
+                  登录
+                </a>
+              </div>
+              <div className="mt-4 rounded-2xl bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-500">
+                登录后会自动尝试合并当前游客会话、订单、预约和收藏。
+              </div>
+            </section>
+
+            <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+              <div className="text-sm font-semibold text-slate-950">临时数据</div>
+              <div className="mt-4 grid grid-cols-3 gap-2">
+                {guestStats.map((item) => (
+                  <div key={item.label} className="rounded-2xl bg-slate-50 px-3 py-3 text-center">
+                    <div className="text-xl font-semibold text-slate-950">{item.value}</div>
+                    <div className="mt-1 text-xs text-slate-500">{item.label}</div>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+              <button
+                type="button"
+                className="flex w-full items-center gap-4 px-5 py-4 text-left transition hover:bg-slate-50"
+                onClick={() => setMobileTab("conversations")}
+              >
+                <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-100 text-slate-700">
+                  <Icon name="chat" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-semibold text-slate-900">会话</span>
+                  <span className="mt-1 block truncate text-xs leading-5 text-slate-500">继续当前游客聊天</span>
+                </span>
+              </button>
+              <button
+                type="button"
+                className="flex w-full items-center gap-4 border-t border-slate-100 px-5 py-4 text-left transition hover:bg-slate-50"
+                onClick={() => setMobileTab("consumption")}
+              >
+                <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-100 text-slate-700">
+                  <Icon name="order" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-semibold text-slate-900">消费</span>
+                  <span className="mt-1 block truncate text-xs leading-5 text-slate-500">查看临时订单和预约</span>
+                </span>
+              </button>
+              <button
+                type="button"
+                className="flex w-full items-center gap-4 border-t border-slate-100 px-5 py-4 text-left transition hover:bg-slate-50"
+                onClick={() => setMobileTab("faolla")}
+              >
+                <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-100 text-slate-700">
+                  <Icon name="shield" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-semibold text-slate-900">Faolla</span>
+                  <span className="mt-1 block truncate text-xs leading-5 text-slate-500">返回当前商户页面</span>
+                </span>
+              </button>
+            </section>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   function renderMobileContent() {
     if (mobileTab === "conversations") return renderMobileConversationsContent();
     if (mobileTab === "consumption") return renderConsumptionContent();
     if (mobileTab === "self") {
+      if (isGuestSession) return renderMobileGuestSelfGate();
       if (mobileSelfSection === "qr") {
         return (
           <FaollaQrPanel
