@@ -166,7 +166,7 @@ type MeSessionPayload = {
 
 type DesktopSection = "conversations" | "bookings" | "orders" | "memberships" | "favorites" | "cards" | "coupons" | "faolla" | "profile";
 type MobileTab = "conversations" | "consumption" | "faolla" | "self";
-type ConsumptionSection = "bookings" | "orders";
+type ConsumptionSection = "all" | "bookings" | "orders";
 type PersonalBookingFilter = "all" | "active" | "confirmed" | "cancelled";
 type PersonalOrderFilter = "all" | "pending" | "confirmed" | "cancelled";
 type MobileConversationView = "list" | "thread";
@@ -2409,7 +2409,7 @@ export default function MePage() {
     setDesktopSection("faolla");
     setMobileTab("faolla");
   }, []);
-  const [consumptionSection, setConsumptionSection] = useState<ConsumptionSection>("bookings");
+  const [consumptionSection, setConsumptionSection] = useState<ConsumptionSection>("all");
   const [mobileConversationView, setMobileConversationView] = useState<MobileConversationView>("list");
   const [mobileSelfSection, setMobileSelfSection] = useState<MobileSelfSection>("home");
   const faollaAndroidAppUpdate = useFaollaAndroidAppUpdate();
@@ -3384,6 +3384,33 @@ export default function MePage() {
         : personalOrders.filter((order) => getPersonalOrderStatus(order) === personalOrderFilter),
     [personalOrderFilter, personalOrders],
   );
+
+  const personalConsumptionRecords = useMemo(() => {
+    const readSortTime = (...values: Array<string | null | undefined>) => {
+      for (const value of values) {
+        const normalized = trimText(value);
+        if (!normalized) continue;
+        const time = new Date(normalized).getTime();
+        if (Number.isFinite(time)) return time;
+      }
+      return 0;
+    };
+
+    return [
+      ...personalBookings.map((booking) => ({
+        kind: "booking" as const,
+        id: booking.id,
+        record: booking,
+        sortAt: readSortTime(booking.updatedAt, booking.createdAt, booking.appointmentAt),
+      })),
+      ...personalOrders.map((order) => ({
+        kind: "order" as const,
+        id: order.id,
+        record: order,
+        sortAt: readSortTime(order.updatedAt, order.createdAt),
+      })),
+    ].sort((left, right) => right.sortAt - left.sortAt);
+  }, [personalBookings, personalOrders]);
 
   const resolvePersonalMerchantContact = useCallback(
     (siteId: string, siteName: string) => {
@@ -5870,7 +5897,20 @@ export default function MePage() {
   }
 
   function renderPersonalConsumptionState(kind: ConsumptionSection) {
-    const loadError = kind === "bookings" ? personalBookingLoadError : personalOrderLoadError;
+    const loadError =
+      kind === "all"
+        ? [personalBookingLoadError, personalOrderLoadError].filter(Boolean).join(" / ")
+        : kind === "bookings"
+          ? personalBookingLoadError
+          : personalOrderLoadError;
+    const emptyIcon = kind === "bookings" ? "calendar" : kind === "orders" ? "order" : "shop";
+    const emptyTitle = kind === "bookings" ? "我的预约" : kind === "orders" ? "我的订单" : "消费记录";
+    const emptyDescription =
+      kind === "bookings"
+        ? "还没有登录账号提交的预约。"
+        : kind === "orders"
+          ? "还没有登录账号提交的订单。"
+          : "还没有预约或订单记录。";
     if (personalConsumptionLoading) {
       return (
         <div className="rounded-[28px] border border-dashed border-slate-200 bg-white px-5 py-8 text-center text-sm font-medium text-slate-500">
@@ -5887,9 +5927,9 @@ export default function MePage() {
     }
     return (
       <EmptyFeatureCard
-        icon={<Icon name={kind === "bookings" ? "calendar" : "order"} />}
-        title={kind === "bookings" ? "我的预约" : "我的订单"}
-        description={kind === "bookings" ? "还没有登录账号提交的预约。" : "还没有登录账号提交的订单。"}
+        icon={<Icon name={emptyIcon} />}
+        title={emptyTitle}
+        description={emptyDescription}
       />
     );
   }
@@ -5917,6 +5957,113 @@ export default function MePage() {
             </button>
           );
         })}
+      </div>
+    );
+  }
+
+  function renderPersonalConsumptionAllCards() {
+    const hasRecords = personalConsumptionRecords.length > 0;
+    if (personalConsumptionLoading || (!hasRecords && (personalBookingLoadError || personalOrderLoadError))) {
+      return renderPersonalConsumptionState("all");
+    }
+
+    return (
+      <div className="space-y-3">
+        {(personalBookingLoadError || personalOrderLoadError) && hasRecords ? (
+          <div className="rounded-[18px] border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-medium leading-5 text-amber-700">
+            部分消费记录暂时加载失败，已先显示可用记录。
+          </div>
+        ) : null}
+
+        {hasRecords ? (
+          personalConsumptionRecords.map((entry) => {
+            if (entry.kind === "booking") {
+              const booking = entry.record;
+              const status = getPersonalBookingStatus(booking);
+              const contact = resolvePersonalMerchantContact(booking.siteId, booking.siteName);
+              return (
+                <article
+                  key={`booking:${booking.id}`}
+                  className="faolla-mobile-record-card rounded-[18px] border border-slate-200 bg-white p-3 shadow-none"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                          预约
+                        </span>
+                        <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${getPersonalStatusBadgeClass(status)}`}>
+                          {getPersonalBookingStatusText(status)}
+                        </span>
+                      </div>
+                      <div className="mt-2 truncate text-sm font-semibold text-slate-900">{contact.name}</div>
+                      <div className="mt-1 text-sm text-slate-700">
+                        {[booking.store, booking.item].map(trimText).filter(Boolean).join(" / ") || "预约项目"}
+                      </div>
+                      <div className="mt-2">{renderPersonalAppointmentSummary(booking.appointmentAt)}</div>
+                    </div>
+                    <button
+                      type="button"
+                      className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+                      onClick={() => setPersonalBookingDetailTargetId(booking.id)}
+                    >
+                      详情
+                    </button>
+                  </div>
+                </article>
+              );
+            }
+
+            const order = entry.record;
+            const status = getPersonalOrderStatus(order);
+            const contact = resolvePersonalMerchantContact(order.siteId, order.siteName);
+            const itemPreview =
+              order.items
+                .slice(0, 2)
+                .map((item) => trimText(item.name) || trimText(item.code))
+                .filter(Boolean)
+                .join(" / ") || "订单商品";
+            return (
+              <article
+                key={`order:${order.id}`}
+                className="faolla-mobile-record-card rounded-[18px] border border-slate-200 bg-white p-3 shadow-none"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                        订单
+                      </span>
+                      <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${getPersonalStatusBadgeClass(status)}`}>
+                        {getPersonalOrderStatusText(status)}
+                      </span>
+                    </div>
+                    <div className="mt-2 truncate text-sm font-semibold text-slate-900">{contact.name}</div>
+                    <div className="mt-1 line-clamp-2 text-sm text-slate-700">{itemPreview}</div>
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+                      <span>{formatPersonalRecordDateTime(order.createdAt)}</span>
+                      <span>{order.totalQuantity} 件</span>
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 flex-col items-end gap-2">
+                    <div className="text-right text-base font-semibold text-slate-900">
+                      {formatPersonalOrderAmount(order.totalAmount, order.pricePrefix)}
+                    </div>
+                    <button
+                      type="button"
+                      className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+                      onClick={() => setPersonalOrderDetailTargetId(order.id)}
+                    >
+                      详情
+                    </button>
+                  </div>
+                </div>
+              </article>
+            );
+          })
+        ) : (
+          renderPersonalConsumptionState("all")
+        )}
       </div>
     );
   }
@@ -7024,35 +7171,42 @@ export default function MePage() {
   }
 
   function renderConsumptionContent() {
-    const isBookings = consumptionSection === "bookings";
+    const consumptionOptions: Array<{ key: ConsumptionSection; label: string; activeClassName: string }> = [
+      { key: "all", label: "全部", activeClassName: "bg-slate-950 text-white shadow-sm" },
+      { key: "bookings", label: "预约", activeClassName: "bg-emerald-500 text-white shadow-sm" },
+      { key: "orders", label: "订单", activeClassName: "bg-slate-950 text-white shadow-sm" },
+    ];
+    const content =
+      consumptionSection === "bookings"
+        ? renderPersonalBookingCards(true)
+        : consumptionSection === "orders"
+          ? renderPersonalOrderCards(true)
+          : renderPersonalConsumptionAllCards();
     return (
       <div className="flex h-full min-h-0 flex-col">
         <div className="faolla-mobile-list-header shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(var(--faolla-mobile-safe-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
           <div className="flex items-center gap-3">
             <div className="inline-flex rounded-[24px] border border-slate-200 bg-white p-1 shadow-sm">
-              <button
-                type="button"
-                className={`rounded-[19px] px-5 py-2.5 text-sm font-semibold transition ${
-                  isBookings ? "bg-emerald-500 text-white shadow-sm" : "text-slate-500"
-                }`}
-                onClick={() => setConsumptionSection("bookings")}
-              >
-                预约
-              </button>
-              <button
-                type="button"
-                className={`rounded-[19px] px-5 py-2.5 text-sm font-semibold transition ${
-                  !isBookings ? "bg-slate-950 text-white shadow-sm" : "text-slate-500"
-                }`}
-                onClick={() => setConsumptionSection("orders")}
-              >
-                订单
-              </button>
+              {consumptionOptions.map((option) => {
+                const active = consumptionSection === option.key;
+                return (
+                  <button
+                    key={option.key}
+                    type="button"
+                    className={`rounded-[19px] px-4 py-2.5 text-sm font-semibold transition ${
+                      active ? option.activeClassName : "text-slate-500"
+                    }`}
+                    onClick={() => setConsumptionSection(option.key)}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(var(--faolla-mobile-safe-bottom)+5.85rem)] pt-4">
-          {isBookings ? renderPersonalBookingCards(true) : renderPersonalOrderCards(true)}
+          {content}
         </div>
       </div>
     );
