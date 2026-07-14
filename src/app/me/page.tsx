@@ -167,6 +167,8 @@ type MeSessionPayload = {
 type DesktopSection = "conversations" | "bookings" | "orders" | "memberships" | "favorites" | "cards" | "coupons" | "faolla" | "profile";
 type MobileTab = "conversations" | "consumption" | "faolla" | "self";
 type ConsumptionSection = "all" | "bookings" | "orders";
+type PersonalConsumptionFilter = "all" | "pending" | "confirmed" | "cancelled";
+type PersonalConsumptionRecordStatus = Exclude<PersonalConsumptionFilter, "all">;
 type PersonalBookingFilter = "all" | "active" | "confirmed" | "cancelled";
 type PersonalOrderFilter = "all" | "pending" | "confirmed" | "cancelled";
 type MobileConversationView = "list" | "thread";
@@ -1213,6 +1215,24 @@ function getPersonalOrderStatusText(status: PersonalOrderFilter) {
   if (status === "pending") return "待确认";
   if (status === "confirmed") return "已确认";
   return "已取消";
+}
+
+function getPersonalConsumptionStatusText(status: PersonalConsumptionFilter) {
+  if (status === "all") return "全部";
+  if (status === "pending") return "待确认";
+  if (status === "confirmed") return "已确认";
+  return "已取消";
+}
+
+function getPersonalBookingConsumptionStatus(record: Pick<MerchantBookingRecord, "status">): PersonalConsumptionRecordStatus {
+  const status = getPersonalBookingStatus(record);
+  if (status === "active") return "pending";
+  return status === "cancelled" ? "cancelled" : "confirmed";
+}
+
+function getPersonalOrderConsumptionStatus(record: Pick<MerchantOrderRecord, "status">): PersonalConsumptionRecordStatus {
+  const status = getPersonalOrderStatus(record);
+  return status === "pending" || status === "cancelled" ? status : "confirmed";
 }
 
 function getPersonalStatusBadgeClass(status: PersonalBookingFilter | PersonalOrderFilter) {
@@ -2489,6 +2509,8 @@ export default function MePage() {
   const [personalBookings, setPersonalBookings] = useState<MerchantBookingRecord[]>([]);
   const [personalOrders, setPersonalOrders] = useState<MerchantOrderRecord[]>([]);
   const [personalMerchantContacts, setPersonalMerchantContacts] = useState<Record<string, PersonalMerchantContact>>({});
+  const [personalConsumptionFilter, setPersonalConsumptionFilter] = useState<PersonalConsumptionFilter>("all");
+  const [personalConsumptionSearch, setPersonalConsumptionSearch] = useState("");
   const [personalBookingFilter, setPersonalBookingFilter] = useState<PersonalBookingFilter>("all");
   const [personalOrderFilter, setPersonalOrderFilter] = useState<PersonalOrderFilter>("all");
   const [personalActionBusyKey, setPersonalActionBusyKey] = useState("");
@@ -3401,16 +3423,86 @@ export default function MePage() {
         kind: "booking" as const,
         id: booking.id,
         record: booking,
+        status: getPersonalBookingConsumptionStatus(booking),
         sortAt: readSortTime(booking.updatedAt, booking.createdAt, booking.appointmentAt),
       })),
       ...personalOrders.map((order) => ({
         kind: "order" as const,
         id: order.id,
         record: order,
+        status: getPersonalOrderConsumptionStatus(order),
         sortAt: readSortTime(order.updatedAt, order.createdAt),
       })),
     ].sort((left, right) => right.sortAt - left.sortAt);
   }, [personalBookings, personalOrders]);
+
+  const personalConsumptionCounts = useMemo(() => {
+    const counts: Record<PersonalConsumptionFilter, number> = {
+      all: personalConsumptionRecords.length,
+      pending: 0,
+      confirmed: 0,
+      cancelled: 0,
+    };
+    personalConsumptionRecords.forEach((entry) => {
+      counts[entry.status] += 1;
+    });
+    return counts;
+  }, [personalConsumptionRecords]);
+
+  const filteredPersonalConsumptionRecords = useMemo(() => {
+    const keyword = personalConsumptionSearch.trim().toLowerCase();
+    return personalConsumptionRecords.filter((entry) => {
+      if (personalConsumptionFilter !== "all" && entry.status !== personalConsumptionFilter) return false;
+      if (!keyword) return true;
+
+      if (entry.kind === "booking") {
+        const booking = entry.record;
+        const contact = personalMerchantContacts[trimText(booking.siteId)];
+        return [
+          booking.id,
+          booking.siteId,
+          booking.siteName,
+          booking.store,
+          booking.item,
+          booking.title,
+          booking.customerName,
+          booking.email,
+          booking.phone,
+          booking.note,
+          booking.appointmentAt,
+          "预约",
+          getPersonalBookingStatusText(getPersonalBookingStatus(booking)),
+          contact?.name,
+          contact?.email,
+          contact?.phone,
+        ]
+          .map((value) => trimText(value).toLowerCase())
+          .some((value) => value.includes(keyword));
+      }
+
+      const order = entry.record;
+      const contact = personalMerchantContacts[trimText(order.siteId)];
+      return [
+        order.id,
+        order.siteId,
+        order.siteName,
+        order.customer.name,
+        order.customer.email,
+        order.customer.phone,
+        order.customer.note,
+        order.createdAt,
+        order.updatedAt,
+        "订单",
+        getPersonalOrderStatusText(getPersonalOrderStatus(order)),
+        contact?.name,
+        contact?.email,
+        contact?.phone,
+        ...order.items.flatMap((item) => [item.code, item.name, item.description, item.tag]),
+      ]
+        .map((value) => trimText(value).toLowerCase())
+        .some((value) => value.includes(keyword));
+    });
+  }, [personalConsumptionFilter, personalConsumptionRecords, personalConsumptionSearch, personalMerchantContacts]);
 
   const resolvePersonalMerchantContact = useCallback(
     (siteId: string, siteName: string) => {
@@ -5961,22 +6053,69 @@ export default function MePage() {
     );
   }
 
+  function renderPersonalConsumptionFilters() {
+    const options: PersonalConsumptionFilter[] = ["all", "pending", "confirmed", "cancelled"];
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        {options.map((status) => {
+          const active = personalConsumptionFilter === status;
+          return (
+            <button
+              key={status}
+              type="button"
+              className={`inline-flex h-10 items-center gap-2 rounded-full px-4 text-sm font-semibold shadow-sm transition hover:-translate-y-px ${getPersonalFilterChipClass(
+                active,
+                status,
+              )}`}
+              onClick={() => setPersonalConsumptionFilter(status)}
+            >
+              <span>{getPersonalConsumptionStatusText(status)}</span>
+              <span className={`text-xs ${active && status === "all" ? "text-white/75" : "opacity-70"}`}>
+                {personalConsumptionCounts[status]}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+
   function renderPersonalConsumptionAllCards() {
     const hasRecords = personalConsumptionRecords.length > 0;
+    const hasFilteredRecords = filteredPersonalConsumptionRecords.length > 0;
+    const filters = (
+      <>
+        <input
+          type="search"
+          className="faolla-mobile-record-search w-full rounded-[20px] border border-slate-200 bg-white px-3 py-2 text-[13px] text-slate-900 outline-none transition focus:border-slate-300"
+          placeholder="搜索编号 / 商户 / 店铺 / 项目 / 商品 / 姓名 / 联系方式"
+          value={personalConsumptionSearch}
+          onChange={(event) => setPersonalConsumptionSearch(event.target.value)}
+          aria-label="搜索全部消费记录"
+        />
+        {renderPersonalConsumptionFilters()}
+      </>
+    );
     if (personalConsumptionLoading || (!hasRecords && (personalBookingLoadError || personalOrderLoadError))) {
-      return renderPersonalConsumptionState("all");
+      return (
+        <div className="space-y-3">
+          {filters}
+          {renderPersonalConsumptionState("all")}
+        </div>
+      );
     }
 
     return (
       <div className="space-y-3">
+        {filters}
         {(personalBookingLoadError || personalOrderLoadError) && hasRecords ? (
           <div className="rounded-[18px] border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-medium leading-5 text-amber-700">
             部分消费记录暂时加载失败，已先显示可用记录。
           </div>
         ) : null}
 
-        {hasRecords ? (
-          personalConsumptionRecords.map((entry) => {
+        {hasFilteredRecords ? (
+          filteredPersonalConsumptionRecords.map((entry) => {
             if (entry.kind === "booking") {
               const booking = entry.record;
               const status = getPersonalBookingStatus(booking);
@@ -6061,6 +6200,12 @@ export default function MePage() {
               </article>
             );
           })
+        ) : hasRecords ? (
+          <EmptyFeatureCard
+            icon={<Icon name="shop" />}
+            title="没有符合条件的消费记录"
+            description="请调整搜索内容或状态后重试。"
+          />
         ) : (
           renderPersonalConsumptionState("all")
         )}
