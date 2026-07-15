@@ -2515,6 +2515,7 @@ export default function MePage() {
   const [personalOrderFilter, setPersonalOrderFilter] = useState<PersonalOrderFilter>("all");
   const [personalActionBusyKey, setPersonalActionBusyKey] = useState("");
   const [personalBookingSearch, setPersonalBookingSearch] = useState("");
+  const [personalOrderSearch, setPersonalOrderSearch] = useState("");
   const [personalBookingEditTargetId, setPersonalBookingEditTargetId] = useState("");
   const [personalBookingDetailTargetId, setPersonalBookingDetailTargetId] = useState("");
   const [personalOrderDetailTargetId, setPersonalOrderDetailTargetId] = useState("");
@@ -3399,13 +3400,32 @@ export default function MePage() {
     });
   }, [personalBookingFilter, personalBookingSearch, personalBookings, personalMerchantContacts]);
 
-  const filteredPersonalOrders = useMemo(
-    () =>
-      personalOrderFilter === "all"
-        ? personalOrders
-        : personalOrders.filter((order) => getPersonalOrderStatus(order) === personalOrderFilter),
-    [personalOrderFilter, personalOrders],
-  );
+  const filteredPersonalOrders = useMemo(() => {
+    const keyword = personalOrderSearch.trim().toLowerCase();
+    return personalOrders.filter((order) => {
+      if (personalOrderFilter !== "all" && getPersonalOrderStatus(order) !== personalOrderFilter) return false;
+      if (!keyword) return true;
+      const contact = personalMerchantContacts[trimText(order.siteId)];
+      return [
+        order.id,
+        order.siteId,
+        order.siteName,
+        order.customer.name,
+        order.customer.email,
+        order.customer.phone,
+        order.customer.note,
+        order.createdAt,
+        order.updatedAt,
+        getPersonalOrderStatusText(getPersonalOrderStatus(order)),
+        contact?.name,
+        contact?.email,
+        contact?.phone,
+        ...order.items.flatMap((item) => [item.code, item.name, item.description, item.tag]),
+      ]
+        .map((value) => trimText(value).toLowerCase())
+        .some((value) => value.includes(keyword));
+    });
+  }, [personalMerchantContacts, personalOrderFilter, personalOrderSearch, personalOrders]);
 
   const personalConsumptionRecords = useMemo(() => {
     const readSortTime = (...values: Array<string | null | undefined>) => {
@@ -6818,9 +6838,23 @@ export default function MePage() {
       "faolla-mobile-record-action rounded-full border border-rose-200 bg-rose-50 px-2 py-1 text-[10.5px] font-medium leading-none text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50";
     return (
       <div className={compact ? "space-y-3" : "space-y-4"}>
+        <input
+          type="search"
+          className="faolla-mobile-record-search w-full rounded-[20px] border border-slate-200 bg-white px-3 py-2 text-[13px] text-slate-900 outline-none transition focus:border-slate-300"
+          placeholder="搜索订单号 / 商户 / 商品 / 姓名 / 邮箱 / 电话 / 备注"
+          value={personalOrderSearch}
+          onChange={(event) => setPersonalOrderSearch(event.target.value)}
+          aria-label="搜索订单记录"
+        />
         {renderPersonalOrderFilters()}
-        {personalOrders.length === 0 || filteredPersonalOrders.length === 0 ? (
+        {personalOrders.length === 0 ? (
           renderPersonalConsumptionState("orders")
+        ) : filteredPersonalOrders.length === 0 ? (
+          <EmptyFeatureCard
+            icon={<Icon name="order" />}
+            title="没有符合条件的订单"
+            description="请调整搜索内容或状态后重试。"
+          />
         ) : (
           filteredPersonalOrders.map((order) => {
             const status = getPersonalOrderStatus(order);
