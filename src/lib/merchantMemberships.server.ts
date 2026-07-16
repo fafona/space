@@ -2,12 +2,14 @@ import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import {
   buildMerchantMemberNo,
   buildMerchantMembershipQrValue,
+  cancelMerchantMemberRechargeTransaction,
   normalizeMerchantMemberAllergens,
   normalizeMerchantMembershipRecords,
   normalizeMerchantMembershipProfileDraft,
   toMerchantMembershipListItem,
   toPersonalMembershipCard,
   writePersonalMembershipCardToUserMetadata,
+  type MerchantMemberAccountTransaction,
   type MerchantMemberAccountTransactionType,
   type MerchantMembershipProfileDraft,
   type MerchantMembershipListItem,
@@ -172,17 +174,22 @@ function createMerchantMemberTransaction(input: {
   note: string;
   operatorId?: string;
   at?: string;
-}) {
+}): MerchantMemberAccountTransaction {
   const at = input.at ?? new Date().toISOString();
   return {
     id: `MT${Date.parse(at).toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
     type: input.type,
+    status: "completed",
     at,
     pointDelta: Math.round(input.pointDelta),
     balanceDelta: Number((input.balanceDelta ?? 0).toFixed(2)),
     growthDelta: normalizeGrowthValue(input.growthDelta ?? 0),
     note: trimText(input.note, 500),
     operatorId: trimText(input.operatorId, 120),
+    cancelledAt: null,
+    cancellationNote: "",
+    cancelledBy: "",
+    cancellationOperationMarker: "",
   };
 }
 
@@ -252,7 +259,11 @@ function calculateAnnualGrowthValue(membership: MerchantMembershipRecord, now: s
     membership.transactions
       .filter((transaction) => {
         const timestamp = Date.parse(transaction.at);
-        return Number.isFinite(timestamp) && new Date(timestamp).getFullYear() === currentYear;
+        return (
+          transaction.status !== "cancelled" &&
+          Number.isFinite(timestamp) &&
+          new Date(timestamp).getFullYear() === currentYear
+        );
       })
       .reduce((sum, transaction) => sum + Math.max(0, transaction.growthDelta), 0),
   );
@@ -462,7 +473,10 @@ async function applyScheduledPointRules(siteId: string, memberships: MerchantMem
     if (expiryDays > 0 && next.pointBalance > 0) {
       const cutoff = nowDate.getTime() - expiryDays * 24 * 60 * 60 * 1000;
       const expiredPositive = next.transactions
-        .filter((transaction) => transaction.pointDelta > 0 && Date.parse(transaction.at) < cutoff)
+        .filter(
+          (transaction) =>
+            transaction.status !== "cancelled" && transaction.pointDelta > 0 && Date.parse(transaction.at) < cutoff,
+        )
         .reduce((sum, transaction) => sum + transaction.pointDelta, 0);
       const alreadyExpired = next.transactions
         .filter((transaction) => transaction.note.includes("[points-expired]"))
@@ -746,16 +760,15 @@ export async function applyMerchantMembershipAccountOperation(input: {
     pointBalance: nextPointBalance,
     balanceAmount: nextBalanceAmount,
     transactions: [
-      {
-        id: `MT${Date.parse(now).toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+      createMerchantMemberTransaction({
         type,
         at: now,
         pointDelta,
         balanceDelta,
-        growthDelta: normalizeGrowthValue(growthDelta),
+        growthDelta,
         note: buildMembershipMutationNote(input.note, fallbackNote, operationMarker),
         operatorId: trimText(input.operatorId, 120),
-      },
+      }),
       ...currentMembership.transactions,
     ].slice(0, 500),
     updatedAt: now,
@@ -787,6 +800,57 @@ export async function applyMerchantMembershipAccountOperation(input: {
       },
     });
   }
+  return toMerchantMembershipListItem(nextMembership);
+}
+
+export async function cancelMerchantMembershipRecharge(input: {
+  siteId: string;
+  membershipId: string;
+  memberNo?: unknown;
+  transactionId?: unknown;
+  note?: unknown;
+  operatorId?: unknown;
+  operationId?: unknown;
+}): Promise<MerchantMembershipListItem> {
+  const supabase = requireMembershipsStoreClient();
+  const siteId = trimText(input.siteId, 64);
+  const membershipId = trimText(input.membershipId, 160);
+  const memberNo = trimText(input.memberNo, 120);
+  if (!siteId || (!membershipId && !memberNo)) throw new Error("membership_not_found");
+  const stored = await loadStoredMerchantMemberships(supabase, siteId);
+  const current = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
+  const index = findMerchantMembershipIndexByIdentity(current, { membershipId, memberNo });
+  if (index < 0) throw new Error("membership_not_found");
+  const currentMembership = current[index];
+  if (currentMembership.status !== "active") throw new Error("membership_not_active");
+
+  const now = new Date().toISOString();
+  const operationMarker = buildMutationOperationMarker("member-recharge-cancel", input.operationId);
+  const cancellation = cancelMerchantMemberRechargeTransaction({
+    membership: currentMembership,
+    transactionId: input.transactionId,
+    cancelledAt: now,
+    cancellationNote: input.note,
+    cancelledBy: input.operatorId,
+    cancellationOperationMarker: operationMarker,
+  });
+  if (cancellation.alreadyCancelled) return toMerchantMembershipListItem(currentMembership);
+
+  const settings = await getMerchantMembershipSettings(siteId).catch(() => null);
+  const nextMembership = applyMembershipGrowthAndLevel({
+    membership: cancellation.membership,
+    settings,
+    growthDelta: 0,
+    now,
+  });
+  const nextMemberships = [...current];
+  nextMemberships[index] = nextMembership;
+  const saved = await saveStoredMerchantMemberships(supabase, {
+    siteId,
+    memberships: nextMemberships,
+    updatedAt: now,
+  });
+  if (saved.error) throw new Error(saved.error);
   return toMerchantMembershipListItem(nextMembership);
 }
 
@@ -1064,16 +1128,15 @@ export async function applyMerchantMembershipRedemptionCart(input: {
     ...currentMembership,
     pointBalance: nextPointBalance,
     transactions: [
-      {
-        id: `MT${Date.parse(now).toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
-        type: "redeem" as const,
+      createMerchantMemberTransaction({
+        type: "redeem",
         at: now,
         pointDelta: -totalPoints,
         balanceDelta: 0,
-        growthDelta: normalizeGrowthValue(growthDelta),
+        growthDelta,
         note: buildMembershipMutationNote(input.note, `积分兑换：${summary}`, operationMarker),
         operatorId: trimText(input.operatorId, 120),
-      },
+      }),
       ...currentMembership.transactions,
     ].slice(0, 500),
     updatedAt: now,

@@ -1150,10 +1150,22 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                                 key={transaction.id}
                                 className="grid gap-2 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600 sm:grid-cols-[110px_1fr_150px]"
                               >
-                                <div className="font-semibold text-slate-900">{accountTransactionTypeLabel(transaction.type)}</div>
+                                <div className="flex items-center gap-1.5 font-semibold text-slate-900">
+                                  <span>{accountTransactionTypeLabel(transaction.type)}</span>
+                                  {transaction.status === "cancelled" ? (
+                                    <span className="rounded-full border border-red-200 bg-red-50 px-1.5 py-0.5 text-[10px] text-red-700">
+                                      取消
+                                    </span>
+                                  ) : null}
+                                </div>
                                 <div>
                                   <div className="font-semibold text-slate-800">{formatAccountTransactionChange(transaction)}</div>
                                   <div className="mt-0.5 text-slate-500">{transaction.note || "-"}</div>
+                                  {transaction.status === "cancelled" ? (
+                                    <div className="mt-0.5 text-red-600">
+                                      撤销备注：{transaction.cancellationNote || "未填写"}
+                                    </div>
+                                  ) : null}
                                 </div>
                                 <div className="text-slate-500 sm:text-right">{formatDateTime(transaction.at)}</div>
                               </div>

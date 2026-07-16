@@ -115,6 +115,7 @@ type ProductImageSize = "large" | "medium" | "small";
 type CatalogFilterTab = "hot" | "category" | "recommend";
 type CatalogSortMode = "code" | "name";
 type RecordsTimeFilter = "today" | "yesterday" | "week" | "month" | "all";
+type RechargeRecordStatusFilter = "all" | "completed" | "cancelled";
 type CashierShortcutKey = "enter" | "minus" | "plus";
 type CashierPrintBridgeStatus = "idle" | "disabled" | "checking" | "updating" | "online" | "offline" | "outdated" | "error";
 type CashierShortcutActions = {
@@ -408,6 +409,19 @@ function operationErrorMessage(message: unknown, fallback: string, operationType
   if (text === "coupon_points_voucher_limit_exceeded") return "本次积分兑换使用的积分券数量超过限制。";
   if (text === "coupon_points_voucher_minimum_not_met") return "本次兑换积分未达到积分券使用门槛。";
   return text || fallback;
+}
+
+function rechargeCancellationErrorMessage(message: unknown) {
+  const text = trimText(message, 1000);
+  if (text === "membership_not_found") return "会员不存在或数据已更新，请刷新后重试。";
+  if (text === "membership_not_active") return "该会员不是正常状态，不能撤销充值。";
+  if (text === "membership_recharge_not_found") return "没有找到这笔充值记录，请刷新后重试。";
+  if (text === "membership_recharge_already_cancelled") return "这笔充值已经撤销，不能重复操作。";
+  if (text === "membership_recharge_not_cancellable") return "这笔记录不是可撤销的充值。";
+  if (text === "membership_recharge_cancel_balance_insufficient") {
+    return "会员当前余额或积分不足，无法撤销这笔充值。";
+  }
+  return text || "撤销充值失败，请稍后重试。";
 }
 
 function redemptionReceiptPrintNotice(outcome: RedemptionReceiptPrintOutcome) {
@@ -724,8 +738,12 @@ export default function MerchantPointRedemptionCashier({
   const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
   const [recordsKeyword, setRecordsKeyword] = useState("");
   const [recordsTimeFilter, setRecordsTimeFilter] = useState<RecordsTimeFilter>("today");
+  const [rechargeRecordStatusFilter, setRechargeRecordStatusFilter] = useState<RechargeRecordStatusFilter>("all");
   const [recordsPage, setRecordsPage] = useState(1);
   const [selectedRecordId, setSelectedRecordId] = useState("");
+  const [cancelRechargeRecordId, setCancelRechargeRecordId] = useState("");
+  const [cancelRechargeNote, setCancelRechargeNote] = useState("");
+  const [cancellingRecharge, setCancellingRecharge] = useState(false);
   const languageRootRef = useRef<HTMLDivElement | null>(null);
   const languageMenuRef = useRef<HTMLDivElement | null>(null);
   const membershipsRef = useRef<MerchantMembershipListItem[]>([]);
@@ -745,6 +763,7 @@ export default function MerchantPointRedemptionCashier({
   });
   const submitCheckoutRef = useRef<() => Promise<void>>(async () => undefined);
   const selectedMemberIdRef = useRef("");
+  const productSearchInputRef = useRef<HTMLInputElement | null>(null);
   const deferredMemberKeyword = useDeferredValue(memberKeyword);
   const deferredItemKeyword = useDeferredValue(itemKeyword);
   const deferredRecordsKeyword = useDeferredValue(recordsKeyword);
@@ -1176,6 +1195,8 @@ export default function MerchantPointRedemptionCashier({
           .filter((transaction) => transaction.type === transactionType)
           .map((transaction) => ({
             id: `${membership.id}:${transaction.id}`,
+            membershipId: membership.id,
+            transactionId: transaction.id,
             at: transaction.at,
             memberName: getMemberDisplayName(membership),
             memberNo: membership.memberNo,
@@ -1185,6 +1206,10 @@ export default function MerchantPointRedemptionCashier({
             rawPointDelta: transaction.pointDelta,
             rawBalanceDelta: transaction.balanceDelta,
             type: transaction.type,
+            status: transaction.status === "cancelled" ? "cancelled" as const : "completed" as const,
+            cancelledAt: transaction.cancelledAt,
+            cancellationNote: transaction.cancellationNote,
+            cancelledBy: transaction.cancelledBy,
           })),
       )
       .sort((left, right) => Date.parse(right.at) - Date.parse(left.at))
@@ -1195,13 +1220,29 @@ export default function MerchantPointRedemptionCashier({
     const keyword = deferredRecordsKeyword.trim().toLowerCase();
     return transactionRecords.filter((record) => {
       if (!isInRecordsTimeFilter(record.at, recordsTimeFilter)) return false;
+      if (
+        view === "rechargeRecords" &&
+        rechargeRecordStatusFilter !== "all" &&
+        record.status !== rechargeRecordStatusFilter
+      ) {
+        return false;
+      }
       if (!keyword) return true;
-      return [record.id, record.memberName, record.memberNo, record.note, record.points, record.balanceAmount]
+      return [
+        record.id,
+        record.memberName,
+        record.memberNo,
+        record.note,
+        record.points,
+        record.balanceAmount,
+        record.status === "cancelled" ? "取消" : "完成",
+        record.cancellationNote,
+      ]
         .join(" ")
         .toLowerCase()
         .includes(keyword);
     });
-  }, [deferredRecordsKeyword, recordsTimeFilter, transactionRecords]);
+  }, [deferredRecordsKeyword, rechargeRecordStatusFilter, recordsTimeFilter, transactionRecords, view]);
 
   const recordsPageSize = 30;
   const recordsTotalPages = Math.max(1, Math.ceil(filteredTransactionRecords.length / recordsPageSize));
@@ -1211,6 +1252,8 @@ export default function MerchantPointRedemptionCashier({
     normalizedRecordsPage * recordsPageSize,
   );
   const selectedRecord = transactionRecords.find((record) => record.id === selectedRecordId) ?? null;
+  const cancelRechargeRecord =
+    transactionRecords.find((record) => record.id === cancelRechargeRecordId && record.type === "recharge") ?? null;
 
   useEffect(() => {
     membershipsRef.current = memberships;
@@ -1219,6 +1262,14 @@ export default function MerchantPointRedemptionCashier({
   useEffect(() => {
     selectedMemberIdRef.current = selectedMemberId;
   }, [selectedMemberId]);
+
+  useEffect(() => {
+    if (view !== "cashier") return;
+    const frameId = window.requestAnimationFrame(() => {
+      productSearchInputRef.current?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, [view]);
 
   useEffect(() => {
     const keyword = deferredMemberKeyword.trim();
@@ -1906,6 +1957,96 @@ export default function MerchantPointRedemptionCashier({
       setError(rechargeError instanceof Error ? rechargeError.message : "充值失败，请稍后重试");
     } finally {
       setSaving(false);
+    }
+  }
+
+  function openRechargeCancellation(recordId: string) {
+    const record = transactionRecords.find((item) => item.id === recordId && item.type === "recharge");
+    if (!record || record.status === "cancelled") return;
+    setError("");
+    setNotice("");
+    setCancelRechargeNote("");
+    setCancelRechargeRecordId(record.id);
+  }
+
+  function closeRechargeCancellation() {
+    if (cancellingRecharge) return;
+    setCancelRechargeRecordId("");
+    setCancelRechargeNote("");
+  }
+
+  async function submitRechargeCancellation() {
+    const record = cancelRechargeRecord;
+    if (!record || record.status === "cancelled") {
+      setError("这笔充值已经撤销或记录已更新，请刷新后重试。");
+      closeRechargeCancellation();
+      return;
+    }
+    setCancellingRecharge(true);
+    setError("");
+    setNotice("");
+    try {
+      const operationId = createClientMutationOperationId("member-recharge-cancel");
+      const response = await fetchPointRedemptionJson("/api/memberships", {
+        method: "PATCH",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({
+          siteId: normalizedSiteId,
+          action: "cancel_recharge",
+          membershipId: record.membershipId,
+          memberNo: record.memberNo,
+          transactionId: record.transactionId,
+          operationId,
+          note: cancelRechargeNote,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as MembershipPatchPayload | null;
+      if (!response.ok || !payload?.ok || !payload.membership) {
+        throw new Error(rechargeCancellationErrorMessage(payload?.message));
+      }
+      const updatedMembership = payload.membership;
+      setMemberships((current) =>
+        current.map((membership) =>
+          isSameMembershipRecord(membership, updatedMembership) ? updatedMembership : membership,
+        ),
+      );
+      invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-memberships", normalizedSiteId));
+      invalidateMerchantAdminDataCachePrefix(
+        makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, record.membershipId),
+      );
+      invalidateMerchantAdminDataCachePrefix(
+        makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, updatedMembership.id),
+      );
+      recordMerchantOperationLog({
+        siteId: normalizedSiteId,
+        module: "积分兑换 > 充值记录",
+        action: "撤销充值",
+        summary: `撤销充值 ${record.transactionId}，会员 ${record.memberName} / ${record.memberNo}`,
+        status: "success",
+        method: "PATCH",
+        endpoint: "/api/memberships",
+        detail: trimText(cancelRechargeNote, 240) || "未填写撤销备注",
+      });
+      setCancelRechargeRecordId("");
+      setCancelRechargeNote("");
+      setNotice("充值已撤销，余额和积分已回退，原记录保留并标记为取消。");
+      void loadData(true, { silent: true });
+    } catch (cancelError) {
+      const message = cancelError instanceof Error ? cancelError.message : "撤销充值失败，请稍后重试。";
+      recordMerchantOperationLog({
+        siteId: normalizedSiteId,
+        module: "积分兑换 > 充值记录",
+        action: "撤销充值",
+        summary: `撤销充值 ${record.transactionId} 失败`,
+        status: "failed",
+        method: "PATCH",
+        endpoint: "/api/memberships",
+        detail: message,
+      });
+      setError(message);
+    } finally {
+      setCancellingRecharge(false);
     }
   }
 
@@ -3475,6 +3616,13 @@ export default function MerchantPointRedemptionCashier({
           outline: none;
         }
 
+        .merchant-pos-cashier textarea.quick-input {
+          min-height: 88px;
+          height: auto;
+          padding: 10px 12px;
+          resize: vertical;
+        }
+
         .merchant-pos-cashier .records-panel {
           min-height: calc(100vh - 190px);
           padding: 18px;
@@ -3482,10 +3630,14 @@ export default function MerchantPointRedemptionCashier({
 
         .merchant-pos-cashier .record-filter-grid {
           display: grid;
-          grid-template-columns: minmax(260px, 1.35fr) minmax(280px, 1.35fr) auto;
+          grid-template-columns: minmax(260px, 1.35fr) minmax(280px, 1.35fr);
           gap: 12px;
           align-items: end;
           margin-bottom: 16px;
+        }
+
+        .merchant-pos-cashier .record-filter-grid.has-status {
+          grid-template-columns: minmax(260px, 1.35fr) minmax(280px, 1.35fr) minmax(140px, 0.45fr);
         }
 
         .merchant-pos-cashier .record-filter-field {
@@ -3552,9 +3704,20 @@ export default function MerchantPointRedemptionCashier({
           color: var(--pos-primary-dark);
         }
 
-        .merchant-pos-cashier .record-filter-actions {
-          display: flex;
-          justify-content: flex-end;
+        .merchant-pos-cashier .record-status-select {
+          width: 100%;
+          height: 36px;
+          border: 1px solid var(--pos-line);
+          border-radius: 8px;
+          background: var(--pos-surface);
+          color: var(--pos-text);
+          padding: 0 10px;
+          outline: none;
+        }
+
+        .merchant-pos-cashier .record-status-select:focus {
+          border-color: var(--pos-primary);
+          box-shadow: 0 0 0 3px rgba(14, 118, 102, 0.12);
         }
 
         .merchant-pos-cashier .records-table {
@@ -3573,6 +3736,10 @@ export default function MerchantPointRedemptionCashier({
           min-height: 48px;
           padding: 10px 14px;
           border-bottom: 1px solid var(--pos-line);
+        }
+
+        .merchant-pos-cashier .records-table.has-status .records-row {
+          grid-template-columns: 70px minmax(150px, 1fr) minmax(150px, 1fr) 110px 100px minmax(150px, 1fr) 88px minmax(220px, 1.35fr) 150px;
         }
 
         .merchant-pos-cashier .records-row.header {
@@ -3613,15 +3780,56 @@ export default function MerchantPointRedemptionCashier({
           font-weight: 800;
         }
 
+        .merchant-pos-cashier .record-state-tag {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 24px;
+          padding: 0 8px;
+          border: 1px solid rgba(22, 163, 74, 0.3);
+          border-radius: 999px;
+          background: rgba(220, 252, 231, 0.8);
+          color: #166534;
+          font-size: 12px;
+          font-weight: 800;
+        }
+
+        .merchant-pos-cashier .record-state-tag.cancelled {
+          border-color: rgba(220, 38, 38, 0.25);
+          background: rgba(254, 226, 226, 0.82);
+          color: #b91c1c;
+        }
+
         .merchant-pos-cashier .record-row-actions {
           display: flex;
           justify-content: flex-end;
+          gap: 6px;
         }
 
         .merchant-pos-cashier .record-row-actions .pos-button {
           min-height: 28px;
           padding: 0 9px;
           font-size: 12px;
+        }
+
+        .merchant-pos-cashier .pos-button.danger {
+          border-color: rgba(220, 38, 38, 0.3);
+          color: #b91c1c;
+        }
+
+        .merchant-pos-cashier .pos-button.danger:hover {
+          border-color: #dc2626;
+          background: #fef2f2;
+          color: #991b1b;
+        }
+
+        .merchant-pos-cashier .pos-button:disabled,
+        .merchant-pos-cashier .pos-button:disabled:hover {
+          cursor: not-allowed;
+          border-color: var(--pos-line);
+          background: var(--pos-surface-soft);
+          color: var(--pos-muted);
+          opacity: 0.72;
         }
 
         .merchant-pos-cashier .record-pagination {
@@ -3656,6 +3864,28 @@ export default function MerchantPointRedemptionCashier({
         .merchant-pos-cashier .record-detail-grid strong {
           min-width: 0;
           overflow-wrap: anywhere;
+        }
+
+        .merchant-pos-cashier .recharge-cancel-summary {
+          display: grid;
+          grid-template-columns: 110px minmax(0, 1fr);
+          gap: 8px 12px;
+          padding: 12px;
+          border: 1px solid var(--pos-line);
+          border-radius: 8px;
+          background: var(--pos-surface-soft);
+        }
+
+        .merchant-pos-cashier .recharge-cancel-summary span {
+          color: var(--pos-muted);
+          font-weight: 760;
+        }
+
+        .merchant-pos-cashier .recharge-cancel-warning {
+          margin: 0;
+          color: #b45309;
+          font-size: 13px;
+          line-height: 1.6;
         }
 
         .merchant-pos-cashier .record-empty-row {
@@ -4192,6 +4422,11 @@ export default function MerchantPointRedemptionCashier({
             grid-template-columns: 60px 140px 170px 100px 90px 150px 220px 86px;
             min-width: 980px;
           }
+
+          .merchant-pos-cashier .records-table.has-status .records-row {
+            grid-template-columns: 60px 140px 170px 100px 90px 150px 88px 210px 150px;
+            min-width: 1200px;
+          }
         }
       `}</style>
 
@@ -4260,7 +4495,7 @@ export default function MerchantPointRedemptionCashier({
       {view === "records" || view === "rechargeRecords" ? (
         <>
           <section className="panel records-panel">
-            <div className="record-filter-grid">
+            <div className={`record-filter-grid${view === "rechargeRecords" ? " has-status" : ""}`}>
               <div className="record-filter-field">
                 <label>搜索</label>
                 <div className="record-search">
@@ -4296,22 +4531,30 @@ export default function MerchantPointRedemptionCashier({
                   ))}
                 </div>
               </div>
-              <div className="record-filter-actions">
-                <button
-                  type="button"
-                  className="pos-button"
-                  onClick={() => {
-                    setRecordsKeyword("");
-                    setRecordsTimeFilter("today");
-                    setRecordsPage(1);
-                  }}
-                >
-                  重置
-                </button>
-              </div>
+              {view === "rechargeRecords" ? (
+                <div className="record-filter-field">
+                  <label htmlFor="recharge-record-status">状态</label>
+                  <select
+                    id="recharge-record-status"
+                    className="record-status-select"
+                    value={rechargeRecordStatusFilter}
+                    onChange={(event) => {
+                      setRechargeRecordStatusFilter(event.target.value as RechargeRecordStatusFilter);
+                      setRecordsPage(1);
+                    }}
+                  >
+                    <option value="all">全部状态</option>
+                    <option value="completed">完成</option>
+                    <option value="cancelled">取消</option>
+                  </select>
+                </div>
+              ) : null}
             </div>
 
-            <div className="records-table" aria-busy={loading}>
+            <div
+              className={`records-table${view === "rechargeRecords" ? " has-status" : ""}`}
+              aria-busy={loading}
+            >
               <div className="records-row header">
                 <span>序号</span>
                 <span>编号</span>
@@ -4319,6 +4562,7 @@ export default function MerchantPointRedemptionCashier({
                 <span className="record-amount">余额</span>
                 <span className="record-points">积分</span>
                 <span>时间</span>
+                {view === "rechargeRecords" ? <span>状态</span> : null}
                 <span>记录</span>
                 <span>操作</span>
               </div>
@@ -4335,6 +4579,13 @@ export default function MerchantPointRedemptionCashier({
                     </span>
                     <span className="record-points">{formatPoints(record.points)}</span>
                     <span>{record.at ? formatDateTime(new Date(record.at)) : "-"}</span>
+                    {view === "rechargeRecords" ? (
+                      <span>
+                        <span className={`record-state-tag${record.status === "cancelled" ? " cancelled" : ""}`}>
+                          {record.status === "cancelled" ? "取消" : "完成"}
+                        </span>
+                      </span>
+                    ) : null}
                     <span>
                       <span className="record-status-tag">{transactionRecordTypeLabel}</span>
                       {" "}
@@ -4344,6 +4595,16 @@ export default function MerchantPointRedemptionCashier({
                       <button type="button" className="pos-button" onClick={() => setSelectedRecordId(record.id)}>
                         查看
                       </button>
+                      {view === "rechargeRecords" ? (
+                        <button
+                          type="button"
+                          className="pos-button danger"
+                          disabled={record.status === "cancelled" || cancellingRecharge}
+                          onClick={() => openRechargeCancellation(record.id)}
+                        >
+                          撤销
+                        </button>
+                      ) : null}
                     </span>
                   </div>
                 ))
@@ -4396,6 +4657,16 @@ export default function MerchantPointRedemptionCashier({
                     </strong>
                     <span>类型</span>
                     <strong>{transactionRecordTypeLabel}</strong>
+                    {view === "rechargeRecords" ? (
+                      <>
+                        <span>状态</span>
+                        <strong>
+                          <span className={`record-state-tag${selectedRecord.status === "cancelled" ? " cancelled" : ""}`}>
+                            {selectedRecord.status === "cancelled" ? "取消" : "完成"}
+                          </span>
+                        </strong>
+                      </>
+                    ) : null}
                     <span>余额变动</span>
                     <strong>
                       {selectedRecord.rawBalanceDelta >= 0 ? "+" : "-"}€{formatMoney(selectedRecord.balanceAmount)}
@@ -4407,11 +4678,91 @@ export default function MerchantPointRedemptionCashier({
                     </strong>
                     <span>记录</span>
                     <strong>{selectedRecord.note}</strong>
+                    {selectedRecord.status === "cancelled" ? (
+                      <>
+                        <span>撤销时间</span>
+                        <strong>
+                          {selectedRecord.cancelledAt ? formatDateTime(new Date(selectedRecord.cancelledAt)) : "-"}
+                        </strong>
+                        <span>撤销备注</span>
+                        <strong>{selectedRecord.cancellationNote || "未填写"}</strong>
+                      </>
+                    ) : null}
                   </div>
                 </div>
                 <div className="pos-modal-footer">
                   <button type="button" className="pos-button primary" onClick={() => setSelectedRecordId("")}>
                     确定
+                  </button>
+                </div>
+              </section>
+            </div>
+          ) : null}
+
+          {cancelRechargeRecord ? (
+            <div className="modal-backdrop" role="presentation" onMouseDown={closeRechargeCancellation}>
+              <section
+                className="pos-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-label="确认撤销充值"
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                <div className="pos-modal-header">
+                  <h3>确认撤销充值</h3>
+                  <button
+                    type="button"
+                    className="link-button"
+                    onClick={closeRechargeCancellation}
+                    disabled={cancellingRecharge}
+                  >
+                    关闭
+                  </button>
+                </div>
+                <div className="pos-modal-body">
+                  <div className="recharge-cancel-summary">
+                    <span>编号</span>
+                    <strong>{cancelRechargeRecord.transactionId}</strong>
+                    <span>会员</span>
+                    <strong>
+                      {cancelRechargeRecord.memberName} / {cancelRechargeRecord.memberNo}
+                    </strong>
+                    <span>回退余额</span>
+                    <strong>€{formatMoney(cancelRechargeRecord.balanceAmount)}</strong>
+                    <span>回退积分</span>
+                    <strong>{formatPoints(cancelRechargeRecord.points)}</strong>
+                  </div>
+                  <p className="recharge-cancel-warning">
+                    确认后会从会员当前余额和积分中扣回这笔充值，原记录不会删除并将标记为取消。余额或积分不足时不能撤销。
+                  </p>
+                  <label className="quick-field">
+                    撤销备注（选填）
+                    <textarea
+                      className="quick-input"
+                      value={cancelRechargeNote}
+                      maxLength={500}
+                      placeholder="填写撤销原因或补充说明"
+                      onChange={(event) => setCancelRechargeNote(event.target.value)}
+                      disabled={cancellingRecharge}
+                    />
+                  </label>
+                </div>
+                <div className="pos-modal-footer">
+                  <button
+                    type="button"
+                    className="pos-button"
+                    onClick={closeRechargeCancellation}
+                    disabled={cancellingRecharge}
+                  >
+                    返回
+                  </button>
+                  <button
+                    type="button"
+                    className="pos-button danger"
+                    onClick={submitRechargeCancellation}
+                    disabled={cancellingRecharge}
+                  >
+                    {cancellingRecharge ? "撤销中..." : "确认撤销"}
                   </button>
                 </div>
               </section>
@@ -4647,6 +4998,7 @@ export default function MerchantPointRedemptionCashier({
                 <IconSearch />
               </span>
               <input
+                ref={productSearchInputRef}
                 value={itemKeyword}
                 onChange={(event) => setItemKeyword(event.target.value)}
                 className="product-search-input"

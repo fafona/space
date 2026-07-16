@@ -21,16 +21,22 @@ export const MERCHANT_MEMBER_LEGAL_ALLERGENS = [
 
 export type MerchantMemberLegalAllergen = (typeof MERCHANT_MEMBER_LEGAL_ALLERGENS)[number];
 export type MerchantMemberAccountTransactionType = "redeem" | "recharge";
+export type MerchantMemberAccountTransactionStatus = "completed" | "cancelled";
 
 export type MerchantMemberAccountTransaction = {
   id: string;
   type: MerchantMemberAccountTransactionType;
+  status: MerchantMemberAccountTransactionStatus;
   at: string;
   pointDelta: number;
   balanceDelta: number;
   growthDelta: number;
   note: string;
   operatorId: string;
+  cancelledAt: string | null;
+  cancellationNote: string;
+  cancelledBy: string;
+  cancellationOperationMarker: string;
 };
 
 export type MerchantMemberCouponSummary = {
@@ -222,20 +228,88 @@ export function normalizeMerchantMemberAccountTransactions(value: unknown): Merc
       const at = normalizeIsoDateValue(record.at);
       if (!at) return null;
       const type: MerchantMemberAccountTransactionType = record.type === "recharge" ? "recharge" : "redeem";
+      const status: MerchantMemberAccountTransactionStatus = record.status === "cancelled" ? "cancelled" : "completed";
       return {
         id: trimText(record.id, 120) || `MT${Date.parse(at).toString(36).toUpperCase()}`,
         type,
+        status,
         at,
         pointDelta: normalizeIntegerValue(record.pointDelta),
         balanceDelta: normalizeMoneyValue(record.balanceDelta),
         growthDelta: normalizeMoneyValue(record.growthDelta),
         note: trimText(record.note, 500),
         operatorId: trimText(record.operatorId, 120),
+        cancelledAt: status === "cancelled" ? normalizeIsoDateValue(record.cancelledAt) || null : null,
+        cancellationNote: status === "cancelled" ? trimText(record.cancellationNote, 500) : "",
+        cancelledBy: status === "cancelled" ? trimText(record.cancelledBy, 120) : "",
+        cancellationOperationMarker:
+          status === "cancelled" ? trimText(record.cancellationOperationMarker, 240) : "",
       };
     })
     .filter((item): item is MerchantMemberAccountTransaction => Boolean(item))
     .sort((left, right) => Date.parse(right.at) - Date.parse(left.at))
     .slice(0, 500);
+}
+
+export function cancelMerchantMemberRechargeTransaction(input: {
+  membership: MerchantMembershipRecord;
+  transactionId: unknown;
+  cancelledAt: unknown;
+  cancellationNote?: unknown;
+  cancelledBy?: unknown;
+  cancellationOperationMarker?: unknown;
+}) {
+  const transactionId = trimText(input.transactionId, 120);
+  const transaction = input.membership.transactions.find((item) => item.id === transactionId);
+  if (!transaction) throw new Error("membership_recharge_not_found");
+  if (transaction.type !== "recharge") throw new Error("membership_recharge_not_cancellable");
+
+  const cancellationOperationMarker = trimText(input.cancellationOperationMarker, 240);
+  if (transaction.status === "cancelled") {
+    if (
+      cancellationOperationMarker &&
+      transaction.cancellationOperationMarker === cancellationOperationMarker
+    ) {
+      return { membership: input.membership, transaction, alreadyCancelled: true };
+    }
+    throw new Error("membership_recharge_already_cancelled");
+  }
+
+  const pointCredit = transaction.pointDelta;
+  const balanceCredit = transaction.balanceDelta;
+  if (pointCredit < 0 || balanceCredit < 0 || (pointCredit <= 0 && balanceCredit <= 0)) {
+    throw new Error("membership_recharge_not_cancellable");
+  }
+
+  const nextPointBalance = input.membership.pointBalance - pointCredit;
+  const nextBalanceAmount = normalizeMoneyValue(input.membership.balanceAmount - balanceCredit);
+  if (nextPointBalance < 0 || nextBalanceAmount < 0) {
+    throw new Error("membership_recharge_cancel_balance_insufficient");
+  }
+
+  const cancelledAt = normalizeIsoDateValue(input.cancelledAt);
+  if (!cancelledAt) throw new Error("membership_recharge_cancel_invalid_time");
+  const cancelledTransaction: MerchantMemberAccountTransaction = {
+    ...transaction,
+    status: "cancelled",
+    cancelledAt,
+    cancellationNote: trimText(input.cancellationNote, 500),
+    cancelledBy: trimText(input.cancelledBy, 120),
+    cancellationOperationMarker,
+  };
+  const membership: MerchantMembershipRecord = {
+    ...input.membership,
+    pointBalance: nextPointBalance,
+    balanceAmount: nextBalanceAmount,
+    growthValue: normalizeMoneyValue(
+      Math.max(0, input.membership.growthValue - Math.max(0, transaction.growthDelta)),
+    ),
+    transactions: input.membership.transactions.map((item) =>
+      item.id === transaction.id ? cancelledTransaction : item,
+    ),
+    updatedAt: cancelledAt,
+  };
+  return { membership, transaction: cancelledTransaction, alreadyCancelled: false };
 }
 
 export function buildMerchantMemberNo(siteId: string, serial: number) {

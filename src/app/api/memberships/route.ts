@@ -18,6 +18,7 @@ import {
   applyMerchantMembershipPointDeduction,
   applyMerchantMembershipRedemptionCart,
   awardMerchantMembershipRulePoints,
+  cancelMerchantMembershipRecharge,
   getMerchantMembershipsSnapshot,
   joinMerchantMembership,
   leaveMerchantMembership,
@@ -447,6 +448,7 @@ export async function PATCH(request: Request) {
       orderId?: unknown;
       requestedPoints?: unknown;
       referenceId?: unknown;
+      transactionId?: unknown;
       operationId?: unknown;
     } | null;
     const siteId = trimText(body?.siteId, 64);
@@ -482,6 +484,22 @@ export async function PATCH(request: Request) {
         rechargePlanId: body?.rechargePlanId,
         redemptionItemId: body?.redemptionItemId,
         redemptionQuantity: body?.redemptionQuantity,
+        operationId: body?.operationId,
+      });
+      return NextResponse.json({ ok: true, membership });
+    }
+    if (trimText(body?.action, 80) === "cancel_recharge") {
+      const merchantSession = await resolveMerchantSessionFromRequest(request, { hintedMerchantId: siteId });
+      if (!merchantSession || merchantSession.merchantId !== siteId) {
+        return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+      }
+      const membership = await cancelMerchantMembershipRecharge({
+        siteId,
+        membershipId: trimText(body?.membershipId, 160),
+        memberNo: trimText(body?.memberNo, 120),
+        transactionId: body?.transactionId,
+        note: body?.note,
+        operatorId: merchantSession.merchantId,
         operationId: body?.operationId,
       });
       return NextResponse.json({ ok: true, membership });
