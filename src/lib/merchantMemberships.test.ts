@@ -88,7 +88,7 @@ test("replaying the same recharge cancellation is idempotent", () => {
   assert.equal(replay.membership.balanceAmount, 50);
 });
 
-test("a cancelled recharge cannot be cancelled by a different operation", () => {
+test("a cancelled recharge remains idempotent when a retry uses a different operation id", () => {
   const first = cancelMerchantMemberRechargeTransaction({
     membership: buildMembership(),
     transactionId: "recharge-1",
@@ -96,16 +96,16 @@ test("a cancelled recharge cannot be cancelled by a different operation", () => 
     cancellationOperationMarker: "[op:member-recharge-cancel:test-1]",
   });
 
-  assert.throws(
-    () =>
-      cancelMerchantMemberRechargeTransaction({
-        membership: first.membership,
-        transactionId: "recharge-1",
-        cancelledAt: "2026-07-16T08:02:00.000Z",
-        cancellationOperationMarker: "[op:member-recharge-cancel:test-2]",
-      }),
-    /membership_recharge_already_cancelled/,
-  );
+  const retry = cancelMerchantMemberRechargeTransaction({
+    membership: first.membership,
+    transactionId: "recharge-1",
+    cancelledAt: "2026-07-16T08:02:00.000Z",
+    cancellationOperationMarker: "[op:member-recharge-cancel:test-2]",
+  });
+
+  assert.equal(retry.alreadyCancelled, true);
+  assert.equal(retry.membership.pointBalance, 200);
+  assert.equal(retry.membership.balanceAmount, 50);
 });
 
 test("recharge cancellation is rejected when the credited value has already been spent", () => {

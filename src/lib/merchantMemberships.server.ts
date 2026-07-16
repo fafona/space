@@ -817,7 +817,10 @@ export async function cancelMerchantMembershipRecharge(input: {
   const membershipId = trimText(input.membershipId, 160);
   const memberNo = trimText(input.memberNo, 120);
   if (!siteId || (!membershipId && !memberNo)) throw new Error("membership_not_found");
-  const stored = await loadStoredMerchantMemberships(supabase, siteId);
+  const [stored, settings] = await Promise.all([
+    loadStoredMerchantMemberships(supabase, siteId),
+    getMerchantMembershipSettings(siteId).catch(() => null),
+  ]);
   const current = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
   const index = findMerchantMembershipIndexByIdentity(current, { membershipId, memberNo });
   if (index < 0) throw new Error("membership_not_found");
@@ -836,7 +839,6 @@ export async function cancelMerchantMembershipRecharge(input: {
   });
   if (cancellation.alreadyCancelled) return toMerchantMembershipListItem(currentMembership);
 
-  const settings = await getMerchantMembershipSettings(siteId).catch(() => null);
   const nextMembership = applyMembershipGrowthAndLevel({
     membership: cancellation.membership,
     settings,

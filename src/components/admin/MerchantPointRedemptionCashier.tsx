@@ -147,6 +147,8 @@ const EMPTY_MEMBER_INSIGHT: MerchantMembershipInsight = {
 
 const MERCHANT_REDEMPTION_ITEM_RENDER_LIMIT = 300;
 const MERCHANT_POINT_REDEMPTION_REQUEST_TIMEOUT_MS = 12_000;
+const RECHARGE_CANCELLATION_REQUEST_TIMEOUT_MS = 45_000;
+const RECHARGE_CANCELLATION_VERIFY_TIMEOUT_MS = 15_000;
 const MEMBER_SEARCH_REQUEST_TIMEOUT_MS = 4_500;
 const MEMBER_REMOTE_SEARCH_LIMIT = 20;
 const PRINT_BRIDGE_LAUNCH_RECHECK_DELAY_MS = 2800;
@@ -422,6 +424,14 @@ function rechargeCancellationErrorMessage(message: unknown) {
     return "会员当前余额或积分不足，无法撤销这笔充值。";
   }
   return text || "撤销充值失败，请稍后重试。";
+}
+
+class RechargeCancellationResultUnknownError extends Error {}
+
+function isRechargeCancellationResultUnknown(error: unknown) {
+  if (error instanceof RechargeCancellationResultUnknownError || error instanceof TypeError) return true;
+  const message = error instanceof Error ? error.message : "";
+  return /请求超时|failed to fetch|networkerror|load failed/i.test(message);
 }
 
 function redemptionReceiptPrintNotice(outcome: RedemptionReceiptPrintOutcome) {
@@ -1975,6 +1985,29 @@ export default function MerchantPointRedemptionCashier({
     setCancelRechargeNote("");
   }
 
+  async function readLatestMembershipForRechargeCancellation(membershipId: string) {
+    const params = new URLSearchParams({
+      siteId: normalizedSiteId,
+      membershipId,
+      limit: "1",
+      includeInsights: "0",
+      t: Date.now().toString(),
+    });
+    const response = await fetchPointRedemptionJson(
+      `/api/memberships?${params.toString()}`,
+      {
+        method: "GET",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: { accept: "application/json" },
+      },
+      RECHARGE_CANCELLATION_VERIFY_TIMEOUT_MS,
+    );
+    const payload = (await response.json().catch(() => null)) as MembershipsPayload | null;
+    const membership = Array.isArray(payload?.memberships) ? payload.memberships[0] : null;
+    return response.ok && payload?.ok === true && membership ? membership : null;
+  }
+
   async function submitRechargeCancellation() {
     const record = cancelRechargeRecord;
     if (!record || record.status === "cancelled") {
@@ -1986,26 +2019,47 @@ export default function MerchantPointRedemptionCashier({
     setError("");
     setNotice("");
     try {
-      const operationId = createClientMutationOperationId("member-recharge-cancel");
-      const response = await fetchPointRedemptionJson("/api/memberships", {
-        method: "PATCH",
-        credentials: "same-origin",
-        headers: { "content-type": "application/json", accept: "application/json" },
-        body: JSON.stringify({
-          siteId: normalizedSiteId,
-          action: "cancel_recharge",
-          membershipId: record.membershipId,
-          memberNo: record.memberNo,
-          transactionId: record.transactionId,
-          operationId,
-          note: cancelRechargeNote,
-        }),
-      });
-      const payload = (await response.json().catch(() => null)) as MembershipPatchPayload | null;
-      if (!response.ok || !payload?.ok || !payload.membership) {
-        throw new Error(rechargeCancellationErrorMessage(payload?.message));
+      const operationId = `member-recharge-cancel:${normalizedSiteId}:${record.transactionId}`;
+      let updatedMembership: MerchantMembershipListItem | null = null;
+      try {
+        const response = await fetchPointRedemptionJson(
+          "/api/memberships",
+          {
+            method: "PATCH",
+            cache: "no-store",
+            credentials: "same-origin",
+            headers: { "content-type": "application/json", accept: "application/json" },
+            body: JSON.stringify({
+              siteId: normalizedSiteId,
+              action: "cancel_recharge",
+              membershipId: record.membershipId,
+              memberNo: record.memberNo,
+              transactionId: record.transactionId,
+              operationId,
+              note: cancelRechargeNote,
+            }),
+          },
+          RECHARGE_CANCELLATION_REQUEST_TIMEOUT_MS,
+        );
+        const payload = (await response.json().catch(() => null)) as MembershipPatchPayload | null;
+        if (!response.ok || !payload?.ok || !payload.membership) {
+          const message = rechargeCancellationErrorMessage(payload?.message);
+          if (response.status >= 500) throw new RechargeCancellationResultUnknownError(message);
+          throw new Error(message);
+        }
+        updatedMembership = payload.membership;
+      } catch (requestError) {
+        if (!isRechargeCancellationResultUnknown(requestError)) throw requestError;
+        const latestMembership = await readLatestMembershipForRechargeCancellation(record.membershipId).catch(() => null);
+        const latestTransaction = latestMembership?.transactions.find(
+          (transaction) => transaction.id === record.transactionId,
+        );
+        if (latestMembership && latestTransaction?.status === "cancelled") {
+          updatedMembership = latestMembership;
+        } else {
+          throw requestError;
+        }
       }
-      const updatedMembership = payload.membership;
       setMemberships((current) =>
         current.map((membership) =>
           isSameMembershipRecord(membership, updatedMembership) ? updatedMembership : membership,

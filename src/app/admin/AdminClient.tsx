@@ -110,6 +110,11 @@ import {
 } from "@/lib/merchantLaunchState";
 import { clearMerchantSignInBridge } from "@/lib/merchantSignInBridge";
 import {
+  claimAdminAutoReload,
+  clearAdminAutoReload,
+  type AdminAutoReloadStorage,
+} from "@/lib/adminAutoReload";
+import {
   buildMerchantAdminDataCacheKey,
   readMerchantAdminDataCache,
   writeMerchantAdminDataCache,
@@ -6861,6 +6866,28 @@ export default function AdminClient({
     checkingAuthRef.current = checkingAuth;
   }, [checkingAuth]);
   useEffect(() => {
+    if (checkingAuth || !hasEditorContent || typeof window === "undefined") return;
+    let storage: AdminAutoReloadStorage | null = null;
+    try {
+      storage = window.sessionStorage;
+    } catch {
+      storage = null;
+    }
+    clearAdminAutoReload(storage, window.location.pathname);
+  }, [checkingAuth, hasEditorContent]);
+  useEffect(() => {
+    if (checkingAuth || hasEditorContent || !backendNotice || typeof window === "undefined") return;
+    let storage: AdminAutoReloadStorage | null = null;
+    try {
+      storage = window.sessionStorage;
+    } catch {
+      storage = null;
+    }
+    if (claimAdminAutoReload(storage, window.location.pathname)) {
+      window.location.reload();
+    }
+  }, [backendNotice, checkingAuth, hasEditorContent]);
+  useEffect(() => {
     supportMobileHomeTabRef.current = supportMobileHomeTab;
   }, [supportMobileHomeTab]);
   const [supportFaollaEmbedHref, setSupportFaollaEmbedHref] = useState(readInitialSupportFaollaEmbedHref);
@@ -9163,7 +9190,7 @@ export default function AdminClient({
       window.location.replace(`/launch?nativeAuthRetry=${retryCount + 1}`);
       return true;
     };
-    const releaseMerchantUnauthenticatedState = (notice: string) => {
+    const releaseMerchantUnauthenticatedState = () => {
       if (!mounted) return;
       if (preserveNativeFaollaShell()) return;
       if (shouldPreserveMerchantSessionDuringResume()) {
@@ -9173,11 +9200,18 @@ export default function AdminClient({
         return;
       }
       if (redirectNativeMerchantShellToLaunch()) return;
-      merchantIdsRef.current = [];
-      setRemoteContentVerified(false);
-      setHasEditorContent(false);
-      setSelectedId("");
-      releaseCheckingScreen({ notice });
+      let reloadStorage: AdminAutoReloadStorage | null = null;
+      try {
+        reloadStorage = window.sessionStorage;
+      } catch {
+        reloadStorage = null;
+      }
+      if (claimAdminAutoReload(reloadStorage, window.location.pathname)) {
+        window.location.reload();
+        return;
+      }
+      const currentHref = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      window.location.replace(`/login?redirect=${encodeURIComponent(currentHref)}`);
     };
     const shouldPreserveMerchantSessionDuringResume = () => {
       if (isPlatformEditor || typeof document === "undefined") return false;
@@ -9402,10 +9436,10 @@ export default function AdminClient({
             return;
           }
           if (justSignedIn) {
-            releaseMerchantUnauthenticatedState("登录已断开，请重新登录后继续。");
+            releaseMerchantUnauthenticatedState();
             return;
           }
-          releaseMerchantUnauthenticatedState("当前未登录，请重新登录后继续。");
+          releaseMerchantUnauthenticatedState();
         })().catch(() => {
           // Ignore listener network failures; keep current editor session.
         });
@@ -9491,10 +9525,10 @@ export default function AdminClient({
               const restored = await tryLoadJustSignedInPublishedContent();
               if (!mounted) return;
               if (restored) return;
-              releaseMerchantUnauthenticatedState("登录未完成，请重新登录后继续。");
+              releaseMerchantUnauthenticatedState();
               return;
             }
-            releaseMerchantUnauthenticatedState("当前未登录，请重新登录后继续。");
+            releaseMerchantUnauthenticatedState();
             return;
           }
 
@@ -9713,7 +9747,7 @@ export default function AdminClient({
               const restored = await tryLoadJustSignedInPublishedContent();
               if (!mounted) return;
               if (restored) return;
-              releaseMerchantUnauthenticatedState("登录未完成，请重新登录后继续。");
+              releaseMerchantUnauthenticatedState();
               return;
             }
             if (cookieBackedMerchantIdentity) {
@@ -9722,7 +9756,7 @@ export default function AdminClient({
               setHasEditorContent(true);
               releaseCheckingScreen({ notice: null });
             } else {
-              releaseMerchantUnauthenticatedState("当前未登录，请重新登录后继续。");
+              releaseMerchantUnauthenticatedState();
               return;
             }
           }
@@ -17903,35 +17937,26 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 : "内容暂未恢复"}
             </div>
             <p className="mt-3 text-sm leading-6 text-slate-500">{backendNotice}</p>
-            <div className="mt-6 space-y-3">
+            <div className="mt-6 grid grid-cols-2 gap-3">
               <button
                 type="button"
-                className="w-full rounded-[22px] bg-slate-950 px-4 py-4 text-[15px] font-semibold text-white shadow-[0_18px_40px_rgba(15,23,42,0.24)] transition hover:bg-slate-800"
-                onClick={() => window.location.reload()}
+                className="rounded-[20px] border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 shadow-[0_8px_24px_rgba(15,23,42,0.06)] transition hover:border-slate-300 hover:bg-white"
+                onClick={() => {
+                  setHasEditorContent(true);
+                  setBackendNotice("当前使用空白模板继续编辑");
+                }}
               >
-                重新加载
+                空白模板
               </button>
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  className="rounded-[20px] border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 shadow-[0_8px_24px_rgba(15,23,42,0.06)] transition hover:border-slate-300 hover:bg-white"
-                  onClick={() => {
-                    setHasEditorContent(true);
-                    setBackendNotice("当前使用空白模板继续编辑");
-                  }}
-                >
-                  空白模板
-                </button>
-                <button
-                  type="button"
-                  className="rounded-[20px] border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 shadow-[0_8px_24px_rgba(15,23,42,0.06)] transition hover:border-slate-300 hover:bg-white"
-                  onClick={() => {
-                    window.location.href = "/login";
-                  }}
-                >
-                  重新登录
-                </button>
-              </div>
+              <button
+                type="button"
+                className="rounded-[20px] border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 shadow-[0_8px_24px_rgba(15,23,42,0.06)] transition hover:border-slate-300 hover:bg-white"
+                onClick={() => {
+                  window.location.href = "/login";
+                }}
+              >
+                重新登录
+              </button>
             </div>
           </div>
         </LoadingProgressScreen>
@@ -17943,13 +17968,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           <h1 className="text-lg font-semibold text-gray-900">未加载到可编辑页面</h1>
           <p className="mt-2 text-sm text-gray-600">{backendNotice}</p>
           <div className="mt-4 flex flex-wrap gap-2">
-            <button
-              type="button"
-              className="rounded border bg-black px-3 py-2 text-sm text-white"
-              onClick={() => window.location.reload()}
-            >
-              重新加载
-            </button>
             <button
               type="button"
               className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50"

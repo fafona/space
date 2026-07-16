@@ -266,13 +266,7 @@ export function cancelMerchantMemberRechargeTransaction(input: {
 
   const cancellationOperationMarker = trimText(input.cancellationOperationMarker, 240);
   if (transaction.status === "cancelled") {
-    if (
-      cancellationOperationMarker &&
-      transaction.cancellationOperationMarker === cancellationOperationMarker
-    ) {
-      return { membership: input.membership, transaction, alreadyCancelled: true };
-    }
-    throw new Error("membership_recharge_already_cancelled");
+    return { membership: input.membership, transaction, alreadyCancelled: true };
   }
 
   const pointCredit = transaction.pointDelta;

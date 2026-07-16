@@ -10,6 +10,12 @@ type StoredSnapshotHistoryRow = {
   updated_at?: unknown;
 };
 
+type SnapshotHistoryRowLookup = {
+  row: StoredSnapshotHistoryRow | null;
+  error: string | null;
+  supportsMerchantId: boolean;
+};
+
 export type MerchantSnapshotHistoryEntry = {
   id: string;
   siteId: string;
@@ -100,7 +106,7 @@ async function querySnapshotHistoryRow(
   slug: string,
   columns: string,
   merchantId: string | null = siteId,
-): Promise<{ row: StoredSnapshotHistoryRow | null; error: string | null; supportsMerchantId: boolean }> {
+): Promise<SnapshotHistoryRowLookup> {
   const merchantQuery = supabase.from("pages").select(columns);
   const byMerchant = await (merchantId === null ? merchantQuery.is("merchant_id", null) : merchantQuery.eq("merchant_id", merchantId))
     .eq("slug", slug)
@@ -150,8 +156,9 @@ async function persistSnapshotHistoryPayload(
   slug: string,
   payload: MerchantSnapshotHistoryPayload,
   merchantId: string | null = siteId,
+  existingLookup?: SnapshotHistoryRowLookup,
 ): Promise<{ error: string | null }> {
-  const existing = await querySnapshotHistoryRow(supabase, siteId, slug, "id", merchantId);
+  const existing = existingLookup ?? (await querySnapshotHistoryRow(supabase, siteId, slug, "id", merchantId));
   if (existing.error) return { error: existing.error };
 
   const updatedAt = payload.updatedAt || new Date().toISOString();
@@ -201,7 +208,10 @@ export async function saveMerchantSnapshotHistory(
     Object.prototype.hasOwnProperty.call(input, "merchantId") && input.merchantId === null
       ? null
       : normalizeText(input.merchantId) || siteId;
-  const current = await querySnapshotHistoryRow(supabase, siteId, slug, "blocks,updated_at", merchantId);
+  const [current, backupCurrent] = await Promise.all([
+    querySnapshotHistoryRow(supabase, siteId, slug, "id,blocks,updated_at", merchantId),
+    querySnapshotHistoryRow(supabase, siteId, backupSlug, "id", merchantId),
+  ]);
   if (current.error) return { error: current.error };
   const currentPayload = normalizeHistoryPayload(current.row?.blocks, siteId);
   const maxEntries = Math.max(1, Math.min(1000, input.maxEntries ?? 240));
@@ -224,9 +234,11 @@ export async function saveMerchantSnapshotHistory(
     siteId,
   );
 
-  const primary = await persistSnapshotHistoryPayload(supabase, siteId, slug, nextPayload, merchantId);
+  const primary = await persistSnapshotHistoryPayload(supabase, siteId, slug, nextPayload, merchantId, current);
   if (primary.error) return primary;
-  const backup = await persistSnapshotHistoryPayload(supabase, siteId, backupSlug, nextPayload, merchantId);
+  const backup = backupCurrent.error
+    ? { error: backupCurrent.error }
+    : await persistSnapshotHistoryPayload(supabase, siteId, backupSlug, nextPayload, merchantId, backupCurrent);
   if (backup.error && typeof console !== "undefined") {
     console.error("[merchant-snapshot-history] backup save failed", backup.error);
   }

@@ -38,6 +38,7 @@ import { verifyFrontendAuthProof } from "@/lib/frontendAuthProof.server";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+export const maxDuration = 60;
 
 function trimText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
