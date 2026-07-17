@@ -1,6 +1,6 @@
 "use client";
 
-import type { CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import type { GoogleReviewDisplayMode, GoogleReviewItem, GoogleReviewsProps } from "@/data/homeBlocks";
 import {
   normalizeGoogleReviewAverage,
@@ -146,16 +146,78 @@ export default function GoogleReviewsBlock({
   googleReviewShowReplies = true,
   googleReviewEmptyText = "暂无可展示的 Google 评论",
   googleReviewSyncedAt = "",
+  googleReviewAutoSync = false,
+  runtimeSiteId = "",
   ...backgroundProps
-}: GoogleReviewsProps) {
+}: GoogleReviewsProps & { runtimeSiteId?: string }) {
+  const [runtimeSnapshot, setRuntimeSnapshot] = useState<{
+    reviews: GoogleReviewItem[];
+    averageRating: number;
+    totalReviewCount: number;
+    syncedAt: string;
+    mapsUri: string;
+    newReviewUri: string;
+    siteId: string;
+    sourceSyncedAt: string;
+  } | null>(null);
+
+  useEffect(() => {
+    const siteId = runtimeSiteId.trim();
+    if (!googleReviewAutoSync || !/^\d{8}$/.test(siteId)) return;
+    const controller = new AbortController();
+    void fetch(`/api/google-business-profile/reviews?siteId=${encodeURIComponent(siteId)}`, {
+      method: "GET",
+      headers: { accept: "application/json" },
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) return null;
+        return (await response.json().catch(() => null)) as {
+          snapshot?: {
+            reviews?: unknown;
+            averageRating?: unknown;
+            totalReviewCount?: unknown;
+            syncedAt?: unknown;
+          };
+          location?: { mapsUri?: unknown; newReviewUri?: unknown } | null;
+        } | null;
+      })
+      .then((payload) => {
+        if (!payload?.snapshot || controller.signal.aborted) return;
+        const reviews = normalizeGoogleReviewItems(payload.snapshot.reviews, 100);
+        const syncedAt = typeof payload.snapshot.syncedAt === "string" ? payload.snapshot.syncedAt.trim() : "";
+        if (!syncedAt) return;
+        setRuntimeSnapshot({
+          reviews,
+          averageRating: normalizeGoogleReviewAverage(payload.snapshot.averageRating, 0),
+          totalReviewCount: normalizeGoogleReviewTotalCount(payload.snapshot.totalReviewCount, reviews.length),
+          syncedAt,
+          mapsUri: typeof payload.location?.mapsUri === "string" ? payload.location.mapsUri.trim() : "",
+          newReviewUri: typeof payload.location?.newReviewUri === "string" ? payload.location.newReviewUri.trim() : "",
+          siteId,
+          sourceSyncedAt: googleReviewSyncedAt,
+        });
+      })
+      .catch(() => null);
+    return () => controller.abort();
+  }, [googleReviewAutoSync, googleReviewSyncedAt, runtimeSiteId]);
+
   const mobileFitScreenWidth = backgroundProps.mobileFitScreenWidth === true;
   const displayMode = normalizeDisplayMode(googleReviewDisplayMode);
   const maxItems = clampMaxItems(googleReviewMaxItems);
-  const items = normalizeGoogleReviewItems(googleReviewItems, maxItems);
+  const liveSnapshot =
+    runtimeSnapshot?.siteId === runtimeSiteId.trim() && runtimeSnapshot.sourceSyncedAt === googleReviewSyncedAt
+      ? runtimeSnapshot
+      : null;
+  const items = normalizeGoogleReviewItems(liveSnapshot?.reviews ?? googleReviewItems, maxItems);
   const derivedAverage = deriveAverageRating(items);
-  const hasExplicitAverage = typeof googleReviewAverageRating === "number" && Number.isFinite(googleReviewAverageRating);
-  const averageRating = hasExplicitAverage ? normalizeGoogleReviewAverage(googleReviewAverageRating) : derivedAverage;
-  const totalCount = normalizeGoogleReviewTotalCount(googleReviewTotalCount, items.length);
+  const effectiveAverageRating = liveSnapshot?.averageRating ?? googleReviewAverageRating;
+  const hasExplicitAverage = typeof effectiveAverageRating === "number" && Number.isFinite(effectiveAverageRating);
+  const averageRating = hasExplicitAverage ? normalizeGoogleReviewAverage(effectiveAverageRating) : derivedAverage;
+  const totalCount = normalizeGoogleReviewTotalCount(liveSnapshot?.totalReviewCount ?? googleReviewTotalCount, items.length);
+  const effectiveReviewUrl = liveSnapshot?.mapsUri || googleReviewUrl;
+  const effectiveWriteUrl = liveSnapshot?.newReviewUri || googleReviewWriteUrl;
   const cardStyle = getBackgroundStyle({
     imageUrl: backgroundProps.bgImageUrl,
     fillMode: backgroundProps.bgFillMode,
@@ -215,7 +277,7 @@ export default function GoogleReviewsBlock({
       : displayMode === "compact"
         ? "grid gap-3"
         : "grid gap-4";
-  const syncedLabel = formatReviewDate(googleReviewSyncedAt);
+  const syncedLabel = formatReviewDate(liveSnapshot?.syncedAt ?? googleReviewSyncedAt);
   const sourceLabel = googleReviewSourceLabel.trim() || "Google";
 
   return (
@@ -245,20 +307,20 @@ export default function GoogleReviewsBlock({
         </div>
 
         <div className="mt-4 flex flex-wrap gap-2 text-sm">
-          {googleReviewUrl ? (
+          {effectiveReviewUrl ? (
             <a
               className="rounded-lg border border-slate-300 bg-white px-3 py-2 font-semibold text-slate-800 hover:bg-slate-50"
-              href={googleReviewUrl}
+              href={effectiveReviewUrl}
               target="_blank"
               rel="noreferrer"
             >
               查看 Google 评论
             </a>
           ) : null}
-          {googleReviewWriteUrl ? (
+          {effectiveWriteUrl ? (
             <a
               className="rounded-lg bg-blue-600 px-3 py-2 font-semibold text-white hover:bg-blue-700"
-              href={googleReviewWriteUrl}
+              href={effectiveWriteUrl}
               target="_blank"
               rel="noreferrer"
             >

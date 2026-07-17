@@ -344,6 +344,7 @@ import BlockRenderer from "@/components/blocks/BlockRenderer";
 import BookingBlock from "@/components/blocks/BookingBlock";
 import CouponBlock from "@/components/blocks/CouponBlock";
 import GoogleReviewsBlock from "@/components/blocks/GoogleReviewsBlock";
+import GoogleBusinessProfileReviewsPanel from "@/components/admin/GoogleBusinessProfileReviewsPanel";
 import { useI18n } from "@/components/I18nProvider";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import NoMercyFlagIcon from "@/components/NoMercyFlagIcon";
@@ -11091,17 +11092,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         props: {
           heading: "Google 评论",
           text: "展示客户在 Google 上留下的真实评价。",
-          googleReviewItems: [
-            {
-              id: createGoogleReviewItemId(),
-              reviewerName: "客户",
-              rating: 5,
-              comment: "服务很好，体验很顺畅。",
-              createTime: new Date().toISOString(),
-            },
-          ],
-          googleReviewAverageRating: 5,
-          googleReviewTotalCount: 1,
+          googleReviewItems: [],
+          googleReviewAverageRating: 0,
+          googleReviewTotalCount: 0,
           googleReviewUrl: "",
           googleReviewWriteUrl: "",
           googleReviewSourceLabel: "Google",
@@ -11111,6 +11104,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           googleReviewShowDates: true,
           googleReviewShowReplies: true,
           googleReviewEmptyText: "暂无可展示的 Google 评论",
+          googleReviewAutoSync: false,
+          googleReviewAccountName: "",
+          googleReviewLocationName: "",
+          googleReviewLocationTitle: "",
         },
       };
     }
@@ -22724,6 +22721,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                               merchantCouponRecords={merchantCouponRecords}
                               onOpenMerchantCoupons={openMerchantCouponsPanel}
                               europeLocationOptionsApi={europeLocationOptionsApi}
+                              onGoogleBusinessProfileRequest={requestMerchantChatWithSessionRecovery}
                             />
                           </div>
                         );
@@ -22792,6 +22790,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       merchantCouponRecords={merchantCouponRecords}
                       onOpenMerchantCoupons={openMerchantCouponsPanel}
                       europeLocationOptionsApi={europeLocationOptionsApi}
+                      onGoogleBusinessProfileRequest={requestMerchantChatWithSessionRecovery}
                     />
                   </div>
                 );
@@ -23580,6 +23579,7 @@ function InlineEditorBlock({
   merchantCouponRecords = [],
   onOpenMerchantCoupons,
   europeLocationOptionsApi,
+  onGoogleBusinessProfileRequest,
 }: {
   block: Block;
   publicBlockId: string;
@@ -23618,6 +23618,7 @@ function InlineEditorBlock({
   merchantCouponRecords?: MerchantCouponRecord[];
   onOpenMerchantCoupons?: () => void;
   europeLocationOptionsApi?: EuropeLocationOptionsApi | null;
+  onGoogleBusinessProfileRequest?: (path: string, init: RequestInit) => Promise<Response>;
 }) {
   const { locale } = useI18n();
   type CommonEditorTextBox = {
@@ -32441,14 +32442,19 @@ type GalleryEditorImage = {
                   显示商家回复
                 </label>
               </div>
-              <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">
-                当前版本先保存可展示的 Google 评论快照。后续接 Google Business Profile API 时，会把官方返回的评论同步到同一组字段中。
-              </div>
+              <GoogleBusinessProfileReviewsPanel
+                siteId={runtimeSiteId}
+                request={onGoogleBusinessProfileRequest}
+                currentSyncedAt={block.props.googleReviewSyncedAt}
+                currentLocationName={block.props.googleReviewLocationName}
+                autoSync={block.props.googleReviewAutoSync === true}
+                onApply={(patch) => onChange(patch)}
+              />
               <div className="rounded-xl border border-slate-200 bg-white px-4 py-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <div className="text-sm font-semibold text-slate-900">评论内容</div>
-                    <div className="mt-1 text-xs leading-5 text-slate-500">作者名、评分和评论正文会在网页区块中展示。</div>
+                    <div className="text-sm font-semibold text-slate-900">手动备用评论</div>
+                    <div className="mt-1 text-xs leading-5 text-slate-500">未连接 Google 时可手动维护；官方同步成功后会自动替换这组快照。</div>
                   </div>
                   <button
                     type="button"
@@ -35595,7 +35601,8 @@ const MemoizedInlineEditorBlock = memo(InlineEditorBlock, (previousProps, nextPr
     previousProps.runtimeSiteId === nextProps.runtimeSiteId &&
     previousProps.runtimeSiteName === nextProps.runtimeSiteName &&
     previousProps.merchantCouponRecords === nextProps.merchantCouponRecords &&
-    previousProps.europeLocationOptionsApi === nextProps.europeLocationOptionsApi
+    previousProps.europeLocationOptionsApi === nextProps.europeLocationOptionsApi &&
+    previousProps.onGoogleBusinessProfileRequest === nextProps.onGoogleBusinessProfileRequest
   );
 });
 

@@ -417,6 +417,10 @@ export type GoogleReviewsProps = BackgroundEditableProps &
     googleReviewShowReplies?: boolean;
     googleReviewEmptyText?: string;
     googleReviewSyncedAt?: string;
+    googleReviewAutoSync?: boolean;
+    googleReviewAccountName?: string;
+    googleReviewLocationName?: string;
+    googleReviewLocationTitle?: string;
   };
 export type BookingProps = BackgroundEditableProps &
   TypographyEditableProps & {
