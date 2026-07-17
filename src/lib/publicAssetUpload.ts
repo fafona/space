@@ -17,6 +17,7 @@ export class PublicAssetUploadError extends Error {
 export type PublicAssetUploadUsage =
   | "common-block-image"
   | "gallery-block-image"
+  | "page-background"
   | "business-card-background"
   | "business-card-contact"
   | "business-card-export"

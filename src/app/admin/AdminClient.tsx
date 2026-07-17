@@ -210,6 +210,7 @@ import {
   runWithMerchantOperationContext,
   type MerchantOperationContext,
 } from "@/lib/merchantOperationContext";
+import { uploadFileToPublicStorageWithMetadata } from "@/lib/publicAssetUpload";
 import { loadEuropeLocationOptionsApi, type EuropeLocationOptionsApi } from "@/lib/europeLocationOptionsLoader";
 import {
   buildMerchantCardPlacement,
@@ -2546,6 +2547,24 @@ async function yieldToBrowser() {
   });
 }
 
+function dataUrlToBrowserBlob(dataUrl: string) {
+  const separatorIndex = dataUrl.indexOf(",");
+  const header = separatorIndex >= 0 ? dataUrl.slice(0, separatorIndex) : "";
+  const encoded = separatorIndex >= 0 ? dataUrl.slice(separatorIndex + 1) : "";
+  const mime = header.match(/^data:([^;,]+)/i)?.[1] ?? "application/octet-stream";
+  if (!encoded || !/;base64$/i.test(header)) return null;
+  try {
+    const binary = atob(encoded);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return new Blob([bytes], { type: mime });
+  } catch {
+    return null;
+  }
+}
+
 async function waitForMs(ms: number) {
   await new Promise<void>((resolve) => {
     setTimeout(resolve, Math.max(0, ms));
@@ -2640,6 +2659,69 @@ async function renderCompressedImageCandidate(
   }
   const dataUrl = canvas.toDataURL("image/webp", quality);
   return { blob: null, dataUrl, bytes: estimateDataUrlBytes(dataUrl) };
+}
+
+async function compressPageBackgroundImageFile(
+  file: File,
+  options: { maxSide: number; quality: number },
+  limitBytes: number,
+) {
+  if (!file.type.startsWith("image/")) {
+    throw new Error("请选择图片文件");
+  }
+  if (file.size > MAX_IMAGE_FILE_BYTES) {
+    throw new Error("图片文件过大，请选择 10MB 以内图片");
+  }
+
+  const image = await loadImageFromBlob(file);
+  const naturalWidth = image.naturalWidth || image.width;
+  const naturalHeight = image.naturalHeight || image.height;
+  const longestSide = Math.max(naturalWidth, naturalHeight);
+  if (!naturalWidth || !naturalHeight || !longestSide) {
+    throw new Error("图片尺寸异常，请更换图片");
+  }
+
+  const maxScale = Math.min(1, options.maxSide / longestSide);
+  let plan = {
+    scale: maxScale,
+    quality: options.quality,
+  };
+  let bestCandidate: { blob: Blob | null; dataUrl: string; bytes: number } | null = null;
+
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    await yieldToBrowser();
+    const candidate = await renderCompressedImageCandidate(image, plan.scale, plan.quality);
+    if (!bestCandidate || candidate.bytes < bestCandidate.bytes) {
+      bestCandidate = candidate;
+    }
+    if (candidate.bytes <= limitBytes) {
+      const blob = candidate.blob ?? dataUrlToBrowserBlob(candidate.dataUrl);
+      if (blob) return { blob, bytes: candidate.bytes };
+    }
+    const refined = refineImageCompressionPlan(plan, candidate.bytes, limitBytes);
+    plan = {
+      scale: Math.min(maxScale, refined.scale),
+      quality: refined.quality,
+    };
+  }
+
+  if (bestCandidate && bestCandidate.bytes <= limitBytes) {
+    const blob = bestCandidate.blob ?? dataUrlToBrowserBlob(bestCandidate.dataUrl);
+    if (blob) return { blob, bytes: bestCandidate.bytes };
+  }
+  throw new Error(`图片已自动压缩，但仍超过当前上传上限 ${Math.ceil(limitBytes / 1024)}KB`);
+}
+
+function createPageBackgroundUploadFile(blob: Blob, sourceFileName: string) {
+  const baseName = sourceFileName
+    .replace(/\.[^.]+$/, "")
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || "page-background";
+  return new File([blob], `${baseName}.webp`, {
+    type: "image/webp",
+    lastModified: Date.now(),
+  });
 }
 
 async function finalizeCompressedImageCandidate(candidate: {
@@ -2824,29 +2906,6 @@ async function fileToOptimizedImageDataUrl(
     throw new Error("图片自动压缩后仍超过当前处理上限");
   }
   return candidate;
-}
-
-async function fileToLimitedOptimizedImageDataUrl(
-  file: File,
-  options: { maxSide: number; quality: number },
-  limitBytes: number,
-): Promise<string> {
-  if (!file.type.startsWith("image/")) {
-    throw new Error("请选择图片文件");
-  }
-  if (file.size > MAX_IMAGE_FILE_BYTES) {
-    throw new Error("图片文件过大，请选择 10MB 以内图片");
-  }
-
-  const originalDataUrl = await fileToDataUrl(file);
-  const compressedDataUrl = await compressImageDataUrl(originalDataUrl, options);
-  if (compressedDataUrl && estimateDataUrlBytes(compressedDataUrl) <= limitBytes) {
-    return compressedDataUrl;
-  }
-
-  const compressed = await compressImageFileWithinLimit(file, limitBytes, options);
-  if (compressed.bytes <= limitBytes) return compressed.dataUrl;
-  throw new Error(`图片已自动压缩，但仍超过当前上传上限 ${Math.ceil(limitBytes / 1024)}KB`);
 }
 
 async function fileToAudioDataUrl(file: File): Promise<string> {
@@ -8088,11 +8147,58 @@ export default function AdminClient({
     return { value: safeValue, externalized: false };
   }
 
+  async function persistPageBackgroundImageFileForEditor(
+    file: File,
+    viewport: ViewportKey,
+  ): Promise<PersistedEditorAssetResult> {
+    const endUpload = beginEditorUpload("正在处理并上传背景图片，请稍候...");
+    const operation = {
+      operationModule: "网站编辑 > 背景设置",
+      operationAction: "上传页面背景图",
+      operationSummary: "在网站编辑 > 背景设置上传页面背景图",
+    };
+    try {
+      const merchantHintPromise = isPlatformEditor ? Promise.resolve("platform") : resolveFirstMerchantHint();
+      const backgroundOptions =
+        viewport === "mobile" ? PAGE_BACKGROUND_IMAGE_COMPRESSION_OPTIONS.mobile : PAGE_BACKGROUND_IMAGE_COMPRESSION_OPTIONS.desktop;
+      const compressed = await compressPageBackgroundImageFile(
+        file,
+        backgroundOptions,
+        PAGE_BACKGROUND_IMAGE_LIMIT_BYTES[viewport],
+      );
+      const merchantHint = ((await merchantHintPromise) || "public").trim() || "public";
+      const uploadFile = createPageBackgroundUploadFile(compressed.blob, file.name);
+      const uploadedAsset = await uploadFileToPublicStorageWithMetadata(uploadFile, {
+        merchantHint,
+        folder: "merchant-assets",
+        usage: "page-background",
+        operation,
+      });
+      if (uploadedAsset?.url) {
+        return {
+          value: uploadedAsset.url,
+          thumbnailUrl: uploadedAsset.thumbnailUrl,
+          externalized: true,
+        };
+      }
+
+      const safeValue = ensureSafeImageUrlSize(await blobToDataUrl(compressed.blob));
+      if (!safeValue) throw new Error("背景图片处理失败，请重试");
+      return { value: safeValue, externalized: false };
+    } finally {
+      endUpload();
+    }
+  }
+
   async function persistImageFileForEditor(
     file: File,
     options?: { purpose?: EditorImageUploadPurpose; viewport?: ViewportKey },
   ): Promise<PersistedEditorAssetResult> {
-    const endUpload = beginEditorUpload(options?.purpose === "page-background" ? "正在上传背景图片，请稍候..." : "正在上传图片，请稍候...");
+    if (options?.purpose === "page-background") {
+      return persistPageBackgroundImageFileForEditor(file, options.viewport === "mobile" ? "mobile" : "desktop");
+    }
+
+    const endUpload = beginEditorUpload("正在上传图片，请稍候...");
     try {
       let dataUrl: string;
       const limitKb =
@@ -8101,16 +8207,7 @@ export default function AdminClient({
           : !isPlatformEditor && options?.purpose === "gallery"
             ? Math.max(50, Math.round(merchantPermissionConfig?.galleryBlockImageLimitKb ?? 300))
             : null;
-      if (options?.purpose === "page-background") {
-        const viewport = options.viewport === "mobile" ? "mobile" : "desktop";
-        const backgroundOptions =
-          viewport === "mobile" ? PAGE_BACKGROUND_IMAGE_COMPRESSION_OPTIONS.mobile : PAGE_BACKGROUND_IMAGE_COMPRESSION_OPTIONS.desktop;
-        dataUrl = await fileToLimitedOptimizedImageDataUrl(
-          file,
-          backgroundOptions,
-          PAGE_BACKGROUND_IMAGE_LIMIT_BYTES[viewport],
-        );
-      } else if (limitKb) {
+      if (limitKb) {
         const limitBytes = limitKb * 1024;
         const compressed = await compressImageFileWithinLimit(file, limitBytes, imageCompressionOptions);
         if (compressed.bytes > limitBytes) {
@@ -8135,17 +8232,11 @@ export default function AdminClient({
                 operationAction: "上传通用区块图片",
                 operationSummary: "在网站编辑 > 区块编辑上传通用区块图片",
               }
-            : options?.purpose === "page-background"
-              ? {
-                  operationModule: "网站编辑 > 背景设置",
-                  operationAction: "上传页面背景图",
-                  operationSummary: "在网站编辑 > 背景设置上传页面背景图",
-                }
-              : {
-                  operationModule: "网站编辑 > 图片素材",
-                  operationAction: "上传图片",
-                  operationSummary: "在网站编辑上传图片素材",
-                };
+            : {
+                operationModule: "网站编辑 > 图片素材",
+                operationAction: "上传图片",
+                operationSummary: "在网站编辑上传图片素材",
+              };
       return persistInlineImageForEditor(dataUrl, usage, operation);
     } finally {
       endUpload();
@@ -11369,13 +11460,19 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   function insertPageImage() {
-    setPageImageUrlInput(blocks[0]?.props.pageBgImageUrl ?? "");
+    const currentBackgroundUrl = blocks[0]?.props.pageBgImageUrl ?? "";
+    setPageImageUrlInput(isInlineDataImageUrl(currentBackgroundUrl) ? "" : currentBackgroundUrl);
     setPageImageDialogOpen(true);
   }
 
   function applyPageImageFromInput() {
     const trimmed = pageImageUrlInput.trim();
     try {
+      const currentBackgroundUrl = blocksRef.current[0]?.props.pageBgImageUrl ?? "";
+      if (!trimmed && isInlineDataImageUrl(currentBackgroundUrl)) {
+        setPageImageDialogOpen(false);
+        return;
+      }
       const nextUrl = ensureSafeImageUrlSize(trimmed || undefined);
       updatePageBackground({ pageBgImageUrl: nextUrl });
       setPageImageDialogOpen(false);
@@ -22714,7 +22811,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               <input
                 className="border p-2 rounded w-full text-sm"
                 value={pageImageUrlInput}
-                placeholder="https://example.com/bg.jpg"
+                placeholder={
+                  isInlineDataImageUrl(blocks[0]?.props.pageBgImageUrl ?? "")
+                    ? "当前背景已上传，可重新上传或填写图片 URL"
+                    : "https://example.com/bg.jpg"
+                }
                 onChange={(e) => setPageImageUrlInput(e.target.value)}
                 disabled={editorUploadBusy}
               />

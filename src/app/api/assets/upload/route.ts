@@ -39,6 +39,7 @@ type AssetUploadRequestBody = {
 type AssetUsage =
   | "common-block-image"
   | "gallery-block-image"
+  | "page-background"
   | "business-card-background"
   | "business-card-contact"
   | "business-card-export"
@@ -465,6 +466,7 @@ function normalizeAssetUsage(value: unknown, folder: string, mime: string): Asse
   if (
     normalized === "common-block-image" ||
     normalized === "gallery-block-image" ||
+    normalized === "page-background" ||
     normalized === "business-card-background" ||
     normalized === "business-card-contact" ||
     normalized === "business-card-export" ||
@@ -487,6 +489,8 @@ function getAssetUploadLimitBytes(input: {
 }) {
   const permissionConfig = input.permissionConfig;
   switch (input.usage) {
+    case "page-background":
+      return 512 * 1024;
     case "gallery-block-image":
       return Math.max(50, Math.round(permissionConfig.galleryBlockImageLimitKb)) * 1024;
     case "business-card-background":
@@ -557,7 +561,7 @@ async function resolveActorContext(
     };
   }
 
-  const snapshotPayload = await loadStoredPlatformMerchantSnapshot(supabase).catch(() => null);
+  const snapshotPayload = await loadStoredPlatformMerchantSnapshot(supabase, { includeHistory: false }).catch(() => null);
   const snapshotSite = snapshotPayload?.snapshot.find((site) => site.id === resolvedSession.merchantId) ?? null;
   return {
     ok: true,
@@ -740,6 +744,16 @@ export async function POST(request: Request) {
   }
 
   const usage = normalizeAssetUsage(usageInput, folder, meta.mime);
+  if (usage === "page-background" && actor.permissionConfig.allowInsertBackground === false) {
+    return NextResponse.json(
+      {
+        ok: false,
+        code: "page_background_not_allowed",
+        message: "The current account cannot upload page backgrounds.",
+      },
+      { status: 403 },
+    );
+  }
   if (usage === "business-card-intro-video" && actor.permissionConfig.allowBusinessCardIntroVideo === false) {
     return NextResponse.json(
       {
