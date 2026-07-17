@@ -150,7 +150,12 @@ function couponDirectUseBadgeClass(item: MerchantMembershipInsight["couponHistor
     : "border-sky-200 bg-sky-50 text-sky-700";
 }
 
-function accountTransactionTypeLabel(type: MerchantMemberAccountTransactionType) {
+function accountTransactionTypeLabel(
+  value: MerchantMemberAccountTransactionType | MerchantMemberAccountTransaction,
+) {
+  if (typeof value !== "string" && value.adjustmentKind === "recharge_reversal") return "充值撤销";
+  if (typeof value !== "string" && value.adjustmentKind === "recharge_manual_adjustment") return "充值冲正";
+  const type = typeof value === "string" ? value : value.type;
   return type === "recharge" ? "充值" : "兑换";
 }
 
@@ -1151,7 +1156,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                                 className="grid gap-2 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600 sm:grid-cols-[110px_1fr_150px]"
                               >
                                 <div className="flex items-center gap-1.5 font-semibold text-slate-900">
-                                  <span>{accountTransactionTypeLabel(transaction.type)}</span>
+                                  <span>{accountTransactionTypeLabel(transaction)}</span>
                                   {transaction.status === "cancelled" ? (
                                     <span className="rounded-full border border-red-200 bg-red-50 px-1.5 py-0.5 text-[10px] text-red-700">
                                       取消

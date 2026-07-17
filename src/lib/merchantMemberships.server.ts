@@ -2,10 +2,12 @@ import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import {
   buildMerchantMemberNo,
   buildMerchantMembershipQrValue,
+  adjustMerchantMemberRechargeTransaction,
   cancelMerchantMemberRechargeTransaction,
   normalizeMerchantMemberAllergens,
   normalizeMerchantMembershipRecords,
   normalizeMerchantMembershipProfileDraft,
+  quoteMerchantMemberRechargeCancellation,
   toMerchantMembershipListItem,
   toPersonalMembershipCard,
   writePersonalMembershipCardToUserMetadata,
@@ -190,6 +192,8 @@ function createMerchantMemberTransaction(input: {
     cancellationNote: "",
     cancelledBy: "",
     cancellationOperationMarker: "",
+    relatedTransactionId: "",
+    adjustmentKind: "",
   };
 }
 
@@ -817,43 +821,129 @@ export async function cancelMerchantMembershipRecharge(input: {
   const membershipId = trimText(input.membershipId, 160);
   const memberNo = trimText(input.memberNo, 120);
   if (!siteId || (!membershipId && !memberNo)) throw new Error("membership_not_found");
-  const [stored, settings] = await Promise.all([
-    loadStoredMerchantMemberships(supabase, siteId),
-    getMerchantMembershipSettings(siteId).catch(() => null),
-  ]);
+  const settings = await getMerchantMembershipSettings(siteId).catch(() => null);
+  const operationMarker = buildMutationOperationMarker("member-recharge-cancel", input.operationId);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const stored = await loadStoredMerchantMemberships(supabase, siteId);
+    const current = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
+    const index = findMerchantMembershipIndexByIdentity(current, { membershipId, memberNo });
+    if (index < 0) throw new Error("membership_not_found");
+    const currentMembership = current[index];
+    if (currentMembership.status !== "active") throw new Error("membership_not_active");
+
+    const now = new Date().toISOString();
+    const cancellation = cancelMerchantMemberRechargeTransaction({
+      membership: currentMembership,
+      transactionId: input.transactionId,
+      cancelledAt: now,
+      cancellationNote: input.note,
+      cancelledBy: input.operatorId,
+      cancellationOperationMarker: operationMarker,
+    });
+    if (cancellation.alreadyCancelled) return toMerchantMembershipListItem(currentMembership);
+
+    const nextMembership = applyMembershipGrowthAndLevel({
+      membership: cancellation.membership,
+      settings,
+      growthDelta: 0,
+      now,
+    });
+    const nextMemberships = [...current];
+    nextMemberships[index] = nextMembership;
+    const saved = await saveStoredMerchantMemberships(supabase, {
+      siteId,
+      memberships: nextMemberships,
+      updatedAt: now,
+      expectedUpdatedAt: stored?.updatedAt ?? null,
+    });
+    if (!saved.error) return toMerchantMembershipListItem(nextMembership);
+    if (saved.error !== "merchant_memberships_conflict" || attempt >= 2) throw new Error(saved.error);
+  }
+  throw new Error("merchant_memberships_conflict");
+}
+
+export async function getMerchantMembershipRechargeCancellationQuote(input: {
+  siteId: string;
+  membershipId: string;
+  memberNo?: unknown;
+  transactionId?: unknown;
+}) {
+  const supabase = requireMembershipsStoreClient();
+  const siteId = trimText(input.siteId, 64);
+  const membershipId = trimText(input.membershipId, 160);
+  const memberNo = trimText(input.memberNo, 120);
+  if (!siteId || (!membershipId && !memberNo)) throw new Error("membership_not_found");
+  const stored = await loadStoredMerchantMemberships(supabase, siteId);
   const current = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
   const index = findMerchantMembershipIndexByIdentity(current, { membershipId, memberNo });
   if (index < 0) throw new Error("membership_not_found");
-  const currentMembership = current[index];
-  if (currentMembership.status !== "active") throw new Error("membership_not_active");
-
-  const now = new Date().toISOString();
-  const operationMarker = buildMutationOperationMarker("member-recharge-cancel", input.operationId);
-  const cancellation = cancelMerchantMemberRechargeTransaction({
-    membership: currentMembership,
+  const membership = current[index];
+  if (membership.status !== "active") throw new Error("membership_not_active");
+  return quoteMerchantMemberRechargeCancellation({
+    membership,
     transactionId: input.transactionId,
-    cancelledAt: now,
-    cancellationNote: input.note,
-    cancelledBy: input.operatorId,
-    cancellationOperationMarker: operationMarker,
   });
-  if (cancellation.alreadyCancelled) return toMerchantMembershipListItem(currentMembership);
+}
 
-  const nextMembership = applyMembershipGrowthAndLevel({
-    membership: cancellation.membership,
-    settings,
-    growthDelta: 0,
-    now,
-  });
-  const nextMemberships = [...current];
-  nextMemberships[index] = nextMembership;
-  const saved = await saveStoredMerchantMemberships(supabase, {
-    siteId,
-    memberships: nextMemberships,
-    updatedAt: now,
-  });
-  if (saved.error) throw new Error(saved.error);
-  return toMerchantMembershipListItem(nextMembership);
+export async function adjustMerchantMembershipRecharge(input: {
+  siteId: string;
+  membershipId: string;
+  memberNo?: unknown;
+  transactionId?: unknown;
+  pointAmount?: unknown;
+  balanceAmount?: unknown;
+  note?: unknown;
+  operatorId?: unknown;
+  operationId?: unknown;
+  confirmationTransactionId?: unknown;
+}): Promise<MerchantMembershipListItem> {
+  const supabase = requireMembershipsStoreClient();
+  const siteId = trimText(input.siteId, 64);
+  const membershipId = trimText(input.membershipId, 160);
+  const memberNo = trimText(input.memberNo, 120);
+  if (!siteId || (!membershipId && !memberNo)) throw new Error("membership_not_found");
+  const settings = await getMerchantMembershipSettings(siteId).catch(() => null);
+  const operationMarker = buildMutationOperationMarker("member-recharge-adjustment", input.operationId);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const stored = await loadStoredMerchantMemberships(supabase, siteId);
+    const current = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
+    const index = findMerchantMembershipIndexByIdentity(current, { membershipId, memberNo });
+    if (index < 0) throw new Error("membership_not_found");
+    const currentMembership = current[index];
+    if (currentMembership.status !== "active") throw new Error("membership_not_active");
+
+    const now = new Date().toISOString();
+    const adjustment = adjustMerchantMemberRechargeTransaction({
+      membership: currentMembership,
+      transactionId: input.transactionId,
+      adjustedAt: now,
+      pointAmount: input.pointAmount,
+      balanceAmount: input.balanceAmount,
+      adjustmentNote: input.note,
+      adjustedBy: input.operatorId,
+      adjustmentOperationMarker: operationMarker,
+      confirmationTransactionId: input.confirmationTransactionId,
+    });
+    if (adjustment.alreadyAdjusted) return toMerchantMembershipListItem(currentMembership);
+
+    const nextMembership = applyMembershipGrowthAndLevel({
+      membership: adjustment.membership,
+      settings,
+      growthDelta: 0,
+      now,
+    });
+    const nextMemberships = [...current];
+    nextMemberships[index] = nextMembership;
+    const saved = await saveStoredMerchantMemberships(supabase, {
+      siteId,
+      memberships: nextMemberships,
+      updatedAt: now,
+      expectedUpdatedAt: stored?.updatedAt ?? null,
+    });
+    if (!saved.error) return toMerchantMembershipListItem(nextMembership);
+    if (saved.error !== "merchant_memberships_conflict" || attempt >= 2) throw new Error(saved.error);
+  }
+  throw new Error("merchant_memberships_conflict");
 }
 
 export async function applyMerchantMembershipRedemptionCart(input: {

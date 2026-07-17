@@ -1,4 +1,5 @@
 import type { MerchantCouponDiscountType } from "@/lib/merchantCoupons";
+import { appendMutationOperationMarker } from "@/lib/mutationOperationId";
 
 export type MerchantMembershipStatus = "active" | "left";
 
@@ -22,6 +23,7 @@ export const MERCHANT_MEMBER_LEGAL_ALLERGENS = [
 export type MerchantMemberLegalAllergen = (typeof MERCHANT_MEMBER_LEGAL_ALLERGENS)[number];
 export type MerchantMemberAccountTransactionType = "redeem" | "recharge";
 export type MerchantMemberAccountTransactionStatus = "completed" | "cancelled";
+export type MerchantMemberAccountAdjustmentKind = "" | "recharge_reversal" | "recharge_manual_adjustment";
 
 export type MerchantMemberAccountTransaction = {
   id: string;
@@ -37,6 +39,34 @@ export type MerchantMemberAccountTransaction = {
   cancellationNote: string;
   cancelledBy: string;
   cancellationOperationMarker: string;
+  relatedTransactionId: string;
+  adjustmentKind: MerchantMemberAccountAdjustmentKind;
+};
+
+export type MerchantRechargeCancellationRelatedUsage = {
+  id: string;
+  at: string;
+  pointAmount: number;
+  balanceAmount: number;
+  note: string;
+};
+
+export type MerchantRechargeCancellationQuote = {
+  transactionId: string;
+  status: "completed" | "adjusted" | "cancelled";
+  originalPointAmount: number;
+  originalBalanceAmount: number;
+  adjustedPointAmount: number;
+  adjustedBalanceAmount: number;
+  remainingPointAmount: number;
+  remainingBalanceAmount: number;
+  currentPointBalance: number;
+  currentBalanceAmount: number;
+  pointShortage: number;
+  balanceShortage: number;
+  canCancel: boolean;
+  alreadyCancelled: boolean;
+  relatedUsage: MerchantRechargeCancellationRelatedUsage[];
 };
 
 export type MerchantMemberCouponSummary = {
@@ -229,6 +259,12 @@ export function normalizeMerchantMemberAccountTransactions(value: unknown): Merc
       if (!at) return null;
       const type: MerchantMemberAccountTransactionType = record.type === "recharge" ? "recharge" : "redeem";
       const status: MerchantMemberAccountTransactionStatus = record.status === "cancelled" ? "cancelled" : "completed";
+      const adjustmentKind: MerchantMemberAccountAdjustmentKind =
+        record.adjustmentKind === "recharge_reversal"
+          ? "recharge_reversal"
+          : record.adjustmentKind === "recharge_manual_adjustment"
+            ? "recharge_manual_adjustment"
+            : "";
       return {
         id: trimText(record.id, 120) || `MT${Date.parse(at).toString(36).toUpperCase()}`,
         type,
@@ -244,11 +280,164 @@ export function normalizeMerchantMemberAccountTransactions(value: unknown): Merc
         cancelledBy: status === "cancelled" ? trimText(record.cancelledBy, 120) : "",
         cancellationOperationMarker:
           status === "cancelled" ? trimText(record.cancellationOperationMarker, 240) : "",
+        relatedTransactionId: adjustmentKind ? trimText(record.relatedTransactionId, 120) : "",
+        adjustmentKind,
       };
     })
     .filter((item): item is MerchantMemberAccountTransaction => Boolean(item))
     .sort((left, right) => Date.parse(right.at) - Date.parse(left.at))
     .slice(0, 500);
+}
+
+function isRechargeAdjustmentForTransaction(
+  transaction: MerchantMemberAccountTransaction,
+  transactionId: string,
+) {
+  return (
+    transaction.status === "completed" &&
+    transaction.type === "redeem" &&
+    Boolean(transaction.adjustmentKind) &&
+    transaction.relatedTransactionId === transactionId
+  );
+}
+
+function normalizeNonNegativeInteger(value: unknown) {
+  const numberValue = typeof value === "number" ? value : Number(trimText(value));
+  if (!Number.isFinite(numberValue) || numberValue <= 0) return 0;
+  return Math.max(0, Math.round(numberValue));
+}
+
+function normalizeNonNegativeMoney(value: unknown) {
+  const numberValue = typeof value === "number" ? value : Number.parseFloat(String(value ?? ""));
+  if (!Number.isFinite(numberValue) || numberValue <= 0) return 0;
+  return Number(Math.max(0, numberValue).toFixed(2));
+}
+
+function buildRechargeAdjustmentTransaction(input: {
+  id?: unknown;
+  kind: Exclude<MerchantMemberAccountAdjustmentKind, "">;
+  relatedTransactionId: string;
+  at: string;
+  pointAmount: number;
+  balanceAmount: number;
+  growthAmount: number;
+  note: string;
+  operatorId?: unknown;
+  operationMarker?: unknown;
+}) {
+  const operationMarker = trimText(input.operationMarker, 240);
+  const note = appendMutationOperationMarker(input.note, operationMarker);
+  return {
+    id:
+      trimText(input.id, 120) ||
+      `MT${Date.parse(input.at).toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+    type: "redeem" as const,
+    status: "completed" as const,
+    at: input.at,
+    pointDelta: -input.pointAmount,
+    balanceDelta: normalizeMoneyValue(-input.balanceAmount),
+    growthDelta: normalizeMoneyValue(-input.growthAmount),
+    note,
+    operatorId: trimText(input.operatorId, 120),
+    cancelledAt: null,
+    cancellationNote: "",
+    cancelledBy: "",
+    cancellationOperationMarker: "",
+    relatedTransactionId: input.relatedTransactionId,
+    adjustmentKind: input.kind,
+  } satisfies MerchantMemberAccountTransaction;
+}
+
+function prependTransactionPreservingTarget(
+  transactions: MerchantMemberAccountTransaction[],
+  nextTransaction: MerchantMemberAccountTransaction,
+  targetTransactionId: string,
+) {
+  const withoutNext = transactions.filter((transaction) => transaction.id !== nextTransaction.id);
+  const retained = withoutNext.slice(0, 499);
+  if (!retained.some((transaction) => transaction.id === targetTransactionId)) {
+    const target = withoutNext.find((transaction) => transaction.id === targetTransactionId);
+    if (target) {
+      if (retained.length >= 499) retained[retained.length - 1] = target;
+      else retained.push(target);
+    }
+  }
+  return [nextTransaction, ...retained];
+}
+
+export function quoteMerchantMemberRechargeCancellation(input: {
+  membership: MerchantMembershipRecord;
+  transactionId: unknown;
+}): MerchantRechargeCancellationQuote {
+  const transactionId = trimText(input.transactionId, 120);
+  const transaction = input.membership.transactions.find((item) => item.id === transactionId);
+  if (!transaction) throw new Error("membership_recharge_not_found");
+  if (transaction.type !== "recharge") throw new Error("membership_recharge_not_cancellable");
+
+  const originalPointAmount = Math.max(0, transaction.pointDelta);
+  const originalBalanceAmount = normalizeNonNegativeMoney(transaction.balanceDelta);
+  if (transaction.pointDelta < 0 || transaction.balanceDelta < 0 || (originalPointAmount <= 0 && originalBalanceAmount <= 0)) {
+    throw new Error("membership_recharge_not_cancellable");
+  }
+
+  const adjustments = input.membership.transactions.filter((item) =>
+    isRechargeAdjustmentForTransaction(item, transactionId),
+  );
+  const adjustedPointAmount = Math.min(
+    originalPointAmount,
+    adjustments.reduce((sum, item) => sum + Math.abs(Math.min(0, item.pointDelta)), 0),
+  );
+  const adjustedBalanceAmount = Math.min(
+    originalBalanceAmount,
+    normalizeNonNegativeMoney(
+      adjustments.reduce((sum, item) => sum + Math.abs(Math.min(0, item.balanceDelta)), 0),
+    ),
+  );
+  const remainingPointAmount = Math.max(0, originalPointAmount - adjustedPointAmount);
+  const remainingBalanceAmount = normalizeNonNegativeMoney(originalBalanceAmount - adjustedBalanceAmount);
+  const currentPointBalance = Math.max(0, input.membership.pointBalance);
+  const currentBalanceAmount = normalizeNonNegativeMoney(input.membership.balanceAmount);
+  const pointShortage = Math.max(0, remainingPointAmount - currentPointBalance);
+  const balanceShortage = normalizeNonNegativeMoney(remainingBalanceAmount - currentBalanceAmount);
+  const alreadyCancelled = transaction.status === "cancelled";
+  const hasAdjustments = adjustedPointAmount > 0 || adjustedBalanceAmount > 0;
+  const relatedUsage = input.membership.transactions
+    .filter((item) => {
+      return (
+        item.status === "completed" &&
+        item.type === "redeem" &&
+        !item.adjustmentKind &&
+        Date.parse(item.at) >= Date.parse(transaction.at) &&
+        (item.pointDelta < 0 || item.balanceDelta < 0)
+      );
+    })
+    .sort((left, right) => Date.parse(right.at) - Date.parse(left.at))
+    .slice(0, 20)
+    .map((item) => ({
+      id: item.id,
+      at: item.at,
+      pointAmount: Math.abs(Math.min(0, item.pointDelta)),
+      balanceAmount: Math.abs(Math.min(0, item.balanceDelta)),
+      note: item.note,
+    }));
+
+  return {
+    transactionId,
+    status: alreadyCancelled ? "cancelled" : hasAdjustments ? "adjusted" : "completed",
+    originalPointAmount,
+    originalBalanceAmount,
+    adjustedPointAmount,
+    adjustedBalanceAmount,
+    remainingPointAmount: alreadyCancelled ? 0 : remainingPointAmount,
+    remainingBalanceAmount: alreadyCancelled ? 0 : remainingBalanceAmount,
+    currentPointBalance,
+    currentBalanceAmount,
+    pointShortage: alreadyCancelled ? 0 : pointShortage,
+    balanceShortage: alreadyCancelled ? 0 : balanceShortage,
+    canCancel: !alreadyCancelled && pointShortage <= 0 && balanceShortage <= 0,
+    alreadyCancelled,
+    relatedUsage,
+  };
 }
 
 export function cancelMerchantMemberRechargeTransaction(input: {
@@ -258,6 +447,7 @@ export function cancelMerchantMemberRechargeTransaction(input: {
   cancellationNote?: unknown;
   cancelledBy?: unknown;
   cancellationOperationMarker?: unknown;
+  reversalTransactionId?: unknown;
 }) {
   const transactionId = trimText(input.transactionId, 120);
   const transaction = input.membership.transactions.find((item) => item.id === transactionId);
@@ -269,17 +459,16 @@ export function cancelMerchantMemberRechargeTransaction(input: {
     return { membership: input.membership, transaction, alreadyCancelled: true };
   }
 
-  const pointCredit = transaction.pointDelta;
-  const balanceCredit = transaction.balanceDelta;
-  if (pointCredit < 0 || balanceCredit < 0 || (pointCredit <= 0 && balanceCredit <= 0)) {
-    throw new Error("membership_recharge_not_cancellable");
-  }
-
-  const nextPointBalance = input.membership.pointBalance - pointCredit;
-  const nextBalanceAmount = normalizeMoneyValue(input.membership.balanceAmount - balanceCredit);
-  if (nextPointBalance < 0 || nextBalanceAmount < 0) {
+  const quote = quoteMerchantMemberRechargeCancellation({
+    membership: input.membership,
+    transactionId,
+  });
+  if (!quote.canCancel) {
     throw new Error("membership_recharge_cancel_balance_insufficient");
   }
+
+  const nextPointBalance = input.membership.pointBalance - quote.remainingPointAmount;
+  const nextBalanceAmount = normalizeMoneyValue(input.membership.balanceAmount - quote.remainingBalanceAmount);
 
   const cancelledAt = normalizeIsoDateValue(input.cancelledAt);
   if (!cancelledAt) throw new Error("membership_recharge_cancel_invalid_time");
@@ -291,6 +480,21 @@ export function cancelMerchantMemberRechargeTransaction(input: {
     cancelledBy: trimText(input.cancelledBy, 120),
     cancellationOperationMarker,
   };
+  const reversalTransaction = buildRechargeAdjustmentTransaction({
+    id: input.reversalTransactionId,
+    kind: "recharge_reversal",
+    relatedTransactionId: transaction.id,
+    at: cancelledAt,
+    pointAmount: quote.remainingPointAmount,
+    balanceAmount: quote.remainingBalanceAmount,
+    growthAmount: Math.max(0, transaction.growthDelta),
+    note: `充值撤销：${transaction.id}${trimText(input.cancellationNote, 500) ? `；${trimText(input.cancellationNote, 500)}` : ""}`,
+    operatorId: input.cancelledBy,
+    operationMarker: cancellationOperationMarker,
+  });
+  const updatedTransactions = input.membership.transactions.map((item) =>
+    item.id === transaction.id ? cancelledTransaction : item,
+  );
   const membership: MerchantMembershipRecord = {
     ...input.membership,
     pointBalance: nextPointBalance,
@@ -298,12 +502,111 @@ export function cancelMerchantMemberRechargeTransaction(input: {
     growthValue: normalizeMoneyValue(
       Math.max(0, input.membership.growthValue - Math.max(0, transaction.growthDelta)),
     ),
-    transactions: input.membership.transactions.map((item) =>
-      item.id === transaction.id ? cancelledTransaction : item,
-    ),
+    transactions: prependTransactionPreservingTarget(updatedTransactions, reversalTransaction, transaction.id),
     updatedAt: cancelledAt,
   };
-  return { membership, transaction: cancelledTransaction, alreadyCancelled: false };
+  return { membership, transaction: cancelledTransaction, reversalTransaction, alreadyCancelled: false };
+}
+
+export function adjustMerchantMemberRechargeTransaction(input: {
+  membership: MerchantMembershipRecord;
+  transactionId: unknown;
+  adjustedAt: unknown;
+  pointAmount?: unknown;
+  balanceAmount?: unknown;
+  adjustmentNote?: unknown;
+  adjustedBy?: unknown;
+  adjustmentOperationMarker?: unknown;
+  adjustmentTransactionId?: unknown;
+  confirmationTransactionId?: unknown;
+}) {
+  const transactionId = trimText(input.transactionId, 120);
+  const transaction = input.membership.transactions.find((item) => item.id === transactionId);
+  if (!transaction) throw new Error("membership_recharge_not_found");
+  if (transaction.type !== "recharge") throw new Error("membership_recharge_not_cancellable");
+
+  const operationMarker = trimText(input.adjustmentOperationMarker, 240);
+  const existingAdjustment = operationMarker
+    ? input.membership.transactions.find(
+        (item) => isRechargeAdjustmentForTransaction(item, transactionId) && item.note.includes(operationMarker),
+      )
+    : null;
+  if (existingAdjustment) {
+    return {
+      membership: input.membership,
+      transaction,
+      adjustmentTransaction: existingAdjustment,
+      completed: transaction.status === "cancelled",
+      alreadyAdjusted: true,
+    };
+  }
+  if (transaction.status === "cancelled") throw new Error("membership_recharge_already_cancelled");
+  if (trimText(input.confirmationTransactionId, 120) !== transactionId) {
+    throw new Error("membership_recharge_adjustment_confirmation_mismatch");
+  }
+  const adjustmentNote = trimText(input.adjustmentNote, 500);
+  if (adjustmentNote.length < 2) throw new Error("membership_recharge_adjustment_note_required");
+
+  const quote = quoteMerchantMemberRechargeCancellation({ membership: input.membership, transactionId });
+  const pointAmount = normalizeNonNegativeInteger(input.pointAmount);
+  const balanceAmount = normalizeNonNegativeMoney(input.balanceAmount);
+  if (pointAmount <= 0 && balanceAmount <= 0) throw new Error("membership_recharge_adjustment_empty");
+  if (pointAmount > quote.remainingPointAmount || balanceAmount > quote.remainingBalanceAmount) {
+    throw new Error("membership_recharge_adjustment_exceeds_remaining");
+  }
+  if (pointAmount > quote.currentPointBalance || balanceAmount > quote.currentBalanceAmount) {
+    throw new Error("membership_recharge_cancel_balance_insufficient");
+  }
+
+  const adjustedAt = normalizeIsoDateValue(input.adjustedAt);
+  if (!adjustedAt) throw new Error("membership_recharge_cancel_invalid_time");
+  const completed =
+    pointAmount === quote.remainingPointAmount &&
+    Math.abs(balanceAmount - quote.remainingBalanceAmount) < 0.005;
+  const nextPointBalance = input.membership.pointBalance - pointAmount;
+  const nextBalanceAmount = normalizeMoneyValue(input.membership.balanceAmount - balanceAmount);
+  const adjustedTransaction: MerchantMemberAccountTransaction = completed
+    ? {
+        ...transaction,
+        status: "cancelled",
+        cancelledAt: adjustedAt,
+        cancellationNote: adjustmentNote,
+        cancelledBy: trimText(input.adjustedBy, 120),
+        cancellationOperationMarker: operationMarker,
+      }
+    : transaction;
+  const adjustmentTransaction = buildRechargeAdjustmentTransaction({
+    id: input.adjustmentTransactionId,
+    kind: "recharge_manual_adjustment",
+    relatedTransactionId: transaction.id,
+    at: adjustedAt,
+    pointAmount,
+    balanceAmount,
+    growthAmount: completed ? Math.max(0, transaction.growthDelta) : 0,
+    note: `充值人工冲正：${transaction.id}；${adjustmentNote}`,
+    operatorId: input.adjustedBy,
+    operationMarker,
+  });
+  const updatedTransactions = input.membership.transactions.map((item) =>
+    item.id === transaction.id ? adjustedTransaction : item,
+  );
+  const membership: MerchantMembershipRecord = {
+    ...input.membership,
+    pointBalance: nextPointBalance,
+    balanceAmount: nextBalanceAmount,
+    growthValue: completed
+      ? normalizeMoneyValue(Math.max(0, input.membership.growthValue - Math.max(0, transaction.growthDelta)))
+      : input.membership.growthValue,
+    transactions: prependTransactionPreservingTarget(updatedTransactions, adjustmentTransaction, transaction.id),
+    updatedAt: adjustedAt,
+  };
+  return {
+    membership,
+    transaction: adjustedTransaction,
+    adjustmentTransaction,
+    completed,
+    alreadyAdjusted: false,
+  };
 }
 
 export function buildMerchantMemberNo(siteId: string, serial: number) {

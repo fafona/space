@@ -17,8 +17,10 @@ import {
   applyMerchantMembershipAccountOperation,
   applyMerchantMembershipPointDeduction,
   applyMerchantMembershipRedemptionCart,
+  adjustMerchantMembershipRecharge,
   awardMerchantMembershipRulePoints,
   cancelMerchantMembershipRecharge,
+  getMerchantMembershipRechargeCancellationQuote,
   getMerchantMembershipsSnapshot,
   joinMerchantMembership,
   leaveMerchantMembership,
@@ -328,6 +330,21 @@ export async function GET(request: Request) {
   const statusFilter = trimText(url.searchParams.get("status"), 32);
   const keyword = trimText(url.searchParams.get("query") ?? url.searchParams.get("keyword"), 200).toLowerCase();
   const membershipId = trimText(url.searchParams.get("membershipId"), 160);
+  if (trimText(url.searchParams.get("action"), 80) === "recharge_cancellation_quote") {
+    try {
+      const quote = await getMerchantMembershipRechargeCancellationQuote({
+        siteId,
+        membershipId,
+        memberNo: url.searchParams.get("memberNo"),
+        transactionId: url.searchParams.get("transactionId"),
+      });
+      return NextResponse.json({ ok: true, quote });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown_error";
+      const status = message === "membership_not_found" || message === "membership_recharge_not_found" ? 404 : 400;
+      return NextResponse.json({ error: "membership_recharge_quote_failed", message }, { status });
+    }
+  }
   const includeInsights = shouldIncludeMembershipInsights(url.searchParams.get("includeInsights"));
   const leanMemberships = !includeInsights && shouldReturnLeanMemberships(url.searchParams.get("lean"));
   const offset = normalizeListOffset(url.searchParams.get("offset"));
@@ -451,6 +468,7 @@ export async function PATCH(request: Request) {
       referenceId?: unknown;
       transactionId?: unknown;
       operationId?: unknown;
+      confirmationTransactionId?: unknown;
     } | null;
     const siteId = trimText(body?.siteId, 64);
     if (!isMerchantNumericId(siteId)) {
@@ -502,6 +520,25 @@ export async function PATCH(request: Request) {
         note: body?.note,
         operatorId: merchantSession.merchantId,
         operationId: body?.operationId,
+      });
+      return NextResponse.json({ ok: true, membership });
+    }
+    if (trimText(body?.action, 80) === "adjust_recharge") {
+      const merchantSession = await resolveMerchantSessionFromRequest(request, { hintedMerchantId: siteId });
+      if (!merchantSession || merchantSession.merchantId !== siteId) {
+        return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+      }
+      const membership = await adjustMerchantMembershipRecharge({
+        siteId,
+        membershipId: trimText(body?.membershipId, 160),
+        memberNo: trimText(body?.memberNo, 120),
+        transactionId: body?.transactionId,
+        pointAmount: body?.points,
+        balanceAmount: body?.balanceAmount,
+        note: body?.note,
+        operatorId: merchantSession.merchantId,
+        operationId: body?.operationId,
+        confirmationTransactionId: body?.confirmationTransactionId,
       });
       return NextResponse.json({ ok: true, membership });
     }
@@ -586,7 +623,12 @@ export async function PATCH(request: Request) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown_error";
-    const status = message === "membership_not_found" ? 404 : 400;
+    const status =
+      message === "membership_not_found" || message === "membership_recharge_not_found"
+        ? 404
+        : message === "membership_recharge_cancel_balance_insufficient" || message === "merchant_memberships_conflict"
+          ? 409
+          : 400;
     return NextResponse.json(
       {
         error: "membership_leave_failed",

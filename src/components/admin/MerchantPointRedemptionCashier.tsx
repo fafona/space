@@ -20,7 +20,12 @@ import {
 import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
 import { createClientMutationOperationId } from "@/lib/mutationOperationId";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
-import type { MerchantMembershipInsight, MerchantMembershipListItem } from "@/lib/merchantMemberships";
+import {
+  quoteMerchantMemberRechargeCancellation,
+  type MerchantMembershipInsight,
+  type MerchantMembershipListItem,
+  type MerchantRechargeCancellationQuote,
+} from "@/lib/merchantMemberships";
 import type {
   MerchantMemberRedemptionCategory,
   MerchantMemberRedemptionItem,
@@ -80,6 +85,12 @@ type MembershipPatchPayload = {
   message?: unknown;
 };
 
+type RechargeCancellationQuotePayload = {
+  ok?: unknown;
+  quote?: MerchantRechargeCancellationQuote;
+  message?: unknown;
+};
+
 type CartLine = {
   itemId: string;
   customName?: string;
@@ -115,7 +126,7 @@ type ProductImageSize = "large" | "medium" | "small";
 type CatalogFilterTab = "hot" | "category" | "recommend";
 type CatalogSortMode = "code" | "name";
 type RecordsTimeFilter = "today" | "yesterday" | "week" | "month" | "all";
-type RechargeRecordStatusFilter = "all" | "completed" | "cancelled";
+type RechargeRecordStatusFilter = "all" | "completed" | "adjusted" | "cancelled";
 type CashierShortcutKey = "enter" | "minus" | "plus";
 type CashierPrintBridgeStatus = "idle" | "disabled" | "checking" | "updating" | "online" | "offline" | "outdated" | "error";
 type CashierShortcutActions = {
@@ -124,6 +135,12 @@ type CashierShortcutActions = {
   openRecharge: () => void;
   openCheckout: () => void;
 };
+
+function rechargeRecordStatusLabel(status: Exclude<RechargeRecordStatusFilter, "all">) {
+  if (status === "cancelled") return "取消";
+  if (status === "adjusted") return "部分冲正";
+  return "完成";
+}
 
 function flagImageUrl(countryCode: string) {
   return `https://flagcdn.com/${countryCode.toLowerCase()}.svg`;
@@ -233,6 +250,12 @@ function parsePositiveInteger(value: unknown) {
   const numberValue = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(numberValue)) return 0;
   return Math.max(0, Math.floor(numberValue));
+}
+
+function parsePositiveMoney(value: unknown) {
+  const numberValue = typeof value === "number" ? value : Number.parseFloat(String(value ?? ""));
+  if (!Number.isFinite(numberValue)) return 0;
+  return Number(Math.max(0, numberValue).toFixed(2));
 }
 
 function startOfLocalDay(date: Date) {
@@ -423,6 +446,15 @@ function rechargeCancellationErrorMessage(message: unknown) {
   if (text === "membership_recharge_cancel_balance_insufficient") {
     return "会员当前余额或积分不足，无法撤销这笔充值。";
   }
+  if (text === "membership_recharge_adjustment_confirmation_mismatch") {
+    return "确认编号不一致，请输入完整充值编号后再提交。";
+  }
+  if (text === "membership_recharge_adjustment_note_required") return "人工冲正必须填写原因。";
+  if (text === "membership_recharge_adjustment_empty") return "人工冲正的积分和余额不能同时为 0。";
+  if (text === "membership_recharge_adjustment_exceeds_remaining") {
+    return "人工冲正不能超过这笔充值尚未回退的积分或余额。";
+  }
+  if (text === "merchant_memberships_conflict") return "会员数据刚刚发生变化，系统已重新核对，请再次确认。";
   return text || "撤销充值失败，请稍后重试。";
 }
 
@@ -747,13 +779,21 @@ export default function MerchantPointRedemptionCashier({
   const [printBridgeUpdating, setPrintBridgeUpdating] = useState(false);
   const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
   const [recordsKeyword, setRecordsKeyword] = useState("");
-  const [recordsTimeFilter, setRecordsTimeFilter] = useState<RecordsTimeFilter>("today");
+  const [recordsTimeFilter, setRecordsTimeFilter] = useState<RecordsTimeFilter>(() =>
+    view === "rechargeRecords" ? "all" : "today",
+  );
   const [rechargeRecordStatusFilter, setRechargeRecordStatusFilter] = useState<RechargeRecordStatusFilter>("all");
   const [recordsPage, setRecordsPage] = useState(1);
   const [selectedRecordId, setSelectedRecordId] = useState("");
   const [cancelRechargeRecordId, setCancelRechargeRecordId] = useState("");
   const [cancelRechargeNote, setCancelRechargeNote] = useState("");
   const [cancellingRecharge, setCancellingRecharge] = useState(false);
+  const [rechargeCancellationQuote, setRechargeCancellationQuote] = useState<MerchantRechargeCancellationQuote | null>(null);
+  const [rechargeCancellationQuoteLoading, setRechargeCancellationQuoteLoading] = useState(false);
+  const [manualRechargeAdjustmentOpen, setManualRechargeAdjustmentOpen] = useState(false);
+  const [manualRechargeAdjustmentPoints, setManualRechargeAdjustmentPoints] = useState("");
+  const [manualRechargeAdjustmentBalance, setManualRechargeAdjustmentBalance] = useState("");
+  const [manualRechargeAdjustmentConfirmation, setManualRechargeAdjustmentConfirmation] = useState("");
   const languageRootRef = useRef<HTMLDivElement | null>(null);
   const languageMenuRef = useRef<HTMLDivElement | null>(null);
   const membershipsRef = useRef<MerchantMembershipListItem[]>([]);
@@ -774,6 +814,7 @@ export default function MerchantPointRedemptionCashier({
   const submitCheckoutRef = useRef<() => Promise<void>>(async () => undefined);
   const selectedMemberIdRef = useRef("");
   const productSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const manualRechargeAdjustmentOperationIdRef = useRef("");
   const deferredMemberKeyword = useDeferredValue(memberKeyword);
   const deferredItemKeyword = useDeferredValue(itemKeyword);
   const deferredRecordsKeyword = useDeferredValue(recordsKeyword);
@@ -1202,25 +1243,45 @@ export default function MerchantPointRedemptionCashier({
     return memberships
       .flatMap((membership) =>
         membership.transactions
-          .filter((transaction) => transaction.type === transactionType)
-          .map((transaction) => ({
-            id: `${membership.id}:${transaction.id}`,
-            membershipId: membership.id,
-            transactionId: transaction.id,
-            at: transaction.at,
-            memberName: getMemberDisplayName(membership),
-            memberNo: membership.memberNo,
-            points: Math.abs(transaction.pointDelta),
-            balanceAmount: Math.abs(transaction.balanceDelta),
-            note: transaction.note || "-",
-            rawPointDelta: transaction.pointDelta,
-            rawBalanceDelta: transaction.balanceDelta,
-            type: transaction.type,
-            status: transaction.status === "cancelled" ? "cancelled" as const : "completed" as const,
-            cancelledAt: transaction.cancelledAt,
-            cancellationNote: transaction.cancellationNote,
-            cancelledBy: transaction.cancelledBy,
-          })),
+          .filter((transaction) => transaction.type === transactionType && !transaction.adjustmentKind)
+          .map((transaction) => {
+            let cancellationQuote: MerchantRechargeCancellationQuote | null = null;
+            if (transaction.type === "recharge") {
+              try {
+                cancellationQuote = quoteMerchantMemberRechargeCancellation({
+                  membership,
+                  transactionId: transaction.id,
+                });
+              } catch {
+                cancellationQuote = null;
+              }
+            }
+            const status: Exclude<RechargeRecordStatusFilter, "all"> =
+              transaction.status === "cancelled"
+                ? "cancelled"
+                : cancellationQuote?.status === "adjusted"
+                  ? "adjusted"
+                  : "completed";
+            return {
+              id: `${membership.id}:${transaction.id}`,
+              membershipId: membership.id,
+              transactionId: transaction.id,
+              at: transaction.at,
+              memberName: getMemberDisplayName(membership),
+              memberNo: membership.memberNo,
+              points: Math.abs(transaction.pointDelta),
+              balanceAmount: Math.abs(transaction.balanceDelta),
+              note: transaction.note || "-",
+              rawPointDelta: transaction.pointDelta,
+              rawBalanceDelta: transaction.balanceDelta,
+              type: transaction.type,
+              status,
+              cancelledAt: transaction.cancelledAt,
+              cancellationNote: transaction.cancellationNote,
+              cancelledBy: transaction.cancelledBy,
+              cancellationQuote,
+            };
+          }),
       )
       .sort((left, right) => Date.parse(right.at) - Date.parse(left.at))
       .slice(0, 200);
@@ -1245,8 +1306,10 @@ export default function MerchantPointRedemptionCashier({
         record.note,
         record.points,
         record.balanceAmount,
-        record.status === "cancelled" ? "取消" : "完成",
+        rechargeRecordStatusLabel(record.status),
         record.cancellationNote,
+        record.cancellationQuote?.adjustedPointAmount,
+        record.cancellationQuote?.adjustedBalanceAmount,
       ]
         .join(" ")
         .toLowerCase()
@@ -1970,19 +2033,82 @@ export default function MerchantPointRedemptionCashier({
     }
   }
 
+  async function loadRechargeCancellationQuote(record: {
+    membershipId: string;
+    memberNo: string;
+    transactionId: string;
+  }) {
+    setRechargeCancellationQuoteLoading(true);
+    try {
+      const params = new URLSearchParams({
+        action: "recharge_cancellation_quote",
+        siteId: normalizedSiteId,
+        membershipId: record.membershipId,
+        memberNo: record.memberNo,
+        transactionId: record.transactionId,
+        t: Date.now().toString(),
+      });
+      const response = await fetchPointRedemptionJson(
+        `/api/memberships?${params.toString()}`,
+        {
+          method: "GET",
+          cache: "no-store",
+          credentials: "same-origin",
+          headers: { accept: "application/json" },
+        },
+        RECHARGE_CANCELLATION_VERIFY_TIMEOUT_MS,
+      );
+      const payload = (await response.json().catch(() => null)) as RechargeCancellationQuotePayload | null;
+      if (!response.ok || payload?.ok !== true || !payload.quote) {
+        throw new Error(rechargeCancellationErrorMessage(payload?.message));
+      }
+      setRechargeCancellationQuote(payload.quote);
+      setManualRechargeAdjustmentPoints(
+        String(Math.min(payload.quote.currentPointBalance, payload.quote.remainingPointAmount)),
+      );
+      setManualRechargeAdjustmentBalance(
+        formatMoney(Math.min(payload.quote.currentBalanceAmount, payload.quote.remainingBalanceAmount)),
+      );
+      return payload.quote;
+    } catch (quoteError) {
+      setRechargeCancellationQuote(null);
+      setError(quoteError instanceof Error ? quoteError.message : "撤销检查失败，请稍后重试。");
+      return null;
+    } finally {
+      setRechargeCancellationQuoteLoading(false);
+    }
+  }
+
   function openRechargeCancellation(recordId: string) {
     const record = transactionRecords.find((item) => item.id === recordId && item.type === "recharge");
     if (!record || record.status === "cancelled") return;
+    if (!record.cancellationQuote) {
+      setError("这笔记录没有可回退的余额或积分，不能按充值撤销处理。");
+      return;
+    }
     setError("");
     setNotice("");
     setCancelRechargeNote("");
+    setRechargeCancellationQuote(null);
+    setManualRechargeAdjustmentOpen(false);
+    setManualRechargeAdjustmentPoints("");
+    setManualRechargeAdjustmentBalance("");
+    setManualRechargeAdjustmentConfirmation("");
+    manualRechargeAdjustmentOperationIdRef.current = "";
     setCancelRechargeRecordId(record.id);
+    void loadRechargeCancellationQuote(record);
   }
 
   function closeRechargeCancellation() {
     if (cancellingRecharge) return;
     setCancelRechargeRecordId("");
     setCancelRechargeNote("");
+    setRechargeCancellationQuote(null);
+    setManualRechargeAdjustmentOpen(false);
+    setManualRechargeAdjustmentPoints("");
+    setManualRechargeAdjustmentBalance("");
+    setManualRechargeAdjustmentConfirmation("");
+    manualRechargeAdjustmentOperationIdRef.current = "";
   }
 
   async function readLatestMembershipForRechargeCancellation(membershipId: string) {
@@ -2013,6 +2139,15 @@ export default function MerchantPointRedemptionCashier({
     if (!record || record.status === "cancelled") {
       setError("这笔充值已经撤销或记录已更新，请刷新后重试。");
       closeRechargeCancellation();
+      return;
+    }
+    if (rechargeCancellationQuoteLoading) return;
+    if (rechargeCancellationQuote && !rechargeCancellationQuote.canCancel) {
+      setError(
+        `当前账户不足以全额撤销：缺少 ${formatPoints(rechargeCancellationQuote.pointShortage)} 积分、€${formatMoney(
+          rechargeCancellationQuote.balanceShortage,
+        )} 余额。请先撤销相关消费，或使用人工冲正。`,
+      );
       return;
     }
     setCancellingRecharge(true);
@@ -2084,6 +2219,8 @@ export default function MerchantPointRedemptionCashier({
       });
       setCancelRechargeRecordId("");
       setCancelRechargeNote("");
+      setRechargeCancellationQuote(null);
+      setManualRechargeAdjustmentOpen(false);
       setNotice("充值已撤销，余额和积分已回退，原记录保留并标记为取消。");
       void loadData(true, { silent: true });
     } catch (cancelError) {
@@ -2099,6 +2236,144 @@ export default function MerchantPointRedemptionCashier({
         detail: message,
       });
       setError(message);
+      if (/余额|积分不足|并发|数据已更新|发生变化/.test(message)) {
+        void loadRechargeCancellationQuote(record);
+      }
+    } finally {
+      setCancellingRecharge(false);
+    }
+  }
+
+  async function submitManualRechargeAdjustment() {
+    const record = cancelRechargeRecord;
+    const quote = rechargeCancellationQuote;
+    if (!record || !quote || quote.alreadyCancelled) {
+      setError("充值记录已经更新，请刷新后重试。");
+      return;
+    }
+    const pointAmount = parsePositiveInteger(manualRechargeAdjustmentPoints);
+    const balanceAmount = parsePositiveMoney(manualRechargeAdjustmentBalance);
+    const note = trimText(cancelRechargeNote, 500);
+    if (pointAmount <= 0 && balanceAmount <= 0) {
+      setError("人工冲正的积分和余额不能同时为 0。");
+      return;
+    }
+    if (pointAmount > quote.remainingPointAmount || balanceAmount > quote.remainingBalanceAmount) {
+      setError("人工冲正不能超过这笔充值尚未回退的积分或余额。");
+      return;
+    }
+    if (pointAmount > quote.currentPointBalance || balanceAmount > quote.currentBalanceAmount) {
+      setError("人工冲正不能超过会员当前可用积分或余额。");
+      return;
+    }
+    if (note.length < 2) {
+      setError("人工冲正必须填写原因。");
+      return;
+    }
+    if (trimText(manualRechargeAdjustmentConfirmation, 120) !== record.transactionId) {
+      setError("请输入完整充值编号确认人工冲正。");
+      return;
+    }
+
+    setCancellingRecharge(true);
+    setError("");
+    setNotice("");
+    const operationId =
+      manualRechargeAdjustmentOperationIdRef.current || createClientMutationOperationId("member-recharge-adjustment");
+    manualRechargeAdjustmentOperationIdRef.current = operationId;
+    try {
+      let updatedMembership: MerchantMembershipListItem | null = null;
+      try {
+        const response = await fetchPointRedemptionJson(
+          "/api/memberships",
+          {
+            method: "PATCH",
+            cache: "no-store",
+            credentials: "same-origin",
+            headers: { "content-type": "application/json", accept: "application/json" },
+            body: JSON.stringify({
+              siteId: normalizedSiteId,
+              action: "adjust_recharge",
+              membershipId: record.membershipId,
+              memberNo: record.memberNo,
+              transactionId: record.transactionId,
+              points: pointAmount,
+              balanceAmount,
+              note,
+              operationId,
+              confirmationTransactionId: manualRechargeAdjustmentConfirmation,
+            }),
+          },
+          RECHARGE_CANCELLATION_REQUEST_TIMEOUT_MS,
+        );
+        const payload = (await response.json().catch(() => null)) as MembershipPatchPayload | null;
+        if (!response.ok || !payload?.ok || !payload.membership) {
+          const message = rechargeCancellationErrorMessage(payload?.message);
+          if (response.status >= 500) throw new RechargeCancellationResultUnknownError(message);
+          throw new Error(message);
+        }
+        updatedMembership = payload.membership;
+      } catch (requestError) {
+        if (!isRechargeCancellationResultUnknown(requestError)) throw requestError;
+        const latestMembership = await readLatestMembershipForRechargeCancellation(record.membershipId).catch(() => null);
+        const adjustmentApplied = latestMembership?.transactions.some(
+          (transaction) =>
+            transaction.relatedTransactionId === record.transactionId &&
+            transaction.adjustmentKind === "recharge_manual_adjustment" &&
+            transaction.note.includes(operationId),
+        );
+        if (latestMembership && adjustmentApplied) updatedMembership = latestMembership;
+        else throw requestError;
+      }
+
+      setMemberships((current) =>
+        current.map((membership) =>
+          isSameMembershipRecord(membership, updatedMembership) ? updatedMembership : membership,
+        ),
+      );
+      invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-memberships", normalizedSiteId));
+      invalidateMerchantAdminDataCachePrefix(
+        makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, record.membershipId),
+      );
+      recordMerchantOperationLog({
+        siteId: normalizedSiteId,
+        module: "积分兑换 > 充值记录",
+        action: "人工冲正充值",
+        summary: `人工冲正充值 ${record.transactionId}，会员 ${record.memberName} / ${record.memberNo}`,
+        status: "success",
+        method: "PATCH",
+        endpoint: "/api/memberships",
+        detail: `余额 €${formatMoney(balanceAmount)} / 积分 ${formatPoints(pointAmount)}；${note}`,
+      });
+      manualRechargeAdjustmentOperationIdRef.current = "";
+      setManualRechargeAdjustmentConfirmation("");
+      const updatedTransaction = updatedMembership.transactions.find(
+        (transaction) => transaction.id === record.transactionId,
+      );
+      if (updatedTransaction?.status === "cancelled") {
+        setCancelRechargeRecordId("");
+        setRechargeCancellationQuote(null);
+        setManualRechargeAdjustmentOpen(false);
+        setNotice("人工冲正已完成，全部剩余充值已回退，原记录标记为取消。");
+      } else {
+        setNotice("人工冲正已完成，原充值保留并标记为部分冲正。");
+        await loadRechargeCancellationQuote(record);
+      }
+      void loadData(true, { silent: true });
+    } catch (adjustmentError) {
+      const message = adjustmentError instanceof Error ? adjustmentError.message : "人工冲正失败，请稍后重试。";
+      recordMerchantOperationLog({
+        siteId: normalizedSiteId,
+        module: "积分兑换 > 充值记录",
+        action: "人工冲正充值",
+        summary: `人工冲正充值 ${record.transactionId} 失败`,
+        status: "failed",
+        method: "PATCH",
+        endpoint: "/api/memberships",
+        detail: message,
+      });
+      setError(message);
+      void loadRechargeCancellationQuote(record);
     } finally {
       setCancellingRecharge(false);
     }
@@ -3854,6 +4129,12 @@ export default function MerchantPointRedemptionCashier({
           color: #b91c1c;
         }
 
+        .merchant-pos-cashier .record-state-tag.adjusted {
+          border-color: rgba(217, 119, 6, 0.28);
+          background: rgba(254, 243, 199, 0.82);
+          color: #92400e;
+        }
+
         .merchant-pos-cashier .record-row-actions {
           display: flex;
           justify-content: flex-end;
@@ -3930,6 +4211,14 @@ export default function MerchantPointRedemptionCashier({
           background: var(--pos-surface-soft);
         }
 
+        .merchant-pos-cashier .pos-modal.recharge-cancel-modal {
+          width: min(760px, 100%);
+        }
+
+        .merchant-pos-cashier .recharge-cancel-modal .pos-modal-footer {
+          flex-wrap: wrap;
+        }
+
         .merchant-pos-cashier .recharge-cancel-summary span {
           color: var(--pos-muted);
           font-weight: 760;
@@ -3940,6 +4229,177 @@ export default function MerchantPointRedemptionCashier({
           color: #b45309;
           font-size: 13px;
           line-height: 1.6;
+        }
+
+        .merchant-pos-cashier .recharge-cancel-check {
+          display: grid;
+          gap: 10px;
+          padding: 12px;
+          border: 1px solid var(--pos-line);
+          border-radius: 8px;
+          background: var(--pos-surface);
+        }
+
+        .merchant-pos-cashier .recharge-cancel-check.is-ready {
+          border-color: rgba(22, 163, 74, 0.28);
+          background: rgba(240, 253, 244, 0.72);
+        }
+
+        .merchant-pos-cashier .recharge-cancel-check.is-blocked {
+          border-color: rgba(220, 38, 38, 0.24);
+          background: rgba(254, 242, 242, 0.68);
+        }
+
+        .merchant-pos-cashier .recharge-cancel-check-title {
+          margin: 0;
+          color: var(--pos-text);
+          font-size: 14px;
+          font-weight: 850;
+        }
+
+        .merchant-pos-cashier .recharge-cancel-check-grid {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 8px;
+        }
+
+        .merchant-pos-cashier .recharge-cancel-metric {
+          display: grid;
+          gap: 4px;
+          min-width: 0;
+          padding: 9px;
+          border: 1px solid var(--pos-line);
+          border-radius: 7px;
+          background: rgba(255, 255, 255, 0.82);
+        }
+
+        .merchant-pos-cashier .recharge-cancel-metric span {
+          color: var(--pos-muted);
+          font-size: 11px;
+          font-weight: 720;
+        }
+
+        .merchant-pos-cashier .recharge-cancel-metric strong {
+          overflow-wrap: anywhere;
+          font-size: 13px;
+          font-variant-numeric: tabular-nums;
+        }
+
+        .merchant-pos-cashier .recharge-cancel-shortage {
+          margin: 0;
+          color: #b91c1c;
+          font-size: 13px;
+          font-weight: 760;
+          line-height: 1.55;
+        }
+
+        .merchant-pos-cashier .recharge-related-usage {
+          display: grid;
+          gap: 8px;
+        }
+
+        .merchant-pos-cashier .recharge-related-usage-heading {
+          display: flex;
+          align-items: baseline;
+          justify-content: space-between;
+          gap: 12px;
+        }
+
+        .merchant-pos-cashier .recharge-related-usage-heading strong {
+          font-size: 13px;
+        }
+
+        .merchant-pos-cashier .recharge-related-usage-heading span,
+        .merchant-pos-cashier .recharge-related-usage-note {
+          color: var(--pos-muted);
+          font-size: 11px;
+          line-height: 1.5;
+        }
+
+        .merchant-pos-cashier .recharge-related-usage-list {
+          display: grid;
+          gap: 6px;
+          max-height: 150px;
+          overflow: auto;
+          padding-right: 2px;
+        }
+
+        .merchant-pos-cashier .recharge-related-usage-item {
+          display: grid;
+          grid-template-columns: 128px minmax(0, 1fr) auto;
+          gap: 8px;
+          align-items: center;
+          padding: 8px 9px;
+          border: 1px solid var(--pos-line);
+          border-radius: 7px;
+          background: var(--pos-surface-soft);
+          font-size: 12px;
+        }
+
+        .merchant-pos-cashier .recharge-related-usage-item span:nth-child(2) {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .merchant-pos-cashier .recharge-related-usage-item strong {
+          color: #b45309;
+          font-variant-numeric: tabular-nums;
+          white-space: nowrap;
+        }
+
+        .merchant-pos-cashier .recharge-manual-panel {
+          display: grid;
+          gap: 12px;
+          padding: 12px;
+          border: 1px solid rgba(217, 119, 6, 0.28);
+          border-radius: 8px;
+          background: rgba(255, 251, 235, 0.72);
+        }
+
+        .merchant-pos-cashier .recharge-manual-panel h4,
+        .merchant-pos-cashier .recharge-manual-panel p {
+          margin: 0;
+        }
+
+        .merchant-pos-cashier .recharge-manual-panel h4 {
+          font-size: 14px;
+        }
+
+        .merchant-pos-cashier .recharge-manual-panel p {
+          color: #92400e;
+          font-size: 12px;
+          line-height: 1.55;
+        }
+
+        .merchant-pos-cashier .recharge-manual-fields {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 10px;
+        }
+
+        .merchant-pos-cashier .recharge-manual-confirmation {
+          font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        }
+
+        @media (max-width: 720px) {
+          .merchant-pos-cashier .recharge-cancel-check-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
+          .merchant-pos-cashier .recharge-related-usage-item {
+            grid-template-columns: 1fr auto;
+          }
+
+          .merchant-pos-cashier .recharge-related-usage-item span:nth-child(2) {
+            grid-column: 1 / -1;
+            grid-row: 2;
+          }
+
+          .merchant-pos-cashier .recharge-manual-fields {
+            grid-template-columns: 1fr;
+          }
         }
 
         .merchant-pos-cashier .record-empty-row {
@@ -4599,6 +5059,7 @@ export default function MerchantPointRedemptionCashier({
                   >
                     <option value="all">全部状态</option>
                     <option value="completed">完成</option>
+                    <option value="adjusted">部分冲正</option>
                     <option value="cancelled">取消</option>
                   </select>
                 </div>
@@ -4635,8 +5096,12 @@ export default function MerchantPointRedemptionCashier({
                     <span>{record.at ? formatDateTime(new Date(record.at)) : "-"}</span>
                     {view === "rechargeRecords" ? (
                       <span>
-                        <span className={`record-state-tag${record.status === "cancelled" ? " cancelled" : ""}`}>
-                          {record.status === "cancelled" ? "取消" : "完成"}
+                        <span
+                          className={`record-state-tag${
+                            record.status === "cancelled" ? " cancelled" : record.status === "adjusted" ? " adjusted" : ""
+                          }`}
+                        >
+                          {rechargeRecordStatusLabel(record.status)}
                         </span>
                       </span>
                     ) : null}
@@ -4653,7 +5118,7 @@ export default function MerchantPointRedemptionCashier({
                         <button
                           type="button"
                           className="pos-button danger"
-                          disabled={record.status === "cancelled" || cancellingRecharge}
+                          disabled={record.status === "cancelled" || !record.cancellationQuote || cancellingRecharge}
                           onClick={() => openRechargeCancellation(record.id)}
                         >
                           撤销
@@ -4715,8 +5180,16 @@ export default function MerchantPointRedemptionCashier({
                       <>
                         <span>状态</span>
                         <strong>
-                          <span className={`record-state-tag${selectedRecord.status === "cancelled" ? " cancelled" : ""}`}>
-                            {selectedRecord.status === "cancelled" ? "取消" : "完成"}
+                          <span
+                            className={`record-state-tag${
+                              selectedRecord.status === "cancelled"
+                                ? " cancelled"
+                                : selectedRecord.status === "adjusted"
+                                  ? " adjusted"
+                                  : ""
+                            }`}
+                          >
+                            {rechargeRecordStatusLabel(selectedRecord.status)}
                           </span>
                         </strong>
                       </>
@@ -4732,6 +5205,24 @@ export default function MerchantPointRedemptionCashier({
                     </strong>
                     <span>记录</span>
                     <strong>{selectedRecord.note}</strong>
+                    {selectedRecord.cancellationQuote &&
+                    (selectedRecord.cancellationQuote.adjustedPointAmount > 0 ||
+                      selectedRecord.cancellationQuote.adjustedBalanceAmount > 0) ? (
+                      <>
+                        <span>已回退</span>
+                        <strong>
+                          €{formatMoney(selectedRecord.cancellationQuote.adjustedBalanceAmount)} / {formatPoints(
+                            selectedRecord.cancellationQuote.adjustedPointAmount,
+                          )} 积分
+                        </strong>
+                        <span>尚待回退</span>
+                        <strong>
+                          €{formatMoney(selectedRecord.cancellationQuote.remainingBalanceAmount)} / {formatPoints(
+                            selectedRecord.cancellationQuote.remainingPointAmount,
+                          )} 积分
+                        </strong>
+                      </>
+                    ) : null}
                     {selectedRecord.status === "cancelled" ? (
                       <>
                         <span>撤销时间</span>
@@ -4756,7 +5247,7 @@ export default function MerchantPointRedemptionCashier({
           {cancelRechargeRecord ? (
             <div className="modal-backdrop" role="presentation" onMouseDown={closeRechargeCancellation}>
               <section
-                className="pos-modal"
+                className="pos-modal recharge-cancel-modal"
                 role="dialog"
                 aria-modal="true"
                 aria-label="确认撤销充值"
@@ -4787,10 +5278,92 @@ export default function MerchantPointRedemptionCashier({
                     <strong>{formatPoints(cancelRechargeRecord.points)}</strong>
                   </div>
                   <p className="recharge-cancel-warning">
-                    确认后会从会员当前余额和积分中扣回这笔充值，原记录不会删除并将标记为取消。余额或积分不足时不能撤销。
+                    系统只会回退这笔充值尚未回退的部分，原充值记录与每次冲正记录都会保留，不会删除。
                   </p>
+                  {rechargeCancellationQuoteLoading ? (
+                    <div className="recharge-cancel-check" aria-live="polite">正在核对会员当前余额、积分和后续使用记录...</div>
+                  ) : rechargeCancellationQuote ? (
+                    <div
+                      className={`recharge-cancel-check${
+                        rechargeCancellationQuote.canCancel ? " is-ready" : " is-blocked"
+                      }`}
+                    >
+                      <p className="recharge-cancel-check-title">
+                        {rechargeCancellationQuote.canCancel
+                          ? "当前余额和积分充足，可以完整撤销"
+                          : "当前余额或积分不足，不能直接完整撤销"}
+                      </p>
+                      <div className="recharge-cancel-check-grid">
+                        <div className="recharge-cancel-metric">
+                          <span>原充值</span>
+                          <strong>
+                            €{formatMoney(rechargeCancellationQuote.originalBalanceAmount)} / {formatPoints(
+                              rechargeCancellationQuote.originalPointAmount,
+                            )} 积分
+                          </strong>
+                        </div>
+                        <div className="recharge-cancel-metric">
+                          <span>已经回退</span>
+                          <strong>
+                            €{formatMoney(rechargeCancellationQuote.adjustedBalanceAmount)} / {formatPoints(
+                              rechargeCancellationQuote.adjustedPointAmount,
+                            )} 积分
+                          </strong>
+                        </div>
+                        <div className="recharge-cancel-metric">
+                          <span>尚待回退</span>
+                          <strong>
+                            €{formatMoney(rechargeCancellationQuote.remainingBalanceAmount)} / {formatPoints(
+                              rechargeCancellationQuote.remainingPointAmount,
+                            )} 积分
+                          </strong>
+                        </div>
+                        <div className="recharge-cancel-metric">
+                          <span>会员当前可用</span>
+                          <strong>
+                            €{formatMoney(rechargeCancellationQuote.currentBalanceAmount)} / {formatPoints(
+                              rechargeCancellationQuote.currentPointBalance,
+                            )} 积分
+                          </strong>
+                        </div>
+                      </div>
+                      {!rechargeCancellationQuote.canCancel ? (
+                        <p className="recharge-cancel-shortage">
+                          尚缺 €{formatMoney(rechargeCancellationQuote.balanceShortage)} 和 {formatPoints(
+                            rechargeCancellationQuote.pointShortage,
+                          )} 积分。可先处理相关消费，或仅冲正会员当前仍可回退的部分。
+                        </p>
+                      ) : null}
+                      {rechargeCancellationQuote.relatedUsage.length > 0 ? (
+                        <div className="recharge-related-usage">
+                          <div className="recharge-related-usage-heading">
+                            <strong>充值后可能相关的使用记录</strong>
+                            <span>最近 {rechargeCancellationQuote.relatedUsage.length} 条</span>
+                          </div>
+                          <div className="recharge-related-usage-list">
+                            {rechargeCancellationQuote.relatedUsage.map((usage) => (
+                              <div key={usage.id} className="recharge-related-usage-item">
+                                <span>{usage.at ? formatDateTime(new Date(usage.at)) : "-"}</span>
+                                <span title={usage.note}>{usage.note || usage.id}</span>
+                                <strong>
+                                  {usage.balanceAmount > 0 ? `-€${formatMoney(usage.balanceAmount)}` : ""}
+                                  {usage.balanceAmount > 0 && usage.pointAmount > 0 ? " / " : ""}
+                                  {usage.pointAmount > 0 ? `-${formatPoints(usage.pointAmount)} 积分` : ""}
+                                </strong>
+                              </div>
+                            ))}
+                          </div>
+                          <span className="recharge-related-usage-note">
+                            以上按充值后的负向账户记录列出，仅供人工核对，不代表系统能精确判定某次消费使用了哪一笔充值。
+                          </span>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <div className="recharge-cancel-check is-blocked">核对失败，当前不能提交。请关闭后重新打开。</div>
+                  )}
                   <label className="quick-field">
-                    撤销备注（选填）
+                    {manualRechargeAdjustmentOpen ? "人工冲正原因（必填）" : "撤销备注（选填）"}
                     <textarea
                       className="quick-input"
                       value={cancelRechargeNote}
@@ -4800,6 +5373,92 @@ export default function MerchantPointRedemptionCashier({
                       disabled={cancellingRecharge}
                     />
                   </label>
+                  {!rechargeCancellationQuoteLoading &&
+                  rechargeCancellationQuote &&
+                  !rechargeCancellationQuote.canCancel &&
+                  !manualRechargeAdjustmentOpen ? (
+                    <button
+                      type="button"
+                      className="pos-button danger"
+                      onClick={() => setManualRechargeAdjustmentOpen(true)}
+                      disabled={
+                        cancellingRecharge ||
+                        (Math.min(
+                          rechargeCancellationQuote.currentPointBalance,
+                          rechargeCancellationQuote.remainingPointAmount,
+                        ) <= 0 &&
+                          Math.min(
+                            rechargeCancellationQuote.currentBalanceAmount,
+                            rechargeCancellationQuote.remainingBalanceAmount,
+                          ) <= 0)
+                      }
+                    >
+                      {Math.min(
+                        rechargeCancellationQuote.currentPointBalance,
+                        rechargeCancellationQuote.remainingPointAmount,
+                      ) <= 0 &&
+                      Math.min(
+                        rechargeCancellationQuote.currentBalanceAmount,
+                        rechargeCancellationQuote.remainingBalanceAmount,
+                      ) <= 0
+                        ? "当前没有可冲正的余额或积分"
+                        : "人工冲正当前可用部分"}
+                    </button>
+                  ) : null}
+                  {manualRechargeAdjustmentOpen && rechargeCancellationQuote ? (
+                    <div className="recharge-manual-panel">
+                      <h4>人工冲正</h4>
+                      <p>
+                        本次只扣回填写的可用额度，不会让账户变成负数。未回退部分继续保留在原充值记录中，状态显示为“部分冲正”，以后可再次处理。
+                      </p>
+                      <div className="recharge-manual-fields">
+                        <label className="quick-field">
+                          本次回退积分
+                          <input
+                            className="quick-input"
+                            type="number"
+                            min={0}
+                            max={Math.min(
+                              rechargeCancellationQuote.currentPointBalance,
+                              rechargeCancellationQuote.remainingPointAmount,
+                            )}
+                            step={1}
+                            value={manualRechargeAdjustmentPoints}
+                            onChange={(event) => setManualRechargeAdjustmentPoints(event.target.value)}
+                            disabled={cancellingRecharge}
+                          />
+                        </label>
+                        <label className="quick-field">
+                          本次回退余额
+                          <input
+                            className="quick-input"
+                            type="number"
+                            min={0}
+                            max={Math.min(
+                              rechargeCancellationQuote.currentBalanceAmount,
+                              rechargeCancellationQuote.remainingBalanceAmount,
+                            )}
+                            step="0.01"
+                            value={manualRechargeAdjustmentBalance}
+                            onChange={(event) => setManualRechargeAdjustmentBalance(event.target.value)}
+                            disabled={cancellingRecharge}
+                          />
+                        </label>
+                      </div>
+                      <label className="quick-field">
+                        输入完整充值编号确认
+                        <input
+                          className="quick-input recharge-manual-confirmation"
+                          value={manualRechargeAdjustmentConfirmation}
+                          maxLength={120}
+                          autoComplete="off"
+                          placeholder={cancelRechargeRecord.transactionId}
+                          onChange={(event) => setManualRechargeAdjustmentConfirmation(event.target.value)}
+                          disabled={cancellingRecharge}
+                        />
+                      </label>
+                    </div>
+                  ) : null}
                 </div>
                 <div className="pos-modal-footer">
                   <button
@@ -4810,14 +5469,43 @@ export default function MerchantPointRedemptionCashier({
                   >
                     返回
                   </button>
-                  <button
-                    type="button"
-                    className="pos-button danger"
-                    onClick={submitRechargeCancellation}
-                    disabled={cancellingRecharge}
-                  >
-                    {cancellingRecharge ? "撤销中..." : "确认撤销"}
-                  </button>
+                  {manualRechargeAdjustmentOpen ? (
+                    <>
+                      <button
+                        type="button"
+                        className="pos-button"
+                        onClick={() => {
+                          setManualRechargeAdjustmentOpen(false);
+                          setManualRechargeAdjustmentConfirmation("");
+                          manualRechargeAdjustmentOperationIdRef.current = "";
+                        }}
+                        disabled={cancellingRecharge}
+                      >
+                        取消人工冲正
+                      </button>
+                      <button
+                        type="button"
+                        className="pos-button danger"
+                        onClick={submitManualRechargeAdjustment}
+                        disabled={cancellingRecharge || rechargeCancellationQuoteLoading || !rechargeCancellationQuote}
+                      >
+                        {cancellingRecharge ? "冲正中..." : "确认人工冲正"}
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      className="pos-button danger"
+                      onClick={submitRechargeCancellation}
+                      disabled={
+                        cancellingRecharge ||
+                        rechargeCancellationQuoteLoading ||
+                        !rechargeCancellationQuote?.canCancel
+                      }
+                    >
+                      {cancellingRecharge ? "撤销中..." : "确认完整撤销"}
+                    </button>
+                  )}
                 </div>
               </section>
             </div>

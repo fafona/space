@@ -24,6 +24,21 @@ type StoredMerchantMembershipsRow = {
   updated_at?: unknown;
 };
 
+function storedMembershipRowTimestamp(row: StoredMerchantMembershipsRow) {
+  const timestamp = Date.parse(normalizeText(row.updated_at));
+  return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
+}
+
+function selectLatestStoredMembershipRow(rows: StoredMerchantMembershipsRow[]) {
+  return rows.reduce<StoredMerchantMembershipsRow | undefined>((latest, row) => {
+    if (!latest) return row;
+    const timestampDifference = storedMembershipRowTimestamp(row) - storedMembershipRowTimestamp(latest);
+    if (timestampDifference > 0) return row;
+    if (timestampDifference < 0) return latest;
+    return String(row.id ?? "") > String(latest.id ?? "") ? row : latest;
+  }, undefined);
+}
+
 function normalizeText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -163,6 +178,7 @@ export async function saveStoredMerchantMemberships(
     siteId: string;
     memberships: MerchantMembershipRecord[];
     updatedAt?: string | null;
+    expectedUpdatedAt?: string | null;
   },
 ): Promise<{ error: string | null }> {
   const normalizedSiteId = normalizeText(input.siteId);
@@ -170,8 +186,16 @@ export async function saveStoredMerchantMemberships(
   const slug = buildMembershipsSlug(normalizedSiteId);
   const memberships = normalizeMerchantMembershipRecords(input.memberships).filter((membership) => membership.siteId === normalizedSiteId);
   const updatedAt = normalizeText(input.updatedAt) || new Date().toISOString();
-  const existing = (await queryStoredMembershipRows(supabase, normalizedSiteId))[0];
-  const beforeMemberships = existing ? normalizeMerchantMembershipRecords(existing.blocks) : null;
+  const existingRows = await queryStoredMembershipRows(supabase, normalizedSiteId);
+  const existing = selectLatestStoredMembershipRow(existingRows);
+  const existingSnapshot = mergeStoredMerchantMembershipRows(normalizedSiteId, existingRows);
+  const shouldCheckVersion = Object.prototype.hasOwnProperty.call(input, "expectedUpdatedAt");
+  const expectedUpdatedAt = normalizeText(input.expectedUpdatedAt);
+  const existingUpdatedAt = normalizeText(existingSnapshot?.updatedAt ?? existing?.updated_at);
+  if (shouldCheckVersion && expectedUpdatedAt !== existingUpdatedAt) {
+    return { error: "merchant_memberships_conflict" };
+  }
+  const beforeMemberships = existingSnapshot?.memberships ?? null;
   const history = await saveMerchantSnapshotHistory(supabase, {
     siteId: normalizedSiteId,
     slug: buildMembershipsHistorySlug(normalizedSiteId),
@@ -185,8 +209,16 @@ export async function saveStoredMerchantMemberships(
 
   const updateExisting = async (body: Record<string, unknown>) => {
     if (existing?.id === undefined || existing?.id === null) return { error: "missing_existing_id" };
-    const updated = await supabase.from("pages").update(body).eq("id", existing.id);
-    return updated.error ? { error: toErrorMessage(updated.error) } : { error: null };
+    let query = supabase.from("pages").update(body).eq("id", existing.id);
+    if (shouldCheckVersion && expectedUpdatedAt) {
+      query = query.eq("updated_at", expectedUpdatedAt).select("id");
+    }
+    const updated = await query;
+    if (updated.error) return { error: toErrorMessage(updated.error) };
+    if (shouldCheckVersion && expectedUpdatedAt && Array.isArray(updated.data) && updated.data.length === 0) {
+      return { error: "merchant_memberships_conflict" };
+    }
+    return { error: null };
   };
 
   const insertNew = async (body: Record<string, unknown>) => {
