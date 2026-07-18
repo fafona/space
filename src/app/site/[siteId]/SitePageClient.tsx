@@ -560,6 +560,16 @@ export function SitePageClient({
         setDbBlocks(nextPublished.blocks);
         if (typeof nextPublished.orderManagementEnabled === "boolean") {
           setRemoteOrderManagementEnabled(nextPublished.orderManagementEnabled);
+        } else {
+          // The direct storage fallback intentionally returns blocks as soon as
+          // possible, but it cannot resolve merchant permissions. Recheck the
+          // authenticated server route without delaying the initial render.
+          void fetchPublishedSiteBlocksViaApi(siteId)
+            .then((serverPublished) => {
+              if (!mounted || typeof serverPublished?.orderManagementEnabled !== "boolean") return;
+              setRemoteOrderManagementEnabled(serverPublished.orderManagementEnabled);
+            })
+            .catch(() => undefined);
         }
         savePublishedBlocksToStorage(nextPublished.blocks, siteScope);
       } catch {
