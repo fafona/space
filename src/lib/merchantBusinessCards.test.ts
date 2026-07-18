@@ -10,6 +10,7 @@ import {
   normalizeMerchantBusinessCards,
   resolveMerchantBusinessCardForChatDisplay,
   selectMerchantBusinessCardForChat,
+  stripMerchantBusinessCardShareMetadata,
 } from "./merchantBusinessCards";
 
 test("business card generation only requires merchant domain prefix", () => {
@@ -97,6 +98,34 @@ test("normalizeMerchantBusinessCardDraft preserves link mode", () => {
   assert.equal(draft.name, "fafona card");
   assert.equal(draft.contacts.phone, "111");
   assert.deepEqual(draft.contacts.phones, ["111", "222"]);
+});
+
+test("stripMerchantBusinessCardShareMetadata removes stale public link fields", () => {
+  const draft = createDefaultMerchantBusinessCardDraft({
+    merchantName: "fafona",
+    domainPrefix: "fafona",
+  });
+  const card = normalizeMerchantBusinessCards([
+    {
+      ...draft,
+      mode: "image",
+      id: "card-1",
+      createdAt: "2026-07-18T00:00:00.000Z",
+      imageUrl: "https://faolla.com/card.png",
+      targetUrl: "https://fafona.faolla.com",
+      shareKey: "stale-share-key",
+      shareImageUrl: "https://faolla.com/shared-card.png",
+      contactPagePublicImageUrl: "https://faolla.com/contact-card.png",
+    },
+  ])[0];
+
+  assert.ok(card);
+  const cleaned = stripMerchantBusinessCardShareMetadata(card);
+  assert.equal(cleaned.shareKey, undefined);
+  assert.equal(cleaned.shareImageUrl, undefined);
+  assert.equal(cleaned.contactPagePublicImageUrl, undefined);
+  assert.equal(cleaned.imageUrl, "https://faolla.com/card.png");
+  assert.equal(cleaned.mode, "image");
 });
 
 test("normalizeMerchantBusinessCardDraft preserves intentionally empty business card name", () => {

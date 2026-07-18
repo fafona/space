@@ -28,6 +28,7 @@ import {
   normalizeMerchantBusinessCardContactFieldOrder,
   resolveMerchantBusinessCardForChatDisplay,
   selectMerchantBusinessCardForChat,
+  stripMerchantBusinessCardShareMetadata,
   type MerchantBusinessCardAsset,
   type MerchantBusinessCardContactDisplayKey,
   type MerchantBusinessCardContactOnlyFieldKey,
@@ -2773,7 +2774,7 @@ export default function MerchantBusinessCardManager({
   async function deleteCardShare(card: MerchantBusinessCardAsset) {
     const shareKey = normalizeText(card.shareKey);
     const legacyPayload = buildLegacySharePayload(card);
-    if (card.mode !== "link") {
+    if (card.mode !== "link" && !shareKey) {
       return;
     }
     if (!shareKey && !legacyPayload) {
@@ -2847,6 +2848,7 @@ export default function MerchantBusinessCardManager({
     }
 
     setDeletingCardId(card.id);
+    const hasPublicShare = card.mode === "link" || Boolean(normalizeText(card.shareKey));
     try {
       await deleteCardShare(card);
 
@@ -2862,13 +2864,13 @@ export default function MerchantBusinessCardManager({
         draftRevisionRef.current += 1;
         setDraft(createDefaultMerchantBusinessCardDraft(profile));
       }
-      setTip(card.mode === "link" ? "名片已删除，二维码和联系卡链接已失效" : "名片已删除");
+      setTip(hasPublicShare ? "名片已删除，二维码和联系卡链接已失效" : "名片已删除");
     } catch (error) {
       if (error instanceof Error && error.message === "share_delete_unauthorized") {
         setTip("登录状态失效，联系卡链接未删除，请重新登录后重试");
       } else if (error instanceof Error && error.message === "share_delete_timeout") {
         setTip("删除超时，二维码和联系卡链接暂未失效，请稍后重试");
-      } else if (card.mode === "link") {
+      } else if (hasPublicShare) {
         setTip("删除失败，二维码和联系卡链接未失效，请重试");
       } else {
         setTip("删除失败，请重试");
@@ -2878,9 +2880,13 @@ export default function MerchantBusinessCardManager({
     }
   };
 
-  const markCardAsChatDisplay = (cardId: string) => {
-    void Promise.resolve(onCardsChange(selectMerchantBusinessCardForChat(normalizedCards, cardId))).catch(() => undefined);
-    setTip("这张名片会在聊天模块中展示");
+  const markCardAsChatDisplay = async (cardId: string) => {
+    try {
+      await Promise.resolve(onCardsChange(selectMerchantBusinessCardForChat(normalizedCards, cardId)));
+      setTip("这张名片会在聊天模块中展示");
+    } catch {
+      setTip("聊天名片设置保存失败，请重试");
+    }
   };
 
   const previewMode = previewAsset?.mode || draft.mode;
@@ -5391,7 +5397,15 @@ export default function MerchantBusinessCardManager({
     if (nextDraft.mode === "link" && !normalizeText(shareBundle?.shareKey)) {
       throw new Error("share_link_unavailable");
     }
-    const asset: MerchantBusinessCardAsset = {
+    if (
+      existingCard &&
+      nextDraft.mode !== "link" &&
+      (existingCard.mode === "link" || Boolean(normalizeText(existingCard.shareKey)))
+    ) {
+      setTip("正在停用原联系卡短链...");
+      await deleteCardShare(existingCard);
+    }
+    const assetWithPossibleShareMetadata: MerchantBusinessCardAsset = {
       ...nextDraft,
       id: existingCard?.id ?? createId("business-card"),
       createdAt: existingCard?.createdAt ?? new Date().toISOString(),
@@ -5407,6 +5421,10 @@ export default function MerchantBusinessCardManager({
       ...(existingCard?.showInChat ? { showInChat: true } : {}),
       ...(existingCard?.chatDisplayDisabled ? { chatDisplayDisabled: true } : {}),
     };
+    const asset =
+      nextDraft.mode === "link"
+        ? assetWithPossibleShareMetadata
+        : stripMerchantBusinessCardShareMetadata(assetWithPossibleShareMetadata);
 
     const nextCards = existingCard
       ? currentCards.map((card) => (card.id === existingCard.id ? asset : card))
@@ -5485,13 +5503,20 @@ export default function MerchantBusinessCardManager({
     if (nextDraft.mode === "link" && !options?.deferShareSync && !normalizeText(shareBundle?.shareKey)) {
       throw new Error("share_link_unavailable");
     }
+    if (
+      nextDraft.mode !== "link" &&
+      (existingCard.mode === "link" || Boolean(normalizeText(existingCard.shareKey)))
+    ) {
+      setTip("正在停用原联系卡短链...");
+      await deleteCardShare(existingCard);
+    }
     const savedShareKey = normalizeText(shareBundle?.shareKey) || resolvedShareKey;
     const shouldRefreshFrontImage =
       Boolean(options?.refreshFrontImage) &&
       Boolean(normalizeText(existingCard.imageUrl) || normalizeText(existingCard.shareImageUrl)) &&
       buildBusinessCardFrontRenderSignature(existingCard) !== buildBusinessCardFrontRenderSignature(nextDraft);
 
-    const asset: MerchantBusinessCardAsset = {
+    const assetWithPossibleShareMetadata: MerchantBusinessCardAsset = {
       ...existingCard,
       ...nextDraft,
       id: existingCard.id,
@@ -5508,6 +5533,10 @@ export default function MerchantBusinessCardManager({
       ...(existingCard.showInChat ? { showInChat: true } : {}),
       ...(existingCard.chatDisplayDisabled ? { chatDisplayDisabled: true } : {}),
     };
+    const asset =
+      nextDraft.mode === "link"
+        ? assetWithPossibleShareMetadata
+        : stripMerchantBusinessCardShareMetadata(assetWithPossibleShareMetadata);
     const nextCards = currentCards.map((card) => (card.id === existingCard.id ? asset : card));
     await persistBusinessCardList(nextCards);
     setPreviewAsset((current) => (current?.id === asset.id ? asset : current));

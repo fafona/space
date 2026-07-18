@@ -2536,7 +2536,10 @@ export default function MePage() {
     {},
   );
   const personalBusinessCardsRef = useRef<MerchantBusinessCardAsset[]>([]);
+  const personalBusinessCardsConfirmedRef = useRef<MerchantBusinessCardAsset[]>([]);
   const personalBusinessCardsSaveRequestIdRef = useRef(0);
+  const personalBusinessCardsSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const personalBusinessCardsAccountIdRef = useRef("");
   const personalFavoriteSitesRef = useRef<PersonalFavoriteSite[]>([]);
   const personalFavoriteSitesSaveRequestIdRef = useRef(0);
   const personalSessionRecoveryInFlightRef = useRef<Promise<MeSessionPayload | null> | null>(null);
@@ -2731,6 +2734,10 @@ export default function MePage() {
     payload && typeof payload.accountId === "string" && /^\d{8}$/.test(payload.accountId.trim())
       ? payload.accountId.trim()
       : "";
+  useEffect(() => {
+    personalBusinessCardsAccountIdRef.current = accountId;
+    personalBusinessCardsSaveRequestIdRef.current += 1;
+  }, [accountId]);
   const email = trimText(payload?.user?.email);
   const personalProfile = useMemo(() => readPersonalProfile(payload), [payload]);
   const displayName = personalProfile.displayName || readDisplayName(payload);
@@ -2807,38 +2814,60 @@ export default function MePage() {
     async (cards: MerchantBusinessCardAsset[]) => {
       if (!accountId) return;
       const normalizedCards = normalizeMerchantBusinessCards(cards);
-      const previousCards = personalBusinessCardsRef.current;
       personalBusinessCardsRef.current = normalizedCards;
       setPersonalBusinessCards(normalizedCards);
       setPersonalProfileMessage("");
       const requestId = personalBusinessCardsSaveRequestIdRef.current + 1;
       personalBusinessCardsSaveRequestIdRef.current = requestId;
-      try {
-        const response = await fetch("/api/personal-profile", {
-          method: "POST",
-          cache: "no-store",
-          credentials: "same-origin",
-          headers: {
-            "Content-Type": "application/json",
-            accept: "application/json",
-          },
-          body: JSON.stringify({
-            businessCards: normalizedCards,
-          }),
+      const saveAccountId = accountId;
+      const saveTask = personalBusinessCardsSaveQueueRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          if (personalBusinessCardsAccountIdRef.current !== saveAccountId) {
+            throw new Error("账户已切换，本次名片保存已取消");
+          }
+          const response = await fetch("/api/personal-profile", {
+            method: "POST",
+            cache: "no-store",
+            credentials: "same-origin",
+            headers: {
+              "Content-Type": "application/json",
+              accept: "application/json",
+            },
+            body: JSON.stringify({
+              businessCards: normalizedCards,
+            }),
+          });
+          const result = (await response.json().catch(() => null)) as PersonalProfileResponsePayload | null;
+          if (!response.ok || !result || result.ok !== true) {
+            throw new Error(readPayloadMessage(result?.message, "名片保存失败，请稍后重试"));
+          }
+          return normalizeMerchantBusinessCards(result.businessCards);
         });
-        const result = (await response.json().catch(() => null)) as PersonalProfileResponsePayload | null;
-        if (!response.ok || !result || result.ok !== true) {
-          throw new Error(readPayloadMessage(result?.message, "名片保存失败，请稍后重试"));
+      personalBusinessCardsSaveQueueRef.current = saveTask.then(
+        () => undefined,
+        () => undefined,
+      );
+      try {
+        const nextCards = await saveTask;
+        if (personalBusinessCardsAccountIdRef.current === saveAccountId) {
+          personalBusinessCardsConfirmedRef.current = nextCards;
         }
-        const nextCards = normalizeMerchantBusinessCards(result.businessCards);
-        if (personalBusinessCardsSaveRequestIdRef.current === requestId) {
+        if (
+          personalBusinessCardsAccountIdRef.current === saveAccountId &&
+          personalBusinessCardsSaveRequestIdRef.current === requestId
+        ) {
           personalBusinessCardsRef.current = nextCards;
           setPersonalBusinessCards(nextCards);
         }
       } catch (error) {
-        if (personalBusinessCardsSaveRequestIdRef.current === requestId) {
-          personalBusinessCardsRef.current = previousCards;
-          setPersonalBusinessCards(previousCards);
+        if (
+          personalBusinessCardsAccountIdRef.current === saveAccountId &&
+          personalBusinessCardsSaveRequestIdRef.current === requestId
+        ) {
+          const confirmedCards = personalBusinessCardsConfirmedRef.current;
+          personalBusinessCardsRef.current = confirmedCards;
+          setPersonalBusinessCards(confirmedCards);
           setPersonalProfileMessage(
             error instanceof Error ? error.message : "名片保存失败，请稍后重试",
           );
@@ -3133,6 +3162,7 @@ export default function MePage() {
       const nextProfile = readPersonalGuestProfile();
       setPersonalProfileDraft(nextProfile);
       personalBusinessCardsRef.current = [];
+      personalBusinessCardsConfirmedRef.current = [];
       setPersonalBusinessCards([]);
       const nextFavoriteSites = normalizePersonalFavoriteSites(readPersonalGuestFavoriteSites<PersonalFavoriteSite>());
       personalFavoriteSitesRef.current = nextFavoriteSites;
@@ -3141,6 +3171,8 @@ export default function MePage() {
       return;
     }
     if (!accountId) {
+      personalBusinessCardsRef.current = [];
+      personalBusinessCardsConfirmedRef.current = [];
       setPersonalBusinessCards([]);
       setPersonalFavoriteSites([]);
       setPersonalProfileLoaded(false);
@@ -3148,6 +3180,9 @@ export default function MePage() {
     }
     let cancelled = false;
     setPersonalProfileLoaded(false);
+    personalBusinessCardsRef.current = [];
+    personalBusinessCardsConfirmedRef.current = [];
+    setPersonalBusinessCards([]);
     void (async () => {
       try {
         const response = await fetch("/api/personal-profile", {
@@ -3176,18 +3211,18 @@ export default function MePage() {
         }
         const nextCards = normalizeMerchantBusinessCards(result.businessCards);
         personalBusinessCardsRef.current = nextCards;
+        personalBusinessCardsConfirmedRef.current = nextCards;
         setPersonalBusinessCards(nextCards);
         const nextFavoriteSites = normalizePersonalFavoriteSites(result.favoriteSites);
         personalFavoriteSitesRef.current = nextFavoriteSites;
         setPersonalFavoriteSites(nextFavoriteSites);
         setPersonalProfileLoaded(true);
-      } catch {
+      } catch (error) {
         if (cancelled) return;
-        personalBusinessCardsRef.current = [];
-        setPersonalBusinessCards([]);
         personalFavoriteSitesRef.current = [];
         setPersonalFavoriteSites([]);
         setPersonalProfileLoaded(false);
+        setPersonalProfileMessage(error instanceof Error ? error.message : "名片加载失败，请稍后重试");
       }
     })();
     return () => {

@@ -7117,6 +7117,7 @@ export default function AdminClient({
   const supportSelfScrollContainerRef = useRef<HTMLDivElement>(null);
   const merchantChatBusinessCardSyncTimerRef = useRef<number | null>(null);
   const merchantChatBusinessCardSyncPayloadRef = useRef("");
+  const merchantChatBusinessCardSyncQueueRef = useRef<Promise<void>>(Promise.resolve());
   const hydrateSupportMerchantProfileRef = useRef<
     (
       merchantId: string,
@@ -14373,6 +14374,40 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     [requestMerchantChatWithSessionRecovery],
   );
 
+  const enqueueMerchantChatBusinessCardSync = useCallback(
+    (body: string) => {
+      const task = merchantChatBusinessCardSyncQueueRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          let response: Response | null = null;
+          for (let attempt = 0; attempt < 2; attempt += 1) {
+            response = await requestMerchantChatBusinessCardSync({
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body,
+            }).catch(() => null);
+            if (response?.ok) return response;
+            const shouldRetry =
+              attempt === 0 &&
+              (!response || response.status === 409 || response.status >= 500);
+            if (!shouldRetry) return response;
+            await new Promise<void>((resolve) => {
+              window.setTimeout(resolve, 250);
+            });
+          }
+          return response;
+        });
+      merchantChatBusinessCardSyncQueueRef.current = task.then(
+        () => undefined,
+        () => undefined,
+      );
+      return task;
+    },
+    [requestMerchantChatBusinessCardSync],
+  );
+
   const handleSupportMessageImageActivate = useCallback((payload: SupportMessageImageActivatePayload) => {
     setSupportImagePreview({
       rawText: payload.rawText,
@@ -14778,7 +14813,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   const scheduleMerchantChatBusinessCardSync = useCallback(
     (merchantId: string, cards: MerchantBusinessCardAsset[]) => {
-      if (isPlatformEditor || typeof window === "undefined") return;
+      if (typeof window === "undefined") return;
       const normalizedMerchantId = String(merchantId ?? "").trim();
       if (!normalizedMerchantId) return;
       const normalizedCards = normalizeMerchantBusinessCards(cards);
@@ -14793,20 +14828,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       }
       merchantChatBusinessCardSyncTimerRef.current = window.setTimeout(() => {
         void (async () => {
-          const response = await requestMerchantChatBusinessCardSync({
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body,
-          }).catch(() => null);
+          const response = await enqueueMerchantChatBusinessCardSync(body);
           if (response?.ok) {
             merchantChatBusinessCardSyncPayloadRef.current = body;
           }
         })();
       }, 500);
     },
-    [isPlatformEditor, requestMerchantChatBusinessCardSync],
+    [enqueueMerchantChatBusinessCardSync],
   );
 
   useEffect(() => {
@@ -14827,13 +14856,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     const body = currentMerchantChatBusinessCardSyncPayload;
     merchantChatBusinessCardSyncTimerRef.current = window.setTimeout(() => {
       void (async () => {
-        const response = await requestMerchantChatBusinessCardSync({
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body,
-        }).catch(() => null);
+        const response = await enqueueMerchantChatBusinessCardSync(body);
         if (response?.ok) {
           merchantChatBusinessCardSyncPayloadRef.current = body;
         }
@@ -14850,7 +14873,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     editingSiteId,
     explicitFaollaSectionEntry,
     isPlatformEditor,
-    requestMerchantChatBusinessCardSync,
+    enqueueMerchantChatBusinessCardSync,
   ]);
 
   const loadSupportThread = useCallback(async (options?: { silent?: boolean; suppressError?: boolean }) => {

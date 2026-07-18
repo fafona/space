@@ -49,6 +49,10 @@ function toErrorMessage(input: unknown) {
   return typeof message === "string" && message.trim() ? message.trim() : "unknown_error";
 }
 
+function buildPersonalBusinessCardLoadError(input: unknown) {
+  return new Error(`personal_business_cards_load_failed:${toErrorMessage(input)}`);
+}
+
 function isMissingSlugColumn(message: string) {
   return (
     /column\s+pages\.slug\s+does\s+not\s+exist/i.test(message) ||
@@ -115,13 +119,13 @@ export async function loadStoredPersonalBusinessCards(
       data = bySlug.data as { blocks?: unknown; updated_at?: unknown } | null;
       error = bySlug.error;
     } else if (isMissingSlugColumn(message)) {
-      return null;
+      throw buildPersonalBusinessCardLoadError(error);
     } else {
-      return null;
+      throw buildPersonalBusinessCardLoadError(error);
     }
   }
 
-  if (error) return null;
+  if (error) throw buildPersonalBusinessCardLoadError(error);
   const cards = readCardsFromBlocks(data?.blocks);
   return {
     accountId: normalizedAccountId,

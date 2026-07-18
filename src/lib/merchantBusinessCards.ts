@@ -211,6 +211,16 @@ export type MerchantBusinessCardAsset = MerchantBusinessCardDraft & {
   chatDisplayDisabled?: boolean;
 };
 
+export function stripMerchantBusinessCardShareMetadata(
+  card: MerchantBusinessCardAsset,
+): MerchantBusinessCardAsset {
+  const cardWithoutShareMetadata = { ...card };
+  delete cardWithoutShareMetadata.shareImageUrl;
+  delete cardWithoutShareMetadata.contactPagePublicImageUrl;
+  delete cardWithoutShareMetadata.shareKey;
+  return cardWithoutShareMetadata;
+}
+
 export type MerchantBusinessCardProfileInput = {
   merchantName?: string;
   domainPrefix?: string;

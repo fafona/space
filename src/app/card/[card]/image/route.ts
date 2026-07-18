@@ -2,12 +2,15 @@ import { NextResponse } from "next/server";
 import {
   isMerchantBusinessCardShareRevoked,
   loadMerchantBusinessCardSharePayloadByKey,
+  normalizeMerchantBusinessCardShareImageUrl,
   normalizeMerchantBusinessCardShareKey,
   resolveMerchantBusinessCardShareOrigin,
 } from "@/lib/merchantBusinessCardShare";
+import type { MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
+import { loadCurrentMerchantSnapshotSites, loadPublishedMerchantSnapshotSites } from "@/lib/publishedMerchantService";
 
 const CARD_IMAGE_CACHE_TTL_MS = 60_000;
-const CARD_IMAGE_REDIRECT_CACHE_CONTROL = "public, max-age=0, s-maxage=300, stale-while-revalidate=600";
+const CARD_IMAGE_REDIRECT_CACHE_CONTROL = "no-store, max-age=0";
 
 const cardImageUrlCache = new Map<
   string,
@@ -67,6 +70,86 @@ function clearCachedCardImageUrl(shareKey: string) {
   if (normalizedShareKey) cardImageUrlCache.delete(normalizedShareKey);
 }
 
+type CardImageSnapshotSite = {
+  businessCards?: MerchantBusinessCardAsset[] | null;
+};
+
+export function findCardImageUrlInSnapshotSites(
+  sites: CardImageSnapshotSite[],
+  shareKey: string,
+) {
+  const normalizedShareKey = normalizeMerchantBusinessCardShareKey(shareKey);
+  if (!normalizedShareKey) return "";
+  for (const site of sites) {
+    const cards = Array.isArray(site.businessCards) ? site.businessCards : [];
+    const card = cards.find(
+      (item) => normalizeMerchantBusinessCardShareKey(item.shareKey) === normalizedShareKey,
+    );
+    if (!card) continue;
+    return String(card.shareImageUrl || card.imageUrl || "").trim();
+  }
+  return "";
+}
+
+export function normalizeCardImageRedirectUrl(value: string, origin: string) {
+  const imageUrl = String(value ?? "").trim();
+  if (!imageUrl) return "";
+  try {
+    const parsed = new URL(imageUrl);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      return parsed.toString();
+    }
+  } catch {
+    // Relative storage paths still need the public origin applied below.
+  }
+  return normalizeMerchantBusinessCardShareImageUrl(imageUrl, origin);
+}
+
+async function resolveCardImageUrlFromSnapshot(shareKey: string, origin: string) {
+  const publishedImageUrl = findCardImageUrlInSnapshotSites(
+    await loadPublishedMerchantSnapshotSites().catch(() => []),
+    shareKey,
+  );
+  if (publishedImageUrl) {
+    return normalizeCardImageRedirectUrl(publishedImageUrl, origin);
+  }
+  const currentImageUrl = findCardImageUrlInSnapshotSites(
+    await loadCurrentMerchantSnapshotSites().catch(() => []),
+    shareKey,
+  );
+  return normalizeCardImageRedirectUrl(currentImageUrl, origin);
+}
+
+function firstResolvedCardImageUrl(tasks: Array<Promise<string>>) {
+  return new Promise<string>((resolve) => {
+    if (tasks.length === 0) {
+      resolve("");
+      return;
+    }
+    let remaining = tasks.length;
+    let settled = false;
+    tasks.forEach((task) => {
+      task
+        .then((value) => {
+          if (settled) return;
+          const imageUrl = String(value ?? "").trim();
+          if (imageUrl) {
+            settled = true;
+            resolve(imageUrl);
+            return;
+          }
+          remaining -= 1;
+          if (remaining <= 0) resolve("");
+        })
+        .catch(() => {
+          if (settled) return;
+          remaining -= 1;
+          if (remaining <= 0) resolve("");
+        });
+    });
+  });
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ card: string }> },
@@ -87,6 +170,9 @@ export async function GET(
   const payloadOrigin = resolveMerchantBusinessCardShareOrigin(requestOrigin, requestOrigin) || requestOrigin;
   const cachedImageUrl = readCachedCardImageUrl(shareKey);
   const payloadPromise = loadMerchantBusinessCardSharePayloadByKey(shareKey, payloadOrigin);
+  const snapshotImagePromise = cachedImageUrl
+    ? null
+    : resolveCardImageUrlFromSnapshot(shareKey, payloadOrigin).catch(() => "");
   const revoked = await withCardImageTimeout(
     isMerchantBusinessCardShareRevoked({
       shareKey,
@@ -113,9 +199,12 @@ export async function GET(
   const imageUrl =
     cachedImageUrl ||
     (await withCardImageTimeout(
-      payloadPromise.then((payload) => String(payload?.imageUrl ?? "").trim()).catch(() => ""),
+      firstResolvedCardImageUrl([
+        payloadPromise.then((payload) => String(payload?.imageUrl ?? "").trim()),
+        ...(snapshotImagePromise ? [snapshotImagePromise] : []),
+      ]),
       "",
-      1_800,
+      4_000,
     ));
   if (!imageUrl) {
     return new NextResponse("Business card image not found", {
