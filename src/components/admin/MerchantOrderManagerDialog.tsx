@@ -704,6 +704,8 @@ export default function MerchantOrderManagerDialog({
         let baseOrder = order;
         if (
           options.persistDetailDraft &&
+          order.status !== "completed" &&
+          order.status !== "cancelled" &&
           (status === "confirmed" || status === "completed") &&
           hasDetailQuantityDraftChanges(order)
         ) {
@@ -1095,7 +1097,10 @@ export default function MerchantOrderManagerDialog({
                       {detailPreviewEntries.map(({ item, index, quantity, subtotal }) => {
                         const itemDraftKey = getDetailItemDraftKey(detailOrder.id, index);
                         const draftQuantity = detailQuantityDrafts[itemDraftKey] ?? String(quantity);
-                        const isDetailActionBusy = busyKey.endsWith(`:${detailOrder.id}`);
+                        const isDetailActionBusy =
+                          busyKey.endsWith(`:${detailOrder.id}`) ||
+                          detailOrder.status === "completed" ||
+                          detailOrder.status === "cancelled";
                         return (
                           <div
                             key={`${detailOrder.id}-${item.productId}-${item.code}-${index}`}

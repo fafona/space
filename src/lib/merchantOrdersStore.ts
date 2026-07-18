@@ -38,6 +38,10 @@ function toErrorMessage(input: unknown) {
   return typeof message === "string" && message.trim() ? message.trim() : "unknown_error";
 }
 
+function throwOrdersStoreQueryError(input: unknown): never {
+  throw new Error(`merchant_orders_read_failed:${toErrorMessage(input)}`);
+}
+
 function isMissingSlugColumn(message: string) {
   return (
     /column\s+pages\.slug\s+does\s+not\s+exist/i.test(message) ||
@@ -215,11 +219,14 @@ async function listStoredMerchantOrdersRows(supabase: MerchantOrdersStoreClient,
     } else if (isMissingSlugColumn(message)) {
       return [];
     } else {
-      return [];
+      throwOrdersStoreQueryError(error);
     }
   }
 
-  if (error) return [];
+  if (error) {
+    if (isMissingSlugColumn(toErrorMessage(error))) return [];
+    throwOrdersStoreQueryError(error);
+  }
   return Array.isArray(data) ? data : [];
 }
 
@@ -258,7 +265,10 @@ async function listStoredMerchantOrdersRowMetadata(supabase: MerchantOrdersStore
     error = fallback.error;
   }
 
-  if (error) return [];
+  if (error) {
+    if (isMissingSlugColumn(toErrorMessage(error))) return [];
+    throwOrdersStoreQueryError(error);
+  }
   return Array.isArray(data) ? data : [];
 }
 
@@ -301,7 +311,10 @@ async function listStoredMerchantOrdersRowsBySlugs(
     error = fallback.error;
   }
 
-  if (error) return [];
+  if (error) {
+    if (isMissingSlugColumn(toErrorMessage(error))) return [];
+    throwOrdersStoreQueryError(error);
+  }
   return Array.isArray(data) ? data : [];
 }
 
@@ -333,7 +346,7 @@ async function listStoredMerchantOrdersRowsBySlugPrefix(supabase: MerchantOrders
       }
     }
 
-    if (error) return rows;
+    if (error) throwOrdersStoreQueryError(error);
     if (!Array.isArray(data) || data.length === 0) break;
     rows.push(...data);
     if (data.length < pageSize) break;

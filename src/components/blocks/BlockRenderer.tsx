@@ -296,6 +296,7 @@ export default function BlockRenderer({
             runtimeSiteId={bookingSiteId}
             runtimeSiteName={bookingSiteName}
             runtimeBlockId={b.id}
+            runtimeCatalogViewport={bookingViewport ?? (forceMobileViewport ? "mobile" : "desktop")}
             runtimeOrderManagementEnabled={productCartEnabled}
             runtimeInteractiveOverlayWithinBlock={forceMobileViewport || options.openedView === true}
             runtimeDisableCartPortal={options.openedView === true}

@@ -368,6 +368,7 @@ function prependTransactionPreservingTarget(
 export function quoteMerchantMemberRechargeCancellation(input: {
   membership: MerchantMembershipRecord;
   transactionId: unknown;
+  allowGrowthOnly?: boolean;
 }): MerchantRechargeCancellationQuote {
   const transactionId = trimText(input.transactionId, 120);
   const transaction = input.membership.transactions.find((item) => item.id === transactionId);
@@ -376,7 +377,12 @@ export function quoteMerchantMemberRechargeCancellation(input: {
 
   const originalPointAmount = Math.max(0, transaction.pointDelta);
   const originalBalanceAmount = normalizeNonNegativeMoney(transaction.balanceDelta);
-  if (transaction.pointDelta < 0 || transaction.balanceDelta < 0 || (originalPointAmount <= 0 && originalBalanceAmount <= 0)) {
+  const originalGrowthAmount = Math.max(0, transaction.growthDelta);
+  if (
+    transaction.pointDelta < 0 ||
+    transaction.balanceDelta < 0 ||
+    (originalPointAmount <= 0 && originalBalanceAmount <= 0 && !(input.allowGrowthOnly && originalGrowthAmount > 0))
+  ) {
     throw new Error("membership_recharge_not_cancellable");
   }
 
@@ -448,6 +454,7 @@ export function cancelMerchantMemberRechargeTransaction(input: {
   cancelledBy?: unknown;
   cancellationOperationMarker?: unknown;
   reversalTransactionId?: unknown;
+  allowGrowthOnly?: boolean;
 }) {
   const transactionId = trimText(input.transactionId, 120);
   const transaction = input.membership.transactions.find((item) => item.id === transactionId);
@@ -462,6 +469,7 @@ export function cancelMerchantMemberRechargeTransaction(input: {
   const quote = quoteMerchantMemberRechargeCancellation({
     membership: input.membership,
     transactionId,
+    allowGrowthOnly: input.allowGrowthOnly,
   });
   if (!quote.canCancel) {
     throw new Error("membership_recharge_cancel_balance_insufficient");

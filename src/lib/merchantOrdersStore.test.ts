@@ -4,8 +4,24 @@ import { createMerchantOrder } from "@/lib/merchantOrders";
 import {
   chunkMerchantOrderRecords,
   getMerchantOrderChunkIndexesForWindow,
+  listStoredMerchantOrdersByCustomer,
+  loadStoredMerchantOrders,
   mergeStoredMerchantOrdersRows,
+  type MerchantOrdersStoreClient,
 } from "@/lib/merchantOrdersStore";
+
+function createReadClient(result: { data: unknown; error: unknown }): MerchantOrdersStoreClient {
+  const query = {
+    select: () => query,
+    eq: () => query,
+    like: () => query,
+    in: () => query,
+    range: () => query,
+    then: (resolve: (value: typeof result) => unknown, reject: (reason: unknown) => unknown) =>
+      Promise.resolve(result).then(resolve, reject),
+  };
+  return { from: () => query };
+}
 
 test("chunkMerchantOrderRecords splits orders into stable chunks", () => {
   const orders = Array.from({ length: 205 }, (_, index) =>
@@ -72,4 +88,18 @@ test("mergeStoredMerchantOrdersRows prefers chunked rows over legacy row", () =>
   assert.equal(merged?.orders.length, 1);
   assert.equal(merged?.orders[0]?.id, second.id);
   assert.equal(merged?.updatedAt, "2026-04-18T10:00:00.000Z");
+});
+
+test("order store propagates unexpected read failures instead of reporting empty data", async () => {
+  const client = createReadClient({ data: null, error: { message: "upstream timeout" } });
+  await assert.rejects(() => loadStoredMerchantOrders(client, "10000000"), /merchant_orders_read_failed:upstream timeout/);
+  await assert.rejects(
+    () => listStoredMerchantOrdersByCustomer(client, { accountId: "account-1" }),
+    /merchant_orders_read_failed:upstream timeout/,
+  );
+});
+
+test("order store still treats a known legacy schema without slug as empty", async () => {
+  const client = createReadClient({ data: null, error: { message: "column pages.slug does not exist" } });
+  assert.equal(await loadStoredMerchantOrders(client, "10000000"), null);
 });

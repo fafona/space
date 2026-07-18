@@ -92,3 +92,19 @@ test("normalizeProductItems preserves product thumbnail urls", () => {
   assert.equal(item?.imageUrl, "https://example.com/full.jpg");
   assert.equal(item?.thumbnailUrl, "https://example.com/thumb.webp");
 });
+
+test("normalizeProductItems gives legacy and duplicate products deterministic unique ids", () => {
+  const source = [
+    { code: "SKU-001", name: "A", price: "1" },
+    { code: "SKU-001", name: "A", price: "1" },
+    { id: "fixed", name: "B" },
+    { id: "fixed", name: "C" },
+  ];
+  const first = normalizeProductItems(source).map((item) => item.id);
+  const second = normalizeProductItems(source).map((item) => item.id);
+
+  assert.deepEqual(first, second);
+  assert.equal(new Set(first).size, first.length);
+  assert.match(first[0] ?? "", /^product-legacy-/);
+  assert.equal(first[3], "fixed-2");
+});

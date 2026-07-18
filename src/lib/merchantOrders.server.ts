@@ -12,13 +12,35 @@ import {
   type MerchantOrderRecord,
   type MerchantOrderStatus,
 } from "@/lib/merchantOrders";
-import { awardMerchantMembershipPointsForOrder } from "@/lib/merchantMemberships.server";
+import { syncMerchantMembershipPointsForOrderTransitions } from "@/lib/merchantMemberships.server";
 import {
   listStoredMerchantOrdersByCustomer,
   loadStoredMerchantOrders,
   loadStoredMerchantOrdersWindow,
   saveStoredMerchantOrders,
 } from "@/lib/merchantOrdersStore";
+
+const merchantOrderMutationTails = new Map<string, Promise<void>>();
+
+async function withMerchantOrderMutationLock<T>(siteId: string, task: () => Promise<T>) {
+  const normalizedSiteId = String(siteId ?? "").trim();
+  const previous = merchantOrderMutationTails.get(normalizedSiteId) ?? Promise.resolve();
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.catch(() => undefined).then(() => gate);
+  merchantOrderMutationTails.set(normalizedSiteId, tail);
+  await previous.catch(() => undefined);
+  try {
+    return await task();
+  } finally {
+    release();
+    if (merchantOrderMutationTails.get(normalizedSiteId) === tail) {
+      merchantOrderMutationTails.delete(normalizedSiteId);
+    }
+  }
+}
 
 function requireOrdersStoreClient() {
   const supabase = createServerSupabaseServiceClient();
@@ -60,36 +82,52 @@ export async function createMerchantOrderRecord(input: MerchantOrderCreateInput)
   if (!siteId) {
     throw new Error("invalid_site_id");
   }
-  const stored = await loadStoredMerchantOrders(supabase, siteId);
-  const existingOrders = normalizeMerchantOrderRecords(stored?.orders ?? []);
-  const nowDate = new Date();
-  const nextId = buildMerchantOrderId(
-    siteId,
-    nowDate,
-    existingOrders.map((item) => item.id),
-  );
-  if (!nextId) {
-    throw new Error("order_id_generation_failed");
-  }
-  const next = createMerchantOrder(input, {
-    id: nextId,
-    createdAt: nowDate,
-    updatedAt: nowDate,
-    merchantTouchedAt: "",
+  return withMerchantOrderMutationLock(siteId, async () => {
+    const stored = await loadStoredMerchantOrders(supabase, siteId);
+    const existingOrders = normalizeMerchantOrderRecords(stored?.orders ?? []);
+    const clientRequestId = trimText(input.clientRequestId);
+    if (clientRequestId) {
+      const existingRequest = existingOrders.find((order) => order.clientRequestId === clientRequestId);
+      if (existingRequest) {
+        const sameOwner =
+          (input.customerAccountId && existingRequest.customerAccountId === trimText(input.customerAccountId)) ||
+          (input.customerUserId && existingRequest.customerUserId === trimText(input.customerUserId)) ||
+          (input.customerLoginEmail &&
+            existingRequest.customerLoginEmail === trimText(input.customerLoginEmail).toLowerCase()) ||
+          (input.customerGuestHash && existingRequest.customerGuestHash === trimText(input.customerGuestHash));
+        if (!sameOwner) throw new Error("order_request_conflict");
+        return existingRequest;
+      }
+    }
+    const nowDate = new Date();
+    const nextId = buildMerchantOrderId(
+      siteId,
+      nowDate,
+      existingOrders.map((item) => item.id),
+    );
+    if (!nextId) {
+      throw new Error("order_id_generation_failed");
+    }
+    const next = createMerchantOrder(input, {
+      id: nextId,
+      createdAt: nowDate,
+      updatedAt: nowDate,
+      merchantTouchedAt: "",
+    });
+    if (next.items.length === 0) {
+      throw new Error("order_items_required");
+    }
+    const orders = [next, ...existingOrders];
+    const saved = await saveStoredMerchantOrders(supabase, {
+      siteId: next.siteId,
+      orders,
+      updatedAt: next.updatedAt,
+    });
+    if (saved.error) {
+      throw new Error(saved.error);
+    }
+    return next;
   });
-  if (next.items.length === 0) {
-    throw new Error("order_items_required");
-  }
-  const orders = [next, ...(stored?.orders ?? [])];
-  const saved = await saveStoredMerchantOrders(supabase, {
-    siteId: next.siteId,
-    orders,
-    updatedAt: next.updatedAt,
-  });
-  if (saved.error) {
-    throw new Error(saved.error);
-  }
-  return next;
 }
 
 function trimText(value: unknown) {
@@ -127,31 +165,33 @@ export async function cancelPersonalMerchantOrder(input: {
   if (!siteId || !orderId || (!lookup.accountId && !lookup.userId && !lookup.email)) {
     throw new Error("order_not_found");
   }
-  const stored = await loadStoredMerchantOrders(supabase, siteId);
-  const orders = normalizeMerchantOrderRecords(stored?.orders ?? []);
-  const orderIndex = orders.findIndex((order) => order.id === orderId);
-  if (orderIndex < 0) throw new Error("order_not_found");
-  const current = orders[orderIndex];
-  if (!matchesPersonalOrderCustomer(current, lookup)) throw new Error("order_not_found");
-  if (current.status !== "pending" || trimText(current.merchantTouchedAt)) {
-    throw new Error("order_customer_action_locked");
-  }
-  const now = new Date().toISOString();
-  const next = {
-    ...current,
-    status: "cancelled" as const,
-    updatedAt: now,
-    cancelledAt: now,
-  };
-  const updatedOrders = [...orders];
-  updatedOrders[orderIndex] = next;
-  const saved = await saveStoredMerchantOrders(supabase, {
-    siteId,
-    orders: updatedOrders,
-    updatedAt: now,
+  return withMerchantOrderMutationLock(siteId, async () => {
+    const stored = await loadStoredMerchantOrders(supabase, siteId);
+    const orders = normalizeMerchantOrderRecords(stored?.orders ?? []);
+    const orderIndex = orders.findIndex((order) => order.id === orderId);
+    if (orderIndex < 0) throw new Error("order_not_found");
+    const current = orders[orderIndex];
+    if (!matchesPersonalOrderCustomer(current, lookup)) throw new Error("order_not_found");
+    if (current.status !== "pending" || trimText(current.merchantTouchedAt)) {
+      throw new Error("order_customer_action_locked");
+    }
+    const now = new Date().toISOString();
+    const next = {
+      ...current,
+      status: "cancelled" as const,
+      updatedAt: now,
+      cancelledAt: now,
+    };
+    const updatedOrders = [...orders];
+    updatedOrders[orderIndex] = next;
+    const saved = await saveStoredMerchantOrders(supabase, {
+      siteId,
+      orders: updatedOrders,
+      updatedAt: now,
+    });
+    if (saved.error) throw new Error(saved.error);
+    return next;
   });
-  if (saved.error) throw new Error(saved.error);
-  return next;
 }
 
 export async function attachPersonalMerchantOrdersByGuestHash(input: {
@@ -180,37 +220,39 @@ export async function attachPersonalMerchantOrdersByGuestHash(input: {
   }
   const attached: MerchantOrderRecord[] = [];
   for (const [siteId, orderIds] of siteMap.entries()) {
-    const stored = await loadStoredMerchantOrders(supabase, siteId);
-    const orders = normalizeMerchantOrderRecords(stored?.orders ?? []);
-    let changed = false;
-    const nextOrders = orders.map((order) => {
-      if (!orderIds.has(order.id)) return order;
-      if (trimText(order.customerGuestHash) !== guestHash) return order;
-      const existingOwner =
-        trimText(order.customerAccountId) || trimText(order.customerUserId) || trimText(order.customerLoginEmail).toLowerCase();
-      const ownedByCurrent =
-        (accountId && trimText(order.customerAccountId) === accountId) ||
-        (userId && trimText(order.customerUserId) === userId) ||
-        (email && trimText(order.customerLoginEmail).toLowerCase() === email);
-      if (existingOwner && !ownedByCurrent) return order;
-      const next: MerchantOrderRecord = {
-        ...order,
-        customerAccountId: accountId || order.customerAccountId,
-        customerUserId: userId || order.customerUserId,
-        customerLoginEmail: email || order.customerLoginEmail,
-      };
-      changed = true;
-      attached.push(next);
-      return next;
-    });
-    if (changed) {
-      const saved = await saveStoredMerchantOrders(supabase, {
-        siteId,
-        orders: nextOrders,
-        updatedAt: new Date().toISOString(),
+    await withMerchantOrderMutationLock(siteId, async () => {
+      const stored = await loadStoredMerchantOrders(supabase, siteId);
+      const orders = normalizeMerchantOrderRecords(stored?.orders ?? []);
+      let changed = false;
+      const nextOrders = orders.map((order) => {
+        if (!orderIds.has(order.id)) return order;
+        if (trimText(order.customerGuestHash) !== guestHash) return order;
+        const existingOwner =
+          trimText(order.customerAccountId) || trimText(order.customerUserId) || trimText(order.customerLoginEmail).toLowerCase();
+        const ownedByCurrent =
+          (accountId && trimText(order.customerAccountId) === accountId) ||
+          (userId && trimText(order.customerUserId) === userId) ||
+          (email && trimText(order.customerLoginEmail).toLowerCase() === email);
+        if (existingOwner && !ownedByCurrent) return order;
+        const next: MerchantOrderRecord = {
+          ...order,
+          customerAccountId: accountId || order.customerAccountId,
+          customerUserId: userId || order.customerUserId,
+          customerLoginEmail: email || order.customerLoginEmail,
+        };
+        changed = true;
+        attached.push(next);
+        return next;
       });
-      if (saved.error) throw new Error(saved.error);
-    }
+      if (changed) {
+        const saved = await saveStoredMerchantOrders(supabase, {
+          siteId,
+          orders: nextOrders,
+          updatedAt: new Date().toISOString(),
+        });
+        if (saved.error) throw new Error(saved.error);
+      }
+    });
   }
   return attached;
 }
@@ -223,38 +265,43 @@ export async function updateMerchantOrderBySite(input: {
   items?: MerchantOrderLineItemInput[];
 }) {
   const supabase = requireOrdersStoreClient();
-  const stored = await loadStoredMerchantOrders(supabase, input.siteId);
-  const orders = normalizeMerchantOrderRecords(stored?.orders ?? []);
-  const orderIndex = orders.findIndex((order) => order.id === input.orderId);
-  if (orderIndex < 0) {
-    throw new Error("order_not_found");
-  }
-  const current = orders[orderIndex];
-  const now = new Date().toISOString();
-  const next = Array.isArray(input.items)
-    ? updateMerchantOrderItems(current, input.items, now)
-    : input.status
-      ? applyMerchantOrderStatus(current, input.status, now)
-    : input.action
-      ? applyMerchantOrderAction(current, input.action, now)
-      : null;
-  if (!next) {
-    throw new Error("invalid_order_update");
-  }
-  const updatedOrders = [...orders];
-  updatedOrders[orderIndex] = next;
-  const saved = await saveStoredMerchantOrders(supabase, {
-    siteId: input.siteId,
-    orders: updatedOrders,
-    updatedAt: now,
+  const siteId = trimText(input.siteId);
+  return withMerchantOrderMutationLock(siteId, async () => {
+    const stored = await loadStoredMerchantOrders(supabase, siteId);
+    const orders = normalizeMerchantOrderRecords(stored?.orders ?? []);
+    const orderIndex = orders.findIndex((order) => order.id === input.orderId);
+    if (orderIndex < 0) {
+      throw new Error("order_not_found");
+    }
+    const current = orders[orderIndex];
+    if (Array.isArray(input.items) && (current.status === "completed" || current.status === "cancelled")) {
+      throw new Error("order_items_locked");
+    }
+    const now = new Date().toISOString();
+    const next = Array.isArray(input.items)
+      ? updateMerchantOrderItems(current, input.items, now)
+      : input.status
+        ? applyMerchantOrderStatus(current, input.status, now)
+      : input.action
+        ? applyMerchantOrderAction(current, input.action, now)
+        : null;
+    if (!next) {
+      throw new Error("invalid_order_update");
+    }
+    await syncMerchantMembershipPointsForOrderTransitions([{ previous: current, next }]);
+    const updatedOrders = [...orders];
+    updatedOrders[orderIndex] = next;
+    const saved = await saveStoredMerchantOrders(supabase, {
+      siteId,
+      orders: updatedOrders,
+      updatedAt: now,
+    });
+    if (saved.error) {
+      await syncMerchantMembershipPointsForOrderTransitions([{ previous: next, next: current }]).catch(() => null);
+      throw new Error(saved.error);
+    }
+    return next;
   });
-  if (saved.error) {
-    throw new Error(saved.error);
-  }
-  if (next.status === "completed" && current.status !== "completed") {
-    await awardMerchantMembershipPointsForOrder(next).catch(() => null);
-  }
-  return next;
 }
 
 export async function updateMerchantOrdersBatchBySite(input: {
@@ -272,37 +319,40 @@ export async function updateMerchantOrdersBatchBySite(input: {
   if (!input.action && !input.status) {
     throw new Error("invalid_order_update");
   }
-  const stored = await loadStoredMerchantOrders(supabase, siteId);
-  const orders = normalizeMerchantOrderRecords(stored?.orders ?? []);
-  const orderIdSet = new Set(orderIds);
-  const now = new Date().toISOString();
-  const updatedOrders: MerchantOrderRecord[] = [];
-  const nextOrders = orders.map((order) => {
-    if (!orderIdSet.has(order.id)) return order;
-    const next = input.status
-      ? applyMerchantOrderStatus(order, input.status, now)
-      : input.action
-        ? applyMerchantOrderAction(order, input.action, now)
-        : null;
-    if (!next) return order;
-    updatedOrders.push(next);
-    return next;
+  return withMerchantOrderMutationLock(siteId, async () => {
+    const stored = await loadStoredMerchantOrders(supabase, siteId);
+    const orders = normalizeMerchantOrderRecords(stored?.orders ?? []);
+    const orderIdSet = new Set(orderIds);
+    const now = new Date().toISOString();
+    const updatedOrders: MerchantOrderRecord[] = [];
+    const transitions: Array<{ previous: MerchantOrderRecord; next: MerchantOrderRecord }> = [];
+    const nextOrders = orders.map((order) => {
+      if (!orderIdSet.has(order.id)) return order;
+      const next = input.status
+        ? applyMerchantOrderStatus(order, input.status, now)
+        : input.action
+          ? applyMerchantOrderAction(order, input.action, now)
+          : null;
+      if (!next) return order;
+      updatedOrders.push(next);
+      transitions.push({ previous: order, next });
+      return next;
+    });
+    if (updatedOrders.length === 0) {
+      throw new Error("order_not_found");
+    }
+    await syncMerchantMembershipPointsForOrderTransitions(transitions);
+    const saved = await saveStoredMerchantOrders(supabase, {
+      siteId,
+      orders: nextOrders,
+      updatedAt: now,
+    });
+    if (saved.error) {
+      await syncMerchantMembershipPointsForOrderTransitions(
+        transitions.map(({ previous, next }) => ({ previous: next, next: previous })),
+      ).catch(() => null);
+      throw new Error(saved.error);
+    }
+    return updatedOrders;
   });
-  if (updatedOrders.length === 0) {
-    throw new Error("order_not_found");
-  }
-  const saved = await saveStoredMerchantOrders(supabase, {
-    siteId,
-    orders: nextOrders,
-    updatedAt: now,
-  });
-  if (saved.error) {
-    throw new Error(saved.error);
-  }
-  await Promise.all(
-    updatedOrders
-      .filter((order) => order.status === "completed")
-      .map((order) => awardMerchantMembershipPointsForOrder(order).catch(() => null)),
-  );
-  return updatedOrders;
 }

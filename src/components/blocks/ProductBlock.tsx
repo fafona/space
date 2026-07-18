@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, FocusEvent } from "react";
 import { createPortal } from "react-dom";
 import Image from "next/image";
@@ -50,6 +50,8 @@ import { useI18n } from "@/components/I18nProvider";
 import { resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
 import {
   formatMerchantOrderAmount,
+  MERCHANT_ORDER_MAX_ITEM_QUANTITY,
+  MERCHANT_ORDER_MAX_LINE_ITEMS,
   parseMerchantOrderPriceValue,
   type MerchantOrderCustomerInput,
   type MerchantOrderRecord,
@@ -108,6 +110,7 @@ type ProductBlockProps = BackgroundEditableProps &
     runtimeSiteId?: string;
     runtimeSiteName?: string;
     runtimeBlockId?: string;
+    runtimeCatalogViewport?: "desktop" | "mobile";
     runtimeOrderManagementEnabled?: boolean;
     runtimeInteractiveOverlayWithinBlock?: boolean;
     runtimeDisableCartPortal?: boolean;
@@ -131,6 +134,7 @@ type ProductCartItemState = {
 type ProductCartStorageState = {
   customer?: MerchantOrderCustomerInput;
   items?: ProductCartItemState[];
+  clientRequestId?: string;
 };
 
 type ProductCartFlyItem = {
@@ -359,7 +363,10 @@ function normalizeCartItems(items: ProductCartItemState[] | undefined, pricePref
   if (!Array.isArray(items)) return [];
   return items
     .map((item) => {
-      const quantity = Math.max(0, Math.round(Number(item?.quantity ?? 0) || 0));
+      const quantity = Math.min(
+        MERCHANT_ORDER_MAX_ITEM_QUANTITY,
+        Math.max(0, Math.round(Number(item?.quantity ?? 0) || 0)),
+      );
       const unitPrice =
         typeof item?.unitPrice === "number" && Number.isFinite(item.unitPrice)
           ? Math.max(0, Number(item.unitPrice.toFixed(2)))
@@ -382,7 +389,8 @@ function normalizeCartItems(items: ProductCartItemState[] | undefined, pricePref
         unitPriceText: String(item?.unitPriceText ?? "").trim() || formatMerchantOrderAmount(unitPrice, pricePrefix),
       } satisfies ProductCartItemState;
     })
-    .filter((item) => item.quantity > 0 && item.productId);
+    .filter((item) => item.quantity > 0 && item.productId)
+    .slice(0, MERCHANT_ORDER_MAX_LINE_ITEMS);
 }
 
 function normalizeCartCustomer(input: MerchantOrderCustomerInput | undefined): MerchantOrderCustomerInput {
@@ -425,6 +433,7 @@ function loadProductCartStorageState(storageKey: string, pricePrefix: string): P
     return {
       customer: normalizeCartCustomer(parsed.customer),
       items: normalizeCartItems(parsed.items, pricePrefix),
+      clientRequestId: String(parsed.clientRequestId ?? "").trim().slice(0, 160),
     };
   } catch {
     return {};
@@ -438,6 +447,11 @@ function saveProductCartStorageState(storageKey: string, next: ProductCartStorag
   } catch {
     // Ignore storage write failures.
   }
+}
+
+function createProductCartRequestId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return `cart-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
 function isOptimizableProductImageHost(hostname: string) {
@@ -680,19 +694,30 @@ export default function ProductBlock(props: ProductBlockProps) {
   const onOpenedCartStateChange = props.runtimeOnOpenedCartStateChange;
   const mobileFitScreenWidth = props.mobileFitScreenWidth === true;
   const { locale } = useI18n();
-  const products = normalizeProductItems(props.products)
-    .map((item) => ({
-      ...item,
-      imageUrl: normalizeProductImageSource(normalizePublicAssetUrl(item.imageUrl)),
-      thumbnailUrl: normalizeProductImageSource(normalizePublicAssetUrl(item.thumbnailUrl)),
-    }))
-    .filter((item) => isMeaningfulProductItem(item));
-  const productTags = Array.from(
-    new Set([...normalizeProductTagOptions(props.productTagOptions), ...products.map((item) => item.tag).filter(Boolean)]),
+  const products = useMemo(
+    () =>
+      normalizeProductItems(props.products)
+        .map((item) => ({
+          ...item,
+          imageUrl: normalizeProductImageSource(normalizePublicAssetUrl(item.imageUrl)),
+          thumbnailUrl: normalizeProductImageSource(normalizePublicAssetUrl(item.thumbnailUrl)),
+        }))
+        .filter((item) => isMeaningfulProductItem(item)),
+    [props.products],
+  );
+  const productTags = useMemo(
+    () =>
+      Array.from(
+        new Set([...normalizeProductTagOptions(props.productTagOptions), ...products.map((item) => item.tag).filter(Boolean)]),
+      ),
+    [products, props.productTagOptions],
   );
   const productTagKey = productTags.join("\u0001");
   const groupedByTag = props.productGroupByTag === true;
-  const arrangedProducts = arrangeProductItemsByTag(products, productTags, groupedByTag);
+  const arrangedProducts = useMemo(
+    () => arrangeProductItemsByTag(products, productTags, groupedByTag),
+    [groupedByTag, productTags, products],
+  );
   const layoutPreset = normalizeProductLayoutPreset(props.productLayoutPreset);
   const containerMode = normalizeProductContainerMode(props.productContainerMode);
   const hideProductScrollbar = props.productHideScrollbar === true;
@@ -806,6 +831,8 @@ export default function ProductBlock(props: ProductBlockProps) {
   const [searchKeyword, setSearchKeyword] = useState("");
   const [cartOpen, setCartOpen] = useState(false);
   const [cartItems, setCartItems] = useState<ProductCartItemState[]>([]);
+  const [cartClientRequestId, setCartClientRequestId] = useState("");
+  const [loadedCartStorageIdentity, setLoadedCartStorageIdentity] = useState("");
   const [cartCustomer, setCartCustomer] = useState<MerchantOrderCustomerInput>({});
   const [cartCustomerDefaults, setCartCustomerDefaults] = useState<MerchantOrderCustomerInput>({});
   const [cartCustomerAuthProof, setCartCustomerAuthProof] = useState("");
@@ -826,6 +853,7 @@ export default function ProductBlock(props: ProductBlockProps) {
   const openedCartCloseSignalRef = useRef(openedCartCloseSignal);
   const runtimeSiteId = String(props.runtimeSiteId ?? "").trim();
   const runtimeBlockId = String(props.runtimeBlockId ?? "").trim();
+  const runtimeCatalogViewport = props.runtimeCatalogViewport === "mobile" ? "mobile" : "desktop";
   if (runtimeSiteId) stableRuntimeSiteIdRef.current = runtimeSiteId;
   const effectiveRuntimeSiteId = runtimeSiteId || stableRuntimeSiteIdRef.current;
   const [cartRuntimeEnabled, setCartRuntimeEnabled] = useState(() =>
@@ -834,6 +862,7 @@ export default function ProductBlock(props: ProductBlockProps) {
   const cartEnabled = Boolean(cartRuntimeEnabled && runtimeBlockId);
   const cartRuntimeReady = Boolean(cartEnabled && effectiveRuntimeSiteId && runtimeBlockId);
   const cartStorageKey = cartRuntimeReady ? getProductCartStorageKey(effectiveRuntimeSiteId, runtimeBlockId) : "";
+  const cartStorageIdentity = cartStorageKey ? `${cartStorageKey}\u0001${pricePrefix}` : "";
   const overlayWithinBlock = props.runtimeInteractiveOverlayWithinBlock === true;
   const disableCartPortal = props.runtimeDisableCartPortal === true;
   const cartUsesOpenedShellHeader = openedView && overlayWithinBlock;
@@ -874,12 +903,12 @@ export default function ProductBlock(props: ProductBlockProps) {
     productScrollSpyEnabled && scrollActiveTag && productTags.includes(scrollActiveTag) ? scrollActiveTag : selectedTag;
 
   useEffect(() => {
-    if (props.runtimeOrderManagementEnabled && runtimeBlockId) {
-      setCartRuntimeEnabled(true);
-      return;
-    }
     if (!runtimeBlockId) {
       setCartRuntimeEnabled(false);
+      return;
+    }
+    if (typeof props.runtimeOrderManagementEnabled === "boolean") {
+      setCartRuntimeEnabled(props.runtimeOrderManagementEnabled);
     }
   }, [props.runtimeOrderManagementEnabled, runtimeBlockId]);
 
@@ -889,13 +918,17 @@ export default function ProductBlock(props: ProductBlockProps) {
       setCartCustomer({});
       setCartCustomerDefaults({});
       setCartCustomerAuthProof("");
+      setCartClientRequestId("");
+      setLoadedCartStorageIdentity("");
       return;
     }
     if (!cartStorageKey) return;
     const stored = loadProductCartStorageState(cartStorageKey, pricePrefix);
     setCartItems(stored.items ?? []);
     setCartCustomer(stored.customer ?? {});
-  }, [cartEnabled, cartStorageKey, pricePrefix]);
+    setCartClientRequestId(stored.clientRequestId ?? "");
+    setLoadedCartStorageIdentity(cartStorageIdentity);
+  }, [cartEnabled, cartStorageIdentity, cartStorageKey, pricePrefix]);
 
   useEffect(() => {
     if (overlayWithinBlock || disableCartPortal || typeof document === "undefined") {
@@ -1074,12 +1107,22 @@ export default function ProductBlock(props: ProductBlockProps) {
   }, [cartCustomerDefaults, cartEnabled]);
 
   useEffect(() => {
-    if (!cartEnabled || !cartStorageKey) return;
+    if (!cartEnabled || !cartStorageKey || loadedCartStorageIdentity !== cartStorageIdentity) return;
     saveProductCartStorageState(cartStorageKey, {
       customer: normalizeCartCustomer(cartCustomer),
       items: normalizeCartItems(cartItems, pricePrefix),
+      clientRequestId: cartClientRequestId,
     });
-  }, [cartEnabled, cartCustomer, cartItems, cartStorageKey, pricePrefix]);
+  }, [
+    cartClientRequestId,
+    cartEnabled,
+    cartCustomer,
+    cartItems,
+    cartStorageIdentity,
+    cartStorageKey,
+    loadedCartStorageIdentity,
+    pricePrefix,
+  ]);
 
   useEffect(() => {
     if (!activeProductId) return;
@@ -1294,6 +1337,7 @@ export default function ProductBlock(props: ProductBlockProps) {
   };
 
   const updateCartItems = (updater: (items: ProductCartItemState[]) => ProductCartItemState[]) => {
+    setCartClientRequestId("");
     setCartItems((current) => normalizeCartItems(updater(current), pricePrefix));
   };
 
@@ -1301,6 +1345,10 @@ export default function ProductBlock(props: ProductBlockProps) {
     if (!cartEnabled) return;
     setCartError("");
     setCartNotice("");
+    if (!cartItems.some((entry) => entry.productId === item.id) && cartItems.length >= MERCHANT_ORDER_MAX_LINE_ITEMS) {
+      setCartError(`购物车最多保留 ${MERCHANT_ORDER_MAX_LINE_ITEMS} 种产品。`);
+      return;
+    }
     triggerAddToCartAnimation(item, sourceElement);
     updateCartItems((current) => {
       const nextIndex = current.findIndex((entry) => entry.productId === item.id);
@@ -1321,7 +1369,7 @@ export default function ProductBlock(props: ProductBlockProps) {
       const next = [...current];
       next[nextIndex] = {
         ...next[nextIndex],
-        quantity: next[nextIndex].quantity + 1,
+        quantity: Math.min(MERCHANT_ORDER_MAX_ITEM_QUANTITY, next[nextIndex].quantity + 1),
         checked: true,
         product: item,
       };
@@ -1350,7 +1398,10 @@ export default function ProductBlock(props: ProductBlockProps) {
   };
 
   const handleSetCartItemQuantity = (productId: string, quantityInput: string) => {
-    const nextQuantity = Math.max(0, Number.parseInt(quantityInput.replace(/[^\d]/g, ""), 10) || 0);
+    const nextQuantity = Math.min(
+      MERCHANT_ORDER_MAX_ITEM_QUANTITY,
+      Math.max(0, Number.parseInt(quantityInput.replace(/[^\d]/g, ""), 10) || 0),
+    );
     updateCartItems((current) =>
       current.flatMap((entry) => {
         if (entry.productId !== productId) return [entry];
@@ -1365,6 +1416,7 @@ export default function ProductBlock(props: ProductBlockProps) {
   };
 
   const handleCartCustomerChange = (field: keyof MerchantOrderCustomerInput, value: string) => {
+    setCartClientRequestId("");
     setCartCustomer((current) => ({
       ...current,
       [field]: value,
@@ -1411,6 +1463,17 @@ export default function ProductBlock(props: ProductBlockProps) {
         (typeof latestAuthPayload?.frontendAuthProof === "string" ? latestAuthPayload.frontendAuthProof.trim() : "") ||
         cartCustomerAuthProof;
       const isPersonalAuthenticated = latestAuthPayload?.authenticated === true && latestAuthPayload.accountType === "personal";
+      const clientRequestId = cartClientRequestId || createProductCartRequestId();
+      if (!cartClientRequestId) {
+        setCartClientRequestId(clientRequestId);
+        if (cartStorageKey) {
+          saveProductCartStorageState(cartStorageKey, {
+            customer: normalizeCartCustomer(cartCustomer),
+            items: normalizeCartItems(cartItems, pricePrefix),
+            clientRequestId,
+          });
+        }
+      }
       const response = await fetch("/api/orders", {
         method: "POST",
         headers: {
@@ -1420,6 +1483,8 @@ export default function ProductBlock(props: ProductBlockProps) {
           siteId: effectiveRuntimeSiteId,
           siteName: props.runtimeSiteName,
           blockId: runtimeBlockId,
+          catalogViewport: runtimeCatalogViewport,
+          clientRequestId,
           pricePrefix,
           frontendAuthProof,
           customerGuestToken: isPersonalAuthenticated ? "" : readPersonalGuestMergeToken(),
@@ -1448,6 +1513,7 @@ export default function ProductBlock(props: ProductBlockProps) {
         upsertPersonalGuestOrder(payload.order);
       }
       setCartItems((current) => current.filter((item) => !item.checked));
+      setCartClientRequestId("");
       setCartCustomer(mergeCartCustomerDefaults({}, cartCustomerDefaults));
       setCartCustomerOpen(false);
       setCartOpen(false);
@@ -1464,17 +1530,35 @@ export default function ProductBlock(props: ProductBlockProps) {
     if (!cartEnabled) return;
     setCartItems((current) => {
       const productMap = new Map(products.map((item) => [item.id, item] as const));
-      const next = current.map((entry) => {
+      let changed = false;
+      const next = current.flatMap((entry) => {
         const product = productMap.get(entry.productId);
-        if (!product) return entry;
+        if (!product) {
+          changed = true;
+          return [];
+        }
         const unitPrice = parseMerchantOrderPriceValue(product.price);
-        return {
+        const unitPriceText = formatMerchantOrderAmount(unitPrice, pricePrefix);
+        const productChanged =
+          entry.product.code !== product.code ||
+          entry.product.name !== product.name ||
+          entry.product.description !== product.description ||
+          entry.product.imageUrl !== product.imageUrl ||
+          entry.product.thumbnailUrl !== product.thumbnailUrl ||
+          entry.product.tag !== product.tag ||
+          entry.product.price !== product.price ||
+          entry.unitPrice !== unitPrice ||
+          entry.unitPriceText !== unitPriceText;
+        if (!productChanged) return [entry];
+        changed = true;
+        return [{
           ...entry,
           product,
           unitPrice,
-          unitPriceText: formatMerchantOrderAmount(unitPrice, pricePrefix),
-        };
+          unitPriceText,
+        }];
       });
+      if (!changed) return current;
       return normalizeCartItems(next, pricePrefix);
     });
   }, [cartEnabled, pricePrefix, products]);

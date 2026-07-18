@@ -3,8 +3,8 @@ import type { Block, MerchantListPublishedSite } from "@/data/homeBlocks";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import type { PublishedMerchantServiceState } from "@/lib/publishedMerchantService";
 import {
+  loadCurrentMerchantSnapshotSiteBySiteId,
   loadPublishedMerchantServiceStateBySiteId,
-  loadPublishedMerchantSnapshotSiteBySiteId,
 } from "@/lib/publishedMerchantService";
 
 export type PublishedPageRow = {
@@ -122,19 +122,6 @@ export function isPublishedBlocksPayload(value: unknown): value is Block[] {
   return Array.isArray(value) && value.length > 0 && value.every((item) => isPublishedBlockRecord(item));
 }
 
-function blocksContainProductBlock(value: unknown): boolean {
-  if (Array.isArray(value)) return value.some((item) => blocksContainProductBlock(item));
-  if (!value || typeof value !== "object") return false;
-  const record = value as { type?: unknown; props?: unknown; blocks?: unknown; pages?: unknown; plans?: unknown };
-  if (record.type === "product") return true;
-  return (
-    blocksContainProductBlock(record.blocks) ||
-    blocksContainProductBlock(record.pages) ||
-    blocksContainProductBlock(record.plans) ||
-    blocksContainProductBlock(record.props)
-  );
-}
-
 export function isMissingPublishedSlugColumn(message: string) {
   return (
     /column\s+pages\.slug\s+does\s+not\s+exist/i.test(message) ||
@@ -248,7 +235,7 @@ async function fetchPublishedSiteBlocksFromSupabaseUncached(siteId: string): Pro
   const supabase = createPublishedSiteDataClient();
   if (!supabase) return null;
 
-  const orderManagementTask = loadPublishedMerchantSnapshotSiteBySiteId(normalizedSiteId)
+  const orderManagementTask = loadCurrentMerchantSnapshotSiteBySiteId(normalizedSiteId)
     .then((site) => Boolean(site?.permissionConfig?.allowProductBlock && site?.permissionConfig?.allowOrderManagement))
     .catch(() => false);
   const { data, error } = await queryPublishedPageRows(supabase, normalizedSiteId);
@@ -265,9 +252,7 @@ async function fetchPublishedSiteBlocksFromSupabaseUncached(siteId: string): Pro
     siteId: normalizedSiteId,
     slug: String(chosen.slug ?? "").trim(),
     blocks: chosen.blocks,
-    orderManagementEnabled:
-      (await withFallbackTimeout(orderManagementTask, ORDER_MANAGEMENT_PERMISSION_TIMEOUT_MS, false)) ||
-      blocksContainProductBlock(chosen.blocks),
+    orderManagementEnabled: await withFallbackTimeout(orderManagementTask, ORDER_MANAGEMENT_PERMISSION_TIMEOUT_MS, false),
   };
 }
 
@@ -316,7 +301,7 @@ async function fetchPublishedSitePayloadFromSupabaseUncached(siteId: string): Pr
     .limit(1)
     .maybeSingle();
   const serviceStateTask = loadPublishedMerchantServiceStateBySiteId(normalizedSiteId).catch(() => null);
-  const snapshotSiteTask = loadPublishedMerchantSnapshotSiteBySiteId(normalizedSiteId).catch(() => null);
+  const snapshotSiteTask = loadCurrentMerchantSnapshotSiteBySiteId(normalizedSiteId).catch(() => null);
 
   const { data, error } = await publishedPagesTask;
 
@@ -340,8 +325,7 @@ async function fetchPublishedSitePayloadFromSupabaseUncached(siteId: string): Pr
     String(snapshotSite?.name ?? "").trim() ||
     String((merchantProfile as MerchantProfileRow | null)?.name ?? "").trim();
   const orderManagementEnabled = Boolean(
-    (snapshotSite?.permissionConfig?.allowProductBlock && snapshotSite?.permissionConfig?.allowOrderManagement) ||
-      blocksContainProductBlock(chosen.blocks),
+    snapshotSite?.permissionConfig?.allowProductBlock && snapshotSite?.permissionConfig?.allowOrderManagement,
   );
 
   return {

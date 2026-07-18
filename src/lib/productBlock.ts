@@ -219,18 +219,44 @@ export function createProductItemId() {
   return `product-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function buildLegacyProductItemId(item: ProductItemInput) {
+  const source = [
+    item?.code,
+    item?.name,
+    item?.description,
+    item?.price,
+    item?.imageUrl,
+    item?.thumbnailUrl,
+    item?.tag,
+  ]
+    .map((value) => String(value ?? "").trim())
+    .join("\u0001");
+  let hash = 2166136261;
+  for (let index = 0; index < source.length; index += 1) {
+    hash ^= source.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `product-legacy-${(hash >>> 0).toString(36)}`;
+}
+
 export function normalizeProductItems(source: ProductItemInput[] | undefined): ProductItem[] {
   if (!Array.isArray(source)) return [];
-  return source.map((item) => ({
-    id: (item?.id ?? "").trim() || createProductItemId(),
-    code: (item?.code ?? "").trim(),
-    name: (item?.name ?? "").trim(),
-    description: (item?.description ?? "").trim(),
-    price: (item?.price ?? "").trim(),
-    imageUrl: (item?.imageUrl ?? "").trim(),
-    thumbnailUrl: (item?.thumbnailUrl ?? "").trim(),
-    tag: (item?.tag ?? "").trim(),
-  }));
+  const idCounts = new Map<string, number>();
+  return source.map((item) => {
+    const baseId = (item?.id ?? "").trim() || buildLegacyProductItemId(item ?? {});
+    const occurrence = (idCounts.get(baseId) ?? 0) + 1;
+    idCounts.set(baseId, occurrence);
+    return {
+      id: occurrence === 1 ? baseId : `${baseId}-${occurrence}`,
+      code: (item?.code ?? "").trim(),
+      name: (item?.name ?? "").trim(),
+      description: (item?.description ?? "").trim(),
+      price: (item?.price ?? "").trim(),
+      imageUrl: (item?.imageUrl ?? "").trim(),
+      thumbnailUrl: (item?.thumbnailUrl ?? "").trim(),
+      tag: (item?.tag ?? "").trim(),
+    };
+  });
 }
 
 export function normalizeProductLayoutPreset(value: unknown): ProductLayoutPreset {

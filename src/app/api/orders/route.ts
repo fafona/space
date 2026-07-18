@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
+import { isMobileViewportRequest } from "@/lib/deviceViewport";
 import { buildMerchantOrderPushNotification } from "@/lib/merchantPushEvents";
 import { loadCurrentMerchantSnapshotSiteBySiteId } from "@/lib/publishedMerchantService";
+import { fetchPublishedSiteBlocksFromSupabase } from "@/lib/publishedSiteData";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import {
   createMerchantOrderRecord,
@@ -21,7 +23,14 @@ import { hashPersonalGuestMergeToken } from "@/lib/personalGuestMerge.server";
 import type { MerchantPushSubscriptionStoreClient } from "@/lib/merchantPushSubscriptionStore";
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import { notifyMerchantPushSubscribers } from "@/lib/webPush";
-import type { MerchantOrderAction, MerchantOrderCreateInput, MerchantOrderLineItemInput, MerchantOrderStatus } from "@/lib/merchantOrders";
+import {
+  getMerchantOrderErrorMessage,
+  type MerchantOrderAction,
+  type MerchantOrderCreateInput,
+  type MerchantOrderLineItemInput,
+  type MerchantOrderStatus,
+} from "@/lib/merchantOrders";
+import { quotePublishedProductOrder } from "@/lib/merchantOrderCatalog";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -35,12 +44,42 @@ async function resolveOrderAdminSession(request: Request, siteId: string) {
 }
 
 async function isOrderManagementEnabled(siteId: string) {
-  const site = await loadCurrentMerchantSnapshotSiteBySiteId(siteId).catch(() => null);
+  const site = await loadCurrentMerchantSnapshotSiteBySiteId(siteId);
   return Boolean(site?.permissionConfig?.allowProductBlock && site?.permissionConfig?.allowOrderManagement);
 }
 
 function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function getOrderApiErrorStatus(error: unknown) {
+  const code = error instanceof Error ? error.message : trimText(error);
+  if (code === "order_not_found") return 404;
+  if (
+    code === "order_request_conflict" ||
+    code === "order_customer_action_locked" ||
+    code === "order_items_locked" ||
+    code === "order_product_catalog_conflict" ||
+    code === "order_points_reversal_balance_insufficient" ||
+    code === "membership_recharge_cancel_balance_insufficient" ||
+    code === "merchant_memberships_conflict"
+  ) {
+    return 409;
+  }
+  if (
+    code === "invalid_site_id" ||
+    code === "invalid_order_update" ||
+    code === "order_items_required" ||
+    code === "order_too_many_items" ||
+    code === "order_items_not_editable" ||
+    code === "order_item_invalid" ||
+    code === "order_quantity_invalid" ||
+    code === "order_product_block_not_found" ||
+    code === "order_product_not_found"
+  ) {
+    return 400;
+  }
+  return 503;
 }
 
 function normalizeOrderListOffset(value: unknown) {
@@ -116,9 +155,9 @@ export async function GET(request: Request) {
     return NextResponse.json(
       {
         error: "order_list_failed",
-        message: error instanceof Error ? error.message : "unknown_error",
+        message: getMerchantOrderErrorMessage(error),
       },
-      { status: 400 },
+      { status: 503 },
     );
   }
 }
@@ -131,14 +170,36 @@ export async function POST(request: Request) {
     const body = (await request.json()) as Partial<MerchantOrderCreateInput> & {
       frontendAuthProof?: unknown;
       customerGuestToken?: unknown;
+      catalogViewport?: unknown;
     };
     const siteId = String(body.siteId ?? "").trim();
     if (!isMerchantNumericId(siteId)) {
       return NextResponse.json({ error: "invalid_site_id" }, { status: 400 });
     }
-    if (!(await isOrderManagementEnabled(siteId))) {
+    const [snapshotSite, publishedSite] = await Promise.all([
+      loadCurrentMerchantSnapshotSiteBySiteId(siteId),
+      fetchPublishedSiteBlocksFromSupabase(siteId),
+    ]);
+    if (!snapshotSite?.permissionConfig?.allowProductBlock || !snapshotSite.permissionConfig.allowOrderManagement) {
       return NextResponse.json({ error: "order_management_disabled" }, { status: 403 });
     }
+    if (!publishedSite?.blocks?.length) {
+      return NextResponse.json(
+        { error: "order_catalog_unavailable", message: getMerchantOrderErrorMessage("order_catalog_unavailable") },
+        { status: 503 },
+      );
+    }
+    const quote = quotePublishedProductOrder({
+      blocks: publishedSite.blocks,
+      blockId: String(body.blockId ?? "").trim(),
+      items: Array.isArray(body.items) ? body.items : [],
+      viewport:
+        body.catalogViewport === "mobile" || body.catalogViewport === "desktop"
+          ? body.catalogViewport
+          : isMobileViewportRequest(request.headers)
+            ? "mobile"
+            : "desktop",
+    });
     const personalSession = await resolvePersonalAccountSessionFromRequest(request).catch(() => null);
     const frontendProof = personalSession ? null : verifyFrontendAuthProof(body.frontendAuthProof);
     const personalProof = frontendProof?.accountType === "personal" ? frontendProof : null;
@@ -163,15 +224,16 @@ export async function POST(request: Request) {
     };
     const order = await createMerchantOrderRecord({
       siteId,
-      siteName: String(body.siteName ?? "").trim(),
-      blockId: String(body.blockId ?? "").trim(),
-      pricePrefix: String(body.pricePrefix ?? "").trim(),
+      siteName: String(snapshotSite.merchantName ?? snapshotSite.name ?? "").trim(),
+      blockId: quote.blockId,
+      clientRequestId: String(body.clientRequestId ?? "").trim(),
+      pricePrefix: quote.pricePrefix,
       customer,
       customerAccountId: personalSession?.accountId ?? personalProof?.accountId ?? "",
       customerUserId: personalSession?.userId ?? personalProof?.userId ?? "",
       customerLoginEmail: personalSession?.email ?? personalProof?.email ?? "",
       customerGuestHash: personalSession || personalProof ? "" : hashPersonalGuestMergeToken(body.customerGuestToken),
-      items: Array.isArray(body.items) ? body.items : [],
+      items: quote.items,
     });
 
     const supabase = createServerSupabaseServiceClient();
@@ -193,9 +255,9 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error: "order_create_failed",
-        message: error instanceof Error ? error.message : "unknown_error",
+        message: getMerchantOrderErrorMessage(error),
       },
-      { status: 400 },
+      { status: getOrderApiErrorStatus(error) },
     );
   }
 }
@@ -273,9 +335,9 @@ export async function PATCH(request: Request) {
     return NextResponse.json(
       {
         error: "order_update_failed",
-        message: error instanceof Error ? error.message : "unknown_error",
+        message: getMerchantOrderErrorMessage(error),
       },
-      { status: 400 },
+      { status: getOrderApiErrorStatus(error) },
     );
   }
 }

@@ -1269,57 +1269,152 @@ export async function applyMerchantMembershipRedemptionCart(input: {
   return toMerchantMembershipListItem(nextMembership);
 }
 
-export async function awardMerchantMembershipPointsForOrder(order: MerchantOrderRecord) {
-  if (order.status !== "completed") return null;
-  const siteId = trimText(order.siteId, 64);
-  if (!siteId) return null;
-  const settings = await getMerchantMembershipSettings(siteId).catch(() => null);
-  if (!settings) return null;
-  const points = calculateOrderPoints(order, settings);
-  const growthDelta = order.totalAmount * settings.growthRules.spendAmountGrowth + points * settings.growthRules.spendPointGrowth;
-  if (points <= 0 && growthDelta <= 0) return null;
-  const supabase = requireMembershipsStoreClient();
-  const stored = await loadStoredMerchantMemberships(supabase, siteId);
-  const current = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
+function findMembershipIndexForOrder(memberships: MerchantMembershipRecord[], order: MerchantOrderRecord) {
   const normalizedEmail = trimText(order.customerLoginEmail || order.customer.email).toLowerCase();
-  const index = current.findIndex((membership) => {
+  return memberships.findIndex((membership) => {
     if (membership.status !== "active") return false;
     if (order.customerAccountId && membership.accountId === order.customerAccountId) return true;
     if (order.customerUserId && membership.userId === order.customerUserId) return true;
     return Boolean(normalizedEmail) && membership.email.toLowerCase() === normalizedEmail;
   });
-  if (index < 0) return null;
-  const marker = `[order-points:${order.id}]`;
-  const currentMembership = current[index];
-  if (transactionHasMarker(currentMembership, marker)) return toMerchantMembershipListItem(currentMembership);
-  const now = new Date().toISOString();
+}
+
+function findActiveOrderPointAward(membership: MerchantMembershipRecord, orderId: string) {
+  const marker = `[order-points:${orderId}]`;
+  return membership.transactions.find(
+    (transaction) =>
+      transaction.type === "recharge" &&
+      transaction.status === "completed" &&
+      !transaction.adjustmentKind &&
+      transaction.note.includes(marker),
+  );
+}
+
+export function awardOrderPointsToMembership(input: {
+  membership: MerchantMembershipRecord;
+  order: MerchantOrderRecord;
+  settings: MerchantMembershipSettings;
+  now: string;
+}) {
+  if (findActiveOrderPointAward(input.membership, input.order.id)) return input.membership;
+  const points = calculateOrderPoints(input.order, input.settings);
+  const growthDelta =
+    input.order.totalAmount * input.settings.growthRules.spendAmountGrowth +
+    points * input.settings.growthRules.spendPointGrowth;
+  if (points <= 0 && growthDelta <= 0) return input.membership;
+  const marker = `[order-points:${input.order.id}]`;
   let nextMembership: MerchantMembershipRecord = {
-    ...currentMembership,
-    pointBalance: currentMembership.pointBalance + points,
+    ...input.membership,
+    pointBalance: input.membership.pointBalance + points,
     transactions: [
       createMerchantMemberTransaction({
         type: "recharge",
-        at: now,
+        at: input.now,
         pointDelta: points,
         growthDelta,
         note: points > 0 ? `订单实付赠送积分 ${marker}` : `订单成长值记录 ${marker}`,
         operatorId: "system",
       }),
-      ...currentMembership.transactions,
+      ...input.membership.transactions,
     ].slice(0, 500),
-    updatedAt: now,
+    updatedAt: input.now,
   };
   nextMembership = applyMembershipGrowthAndLevel({
     membership: nextMembership,
-    settings,
+    settings: input.settings,
     growthDelta,
-    now,
+    now: input.now,
   });
-  const nextMemberships = [...current];
-  nextMemberships[index] = nextMembership;
-  const saved = await saveStoredMerchantMemberships(supabase, { siteId, memberships: nextMemberships, updatedAt: now });
-  if (saved.error) throw new Error(saved.error);
-  return toMerchantMembershipListItem(nextMembership);
+  return nextMembership;
+}
+
+export function revokeOrderPointsFromMembership(input: {
+  membership: MerchantMembershipRecord;
+  order: MerchantOrderRecord;
+  settings: MerchantMembershipSettings | null;
+  now: string;
+}) {
+  const activeAward = findActiveOrderPointAward(input.membership, input.order.id);
+  if (!activeAward) return input.membership;
+  const marker = `[order-points-reversal:${input.order.id}]`;
+  const cancellation = cancelMerchantMemberRechargeTransaction({
+    membership: input.membership,
+    transactionId: activeAward.id,
+    cancelledAt: input.now,
+    cancellationNote: `订单 ${input.order.id} 状态回退`,
+    cancelledBy: "system",
+    cancellationOperationMarker: marker,
+    allowGrowthOnly: true,
+  });
+  return applyMembershipGrowthAndLevel({
+    membership: cancellation.membership,
+    settings: input.settings,
+    growthDelta: 0,
+    now: input.now,
+  });
+}
+
+export async function syncMerchantMembershipPointsForOrderTransitions(
+  transitions: Array<{ previous: MerchantOrderRecord; next: MerchantOrderRecord }>,
+) {
+  const relevant = transitions.filter(
+    ({ previous, next }) =>
+      (previous.status !== "completed" && next.status === "completed") ||
+      (previous.status === "completed" && next.status !== "completed"),
+  );
+  if (relevant.length === 0) return [];
+  const siteId = trimText(relevant[0]?.next.siteId || relevant[0]?.previous.siteId, 64);
+  if (!siteId || relevant.some(({ previous, next }) => previous.siteId !== siteId || next.siteId !== siteId)) {
+    throw new Error("invalid_site_id");
+  }
+
+  const supabase = requireMembershipsStoreClient();
+  let settings: MerchantMembershipSettings | undefined;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const stored = await loadStoredMerchantMemberships(supabase, siteId);
+    const memberships = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
+    const hasMatchingMembership = relevant.some(({ previous, next }) => {
+      const order = next.status === "completed" ? next : previous;
+      return findMembershipIndexForOrder(memberships, order) >= 0;
+    });
+    if (!hasMatchingMembership) return memberships.map(toMerchantMembershipListItem);
+    settings = settings ?? (await getMerchantMembershipSettings(siteId));
+    const nextMemberships = [...memberships];
+    const now = new Date().toISOString();
+    let changed = false;
+
+    for (const transition of relevant) {
+      const order = transition.next.status === "completed" ? transition.next : transition.previous;
+      const index = findMembershipIndexForOrder(nextMemberships, order);
+      if (index < 0) continue;
+      const currentMembership = nextMemberships[index];
+      const nextMembership = transition.next.status === "completed"
+        ? awardOrderPointsToMembership({ membership: currentMembership, order: transition.next, settings, now })
+        : revokeOrderPointsFromMembership({ membership: currentMembership, order: transition.previous, settings, now });
+      if (nextMembership === currentMembership) continue;
+      nextMemberships[index] = nextMembership;
+      changed = true;
+    }
+
+    if (!changed) return nextMemberships.map(toMerchantMembershipListItem);
+    const saved = await saveStoredMerchantMemberships(supabase, {
+      siteId,
+      memberships: nextMemberships,
+      updatedAt: now,
+      expectedUpdatedAt: stored?.updatedAt ?? null,
+    });
+    if (!saved.error) return nextMemberships.map(toMerchantMembershipListItem);
+    if (saved.error !== "merchant_memberships_conflict" || attempt >= 2) throw new Error(saved.error);
+  }
+  throw new Error("merchant_memberships_conflict");
+}
+
+export async function awardMerchantMembershipPointsForOrder(order: MerchantOrderRecord) {
+  if (order.status !== "completed") return null;
+  const previous = { ...order, status: "confirmed" as const };
+  const memberships = await syncMerchantMembershipPointsForOrderTransitions([{ previous, next: order }]);
+  const index = memberships.findIndex((membership) => membership.siteId === order.siteId && findMembershipIndexForOrder([membership], order) === 0);
+  return index >= 0 ? memberships[index] : null;
 }
 
 export async function quoteMerchantMembershipPointDeduction(input: {

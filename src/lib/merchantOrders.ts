@@ -1,4 +1,6 @@
 export const MERCHANT_ORDER_STATUSES = ["pending", "confirmed", "completed", "cancelled"] as const;
+export const MERCHANT_ORDER_MAX_LINE_ITEMS = 100;
+export const MERCHANT_ORDER_MAX_ITEM_QUANTITY = 999;
 
 export type MerchantOrderStatus = (typeof MERCHANT_ORDER_STATUSES)[number];
 
@@ -46,6 +48,7 @@ export type MerchantOrderRecord = {
   siteId: string;
   siteName: string;
   blockId: string;
+  clientRequestId?: string;
   customerAccountId?: string;
   customerUserId?: string;
   customerLoginEmail?: string;
@@ -70,6 +73,7 @@ export type MerchantOrderCreateInput = {
   siteId: string;
   siteName?: string;
   blockId?: string;
+  clientRequestId?: string;
   customerAccountId?: string;
   customerUserId?: string;
   customerLoginEmail?: string;
@@ -88,7 +92,7 @@ function trimText(value: unknown) {
 function normalizePositiveInt(value: unknown) {
   const next = typeof value === "number" ? value : Number.parseInt(String(value ?? ""), 10);
   if (!Number.isFinite(next)) return 0;
-  return Math.max(0, Math.round(next));
+  return Math.min(MERCHANT_ORDER_MAX_ITEM_QUANTITY, Math.max(0, Math.round(next)));
 }
 
 function normalizeMoneyValue(value: unknown) {
@@ -113,7 +117,11 @@ export function parseMerchantOrderPriceValue(value: string) {
   const sanitized = raw.replace(/[^\d,.-]/g, "");
   if (!sanitized) return 0;
   if (sanitized.includes(",") && sanitized.includes(".")) {
-    const compact = sanitized.replace(/,/g, "");
+    const lastComma = sanitized.lastIndexOf(",");
+    const lastDot = sanitized.lastIndexOf(".");
+    const decimalSeparator = lastComma > lastDot ? "," : ".";
+    const thousandsSeparator = decimalSeparator === "," ? "." : ",";
+    const compact = sanitized.replaceAll(thousandsSeparator, "").replace(decimalSeparator, ".");
     const parsed = Number.parseFloat(compact);
     return Number.isFinite(parsed) ? Math.max(0, Number(parsed.toFixed(2))) : 0;
   }
@@ -135,6 +143,38 @@ export function getMerchantOrderStatusLabel(status: MerchantOrderStatus) {
   if (status === "completed") return "已完成";
   if (status === "cancelled") return "已取消";
   return "待确认";
+}
+
+export function getMerchantOrderErrorMessage(value: unknown) {
+  const code = value instanceof Error ? value.message : trimText(value);
+  if (code === "membership_recharge_cancel_balance_insufficient" || code === "order_points_reversal_balance_insufficient") {
+    return "该订单赠送的积分已被使用，暂时不能回退完成状态；请先处理会员积分后再操作。";
+  }
+  if (code === "order_items_locked") return "已完成或已取消的订单不能直接修改商品，请先回退订单状态。";
+  if (code === "order_product_block_not_found" || code === "order_product_not_found") {
+    return "产品已更新或下架，请返回产品页刷新后重新选择。";
+  }
+  if (code === "order_product_catalog_conflict") {
+    return "手机端与电脑端的产品价格不一致，请先在网站编辑器中统一价格后再下单。";
+  }
+  if (code === "order_quantity_invalid") return `单项产品数量必须为 1-${MERCHANT_ORDER_MAX_ITEM_QUANTITY}。`;
+  if (code === "order_too_many_items") return `每笔订单最多包含 ${MERCHANT_ORDER_MAX_LINE_ITEMS} 种产品。`;
+  if (code === "order_catalog_unavailable") return "产品目录暂时不可用，请稍后重试。";
+  if (code === "order_request_conflict") return "订单提交编号冲突，请修改购物车后重试。";
+  if (code === "order_not_found") return "没有找到该订单，可能已被其他操作更新，请刷新后重试。";
+  if (code === "order_customer_action_locked") return "商家已开始处理该订单，当前不能由客户取消。";
+  if (code === "order_item_invalid" || code === "order_items_not_editable") return "订单商品数据无效，请刷新后重试。";
+  if (code === "invalid_order_update") return "订单操作无效，请刷新后重试。";
+  if (code === "order_items_required") return "订单至少需要保留一项产品。";
+  if (
+    code === "orders_store_unavailable" ||
+    code.startsWith("merchant_orders_read_failed") ||
+    code.startsWith("merchant_orders_history_save_failed")
+  ) {
+    return "订单服务暂时不可用，请稍后重试。";
+  }
+  if (code === "merchant_memberships_conflict") return "会员积分正在被其他操作更新，请稍后重试。";
+  return code || "unknown_error";
 }
 
 export function formatMerchantOrderIdDate(value: Date | string) {
@@ -163,10 +203,10 @@ export function buildMerchantOrderId(siteId: string, createdAt: Date | string, e
 
 export function normalizeMerchantOrderCustomer(input: MerchantOrderCustomerInput | null | undefined): MerchantOrderCustomer {
   return {
-    name: trimText(input?.name),
-    phone: trimText(input?.phone),
-    email: trimText(input?.email),
-    note: trimText(input?.note),
+    name: trimText(input?.name).slice(0, 160),
+    phone: trimText(input?.phone).slice(0, 80),
+    email: trimText(input?.email).slice(0, 320),
+    note: trimText(input?.note).slice(0, 2000),
   };
 }
 
@@ -184,15 +224,15 @@ export function normalizeMerchantOrderLineItems(
           : parseMerchantOrderPriceValue(trimText(item?.unitPriceText));
       const unitPriceText = trimText(item?.unitPriceText) || formatMerchantOrderAmount(unitPrice, pricePrefix);
       return {
-        productId: trimText(item?.productId),
-        code: trimText(item?.code),
-        name: trimText(item?.name),
-        description: trimText(item?.description),
-        imageUrl: trimText(item?.imageUrl),
-        tag: trimText(item?.tag),
+        productId: trimText(item?.productId).slice(0, 200),
+        code: trimText(item?.code).slice(0, 200),
+        name: trimText(item?.name).slice(0, 500),
+        description: trimText(item?.description).slice(0, 4000),
+        imageUrl: trimText(item?.imageUrl).slice(0, 4096),
+        tag: trimText(item?.tag).slice(0, 200),
         quantity,
         unitPrice,
-        unitPriceText,
+        unitPriceText: unitPriceText.slice(0, 120),
         subtotal: normalizeMoneyValue(unitPrice * quantity),
       };
     })
@@ -221,6 +261,7 @@ export function normalizeMerchantOrderRecord(input: Partial<MerchantOrderRecord>
     siteId,
     siteName: trimText(input.siteName),
     blockId: trimText(input.blockId),
+    clientRequestId: trimText(input.clientRequestId).slice(0, 160),
     customerAccountId: trimText(input.customerAccountId),
     customerUserId: trimText(input.customerUserId),
     customerLoginEmail: trimText(input.customerLoginEmail).toLowerCase(),
@@ -365,7 +406,39 @@ export function updateMerchantOrderItems(
   itemsInput: MerchantOrderLineItemInput[],
   actedAt = new Date().toISOString(),
 ): MerchantOrderRecord {
-  const items = normalizeMerchantOrderLineItems(itemsInput, record.pricePrefix);
+  if (!Array.isArray(itemsInput) || itemsInput.length === 0) {
+    throw new Error("order_items_required");
+  }
+  if (itemsInput.length > MERCHANT_ORDER_MAX_LINE_ITEMS) {
+    throw new Error("order_too_many_items");
+  }
+  const currentByProductId = new Map<string, MerchantOrderLineItem>();
+  for (const item of record.items) {
+    if (!item.productId || currentByProductId.has(item.productId)) {
+      throw new Error("order_items_not_editable");
+    }
+    currentByProductId.set(item.productId, item);
+  }
+  const seen = new Set<string>();
+  const items = itemsInput.flatMap((item) => {
+    const productId = trimText(item?.productId);
+    const current = currentByProductId.get(productId);
+    if (!productId || !current || seen.has(productId)) {
+      throw new Error("order_item_invalid");
+    }
+    seen.add(productId);
+    const rawQuantity = typeof item?.quantity === "number" ? item.quantity : Number(item?.quantity);
+    if (!Number.isInteger(rawQuantity) || rawQuantity < 0 || rawQuantity > MERCHANT_ORDER_MAX_ITEM_QUANTITY) {
+      throw new Error("order_quantity_invalid");
+    }
+    if (rawQuantity === 0) return [];
+    return [{
+      ...current,
+      quantity: rawQuantity,
+      subtotal: normalizeMoneyValue(current.unitPrice * rawQuantity),
+    }];
+  });
+  if (items.length === 0) throw new Error("order_items_required");
   const summary = summarizeMerchantOrderItems(items);
   return {
     ...record,
@@ -397,6 +470,7 @@ export function createMerchantOrder(
     siteId: trimText(input.siteId),
     siteName: trimText(input.siteName),
     blockId: trimText(input.blockId),
+    clientRequestId: trimText(input.clientRequestId).slice(0, 160),
     customerAccountId: trimText(input.customerAccountId),
     customerUserId: trimText(input.customerUserId),
     customerLoginEmail: trimText(input.customerLoginEmail).toLowerCase(),

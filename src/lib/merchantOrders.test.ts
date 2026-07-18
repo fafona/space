@@ -17,6 +17,8 @@ test("parseMerchantOrderPriceValue parses formatted values", () => {
   assert.equal(parseMerchantOrderPriceValue("39.90"), 39.9);
   assert.equal(parseMerchantOrderPriceValue("€14"), 14);
   assert.equal(parseMerchantOrderPriceValue("1,25"), 1.25);
+  assert.equal(parseMerchantOrderPriceValue("1.234,56"), 1234.56);
+  assert.equal(parseMerchantOrderPriceValue("1,234.56"), 1234.56);
 });
 
 test("normalizeMerchantOrderLineItems computes subtotal", () => {
@@ -290,4 +292,28 @@ test("updateMerchantOrderItems removes items whose quantity becomes zero", () =>
   assert.equal(updated.items[0]?.code, "SKU-002");
   assert.equal(updated.totalQuantity, 2);
   assert.equal(updated.totalAmount, 14);
+});
+
+test("updateMerchantOrderItems only accepts quantities for existing lines and preserves server prices", () => {
+  const base = createMerchantOrder({
+    siteId: "10000000",
+    items: [{ productId: "a", code: "SKU-001", name: "Original", quantity: 1, unitPrice: 39.9 }],
+  });
+  const updated = updateMerchantOrderItems(base, [
+    {
+      productId: "a",
+      name: "Tampered",
+      quantity: 2,
+      unitPrice: 0.01,
+      unitPriceText: "0.01",
+    },
+  ]);
+
+  assert.equal(updated.items[0]?.name, "Original");
+  assert.equal(updated.items[0]?.unitPrice, 39.9);
+  assert.equal(updated.totalAmount, 79.8);
+  assert.throws(
+    () => updateMerchantOrderItems(base, [{ productId: "unknown", quantity: 1 }]),
+    /order_item_invalid/,
+  );
 });
