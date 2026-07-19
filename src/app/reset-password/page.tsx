@@ -4,6 +4,13 @@ import { createClient } from "@supabase/supabase-js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/components/I18nProvider";
 import PasswordField, { getPasswordToggleLabels } from "@/components/PasswordField";
+import {
+  AUTH_EMAIL_MAX_LENGTH,
+  AUTH_PASSWORD_MAX_LENGTH,
+  AUTH_VERIFICATION_CODE_MAX_LENGTH,
+  isValidAuthEmail,
+  isValidAuthVerificationCode,
+} from "@/lib/authCredentialValidation";
 import { recoverBrowserSupabaseSession } from "@/lib/authSessionRecovery";
 import {
   clearStoredResetPasswordEmailRequest,
@@ -114,6 +121,11 @@ export default function ResetPasswordPage() {
 
   function normalizeResetCodeError(message: string) {
     const normalized = String(message ?? "").trim();
+    if (/auth_rate_limited/i.test(normalized)) {
+      return locale.trim().toLowerCase().startsWith("zh")
+        ? "尝试次数过多，请稍后再试。"
+        : "Too many attempts. Please try again later.";
+    }
     if (/invalid_email/i.test(normalized)) return t("login.invalidEmail");
     if (/invalid_code|invalid_or_expired|expired|otp|token/i.test(normalized)) return t("reset.invalidCode");
     if (/env_missing|unavailable|failed to fetch|fetch failed|network/i.test(normalized)) {
@@ -125,6 +137,7 @@ export default function ResetPasswordPage() {
   function validate(): string | null {
     if (!password) return t("reset.requiredNewPassword");
     if (password.length < 6) return t("reset.newPasswordTooShort");
+    if (password.length > AUTH_PASSWORD_MAX_LENGTH) return t("login.requestFailed");
     if (!confirmPassword) return t("reset.requiredConfirmPassword");
     if (password !== confirmPassword) return t("reset.passwordMismatch");
     return null;
@@ -415,7 +428,7 @@ export default function ResetPasswordPage() {
   async function resendResetEmailCode() {
     if (resendingCode || verifyingCode || saving) return;
     const email = resetEmail.trim().toLowerCase();
-    if (!email || !email.includes("@")) {
+    if (!isValidAuthEmail(email)) {
       setMsg(t("login.invalidEmail"));
       return;
     }
@@ -452,12 +465,12 @@ export default function ResetPasswordPage() {
   async function verifyResetCodeFallback() {
     if (verifyingCode || resendingCode || saving) return;
     const email = resetEmail.trim().toLowerCase();
-    const code = resetCode.trim();
-    if (!email || !email.includes("@")) {
+    const code = resetCode.trim().replace(/\s+/g, "");
+    if (!isValidAuthEmail(email)) {
       setMsg(t("login.invalidEmail"));
       return;
     }
-    if (!code) {
+    if (!isValidAuthVerificationCode(code)) {
       setMsg(t("reset.invalidCode"));
       return;
     }
@@ -510,6 +523,7 @@ export default function ResetPasswordPage() {
           <PasswordField
             className="w-full rounded border p-2 text-slate-900 placeholder:text-slate-300"
             autoComplete="new-password"
+            maxLength={AUTH_PASSWORD_MAX_LENGTH}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder={t("login.passwordMin6")}
@@ -524,6 +538,7 @@ export default function ResetPasswordPage() {
           <PasswordField
             className="w-full rounded border p-2 text-slate-900 placeholder:text-slate-300"
             autoComplete="new-password"
+            maxLength={AUTH_PASSWORD_MAX_LENGTH}
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
             placeholder={t("reset.inputConfirmPasswordAgain")}
@@ -550,6 +565,7 @@ export default function ResetPasswordPage() {
                 autoCapitalize="none"
                 autoCorrect="off"
                 spellCheck={false}
+                maxLength={AUTH_EMAIL_MAX_LENGTH}
                 disabled={saving || verifyingCode || resendingCode}
               />
             </div>
@@ -563,6 +579,8 @@ export default function ResetPasswordPage() {
                 autoCapitalize="none"
                 autoCorrect="off"
                 spellCheck={false}
+                inputMode="numeric"
+                maxLength={AUTH_VERIFICATION_CODE_MAX_LENGTH}
                 disabled={saving || verifyingCode || resendingCode}
               />
             </div>

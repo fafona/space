@@ -8,6 +8,7 @@ export async function POST(request: Request) {
   }
 
   const response = NextResponse.json({ ok: true });
+  response.headers.set("cache-control", "no-store");
   clearMerchantAuthCookies(response, request);
   return response;
 }

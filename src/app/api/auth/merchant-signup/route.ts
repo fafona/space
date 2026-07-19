@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import {
+  isAuthRateLimitError,
+  isValidAuthEmail,
+  isValidAuthPassword,
+  normalizeAuthEmail,
+  readAuthPassword,
+} from "@/lib/authCredentialValidation";
+import {
   type MerchantAuthUserSummary,
 } from "@/lib/merchantAuthIdentity";
 import { setMerchantAuthCookies } from "@/lib/merchantAuthSession";
@@ -26,16 +33,10 @@ function readEnv(name: string) {
   return (process.env[name] ?? "").trim();
 }
 
-function normalizeEmail(value: unknown) {
-  return typeof value === "string" ? value.trim().toLowerCase() : "";
-}
-
-function normalizePassword(value: unknown) {
-  return typeof value === "string" ? value : "";
-}
-
-function isValidEmail(value: string) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+function noStoreJson(body: unknown, init?: ResponseInit) {
+  const response = NextResponse.json(body, init);
+  response.headers.set("cache-control", "no-store");
+  return response;
 }
 
 function createAnonSupabaseClient() {
@@ -79,22 +80,6 @@ function signUpNeedsEmailConfirmation(data: {
   return !(data.session || user?.email_confirmed_at || emailVerified);
 }
 
-async function sendSignupEmailCode(
-  supabase: ReturnType<typeof createAnonSupabaseClient>,
-  email: string,
-  emailRedirectTo: string,
-) {
-  if (!supabase) return false;
-  const { error } = await supabase.auth.signInWithOtp({
-    email,
-    options: {
-      shouldCreateUser: false,
-      emailRedirectTo,
-    },
-  });
-  return !error;
-}
-
 export async function POST(request: Request) {
   if (!isTrustedSameOriginMutationRequest(request)) {
     return getTrustedMutationRequestErrorResponse();
@@ -104,23 +89,23 @@ export async function POST(request: Request) {
   try {
     body = (await request.json()) as MerchantSignupBody;
   } catch {
-    return NextResponse.json({ ok: false, error: "invalid_json" }, { status: 400 });
+    return noStoreJson({ ok: false, error: "invalid_json" }, { status: 400 });
   }
 
-  const email = normalizeEmail(body?.email);
-  const password = normalizePassword(body?.password);
+  const email = normalizeAuthEmail(body?.email);
+  const password = readAuthPassword(body?.password);
   const accountType = normalizeRequestedAccountType(body?.accountType);
-  if (!isValidEmail(email)) {
-    return NextResponse.json({ ok: false, error: "invalid_email" }, { status: 400 });
+  if (!isValidAuthEmail(email)) {
+    return noStoreJson({ ok: false, error: "invalid_email" }, { status: 400 });
   }
-  if (password.length < 6) {
-    return NextResponse.json({ ok: false, error: "invalid_password" }, { status: 400 });
+  if (!isValidAuthPassword(password)) {
+    return noStoreJson({ ok: false, error: "invalid_password" }, { status: 400 });
   }
 
   const supabase = createAnonSupabaseClient();
   const adminSupabase = createServiceRoleSupabaseClient();
   if (!supabase) {
-    return NextResponse.json({ ok: false, error: "merchant_signup_env_missing" }, { status: 503 });
+    return noStoreJson({ ok: false, error: "merchant_signup_env_missing" }, { status: 503 });
   }
 
   const publicOrigin = resolveTrustedPublicOrigin(new URL(request.url));
@@ -141,9 +126,12 @@ export async function POST(request: Request) {
   if (error) {
     const code = typeof (error as { code?: unknown }).code === "string" ? String((error as { code?: unknown }).code) : "";
     if (code === "user_already_exists" || /user already registered/i.test(error.message)) {
-      return NextResponse.json({ ok: false, error: "user_already_exists", message: error.message }, { status: 409 });
+      return noStoreJson({ ok: false, error: "user_already_exists" }, { status: 409 });
     }
-    return NextResponse.json({ ok: false, error: "merchant_signup_failed", message: error.message }, { status: 400 });
+    if (isAuthRateLimitError(error)) {
+      return noStoreJson({ ok: false, error: "auth_rate_limited" }, { status: 429 });
+    }
+    return noStoreJson({ ok: false, error: "merchant_signup_failed" }, { status: 400 });
   }
 
   const needsConfirmation = signUpNeedsEmailConfirmation(data);
@@ -154,11 +142,10 @@ export async function POST(request: Request) {
   });
 
   if (needsConfirmation || !data.session?.access_token || !data.session.refresh_token) {
-    const codeSent = needsConfirmation ? await sendSignupEmailCode(supabase, email, emailRedirectTo).catch(() => false) : false;
-    return NextResponse.json({
+    return noStoreJson({
       ok: true,
       needsConfirmation: true,
-      codeSent,
+      codeSent: needsConfirmation,
       maskedEmail: maskEmailAddress(email),
       accountType: platformIdentity.accountType,
       accountId: platformIdentity.accountId,
@@ -177,6 +164,7 @@ export async function POST(request: Request) {
     merchantIds: platformIdentity.merchantIds,
     user: authUser,
   });
+  response.headers.set("cache-control", "no-store");
   setMerchantAuthCookies(response, {
     accessToken: data.session.access_token,
     refreshToken: data.session.refresh_token,

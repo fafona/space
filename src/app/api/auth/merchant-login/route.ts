@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import {
+  isValidAuthAccount,
+  isValidAuthPassword,
+  normalizeAuthAccount,
+  readAuthPassword,
+} from "@/lib/authCredentialValidation";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import {
   listMerchantIdsForUser,
@@ -118,7 +124,8 @@ function isTransientBackendLookupError(error: unknown) {
 }
 
 function isTransientAuthPasswordError(status: number, payload: unknown) {
-  if (status >= 500 || status === 429) return true;
+  if (status === 429) return false;
+  if (status >= 500) return true;
   if (!payload || typeof payload !== "object") return false;
   const record = payload as { msg?: unknown; message?: unknown; error?: unknown; error_code?: unknown };
   const text = [record.msg, record.message, record.error, record.error_code]
@@ -131,6 +138,12 @@ function wait(ms: number) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+function noStoreJson(body: unknown, init?: ResponseInit) {
+  const response = NextResponse.json(body, init);
+  response.headers.set("cache-control", "no-store");
+  return response;
 }
 
 async function runBackendLookupWithRetry<T extends { error?: unknown }>(task: () => PromiseLike<T>, attempts = 3) {
@@ -401,28 +414,28 @@ export async function POST(request: Request) {
     const payload = (await request.json().catch(() => null)) as
       | { account?: unknown; password?: unknown; preferredAccountType?: unknown }
       | null;
-    const account = typeof payload?.account === "string" ? payload.account.trim() : "";
-    const password = typeof payload?.password === "string" ? payload.password : "";
+    const account = normalizeAuthAccount(payload?.account);
+    const password = readAuthPassword(payload?.password);
     const requestedAccountType = normalizeRequestedAccountType(payload?.preferredAccountType);
 
-    if (!account) {
-      return NextResponse.json({ error: "invalid_account" }, { status: 400 });
+    if (!isValidAuthAccount(account)) {
+      return noStoreJson({ error: "invalid_account" }, { status: 400 });
     }
-    if (!password) {
-      return NextResponse.json({ error: "invalid_password" }, { status: 400 });
+    if (!isValidAuthPassword(password)) {
+      return noStoreJson({ error: "invalid_password" }, { status: 400 });
     }
 
     const supabase = createServerSupabaseClient();
     const supabaseUrl = readEnv("NEXT_PUBLIC_SUPABASE_URL");
     const anonKey = readEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
     if (!supabase || !supabaseUrl || !anonKey) {
-      return NextResponse.json({ error: "merchant_login_env_missing" }, { status: 503 });
+      return noStoreJson({ error: "merchant_login_env_missing" }, { status: 503 });
     }
 
     const resolvedAccount = await resolveAccountIdentity(supabase, account, requestedAccountType);
     const email = resolvedAccount.email;
     if (!email) {
-      return NextResponse.json({ error: "invalid_credentials" }, { status: 401 });
+      return noStoreJson({ error: "invalid_credentials" }, { status: 401 });
     }
 
     let upstreamResponse: Response | null = null;
@@ -449,7 +462,7 @@ export async function POST(request: Request) {
     }
 
     if (!upstreamResponse) {
-      return NextResponse.json({ error: "merchant_login_failed", message: "auth_request_not_started" }, { status: 503 });
+      return noStoreJson({ error: "merchant_login_failed" }, { status: 503 });
     }
 
     if (!upstreamResponse.ok) {
@@ -461,19 +474,25 @@ export async function POST(request: Request) {
         (typeof upstreamPayload?.error === "string" && upstreamPayload.error) ||
         "merchant_login_failed";
 
+      if (upstreamResponse.status === 429) {
+        const response = noStoreJson({ error: "auth_rate_limited" }, { status: 429 });
+        const retryAfter = upstreamResponse.headers.get("retry-after")?.trim();
+        if (retryAfter) response.headers.set("retry-after", retryAfter);
+        return response;
+      }
       if (errorCode === "invalid_credentials" || /invalid login credentials/i.test(message)) {
-        return NextResponse.json({ error: "invalid_credentials" }, { status: 401 });
+        return noStoreJson({ error: "invalid_credentials" }, { status: 401 });
       }
-      if (/email not confirmed/i.test(message)) {
-        return NextResponse.json({ error: "email_not_confirmed" }, { status: 403 });
+      if (errorCode === "email_not_confirmed" || /email not confirmed/i.test(message)) {
+        return noStoreJson({ error: "email_not_confirmed" }, { status: 403 });
       }
-      return NextResponse.json({ error: "merchant_login_failed", message }, { status: 503 });
+      return noStoreJson({ error: "merchant_login_failed" }, { status: 503 });
     }
 
     const accessToken = typeof upstreamPayload?.access_token === "string" ? upstreamPayload.access_token.trim() : "";
     const refreshToken = typeof upstreamPayload?.refresh_token === "string" ? upstreamPayload.refresh_token.trim() : "";
     if (!accessToken || !refreshToken) {
-      return NextResponse.json({ error: "merchant_login_failed", message: "session_tokens_missing" }, { status: 503 });
+      return noStoreJson({ error: "merchant_login_failed" }, { status: 503 });
     }
 
     const authUser =
@@ -505,6 +524,7 @@ export async function POST(request: Request) {
       message: entrySwitched ? buildAutoSwitchedEntryMessage(platformIdentity.accountType) : undefined,
       user: authUser,
     });
+    response.headers.set("cache-control", "no-store");
     setMerchantAuthCookies(response, {
       accessToken,
       refreshToken,
@@ -514,6 +534,6 @@ export async function POST(request: Request) {
     }, request);
     return response;
   } catch {
-    return NextResponse.json({ error: "merchant_login_failed" }, { status: 503 });
+    return noStoreJson({ error: "merchant_login_failed" }, { status: 503 });
   }
 }

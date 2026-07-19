@@ -5,6 +5,14 @@ import { useSearchParams } from "next/navigation";
 import { useI18n } from "@/components/I18nProvider";
 import PasswordField, { getPasswordToggleLabels } from "@/components/PasswordField";
 import {
+  AUTH_ACCOUNT_MAX_LENGTH,
+  AUTH_EMAIL_MAX_LENGTH,
+  AUTH_PASSWORD_MAX_LENGTH,
+  AUTH_VERIFICATION_CODE_MAX_LENGTH,
+  isValidAuthEmail,
+  isValidAuthVerificationCode,
+} from "@/lib/authCredentialValidation";
+import {
   clearStoredBrowserSupabaseSessionTokens,
   establishBrowserSupabaseSession,
   hasStoredBrowserSupabaseSessionTokens,
@@ -394,6 +402,7 @@ function LoginPageInner() {
   const isDevelopment = process.env.NODE_ENV === "development";
   const [account, setAccount] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [resetCode, setResetCode] = useState("");
   const formViewportRef = useRef<HTMLDivElement>(null);
   const accountInputRef = useRef<HTMLInputElement>(null);
@@ -688,10 +697,17 @@ function LoginPageInner() {
     clearRecentMerchantLaunchState();
     setAccount("");
     setPassword("");
+    setConfirmPassword("");
     setResetCode("");
     setPendingResetEmail("");
     setPendingResetEmailMasked("");
     setMsg("");
+    void fetch("/api/auth/merchant-logout", {
+      method: "POST",
+      cache: "no-store",
+      credentials: "same-origin",
+    }).catch(() => null);
+    void supabase.auth.signOut({ scope: "local" }).catch(() => null);
 
     const scrub = () => {
       if (accountInputRef.current) {
@@ -923,13 +939,6 @@ function LoginPageInner() {
     if (normalizedLocale.startsWith("zh")) return "注册中...";
     return "Signing up...";
   }, [normalizedLocale]);
-  const signUpSuccessBackToLoginMessage = useMemo(() => {
-    if (normalizedLocale.startsWith("zh-tw")) return "註冊成功，請登入。";
-    if (normalizedLocale.startsWith("ja")) return "登録が完了しました。ログインしてください。";
-    if (normalizedLocale.startsWith("ko")) return "가입이 완료되었습니다. 로그인해 주세요.";
-    if (normalizedLocale.startsWith("zh")) return "注册成功，请登录。";
-    return "Registration completed. Please sign in.";
-  }, [normalizedLocale]);
   const signUpCodeSentMessage = useMemo(() => {
     if (normalizedLocale.startsWith("zh-tw")) return "註冊驗證碼已發送，請輸入驗證碼完成註冊。";
     if (normalizedLocale.startsWith("ja")) return "登録確認コードを送信しました。コードを入力して登録を完了してください。";
@@ -1137,7 +1146,7 @@ function LoginPageInner() {
     });
 
     void (async () => {
-      if (isGoogleOAuthReturn) return;
+      if (loggedOut || isGoogleOAuthReturn) return;
       try {
         const cookieBackedSession = await readValidatedCookieBackedSession();
         if (!mounted) return;
@@ -1159,14 +1168,16 @@ function LoginPageInner() {
     return () => {
       mounted = false;
     };
-  }, [isGoogleOAuthReturn, redirectToAccountHome]);
+  }, [isGoogleOAuthReturn, loggedOut, redirectToAccountHome]);
 
   function validateSignInForm(): string | null {
     const trimmedAccount = account.trim();
 
     if (!trimmedAccount) return loginAccountRequiredMessage;
+    if (trimmedAccount.length > AUTH_ACCOUNT_MAX_LENGTH) return t("login.requestFailed");
     if (!password) return t("login.requiredPassword");
     if (password.length < 6) return t("login.passwordTooShort");
+    if (password.length > AUTH_PASSWORD_MAX_LENGTH) return t("login.requestFailed");
 
     return null;
   }
@@ -1175,9 +1186,12 @@ function LoginPageInner() {
     const trimmedEmail = account.trim();
 
     if (!trimmedEmail) return t("login.requiredEmail");
-    if (!trimmedEmail.includes("@")) return t("login.invalidEmail");
+    if (!isValidAuthEmail(trimmedEmail.toLowerCase())) return t("login.invalidEmail");
     if (!password) return t("login.requiredPassword");
     if (password.length < 6) return t("login.passwordTooShort");
+    if (password.length > AUTH_PASSWORD_MAX_LENGTH) return t("login.requestFailed");
+    if (!confirmPassword) return t("reset.requiredConfirmPassword");
+    if (password !== confirmPassword) return t("reset.passwordMismatch");
 
     return null;
   }
@@ -1212,13 +1226,20 @@ function LoginPageInner() {
   }
 
   function normalizeError(message: string) {
+    if (/auth_rate_limited/i.test(message)) {
+      if (normalizedLocale.startsWith("zh-tw")) return "嘗試次數過多，請稍後再試。";
+      if (normalizedLocale.startsWith("ja")) return "試行回数が多すぎます。しばらくしてから再試行してください。";
+      if (normalizedLocale.startsWith("ko")) return "시도 횟수가 너무 많습니다. 잠시 후 다시 시도하세요.";
+      if (normalizedLocale.startsWith("zh")) return "尝试次数过多，请稍后再试。";
+      return "Too many attempts. Please try again later.";
+    }
     if (/supabase_unavailable:/i.test(message)) {
       return t("login.backendUnavailable");
     }
     if (/browser_session_not_ready/i.test(message)) {
       return t("login.requestFailed");
     }
-    if (/merchant_login_|auth_signin_|account_resolve_/i.test(message)) {
+    if (/merchant_(login|signup)_|auth_signin_|account_resolve_|signup_code_request_failed/i.test(message)) {
       return t("login.backendUnavailable");
     }
     if (/failed to fetch|fetch failed|networkerror|network request failed|load failed/i.test(message)) {
@@ -1717,8 +1738,8 @@ function LoginPageInner() {
       const needsConfirmation = payload?.needsConfirmation === true;
       setEmailConfirmationRequired(needsConfirmation);
       clearStoredBrowserSupabaseSessionTokens();
-      setAuthView("signin");
       if (needsConfirmation) {
+        setAuthView("signin");
         setPendingSignupVerificationEmail(account.trim().toLowerCase());
         setPendingSignupVerificationMaskedEmail(
           typeof payload?.maskedEmail === "string" ? payload.maskedEmail : account.trim().toLowerCase(),
@@ -1729,7 +1750,21 @@ function LoginPageInner() {
         setPendingSignupVerificationEmail("");
         setPendingSignupVerificationMaskedEmail("");
         setPendingSignupVerificationAccountType(null);
-        setMsg(signUpSuccessBackToLoginMessage);
+        const merchantIds = readMerchantSessionMerchantIds(payload);
+        const signedUpAccountType = normalizePlatformAccountType(payload?.accountType) || accountType;
+        void readMerchantSessionPayload(4200, { includeClientTokens: true }).catch(() => null);
+        await redirectToAccountHome(payload?.user ?? null, {
+          accountType: signedUpAccountType,
+          accountId: normalizePlatformAccountId(payload?.accountId),
+          merchantId: pickPrimaryMerchantId(
+            typeof payload?.merchantId === "string" ? payload.merchantId.trim() : "",
+            merchantIds,
+          ),
+          merchantIds,
+        }, {
+          withSignInBridge: false,
+        });
+        return;
       }
       setNeedConfirmEmail(needsConfirmation);
     } catch (error) {
@@ -1751,6 +1786,7 @@ function LoginPageInner() {
     setPendingSignupVerificationAccountType(null);
     setResetCode("");
     setSignupCode("");
+    setConfirmPassword("");
   }
 
   function selectLoginEntry(accountType: PlatformAccountType) {
@@ -1767,6 +1803,7 @@ function LoginPageInner() {
     setPendingSignupVerificationAccountType(null);
     setResetCode("");
     setSignupCode("");
+    setConfirmPassword("");
   }
 
   function returnToEntrySelection() {
@@ -1782,6 +1819,7 @@ function LoginPageInner() {
     setPendingSignupVerificationAccountType(null);
     setResetCode("");
     setSignupCode("");
+    setConfirmPassword("");
   }
 
   async function signInWithGoogle(options?: { accountType?: PlatformAccountType; retryExpiredState?: boolean }) {
@@ -1984,7 +2022,8 @@ function LoginPageInner() {
 
     const email = (pendingSignupVerificationEmail || account).trim().toLowerCase();
     if (!email || !email.includes("@")) return setMsg(t("login.inputRegisterEmailFirst"));
-    if (!signupCode.trim()) return setMsg(t("reset.invalidCode"));
+    const normalizedSignupCode = signupCode.trim().replace(/\s+/g, "");
+    if (!isValidAuthVerificationCode(normalizedSignupCode)) return setMsg(t("reset.invalidCode"));
 
     setPendingAction("verify_signup_code");
     try {
@@ -1997,17 +2036,33 @@ function LoginPageInner() {
           },
           body: JSON.stringify({
             email,
-            code: signupCode,
+            code: normalizedSignupCode,
             accountType: pendingSignupVerificationAccountType ?? undefined,
           }),
         }),
       );
       const payload = (await response.json().catch(() => null)) as
-        | { ok?: unknown; error?: unknown; verified?: unknown }
+        | {
+            ok?: unknown;
+            error?: unknown;
+            verified?: unknown;
+            accountType?: unknown;
+            accountId?: unknown;
+            merchantId?: unknown;
+            merchantIds?: unknown;
+            user?: LoginAuthUser | null;
+          }
         | null;
       if (!response.ok || payload?.ok !== true || payload?.verified !== true) {
         const errorMessage = typeof payload?.error === "string" ? payload.error : t("login.requestFailed");
         throw new Error(errorMessage);
+      }
+      const payloadAccountType = normalizePlatformAccountType(payload?.accountType);
+      const verificationAccountType: PlatformAccountType | null =
+        pendingSignupVerificationAccountType ?? entryAccountType ?? (payloadAccountType || null);
+      let signedInResult: ServerSignInResult | null = null;
+      if (verificationAccountType && password.length >= 6 && password.length <= AUTH_PASSWORD_MAX_LENGTH) {
+        signedInResult = await signInViaServer(email, password, verificationAccountType).catch(() => null);
       }
       setPendingSignupVerificationEmail("");
       setPendingSignupVerificationMaskedEmail("");
@@ -2015,6 +2070,26 @@ function LoginPageInner() {
       setSignupCode("");
       setNeedConfirmEmail(false);
       setAuthView("signin");
+      if (signedInResult) {
+        clearStoredBrowserSupabaseSessionTokens();
+        void readMerchantSessionPayload(4200, { includeClientTokens: true }).catch(() => null);
+        if (signedInResult.entrySwitched) {
+          await showAutoSwitchedEntryNotice(
+            signedInResult.accountType,
+            signedInResult.requestedAccountType ?? verificationAccountType,
+            signedInResult.message,
+          );
+        }
+        await redirectToAccountHome(signedInResult.user, {
+          accountType: signedInResult.accountType,
+          accountId: signedInResult.accountId,
+          merchantId: signedInResult.merchantId,
+          merchantIds: signedInResult.merchantIds,
+        }, {
+          withSignInBridge: signedInResult.needsJustSignedInBridge,
+        });
+        return;
+      }
       setMsg(signUpCodeVerifiedMessage);
     } catch (error) {
       setMsg(error instanceof Error ? normalizeResetCodeError(error.message) : t("reset.invalidCode"));
@@ -2081,7 +2156,8 @@ function LoginPageInner() {
 
     const email = pendingResetEmail.trim() || account.trim().toLowerCase();
     if (!email || !email.includes("@")) return setMsg(t("login.inputEmailBeforeForgot"));
-    if (!resetCode.trim()) return setMsg(t("reset.invalidCode"));
+    const normalizedResetCode = resetCode.trim().replace(/\s+/g, "");
+    if (!isValidAuthVerificationCode(normalizedResetCode)) return setMsg(t("reset.invalidCode"));
 
     setPendingAction("verify_reset_code");
     try {
@@ -2094,7 +2170,7 @@ function LoginPageInner() {
           },
           body: JSON.stringify({
             email,
-            code: resetCode,
+            code: normalizedResetCode,
           }),
         }),
       );
@@ -2289,23 +2365,18 @@ function LoginPageInner() {
                 </div>
 
                 <div className="space-y-3 md:space-y-4">
-                  <div className="hidden" aria-hidden="true">
-                    <input type="text" tabIndex={-1} autoComplete="username" />
-                    <input type="password" tabIndex={-1} autoComplete="current-password" />
-                  </div>
-
                   <div className="space-y-2">
                     <div className="px-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">{accountFieldLabel}</div>
                     <input
                       ref={accountInputRef}
                       className={fieldClassName}
                       type={authView === "signin" ? "text" : "email"}
-                      name="merchant-login-account"
-                      autoComplete="off"
+                      name={authView === "signin" ? "merchant-login-account" : "merchant-signup-email"}
+                      autoComplete={authView === "signin" ? "username" : "email"}
                       autoCapitalize="none"
                       autoCorrect="off"
                       spellCheck={false}
-                      data-lpignore="true"
+                      maxLength={authView === "signin" ? AUTH_ACCOUNT_MAX_LENGTH : AUTH_EMAIL_MAX_LENGTH}
                       value={account}
                       onChange={(e) => setAccount(e.target.value)}
                       placeholder={accountFieldPlaceholder}
@@ -2317,9 +2388,9 @@ function LoginPageInner() {
                     <PasswordField
                       ref={passwordInputRef}
                       className={fieldClassName}
-                      name="merchant-login-password"
-                      autoComplete="new-password"
-                      data-lpignore="true"
+                      name={authView === "signin" ? "merchant-login-password" : "merchant-signup-password"}
+                      autoComplete={authView === "signin" ? "current-password" : "new-password"}
+                      maxLength={AUTH_PASSWORD_MAX_LENGTH}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       onKeyDown={(event) => {
@@ -2333,6 +2404,31 @@ function LoginPageInner() {
                       toggleButtonTabIndex={-1}
                     />
                   </div>
+
+                  {activeSignupAccountType ? (
+                    <div className="space-y-2">
+                      <div className="px-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                        {t("reset.confirmPassword")}
+                      </div>
+                      <PasswordField
+                        className={fieldClassName}
+                        name="merchant-signup-password-confirmation"
+                        autoComplete="new-password"
+                        maxLength={AUTH_PASSWORD_MAX_LENGTH}
+                        value={confirmPassword}
+                        onChange={(event) => setConfirmPassword(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter") return;
+                          event.preventDefault();
+                          submitPrimaryAuthAction();
+                        }}
+                        placeholder={t("reset.inputConfirmPasswordAgain")}
+                        showLabel={passwordToggleLabels.show}
+                        hideLabel={passwordToggleLabels.hide}
+                        toggleButtonTabIndex={-1}
+                      />
+                    </div>
+                  ) : null}
                 </div>
 
                 {msg ? (
@@ -2431,6 +2527,8 @@ function LoginPageInner() {
                         autoCapitalize="none"
                         autoCorrect="off"
                         spellCheck={false}
+                        inputMode="numeric"
+                        maxLength={AUTH_VERIFICATION_CODE_MAX_LENGTH}
                       />
                       <button
                         className={secondaryButtonClassName}
@@ -2470,6 +2568,7 @@ function LoginPageInner() {
                         autoCorrect="off"
                         spellCheck={false}
                         inputMode="numeric"
+                        maxLength={AUTH_VERIFICATION_CODE_MAX_LENGTH}
                       />
                       <button
                         className={secondaryButtonClassName}

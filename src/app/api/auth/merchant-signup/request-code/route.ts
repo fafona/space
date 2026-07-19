@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isAuthRateLimitError, isValidAuthEmail, normalizeAuthEmail } from "@/lib/authCredentialValidation";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { resolveTrustedPublicOrigin } from "@/lib/requestOrigin";
 import { createServerSupabaseAuthClient, maskEmailAddress } from "@/lib/superAdminServer";
@@ -9,10 +10,6 @@ export const revalidate = 0;
 type RequestBody = {
   email?: unknown;
 };
-
-function normalizeEmail(value: unknown) {
-  return typeof value === "string" ? value.trim().toLowerCase() : "";
-}
 
 function noStoreJson(body: unknown, init?: ResponseInit) {
   const response = NextResponse.json(body, init);
@@ -27,8 +24,8 @@ export async function POST(request: Request) {
 
   try {
     const body = (await request.json().catch(() => null)) as RequestBody | null;
-    const email = normalizeEmail(body?.email);
-    if (!email || !email.includes("@")) {
+    const email = normalizeAuthEmail(body?.email);
+    if (!isValidAuthEmail(email)) {
       return noStoreJson({ ok: false, error: "signup_code_invalid_email" }, { status: 400 });
     }
 
@@ -55,10 +52,13 @@ export async function POST(request: Request) {
           maskedEmail: maskEmailAddress(email),
         });
       }
+      if (isAuthRateLimitError(error)) {
+        return noStoreJson({ ok: false, error: "auth_rate_limited" }, { status: 429 });
+      }
       return noStoreJson(
         {
           ok: false,
-          error: error.message || "signup_code_request_failed",
+          error: "signup_code_request_failed",
         },
         { status: 503 },
       );

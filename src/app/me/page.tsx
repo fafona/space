@@ -5399,6 +5399,7 @@ export default function MePage() {
         cache: "no-store",
       }).catch(() => null);
     } finally {
+      clearStoredBrowserSupabaseSessionTokens();
       window.location.replace("/login?loggedOut=1");
     }
   }

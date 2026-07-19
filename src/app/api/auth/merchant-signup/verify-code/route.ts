@@ -1,5 +1,12 @@
 import { NextResponse } from "next/server";
 import { createClient, type EmailOtpType } from "@supabase/supabase-js";
+import {
+  isAuthRateLimitError,
+  isValidAuthEmail,
+  isValidAuthVerificationCode,
+  normalizeAuthEmail,
+  normalizeAuthVerificationCode,
+} from "@/lib/authCredentialValidation";
 import { type MerchantAuthUserSummary } from "@/lib/merchantAuthIdentity";
 import {
   resolvePlatformAccountIdentityForUser,
@@ -19,14 +26,6 @@ type RequestBody = {
 
 function readEnv(name: string) {
   return (process.env[name] ?? "").trim();
-}
-
-function normalizeEmail(value: unknown) {
-  return typeof value === "string" ? value.trim().toLowerCase() : "";
-}
-
-function normalizeCode(value: unknown) {
-  return typeof value === "string" ? value.trim().replace(/\s+/g, "") : "";
 }
 
 function normalizeRequestedAccountType(value: unknown): PlatformAccountType | null {
@@ -82,6 +81,7 @@ async function verifySignupCode(input: {
     });
     if (!error && data.user) return { data, type };
     lastError = error ?? lastError;
+    if (isAuthRateLimitError(error)) break;
   }
   return { data: null, type: null, error: lastError };
 }
@@ -93,13 +93,13 @@ export async function POST(request: Request) {
 
   try {
     const body = (await request.json().catch(() => null)) as RequestBody | null;
-    const email = normalizeEmail(body?.email);
-    const code = normalizeCode(body?.code);
+    const email = normalizeAuthEmail(body?.email);
+    const code = normalizeAuthVerificationCode(body?.code);
     const requestedAccountType = normalizeRequestedAccountType(body?.accountType);
-    if (!email || !email.includes("@")) {
+    if (!isValidAuthEmail(email)) {
       return noStoreJson({ ok: false, error: "signup_code_invalid_email" }, { status: 400 });
     }
-    if (!code || code.length < 4) {
+    if (!isValidAuthVerificationCode(code)) {
       return noStoreJson({ ok: false, error: "signup_code_invalid_code" }, { status: 400 });
     }
 
@@ -112,10 +112,13 @@ export async function POST(request: Request) {
     const result = await verifySignupCode({ supabase, email, code });
     const authUser = (result.data?.user ?? null) as MerchantAuthUserSummary | null;
     if (!authUser) {
+      if (isAuthRateLimitError(result.error)) {
+        return noStoreJson({ ok: false, error: "auth_rate_limited" }, { status: 429 });
+      }
       return noStoreJson(
         {
           ok: false,
-          error: result.error?.message || "signup_code_invalid_or_expired",
+          error: "signup_code_invalid_or_expired",
         },
         { status: 401 },
       );
