@@ -1,6 +1,8 @@
 import {
   PLATFORM_SUPPORT_INBOX_SLUG,
   buildPlatformSupportInboxBlocks,
+  mergePlatformSupportInboxPayloads,
+  normalizePlatformSupportInboxPayload,
   readPlatformSupportInboxFromBlocks,
   type PlatformSupportInboxPayload,
 } from "@/lib/platformSupportInbox";
@@ -33,11 +35,16 @@ let platformSupportInboxCache:
       value: PlatformSupportInboxPayload;
     }
   | null = null;
+let platformSupportInboxWriteQueue: Promise<void> = Promise.resolve();
 
 function toErrorMessage(input: unknown) {
   if (!input || typeof input !== "object") return "unknown_error";
   const message = (input as { message?: unknown }).message;
   return typeof message === "string" && message.trim() ? message.trim() : "unknown_error";
+}
+
+function throwPlatformSupportInboxReadError(input: unknown): never {
+  throw new Error(`platform_support_inbox_read_failed:${toErrorMessage(input)}`);
 }
 
 function isMissingSlugColumn(message: string) {
@@ -63,8 +70,9 @@ function isMissingUpdatedAtColumn(message: string) {
 
 export async function loadStoredPlatformSupportInbox(
   supabase: PlatformSupportInboxStoreClient,
+  options?: { bypassCache?: boolean },
 ): Promise<PlatformSupportInboxPayload> {
-  if (platformSupportInboxCache && platformSupportInboxCache.expiresAt > Date.now()) {
+  if (!options?.bypassCache && platformSupportInboxCache && platformSupportInboxCache.expiresAt > Date.now()) {
     return platformSupportInboxCache.value;
   }
 
@@ -93,11 +101,14 @@ export async function loadStoredPlatformSupportInbox(
     } else if (isMissingSlugColumn(message)) {
       return { threads: [] };
     } else {
-      return { threads: [] };
+      throwPlatformSupportInboxReadError(error);
     }
   }
 
-  if (error) return { threads: [] };
+  if (error) {
+    if (isMissingSlugColumn(toErrorMessage(error))) return { threads: [] };
+    throwPlatformSupportInboxReadError(error);
+  }
   const payload = readPlatformSupportInboxFromBlocks(data?.blocks);
   platformSupportInboxCache = {
     expiresAt: Date.now() + PLATFORM_SUPPORT_INBOX_CACHE_TTL_MS,
@@ -106,12 +117,18 @@ export async function loadStoredPlatformSupportInbox(
   return payload;
 }
 
-export async function savePlatformSupportInbox(
+async function savePlatformSupportInboxUnlocked(
   supabase: PlatformSupportInboxStoreClient,
   payload: PlatformSupportInboxPayload,
-): Promise<{ error: string | null }> {
-  const beforePayload = await loadStoredPlatformSupportInbox(supabase);
-  const blocks = buildPlatformSupportInboxBlocks(payload);
+  options?: { replace?: boolean },
+): Promise<{ error: string | null; payload: PlatformSupportInboxPayload | null }> {
+  platformSupportInboxCache = null;
+  const beforePayload = await loadStoredPlatformSupportInbox(supabase, { bypassCache: true });
+  const incomingPayload = normalizePlatformSupportInboxPayload(payload);
+  const normalizedPayload = options?.replace
+    ? incomingPayload
+    : mergePlatformSupportInboxPayloads(beforePayload, incomingPayload);
+  const blocks = buildPlatformSupportInboxBlocks(normalizedPayload);
   const basePayload = {
     blocks,
     updated_at: new Date().toISOString(),
@@ -122,12 +139,12 @@ export async function savePlatformSupportInbox(
     backupSlug: PLATFORM_SUPPORT_INBOX_HISTORY_BACKUP_SLUG,
     source: "platform-support-inbox",
     before: beforePayload,
-    after: payload,
+    after: normalizedPayload,
     at: basePayload.updated_at,
     maxEntries: 20,
     merchantId: null,
   });
-  if (history.error) return { error: `platform_support_inbox_history_save_failed:${history.error}` };
+  if (history.error) return { error: `platform_support_inbox_history_save_failed:${history.error}`, payload: null };
 
   const queryExisting = async () => {
     const scoped = await supabase
@@ -172,7 +189,7 @@ export async function savePlatformSupportInbox(
 
   const existing = await queryExisting();
   if ("error" in existing && existing.error) {
-    return { error: existing.error };
+    return { error: existing.error, payload: null };
   }
 
   const recordId = existing.record?.id;
@@ -199,17 +216,35 @@ export async function savePlatformSupportInbox(
   if (!first.error) {
     platformSupportInboxCache = {
       expiresAt: Date.now() + PLATFORM_SUPPORT_INBOX_CACHE_TTL_MS,
-      value: payload,
+      value: normalizedPayload,
     };
-    return { error: null };
+    return { error: null, payload: normalizedPayload };
   }
-  if (!isMissingUpdatedAtColumn(first.error)) return first;
+  if (!isMissingUpdatedAtColumn(first.error)) return { error: first.error, payload: null };
   const fallback = await updatePayload(payloadWithoutUpdatedAt);
   if (!fallback.error) {
     platformSupportInboxCache = {
       expiresAt: Date.now() + PLATFORM_SUPPORT_INBOX_CACHE_TTL_MS,
-      value: payload,
+      value: normalizedPayload,
     };
   }
-  return fallback;
+  return {
+    error: fallback.error,
+    payload: fallback.error ? null : normalizedPayload,
+  };
+}
+
+export function savePlatformSupportInbox(
+  supabase: PlatformSupportInboxStoreClient,
+  payload: PlatformSupportInboxPayload,
+  options?: { replace?: boolean },
+): Promise<{ error: string | null; payload: PlatformSupportInboxPayload | null }> {
+  const operation = platformSupportInboxWriteQueue
+    .catch(() => undefined)
+    .then(() => savePlatformSupportInboxUnlocked(supabase, payload, options));
+  platformSupportInboxWriteQueue = operation.then(
+    () => undefined,
+    () => undefined,
+  );
+  return operation;
 }

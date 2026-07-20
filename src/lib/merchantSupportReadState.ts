@@ -42,6 +42,17 @@ export function getLatestSupportReadTimestamp(left: unknown, right: unknown) {
   return new Date(rightNormalized).getTime() > new Date(leftNormalized).getTime() ? rightNormalized : leftNormalized;
 }
 
+export function getLatestSupportReadTimestampAtOrBefore(timestamps: unknown[], requestedTimestamp: unknown) {
+  const requested = normalizeIsoString(requestedTimestamp);
+  if (!requested) return "";
+  const requestedTime = new Date(requested).getTime();
+  return timestamps.reduce((latest, timestamp) => {
+    const normalized = normalizeIsoString(timestamp);
+    if (!normalized || new Date(normalized).getTime() > requestedTime) return latest;
+    return getLatestSupportReadTimestamp(latest, normalized);
+  }, "");
+}
+
 function normalizePeerLastRead(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {} as Record<string, string>;
   return Object.fromEntries(
@@ -59,9 +70,10 @@ function normalizeEntry(value: unknown): MerchantSupportReadStateEntry | null {
   const peerLastRead = normalizePeerLastRead(record.peerLastRead);
   const officialLastReadAt = normalizeIsoString(record.officialLastReadAt);
   const updatedAt =
-    normalizeIsoString(record.updatedAt) ||
-    [officialLastReadAt, ...Object.values(peerLastRead)].reduce(getLatestSupportReadTimestamp, "") ||
-    new Date(0).toISOString();
+    [normalizeIsoString(record.updatedAt), officialLastReadAt, ...Object.values(peerLastRead)].reduce(
+      getLatestSupportReadTimestamp,
+      "",
+    ) || new Date(0).toISOString();
   return {
     accountId,
     officialLastReadAt,
@@ -102,6 +114,23 @@ export function normalizeMerchantSupportReadStatePayload(value: unknown): Mercha
   return {
     accounts: sortReadStateEntries([...mergedByAccount.values()]),
   };
+}
+
+export function mergeMerchantSupportReadStatePayloads(
+  current: MerchantSupportReadStatePayload,
+  incoming: MerchantSupportReadStatePayload,
+) {
+  return normalizeMerchantSupportReadStatePayload({
+    accounts: [...current.accounts, ...incoming.accounts],
+  });
+}
+
+export function isSupportTimestampUnread(messageTimestamp: unknown, lastReadTimestamp: unknown) {
+  const normalizedMessageTimestamp = normalizeIsoString(messageTimestamp);
+  if (!normalizedMessageTimestamp) return false;
+  const normalizedLastReadTimestamp = normalizeIsoString(lastReadTimestamp);
+  if (!normalizedLastReadTimestamp) return true;
+  return new Date(normalizedMessageTimestamp).getTime() > new Date(normalizedLastReadTimestamp).getTime();
 }
 
 export function buildMerchantSupportReadStateBlocks(payload: MerchantSupportReadStatePayload) {

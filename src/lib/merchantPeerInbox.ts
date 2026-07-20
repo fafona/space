@@ -131,6 +131,28 @@ function sortMessages(messages: MerchantPeerMessage[]) {
   });
 }
 
+function selectLatestIsoTimestamp(left: string, right: string) {
+  const leftTimestamp = new Date(left).getTime();
+  const rightTimestamp = new Date(right).getTime();
+  if (!Number.isFinite(leftTimestamp)) return right;
+  if (!Number.isFinite(rightTimestamp)) return left;
+  return rightTimestamp > leftTimestamp ? right : left;
+}
+
+function isSameOrLaterIsoTimestamp(candidate: string, current: string) {
+  const candidateTimestamp = new Date(candidate).getTime();
+  const currentTimestamp = new Date(current).getTime();
+  if (!Number.isFinite(candidateTimestamp)) return false;
+  if (!Number.isFinite(currentTimestamp)) return true;
+  return candidateTimestamp >= currentTimestamp;
+}
+
+function selectParticipantName(current: string, candidate: string, merchantId: string) {
+  if (candidate && candidate !== merchantId) return candidate;
+  if (current) return current;
+  return candidate || merchantId;
+}
+
 function buildThreadParticipantRecord(input: {
   leftMerchantId: unknown;
   leftMerchantName?: unknown;
@@ -177,15 +199,23 @@ function normalizeThread(value: unknown): MerchantPeerThread | null {
     rightMerchantEmail: record.merchantBEmail,
   });
   if (!participants) return null;
-  const messages = Array.isArray(record.messages)
-    ? sortMessages(
-        record.messages
-          .map((item, index) => normalizeMessage(item, index))
-          .filter((item): item is MerchantPeerMessage => !!item),
+  const messageMap = new Map<string, MerchantPeerMessage>();
+  if (Array.isArray(record.messages)) {
+    record.messages
+      .map((item, index) => normalizeMessage(item, index))
+      .filter(
+        (item): item is MerchantPeerMessage =>
+          !!item &&
+          (item.senderMerchantId === participants.merchantAId || item.senderMerchantId === participants.merchantBId),
       )
-    : [];
+      .forEach((message) => {
+        if (!messageMap.has(message.id)) messageMap.set(message.id, message);
+      });
+  }
+  const messages = sortMessages([...messageMap.values()]);
   const latestMessageAt = messages[messages.length - 1]?.createdAt ?? "";
-  const updatedAt = normalizeIsoString(record.updatedAt) || latestMessageAt || new Date(0).toISOString();
+  const updatedAt =
+    selectLatestIsoTimestamp(normalizeIsoString(record.updatedAt), latestMessageAt) || new Date(0).toISOString();
   return {
     ...participants,
     updatedAt,
@@ -230,20 +260,75 @@ function sortContacts(contacts: MerchantPeerContact[]) {
 }
 
 export function normalizeMerchantPeerInboxPayload(value: unknown): MerchantPeerInboxPayload {
-  const contacts = Array.isArray((value as { contacts?: unknown } | null | undefined)?.contacts)
+  const normalizedContacts = Array.isArray((value as { contacts?: unknown } | null | undefined)?.contacts)
     ? (value as { contacts: unknown[] }).contacts
         .map((item) => normalizeContact(item))
         .filter((item): item is MerchantPeerContact => !!item)
     : [];
-  const threads = Array.isArray((value as { threads?: unknown } | null | undefined)?.threads)
+  const contactMap = new Map<string, MerchantPeerContact>();
+  normalizedContacts.forEach((contact) => {
+    const key = `${contact.ownerMerchantId}::${contact.contactMerchantId}`;
+    const current = contactMap.get(key);
+    if (!current) {
+      contactMap.set(key, contact);
+      return;
+    }
+    const candidateIsCurrent = isSameOrLaterIsoTimestamp(contact.savedAt, current.savedAt);
+    const preferred = candidateIsCurrent ? contact : current;
+    const fallback = candidateIsCurrent ? current : contact;
+    contactMap.set(key, {
+      ...current,
+      contactName: selectParticipantName(fallback.contactName, preferred.contactName, contact.contactMerchantId),
+      contactEmail: preferred.contactEmail || fallback.contactEmail,
+      savedAt: selectLatestIsoTimestamp(current.savedAt, contact.savedAt),
+    });
+  });
+
+  const normalizedThreads = Array.isArray((value as { threads?: unknown } | null | undefined)?.threads)
     ? (value as { threads: unknown[] }).threads
         .map((item) => normalizeThread(item))
         .filter((item): item is MerchantPeerThread => !!item)
     : [];
+  const threadMap = new Map<string, MerchantPeerThread>();
+  normalizedThreads.forEach((thread) => {
+    const current = threadMap.get(thread.threadKey);
+    if (!current) {
+      threadMap.set(thread.threadKey, thread);
+      return;
+    }
+    const messageMap = new Map(current.messages.map((message) => [message.id, message]));
+    thread.messages.forEach((message) => {
+      if (!messageMap.has(message.id)) messageMap.set(message.id, message);
+    });
+    const messages = sortMessages([...messageMap.values()]);
+    const candidateIsCurrent = isSameOrLaterIsoTimestamp(thread.updatedAt, current.updatedAt);
+    const preferred = candidateIsCurrent ? thread : current;
+    const fallback = candidateIsCurrent ? current : thread;
+    threadMap.set(thread.threadKey, {
+      ...current,
+      merchantAName: selectParticipantName(fallback.merchantAName, preferred.merchantAName, thread.merchantAId),
+      merchantAEmail: preferred.merchantAEmail || fallback.merchantAEmail,
+      merchantBName: selectParticipantName(fallback.merchantBName, preferred.merchantBName, thread.merchantBId),
+      merchantBEmail: preferred.merchantBEmail || fallback.merchantBEmail,
+      updatedAt:
+        messages[messages.length - 1]?.createdAt || selectLatestIsoTimestamp(current.updatedAt, thread.updatedAt),
+      messages,
+    });
+  });
   return {
-    contacts: sortContacts(contacts),
-    threads: sortThreads(threads),
+    contacts: sortContacts([...contactMap.values()]),
+    threads: sortThreads([...threadMap.values()]),
   };
+}
+
+export function mergeMerchantPeerInboxPayloads(
+  current: MerchantPeerInboxPayload,
+  incoming: MerchantPeerInboxPayload,
+) {
+  return normalizeMerchantPeerInboxPayload({
+    contacts: [...current.contacts, ...incoming.contacts],
+    threads: [...current.threads, ...incoming.threads],
+  });
 }
 
 export function buildMerchantPeerInboxBlocks(payload: MerchantPeerInboxPayload) {
@@ -303,7 +388,8 @@ export function upsertMerchantPeerContact(
   if (!ownerMerchantId || !contactMerchantId || ownerMerchantId === contactMerchantId) {
     return normalizeMerchantPeerInboxPayload(payload);
   }
-  const contactName = normalizeMerchantName(input.contactName, contactMerchantId);
+  const providedContactName = normalizeText(input.contactName);
+  const contactName = providedContactName || contactMerchantId;
   const contactEmail = normalizeEmail(input.contactEmail);
   const savedAt = normalizeIsoString(input.savedAt) || new Date().toISOString();
   const nextPayload = normalizeMerchantPeerInboxPayload(payload);
@@ -314,9 +400,9 @@ export function upsertMerchantPeerContact(
   if (existingIndex >= 0) {
     contacts[existingIndex] = {
       ...contacts[existingIndex],
-      contactName: contactName || contacts[existingIndex].contactName,
+      contactName: providedContactName || contacts[existingIndex].contactName,
       contactEmail: contactEmail || contacts[existingIndex].contactEmail,
-      savedAt,
+      savedAt: selectLatestIsoTimestamp(contacts[existingIndex].savedAt, savedAt),
     };
     return {
       contacts: sortContacts(contacts),
@@ -381,11 +467,16 @@ export function upsertMerchantPeerMessage(
     const hasMessage = nextMessage ? current.messages.some((message) => message.id === nextMessage.id) : false;
     const mergedMessages = nextMessage && !hasMessage ? sortMessages([...current.messages, nextMessage]) : current.messages;
     const latestMessageAt = mergedMessages[mergedMessages.length - 1]?.createdAt ?? current.updatedAt;
+    const senderMerchantId = normalizeMerchantId(input.senderMerchantId);
+    const senderMerchantName = normalizeText(input.senderMerchantName);
+    const recipientMerchantName = normalizeText(input.recipientMerchantName);
+    const participantAName = participants.merchantAId === senderMerchantId ? senderMerchantName : recipientMerchantName;
+    const participantBName = participants.merchantBId === senderMerchantId ? senderMerchantName : recipientMerchantName;
     threads[existingIndex] = {
       ...current,
-      merchantAName: participants.merchantAName || current.merchantAName,
+      merchantAName: participantAName || current.merchantAName,
       merchantAEmail: participants.merchantAEmail || current.merchantAEmail,
-      merchantBName: participants.merchantBName || current.merchantBName,
+      merchantBName: participantBName || current.merchantBName,
       merchantBEmail: participants.merchantBEmail || current.merchantBEmail,
       updatedAt: latestMessageAt,
       messages: mergedMessages,

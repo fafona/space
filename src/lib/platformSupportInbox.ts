@@ -71,20 +71,40 @@ function sortMessages(messages: PlatformSupportMessage[]) {
   });
 }
 
+function selectLatestIsoTimestamp(left: string, right: string) {
+  const leftTimestamp = new Date(left).getTime();
+  const rightTimestamp = new Date(right).getTime();
+  if (!Number.isFinite(leftTimestamp)) return right;
+  if (!Number.isFinite(rightTimestamp)) return left;
+  return rightTimestamp > leftTimestamp ? right : left;
+}
+
+function isSameOrLaterIsoTimestamp(candidate: string, current: string) {
+  const candidateTimestamp = new Date(candidate).getTime();
+  const currentTimestamp = new Date(current).getTime();
+  if (!Number.isFinite(candidateTimestamp)) return false;
+  if (!Number.isFinite(currentTimestamp)) return true;
+  return candidateTimestamp >= currentTimestamp;
+}
+
 function normalizeThread(value: unknown): PlatformSupportThread | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
   const merchantId = normalizeText(record.merchantId);
   if (!merchantId) return null;
-  const messages = Array.isArray(record.messages)
-    ? sortMessages(
-        record.messages
-          .map((item, index) => normalizeMessage(item, index))
-          .filter((item): item is PlatformSupportMessage => !!item),
-      )
-    : [];
+  const messageMap = new Map<string, PlatformSupportMessage>();
+  if (Array.isArray(record.messages)) {
+    record.messages
+      .map((item, index) => normalizeMessage(item, index))
+      .filter((item): item is PlatformSupportMessage => !!item)
+      .forEach((message) => {
+        if (!messageMap.has(message.id)) messageMap.set(message.id, message);
+      });
+  }
+  const messages = sortMessages([...messageMap.values()]);
   const latestMessageAt = messages[messages.length - 1]?.createdAt ?? "";
-  const updatedAt = normalizeIsoString(record.updatedAt) || latestMessageAt || new Date(0).toISOString();
+  const updatedAt =
+    selectLatestIsoTimestamp(normalizeIsoString(record.updatedAt), latestMessageAt) || new Date(0).toISOString();
   return {
     merchantId,
     siteId: normalizeText(record.siteId) || merchantId,
@@ -105,14 +125,48 @@ export function sortSupportThreads(threads: PlatformSupportThread[]) {
 }
 
 export function normalizePlatformSupportInboxPayload(value: unknown): PlatformSupportInboxPayload {
-  const threads = Array.isArray((value as { threads?: unknown } | null | undefined)?.threads)
+  const normalizedThreads = Array.isArray((value as { threads?: unknown } | null | undefined)?.threads)
     ? (value as { threads: unknown[] }).threads
         .map((item) => normalizeThread(item))
         .filter((item): item is PlatformSupportThread => !!item)
     : [];
+  const threadMap = new Map<string, PlatformSupportThread>();
+  normalizedThreads.forEach((thread) => {
+    const current = threadMap.get(thread.merchantId);
+    if (!current) {
+      threadMap.set(thread.merchantId, thread);
+      return;
+    }
+    const messageMap = new Map(current.messages.map((message) => [message.id, message]));
+    thread.messages.forEach((message) => {
+      if (!messageMap.has(message.id)) messageMap.set(message.id, message);
+    });
+    const messages = sortMessages([...messageMap.values()]);
+    const candidateIsCurrent = isSameOrLaterIsoTimestamp(thread.updatedAt, current.updatedAt);
+    const preferred = candidateIsCurrent ? thread : current;
+    const fallback = candidateIsCurrent ? current : thread;
+    threadMap.set(thread.merchantId, {
+      ...current,
+      siteId: preferred.siteId || fallback.siteId,
+      merchantName: preferred.merchantName || fallback.merchantName,
+      merchantEmail: preferred.merchantEmail || fallback.merchantEmail,
+      updatedAt:
+        messages[messages.length - 1]?.createdAt || selectLatestIsoTimestamp(current.updatedAt, thread.updatedAt),
+      messages,
+    });
+  });
   return {
-    threads: sortSupportThreads(threads),
+    threads: sortSupportThreads([...threadMap.values()]),
   };
+}
+
+export function mergePlatformSupportInboxPayloads(
+  current: PlatformSupportInboxPayload,
+  incoming: PlatformSupportInboxPayload,
+) {
+  return normalizePlatformSupportInboxPayload({
+    threads: [...current.threads, ...incoming.threads],
+  });
 }
 
 export function buildPlatformSupportInboxBlocks(payload: PlatformSupportInboxPayload) {
@@ -178,7 +232,8 @@ export function upsertPlatformSupportThread(
 
   if (existingIndex >= 0) {
     const current = nextThreads[existingIndex];
-    const mergedMessages = nextMessage ? sortMessages([...current.messages, nextMessage]) : current.messages;
+    const hasMessage = nextMessage ? current.messages.some((message) => message.id === nextMessage.id) : false;
+    const mergedMessages = nextMessage && !hasMessage ? sortMessages([...current.messages, nextMessage]) : current.messages;
     const latestMessageAt = mergedMessages[mergedMessages.length - 1]?.createdAt ?? current.updatedAt;
     nextThreads[existingIndex] = {
       ...current,

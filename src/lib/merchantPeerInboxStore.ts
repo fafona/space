@@ -1,6 +1,7 @@
 import {
   MERCHANT_PEER_INBOX_SLUG,
   buildMerchantPeerInboxBlocks,
+  mergeMerchantPeerInboxPayloads,
   normalizeMerchantPeerInboxPayload,
   readMerchantPeerInboxFromBlocks,
   type MerchantPeerInboxPayload,
@@ -34,11 +35,16 @@ let merchantPeerInboxCache:
       value: MerchantPeerInboxPayload;
     }
   | null = null;
+let merchantPeerInboxWriteQueue: Promise<void> = Promise.resolve();
 
 function toErrorMessage(input: unknown) {
   if (!input || typeof input !== "object") return "unknown_error";
   const message = (input as { message?: unknown }).message;
   return typeof message === "string" && message.trim() ? message.trim() : "unknown_error";
+}
+
+function throwMerchantPeerInboxReadError(input: unknown): never {
+  throw new Error(`merchant_peer_inbox_read_failed:${toErrorMessage(input)}`);
 }
 
 function isMissingSlugColumn(message: string) {
@@ -64,8 +70,9 @@ function isMissingUpdatedAtColumn(message: string) {
 
 export async function loadStoredMerchantPeerInbox(
   supabase: MerchantPeerInboxStoreClient,
+  options?: { bypassCache?: boolean },
 ): Promise<MerchantPeerInboxPayload> {
-  if (merchantPeerInboxCache && merchantPeerInboxCache.expiresAt > Date.now()) {
+  if (!options?.bypassCache && merchantPeerInboxCache && merchantPeerInboxCache.expiresAt > Date.now()) {
     return merchantPeerInboxCache.value;
   }
 
@@ -94,11 +101,14 @@ export async function loadStoredMerchantPeerInbox(
     } else if (isMissingSlugColumn(message)) {
       return { contacts: [], threads: [] };
     } else {
-      return { contacts: [], threads: [] };
+      throwMerchantPeerInboxReadError(error);
     }
   }
 
-  if (error) return { contacts: [], threads: [] };
+  if (error) {
+    if (isMissingSlugColumn(toErrorMessage(error))) return { contacts: [], threads: [] };
+    throwMerchantPeerInboxReadError(error);
+  }
   const payload = readMerchantPeerInboxFromBlocks(data?.blocks);
   merchantPeerInboxCache = {
     expiresAt: Date.now() + MERCHANT_PEER_INBOX_CACHE_TTL_MS,
@@ -107,12 +117,16 @@ export async function loadStoredMerchantPeerInbox(
   return payload;
 }
 
-export async function saveMerchantPeerInbox(
+async function saveMerchantPeerInboxUnlocked(
   supabase: MerchantPeerInboxStoreClient,
   payload: MerchantPeerInboxPayload,
-): Promise<{ error: string | null }> {
-  const beforePayload = await loadStoredMerchantPeerInbox(supabase);
-  const normalizedPayload = normalizeMerchantPeerInboxPayload(payload);
+): Promise<{ error: string | null; payload: MerchantPeerInboxPayload | null }> {
+  merchantPeerInboxCache = null;
+  const beforePayload = await loadStoredMerchantPeerInbox(supabase, { bypassCache: true });
+  const normalizedPayload = mergeMerchantPeerInboxPayloads(
+    beforePayload,
+    normalizeMerchantPeerInboxPayload(payload),
+  );
   const blocks = buildMerchantPeerInboxBlocks(normalizedPayload);
   const basePayload = {
     blocks,
@@ -129,7 +143,7 @@ export async function saveMerchantPeerInbox(
     maxEntries: 20,
     merchantId: null,
   });
-  if (history.error) return { error: `merchant_peer_inbox_history_save_failed:${history.error}` };
+  if (history.error) return { error: `merchant_peer_inbox_history_save_failed:${history.error}`, payload: null };
 
   const queryExisting = async () => {
     const scoped = await supabase
@@ -174,7 +188,7 @@ export async function saveMerchantPeerInbox(
 
   const existing = await queryExisting();
   if ("error" in existing && existing.error) {
-    return { error: existing.error };
+    return { error: existing.error, payload: null };
   }
 
   const recordId = existing.record?.id;
@@ -203,9 +217,9 @@ export async function saveMerchantPeerInbox(
       expiresAt: Date.now() + MERCHANT_PEER_INBOX_CACHE_TTL_MS,
       value: normalizedPayload,
     };
-    return { error: null };
+    return { error: null, payload: normalizedPayload };
   }
-  if (!isMissingUpdatedAtColumn(first.error)) return first;
+  if (!isMissingUpdatedAtColumn(first.error)) return { error: first.error, payload: null };
   const fallback = await updatePayload(payloadWithoutUpdatedAt);
   if (!fallback.error) {
     merchantPeerInboxCache = {
@@ -213,5 +227,22 @@ export async function saveMerchantPeerInbox(
       value: normalizedPayload,
     };
   }
-  return fallback;
+  return {
+    error: fallback.error,
+    payload: fallback.error ? null : normalizedPayload,
+  };
+}
+
+export function saveMerchantPeerInbox(
+  supabase: MerchantPeerInboxStoreClient,
+  payload: MerchantPeerInboxPayload,
+): Promise<{ error: string | null; payload: MerchantPeerInboxPayload | null }> {
+  const operation = merchantPeerInboxWriteQueue
+    .catch(() => undefined)
+    .then(() => saveMerchantPeerInboxUnlocked(supabase, payload));
+  merchantPeerInboxWriteQueue = operation.then(
+    () => undefined,
+    () => undefined,
+  );
+  return operation;
 }

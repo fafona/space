@@ -97,9 +97,15 @@ import {
 } from "@/lib/merchantBusinessCards";
 import {
   findMerchantPeerThreadForMerchants,
+  mergeMerchantPeerInboxPayloads,
   type MerchantPeerContactSummary,
   type MerchantPeerThread,
 } from "@/lib/merchantPeerInbox";
+import {
+  getLatestSupportReadTimestamp,
+  isSupportTimestampUnread,
+  mergeSupportPeerLastRead,
+} from "@/lib/merchantSupportReadState";
 import { type PlatformSupportMessage, type PlatformSupportThread } from "@/lib/platformSupportInbox";
 import {
   formatSupportConversationPreview,
@@ -186,6 +192,9 @@ type SupportResponsePayload = {
   error?: unknown;
   message?: unknown;
   thread?: PlatformSupportThread | null;
+  readState?: {
+    officialLastReadAt?: unknown;
+  } | null;
 };
 
 type MerchantPeerResponsePayload = {
@@ -199,9 +208,19 @@ type MerchantPeerResponsePayload = {
   } | null;
   contacts?: MerchantPeerContactSummary[];
   threads?: MerchantPeerThread[];
+  readState?: {
+    peerLastRead?: unknown;
+  } | null;
 };
 
 type PersonalConversationKey = "official" | `merchant:${string}`;
+
+type MerchantPeerMessagePage = {
+  total: number;
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+};
 
 type PersonalVisibleSupportMessage = Pick<PlatformSupportMessage, "id" | "text" | "createdAt"> & {
   isSelf: boolean;
@@ -1091,6 +1110,30 @@ function sanitizeMerchantPeerThread(value: unknown): MerchantPeerThread | null {
     updatedAt: trimText(record.updatedAt),
     messages,
   };
+}
+
+function sanitizeSupportReadTimestamp(value: unknown) {
+  const normalized = trimText(value);
+  if (!normalized) return "";
+  const timestamp = new Date(normalized).getTime();
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : "";
+}
+
+function sanitizeSupportPeerLastRead(value: unknown) {
+  const record = readRecord(value);
+  if (!record) return {} as Record<string, string>;
+  return Object.fromEntries(
+    Object.entries(record)
+      .map(([accountId, timestamp]) => [accountId.trim(), sanitizeSupportReadTimestamp(timestamp)] as const)
+      .filter(([accountId, timestamp]) => /^\d{8}$/.test(accountId) && timestamp),
+  );
+}
+
+function mergeSanitizedMerchantPeerThreads(current: MerchantPeerThread[], incoming: MerchantPeerThread[]) {
+  return mergeMerchantPeerInboxPayloads(
+    { contacts: [], threads: current },
+    { contacts: [], threads: incoming },
+  ).threads;
 }
 
 function buildVisibleSupportMessageKey(message: Pick<PersonalVisibleSupportMessage, "id" | "createdAt">) {
@@ -2475,6 +2518,12 @@ export default function MePage() {
   const [supportThread, setSupportThread] = useState<PlatformSupportThread | null>(null);
   const [peerContacts, setPeerContacts] = useState<MerchantPeerContactSummary[]>([]);
   const [peerThreads, setPeerThreads] = useState<MerchantPeerThread[]>([]);
+  const [peerMessagePageByMerchantId, setPeerMessagePageByMerchantId] = useState<
+    Record<string, MerchantPeerMessagePage>
+  >({});
+  const [peerHistoryLoadingMerchantId, setPeerHistoryLoadingMerchantId] = useState("");
+  const [supportOfficialLastReadAt, setSupportOfficialLastReadAt] = useState("");
+  const [peerLastReadMap, setPeerLastReadMap] = useState<Record<string, string>>({});
   const [supportLoading, setSupportLoading] = useState(false);
   const [peerLoading, setPeerLoading] = useState(false);
   const [supportSending, setSupportSending] = useState(false);
@@ -2531,6 +2580,10 @@ export default function MePage() {
   const supportMessagesViewportRef = useRef<HTMLDivElement | null>(null);
   const supportInputRef = useRef<HTMLTextAreaElement | null>(null);
   const supportSendingRef = useRef(false);
+  const supportLoadRequestIdRef = useRef(0);
+  const peerLoadRequestIdRef = useRef(0);
+  const peerThreadPageRequestIdRef = useRef<Record<string, number>>({});
+  const supportMarkReadInFlightRef = useRef(new Set<string>());
   const supportSendPointerHandledRef = useRef(false);
   const supportSelfCardShareBundleRef = useRef<Record<string, { shareUrl: string; shareKey: string; imageUrl: string }>>(
     {},
@@ -2734,6 +2787,19 @@ export default function MePage() {
     payload && typeof payload.accountId === "string" && /^\d{8}$/.test(payload.accountId.trim())
       ? payload.accountId.trim()
       : "";
+  useEffect(() => {
+    supportLoadRequestIdRef.current += 1;
+    peerLoadRequestIdRef.current += 1;
+    supportMarkReadInFlightRef.current.clear();
+    setSupportThread(null);
+    setPeerContacts([]);
+    setPeerThreads([]);
+    setPeerMessagePageByMerchantId({});
+    setPeerHistoryLoadingMerchantId("");
+    peerThreadPageRequestIdRef.current = {};
+    setSupportOfficialLastReadAt("");
+    setPeerLastReadMap({});
+  }, [accountId, isGuestSession]);
   useEffect(() => {
     personalBusinessCardsAccountIdRef.current = accountId;
     personalBusinessCardsSaveRequestIdRef.current += 1;
@@ -4040,6 +4106,26 @@ export default function MePage() {
   const supportContactPreview =
     formatSupportConversationPreview(latestSupportMessage?.text) || "还没有留言记录，可以直接给 Faolla 留言。";
   const supportContactUpdatedAt = latestSupportMessage?.createdAt || "";
+  const latestOfficialInboundMessageAt = useMemo(
+    () =>
+      (supportThread?.messages ?? [])
+        .filter((message) => message.sender === "super_admin")
+        .reduce((latest, message) => getLatestSupportReadTimestamp(latest, message.createdAt), ""),
+    [supportThread?.messages],
+  );
+  const latestPeerInboundMessageAt = useMemo(() => {
+    const result: Record<string, string> = {};
+    if (!accountId) return result;
+    peerThreads.forEach((thread) => {
+      const contactId = thread.merchantAId === accountId ? thread.merchantBId : thread.merchantBId === accountId ? thread.merchantAId : "";
+      if (!contactId) return;
+      thread.messages.forEach((message) => {
+        if (message.senderMerchantId === accountId) return;
+        result[contactId] = getLatestSupportReadTimestamp(result[contactId], message.createdAt);
+      });
+    });
+    return result;
+  }, [accountId, peerThreads]);
   const supportContactMatchesSearch = useMemo(() => {
     const keyword = supportContactKeyword.trim().toLowerCase();
     if (!keyword) return true;
@@ -4263,7 +4349,7 @@ export default function MePage() {
       subtitle: "www.faolla.com",
       preview: supportContactPreview || "还没有留言记录，可以直接在右侧给 Faolla 留言。",
       updatedAt: supportContactUpdatedAt,
-      unread: false,
+      unread: isSupportTimestampUnread(latestOfficialInboundMessageAt, supportOfficialLastReadAt),
       avatarLabel: "FA",
       avatarImageUrl: "",
       isOfficial: true,
@@ -4280,7 +4366,7 @@ export default function MePage() {
           subtitle: contactId,
           preview: formatSupportConversationPreview(contact.lastMessage?.text) || "还没有聊天记录，可以直接开始对话。",
           updatedAt: trimText(contact.updatedAt) || trimText(contact.savedAt),
-          unread: false,
+          unread: isSupportTimestampUnread(latestPeerInboundMessageAt[contactId], peerLastReadMap[contactId]),
           avatarLabel: getSupportContactAvatarLabel(contactName || contactId, "商"),
           avatarImageUrl,
           accountType: contact.accountType ?? "merchant",
@@ -4289,17 +4375,22 @@ export default function MePage() {
       ];
     }),
   ];
-  const mobileSupportContactListSummary = `全部 ${supportContactRows.length} 个会话已读`;
+  const unreadSupportContactCount = supportContactRows.filter((contact) => contact.unread).length;
+  const mobileSupportContactListSummary = unreadSupportContactCount
+    ? `${unreadSupportContactCount} 个未读会话`
+    : `全部 ${supportContactRows.length} 个会话已读`;
 
   const loadSupportThread = useCallback(async (options?: { silent?: boolean }) => {
     if (!accountId) return;
+    const requestId = supportLoadRequestIdRef.current + 1;
+    supportLoadRequestIdRef.current = requestId;
     if (isGuestSession) {
       setSupportThread(readPersonalGuestSupportThread(ensurePersonalGuestIdentity(), readPersonalGuestProfile()));
       setSupportError("");
       return;
     }
     if (!options?.silent) setSupportLoading(true);
-    setSupportError("");
+    if (!options?.silent) setSupportError("");
     try {
       const params = new URLSearchParams({
         siteId: accountId,
@@ -4319,16 +4410,25 @@ export default function MePage() {
       if (!response.ok || !result || result.ok !== true) {
         throw new Error(typeof result?.error === "string" ? result.error : "support_load_failed");
       }
+      if (supportLoadRequestIdRef.current !== requestId) return;
       setSupportThread(result.thread ?? null);
+      const remoteLastReadAt = sanitizeSupportReadTimestamp(result.readState?.officialLastReadAt);
+      if (remoteLastReadAt) {
+        setSupportOfficialLastReadAt((current) => getLatestSupportReadTimestamp(current, remoteLastReadAt));
+      }
     } catch {
-      setSupportError("会话加载失败，请稍后重试。");
+      if (!options?.silent && supportLoadRequestIdRef.current === requestId) {
+        setSupportError("会话加载失败，请稍后重试。");
+      }
     } finally {
-      if (!options?.silent) setSupportLoading(false);
+      if (!options?.silent && supportLoadRequestIdRef.current === requestId) setSupportLoading(false);
     }
   }, [accountId, email, ensurePersonalSessionReady, isGuestSession, profileName]);
 
   const loadPeerInbox = useCallback(async (options?: { silent?: boolean }) => {
     if (!accountId) return;
+    const requestId = peerLoadRequestIdRef.current + 1;
+    peerLoadRequestIdRef.current = requestId;
     if (isGuestSession) {
       const identity = ensurePersonalGuestIdentity();
       setPeerContacts(readPersonalGuestPeerContacts(identity));
@@ -4337,7 +4437,7 @@ export default function MePage() {
       return;
     }
     if (!options?.silent) setPeerLoading(true);
-    setSupportError("");
+    if (!options?.silent) setSupportError("");
     try {
       const params = new URLSearchParams({
         siteId: accountId,
@@ -4357,6 +4457,7 @@ export default function MePage() {
       if (!response.ok || !result || result.ok !== true) {
         throw new Error(typeof result?.error === "string" ? result.error : "peer_load_failed");
       }
+      if (peerLoadRequestIdRef.current !== requestId) return;
       const nextContacts = Array.isArray(result.contacts)
         ? result.contacts
             .map(sanitizeMerchantPeerContactSummary)
@@ -4368,13 +4469,215 @@ export default function MePage() {
             .filter((thread): thread is MerchantPeerThread => thread !== null)
         : [];
       setPeerContacts(nextContacts);
-      setPeerThreads(nextThreads);
+      setPeerThreads((current) => mergeSanitizedMerchantPeerThreads(current, nextThreads));
+      const remotePeerLastRead = sanitizeSupportPeerLastRead(result.readState?.peerLastRead);
+      if (Object.keys(remotePeerLastRead).length > 0) {
+        setPeerLastReadMap((current) => mergeSupportPeerLastRead(current, remotePeerLastRead));
+      }
     } catch {
-      setSupportError("商户会话加载失败，请稍后重试。");
+      if (!options?.silent && peerLoadRequestIdRef.current === requestId) {
+        setSupportError("商户会话加载失败，请稍后重试。");
+      }
     } finally {
-      if (!options?.silent) setPeerLoading(false);
+      if (!options?.silent && peerLoadRequestIdRef.current === requestId) setPeerLoading(false);
     }
   }, [accountId, email, ensurePersonalSessionReady, isGuestSession, profileName]);
+
+  const loadPeerThreadPage = useCallback(
+    async (contactMerchantId: string, offset: number, options?: { userInitiated?: boolean }) => {
+      const normalizedContactId = /^\d{8}$/.test(contactMerchantId) ? contactMerchantId : "";
+      if (!accountId || isGuestSession || !normalizedContactId) return;
+      const requestId = (peerThreadPageRequestIdRef.current[normalizedContactId] ?? 0) + 1;
+      peerThreadPageRequestIdRef.current[normalizedContactId] = requestId;
+      const preserveScroll = offset > 0;
+      const viewport = preserveScroll ? supportMessagesViewportRef.current : null;
+      const previousScrollHeight = viewport?.scrollHeight ?? 0;
+      const previousScrollTop = viewport?.scrollTop ?? 0;
+      if (options?.userInitiated) setPeerHistoryLoadingMerchantId(normalizedContactId);
+      try {
+        const params = new URLSearchParams({
+          contactMerchantId: normalizedContactId,
+          offset: String(Math.max(0, Math.floor(offset))),
+          limit: "80",
+        });
+        await ensurePersonalSessionReady();
+        const response = await fetch(`/api/merchant-peer-messages?${params.toString()}`, {
+          method: "GET",
+          cache: "no-store",
+          credentials: "same-origin",
+          headers: { accept: "application/json" },
+        });
+        const result = (await response.json().catch(() => null)) as
+          | {
+              ok?: unknown;
+              error?: unknown;
+              thread?: unknown;
+              messagePage?: {
+                total?: unknown;
+                offset?: unknown;
+                limit?: unknown;
+                hasMore?: unknown;
+              } | null;
+            }
+          | null;
+        if (!response.ok || result?.ok !== true) {
+          throw new Error(typeof result?.error === "string" ? result.error : "peer_thread_load_failed");
+        }
+        if (peerThreadPageRequestIdRef.current[normalizedContactId] !== requestId) return;
+        const thread = sanitizeMerchantPeerThread(result.thread);
+        if (thread) {
+          setPeerThreads((current) => mergeSanitizedMerchantPeerThreads(current, [thread]));
+        }
+        const total = Math.max(0, Math.floor(Number(result.messagePage?.total) || thread?.messages.length || 0));
+        const pageOffset = Math.max(0, Math.floor(Number(result.messagePage?.offset) || 0));
+        const limit = Math.max(1, Math.floor(Number(result.messagePage?.limit) || 80));
+        setPeerMessagePageByMerchantId((current) => ({
+          ...current,
+          [normalizedContactId]: {
+            total,
+            offset: pageOffset,
+            limit,
+            hasMore: result.messagePage?.hasMore === true,
+          },
+        }));
+        if (viewport && typeof window !== "undefined") {
+          window.requestAnimationFrame(() => {
+            const nextViewport = supportMessagesViewportRef.current;
+            if (!nextViewport) return;
+            nextViewport.scrollTop = previousScrollTop + Math.max(0, nextViewport.scrollHeight - previousScrollHeight);
+          });
+        }
+      } catch {
+        if (options?.userInitiated) setSupportError("更早的聊天记录加载失败，请稍后重试。");
+      } finally {
+        if (
+          options?.userInitiated &&
+          peerThreadPageRequestIdRef.current[normalizedContactId] === requestId
+        ) {
+          setPeerHistoryLoadingMerchantId((current) => (current === normalizedContactId ? "" : current));
+        }
+      }
+    },
+    [accountId, ensurePersonalSessionReady, isGuestSession],
+  );
+
+  useEffect(() => {
+    if (!selectedPeerMerchantId || selectedConversationIsOfficial || isGuestSession) return;
+    void loadPeerThreadPage(selectedPeerMerchantId, 0);
+  }, [isGuestSession, loadPeerThreadPage, selectedConversationIsOfficial, selectedPeerMerchantId]);
+
+  const conversationSurfaceActive = isMobileViewport
+    ? mobileTab === "conversations"
+    : desktopSection === "conversations";
+
+  useEffect(() => {
+    if (!accountId || isGuestSession || typeof window === "undefined") return;
+    const refresh = () => {
+      if (document.visibilityState !== "visible" || supportSendingRef.current) return;
+      void loadSupportThread({ silent: true });
+      void loadPeerInbox({ silent: true });
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    const timer = window.setInterval(refresh, conversationSurfaceActive ? 8_000 : 30_000);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [accountId, conversationSurfaceActive, isGuestSession, loadPeerInbox, loadSupportThread]);
+
+  const selectedInboundMessageAt = selectedConversationIsOfficial
+    ? latestOfficialInboundMessageAt
+    : latestPeerInboundMessageAt[selectedPeerMerchantId] ?? "";
+  const selectedLastReadAt = selectedConversationIsOfficial
+    ? supportOfficialLastReadAt
+    : peerLastReadMap[selectedPeerMerchantId] ?? "";
+  const selectedConversationVisible = isMobileViewport
+    ? mobileTab === "conversations" && mobileConversationView === "thread"
+    : desktopSection === "conversations";
+
+  useEffect(() => {
+    if (
+      !accountId ||
+      isGuestSession ||
+      !selectedConversationVisible ||
+      !selectedInboundMessageAt ||
+      !isSupportTimestampUnread(selectedInboundMessageAt, selectedLastReadAt)
+    ) {
+      return;
+    }
+    if (!selectedConversationIsOfficial && !selectedPeerMerchantId) return;
+
+    const requestKey = `${selectedConversationKey}:${selectedInboundMessageAt}`;
+    if (supportMarkReadInFlightRef.current.has(requestKey)) return;
+    supportMarkReadInFlightRef.current.add(requestKey);
+    let cancelled = false;
+    void (async () => {
+      try {
+        await ensurePersonalSessionReady();
+        const response = await fetch(
+          selectedConversationIsOfficial ? "/api/support-messages" : "/api/merchant-peer-messages",
+          {
+            method: "POST",
+            cache: "no-store",
+            credentials: "same-origin",
+            headers: {
+              "Content-Type": "application/json",
+              accept: "application/json",
+            },
+            body: JSON.stringify(
+              selectedConversationIsOfficial
+                ? {
+                    action: "mark_read",
+                    lastReadAt: selectedInboundMessageAt,
+                    siteId: accountId,
+                  }
+                : {
+                    action: "mark_read",
+                    contactMerchantId: selectedPeerMerchantId,
+                    lastReadAt: selectedInboundMessageAt,
+                    siteId: accountId,
+                  },
+            ),
+          },
+        );
+        const result = (await response.json().catch(() => null)) as
+          | (SupportResponsePayload & MerchantPeerResponsePayload)
+          | null;
+        if (!response.ok || result?.ok !== true || cancelled) return;
+        if (selectedConversationIsOfficial) {
+          const remoteTimestamp =
+            sanitizeSupportReadTimestamp(result.readState?.officialLastReadAt) || selectedInboundMessageAt;
+          setSupportOfficialLastReadAt((current) => getLatestSupportReadTimestamp(current, remoteTimestamp));
+        } else {
+          const remotePeerLastRead = sanitizeSupportPeerLastRead(result.readState?.peerLastRead);
+          const nextPeerLastRead = Object.keys(remotePeerLastRead).length
+            ? remotePeerLastRead
+            : { [selectedPeerMerchantId]: selectedInboundMessageAt };
+          setPeerLastReadMap((current) => mergeSupportPeerLastRead(current, nextPeerLastRead));
+        }
+      } finally {
+        supportMarkReadInFlightRef.current.delete(requestKey);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    accountId,
+    ensurePersonalSessionReady,
+    isGuestSession,
+    selectedConversationIsOfficial,
+    selectedConversationKey,
+    selectedConversationVisible,
+    selectedInboundMessageAt,
+    selectedLastReadAt,
+    selectedPeerMerchantId,
+  ]);
 
   useEffect(() => {
     if (
@@ -4611,8 +4914,9 @@ export default function MePage() {
           accept: "application/json",
         },
         body: JSON.stringify({
-          action: "search",
-          query,
+          action: "ensure_contact",
+          contactAccountId: /^\d{8}$/.test(query) ? query : "",
+          contactEmail: query.includes("@") ? query : "",
           siteId: accountId,
           merchantEmail: email,
           merchantName: profileName,
@@ -4620,17 +4924,28 @@ export default function MePage() {
       });
       const result = (await response.json().catch(() => null)) as MerchantPeerResponsePayload | null;
       if (!response.ok || !result || result.ok !== true) {
-        throw new Error(readPayloadMessage(result?.message, "没有找到匹配的商户，请输入完整 8 位商户 ID 或邮箱。"));
+        throw new Error(readPayloadMessage(result?.message, "没有找到匹配的账号，请输入完整 8 位账号 ID 或邮箱。"));
       }
-      setPeerContacts(Array.isArray(result.contacts) ? result.contacts : []);
-      setPeerThreads(Array.isArray(result.threads) ? result.threads : []);
+      const nextContacts = Array.isArray(result.contacts)
+        ? result.contacts
+            .map(sanitizeMerchantPeerContactSummary)
+            .filter((contact): contact is MerchantPeerContactSummary => contact !== null)
+        : [];
+      const nextThreads = Array.isArray(result.threads)
+        ? result.threads.map(sanitizeMerchantPeerThread).filter((thread): thread is MerchantPeerThread => thread !== null)
+        : [];
+      setPeerContacts(nextContacts);
+      setPeerThreads((current) => mergeSanitizedMerchantPeerThreads(current, nextThreads));
+      setPeerLastReadMap((current) =>
+        mergeSupportPeerLastRead(current, sanitizeSupportPeerLastRead(result.readState?.peerLastRead)),
+      );
       const merchantId = trimText(result.contact?.merchantId);
       if (merchantId) {
         setSelectedConversationKey(`merchant:${merchantId}`);
         setMobileConversationView("thread");
       }
     } catch (error) {
-      setSupportSearchError(error instanceof Error ? error.message : "商户搜索失败，请稍后重试。");
+      setSupportSearchError(error instanceof Error ? error.message : "账号搜索失败，请稍后重试。");
     } finally {
       setSupportSearching(false);
     }
@@ -4691,6 +5006,11 @@ export default function MePage() {
     setSupportSending(true);
     setSupportError("");
     setSupportAttachmentMenuOpen(false);
+    if (selectedConversationIsOfficial) {
+      supportLoadRequestIdRef.current += 1;
+    } else {
+      peerLoadRequestIdRef.current += 1;
+    }
     if (options?.clearDraft) {
       setSupportDraft("");
     }
@@ -4729,8 +5049,21 @@ export default function MePage() {
       if (selectedConversationIsOfficial) {
         setSupportThread(result.thread ?? null);
       } else {
-        setPeerContacts(Array.isArray(result.contacts) ? result.contacts : []);
-        setPeerThreads(Array.isArray(result.threads) ? result.threads : []);
+        const nextContacts = Array.isArray(result.contacts)
+          ? result.contacts
+              .map(sanitizeMerchantPeerContactSummary)
+              .filter((contact): contact is MerchantPeerContactSummary => contact !== null)
+          : [];
+        const nextThreads = Array.isArray(result.threads)
+          ? result.threads
+              .map(sanitizeMerchantPeerThread)
+              .filter((thread): thread is MerchantPeerThread => thread !== null)
+          : [];
+        setPeerContacts(nextContacts);
+        setPeerThreads((current) => mergeSanitizedMerchantPeerThreads(current, nextThreads));
+        setPeerLastReadMap((current) =>
+          mergeSupportPeerLastRead(current, sanitizeSupportPeerLastRead(result.readState?.peerLastRead)),
+        );
       }
       if (!options?.clearDraft) {
         setSupportDraft("");
@@ -5463,8 +5796,30 @@ export default function MePage() {
   }
 
   function renderSupportMessageList(className: string) {
+    const selectedPeerMessagePage = selectedConversationIsOfficial
+      ? null
+      : peerMessagePageByMerchantId[selectedPeerMerchantId] ?? null;
+    const peerHistoryLoading = peerHistoryLoadingMerchantId === selectedPeerMerchantId;
     return (
       <div ref={supportMessagesViewportRef} className={className}>
+        {selectedPeerMessagePage?.hasMore ? (
+          <div className="mb-3 flex justify-center">
+            <button
+              type="button"
+              className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
+              disabled={peerHistoryLoading}
+              onClick={() =>
+                void loadPeerThreadPage(
+                  selectedPeerMerchantId,
+                  selectedPeerMessagePage.offset + selectedPeerMessagePage.limit,
+                  { userInitiated: true },
+                )
+              }
+            >
+              {peerHistoryLoading ? "加载中..." : "加载更早消息"}
+            </button>
+          </div>
+        ) : null}
         {selectedConversationLoading ? (
           <div className="rounded-2xl border border-dashed bg-white px-4 py-6 text-center text-sm text-slate-500">正在加载聊天记录...</div>
         ) : visibleSupportMessages.length ? (

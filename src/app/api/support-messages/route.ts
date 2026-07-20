@@ -21,6 +21,7 @@ import {
   type PlatformSupportInboxStoreClient,
 } from "@/lib/platformSupportInboxStore";
 import {
+  getLatestSupportReadTimestampAtOrBefore,
   getMerchantSupportReadState,
   mergeMerchantSupportReadState,
 } from "@/lib/merchantSupportReadState";
@@ -64,6 +65,16 @@ function normalizeIsoString(value: unknown) {
   if (!normalized) return "";
   const timestamp = new Date(normalized).getTime();
   return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : "";
+}
+
+function findLatestReadableSupportTimestamp(
+  thread: PlatformSupportThread | null,
+  requestedLastReadAt: string,
+) {
+  return getLatestSupportReadTimestampAtOrBefore(
+    (thread?.messages ?? []).filter((message) => message.sender === "super_admin").map((message) => message.createdAt),
+    requestedLastReadAt,
+  );
 }
 
 function noStoreJson(body: unknown, init?: ResponseInit) {
@@ -176,12 +187,26 @@ export async function POST(request: Request) {
 
   const action = trimText(body?.action);
   if (action === "mark_read") {
-    const lastReadAt = normalizeIsoString(body?.lastReadAt);
-    if (!lastReadAt) {
+    const requestedLastReadAt = normalizeIsoString(body?.lastReadAt);
+    if (!requestedLastReadAt) {
       return noStoreJson({ error: "support_read_timestamp_invalid" }, { status: 400 });
     }
 
-    const readStatePayload = await loadStoredMerchantSupportReadState(supabase as unknown as MerchantSupportReadStateStoreClient);
+    const [inboxPayload, readStatePayload] = await Promise.all([
+      loadStoredPlatformSupportInbox(supabase as unknown as PlatformSupportInboxStoreClient),
+      loadStoredMerchantSupportReadState(supabase as unknown as MerchantSupportReadStateStoreClient),
+    ]);
+    const thread = inboxPayload.threads.find((item) => item.merchantId === session.merchantId) ?? null;
+    const lastReadAt = findLatestReadableSupportTimestamp(thread, requestedLastReadAt);
+    if (!lastReadAt) {
+      const readState = getMerchantSupportReadState(readStatePayload, session.merchantId);
+      return noStoreJson({
+        ok: true,
+        readState: {
+          officialLastReadAt: readState.officialLastReadAt,
+        },
+      });
+    }
     const nextReadStatePayload = mergeMerchantSupportReadState(readStatePayload, session.merchantId, {
       officialLastReadAt: lastReadAt,
     });
@@ -198,7 +223,10 @@ export async function POST(request: Request) {
         { status: 500 },
       );
     }
-    const readState = getMerchantSupportReadState(nextReadStatePayload, session.merchantId);
+    const readState = getMerchantSupportReadState(
+      saveReadStateResult.payload ?? nextReadStatePayload,
+      session.merchantId,
+    );
     return noStoreJson({
       ok: true,
       readState: {
@@ -234,7 +262,8 @@ export async function POST(request: Request) {
     );
   }
 
-  const thread = nextPayload.threads.find((item) => item.merchantId === session.merchantId) ?? null;
+  const persistedPayload = saveResult.payload ?? nextPayload;
+  const thread = persistedPayload.threads.find((item) => item.merchantId === session.merchantId) ?? null;
   return noStoreJson({
     ok: true,
     thread: buildThreadResponse(thread, session.merchantId, thread?.merchantEmail || session.merchantEmail),

@@ -102,6 +102,7 @@ export async function POST(request: Request) {
       { status: 500 },
     );
   }
+  const persistedPayload = saveResult.payload ?? nextPayload;
 
   const notification = buildSuperAdminReplyPushNotification({
     merchantId,
@@ -117,7 +118,7 @@ export async function POST(request: Request) {
 
   return noStoreJson({
     ok: true,
-    threads: nextPayload.threads,
-    thread: nextPayload.threads.find((item) => item.merchantId === merchantId) ?? null,
+    threads: persistedPayload.threads,
+    thread: persistedPayload.threads.find((item) => item.merchantId === merchantId) ?? null,
   });
 }

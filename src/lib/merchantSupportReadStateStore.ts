@@ -1,6 +1,7 @@
 import {
   MERCHANT_SUPPORT_READ_STATE_SLUG,
   buildMerchantSupportReadStateBlocks,
+  mergeMerchantSupportReadStatePayloads,
   normalizeMerchantSupportReadStatePayload,
   readMerchantSupportReadStateFromBlocks,
   type MerchantSupportReadStatePayload,
@@ -34,11 +35,16 @@ let merchantSupportReadStateCache:
       value: MerchantSupportReadStatePayload;
     }
   | null = null;
+let merchantSupportReadStateWriteQueue: Promise<void> = Promise.resolve();
 
 function toErrorMessage(input: unknown) {
   if (!input || typeof input !== "object") return "unknown_error";
   const message = (input as { message?: unknown }).message;
   return typeof message === "string" && message.trim() ? message.trim() : "unknown_error";
+}
+
+function throwMerchantSupportReadStateReadError(input: unknown): never {
+  throw new Error(`merchant_support_read_state_read_failed:${toErrorMessage(input)}`);
 }
 
 function isMissingSlugColumn(message: string) {
@@ -64,8 +70,9 @@ function isMissingUpdatedAtColumn(message: string) {
 
 export async function loadStoredMerchantSupportReadState(
   supabase: MerchantSupportReadStateStoreClient,
+  options?: { bypassCache?: boolean },
 ): Promise<MerchantSupportReadStatePayload> {
-  if (merchantSupportReadStateCache && merchantSupportReadStateCache.expiresAt > Date.now()) {
+  if (!options?.bypassCache && merchantSupportReadStateCache && merchantSupportReadStateCache.expiresAt > Date.now()) {
     return merchantSupportReadStateCache.value;
   }
 
@@ -94,11 +101,14 @@ export async function loadStoredMerchantSupportReadState(
     } else if (isMissingSlugColumn(message)) {
       return { accounts: [] };
     } else {
-      return { accounts: [] };
+      throwMerchantSupportReadStateReadError(error);
     }
   }
 
-  if (error) return { accounts: [] };
+  if (error) {
+    if (isMissingSlugColumn(toErrorMessage(error))) return { accounts: [] };
+    throwMerchantSupportReadStateReadError(error);
+  }
   const payload = readMerchantSupportReadStateFromBlocks(data?.blocks);
   merchantSupportReadStateCache = {
     expiresAt: Date.now() + MERCHANT_SUPPORT_READ_STATE_CACHE_TTL_MS,
@@ -107,12 +117,16 @@ export async function loadStoredMerchantSupportReadState(
   return payload;
 }
 
-export async function saveMerchantSupportReadState(
+async function saveMerchantSupportReadStateUnlocked(
   supabase: MerchantSupportReadStateStoreClient,
   payload: MerchantSupportReadStatePayload,
-): Promise<{ error: string | null }> {
-  const beforePayload = await loadStoredMerchantSupportReadState(supabase);
-  const normalizedPayload = normalizeMerchantSupportReadStatePayload(payload);
+): Promise<{ error: string | null; payload: MerchantSupportReadStatePayload | null }> {
+  merchantSupportReadStateCache = null;
+  const beforePayload = await loadStoredMerchantSupportReadState(supabase, { bypassCache: true });
+  const normalizedPayload = mergeMerchantSupportReadStatePayloads(
+    beforePayload,
+    normalizeMerchantSupportReadStatePayload(payload),
+  );
   const blocks = buildMerchantSupportReadStateBlocks(normalizedPayload);
   const basePayload = {
     blocks,
@@ -129,7 +143,7 @@ export async function saveMerchantSupportReadState(
     maxEntries: 20,
     merchantId: null,
   });
-  if (history.error) return { error: `merchant_support_read_state_history_save_failed:${history.error}` };
+  if (history.error) return { error: `merchant_support_read_state_history_save_failed:${history.error}`, payload: null };
 
   const queryExisting = async () => {
     const scoped = await supabase
@@ -174,7 +188,7 @@ export async function saveMerchantSupportReadState(
 
   const existing = await queryExisting();
   if ("error" in existing && existing.error) {
-    return { error: existing.error };
+    return { error: existing.error, payload: null };
   }
 
   const recordId = existing.record?.id;
@@ -203,9 +217,9 @@ export async function saveMerchantSupportReadState(
       expiresAt: Date.now() + MERCHANT_SUPPORT_READ_STATE_CACHE_TTL_MS,
       value: normalizedPayload,
     };
-    return { error: null };
+    return { error: null, payload: normalizedPayload };
   }
-  if (!isMissingUpdatedAtColumn(first.error)) return first;
+  if (!isMissingUpdatedAtColumn(first.error)) return { error: first.error, payload: null };
   const fallback = await updatePayload(payloadWithoutUpdatedAt);
   if (!fallback.error) {
     merchantSupportReadStateCache = {
@@ -213,5 +227,22 @@ export async function saveMerchantSupportReadState(
       value: normalizedPayload,
     };
   }
-  return fallback;
+  return {
+    error: fallback.error,
+    payload: fallback.error ? null : normalizedPayload,
+  };
+}
+
+export function saveMerchantSupportReadState(
+  supabase: MerchantSupportReadStateStoreClient,
+  payload: MerchantSupportReadStatePayload,
+): Promise<{ error: string | null; payload: MerchantSupportReadStatePayload | null }> {
+  const operation = merchantSupportReadStateWriteQueue
+    .catch(() => undefined)
+    .then(() => saveMerchantSupportReadStateUnlocked(supabase, payload));
+  merchantSupportReadStateWriteQueue = operation.then(
+    () => undefined,
+    () => undefined,
+  );
+  return operation;
 }

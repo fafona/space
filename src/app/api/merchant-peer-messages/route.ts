@@ -14,6 +14,7 @@ import {
   type MerchantPeerInboxStoreClient,
 } from "@/lib/merchantPeerInboxStore";
 import {
+  getLatestSupportReadTimestampAtOrBefore,
   getMerchantSupportReadState,
   mergeMerchantSupportReadState,
   type MerchantSupportReadStatePayload,
@@ -94,6 +95,21 @@ type MerchantPeerSessionHintInput = {
 } | null;
 
 const MERCHANT_PEER_DEFAULT_THREAD_MESSAGE_LIMIT = 80;
+const PERSONAL_PEER_DIRECTORY_CACHE_TTL_MS = 60_000;
+
+type PersonalPeerDirectory = {
+  profilesById: Map<string, PersonalPeerProfile>;
+  recordsById: Map<string, ResolvedPeerRecord>;
+  recordsByEmail: Map<string, ResolvedPeerRecord[]>;
+};
+
+let personalPeerDirectoryCache:
+  | {
+      expiresAt: number;
+      value: PersonalPeerDirectory;
+    }
+  | null = null;
+let personalPeerDirectoryLoad: Promise<PersonalPeerDirectory> | null = null;
 
 function normalizeNonNegativeInteger(value: unknown) {
   const numberValue = Number(trimText(value));
@@ -159,6 +175,19 @@ function normalizeIsoString(value: unknown) {
 
 function normalizeSupportText(value: unknown) {
   return trimText(value).slice(0, 5000);
+}
+
+function findLatestReadablePeerTimestamp(
+  thread: ReturnType<typeof findMerchantPeerThreadForMerchants>,
+  readerMerchantId: string,
+  requestedLastReadAt: string,
+) {
+  return getLatestSupportReadTimestampAtOrBefore(
+    (thread?.messages ?? [])
+      .filter((message) => message.senderMerchantId !== readerMerchantId)
+      .map((message) => message.createdAt),
+    requestedLastReadAt,
+  );
 }
 
 function readMetadataString(metadata: Record<string, unknown> | null | undefined, ...keys: string[]) {
@@ -227,27 +256,11 @@ async function loadPersonalPeerProfiles(
   const targetIds = new Set(accountIds.map((accountId) => normalizeMerchantId(accountId)).filter(Boolean));
   const profileMap = new Map<string, PersonalPeerProfile>();
   if (!supabase || targetIds.size === 0) return profileMap;
-
-  let page = 1;
-  while (targetIds.size > profileMap.size) {
-    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: 200 }).catch(() => ({
-      data: null,
-      error: new Error("list_users_failed"),
-    }));
-    if (error) break;
-    const users = data?.users ?? [];
-    for (const user of users) {
-      const summary = toAuthUserSummary(user);
-      const accountId = readPlatformAccountIdFromMetadata(summary);
-      if (!targetIds.has(accountId)) continue;
-      const accountType = readPlatformAccountTypeHintFromMetadata(summary, "") || "";
-      if (accountType !== "personal") continue;
-      profileMap.set(accountId, readPersonalPeerProfile(summary));
-    }
-    if (users.length < 200) break;
-    page += 1;
-  }
-
+  const directory = await loadPersonalPeerDirectory(supabase);
+  targetIds.forEach((accountId) => {
+    const profile = directory.profilesById.get(accountId);
+    if (profile) profileMap.set(accountId, profile);
+  });
   return profileMap;
 }
 
@@ -380,6 +393,68 @@ function toResolvedPersonalRecord(user: MerchantAuthUserSummary | null | undefin
   } satisfies ResolvedPeerRecord;
 }
 
+async function loadPersonalPeerDirectory(
+  supabase: PlatformIdentitySupabaseClient,
+  options?: { forceRefresh?: boolean },
+): Promise<PersonalPeerDirectory> {
+  if (!options?.forceRefresh && personalPeerDirectoryCache && personalPeerDirectoryCache.expiresAt > Date.now()) {
+    return personalPeerDirectoryCache.value;
+  }
+  if (personalPeerDirectoryLoad) return personalPeerDirectoryLoad;
+
+  const task = (async () => {
+    const directory: PersonalPeerDirectory = {
+      profilesById: new Map(),
+      recordsById: new Map(),
+      recordsByEmail: new Map(),
+    };
+    let page = 1;
+    let completed = false;
+    while (true) {
+      const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: 200 }).catch(() => ({
+        data: null,
+        error: new Error("list_users_failed"),
+      }));
+      if (error) break;
+      const users = data?.users ?? [];
+      for (const user of users) {
+        const summary = toAuthUserSummary(user);
+        if (readPlatformAccountTypeHintFromMetadata(summary, "") !== "personal") continue;
+        const record = toResolvedPersonalRecord(summary);
+        if (!record) continue;
+        const profile = readPersonalPeerProfile(summary);
+        directory.profilesById.set(record.merchantId, profile);
+        directory.recordsById.set(record.merchantId, record);
+        const emails = new Set([normalizeEmail(summary.email), normalizeEmail(profile.email)].filter(Boolean));
+        emails.forEach((email) => {
+          const current = directory.recordsByEmail.get(email) ?? [];
+          if (!current.some((item) => item.merchantId === record.merchantId)) {
+            directory.recordsByEmail.set(email, [...current, record]);
+          }
+        });
+      }
+      if (users.length < 200) {
+        completed = true;
+        break;
+      }
+      page += 1;
+    }
+    if (completed) {
+      personalPeerDirectoryCache = {
+        expiresAt: Date.now() + PERSONAL_PEER_DIRECTORY_CACHE_TTL_MS,
+        value: directory,
+      };
+    }
+    return directory;
+  })();
+  personalPeerDirectoryLoad = task;
+  try {
+    return await task;
+  } finally {
+    if (personalPeerDirectoryLoad === task) personalPeerDirectoryLoad = null;
+  }
+}
+
 async function resolveMerchantById(
   supabase: ReturnType<typeof createServerSupabaseServiceClient>,
   merchantId: string,
@@ -435,26 +510,11 @@ async function resolvePersonalById(
 ) {
   const normalizedAccountId = normalizeMerchantId(accountId);
   if (!supabase || !normalizedAccountId) return null;
-
-  let page = 1;
-  while (true) {
-    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: 200 }).catch(() => ({
-      data: null,
-      error: new Error("list_users_failed"),
-    }));
-    if (error) return null;
-    const users = data?.users ?? [];
-    for (const user of users) {
-      const summary = toAuthUserSummary(user);
-      if (readPlatformAccountIdFromMetadata(summary) !== normalizedAccountId) continue;
-      const record = toResolvedPersonalRecord(summary);
-      if (record) return record;
-    }
-    if (users.length < 200) break;
-    page += 1;
-  }
-
-  return null;
+  const directory = await loadPersonalPeerDirectory(supabase);
+  const cachedRecord = directory.recordsById.get(normalizedAccountId) ?? null;
+  if (cachedRecord) return cachedRecord;
+  const refreshedDirectory = await loadPersonalPeerDirectory(supabase, { forceRefresh: true });
+  return refreshedDirectory.recordsById.get(normalizedAccountId) ?? null;
 }
 
 async function resolvePersonalByEmail(
@@ -465,32 +525,12 @@ async function resolvePersonalByEmail(
   if (!supabase || !normalizedEmail || !normalizedEmail.includes("@")) {
     return { record: null, ambiguous: false };
   }
-
-  const records = new Map<string, ResolvedPeerRecord>();
-  let page = 1;
-  while (true) {
-    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: 200 }).catch(() => ({
-      data: null,
-      error: new Error("list_users_failed"),
-    }));
-    if (error) break;
-    const users = data?.users ?? [];
-    for (const user of users) {
-      const summary = toAuthUserSummary(user);
-      if (readPlatformAccountTypeHintFromMetadata(summary, "") !== "personal") continue;
-      const profile = readPersonalPeerProfile(summary);
-      const matched =
-        normalizeEmail(summary.email) === normalizedEmail || normalizeEmail(profile.email) === normalizedEmail;
-      if (!matched) continue;
-      const record = toResolvedPersonalRecord(summary);
-      if (!record || records.has(record.merchantId)) continue;
-      records.set(record.merchantId, record);
-    }
-    if (users.length < 200) break;
-    page += 1;
+  const directory = await loadPersonalPeerDirectory(supabase);
+  let resolved = directory.recordsByEmail.get(normalizedEmail) ?? [];
+  if (resolved.length === 0) {
+    const refreshedDirectory = await loadPersonalPeerDirectory(supabase, { forceRefresh: true });
+    resolved = refreshedDirectory.recordsByEmail.get(normalizedEmail) ?? [];
   }
-
-  const resolved = [...records.values()];
   return {
     record: resolved[0] ?? null,
     ambiguous: resolved.length > 1,
@@ -746,12 +786,26 @@ export async function POST(request: Request) {
 
   if (action === "mark_read") {
     const contactMerchantId = normalizeMerchantId(body?.contactMerchantId);
-    const lastReadAt = normalizeIsoString(body?.lastReadAt);
-    if (!contactMerchantId || !lastReadAt || contactMerchantId === session.merchantId) {
+    const requestedLastReadAt = normalizeIsoString(body?.lastReadAt);
+    if (!contactMerchantId || !requestedLastReadAt || contactMerchantId === session.merchantId) {
       return noStoreJson({ error: "merchant_read_state_invalid" }, { status: 400 });
     }
 
-    const readStatePayload = await loadStoredMerchantSupportReadState(supabase as unknown as MerchantSupportReadStateStoreClient);
+    const [inboxPayload, readStatePayload] = await Promise.all([
+      loadStoredMerchantPeerInbox(supabase as unknown as MerchantPeerInboxStoreClient),
+      loadStoredMerchantSupportReadState(supabase as unknown as MerchantSupportReadStateStoreClient),
+    ]);
+    const thread = findMerchantPeerThreadForMerchants(inboxPayload, session.merchantId, contactMerchantId);
+    const lastReadAt = findLatestReadablePeerTimestamp(thread, session.merchantId, requestedLastReadAt);
+    if (!lastReadAt) {
+      const readState = getMerchantSupportReadState(readStatePayload, session.merchantId);
+      return noStoreJson({
+        ok: true,
+        readState: {
+          peerLastRead: readState.peerLastRead,
+        },
+      });
+    }
     const nextReadStatePayload = mergeMerchantSupportReadState(readStatePayload, session.merchantId, {
       peerLastRead: {
         [contactMerchantId]: lastReadAt,
@@ -767,7 +821,10 @@ export async function POST(request: Request) {
         { status: 500 },
       );
     }
-    const readState = getMerchantSupportReadState(nextReadStatePayload, session.merchantId);
+    const readState = getMerchantSupportReadState(
+      saveReadStateResult.payload ?? nextReadStatePayload,
+      session.merchantId,
+    );
     return noStoreJson({
       ok: true,
       readState: {
@@ -820,10 +877,11 @@ export async function POST(request: Request) {
         { status: 500 },
       );
     }
+    const persistedPayload = saveResult.payload ?? nextPayload;
 
     return noStoreJson({
       ...(await buildInboxResponse(
-        nextPayload,
+        persistedPayload,
         session.merchantId,
         supabase as unknown as PlatformIdentitySupabaseClient & PlatformMerchantSnapshotStoreClient,
         readStatePayload,
@@ -877,10 +935,11 @@ export async function POST(request: Request) {
         { status: 500 },
       );
     }
+    const persistedPayload = saveResult.payload ?? nextPayload;
 
     return noStoreJson({
       ...(await buildInboxResponse(
-        nextPayload,
+        persistedPayload,
         session.merchantId,
         supabase as unknown as PlatformIdentitySupabaseClient & PlatformMerchantSnapshotStoreClient,
         readStatePayload,
@@ -941,6 +1000,7 @@ export async function POST(request: Request) {
         { status: 500 },
       );
     }
+    const persistedPayload = saveResult.payload ?? nextPayload;
 
     if (recipient.accountType === "merchant") {
       const notification = buildMerchantPeerPushNotification({
@@ -960,12 +1020,12 @@ export async function POST(request: Request) {
 
     return noStoreJson({
       ...(await buildInboxResponse(
-        nextPayload,
+        persistedPayload,
         session.merchantId,
         supabase as unknown as PlatformIdentitySupabaseClient & PlatformMerchantSnapshotStoreClient,
         readStatePayload,
       )),
-      thread: findMerchantPeerThreadForMerchants(nextPayload, session.merchantId, recipient.merchantId),
+      thread: findMerchantPeerThreadForMerchants(persistedPayload, session.merchantId, recipient.merchantId),
     });
   }
 

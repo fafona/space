@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildPlatformSupportInboxBlocks,
   createPlatformSupportMessage,
+  mergePlatformSupportInboxPayloads,
   readPlatformSupportInboxFromBlocks,
   upsertPlatformSupportThread,
 } from "@/lib/platformSupportInbox";
@@ -81,4 +82,103 @@ test("upsertPlatformSupportThread appends and sorts newest thread first", () => 
   assert.equal(third.threads[0]?.merchantId, "10000000");
   assert.equal(third.threads[0]?.messages.length, 2);
   assert.equal(third.threads[0]?.messages[1]?.text, "reply");
+});
+
+test("support message ids are idempotent", () => {
+  const first = upsertPlatformSupportThread(
+    { threads: [] },
+    {
+      merchantId: "10000000",
+      message: createPlatformSupportMessage({
+        id: "same-message",
+        sender: "merchant",
+        text: "first",
+        createdAt: "2026-03-31T09:00:00.000Z",
+      }),
+    },
+  );
+  const second = upsertPlatformSupportThread(first, {
+    merchantId: "10000000",
+    message: createPlatformSupportMessage({
+      id: "same-message",
+      sender: "merchant",
+      text: "duplicate",
+      createdAt: "2026-03-31T10:00:00.000Z",
+    }),
+  });
+
+  assert.equal(second.threads[0]?.messages.length, 1);
+  assert.equal(second.threads[0]?.messages[0]?.text, "first");
+});
+
+test("concurrent support snapshots merge without dropping replies", () => {
+  const merchantSnapshot = upsertPlatformSupportThread(
+    { threads: [] },
+    {
+      merchantId: "10000000",
+      message: createPlatformSupportMessage({
+        id: "merchant-message",
+        sender: "merchant",
+        text: "question",
+        createdAt: "2026-03-31T09:00:00.000Z",
+      }),
+    },
+  );
+  const adminSnapshot = upsertPlatformSupportThread(
+    { threads: [] },
+    {
+      merchantId: "10000000",
+      message: createPlatformSupportMessage({
+        id: "admin-message",
+        sender: "super_admin",
+        text: "answer",
+        createdAt: "2026-03-31T09:00:01.000Z",
+      }),
+    },
+  );
+
+  const merged = mergePlatformSupportInboxPayloads(merchantSnapshot, adminSnapshot);
+  assert.deepEqual(
+    merged.threads[0]?.messages.map((message) => message.id),
+    ["merchant-message", "admin-message"],
+  );
+});
+
+test("an older support snapshot cannot restore stale merchant metadata", () => {
+  const current = upsertPlatformSupportThread(
+    { threads: [] },
+    {
+      merchantId: "10000000",
+      merchantName: "Current merchant",
+      merchantEmail: "current@example.com",
+      message: createPlatformSupportMessage({
+        id: "current-message",
+        sender: "merchant",
+        text: "current",
+        createdAt: "2026-03-31T10:00:00.000Z",
+      }),
+    },
+  );
+  const stale = upsertPlatformSupportThread(
+    { threads: [] },
+    {
+      merchantId: "10000000",
+      merchantName: "Old merchant",
+      merchantEmail: "old@example.com",
+      message: createPlatformSupportMessage({
+        id: "old-message",
+        sender: "merchant",
+        text: "old",
+        createdAt: "2026-03-31T09:00:00.000Z",
+      }),
+    },
+  );
+
+  const merged = mergePlatformSupportInboxPayloads(current, stale);
+  assert.equal(merged.threads[0]?.merchantName, "Current merchant");
+  assert.equal(merged.threads[0]?.merchantEmail, "current@example.com");
+  assert.deepEqual(
+    merged.threads[0]?.messages.map((message) => message.id),
+    ["old-message", "current-message"],
+  );
 });

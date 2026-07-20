@@ -245,6 +245,7 @@ export async function PATCH(request: Request) {
   const supportSave = await savePlatformSupportInbox(
     supabase as unknown as PlatformSupportInboxStoreClient,
     target.snapshot.supportInbox,
+    { replace: true },
   );
   if (supportSave.error) {
     return noStoreJson(
