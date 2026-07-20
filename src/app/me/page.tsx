@@ -6366,7 +6366,7 @@ export default function MePage() {
             <div className="flex min-w-0 items-center gap-3">
               <button
                 type="button"
-                className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-900 text-sm font-semibold text-white shadow-sm transition hover:scale-[1.02]"
+                className="flex h-12 w-12 shrink-0 items-center justify-center overflow-visible rounded-full bg-slate-900 text-sm font-semibold text-white shadow-sm transition hover:scale-[1.02]"
                 onClick={() => setConversationInfoOpen(true)}
                 aria-label="查看资料"
               >
