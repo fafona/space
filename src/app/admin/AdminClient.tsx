@@ -140,6 +140,11 @@ import {
   type MerchantPeerThread,
 } from "@/lib/merchantPeerInbox";
 import {
+  findFirstNewIncomingSupportMessageKey,
+  findFirstUnreadSupportMessageKey,
+  type SupportConversationScrollMessage,
+} from "@/lib/supportConversationScroll";
+import {
   formatSupportConversationPreview,
   isSupportShortMerchantCardLink,
   parseSupportMessageAttachmentPreview,
@@ -7111,6 +7116,11 @@ export default function AdminClient({
   const supportNotifiedEventStorageKeyRef = useRef("");
   const supportNotifiedEventKeysRef = useRef<Set<string>>(new Set());
   const supportLastVisibleMessageKeyRef = useRef("");
+  const supportVisibleMessageKeysRef = useRef<string[]>([]);
+  const supportInitialScrollTargetKeyRef = useRef("");
+  const supportInitialScrollConversationKeyRef = useRef("");
+  const supportScrollStabilizationTargetKeyRef = useRef("");
+  const supportScrollStabilizationUntilRef = useRef(0);
   const supportScrollToLatestPendingRef = useRef(false);
   const supportMobileSwipeStartRef = useRef<{ x: number; y: number; fromEdge: boolean } | null>(null);
   const supportSelfSwipeStartRef = useRef<{ x: number; y: number; fromEdge: boolean } | null>(null);
@@ -12638,6 +12648,16 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   );
   const visibleSupportMessages =
     supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY ? officialVisibleSupportMessages : peerVisibleSupportMessages;
+  const visibleSupportScrollMessages = useMemo<SupportConversationScrollMessage[]>(() => {
+    const hiddenMessageKeys = new Set(supportHiddenMessageKeys);
+    return visibleSupportMessages
+      .map((message) => ({
+        key: buildVisibleSupportMessageKey(message),
+        createdAt: message.createdAt,
+        isSelf: message.isSelf,
+      }))
+      .filter((message) => !hiddenMessageKeys.has(message.key));
+  }, [supportHiddenMessageKeys, visibleSupportMessages]);
   const selectedSupportMessages = visibleSupportMessages.filter((message) => {
     const key = buildVisibleSupportMessageKey(message);
     return supportSelectedMessageKeys.includes(key) && !supportHiddenMessageKeys.includes(key);
@@ -12645,10 +12665,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const supportSelectionActive = selectedSupportMessages.length > 0;
   const latestOfficialVisibleSupportMessage =
     officialVisibleSupportMessages[officialVisibleSupportMessages.length - 1] ?? null;
-  const latestVisibleSupportMessage = visibleSupportMessages[visibleSupportMessages.length - 1] ?? null;
-  const latestVisibleSupportMessageKey = latestVisibleSupportMessage
-    ? buildVisibleSupportMessageKey(latestVisibleSupportMessage)
-    : "";
+  const latestVisibleSupportMessageKey = visibleSupportScrollMessages[visibleSupportScrollMessages.length - 1]?.key ?? "";
   const selectedSupportDisplayName =
     supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY
       ? supportOfficialName
@@ -13213,6 +13230,22 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const isIosSupportBrowser =
     typeof navigator !== "undefined" && /iPhone|iPad|iPod/i.test(String(navigator.userAgent ?? ""));
   const selectedSupportConversationVisible = !isMobileSupportDialog || supportMobileView === "thread";
+  const selectedSupportReadStateHydrated = selectedSupportIsOfficial
+    ? supportReadStateHydrated.official
+    : supportReadStateHydrated.peer;
+  const selectedSupportLastReadAt = selectedSupportIsOfficial
+    ? supportLastReadAt
+    : normalizeSupportMessageTimestamp(supportPeerLastReadMap[selectedSupportPeerMerchantId]);
+  const selectedSupportConversationKey = selectedSupportIsOfficial
+    ? (supportReadMerchantId || currentSupportMerchantId || editingSiteId).trim()
+      ? `official:${(supportReadMerchantId || currentSupportMerchantId || editingSiteId).trim()}`
+      : ""
+    : currentSupportMerchantId && selectedSupportPeerMerchantId
+      ? `peer:${currentSupportMerchantId}:${selectedSupportPeerMerchantId}`
+      : "";
+  const firstUnreadVisibleSupportMessageKey = selectedSupportReadStateHydrated
+    ? findFirstUnreadSupportMessageKey(visibleSupportScrollMessages, selectedSupportLastReadAt)
+    : "";
   const selectedSupportAvatarLabel = getSupportContactAvatarLabel(
     selectedSupportDisplayName,
     selectedSupportIsOfficial ? "FA" : "商",
@@ -16032,8 +16065,50 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   ]);
 
   useEffect(() => {
+    if (
+      isPlatformEditor ||
+      !supportInterfaceOpen ||
+      !selectedSupportConversationVisible
+    ) {
+      supportInitialScrollConversationKeyRef.current = "";
+      supportInitialScrollTargetKeyRef.current = "";
+      supportLastVisibleMessageKeyRef.current = "";
+      supportVisibleMessageKeysRef.current = [];
+      supportScrollStabilizationTargetKeyRef.current = "";
+      supportScrollStabilizationUntilRef.current = 0;
+      return;
+    }
+    if (
+      selectedSupportLoading ||
+      !selectedSupportReadStateHydrated ||
+      !selectedSupportConversationKey ||
+      supportInitialScrollConversationKeyRef.current === selectedSupportConversationKey
+    ) {
+      return;
+    }
+
+    supportInitialScrollConversationKeyRef.current = selectedSupportConversationKey;
+    supportInitialScrollTargetKeyRef.current = firstUnreadVisibleSupportMessageKey;
+    supportLastVisibleMessageKeyRef.current = "";
+    supportVisibleMessageKeysRef.current = [];
+    supportScrollStabilizationTargetKeyRef.current = "";
+    supportScrollStabilizationUntilRef.current = 0;
+    supportScrollToLatestPendingRef.current = true;
+  }, [
+    firstUnreadVisibleSupportMessageKey,
+    isPlatformEditor,
+    selectedSupportConversationKey,
+    selectedSupportConversationVisible,
+    selectedSupportLoading,
+    selectedSupportReadStateHydrated,
+    supportInterfaceOpen,
+  ]);
+
+  useEffect(() => {
     if (isPlatformEditor || !supportInterfaceOpen || !selectedSupportConversationVisible || typeof window === "undefined") return;
     if (supportSelectedContactKey !== SUPPORT_OFFICIAL_CONTACT_KEY) return;
+    if (!supportReadStateHydrated.official) return;
+    if (supportInitialScrollConversationKeyRef.current !== selectedSupportConversationKey) return;
     if (!supportReadMerchantId || !latestSupportAdminMessageAt) return;
     if (!isSupportReadTimestampNewer(latestSupportAdminMessageAt, supportLastReadAt)) return;
     setSupportLastReadAt(latestSupportAdminMessageAt);
@@ -16056,12 +16131,16 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     supportInterfaceOpen,
     supportLastReadAt,
     supportReadMerchantId,
+    supportReadStateHydrated.official,
+    selectedSupportConversationKey,
     supportSelectedContactKey,
   ]);
 
   useEffect(() => {
     if (isPlatformEditor || !supportInterfaceOpen || !selectedSupportConversationVisible || typeof window === "undefined") return;
     if (supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY) return;
+    if (!supportReadStateHydrated.peer) return;
+    if (supportInitialScrollConversationKeyRef.current !== selectedSupportConversationKey) return;
     if (!currentSupportMerchantId || !selectedSupportPeerMerchantId || !latestSelectedSupportPeerIncomingMessageAt) return;
     const currentLastReadAt = normalizeSupportMessageTimestamp(supportPeerLastReadMap[selectedSupportPeerMerchantId]);
     if (!isSupportReadTimestampNewer(latestSelectedSupportPeerIncomingMessageAt, currentLastReadAt)) return;
@@ -16096,8 +16175,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     requestMerchantPeerWithSessionRecovery,
     selectedSupportConversationVisible,
     selectedSupportPeerMerchantId,
+    selectedSupportConversationKey,
     supportInterfaceOpen,
     supportPeerLastReadMap,
+    supportReadStateHydrated.peer,
     supportSelectedContactKey,
   ]);
 
@@ -16295,35 +16376,132 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   useEffect(() => {
     if (isPlatformEditor || !supportInterfaceOpen || !selectedSupportConversationVisible || typeof window === "undefined") return;
-    if (selectedSupportLoading) return;
+    if (
+      selectedSupportLoading ||
+      !selectedSupportReadStateHydrated ||
+      !selectedSupportConversationKey
+    ) {
+      return;
+    }
     const viewport = supportMessagesViewportRef.current;
     if (!viewport) return;
     const shouldScrollToInitialTarget = supportScrollToLatestPendingRef.current;
+    if (
+      shouldScrollToInitialTarget &&
+      supportInitialScrollConversationKeyRef.current !== selectedSupportConversationKey
+    ) {
+      return;
+    }
+    const previousMessageKeys = supportVisibleMessageKeysRef.current;
+    const currentMessageKeys = visibleSupportScrollMessages.map((message) => message.key);
+    const firstNewIncomingMessageKey = shouldScrollToInitialTarget
+      ? ""
+      : findFirstNewIncomingSupportMessageKey(visibleSupportScrollMessages, previousMessageKeys);
     const shouldScrollForNewMessage =
       !!latestVisibleSupportMessageKey && supportLastVisibleMessageKeyRef.current !== latestVisibleSupportMessageKey;
-    if (!shouldScrollToInitialTarget && !shouldScrollForNewMessage) return;
-    const behavior: ScrollBehavior = shouldScrollToInitialTarget || !supportLastVisibleMessageKeyRef.current ? "auto" : "smooth";
-    supportScrollToLatestPendingRef.current = false;
+    supportVisibleMessageKeysRef.current = currentMessageKeys;
     supportLastVisibleMessageKeyRef.current = latestVisibleSupportMessageKey;
+    const shouldStartScroll = shouldScrollToInitialTarget || shouldScrollForNewMessage;
+    const shouldContinueStabilizing =
+      !shouldStartScroll && Date.now() < supportScrollStabilizationUntilRef.current;
+    if (!shouldStartScroll && !shouldContinueStabilizing) return;
+
+    let targetMessageKey = supportScrollStabilizationTargetKeyRef.current;
+    let behavior: ScrollBehavior = "auto";
+    if (shouldStartScroll) {
+      targetMessageKey = shouldScrollToInitialTarget
+        ? supportInitialScrollTargetKeyRef.current
+        : firstNewIncomingMessageKey;
+      behavior = shouldScrollToInitialTarget ? "auto" : "smooth";
+      supportScrollStabilizationTargetKeyRef.current = targetMessageKey;
+      supportScrollStabilizationUntilRef.current = Date.now() + 30000;
+      supportScrollToLatestPendingRef.current = false;
+      supportInitialScrollTargetKeyRef.current = "";
+    }
+
+    let userInterrupted = false;
     const rafIds = new Set<number>();
-    const timers = [0, 80, 240, 600].map((delay) =>
+    const scrollToSelectedPosition = (nextBehavior: ScrollBehavior) => {
+      if (userInterrupted || Date.now() >= supportScrollStabilizationUntilRef.current) return;
+      if (targetMessageKey) {
+        const targetElement = supportMessageElementByKeyRef.current[targetMessageKey];
+        if (targetElement && viewport.contains(targetElement)) {
+          const viewportRect = viewport.getBoundingClientRect();
+          const targetRect = targetElement.getBoundingClientRect();
+          const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+          const targetScrollTop = Math.max(
+            0,
+            Math.min(maxScrollTop, viewport.scrollTop + targetRect.top - viewportRect.top - 12),
+          );
+          viewport.scrollTo({ top: targetScrollTop, behavior: nextBehavior });
+          return;
+        }
+      }
+      viewport.scrollTo({ top: viewport.scrollHeight, behavior: nextBehavior });
+    };
+    const queueScroll = (nextBehavior: ScrollBehavior) => {
+      const rafId = window.requestAnimationFrame(() => {
+        rafIds.delete(rafId);
+        scrollToSelectedPosition(nextBehavior);
+      });
+      rafIds.add(rafId);
+    };
+    const timers = [0, 80, 240, 600, 1200, 2400].map((delay, index) =>
       window.setTimeout(() => {
-        const rafId = window.requestAnimationFrame(() => {
-          viewport.scrollTo({ top: viewport.scrollHeight, behavior });
-        });
-        rafIds.add(rafId);
+        queueScroll(index === 0 ? behavior : "auto");
       }, delay),
     );
+
+    const messageList = viewport.querySelector<HTMLElement>("[data-support-message-list='true']");
+    const resizeObserver =
+      typeof ResizeObserver === "undefined" || !messageList
+        ? null
+        : new ResizeObserver(() => queueScroll("auto"));
+    if (messageList && resizeObserver) {
+      resizeObserver.observe(messageList);
+    }
+
+    const stopStabilizingScroll = () => {
+      userInterrupted = true;
+      supportScrollStabilizationTargetKeyRef.current = "";
+      supportScrollStabilizationUntilRef.current = 0;
+      resizeObserver?.disconnect();
+    };
+    const handleMediaLoad = (event: Event) => {
+      const target = event.target;
+      if (target instanceof HTMLImageElement || target instanceof HTMLVideoElement) {
+        queueScroll("auto");
+      }
+    };
+    viewport.addEventListener("load", handleMediaLoad, true);
+    viewport.addEventListener("wheel", stopStabilizingScroll, { passive: true });
+    viewport.addEventListener("touchstart", stopStabilizingScroll, { passive: true });
+    viewport.addEventListener("pointerdown", stopStabilizingScroll, { passive: true });
+    timers.push(
+      window.setTimeout(
+        stopStabilizingScroll,
+        Math.max(0, supportScrollStabilizationUntilRef.current - Date.now()),
+      ),
+    );
+
     return () => {
       timers.forEach((timer) => window.clearTimeout(timer));
       rafIds.forEach((rafId) => window.cancelAnimationFrame(rafId));
+      resizeObserver?.disconnect();
+      viewport.removeEventListener("load", handleMediaLoad, true);
+      viewport.removeEventListener("wheel", stopStabilizingScroll);
+      viewport.removeEventListener("touchstart", stopStabilizingScroll);
+      viewport.removeEventListener("pointerdown", stopStabilizingScroll);
     };
   }, [
     isPlatformEditor,
     latestVisibleSupportMessageKey,
+    selectedSupportConversationKey,
     selectedSupportConversationVisible,
     selectedSupportLoading,
+    selectedSupportReadStateHydrated,
     supportInterfaceOpen,
+    visibleSupportScrollMessages,
   ]);
 
   useEffect(() => {
@@ -19862,7 +20040,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             正在加载聊天记录...
           </div>
         ) : visibleSupportMessages.length ? (
-          <div className="space-y-2">
+          <div className="space-y-2" data-support-message-list="true">
             {visibleSupportMessages.map((message, index) => {
               const previousMessage = index > 0 ? visibleSupportMessages[index - 1] : null;
               const showDateDivider =
@@ -21188,7 +21366,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           {selectedSupportLoading ? (
             <div className="rounded-2xl border border-dashed bg-white px-4 py-6 text-center text-sm text-slate-500">正在加载聊天记录...</div>
           ) : visibleSupportMessages.length ? (
-            <div className="min-w-0 space-y-2">
+            <div className="min-w-0 space-y-2" data-support-message-list="true">
               {visibleSupportMessages.map((message, index) => {
                 const previousMessage = index > 0 ? visibleSupportMessages[index - 1] : null;
                 const showDateDivider =
