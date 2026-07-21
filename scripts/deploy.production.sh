@@ -5,6 +5,10 @@ APP_DIR="${APP_DIR:-/var/www/merchant-space}"
 APP_NAME="${APP_NAME:-merchant-space}"
 APP_PORT="${APP_PORT:-3000}"
 APP_BRANCH="${APP_BRANCH:-main}"
+DISK_WARNING_THRESHOLD="${DISK_WARNING_THRESHOLD:-75}"
+DISK_CACHE_CLEANUP_THRESHOLD="${DISK_CACHE_CLEANUP_THRESHOLD:-80}"
+DISK_ABORT_THRESHOLD="${DISK_ABORT_THRESHOLD:-90}"
+MIN_FREE_DISK_MB="${MIN_FREE_DISK_MB:-5120}"
 
 if ! command -v git >/dev/null 2>&1; then
   echo "[deploy] git is required on the server"
@@ -31,6 +35,45 @@ cd "$APP_DIR"
 echo "[deploy] working directory: $APP_DIR"
 echo "[deploy] branch: $APP_BRANCH"
 
+validate_disk_thresholds() {
+  local name
+  local value
+  for name in DISK_WARNING_THRESHOLD DISK_CACHE_CLEANUP_THRESHOLD DISK_ABORT_THRESHOLD MIN_FREE_DISK_MB; do
+    value="${!name}"
+    if ! [[ "$value" =~ ^[0-9]+$ ]]; then
+      echo "[deploy] $name must be a non-negative integer: $value"
+      exit 1
+    fi
+  done
+  if [ "$DISK_WARNING_THRESHOLD" -gt 100 ] \
+    || [ "$DISK_CACHE_CLEANUP_THRESHOLD" -gt 100 ] \
+    || [ "$DISK_ABORT_THRESHOLD" -gt 100 ] \
+    || [ "$DISK_WARNING_THRESHOLD" -ge "$DISK_CACHE_CLEANUP_THRESHOLD" ] \
+    || [ "$DISK_CACHE_CLEANUP_THRESHOLD" -ge "$DISK_ABORT_THRESHOLD" ]; then
+    echo "[deploy] disk thresholds must be ordered warning < cleanup < abort <= 100"
+    exit 1
+  fi
+}
+
+disk_usage_percent() {
+  df -P "$APP_DIR" | awk 'NR == 2 { gsub(/%/, "", $5); print $5 }'
+}
+
+disk_available_mb() {
+  df -Pk "$APP_DIR" | awk 'NR == 2 { print int($4 / 1024) }'
+}
+
+report_disk_status() {
+  local disk_usage
+  local disk_available
+  disk_usage="$(disk_usage_percent)"
+  disk_available="$(disk_available_mb)"
+  echo "[deploy] disk usage: ${disk_usage}% (${disk_available} MB available)"
+  if [ "$disk_usage" -ge "$DISK_WARNING_THRESHOLD" ]; then
+    echo "[deploy] warning: disk usage has reached the ${DISK_WARNING_THRESHOLD}% warning threshold"
+  fi
+}
+
 cleanup_cache_dir() {
   local expected_path="$1"
   local resolved_path
@@ -49,14 +92,34 @@ cleanup_rebuildable_caches() {
   local home_dir="${HOME:-/root}"
   local disk_usage
   cleanup_cache_dir "$home_dir/.cache/ffmpeg-static-nodejs"
-  disk_usage="$(df -P "$APP_DIR" | awk 'NR == 2 { gsub(/%/, "", $5); print $5 }')"
-  if [ -n "$disk_usage" ] && [ "$disk_usage" -ge 85 ]; then
+  disk_usage="$(disk_usage_percent)"
+  if [ -n "$disk_usage" ] && [ "$disk_usage" -ge "$DISK_CACHE_CLEANUP_THRESHOLD" ]; then
     echo "[deploy] disk usage is ${disk_usage}%; clearing the rebuildable npm cache"
     cleanup_cache_dir "$home_dir/.npm/_cacache"
+    cleanup_cache_dir "$APP_DIR/.next/cache"
   fi
 }
 
+ensure_disk_headroom() {
+  local disk_usage
+  local disk_available
+  disk_usage="$(disk_usage_percent)"
+  disk_available="$(disk_available_mb)"
+  if [ "$disk_usage" -ge "$DISK_ABORT_THRESHOLD" ]; then
+    echo "[deploy] refusing to deploy at ${disk_usage}% disk usage; limit is ${DISK_ABORT_THRESHOLD}%"
+    exit 1
+  fi
+  if [ "$disk_available" -lt "$MIN_FREE_DISK_MB" ]; then
+    echo "[deploy] refusing to deploy with ${disk_available} MB free; minimum is ${MIN_FREE_DISK_MB} MB"
+    exit 1
+  fi
+}
+
+validate_disk_thresholds
+report_disk_status
 cleanup_rebuildable_caches
+report_disk_status
+ensure_disk_headroom
 
 write_env_value() {
   local key="$1"
@@ -103,6 +166,12 @@ git fetch origin "$APP_BRANCH" --prune
 git checkout "$APP_BRANCH"
 git reset --hard "origin/$APP_BRANCH"
 
+if [ -f "$APP_DIR/scripts/configure-production-log-retention.sh" ]; then
+  if ! bash "$APP_DIR/scripts/configure-production-log-retention.sh"; then
+    echo "[deploy] warning: production log retention configuration failed"
+  fi
+fi
+
 FAOLLA_WEB_BUILD_ID="$(git rev-parse HEAD)"
 FAOLLA_WEB_RELEASED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 write_env_value "FAOLLA_WEB_BUILD_ID" "$FAOLLA_WEB_BUILD_ID"
@@ -112,6 +181,9 @@ write_env_value "FAOLLA_WEB_RELEASED_AT" "$FAOLLA_WEB_RELEASED_AT"
 node scripts/check-supabase-health.mjs
 
 npm ci
+cleanup_rebuildable_caches
+report_disk_status
+ensure_disk_headroom
 
 if [ -f "$APP_DIR/node_modules/ffmpeg-static/ffmpeg" ]; then
   chmod +x "$APP_DIR/node_modules/ffmpeg-static/ffmpeg" || true
@@ -124,6 +196,8 @@ fi
 
 npm run build
 cleanup_rebuildable_caches
+report_disk_status
+ensure_disk_headroom
 
 if pm2 describe "$APP_NAME" >/dev/null 2>&1; then
   pm2 delete "$APP_NAME" >/dev/null 2>&1 || true
@@ -145,4 +219,5 @@ fi
 PORT="$APP_PORT" pm2 start npm --name "$APP_NAME" -- start -- -p "$APP_PORT"
 
 pm2 save
+report_disk_status
 echo "[deploy] deploy finished"
