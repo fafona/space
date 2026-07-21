@@ -1,15 +1,13 @@
 import {
+  filterMerchantOperationLogs,
   MAX_MERCHANT_OPERATION_LOGS,
   normalizeMerchantOperationLogEntry,
   shouldKeepMerchantOperationLog,
   type MerchantOperationLogEntry,
   type MerchantOperationLogStatus,
 } from "@/lib/merchantOperationLogs";
-import { saveMerchantSnapshotHistory } from "@/lib/merchantSnapshotHistoryStore";
 
 const MERCHANT_OPERATION_LOGS_SLUG_PREFIX = "__merchant_operation_logs__:";
-const MERCHANT_OPERATION_LOGS_HISTORY_SLUG_PREFIX = "__merchant_operation_logs_history__:";
-const MERCHANT_OPERATION_LOGS_HISTORY_BACKUP_SLUG_PREFIX = "__merchant_operation_logs_history_backup__:";
 
 export type MerchantOperationLogsStoreClient = {
   // Supabase query builders are heavily generic; this store only relies on runtime chaining.
@@ -22,6 +20,8 @@ export type MerchantOperationLogQuery = {
   status?: "all" | MerchantOperationLogStatus;
   startDate?: string;
   endDate?: string;
+  startAt?: string;
+  endAt?: string;
   offset?: number;
   limit?: number;
 };
@@ -38,7 +38,7 @@ export type MerchantOperationLogQueryResult = {
   hasMore: boolean;
 };
 
-type StoredMerchantOperationLogsRow = {
+export type StoredMerchantOperationLogsRow = {
   id?: string | number | null;
   slug?: unknown;
   blocks?: unknown;
@@ -76,16 +76,12 @@ function isMissingUpdatedAtColumn(message: string) {
   );
 }
 
+function throwOperationLogsStoreQueryError(error: unknown): never {
+  throw new Error(`merchant_operation_logs_read_failed:${toErrorMessage(error)}`);
+}
+
 function buildOperationLogsSlug(siteId: string) {
   return `${MERCHANT_OPERATION_LOGS_SLUG_PREFIX}${siteId}`;
-}
-
-function buildOperationLogsHistorySlug(siteId: string) {
-  return `${MERCHANT_OPERATION_LOGS_HISTORY_SLUG_PREFIX}${siteId}`;
-}
-
-function buildOperationLogsHistoryBackupSlug(siteId: string) {
-  return `${MERCHANT_OPERATION_LOGS_HISTORY_BACKUP_SLUG_PREFIX}${siteId}`;
 }
 
 async function queryStoredOperationLogRows(supabase: MerchantOperationLogsStoreClient, siteId: string) {
@@ -93,46 +89,50 @@ async function queryStoredOperationLogRows(supabase: MerchantOperationLogsStoreC
   if (!normalizedSiteId) return [] as StoredMerchantOperationLogsRow[];
   const slug = buildOperationLogsSlug(normalizedSiteId);
 
-  const initial = await supabase
-    .from("pages")
-    .select("id,slug,blocks,updated_at")
-    .eq("merchant_id", normalizedSiteId)
-    .eq("slug", slug);
+  const runQuery = async (includeMerchantId: boolean, includeUpdatedAt: boolean) => {
+    const query = supabase
+      .from("pages")
+      .select(includeUpdatedAt ? "id,slug,blocks,updated_at" : "id,slug,blocks")
+      .eq("slug", slug);
+    return includeMerchantId ? query.eq("merchant_id", normalizedSiteId) : query;
+  };
 
-  let data = (initial.data ?? []) as StoredMerchantOperationLogsRow[];
-  let error = initial.error;
+  let includeMerchantId = true;
+  let includeUpdatedAt = true;
+  let data: StoredMerchantOperationLogsRow[] = [];
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const result = await runQuery(includeMerchantId, includeUpdatedAt);
+    data = (result.data ?? []) as StoredMerchantOperationLogsRow[];
+    if (!result.error) break;
+    const message = toErrorMessage(result.error);
+    if (isMissingSlugColumn(message)) return [];
+    if (includeMerchantId && isMissingMerchantIdColumn(message)) {
+      includeMerchantId = false;
+      continue;
+    }
+    if (includeUpdatedAt && isMissingUpdatedAtColumn(message)) {
+      includeUpdatedAt = false;
+      continue;
+    }
+    throwOperationLogsStoreQueryError(result.error);
+  }
 
-  if (error) {
-    const message = toErrorMessage(error);
-    if (isMissingMerchantIdColumn(message)) {
-      const retry = await supabase.from("pages").select("id,slug,blocks,updated_at").eq("slug", slug);
-      data = (retry.data ?? []) as StoredMerchantOperationLogsRow[];
-      error = retry.error;
-    } else if (isMissingSlugColumn(message)) {
-      return [];
-    } else if (isMissingUpdatedAtColumn(message)) {
-      const retry = await supabase
-        .from("pages")
-        .select("id,slug,blocks")
-        .eq("merchant_id", normalizedSiteId)
-        .eq("slug", slug);
-      data = (retry.data ?? []) as StoredMerchantOperationLogsRow[];
-      error = retry.error;
+  if (data.length === 0 && includeMerchantId) {
+    includeMerchantId = false;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await runQuery(includeMerchantId, includeUpdatedAt);
+      data = (result.data ?? []) as StoredMerchantOperationLogsRow[];
+      if (!result.error) break;
+      const message = toErrorMessage(result.error);
+      if (isMissingSlugColumn(message)) return [];
+      if (includeUpdatedAt && isMissingUpdatedAtColumn(message)) {
+        includeUpdatedAt = false;
+        continue;
+      }
+      throwOperationLogsStoreQueryError(result.error);
     }
   }
 
-  if (!error && data.length === 0) {
-    const retry = await supabase.from("pages").select("id,slug,blocks,updated_at").eq("slug", slug);
-    data = (retry.data ?? []) as StoredMerchantOperationLogsRow[];
-    error = retry.error;
-    if (error && isMissingUpdatedAtColumn(toErrorMessage(error))) {
-      const retryWithoutUpdatedAt = await supabase.from("pages").select("id,slug,blocks").eq("slug", slug);
-      data = (retryWithoutUpdatedAt.data ?? []) as StoredMerchantOperationLogsRow[];
-      error = retryWithoutUpdatedAt.error;
-    }
-  }
-
-  if (error) return [];
   return Array.isArray(data) ? data : [];
 }
 
@@ -148,14 +148,23 @@ function normalizeStoredLogs(siteId: string, value: unknown) {
     .filter((item): item is MerchantOperationLogEntry => {
       return Boolean(item && item.siteId === normalizedSiteId && shouldKeepMerchantOperationLog(item));
     });
-  const map = new Map<string, MerchantOperationLogEntry>();
-  logs.forEach((item) => {
-    const existing = map.get(item.id);
-    if (!existing || Date.parse(item.at) >= Date.parse(existing.at)) {
-      map.set(item.id, item);
-    }
-  });
-  return Array.from(map.values()).sort((left, right) => Date.parse(right.at) - Date.parse(left.at));
+  return filterMerchantOperationLogs(logs);
+}
+
+export function mergeStoredMerchantOperationLogRows(siteId: string, rows: StoredMerchantOperationLogsRow[]) {
+  const normalizedSiteId = normalizeText(siteId, 80);
+  if (!normalizedSiteId || !Array.isArray(rows) || rows.length === 0) {
+    return { logs: [] as MerchantOperationLogEntry[], existingRowId: null as string | number | null };
+  }
+  const slug = buildOperationLogsSlug(normalizedSiteId);
+  const matchedRows = rows.filter((row) => normalizeText(row.slug) === slug || !normalizeText(row.slug));
+  const logs = filterMerchantOperationLogs(
+    matchedRows.flatMap((row) => normalizeStoredLogs(normalizedSiteId, row.blocks)),
+  ).filter((item) => item.siteId === normalizedSiteId);
+  return {
+    logs: logs.slice(0, MAX_MERCHANT_OPERATION_LOGS),
+    existingRowId: matchedRows.find((row) => row.id !== undefined && row.id !== null)?.id ?? null,
+  };
 }
 
 export async function loadStoredMerchantOperationLogs(
@@ -165,9 +174,7 @@ export async function loadStoredMerchantOperationLogs(
   const normalizedSiteId = normalizeText(siteId, 80);
   if (!normalizedSiteId) return [];
   const rows = await queryStoredOperationLogRows(supabase, normalizedSiteId);
-  const slug = buildOperationLogsSlug(normalizedSiteId);
-  const row = rows.find((item) => normalizeText(item.slug) === slug) ?? rows[0];
-  return row ? normalizeStoredLogs(normalizedSiteId, row.blocks) : [];
+  return mergeStoredMerchantOperationLogRows(normalizedSiteId, rows).logs;
 }
 
 export async function saveStoredMerchantOperationLogs(
@@ -181,25 +188,22 @@ export async function saveStoredMerchantOperationLogs(
   const normalizedSiteId = normalizeText(input.siteId, 80);
   if (!normalizedSiteId) return { error: "invalid_site_id" };
   const slug = buildOperationLogsSlug(normalizedSiteId);
-  const logs = normalizeStoredLogs(normalizedSiteId, input.logs).slice(0, MAX_MERCHANT_OPERATION_LOGS);
-  const updatedAt = normalizeText(input.updatedAt) || new Date().toISOString();
-  const beforeLogs = await loadStoredMerchantOperationLogs(supabase, normalizedSiteId);
-  const history = await saveMerchantSnapshotHistory(supabase, {
-    siteId: normalizedSiteId,
-    slug: buildOperationLogsHistorySlug(normalizedSiteId),
-    backupSlug: buildOperationLogsHistoryBackupSlug(normalizedSiteId),
-    source: "merchant-operation-logs",
-    before: beforeLogs,
-    after: logs,
-    at: updatedAt,
-    maxEntries: 10,
-  });
-  if (history.error) return { error: `merchant_operation_logs_history_save_failed:${history.error}` };
-  const existing = (await queryStoredOperationLogRows(supabase, normalizedSiteId))[0];
+  const rows = await queryStoredOperationLogRows(supabase, normalizedSiteId);
+  const merged = mergeStoredMerchantOperationLogRows(normalizedSiteId, rows);
+  const logs = filterMerchantOperationLogs([...input.logs, ...merged.logs])
+    .filter((item) => item.siteId === normalizedSiteId)
+    .slice(0, MAX_MERCHANT_OPERATION_LOGS);
+  const requestedUpdatedAt = normalizeText(input.updatedAt) || new Date().toISOString();
+  const latestLogAt = logs[0]?.at ?? "";
+  const updatedAt =
+    Number.isFinite(Date.parse(latestLogAt)) && Date.parse(latestLogAt) > Date.parse(requestedUpdatedAt)
+      ? latestLogAt
+      : requestedUpdatedAt;
+  const existingRowId = merged.existingRowId;
 
   const updateExisting = async (body: Record<string, unknown>) => {
-    if (existing?.id === undefined || existing?.id === null) return { error: "missing_existing_id" };
-    const updated = await supabase.from("pages").update(body).eq("id", existing.id);
+    if (existingRowId === undefined || existingRowId === null) return { error: "missing_existing_id" };
+    const updated = await supabase.from("pages").update(body).eq("id", existingRowId);
     return updated.error ? { error: toErrorMessage(updated.error) } : { error: null };
   };
 
@@ -222,27 +226,72 @@ export async function saveStoredMerchantOperationLogs(
     blocks: { logs },
     updated_at: updatedAt,
   };
-  const first = existing ? await updateExisting(basePayload) : await insertNew(basePayload);
+  const first = existingRowId !== null ? await updateExisting(basePayload) : await insertNew(basePayload);
   if (!first.error) return first;
   if (!isMissingUpdatedAtColumn(first.error)) return first;
-  return existing ? updateExisting({ blocks: { logs } }) : insertNew({ blocks: { logs } });
+  return existingRowId !== null ? updateExisting({ blocks: { logs } }) : insertNew({ blocks: { logs } });
 }
 
-function readDateBoundary(value: string | undefined, boundary: "start" | "end") {
-  const normalized = normalizeText(value, 32).replace(/[./]/g, "-");
+const merchantOperationLogMutationTails = new Map<string, Promise<void>>();
+
+async function withMerchantOperationLogMutationLock<T>(siteId: string, task: () => Promise<T>) {
+  const previous = merchantOperationLogMutationTails.get(siteId) ?? Promise.resolve();
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.catch(() => undefined).then(() => gate);
+  merchantOperationLogMutationTails.set(siteId, tail);
+  await previous.catch(() => undefined);
+  try {
+    return await task();
+  } finally {
+    release();
+    if (merchantOperationLogMutationTails.get(siteId) === tail) merchantOperationLogMutationTails.delete(siteId);
+  }
+}
+
+export async function appendStoredMerchantOperationLog(
+  supabase: MerchantOperationLogsStoreClient,
+  entry: MerchantOperationLogEntry,
+) {
+  const normalized = normalizeMerchantOperationLogEntry(entry);
+  if (!normalized || !shouldKeepMerchantOperationLog(normalized)) return { error: "invalid_operation_log" };
+  return withMerchantOperationLogMutationLock(normalized.siteId, () =>
+    saveStoredMerchantOperationLogs(supabase, {
+      siteId: normalized.siteId,
+      logs: [normalized],
+      updatedAt: normalized.at,
+    }),
+  );
+}
+
+export function parseMerchantOperationLogBoundary(value: string | undefined, boundary: "start" | "end") {
+  const normalized = normalizeText(value, 64);
   if (!normalized) return null;
-  const match = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-  if (!match) return null;
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return null;
-  const date =
-    boundary === "start"
-      ? new Date(year, month - 1, day, 0, 0, 0, 0)
-      : new Date(year, month - 1, day, 23, 59, 59, 999);
-  const time = date.getTime();
-  return Number.isFinite(time) ? time : null;
+  const dateOnly = normalized.replace(/[./]/g, "-");
+  const match = dateOnly.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (match) {
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const probe = new Date(Date.UTC(year, month - 1, day));
+    if (
+      !Number.isInteger(year) ||
+      !Number.isInteger(month) ||
+      !Number.isInteger(day) ||
+      probe.getUTCFullYear() !== year ||
+      probe.getUTCMonth() !== month - 1 ||
+      probe.getUTCDate() !== day
+    ) {
+      return null;
+    }
+    return boundary === "start"
+      ? Date.UTC(year, month - 1, day, 0, 0, 0, 0)
+      : Date.UTC(year, month - 1, day, 23, 59, 59, 999);
+  }
+  const parsed = Date.parse(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 export function queryMerchantOperationLogs(
@@ -251,23 +300,19 @@ export function queryMerchantOperationLogs(
 ): MerchantOperationLogQueryResult {
   const moduleName = normalizeText(query.module, 80);
   const status = query.status === "success" || query.status === "failed" ? query.status : "all";
-  const startAt = readDateBoundary(query.startDate, "start");
-  const endAt = readDateBoundary(query.endDate, "end");
+  const startAt = parseMerchantOperationLogBoundary(query.startAt || query.startDate, "start");
+  const endAt = parseMerchantOperationLogBoundary(query.endAt || query.endDate, "end");
   const offset = Math.max(0, Math.floor(Number(query.offset) || 0));
   const limit = Math.min(MAX_MERCHANT_OPERATION_LOGS, Math.max(1, Math.floor(Number(query.limit) || 100)));
-  const normalizedLogs = logs.filter(shouldKeepMerchantOperationLog);
+  const normalizedLogs = filterMerchantOperationLogs(logs);
   const modules = Array.from(new Set(normalizedLogs.map((item) => item.module).filter(Boolean))).sort((left, right) =>
     left.localeCompare(right, "zh-CN"),
   );
-  const filtered = normalizedLogs.filter((item) => {
-    if (moduleName && moduleName !== "all" && item.module !== moduleName) return false;
-    if (status !== "all" && item.status !== status) return false;
-    const itemTime = Date.parse(item.at);
-    if (Number.isFinite(itemTime)) {
-      if (startAt !== null && itemTime < startAt) return false;
-      if (endAt !== null && itemTime > endAt) return false;
-    }
-    return true;
+  const filtered = filterMerchantOperationLogs(normalizedLogs, {
+    module: moduleName,
+    status,
+    startAt,
+    endAt,
   });
   const total = filtered.length;
   const page = filtered.slice(offset, offset + limit);

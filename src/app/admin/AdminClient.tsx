@@ -203,6 +203,7 @@ import {
 } from "@/lib/galleryLayout";
 import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
 import {
+  filterMerchantOperationLogs,
   MERCHANT_OPERATION_LOG_EVENT,
   readMerchantOperationLogs,
   recordMerchantOperationLog,
@@ -890,7 +891,14 @@ function readMerchantLogDatePartsValue(value: string) {
   const month = Number(match[2]);
   const day = Number(match[3]);
   if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return null;
-  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const probe = new Date(year, month - 1, day);
+  if (
+    probe.getFullYear() !== year ||
+    probe.getMonth() !== month - 1 ||
+    probe.getDate() !== day
+  ) {
+    return null;
+  }
   return { year, month, day };
 }
 
@@ -898,6 +906,16 @@ function formatMerchantLogDateValue(value: string) {
   const parts = readMerchantLogDatePartsValue(value);
   if (!parts) return "";
   return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+}
+
+function formatMerchantLogDateBoundaryIso(value: string, boundary: "start" | "end") {
+  const parts = readMerchantLogDatePartsValue(value);
+  if (!parts) return "";
+  const date =
+    boundary === "start"
+      ? new Date(parts.year, parts.month - 1, parts.day, 0, 0, 0, 0)
+      : new Date(parts.year, parts.month - 1, parts.day, 23, 59, 59, 999);
+  return date.toISOString();
 }
 
 function isSameBlocksSnapshot(a: Block[], b: Block[]) {
@@ -4076,7 +4094,7 @@ function buildMerchantOperationFetchInfo(
     return { siteId, method, endpoint, module: "会员管理", action: method === "POST" ? "新增会员" : "更新会员", summary: `${method === "POST" ? "新增" : "更新"}会员${target}` };
   }
   if (endpoint === "/api/coupons") {
-    const action = method === "POST" ? "新建优惠券" : method === "DELETE" ? "删除优惠券" : statusText ? "更新优惠券状态" : "更新优惠券";
+    const action = method === "POST" ? "新建优惠券" : method === "DELETE" ? "归档优惠券" : statusText ? "更新优惠券状态" : "更新优惠券";
     return { siteId, method, endpoint, module: "优惠券", action, summary: `${action}${target}` };
   }
   if (endpoint === "/api/orders") {
@@ -6864,7 +6882,9 @@ export default function AdminClient({
   const [merchantOperationLogModules, setMerchantOperationLogModules] = useState<string[]>([]);
   const [merchantOperationLogHasMore, setMerchantOperationLogHasMore] = useState(false);
   const [merchantOperationLogsLoading, setMerchantOperationLogsLoading] = useState(false);
+  const [merchantOperationLogsError, setMerchantOperationLogsError] = useState("");
   const merchantOperationLogsCountRef = useRef(0);
+  const merchantOperationLogsRequestIdRef = useRef(0);
   const merchantOperationLogStartPickerRef = useRef<HTMLInputElement>(null);
   const merchantOperationLogEndPickerRef = useRef<HTMLInputElement>(null);
   const [europeLocationOptionsApi, setEuropeLocationOptionsApi] = useState<EuropeLocationOptionsApi | null>(null);
@@ -12230,11 +12250,28 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, [editingSiteId, isPlatformEditor]);
 
   useEffect(() => {
+    merchantOperationLogsRequestIdRef.current += 1;
+    setMerchantOperationLogs([]);
+    setMerchantOperationLogTotal(0);
+    setMerchantOperationLogAllTotal(0);
+    setMerchantOperationLogSuccessTotal(0);
+    setMerchantOperationLogFailedTotal(0);
+    setMerchantOperationLogModules([]);
+    setMerchantOperationLogHasMore(false);
+    setMerchantOperationLogsError("");
+    setMerchantOperationLogModuleFilter("all");
+    setMerchantOperationLogStatusFilter("all");
+    setMerchantOperationLogStartDate("");
+    setMerchantOperationLogEndDate("");
+  }, [editingSiteId, isPlatformEditor]);
+
+  useEffect(() => {
     merchantOperationLogsCountRef.current = merchantOperationLogs.length;
   }, [merchantOperationLogs.length]);
 
   const loadMerchantOperationLogs = useCallback(
     async (mode: "reset" | "append" = "reset") => {
+      const requestId = ++merchantOperationLogsRequestIdRef.current;
       if (isPlatformEditor || typeof window === "undefined" || !isMerchantNumericId(editingSiteId)) {
         setMerchantOperationLogs([]);
         setMerchantOperationLogTotal(0);
@@ -12243,10 +12280,31 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         setMerchantOperationLogFailedTotal(0);
         setMerchantOperationLogModules([]);
         setMerchantOperationLogHasMore(false);
+        setMerchantOperationLogsError("");
+        return;
+      }
+      const normalizedStartDate = formatMerchantLogDateValue(merchantOperationLogStartDate);
+      const normalizedEndDate = formatMerchantLogDateValue(merchantOperationLogEndDate);
+      if (merchantOperationLogStartDate.trim() && !normalizedStartDate) {
+        setMerchantOperationLogsError("开始日期无效，请输入真实日期，例如 2026-07-21。");
+        setMerchantOperationLogsLoading(false);
+        return;
+      }
+      if (merchantOperationLogEndDate.trim() && !normalizedEndDate) {
+        setMerchantOperationLogsError("结束日期无效，请输入真实日期，例如 2026-07-21。");
+        setMerchantOperationLogsLoading(false);
+        return;
+      }
+      const startAt = normalizedStartDate ? formatMerchantLogDateBoundaryIso(normalizedStartDate, "start") : "";
+      const endAt = normalizedEndDate ? formatMerchantLogDateBoundaryIso(normalizedEndDate, "end") : "";
+      if (startAt && endAt && Date.parse(startAt) > Date.parse(endAt)) {
+        setMerchantOperationLogsError("开始日期不能晚于结束日期。");
+        setMerchantOperationLogsLoading(false);
         return;
       }
       const offset = mode === "append" ? merchantOperationLogsCountRef.current : 0;
       setMerchantOperationLogsLoading(true);
+      setMerchantOperationLogsError("");
       try {
         const params = new URLSearchParams({
           siteId: editingSiteId,
@@ -12255,8 +12313,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         });
         if (merchantOperationLogModuleFilter !== "all") params.set("module", merchantOperationLogModuleFilter);
         if (merchantOperationLogStatusFilter !== "all") params.set("status", merchantOperationLogStatusFilter);
-        if (merchantOperationLogStartDate.trim()) params.set("startDate", formatMerchantLogDateValue(merchantOperationLogStartDate) || merchantOperationLogStartDate.trim());
-        if (merchantOperationLogEndDate.trim()) params.set("endDate", formatMerchantLogDateValue(merchantOperationLogEndDate) || merchantOperationLogEndDate.trim());
+        if (startAt) params.set("startAt", startAt);
+        if (endAt) params.set("endAt", endAt);
         const response = await fetch(`/api/merchant-operation-logs?${params.toString()}`, {
           method: "GET",
           cache: "no-store",
@@ -12280,7 +12338,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         if (!response.ok || payload?.ok !== true || !Array.isArray(payload.logs)) {
           throw new Error("merchant_operation_logs_load_failed");
         }
-        setMerchantOperationLogs((current) => (mode === "append" ? [...current, ...payload.logs!] : payload.logs!));
+        if (requestId !== merchantOperationLogsRequestIdRef.current) return;
+        setMerchantOperationLogs((current) =>
+          mode === "append" ? filterMerchantOperationLogs([...current, ...payload.logs!]) : payload.logs!,
+        );
         setMerchantOperationLogTotal(Number(payload.total) || 0);
         setMerchantOperationLogAllTotal(Number(payload.allTotal) || 0);
         setMerchantOperationLogSuccessTotal(Number(payload.successCount) || 0);
@@ -12288,18 +12349,30 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         setMerchantOperationLogModules(Array.isArray(payload.modules) ? payload.modules.filter((item): item is string => typeof item === "string") : []);
         setMerchantOperationLogHasMore(payload.hasMore === true);
       } catch {
+        if (requestId !== merchantOperationLogsRequestIdRef.current) return;
+        setMerchantOperationLogsError(
+          mode === "reset"
+            ? "服务器日志暂时不可用，当前显示此设备的本机缓存。"
+            : "加载更多日志失败，请稍后重试。",
+        );
         if (mode === "reset") {
           const localLogs = readMerchantOperationLogs(editingSiteId);
-          setMerchantOperationLogs(localLogs);
-          setMerchantOperationLogTotal(localLogs.length);
+          const filteredLocalLogs = filterMerchantOperationLogs(localLogs, {
+            module: merchantOperationLogModuleFilter,
+            status: merchantOperationLogStatusFilter,
+            startAt: startAt ? Date.parse(startAt) : null,
+            endAt: endAt ? Date.parse(endAt) : null,
+          });
+          setMerchantOperationLogs(filteredLocalLogs);
+          setMerchantOperationLogTotal(filteredLocalLogs.length);
           setMerchantOperationLogAllTotal(localLogs.length);
-          setMerchantOperationLogSuccessTotal(localLogs.filter((item) => item.status === "success").length);
-          setMerchantOperationLogFailedTotal(localLogs.filter((item) => item.status === "failed").length);
+          setMerchantOperationLogSuccessTotal(filteredLocalLogs.filter((item) => item.status === "success").length);
+          setMerchantOperationLogFailedTotal(filteredLocalLogs.filter((item) => item.status === "failed").length);
           setMerchantOperationLogModules(Array.from(new Set(localLogs.map((item) => item.module).filter(Boolean))));
           setMerchantOperationLogHasMore(false);
         }
       } finally {
-        setMerchantOperationLogsLoading(false);
+        if (requestId === merchantOperationLogsRequestIdRef.current) setMerchantOperationLogsLoading(false);
       }
     },
     [
@@ -12342,7 +12415,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             .json()
             .catch(() => null)
             .then((payload) => {
-              const payloadOk = payload && typeof payload === "object" ? (payload as Record<string, unknown>).ok !== false : true;
+              const payloadRecord = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : null;
+              const payloadOk = payloadRecord ? payloadRecord.ok !== false && !payloadRecord.error : true;
               const status: MerchantOperationLogStatus = response.ok && payloadOk ? "success" : "failed";
               recordMerchantOperationFetchResult(info, status, status === "failed" ? readMerchantOperationResponseMessage(payload) : undefined);
             });
@@ -18601,16 +18675,24 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 : item,
             ),
           };
-          const syncResult = await syncMerchantProfileBinding(targetSiteId, normalizedDomainPrefix, merchantName, {
-            domain: nextDomain,
-            contactAddress,
-            contactName,
-            contactPhone,
-            contactEmail,
-            industry,
-            location,
-            businessCards: normalizeMerchantBusinessCardChatDisplaySelection(target?.businessCards ?? []),
-          });
+          const syncResult = await runWithMerchantOperationContext(
+            {
+              operationModule: "商户信息",
+              operationAction: "保存",
+              operationSummary: `保存商户信息：${merchantName || targetSiteId}`,
+            },
+            () =>
+              syncMerchantProfileBinding(targetSiteId, normalizedDomainPrefix, merchantName, {
+                domain: nextDomain,
+                contactAddress,
+                contactName,
+                contactPhone,
+                contactEmail,
+                industry,
+                location,
+                businessCards: normalizeMerchantBusinessCardChatDisplaySelection(target?.businessCards ?? []),
+              }),
+          );
           if (!syncResult.ok) {
             throw new Error(syncResult.message || "商户信息同步失败，请稍后重新保存");
           }
@@ -18622,13 +18704,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             setMerchantProfileDialogOpen(false);
           }
           setMerchantProfileAttention(false);
-          recordMerchantOperationLog({
-            siteId: targetSiteId,
-            module: "商户信息",
-            action: "保存",
-            summary: `保存商户信息：${merchantName || targetSiteId}`,
-            status: "success",
-          });
           showTip("商户信息已保存");
         },
       }
@@ -20838,6 +20913,22 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       showTip("没有可导出的日志");
       return;
     }
+    const normalizedStartDate = formatMerchantLogDateValue(merchantOperationLogStartDate);
+    const normalizedEndDate = formatMerchantLogDateValue(merchantOperationLogEndDate);
+    if (merchantOperationLogStartDate.trim() && !normalizedStartDate) {
+      showTip("开始日期无效，请输入真实日期");
+      return;
+    }
+    if (merchantOperationLogEndDate.trim() && !normalizedEndDate) {
+      showTip("结束日期无效，请输入真实日期");
+      return;
+    }
+    const startAt = normalizedStartDate ? formatMerchantLogDateBoundaryIso(normalizedStartDate, "start") : "";
+    const endAt = normalizedEndDate ? formatMerchantLogDateBoundaryIso(normalizedEndDate, "end") : "";
+    if (startAt && endAt && Date.parse(startAt) > Date.parse(endAt)) {
+      showTip("开始日期不能晚于结束日期");
+      return;
+    }
     try {
       const params = new URLSearchParams({
         siteId: editingSiteId,
@@ -20845,8 +20936,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       });
       if (merchantOperationLogModuleFilter !== "all") params.set("module", merchantOperationLogModuleFilter);
       if (merchantOperationLogStatusFilter !== "all") params.set("status", merchantOperationLogStatusFilter);
-      if (merchantOperationLogStartDate.trim()) params.set("startDate", formatMerchantLogDateValue(merchantOperationLogStartDate) || merchantOperationLogStartDate.trim());
-      if (merchantOperationLogEndDate.trim()) params.set("endDate", formatMerchantLogDateValue(merchantOperationLogEndDate) || merchantOperationLogEndDate.trim());
+      if (startAt) params.set("startAt", startAt);
+      if (endAt) params.set("endAt", endAt);
       const response = await fetch(`/api/merchant-operation-logs?${params.toString()}`, {
         method: "GET",
         cache: "no-store",
@@ -20901,14 +20992,24 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               显示此商户后台写操作，最新操作在最上方。筛选结果 {merchantOperationLogTotal} 条。
             </div>
           </div>
-          <button
-            type="button"
-            className="h-10 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800 shadow-sm transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={!merchantOperationLogTotal}
-            onClick={exportMerchantOperationLogs}
-          >
-            导出
-          </button>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              className="h-10 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800 shadow-sm transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={merchantOperationLogsLoading}
+              onClick={() => void loadMerchantOperationLogs("reset")}
+            >
+              {merchantOperationLogsLoading ? "刷新中..." : "刷新"}
+            </button>
+            <button
+              type="button"
+              className="h-10 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800 shadow-sm transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={!merchantOperationLogTotal || merchantOperationLogsLoading}
+              onClick={exportMerchantOperationLogs}
+            >
+              导出
+            </button>
+          </div>
         </div>
         <div className="mt-4 grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 md:grid-cols-[1fr_1fr_1fr_1fr_auto] md:items-end">
           <label className="grid gap-1 text-xs font-semibold text-slate-500">
@@ -21024,6 +21125,19 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             重置
           </button>
         </div>
+        {merchantOperationLogsError ? (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <span>{merchantOperationLogsError}</span>
+            <button
+              type="button"
+              className="font-semibold text-amber-900 underline underline-offset-2 disabled:opacity-50"
+              disabled={merchantOperationLogsLoading}
+              onClick={() => void loadMerchantOperationLogs("reset")}
+            >
+              重试
+            </button>
+          </div>
+        ) : null}
         <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200">
           {merchantOperationLogItems.length ? (
             <div className="divide-y divide-slate-100">

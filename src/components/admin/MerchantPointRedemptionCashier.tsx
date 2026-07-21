@@ -34,6 +34,7 @@ import type {
 } from "@/lib/merchantMembershipSettings";
 import { parseMerchantMemberPointDiscountRate } from "@/lib/merchantMembershipSettings";
 import { recordMerchantOperationLog } from "@/lib/merchantOperationLogs";
+import { runWithMerchantOperationContext } from "@/lib/merchantOperationContext";
 import {
   fetchPrintHelperUpdateManifest,
   inspectLocalPrintBridge,
@@ -2157,24 +2158,28 @@ export default function MerchantPointRedemptionCashier({
       const operationId = `member-recharge-cancel:${normalizedSiteId}:${record.transactionId}`;
       let updatedMembership: MerchantMembershipListItem | null = null;
       try {
-        const response = await fetchPointRedemptionJson(
-          "/api/memberships",
-          {
-            method: "PATCH",
-            cache: "no-store",
-            credentials: "same-origin",
-            headers: { "content-type": "application/json", accept: "application/json" },
-            body: JSON.stringify({
-              siteId: normalizedSiteId,
-              action: "cancel_recharge",
-              membershipId: record.membershipId,
-              memberNo: record.memberNo,
-              transactionId: record.transactionId,
-              operationId,
-              note: cancelRechargeNote,
-            }),
-          },
-          RECHARGE_CANCELLATION_REQUEST_TIMEOUT_MS,
+        const response = await runWithMerchantOperationContext(
+          { skipOperationLog: true },
+          () =>
+            fetchPointRedemptionJson(
+              "/api/memberships",
+              {
+                method: "PATCH",
+                cache: "no-store",
+                credentials: "same-origin",
+                headers: { "content-type": "application/json", accept: "application/json" },
+                body: JSON.stringify({
+                  siteId: normalizedSiteId,
+                  action: "cancel_recharge",
+                  membershipId: record.membershipId,
+                  memberNo: record.memberNo,
+                  transactionId: record.transactionId,
+                  operationId,
+                  note: cancelRechargeNote,
+                }),
+              },
+              RECHARGE_CANCELLATION_REQUEST_TIMEOUT_MS,
+            ),
         );
         const payload = (await response.json().catch(() => null)) as MembershipPatchPayload | null;
         if (!response.ok || !payload?.ok || !payload.membership) {
@@ -2284,27 +2289,31 @@ export default function MerchantPointRedemptionCashier({
     try {
       let updatedMembership: MerchantMembershipListItem | null = null;
       try {
-        const response = await fetchPointRedemptionJson(
-          "/api/memberships",
-          {
-            method: "PATCH",
-            cache: "no-store",
-            credentials: "same-origin",
-            headers: { "content-type": "application/json", accept: "application/json" },
-            body: JSON.stringify({
-              siteId: normalizedSiteId,
-              action: "adjust_recharge",
-              membershipId: record.membershipId,
-              memberNo: record.memberNo,
-              transactionId: record.transactionId,
-              points: pointAmount,
-              balanceAmount,
-              note,
-              operationId,
-              confirmationTransactionId: manualRechargeAdjustmentConfirmation,
-            }),
-          },
-          RECHARGE_CANCELLATION_REQUEST_TIMEOUT_MS,
+        const response = await runWithMerchantOperationContext(
+          { skipOperationLog: true },
+          () =>
+            fetchPointRedemptionJson(
+              "/api/memberships",
+              {
+                method: "PATCH",
+                cache: "no-store",
+                credentials: "same-origin",
+                headers: { "content-type": "application/json", accept: "application/json" },
+                body: JSON.stringify({
+                  siteId: normalizedSiteId,
+                  action: "adjust_recharge",
+                  membershipId: record.membershipId,
+                  memberNo: record.memberNo,
+                  transactionId: record.transactionId,
+                  points: pointAmount,
+                  balanceAmount,
+                  note,
+                  operationId,
+                  confirmationTransactionId: manualRechargeAdjustmentConfirmation,
+                }),
+              },
+              RECHARGE_CANCELLATION_REQUEST_TIMEOUT_MS,
+            ),
         );
         const payload = (await response.json().catch(() => null)) as MembershipPatchPayload | null;
         if (!response.ok || !payload?.ok || !payload.membership) {
