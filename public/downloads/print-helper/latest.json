@@ -1,33 +1,36 @@
 {
   "ok": true,
   "name": "faolla-print-helper",
-  "version": "1.5.4",
-  "latestVersion": "1.5.4",
+  "version": "1.5.5",
+  "latestVersion": "1.5.5",
   "minimumVersion": "1.5.3",
   "minimumWebVersion": "1.5.0",
   "mandatory": false,
-  "publishedAt": "2026-06-30T00:00:00Z",
+  "publishedAt": "2026-07-22T00:00:00Z",
   "package": {
-    "url": "/downloads/print-helper/FAOLLA-print-helper-1.5.4.zip?v=20260630e",
-    "sha256": "77cf2f4ac2c1239c77416eeea092708df1ef2b0ca6b752fa8b9cc469770a86e1",
-    "sizeBytes": 34105124
+    "url": "/downloads/print-helper/FAOLLA-print-helper-1.5.5.zip?v=20260722a",
+    "sha256": "d3312a14fa5eb34c461fcfbaabbb83ab1ea2d541bae2f0f26641d0fa939e273d",
+    "sizeBytes": 34105860
   },
   "existingInstallUpdate": {
-    "helperScriptUrl": "/downloads/print-helper/faolla-print-helper-1.5.4.mjs?v=20260630e",
-    "helperScriptSha256": "a3f473dfee50083472a1e991a51580567b00d87e246e3859e07a3145aaf6629c",
-    "helperScriptSizeBytes": 44019
+    "helperScriptUrl": "/downloads/print-helper/faolla-print-helper-1.5.5.mjs?v=20260722a",
+    "helperScriptSha256": "9090ca31420e2102e37f6f8f3ddcd2d2cd4f9459a1ef061250d29aed1a615ba5",
+    "helperScriptSizeBytes": 45543,
+    "launcherScriptUrl": "/downloads/print-helper/run-hidden-1.5.5.vbs?v=20260722a",
+    "launcherScriptSha256": "decbcc909677f2d1e7e245ab7f59c33a51652f61b709d8b66f5d12abecbdde93",
+    "launcherScriptSizeBytes": 504
   },
   "installer": {
-    "url": "/downloads/print-helper/install-faolla-print-helper.cmd?v=20260630e",
-    "sha256": "2035b7036a60e2b33457b84601a1646eeb28d44d2875b680b50c4e8e4e09a181",
+    "url": "/downloads/print-helper/install-faolla-print-helper.cmd?v=20260722a",
+    "sha256": "a845f82390bb91186f57ff981e325917b23b54af52926e5ffb135d5f56765b57",
     "sizeBytes": 1056,
-    "scriptUrl": "/downloads/print-helper/install-faolla-print-helper.ps1?v=20260630e",
-    "scriptSha256": "0ce6771f648d3fda63a3160d2026035a4bca7f5b49cc8b36c288214290aae810",
-    "scriptSizeBytes": 9015
+    "scriptUrl": "/downloads/print-helper/install-faolla-print-helper.ps1?v=20260722a",
+    "scriptSha256": "32ac2e21845944bfd7ff57187525b9dc8e59af4084fafbb62656affac2bea55d",
+    "scriptSizeBytes": 10140
   },
   "releaseNotes": [
-    "Added a one-click installer that installs to C:\\FAOLLA\\打印助手.",
-    "The installer registers faolla-print-helper://, enables current-user startup, and starts the helper.",
-    "The installer verifies the official package SHA256 before replacing files."
+    "Restricted the helper and web client to the local loopback interface.",
+    "Fixed faolla-print-helper:// custom-port launch arguments.",
+    "Added browser local-network preflight compatibility and stricter remote image validation."
   ]
 }

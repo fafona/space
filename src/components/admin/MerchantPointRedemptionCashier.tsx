@@ -38,6 +38,7 @@ import { runWithMerchantOperationContext } from "@/lib/merchantOperationContext"
 import {
   fetchPrintHelperUpdateManifest,
   inspectLocalPrintBridge,
+  isPrintHelperUpdateAvailable,
   isPrintHelperVersionOutdated,
   printRedemptionReceipt,
   requestLocalPrintBridgeLaunch,
@@ -129,7 +130,16 @@ type CatalogSortMode = "code" | "name";
 type RecordsTimeFilter = "today" | "yesterday" | "week" | "month" | "all";
 type RechargeRecordStatusFilter = "all" | "completed" | "adjusted" | "cancelled";
 type CashierShortcutKey = "enter" | "minus" | "plus";
-type CashierPrintBridgeStatus = "idle" | "disabled" | "checking" | "updating" | "online" | "offline" | "outdated" | "error";
+type CashierPrintBridgeStatus =
+  | "idle"
+  | "disabled"
+  | "checking"
+  | "updating"
+  | "online"
+  | "offline"
+  | "outdated"
+  | "update_available"
+  | "error";
 type CashierShortcutActions = {
   blocked: () => boolean;
   openQuickRedeem: () => void;
@@ -486,6 +496,7 @@ function getCashierPrintBridgeStatusLabel(status: CashierPrintBridgeStatus, vers
   if (status === "updating") return "助手更新中";
   if (status === "online") return version ? `打印已连接 ${version}` : "打印已连接";
   if (status === "outdated") return version ? `助手需更新 ${version}` : "助手需更新";
+  if (status === "update_available") return version ? `助手可更新 ${version}` : "助手可更新";
   if (status === "offline") return "打印未连接";
   if (status === "error") return "打印异常";
   if (status === "disabled") return "打印未启用";
@@ -497,6 +508,7 @@ function getCashierPrintBridgeStatusTitle(status: CashierPrintBridgeStatus, vers
   const versionText = version ? `，助手版本 ${version}` : "";
   if (status === "disabled") return `当前配置未启用静默自动打印。${checkedText}`;
   if (status === "outdated") return `本机打印助手版本低于网页要求${versionText}，请更新后再静默打印。${checkedText}`;
+  if (status === "update_available") return `本机打印助手可正常使用${versionText}，并有新版本可更新。${checkedText}`;
   if (status === "offline") return `未检测到本机打印助手，请确认助手已启动。${checkedText}`;
   if (status === "error") return `本机打印助手已响应，但打印机或打印任务异常${versionText}。${checkedText}`;
   if (status === "online") return `本机打印助手可用${versionText}。${checkedText}`;
@@ -865,7 +877,13 @@ export default function MerchantPointRedemptionCashier({
       setPrintBridgeStatus("offline");
       return;
     }
-    setPrintBridgeStatus(isPrintHelperVersionOutdated(inspection.version, manifest) ? "outdated" : "online");
+    setPrintBridgeStatus(
+      isPrintHelperVersionOutdated(inspection.version, manifest)
+        ? "outdated"
+        : isPrintHelperUpdateAvailable(inspection.version, manifest)
+          ? "update_available"
+          : "online",
+    );
   }, [cashierPrintSettings]);
 
   const handlePrintBridgeBadgeClick = useCallback(async () => {
@@ -888,7 +906,7 @@ export default function MerchantPointRedemptionCashier({
         return;
       }
     }
-    if (printBridgeStatus !== "outdated") {
+    if (printBridgeStatus !== "outdated" && printBridgeStatus !== "update_available") {
       await checkCashierPrintBridge({ force: true });
       return;
     }
@@ -907,13 +925,17 @@ export default function MerchantPointRedemptionCashier({
         return;
       }
       if (!inspection.updateSupported) {
-        setPrintBridgeStatus("outdated");
-        showGlobalToast("当前助手版本太旧，不支持自动更新，请下载安装最新版。");
+        setPrintBridgeStatus(printBridgeStatus);
+        showGlobalToast(
+          printBridgeStatus === "outdated"
+            ? "当前助手版本太旧，不支持自动更新，请下载安装最新版。"
+            : "当前助手不支持网页自动更新，请下载安装最新版。",
+        );
         return;
       }
       const started = await requestLocalPrintBridgeUpdate(printSettings);
       if (!started) {
-        setPrintBridgeStatus("outdated");
+        setPrintBridgeStatus(printBridgeStatus);
         showGlobalToast("助手自动更新未启动，请稍后重试或下载安装最新版。");
         return;
       }
@@ -927,7 +949,7 @@ export default function MerchantPointRedemptionCashier({
         void checkCashierPrintBridge({ force: true });
       }, 18_000);
     } catch {
-      setPrintBridgeStatus("outdated");
+      setPrintBridgeStatus(printBridgeStatus);
       showGlobalToast("助手自动更新失败，请稍后重试。");
     } finally {
       if (!updateStarted) {
@@ -2603,7 +2625,9 @@ export default function MerchantPointRedemptionCashier({
           recordRedemptionReceiptPrintOutcome(normalizedSiteId, receiptData, printOutcome);
           const nextPrintBridgeStatus = resolveCashierPrintBridgeStatusFromOutcome(printOutcome);
           if (nextPrintBridgeStatus) {
-            setPrintBridgeStatus(nextPrintBridgeStatus);
+            setPrintBridgeStatus((current) =>
+              nextPrintBridgeStatus === "online" && current === "update_available" ? current : nextPrintBridgeStatus,
+            );
             setPrintBridgeCheckedAt(Date.now());
           }
           const printNotice = redemptionReceiptPrintNotice(printOutcome);
@@ -3189,6 +3213,16 @@ export default function MerchantPointRedemptionCashier({
         .merchant-pos-cashier .print-bridge-badge.error .print-bridge-dot,
         .merchant-pos-cashier .print-bridge-badge.outdated .print-bridge-dot {
           background: var(--pos-danger);
+        }
+
+        .merchant-pos-cashier .print-bridge-badge.update_available {
+          border-color: rgba(217, 119, 6, 0.28);
+          background: #fffbeb;
+          color: #9a5b08;
+        }
+
+        .merchant-pos-cashier .print-bridge-badge.update_available .print-bridge-dot {
+          background: #d97706;
         }
 
         .merchant-pos-cashier .member-search {

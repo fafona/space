@@ -1,11 +1,17 @@
 import {
   createDefaultMerchantReceiptFields,
   getMerchantReceiptSystemTextForSettings,
+  resolveMerchantReceiptSettingsLocale,
   type MerchantReceiptContentField,
   type MerchantReceiptFieldSection,
   type MerchantReceiptPrintSettings,
   type MerchantReceiptSystemTextKey,
 } from "@/lib/merchantMembershipSettings";
+import {
+  LOCAL_PRINT_BRIDGE_DEFAULT_URL,
+  getLocalPrintBridgePort,
+  normalizeLocalPrintBridgeUrl,
+} from "@/lib/localPrintBridge";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import { toPng } from "html-to-image";
 
@@ -41,7 +47,7 @@ const FALLBACK_PRINT_SETTINGS: MerchantReceiptPrintSettings = {
   enabled: true,
   autoPrintRedemptionReceipt: true,
   silentPrintEnabled: false,
-  localPrintBridgeUrl: "http://127.0.0.1:17658",
+  localPrintBridgeUrl: LOCAL_PRINT_BRIDGE_DEFAULT_URL,
   localPrinterName: "",
   fallbackToBrowserPrint: true,
   cutPaperAfterPrint: false,
@@ -151,8 +157,11 @@ function limitLocalPrintBridgeDataImage(value: string) {
   return value.length <= LOCAL_PRINT_BRIDGE_MAX_DATA_IMAGE_CHARS ? value : "";
 }
 
-function shouldUseReceiptImageForLocalBridge(settings: MerchantReceiptPrintSettings) {
+export function shouldUseReceiptImageForLocalBridge(settings: MerchantReceiptPrintSettings, receiptText = "") {
   if (settings.watermarkEnabled) return true;
+  const receiptLocale = resolveMerchantReceiptSettingsLocale(settings);
+  if (receiptLocale !== "zh" && receiptLocale !== "en") return true;
+  if (/[^\x00-\x7F\u3000-\u303F\u3400-\u9FFF\uF900-\uFAFF\uFF00-\uFFEF]/u.test(receiptText)) return true;
   const baseFontSizePx = clampInteger(settings.fontSizePx, 9, 18, FALLBACK_PRINT_SETTINGS.fontSizePx);
   return settings.receiptFields.some((field) => {
     if (!field.visible) return false;
@@ -289,8 +298,7 @@ export function normalizeReceiptPrintSettingsForClient(settings: MerchantReceipt
     title: normalizeReceiptDisplayText(settings?.title, FALLBACK_PRINT_SETTINGS.title, 120),
     subtitle: settings?.subtitle?.trim() || "",
     footer: normalizeReceiptDisplayText(settings?.footer, FALLBACK_PRINT_SETTINGS.footer, 240),
-    localPrintBridgeUrl:
-      settings?.localPrintBridgeUrl?.trim().replace(/\/+$/, "") || FALLBACK_PRINT_SETTINGS.localPrintBridgeUrl,
+    localPrintBridgeUrl: normalizeLocalPrintBridgeUrl(settings?.localPrintBridgeUrl),
     localPrinterName: settings?.localPrinterName?.trim() || "",
     paperWidthMm: clampInteger(settings?.paperWidthMm, 40, 120, FALLBACK_PRINT_SETTINGS.paperWidthMm),
     contentMarginTopMm: clampNumber(
@@ -984,8 +992,9 @@ export async function sendRedemptionReceiptToLocalBridge(
     headerLogoUrl,
   };
   const headerLogoDataUrl = headerLogoUrl ? await buildPrintableLogoDataUrl(headerLogoUrl) : "";
-  const renderSettings = headerLogoDataUrl ? { ...helperSettings, headerLogoUrl: headerLogoDataUrl } : helperSettings;
-  const shouldUseImage = shouldUseReceiptImageForLocalBridge(helperSettings);
+  const renderSettings = { ...helperSettings, headerLogoUrl: headerLogoDataUrl };
+  const receiptText = buildRedemptionReceiptText(helperSettings, receipt);
+  const shouldUseImage = shouldUseReceiptImageForLocalBridge(helperSettings, receiptText);
   const contentHtml = shouldUseImage ? buildRedemptionReceiptHtml(renderSettings, receipt) : "";
   const receiptImageDataUrl = shouldUseImage
     ? limitLocalPrintBridgeDataImage(await buildReceiptImageDataUrl(contentHtml))
@@ -1015,14 +1024,11 @@ export async function sendRedemptionReceiptToLocalBridge(
         contentMarginRightMm: helperSettings.contentMarginRightMm,
         contentMarginBottomMm: helperSettings.contentMarginBottomMm,
         contentMarginLeftMm: helperSettings.contentMarginLeftMm,
-        headerLogoUrl: helperSettings.headerLogoUrl,
-        headerLogoDataUrl,
+        headerLogoUrl: "",
+        headerLogoDataUrl: receiptImageDataUrl ? "" : headerLogoDataUrl,
         headerLogoWidthPercent: helperSettings.headerLogoWidthPercent,
-        fontSizePx: helperSettings.fontSizePx,
-        receiptFields: helperSettings.receiptFields,
         receiptImageDataUrl,
-        contentHtml,
-        content: buildRedemptionReceiptText(helperSettings, receipt),
+        content: receiptImageDataUrl ? "" : receiptText,
       }),
       signal: controller.signal,
     });
@@ -1132,6 +1138,40 @@ export type PrintHelperUpdateManifest = {
   };
 };
 
+function isPrintHelperVersionString(value: unknown): value is string {
+  return typeof value === "string" && /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(value.trim());
+}
+
+function isSha256(value: unknown) {
+  return typeof value === "string" && /^[a-f0-9]{64}$/i.test(value.trim());
+}
+
+export function normalizePrintHelperUpdateManifest(value: unknown): PrintHelperUpdateManifest | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const manifest = value as PrintHelperUpdateManifest;
+  const version = typeof manifest.version === "string" ? manifest.version.trim() : "";
+  const minimumVersion =
+    typeof manifest.minimumVersion === "string"
+      ? manifest.minimumVersion.trim()
+      : typeof manifest.minimumWebVersion === "string"
+        ? manifest.minimumWebVersion.trim()
+        : "";
+  if (
+    manifest.ok !== true ||
+    manifest.name !== "faolla-print-helper" ||
+    !isPrintHelperVersionString(version) ||
+    !isPrintHelperVersionString(minimumVersion) ||
+    typeof manifest.package?.url !== "string" ||
+    !manifest.package.url.trim() ||
+    !isSha256(manifest.package.sha256) ||
+    !Number.isFinite(Number(manifest.package.sizeBytes)) ||
+    Number(manifest.package.sizeBytes) <= 0
+  ) {
+    return null;
+  }
+  return manifest;
+}
+
 export type LocalPrintBridgeInspection = {
   online: boolean;
   health: LocalPrintBridgeHealth | null;
@@ -1196,31 +1236,49 @@ export function isPrintHelperVersionOutdated(
   return comparePrintHelperVersions(normalizedVersion, getPrintHelperManifestMinimumVersion(manifest)) < 0;
 }
 
+export function isPrintHelperUpdateAvailable(
+  version: string,
+  manifest: PrintHelperUpdateManifest | null | undefined,
+) {
+  const normalizedVersion = version.trim();
+  if (!normalizedVersion || isPrintHelperVersionOutdated(normalizedVersion, manifest)) return false;
+  return comparePrintHelperVersions(normalizedVersion, getPrintHelperManifestLatestVersion(manifest)) < 0;
+}
+
 export function resolvePrintHelperManifestUrl() {
   if (typeof window === "undefined") return PRINT_HELPER_MANIFEST_PATH;
   return new URL(PRINT_HELPER_MANIFEST_PATH, window.location.origin).toString();
 }
 
-export function resolvePrintHelperPackageUrl(manifest: PrintHelperUpdateManifest | null | undefined) {
-  const packageUrl = typeof manifest?.package?.url === "string" ? manifest.package.url.trim() : "";
-  if (!packageUrl) return "";
-  if (typeof window === "undefined") return packageUrl;
+export function resolveOfficialPrintHelperDownloadUrl(value: unknown) {
+  const input = typeof value === "string" ? value.trim() : "";
+  if (!input) return "";
+  if (typeof window === "undefined") {
+    if (/^\/downloads\/print-helper\/[A-Za-z0-9._~!$&'()*+,;=:@%/?-]+$/.test(input)) return input;
+    try {
+      const url = new URL(input);
+      return url.protocol === "https:" && /^(?:[a-z0-9-]+\.)?faolla\.com$/i.test(url.hostname) &&
+        url.pathname.startsWith("/downloads/print-helper/")
+        ? url.toString()
+        : "";
+    } catch {
+      return "";
+    }
+  }
   try {
-    return new URL(packageUrl, window.location.origin).toString();
+    const url = new URL(input, window.location.origin);
+    return url.origin === window.location.origin && url.pathname.startsWith("/downloads/print-helper/") ? url.toString() : "";
   } catch {
-    return packageUrl;
+    return "";
   }
 }
 
+export function resolvePrintHelperPackageUrl(manifest: PrintHelperUpdateManifest | null | undefined) {
+  return resolveOfficialPrintHelperDownloadUrl(manifest?.package?.url);
+}
+
 export function resolvePrintHelperInstallerUrl(manifest: PrintHelperUpdateManifest | null | undefined) {
-  const installerUrl = typeof manifest?.installer?.url === "string" ? manifest.installer.url.trim() : "";
-  if (!installerUrl) return "";
-  if (typeof window === "undefined") return installerUrl;
-  try {
-    return new URL(installerUrl, window.location.origin).toString();
-  } catch {
-    return installerUrl;
-  }
+  return resolveOfficialPrintHelperDownloadUrl(manifest?.installer?.url);
 }
 
 export async function fetchPrintHelperUpdateManifest() {
@@ -1234,8 +1292,8 @@ export async function fetchPrintHelperUpdateManifest() {
       headers: { accept: "application/json" },
       signal: controller.signal,
     });
-    const payload = (await response.json().catch(() => null)) as PrintHelperUpdateManifest | null;
-    return response.ok && payload ? payload : null;
+    const payload = await response.json().catch(() => null);
+    return response.ok ? normalizePrintHelperUpdateManifest(payload) : null;
   } catch {
     return null as PrintHelperUpdateManifest | null;
   } finally {
@@ -1265,7 +1323,7 @@ export async function inspectLocalPrintBridge(inputSettings: MerchantReceiptPrin
       signal: controller.signal,
     });
     const payload = (await response.json().catch(() => null)) as LocalPrintBridgeHealth | null;
-    if (!response.ok || payload?.ok !== true) return offline;
+    if (!response.ok || payload?.ok !== true || payload.name !== "faolla-print-helper") return offline;
     const version = typeof payload.version === "string" ? payload.version.trim() : "";
     const protocolVersion = Number(payload.protocolVersion);
     const updateEndpoint = typeof payload.update?.endpoint === "string" ? payload.update.endpoint.trim() : "";
@@ -1290,13 +1348,7 @@ export function requestLocalPrintBridgeLaunch(
 ) {
   if (typeof window === "undefined" || typeof document === "undefined") return false;
   const settings = normalizeReceiptPrintSettingsForClient(inputSettings);
-  let port = "17658";
-  try {
-    const bridgeUrl = new URL(settings.localPrintBridgeUrl);
-    port = bridgeUrl.port || (bridgeUrl.protocol === "https:" ? "443" : "80");
-  } catch {
-    // Keep the default helper port when the custom bridge URL is not parseable.
-  }
+  const port = String(getLocalPrintBridgePort(settings.localPrintBridgeUrl));
   const launchUrl = `faolla-print-helper://start?port=${encodeURIComponent(port)}`;
   try {
     if (options.direct) {
@@ -1422,7 +1474,24 @@ export async function listLocalPrintBridgePrinters(inputSettings: MerchantReceip
     const payload = (await response.json().catch(() => null)) as
       | { ok?: unknown; printers?: LocalPrintBridgePrinter[] }
       | null;
-    return response.ok && payload?.ok === true && Array.isArray(payload.printers) ? payload.printers : [];
+    if (!response.ok || payload?.ok !== true || !Array.isArray(payload.printers)) return [];
+    const seen = new Set<string>();
+    return payload.printers.slice(0, 100).flatMap((printer) => {
+      if (!printer || typeof printer !== "object") return [];
+      const name = String(printer.name ?? "").trim().slice(0, 160);
+      const key = name.toLocaleLowerCase();
+      if (!name || seen.has(key)) return [];
+      seen.add(key);
+      return [
+        {
+          name,
+          driverName: String(printer.driverName ?? "").trim().slice(0, 160),
+          portName: String(printer.portName ?? "").trim().slice(0, 160),
+          isDefault: printer.isDefault === true,
+          status: String(printer.status ?? "").trim().slice(0, 80),
+        } satisfies LocalPrintBridgePrinter,
+      ];
+    });
   } catch {
     return [] as LocalPrintBridgePrinter[];
   } finally {

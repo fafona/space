@@ -1,3 +1,5 @@
+import { normalizeLocalPrintBridgeUrl } from "@/lib/localPrintBridge";
+
 export type MerchantMemberSettingsView =
   | "list"
   | "rechargePlans"
@@ -1334,8 +1336,7 @@ function normalizeReceiptPrintSettings(value: unknown): MerchantReceiptPrintSett
       record.silentPrintEnabled ?? record.localPrintBridgeEnabled ?? record.directPrintEnabled,
       fallback.silentPrintEnabled,
     ),
-    localPrintBridgeUrl:
-      trimText(record.localPrintBridgeUrl ?? record.printBridgeUrl, 240) || fallback.localPrintBridgeUrl,
+    localPrintBridgeUrl: normalizeLocalPrintBridgeUrl(record.localPrintBridgeUrl ?? record.printBridgeUrl),
     localPrinterName: trimText(record.localPrinterName ?? record.printerName, 160),
     fallbackToBrowserPrint: normalizeBoolean(
       record.fallbackToBrowserPrint ?? record.browserPrintFallback,

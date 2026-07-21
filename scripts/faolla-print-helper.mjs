@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const VERSION = "1.5.4";
+const VERSION = "1.5.5";
 const PROTOCOL_VERSION = 2;
 const MINIMUM_WEB_VERSION = "1.5.0";
 const DEFAULT_UPDATE_MANIFEST_URL = "https://faolla.com/downloads/print-helper/latest.json";
@@ -24,18 +24,35 @@ let printQueue = Promise.resolve();
 let activePrintJobs = 0;
 let printJobSequence = 0;
 
-const args = new Map(
-  process.argv
-    .slice(2)
-    .map((arg) => {
-      const [key, ...rest] = arg.replace(/^--/, "").split("=");
-      return [key, rest.join("=") || "1"];
-    })
-    .filter(([key]) => key),
-);
+function readArguments(values) {
+  const parsed = new Map();
+  values.forEach((rawValue) => {
+    const value = String(rawValue ?? "").trim();
+    if (!value) return;
+    if (/^faolla-print-helper:\/\//i.test(value)) {
+      try {
+        const launchUrl = new URL(value);
+        launchUrl.searchParams.forEach((item, key) => parsed.set(key, item));
+        parsed.set("command", launchUrl.hostname || launchUrl.pathname.replace(/^\/+/, "") || "start");
+      } catch {
+        // Ignore malformed protocol arguments and keep safe defaults.
+      }
+      return;
+    }
+    const [key, ...rest] = value.replace(/^--/, "").split("=");
+    if (key) parsed.set(key, rest.join("=") || "1");
+  });
+  return parsed;
+}
 
-const host = args.get("host") || process.env.FAOLLA_PRINT_HELPER_HOST || DEFAULT_HOST;
-const port = Number(args.get("port") || process.env.FAOLLA_PRINT_HELPER_PORT || DEFAULT_PORT);
+function normalizeListenPort(value) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  return Number.isInteger(parsed) && parsed >= 1024 && parsed <= 65535 ? parsed : DEFAULT_PORT;
+}
+
+const args = readArguments(process.argv.slice(2));
+const host = DEFAULT_HOST;
+const port = normalizeListenPort(args.get("port") || process.env.FAOLLA_PRINT_HELPER_PORT || DEFAULT_PORT);
 
 function isAllowedOrigin(origin) {
   if (!origin) return true;
@@ -119,7 +136,10 @@ function handleOptions(request, response) {
   response.setHeader("access-control-allow-methods", "GET,POST,OPTIONS");
   response.setHeader("access-control-allow-headers", "content-type,accept");
   response.setHeader("access-control-max-age", "86400");
-  response.setHeader("vary", "origin");
+  if (request.headers["access-control-request-private-network"] === "true") {
+    response.setHeader("access-control-allow-private-network", "true");
+  }
+  response.setHeader("vary", "origin, access-control-request-private-network");
   response.end();
 }
 
@@ -489,7 +509,15 @@ function normalizeCutMode(value) {
 function normalizeUrl(value) {
   const trimmed = String(value ?? "").trim();
   if (!trimmed || trimmed.length > 1000) return "";
-  return /^https?:\/\//i.test(trimmed) ? trimmed : "";
+  try {
+    const url = new URL(trimmed);
+    if (url.username || url.password) return "";
+    if (url.protocol === "https:" && /^(?:[a-z0-9-]+\.)?faolla\.com$/i.test(url.hostname)) return url.toString();
+    if (url.protocol === "http:" && /^(?:localhost|127\.0\.0\.1)$/i.test(url.hostname)) return url.toString();
+    return "";
+  } catch {
+    return "";
+  }
 }
 
 function normalizeDataImage(value) {
@@ -1114,6 +1142,16 @@ const server = createServer(async (request, response) => {
     message: "not_found",
     routes: ["/health", "/version", "/printers", "/print", "/update", "/autostart"],
   }, origin);
+});
+
+server.on("error", (error) => {
+  if (error?.code === "EADDRINUSE") {
+    console.log(`FAOLLA print helper is already running on http://${host}:${port}`);
+    process.exitCode = 0;
+    return;
+  }
+  console.error(`FAOLLA print helper failed: ${readSafeErrorMessage(error, "server_start_failed")}`);
+  process.exitCode = 1;
 });
 
 server.listen(port, host, () => {

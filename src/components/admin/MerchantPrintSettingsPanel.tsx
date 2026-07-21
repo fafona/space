@@ -32,6 +32,7 @@ import {
   getPrintHelperManifestLatestVersion,
   getPrintHelperManifestMinimumVersion,
   inspectLocalPrintBridge,
+  isPrintHelperUpdateAvailable,
   isPrintHelperVersionOutdated,
   isReceiptFieldVisible,
   inspectLocalPrintBridgeAutoStart,
@@ -50,6 +51,7 @@ import {
   type MerchantRedemptionReceiptData,
   type PrintHelperUpdateManifest,
 } from "@/lib/merchantReceiptPrint";
+import { getLocalPrintBridgePort } from "@/lib/localPrintBridge";
 import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import { runWithMerchantOperationContext } from "@/lib/merchantOperationContext";
@@ -74,7 +76,7 @@ type MembershipSettingsPayload = {
 };
 
 type PrintSettingsPanelTab = "text" | "content" | "print";
-type LocalPrintBridgePanelStatus = "unknown" | "online" | "offline" | "outdated" | "updating";
+type LocalPrintBridgePanelStatus = "unknown" | "online" | "offline" | "outdated" | "update_available" | "updating";
 type ReceiptMarginSide = "top" | "right" | "bottom" | "left";
 
 const RECEIPT_PREVIEW_MM_SCALE = 3.2;
@@ -323,7 +325,7 @@ function readLocalPrintBridgePrintErrorMessage(message: string, bridgeOutdated: 
     return "小票图片数据过大，请减小 Logo 或水印图片后重试。";
   }
   if (/Failed to fetch|fetch failed|local_print_bridge_unreachable/i.test(normalized)) {
-    return "无法连接本机打印助手，请确认助手正在运行。";
+    return "无法连接本机打印助手。请确认助手正在运行，并在浏览器的网站权限中允许 FAOLLA 访问本地网络。";
   }
   return normalized ? `测试打印失败：${normalized}` : "测试打印失败，请确认打印机和本机助手状态。";
 }
@@ -559,12 +561,16 @@ export default function MerchantPrintSettingsPanel({
   };
   const bridgeOutdated =
     Boolean(bridgeInspection?.online) && isPrintHelperVersionOutdated(bridgeCurrentVersion, printHelperManifest);
+  const bridgeUpdateAvailable =
+    Boolean(bridgeInspection?.online) && isPrintHelperUpdateAvailable(bridgeCurrentVersion, printHelperManifest);
   const bridgeCanSelfUpdate = Boolean(bridgeInspection?.online && bridgeInspection.updateSupported);
   const bridgeStatusLabel =
     bridgeStatus === "online"
       ? "已连接"
       : bridgeStatus === "outdated"
         ? "版本旧"
+        : bridgeStatus === "update_available"
+          ? "可更新"
         : bridgeStatus === "updating"
           ? "更新中"
           : bridgeStatus === "offline"
@@ -575,6 +581,8 @@ export default function MerchantPrintSettingsPanel({
       ? "bg-emerald-50 text-emerald-700"
       : bridgeStatus === "outdated"
         ? "bg-amber-50 text-amber-700"
+        : bridgeStatus === "update_available"
+          ? "bg-amber-50 text-amber-700"
         : bridgeStatus === "updating"
           ? "bg-blue-50 text-blue-700"
           : bridgeStatus === "offline"
@@ -756,7 +764,8 @@ export default function MerchantPrintSettingsPanel({
   const readBridgePanelStatus = useCallback(
     (inspection: LocalPrintBridgeInspection, manifest: PrintHelperUpdateManifest | null) => {
       if (!inspection.online) return "offline" as const;
-      return isPrintHelperVersionOutdated(inspection.version, manifest) ? ("outdated" as const) : ("online" as const);
+      if (isPrintHelperVersionOutdated(inspection.version, manifest)) return "outdated" as const;
+      return isPrintHelperUpdateAvailable(inspection.version, manifest) ? ("update_available" as const) : ("online" as const);
     },
     [],
   );
@@ -920,10 +929,16 @@ export default function MerchantPrintSettingsPanel({
       setBridgeStatus(nextStatus);
       if (!inspection.online) {
         setBridgeAutoStart(null);
-        setNotice("没有连接到本机打印助手，请先在收银电脑安装并运行 FAOLLA 打印助手。");
+        setNotice("没有连接到本机打印助手。请确认助手已运行，并允许浏览器访问本地网络；未安装时请先安装最新版。");
       } else if (nextStatus === "outdated") {
         setBridgeAutoStart(null);
-        setNotice(`本机打印助手版本 ${inspection.version || "未知"} 偏旧，请更新到 ${getPrintHelperManifestLatestVersion(manifest)}。`);
+        setNotice(
+          `本机打印助手版本 ${inspection.version || "未知"} 低于最低要求 ${getPrintHelperManifestMinimumVersion(manifest)}，请更新后再打印。`,
+        );
+      } else if (nextStatus === "update_available") {
+        const autostart = await inspectLocalPrintBridgeAutoStart(printSettings);
+        setBridgeAutoStart(autostart);
+        setNotice(`本机打印助手已连接，可更新到 ${getPrintHelperManifestLatestVersion(manifest)}。当前版本仍可正常打印。`);
       } else {
         const autostart = await inspectLocalPrintBridgeAutoStart(printSettings);
         setBridgeAutoStart(autostart);
@@ -962,7 +977,7 @@ export default function MerchantPrintSettingsPanel({
       setBridgeStatus(nextStatus);
       if (!inspection.online) {
         setBridgePrinters([]);
-        setNotice("没有连接到本机打印助手，请先运行助手后再读取打印机。");
+        setNotice("没有连接到本机打印助手。请先运行助手，并确认浏览器已允许访问本地网络。");
         return;
       }
       const printers = await listLocalPrintBridgePrinters(printSettings);
@@ -984,25 +999,31 @@ export default function MerchantPrintSettingsPanel({
       const manifest = printHelperManifest ?? (await refreshPrintHelperManifest());
       if (!manifest) {
         setError("没有读取到打印助手更新清单，请稍后重试。");
-        setBridgeStatus(bridgeInspection?.online ? (bridgeOutdated ? "outdated" : "online") : "offline");
+        setBridgeStatus(
+          bridgeInspection?.online ? (bridgeOutdated ? "outdated" : bridgeUpdateAvailable ? "update_available" : "online") : "offline",
+        );
         return;
       }
       const inspection = bridgeInspection?.online ? bridgeInspection : await inspectLocalPrintBridge(printSettings);
       setBridgeInspection(inspection);
       if (!inspection.online) {
-        setError("没有连接到本机打印助手，无法自动更新。请先下载安装最新版。");
+        setError("没有连接到本机打印助手，无法自动更新。请先启动助手或下载安装最新版。");
         setBridgeStatus("offline");
         return;
       }
       if (!inspection.updateSupported) {
-        setError("当前打印助手版本太旧，不支持自动更新。请下载最新版安装一次，之后即可自动更新。");
-        setBridgeStatus("outdated");
+        setError(
+          bridgeOutdated
+            ? "当前打印助手版本太旧，不支持自动更新。请下载最新版安装一次，之后即可自动更新。"
+            : "当前打印助手不支持网页自动更新，请下载最新版安装一次。",
+        );
+        setBridgeStatus(bridgeOutdated ? "outdated" : "update_available");
         return;
       }
       const started = await requestLocalPrintBridgeUpdate(printSettings);
       if (!started) {
         setError("打印助手自动更新未启动，请下载安装最新版。");
-        setBridgeStatus("outdated");
+        setBridgeStatus(bridgeOutdated ? "outdated" : "update_available");
         return;
       }
       setNotice("打印助手正在自动更新并重启，请等待 10 秒后重新检测。");
@@ -1058,7 +1079,7 @@ export default function MerchantPrintSettingsPanel({
       setBridgeInspection(inspection);
       setBridgeStatus(nextStatus);
       if (!inspection.online) {
-        setError("无法连接本机打印助手，请确认助手已运行。");
+        setError("无法连接本机打印助手。请确认助手已运行，并允许浏览器访问本地网络。");
         return;
       }
       if (nextStatus === "outdated") {
@@ -1323,9 +1344,11 @@ export default function MerchantPrintSettingsPanel({
                   ? "如果收银电脑还没有安装打印助手，请先下载最新版并安装；安装后点击“检测助手”。"
                   : bridgeOutdated
                     ? bridgeCanSelfUpdate
-                      ? "当前助手版本偏旧，可以直接自动更新。更新时助手会短暂断开并自动重启。"
-                      : "当前助手版本偏旧且不支持自动更新，请下载最新版手动安装一次；之后即可自动更新。"
-                    : "助手版本满足当前打印要求，可以读取打印机并静默打印。"}
+                      ? "当前助手低于最低版本，可以直接自动更新。更新时助手会短暂断开并自动重启。"
+                      : "当前助手低于最低版本且不支持自动更新，请下载最新版手动安装一次。"
+                    : bridgeUpdateAvailable
+                      ? "当前版本可以正常打印，并有新版本可用；建议空闲时更新。"
+                      : "助手已是最新版，可以读取打印机并静默打印。"}
               </div>
               {bridgeInspection?.online ? (
                 <div className="mt-1 text-xs text-slate-500">
@@ -1351,19 +1374,27 @@ export default function MerchantPrintSettingsPanel({
                 checked={printSettings.cutPaperAfterPrint}
                 onChange={(checked) => patchPrintSettings({ cutPaperAfterPrint: checked })}
               />
-              <Field label="助手地址">
+              <Field label="助手端口">
                 <input
+                  type="number"
+                  min={1024}
+                  max={65535}
+                  step={1}
                   className={inputClassName()}
-                  value={printSettings.localPrintBridgeUrl}
+                  value={getLocalPrintBridgePort(printSettings.localPrintBridgeUrl)}
                   onChange={(event) => {
+                    const port = Number.parseInt(event.target.value, 10);
+                    if (!Number.isInteger(port) || port < 1024 || port > 65535) return;
                     setBridgeStatus("unknown");
                     setBridgeInspection(null);
                     setBridgeAutoStart(null);
                     setBridgePrinters([]);
-                    patchPrintSettings({ localPrintBridgeUrl: event.target.value });
+                    patchPrintSettings({ localPrintBridgeUrl: `http://127.0.0.1:${port}` });
                   }}
-                  placeholder="http://127.0.0.1:17658"
                 />
+                <p className="mt-1 text-xs text-slate-500">
+                  固定访问本机：<span className="font-mono">127.0.0.1:{getLocalPrintBridgePort(printSettings.localPrintBridgeUrl)}</span>
+                </p>
               </Field>
               <Field label="打印机名称">
                 <input
@@ -1436,7 +1467,7 @@ export default function MerchantPrintSettingsPanel({
                 >
                   读取本机打印机
                 </button>
-                {bridgeOutdated && bridgeCanSelfUpdate ? (
+                {(bridgeOutdated || bridgeUpdateAvailable) && bridgeCanSelfUpdate ? (
                   <button
                     type="button"
                     className="rounded-xl border border-blue-200 bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"

@@ -84,7 +84,7 @@ function Start-InstalledHelper([string]$InstallDir, [string]$NodePath, [string]$
   }
 }
 
-function Update-ExistingHelperScript([string]$HelperPath) {
+function Update-ExistingHelperFiles([string]$HelperPath, [string]$InstallDir) {
   try {
     $manifestUri = [Uri]::new($manifestUrl)
     Assert-FaollaUrl $manifestUri 'manifest'
@@ -112,6 +112,23 @@ function Update-ExistingHelperScript([string]$HelperPath) {
     if ($actualSha -ne $expectedSha) { throw 'helper_script_sha256_mismatch' }
     Copy-Item -LiteralPath $helperDownloadPath -Destination $HelperPath -Force
     Write-InstallLog 'Existing helper script updated.'
+
+    $launcherUrlText = [string]$manifest.existingInstallUpdate.launcherScriptUrl
+    $launcherExpectedSha = ([string]$manifest.existingInstallUpdate.launcherScriptSha256).Trim().ToLowerInvariant()
+    if ($launcherUrlText -and $launcherExpectedSha) {
+      if ([Uri]::IsWellFormedUriString($launcherUrlText, [UriKind]::Absolute)) {
+        $launcherUri = [Uri]::new($launcherUrlText)
+      } else {
+        $launcherUri = [Uri]::new($manifestUri, $launcherUrlText)
+      }
+      Assert-FaollaUrl $launcherUri 'launcher_script'
+      $launcherDownloadPath = Join-Path $workDir 'run-hidden.vbs'
+      Invoke-WebRequest -Uri $launcherUri -OutFile $launcherDownloadPath -UseBasicParsing -TimeoutSec 30
+      $launcherActualSha = (Get-FileHash -LiteralPath $launcherDownloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
+      if ($launcherActualSha -ne $launcherExpectedSha) { throw 'launcher_script_sha256_mismatch' }
+      Copy-Item -LiteralPath $launcherDownloadPath -Destination (Join-Path $InstallDir 'run-hidden.vbs') -Force
+      Write-InstallLog 'Existing helper launcher updated.'
+    }
     return $true
   } catch {
     Write-InstallLog ('Existing helper script update skipped: ' + $_.Exception.Message)
@@ -129,7 +146,7 @@ try {
   if ((Test-Path -LiteralPath $existingNodePath) -and (Test-Path -LiteralPath $existingHelperPath)) {
     Write-InstallLog 'Existing helper files found. Repairing launch protocol and starting helper without package download.'
     Stop-ExistingHelper
-    [void](Update-ExistingHelperScript $existingHelperPath)
+    [void](Update-ExistingHelperFiles $existingHelperPath $installDir)
     Register-LaunchProtocol $existingNodePath $existingHelperPath
     Enable-Startup $installDir
     Start-InstalledHelper $installDir $existingNodePath $existingHelperPath
