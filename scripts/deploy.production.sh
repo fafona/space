@@ -31,6 +31,33 @@ cd "$APP_DIR"
 echo "[deploy] working directory: $APP_DIR"
 echo "[deploy] branch: $APP_BRANCH"
 
+cleanup_cache_dir() {
+  local expected_path="$1"
+  local resolved_path
+  if [ ! -d "$expected_path" ]; then
+    return 0
+  fi
+  resolved_path="$(readlink -f "$expected_path" 2>/dev/null || true)"
+  if [ -z "$resolved_path" ] || [ "$resolved_path" != "$expected_path" ]; then
+    echo "[deploy] warning: refusing to clean unexpected cache path: $expected_path -> ${resolved_path:-missing}"
+    return 0
+  fi
+  find "$resolved_path" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+}
+
+cleanup_rebuildable_caches() {
+  local home_dir="${HOME:-/root}"
+  local disk_usage
+  cleanup_cache_dir "$home_dir/.cache/ffmpeg-static-nodejs"
+  disk_usage="$(df -P "$APP_DIR" | awk 'NR == 2 { gsub(/%/, "", $5); print $5 }')"
+  if [ -n "$disk_usage" ] && [ "$disk_usage" -ge 85 ]; then
+    echo "[deploy] disk usage is ${disk_usage}%; clearing the rebuildable npm cache"
+    cleanup_cache_dir "$home_dir/.npm/_cacache"
+  fi
+}
+
+cleanup_rebuildable_caches
+
 write_env_value() {
   local key="$1"
   local value="$2"
@@ -82,6 +109,8 @@ write_env_value "FAOLLA_WEB_BUILD_ID" "$FAOLLA_WEB_BUILD_ID"
 write_env_value "NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID" "$FAOLLA_WEB_BUILD_ID"
 write_env_value "FAOLLA_WEB_RELEASED_AT" "$FAOLLA_WEB_RELEASED_AT"
 
+node scripts/check-supabase-health.mjs
+
 npm ci
 
 if [ -f "$APP_DIR/node_modules/ffmpeg-static/ffmpeg" ]; then
@@ -94,6 +123,7 @@ else
 fi
 
 npm run build
+cleanup_rebuildable_caches
 
 if pm2 describe "$APP_NAME" >/dev/null 2>&1; then
   pm2 delete "$APP_NAME" >/dev/null 2>&1 || true
