@@ -17,6 +17,31 @@ import {
   hasMutationOperationMarker,
 } from "@/lib/mutationOperationId";
 
+const merchantCouponMutationTails = new Map<string, Promise<void>>();
+
+async function withMerchantCouponMutationLock<T>(siteId: string, task: () => Promise<T>) {
+  const normalizedSiteId = trimText(siteId);
+  if (!normalizedSiteId) throw new Error("invalid_site_id");
+
+  const previous = merchantCouponMutationTails.get(normalizedSiteId) ?? Promise.resolve();
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.catch(() => undefined).then(() => gate);
+  merchantCouponMutationTails.set(normalizedSiteId, tail);
+
+  await previous.catch(() => undefined);
+  try {
+    return await task();
+  } finally {
+    release();
+    if (merchantCouponMutationTails.get(normalizedSiteId) === tail) {
+      merchantCouponMutationTails.delete(normalizedSiteId);
+    }
+  }
+}
+
 function requireCouponsStoreClient() {
   const supabase = createServerSupabaseServiceClient();
   if (!supabase) {
@@ -61,23 +86,25 @@ export async function createMerchantCouponRecord(input: MerchantCouponInput) {
   const supabase = requireCouponsStoreClient();
   const siteId = trimText(input.siteId);
   if (!siteId) throw new Error("invalid_site_id");
-  const stored = await loadStoredMerchantCoupons(supabase, siteId);
-  const current = normalizeMerchantCouponRecords(stored?.coupons ?? []);
-  const coupon = createMerchantCoupon(
-    {
-      ...input,
+  return withMerchantCouponMutationLock(siteId, async () => {
+    const stored = await loadStoredMerchantCoupons(supabase, siteId);
+    const current = normalizeMerchantCouponRecords(stored?.coupons ?? []);
+    const coupon = createMerchantCoupon(
+      {
+        ...input,
+        siteId,
+      },
+      current.map((item) => item.code),
+    );
+    const saved = await saveStoredMerchantCoupons(supabase, {
       siteId,
-    },
-    current.map((item) => item.code),
-  );
-  const saved = await saveStoredMerchantCoupons(supabase, {
-    siteId,
-    coupons: [coupon, ...current],
-    updatedAt: coupon.updatedAt,
-    existingRowId: stored?.existingRowId ?? null,
+      coupons: [coupon, ...current],
+      updatedAt: coupon.updatedAt,
+      existingRowId: stored?.existingRowId ?? null,
+    });
+    if (saved.error) throw new Error(saved.error);
+    return coupon;
   });
-  if (saved.error) throw new Error(saved.error);
-  return coupon;
 }
 
 export async function updateMerchantCouponRecord(input: {
@@ -89,26 +116,28 @@ export async function updateMerchantCouponRecord(input: {
   const siteId = trimText(input.siteId);
   const couponId = trimText(input.couponId);
   if (!siteId || !couponId) throw new Error("coupon_not_found");
-  const stored = await loadStoredMerchantCoupons(supabase, siteId);
-  const coupons = normalizeMerchantCouponRecords(stored?.coupons ?? []);
-  const index = coupons.findIndex((coupon) => coupon.id === couponId);
-  if (index < 0) throw new Error("coupon_not_found");
-  const current = coupons[index];
-  const next = updateMerchantCoupon(
-    current,
-    input.patch,
-    coupons.filter((coupon) => coupon.id !== couponId).map((coupon) => coupon.code),
-  );
-  const updatedCoupons = [...coupons];
-  updatedCoupons[index] = next;
-  const saved = await saveStoredMerchantCoupons(supabase, {
-    siteId,
-    coupons: updatedCoupons,
-    updatedAt: next.updatedAt,
-    existingRowId: stored?.existingRowId ?? null,
+  return withMerchantCouponMutationLock(siteId, async () => {
+    const stored = await loadStoredMerchantCoupons(supabase, siteId);
+    const coupons = normalizeMerchantCouponRecords(stored?.coupons ?? []);
+    const index = coupons.findIndex((coupon) => coupon.id === couponId);
+    if (index < 0) throw new Error("coupon_not_found");
+    const current = coupons[index];
+    const next = updateMerchantCoupon(
+      current,
+      input.patch,
+      coupons.filter((coupon) => coupon.id !== couponId).map((coupon) => coupon.code),
+    );
+    const updatedCoupons = [...coupons];
+    updatedCoupons[index] = next;
+    const saved = await saveStoredMerchantCoupons(supabase, {
+      siteId,
+      coupons: updatedCoupons,
+      updatedAt: next.updatedAt,
+      existingRowId: stored?.existingRowId ?? null,
+    });
+    if (saved.error) throw new Error(saved.error);
+    return next;
   });
-  if (saved.error) throw new Error(saved.error);
-  return next;
 }
 
 export async function archiveMerchantCouponRecord(input: { siteId: string; couponId: string }) {
@@ -116,19 +145,31 @@ export async function archiveMerchantCouponRecord(input: { siteId: string; coupo
   const siteId = trimText(input.siteId);
   const couponId = trimText(input.couponId);
   if (!siteId || !couponId) throw new Error("coupon_not_found");
-  const stored = await loadStoredMerchantCoupons(supabase, siteId);
-  const coupons = normalizeMerchantCouponRecords(stored?.coupons ?? []);
-  const deletedCoupon = coupons.find((coupon) => coupon.id === couponId);
-  if (!deletedCoupon) throw new Error("coupon_not_found");
-  const updatedCoupons = coupons.filter((coupon) => coupon.id !== couponId);
-  const saved = await saveStoredMerchantCoupons(supabase, {
-    siteId,
-    coupons: updatedCoupons,
-    updatedAt: new Date().toISOString(),
-    existingRowId: stored?.existingRowId ?? null,
+  return withMerchantCouponMutationLock(siteId, async () => {
+    const stored = await loadStoredMerchantCoupons(supabase, siteId);
+    const coupons = normalizeMerchantCouponRecords(stored?.coupons ?? []);
+    const index = coupons.findIndex((coupon) => coupon.id === couponId);
+    if (index < 0) throw new Error("coupon_not_found");
+    const archivedCoupon = updateMerchantCoupon(
+      coupons[index],
+      {
+        status: "archived",
+        showOnWebsite: false,
+        showOnContactCard: false,
+      },
+      coupons.filter((coupon) => coupon.id !== couponId).map((coupon) => coupon.code),
+    );
+    const updatedCoupons = [...coupons];
+    updatedCoupons[index] = archivedCoupon;
+    const saved = await saveStoredMerchantCoupons(supabase, {
+      siteId,
+      coupons: updatedCoupons,
+      updatedAt: archivedCoupon.updatedAt,
+      existingRowId: stored?.existingRowId ?? null,
+    });
+    if (saved.error) throw new Error(saved.error);
+    return archivedCoupon;
   });
-  if (saved.error) throw new Error(saved.error);
-  return deletedCoupon;
 }
 
 export async function claimMerchantCouponRecord(input: {
@@ -140,22 +181,24 @@ export async function claimMerchantCouponRecord(input: {
   const siteId = trimText(input.siteId);
   const couponId = trimText(input.couponId);
   if (!siteId || !couponId) throw new Error("coupon_not_found");
-  const stored = await loadStoredMerchantCoupons(supabase, siteId);
-  const coupons = normalizeMerchantCouponRecords(stored?.coupons ?? []);
-  const index = coupons.findIndex((coupon) => coupon.id === couponId);
-  if (index < 0) throw new Error("coupon_not_found");
-  const claimEvent = await input.beforeClaim?.(coupons[index]);
-  const next = claimMerchantCoupon(coupons[index], new Date(), claimEvent ?? undefined);
-  const updatedCoupons = [...coupons];
-  updatedCoupons[index] = next;
-  const saved = await saveStoredMerchantCoupons(supabase, {
-    siteId,
-    coupons: updatedCoupons,
-    updatedAt: next.updatedAt,
-    existingRowId: stored?.existingRowId ?? null,
+  return withMerchantCouponMutationLock(siteId, async () => {
+    const stored = await loadStoredMerchantCoupons(supabase, siteId);
+    const coupons = normalizeMerchantCouponRecords(stored?.coupons ?? []);
+    const index = coupons.findIndex((coupon) => coupon.id === couponId);
+    if (index < 0) throw new Error("coupon_not_found");
+    const claimEvent = await input.beforeClaim?.(coupons[index]);
+    const next = claimMerchantCoupon(coupons[index], new Date(), claimEvent ?? undefined);
+    const updatedCoupons = [...coupons];
+    updatedCoupons[index] = next;
+    const saved = await saveStoredMerchantCoupons(supabase, {
+      siteId,
+      coupons: updatedCoupons,
+      updatedAt: next.updatedAt,
+      existingRowId: stored?.existingRowId ?? null,
+    });
+    if (saved.error) throw new Error(saved.error);
+    return next;
   });
-  if (saved.error) throw new Error(saved.error);
-  return next;
 }
 
 export async function redeemMerchantCouponRecord(input: {
@@ -209,64 +252,66 @@ export async function redeemMerchantCouponRecords(input: {
       return true;
     });
   if (redemptions.length === 0) throw new Error("invalid_settlement_code");
-  const stored = await loadStoredMerchantCoupons(supabase, siteId);
-  const coupons = normalizeMerchantCouponRecords(stored?.coupons ?? []);
-  const redeemedCoupons: MerchantCouponRecord[] = [];
-  redemptions.forEach((redemption) => {
-    const index = coupons.findIndex((coupon) =>
-      coupon.claimEvents.some((event) => event.settlementCode === redemption.settlementCode),
-    );
-    if (index < 0) throw new Error("coupon_claim_not_found");
-    const claimEvent = coupons[index].claimEvents.find((event) => event.settlementCode === redemption.settlementCode);
-    if (!claimEvent) throw new Error("coupon_claim_not_found");
-    if (redemption.expectedCouponId && coupons[index].id !== redemption.expectedCouponId) {
-      throw new Error("coupon_claim_not_found");
-    }
-    if (redemption.expectedClaimEventId && claimEvent.id !== redemption.expectedClaimEventId) {
-      throw new Error("coupon_claim_not_found");
-    }
-    if (
-      redemption.allowedDiscountTypes?.length &&
-      !redemption.allowedDiscountTypes.includes(coupons[index].discountType)
-    ) {
-      throw new Error("coupon_not_direct_redeemable");
-    }
-    const existingRedeemEvent = coupons[index].redeemEvents.find(
-      (event) => event.settlementCode === redemption.settlementCode || event.claimEventId === claimEvent.id,
-    );
-    if (existingRedeemEvent) {
-      if (hasMutationOperationMarker(existingRedeemEvent.note, redemption.operationMarker)) {
-        redeemedCoupons.push(coupons[index]);
-        return;
+  return withMerchantCouponMutationLock(siteId, async () => {
+    const stored = await loadStoredMerchantCoupons(supabase, siteId);
+    const coupons = normalizeMerchantCouponRecords(stored?.coupons ?? []);
+    const redeemedCoupons: MerchantCouponRecord[] = [];
+    redemptions.forEach((redemption) => {
+      const index = coupons.findIndex((coupon) =>
+        coupon.claimEvents.some((event) => event.settlementCode === redemption.settlementCode),
+      );
+      if (index < 0) throw new Error("coupon_claim_not_found");
+      const claimEvent = coupons[index].claimEvents.find((event) => event.settlementCode === redemption.settlementCode);
+      if (!claimEvent) throw new Error("coupon_claim_not_found");
+      if (redemption.expectedCouponId && coupons[index].id !== redemption.expectedCouponId) {
+        throw new Error("coupon_claim_not_found");
       }
-      throw new Error("coupon_already_redeemed");
-    }
-    const hasExpectedIdentity = Boolean(
-      redemption.expectedAccountId || redemption.expectedUserId || redemption.expectedEmail,
-    );
-    const identityMatches = Boolean(
-      (redemption.expectedAccountId && claimEvent.accountId === redemption.expectedAccountId) ||
-        (redemption.expectedUserId && claimEvent.userId === redemption.expectedUserId) ||
-        (redemption.expectedEmail && claimEvent.email.toLowerCase() === redemption.expectedEmail),
-    );
-    if (hasExpectedIdentity && !identityMatches) throw new Error("coupon_claim_member_mismatch");
-    const next = redeemMerchantCoupon(coupons[index], {
-      settlementCode: redemption.settlementCode,
-      operatorId: redemption.operatorId,
-      note: appendMutationOperationMarker(redemption.note, redemption.operationMarker),
+      if (redemption.expectedClaimEventId && claimEvent.id !== redemption.expectedClaimEventId) {
+        throw new Error("coupon_claim_not_found");
+      }
+      if (
+        redemption.allowedDiscountTypes?.length &&
+        !redemption.allowedDiscountTypes.includes(coupons[index].discountType)
+      ) {
+        throw new Error("coupon_not_direct_redeemable");
+      }
+      const existingRedeemEvent = coupons[index].redeemEvents.find(
+        (event) => event.settlementCode === redemption.settlementCode || event.claimEventId === claimEvent.id,
+      );
+      if (existingRedeemEvent) {
+        if (hasMutationOperationMarker(existingRedeemEvent.note, redemption.operationMarker)) {
+          redeemedCoupons.push(coupons[index]);
+          return;
+        }
+        throw new Error("coupon_already_redeemed");
+      }
+      const hasExpectedIdentity = Boolean(
+        redemption.expectedAccountId || redemption.expectedUserId || redemption.expectedEmail,
+      );
+      const identityMatches = Boolean(
+        (redemption.expectedAccountId && claimEvent.accountId === redemption.expectedAccountId) ||
+          (redemption.expectedUserId && claimEvent.userId === redemption.expectedUserId) ||
+          (redemption.expectedEmail && claimEvent.email.toLowerCase() === redemption.expectedEmail),
+      );
+      if (hasExpectedIdentity && !identityMatches) throw new Error("coupon_claim_member_mismatch");
+      const next = redeemMerchantCoupon(coupons[index], {
+        settlementCode: redemption.settlementCode,
+        operatorId: redemption.operatorId,
+        note: appendMutationOperationMarker(redemption.note, redemption.operationMarker),
+      });
+      coupons[index] = next;
+      redeemedCoupons.push(next);
     });
-    coupons[index] = next;
-    redeemedCoupons.push(next);
-  });
-  if (input.commit === false) {
+    if (input.commit === false) {
+      return redeemedCoupons;
+    }
+    const saved = await saveStoredMerchantCoupons(supabase, {
+      siteId,
+      coupons,
+      updatedAt: new Date().toISOString(),
+      existingRowId: stored?.existingRowId ?? null,
+    });
+    if (saved.error) throw new Error(saved.error);
     return redeemedCoupons;
-  }
-  const saved = await saveStoredMerchantCoupons(supabase, {
-    siteId,
-    coupons,
-    updatedAt: new Date().toISOString(),
-    existingRowId: stored?.existingRowId ?? null,
   });
-  if (saved.error) throw new Error(saved.error);
-  return redeemedCoupons;
 }

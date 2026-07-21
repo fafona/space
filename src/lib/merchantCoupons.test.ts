@@ -15,14 +15,18 @@ import {
   getMerchantCouponDiscountLabel,
   getMerchantCouponRemainingCount,
   getVisibleMerchantCoupons,
+  hasActiveMerchantMembershipForCouponClaim,
   isMerchantCouponDirectRedemptionDiscountType,
   isMerchantCouponDisplayFieldHidden,
+  isMerchantCouponOldUserEligible,
   MERCHANT_COUPON_DIRECT_REDEMPTION_DISCOUNT_TYPES,
   merchantCouponRequiresClaimCode,
   merchantCouponRequiresPersonalClaim,
   merchantCouponSupportsUsageScenario,
   normalizeMerchantCouponRecord,
   redeemMerchantCoupon,
+  toPublicMerchantCouponRecord,
+  updateMerchantCoupon,
 } from "@/lib/merchantCoupons";
 
 test("buildMerchantCouponCode creates unique uppercase codes", () => {
@@ -313,6 +317,77 @@ test("claim rules normalize limits, windows, triggers, tasks, and claim events",
   assert.match(buildMerchantCouponSettlementCode(claimed, "checkout_barcode", 1, "abc123"), /^BAR000000ABC1230001$/);
 });
 
+test("public coupon records keep rule signals without exposing restricted values or customer history", () => {
+  const coupon = createMerchantCoupon({
+    siteId: "10000000",
+    title: "Restricted",
+    discountValue: 5,
+    claimAllowedAccountIds: ["10000001", "10000002"],
+    claimAllowedCodes: ["SECRET-A", "SECRET-B"],
+    claimEvents: [{
+      id: "claim-1",
+      at: "2026-07-10T12:00:00.000Z",
+      accountId: "10000001",
+      userId: "user-private",
+      email: "private@example.com",
+      code: "SECRET-A",
+      customerName: "Private customer",
+      settlementType: "qr",
+      settlementCode: "SETTLEMENT-SECRET",
+      validUntil: null,
+    }],
+  });
+  const publicCoupon = toPublicMerchantCouponRecord(coupon);
+
+  assert.deepEqual(publicCoupon.claimAllowedAccountIds, ["__restricted__"]);
+  assert.deepEqual(publicCoupon.claimAllowedCodes, ["__required__"]);
+  assert.deepEqual(publicCoupon.claimEvents, []);
+  assert.deepEqual(publicCoupon.redeemEvents, []);
+  assert.equal(merchantCouponRequiresPersonalClaim(publicCoupon), true);
+  assert.equal(merchantCouponRequiresClaimCode(publicCoupon), true);
+});
+
+test("member-only and old-user coupon eligibility uses active identity and coupon creation time", () => {
+  const memberships = [
+    { status: "left", accountId: "10000001", userId: "user-left", email: "left@example.com" },
+    { status: "active", accountId: "10000002", userId: "user-active", email: "member@example.com" },
+  ];
+  assert.equal(
+    hasActiveMerchantMembershipForCouponClaim(memberships, { accountId: "10000002" }),
+    true,
+  );
+  assert.equal(
+    hasActiveMerchantMembershipForCouponClaim(memberships, { email: "MEMBER@example.com" }),
+    true,
+  );
+  assert.equal(
+    hasActiveMerchantMembershipForCouponClaim(memberships, { accountId: "10000001" }),
+    false,
+  );
+
+  const coupon = createMerchantCoupon({
+    siteId: "10000000",
+    title: "Old user",
+    discountValue: 5,
+    claimOldUserOnly: true,
+    createdAt: "2026-07-10T12:00:00.000Z",
+  });
+  assert.equal(isMerchantCouponOldUserEligible(coupon, "2026-07-10T11:59:59.000Z"), true);
+  assert.equal(isMerchantCouponOldUserEligible(coupon, "2026-07-10T12:00:01.000Z"), false);
+  assert.equal(isMerchantCouponOldUserEligible(coupon, "invalid"), false);
+});
+
+test("reserved automation settings do not create a fake personal claim requirement", () => {
+  const coupon = createMerchantCoupon({
+    siteId: "10000000",
+    title: "Reserved automation",
+    discountValue: 5,
+    claimBehaviorTriggers: ["share"],
+    claimTaskRequirements: ["watch_ad"],
+  });
+  assert.equal(merchantCouponRequiresPersonalClaim(coupon), false);
+});
+
 test("redeemMerchantCoupon validates claim state and validity", () => {
   const coupon = createMerchantCoupon({
     siteId: "10000000",
@@ -341,6 +416,33 @@ test("redeemMerchantCoupon validates claim state and validity", () => {
   assert.throws(() => redeemMerchantCoupon(redeemed, { settlementCode, now: "2026-06-01T12:00:00.000Z" }), /coupon_already_redeemed/);
   assert.throws(() => redeemMerchantCoupon(claimed, { settlementCode, now: "2026-06-03T10:00:00.000Z" }), /coupon_claim_expired/);
   assert.throws(() => redeemMerchantCoupon({ ...claimed, status: "paused" }, { settlementCode, now: "2026-06-01T11:00:00.000Z" }), /coupon_not_active/);
+});
+
+test("archiving a coupon preserves its claim and redemption history", () => {
+  const coupon = createMerchantCoupon({
+    siteId: "10000000",
+    title: "Archive",
+    discountValue: 5,
+  });
+  const claimed = claimMerchantCoupon(coupon, "2026-06-01T10:00:00.000Z", {
+    settlementCode: "QR100000ARCHIVE0001",
+  });
+  const redeemed = redeemMerchantCoupon(claimed, {
+    settlementCode: "QR100000ARCHIVE0001",
+    now: "2026-06-01T11:00:00.000Z",
+  });
+  const archived = updateMerchantCoupon(
+    redeemed,
+    { status: "archived", showOnWebsite: false, showOnContactCard: false },
+    [redeemed.code],
+    "2026-06-01T12:00:00.000Z",
+  );
+
+  assert.equal(archived.status, "archived");
+  assert.equal(archived.claimEvents.length, 1);
+  assert.equal(archived.redeemEvents.length, 1);
+  assert.equal(archived.claimedCount, 1);
+  assert.equal(archived.usedCount, 1);
 });
 
 test("getContactCardVisibleMerchantCoupons uses contact card visibility flag", () => {

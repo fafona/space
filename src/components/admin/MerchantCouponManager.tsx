@@ -11,6 +11,10 @@ import {
   readMerchantAdminDataCacheSnapshot,
 } from "@/lib/merchantAdminDataCache";
 import { runWithMerchantOperationContext } from "@/lib/merchantOperationContext";
+import {
+  parseMerchantCouponDailyTimeWindow,
+  parseMerchantCouponDateTimeWindow,
+} from "@/lib/merchantCouponClaimWindows";
 import { createClientMutationOperationId } from "@/lib/mutationOperationId";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
@@ -692,9 +696,9 @@ function buildFormFromCoupon(coupon: MerchantCouponRecord, pricePrefix: string):
     exchangeQuantity: coupon.exchangeQuantity > 0 ? String(coupon.exchangeQuantity) : "",
     ticketVenue: coupon.ticketVenue,
     ticketDurationMinutes: coupon.ticketDurationMinutes > 0 ? String(coupon.ticketDurationMinutes) : "",
-    maxDiscountAmount: "",
+    maxDiscountAmount: coupon.maxDiscountAmount > 0 ? String(coupon.maxDiscountAmount) : "",
     totalQuantity: coupon.totalQuantity > 0 ? String(coupon.totalQuantity) : "",
-    perCustomerLimit: "",
+    perCustomerLimit: coupon.perCustomerLimit > 0 ? String(coupon.perCustomerLimit) : "",
     startsAt: toDateTimeTextValue(coupon.startsAt),
     expiresAt: toDateTimeTextValue(coupon.expiresAt),
     status: coupon.status,
@@ -882,6 +886,12 @@ function validateCouponForm(form: CouponFormState) {
   if (isInvalidDateTimeTextValue(form.startsAt)) return "开始时间格式不正确，请使用 2026-05-16 18:30";
   if (isInvalidDateTimeTextValue(form.expiresAt)) return "结束时间格式不正确，请使用 2026-12-31 23:59";
   if (startsAt && expiresAt && Date.parse(startsAt) > Date.parse(expiresAt)) return "结束时间不能早于开始时间";
+  if (splitRuleList(form.claimDateTimeWindows).some((value) => !parseMerchantCouponDateTimeWindow(value))) {
+    return "领取日期时段格式不正确";
+  }
+  if (splitRuleList(form.claimDailyTimeWindows).some((value) => !parseMerchantCouponDailyTimeWindow(value))) {
+    return "每日领取时段格式不正确";
+  }
   return "";
 }
 
@@ -1508,8 +1518,8 @@ export default function MerchantCouponManager({
                     .join(" / ")
                 : "不限",
           },
-          { label: "行为触发", value: triggerLabels.join(" / ") || "未设置" },
-          { label: "任务领取", value: taskLabels.join(" / ") || "未设置" },
+          { label: "行为自动发券（预留）", value: triggerLabels.join(" / ") || "未设置" },
+          { label: "任务自动发券（预留）", value: taskLabels.join(" / ") || "未设置" },
         ],
       },
     ];
@@ -1919,24 +1929,6 @@ export default function MerchantCouponManager({
     });
   }
 
-  function toggleBehaviorTrigger(trigger: MerchantCouponBehaviorTrigger, checked: boolean) {
-    setForm((current) => ({
-      ...current,
-      claimBehaviorTriggers: checked
-        ? Array.from(new Set([...current.claimBehaviorTriggers, trigger]))
-        : current.claimBehaviorTriggers.filter((item) => item !== trigger),
-    }));
-  }
-
-  function toggleTaskRequirement(task: MerchantCouponTaskRequirement, checked: boolean) {
-    setForm((current) => ({
-      ...current,
-      claimTaskRequirements: checked
-        ? Array.from(new Set([...current.claimTaskRequirements, task]))
-        : current.claimTaskRequirements.filter((item) => item !== task),
-    }));
-  }
-
   function buildPayload(): MerchantCouponInput {
     const hiddenFields = MERCHANT_COUPON_DISPLAY_FIELDS.filter((field) => {
       const valueKey = DISPLAY_FIELD_CONFIG[field].valueKey;
@@ -1960,9 +1952,9 @@ export default function MerchantCouponManager({
       exchangeQuantity: toIntValue(form.exchangeQuantity),
       ticketVenue: form.ticketVenue.trim(),
       ticketDurationMinutes: toIntValue(form.ticketDurationMinutes),
-      maxDiscountAmount: 0,
+      maxDiscountAmount: toNumberValue(form.maxDiscountAmount),
       totalQuantity: toIntValue(form.totalQuantity),
-      perCustomerLimit: 0,
+      perCustomerLimit: toIntValue(form.perCustomerLimit),
       startsAt: fromDateTimeTextValue(form.startsAt),
       expiresAt: fromDateTimeTextValue(form.expiresAt),
       status: form.status === "archived" ? "paused" : form.status,
@@ -2184,7 +2176,7 @@ export default function MerchantCouponManager({
 
   async function archiveCoupon(coupon: MerchantCouponRecord) {
     if (!siteId || saving) return;
-    if (typeof window !== "undefined" && !window.confirm(`确定删除优惠券「${coupon.title}」吗？删除后不会再展示给客户。`)) {
+    if (typeof window !== "undefined" && !window.confirm(`确定归档优惠券「${coupon.title}」吗？归档后不会再展示给客户，领取和核销记录会继续保留。`)) {
       return;
     }
     setSaving(true);
@@ -2206,9 +2198,9 @@ export default function MerchantCouponManager({
         setFormOpen(false);
       }
       await loadCoupons(true);
-      setTip("优惠券已删除");
+      setTip("优惠券已归档，历史记录已保留");
     } catch (archiveError) {
-      setError(archiveError instanceof Error ? archiveError.message : "优惠券删除失败");
+      setError(archiveError instanceof Error ? archiveError.message : "优惠券归档失败");
     } finally {
       setSaving(false);
     }
@@ -2704,7 +2696,7 @@ export default function MerchantCouponManager({
                       />
                       <span>
                         <span className="block font-medium text-slate-800">会员领取</span>
-                        <span className="mt-1 block text-xs leading-5 text-slate-500">未登录用户点击领取会跳转登录；领取后自动收藏该站点。</span>
+                        <span className="mt-1 block text-xs leading-5 text-slate-500">仅该商户的有效会员可领取；未登录用户会先跳转登录。</span>
                       </span>
                     </label>
                     <div className="rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm">
@@ -2716,6 +2708,7 @@ export default function MerchantCouponManager({
                         />
                         <span className="font-medium text-slate-800">老用户专享</span>
                       </label>
+                      <span className="mt-1 block text-xs leading-5 text-slate-500">仅优惠券创建前已注册的用户可领取；下方可继续增加注册时长、消费和订单条件。</span>
                       <div className="mt-3 grid gap-3 lg:grid-cols-3">
                         <label className="space-y-1">
                           <span className="block text-slate-600">注册超过天数</span>
@@ -3061,15 +3054,42 @@ export default function MerchantCouponManager({
                   </label>
                 </div>
 
-                <div className="rounded-lg border border-slate-200 bg-white px-3 py-3">
-                  <div className="text-sm font-semibold text-slate-900">行为触发领取</div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">行为自动发券（预留）</div>
+                      <div className="mt-1 text-xs text-slate-500">尚未接入可审计的行为事件，当前设置会保留但不会参与领取判断。</div>
+                    </div>
+                    <button
+                      type="button"
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-600 disabled:cursor-not-allowed disabled:opacity-50"
+                      disabled={
+                        form.claimBehaviorTriggers.length === 0 &&
+                        !form.claimTriggerAmount.trim() &&
+                        !form.claimTriggerCount.trim() &&
+                        !form.claimTriggerDate.trim()
+                      }
+                      onClick={() =>
+                        setForm((current) => ({
+                          ...current,
+                          claimBehaviorTriggers: [],
+                          claimTriggerAmount: "",
+                          claimTriggerCount: "",
+                          claimTriggerDate: "",
+                        }))
+                      }
+                    >
+                      清除预留设置
+                    </button>
+                  </div>
                   <div className="mt-2 grid gap-2 md:grid-cols-3">
                     {BEHAVIOR_TRIGGER_OPTIONS.map((option) => (
-                      <label key={option.value} className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
+                      <label key={option.value} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-400">
                         <input
                           type="checkbox"
                           checked={form.claimBehaviorTriggers.includes(option.value)}
-                          onChange={(event) => toggleBehaviorTrigger(option.value, event.target.checked)}
+                          disabled
+                          readOnly
                         />
                         {option.label}
                       </label>
@@ -3078,25 +3098,53 @@ export default function MerchantCouponManager({
                   <div className="mt-2 grid gap-3 md:grid-cols-3">
                     <label className="space-y-1 text-sm">
                       <span className="block text-slate-600">满额金额</span>
-                      <input type="number" min={0} step={0.01} className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500" value={form.claimTriggerAmount} onChange={handleInputChange("claimTriggerAmount")} />
+                      <input type="number" min={0} step={0.01} disabled className="w-full rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-slate-400" value={form.claimTriggerAmount} readOnly />
                     </label>
                     <label className="space-y-1 text-sm">
                       <span className="block text-slate-600">满次次数</span>
-                      <input type="number" min={0} className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500" value={form.claimTriggerCount} onChange={handleInputChange("claimTriggerCount")} />
+                      <input type="number" min={0} disabled className="w-full rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-slate-400" value={form.claimTriggerCount} readOnly />
                     </label>
-                    <CouponDateTimeField label="指定日期" value={form.claimTriggerDate} onChange={(value) => updateField("claimTriggerDate", value)} placeholder="2026-06-01 00:00" />
+                    <label className="space-y-1 text-sm">
+                      <span className="block text-slate-600">指定日期</span>
+                      <input disabled readOnly className="w-full rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-slate-400" value={form.claimTriggerDate} />
+                    </label>
                   </div>
                 </div>
 
-                <div className="rounded-lg border border-slate-200 bg-white px-3 py-3">
-                  <div className="text-sm font-semibold text-slate-900">任务领取</div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">任务自动发券（预留）</div>
+                      <div className="mt-1 text-xs text-slate-500">尚未接入任务完成记录，当前设置会保留但不会参与领取判断。</div>
+                    </div>
+                    <button
+                      type="button"
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-600 disabled:cursor-not-allowed disabled:opacity-50"
+                      disabled={
+                        form.claimTaskRequirements.length === 0 &&
+                        !form.claimTaskPageUrl.trim() &&
+                        !form.claimTaskInviteCount.trim()
+                      }
+                      onClick={() =>
+                        setForm((current) => ({
+                          ...current,
+                          claimTaskRequirements: [],
+                          claimTaskPageUrl: "",
+                          claimTaskInviteCount: "",
+                        }))
+                      }
+                    >
+                      清除预留设置
+                    </button>
+                  </div>
                   <div className="mt-2 grid gap-2 md:grid-cols-3">
                     {TASK_REQUIREMENT_OPTIONS.map((option) => (
-                      <label key={option.value} className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
+                      <label key={option.value} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-400">
                         <input
                           type="checkbox"
                           checked={form.claimTaskRequirements.includes(option.value)}
-                          onChange={(event) => toggleTaskRequirement(option.value, event.target.checked)}
+                          disabled
+                          readOnly
                         />
                         {option.label}
                       </label>
@@ -3105,11 +3153,11 @@ export default function MerchantCouponManager({
                   <div className="mt-2 grid gap-3 md:grid-cols-2">
                     <label className="space-y-1 text-sm">
                       <span className="block text-slate-600">指定页面</span>
-                      <input className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500" value={form.claimTaskPageUrl} onChange={handleInputChange("claimTaskPageUrl")} placeholder="页面路径或完整 URL" />
+                      <input disabled readOnly className="w-full rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-slate-400" value={form.claimTaskPageUrl} placeholder="页面路径或完整 URL" />
                     </label>
                     <label className="space-y-1 text-sm">
                       <span className="block text-slate-600">邀请人数</span>
-                      <input type="number" min={0} className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500" value={form.claimTaskInviteCount} onChange={handleInputChange("claimTaskInviteCount")} />
+                      <input type="number" min={0} disabled readOnly className="w-full rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-slate-400" value={form.claimTaskInviteCount} />
                     </label>
                   </div>
                 </div>
@@ -3420,7 +3468,7 @@ export default function MerchantCouponManager({
                             onClick={() => void archiveCoupon(coupon)}
                             disabled={saving}
                           >
-                            删除
+                            归档
                           </button>
                         </>
                       </div>

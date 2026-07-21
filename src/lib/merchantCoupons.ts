@@ -846,10 +846,51 @@ export function merchantCouponRequiresPersonalClaim(coupon: MerchantCouponRecord
       coupon.claimPerUserTotalLimit > 0 ||
       coupon.claimPerUserDailyLimit > 0 ||
       coupon.claimPerUserWeeklyLimit > 0 ||
-      coupon.claimPerUserMonthlyLimit > 0 ||
-      coupon.claimBehaviorTriggers.length > 0 ||
-      coupon.claimTaskRequirements.length > 0,
+      coupon.claimPerUserMonthlyLimit > 0,
   );
+}
+
+export function hasActiveMerchantMembershipForCouponClaim(
+  memberships: Array<{
+    status?: unknown;
+    accountId?: unknown;
+    userId?: unknown;
+    email?: unknown;
+  }>,
+  identity: { accountId?: unknown; userId?: unknown; email?: unknown },
+) {
+  const accountId = trimText(identity.accountId);
+  const userId = trimText(identity.userId);
+  const email = trimText(identity.email).toLowerCase();
+  return memberships.some((membership) => {
+    if (membership.status !== "active") return false;
+    return Boolean(
+      (accountId && trimText(membership.accountId) === accountId) ||
+        (userId && trimText(membership.userId) === userId) ||
+        (email && trimText(membership.email).toLowerCase() === email),
+    );
+  });
+}
+
+export function isMerchantCouponOldUserEligible(coupon: MerchantCouponRecord, userCreatedAt: unknown) {
+  if (!coupon.claimOldUserOnly) return true;
+  const userCreatedTimestamp = Date.parse(trimText(userCreatedAt));
+  const couponCreatedTimestamp = Date.parse(trimText(coupon.createdAt));
+  return (
+    Number.isFinite(userCreatedTimestamp) &&
+    Number.isFinite(couponCreatedTimestamp) &&
+    userCreatedTimestamp <= couponCreatedTimestamp
+  );
+}
+
+export function toPublicMerchantCouponRecord(coupon: MerchantCouponRecord): MerchantCouponRecord {
+  return {
+    ...coupon,
+    claimAllowedAccountIds: coupon.claimAllowedAccountIds.length > 0 ? ["__restricted__"] : [],
+    claimAllowedCodes: coupon.claimAllowedCodes.length > 0 ? ["__required__"] : [],
+    claimEvents: [],
+    redeemEvents: [],
+  };
 }
 
 export function merchantCouponRequiresClaimCode(coupon: MerchantCouponRecord) {

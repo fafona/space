@@ -35,6 +35,10 @@ function toErrorMessage(input: unknown) {
   return typeof message === "string" && message.trim() ? message.trim() : "unknown_error";
 }
 
+function throwCouponsStoreQueryError(input: unknown): never {
+  throw new Error(`merchant_coupons_read_failed:${toErrorMessage(input)}`);
+}
+
 function isMissingSlugColumn(message: string) {
   return (
     /column\s+pages\.slug\s+does\s+not\s+exist/i.test(message) ||
@@ -73,46 +77,50 @@ async function queryStoredCouponRows(supabase: MerchantCouponsStoreClient, siteI
   if (!normalizedSiteId) return [] as StoredMerchantCouponsRow[];
   const slug = buildCouponsSlug(normalizedSiteId);
 
-  const initial = await supabase
-    .from("pages")
-    .select("id,slug,blocks,updated_at")
-    .eq("merchant_id", normalizedSiteId)
-    .eq("slug", slug);
+  const runQuery = async (includeMerchantId: boolean, includeUpdatedAt: boolean) => {
+    const query = supabase
+      .from("pages")
+      .select(includeUpdatedAt ? "id,slug,blocks,updated_at" : "id,slug,blocks")
+      .eq("slug", slug);
+    return includeMerchantId ? query.eq("merchant_id", normalizedSiteId) : query;
+  };
 
-  let data = (initial.data ?? []) as StoredMerchantCouponsRow[];
-  let error = initial.error;
+  let includeMerchantId = true;
+  let includeUpdatedAt = true;
+  let data: StoredMerchantCouponsRow[] = [];
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const result = await runQuery(includeMerchantId, includeUpdatedAt);
+    data = (result.data ?? []) as StoredMerchantCouponsRow[];
+    if (!result.error) break;
+    const message = toErrorMessage(result.error);
+    if (isMissingSlugColumn(message)) return [];
+    if (includeMerchantId && isMissingMerchantIdColumn(message)) {
+      includeMerchantId = false;
+      continue;
+    }
+    if (includeUpdatedAt && isMissingUpdatedAtColumn(message)) {
+      includeUpdatedAt = false;
+      continue;
+    }
+    throwCouponsStoreQueryError(result.error);
+  }
 
-  if (error) {
-    const message = toErrorMessage(error);
-    if (isMissingMerchantIdColumn(message)) {
-      const retry = await supabase.from("pages").select("id,slug,blocks,updated_at").eq("slug", slug);
-      data = (retry.data ?? []) as StoredMerchantCouponsRow[];
-      error = retry.error;
-    } else if (isMissingSlugColumn(message)) {
-      return [];
-    } else if (isMissingUpdatedAtColumn(message)) {
-      const retry = await supabase
-        .from("pages")
-        .select("id,slug,blocks")
-        .eq("merchant_id", normalizedSiteId)
-        .eq("slug", slug);
-      data = (retry.data ?? []) as StoredMerchantCouponsRow[];
-      error = retry.error;
+  if (data.length === 0 && includeMerchantId) {
+    includeMerchantId = false;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await runQuery(includeMerchantId, includeUpdatedAt);
+      data = (result.data ?? []) as StoredMerchantCouponsRow[];
+      if (!result.error) break;
+      const message = toErrorMessage(result.error);
+      if (isMissingSlugColumn(message)) return [];
+      if (includeUpdatedAt && isMissingUpdatedAtColumn(message)) {
+        includeUpdatedAt = false;
+        continue;
+      }
+      throwCouponsStoreQueryError(result.error);
     }
   }
 
-  if (!error && data.length === 0) {
-    const retry = await supabase.from("pages").select("id,slug,blocks,updated_at").eq("slug", slug);
-    data = (retry.data ?? []) as StoredMerchantCouponsRow[];
-    error = retry.error;
-    if (error && isMissingUpdatedAtColumn(toErrorMessage(error))) {
-      const retryWithoutUpdatedAt = await supabase.from("pages").select("id,slug,blocks").eq("slug", slug);
-      data = (retryWithoutUpdatedAt.data ?? []) as StoredMerchantCouponsRow[];
-      error = retryWithoutUpdatedAt.error;
-    }
-  }
-
-  if (error) return [];
   return Array.isArray(data) ? data : [];
 }
 

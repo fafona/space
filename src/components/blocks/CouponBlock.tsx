@@ -301,7 +301,8 @@ export default function CouponBlock({
 
   const markCouponClaimed = (couponId: string, limit: number) => {
     setClaimedCounts((current) => {
-      const nextCount = Math.min(Math.max(1, limit || 1), (current[couponId] ?? 0) + 1);
+      const incremented = (current[couponId] ?? 0) + 1;
+      const nextCount = limit > 0 ? Math.min(limit, incremented) : incremented;
       const next = { ...current, [couponId]: nextCount };
       writeClaimCounts(runtimeSiteId, next);
       return next;
@@ -317,8 +318,8 @@ export default function CouponBlock({
       return;
     }
     const localClaimCount = claimedCounts[coupon.id] ?? 0;
-    const perCustomerLimit = Math.max(1, coupon.perCustomerLimit || 1);
-    if (localClaimCount >= perCustomerLimit) {
+    const perCustomerLimit = Math.max(0, coupon.claimPerUserTotalLimit || 0);
+    if ((!runtimeSiteId || previewCoupons) && perCustomerLimit > 0 && localClaimCount >= perCustomerLimit) {
       setCopiedCode(coupon.code);
       try {
         await navigator.clipboard?.writeText(coupon.code);
@@ -352,8 +353,23 @@ export default function CouponBlock({
         coupon?: unknown;
         claimResultUrl?: unknown;
         savedToAccount?: unknown;
+        message?: unknown;
+        error?: unknown;
       } | null;
-      if (!response.ok) throw new Error("claim_failed");
+      if (!response.ok) {
+        if (response.status === 401 && typeof window !== "undefined" && merchantCouponRequiresPersonalClaim(coupon)) {
+          const redirect = encodeURIComponent(`${window.location.pathname}${window.location.search}${window.location.hash}`);
+          window.location.assign(`/login?accountType=personal&redirect=${redirect}`);
+          return;
+        }
+        throw new Error(
+          typeof payload?.message === "string"
+            ? payload.message
+            : typeof payload?.error === "string"
+              ? payload.error
+              : "claim_failed",
+        );
+      }
       const [claimedCoupon] = normalizeMerchantCouponRecords(payload?.coupon ? [payload.coupon] : []);
       if (claimedCoupon) {
         setLoadedCoupons((current) => current.map((item) => (item.id === claimedCoupon.id ? claimedCoupon : item)));
@@ -371,11 +387,6 @@ export default function CouponBlock({
       }
       window.setTimeout(() => setCopiedCode((current) => (current === coupon.code ? "" : current)), 1200);
     } catch {
-      if (typeof window !== "undefined" && merchantCouponRequiresPersonalClaim(coupon)) {
-        const redirect = encodeURIComponent(`${window.location.pathname}${window.location.search}${window.location.hash}`);
-        window.location.assign(`/login?accountType=personal&redirect=${redirect}`);
-        return;
-      }
       setClaimErrorCouponId(coupon.id);
     } finally {
       setClaimingCouponId("");

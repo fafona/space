@@ -73,7 +73,7 @@ export default async function CouponClaimResultPage({
   const normalizedClaimId = trimText(decodeURIComponent(claimId), 120);
   if (!siteId || !couponId || !normalizedClaimId) notFound();
 
-  const coupons = await listMerchantCoupons(siteId).catch(() => []);
+  const coupons = await listMerchantCoupons(siteId);
   const coupon = coupons.find((item) => item.id === couponId);
   if (!coupon) notFound();
   const claimEvent = coupon.claimEvents.find((event) => event.id === normalizedClaimId) as MerchantCouponClaimEvent | undefined;
