@@ -3,7 +3,6 @@ import test from "node:test";
 
 import {
   findFirstNewIncomingSupportMessageKey,
-  findFirstUnreadSupportMessageKey,
   type SupportConversationScrollMessage,
 } from "@/lib/supportConversationScroll";
 
@@ -12,17 +11,6 @@ const messages: SupportConversationScrollMessage[] = [
   { key: "incoming-1", createdAt: "2026-07-21T08:01:00.000Z", isSelf: false },
   { key: "incoming-2", createdAt: "2026-07-21T08:02:00.000Z", isSelf: false },
 ];
-
-test("finds the first unread incoming message and ignores self messages", () => {
-  assert.equal(
-    findFirstUnreadSupportMessageKey(messages, "2026-07-21T08:00:30.000Z"),
-    "incoming-1",
-  );
-  assert.equal(
-    findFirstUnreadSupportMessageKey(messages, "2026-07-21T08:02:00.000Z"),
-    "",
-  );
-});
 
 test("finds the first incoming message appended after the last known message", () => {
   const nextMessages = [

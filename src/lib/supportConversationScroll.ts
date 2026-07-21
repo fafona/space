@@ -1,21 +1,8 @@
-import { isSupportTimestampUnread } from "@/lib/merchantSupportReadState";
-
 export type SupportConversationScrollMessage = {
   key: string;
   createdAt: string;
   isSelf: boolean;
 };
-
-export function findFirstUnreadSupportMessageKey(
-  messages: readonly SupportConversationScrollMessage[],
-  lastReadAt: string,
-) {
-  return (
-    messages.find(
-      (message) => !message.isSelf && isSupportTimestampUnread(message.createdAt, lastReadAt),
-    )?.key ?? ""
-  );
-}
 
 export function findFirstNewIncomingSupportMessageKey(
   messages: readonly SupportConversationScrollMessage[],

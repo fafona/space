@@ -141,7 +141,6 @@ import {
 } from "@/lib/merchantPeerInbox";
 import {
   findFirstNewIncomingSupportMessageKey,
-  findFirstUnreadSupportMessageKey,
   type SupportConversationScrollMessage,
 } from "@/lib/supportConversationScroll";
 import {
@@ -7117,7 +7116,6 @@ export default function AdminClient({
   const supportNotifiedEventKeysRef = useRef<Set<string>>(new Set());
   const supportLastVisibleMessageKeyRef = useRef("");
   const supportVisibleMessageKeysRef = useRef<string[]>([]);
-  const supportInitialScrollTargetKeyRef = useRef("");
   const supportInitialScrollConversationKeyRef = useRef("");
   const supportScrollStabilizationTargetKeyRef = useRef("");
   const supportScrollStabilizationUntilRef = useRef(0);
@@ -13233,9 +13231,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const selectedSupportReadStateHydrated = selectedSupportIsOfficial
     ? supportReadStateHydrated.official
     : supportReadStateHydrated.peer;
-  const selectedSupportLastReadAt = selectedSupportIsOfficial
-    ? supportLastReadAt
-    : normalizeSupportMessageTimestamp(supportPeerLastReadMap[selectedSupportPeerMerchantId]);
   const selectedSupportConversationKey = selectedSupportIsOfficial
     ? (supportReadMerchantId || currentSupportMerchantId || editingSiteId).trim()
       ? `official:${(supportReadMerchantId || currentSupportMerchantId || editingSiteId).trim()}`
@@ -13243,9 +13238,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     : currentSupportMerchantId && selectedSupportPeerMerchantId
       ? `peer:${currentSupportMerchantId}:${selectedSupportPeerMerchantId}`
       : "";
-  const firstUnreadVisibleSupportMessageKey = selectedSupportReadStateHydrated
-    ? findFirstUnreadSupportMessageKey(visibleSupportScrollMessages, selectedSupportLastReadAt)
-    : "";
   const selectedSupportAvatarLabel = getSupportContactAvatarLabel(
     selectedSupportDisplayName,
     selectedSupportIsOfficial ? "FA" : "商",
@@ -16071,7 +16063,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       !selectedSupportConversationVisible
     ) {
       supportInitialScrollConversationKeyRef.current = "";
-      supportInitialScrollTargetKeyRef.current = "";
       supportLastVisibleMessageKeyRef.current = "";
       supportVisibleMessageKeysRef.current = [];
       supportScrollStabilizationTargetKeyRef.current = "";
@@ -16088,14 +16079,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
 
     supportInitialScrollConversationKeyRef.current = selectedSupportConversationKey;
-    supportInitialScrollTargetKeyRef.current = firstUnreadVisibleSupportMessageKey;
     supportLastVisibleMessageKeyRef.current = "";
     supportVisibleMessageKeysRef.current = [];
     supportScrollStabilizationTargetKeyRef.current = "";
     supportScrollStabilizationUntilRef.current = 0;
     supportScrollToLatestPendingRef.current = true;
   }, [
-    firstUnreadVisibleSupportMessageKey,
     isPlatformEditor,
     selectedSupportConversationKey,
     selectedSupportConversationVisible,
@@ -16409,14 +16398,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     let targetMessageKey = supportScrollStabilizationTargetKeyRef.current;
     let behavior: ScrollBehavior = "auto";
     if (shouldStartScroll) {
+      // Initial opens fall through to the exact bottom; live updates target their first incoming message.
       targetMessageKey = shouldScrollToInitialTarget
-        ? supportInitialScrollTargetKeyRef.current
+        ? ""
         : firstNewIncomingMessageKey;
       behavior = shouldScrollToInitialTarget ? "auto" : "smooth";
       supportScrollStabilizationTargetKeyRef.current = targetMessageKey;
       supportScrollStabilizationUntilRef.current = Date.now() + 30000;
       supportScrollToLatestPendingRef.current = false;
-      supportInitialScrollTargetKeyRef.current = "";
     }
 
     let userInterrupted = false;
