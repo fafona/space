@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const VERSION = "1.5.5";
+const VERSION = "1.5.6";
 const PROTOCOL_VERSION = 2;
 const MINIMUM_WEB_VERSION = "1.5.0";
 const DEFAULT_UPDATE_MANIFEST_URL = "https://faolla.com/downloads/print-helper/latest.json";
@@ -165,7 +165,12 @@ async function runPowerShell(script, timeout = 15000) {
   const workDir = path.join(tmpdir(), "faolla-print-helper");
   await mkdir(workDir, { recursive: true });
   const scriptPath = path.join(workDir, `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.ps1`);
-  await writeFile(scriptPath, `\ufeff${script}`, "utf8");
+  const outputEncodingPreamble = `
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[Console]::OutputEncoding = $utf8NoBom
+$OutputEncoding = $utf8NoBom
+`;
+  await writeFile(scriptPath, `\ufeff${outputEncodingPreamble}${script}`, "utf8");
   try {
     const { stdout } = await execFileAsync(
       "powershell.exe",
@@ -552,7 +557,29 @@ function readSafeErrorMessage(error, fallback) {
 async function listPrinters() {
   const stdout = await runPowerShell(`
 $ErrorActionPreference = 'Stop'
-$printers = Get-CimInstance Win32_Printer | Select-Object Name, DriverName, PortName, Default, PrinterStatus
+Add-Type -AssemblyName System.Drawing
+$defaultPrinter = (New-Object System.Drawing.Printing.PrinterSettings).PrinterName
+if (Get-Command Get-Printer -ErrorAction SilentlyContinue) {
+  $printers = Get-Printer -ErrorAction Stop | ForEach-Object {
+    [pscustomobject]@{
+      Name = [string]$_.Name
+      DriverName = [string]$_.DriverName
+      PortName = [string]$_.PortName
+      Default = ([string]$_.Name -eq $defaultPrinter)
+      PrinterStatus = [string]$_.PrinterStatus
+    }
+  }
+} else {
+  $printers = [System.Drawing.Printing.PrinterSettings]::InstalledPrinters | ForEach-Object {
+    [pscustomobject]@{
+      Name = [string]$_
+      DriverName = ''
+      PortName = ''
+      Default = ([string]$_ -eq $defaultPrinter)
+      PrinterStatus = ''
+    }
+  }
+}
 $printers | ConvertTo-Json -Depth 3
 `);
   if (!stdout) return [];
@@ -665,7 +692,8 @@ $ProgressPreference = 'SilentlyContinue'
 $InformationPreference = 'SilentlyContinue'
 $printerName = ${psString(printerName)}
 if (-not $printerName) {
-  $printerName = Get-CimInstance Win32_Printer | Where-Object { $_.Default } | Select-Object -First 1 -ExpandProperty Name
+  Add-Type -AssemblyName System.Drawing
+  $printerName = (New-Object System.Drawing.Printing.PrinterSettings).PrinterName
 }
 if (-not $printerName) {
   throw 'default_printer_not_found'

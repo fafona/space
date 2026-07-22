@@ -46,7 +46,7 @@ test("helper accepts protocol launch ports and enforces its browser boundary", a
   const health = (await healthResponse.json()) as Record<string, unknown>;
   assert.equal(health.ok, true);
   assert.equal(health.name, "faolla-print-helper");
-  assert.equal(health.version, "1.5.5");
+  assert.equal(health.version, "1.5.6");
 
   const preflight = await fetch(`${helperUrl}/print`, {
     method: "OPTIONS",
