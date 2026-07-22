@@ -25,6 +25,7 @@ import {
   merchantCouponSupportsUsageScenario,
   normalizeMerchantCouponRecord,
   redeemMerchantCoupon,
+  releaseMerchantCouponRedemption,
   toPublicMerchantCouponRecord,
   updateMerchantCoupon,
 } from "@/lib/merchantCoupons";
@@ -416,6 +417,44 @@ test("redeemMerchantCoupon validates claim state and validity", () => {
   assert.throws(() => redeemMerchantCoupon(redeemed, { settlementCode, now: "2026-06-01T12:00:00.000Z" }), /coupon_already_redeemed/);
   assert.throws(() => redeemMerchantCoupon(claimed, { settlementCode, now: "2026-06-03T10:00:00.000Z" }), /coupon_claim_expired/);
   assert.throws(() => redeemMerchantCoupon({ ...claimed, status: "paused" }, { settlementCode, now: "2026-06-01T11:00:00.000Z" }), /coupon_not_active/);
+});
+
+test("coupon redemption rollback only releases the matching checkout operation", () => {
+  const operationMarker = "[op:member-redemption-checkout:checkout-1]";
+  const claimed = claimMerchantCoupon(
+    createMerchantCoupon({ siteId: "10000000", title: "Rollback", discountValue: 5 }),
+    "2026-06-01T10:00:00.000Z",
+    { settlementCode: "QR100000ROLLBACK001" },
+  );
+  const redeemed = redeemMerchantCoupon(claimed, {
+    settlementCode: "QR100000ROLLBACK001",
+    note: operationMarker,
+    now: "2026-06-01T11:00:00.000Z",
+  });
+
+  assert.throws(
+    () =>
+      releaseMerchantCouponRedemption(redeemed, {
+        settlementCode: "QR100000ROLLBACK001",
+        operationMarker: "[op:member-redemption-checkout:another-checkout]",
+      }),
+    /coupon_redemption_rollback_conflict/,
+  );
+
+  const released = releaseMerchantCouponRedemption(redeemed, {
+    settlementCode: "QR100000ROLLBACK001",
+    operationMarker,
+    now: "2026-06-01T11:05:00.000Z",
+  });
+  assert.equal(released.alreadyReleased, false);
+  assert.equal(released.coupon.usedCount, 0);
+  assert.equal(released.coupon.redeemEvents.length, 0);
+
+  const replay = releaseMerchantCouponRedemption(released.coupon, {
+    settlementCode: "QR100000ROLLBACK001",
+    operationMarker,
+  });
+  assert.equal(replay.alreadyReleased, true);
 });
 
 test("archiving a coupon preserves its claim and redemption history", () => {

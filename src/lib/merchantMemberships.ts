@@ -285,8 +285,7 @@ export function normalizeMerchantMemberAccountTransactions(value: unknown): Merc
       };
     })
     .filter((item): item is MerchantMemberAccountTransaction => Boolean(item))
-    .sort((left, right) => Date.parse(right.at) - Date.parse(left.at))
-    .slice(0, 500);
+    .sort((left, right) => Date.parse(right.at) - Date.parse(left.at));
 }
 
 function isRechargeAdjustmentForTransaction(

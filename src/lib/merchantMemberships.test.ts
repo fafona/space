@@ -3,9 +3,17 @@ import test from "node:test";
 import {
   adjustMerchantMemberRechargeTransaction,
   cancelMerchantMemberRechargeTransaction,
+  normalizeMerchantMemberAccountTransactions,
   normalizeMerchantMembershipRecord,
   quoteMerchantMemberRechargeCancellation,
 } from "./merchantMemberships";
+import {
+  createEmptyMerchantMembershipSettings,
+  mergeMerchantMembershipSettingsForView,
+  normalizeMerchantMembershipSettings,
+  releaseMerchantRedemptionStock,
+  reserveMerchantRedemptionStock,
+} from "./merchantMembershipSettings";
 
 function buildMembership(input?: { pointBalance?: number; balanceAmount?: number; transactionType?: "recharge" | "redeem" }) {
   const membership = normalizeMerchantMembershipRecord({
@@ -380,4 +388,114 @@ test("redemption transactions cannot be cancelled as recharges", () => {
       }),
     /membership_recharge_not_cancellable/,
   );
+});
+
+test("membership transaction history is not truncated after 500 records", () => {
+  const transactions = Array.from({ length: 620 }, (_, index) => ({
+    id: `transaction-${index}`,
+    type: index % 2 === 0 ? ("redeem" as const) : ("recharge" as const),
+    at: new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString(),
+    pointDelta: index % 2 === 0 ? -1 : 1,
+    balanceDelta: 0,
+    growthDelta: 0,
+    note: `记录 ${index}`,
+    operatorId: "10000000",
+  }));
+
+  assert.equal(normalizeMerchantMemberAccountTransactions(transactions).length, 620);
+});
+
+test("redemption stock reservation and release are idempotent", () => {
+  const settings = normalizeMerchantMembershipSettings("10000000", {
+    redemptionItems: [
+      {
+        id: "item-1",
+        name: "测试项目",
+        code: "SKU-1",
+        enabled: true,
+        pointsCost: 100,
+        stock: 5,
+      },
+    ],
+  });
+  const operationId = "[op:member-redemption-stock:test-1]";
+  const first = reserveMerchantRedemptionStock({
+    settings,
+    operationId,
+    deltas: [{ itemId: "item-1", quantity: 2 }],
+  });
+  assert.equal(first.alreadyApplied, false);
+  assert.equal(first.settings.redemptionItems[0]?.stock, 3);
+
+  const replay = reserveMerchantRedemptionStock({
+    settings: first.settings,
+    operationId,
+    deltas: [{ itemId: "item-1", quantity: 2 }],
+  });
+  assert.equal(replay.alreadyApplied, true);
+  assert.equal(replay.settings.redemptionItems[0]?.stock, 3);
+
+  const released = releaseMerchantRedemptionStock({
+    settings: replay.settings,
+    operationId,
+    deltas: [{ itemId: "item-1", quantity: 2 }],
+  });
+  assert.equal(released.alreadyReleased, false);
+  assert.equal(released.settings.redemptionItems[0]?.stock, 5);
+
+  const releaseReplay = releaseMerchantRedemptionStock({
+    settings: released.settings,
+    operationId,
+    deltas: [{ itemId: "item-1", quantity: 2 }],
+  });
+  assert.equal(releaseReplay.alreadyReleased, true);
+  assert.equal(releaseReplay.settings.redemptionItems[0]?.stock, 5);
+});
+
+test("redemption stock validation rejects invalid quantities and insufficient stock", () => {
+  const settings = normalizeMerchantMembershipSettings("10000000", {
+    redemptionItems: [{ id: "item-1", name: "测试项目", enabled: true, pointsCost: 100, stock: 1 }],
+  });
+  assert.throws(
+    () =>
+      reserveMerchantRedemptionStock({
+        settings,
+        operationId: "invalid-quantity",
+        deltas: [{ itemId: "item-1", quantity: -1 }],
+      }),
+    /membership_redemption_quantity_invalid/,
+  );
+  assert.throws(
+    () =>
+      reserveMerchantRedemptionStock({
+        settings,
+        operationId: "insufficient-stock",
+        deltas: [{ itemId: "item-1", quantity: 2 }],
+      }),
+    /membership_redemption_stock_insufficient/,
+  );
+  assert.equal(settings.redemptionItems[0]?.stock, 1);
+});
+
+test("saving one membership settings view preserves stock and unrelated settings", () => {
+  const existing = normalizeMerchantMembershipSettings("10000000", {
+    updatedAt: "2026-07-22T00:00:00.000Z",
+    rechargePlans: [{ id: "plan-1", title: "原充值方案", enabled: true }],
+    redemptionCategories: [{ id: "category-1", name: "礼品", enabled: true }],
+    redemptionItems: [
+      { id: "item-1", categoryId: "category-1", name: "原项目", enabled: true, pointsCost: 100, stock: 3 },
+    ],
+    redemptionStockOperationIds: ["stock-operation-1"],
+  });
+  const incoming = {
+    ...createEmptyMerchantMembershipSettings("10000000"),
+    updatedAt: "2026-07-22T00:01:00.000Z",
+    redemptionCategories: [{ ...existing.redemptionCategories[0]!, name: "新礼品" }],
+  };
+  const merged = mergeMerchantMembershipSettingsForView(incoming, existing, "redemptionCategories");
+
+  assert.equal(merged.redemptionCategories[0]?.name, "新礼品");
+  assert.equal(merged.redemptionItems[0]?.stock, 3);
+  assert.equal(merged.rechargePlans[0]?.title, "原充值方案");
+  assert.deepEqual(merged.redemptionStockOperationIds, ["stock-operation-1"]);
 });

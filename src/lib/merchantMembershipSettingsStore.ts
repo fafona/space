@@ -134,6 +134,7 @@ export async function saveStoredMerchantMembershipSettings(
     siteId: string;
     settings: MerchantMembershipSettings;
     updatedAt?: string | null;
+    expectedUpdatedAt?: string | null;
     view?: unknown;
   },
 ): Promise<{ error: string | null }> {
@@ -147,6 +148,12 @@ export async function saveStoredMerchantMembershipSettings(
     updatedAt,
   });
   const existing = (await queryStoredSettingsRows(supabase, normalizedSiteId))[0];
+  const shouldCheckVersion = Object.prototype.hasOwnProperty.call(input, "expectedUpdatedAt");
+  const expectedUpdatedAt = normalizeText(input.expectedUpdatedAt);
+  const existingUpdatedAt = normalizeText(existing?.updated_at);
+  if (shouldCheckVersion && expectedUpdatedAt !== existingUpdatedAt) {
+    return { error: "merchant_membership_settings_conflict" };
+  }
   const beforeSettings = existing ? normalizeMerchantMembershipSettings(normalizedSiteId, existing.blocks) : null;
   const history = await saveMerchantSnapshotHistory(supabase, {
     siteId: normalizedSiteId,
@@ -161,8 +168,16 @@ export async function saveStoredMerchantMembershipSettings(
 
   const updateExisting = async (body: Record<string, unknown>) => {
     if (existing?.id === undefined || existing?.id === null) return { error: "missing_existing_id" };
-    const updated = await supabase.from("pages").update(body).eq("id", existing.id);
-    return updated.error ? { error: toErrorMessage(updated.error) } : { error: null };
+    let query = supabase.from("pages").update(body).eq("id", existing.id);
+    if (shouldCheckVersion && expectedUpdatedAt) {
+      query = query.eq("updated_at", expectedUpdatedAt).select("id");
+    }
+    const updated = await query;
+    if (updated.error) return { error: toErrorMessage(updated.error) };
+    if (shouldCheckVersion && expectedUpdatedAt && Array.isArray(updated.data) && updated.data.length === 0) {
+      return { error: "merchant_membership_settings_conflict" };
+    }
+    return { error: null };
   };
 
   const insertNew = async (body: Record<string, unknown>) => {

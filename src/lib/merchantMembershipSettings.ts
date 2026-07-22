@@ -515,6 +515,7 @@ export type MerchantMembershipSettings = {
   redemptionCategories: MerchantMemberRedemptionCategory[];
   redemptionItems: MerchantMemberRedemptionItem[];
   redemptionShowStock: boolean;
+  redemptionStockOperationIds: string[];
   printSettings: MerchantReceiptPrintSettings;
   growthRules: MerchantMemberGrowthRules;
   levels: MerchantMemberLevel[];
@@ -993,6 +994,7 @@ export function createEmptyMerchantMembershipSettings(siteId: string): MerchantM
     redemptionCategories: [],
     redemptionItems: [],
     redemptionShowStock: true,
+    redemptionStockOperationIds: [],
     printSettings: {
       enabled: true,
       autoPrintRedemptionReceipt: true,
@@ -1442,11 +1444,125 @@ export function normalizeMerchantMembershipSettings(siteId: string, value: unkno
       record.redemptionShowStock ?? record.showRedemptionStock ?? record.redemptionStockVisible,
       legacyRedemptionShowStock,
     ),
+    redemptionStockOperationIds: normalizeStringList(record.redemptionStockOperationIds, 180).slice(0, 1000),
     printSettings: normalizeReceiptPrintSettings(record.printSettings ?? record.receiptPrintSettings),
     growthRules: normalizeGrowthRules(record.growthRules),
     levels: normalizeLevels(record.levels),
     pointsRules: normalizePointsRules(record.pointsRules),
     updatedAt: trimText(record.updatedAt, 80) || null,
+  };
+}
+
+export function mergeMerchantMembershipSettingsForView(
+  incoming: MerchantMembershipSettings,
+  existing: MerchantMembershipSettings,
+  view: MerchantMemberSettingsView | "",
+): MerchantMembershipSettings {
+  const shared = {
+    ...existing,
+    updatedAt: incoming.updatedAt,
+    redemptionStockOperationIds: existing.redemptionStockOperationIds,
+  };
+  if (view === "rechargePlans") return { ...shared, rechargePlans: incoming.rechargePlans };
+  if (view === "redemptionCategories") {
+    return { ...shared, redemptionCategories: incoming.redemptionCategories };
+  }
+  if (view === "redemptionItems") {
+    return {
+      ...shared,
+      redemptionItems: incoming.redemptionItems,
+      redemptionShowStock: incoming.redemptionShowStock,
+    };
+  }
+  if (view === "levels") return { ...shared, growthRules: incoming.growthRules, levels: incoming.levels };
+  if (view === "pointsRules") return { ...shared, pointsRules: incoming.pointsRules };
+  return { ...incoming, redemptionStockOperationIds: existing.redemptionStockOperationIds };
+}
+
+export type MerchantRedemptionStockDelta = {
+  itemId: string;
+  quantity: number;
+};
+
+function normalizeMerchantRedemptionStockDeltas(value: readonly MerchantRedemptionStockDelta[]) {
+  const quantities = new Map<string, number>();
+  value.forEach((entry) => {
+    const itemId = trimText(entry?.itemId, 120);
+    const quantity = Number(entry?.quantity);
+    if (!itemId || !Number.isSafeInteger(quantity) || quantity <= 0 || quantity > 9999) {
+      throw new Error("membership_redemption_quantity_invalid");
+    }
+    const nextQuantity = (quantities.get(itemId) ?? 0) + quantity;
+    if (!Number.isSafeInteger(nextQuantity) || nextQuantity > 9999) {
+      throw new Error("membership_redemption_quantity_invalid");
+    }
+    quantities.set(itemId, nextQuantity);
+  });
+  return quantities;
+}
+
+export function reserveMerchantRedemptionStock(input: {
+  settings: MerchantMembershipSettings;
+  operationId: string;
+  deltas: readonly MerchantRedemptionStockDelta[];
+}) {
+  const operationId = trimText(input.operationId, 180);
+  if (!operationId) throw new Error("mutation_operation_id_required");
+  if (input.settings.redemptionStockOperationIds.includes(operationId)) {
+    return { settings: input.settings, alreadyApplied: true };
+  }
+  const quantities = normalizeMerchantRedemptionStockDeltas(input.deltas);
+  if (quantities.size === 0) return { settings: input.settings, alreadyApplied: false };
+
+  const knownItemIds = new Set(input.settings.redemptionItems.map((item) => item.id));
+  for (const [itemId, quantity] of quantities) {
+    const item = input.settings.redemptionItems.find((entry) => entry.id === itemId && entry.enabled);
+    if (!item || !knownItemIds.has(itemId)) throw new Error("membership_redemption_item_not_found");
+    if (item.stock === null || item.stock < quantity) throw new Error("membership_redemption_stock_insufficient");
+  }
+
+  return {
+    alreadyApplied: false,
+    settings: {
+      ...input.settings,
+      redemptionItems: input.settings.redemptionItems.map((item) => {
+        const quantity = quantities.get(item.id) ?? 0;
+        return quantity > 0 && item.stock !== null ? { ...item, stock: item.stock - quantity } : item;
+      }),
+      redemptionStockOperationIds: [
+        operationId,
+        ...input.settings.redemptionStockOperationIds.filter((entry) => entry !== operationId),
+      ].slice(0, 1000),
+    },
+  };
+}
+
+export function releaseMerchantRedemptionStock(input: {
+  settings: MerchantMembershipSettings;
+  operationId: string;
+  deltas: readonly MerchantRedemptionStockDelta[];
+}) {
+  const operationId = trimText(input.operationId, 180);
+  if (!operationId) throw new Error("mutation_operation_id_required");
+  if (!input.settings.redemptionStockOperationIds.includes(operationId)) {
+    return { settings: input.settings, alreadyReleased: true };
+  }
+  const quantities = normalizeMerchantRedemptionStockDeltas(input.deltas);
+  const missingItemId = Array.from(quantities.keys()).find(
+    (itemId) => !input.settings.redemptionItems.some((item) => item.id === itemId),
+  );
+  if (missingItemId) throw new Error("membership_redemption_item_not_found");
+
+  return {
+    alreadyReleased: false,
+    settings: {
+      ...input.settings,
+      redemptionItems: input.settings.redemptionItems.map((item) => {
+        const quantity = quantities.get(item.id) ?? 0;
+        return quantity > 0 && item.stock !== null ? { ...item, stock: item.stock + quantity } : item;
+      }),
+      redemptionStockOperationIds: input.settings.redemptionStockOperationIds.filter((entry) => entry !== operationId),
+    },
   };
 }
 

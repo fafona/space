@@ -420,6 +420,9 @@ export default function MerchantMembershipSettingsPanel({
 
   function readSettingsSaveErrorMessage(error: unknown) {
     if (isNetworkFetchError(error)) return "保存请求没有成功发送，请检查网络后重试。";
+    if (error instanceof Error && error.message === "merchant_membership_settings_conflict") {
+      return "配置或库存已被其他操作更新，请刷新后确认最新数据再保存。";
+    }
     return error instanceof Error ? error.message : "会员配置保存失败，请稍后重试";
   }
 
@@ -527,7 +530,12 @@ export default function MerchantMembershipSettingsPanel({
                 "Content-Type": "application/json",
                 accept: "application/json",
               },
-              body: JSON.stringify({ siteId: normalizedSiteId, settings: normalized, view }),
+              body: JSON.stringify({
+                siteId: normalizedSiteId,
+                settings: normalized,
+                view,
+                expectedUpdatedAt: normalized.updatedAt,
+              }),
             }),
           );
           lastNetworkError = null;

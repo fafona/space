@@ -626,7 +626,16 @@ export async function PATCH(request: Request) {
     const status =
       message === "membership_not_found" || message === "membership_recharge_not_found"
         ? 404
-        : message === "membership_recharge_cancel_balance_insufficient" || message === "merchant_memberships_conflict"
+        : message === "membership_redemption_rollback_failed" ||
+            message === "membership_redemption_stock_rollback_failed" ||
+            message.includes("_history_save_failed")
+          ? 500
+        : message === "membership_recharge_cancel_balance_insufficient" ||
+            message === "membership_balance_insufficient" ||
+            message === "membership_redemption_stock_insufficient" ||
+            message === "merchant_memberships_conflict" ||
+            message === "merchant_membership_settings_conflict" ||
+            message === "coupon_already_redeemed"
           ? 409
           : 400;
     return NextResponse.json(

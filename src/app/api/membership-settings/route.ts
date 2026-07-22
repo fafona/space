@@ -53,6 +53,7 @@ export async function PUT(request: Request) {
       siteId?: unknown;
       settings?: unknown;
       view?: unknown;
+      expectedUpdatedAt?: unknown;
     } | null;
     const siteId = trimText(body?.siteId, 64);
     if (!isMerchantNumericId(siteId)) {
@@ -65,6 +66,9 @@ export async function PUT(request: Request) {
       siteId,
       settings: body?.settings,
       view: body?.view,
+      ...(body && Object.prototype.hasOwnProperty.call(body, "expectedUpdatedAt")
+        ? { expectedUpdatedAt: body.expectedUpdatedAt }
+        : {}),
     });
     return NextResponse.json({ ok: true, settings });
   } catch (error) {
@@ -73,7 +77,7 @@ export async function PUT(request: Request) {
         error: "membership_settings_save_failed",
         message: error instanceof Error ? error.message : "unknown_error",
       },
-      { status: 400 },
+      { status: error instanceof Error && error.message === "merchant_membership_settings_conflict" ? 409 : 400 },
     );
   }
 }

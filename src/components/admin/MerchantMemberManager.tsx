@@ -308,6 +308,11 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
   const membershipInsightRequestIdsRef = useRef<Set<string>>(new Set());
   const membershipLoadRequestIdRef = useRef(0);
   const memberSettingsLoadRequestIdRef = useRef(0);
+  const memberOperationSubmittingRef = useRef(false);
+  const memberOperationMutationRef = useRef<{ fingerprint: string; operationId: string }>({
+    fingerprint: "",
+    operationId: "",
+  });
   const [couponHistoryOpen, setCouponHistoryOpen] = useState(false);
   const [couponWalletMembershipId, setCouponWalletMembershipId] = useState("");
   const [allergenSaving, setAllergenSaving] = useState(false);
@@ -718,6 +723,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     setOperationRedemptionItemId("");
     setOperationRedemptionQuantity("1");
     setOperationError("");
+    memberOperationMutationRef.current = { fingerprint: "", operationId: "" };
     if (defaultRechargePlan) applyRechargePlanSelection(defaultRechargePlan);
     if (defaultRedemptionItem) applyRedemptionItemSelection(defaultRedemptionItem, "1", membership);
   }
@@ -726,6 +732,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     if (operationSaving) return;
     setOperationDialog(null);
     setOperationError("");
+    memberOperationMutationRef.current = { fingerprint: "", operationId: "" };
   }
 
   function openMemberCoupons(membership: MerchantMembershipListItem) {
@@ -736,6 +743,13 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     const message = trimText(value);
     if (message === "membership_balance_insufficient") return "积分或余额不足，不能兑换。";
     if (message === "membership_redemption_stock_insufficient") return "兑换项目库存不足。";
+    if (message === "membership_redemption_quantity_invalid") return "兑换数量无效或超过单次上限。";
+    if (message === "merchant_memberships_conflict" || message === "merchant_membership_settings_conflict") {
+      return "会员积分或库存刚被其他操作更新，请刷新后重试。";
+    }
+    if (message === "membership_redemption_rollback_failed" || message === "membership_redemption_stock_rollback_failed") {
+      return "操作未完成且数据自动回退失败，请勿重复操作，并立即核对会员、库存和卡券记录。";
+    }
     if (message === "membership_operation_empty") return "请填写积分或金额。";
     if (message === "membership_not_active") return "该会员不是正常状态，不能操作。";
     return message || fallback;
@@ -764,7 +778,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
   }
 
   async function submitMemberOperation() {
-    if (!operationDialog || !operationMembership || operationSaving) return;
+    if (!operationDialog || !operationMembership || operationSaving || memberOperationSubmittingRef.current) return;
     const redemptionQuantity = Math.max(1, Number.parseInt(operationRedemptionQuantity, 10) || 1);
     const points =
       operationDialog.type === "recharge" && selectedRechargePlan
@@ -788,10 +802,27 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
         return;
       }
     }
+    const operationFingerprint = JSON.stringify({
+      siteId: normalizedSiteId,
+      membershipId: operationMembership.id,
+      type: operationDialog.type,
+      points,
+      balanceAmount,
+      note: operationNote.trim(),
+      rechargePlanId: selectedRechargePlan?.id ?? "",
+      redemptionItemId: selectedRedemptionItem?.id ?? "",
+      redemptionQuantity,
+    });
+    const operationId =
+      memberOperationMutationRef.current.fingerprint === operationFingerprint &&
+      memberOperationMutationRef.current.operationId
+        ? memberOperationMutationRef.current.operationId
+        : createClientMutationOperationId("member-operation");
+    memberOperationMutationRef.current = { fingerprint: operationFingerprint, operationId };
+    memberOperationSubmittingRef.current = true;
     setOperationSaving(true);
     setOperationError("");
     try {
-      const operationId = createClientMutationOperationId("member-operation");
       const response = await fetchMemberJson("/api/memberships", {
         method: "PATCH",
         cache: "no-store",
@@ -839,6 +870,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
       );
       setOperationDialog(null);
       setOperationError("");
+      memberOperationMutationRef.current = { fingerprint: "", operationId: "" };
       if (operationDialog.type === "redeem" && selectedRedemptionItem && selectedRedemptionItem.stock !== null) {
         invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-membership-settings", normalizedSiteId));
         void loadMemberSettings(true);
@@ -846,6 +878,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     } catch (error) {
       setOperationError(error instanceof Error ? error.message : "会员账户操作失败，请稍后重试");
     } finally {
+      memberOperationSubmittingRef.current = false;
       setOperationSaving(false);
     }
   }

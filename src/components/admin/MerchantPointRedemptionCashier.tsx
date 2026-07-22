@@ -429,6 +429,14 @@ function operationErrorMessage(message: unknown, fallback: string, operationType
   if (text === "membership_not_found") return "会员不存在或数据已更新，请刷新后重新选择会员。";
   if (text === "membership_balance_insufficient") return "会员积分不足，不能兑换。";
   if (text === "membership_redemption_stock_insufficient") return "兑换项目库存不足。";
+  if (text === "membership_redemption_quantity_invalid") return "兑换数量无效或超过单次上限。";
+  if (text === "merchant_memberships_conflict" || text === "merchant_membership_settings_conflict") {
+    return "会员积分或库存刚被其他操作更新，请刷新数据后重新结算。";
+  }
+  if (text === "membership_redemption_rollback_failed" || text === "membership_redemption_stock_rollback_failed") {
+    return "结算未完成且数据自动回退失败，请勿重复操作，并立即核对会员、库存和卡券记录。";
+  }
+  if (text === "mutation_operation_id_required") return "结算操作编号缺失，请刷新页面后重试。";
   if (text === "membership_operation_empty") {
     return operationType === "recharge" ? "充值方案金额和积分不能都为空" : "请选择兑换项目。";
   }
@@ -827,6 +835,16 @@ export default function MerchantPointRedemptionCashier({
   const submitCheckoutRef = useRef<() => Promise<void>>(async () => undefined);
   const selectedMemberIdRef = useRef("");
   const productSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const checkoutSubmittingRef = useRef(false);
+  const checkoutMutationRef = useRef<{ fingerprint: string; operationId: string }>({
+    fingerprint: "",
+    operationId: "",
+  });
+  const rechargeSubmittingRef = useRef(false);
+  const rechargeMutationRef = useRef<{ fingerprint: string; operationId: string }>({
+    fingerprint: "",
+    operationId: "",
+  });
   const manualRechargeAdjustmentOperationIdRef = useRef("");
   const deferredMemberKeyword = useDeferredValue(memberKeyword);
   const deferredItemKeyword = useDeferredValue(itemKeyword);
@@ -1306,8 +1324,7 @@ export default function MerchantPointRedemptionCashier({
             };
           }),
       )
-      .sort((left, right) => Date.parse(right.at) - Date.parse(left.at))
-      .slice(0, 200);
+      .sort((left, right) => Date.parse(right.at) - Date.parse(left.at));
   }, [memberships, view]);
 
   const filteredTransactionRecords = useMemo(() => {
@@ -1461,7 +1478,13 @@ export default function MerchantPointRedemptionCashier({
       setError("当前商户资料还没准备好，请稍后重试。");
       return;
     }
-    const membersCacheKey = makeMerchantAdminDataCacheKey("merchant-memberships", normalizedSiteId, "cashier-active-v2", 0, 300);
+    const membersCacheKey = makeMerchantAdminDataCacheKey(
+      "merchant-memberships",
+      normalizedSiteId,
+      view === "cashier" ? "cashier-active-v3" : `cashier-${view}-all-v1`,
+      0,
+      300,
+    );
     const settingsCacheKey = makeMerchantAdminDataCacheKey(
       "merchant-membership-settings",
       normalizedSiteId,
@@ -1516,6 +1539,7 @@ export default function MerchantPointRedemptionCashier({
       const params = new URLSearchParams({
         siteId: normalizedSiteId,
         limit: "300",
+        mode: view,
       });
       if (cachedMemberships?.version) params.set("knownMembershipVersion", cachedMemberships.version);
       if (cachedSettings?.version && cachedSettingsHasEnabledItems) {
@@ -1593,7 +1617,7 @@ export default function MerchantPointRedemptionCashier({
     } finally {
       if (!options.silent && cashierLoadRequestIdRef.current === requestId) setLoading(false);
     }
-  }, [normalizedSiteId]);
+  }, [normalizedSiteId, view]);
 
   useEffect(() => {
     void loadData();
@@ -1999,6 +2023,7 @@ export default function MerchantPointRedemptionCashier({
   }
 
   async function submitRechargePlan() {
+    if (rechargeSubmittingRef.current) return;
     if (!selectedMember) {
       setError("请先选择会员。");
       setRechargeDialogOpen(false);
@@ -2009,11 +2034,22 @@ export default function MerchantPointRedemptionCashier({
       setError("请选择充值方案。");
       return;
     }
+    const rechargeFingerprint = JSON.stringify({
+      siteId: normalizedSiteId,
+      membershipId: selectedMember.id,
+      memberNo: selectedMember.memberNo,
+      rechargePlanId: plan.id,
+    });
+    const operationId =
+      rechargeMutationRef.current.fingerprint === rechargeFingerprint && rechargeMutationRef.current.operationId
+        ? rechargeMutationRef.current.operationId
+        : createClientMutationOperationId("member-recharge");
+    rechargeMutationRef.current = { fingerprint: rechargeFingerprint, operationId };
+    rechargeSubmittingRef.current = true;
     setSaving(true);
     setError("");
     setNotice("");
     try {
-      const operationId = createClientMutationOperationId("member-recharge");
       const response = await fetch("/api/memberships", {
         method: "PATCH",
         credentials: "same-origin",
@@ -2047,11 +2083,13 @@ export default function MerchantPointRedemptionCashier({
         makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, updatedMembership.id),
       );
       setRechargeDialogOpen(false);
+      rechargeMutationRef.current = { fingerprint: "", operationId: "" };
       setNotice(`充值完成，余额增加 €${formatMoney(plan.rechargeAmount + plan.giftAmount)}，积分增加 ${formatPoints(plan.giftPoints)}。`);
       void loadData(true, { silent: true });
     } catch (rechargeError) {
       setError(rechargeError instanceof Error ? rechargeError.message : "充值失败，请稍后重试");
     } finally {
+      rechargeSubmittingRef.current = false;
       setSaving(false);
     }
   }
@@ -2490,6 +2528,7 @@ export default function MerchantPointRedemptionCashier({
   }
 
   async function submitCheckout() {
+    if (checkoutSubmittingRef.current) return;
     setError("");
     setNotice("");
     if (!selectedMember) {
@@ -2521,6 +2560,33 @@ export default function MerchantPointRedemptionCashier({
       setError("会员积分不足，不能兑换。");
       return;
     }
+    const redemptionItems = cartRows.map((row) => ({
+      redemptionItemId: row.item?.id,
+      customName: row.custom ? row.name : undefined,
+      customCode: row.custom ? row.code : undefined,
+      customPoints: row.custom ? row.unitPoints : undefined,
+      couponId: row.couponId || undefined,
+      couponClaimId: row.couponClaimId || undefined,
+      couponSettlementCode: row.couponSettlementCode || undefined,
+      couponTitle: row.couponTitle || undefined,
+      couponDiscountLabel: row.couponDiscountLabel || undefined,
+      couponPointDiscount: row.couponPointDiscount || undefined,
+      quantity: row.quantity,
+    }));
+    const receiptNote = note.trim();
+    const checkoutFingerprint = JSON.stringify({
+      siteId: normalizedSiteId,
+      membershipId: selectedMember.id,
+      memberNo: selectedMember.memberNo,
+      redemptionItems,
+      note: receiptNote,
+    });
+    const operationId =
+      checkoutMutationRef.current.fingerprint === checkoutFingerprint && checkoutMutationRef.current.operationId
+        ? checkoutMutationRef.current.operationId
+        : createClientMutationOperationId("member-redemption-checkout");
+    checkoutMutationRef.current = { fingerprint: checkoutFingerprint, operationId };
+    checkoutSubmittingRef.current = true;
     const receiptCreatedAt = new Date();
     const receiptBeforePointBalance = selectedInsight.pointBalance;
     const receiptLines = cartRows.map((row) => ({
@@ -2533,10 +2599,8 @@ export default function MerchantPointRedemptionCashier({
       couponDiscountLabel: row.couponDiscountLabel,
       couponPointDiscount: row.couponPointDiscount,
     }));
-    const receiptNote = note.trim();
     setSaving(true);
     try {
-      const operationId = createClientMutationOperationId("member-redemption-checkout");
       const response = await fetch("/api/memberships", {
         method: "PATCH",
         credentials: "same-origin",
@@ -2546,20 +2610,8 @@ export default function MerchantPointRedemptionCashier({
           action: "member_redemption_checkout",
           membershipId: selectedMember.id,
           memberNo: selectedMember.memberNo,
-          redemptionItems: cartRows.map((row) => ({
-            redemptionItemId: row.item?.id,
-            customName: row.custom ? row.name : undefined,
-            customCode: row.custom ? row.code : undefined,
-            customPoints: row.custom ? row.unitPoints : undefined,
-            couponId: row.couponId || undefined,
-            couponClaimId: row.couponClaimId || undefined,
-            couponSettlementCode: row.couponSettlementCode || undefined,
-            couponTitle: row.couponTitle || undefined,
-            couponDiscountLabel: row.couponDiscountLabel || undefined,
-            couponPointDiscount: row.couponPointDiscount || undefined,
-            quantity: row.quantity,
-          })),
-          note: note.trim(),
+          redemptionItems,
+          note: receiptNote,
           operationId,
         }),
       });
@@ -2610,6 +2662,7 @@ export default function MerchantPointRedemptionCashier({
       );
       setCart([]);
       setNote("");
+      checkoutMutationRef.current = { fingerprint: "", operationId: "" };
       const couponLineCount = cartRows.filter((row) => row.couponSettlementCode).length;
       setNotice(
         totalPoints > 0 && couponLineCount > 0
@@ -2654,6 +2707,7 @@ export default function MerchantPointRedemptionCashier({
     } catch (checkoutError) {
       setError(checkoutError instanceof Error ? checkoutError.message : "积分兑换失败，请稍后重试");
     } finally {
+      checkoutSubmittingRef.current = false;
       setSaving(false);
     }
   }

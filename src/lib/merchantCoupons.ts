@@ -1,3 +1,5 @@
+import { hasMutationOperationMarker } from "@/lib/mutationOperationId";
+
 export const MERCHANT_COUPON_DISCOUNT_TYPES = [
   "amount_off",
   "percent_off",
@@ -689,6 +691,38 @@ export function redeemMerchantCoupon(
     [coupon.code],
     now,
   );
+}
+
+export function releaseMerchantCouponRedemption(
+  coupon: MerchantCouponRecord,
+  input: { settlementCode: string; operationMarker: string; now?: Date | string },
+) {
+  const settlementCode = trimText(input.settlementCode);
+  const operationMarker = trimText(input.operationMarker);
+  if (!settlementCode) throw new Error("invalid_settlement_code");
+  if (!operationMarker) throw new Error("mutation_operation_id_required");
+  const claimEvent = coupon.claimEvents.find((event) => event.settlementCode === settlementCode);
+  if (!claimEvent) throw new Error("coupon_claim_not_found");
+  const redeemEvent = coupon.redeemEvents.find(
+    (event) => event.settlementCode === settlementCode || event.claimEventId === claimEvent.id,
+  );
+  if (!redeemEvent) return { coupon, alreadyReleased: true };
+  if (!hasMutationOperationMarker(redeemEvent.note, operationMarker)) {
+    throw new Error("coupon_redemption_rollback_conflict");
+  }
+  const now = input.now instanceof Date ? input.now.toISOString() : normalizeIsoDateValue(input.now) ?? new Date().toISOString();
+  return {
+    alreadyReleased: false,
+    coupon: updateMerchantCoupon(
+      coupon,
+      {
+        usedCount: Math.max(0, coupon.usedCount - 1),
+        redeemEvents: coupon.redeemEvents.filter((event) => event.id !== redeemEvent.id),
+      },
+      [coupon.code],
+      now,
+    ),
+  };
 }
 
 export function getVisibleMerchantCoupons(coupons: MerchantCouponRecord[], nowInput: Date | string = new Date()) {

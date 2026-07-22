@@ -59,13 +59,23 @@ export async function GET(request: Request) {
     const membershipsNotModified = Boolean(knownMembershipVersion && membershipVersion && knownMembershipVersion === membershipVersion);
     const settingsNotModified = Boolean(knownSettingsVersion && settingsVersion && knownSettingsVersion === settingsVersion);
     const couponsNotModified = Boolean(knownCouponVersion && couponVersion && knownCouponVersion === couponVersion);
-    const memberships = membershipsSnapshot.memberships
-      .filter((membership) => membership.status === "active")
-      .slice(0, limit);
-    const searchMemberships = membershipsSnapshot.memberships
-      .filter((membership) => membership.profileVisible && membership.status === "active")
-      .slice(0, MAX_CASHIER_SEARCH_MEMBERSHIPS)
-      .map(buildCashierMembershipSearchItem);
+    const mode = trimText(url.searchParams.get("mode"), 32);
+    const recordTransactionType = mode === "rechargeRecords" ? "recharge" : mode === "records" ? "redeem" : "";
+    const memberships = recordTransactionType
+      ? membershipsSnapshot.memberships.filter((membership) =>
+          membership.transactions.some(
+            (transaction) => transaction.type === recordTransactionType && !transaction.adjustmentKind,
+          ),
+        )
+      : membershipsSnapshot.memberships
+          .filter((membership) => membership.status === "active")
+          .slice(0, limit);
+    const searchMemberships = recordTransactionType
+      ? []
+      : membershipsSnapshot.memberships
+          .filter((membership) => membership.profileVisible && membership.status === "active")
+          .slice(0, MAX_CASHIER_SEARCH_MEMBERSHIPS)
+          .map(buildCashierMembershipSearchItem);
     const couponCatalog = couponsSnapshot.coupons.map((coupon) => ({
       ...coupon,
       claimEvents: [],
