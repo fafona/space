@@ -45,14 +45,13 @@ import {
   getMerchantBookingHistoryVisibilityText,
   getMerchantBookingSortLabel,
   getMerchantBookingSortOptionText,
-  loadMerchantBookingManagerPreferences,
   MERCHANT_BOOKING_HISTORY_VISIBILITY_OPTIONS,
   MERCHANT_BOOKING_SORT_MODES,
-  saveMerchantBookingManagerPreferences,
   sortMerchantBookingRecords,
   type MerchantBookingHistoryVisibility,
   type MerchantBookingSortMode,
 } from "@/lib/merchantBookingManagerPreferences";
+import { useMerchantBookingManagerPreferences } from "@/lib/useMerchantManagerPreferences";
 import {
   resolveMerchantBookingRuleEntry,
   type MerchantBookingRuleSnapshotEntry,
@@ -536,16 +535,15 @@ export default function MerchantBookingManagerDialog({
   const [loadingMoreRecords, setLoadingMoreRecords] = useState(false);
   const [hasMoreRemoteRecords, setHasMoreRemoteRecords] = useState(false);
   const [filter, setFilter] = useState<MerchantBookingFilter>("all");
-  const [selectedStatuses, setSelectedStatuses] = useState<MerchantBookingStatus[]>(
-    () => loadMerchantBookingManagerPreferences(siteId).selectedStatuses,
-  );
+  const {
+    selectedStatuses,
+    setSelectedStatuses,
+    sortMode,
+    setSortMode,
+    historyVisibility,
+    setHistoryVisibility,
+  } = useMerchantBookingManagerPreferences(siteId);
   const deferredQuery = useDeferredValue(query);
-  const [sortMode, setSortMode] = useState<MerchantBookingSortMode>(
-    () => loadMerchantBookingManagerPreferences(siteId).sortMode,
-  );
-  const [historyVisibility, setHistoryVisibility] = useState<MerchantBookingHistoryVisibility>(
-    () => loadMerchantBookingManagerPreferences(siteId).historyVisibility,
-  );
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedBookingIds, setSelectedBookingIds] = useState<string[]>([]);
   const [busyKey, setBusyKey] = useState("");
@@ -750,21 +748,6 @@ export default function MerchantBookingManagerDialog({
       setSelectedBookingIds([]);
     }
   }, [selectedBookingIds.length, selectionMode]);
-
-  useEffect(() => {
-    const preferences = loadMerchantBookingManagerPreferences(siteId);
-    setSelectedStatuses(preferences.selectedStatuses);
-    setSortMode(preferences.sortMode);
-    setHistoryVisibility(preferences.historyVisibility);
-  }, [siteId]);
-
-  useEffect(() => {
-    saveMerchantBookingManagerPreferences(siteId, {
-      selectedStatuses,
-      sortMode,
-      historyVisibility,
-    });
-  }, [historyVisibility, selectedStatuses, siteId, sortMode]);
 
   useEffect(() => {
     setRenderLimit(MERCHANT_BOOKING_RENDER_LIMIT);

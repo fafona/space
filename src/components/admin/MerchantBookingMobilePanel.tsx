@@ -55,14 +55,13 @@ import {
   getMerchantBookingHistoryVisibilityText,
   getMerchantBookingSortLabel,
   getMerchantBookingSortOptionText,
-  loadMerchantBookingManagerPreferences,
   MERCHANT_BOOKING_HISTORY_VISIBILITY_OPTIONS,
   MERCHANT_BOOKING_SORT_MODES,
-  saveMerchantBookingManagerPreferences,
   sortMerchantBookingRecords,
   type MerchantBookingHistoryVisibility,
   type MerchantBookingSortMode,
 } from "@/lib/merchantBookingManagerPreferences";
+import { useMerchantBookingManagerPreferences } from "@/lib/useMerchantManagerPreferences";
 import {
   buildMerchantBookingReminderOffsetLabel,
   resolveMerchantBookingCustomerEmailLocale,
@@ -573,15 +572,14 @@ export default function MerchantBookingMobilePanel({
   const [loadingMoreRecords, setLoadingMoreRecords] = useState(false);
   const [hasMoreRemoteRecords, setHasMoreRemoteRecords] = useState(false);
   const [filter, setFilter] = useState<MerchantBookingFilter>("all");
-  const [selectedStatuses, setSelectedStatuses] = useState<MerchantBookingStatus[]>(
-    () => loadMerchantBookingManagerPreferences(siteId).selectedStatuses,
-  );
-  const [sortMode, setSortMode] = useState<MerchantBookingSortMode>(
-    () => loadMerchantBookingManagerPreferences(siteId).sortMode,
-  );
-  const [historyVisibility, setHistoryVisibility] = useState<MerchantBookingHistoryVisibility>(
-    () => loadMerchantBookingManagerPreferences(siteId).historyVisibility,
-  );
+  const {
+    selectedStatuses,
+    setSelectedStatuses,
+    sortMode,
+    setSortMode,
+    historyVisibility,
+    setHistoryVisibility,
+  } = useMerchantBookingManagerPreferences(siteId);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedBookingIds, setSelectedBookingIds] = useState<string[]>([]);
   const [busyKey, setBusyKey] = useState("");
@@ -791,21 +789,6 @@ export default function MerchantBookingMobilePanel({
       document.removeEventListener("touchstart", handlePointerDown);
     };
   }, [overflowMenuOpen]);
-
-  useEffect(() => {
-    const preferences = loadMerchantBookingManagerPreferences(siteId);
-    setSelectedStatuses(preferences.selectedStatuses);
-    setSortMode(preferences.sortMode);
-    setHistoryVisibility(preferences.historyVisibility);
-  }, [siteId]);
-
-  useEffect(() => {
-    saveMerchantBookingManagerPreferences(siteId, {
-      selectedStatuses,
-      sortMode,
-      historyVisibility,
-    });
-  }, [historyVisibility, selectedStatuses, siteId, sortMode]);
 
   const {
     pullDistance,

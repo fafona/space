@@ -14,13 +14,12 @@ import {
   type MerchantOrderStatus,
 } from "@/lib/merchantOrders";
 import {
-  loadMerchantOrderManagerPreferences,
   MERCHANT_ORDER_HISTORY_OPTIONS,
   MERCHANT_ORDER_SORT_OPTIONS,
-  saveMerchantOrderManagerPreferences,
   type MerchantOrderHistoryVisibility,
   type MerchantOrderSortMode,
 } from "@/lib/merchantOrderManagerPreferences";
+import { useMerchantOrderManagerPreferences } from "@/lib/useMerchantManagerPreferences";
 import {
   buildMerchantAdminDataCacheKey,
   readMerchantAdminDataCache,
@@ -266,21 +265,20 @@ export default function MerchantOrderManagerDialog({
   const [search, setSearch] = useState("");
   const [renderLimit, setRenderLimit] = useState(MERCHANT_ORDER_RENDER_LIMIT);
   const [filter, setFilter] = useState<MerchantOrderFilter>("all");
-  const [sortMode, setSortMode] = useState<MerchantOrderSortMode>(
-    () => loadMerchantOrderManagerPreferences(siteId).sortMode,
-  );
-  const [historyVisibility, setHistoryVisibility] = useState<MerchantOrderHistoryVisibility>(
-    () => loadMerchantOrderManagerPreferences(siteId).historyVisibility,
-  );
+  const {
+    selectedStatuses,
+    setSelectedStatuses,
+    sortMode,
+    setSortMode,
+    historyVisibility,
+    setHistoryVisibility,
+  } = useMerchantOrderManagerPreferences(siteId);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
   const [busyKey, setBusyKey] = useState("");
   const [internalWorkbenchOpen, setInternalWorkbenchOpen] = useState(false);
   const [detailOrderId, setDetailOrderId] = useState("");
   const [detailQuantityDrafts, setDetailQuantityDrafts] = useState<Record<string, string>>({});
-  const [selectedStatuses, setSelectedStatuses] = useState<MerchantOrderStatus[]>(
-    () => loadMerchantOrderManagerPreferences(siteId).selectedStatuses,
-  );
   const deferredSearch = useDeferredValue(search);
   const isWorkbenchOpenControlled = controlledWorkbenchOpen !== undefined;
   const workbenchOpen = controlledWorkbenchOpen ?? internalWorkbenchOpen;
@@ -401,21 +399,6 @@ export default function MerchantOrderManagerDialog({
   useEffect(() => {
     onOrdersChange?.(records);
   }, [onOrdersChange, records]);
-
-  useEffect(() => {
-    const preferences = loadMerchantOrderManagerPreferences(siteId);
-    setSelectedStatuses(preferences.selectedStatuses);
-    setSortMode(preferences.sortMode);
-    setHistoryVisibility(preferences.historyVisibility);
-  }, [siteId]);
-
-  useEffect(() => {
-    saveMerchantOrderManagerPreferences(siteId, {
-      selectedStatuses,
-      sortMode,
-      historyVisibility,
-    });
-  }, [historyVisibility, selectedStatuses, siteId, sortMode]);
 
   useEffect(() => {
     if (!selectionMode && selectedOrderIds.length > 0) {
