@@ -11,6 +11,11 @@ SHARED_DIR="${SHARED_DIR:-${APP_DIR}.shared}"
 SHARED_RUNTIME_DIR="$SHARED_DIR/.runtime"
 RELEASE_KEEP_COUNT="${RELEASE_KEEP_COUNT:-2}"
 HEALTHCHECK_ATTEMPTS="${HEALTHCHECK_ATTEMPTS:-30}"
+PRODUCTION_SMOKE_ORIGIN="${PRODUCTION_SMOKE_ORIGIN:-https://faolla.com}"
+PRODUCTION_SMOKE_PATHS="${PRODUCTION_SMOKE_PATHS:-/,/login,/10909094}"
+PRODUCTION_SMOKE_ATTEMPTS="${PRODUCTION_SMOKE_ATTEMPTS:-8}"
+PRODUCTION_SMOKE_DELAY_MS="${PRODUCTION_SMOKE_DELAY_MS:-2000}"
+PRODUCTION_SMOKE_TIMEOUT_MS="${PRODUCTION_SMOKE_TIMEOUT_MS:-12000}"
 DISK_WARNING_THRESHOLD="${DISK_WARNING_THRESHOLD:-75}"
 DISK_CACHE_CLEANUP_THRESHOLD="${DISK_CACHE_CLEANUP_THRESHOLD:-80}"
 DISK_ABORT_THRESHOLD="${DISK_ABORT_THRESHOLD:-90}"
@@ -55,7 +60,10 @@ validate_disk_thresholds() {
     DISK_ABORT_THRESHOLD \
     MIN_FREE_DISK_MB \
     RELEASE_KEEP_COUNT \
-    HEALTHCHECK_ATTEMPTS; do
+    HEALTHCHECK_ATTEMPTS \
+    PRODUCTION_SMOKE_ATTEMPTS \
+    PRODUCTION_SMOKE_DELAY_MS \
+    PRODUCTION_SMOKE_TIMEOUT_MS; do
     value="${!name}"
     if ! [[ "$value" =~ ^[0-9]+$ ]]; then
       echo "[deploy] $name must be a non-negative integer: $value"
@@ -76,6 +84,14 @@ validate_disk_thresholds() {
   fi
   if [ "$HEALTHCHECK_ATTEMPTS" -lt 1 ]; then
     echo "[deploy] HEALTHCHECK_ATTEMPTS must be at least 1"
+    exit 1
+  fi
+  if [ "$PRODUCTION_SMOKE_ATTEMPTS" -lt 1 ]; then
+    echo "[deploy] PRODUCTION_SMOKE_ATTEMPTS must be at least 1"
+    exit 1
+  fi
+  if [ "$PRODUCTION_SMOKE_TIMEOUT_MS" -lt 250 ]; then
+    echo "[deploy] PRODUCTION_SMOKE_TIMEOUT_MS must be at least 250"
     exit 1
   fi
 }
@@ -356,6 +372,19 @@ wait_for_release_health() {
   return 1
 }
 
+run_public_release_smoke() {
+  (
+    cd "$RELEASE_DIR"
+    node scripts/check-production-smoke.mjs \
+      --origin "$PRODUCTION_SMOKE_ORIGIN" \
+      --paths "$PRODUCTION_SMOKE_PATHS" \
+      --expected-build "$FAOLLA_WEB_BUILD_ID" \
+      --attempts "$PRODUCTION_SMOKE_ATTEMPTS" \
+      --delay-ms "$PRODUCTION_SMOKE_DELAY_MS" \
+      --timeout-ms "$PRODUCTION_SMOKE_TIMEOUT_MS"
+  )
+}
+
 switch_current_release() {
   local release_dir="$1"
   local pending_link="${CURRENT_LINK}.pending"
@@ -418,6 +447,9 @@ cleanup_failed_build() {
     safe_remove_release_path "$RELEASE_BUILD_DIR"
   fi
   rollback_release
+  if [ "$DEPLOY_HEALTHY" != "1" ] && [ -d "$RELEASE_DIR" ]; then
+    safe_remove_release_path "$RELEASE_DIR"
+  fi
 }
 
 trap cleanup_failed_build EXIT
@@ -479,6 +511,11 @@ fi
 
 if ! wait_for_release_health "$FAOLLA_WEB_BUILD_ID"; then
   echo "[deploy] release health check failed"
+  exit 1
+fi
+
+if ! run_public_release_smoke; then
+  echo "[deploy] public production smoke check failed"
   exit 1
 fi
 
