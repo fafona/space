@@ -4,7 +4,13 @@ import {
   normalizeMerchantBookingWorkbenchSettings,
   type MerchantBookingWorkbenchSettings,
 } from "./merchantBookingWorkbench";
+import {
+  loadMerchantBookingPersistenceValue,
+  merchantBookingPersistenceValuesEqual,
+  saveMerchantBookingPersistenceValue,
+} from "./merchantBookingPersistenceStore";
 import { readJsonFileWithBackup, writeJsonFileWithBackup } from "./resilientJsonFileStore";
+import { createServerSupabaseServiceClient } from "./superAdminServer";
 
 type MerchantBookingWorkbenchStoreFile = {
   version: 1;
@@ -41,28 +47,88 @@ async function withBookingWorkbenchStoreLock<T>(task: () => Promise<T>) {
   }
 }
 
-async function readBookingWorkbenchStore(): Promise<MerchantBookingWorkbenchStoreFile> {
+function normalizeBookingWorkbenchStore(value: unknown): MerchantBookingWorkbenchStoreFile | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const parsed = value as Partial<MerchantBookingWorkbenchStoreFile>;
+  if (!parsed.settingsBySiteId || typeof parsed.settingsBySiteId !== "object" || Array.isArray(parsed.settingsBySiteId)) {
+    return null;
+  }
+  const settingsBySiteId: Record<string, MerchantBookingWorkbenchSettings> = {};
+  Object.entries(parsed.settingsBySiteId).forEach(([siteId, settings]) => {
+    const normalizedSiteId = trimText(siteId);
+    if (!normalizedSiteId) return;
+    settingsBySiteId[normalizedSiteId] = normalizeMerchantBookingWorkbenchSettings(settings);
+  });
+  return {
+    version: STORE_VERSION,
+    settingsBySiteId,
+  };
+}
+
+async function readLocalBookingWorkbenchStore(): Promise<MerchantBookingWorkbenchStoreFile> {
   return readJsonFileWithBackup<MerchantBookingWorkbenchStoreFile>(
     BOOKING_WORKBENCH_STORE_PATH,
     { version: STORE_VERSION, settingsBySiteId: {} },
-    (value) => {
-      const parsed = value as Partial<MerchantBookingWorkbenchStoreFile>;
-      const settingsBySiteId: Record<string, MerchantBookingWorkbenchSettings> = {};
-      Object.entries(parsed.settingsBySiteId ?? {}).forEach(([siteId, settings]) => {
-        const normalizedSiteId = trimText(siteId);
-        if (!normalizedSiteId) return;
-        settingsBySiteId[normalizedSiteId] = normalizeMerchantBookingWorkbenchSettings(settings);
-      });
-      return {
-        version: STORE_VERSION,
-        settingsBySiteId,
-      };
-    },
+    normalizeBookingWorkbenchStore,
   );
 }
 
-async function writeBookingWorkbenchStore(store: MerchantBookingWorkbenchStoreFile) {
+async function writeLocalBookingWorkbenchStore(store: MerchantBookingWorkbenchStoreFile) {
   await writeJsonFileWithBackup(BOOKING_WORKBENCH_STORE_PATH, store);
+}
+
+function bookingWorkbenchStoresEqual(
+  left: MerchantBookingWorkbenchStoreFile,
+  right: MerchantBookingWorkbenchStoreFile,
+) {
+  return merchantBookingPersistenceValuesEqual(left, right);
+}
+
+async function readBookingWorkbenchStore(): Promise<MerchantBookingWorkbenchStoreFile> {
+  const localStore = await readLocalBookingWorkbenchStore();
+  const supabase = createServerSupabaseServiceClient();
+  if (!supabase) return localStore;
+
+  const remote = await loadMerchantBookingPersistenceValue(
+    supabase,
+    "workbench",
+    normalizeBookingWorkbenchStore,
+  );
+  const remoteStore = remote?.value ?? { version: STORE_VERSION, settingsBySiteId: {} };
+  const mergedStore: MerchantBookingWorkbenchStoreFile = {
+    version: STORE_VERSION,
+    settingsBySiteId: {
+      ...localStore.settingsBySiteId,
+      ...remoteStore.settingsBySiteId,
+    },
+  };
+
+  if (!remote || remote.recoveredFromBackup || !bookingWorkbenchStoresEqual(mergedStore, remoteStore)) {
+    await saveMerchantBookingPersistenceValue(
+      supabase,
+      "workbench",
+      mergedStore,
+      new Date().toISOString(),
+      remote?.recoveredFromBackup ? { preserveCurrentAsBackup: false } : undefined,
+    );
+  }
+  if (!bookingWorkbenchStoresEqual(mergedStore, localStore)) {
+    await writeLocalBookingWorkbenchStore(mergedStore);
+  }
+  return mergedStore;
+}
+
+async function writeBookingWorkbenchStore(store: MerchantBookingWorkbenchStoreFile) {
+  const supabase = createServerSupabaseServiceClient();
+  if (supabase) {
+    await saveMerchantBookingPersistenceValue(supabase, "workbench", store);
+  }
+  await writeLocalBookingWorkbenchStore(store);
+}
+
+export async function migrateMerchantBookingWorkbenchPersistence() {
+  const store = await readBookingWorkbenchStore();
+  return Object.keys(store.settingsBySiteId).length;
 }
 
 export async function loadMerchantBookingWorkbenchSettings(siteId: string) {

@@ -26,7 +26,10 @@ import {
   getMerchantBookingRecurringIssue,
   shouldMarkMerchantBookingNoShow,
 } from "./merchantBookingWorkbench";
-import { loadMerchantBookingWorkbenchSettings } from "./merchantBookingWorkbenchStore";
+import {
+  loadMerchantBookingWorkbenchSettings,
+  migrateMerchantBookingWorkbenchPersistence,
+} from "./merchantBookingWorkbenchStore";
 import {
   sendMerchantBookingStatusEmail,
   sendMerchantBookingReminderEmail,
@@ -39,12 +42,21 @@ import {
 } from "./merchantBookingSelfService";
 import { buildMerchantBookingReminderPushNotification } from "./merchantPushEvents";
 import { resolveMerchantBookingRuleEntry, type MerchantBookingRuleLocator } from "./merchantBookingRules";
-import { loadMerchantBookingRulesSnapshot } from "./merchantBookingRulesStore";
+import {
+  loadMerchantBookingRulesSnapshot,
+  migrateMerchantBookingRulesPersistence,
+} from "./merchantBookingRulesStore";
 import { loadCurrentMerchantSnapshotSiteBySiteId } from "./publishedMerchantService";
 import type { MerchantPushSubscriptionStoreClient } from "./merchantPushSubscriptionStore";
 import { readJsonFileWithBackup, writeJsonFileWithBackup } from "./resilientJsonFileStore";
 import { createServerSupabaseServiceClient } from "./superAdminServer";
 import { notifyMerchantPushSubscribers } from "./webPush";
+import {
+  loadMerchantBookingPersistenceValue,
+  merchantBookingPersistenceValuesEqual,
+  mergeMerchantBookingPersistenceRecords,
+  saveMerchantBookingPersistenceValue,
+} from "./merchantBookingPersistenceStore";
 
 type MerchantBookingStoreFile = {
   version: 1;
@@ -94,25 +106,85 @@ async function withBookingStoreLock<T>(task: () => Promise<T>) {
   }
 }
 
-async function readMerchantBookingStore(): Promise<MerchantBookingStoreFile> {
+function normalizeMerchantBookingStore(value: unknown): MerchantBookingStoreFile {
+  const parsed = value as Partial<MerchantBookingStoreFile>;
+  if (!Array.isArray(parsed?.records)) {
+    return { version: STORE_VERSION, records: [] };
+  }
+  return {
+    version: STORE_VERSION,
+    records: parsed.records.filter((item) => item && typeof item === "object") as MerchantBookingStoredRecord[],
+  };
+}
+
+function normalizePersistedMerchantBookingStore(value: unknown): MerchantBookingStoreFile | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const parsed = value as Partial<MerchantBookingStoreFile>;
+  if (!Array.isArray(parsed.records)) return null;
+  return normalizeMerchantBookingStore(value);
+}
+
+async function readLocalMerchantBookingStore(): Promise<MerchantBookingStoreFile> {
   return readJsonFileWithBackup<MerchantBookingStoreFile>(
     BOOKING_STORE_PATH,
     { version: STORE_VERSION, records: [] },
-    (value) => {
-      const parsed = value as Partial<MerchantBookingStoreFile>;
-      if (!Array.isArray(parsed.records)) {
-        return { version: STORE_VERSION, records: [] };
-      }
-      return {
-        version: STORE_VERSION,
-        records: parsed.records.filter((item) => item && typeof item === "object") as MerchantBookingStoredRecord[],
-      };
-    },
+    normalizeMerchantBookingStore,
   );
 }
 
-async function writeMerchantBookingStore(store: MerchantBookingStoreFile) {
+async function writeLocalMerchantBookingStore(store: MerchantBookingStoreFile) {
   await writeJsonFileWithBackup(BOOKING_STORE_PATH, store);
+}
+
+function mergeMerchantBookingStores(
+  localStore: MerchantBookingStoreFile,
+  remoteStore: MerchantBookingStoreFile,
+): MerchantBookingStoreFile {
+  return {
+    version: STORE_VERSION,
+    records: mergeMerchantBookingPersistenceRecords(localStore.records, remoteStore.records),
+  };
+}
+
+function bookingStoresEqual(left: MerchantBookingStoreFile, right: MerchantBookingStoreFile) {
+  return merchantBookingPersistenceValuesEqual(left, right);
+}
+
+async function readMerchantBookingStore(): Promise<MerchantBookingStoreFile> {
+  const localStore = await readLocalMerchantBookingStore();
+  const supabase = createServerSupabaseServiceClient();
+  if (!supabase) return localStore;
+
+  const remote = await loadMerchantBookingPersistenceValue(
+    supabase,
+    "records",
+    normalizePersistedMerchantBookingStore,
+  );
+  const remoteStore = remote?.value ?? { version: STORE_VERSION, records: [] };
+  const mergedStore = mergeMerchantBookingStores(localStore, remoteStore);
+
+  if (!remote || remote.recoveredFromBackup || !bookingStoresEqual(mergedStore, remoteStore)) {
+    await saveMerchantBookingPersistenceValue(
+      supabase,
+      "records",
+      mergedStore,
+      new Date().toISOString(),
+      remote?.recoveredFromBackup ? { preserveCurrentAsBackup: false } : undefined,
+    );
+  }
+  if (!bookingStoresEqual(mergedStore, localStore)) {
+    await writeLocalMerchantBookingStore(mergedStore);
+  }
+  return mergedStore;
+}
+
+async function writeMerchantBookingStore(store: MerchantBookingStoreFile) {
+  const normalizedStore = normalizeMerchantBookingStore(store);
+  const supabase = createServerSupabaseServiceClient();
+  if (supabase) {
+    await saveMerchantBookingPersistenceValue(supabase, "records", normalizedStore);
+  }
+  await writeLocalMerchantBookingStore(normalizedStore);
 }
 
 function createEditToken() {
@@ -776,6 +848,8 @@ async function runMerchantBookingAutomationForSite(siteId: string) {
 
 export async function runMerchantBookingAutomationForAllSites() {
   const store = await readMerchantBookingStore();
+  const migratedWorkbenchSiteCount = await migrateMerchantBookingWorkbenchPersistence();
+  const migratedRulesSiteCount = await migrateMerchantBookingRulesPersistence();
   const siteIds = collectAutomationSiteIds(store.records);
   for (const siteId of siteIds) {
     await runMerchantBookingAutomationForSite(siteId);
@@ -783,6 +857,8 @@ export async function runMerchantBookingAutomationForAllSites() {
   return {
     processedSiteCount: siteIds.length,
     siteIds,
+    migratedWorkbenchSiteCount,
+    migratedRulesSiteCount,
   };
 }
 
