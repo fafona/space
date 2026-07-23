@@ -268,6 +268,55 @@ prepare_shared_runtime() {
   fi
 }
 
+prepare_legacy_static_bridge() {
+  if [ "$PREVIOUS_RUNTIME_DIR" != "$APP_DIR" ]; then
+    return 0
+  fi
+  if [ ! -d "$APP_DIR/.next/static" ] || [ ! -d "$RELEASE_DIR/.next/static" ]; then
+    return 0
+  fi
+  echo "[deploy] adding new assets to the legacy static path before the first atomic switch"
+  cp -a -n -- "$RELEASE_DIR/.next/static/." "$APP_DIR/.next/static/"
+}
+
+install_runtime_compatibility_links() {
+  local next_link="$APP_DIR/.next"
+  local modules_link="$APP_DIR/node_modules"
+  local next_backup="$APP_DIR/.next.pre-atomic-deploy"
+  local modules_backup="$APP_DIR/node_modules.pre-atomic-deploy"
+
+  if [ "$(readlink "$next_link" 2>/dev/null || true)" = "$CURRENT_LINK/.next" ] \
+    && [ "$(readlink "$modules_link" 2>/dev/null || true)" = "$CURRENT_LINK/node_modules" ]; then
+    return 0
+  fi
+  if [ -e "$next_backup" ] || [ -L "$next_backup" ] \
+    || [ -e "$modules_backup" ] || [ -L "$modules_backup" ]; then
+    echo "[deploy] refusing to overwrite an existing compatibility backup"
+    return 1
+  fi
+
+  if [ -e "$next_link" ] || [ -L "$next_link" ]; then
+    mv -- "$next_link" "$next_backup"
+  fi
+  if [ -e "$modules_link" ] || [ -L "$modules_link" ]; then
+    mv -- "$modules_link" "$modules_backup"
+  fi
+
+  if ! ln -s "$CURRENT_LINK/.next" "$next_link" \
+    || ! ln -s "$CURRENT_LINK/node_modules" "$modules_link"; then
+    rm -f -- "$next_link" "$modules_link"
+    if [ -e "$next_backup" ] || [ -L "$next_backup" ]; then
+      mv -- "$next_backup" "$next_link"
+    fi
+    if [ -e "$modules_backup" ] || [ -L "$modules_backup" ]; then
+      mv -- "$modules_backup" "$modules_link"
+    fi
+    return 1
+  fi
+
+  rm -rf -- "$next_backup" "$modules_backup"
+}
+
 wait_for_port_release() {
   if ! command -v ss >/dev/null 2>&1; then
     sleep 2
@@ -413,6 +462,7 @@ cd "$APP_DIR"
 cleanup_rebuildable_caches
 report_disk_status
 ensure_disk_headroom
+prepare_legacy_static_bridge
 
 if pm2 describe "$APP_NAME" >/dev/null 2>&1; then
   pm2 delete "$APP_NAME" >/dev/null 2>&1 || true
@@ -432,15 +482,14 @@ if ! wait_for_release_health "$FAOLLA_WEB_BUILD_ID"; then
   exit 1
 fi
 
+install_runtime_compatibility_links
 DEPLOY_HEALTHY=1
-pm2 save
+if ! pm2 save; then
+  echo "[deploy] warning: pm2 save failed after the healthy release was activated"
+fi
 
 safe_remove_release_path "$RELEASE_BUILD_DIR"
 cleanup_old_releases
-
-if [ "$PREVIOUS_RUNTIME_DIR" = "$APP_DIR" ]; then
-  rm -rf -- "$APP_DIR/.next" "$APP_DIR/node_modules"
-fi
 
 trap - EXIT
 report_disk_status
