@@ -385,6 +385,13 @@ run_public_release_smoke() {
   )
 }
 
+verify_booking_persistence() {
+  (
+    cd "$RELEASE_DIR"
+    node --env-file=.env.local scripts/check-booking-persistence.mjs
+  )
+}
+
 switch_current_release() {
   local release_dir="$1"
   local pending_link="${CURRENT_LINK}.pending"
@@ -511,6 +518,11 @@ fi
 
 if ! wait_for_release_health "$FAOLLA_WEB_BUILD_ID"; then
   echo "[deploy] release health check failed"
+  exit 1
+fi
+
+if ! verify_booking_persistence; then
+  echo "[deploy] booking persistence check failed"
   exit 1
 fi
 

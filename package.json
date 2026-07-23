@@ -35,7 +35,7 @@
     "test": "npm run test:coupons && npm run test:logs && npm run test:print && npm run test:booking-store && npm run test:sanitizer && npm run test:auth && npm run test:card-image && npm run test:production-smoke",
     "test:auth": "tsx --test src/lib/authCredentialValidation.test.ts src/app/api/auth/merchant-login/route.test.ts src/app/api/auth/merchant-signup/route.test.ts",
     "test:card-image": "tsx --test src/lib/merchantBusinessCardImageRoute.test.ts",
-    "test:booking-store": "tsx --test src/lib/merchantBookingPersistenceStore.test.ts",
+    "test:booking-store": "tsx --test src/lib/merchantBookingPersistenceStore.test.ts && node --test scripts/check-booking-persistence.test.mjs",
     "test:coupons": "tsx --test src/lib/merchantCouponClaimWindows.test.ts src/lib/merchantCoupons.test.ts src/lib/merchantCouponsStore.test.ts",
     "test:logs": "tsx --test src/lib/merchantOperationLogs.test.ts src/lib/merchantOperationLogsStore.test.ts src/app/api/merchant-operation-logs/route.test.ts",
     "test:print": "tsx --test src/lib/localPrintBridge.test.ts src/lib/merchantReceiptPrint.test.ts scripts/faolla-print-helper.test.ts",
