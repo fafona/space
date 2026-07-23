@@ -1257,24 +1257,57 @@ function buildFaollaClientErrorRecoveryScript(buildId: string) {
 (() => {
   if (typeof window === "undefined" || typeof document === "undefined") return;
   const buildId = ${serializedBuildId};
-  const recoveryKey = "faolla:client-error-recovery:" + buildId;
+  const recoveryWindowMs = 120000;
+  const maxRecoveryAttempts = 2;
+  const stableResetDelayMs = 20000;
+  const recoveryPath = String(window.location.pathname || "/");
+  const recoveryKey =
+    "faolla:client-error-recovery:v2:" + buildId + ":" + encodeURIComponent(recoveryPath);
   let scheduled = false;
-  const hasRecoveredForBuild = () => {
+  const readRecoveryState = () => {
     try {
-      return window.sessionStorage.getItem(recoveryKey) === "1";
+      const raw = window.sessionStorage.getItem(recoveryKey);
+      if (!raw) return { attempts: 0, startedAt: 0 };
+      const parsed = JSON.parse(raw);
+      const attempts = Number.isFinite(Number(parsed && parsed.attempts))
+        ? Math.max(0, Number(parsed.attempts))
+        : 0;
+      const startedAt = Number.isFinite(Number(parsed && parsed.startedAt))
+        ? Math.max(0, Number(parsed.startedAt))
+        : 0;
+      if (!startedAt || Date.now() - startedAt > recoveryWindowMs) {
+        return { attempts: 0, startedAt: 0 };
+      }
+      return { attempts, startedAt };
     } catch {
-      return false;
+      return { attempts: 0, startedAt: 0 };
     }
   };
-  const markRecoveredForBuild = () => {
+  const claimRecoveryAttempt = () => {
+    const current = readRecoveryState();
+    if (current.attempts >= maxRecoveryAttempts) return false;
+    const next = {
+      attempts: current.attempts + 1,
+      startedAt: current.startedAt || Date.now(),
+    };
     try {
-      window.sessionStorage.setItem(recoveryKey, "1");
+      window.sessionStorage.setItem(recoveryKey, JSON.stringify(next));
+    } catch {
+      // Ignore storage failures.
+    }
+    return true;
+  };
+  const clearRecoveryState = () => {
+    try {
+      window.sessionStorage.removeItem(recoveryKey);
     } catch {
       // Ignore storage failures.
     }
   };
   const looksLikeNextClientErrorPage = () => {
     try {
+      if (document.documentElement.hasAttribute("data-faolla-global-error")) return true;
+      if (document.querySelector("[data-faolla-global-error='true']")) return true;
       const text = (document.body && document.body.innerText ? document.body.innerText : "").trim();
       return text.indexOf("Application error: a client-side exception has occurred") >= 0;
     } catch {
@@ -1287,9 +1320,22 @@ function buildFaollaClientErrorRecoveryScript(buildId: string) {
       text.indexOf("ChunkLoadError") >= 0 ||
       text.indexOf("Loading chunk") >= 0 ||
       text.indexOf("Loading CSS chunk") >= 0 ||
+      text.indexOf("Failed to fetch dynamically imported module") >= 0 ||
+      text.indexOf("Failed to load module script") >= 0 ||
       text.indexOf("client-side exception") >= 0 ||
       text.indexOf("Minified React error") >= 0
     );
+  };
+  const isNextAssetFailure = (event) => {
+    try {
+      const target = event && event.target;
+      const tagName = String(target && target.tagName || "").toUpperCase();
+      if (tagName !== "SCRIPT" && tagName !== "LINK") return false;
+      const assetUrl = String(target.src || target.href || "");
+      return assetUrl.indexOf("/_next/static/") >= 0;
+    } catch {
+      return false;
+    }
   };
   const clearRuntimeCaches = async () => {
     try {
@@ -1315,6 +1361,11 @@ function buildFaollaClientErrorRecoveryScript(buildId: string) {
               target.postMessage({ type: "SKIP_WAITING" });
             }
             await registration.update().catch(() => undefined);
+            const refreshedTarget = registration.waiting || registration.installing;
+            if (refreshedTarget) {
+              refreshedTarget.postMessage({ type: "CLEAR_RUNTIME_CACHES" });
+              refreshedTarget.postMessage({ type: "SKIP_WAITING" });
+            }
           }),
         );
       }
@@ -1323,9 +1374,8 @@ function buildFaollaClientErrorRecoveryScript(buildId: string) {
     }
   };
   const recover = () => {
-    if (scheduled || hasRecoveredForBuild()) return;
+    if (scheduled || !claimRecoveryAttempt()) return;
     scheduled = true;
-    markRecoveredForBuild();
     clearRuntimeCaches().finally(() => {
       try {
         const url = new URL(window.location.href);
@@ -1336,10 +1386,24 @@ function buildFaollaClientErrorRecoveryScript(buildId: string) {
       }
     });
   };
+  const inspectErrorPage = () => {
+    if (looksLikeNextClientErrorPage()) recover();
+  };
+  const scheduleErrorPageInspection = () => {
+    [0, 100, 500, 1500].forEach((delay) => {
+      window.setTimeout(inspectErrorPage, delay);
+    });
+  };
   window.addEventListener("error", (event) => {
-    if (looksLikeStaleClientBundleError(event.message) || looksLikeStaleClientBundleError(event.error && event.error.message)) {
+    const staleBundleError =
+      isNextAssetFailure(event) ||
+      looksLikeStaleClientBundleError(event.message) ||
+      looksLikeStaleClientBundleError(event.error && event.error.message);
+    if (staleBundleError) {
       recover();
+      return;
     }
+    scheduleErrorPageInspection();
   }, true);
   window.addEventListener("unhandledrejection", (event) => {
     const reason = event.reason;
@@ -1347,17 +1411,21 @@ function buildFaollaClientErrorRecoveryScript(buildId: string) {
     if (looksLikeStaleClientBundleError(message)) {
       event.preventDefault();
       recover();
+      return;
     }
+    scheduleErrorPageInspection();
   }, true);
-  const inspectErrorPage = () => {
-    if (looksLikeNextClientErrorPage()) recover();
-  };
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", inspectErrorPage, { once: true });
   } else {
     inspectErrorPage();
   }
-  window.setTimeout(inspectErrorPage, 800);
+  [250, 800, 2000, 5000, 10000].forEach((delay) => {
+    window.setTimeout(inspectErrorPage, delay);
+  });
+  window.setTimeout(() => {
+    if (!looksLikeNextClientErrorPage()) clearRecoveryState();
+  }, stableResetDelayMs);
 })();
 `;
 }

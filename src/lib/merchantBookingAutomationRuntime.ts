@@ -37,9 +37,7 @@ async function runAutomationTick() {
   store[RUNNING_KEY] = true;
   store[LAST_STARTED_AT_KEY] = new Date().toISOString();
   try {
-    const { runMerchantBookingAutomationForAllSites } = (await import(
-      /* webpackIgnore: true */ "./merchantBookings.server"
-    )) as {
+    const { runMerchantBookingAutomationForAllSites } = (await import("./merchantBookings.server")) as {
       runMerchantBookingAutomationForAllSites: () => Promise<MerchantBookingAutomationResult>;
     };
     const result = await runMerchantBookingAutomationForAllSites();

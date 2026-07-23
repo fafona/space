@@ -12,8 +12,6 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import { toPng } from "html-to-image";
-import QRCode from "qrcode";
 import { showGlobalToast } from "@/lib/globalToast";
 import {
   MERCHANT_BUSINESS_CARD_RATIO_OPTIONS,
@@ -449,6 +447,7 @@ async function renderCardNodeToImage(node: HTMLElement) {
   if (typeof document.fonts?.ready?.then === "function") {
     await document.fonts.ready.catch(() => undefined);
   }
+  const { toPng } = await import("html-to-image");
   return toPng(node, {
     pixelRatio: 1,
     cacheBust: true,
@@ -2127,7 +2126,14 @@ export default function MerchantBusinessCardManager({
       setQrCodeUrl("");
       return;
     }
-    void QRCode.toDataURL(qrTargetUrl, { width: clamp(draft.qr.size * 2, 96, 1200), margin: 1, errorCorrectionLevel: "M" })
+    void import("qrcode")
+      .then(({ default: QRCode }) =>
+        QRCode.toDataURL(qrTargetUrl, {
+          width: clamp(draft.qr.size * 2, 96, 1200),
+          margin: 1,
+          errorCorrectionLevel: "M",
+        }),
+      )
       .then((url) => {
         if (!cancelled) setQrCodeUrl(url);
       })

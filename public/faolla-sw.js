@@ -1,4 +1,14 @@
-const FAOLLA_SW_VERSION = "faolla-pwa-v20260707-1";
+const FAOLLA_SW_BUILD_MARKER = (() => {
+  try {
+    return String(new URL(self.location.href).searchParams.get("build") || "")
+      .trim()
+      .replace(/[^a-zA-Z0-9_-]/g, "")
+      .slice(0, 24);
+  } catch {
+    return "";
+  }
+})();
+const FAOLLA_SW_VERSION = `faolla-pwa-v20260723-1-${FAOLLA_SW_BUILD_MARKER || "base"}`;
 const FAOLLA_BADGE_CACHE = "faolla-badge-state-v1";
 const FAOLLA_BADGE_STATE_URL = "/__faolla_badge_state__";
 const FAOLLA_VISIBILITY_STATE_URL = "/__faolla_visibility_state__";

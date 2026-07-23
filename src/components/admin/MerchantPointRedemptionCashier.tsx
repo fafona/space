@@ -820,6 +820,7 @@ export default function MerchantPointRedemptionCashier({
   const membershipsRef = useRef<MerchantMembershipListItem[]>([]);
   const memberInsightRequestIdsRef = useRef<Set<string>>(new Set());
   const cashierLoadRequestIdRef = useRef(0);
+  const cashierResumeRefreshAtRef = useRef(0);
   const memberSearchRequestIdRef = useRef(0);
   const memberSearchCacheRef = useRef<Map<string, MerchantMembershipListItem[]>>(new Map());
   const printBridgeCheckRef = useRef<{ key: string; at: number }>({ key: "", at: 0 });
@@ -1481,7 +1482,7 @@ export default function MerchantPointRedemptionCashier({
     const membersCacheKey = makeMerchantAdminDataCacheKey(
       "merchant-memberships",
       normalizedSiteId,
-      view === "cashier" ? "cashier-active-v3" : `cashier-${view}-all-v1`,
+      view === "cashier" ? "cashier-active-v4" : `cashier-${view}-all-v1`,
       0,
       300,
     );
@@ -1620,13 +1621,17 @@ export default function MerchantPointRedemptionCashier({
   }, [normalizedSiteId, view]);
 
   useEffect(() => {
+    cashierResumeRefreshAtRef.current = Date.now();
     void loadData();
   }, [loadData]);
 
   useEffect(() => {
     const refreshOnVisible = () => {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
-      void loadData();
+      const now = Date.now();
+      if (now - cashierResumeRefreshAtRef.current < 1500) return;
+      cashierResumeRefreshAtRef.current = now;
+      void loadData(false, { silent: true });
     };
     window.addEventListener("focus", refreshOnVisible);
     document.addEventListener("visibilitychange", refreshOnVisible);

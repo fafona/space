@@ -383,6 +383,7 @@ import {
 } from "@/lib/faollaQrClient";
 import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
+import { buildFaollaServiceWorkerPath } from "@/lib/faollaServiceWorker";
 import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
 import { MOBILE_SWIPE_BACK_EVENT } from "@/lib/mobileSwipeBack";
 import { clearTankBattleLobbyReturnTarget, readTankBattleLobbyReturnTarget } from "@/lib/tankBattleLobbyReturn";
@@ -405,7 +406,11 @@ function readSameOriginFrameHref(frame: HTMLIFrameElement | null) {
   }
 }
 
-const MerchantBusinessCardManager = dynamic(() => import("@/components/admin/MerchantBusinessCardManager"), {
+const loadMerchantBusinessCardManager = () => import("@/components/admin/MerchantBusinessCardManager");
+const loadMerchantPointRedemptionCashier = () => import("@/components/admin/MerchantPointRedemptionCashier");
+const loadMerchantPrintSettingsPanel = () => import("@/components/admin/MerchantPrintSettingsPanel");
+
+const MerchantBusinessCardManager = dynamic(loadMerchantBusinessCardManager, {
   ssr: false,
   loading: () => <DeferredAdminPanelLoading label="名片夹加载中..." />,
 });
@@ -415,7 +420,7 @@ const MerchantMemberManager = dynamic(() => import("@/components/admin/MerchantM
   loading: () => <DeferredAdminPanelLoading label="会员管理加载中..." />,
 });
 
-const MerchantPointRedemptionCashier = dynamic(() => import("@/components/admin/MerchantPointRedemptionCashier"), {
+const MerchantPointRedemptionCashier = dynamic(loadMerchantPointRedemptionCashier, {
   ssr: false,
   loading: () => <DeferredAdminPanelLoading label="积分兑换加载中..." />,
 });
@@ -430,7 +435,7 @@ const MerchantRedemptionSettingsPanel = dynamic(() => import("@/components/admin
   loading: () => <DeferredAdminPanelLoading label="项目配置加载中..." />,
 });
 
-const MerchantPrintSettingsPanel = dynamic(() => import("@/components/admin/MerchantPrintSettingsPanel"), {
+const MerchantPrintSettingsPanel = dynamic(loadMerchantPrintSettingsPanel, {
   ssr: false,
   loading: () => <DeferredAdminPanelLoading label="打印配置加载中..." />,
 });
@@ -6280,7 +6285,7 @@ function readInitialSupportFaollaEmbedHref() {
 }
 
 const SUPPORT_EMPTY_SIGNATURE_TEXT = "这家伙很懒，什么都没有留下。";
-const SUPPORT_PUSH_SERVICE_WORKER_PATH = "/faolla-sw.js";
+const SUPPORT_PUSH_SERVICE_WORKER_PATH = buildFaollaServiceWorkerPath();
 const DEFAULT_SUPPORT_NOTIFICATION_PREFERENCES: SupportNotificationPreferences = {
   systemNotificationsEnabled: true,
   messageSoundEnabled: true,
@@ -15363,6 +15368,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   function openMerchantCardsPanel() {
+    void loadMerchantBusinessCardManager().catch(() => undefined);
     setMerchantDesktopSection("cards");
   }
 
@@ -15407,6 +15413,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   async function openMerchantPointRedemptionPanel() {
+    void loadMerchantPointRedemptionCashier().catch(() => undefined);
     if (!canUsePointsRedemption) {
       showTip(canUseMembershipManagement ? "当前商户未开通积分兑换" : "请先开通会员管理");
       return;
@@ -15489,7 +15496,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   function openMerchantBusinessCenterPanel() {
+    void loadMerchantBusinessCardManager().catch(() => undefined);
+    void loadMerchantPrintSettingsPanel().catch(() => undefined);
     setMerchantDesktopSection("business");
+  }
+
+  function openMerchantPrintPanel() {
+    void loadMerchantPrintSettingsPanel().catch(() => undefined);
+    setMerchantDesktopSection("printer");
   }
 
   async function openMerchantEditorInNewWindow() {
@@ -18117,6 +18131,45 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           : canUseCouponModule
             ? "coupons"
             : "business";
+  useEffect(() => {
+    if (checkingAuth || !isDesktopMerchantWorkspace || merchantEditorOnly || typeof window === "undefined") return;
+
+    let cancelled = false;
+    const timeoutIds: number[] = [];
+    const idleWindow = window as Window & {
+      requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+
+    if (canUsePointsRedemption) {
+      void loadMerchantPointRedemptionCashier().catch(() => undefined);
+    }
+
+    const preloadSecondaryPanels = () => {
+      if (cancelled) return;
+      void loadMerchantBusinessCardManager().catch(() => undefined);
+      timeoutIds.push(
+        window.setTimeout(() => {
+          if (!cancelled) void loadMerchantPrintSettingsPanel().catch(() => undefined);
+        }, 900),
+      );
+    };
+
+    let idleCallbackId: number | null = null;
+    if (typeof idleWindow.requestIdleCallback === "function") {
+      idleCallbackId = idleWindow.requestIdleCallback(preloadSecondaryPanels, { timeout: 1800 });
+    } else {
+      timeoutIds.push(window.setTimeout(preloadSecondaryPanels, 700));
+    }
+
+    return () => {
+      cancelled = true;
+      timeoutIds.forEach((timeoutId) => window.clearTimeout(timeoutId));
+      if (idleCallbackId !== null && typeof idleWindow.cancelIdleCallback === "function") {
+        idleWindow.cancelIdleCallback(idleCallbackId);
+      }
+    };
+  }, [canUsePointsRedemption, checkingAuth, isDesktopMerchantWorkspace, merchantEditorOnly]);
   useEffect(() => {
     if (checkingAuth || !isDesktopMerchantWorkspace || merchantEditorOnly) return;
     const explicitFaollaSection = typeof window !== "undefined" && isFaollaSectionSearch(window.location.search);
@@ -22043,6 +22096,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       <button
                         type="button"
                         className={getMerchantDesktopMenuButtonClassName(merchantDesktopPointRedemptionCenterActive)}
+                        onPointerEnter={() => {
+                          void loadMerchantPointRedemptionCashier().catch(() => undefined);
+                        }}
+                        onFocus={() => {
+                          void loadMerchantPointRedemptionCashier().catch(() => undefined);
+                        }}
                         onClick={() => {
                           void openMerchantPointRedemptionPanel();
                         }}
@@ -22147,6 +22206,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       <button
                         type="button"
                         className={getMerchantDesktopMenuButtonClassName(merchantDesktopOperationCenterActive)}
+                        onPointerEnter={() => {
+                          void loadMerchantBusinessCardManager().catch(() => undefined);
+                          void loadMerchantPrintSettingsPanel().catch(() => undefined);
+                        }}
+                        onFocus={() => {
+                          void loadMerchantBusinessCardManager().catch(() => undefined);
+                          void loadMerchantPrintSettingsPanel().catch(() => undefined);
+                        }}
                         onClick={openMerchantBusinessCenterPanel}
                         aria-current={merchantDesktopOperationCenterActive ? "page" : undefined}
                       >
@@ -22372,6 +22439,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       <button
                         type="button"
                         className={getMerchantDesktopSubmenuButtonClassName(merchantDesktopSection === "cards", "cyan")}
+                        onPointerEnter={() => {
+                          void loadMerchantBusinessCardManager().catch(() => undefined);
+                        }}
+                        onFocus={() => {
+                          void loadMerchantBusinessCardManager().catch(() => undefined);
+                        }}
                         onClick={openMerchantCardsPanel}
                       >
                         <span>名片夹</span>
@@ -22389,7 +22462,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       <button
                         type="button"
                         className={getMerchantDesktopSubmenuButtonClassName(merchantDesktopSection === "printer")}
-                        onClick={() => setMerchantDesktopSection("printer")}
+                        onPointerEnter={() => {
+                          void loadMerchantPrintSettingsPanel().catch(() => undefined);
+                        }}
+                        onFocus={() => {
+                          void loadMerchantPrintSettingsPanel().catch(() => undefined);
+                        }}
+                        onClick={openMerchantPrintPanel}
                       >
                         打印机
                       </button>

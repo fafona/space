@@ -10,8 +10,9 @@ import {
   resolvePreferredPwaLaunchPath,
   shouldAutoWarmPwaRoutes,
 } from "@/lib/pwaRecentRoutes";
+import { buildFaollaServiceWorkerPath } from "@/lib/faollaServiceWorker";
 
-const FAOLLA_SERVICE_WORKER_PATH = "/faolla-sw.js";
+const FAOLLA_SERVICE_WORKER_PATH = buildFaollaServiceWorkerPath();
 const PWA_UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 const PWA_UPDATE_RESUME_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const PWA_INSTALL_DISMISS_STORAGE_KEY = "merchant-space:pwa-install-dismissed:v1";
