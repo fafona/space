@@ -317,7 +317,7 @@ async function resolveSiteName(siteId: string, fallback: string) {
   return trimText(snapshot?.merchantName, 120) || trimText(snapshot?.name, 120) || trimText(fallback, 120) || siteId;
 }
 
-export async function GET(request: Request) {
+async function handleGetMemberships(request: Request) {
   const url = new URL(request.url);
   const siteId = trimText(url.searchParams.get("siteId"), 64);
   if (!isMerchantNumericId(siteId)) {
@@ -341,7 +341,12 @@ export async function GET(request: Request) {
       return NextResponse.json({ ok: true, quote });
     } catch (error) {
       const message = error instanceof Error ? error.message : "unknown_error";
-      const status = message === "membership_not_found" || message === "membership_recharge_not_found" ? 404 : 400;
+      const status =
+        message === "membership_not_found" || message === "membership_recharge_not_found"
+          ? 404
+          : message.startsWith("merchant_memberships_read_failed:")
+            ? 500
+            : 400;
       return NextResponse.json({ error: "membership_recharge_quote_failed", message }, { status });
     }
   }
@@ -404,6 +409,15 @@ export async function GET(request: Request) {
   });
 }
 
+export async function GET(request: Request) {
+  try {
+    return await handleGetMemberships(request);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "unknown_error";
+    return NextResponse.json({ error: "membership_list_failed", message }, { status: 500 });
+  }
+}
+
 export async function POST(request: Request) {
   if (!isTrustedSameOriginMutationRequest(request)) {
     return getTrustedMutationRequestErrorResponse();
@@ -433,12 +447,13 @@ export async function POST(request: Request) {
       membership: toPersonalMembershipCard(membership),
     });
   } catch (error) {
+    const message = error instanceof Error ? error.message : "unknown_error";
     return NextResponse.json(
       {
         error: "membership_join_failed",
-        message: error instanceof Error ? error.message : "unknown_error",
+        message,
       },
-      { status: 400 },
+      { status: message.startsWith("merchant_memberships_read_failed:") ? 500 : 400 },
     );
   }
 }
@@ -608,6 +623,7 @@ export async function PATCH(request: Request) {
         orderAmount: body?.orderAmount,
         requestedPoints: body?.requestedPoints,
         orderId: body?.orderId,
+        operationId: body?.operationId,
         operatorId: merchantSession.merchantId,
       });
       return NextResponse.json({ ok: true, ...result });
@@ -628,6 +644,7 @@ export async function PATCH(request: Request) {
         ? 404
         : message === "membership_redemption_rollback_failed" ||
             message === "membership_redemption_stock_rollback_failed" ||
+            message.startsWith("merchant_memberships_read_failed:") ||
             message.includes("_history_save_failed")
           ? 500
         : message === "membership_recharge_cancel_balance_insufficient" ||

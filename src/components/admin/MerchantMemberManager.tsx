@@ -314,6 +314,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     operationId: "",
   });
   const [couponHistoryOpen, setCouponHistoryOpen] = useState(false);
+  const [transactionHistoryExpanded, setTransactionHistoryExpanded] = useState(false);
   const [couponWalletMembershipId, setCouponWalletMembershipId] = useState("");
   const [allergenSaving, setAllergenSaving] = useState(false);
   const [allergenError, setAllergenError] = useState("");
@@ -429,7 +430,12 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
       : readMerchantAdminDataCacheSnapshot<MembershipsPayload>(cacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
     const applyMembershipsPayload = (payload: MembershipsPayload) => {
       const nextMemberships = Array.isArray(payload.memberships) ? payload.memberships : [];
-      setMemberships((current) => (mode === "append" ? [...current, ...nextMemberships] : nextMemberships));
+      setMemberships((current) => {
+        if (mode !== "append") return nextMemberships;
+        const merged = new Map(current.map((membership) => [membership.id, membership]));
+        nextMemberships.forEach((membership) => merged.set(membership.id, membership));
+        return Array.from(merged.values());
+      });
       setMembershipTotal(Number(payload.total) || nextMemberships.length);
       setMembershipAllTotal(Number(payload.allTotal) || nextMemberships.length);
       setMembershipHasMore(payload.hasMore === true);
@@ -486,13 +492,6 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
       if (membershipLoadRequestIdRef.current === requestId) applyMembershipsPayload(payload);
     } catch (error) {
       if (membershipLoadRequestIdRef.current === requestId) {
-        if (mode === "reset") {
-          setMemberships([]);
-          setMembershipTotal(0);
-          setMembershipAllTotal(0);
-          setMembershipHasMore(false);
-        }
-        setSelectedMembershipId("");
         setLoadError(error instanceof Error ? error.message : "会员列表加载失败，请稍后重试");
       }
     } finally {
@@ -640,6 +639,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
 
   useEffect(() => {
     setCouponHistoryOpen(false);
+    setTransactionHistoryExpanded(false);
     setAllergenError("");
   }, [selectedMembershipId]);
 
@@ -660,7 +660,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     if (currentSet.has(allergen)) currentSet.delete(allergen);
     else currentSet.add(allergen);
     const nextAllergens = Array.from(currentSet);
-    const previousMemberships = memberships;
+    const previousAllergens = currentAllergens;
     setAllergenSaving(true);
     setAllergenError("");
     setMemberships((current) =>
@@ -704,8 +704,13 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
         ),
       );
     } catch (error) {
-      setMemberships(previousMemberships);
+      setMemberships((current) =>
+        current.map((membership) =>
+          membership.id === selectedMembership.id ? { ...membership, allergens: previousAllergens } : membership,
+        ),
+      );
       setAllergenError(error instanceof Error ? error.message : "过敏信息保存失败，请稍后重试");
+      void loadMemberships("reset", true);
     } finally {
       setAllergenSaving(false);
     }
@@ -1183,7 +1188,9 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                         </div>
                         <div className="mt-3 space-y-2">
                           {selectedMembership.transactions.length > 0 ? (
-                            selectedMembership.transactions.slice(0, 8).map((transaction) => (
+                            selectedMembership.transactions
+                              .slice(0, transactionHistoryExpanded ? undefined : 8)
+                              .map((transaction) => (
                               <div
                                 key={transaction.id}
                                 className="grid gap-2 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600 sm:grid-cols-[110px_1fr_150px]"
@@ -1207,10 +1214,21 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                                 </div>
                                 <div className="text-slate-500 sm:text-right">{formatDateTime(transaction.at)}</div>
                               </div>
-                            ))
+                              ))
                           ) : (
                             <div className="rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-500">暂无账户操作记录。</div>
                           )}
+                          {selectedMembership.transactions.length > 8 ? (
+                            <button
+                              type="button"
+                              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                              onClick={() => setTransactionHistoryExpanded((current) => !current)}
+                            >
+                              {transactionHistoryExpanded
+                                ? "收起"
+                                : `查看全部 ${selectedMembership.transactions.length} 条记录`}
+                            </button>
+                          ) : null}
                         </div>
                       </div>
 

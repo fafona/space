@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   adjustMerchantMemberRechargeTransaction,
+  calculateExpiredMerchantMemberPoints,
   cancelMerchantMemberRechargeTransaction,
+  getMerchantMembershipProfileValidationError,
   normalizeMerchantMemberAccountTransactions,
+  normalizeMerchantMembershipProfileDraft,
   normalizeMerchantMembershipRecord,
   quoteMerchantMemberRechargeCancellation,
 } from "./merchantMemberships";
@@ -50,6 +53,28 @@ test("legacy recharge transactions normalize to completed status", () => {
   const membership = buildMembership();
   assert.equal(membership.transactions[0]?.status, "completed");
   assert.equal(membership.transactions[0]?.cancelledAt, null);
+});
+
+test("membership profile validation rejects incomplete and invalid join data", () => {
+  const empty = normalizeMerchantMembershipProfileDraft({});
+  assert.equal(getMerchantMembershipProfileValidationError(empty), "请填写昵称");
+
+  const invalidEmail = normalizeMerchantMembershipProfileDraft({
+    nickname: "Nana",
+    phone: "600000000",
+    email: "invalid",
+    birthday: "2000-01-01",
+  });
+  assert.equal(getMerchantMembershipProfileValidationError(invalidEmail), "邮箱格式不正确");
+
+  const valid = normalizeMerchantMembershipProfileDraft({
+    nickname: "Nana",
+    phone: "600000000",
+    email: "nana@example.com",
+    birthday: "02-29",
+    birthdayMonthDayOnly: true,
+  });
+  assert.equal(getMerchantMembershipProfileValidationError(valid), "");
 });
 
 test("cancelling a recharge reverses balances and preserves the cancelled record", () => {
@@ -403,6 +428,110 @@ test("membership transaction history is not truncated after 500 records", () => 
   }));
 
   assert.equal(normalizeMerchantMemberAccountTransactions(transactions).length, 620);
+});
+
+test("recharge cancellation preserves the complete transaction history", () => {
+  const membership = buildMembership();
+  const historicalTransactions = normalizeMerchantMemberAccountTransactions(
+    Array.from({ length: 620 }, (_, index) => ({
+      id: `historical-${index}`,
+      type: index % 2 === 0 ? "redeem" : "recharge",
+      at: new Date(Date.UTC(2025, 0, 1, 0, index)).toISOString(),
+      pointDelta: 0,
+      note: `历史记录 ${index}`,
+    })),
+  );
+  const input = { ...membership, transactions: [...membership.transactions, ...historicalTransactions] };
+  const result = cancelMerchantMemberRechargeTransaction({
+    membership: input,
+    transactionId: "recharge-1",
+    cancelledAt: "2026-07-16T08:00:00.000Z",
+  });
+
+  assert.equal(result.membership.transactions.length, input.transactions.length + 1);
+  assert.ok(result.membership.transactions.some((transaction) => transaction.id === "recharge-1"));
+  assert.ok(result.membership.transactions.some((transaction) => transaction.id === "historical-619"));
+});
+
+test("spent old points do not expire newer point lots", () => {
+  const transactions = normalizeMerchantMemberAccountTransactions([
+    { id: "old-credit", type: "recharge", at: "2025-01-01T00:00:00.000Z", pointDelta: 100 },
+    { id: "old-spend", type: "redeem", at: "2025-02-01T00:00:00.000Z", pointDelta: -100 },
+    { id: "new-credit", type: "recharge", at: "2026-06-01T00:00:00.000Z", pointDelta: 50 },
+  ]);
+
+  assert.equal(
+    calculateExpiredMerchantMemberPoints({
+      transactions,
+      pointBalance: 50,
+      cutoffTimestamp: Date.parse("2026-01-01T00:00:00.000Z"),
+    }),
+    0,
+  );
+});
+
+test("only the unspent part of an old point lot expires", () => {
+  const transactions = normalizeMerchantMemberAccountTransactions([
+    { id: "old-credit", type: "recharge", at: "2025-01-01T00:00:00.000Z", pointDelta: 100 },
+    { id: "old-spend", type: "redeem", at: "2025-02-01T00:00:00.000Z", pointDelta: -40 },
+    { id: "new-credit", type: "recharge", at: "2026-06-01T00:00:00.000Z", pointDelta: 50 },
+  ]);
+
+  assert.equal(
+    calculateExpiredMerchantMemberPoints({
+      transactions,
+      pointBalance: 110,
+      cutoffTimestamp: Date.parse("2026-01-01T00:00:00.000Z"),
+    }),
+    60,
+  );
+});
+
+test("a targeted recharge reversal consumes its own point lot before older points", () => {
+  const transactions = normalizeMerchantMemberAccountTransactions([
+    { id: "old-credit", type: "recharge", at: "2025-01-01T00:00:00.000Z", pointDelta: 100 },
+    { id: "new-credit", type: "recharge", at: "2026-05-01T00:00:00.000Z", pointDelta: 100 },
+    {
+      id: "new-reversal",
+      type: "redeem",
+      at: "2026-06-01T00:00:00.000Z",
+      pointDelta: -100,
+      relatedTransactionId: "new-credit",
+      adjustmentKind: "recharge_reversal",
+    },
+  ]);
+
+  assert.equal(
+    calculateExpiredMerchantMemberPoints({
+      transactions,
+      pointBalance: 100,
+      cutoffTimestamp: Date.parse("2026-01-01T00:00:00.000Z"),
+    }),
+    100,
+  );
+});
+
+test("a legacy cancelled credit without a reversal cannot expire unrelated newer points", () => {
+  const transactions = normalizeMerchantMemberAccountTransactions([
+    {
+      id: "legacy-cancelled-credit",
+      type: "recharge",
+      status: "cancelled",
+      at: "2025-01-01T00:00:00.000Z",
+      cancelledAt: "2025-02-01T00:00:00.000Z",
+      pointDelta: 100,
+    },
+    { id: "new-credit", type: "recharge", at: "2026-06-01T00:00:00.000Z", pointDelta: 50 },
+  ]);
+
+  assert.equal(
+    calculateExpiredMerchantMemberPoints({
+      transactions,
+      pointBalance: 50,
+      cutoffTimestamp: Date.parse("2026-01-01T00:00:00.000Z"),
+    }),
+    0,
+  );
 });
 
 test("redemption stock reservation and release are idempotent", () => {

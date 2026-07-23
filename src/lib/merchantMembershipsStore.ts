@@ -126,7 +126,11 @@ async function queryStoredMembershipRows(supabase: MerchantMembershipsStoreClien
     }
   }
 
-  if (error) return [];
+  if (error) {
+    const message = toErrorMessage(error);
+    if (isMissingSlugColumn(message)) return [];
+    throw new Error(`merchant_memberships_read_failed:${message}`);
+  }
   return Array.isArray(data) ? data : [];
 }
 

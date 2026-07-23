@@ -2,6 +2,8 @@ import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import {
   buildMerchantMemberNo,
   buildMerchantMembershipQrValue,
+  calculateExpiredMerchantMemberPoints,
+  getMerchantMembershipProfileValidationError,
   adjustMerchantMemberRechargeTransaction,
   cancelMerchantMemberRechargeTransaction,
   normalizeMerchantMemberAllergens,
@@ -46,25 +48,25 @@ function requireMembershipsStoreClient() {
   return supabase;
 }
 
-const merchantMembershipRedemptionMutationTails = new Map<string, Promise<void>>();
+const merchantMembershipMutationTails = new Map<string, Promise<void>>();
 
-async function withMerchantMembershipRedemptionMutationLock<T>(siteId: string, task: () => Promise<T>) {
+async function withMerchantMembershipMutationLock<T>(siteId: string, task: () => Promise<T>) {
   const normalizedSiteId = trimText(siteId, 64);
   if (!normalizedSiteId) throw new Error("invalid_site_id");
-  const previous = merchantMembershipRedemptionMutationTails.get(normalizedSiteId) ?? Promise.resolve();
+  const previous = merchantMembershipMutationTails.get(normalizedSiteId) ?? Promise.resolve();
   let release: () => void = () => undefined;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
   const tail = previous.catch(() => undefined).then(() => gate);
-  merchantMembershipRedemptionMutationTails.set(normalizedSiteId, tail);
+  merchantMembershipMutationTails.set(normalizedSiteId, tail);
   await previous.catch(() => undefined);
   try {
     return await task();
   } finally {
     release();
-    if (merchantMembershipRedemptionMutationTails.get(normalizedSiteId) === tail) {
-      merchantMembershipRedemptionMutationTails.delete(normalizedSiteId);
+    if (merchantMembershipMutationTails.get(normalizedSiteId) === tail) {
+      merchantMembershipMutationTails.delete(normalizedSiteId);
     }
   }
 }
@@ -448,7 +450,12 @@ function applyJoinPoints(membership: MerchantMembershipRecord, settings: Merchan
   };
 }
 
-async function applyScheduledPointRules(siteId: string, memberships: MerchantMembershipRecord[]) {
+async function applyScheduledPointRules(
+  siteId: string,
+  memberships: MerchantMembershipRecord[],
+  expectedUpdatedAt: string | null,
+  retryAttempt = 0,
+) {
   const settings = await getMerchantMembershipSettings(siteId).catch(() => null);
   if (!settings) return memberships;
   const nowDate = new Date();
@@ -500,16 +507,11 @@ async function applyScheduledPointRules(siteId: string, memberships: MerchantMem
     }
     if (expiryDays > 0 && next.pointBalance > 0) {
       const cutoff = nowDate.getTime() - expiryDays * 24 * 60 * 60 * 1000;
-      const expiredPositive = next.transactions
-        .filter(
-          (transaction) =>
-            transaction.status !== "cancelled" && transaction.pointDelta > 0 && Date.parse(transaction.at) < cutoff,
-        )
-        .reduce((sum, transaction) => sum + transaction.pointDelta, 0);
-      const alreadyExpired = next.transactions
-        .filter((transaction) => transaction.note.includes("[points-expired]"))
-        .reduce((sum, transaction) => sum + Math.abs(Math.min(0, transaction.pointDelta)), 0);
-      const expiredDelta = Math.min(next.pointBalance, Math.max(0, expiredPositive - alreadyExpired));
+      const expiredDelta = calculateExpiredMerchantMemberPoints({
+        transactions: next.transactions,
+        pointBalance: next.pointBalance,
+        cutoffTimestamp: cutoff,
+      });
       if (expiredDelta > 0) {
         next = {
           ...next,
@@ -533,7 +535,21 @@ async function applyScheduledPointRules(siteId: string, memberships: MerchantMem
   });
   if (!changed) return memberships;
   const supabase = requireMembershipsStoreClient();
-  const saved = await saveStoredMerchantMemberships(supabase, { siteId, memberships: nextMemberships, updatedAt: now });
+  const saved = await saveStoredMerchantMemberships(supabase, {
+    siteId,
+    memberships: nextMemberships,
+    updatedAt: now,
+    expectedUpdatedAt,
+  });
+  if (saved.error === "merchant_memberships_conflict" && retryAttempt < 2) {
+    const latest = await loadStoredMerchantMemberships(supabase, siteId);
+    return applyScheduledPointRules(
+      siteId,
+      normalizeMerchantMembershipRecords(latest?.memberships ?? []),
+      latest?.updatedAt ?? null,
+      retryAttempt + 1,
+    );
+  }
   if (saved.error) throw new Error(saved.error);
   return nextMemberships;
 }
@@ -557,7 +573,10 @@ export async function getMerchantMembershipsSnapshot(
   const supabase = requireMembershipsStoreClient();
   const stored = await loadStoredMerchantMemberships(supabase, siteId);
   const memberships = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
-  const nextMemberships = options.applyScheduledRules === false ? memberships : await applyScheduledPointRules(siteId, memberships);
+  const nextMemberships =
+    options.applyScheduledRules === false
+      ? memberships
+      : await applyScheduledPointRules(siteId, memberships, stored?.updatedAt ?? null);
   return {
     memberships: nextMemberships.map(toMerchantMembershipListItem),
     updatedAt: resolveMerchantMembershipsVersion(nextMemberships, stored?.updatedAt ?? null),
@@ -578,25 +597,31 @@ export async function updateMerchantMembershipAllergens(input: {
   const siteId = trimText(input.siteId, 64);
   const membershipId = trimText(input.membershipId, 160);
   if (!siteId || !membershipId) throw new Error("membership_not_found");
-  const stored = await loadStoredMerchantMemberships(supabase, siteId);
-  const current = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
-  const index = current.findIndex((membership) => membership.id === membershipId);
-  if (index < 0) throw new Error("membership_not_found");
-  const now = new Date().toISOString();
-  const nextMembership = {
-    ...current[index],
-    allergens: normalizeMerchantMemberAllergens(input.allergens),
-    updatedAt: now,
-  };
-  const nextMemberships = [...current];
-  nextMemberships[index] = nextMembership;
-  const saved = await saveStoredMerchantMemberships(supabase, {
-    siteId,
-    memberships: nextMemberships,
-    updatedAt: now,
-  });
-  if (saved.error) throw new Error(saved.error);
-  return toMerchantMembershipListItem(nextMembership);
+  const allergens = normalizeMerchantMemberAllergens(input.allergens);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const stored = await loadStoredMerchantMemberships(supabase, siteId);
+    const current = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
+    const index = current.findIndex((membership) => membership.id === membershipId);
+    if (index < 0) throw new Error("membership_not_found");
+    if (current[index]?.status !== "active") throw new Error("membership_not_active");
+    const now = new Date().toISOString();
+    const nextMembership = {
+      ...current[index],
+      allergens,
+      updatedAt: now,
+    };
+    const nextMemberships = [...current];
+    nextMemberships[index] = nextMembership;
+    const saved = await saveStoredMerchantMemberships(supabase, {
+      siteId,
+      memberships: nextMemberships,
+      updatedAt: now,
+      expectedUpdatedAt: stored?.updatedAt ?? null,
+    });
+    if (!saved.error) return toMerchantMembershipListItem(nextMembership);
+    if (saved.error !== "merchant_memberships_conflict" || attempt >= 2) throw new Error(saved.error);
+  }
+  throw new Error("merchant_memberships_conflict");
 }
 
 type MerchantMembershipPointRuleAction = "checkin" | "invitation" | "review";
@@ -637,30 +662,15 @@ export async function awardMerchantMembershipRulePoints(input: {
   const supabase = requireMembershipsStoreClient();
   const siteId = trimText(input.siteId, 64);
   if (!siteId) throw new Error("invalid_site_id");
-  const [stored, settings] = await Promise.all([
-    loadStoredMerchantMemberships(supabase, siteId),
-    getMerchantMembershipSettings(siteId),
-  ]);
-  const current = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
-  const index = findActiveMembershipIndex(current, input);
-  if (index < 0) throw new Error("membership_not_found");
+  const settings = await getMerchantMembershipSettings(siteId);
   const nowDate = new Date();
-  const now = nowDate.toISOString();
   const dayKey = formatDateYmd(nowDate);
-  const currentMembership = current[index];
   let points = 0;
   let marker = "";
   let note = "";
 
   if (input.action === "checkin") {
-    points = settings.pointsRules.checkinPoints;
-    const previousMarker = `[checkin-points:${getPreviousDateYmd(nowDate)}]`;
-    const continuousPoints = transactionHasMarker(currentMembership, previousMarker)
-      ? settings.pointsRules.continuousCheckinPoints
-      : 0;
-    points += continuousPoints;
     marker = `[checkin-points:${dayKey}]`;
-    note = continuousPoints > 0 ? `签到积分，含连续签到 ${continuousPoints} 分 ${marker}` : `签到积分 ${marker}`;
   } else if (input.action === "invitation") {
     points = settings.pointsRules.invitationPoints;
     const referenceId = normalizeReferenceId(input.referenceId, "");
@@ -676,32 +686,55 @@ export async function awardMerchantMembershipRulePoints(input: {
   }
 
   const shouldRecordZeroCheckin = input.action === "checkin" && settings.pointsRules.continuousCheckinPoints > 0;
-  if (points <= 0 && !shouldRecordZeroCheckin) return toMerchantMembershipListItem(currentMembership);
-  if (transactionHasMarker(currentMembership, marker)) return toMerchantMembershipListItem(currentMembership);
-  const nextMembership = {
-    ...currentMembership,
-    pointBalance: currentMembership.pointBalance + points,
-    transactions: [
-      createMerchantMemberTransaction({
-        type: "recharge",
-        at: now,
-        pointDelta: points,
-        note,
-        operatorId: trimText(input.operatorId, 120) || (input.session ? input.session.accountId : "system"),
-      }),
-      ...currentMembership.transactions,
-    ],
-    updatedAt: now,
-  };
-  const nextMemberships = [...current];
-  nextMemberships[index] = nextMembership;
-  const saved = await saveStoredMerchantMemberships(supabase, {
-    siteId,
-    memberships: nextMemberships,
-    updatedAt: now,
-  });
-  if (saved.error) throw new Error(saved.error);
-  return toMerchantMembershipListItem(nextMembership);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const stored = await loadStoredMerchantMemberships(supabase, siteId);
+    const current = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
+    const index = findActiveMembershipIndex(current, input);
+    if (index < 0) throw new Error("membership_not_found");
+    const currentMembership = current[index];
+    if (transactionHasMarker(currentMembership, marker)) return toMerchantMembershipListItem(currentMembership);
+    let operationPoints = points;
+    let operationNote = note;
+    if (input.action === "checkin") {
+      const previousMarker = `[checkin-points:${getPreviousDateYmd(nowDate)}]`;
+      const continuousPoints = transactionHasMarker(currentMembership, previousMarker)
+        ? settings.pointsRules.continuousCheckinPoints
+        : 0;
+      operationPoints = settings.pointsRules.checkinPoints + continuousPoints;
+      operationNote =
+        continuousPoints > 0
+          ? `签到积分，含连续签到 ${continuousPoints} 分 ${marker}`
+          : `签到积分 ${marker}`;
+    }
+    if (operationPoints <= 0 && !shouldRecordZeroCheckin) return toMerchantMembershipListItem(currentMembership);
+    const now = new Date().toISOString();
+    const nextMembership = {
+      ...currentMembership,
+      pointBalance: currentMembership.pointBalance + operationPoints,
+      transactions: [
+        createMerchantMemberTransaction({
+          type: "recharge",
+          at: now,
+          pointDelta: operationPoints,
+          note: operationNote,
+          operatorId: trimText(input.operatorId, 120) || (input.session ? input.session.accountId : "system"),
+        }),
+        ...currentMembership.transactions,
+      ],
+      updatedAt: now,
+    };
+    const nextMemberships = [...current];
+    nextMemberships[index] = nextMembership;
+    const saved = await saveStoredMerchantMemberships(supabase, {
+      siteId,
+      memberships: nextMemberships,
+      updatedAt: now,
+      expectedUpdatedAt: stored?.updatedAt ?? null,
+    });
+    if (!saved.error) return toMerchantMembershipListItem(nextMembership);
+    if (saved.error !== "merchant_memberships_conflict" || attempt >= 2) throw new Error(saved.error);
+  }
+  throw new Error("merchant_memberships_conflict");
 }
 
 export async function applyMerchantMembershipAccountOperation(input: {
@@ -1365,7 +1398,7 @@ export async function applyMerchantMembershipRedemptionCart(
 ): Promise<MerchantMembershipListItem> {
   const siteId = trimText(input.siteId, 64);
   if (!siteId) throw new Error("invalid_site_id");
-  return withMerchantMembershipRedemptionMutationLock(siteId, () =>
+  return withMerchantMembershipMutationLock(siteId, () =>
     applyMerchantMembershipRedemptionCartUnlocked({ ...input, siteId }),
   );
 }
@@ -1548,63 +1581,85 @@ export async function applyMerchantMembershipPointDeduction(input: {
   orderAmount: unknown;
   requestedPoints: unknown;
   orderId?: unknown;
+  operationId?: unknown;
   operatorId?: string;
 }) {
   const supabase = requireMembershipsStoreClient();
   const siteId = trimText(input.siteId, 64);
   const membershipId = trimText(input.membershipId, 160);
   if (!siteId || !membershipId) throw new Error("membership_not_found");
-  const [stored, settings] = await Promise.all([
-    loadStoredMerchantMemberships(supabase, siteId),
-    getMerchantMembershipSettings(siteId),
-  ]);
-  const current = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
-  const membershipIndex = current.findIndex((item) => item.id === membershipId);
-  if (membershipIndex < 0 || current[membershipIndex]?.status !== "active") throw new Error("membership_not_found");
-  const currentMembership = current[membershipIndex];
+  const settings = await getMerchantMembershipSettings(siteId);
   const orderId = trimText(input.orderId, 160);
-  const marker = orderId ? `[point-deduction:${orderId}]` : "";
-  if (marker && transactionHasMarker(currentMembership, marker)) {
-    throw new Error("point_deduction_already_applied");
+  const marker = orderId
+    ? `[point-deduction:${orderId}]`
+    : buildMutationOperationMarker("point-deduction", input.operationId);
+  if (!marker) throw new Error("mutation_operation_id_required");
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const stored = await loadStoredMerchantMemberships(supabase, siteId);
+    const current = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
+    const membershipIndex = current.findIndex((item) => item.id === membershipId);
+    if (membershipIndex < 0 || current[membershipIndex]?.status !== "active") throw new Error("membership_not_found");
+    const currentMembership = current[membershipIndex];
+    const existingTransaction = currentMembership.transactions.find((transaction) => transaction.note.includes(marker));
+    if (existingTransaction) {
+      const existingPoints = Math.abs(Math.min(0, existingTransaction.pointDelta));
+      const existingAmount = Number.parseFloat(
+        existingTransaction.note.match(/订单积分抵扣\s+([0-9]+(?:\.[0-9]+)?)/)?.[1] ?? "0",
+      );
+      const amount = Number.isFinite(existingAmount) ? existingAmount : 0;
+      return {
+        membership: toMerchantMembershipListItem(currentMembership),
+        quote: { points: existingPoints, amount, maxPoints: existingPoints, maxAmount: amount },
+        alreadyApplied: true,
+      };
+    }
+    const quote = calculateMerchantMemberPointDeduction({
+      orderAmount: normalizePositiveMoney(input.orderAmount),
+      pointBalance: currentMembership.pointBalance,
+      requestedPoints: normalizePositiveInteger(input.requestedPoints),
+      settings,
+    });
+    if (quote.points <= 0 || quote.amount <= 0) {
+      throw new Error("point_deduction_unavailable");
+    }
+    const now = new Date().toISOString();
+    const growthDelta = quote.points * settings.growthRules.spendPointGrowth;
+    let nextMembership: MerchantMembershipRecord = {
+      ...currentMembership,
+      pointBalance: Math.max(0, currentMembership.pointBalance - quote.points),
+      transactions: [
+        createMerchantMemberTransaction({
+          type: "redeem",
+          at: now,
+          pointDelta: -quote.points,
+          growthDelta,
+          note: `订单积分抵扣 ${quote.amount.toFixed(2)} ${marker}`,
+          operatorId: trimText(input.operatorId, 120) || "system",
+        }),
+        ...currentMembership.transactions,
+      ],
+      updatedAt: now,
+    };
+    nextMembership = applyMembershipGrowthAndLevel({
+      membership: nextMembership,
+      settings,
+      growthDelta,
+      now,
+    });
+    const nextMemberships = [...current];
+    nextMemberships[membershipIndex] = nextMembership;
+    const saved = await saveStoredMerchantMemberships(supabase, {
+      siteId,
+      memberships: nextMemberships,
+      updatedAt: now,
+      expectedUpdatedAt: stored?.updatedAt ?? null,
+    });
+    if (!saved.error) {
+      return { membership: toMerchantMembershipListItem(nextMembership), quote, alreadyApplied: false };
+    }
+    if (saved.error !== "merchant_memberships_conflict" || attempt >= 2) throw new Error(saved.error);
   }
-  const quote = calculateMerchantMemberPointDeduction({
-    orderAmount: normalizePositiveMoney(input.orderAmount),
-    pointBalance: currentMembership.pointBalance,
-    requestedPoints: normalizePositiveInteger(input.requestedPoints),
-    settings,
-  });
-  if (quote.points <= 0 || quote.amount <= 0) {
-    throw new Error("point_deduction_unavailable");
-  }
-  const now = new Date().toISOString();
-  const growthDelta = quote.points * settings.growthRules.spendPointGrowth;
-  let nextMembership: MerchantMembershipRecord = {
-    ...currentMembership,
-    pointBalance: Math.max(0, currentMembership.pointBalance - quote.points),
-    transactions: [
-      createMerchantMemberTransaction({
-        type: "redeem",
-        at: now,
-        pointDelta: -quote.points,
-        growthDelta,
-        note: `订单积分抵扣 ${quote.amount.toFixed(2)}${marker ? ` ${marker}` : ""}`,
-        operatorId: trimText(input.operatorId, 120) || "system",
-      }),
-      ...currentMembership.transactions,
-    ],
-    updatedAt: now,
-  };
-  nextMembership = applyMembershipGrowthAndLevel({
-    membership: nextMembership,
-    settings,
-    growthDelta,
-    now,
-  });
-  const nextMemberships = [...current];
-  nextMemberships[membershipIndex] = nextMembership;
-  const saved = await saveStoredMerchantMemberships(supabase, { siteId, memberships: nextMemberships, updatedAt: now });
-  if (saved.error) throw new Error(saved.error);
-  return { membership: toMerchantMembershipListItem(nextMembership), quote };
+  throw new Error("merchant_memberships_conflict");
 }
 
 export async function joinMerchantMembership(input: {
@@ -1617,82 +1672,87 @@ export async function joinMerchantMembership(input: {
   const siteId = trimText(input.siteId, 64);
   if (!siteId) throw new Error("invalid_site_id");
   const siteName = trimText(input.siteName, 120) || siteId;
-  const stored = await loadStoredMerchantMemberships(supabase, siteId);
-  const current = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
   const settings = await getMerchantMembershipSettings(siteId).catch(() => null);
   const profile = normalizeMerchantMembershipProfileDraft(input.profile, readPersonalMembershipProfileFromSession(input.session));
-  const existingIndex = current.findIndex(
-    (membership) =>
-      (membership.accountId && membership.accountId === input.session.accountId) ||
-      (membership.userId && membership.userId === input.session.userId),
-  );
-  const now = new Date().toISOString();
-  const baseProfile = {
-    siteName,
-    accountId: input.session.accountId,
-    userId: input.session.userId,
-    email: profile.email || input.session.email,
-    nickname: profile.nickname,
-    name: profile.name,
-    phone: profile.phone,
-    avatarUrl: profile.avatarUrl,
-    birthday: profile.birthday,
-    birthdayMonthDayOnly: profile.birthdayMonthDayOnly,
-    gender: profile.gender,
-    country: profile.country,
-    province: profile.province,
-    city: profile.city,
-    address: profile.address,
-    taxName: profile.taxName,
-    taxNumber: profile.taxNumber,
-    taxCountry: profile.taxCountry,
-    taxProvince: profile.taxProvince,
-    taxCity: profile.taxCity,
-    taxAddress: profile.taxAddress,
-    allergens: profile.allergens,
-    status: "active" as const,
-    leftAt: null,
-    updatedAt: now,
-  };
+  const profileValidationError = getMerchantMembershipProfileValidationError(profile);
+  if (profileValidationError) throw new Error(profileValidationError);
+  const nextMembership = await withMerchantMembershipMutationLock(siteId, async () => {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const stored = await loadStoredMerchantMemberships(supabase, siteId);
+      const current = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
+      const existingIndex = current.findIndex(
+        (membership) =>
+          (membership.accountId && membership.accountId === input.session.accountId) ||
+          (membership.userId && membership.userId === input.session.userId),
+      );
+      const now = new Date().toISOString();
+      const baseProfile = {
+        siteName,
+        accountId: input.session.accountId,
+        userId: input.session.userId,
+        email: profile.email || input.session.email,
+        nickname: profile.nickname,
+        name: profile.name,
+        phone: profile.phone,
+        avatarUrl: profile.avatarUrl,
+        birthday: profile.birthday,
+        birthdayMonthDayOnly: profile.birthdayMonthDayOnly,
+        gender: profile.gender,
+        country: profile.country,
+        province: profile.province,
+        city: profile.city,
+        address: profile.address,
+        taxName: profile.taxName,
+        taxNumber: profile.taxNumber,
+        taxCountry: profile.taxCountry,
+        taxProvince: profile.taxProvince,
+        taxCity: profile.taxCity,
+        taxAddress: profile.taxAddress,
+        allergens: profile.allergens,
+        status: "active" as const,
+        leftAt: null,
+        updatedAt: now,
+      };
 
-  let nextMembership: MerchantMembershipRecord =
-    existingIndex >= 0
-      ? {
-          ...current[existingIndex],
-          ...baseProfile,
-        }
-      : (() => {
-          const serial = current.reduce((max, item) => Math.max(max, item.serial), 0) + 1;
-          return {
-            id: `${siteId}:${input.session.accountId || input.session.userId}`,
-            siteId,
-            memberNo: buildMerchantMemberNo(siteId, serial),
-            serial,
-            joinedAt: now,
-            pointBalance: 0,
-            balanceAmount: 0,
-            growthValue: 0,
-            levelId: "",
-            transactions: [],
-            ...baseProfile,
-          } satisfies MerchantMembershipRecord;
-        })();
-  if (settings) {
-    nextMembership = applyJoinPoints(nextMembership, settings, now);
-    nextMembership = applyMembershipGrowthAndLevel({
-      membership: nextMembership,
-      settings,
-      now,
-    });
-  }
-  const nextMemberships = existingIndex >= 0 ? [...current] : [nextMembership, ...current];
-  if (existingIndex >= 0) nextMemberships[existingIndex] = nextMembership;
-  const saved = await saveStoredMerchantMemberships(supabase, {
-    siteId,
-    memberships: nextMemberships,
-    updatedAt: now,
+      let membership: MerchantMembershipRecord =
+        existingIndex >= 0
+          ? {
+              ...current[existingIndex],
+              ...baseProfile,
+            }
+          : (() => {
+              const serial = current.reduce((max, item) => Math.max(max, item.serial), 0) + 1;
+              return {
+                id: `${siteId}:${input.session.accountId || input.session.userId}`,
+                siteId,
+                memberNo: buildMerchantMemberNo(siteId, serial),
+                serial,
+                joinedAt: now,
+                pointBalance: 0,
+                balanceAmount: 0,
+                growthValue: 0,
+                levelId: "",
+                transactions: [],
+                ...baseProfile,
+              } satisfies MerchantMembershipRecord;
+            })();
+      if (settings) {
+        membership = applyJoinPoints(membership, settings, now);
+        membership = applyMembershipGrowthAndLevel({ membership, settings, now });
+      }
+      const nextMemberships = existingIndex >= 0 ? [...current] : [membership, ...current];
+      if (existingIndex >= 0) nextMemberships[existingIndex] = membership;
+      const saved = await saveStoredMerchantMemberships(supabase, {
+        siteId,
+        memberships: nextMemberships,
+        updatedAt: now,
+        expectedUpdatedAt: stored?.updatedAt ?? null,
+      });
+      if (!saved.error) return membership;
+      if (saved.error !== "merchant_memberships_conflict" || attempt >= 2) throw new Error(saved.error);
+    }
+    throw new Error("merchant_memberships_conflict");
   });
-  if (saved.error) throw new Error(saved.error);
   await writePersonalMembershipToMetadata(input.session, nextMembership);
   return nextMembership;
 }
@@ -1704,29 +1764,37 @@ export async function leaveMerchantMembership(input: {
   const supabase = requireMembershipsStoreClient();
   const siteId = trimText(input.siteId, 64);
   if (!siteId) throw new Error("invalid_site_id");
-  const stored = await loadStoredMerchantMemberships(supabase, siteId);
-  const current = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
-  const index = current.findIndex(
-    (membership) =>
-      (membership.accountId && membership.accountId === input.session.accountId) ||
-      (membership.userId && membership.userId === input.session.userId),
-  );
-  if (index < 0) throw new Error("membership_not_found");
-  const now = new Date().toISOString();
-  const nextMembership = {
-    ...current[index],
-    status: "left" as const,
-    leftAt: now,
-    updatedAt: now,
-  };
-  const nextMemberships = [...current];
-  nextMemberships[index] = nextMembership;
-  const saved = await saveStoredMerchantMemberships(supabase, {
-    siteId,
-    memberships: nextMemberships,
-    updatedAt: now,
+  const nextMembership = await withMerchantMembershipMutationLock(siteId, async () => {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const stored = await loadStoredMerchantMemberships(supabase, siteId);
+      const current = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
+      const index = current.findIndex(
+        (membership) =>
+          (membership.accountId && membership.accountId === input.session.accountId) ||
+          (membership.userId && membership.userId === input.session.userId),
+      );
+      if (index < 0) throw new Error("membership_not_found");
+      if (current[index]?.status === "left") return current[index];
+      const now = new Date().toISOString();
+      const membership = {
+        ...current[index],
+        status: "left" as const,
+        leftAt: now,
+        updatedAt: now,
+      };
+      const nextMemberships = [...current];
+      nextMemberships[index] = membership;
+      const saved = await saveStoredMerchantMemberships(supabase, {
+        siteId,
+        memberships: nextMemberships,
+        updatedAt: now,
+        expectedUpdatedAt: stored?.updatedAt ?? null,
+      });
+      if (!saved.error) return membership;
+      if (saved.error !== "merchant_memberships_conflict" || attempt >= 2) throw new Error(saved.error);
+    }
+    throw new Error("merchant_memberships_conflict");
   });
-  if (saved.error) throw new Error(saved.error);
   await writePersonalMembershipToMetadata(input.session, toPersonalMembershipCard(nextMembership));
   return nextMembership;
 }

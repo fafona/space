@@ -288,6 +288,58 @@ export function normalizeMerchantMemberAccountTransactions(value: unknown): Merc
     .sort((left, right) => Date.parse(right.at) - Date.parse(left.at));
 }
 
+export function calculateExpiredMerchantMemberPoints(input: {
+  transactions: readonly MerchantMemberAccountTransaction[];
+  pointBalance: unknown;
+  cutoffTimestamp: unknown;
+}) {
+  const pointBalance = normalizeNonNegativeInteger(input.pointBalance);
+  const cutoffTimestamp = Number(input.cutoffTimestamp);
+  if (pointBalance <= 0 || !Number.isFinite(cutoffTimestamp)) return 0;
+
+  const lots: Array<{ transactionId: string; at: number; remaining: number }> = [];
+  const adjustedTransactionIds = new Set(
+    input.transactions
+      .filter((transaction) => transaction.pointDelta < 0 && transaction.relatedTransactionId)
+      .map((transaction) => transaction.relatedTransactionId),
+  );
+  [...input.transactions]
+    .map((transaction, index) => ({ transaction, index, at: Date.parse(transaction.at) }))
+    .filter((entry) => Number.isFinite(entry.at) && entry.transaction.pointDelta !== 0)
+    .sort((left, right) => left.at - right.at || left.index - right.index)
+    .forEach(({ transaction, at }) => {
+      if (transaction.pointDelta > 0) {
+        if (transaction.status === "cancelled" && !adjustedTransactionIds.has(transaction.id)) return;
+        lots.push({ transactionId: transaction.id, at, remaining: transaction.pointDelta });
+        return;
+      }
+
+      let amountToConsume = Math.abs(transaction.pointDelta);
+      if (transaction.relatedTransactionId) {
+        const relatedLot = lots.find(
+          (lot) => lot.transactionId === transaction.relatedTransactionId && lot.remaining > 0,
+        );
+        if (relatedLot) {
+          const relatedAmount = Math.min(relatedLot.remaining, amountToConsume);
+          relatedLot.remaining -= relatedAmount;
+          amountToConsume -= relatedAmount;
+        }
+      }
+      for (const lot of lots) {
+        if (amountToConsume <= 0) break;
+        if (lot.remaining <= 0) continue;
+        const consumed = Math.min(lot.remaining, amountToConsume);
+        lot.remaining -= consumed;
+        amountToConsume -= consumed;
+      }
+    });
+
+  const expiredPoints = lots
+    .filter((lot) => lot.at < cutoffTimestamp)
+    .reduce((sum, lot) => sum + lot.remaining, 0);
+  return Math.min(pointBalance, Math.max(0, Math.round(expiredPoints)));
+}
+
 function isRechargeAdjustmentForTransaction(
   transaction: MerchantMemberAccountTransaction,
   transactionId: string,
@@ -347,21 +399,12 @@ function buildRechargeAdjustmentTransaction(input: {
   } satisfies MerchantMemberAccountTransaction;
 }
 
-function prependTransactionPreservingTarget(
+function prependTransaction(
   transactions: MerchantMemberAccountTransaction[],
   nextTransaction: MerchantMemberAccountTransaction,
-  targetTransactionId: string,
 ) {
   const withoutNext = transactions.filter((transaction) => transaction.id !== nextTransaction.id);
-  const retained = withoutNext.slice(0, 499);
-  if (!retained.some((transaction) => transaction.id === targetTransactionId)) {
-    const target = withoutNext.find((transaction) => transaction.id === targetTransactionId);
-    if (target) {
-      if (retained.length >= 499) retained[retained.length - 1] = target;
-      else retained.push(target);
-    }
-  }
-  return [nextTransaction, ...retained];
+  return [nextTransaction, ...withoutNext];
 }
 
 export function quoteMerchantMemberRechargeCancellation(input: {
@@ -509,7 +552,7 @@ export function cancelMerchantMemberRechargeTransaction(input: {
     growthValue: normalizeMoneyValue(
       Math.max(0, input.membership.growthValue - Math.max(0, transaction.growthDelta)),
     ),
-    transactions: prependTransactionPreservingTarget(updatedTransactions, reversalTransaction, transaction.id),
+    transactions: prependTransaction(updatedTransactions, reversalTransaction),
     updatedAt: cancelledAt,
   };
   return { membership, transaction: cancelledTransaction, reversalTransaction, alreadyCancelled: false };
@@ -604,7 +647,7 @@ export function adjustMerchantMemberRechargeTransaction(input: {
     growthValue: completed
       ? normalizeMoneyValue(Math.max(0, input.membership.growthValue - Math.max(0, transaction.growthDelta)))
       : input.membership.growthValue,
-    transactions: prependTransactionPreservingTarget(updatedTransactions, adjustmentTransaction, transaction.id),
+    transactions: prependTransaction(updatedTransactions, adjustmentTransaction),
     updatedAt: adjustedAt,
   };
   return {
@@ -663,6 +706,28 @@ export function normalizeMerchantMembershipProfileDraft(
     taxAddress: trimText(record.taxAddress, 240) || trimText(record.tax_address, 240) || trimText(fallback.taxAddress, 240),
     allergens: normalizeMerchantMemberAllergens(record.allergens ?? fallback.allergens),
   };
+}
+
+function isValidMembershipBirthday(value: string, monthDayOnly: boolean) {
+  const match = value.match(monthDayOnly ? /^(\d{2})-(\d{2})$/ : /^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return false;
+  const year = monthDayOnly ? 2000 : Number(match[1]);
+  const month = Number(match[monthDayOnly ? 1 : 2]);
+  const day = Number(match[monthDayOnly ? 2 : 3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() + 1 === month && date.getUTCDate() === day;
+}
+
+export function getMerchantMembershipProfileValidationError(profile: MerchantMembershipProfileDraft) {
+  if (!profile.nickname) return "请填写昵称";
+  if (!profile.phone) return "请填写手机";
+  if (!profile.email) return "请填写邮箱";
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(profile.email)) return "邮箱格式不正确";
+  if (!profile.birthday) return profile.birthdayMonthDayOnly ? "请填写生日月日" : "请填写生日";
+  if (!isValidMembershipBirthday(profile.birthday, profile.birthdayMonthDayOnly)) {
+    return profile.birthdayMonthDayOnly ? "生日月日格式不正确" : "生日格式不正确";
+  }
+  return "";
 }
 
 export function normalizeMerchantMembershipRecord(value: unknown): MerchantMembershipRecord | null {
