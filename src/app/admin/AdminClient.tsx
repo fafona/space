@@ -342,10 +342,6 @@ import {
   restoreAccountSwitchEntry,
   type AccountSwitchEntry,
 } from "@/lib/accountSwitching";
-import BlockRenderer from "@/components/blocks/BlockRenderer";
-import BookingBlock from "@/components/blocks/BookingBlock";
-import CouponBlock from "@/components/blocks/CouponBlock";
-import GoogleReviewsBlock from "@/components/blocks/GoogleReviewsBlock";
 import { useI18n } from "@/components/I18nProvider";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import NoMercyFlagIcon from "@/components/NoMercyFlagIcon";
@@ -394,6 +390,14 @@ function DeferredAdminPanelLoading({ label }: { label: string }) {
   );
 }
 
+function DeferredEditorPreviewLoading({ label }: { label: string }) {
+  return (
+    <div className="flex min-h-24 items-center justify-center rounded-lg border border-dashed border-slate-200 bg-white/70 px-4 text-xs text-slate-500">
+      {label}
+    </div>
+  );
+}
+
 function readSameOriginFrameHref(frame: HTMLIFrameElement | null) {
   try {
     return frame?.contentWindow?.location.href ?? "";
@@ -410,6 +414,19 @@ const loadFaollaQrPanel = () => import("@/components/FaollaQrPanel");
 const loadAccountSwitcherDialog = () => import("@/components/AccountSwitcherDialog");
 const loadGoogleBusinessProfileReviewsPanel = () =>
   import("@/components/admin/GoogleBusinessProfileReviewsPanel");
+const loadEditorBlockRenderer = () => import("@/components/blocks/BlockRenderer");
+const loadEditorBookingBlock = () => import("@/components/blocks/BookingBlock");
+const loadEditorCouponBlock = () => import("@/components/blocks/CouponBlock");
+const loadEditorGoogleReviewsBlock = () => import("@/components/blocks/GoogleReviewsBlock");
+
+function preloadEditorPreviewComponents() {
+  void Promise.allSettled([
+    loadEditorBlockRenderer(),
+    loadEditorBookingBlock(),
+    loadEditorCouponBlock(),
+    loadEditorGoogleReviewsBlock(),
+  ]);
+}
 
 const MerchantBusinessCardManager = dynamic(loadMerchantBusinessCardManager, {
   ssr: false,
@@ -509,6 +526,26 @@ const AccountSwitcherDialog = dynamic(loadAccountSwitcherDialog, {
 const GoogleBusinessProfileReviewsPanel = dynamic(loadGoogleBusinessProfileReviewsPanel, {
   ssr: false,
   loading: () => <DeferredAdminPanelLoading label="Google 评论配置加载中..." />,
+});
+
+const BlockRenderer = dynamic(loadEditorBlockRenderer, {
+  ssr: false,
+  loading: () => <DeferredEditorPreviewLoading label="页面预览加载中..." />,
+});
+
+const BookingBlock = dynamic(loadEditorBookingBlock, {
+  ssr: false,
+  loading: () => <DeferredEditorPreviewLoading label="预约区块预览加载中..." />,
+});
+
+const CouponBlock = dynamic(loadEditorCouponBlock, {
+  ssr: false,
+  loading: () => <DeferredEditorPreviewLoading label="优惠券区块预览加载中..." />,
+});
+
+const GoogleReviewsBlock = dynamic(loadEditorGoogleReviewsBlock, {
+  ssr: false,
+  loading: () => <DeferredEditorPreviewLoading label="Google 评论区块预览加载中..." />,
 });
 
 const IMAGE_FILL_VALUES: ImageFillMode[] = [
@@ -15535,6 +15572,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       showTip("当前商户还没准备好网站编辑资料，请稍后重试");
       return;
     }
+    preloadEditorPreviewComponents();
     const editorHref = new URL(buildMerchantBackendHref(resolvedSiteId), window.location.origin);
     editorHref.searchParams.set("editorOnly", "1");
     const opened = window.open(editorHref.toString(), "_blank", "noopener,noreferrer");
