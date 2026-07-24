@@ -88,6 +88,20 @@ export function readMerchantAdminDataCacheSnapshot<T>(
   }
 }
 
+export function readLatestMerchantAdminDataCacheSnapshot<T>(
+  keys: string[],
+  freshAgeMs = MERCHANT_ADMIN_DATA_CACHE_TTL_MS,
+): MerchantAdminDataCacheSnapshot<T> | null {
+  let latestSnapshot: MerchantAdminDataCacheSnapshot<T> | null = null;
+  for (const key of keys) {
+    const snapshot = readMerchantAdminDataCacheSnapshot<T>(key, freshAgeMs);
+    if (snapshot && (!latestSnapshot || snapshot.savedAt > latestSnapshot.savedAt)) {
+      latestSnapshot = snapshot;
+    }
+  }
+  return latestSnapshot;
+}
+
 export function writeMerchantAdminDataCache<T>(key: string, data: T, options: { version?: string | null } = {}) {
   if (typeof window === "undefined" || !key) return;
   try {

@@ -56,8 +56,11 @@ import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import { runWithMerchantOperationContext } from "@/lib/merchantOperationContext";
 import {
+  MERCHANT_ADMIN_DATA_CACHE_TTL_MS,
   invalidateMerchantAdminDataCachePrefix,
   makeMerchantAdminDataCacheKey,
+  readLatestMerchantAdminDataCacheSnapshot,
+  writeMerchantAdminDataCache,
 } from "@/lib/merchantAdminDataCache";
 
 type MerchantPrintSettingsPanelProps = {
@@ -73,6 +76,8 @@ type MembershipSettingsPayload = {
   settings?: MerchantMembershipSettings;
   message?: unknown;
   error?: unknown;
+  notModified?: unknown;
+  version?: unknown;
 };
 
 type PrintSettingsPanelTab = "text" | "content" | "print";
@@ -499,6 +504,7 @@ export default function MerchantPrintSettingsPanel({
   const [activeReceiptSection, setActiveReceiptSection] = useState<MerchantReceiptFieldSection>("meta");
   const [draggingReceiptMargin, setDraggingReceiptMargin] = useState<ReceiptMarginSide | null>(null);
   const [receiptMarginInputDraft, setReceiptMarginInputDraft] = useState<Partial<Record<ReceiptMarginSide, string>>>({});
+  const settingsLoadRequestIdRef = useRef(0);
   const receiptMarginDragRef = useRef<{
     side: ReceiptMarginSide;
     startX: number;
@@ -814,7 +820,7 @@ export default function MerchantPrintSettingsPanel({
     return true;
   }, [downloadPrintHelperInstaller, printHelperManifest, refreshPrintHelperManifest]);
 
-  const loadSettings = useCallback(async () => {
+  const loadSettings = useCallback(async (force = false) => {
     if (!/^\d{8}$/.test(normalizedSiteId)) {
       const emptySettings = createEmptyMerchantMembershipSettings(normalizedSiteId);
       setSettings({
@@ -824,22 +830,21 @@ export default function MerchantPrintSettingsPanel({
       setError("当前商户资料还没准备好，请稍后重试。");
       return;
     }
-    setLoading(true);
-    setError("");
-    setNotice("");
-    try {
-      const params = new URLSearchParams({ siteId: normalizedSiteId });
-      const response = await fetch(`/api/membership-settings?${params.toString()}`, {
-        method: "GET",
-        cache: "no-store",
-        credentials: "same-origin",
-        headers: { accept: "application/json" },
-      });
-      const payload = (await response.json().catch(() => null)) as MembershipSettingsPayload | null;
-      if (!response.ok || payload?.ok !== true || !payload.settings) {
-        throw new Error(readPayloadMessage(payload?.message, "打印配置加载失败，请稍后重试"));
-      }
-      const normalized = normalizeMerchantMembershipSettings(normalizedSiteId, payload.settings);
+    const cacheKey = makeMerchantAdminDataCacheKey("merchant-membership-settings", normalizedSiteId, "print-panel");
+    const cachedSettings = force
+      ? null
+      : readLatestMerchantAdminDataCacheSnapshot<MerchantMembershipSettings>(
+          [
+            cacheKey,
+            makeMerchantAdminDataCacheKey("merchant-membership-settings", normalizedSiteId, "full"),
+            makeMerchantAdminDataCacheKey("merchant-membership-settings", normalizedSiteId, "settings-panel"),
+            makeMerchantAdminDataCacheKey("merchant-membership-settings", normalizedSiteId, "redemption-cashier"),
+          ],
+          MERCHANT_ADMIN_DATA_CACHE_TTL_MS,
+        );
+    const requestId = ++settingsLoadRequestIdRef.current;
+    const applyLoadedSettings = (nextSettings: MerchantMembershipSettings) => {
+      const normalized = normalizeMerchantMembershipSettings(normalizedSiteId, nextSettings);
       setSettings(
         normalized.printSettings.receiptLocale === MERCHANT_RECEIPT_AUTO_LOCALE
           ? {
@@ -848,10 +853,42 @@ export default function MerchantPrintSettingsPanel({
             }
           : normalized,
       );
+    };
+    if (cachedSettings) {
+      applyLoadedSettings(cachedSettings.data);
+    }
+    setLoading(true);
+    setError("");
+    setNotice("");
+    try {
+      const params = new URLSearchParams({ siteId: normalizedSiteId });
+      if (cachedSettings?.version) params.set("knownVersion", cachedSettings.version);
+      const response = await fetch(`/api/membership-settings?${params.toString()}`, {
+        method: "GET",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: { accept: "application/json" },
+      });
+      const payload = (await response.json().catch(() => null)) as MembershipSettingsPayload | null;
+      const settingsNotModified = payload?.notModified === true && Boolean(cachedSettings);
+      if (!response.ok || payload?.ok !== true || (!settingsNotModified && !payload.settings)) {
+        throw new Error(readPayloadMessage(payload?.message, "打印配置加载失败，请稍后重试"));
+      }
+      const nextSettings = settingsNotModified
+        ? cachedSettings!.data
+        : normalizeMerchantMembershipSettings(normalizedSiteId, payload!.settings);
+      const loadedVersion =
+        typeof payload?.version === "string" && payload.version.trim()
+          ? payload.version.trim()
+          : cachedSettings?.version ?? nextSettings.updatedAt;
+      writeMerchantAdminDataCache(cacheKey, nextSettings, { version: loadedVersion });
+      if (settingsLoadRequestIdRef.current === requestId) applyLoadedSettings(nextSettings);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "打印配置加载失败，请稍后重试");
+      if (settingsLoadRequestIdRef.current === requestId && !cachedSettings) {
+        setError(loadError instanceof Error ? loadError.message : "打印配置加载失败，请稍后重试");
+      }
     } finally {
-      setLoading(false);
+      if (settingsLoadRequestIdRef.current === requestId) setLoading(false);
     }
   }, [defaultReceiptLocale, normalizedSiteId]);
 
@@ -905,8 +942,14 @@ export default function MerchantPrintSettingsPanel({
       if (!response.ok || payload?.ok !== true || !payload.settings) {
         throw new Error(readPayloadMessage(payload?.message ?? payload?.error, `打印配置保存失败（${response.status}），请稍后重试`));
       }
-      setSettings(normalizeMerchantMembershipSettings(normalizedSiteId, payload.settings));
+      const savedSettings = normalizeMerchantMembershipSettings(normalizedSiteId, payload.settings);
+      setSettings(savedSettings);
       invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-membership-settings", normalizedSiteId));
+      writeMerchantAdminDataCache(
+        makeMerchantAdminDataCacheKey("merchant-membership-settings", normalizedSiteId, "print-panel"),
+        savedSettings,
+        { version: savedSettings.updatedAt },
+      );
       setNotice("打印配置已保存");
     } catch (saveError) {
       setError(readPrintSettingsSaveErrorMessage(saveError));
@@ -1172,7 +1215,7 @@ export default function MerchantPrintSettingsPanel({
           <button
             type="button"
             className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-            onClick={() => void loadSettings()}
+            onClick={() => void loadSettings(true)}
             disabled={loading || saving || logoUploading}
           >
             {loading ? "刷新中..." : "刷新"}

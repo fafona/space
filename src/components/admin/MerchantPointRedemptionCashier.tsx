@@ -14,6 +14,7 @@ import {
   MERCHANT_ADMIN_DATA_CACHE_TTL_MS,
   invalidateMerchantAdminDataCachePrefix,
   makeMerchantAdminDataCacheKey,
+  readLatestMerchantAdminDataCacheSnapshot,
   readMerchantAdminDataCacheSnapshot,
   writeMerchantAdminDataCache,
 } from "@/lib/merchantAdminDataCache";
@@ -1498,16 +1499,36 @@ export default function MerchantPointRedemptionCashier({
       : readMerchantAdminDataCacheSnapshot<MerchantMembershipListItem[]>(membersCacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
     const cachedSettings = force
       ? null
-      : readMerchantAdminDataCacheSnapshot<MerchantMembershipSettings>(settingsCacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
-    const cachedCoupons = force
+      : readLatestMerchantAdminDataCacheSnapshot<MerchantMembershipSettings>(
+          [
+            settingsCacheKey,
+            makeMerchantAdminDataCacheKey("merchant-membership-settings", normalizedSiteId, "full"),
+            makeMerchantAdminDataCacheKey("merchant-membership-settings", normalizedSiteId, "settings-panel"),
+            makeMerchantAdminDataCacheKey("merchant-membership-settings", normalizedSiteId, "print-panel"),
+          ],
+          MERCHANT_ADMIN_DATA_CACHE_TTL_MS,
+        );
+    const cachedCouponsSnapshot = force
       ? null
-      : readMerchantAdminDataCacheSnapshot<MerchantCouponRecord[]>(couponsCacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
+      : readLatestMerchantAdminDataCacheSnapshot<MerchantCouponRecord[]>(
+          [
+            couponsCacheKey,
+            makeMerchantAdminDataCacheKey("merchant-coupons", normalizedSiteId),
+          ],
+          MERCHANT_ADMIN_DATA_CACHE_TTL_MS,
+        );
+    const cachedCoupons = cachedCouponsSnapshot
+      ? {
+          ...cachedCouponsSnapshot,
+          data: cachedCouponsSnapshot.data.map((coupon) => ({
+            ...coupon,
+            claimEvents: [],
+            redeemEvents: [],
+          })),
+        }
+      : null;
     const cachedSettingsHasEnabledItems = (cachedSettings?.data.redemptionItems ?? []).some((item) => item.enabled);
-    const applyLoadedData = (
-      nextMemberships: MerchantMembershipListItem[],
-      nextSettings: MerchantMembershipSettings,
-      nextCoupons: MerchantCouponRecord[],
-    ) => {
+    const applyLoadedMemberships = (nextMemberships: MerchantMembershipListItem[]) => {
       setMemberships((current) => {
         const insightById = new Map(
           current
@@ -1533,6 +1554,13 @@ export default function MerchantPointRedemptionCashier({
           return insight ? { ...membership, insight } : membership;
         });
       });
+    };
+    const applyLoadedData = (
+      nextMemberships: MerchantMembershipListItem[],
+      nextSettings: MerchantMembershipSettings,
+      nextCoupons: MerchantCouponRecord[],
+    ) => {
+      applyLoadedMemberships(nextMemberships);
       setSettings(nextSettings);
       setCoupons(nextCoupons);
     };
@@ -1601,9 +1629,13 @@ export default function MerchantPointRedemptionCashier({
       });
       applyLoadedData(mergedMemberships, nextSettings, nextCoupons);
     };
-    if (cachedMemberships && cachedSettings && cachedCoupons) {
+    if (cachedMemberships || cachedSettings || cachedCoupons) {
       setError("");
-      applyLoadedData(cachedMemberships.data, cachedSettings.data, cachedCoupons.data);
+      if (cachedMemberships) applyLoadedMemberships(cachedMemberships.data);
+      if (cachedSettings) setSettings(cachedSettings.data);
+      if (cachedCoupons) setCoupons(cachedCoupons.data);
+    }
+    if (cachedMemberships && cachedSettings && cachedCoupons) {
       void loadCashierDataFromServer().catch(() => {});
       return;
     }

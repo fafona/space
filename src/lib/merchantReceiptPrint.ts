@@ -13,7 +13,6 @@ import {
   normalizeLocalPrintBridgeUrl,
 } from "@/lib/localPrintBridge";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
-import { toPng } from "html-to-image";
 
 export type MerchantRedemptionReceiptLine = {
   code: string;
@@ -104,9 +103,20 @@ const RECEIPT_WATERMARK_PRINT_COLUMNS = Array.from({ length: 7 }, (_, index) => 
 const LOCAL_PRINT_BRIDGE_MAX_DATA_IMAGE_CHARS = 3_500_000;
 const PRINTABLE_LOGO_DATA_URL_CACHE_LIMIT = 24;
 const printableLogoDataUrlCache = new Map<string, Promise<string>>();
+let htmlToImageModulePromise: Promise<typeof import("html-to-image")> | null = null;
 
 export const PRINT_HELPER_MANIFEST_PATH = "/downloads/print-helper/latest.json";
 export const PRINT_HELPER_MINIMUM_VERSION = "1.5.3";
+
+function loadHtmlToImageModule() {
+  if (!htmlToImageModulePromise) {
+    htmlToImageModulePromise = import("html-to-image").catch((error) => {
+      htmlToImageModulePromise = null;
+      throw error;
+    });
+  }
+  return htmlToImageModulePromise;
+}
 
 function escapeHtml(value: unknown) {
   return String(value ?? "")
@@ -248,6 +258,7 @@ async function buildReceiptImageDataUrl(html: string) {
     host.appendChild(content);
     document.body.appendChild(host);
     await document.fonts?.ready;
+    const { toPng } = await loadHtmlToImageModule();
     return await toPng(content, {
       backgroundColor: "#ffffff",
       cacheBust: true,
