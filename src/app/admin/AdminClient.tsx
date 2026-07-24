@@ -18,9 +18,6 @@ import {
 import NextImage from "next/image";
 import dynamic from "next/dynamic";
 import { createPortal } from "react-dom";
-import AccountSwitcherDialog from "@/components/AccountSwitcherDialog";
-import FaollaQrPanel from "@/components/FaollaQrPanel";
-import MerchantCouponManager from "@/components/admin/MerchantCouponManager";
 import {
   homeBlocks,
   type BlockBorderStyle,
@@ -349,7 +346,6 @@ import BlockRenderer from "@/components/blocks/BlockRenderer";
 import BookingBlock from "@/components/blocks/BookingBlock";
 import CouponBlock from "@/components/blocks/CouponBlock";
 import GoogleReviewsBlock from "@/components/blocks/GoogleReviewsBlock";
-import GoogleBusinessProfileReviewsPanel from "@/components/admin/GoogleBusinessProfileReviewsPanel";
 import { useI18n } from "@/components/I18nProvider";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import NoMercyFlagIcon from "@/components/NoMercyFlagIcon";
@@ -407,12 +403,22 @@ function readSameOriginFrameHref(frame: HTMLIFrameElement | null) {
 }
 
 const loadMerchantBusinessCardManager = () => import("@/components/admin/MerchantBusinessCardManager");
+const loadMerchantCouponManager = () => import("@/components/admin/MerchantCouponManager");
 const loadMerchantPointRedemptionCashier = () => import("@/components/admin/MerchantPointRedemptionCashier");
 const loadMerchantPrintSettingsPanel = () => import("@/components/admin/MerchantPrintSettingsPanel");
+const loadFaollaQrPanel = () => import("@/components/FaollaQrPanel");
+const loadAccountSwitcherDialog = () => import("@/components/AccountSwitcherDialog");
+const loadGoogleBusinessProfileReviewsPanel = () =>
+  import("@/components/admin/GoogleBusinessProfileReviewsPanel");
 
 const MerchantBusinessCardManager = dynamic(loadMerchantBusinessCardManager, {
   ssr: false,
   loading: () => <DeferredAdminPanelLoading label="名片夹加载中..." />,
+});
+
+const MerchantCouponManager = dynamic(loadMerchantCouponManager, {
+  ssr: false,
+  loading: () => <DeferredAdminPanelLoading label="优惠券加载中..." />,
 });
 
 const MerchantMemberManager = dynamic(() => import("@/components/admin/MerchantMemberManager"), {
@@ -488,6 +494,21 @@ const BookingTimeSlotRulesEditor = dynamic(() => import("@/components/admin/Book
 const BookingDateCalendarEditor = dynamic(() => import("@/components/admin/BookingDateCalendarEditor"), {
   ssr: false,
   loading: () => <DeferredAdminPanelLoading label="日期规则加载中..." />,
+});
+
+const FaollaQrPanel = dynamic(loadFaollaQrPanel, {
+  ssr: false,
+  loading: () => <DeferredAdminPanelLoading label="二维码加载中..." />,
+});
+
+const AccountSwitcherDialog = dynamic(loadAccountSwitcherDialog, {
+  ssr: false,
+  loading: () => null,
+});
+
+const GoogleBusinessProfileReviewsPanel = dynamic(loadGoogleBusinessProfileReviewsPanel, {
+  ssr: false,
+  loading: () => <DeferredAdminPanelLoading label="Google 评论配置加载中..." />,
 });
 
 const IMAGE_FILL_VALUES: ImageFillMode[] = [
@@ -12165,6 +12186,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   async function openAccountSwitcher() {
+    void loadAccountSwitcherDialog().catch(() => undefined);
     setAccountSwitchError("");
     const entries = await recordCurrentAccountSwitchSession({
       displayName: supportSelfDisplayName,
@@ -15379,6 +15401,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       showTip("当前商户未开通优惠券模块");
       return;
     }
+    void loadMerchantCouponManager().catch(() => undefined);
     setMerchantDesktopSection(section);
   }
 
@@ -19078,7 +19101,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           <button
             type="button"
             className="absolute left-4 top-[calc(var(--faolla-mobile-safe-top)+0.7rem)] z-20 flex h-11 w-11 items-center justify-center rounded-full bg-white text-slate-900 shadow-[0_10px_24px_rgba(15,23,42,0.10)]"
-            onClick={() => setSupportSelfSectionView("qr")}
+            onClick={() => {
+              void loadFaollaQrPanel().catch(() => undefined);
+              setSupportSelfSectionView("qr");
+            }}
             aria-label="打开二维码"
           >
             <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
@@ -19306,7 +19332,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         <path d="M9 8.5h6M9 12h6M9 15.5h3.8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
                       </svg>
                     ),
-                    onClick: () => setSupportSelfSectionView("coupons" as const),
+                    onClick: () => {
+                      void loadMerchantCouponManager().catch(() => undefined);
+                      setSupportSelfSectionView("coupons" as const);
+                    },
                   },
                   {
                     key: "tools",
@@ -20752,70 +20781,72 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         {supportSelfCardPickerOverlay}
         {supportMessageContextMenuOverlay}
         {supportMerchantInfoSheetOverlay}
-        <ChatBusinessCardDialog
-          open={supportBusinessCardDialogOpen && supportInterfaceOpen && !isPlatformEditor}
-          merchantName={selectedSupportDisplayName}
-          subtitle={selectedSupportSubtitle}
-          card={selectedSupportBusinessCard}
-          loading={supportBusinessCardLoading}
-          error={supportBusinessCardError}
-          onClose={() => {
-            setSupportBusinessCardDialogOpen(false);
-            setSupportBusinessCardLoading(false);
-            setSupportBusinessCardError("");
-          }}
-        />
-        <SupportMessageImagePreviewOverlay
-          open={!!supportImagePreview}
-          imageUrl={supportImagePreview?.imageUrl ?? ""}
-          linkUrl={supportImagePreview?.linkUrl ?? ""}
-          title={supportImagePreview?.title ?? "图片预览"}
-          onClose={() => setSupportImagePreview(null)}
-          onNotice={showTip}
-          currentForwardAction={
-            selectedSupportPeerContact && supportImagePreview
-              ? {
-                  label: `转发给 ${selectedSupportPeerContact.merchantName || selectedSupportPeerContact.merchantId}`,
-                  onForward: () =>
-                    sendSupportAttachmentToPeerRecipient(
-                      selectedSupportPeerContact.merchantId,
-                      supportImagePreview.rawText,
-                      selectedSupportPeerContact.merchantName || selectedSupportPeerContact.merchantId,
-                    ),
-                }
-              : null
-          }
-          queryForwardAction={
-            supportImagePreview
-              ? {
-                  label: "转发给指定商户",
-                  placeholder: "例如：10000000 或 owner@example.com",
-                  onForward: (query) => forwardSupportAttachmentToSpecifiedMerchant(query, supportImagePreview.rawText),
-                }
-              : null
-          }
-        />
-        <AccountSwitcherDialog
-          open={accountSwitcherOpen}
-          entries={accountSwitchEntries}
-          currentKey={merchantAccountSwitchCurrentKey}
-          busyKey={accountSwitchBusyKey}
-          error={accountSwitchError}
-          onClose={() => {
-            if (accountSwitchBusyKey) return;
-            setAccountSwitcherOpen(false);
-            setAccountSwitchError("");
-          }}
-          onSwitch={(entry) => {
-            void handleAccountSwitch(entry);
-          }}
-          onRemove={(key) => {
-            setAccountSwitchEntries(removeAccountSwitchEntry(key));
-          }}
-          onAddAccount={() => {
-            void addAccountFromSwitcher();
-          }}
-        />
+        {supportBusinessCardDialogOpen && supportInterfaceOpen && !isPlatformEditor ? (
+          <ChatBusinessCardDialog
+            open
+            merchantName={selectedSupportDisplayName}
+            subtitle={selectedSupportSubtitle}
+            card={selectedSupportBusinessCard}
+            loading={supportBusinessCardLoading}
+            error={supportBusinessCardError}
+            onClose={() => {
+              setSupportBusinessCardDialogOpen(false);
+              setSupportBusinessCardLoading(false);
+              setSupportBusinessCardError("");
+            }}
+          />
+        ) : null}
+        {supportImagePreview ? (
+          <SupportMessageImagePreviewOverlay
+            open
+            imageUrl={supportImagePreview.imageUrl}
+            linkUrl={supportImagePreview.linkUrl}
+            title={supportImagePreview.title || "图片预览"}
+            onClose={() => setSupportImagePreview(null)}
+            onNotice={showTip}
+            currentForwardAction={
+              selectedSupportPeerContact
+                ? {
+                    label: `转发给 ${selectedSupportPeerContact.merchantName || selectedSupportPeerContact.merchantId}`,
+                    onForward: () =>
+                      sendSupportAttachmentToPeerRecipient(
+                        selectedSupportPeerContact.merchantId,
+                        supportImagePreview.rawText,
+                        selectedSupportPeerContact.merchantName || selectedSupportPeerContact.merchantId,
+                      ),
+                  }
+                : null
+            }
+            queryForwardAction={{
+              label: "转发给指定商户",
+              placeholder: "例如：10000000 或 owner@example.com",
+              onForward: (query) => forwardSupportAttachmentToSpecifiedMerchant(query, supportImagePreview.rawText),
+            }}
+          />
+        ) : null}
+        {accountSwitcherOpen ? (
+          <AccountSwitcherDialog
+            open
+            entries={accountSwitchEntries}
+            currentKey={merchantAccountSwitchCurrentKey}
+            busyKey={accountSwitchBusyKey}
+            error={accountSwitchError}
+            onClose={() => {
+              if (accountSwitchBusyKey) return;
+              setAccountSwitcherOpen(false);
+              setAccountSwitchError("");
+            }}
+            onSwitch={(entry) => {
+              void handleAccountSwitch(entry);
+            }}
+            onRemove={(key) => {
+              setAccountSwitchEntries(removeAccountSwitchEntry(key));
+            }}
+            onAddAccount={() => {
+              void addAccountFromSwitcher();
+            }}
+          />
+        ) : null}
         {editorUploadBusyOverlay}
         {publishBusyOverlay}
         {dialogOverlay}
