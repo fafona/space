@@ -408,8 +408,19 @@ function readSameOriginFrameHref(frame: HTMLIFrameElement | null) {
 
 const loadMerchantBusinessCardManager = () => import("@/components/admin/MerchantBusinessCardManager");
 const loadMerchantCouponManager = () => import("@/components/admin/MerchantCouponManager");
+const loadMerchantMemberManager = () => import("@/components/admin/MerchantMemberManager");
+const loadMerchantMembershipSettingsPanel = () => import("@/components/admin/MerchantMembershipSettingsPanel");
 const loadMerchantPointRedemptionCashier = () => import("@/components/admin/MerchantPointRedemptionCashier");
 const loadMerchantPrintSettingsPanel = () => import("@/components/admin/MerchantPrintSettingsPanel");
+const loadMerchantBookingManagerDialog = () => import("@/components/admin/MerchantBookingManagerDialog");
+const loadMerchantOrderManagerDialog = () => import("@/components/admin/MerchantOrderManagerDialog");
+const loadMerchantProfileDialog = () => import("@/components/admin/MerchantProfileDialog");
+const loadMerchantBookingMobilePanel = () => import("@/components/admin/MerchantBookingMobilePanel");
+const loadMerchantOrderMobilePanel = () => import("@/components/admin/MerchantOrderMobilePanel");
+const loadChatBusinessCardDialog = () => import("@/components/admin/ChatBusinessCardDialog");
+const loadSupportMessageImagePreviewOverlay = () =>
+  import("@/components/support/SupportMessageImagePreviewOverlay");
+const loadSupportMessageContent = () => import("@/components/support/SupportMessageContent");
 const loadFaollaQrPanel = () => import("@/components/FaollaQrPanel");
 const loadAccountSwitcherDialog = () => import("@/components/AccountSwitcherDialog");
 const loadGoogleBusinessProfileReviewsPanel = () =>
@@ -438,9 +449,19 @@ const MerchantCouponManager = dynamic(loadMerchantCouponManager, {
   loading: () => <DeferredAdminPanelLoading label="优惠券加载中..." />,
 });
 
-const MerchantMemberManager = dynamic(() => import("@/components/admin/MerchantMemberManager"), {
+const MerchantMemberManager = dynamic(loadMerchantMemberManager, {
   ssr: false,
   loading: () => <DeferredAdminPanelLoading label="会员管理加载中..." />,
+});
+
+const MerchantMembershipSettingsPanel = dynamic(loadMerchantMembershipSettingsPanel, {
+  ssr: false,
+  loading: () => <DeferredAdminPanelLoading label="会员配置加载中..." />,
+});
+
+const MerchantRedemptionSettingsPanel = dynamic(loadMerchantMembershipSettingsPanel, {
+  ssr: false,
+  loading: () => <DeferredAdminPanelLoading label="项目配置加载中..." />,
 });
 
 const MerchantPointRedemptionCashier = dynamic(loadMerchantPointRedemptionCashier, {
@@ -448,57 +469,47 @@ const MerchantPointRedemptionCashier = dynamic(loadMerchantPointRedemptionCashie
   loading: () => <DeferredAdminPanelLoading label="积分兑换加载中..." />,
 });
 
-const MerchantMembershipSettingsPanel = dynamic(() => import("@/components/admin/MerchantMembershipSettingsPanel"), {
-  ssr: false,
-  loading: () => <DeferredAdminPanelLoading label="会员配置加载中..." />,
-});
-
-const MerchantRedemptionSettingsPanel = dynamic(() => import("@/components/admin/MerchantMembershipSettingsPanel"), {
-  ssr: false,
-  loading: () => <DeferredAdminPanelLoading label="项目配置加载中..." />,
-});
-
 const MerchantPrintSettingsPanel = dynamic(loadMerchantPrintSettingsPanel, {
   ssr: false,
   loading: () => <DeferredAdminPanelLoading label="打印配置加载中..." />,
 });
 
-const MerchantBookingManagerDialog = dynamic(() => import("@/components/admin/MerchantBookingManagerDialog"), {
+const MerchantBookingManagerDialog = dynamic(loadMerchantBookingManagerDialog, {
   ssr: false,
   loading: () => <DeferredAdminPanelLoading label="预约管理加载中..." />,
 });
 
-const MerchantOrderManagerDialog = dynamic(() => import("@/components/admin/MerchantOrderManagerDialog"), {
+const MerchantOrderManagerDialog = dynamic(loadMerchantOrderManagerDialog, {
   ssr: false,
   loading: () => <DeferredAdminPanelLoading label="订单管理加载中..." />,
 });
 
-const MerchantProfileDialog = dynamic(() => import("@/components/admin/MerchantProfileDialog"), {
+const MerchantProfileDialog = dynamic(loadMerchantProfileDialog, {
   ssr: false,
   loading: () => <DeferredAdminPanelLoading label="商户资料加载中..." />,
 });
 
-const MerchantBookingMobilePanel = dynamic(() => import("@/components/admin/MerchantBookingMobilePanel"), {
+const MerchantBookingMobilePanel = dynamic(loadMerchantBookingMobilePanel, {
   ssr: false,
   loading: () => <DeferredAdminPanelLoading label="预约列表加载中..." />,
 });
 
-const MerchantOrderMobilePanel = dynamic(() => import("@/components/admin/MerchantOrderMobilePanel"), {
+const MerchantOrderMobilePanel = dynamic(loadMerchantOrderMobilePanel, {
   ssr: false,
   loading: () => <DeferredAdminPanelLoading label="订单列表加载中..." />,
 });
 
-const ChatBusinessCardDialog = dynamic(() => import("@/components/admin/ChatBusinessCardDialog"), {
+const ChatBusinessCardDialog = dynamic(loadChatBusinessCardDialog, {
   ssr: false,
   loading: () => null,
 });
 
-const SupportMessageImagePreviewOverlay = dynamic(() => import("@/components/support/SupportMessageImagePreviewOverlay"), {
+const SupportMessageImagePreviewOverlay = dynamic(loadSupportMessageImagePreviewOverlay, {
   ssr: false,
   loading: () => null,
 });
 
-const SupportMessageContent = dynamic(() => import("@/components/support/SupportMessageContent"), {
+const SupportMessageContent = dynamic(loadSupportMessageContent, {
   ssr: false,
   loading: () => null,
 });
@@ -15384,6 +15395,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   async function openMerchantProfilePanel() {
+    void loadMerchantProfileDialog().catch(() => undefined);
     const resolvedSiteId = await ensureEditableMerchantSiteId();
     if (!resolvedSiteId) {
       showTip("正在初始化商户资料，请稍后重试");
@@ -15443,6 +15455,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   async function openMerchantMembersPanel() {
+    void loadMerchantMemberManager().catch(() => undefined);
     if (!canUseMembershipManagement) {
       showTip("当前商户未开通会员管理");
       return;
@@ -15458,6 +15471,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   async function openMerchantMemberSettingsPanel(view: Exclude<MerchantMemberSettingsView, "list">) {
+    void loadMerchantMembershipSettingsPanel().catch(() => undefined);
     if (!canUseMembershipManagement) {
       showTip("当前商户未开通会员管理");
       return;
@@ -15516,6 +15530,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   async function openMerchantPointRedemptionSettingsPanel(view: "redemptionCategories" | "redemptionItems") {
+    void loadMerchantMembershipSettingsPanel().catch(() => undefined);
     if (!canUsePointsRedemption) {
       showTip(canUseMembershipManagement ? "当前商户未开通积分兑换" : "请先开通会员管理");
       return;
@@ -15530,6 +15545,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   async function openMerchantBookingPanel() {
+    void loadMerchantBookingManagerDialog().catch(() => undefined);
     const resolvedSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
     if (!resolvedSiteId) {
       showTip("当前商户还没准备好预约资料，请稍后重试");
@@ -15541,6 +15557,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   async function openMerchantOrderPanel() {
+    void loadMerchantOrderManagerDialog().catch(() => undefined);
     const resolvedSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
     if (!resolvedSiteId) {
       showTip("当前商户还没准备好订单资料，请稍后重试");
@@ -15582,6 +15599,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   function openMerchantSupportPanel() {
+    void loadSupportMessageContent().catch(() => undefined);
     setMerchantDesktopSection("support");
     openSupportDialog();
   }
@@ -22185,6 +22203,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       <button
                         type="button"
                         className={getMerchantDesktopMenuButtonClassName(merchantDesktopSection === "booking")}
+                        onPointerEnter={() => {
+                          void loadMerchantBookingManagerDialog().catch(() => undefined);
+                        }}
+                        onFocus={() => {
+                          void loadMerchantBookingManagerDialog().catch(() => undefined);
+                        }}
                         onClick={() => {
                           void openMerchantBookingPanel();
                         }}
@@ -22204,6 +22228,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       <button
                         type="button"
                         className={getMerchantDesktopMenuButtonClassName(merchantDesktopSection === "orders")}
+                        onPointerEnter={() => {
+                          void loadMerchantOrderManagerDialog().catch(() => undefined);
+                        }}
+                        onFocus={() => {
+                          void loadMerchantOrderManagerDialog().catch(() => undefined);
+                        }}
                         onClick={() => {
                           void openMerchantOrderPanel();
                         }}
@@ -22225,6 +22255,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         merchantDesktopSection === "support",
                         supportHasUnreadMessages ? "alert" : "default",
                       )}
+                      onPointerEnter={() => {
+                        void loadSupportMessageContent().catch(() => undefined);
+                      }}
+                      onFocus={() => {
+                        void loadSupportMessageContent().catch(() => undefined);
+                      }}
                       onClick={openMerchantSupportPanel}
                       aria-label={supportHasUnreadMessages ? "会话，有新消息" : "会话"}
                     >
@@ -22243,6 +22279,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       <button
                         type="button"
                         className={getMerchantDesktopMenuButtonClassName(merchantDesktopSection === "members")}
+                        onPointerEnter={() => {
+                          void loadMerchantMemberManager().catch(() => undefined);
+                        }}
+                        onFocus={() => {
+                          void loadMerchantMemberManager().catch(() => undefined);
+                        }}
                         onClick={() => {
                           void openMerchantMembersPanel();
                         }}
@@ -22257,6 +22299,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       <button
                         type="button"
                         className={getMerchantDesktopMenuButtonClassName(merchantDesktopCouponCenterActive)}
+                        onPointerEnter={() => {
+                          void loadMerchantCouponManager().catch(() => undefined);
+                        }}
+                        onFocus={() => {
+                          void loadMerchantCouponManager().catch(() => undefined);
+                        }}
                         onClick={() => openMerchantCouponsPanel()}
                         aria-current={merchantDesktopCouponCenterActive ? "page" : undefined}
                       >
@@ -23434,49 +23482,49 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           )
         : null}
 
-      <ChatBusinessCardDialog
-        open={supportBusinessCardDialogOpen && supportInterfaceOpen && !isPlatformEditor}
-        merchantName={selectedSupportDisplayName}
-        subtitle={selectedSupportSubtitle}
-        card={selectedSupportBusinessCard}
-        loading={supportBusinessCardLoading}
-        error={supportBusinessCardError}
-        onClose={() => {
-          setSupportBusinessCardDialogOpen(false);
-          setSupportBusinessCardLoading(false);
-          setSupportBusinessCardError("");
-        }}
-      />
-      <SupportMessageImagePreviewOverlay
-        open={!!supportImagePreview}
-        imageUrl={supportImagePreview?.imageUrl ?? ""}
-        linkUrl={supportImagePreview?.linkUrl ?? ""}
-        title={supportImagePreview?.title ?? "图片预览"}
-        onClose={() => setSupportImagePreview(null)}
-        onNotice={showTip}
-        currentForwardAction={
-          selectedSupportPeerContact && supportImagePreview
-            ? {
-                label: `转发给 ${selectedSupportPeerContact.merchantName || selectedSupportPeerContact.merchantId}`,
-                onForward: () =>
-                  sendSupportAttachmentToPeerRecipient(
-                    selectedSupportPeerContact.merchantId,
-                    supportImagePreview.rawText,
-                    selectedSupportPeerContact.merchantName || selectedSupportPeerContact.merchantId,
-                  ),
-              }
-            : null
-        }
-        queryForwardAction={
-          supportImagePreview
-            ? {
-                label: "转发给指定商户",
-                placeholder: "例如：10000000 或 owner@example.com",
-                onForward: (query) => forwardSupportAttachmentToSpecifiedMerchant(query, supportImagePreview.rawText),
-              }
-            : null
-        }
-      />
+      {supportBusinessCardDialogOpen && supportInterfaceOpen && !isPlatformEditor ? (
+        <ChatBusinessCardDialog
+          open
+          merchantName={selectedSupportDisplayName}
+          subtitle={selectedSupportSubtitle}
+          card={selectedSupportBusinessCard}
+          loading={supportBusinessCardLoading}
+          error={supportBusinessCardError}
+          onClose={() => {
+            setSupportBusinessCardDialogOpen(false);
+            setSupportBusinessCardLoading(false);
+            setSupportBusinessCardError("");
+          }}
+        />
+      ) : null}
+      {supportImagePreview ? (
+        <SupportMessageImagePreviewOverlay
+          open
+          imageUrl={supportImagePreview.imageUrl}
+          linkUrl={supportImagePreview.linkUrl}
+          title={supportImagePreview.title || "图片预览"}
+          onClose={() => setSupportImagePreview(null)}
+          onNotice={showTip}
+          currentForwardAction={
+            selectedSupportPeerContact
+              ? {
+                  label: `转发给 ${selectedSupportPeerContact.merchantName || selectedSupportPeerContact.merchantId}`,
+                  onForward: () =>
+                    sendSupportAttachmentToPeerRecipient(
+                      selectedSupportPeerContact.merchantId,
+                      supportImagePreview.rawText,
+                      selectedSupportPeerContact.merchantName || selectedSupportPeerContact.merchantId,
+                    ),
+                }
+              : null
+          }
+          queryForwardAction={{
+            label: "转发给指定商户",
+            placeholder: "例如：10000000 或 owner@example.com",
+            onForward: (query) => forwardSupportAttachmentToSpecifiedMerchant(query, supportImagePreview.rawText),
+          }}
+        />
+      ) : null}
 
       {supportMerchantInfoSheetOverlay}
       {supportSelfCardPickerOverlay}
