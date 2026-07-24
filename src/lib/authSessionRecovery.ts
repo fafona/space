@@ -35,6 +35,13 @@ export type MerchantCookieSessionPayload = {
 
 let merchantSessionPayloadInFlight: Promise<MerchantCookieSessionPayload | null> | null = null;
 let merchantSessionPayloadWithTokensInFlight: Promise<MerchantCookieSessionPayload | null> | null = null;
+let merchantSessionPayloadCache: {
+  payload: MerchantCookieSessionPayload | null;
+  expiresAt: number;
+} | null = null;
+
+const AUTHENTICATED_MERCHANT_SESSION_CACHE_MS = 5000;
+const UNAUTHENTICATED_MERCHANT_SESSION_CACHE_MS = 1500;
 
 type ReadMerchantSessionPayloadOptions = {
   includeClientTokens?: boolean;
@@ -57,6 +64,29 @@ function isNativeAppShellRuntime() {
 
 function buildMerchantSessionRequestHref(includeClientTokens: boolean) {
   return includeClientTokens ? "/api/auth/merchant-session?accountSwitch=1" : "/api/auth/merchant-session";
+}
+
+export function invalidateMerchantSessionPayloadCache() {
+  merchantSessionPayloadCache = null;
+}
+
+function readCachedMerchantSessionPayload() {
+  if (!merchantSessionPayloadCache) return undefined;
+  if (merchantSessionPayloadCache.expiresAt <= Date.now()) {
+    merchantSessionPayloadCache = null;
+    return undefined;
+  }
+  return merchantSessionPayloadCache.payload;
+}
+
+function cacheMerchantSessionPayload(
+  payload: MerchantCookieSessionPayload | null,
+  lifetimeMs: number,
+) {
+  merchantSessionPayloadCache = {
+    payload,
+    expiresAt: Date.now() + Math.max(0, lifetimeMs),
+  };
 }
 
 function persistBrowserSupabaseSessionFromMerchantPayload(payload: MerchantCookieSessionPayload | null | undefined) {
@@ -322,6 +352,7 @@ export function hasStoredBrowserSupabaseSessionTokens(): boolean {
 }
 
 export function clearStoredBrowserSupabaseSessionTokens() {
+  invalidateMerchantSessionPayloadCache();
   const storageKeys = getRecoveryStorageKeys();
   for (const storage of getRecoveryBrowserStorages()) {
     for (const storageKey of storageKeys) {
@@ -363,6 +394,10 @@ export async function readMerchantSessionPayload(
 ): Promise<MerchantCookieSessionPayload | null> {
   if (typeof window === "undefined") return null;
   const includeClientTokens = options.includeClientTokens === true || isNativeAppShellRuntime();
+  if (!includeClientTokens) {
+    const cachedPayload = readCachedMerchantSessionPayload();
+    if (cachedPayload !== undefined) return cachedPayload;
+  }
   const inFlight = includeClientTokens ? merchantSessionPayloadWithTokensInFlight : merchantSessionPayloadInFlight;
   if (inFlight) return inFlight;
   let task: Promise<MerchantCookieSessionPayload | null> | null = null;
@@ -379,8 +414,21 @@ export async function readMerchantSessionPayload(
         }),
         Math.max(1200, timeoutMs),
       );
-      if (!response.ok) return null;
+      if (!response.ok) {
+        if (!includeClientTokens && (response.status === 401 || response.status === 403)) {
+          cacheMerchantSessionPayload(null, UNAUTHENTICATED_MERCHANT_SESSION_CACHE_MS);
+        }
+        return null;
+      }
       const payload = (await response.json().catch(() => null)) as MerchantCookieSessionPayload | null;
+      if (!includeClientTokens) {
+        cacheMerchantSessionPayload(
+          payload,
+          payload?.authenticated === true
+            ? AUTHENTICATED_MERCHANT_SESSION_CACHE_MS
+            : UNAUTHENTICATED_MERCHANT_SESSION_CACHE_MS,
+        );
+      }
       persistBrowserSupabaseSessionFromMerchantPayload(payload);
       return payload;
     } catch {
@@ -563,6 +611,7 @@ export async function syncMerchantSessionCookies(
     typeof session?.expires_in === "number" && Number.isFinite(session.expires_in) ? session.expires_in : undefined;
   if (!accessToken) return null;
 
+  invalidateMerchantSessionPayloadCache();
   try {
     const response = await withTimeout(
       fetch("/api/auth/merchant-session", {
@@ -582,7 +631,14 @@ export async function syncMerchantSessionCookies(
       Math.max(1200, timeoutMs),
     );
     if (!response.ok) return null;
-    return (await response.json().catch(() => null)) as MerchantCookieSessionPayload | null;
+    const payload = (await response.json().catch(() => null)) as MerchantCookieSessionPayload | null;
+    cacheMerchantSessionPayload(
+      payload,
+      payload?.authenticated === true
+        ? AUTHENTICATED_MERCHANT_SESSION_CACHE_MS
+        : UNAUTHENTICATED_MERCHANT_SESSION_CACHE_MS,
+    );
+    return payload;
   } catch {
     return null;
   }

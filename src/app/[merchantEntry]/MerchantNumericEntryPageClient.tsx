@@ -135,6 +135,7 @@ export default function MerchantNumericEntryPageClient() {
       if (!mounted || typeof window === "undefined") return;
       setNumericAdminAuthenticated(false);
       setNumericAdminAuthReady(true);
+      setNumericSessionLookupDone(true);
       window.location.replace(`/login?redirect=${encodeURIComponent(`/${merchantEntry}`)}`);
     };
 
@@ -144,6 +145,7 @@ export default function MerchantNumericEntryPageClient() {
       if (!mounted || gatewayReady !== false) return false;
       setNumericAdminAuthenticated(true);
       setNumericAdminAuthReady(true);
+      setNumericSessionLookupDone(true);
       return true;
     };
 
@@ -154,6 +156,7 @@ export default function MerchantNumericEntryPageClient() {
         setNumericSessionEmail(cookieBackedIdentity.email);
         setNumericAdminAuthenticated(true);
         setNumericAdminAuthReady(true);
+        setNumericSessionLookupDone(true);
         return;
       }
       if (await allowTransientResumeRecovery()) {
@@ -168,6 +171,7 @@ export default function MerchantNumericEntryPageClient() {
             setNumericSessionEmail(cookieBackedIdentity.email);
             setNumericAdminAuthenticated(true);
             setNumericAdminAuthReady(true);
+            setNumericSessionLookupDone(true);
             return;
           }
           if (await allowTransientResumeRecovery()) {
@@ -196,42 +200,25 @@ export default function MerchantNumericEntryPageClient() {
   ]);
 
   useEffect(() => {
-    if (!hydrated || !merchantEntry || !isSupabaseEnabled) return;
-
-    let mounted = true;
-    if (skipEntrySessionCheck) {
-      return () => {
-        mounted = false;
-      };
-    }
-    void Promise.resolve()
-      .then(() => {
-        if (!mounted) return null;
-        setNumericSessionLookupDone(false);
-        return readCookieBackedMerchantIdentity(2200);
-      })
-      .then(async (cookieBackedIdentity) => {
-        if (!mounted) return;
-        const sessionEmail = String(cookieBackedIdentity?.email ?? "").trim().toLowerCase();
-        if (sessionEmail) {
-          setNumericSessionEmail(sessionEmail);
-          return;
-        }
-        setNumericSessionEmail("");
-      })
-      .catch(() => {
-        if (!mounted) return;
-        setNumericSessionEmail("");
-      })
-      .finally(() => {
-        if (!mounted) return;
-        setNumericSessionLookupDone(true);
-      });
-
-    return () => {
-      mounted = false;
-    };
-  }, [hydrated, merchantEntry, readCookieBackedMerchantIdentity, skipEntrySessionCheck]);
+    if (!hydrated || !merchantEntry) return;
+    const likelyMerchantSession =
+      !isSupabaseEnabled ||
+      skipEntrySessionCheck ||
+      recentSignInBridgeActive ||
+      hasRecentLaunchEntry ||
+      numericAdminAuthenticated;
+    if (!likelyMerchantSession) return;
+    void import("@/app/admin/AdminClient").catch(() => {
+      // The dynamic component keeps its normal retry and error handling path.
+    });
+  }, [
+    hasRecentLaunchEntry,
+    hydrated,
+    merchantEntry,
+    numericAdminAuthenticated,
+    recentSignInBridgeActive,
+    skipEntrySessionCheck,
+  ]);
 
   useEffect(() => {
     if (!recentSignInBridgeActive) return;
