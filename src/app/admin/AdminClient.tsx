@@ -6860,6 +6860,7 @@ export default function AdminClient({
     }
   });
   const isPlatformEditor = editorMode === "platform";
+  const [initialPlatformState] = useState(() => loadPlatformState());
   useMobilePortraitOrientationLock(!isPlatformEditor);
   const [platformSeedBlocks] = useState<Block[]>(() =>
     isPlatformEditor && Array.isArray(initialPublishedBlocks)
@@ -6919,7 +6920,9 @@ export default function AdminClient({
   const [newBlockType, setNewBlockType] = useState<Block["type"]>("common");
   const [previewViewport, setPreviewViewport] = useState<"desktop" | "mobile">("desktop");
   const [tip, setTip] = useState<string>("");
-  const [, setMerchantPlatformRevision] = useState(0);
+  const [merchantPlatformState, setMerchantPlatformState] = useState(() =>
+    isPlatformEditor ? null : initialPlatformState,
+  );
   const [backendNotice, setBackendNotice] = useState<string | null>(supabaseMissingEnvNotice);
   const [dialog, setDialog] = useState<CenterDialog | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(startInLoadingState);
@@ -7452,7 +7455,7 @@ export default function AdminClient({
   const [planTemplateDialogOpen, setPlanTemplateDialogOpen] = useState(false);
   const [planTemplateSearch, setPlanTemplateSearch] = useState("");
   const [planTemplateFilter, setPlanTemplateFilter] = useState<PlanTemplateFilterCategory>("全部");
-  const [planTemplates, setPlanTemplates] = useState<PlanTemplate[]>(() => loadPlatformState().planTemplates ?? []);
+  const [planTemplates, setPlanTemplates] = useState<PlanTemplate[]>(() => initialPlatformState.planTemplates ?? []);
   const [planTemplateCoverPreview, setPlanTemplateCoverPreview] = useState<{ url: string; name: string } | null>(null);
   const [planTemplateCoverPreviewScale, setPlanTemplateCoverPreviewScale] = useState(1);
   const pageImageInputRef = useRef<HTMLInputElement>(null);
@@ -7715,10 +7718,13 @@ export default function AdminClient({
   useEffect(
     () =>
       subscribePlatformState(() => {
-        setPlanTemplates(loadPlatformState().planTemplates ?? []);
-        setMerchantPlatformRevision((current) => current + 1);
+        const nextPlatformState = loadPlatformState();
+        setPlanTemplates(nextPlatformState.planTemplates ?? []);
+        if (!isPlatformEditor) {
+          setMerchantPlatformState(nextPlatformState);
+        }
       }),
-    [],
+    [isPlatformEditor],
   );
 
   useEffect(() => {
@@ -12284,7 +12290,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     window.location.href = "/login?loggedOut=1&redirect=/admin";
   }
 
-  const merchantPlatformState = !isPlatformEditor ? loadPlatformState() : null;
   const scopedSiteId = !isPlatformEditor ? getSiteIdFromStoreScope(storeScope) : "";
   const fallbackMerchantSiteId =
     !isPlatformEditor
@@ -12461,11 +12466,19 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   );
 
   useEffect(() => {
+    if (merchantDesktopSection !== "logs") return;
     void loadMerchantOperationLogs("reset");
-  }, [loadMerchantOperationLogs]);
+  }, [loadMerchantOperationLogs, merchantDesktopSection]);
 
   useEffect(() => {
-    if (isPlatformEditor || typeof window === "undefined" || !isMerchantNumericId(editingSiteId)) return;
+    if (
+      isPlatformEditor ||
+      merchantDesktopSection !== "logs" ||
+      typeof window === "undefined" ||
+      !isMerchantNumericId(editingSiteId)
+    ) {
+      return;
+    }
     const refreshLogs = () => {
       void loadMerchantOperationLogs("reset");
     };
@@ -12473,7 +12486,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     return () => {
       window.removeEventListener(MERCHANT_OPERATION_LOG_EVENT, refreshLogs);
     };
-  }, [editingSiteId, isPlatformEditor, loadMerchantOperationLogs]);
+  }, [editingSiteId, isPlatformEditor, loadMerchantOperationLogs, merchantDesktopSection]);
 
   useEffect(() => {
     if (isPlatformEditor || typeof window === "undefined") return;
