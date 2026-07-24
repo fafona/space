@@ -3,6 +3,7 @@ import http from "node:http";
 import test from "node:test";
 import {
   collectNextStaticAssetUrls,
+  collectNextStaticChunkDependencyUrls,
   containsDefaultClientExceptionPage,
   normalizeProductionSmokePaths,
   runProductionSmoke,
@@ -26,6 +27,28 @@ test("collectNextStaticAssetUrls keeps unique same-origin Next assets", () => {
   ]);
 });
 
+test("collectNextStaticChunkDependencyUrls keeps unique same-origin compiled chunks", () => {
+  const source = `
+    Promise.all([
+      "static/chunks/admin.js",
+      "/_next/static/chunks/shared.js?build=123",
+      "static/chunks/admin.js",
+      "https://cdn.example.com/_next/static/chunks/external.js",
+      "static/chunks/../private.js"
+    ]);
+  `;
+  assert.deepEqual(
+    collectNextStaticChunkDependencyUrls(
+      source,
+      "https://faolla.com/_next/static/chunks/loader.js",
+    ),
+    [
+      "https://faolla.com/_next/static/chunks/admin.js",
+      "https://faolla.com/_next/static/chunks/shared.js?build=123",
+    ],
+  );
+});
+
 test("normalizeProductionSmokePaths rejects external and protocol-relative paths", () => {
   assert.deepEqual(normalizeProductionSmokePaths("/,/login,/login"), ["/", "/login"]);
   assert.throws(() => normalizeProductionSmokePaths("https://example.com/login"), /root-relative/);
@@ -43,6 +66,7 @@ test("containsDefaultClientExceptionPage ignores detector text inside scripts", 
 
 async function startSmokeServer() {
   let assetStatus = 200;
+  let dynamicAssetStatus = 200;
   const server = http.createServer((request, response) => {
     const url = new URL(request.url || "/", "http://127.0.0.1");
     if (url.pathname === "/api/app-web-version") {
@@ -53,7 +77,17 @@ async function startSmokeServer() {
     if (url.pathname === "/_next/static/chunks/app.js") {
       response.statusCode = assetStatus;
       response.setHeader("Content-Type", "application/javascript");
-      response.end(assetStatus === 200 ? "globalThis.__smoke = true;" : "missing");
+      response.end(
+        assetStatus === 200
+          ? 'globalThis.__smoke = "static/chunks/admin.js";'
+          : "missing",
+      );
+      return;
+    }
+    if (url.pathname === "/_next/static/chunks/admin.js") {
+      response.statusCode = dynamicAssetStatus;
+      response.setHeader("Content-Type", "application/javascript");
+      response.end(dynamicAssetStatus === 200 ? "globalThis.__admin = true;" : "missing");
       return;
     }
     if (url.pathname === "/faolla-sw.js") {
@@ -71,6 +105,9 @@ async function startSmokeServer() {
     origin: `http://127.0.0.1:${address.port}`,
     setAssetStatus(status) {
       assetStatus = status;
+    },
+    setDynamicAssetStatus(status) {
+      dynamicAssetStatus = status;
     },
     close() {
       return new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
@@ -93,7 +130,30 @@ test("runProductionSmoke verifies build, pages, assets and service worker", asyn
     assert.equal(result.ok, true);
     assert.equal(result.buildId, "build-123");
     assert.equal(result.pagesChecked, 3);
-    assert.equal(result.assetsChecked, 1);
+    assert.equal(result.assetsChecked, 2);
+    assert.equal(result.directAssetsChecked, 1);
+    assert.equal(result.dynamicAssetsChecked, 1);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("runProductionSmoke fails when a first-level dynamic chunk returns 404", async () => {
+  const fixture = await startSmokeServer();
+  fixture.setDynamicAssetStatus(404);
+  try {
+    await assert.rejects(
+      runProductionSmoke({
+        origin: fixture.origin,
+        paths: ["/admin"],
+        expectedBuildId: "build-123",
+        attempts: 1,
+        delayMs: 0,
+        timeoutMs: 2_000,
+        logger: silentLogger,
+      }),
+      /dynamic static asset request failed \(404\)/,
+    );
   } finally {
     await fixture.close();
   }

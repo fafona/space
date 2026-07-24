@@ -6,6 +6,7 @@ const DEFAULT_ATTEMPTS = 8;
 const DEFAULT_DELAY_MS = 2_000;
 const DEFAULT_TIMEOUT_MS = 12_000;
 const DEFAULT_CONCURRENCY = 8;
+const DEFAULT_DYNAMIC_CHUNK_LIMIT = 96;
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -70,6 +71,36 @@ export function collectNextStaticAssetUrls(html, pageUrl) {
   return [...assets];
 }
 
+export function collectNextStaticChunkDependencyUrls(source, assetUrl) {
+  const asset = new URL(assetUrl);
+  const dependencies = new Set();
+  const references =
+    String(source || "").match(
+      /(?<![A-Za-z0-9:/.])(?:\/?_next\/)?static\/chunks\/[A-Za-z0-9][A-Za-z0-9._/-]*\.js(?:\?[A-Za-z0-9._~!$&'()*+,;=:@/?%-]*)?/g,
+    ) ?? [];
+  for (const reference of references) {
+    if (reference.includes("..")) continue;
+    const normalizedReference = reference
+      .replace(/^\/?_next\//, "")
+      .replace(/^\/+/, "");
+    try {
+      const dependency = new URL(`/_next/${normalizedReference}`, asset.origin);
+      if (
+        dependency.origin !== asset.origin ||
+        !dependency.pathname.startsWith("/_next/static/chunks/") ||
+        !dependency.pathname.endsWith(".js") ||
+        dependency.href === asset.href
+      ) {
+        continue;
+      }
+      dependencies.add(dependency.href);
+    } catch {
+      // Ignore malformed strings that merely resemble a compiled chunk reference.
+    }
+  }
+  return [...dependencies];
+}
+
 export function containsDefaultClientExceptionPage(html) {
   const visibleMarkup = String(html || "")
     .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, " ")
@@ -132,6 +163,7 @@ async function runProductionSmokeAttempt({
   expectedBuildId,
   timeoutMs,
   concurrency,
+  dynamicChunkLimit,
   nonce,
 }) {
   const versionUrl = addSmokeNonce(new URL("/api/app-web-version", origin).href, nonce);
@@ -164,10 +196,32 @@ async function runProductionSmokeAttempt({
     checkedPages.push({ requestedUrl: pageUrl, finalUrl: response.url || pageUrl, assets: pageAssets.length });
   }
 
-  await mapWithConcurrency([...assets], concurrency, async (assetUrl) => {
+  const directAssets = [...assets];
+  const dynamicChunkDependencies = new Set();
+  await mapWithConcurrency(directAssets, concurrency, async (assetUrl) => {
     const response = await fetchWithTimeout(assetUrl, { redirect: "follow" }, timeoutMs);
     await assertSuccessfulResponse(assetUrl, response, "static asset");
+    const asset = new URL(assetUrl);
+    if (asset.pathname.startsWith("/_next/static/chunks/") && asset.pathname.endsWith(".js")) {
+      const source = await response.text();
+      for (const dependencyUrl of collectNextStaticChunkDependencyUrls(source, assetUrl)) {
+        if (!assets.has(dependencyUrl)) dynamicChunkDependencies.add(dependencyUrl);
+      }
+      return;
+    }
     await response.body?.cancel().catch(() => undefined);
+  });
+
+  const discoveredDynamicChunks = [...dynamicChunkDependencies];
+  if (discoveredDynamicChunks.length > dynamicChunkLimit) {
+    throw new Error(
+      `first-level dynamic chunk count exceeded safety limit: ${discoveredDynamicChunks.length} > ${dynamicChunkLimit}`,
+    );
+  }
+  await mapWithConcurrency(discoveredDynamicChunks, concurrency, async (assetUrl) => {
+    const response = await fetchWithTimeout(assetUrl, { redirect: "follow" }, timeoutMs);
+    await assertSuccessfulResponse(assetUrl, response, "dynamic static asset");
+    await response.arrayBuffer();
   });
 
   const serviceWorkerUrl = new URL("/faolla-sw.js", origin);
@@ -181,7 +235,9 @@ async function runProductionSmokeAttempt({
     ok: true,
     buildId: observedBuildId,
     pagesChecked: checkedPages.length,
-    assetsChecked: assets.size,
+    assetsChecked: assets.size + discoveredDynamicChunks.length,
+    directAssetsChecked: assets.size,
+    dynamicAssetsChecked: discoveredDynamicChunks.length,
     checkedPages,
   };
 }
@@ -197,6 +253,11 @@ export async function runProductionSmoke(options = {}) {
     1,
     Number.parseInt(String(options.concurrency ?? DEFAULT_CONCURRENCY), 10) || DEFAULT_CONCURRENCY,
   );
+  const dynamicChunkLimit = Math.max(
+    1,
+    Number.parseInt(String(options.dynamicChunkLimit ?? DEFAULT_DYNAMIC_CHUNK_LIMIT), 10) ||
+      DEFAULT_DYNAMIC_CHUNK_LIMIT,
+  );
   const logger = options.logger ?? console;
   let lastError;
 
@@ -210,10 +271,12 @@ export async function runProductionSmoke(options = {}) {
         expectedBuildId,
         timeoutMs,
         concurrency,
+        dynamicChunkLimit,
         nonce,
       });
       logger.log(
-        `[production-smoke] OK build=${result.buildId} pages=${result.pagesChecked} assets=${result.assetsChecked}`,
+        `[production-smoke] OK build=${result.buildId} pages=${result.pagesChecked} ` +
+          `assets=${result.assetsChecked} dynamic=${result.dynamicAssetsChecked}`,
       );
       return result;
     } catch (error) {
@@ -243,6 +306,10 @@ async function main() {
     attempts: readArgument("attempts") || process.env.FAOLLA_PRODUCTION_SMOKE_ATTEMPTS || DEFAULT_ATTEMPTS,
     delayMs: readArgument("delay-ms") || process.env.FAOLLA_PRODUCTION_SMOKE_DELAY_MS || DEFAULT_DELAY_MS,
     timeoutMs: readArgument("timeout-ms") || process.env.FAOLLA_PRODUCTION_SMOKE_TIMEOUT_MS || DEFAULT_TIMEOUT_MS,
+    dynamicChunkLimit:
+      readArgument("dynamic-chunk-limit") ||
+      process.env.FAOLLA_PRODUCTION_SMOKE_DYNAMIC_CHUNK_LIMIT ||
+      DEFAULT_DYNAMIC_CHUNK_LIMIT,
   });
   console.log(JSON.stringify(result));
 }
