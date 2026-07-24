@@ -406,6 +406,39 @@ function readSameOriginFrameHref(frame: HTMLIFrameElement | null) {
   }
 }
 
+function scheduleAdminIdleTask(
+  task: () => void,
+  options: { timeoutMs?: number; fallbackDelayMs?: number } = {},
+) {
+  if (typeof window === "undefined") return () => {};
+  const idleWindow = window as Window & {
+    requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number;
+    cancelIdleCallback?: (handle: number) => void;
+  };
+  let cancelled = false;
+  let idleCallbackId: number | null = null;
+  let timeoutId: number | null = null;
+  const run = () => {
+    if (!cancelled) task();
+  };
+
+  if (typeof idleWindow.requestIdleCallback === "function") {
+    idleCallbackId = idleWindow.requestIdleCallback(run, { timeout: options.timeoutMs ?? 1400 });
+  } else {
+    timeoutId = window.setTimeout(run, options.fallbackDelayMs ?? 320);
+  }
+
+  return () => {
+    cancelled = true;
+    if (idleCallbackId !== null && typeof idleWindow.cancelIdleCallback === "function") {
+      idleWindow.cancelIdleCallback(idleCallbackId);
+    }
+    if (timeoutId !== null) {
+      window.clearTimeout(timeoutId);
+    }
+  };
+}
+
 const loadMerchantBusinessCardManager = () => import("@/components/admin/MerchantBusinessCardManager");
 const loadMerchantCouponManager = () => import("@/components/admin/MerchantCouponManager");
 const loadMerchantMemberManager = () => import("@/components/admin/MerchantMemberManager");
@@ -12558,12 +12591,15 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         // Keep the last known badge count when the lightweight refresh fails.
       }
     };
-    void loadMerchantBookingAttention();
+    const cancelInitialRefresh = scheduleAdminIdleTask(() => {
+      void loadMerchantBookingAttention();
+    });
     timer = setInterval(() => {
       void loadMerchantBookingAttention();
     }, 60000);
     return () => {
       cancelled = true;
+      cancelInitialRefresh();
       if (timer) clearInterval(timer);
     };
   }, [editingSiteId, explicitFaollaSectionEntry, isPlatformEditor, summarizeMerchantBookingAttention]);
@@ -12607,12 +12643,15 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         // Keep the last known badge count when the lightweight refresh fails.
       }
     };
-    void loadMerchantOrderAttention();
+    const cancelInitialRefresh = scheduleAdminIdleTask(() => {
+      void loadMerchantOrderAttention();
+    });
     timer = setInterval(() => {
       void loadMerchantOrderAttention();
     }, 60000);
     return () => {
       cancelled = true;
+      cancelInitialRefresh();
       if (timer) clearInterval(timer);
     };
   }, [editingSiteId, explicitFaollaSectionEntry, isPlatformEditor, summarizeMerchantOrderAttention]);
@@ -15766,11 +15805,13 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (isPlatformEditor || typeof window === "undefined" || !supportDataActivated) return;
     if (supportFaollaActive) return;
 
-    void loadSupportThread({ silent: !supportInterfaceOpen, suppressError: !supportInterfaceOpen });
-    void loadSupportPeerInbox({
-      silent: !supportInterfaceOpen,
-      suppressError: isMobileMerchantSupportOnlyMode || !supportInterfaceOpen,
-    });
+    const loadInitialSupportData = () => {
+      void loadSupportThread({ silent: !supportInterfaceOpen, suppressError: !supportInterfaceOpen });
+      void loadSupportPeerInbox({
+        silent: !supportInterfaceOpen,
+        suppressError: isMobileMerchantSupportOnlyMode || !supportInterfaceOpen,
+      });
+    };
     const refreshSupportThread = () => {
       void loadSupportThread({ silent: true, suppressError: !supportInterfaceOpen });
       void loadSupportPeerInbox({
@@ -15778,6 +15819,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         suppressError: isMobileMerchantSupportOnlyMode || !supportInterfaceOpen,
       });
     };
+    let cancelInitialRefresh = () => {};
+    if (supportInterfaceOpen || isMobileMerchantSupportOnlyMode) {
+      loadInitialSupportData();
+    } else {
+      cancelInitialRefresh = scheduleAdminIdleTask(loadInitialSupportData);
+    }
 
     const timer = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
@@ -15793,6 +15840,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     window.addEventListener("focus", handleFocus);
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
+      cancelInitialRefresh();
       window.clearInterval(timer);
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
@@ -18228,10 +18276,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
 
     let cancelled = false;
     const timeoutIds: number[] = [];
-    const idleWindow = window as Window & {
-      requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number;
-      cancelIdleCallback?: (handle: number) => void;
-    };
 
     if (canUsePointsRedemption) {
       void loadMerchantPointRedemptionCashier().catch(() => undefined);
@@ -18247,19 +18291,15 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       );
     };
 
-    let idleCallbackId: number | null = null;
-    if (typeof idleWindow.requestIdleCallback === "function") {
-      idleCallbackId = idleWindow.requestIdleCallback(preloadSecondaryPanels, { timeout: 1800 });
-    } else {
-      timeoutIds.push(window.setTimeout(preloadSecondaryPanels, 700));
-    }
+    const cancelSecondaryPanelPreload = scheduleAdminIdleTask(preloadSecondaryPanels, {
+      timeoutMs: 1800,
+      fallbackDelayMs: 700,
+    });
 
     return () => {
       cancelled = true;
+      cancelSecondaryPanelPreload();
       timeoutIds.forEach((timeoutId) => window.clearTimeout(timeoutId));
-      if (idleCallbackId !== null && typeof idleWindow.cancelIdleCallback === "function") {
-        idleWindow.cancelIdleCallback(idleCallbackId);
-      }
     };
   }, [canUsePointsRedemption, checkingAuth, isDesktopMerchantWorkspace, merchantEditorOnly]);
   useEffect(() => {
