@@ -113,7 +113,10 @@ import {
 } from "@/lib/adminAutoReload";
 import {
   buildMerchantAdminDataCacheKey,
+  fetchMerchantAdminDataWithCache,
+  makeMerchantAdminDataCacheKey,
   readMerchantAdminDataCache,
+  readMerchantAdminDataCacheSnapshot,
   writeMerchantAdminDataCache,
 } from "@/lib/merchantAdminDataCache";
 import { buildPublishedMerchantProfilePatch } from "@/lib/merchantProfileBinding";
@@ -18150,23 +18153,63 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       setMerchantCouponRecords([]);
       return;
     }
+
     let cancelled = false;
-    fetch(`/api/coupons?siteId=${encodeURIComponent(editingSiteId)}`, {
-      credentials: "same-origin",
-      cache: "no-store",
-    })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((payload) => {
-        if (cancelled) return;
-        setMerchantCouponRecords(normalizeMerchantCouponRecords(payload?.coupons));
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setMerchantCouponRecords([]);
-        }
+    const cacheKey = makeMerchantAdminDataCacheKey("merchant-coupons", editingSiteId);
+    const cachedSnapshot = readMerchantAdminDataCacheSnapshot<MerchantCouponRecord[]>(cacheKey);
+    let loadedCouponsVersion: string | null = null;
+
+    if (cachedSnapshot) {
+      setMerchantCouponRecords(cachedSnapshot.data);
+    } else {
+      setMerchantCouponRecords([]);
+    }
+
+    const loadCouponsFromServer = async () => {
+      const params = new URLSearchParams({ siteId: editingSiteId });
+      if (cachedSnapshot?.version) params.set("knownVersion", cachedSnapshot.version);
+      const response = await fetch(`/api/coupons?${params.toString()}`, {
+        credentials: "same-origin",
+        cache: "no-store",
       });
+      const payload = (await response.json().catch(() => null)) as {
+        coupons?: unknown;
+        message?: string;
+        error?: string;
+        notModified?: unknown;
+        version?: unknown;
+      } | null;
+      if (!response.ok) {
+        throw new Error(payload?.message || payload?.error || "优惠券加载失败");
+      }
+      loadedCouponsVersion =
+        typeof payload?.version === "string" && payload.version.trim() ? payload.version.trim() : null;
+      if (payload?.notModified === true && cachedSnapshot) return cachedSnapshot.data;
+      return normalizeMerchantCouponRecords(payload?.coupons);
+    };
+
+    const refreshCoupons = () => {
+      void fetchMerchantAdminDataWithCache(cacheKey, loadCouponsFromServer, {
+        force: true,
+        allowStaleOnError: true,
+        dedupe: true,
+        cacheVersion: () => loadedCouponsVersion,
+      })
+        .then((nextCoupons) => {
+          if (!cancelled) setMerchantCouponRecords(nextCoupons);
+        })
+        .catch(() => {
+          if (!cancelled && !cachedSnapshot) setMerchantCouponRecords([]);
+        });
+    };
+    const cancelRefresh = scheduleAdminIdleTask(refreshCoupons, {
+      timeoutMs: 2200,
+      fallbackDelayMs: 900,
+    });
+
     return () => {
       cancelled = true;
+      cancelRefresh();
     };
   }, [canUseCouponModule, checkingAuth, editingSiteId, isPlatformEditor]);
   const merchantPublishSizeLimitBytes = !isPlatformEditor
@@ -18274,33 +18317,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   useEffect(() => {
     if (checkingAuth || !isDesktopMerchantWorkspace || merchantEditorOnly || typeof window === "undefined") return;
 
-    let cancelled = false;
-    const timeoutIds: number[] = [];
-
     if (canUsePointsRedemption) {
       void loadMerchantPointRedemptionCashier().catch(() => undefined);
     }
-
-    const preloadSecondaryPanels = () => {
-      if (cancelled) return;
-      void loadMerchantBusinessCardManager().catch(() => undefined);
-      timeoutIds.push(
-        window.setTimeout(() => {
-          if (!cancelled) void loadMerchantPrintSettingsPanel().catch(() => undefined);
-        }, 900),
-      );
-    };
-
-    const cancelSecondaryPanelPreload = scheduleAdminIdleTask(preloadSecondaryPanels, {
-      timeoutMs: 1800,
-      fallbackDelayMs: 700,
-    });
-
-    return () => {
-      cancelled = true;
-      cancelSecondaryPanelPreload();
-      timeoutIds.forEach((timeoutId) => window.clearTimeout(timeoutId));
-    };
   }, [canUsePointsRedemption, checkingAuth, isDesktopMerchantWorkspace, merchantEditorOnly]);
   useEffect(() => {
     if (checkingAuth || !isDesktopMerchantWorkspace || merchantEditorOnly) return;
