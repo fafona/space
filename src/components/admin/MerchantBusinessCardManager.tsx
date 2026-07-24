@@ -2122,7 +2122,7 @@ export default function MerchantBusinessCardManager({
 
   useEffect(() => {
     let cancelled = false;
-    if (!qrTargetUrl) {
+    if (!editorOpen || !qrTargetUrl) {
       setQrCodeUrl("");
       return;
     }
@@ -2143,7 +2143,7 @@ export default function MerchantBusinessCardManager({
     return () => {
       cancelled = true;
     };
-  }, [draft.qr.size, qrTargetUrl]);
+  }, [draft.qr.size, editorOpen, qrTargetUrl]);
 
   useEffect(() => {
     const validSelectionKeys = new Set<string>([
@@ -2969,7 +2969,13 @@ export default function MerchantBusinessCardManager({
                 >
                   {/* 名片夹封面来自用户已生成内容，保留原始地址和比例比 next/image 更稳。 */}
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={card.imageUrl} alt={card.name} className="block h-auto w-full object-cover bg-transparent" />
+                  <img
+                    src={card.imageUrl}
+                    alt={card.name}
+                    className="block h-auto w-full object-cover bg-transparent"
+                    loading="lazy"
+                    decoding="async"
+                  />
                 </button>
                 <div>
                   <div className="flex items-center gap-2">

@@ -12569,9 +12569,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     let cancelled = false;
     let timer: ReturnType<typeof setInterval> | null = null;
     const bookingCacheKey = buildMerchantAdminDataCacheKey("bookings", editingSiteId);
-    const cachedBookings = readMerchantAdminDataCache<MerchantBookingRecord[]>(bookingCacheKey);
-    if (Array.isArray(cachedBookings)) {
-      setMerchantBookingAttentionSummary(summarizeMerchantBookingAttention(cachedBookings));
+    const cachedBookings = readMerchantAdminDataCacheSnapshot<MerchantBookingRecord[]>(bookingCacheKey);
+    if (Array.isArray(cachedBookings?.data)) {
+      setMerchantBookingAttentionSummary(summarizeMerchantBookingAttention(cachedBookings.data));
       setMerchantBusinessAttentionHydrationState((current) => (current.booking ? current : { ...current, booking: true }));
     }
     const loadMerchantBookingAttention = async () => {
@@ -12594,9 +12594,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         // Keep the last known badge count when the lightweight refresh fails.
       }
     };
-    const cancelInitialRefresh = scheduleAdminIdleTask(() => {
-      void loadMerchantBookingAttention();
-    });
+    const cancelInitialRefresh = cachedBookings?.fresh
+      ? () => {}
+      : scheduleAdminIdleTask(() => {
+          void loadMerchantBookingAttention();
+        });
     timer = setInterval(() => {
       void loadMerchantBookingAttention();
     }, 60000);
@@ -12616,9 +12618,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     let cancelled = false;
     let timer: ReturnType<typeof setInterval> | null = null;
     const orderCacheKey = buildMerchantAdminDataCacheKey("orders", editingSiteId);
-    const cachedOrders = readMerchantAdminDataCache<MerchantOrderRecord[]>(orderCacheKey);
-    if (Array.isArray(cachedOrders)) {
-      setMerchantOrderAttentionSummary(summarizeMerchantOrderAttention(cachedOrders));
+    const cachedOrders = readMerchantAdminDataCacheSnapshot<MerchantOrderRecord[]>(orderCacheKey);
+    if (Array.isArray(cachedOrders?.data)) {
+      setMerchantOrderAttentionSummary(summarizeMerchantOrderAttention(cachedOrders.data));
       setMerchantBusinessAttentionHydrationState((current) => (current.orders ? current : { ...current, orders: true }));
     }
     const loadMerchantOrderAttention = async () => {
@@ -12646,9 +12648,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         // Keep the last known badge count when the lightweight refresh fails.
       }
     };
-    const cancelInitialRefresh = scheduleAdminIdleTask(() => {
-      void loadMerchantOrderAttention();
-    });
+    const cancelInitialRefresh = cachedOrders?.fresh
+      ? () => {}
+      : scheduleAdminIdleTask(() => {
+          void loadMerchantOrderAttention();
+        });
     timer = setInterval(() => {
       void loadMerchantOrderAttention();
     }, 60000);
@@ -15628,8 +15632,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   function openMerchantBusinessCenterPanel() {
-    void loadMerchantBusinessCardManager().catch(() => undefined);
-    void loadMerchantPrintSettingsPanel().catch(() => undefined);
     setMerchantDesktopSection("business");
   }
 
@@ -18315,12 +18317,26 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             ? "coupons"
             : "business";
   useEffect(() => {
-    if (checkingAuth || !isDesktopMerchantWorkspace || merchantEditorOnly || typeof window === "undefined") return;
+    if (
+      checkingAuth ||
+      !isDesktopMerchantWorkspace ||
+      merchantEditorOnly ||
+      !merchantDesktopPointRedemptionCenterActive ||
+      typeof window === "undefined"
+    ) {
+      return;
+    }
 
     if (canUsePointsRedemption) {
       void loadMerchantPointRedemptionCashier().catch(() => undefined);
     }
-  }, [canUsePointsRedemption, checkingAuth, isDesktopMerchantWorkspace, merchantEditorOnly]);
+  }, [
+    canUsePointsRedemption,
+    checkingAuth,
+    isDesktopMerchantWorkspace,
+    merchantDesktopPointRedemptionCenterActive,
+    merchantEditorOnly,
+  ]);
   useEffect(() => {
     if (checkingAuth || !isDesktopMerchantWorkspace || merchantEditorOnly) return;
     const explicitFaollaSection = typeof window !== "undefined" && isFaollaSectionSearch(window.location.search);
@@ -22395,14 +22411,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       <button
                         type="button"
                         className={getMerchantDesktopMenuButtonClassName(merchantDesktopOperationCenterActive)}
-                        onPointerEnter={() => {
-                          void loadMerchantBusinessCardManager().catch(() => undefined);
-                          void loadMerchantPrintSettingsPanel().catch(() => undefined);
-                        }}
-                        onFocus={() => {
-                          void loadMerchantBusinessCardManager().catch(() => undefined);
-                          void loadMerchantPrintSettingsPanel().catch(() => undefined);
-                        }}
                         onClick={openMerchantBusinessCenterPanel}
                         aria-current={merchantDesktopOperationCenterActive ? "page" : undefined}
                       >
