@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createMerchantOrder } from "@/lib/merchantOrders";
+import { createMerchantOrder, updateMerchantOrderItems } from "@/lib/merchantOrders";
 import {
   chunkMerchantOrderRecords,
+  getChangedMerchantOrderChunkIndexes,
   getMerchantOrderChunkIndexesForWindow,
   listStoredMerchantOrdersByCustomer,
   loadStoredMerchantOrders,
@@ -25,20 +26,25 @@ function createReadClient(result: { data: unknown; error: unknown }): MerchantOr
 
 test("chunkMerchantOrderRecords splits orders into stable chunks", () => {
   const orders = Array.from({ length: 205 }, (_, index) =>
-    createMerchantOrder({
-      siteId: "10000000",
-      siteName: "fafona",
-      blockId: "product-block",
-      customer: { name: "Felix" },
-      items: [
-        {
-          productId: `product-${index + 1}`,
-          name: `Product ${index + 1}`,
-          quantity: 1,
-          unitPriceText: "1",
-        },
-      ],
-    }),
+    createMerchantOrder(
+      {
+        siteId: "10000000",
+        siteName: "fafona",
+        blockId: "product-block",
+        customer: { name: "Felix" },
+        items: [
+          {
+            productId: `product-${index + 1}`,
+            name: `Product ${index + 1}`,
+            quantity: 1,
+            unitPriceText: "1",
+          },
+        ],
+      },
+      {
+        createdAt: new Date(Date.UTC(2026, 6, 24, 10, 0, 0) - index * 1000),
+      },
+    ),
   );
 
   const chunks = chunkMerchantOrderRecords(orders);
@@ -53,6 +59,40 @@ test("getMerchantOrderChunkIndexesForWindow returns only chunks needed by the re
   assert.deepEqual(getMerchantOrderChunkIndexesForWindow(5, 90, 40), [0, 1]);
   assert.deepEqual(getMerchantOrderChunkIndexesForWindow(5, 250, 120), [2, 3]);
   assert.deepEqual(getMerchantOrderChunkIndexesForWindow(2, 250, 50), []);
+});
+
+test("getChangedMerchantOrderChunkIndexes isolates an in-place order edit to one chunk", () => {
+  const orders = Array.from({ length: 205 }, (_, index) =>
+    createMerchantOrder(
+      {
+        siteId: "10000000",
+        siteName: "fafona",
+        blockId: "product-block",
+        customer: { name: "Felix" },
+        items: [
+          {
+            productId: `product-${index + 1}`,
+            name: `Product ${index + 1}`,
+            quantity: 1,
+            unitPriceText: "1",
+          },
+        ],
+      },
+      {
+        createdAt: new Date(Date.UTC(2026, 6, 24, 10, 0, 0) - index * 1000),
+      },
+    ),
+  );
+  const nextOrders = [...orders];
+  const target = orders[150];
+  assert.ok(target);
+  nextOrders[150] = updateMerchantOrderItems(
+    target,
+    target.items.map((item) => ({ ...item, quantity: 2 })),
+    "2026-07-24T10:00:00.000Z",
+  );
+
+  assert.deepEqual(getChangedMerchantOrderChunkIndexes(orders, nextOrders), [1]);
 });
 
 test("mergeStoredMerchantOrdersRows prefers chunked rows over legacy row", () => {

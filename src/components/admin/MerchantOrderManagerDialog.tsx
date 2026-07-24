@@ -512,7 +512,7 @@ export default function MerchantOrderManagerDialog({
         | { order?: MerchantOrderRecord; message?: string; error?: string }
         | null;
       if (!response.ok || !payload?.order) {
-        throw new Error(payload?.message || payload?.error || "order_update_failed");
+        throw new Error(payload?.message || payload?.error || "订单保存失败，请稍后重试。");
       }
       return payload.order;
     },
@@ -520,7 +520,11 @@ export default function MerchantOrderManagerDialog({
   );
 
   const requestOrderStatusUpdate = useCallback(
-    async (orderId: string, status: MerchantOrderStatus) => {
+    async (
+      orderId: string,
+      status: MerchantOrderStatus,
+      items?: MerchantOrderLineItemInput[],
+    ) => {
       const response = await fetch("/api/orders", {
         method: "PATCH",
         headers: {
@@ -530,13 +534,14 @@ export default function MerchantOrderManagerDialog({
           siteId,
           orderId,
           status,
+          ...(items ? { items } : {}),
         }),
       });
       const payload = (await response.json().catch(() => null)) as
         | { order?: MerchantOrderRecord; message?: string; error?: string }
         | null;
       if (!response.ok || !payload?.order) {
-        throw new Error(payload?.message || payload?.error || "order_update_failed");
+        throw new Error(payload?.message || payload?.error || "订单保存失败，请稍后重试。");
       }
       return payload.order;
     },
@@ -560,33 +565,9 @@ export default function MerchantOrderManagerDialog({
         | { orders?: MerchantOrderRecord[]; hasMore?: boolean; message?: string; error?: string }
         | null;
       if (!response.ok || !Array.isArray(payload?.orders)) {
-        throw new Error(payload?.message || payload?.error || "order_update_failed");
+        throw new Error(payload?.message || payload?.error || "订单保存失败，请稍后重试。");
       }
       return payload.orders;
-    },
-    [siteId],
-  );
-
-  const requestOrderItemsUpdate = useCallback(
-    async (orderId: string, items: MerchantOrderLineItemInput[]) => {
-      const response = await fetch("/api/orders", {
-        method: "PATCH",
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          siteId,
-          orderId,
-          items,
-        }),
-      });
-      const payload = (await response.json().catch(() => null)) as
-        | { order?: MerchantOrderRecord; message?: string; error?: string }
-        | null;
-      if (!response.ok || !payload?.order) {
-        throw new Error(payload?.message || payload?.error || "order_update_failed");
-      }
-      return payload.order;
     },
     [siteId],
   );
@@ -684,26 +665,25 @@ export default function MerchantOrderManagerDialog({
       setBusyKey(`${busyLabel}:${order.id}`);
       setError("");
       try {
-        let baseOrder = order;
-        if (
+        const draftItems =
           options.persistDetailDraft &&
           order.status !== "completed" &&
           order.status !== "cancelled" &&
           (status === "confirmed" || status === "completed") &&
           hasDetailQuantityDraftChanges(order)
-        ) {
-          baseOrder = await requestOrderItemsUpdate(order.id, buildDetailDraftItemsInput(order));
-          setRecords((current) => current.map((item) => (item.id === order.id ? baseOrder : item)));
-        }
-        const nextOrder = await requestOrderStatusUpdate(baseOrder.id, status);
+            ? buildDetailDraftItemsInput(order)
+            : undefined;
+        const nextOrder = await requestOrderStatusUpdate(order.id, status, draftItems);
         setRecords((current) => current.map((item) => (item.id === order.id ? nextOrder : item)));
       } catch (nextError) {
-        setError(nextError instanceof Error && nextError.message ? nextError.message : "订单操作失败");
+        const message =
+          nextError instanceof Error && nextError.message ? nextError.message : "订单保存失败，请稍后重试。";
+        setError(`保存失败，修改未生效：${message}`);
       } finally {
         setBusyKey("");
       }
     },
-    [buildDetailDraftItemsInput, hasDetailQuantityDraftChanges, requestOrderItemsUpdate, requestOrderStatusUpdate],
+    [buildDetailDraftItemsInput, hasDetailQuantityDraftChanges, requestOrderStatusUpdate],
   );
 
   const printOrder = useCallback(

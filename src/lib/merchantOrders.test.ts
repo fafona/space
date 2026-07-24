@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  applyMerchantOrderUpdate,
   applyMerchantOrderAction,
   buildMerchantOrderId,
   createMerchantOrder,
@@ -250,6 +251,42 @@ test("updateMerchantOrderItems recalculates quantity and totals", () => {
   assert.equal(updated.totalAmount, 133.7);
   assert.equal(updated.updatedAt, "2026-04-20T10:00:00.000Z");
   assert.equal(updated.merchantTouchedAt, "2026-04-20T10:00:00.000Z");
+});
+
+test("applyMerchantOrderUpdate persists item and status changes as one final order", () => {
+  const base = createMerchantOrder({
+    siteId: "10000000",
+    siteName: "fafona",
+    blockId: "b-product",
+    pricePrefix: "€",
+    customer: { name: "Felix" },
+    items: [
+      {
+        productId: "a",
+        code: "SKU-001",
+        name: "Demo A",
+        quantity: 1,
+        unitPriceText: "39.90",
+      },
+    ],
+  });
+  const actedAt = "2026-07-24T10:00:00.000Z";
+  const updated = applyMerchantOrderUpdate(
+    base,
+    {
+      items: base.items.map((item) => ({ ...item, quantity: 3 })),
+      status: "confirmed",
+    },
+    actedAt,
+  );
+
+  assert.equal(updated.items[0]?.quantity, 3);
+  assert.equal(updated.totalQuantity, 3);
+  assert.equal(updated.totalAmount, 119.7);
+  assert.equal(updated.status, "confirmed");
+  assert.equal(updated.confirmedAt, actedAt);
+  assert.equal(updated.updatedAt, actedAt);
+  assert.equal(updated.merchantTouchedAt, actedAt);
 });
 
 test("updateMerchantOrderItems removes items whose quantity becomes zero", () => {

@@ -2,8 +2,8 @@ import { normalizeMerchantOrderRecords, type MerchantOrderRecord } from "@/lib/m
 import { saveMerchantSnapshotHistory } from "@/lib/merchantSnapshotHistoryStore";
 
 const MERCHANT_ORDER_SLUG_PREFIX = "__merchant_orders__:";
-const MERCHANT_ORDER_HISTORY_SLUG_PREFIX = "__merchant_orders_history__:";
-const MERCHANT_ORDER_HISTORY_BACKUP_SLUG_PREFIX = "__merchant_orders_history_backup__:";
+const MERCHANT_ORDER_HISTORY_SLUG_PREFIX = "__merchant_orders_history_v2__:";
+const MERCHANT_ORDER_HISTORY_BACKUP_SLUG_PREFIX = "__merchant_orders_history_backup_v2__:";
 const MERCHANT_ORDER_CHUNK_SIZE = 100;
 
 export type MerchantOrdersStoreClient = {
@@ -114,6 +114,40 @@ export function chunkMerchantOrderRecords(orders: MerchantOrderRecord[], chunkSi
     chunks.push(orders.slice(index, index + normalizedChunkSize));
   }
   return chunks;
+}
+
+export function getChangedMerchantOrderChunkIndexes(
+  previousOrders: MerchantOrderRecord[],
+  nextOrders: MerchantOrderRecord[],
+  chunkSize = MERCHANT_ORDER_CHUNK_SIZE,
+) {
+  const previousChunks = chunkMerchantOrderRecords(normalizeMerchantOrderRecords(previousOrders), chunkSize);
+  const nextChunks = chunkMerchantOrderRecords(normalizeMerchantOrderRecords(nextOrders), chunkSize);
+  const changedIndexes: number[] = [];
+  const totalChunks = Math.max(previousChunks.length, nextChunks.length);
+  for (let index = 0; index < totalChunks; index += 1) {
+    if (JSON.stringify(previousChunks[index] ?? []) !== JSON.stringify(nextChunks[index] ?? [])) {
+      changedIndexes.push(index);
+    }
+  }
+  return changedIndexes;
+}
+
+function buildMerchantOrderChunkHistorySnapshot(
+  siteId: string,
+  orders: MerchantOrderRecord[],
+  chunkIndexes: number[],
+) {
+  const chunks = chunkMerchantOrderRecords(orders);
+  return {
+    format: "merchant-order-chunks-v2",
+    siteId,
+    totalOrders: orders.length,
+    chunks: chunkIndexes.map((index) => ({
+      index,
+      orders: chunks[index] ?? [],
+    })),
+  };
 }
 
 export function getMerchantOrderChunkIndexesForWindow(
@@ -470,6 +504,7 @@ export async function saveStoredMerchantOrders(
   input: {
     siteId: string;
     orders: MerchantOrderRecord[];
+    previousOrders?: MerchantOrderRecord[] | null;
     updatedAt?: string | null;
   },
 ): Promise<{ error: string | null }> {
@@ -477,26 +512,58 @@ export async function saveStoredMerchantOrders(
   if (!normalizedSiteId) return { error: "invalid_site_id" };
   const normalizedOrders = normalizeMerchantOrderRecords(input.orders);
   const updatedAt = normalizeText(input.updatedAt) || new Date().toISOString();
-  const existingRows = await listStoredMerchantOrdersRows(supabase, normalizedSiteId);
-  const beforeOrders = mergeStoredMerchantOrdersRows(normalizedSiteId, existingRows)?.orders ?? null;
-  const history = await saveMerchantSnapshotHistory(supabase, {
-    siteId: normalizedSiteId,
-    slug: buildOrdersHistorySlug(normalizedSiteId),
-    backupSlug: buildOrdersHistoryBackupSlug(normalizedSiteId),
-    source: "merchant-orders",
-    before: beforeOrders,
-    after: normalizedOrders,
-    at: updatedAt,
-    maxEntries: 8,
+  const hasPreviousOrders = Object.prototype.hasOwnProperty.call(input, "previousOrders");
+  const existingRows = hasPreviousOrders
+    ? await listStoredMerchantOrdersRowMetadata(supabase, normalizedSiteId)
+    : await listStoredMerchantOrdersRows(supabase, normalizedSiteId);
+  const beforeOrders = hasPreviousOrders
+    ? normalizeMerchantOrderRecords(input.previousOrders ?? [])
+    : mergeStoredMerchantOrdersRows(normalizedSiteId, existingRows)?.orders ?? null;
+  const contentChangedChunkIndexes =
+    beforeOrders === null
+      ? chunkMerchantOrderRecords(normalizedOrders).map((_, index) => index)
+      : getChangedMerchantOrderChunkIndexes(beforeOrders, normalizedOrders);
+  const desiredChunks = chunkMerchantOrderRecords(normalizedOrders);
+  const desiredSlugs = desiredChunks.map((_, index) => buildOrdersChunkSlug(normalizedSiteId, index));
+  const existingSlugSet = new Set(existingRows.map((row) => normalizeText(row.slug)).filter(Boolean));
+  const missingChunkIndexes = desiredSlugs.flatMap((slug, index) => (existingSlugSet.has(slug) ? [] : [index]));
+  const changedChunkIndexes = [...new Set([...contentChangedChunkIndexes, ...missingChunkIndexes])].sort(
+    (left, right) => left - right,
+  );
+  const staleRows = existingRows.filter((row) => {
+    const slug = normalizeText(row.slug);
+    return slug && !desiredSlugs.includes(slug);
   });
-  if (history.error) return { error: `merchant_orders_history_save_failed:${history.error}` };
+
+  if (changedChunkIndexes.length === 0 && staleRows.length === 0) {
+    return { error: null };
+  }
+
+  if (contentChangedChunkIndexes.length > 0) {
+    const history = await saveMerchantSnapshotHistory(supabase, {
+      siteId: normalizedSiteId,
+      slug: buildOrdersHistorySlug(normalizedSiteId),
+      backupSlug: buildOrdersHistoryBackupSlug(normalizedSiteId),
+      source: "merchant-orders-chunks-v2",
+      before:
+        beforeOrders === null
+          ? null
+          : buildMerchantOrderChunkHistorySnapshot(normalizedSiteId, beforeOrders, contentChangedChunkIndexes),
+      after: buildMerchantOrderChunkHistorySnapshot(
+        normalizedSiteId,
+        normalizedOrders,
+        contentChangedChunkIndexes,
+      ),
+      at: updatedAt,
+      maxEntries: 20,
+    });
+    if (history.error) return { error: `merchant_orders_history_save_failed:${history.error}` };
+  }
   const existingBySlug = new Map(
     existingRows
       .map((row) => [normalizeText(row.slug), row] as const)
       .filter(([slug]) => Boolean(slug)),
   );
-  const desiredChunks = chunkMerchantOrderRecords(normalizedOrders);
-  const desiredSlugs = desiredChunks.map((_, index) => buildOrdersChunkSlug(normalizedSiteId, index));
 
   const upsertChunk = async (slug: string, orders: MerchantOrderRecord[]) => {
     const existing = existingBySlug.get(slug);
@@ -534,17 +601,13 @@ export async function saveStoredMerchantOrders(
     return existing ? updateExisting({ blocks: orders }) : insertNew({ blocks: orders });
   };
 
-  for (let index = 0; index < desiredChunks.length; index += 1) {
+  for (const index of changedChunkIndexes) {
     const chunkOrders = desiredChunks[index] ?? [];
+    if (chunkOrders.length === 0) continue;
     const slug = desiredSlugs[index] ?? buildOrdersChunkSlug(normalizedSiteId, index);
     const result = await upsertChunk(slug, chunkOrders);
     if (result.error) return result;
   }
-
-  const staleRows = existingRows.filter((row) => {
-    const slug = normalizeText(row.slug);
-    return slug && !desiredSlugs.includes(slug);
-  });
 
   for (const row of staleRows) {
     if (row.id === undefined || row.id === null) continue;

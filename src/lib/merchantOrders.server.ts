@@ -2,10 +2,10 @@ import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import {
   applyMerchantOrderAction,
   applyMerchantOrderStatus,
+  applyMerchantOrderUpdate,
   buildMerchantOrderId,
   createMerchantOrder,
   normalizeMerchantOrderRecords,
-  updateMerchantOrderItems,
   type MerchantOrderAction,
   type MerchantOrderCreateInput,
   type MerchantOrderLineItemInput,
@@ -121,6 +121,7 @@ export async function createMerchantOrderRecord(input: MerchantOrderCreateInput)
     const saved = await saveStoredMerchantOrders(supabase, {
       siteId: next.siteId,
       orders,
+      previousOrders: existingOrders,
       updatedAt: next.updatedAt,
     });
     if (saved.error) {
@@ -187,6 +188,7 @@ export async function cancelPersonalMerchantOrder(input: {
     const saved = await saveStoredMerchantOrders(supabase, {
       siteId,
       orders: updatedOrders,
+      previousOrders: orders,
       updatedAt: now,
     });
     if (saved.error) throw new Error(saved.error);
@@ -248,6 +250,7 @@ export async function attachPersonalMerchantOrdersByGuestHash(input: {
         const saved = await saveStoredMerchantOrders(supabase, {
           siteId,
           orders: nextOrders,
+          previousOrders: orders,
           updatedAt: new Date().toISOString(),
         });
         if (saved.error) throw new Error(saved.error);
@@ -278,22 +281,14 @@ export async function updateMerchantOrderBySite(input: {
       throw new Error("order_items_locked");
     }
     const now = new Date().toISOString();
-    const next = Array.isArray(input.items)
-      ? updateMerchantOrderItems(current, input.items, now)
-      : input.status
-        ? applyMerchantOrderStatus(current, input.status, now)
-      : input.action
-        ? applyMerchantOrderAction(current, input.action, now)
-        : null;
-    if (!next) {
-      throw new Error("invalid_order_update");
-    }
+    const next = applyMerchantOrderUpdate(current, input, now);
     await syncMerchantMembershipPointsForOrderTransitions([{ previous: current, next }]);
     const updatedOrders = [...orders];
     updatedOrders[orderIndex] = next;
     const saved = await saveStoredMerchantOrders(supabase, {
       siteId,
       orders: updatedOrders,
+      previousOrders: orders,
       updatedAt: now,
     });
     if (saved.error) {
@@ -345,6 +340,7 @@ export async function updateMerchantOrdersBatchBySite(input: {
     const saved = await saveStoredMerchantOrders(supabase, {
       siteId,
       orders: nextOrders,
+      previousOrders: orders,
       updatedAt: now,
     });
     if (saved.error) {

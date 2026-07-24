@@ -165,6 +165,7 @@ export function getMerchantOrderErrorMessage(value: unknown) {
   if (code === "order_customer_action_locked") return "商家已开始处理该订单，当前不能由客户取消。";
   if (code === "order_item_invalid" || code === "order_items_not_editable") return "订单商品数据无效，请刷新后重试。";
   if (code === "invalid_order_update") return "订单操作无效，请刷新后重试。";
+  if (code === "order_update_failed") return "订单保存失败，请稍后重试。";
   if (code === "order_items_required") return "订单至少需要保留一项产品。";
   if (
     code === "orders_store_unavailable" ||
@@ -448,6 +449,33 @@ export function updateMerchantOrderItems(
     updatedAt: actedAt,
     merchantTouchedAt: actedAt,
   };
+}
+
+export function applyMerchantOrderUpdate(
+  record: MerchantOrderRecord,
+  input: {
+    action?: MerchantOrderAction;
+    status?: MerchantOrderStatus;
+    items?: MerchantOrderLineItemInput[];
+  },
+  actedAt = new Date().toISOString(),
+): MerchantOrderRecord {
+  const hasItems = Array.isArray(input.items);
+  if (!hasItems && !input.status && !input.action) {
+    throw new Error("invalid_order_update");
+  }
+  if ((input.status && input.action) || (hasItems && input.action)) {
+    throw new Error("invalid_order_update");
+  }
+
+  const orderWithItems = hasItems ? updateMerchantOrderItems(record, input.items ?? [], actedAt) : record;
+  if (input.status) {
+    return applyMerchantOrderStatus(orderWithItems, input.status, actedAt);
+  }
+  if (input.action) {
+    return applyMerchantOrderAction(orderWithItems, input.action, actedAt);
+  }
+  return orderWithItems;
 }
 
 export function createMerchantOrder(
