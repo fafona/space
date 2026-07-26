@@ -36,6 +36,12 @@ import type { MerchantOrderRecord } from "@/lib/merchantOrders";
 import { MERCHANT_COUPON_DIRECT_REDEMPTION_DISCOUNT_TYPES } from "@/lib/merchantCoupons";
 import { redeemMerchantCouponRecords, releaseMerchantCouponRedemptions } from "@/lib/merchantCoupons.server";
 import { loadStoredMerchantMemberships, saveStoredMerchantMemberships } from "@/lib/merchantMembershipsStore";
+import {
+  loadMerchantMembershipV1VerificationData,
+  readMerchantMembershipsWithV1Verification,
+  resolveMerchantMembershipV1ReadConfig,
+  type MerchantMembershipV1ReadClient,
+} from "@/lib/merchantMembershipLedgerV1Read.server";
 import { appendMutationOperationMarker, buildMutationOperationMarker } from "@/lib/mutationOperationId";
 import { readPersonalCustomerProfileFromSession } from "@/lib/personalCustomerProfile";
 import type { PersonalAccountSession } from "@/lib/personalAccountSession.server";
@@ -577,9 +583,28 @@ export async function getMerchantMembershipsSnapshot(
     options.applyScheduledRules === false
       ? memberships
       : await applyScheduledPointRules(siteId, memberships, stored?.updatedAt ?? null);
+  const legacy = {
+    memberships: nextMemberships,
+    updatedAt: resolveMerchantMembershipsVersion(
+      nextMemberships,
+      stored?.updatedAt ?? null,
+    ),
+  };
+  const readConfig = resolveMerchantMembershipV1ReadConfig();
+  const verified = await readMerchantMembershipsWithV1Verification({
+    siteId,
+    legacy,
+    loadV1: () =>
+      loadMerchantMembershipV1VerificationData(
+        supabase as unknown as MerchantMembershipV1ReadClient,
+        siteId,
+        readConfig.currency,
+      ),
+    config: readConfig,
+  });
   return {
-    memberships: nextMemberships.map(toMerchantMembershipListItem),
-    updatedAt: resolveMerchantMembershipsVersion(nextMemberships, stored?.updatedAt ?? null),
+    memberships: verified.memberships.map(toMerchantMembershipListItem),
+    updatedAt: verified.updatedAt,
   };
 }
 

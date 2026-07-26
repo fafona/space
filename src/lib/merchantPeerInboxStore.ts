@@ -6,6 +6,10 @@ import {
   readMerchantPeerInboxFromBlocks,
   type MerchantPeerInboxPayload,
 } from "@/lib/merchantPeerInbox";
+import {
+  mirrorMerchantPeerConversationSnapshot,
+  type MerchantConversationShadowClient,
+} from "@/lib/merchantConversationDualWrite.server";
 import { saveMerchantSnapshotHistory } from "@/lib/merchantSnapshotHistoryStore";
 
 const MERCHANT_PEER_INBOX_HISTORY_SLUG = "__merchant_peer_inbox_history__";
@@ -24,7 +28,7 @@ type MerchantPeerQueryBuilder = PromiseLike<{ data?: unknown; error: StoreErrorL
   maybeSingle: () => Promise<{ data?: unknown; error: StoreErrorLike }>;
 };
 
-export type MerchantPeerInboxStoreClient = {
+export type MerchantPeerInboxStoreClient = MerchantConversationShadowClient & {
   from: (table: string) => MerchantPeerQueryBuilder;
 };
 
@@ -210,26 +214,30 @@ async function saveMerchantPeerInboxUnlocked(
 
     return { error: "pages_slug_column_missing" };
   };
-
-  const first = await updatePayload(basePayload);
-  if (!first.error) {
+  const completeSuccessfulSave = async () => {
     merchantPeerInboxCache = {
       expiresAt: Date.now() + MERCHANT_PEER_INBOX_CACHE_TTL_MS,
       value: normalizedPayload,
     };
+    await mirrorMerchantPeerConversationSnapshot(supabase, {
+      current: normalizedPayload,
+      previous: beforePayload,
+    });
     return { error: null, payload: normalizedPayload };
+  };
+
+  const first = await updatePayload(basePayload);
+  if (!first.error) {
+    return completeSuccessfulSave();
   }
   if (!isMissingUpdatedAtColumn(first.error)) return { error: first.error, payload: null };
   const fallback = await updatePayload(payloadWithoutUpdatedAt);
   if (!fallback.error) {
-    merchantPeerInboxCache = {
-      expiresAt: Date.now() + MERCHANT_PEER_INBOX_CACHE_TTL_MS,
-      value: normalizedPayload,
-    };
+    return completeSuccessfulSave();
   }
   return {
     error: fallback.error,
-    payload: fallback.error ? null : normalizedPayload,
+    payload: null,
   };
 }
 

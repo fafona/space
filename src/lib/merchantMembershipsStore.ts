@@ -1,4 +1,8 @@
 import { normalizeMerchantMembershipRecords, type MerchantMembershipRecord } from "@/lib/merchantMemberships";
+import {
+  mirrorMerchantMembershipLedgerChanges,
+  resolveMerchantMembershipLedgerDualWriteConfig,
+} from "@/lib/merchantMembershipLedgerDualWrite.server";
 import { saveMerchantSnapshotHistory } from "@/lib/merchantSnapshotHistoryStore";
 
 const MERCHANT_MEMBERSHIP_SLUG_PREFIX = "__merchant_memberships__:";
@@ -9,6 +13,10 @@ export type MerchantMembershipsStoreClient = {
   // Supabase query builders are heavily generic; this store only relies on runtime chaining.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   from: (table: string) => any;
+  rpc?: (
+    functionName: string,
+    args: Record<string, unknown>,
+  ) => PromiseLike<{ data?: unknown; error?: unknown }>;
 };
 
 export type StoredMerchantMemberships = {
@@ -80,6 +88,43 @@ function buildMembershipsHistorySlug(siteId: string) {
 
 function buildMembershipsHistoryBackupSlug(siteId: string) {
   return `${MERCHANT_MEMBERSHIP_HISTORY_BACKUP_SLUG_PREFIX}${siteId}`;
+}
+
+async function mirrorSavedMemberships(
+  supabase: MerchantMembershipsStoreClient,
+  input: {
+    siteId: string;
+    previousMemberships: MerchantMembershipRecord[] | null;
+    nextMemberships: MerchantMembershipRecord[];
+  },
+) {
+  const config = resolveMerchantMembershipLedgerDualWriteConfig();
+  if (config.mode === "off") return;
+  if (typeof supabase.rpc !== "function") {
+    console.error(
+      "[merchant-membership-ledger-dual-write]",
+      JSON.stringify({
+        event: "merchant_membership_ledger_shadow_write_failed",
+        status: "failed",
+        siteIds: [input.siteId],
+        membershipIds: [],
+        transactionIds: [],
+        customerCount: 0,
+        entryCount: 0,
+        error: "supabase_rpc_unavailable",
+      }),
+    );
+    return;
+  }
+  await mirrorMerchantMembershipLedgerChanges(
+    { rpc: supabase.rpc.bind(supabase) },
+    {
+      siteId: input.siteId,
+      previousMemberships: input.previousMemberships,
+      nextMemberships: input.nextMemberships,
+    },
+    { config },
+  );
 }
 
 async function queryStoredMembershipRows(supabase: MerchantMembershipsStoreClient, siteId: string) {
@@ -245,7 +290,24 @@ export async function saveStoredMerchantMemberships(
     updated_at: updatedAt,
   };
   const first = existing ? await updateExisting(basePayload) : await insertNew(basePayload);
-  if (!first.error) return first;
+  if (!first.error) {
+    await mirrorSavedMemberships(supabase, {
+      siteId: normalizedSiteId,
+      previousMemberships: beforeMemberships,
+      nextMemberships: memberships,
+    });
+    return first;
+  }
   if (!isMissingUpdatedAtColumn(first.error)) return first;
-  return existing ? updateExisting({ blocks: memberships }) : insertNew({ blocks: memberships });
+  const fallback = existing
+    ? await updateExisting({ blocks: memberships })
+    : await insertNew({ blocks: memberships });
+  if (!fallback.error) {
+    await mirrorSavedMemberships(supabase, {
+      siteId: normalizedSiteId,
+      previousMemberships: beforeMemberships,
+      nextMemberships: memberships,
+    });
+  }
+  return fallback;
 }

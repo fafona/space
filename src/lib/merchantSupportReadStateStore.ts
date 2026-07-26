@@ -6,6 +6,10 @@ import {
   readMerchantSupportReadStateFromBlocks,
   type MerchantSupportReadStatePayload,
 } from "@/lib/merchantSupportReadState";
+import {
+  mirrorMerchantConversationReadState,
+  type MerchantConversationShadowClient,
+} from "@/lib/merchantConversationDualWrite.server";
 import { saveMerchantSnapshotHistory } from "@/lib/merchantSnapshotHistoryStore";
 
 const MERCHANT_SUPPORT_READ_STATE_HISTORY_SLUG = "__merchant_support_read_state_history__";
@@ -24,7 +28,8 @@ type MerchantSupportReadStateQueryBuilder = PromiseLike<{ data?: unknown; error:
   maybeSingle: () => Promise<{ data?: unknown; error: StoreErrorLike }>;
 };
 
-export type MerchantSupportReadStateStoreClient = {
+export type MerchantSupportReadStateStoreClient =
+  MerchantConversationShadowClient & {
   from: (table: string) => MerchantSupportReadStateQueryBuilder;
 };
 
@@ -210,26 +215,30 @@ async function saveMerchantSupportReadStateUnlocked(
 
     return { error: "pages_slug_column_missing" };
   };
-
-  const first = await updatePayload(basePayload);
-  if (!first.error) {
+  const completeSuccessfulSave = async () => {
     merchantSupportReadStateCache = {
       expiresAt: Date.now() + MERCHANT_SUPPORT_READ_STATE_CACHE_TTL_MS,
       value: normalizedPayload,
     };
+    await mirrorMerchantConversationReadState(supabase, {
+      current: normalizedPayload,
+      previous: beforePayload,
+    });
     return { error: null, payload: normalizedPayload };
+  };
+
+  const first = await updatePayload(basePayload);
+  if (!first.error) {
+    return completeSuccessfulSave();
   }
   if (!isMissingUpdatedAtColumn(first.error)) return { error: first.error, payload: null };
   const fallback = await updatePayload(payloadWithoutUpdatedAt);
   if (!fallback.error) {
-    merchantSupportReadStateCache = {
-      expiresAt: Date.now() + MERCHANT_SUPPORT_READ_STATE_CACHE_TTL_MS,
-      value: normalizedPayload,
-    };
+    return completeSuccessfulSave();
   }
   return {
     error: fallback.error,
-    payload: fallback.error ? null : normalizedPayload,
+    payload: null,
   };
 }
 

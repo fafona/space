@@ -6,6 +6,10 @@ import {
   readPlatformSupportInboxFromBlocks,
   type PlatformSupportInboxPayload,
 } from "@/lib/platformSupportInbox";
+import {
+  mirrorPlatformSupportConversationSnapshot,
+  type MerchantConversationShadowClient,
+} from "@/lib/merchantConversationDualWrite.server";
 import { saveMerchantSnapshotHistory } from "@/lib/merchantSnapshotHistoryStore";
 
 const PLATFORM_SUPPORT_INBOX_HISTORY_SLUG = "__platform_support_inbox_history__";
@@ -24,7 +28,7 @@ type SupportQueryBuilder = PromiseLike<{ data?: unknown; error: StoreErrorLike }
   maybeSingle: () => Promise<{ data?: unknown; error: StoreErrorLike }>;
 };
 
-export type PlatformSupportInboxStoreClient = {
+export type PlatformSupportInboxStoreClient = MerchantConversationShadowClient & {
   from: (table: string) => SupportQueryBuilder;
 };
 
@@ -211,26 +215,32 @@ async function savePlatformSupportInboxUnlocked(
 
     return { error: "pages_slug_column_missing" };
   };
-
-  const first = await updatePayload(basePayload);
-  if (!first.error) {
+  const completeSuccessfulSave = async () => {
     platformSupportInboxCache = {
       expiresAt: Date.now() + PLATFORM_SUPPORT_INBOX_CACHE_TTL_MS,
       value: normalizedPayload,
     };
+    await mirrorPlatformSupportConversationSnapshot(supabase, {
+      current: normalizedPayload,
+      previous: beforePayload,
+      replace: options?.replace,
+      operationAt: basePayload.updated_at,
+    });
     return { error: null, payload: normalizedPayload };
+  };
+
+  const first = await updatePayload(basePayload);
+  if (!first.error) {
+    return completeSuccessfulSave();
   }
   if (!isMissingUpdatedAtColumn(first.error)) return { error: first.error, payload: null };
   const fallback = await updatePayload(payloadWithoutUpdatedAt);
   if (!fallback.error) {
-    platformSupportInboxCache = {
-      expiresAt: Date.now() + PLATFORM_SUPPORT_INBOX_CACHE_TTL_MS,
-      value: normalizedPayload,
-    };
+    return completeSuccessfulSave();
   }
   return {
     error: fallback.error,
-    payload: fallback.error ? null : normalizedPayload,
+    payload: null,
   };
 }
 

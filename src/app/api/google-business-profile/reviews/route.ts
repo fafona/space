@@ -9,7 +9,9 @@ import {
   saveGoogleBusinessProfileIntegration,
   type GoogleBusinessProfileIntegration,
 } from "@/lib/googleBusinessProfileStore";
+import { enqueueGoogleReviewsSyncShadow } from "@/lib/googleReviewsOutbox.server";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
+import type { MerchantOutboxRpcClient } from "@/lib/merchantOutboxEnqueue.server";
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 
 export const dynamic = "force-dynamic";
@@ -59,6 +61,14 @@ export async function GET(request: Request) {
   }
 
   if (!isFresh(integration)) {
+    const shadowEnqueue = enqueueGoogleReviewsSyncShadow(
+      supabase as unknown as MerchantOutboxRpcClient,
+      {
+        siteId,
+        reason: "stale_public_read",
+        dedupeWindowMs: readSyncIntervalMs(),
+      },
+    );
     let task = syncTasks.get(siteId);
     if (!task) {
       const source = integration;
@@ -71,7 +81,9 @@ export async function GET(request: Request) {
       syncTasks.set(siteId, task);
     }
     try {
-      integration = await task;
+      const [syncResult] = await Promise.allSettled([task, shadowEnqueue]);
+      if (syncResult.status === "rejected") throw syncResult.reason;
+      integration = syncResult.value;
     } catch (error) {
       integration = markGoogleBusinessProfileError(integration, error);
       await saveGoogleBusinessProfileIntegration(supabase, integration).catch(() => null);

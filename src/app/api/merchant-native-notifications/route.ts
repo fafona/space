@@ -26,6 +26,13 @@ import {
   loadStoredMerchantSupportReadState,
   type MerchantSupportReadStateStoreClient,
 } from "@/lib/merchantSupportReadStateStore";
+import {
+  loadMerchantConversationsV1VerificationData,
+  readMerchantConversationsWithV1Verification,
+  reserveMerchantConversationV1ReadWindow,
+  resolveMerchantConversationV1ReadConfig,
+  type MerchantConversationV1ReadClient,
+} from "@/lib/merchantConversationsV1Read.server";
 import { listMerchantBookings } from "@/lib/merchantBookings.server";
 import {
   isMerchantBookingNewForMerchant,
@@ -264,6 +271,28 @@ export async function GET(request: Request) {
     listMerchantBookings(merchantId, { includeAutomationState: true }).catch(() => [] as MerchantBookingRecord[]),
     listMerchantOrders(merchantId).catch(() => [] as MerchantOrderRecord[]),
   ]);
+  const conversationReadConfig = resolveMerchantConversationV1ReadConfig();
+  if (
+    reserveMerchantConversationV1ReadWindow(
+      merchantId,
+      conversationReadConfig,
+    )
+  ) {
+    await readMerchantConversationsWithV1Verification({
+      siteId: merchantId,
+      legacy: {
+        peerInbox: peerPayload,
+        supportInbox: supportPayload,
+        readState: readStatePayload,
+      },
+      loadV1: () =>
+        loadMerchantConversationsV1VerificationData(
+          supabase as unknown as MerchantConversationV1ReadClient,
+          merchantId,
+        ),
+      config: conversationReadConfig,
+    });
+  }
   const storedReadState = getMerchantSupportReadState(readStatePayload, merchantId);
   const officialLastReadAt = getLatestSupportReadTimestamp(
     queryOfficialLastReadAt,

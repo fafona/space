@@ -19,6 +19,12 @@ import {
   loadStoredMerchantOrdersWindow,
   saveStoredMerchantOrders,
 } from "@/lib/merchantOrdersStore";
+import { mirrorMerchantOrderTransitions } from "@/lib/merchantOrderDualWrite.server";
+import {
+  loadMerchantOrdersV1,
+  loadMerchantOrdersV1Window,
+  readMerchantOrdersWithV1Fallback,
+} from "@/lib/merchantOrdersV1Read.server";
 
 const merchantOrderMutationTails = new Map<string, Promise<void>>();
 
@@ -52,7 +58,11 @@ function requireOrdersStoreClient() {
 
 export async function listMerchantOrders(siteId: string) {
   const supabase = requireOrdersStoreClient();
-  const stored = await loadStoredMerchantOrders(supabase, siteId);
+  const stored = await readMerchantOrdersWithV1Fallback({
+    siteId,
+    loadLegacy: () => loadStoredMerchantOrders(supabase, siteId),
+    loadV1: () => loadMerchantOrdersV1(supabase, siteId),
+  });
   return stored?.orders ?? [];
 }
 
@@ -64,7 +74,11 @@ export async function listMerchantOrdersWindow(
   },
 ) {
   const supabase = requireOrdersStoreClient();
-  return loadStoredMerchantOrdersWindow(supabase, siteId, input);
+  return readMerchantOrdersWithV1Fallback({
+    siteId,
+    loadLegacy: () => loadStoredMerchantOrdersWindow(supabase, siteId, input),
+    loadV1: () => loadMerchantOrdersV1Window(supabase, siteId, input),
+  });
 }
 
 export async function listPersonalMerchantOrders(input: {
@@ -96,6 +110,7 @@ export async function createMerchantOrderRecord(input: MerchantOrderCreateInput)
             existingRequest.customerLoginEmail === trimText(input.customerLoginEmail).toLowerCase()) ||
           (input.customerGuestHash && existingRequest.customerGuestHash === trimText(input.customerGuestHash));
         if (!sameOwner) throw new Error("order_request_conflict");
+        await mirrorMerchantOrderTransitions(supabase, [{ next: existingRequest }]);
         return existingRequest;
       }
     }
@@ -127,6 +142,7 @@ export async function createMerchantOrderRecord(input: MerchantOrderCreateInput)
     if (saved.error) {
       throw new Error(saved.error);
     }
+    await mirrorMerchantOrderTransitions(supabase, [{ next }]);
     return next;
   });
 }
@@ -192,6 +208,7 @@ export async function cancelPersonalMerchantOrder(input: {
       updatedAt: now,
     });
     if (saved.error) throw new Error(saved.error);
+    await mirrorMerchantOrderTransitions(supabase, [{ previous: current, next }]);
     return next;
   });
 }
@@ -254,6 +271,15 @@ export async function attachPersonalMerchantOrdersByGuestHash(input: {
           updatedAt: new Date().toISOString(),
         });
         if (saved.error) throw new Error(saved.error);
+        await mirrorMerchantOrderTransitions(
+          supabase,
+          nextOrders
+            .filter((order) => orderIds.has(order.id) && trimText(order.customerGuestHash) === guestHash)
+            .map((next) => ({
+              previous: orders.find((order) => order.id === next.id) ?? null,
+              next,
+            })),
+        );
       }
     });
   }
@@ -295,6 +321,7 @@ export async function updateMerchantOrderBySite(input: {
       await syncMerchantMembershipPointsForOrderTransitions([{ previous: next, next: current }]).catch(() => null);
       throw new Error(saved.error);
     }
+    await mirrorMerchantOrderTransitions(supabase, [{ previous: current, next }]);
     return next;
   });
 }
@@ -349,6 +376,7 @@ export async function updateMerchantOrdersBatchBySite(input: {
       ).catch(() => null);
       throw new Error(saved.error);
     }
+    await mirrorMerchantOrderTransitions(supabase, transitions);
     return updatedOrders;
   });
 }

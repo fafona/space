@@ -1,0 +1,260 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import type { MerchantOrderRecord } from "@/lib/merchantOrders";
+import type { StoredMerchantOrders, StoredMerchantOrdersWindow } from "@/lib/merchantOrdersStore";
+import {
+  isMerchantOrderV1ReadEnabled,
+  readMerchantOrdersWithV1Fallback,
+  resolveMerchantOrderV1ReadConfig,
+  type MerchantOrderV1ReadEvent,
+} from "@/lib/merchantOrdersV1Read.server";
+
+function createOrder(overrides: Partial<MerchantOrderRecord> = {}): MerchantOrderRecord {
+  return {
+    id: "O10000000202607250001",
+    siteId: "10000000",
+    siteName: "Faolla",
+    blockId: "products",
+    clientRequestId: "request-1",
+    customerAccountId: "10000000000001",
+    customerUserId: "user-1",
+    customerLoginEmail: "member@example.com",
+    customerGuestHash: "",
+    createdAt: "2026-07-25T10:00:00.000Z",
+    updatedAt: "2026-07-25T10:05:00.000Z",
+    merchantTouchedAt: "",
+    status: "pending",
+    customer: {
+      name: "Nana",
+      phone: "600000000",
+      email: "member@example.com",
+      note: "",
+    },
+    items: [
+      {
+        productId: "product-1",
+        code: "SKU-001",
+        name: "Product",
+        description: "",
+        imageUrl: "",
+        tag: "",
+        quantity: 1,
+        unitPrice: 10,
+        unitPriceText: "EUR 10.00",
+        subtotal: 10,
+      },
+    ],
+    totalQuantity: 1,
+    totalAmount: 10,
+    pricePrefix: "EUR",
+    confirmedAt: null,
+    completedAt: null,
+    cancelledAt: null,
+    printedAt: null,
+    printCount: 0,
+    ...overrides,
+  };
+}
+
+function createStoredOrder(
+  order = createOrder(),
+  overrides: Partial<StoredMerchantOrders> = {},
+): StoredMerchantOrders {
+  return {
+    siteId: order.siteId,
+    orders: [order],
+    updatedAt: "2026-07-25T10:06:00.000Z",
+    ...overrides,
+  };
+}
+
+test("read config is default-off and only accepts exact merchant ids", () => {
+  const config = resolveMerchantOrderV1ReadConfig({
+    MERCHANT_ORDER_V1_READ_MODE: "primary",
+    MERCHANT_ORDER_V1_READ_SITE_IDS: "10000000, *, abc, 20000000,10000000",
+    MERCHANT_ORDER_V1_READ_TIMEOUT_MS: "15",
+  });
+
+  assert.deepEqual(config, {
+    mode: "primary",
+    siteIds: ["10000000", "20000000"],
+    timeoutMs: 250,
+  });
+  assert.equal(isMerchantOrderV1ReadEnabled("10000000", config), true);
+  assert.equal(isMerchantOrderV1ReadEnabled("30000000", config), false);
+  assert.equal(
+    resolveMerchantOrderV1ReadConfig({
+      MERCHANT_ORDER_V1_READ_MODE: "unexpected",
+      MERCHANT_ORDER_V1_READ_SITE_IDS: "10000000",
+    }).mode,
+    "off",
+  );
+});
+
+test("disabled reads never invoke the V1 loader", async () => {
+  const legacy = createStoredOrder();
+  let v1Calls = 0;
+  const result = await readMerchantOrdersWithV1Fallback({
+    siteId: "10000000",
+    loadLegacy: async () => legacy,
+    loadV1: async () => {
+      v1Calls += 1;
+      return createStoredOrder();
+    },
+    config: {
+      mode: "off",
+      siteIds: ["10000000"],
+      timeoutMs: 2500,
+    },
+  });
+
+  assert.equal(result, legacy);
+  assert.equal(v1Calls, 0);
+});
+
+test("verify mode observes parity but always returns the legacy envelope", async () => {
+  const legacy = createStoredOrder();
+  const events: MerchantOrderV1ReadEvent[] = [];
+  const result = await readMerchantOrdersWithV1Fallback({
+    siteId: "10000000",
+    loadLegacy: async () => legacy,
+    loadV1: async () => createStoredOrder(structuredClone(legacy.orders[0])),
+    config: {
+      mode: "verify",
+      siteIds: ["10000000"],
+      timeoutMs: 2500,
+    },
+    logger: (event) => events.push(event),
+  });
+
+  assert.equal(result, legacy);
+  assert.equal(events[0]?.outcome, "match");
+  assert.equal(events[0]?.reason, "parity");
+  assert.match(events[0]?.observedAt ?? "", /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(Number.isInteger(events[0]?.durationMs), true);
+});
+
+test("primary mode uses V1 order objects only after exact parity", async () => {
+  const legacyOrder = createOrder();
+  const v1Order = structuredClone(legacyOrder);
+  const legacy: StoredMerchantOrdersWindow = {
+    ...createStoredOrder(legacyOrder),
+    offset: 0,
+    limit: 100,
+    hasMore: false,
+  };
+  const v1: StoredMerchantOrdersWindow = {
+    ...createStoredOrder(v1Order),
+    updatedAt: "2026-07-25T12:00:00.000Z",
+    offset: 0,
+    limit: 100,
+    hasMore: false,
+  };
+
+  const result = await readMerchantOrdersWithV1Fallback({
+    siteId: "10000000",
+    loadLegacy: async () => legacy,
+    loadV1: async () => v1,
+    config: {
+      mode: "primary",
+      siteIds: ["10000000"],
+      timeoutMs: 2500,
+    },
+    logger: () => undefined,
+  });
+
+  assert.notEqual(result, legacy);
+  assert.notEqual(result?.orders[0], legacyOrder);
+  assert.deepEqual(result?.orders[0], v1Order);
+  assert.equal(result?.updatedAt, legacy.updatedAt);
+  assert.equal((result as StoredMerchantOrdersWindow).hasMore, false);
+});
+
+test("primary mode falls back on content and window metadata mismatches", async () => {
+  const legacy: StoredMerchantOrdersWindow = {
+    ...createStoredOrder(),
+    offset: 0,
+    limit: 100,
+    hasMore: false,
+  };
+  const events: MerchantOrderV1ReadEvent[] = [];
+  const contentMismatch = await readMerchantOrdersWithV1Fallback({
+    siteId: "10000000",
+    loadLegacy: async () => legacy,
+    loadV1: async () => ({
+      ...legacy,
+      orders: [
+        createOrder({
+          customer: {
+            ...legacy.orders[0].customer,
+            name: "Different customer",
+          },
+        }),
+      ],
+    }),
+    config: {
+      mode: "primary",
+      siteIds: ["10000000"],
+      timeoutMs: 2500,
+    },
+    logger: (event) => events.push(event),
+  });
+  const windowMismatch = await readMerchantOrdersWithV1Fallback({
+    siteId: "10000000",
+    loadLegacy: async () => legacy,
+    loadV1: async () => ({
+      ...legacy,
+      hasMore: true,
+    }),
+    config: {
+      mode: "primary",
+      siteIds: ["10000000"],
+      timeoutMs: 2500,
+    },
+    logger: (event) => events.push(event),
+  });
+
+  assert.equal(contentMismatch, legacy);
+  assert.equal(windowMismatch, legacy);
+  assert.deepEqual(
+    events.map((event) => event.reason),
+    ["order_content_mismatch", "window_metadata_mismatch"],
+  );
+});
+
+test("V1 timeout and query failures both return legacy data", async () => {
+  const legacy = createStoredOrder();
+  const events: MerchantOrderV1ReadEvent[] = [];
+  const timeoutResult = await readMerchantOrdersWithV1Fallback({
+    siteId: "10000000",
+    loadLegacy: async () => legacy,
+    loadV1: () => new Promise<StoredMerchantOrders | null>(() => undefined),
+    config: {
+      mode: "primary",
+      siteIds: ["10000000"],
+      timeoutMs: 1,
+    },
+    logger: (event) => events.push(event),
+  });
+  const failedResult = await readMerchantOrdersWithV1Fallback({
+    siteId: "10000000",
+    loadLegacy: async () => legacy,
+    loadV1: async () => {
+      throw new Error("database unavailable");
+    },
+    config: {
+      mode: "primary",
+      siteIds: ["10000000"],
+      timeoutMs: 2500,
+    },
+    logger: (event) => events.push(event),
+  });
+
+  assert.equal(timeoutResult, legacy);
+  assert.equal(failedResult, legacy);
+  assert.deepEqual(
+    events.map((event) => event.reason),
+    ["v1_timeout", "v1_query_failed"],
+  );
+});

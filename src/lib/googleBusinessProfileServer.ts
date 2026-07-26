@@ -89,18 +89,30 @@ function readGoogleError(payload: unknown, fallback: string) {
   );
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit) {
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  externalSignal?: AbortSignal,
+) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let timedOut = false;
+  const abortFromCaller = () => controller.abort(externalSignal?.reason);
+  if (externalSignal?.aborted) abortFromCaller();
+  else externalSignal?.addEventListener("abort", abortFromCaller, { once: true });
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, REQUEST_TIMEOUT_MS);
   try {
     return await fetch(url, { ...init, signal: controller.signal, cache: "no-store" });
   } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
+    if (error instanceof Error && error.name === "AbortError" && timedOut) {
       throw new GoogleBusinessProfileRequestError("Google API 请求超时，请稍后重试。", 504, "google_api_timeout");
     }
     throw error;
   } finally {
     clearTimeout(timeout);
+    externalSignal?.removeEventListener("abort", abortFromCaller);
   }
 }
 
@@ -156,12 +168,12 @@ export function buildGoogleBusinessProfileAuthorizationUrl(input: {
   return url.toString();
 }
 
-async function requestOAuthToken(body: URLSearchParams) {
+async function requestOAuthToken(body: URLSearchParams, signal?: AbortSignal) {
   const response = await fetchWithTimeout(GOOGLE_TOKEN_URL, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
     body,
-  });
+  }, signal);
   const payload = (await readResponsePayload(response)) as GoogleOAuthTokenResponse | null;
   if (!response.ok || !trimText(payload?.access_token, 12_000)) {
     const code = trimText(payload?.error, 200) || "google_oauth_token_failed";
@@ -232,7 +244,10 @@ export async function exchangeGoogleBusinessProfileAuthorizationCode(input: {
   return applyOAuthTokenResponse(input.siteId, payload, input.previous);
 }
 
-async function refreshAccessToken(integration: GoogleBusinessProfileIntegration) {
+async function refreshAccessToken(
+  integration: GoogleBusinessProfileIntegration,
+  signal?: AbortSignal,
+) {
   const refreshTokenRecord = integration.tokens.refreshToken;
   if (!refreshTokenRecord) {
     throw new GoogleBusinessProfileRequestError("Google 授权已失效，请重新连接。", 401, "google_reauthorization_required");
@@ -244,14 +259,18 @@ async function refreshAccessToken(integration: GoogleBusinessProfileIntegration)
     refresh_token: decryptGoogleBusinessProfileSecret(refreshTokenRecord),
     grant_type: "refresh_token",
   });
-  const payload = await requestOAuthToken(body);
+  const payload = await requestOAuthToken(body, signal);
   return applyOAuthTokenResponse(integration.siteId, payload, integration);
 }
 
-async function ensureAccessToken(integration: GoogleBusinessProfileIntegration, forceRefresh = false) {
+async function ensureAccessToken(
+  integration: GoogleBusinessProfileIntegration,
+  forceRefresh = false,
+  signal?: AbortSignal,
+) {
   const expiresAt = new Date(integration.tokens.expiresAt).getTime();
   const shouldRefresh = forceRefresh || !Number.isFinite(expiresAt) || expiresAt <= Date.now() + 60_000;
-  const nextIntegration = shouldRefresh ? await refreshAccessToken(integration) : integration;
+  const nextIntegration = shouldRefresh ? await refreshAccessToken(integration, signal) : integration;
   return {
     accessToken: decryptGoogleBusinessProfileSecret(nextIntegration.tokens.accessToken),
     integration: nextIntegration,
@@ -261,16 +280,17 @@ async function ensureAccessToken(integration: GoogleBusinessProfileIntegration, 
 async function authorizedJson(
   integration: GoogleBusinessProfileIntegration,
   url: string,
+  signal?: AbortSignal,
 ): Promise<AuthorizedJsonResult> {
-  let authorized = await ensureAccessToken(integration);
+  let authorized = await ensureAccessToken(integration, false, signal);
   let response = await fetchWithTimeout(url, {
     headers: { authorization: `Bearer ${authorized.accessToken}`, accept: "application/json" },
-  });
+  }, signal);
   if (response.status === 401) {
-    authorized = await ensureAccessToken(authorized.integration, true);
+    authorized = await ensureAccessToken(authorized.integration, true, signal);
     response = await fetchWithTimeout(url, {
       headers: { authorization: `Bearer ${authorized.accessToken}`, accept: "application/json" },
-    });
+    }, signal);
   }
   const payload = await readResponsePayload(response);
   if (!response.ok) {
@@ -401,7 +421,10 @@ export async function discoverGoogleBusinessProfileResources(integration: Google
   } satisfies GoogleBusinessProfileIntegration;
 }
 
-export async function syncGoogleBusinessProfileReviews(integration: GoogleBusinessProfileIntegration) {
+export async function syncGoogleBusinessProfileReviews(
+  integration: GoogleBusinessProfileIntegration,
+  options?: { signal?: AbortSignal },
+) {
   const location = findGoogleBusinessProfileLocation(
     integration.locations,
     integration.selectedAccountName,
@@ -420,7 +443,7 @@ export async function syncGoogleBusinessProfileReviews(integration: GoogleBusine
     url.searchParams.set("pageSize", "50");
     url.searchParams.set("orderBy", "updateTime desc");
     if (pageToken) url.searchParams.set("pageToken", pageToken);
-    const result = await authorizedJson(current, url.toString());
+    const result = await authorizedJson(current, url.toString(), options?.signal);
     current = result.integration;
     const record = toRecord(result.payload);
     if (Array.isArray(record?.reviews)) collectedReviews.push(...record.reviews);

@@ -57,6 +57,16 @@ import {
   mergeMerchantBookingPersistenceRecords,
   saveMerchantBookingPersistenceValue,
 } from "./merchantBookingPersistenceStore";
+import {
+  mirrorMerchantBookingRecords,
+  resolveMerchantBookingDualWriteConfig,
+} from "./merchantBookingDualWrite.server";
+import {
+  loadMerchantBookingsV1,
+  loadMerchantBookingsV1Window,
+  readMerchantBookingsWithV1Verification,
+  type MerchantBookingV1ReadClient,
+} from "./merchantBookingsV1Read.server";
 
 type MerchantBookingStoreFile = {
   version: 1;
@@ -178,13 +188,32 @@ async function readMerchantBookingStore(): Promise<MerchantBookingStoreFile> {
   return mergedStore;
 }
 
-async function writeMerchantBookingStore(store: MerchantBookingStoreFile) {
+async function mirrorSavedMerchantBookingRecords(
+  supabase: NonNullable<ReturnType<typeof createServerSupabaseServiceClient>>,
+  records: MerchantBookingStoredRecord[],
+) {
+  const config = resolveMerchantBookingDualWriteConfig();
+  if (config.mode === "off") return;
+  await mirrorMerchantBookingRecords(
+    { rpc: supabase.rpc.bind(supabase) },
+    records,
+    { config },
+  );
+}
+
+async function writeMerchantBookingStore(
+  store: MerchantBookingStoreFile,
+  changedRecords: MerchantBookingStoredRecord[],
+) {
   const normalizedStore = normalizeMerchantBookingStore(store);
   const supabase = createServerSupabaseServiceClient();
   if (supabase) {
     await saveMerchantBookingPersistenceValue(supabase, "records", normalizedStore);
   }
   await writeLocalMerchantBookingStore(normalizedStore);
+  if (supabase && changedRecords.length > 0) {
+    await mirrorSavedMerchantBookingRecords(supabase, changedRecords);
+  }
 }
 
 function createEditToken() {
@@ -638,6 +667,7 @@ async function runMerchantBookingAutomationForSite(siteId: string) {
     const nowIso = now.toISOString();
     const supabase = createServerSupabaseServiceClient();
     let changed = false;
+    const changedRecords: MerchantBookingStoredRecord[] = [];
 
     for (let index = 0; index < store.records.length; index += 1) {
       const current = store.records[index];
@@ -835,11 +865,12 @@ async function runMerchantBookingAutomationForSite(siteId: string) {
 
       if (next !== current) {
         store.records[index] = next;
+        changedRecords.push(next);
       }
     }
 
     if (changed) {
-      await writeMerchantBookingStore(store);
+      await writeMerchantBookingStore(store, changedRecords);
     }
 
     return store;
@@ -874,11 +905,25 @@ export async function listMerchantBookings(
   } catch {
     store = await readMerchantBookingStore();
   }
-  return sortNewestFirst(
+  const legacyRecords = sortNewestFirst(
     store.records
       .filter((item) => item.siteId === normalizedSiteId)
       .map((item) => withoutMerchantBookingToken(item, options)),
   );
+  const result = await readMerchantBookingsWithV1Verification({
+    siteId: normalizedSiteId,
+    loadLegacy: async () => ({ records: legacyRecords }),
+    loadV1: async () => {
+      const supabase = createServerSupabaseServiceClient();
+      if (!supabase) return null;
+      return loadMerchantBookingsV1(
+        supabase as unknown as MerchantBookingV1ReadClient,
+        normalizedSiteId,
+        options,
+      );
+    },
+  });
+  return result.records;
 }
 
 export async function listMerchantBookingsWindow(
@@ -897,13 +942,30 @@ export async function listMerchantBookingsWindow(
   }
   const sortedRecords = sortNewestFirst(store.records.filter((item) => item.siteId === normalizedSiteId));
   const windowRecords = sortedRecords.slice(offset, offset + limit);
-  return {
+  const legacyWindow = {
     records: windowRecords.map((item) => withoutMerchantBookingToken(item, options)),
     offset,
     limit,
     total: sortedRecords.length,
     hasMore: offset + windowRecords.length < sortedRecords.length,
   };
+  return readMerchantBookingsWithV1Verification({
+    siteId: normalizedSiteId,
+    loadLegacy: async () => legacyWindow,
+    loadV1: async () => {
+      const supabase = createServerSupabaseServiceClient();
+      if (!supabase) return null;
+      return loadMerchantBookingsV1Window(
+        supabase as unknown as MerchantBookingV1ReadClient,
+        normalizedSiteId,
+        {
+          ...options,
+          offset,
+          limit,
+        },
+      );
+    },
+  });
 }
 
 function matchesPersonalBookingCustomer(
@@ -982,6 +1044,7 @@ export async function attachPersonalMerchantBookingsByGuestHash(input: {
   return withBookingStoreLock(async () => {
     const store = await readMerchantBookingStore();
     const attached: MerchantBookingRecord[] = [];
+    const changedRecords: MerchantBookingStoredRecord[] = [];
     let changed = false;
     store.records = store.records.map((record) => {
       if (!targetKeys.has(`${record.siteId}:${record.id}`)) return record;
@@ -1000,11 +1063,12 @@ export async function attachPersonalMerchantBookingsByGuestHash(input: {
         customerLoginEmail: email || record.customerLoginEmail,
       };
       changed = true;
+      changedRecords.push(next);
       attached.push(withoutMerchantBookingToken(next, { includeAutomationState: true, includeCustomerEmailLogs: true, includeTimeline: true }));
       return next;
     });
     if (changed) {
-      await writeMerchantBookingStore(store);
+      await writeMerchantBookingStore(store, changedRecords);
     }
     return sortNewestFirst(attached);
   });
@@ -1056,7 +1120,7 @@ export async function cancelPersonalMerchantBooking(input: {
       runtime: emailRuntime,
     });
     store.records[targetIndex] = next;
-    await writeMerchantBookingStore(store);
+    await writeMerchantBookingStore(store, [next]);
     return withoutMerchantBookingToken(next, { includeAutomationState: true, includeCustomerEmailLogs: true, includeTimeline: true });
   });
 }
@@ -1112,7 +1176,7 @@ export async function updatePersonalMerchantBooking(input: {
         runtime: emailRuntime,
       });
       store.records[targetIndex] = next;
-      await writeMerchantBookingStore(store);
+      await writeMerchantBookingStore(store, [next]);
       return withoutMerchantBookingToken(next, { includeAutomationState: true, includeCustomerEmailLogs: true, includeTimeline: true });
     }
 
@@ -1194,7 +1258,7 @@ export async function updatePersonalMerchantBooking(input: {
       runtime: emailRuntime,
     });
     store.records[targetIndex] = next;
-    await writeMerchantBookingStore(store);
+    await writeMerchantBookingStore(store, [next]);
     return withoutMerchantBookingToken(next, { includeAutomationState: true, includeCustomerEmailLogs: true, includeTimeline: true });
   });
 }
@@ -1320,7 +1384,7 @@ export async function createMerchantBooking(input: MerchantBookingCreateInput): 
       runtime: emailRuntime,
     });
     store.records.unshift(record);
-    await writeMerchantBookingStore(store);
+    await writeMerchantBookingStore(store, [record]);
     return {
       booking: withoutMerchantBookingToken(record),
       editToken: record.editToken,
@@ -1366,7 +1430,7 @@ export async function updateMerchantBooking(input: MerchantBookingActionInput): 
         runtime: emailRuntime,
       });
       store.records[targetIndex] = next;
-      await writeMerchantBookingStore(store);
+      await writeMerchantBookingStore(store, [next]);
       return withoutMerchantBookingToken(next, { includeCustomerEmailLogs: true, includeTimeline: true });
     }
 
@@ -1447,7 +1511,7 @@ export async function updateMerchantBooking(input: MerchantBookingActionInput): 
       runtime: emailRuntime,
     });
     store.records[targetIndex] = next;
-    await writeMerchantBookingStore(store);
+    await writeMerchantBookingStore(store, [next]);
     return withoutMerchantBookingToken(next, { includeCustomerEmailLogs: true, includeTimeline: true });
   });
 }
@@ -1496,7 +1560,7 @@ export async function updateMerchantBookingStatusBySite(input: {
       runtime: emailRuntime,
     });
     store.records[targetIndex] = next;
-    await writeMerchantBookingStore(store);
+    await writeMerchantBookingStore(store, [next]);
     return withoutMerchantBookingToken(next, { includeCustomerEmailLogs: true, includeTimeline: true });
   });
 }
@@ -1619,7 +1683,7 @@ export async function updateMerchantBookingBySite(input: {
       runtime: emailRuntime,
     });
     store.records[targetIndex] = next;
-    await writeMerchantBookingStore(store);
+    await writeMerchantBookingStore(store, [next]);
     return withoutMerchantBookingToken(next, { includeCustomerEmailLogs: true, includeTimeline: true });
   });
 }
@@ -1640,6 +1704,7 @@ export async function updateMerchantBookingsBatchBySite(input: {
     const workbenchSettings = await loadMerchantBookingWorkbenchSettings(siteId);
     const emailRuntime = await loadSiteCustomerEmailRuntime(siteId, workbenchSettings);
     const nextRecords: MerchantBookingRecord[] = [];
+    const changedRecords: MerchantBookingStoredRecord[] = [];
 
     for (const bookingId of bookingIds) {
       const targetIndex = store.records.findIndex((item) => item.id === bookingId && item.siteId === siteId);
@@ -1665,13 +1730,14 @@ export async function updateMerchantBookingsBatchBySite(input: {
         runtime: emailRuntime,
       });
       store.records[targetIndex] = next;
+      changedRecords.push(next);
       nextRecords.push(withoutMerchantBookingToken(next, { includeCustomerEmailLogs: true, includeTimeline: true }));
     }
 
     if (nextRecords.length === 0) {
       throw new Error("未找到可批量更新的预约");
     }
-    await writeMerchantBookingStore(store);
+    await writeMerchantBookingStore(store, changedRecords);
     return nextRecords;
   });
 }
@@ -1735,7 +1801,7 @@ export async function sendMerchantBookingManualEmailBySite(input: {
         );
       }
       store.records[targetIndex] = next;
-      await writeMerchantBookingStore(store);
+      await writeMerchantBookingStore(store, [next]);
       throw new Error(resolveCustomerEmailSendFailureMessage(emailResult));
     }
     next = appendTimelineEntry(
@@ -1763,7 +1829,7 @@ export async function sendMerchantBookingManualEmailBySite(input: {
       }),
     );
     store.records[targetIndex] = next;
-    await writeMerchantBookingStore(store);
+    await writeMerchantBookingStore(store, [next]);
     return withoutMerchantBookingToken(next, { includeCustomerEmailLogs: true, includeTimeline: true });
   });
 }
@@ -1800,7 +1866,7 @@ export async function acknowledgeMerchantBookingBySite(input: {
       );
     }
     store.records[targetIndex] = next;
-    await writeMerchantBookingStore(store);
+    await writeMerchantBookingStore(store, [next]);
     return withoutMerchantBookingToken(next, { includeCustomerEmailLogs: true, includeTimeline: true });
   });
 }

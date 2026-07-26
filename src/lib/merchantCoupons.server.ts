@@ -13,6 +13,15 @@ import {
 } from "@/lib/merchantCoupons";
 import { loadStoredMerchantCoupons, saveStoredMerchantCoupons } from "@/lib/merchantCouponsStore";
 import {
+  mirrorMerchantCouponChanges,
+  type MerchantCouponShadowChange,
+} from "@/lib/merchantCouponDualWrite.server";
+import {
+  loadMerchantCouponsV1VerificationData,
+  readMerchantCouponsWithV1Verification,
+  type MerchantCouponV1ReadClient,
+} from "@/lib/merchantCouponsV1Read.server";
+import {
   appendMutationOperationMarker,
   buildMutationOperationMarker,
   hasMutationOperationMarker,
@@ -55,6 +64,13 @@ function trimText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
 
+async function mirrorSavedCouponChanges(
+  supabase: ReturnType<typeof requireCouponsStoreClient>,
+  changes: MerchantCouponShadowChange[],
+) {
+  await mirrorMerchantCouponChanges(supabase, changes);
+}
+
 export type MerchantCouponRedeemRequest = {
   settlementCode: string;
   expectedCouponId?: string;
@@ -72,10 +88,19 @@ export type MerchantCouponRedeemRequest = {
 export async function getMerchantCouponsSnapshot(siteId: string) {
   const supabase = requireCouponsStoreClient();
   const stored = await loadStoredMerchantCoupons(supabase, siteId);
-  return {
+  const legacy = {
     coupons: normalizeMerchantCouponRecords(stored?.coupons ?? []),
     updatedAt: stored?.updatedAt ?? null,
   };
+  return readMerchantCouponsWithV1Verification({
+    siteId,
+    legacy,
+    loadV1: () =>
+      loadMerchantCouponsV1VerificationData(
+        supabase as unknown as MerchantCouponV1ReadClient,
+        siteId,
+      ),
+  });
 }
 
 export async function listMerchantCoupons(siteId: string) {
@@ -104,6 +129,7 @@ export async function createMerchantCouponRecord(input: MerchantCouponInput) {
       existingRowId: stored?.existingRowId ?? null,
     });
     if (saved.error) throw new Error(saved.error);
+    await mirrorSavedCouponChanges(supabase, [{ current: coupon }]);
     return coupon;
   });
 }
@@ -137,6 +163,9 @@ export async function updateMerchantCouponRecord(input: {
       existingRowId: stored?.existingRowId ?? null,
     });
     if (saved.error) throw new Error(saved.error);
+    await mirrorSavedCouponChanges(supabase, [
+      { current: next, previous: current },
+    ]);
     return next;
   });
 }
@@ -151,8 +180,9 @@ export async function archiveMerchantCouponRecord(input: { siteId: string; coupo
     const coupons = normalizeMerchantCouponRecords(stored?.coupons ?? []);
     const index = coupons.findIndex((coupon) => coupon.id === couponId);
     if (index < 0) throw new Error("coupon_not_found");
+    const previousCoupon = coupons[index];
     const archivedCoupon = updateMerchantCoupon(
-      coupons[index],
+      previousCoupon,
       {
         status: "archived",
         showOnWebsite: false,
@@ -169,6 +199,9 @@ export async function archiveMerchantCouponRecord(input: { siteId: string; coupo
       existingRowId: stored?.existingRowId ?? null,
     });
     if (saved.error) throw new Error(saved.error);
+    await mirrorSavedCouponChanges(supabase, [
+      { current: archivedCoupon, previous: previousCoupon },
+    ]);
     return archivedCoupon;
   });
 }
@@ -187,8 +220,9 @@ export async function claimMerchantCouponRecord(input: {
     const coupons = normalizeMerchantCouponRecords(stored?.coupons ?? []);
     const index = coupons.findIndex((coupon) => coupon.id === couponId);
     if (index < 0) throw new Error("coupon_not_found");
-    const claimEvent = await input.beforeClaim?.(coupons[index]);
-    const next = claimMerchantCoupon(coupons[index], new Date(), claimEvent ?? undefined);
+    const previousCoupon = coupons[index];
+    const claimEvent = await input.beforeClaim?.(previousCoupon);
+    const next = claimMerchantCoupon(previousCoupon, new Date(), claimEvent ?? undefined);
     const updatedCoupons = [...coupons];
     updatedCoupons[index] = next;
     const saved = await saveStoredMerchantCoupons(supabase, {
@@ -198,6 +232,9 @@ export async function claimMerchantCouponRecord(input: {
       existingRowId: stored?.existingRowId ?? null,
     });
     if (saved.error) throw new Error(saved.error);
+    await mirrorSavedCouponChanges(supabase, [
+      { current: next, previous: previousCoupon },
+    ]);
     return next;
   });
 }
@@ -257,6 +294,7 @@ export async function redeemMerchantCouponRecords(input: {
     const stored = await loadStoredMerchantCoupons(supabase, siteId);
     const coupons = normalizeMerchantCouponRecords(stored?.coupons ?? []);
     const redeemedCoupons: MerchantCouponRecord[] = [];
+    const shadowChanges: MerchantCouponShadowChange[] = [];
     redemptions.forEach((redemption) => {
       const index = coupons.findIndex((coupon) =>
         coupon.claimEvents.some((event) => event.settlementCode === redemption.settlementCode),
@@ -295,13 +333,15 @@ export async function redeemMerchantCouponRecords(input: {
           (redemption.expectedEmail && claimEvent.email.toLowerCase() === redemption.expectedEmail),
       );
       if (hasExpectedIdentity && !identityMatches) throw new Error("coupon_claim_member_mismatch");
-      const next = redeemMerchantCoupon(coupons[index], {
+      const previousCoupon = coupons[index];
+      const next = redeemMerchantCoupon(previousCoupon, {
         settlementCode: redemption.settlementCode,
         operatorId: redemption.operatorId,
         note: appendMutationOperationMarker(redemption.note, redemption.operationMarker),
       });
       coupons[index] = next;
       redeemedCoupons.push(next);
+      shadowChanges.push({ current: next, previous: previousCoupon });
     });
     if (input.commit === false) {
       return redeemedCoupons;
@@ -313,6 +353,7 @@ export async function redeemMerchantCouponRecords(input: {
       existingRowId: stored?.existingRowId ?? null,
     });
     if (saved.error) throw new Error(saved.error);
+    await mirrorSavedCouponChanges(supabase, shadowChanges);
     return redeemedCoupons;
   });
 }
@@ -343,6 +384,7 @@ export async function releaseMerchantCouponRedemptions(input: {
   return withMerchantCouponMutationLock(siteId, async () => {
     const stored = await loadStoredMerchantCoupons(supabase, siteId);
     const coupons = normalizeMerchantCouponRecords(stored?.coupons ?? []);
+    const shadowChanges: MerchantCouponShadowChange[] = [];
     let changed = false;
     redemptions.forEach((redemption) => {
       const index = coupons.findIndex((coupon) =>
@@ -364,6 +406,12 @@ export async function releaseMerchantCouponRedemptions(input: {
       });
       coupons[index] = release.coupon;
       changed = changed || !release.alreadyReleased;
+      if (!release.alreadyReleased) {
+        shadowChanges.push({
+          current: release.coupon,
+          previous: coupon,
+        });
+      }
     });
     if (!changed) return coupons;
     const saved = await saveStoredMerchantCoupons(supabase, {
@@ -373,6 +421,7 @@ export async function releaseMerchantCouponRedemptions(input: {
       existingRowId: stored?.existingRowId ?? null,
     });
     if (saved.error) throw new Error(saved.error);
+    await mirrorSavedCouponChanges(supabase, shadowChanges);
     return coupons;
   });
 }
