@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 const BOOKING_PERSISTENCE_MERCHANT_ID = "__faolla_booking_persistence__";
 const DEFAULT_ATTEMPTS = 30;
 const DEFAULT_DELAY_MS = 1_000;
+const DEFAULT_QUERY_TIMEOUT_MS = 10_000;
 
 const EXPECTED_STORES = {
   "__merchant_booking_records__:v1": {
@@ -73,28 +74,64 @@ export async function waitForBookingPersistence(
 ) {
   const attempts = normalizePositiveInteger(options.attempts, DEFAULT_ATTEMPTS);
   const delayMs = normalizePositiveInteger(options.delayMs, DEFAULT_DELAY_MS);
+  const queryTimeoutMs = normalizePositiveInteger(
+    options.queryTimeoutMs,
+    DEFAULT_QUERY_TIMEOUT_MS,
+  );
   let summary = summarizeBookingPersistenceRows([]);
+  let lastQueryError = null;
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const result = await client
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), queryTimeoutMs);
+    let query = client
       .from("pages")
       .select("slug,blocks,updated_at")
       .eq("merchant_id", BOOKING_PERSISTENCE_MERCHANT_ID);
-    if (result.error) {
-      throw new Error(`booking_persistence_query_failed:${result.error.message || "unknown_error"}`);
+    if (typeof query?.abortSignal === "function") {
+      query = query.abortSignal(controller.signal);
     }
-    summary = summarizeBookingPersistenceRows(result.data);
-    if (summary.complete) {
-      return {
-        ...summary,
-        attemptsUsed: attempt,
-      };
+
+    let result;
+    try {
+      result = await Promise.race([
+        query,
+        new Promise((_, reject) => {
+          controller.signal.addEventListener(
+            "abort",
+            () => reject(new Error(`query_timeout_${queryTimeoutMs}ms`)),
+            { once: true },
+          );
+        }),
+      ]);
+    } catch (error) {
+      lastQueryError = error instanceof Error ? error.message : "unknown_error";
+      result = null;
+    } finally {
+      clearTimeout(timeout);
     }
+
+    if (result?.error) {
+      lastQueryError = result.error.message || "unknown_error";
+    } else if (result) {
+      lastQueryError = null;
+      summary = summarizeBookingPersistenceRows(result.data);
+      if (summary.complete) {
+        return {
+          ...summary,
+          attemptsUsed: attempt,
+        };
+      }
+    }
+
     if (attempt < attempts) {
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
 
+  if (lastQueryError) {
+    throw new Error(`booking_persistence_query_failed:${lastQueryError}`);
+  }
   const incomplete = summary.stores.filter((store) => !store.valid).map((store) => store.slug);
   throw new Error(`booking_persistence_incomplete:${incomplete.join(",")}`);
 }
@@ -118,6 +155,7 @@ async function main() {
   const result = await waitForBookingPersistence(client, {
     attempts: process.env.BOOKING_PERSISTENCE_CHECK_ATTEMPTS,
     delayMs: process.env.BOOKING_PERSISTENCE_CHECK_DELAY_MS,
+    queryTimeoutMs: process.env.BOOKING_PERSISTENCE_QUERY_TIMEOUT_MS,
   });
   console.log(`[booking-persistence] OK attempts=${result.attemptsUsed}`);
   result.stores.forEach((store) => {

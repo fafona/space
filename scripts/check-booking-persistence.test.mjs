@@ -96,3 +96,50 @@ test("booking persistence check surfaces database errors", async () => {
     /booking_persistence_query_failed:upstream timeout/,
   );
 });
+
+test("booking persistence check retries transient database errors", async () => {
+  let requestCount = 0;
+  const client = {
+    from: () => ({
+      select: () => ({
+        eq: async () => {
+          requestCount += 1;
+          if (requestCount === 1) {
+            return {
+              data: null,
+              error: { message: "temporary upstream failure" },
+            };
+          }
+          return { data: VALID_ROWS, error: null };
+        },
+      }),
+    }),
+  };
+
+  const result = await waitForBookingPersistence(client, {
+    attempts: 2,
+    delayMs: 1,
+    queryTimeoutMs: 100,
+  });
+  assert.equal(result.complete, true);
+  assert.equal(result.attemptsUsed, 2);
+});
+
+test("booking persistence check bounds a stalled query", async () => {
+  const client = {
+    from: () => ({
+      select: () => ({
+        eq: () => new Promise(() => {}),
+      }),
+    }),
+  };
+
+  await assert.rejects(
+    () =>
+      waitForBookingPersistence(client, {
+        attempts: 1,
+        queryTimeoutMs: 10,
+      }),
+    /booking_persistence_query_failed:query_timeout_10ms/,
+  );
+});

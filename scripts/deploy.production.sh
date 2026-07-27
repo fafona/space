@@ -402,7 +402,10 @@ verify_supabase_health() {
 verify_booking_persistence() {
   (
     cd "$RELEASE_DIR"
-    node --env-file=.env.local scripts/check-booking-persistence.mjs
+    BOOKING_PERSISTENCE_CHECK_ATTEMPTS="${BOOKING_PERSISTENCE_CHECK_ATTEMPTS:-3}" \
+      BOOKING_PERSISTENCE_CHECK_DELAY_MS="${BOOKING_PERSISTENCE_CHECK_DELAY_MS:-2000}" \
+      BOOKING_PERSISTENCE_QUERY_TIMEOUT_MS="${BOOKING_PERSISTENCE_QUERY_TIMEOUT_MS:-10000}" \
+      node --env-file=.env.local scripts/check-booking-persistence.mjs
   )
 }
 
