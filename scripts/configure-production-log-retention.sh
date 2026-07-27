@@ -6,11 +6,51 @@ NGINX_PID_FILE="${NGINX_PID_FILE:-/www/server/nginx/logs/nginx.pid}"
 LOGROTATE_CONFIG="${LOGROTATE_CONFIG:-/etc/logrotate.conf}"
 LOGROTATE_DIR="${LOGROTATE_DIR:-/etc/logrotate.d}"
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/faolla-server-config}"
+JOURNALD_CONFIG_DIR="${JOURNALD_CONFIG_DIR:-/etc/systemd/journald.conf.d}"
+JOURNALD_CONFIG="${JOURNALD_CONFIG:-$JOURNALD_CONFIG_DIR/faolla-retention.conf}"
+JOURNAL_SYSTEM_MAX_USE="${JOURNAL_SYSTEM_MAX_USE:-256M}"
+JOURNAL_SYSTEM_KEEP_FREE="${JOURNAL_SYSTEM_KEEP_FREE:-8G}"
+JOURNAL_RUNTIME_MAX_USE="${JOURNAL_RUNTIME_MAX_USE:-64M}"
+JOURNAL_MAX_RETENTION="${JOURNAL_MAX_RETENTION:-14day}"
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "[log-retention] not running as root; skipping system log configuration"
   exit 0
 fi
+
+configure_journal_retention() {
+  local journal_config
+  if ! command -v journalctl >/dev/null 2>&1 \
+    || ! command -v systemctl >/dev/null 2>&1; then
+    echo "[log-retention] systemd journal tools are unavailable; skipping journal retention"
+    return 0
+  fi
+
+  mkdir -p "$JOURNALD_CONFIG_DIR"
+  journal_config="$(mktemp)"
+  cat > "$journal_config" <<EOF
+[Journal]
+SystemMaxUse=$JOURNAL_SYSTEM_MAX_USE
+SystemKeepFree=$JOURNAL_SYSTEM_KEEP_FREE
+RuntimeMaxUse=$JOURNAL_RUNTIME_MAX_USE
+MaxRetentionSec=$JOURNAL_MAX_RETENTION
+Compress=yes
+EOF
+  install -m 0644 "$journal_config" "$JOURNALD_CONFIG"
+  rm -f "$journal_config"
+
+  if ! systemctl kill --kill-who=main --signal=HUP systemd-journald.service; then
+    echo "[log-retention] warning: journald did not reload the retention configuration"
+  fi
+  if ! journalctl \
+    --vacuum-size="$JOURNAL_SYSTEM_MAX_USE" \
+    --vacuum-time="$JOURNAL_MAX_RETENTION" >/dev/null; then
+    echo "[log-retention] warning: journald vacuum did not complete"
+  fi
+  echo "[log-retention] bounded systemd journal retention is configured"
+}
+
+configure_journal_retention
 
 if ! command -v logrotate >/dev/null 2>&1; then
   echo "[log-retention] logrotate is unavailable; skipping"

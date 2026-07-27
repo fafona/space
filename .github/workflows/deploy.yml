@@ -27,6 +27,7 @@ jobs:
       (github.event.workflow_run.conclusion == 'success' &&
       (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'master'))
     runs-on: ubuntu-latest
+    timeout-minutes: 70
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       DEPLOY_BRANCH: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.event.workflow_run.head_branch }}

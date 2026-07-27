@@ -225,9 +225,11 @@ As of 2026-07-27, production PITR is intentionally **blocked**, not silently
 reported as protected:
 
 - PostgreSQL `archive_mode` is `off` and `archive_timeout` is `0`.
-- No WAL-G binary or off-host WAL repository is configured.
+- WAL-G `3.0.5` is available inside the database container, but no owner-only
+  WAL-G configuration or off-host WAL repository is configured.
 - No physical PITR base backup or isolated PITR restore evidence exists.
-- The server filesystem is 40 GiB with approximately 11 GiB available.
+- The server filesystem is 40 GiB with approximately 12 GiB available after
+  removing abandoned deployment processes and an incomplete build.
   Supabase recommends at least 80 GiB for self-hosting, so disk expansion
   should precede production activation even though the readiness check also
   enforces free-space headroom.
@@ -259,6 +261,26 @@ Recommended activation order:
 Do not enable `archive_mode` with a failing or local-only archive command.
 PostgreSQL retains unarchived WAL until the command succeeds, so a broken
 destination can consume the remaining production disk.
+
+## Deployment process safety
+
+Production deployment is serialized with an exclusive host lock. Dependency
+installation and application build are each bounded to 30 minutes and receive
+a forced termination after the grace period. Incomplete `.building`
+directories older than 45 minutes are removed on the next deployment only when
+no process has a working directory inside them. The GitHub deploy job is also
+bounded to 70 minutes.
+
+Do not bypass the deployment script or remove either the current release or
+the newest rollback release manually. If a deployment connection is
+interrupted, allow the host-side timeout to finish before retrying.
+
+The deployment also configures bounded log retention:
+
+- systemd journal: 256 MiB maximum, 8 GiB reserved free space, 14-day maximum;
+- runtime journal: 64 MiB maximum;
+- nginx logs: daily or 50 MiB, 14 compressed rotations;
+- failed-login log: weekly or 25 MiB, four compressed rotations.
 
 ## Security
 

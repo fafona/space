@@ -20,6 +20,13 @@ RELEASE_SMOKE_TIMEOUT_MS="${RELEASE_SMOKE_TIMEOUT_MS:-12000}"
 GIT_FETCH_ATTEMPTS="${GIT_FETCH_ATTEMPTS:-4}"
 GIT_FETCH_DELAY_SECONDS="${GIT_FETCH_DELAY_SECONDS:-8}"
 GIT_FETCH_LOW_SPEED_TIME_SECONDS="${GIT_FETCH_LOW_SPEED_TIME_SECONDS:-30}"
+DEPLOY_LOCK_FILE="${DEPLOY_LOCK_FILE:-${APP_DIR}.deploy.lock}"
+DEPLOY_LOCK_WAIT_SECONDS="${DEPLOY_LOCK_WAIT_SECONDS:-120}"
+NPM_CI_TIMEOUT_SECONDS="${NPM_CI_TIMEOUT_SECONDS:-1800}"
+NPM_CI_KILL_AFTER_SECONDS="${NPM_CI_KILL_AFTER_SECONDS:-30}"
+BUILD_TIMEOUT_SECONDS="${BUILD_TIMEOUT_SECONDS:-1800}"
+BUILD_KILL_AFTER_SECONDS="${BUILD_KILL_AFTER_SECONDS:-30}"
+STALE_BUILD_MINUTES="${STALE_BUILD_MINUTES:-45}"
 DISK_WARNING_THRESHOLD="${DISK_WARNING_THRESHOLD:-75}"
 DISK_CACHE_CLEANUP_THRESHOLD="${DISK_CACHE_CLEANUP_THRESHOLD:-80}"
 DISK_ABORT_THRESHOLD="${DISK_ABORT_THRESHOLD:-90}"
@@ -42,6 +49,16 @@ fi
 
 if ! command -v tar >/dev/null 2>&1; then
   echo "[deploy] tar is required on the server"
+  exit 1
+fi
+
+if ! command -v flock >/dev/null 2>&1; then
+  echo "[deploy] flock is required on the server"
+  exit 1
+fi
+
+if ! command -v timeout >/dev/null 2>&1; then
+  echo "[deploy] timeout is required on the server"
   exit 1
 fi
 
@@ -70,7 +87,13 @@ validate_disk_thresholds() {
     RELEASE_SMOKE_TIMEOUT_MS \
     GIT_FETCH_ATTEMPTS \
     GIT_FETCH_DELAY_SECONDS \
-    GIT_FETCH_LOW_SPEED_TIME_SECONDS; do
+    GIT_FETCH_LOW_SPEED_TIME_SECONDS \
+    DEPLOY_LOCK_WAIT_SECONDS \
+    NPM_CI_TIMEOUT_SECONDS \
+    NPM_CI_KILL_AFTER_SECONDS \
+    BUILD_TIMEOUT_SECONDS \
+    BUILD_KILL_AFTER_SECONDS \
+    STALE_BUILD_MINUTES; do
     value="${!name}"
     if ! [[ "$value" =~ ^[0-9]+$ ]]; then
       echo "[deploy] $name must be a non-negative integer: $value"
@@ -105,6 +128,28 @@ validate_disk_thresholds() {
     echo "[deploy] Git fetch attempts and low-speed timeout must be at least 1"
     exit 1
   fi
+  if [ "$DEPLOY_LOCK_WAIT_SECONDS" -lt 1 ] \
+    || [ "$NPM_CI_TIMEOUT_SECONDS" -lt 60 ] \
+    || [ "$NPM_CI_KILL_AFTER_SECONDS" -lt 1 ] \
+    || [ "$BUILD_TIMEOUT_SECONDS" -lt 60 ] \
+    || [ "$BUILD_KILL_AFTER_SECONDS" -lt 1 ] \
+    || [ "$STALE_BUILD_MINUTES" -lt 1 ]; then
+    echo "[deploy] deploy lock, install/build timeouts, and stale-build limits are invalid"
+    exit 1
+  fi
+}
+
+acquire_deploy_lock() {
+  if [ -L "$DEPLOY_LOCK_FILE" ]; then
+    echo "[deploy] refusing to use a symlink as the deploy lock: $DEPLOY_LOCK_FILE"
+    exit 1
+  fi
+  exec 9>"$DEPLOY_LOCK_FILE"
+  if ! flock -w "$DEPLOY_LOCK_WAIT_SECONDS" 9; then
+    echo "[deploy] another deployment still owns the lock: $DEPLOY_LOCK_FILE"
+    exit 1
+  fi
+  echo "[deploy] acquired exclusive deployment lock"
 }
 
 disk_usage_percent() {
@@ -167,6 +212,7 @@ ensure_disk_headroom() {
 }
 
 validate_disk_thresholds
+acquire_deploy_lock
 report_disk_status
 cleanup_rebuildable_caches
 report_disk_status
@@ -277,6 +323,44 @@ safe_remove_release_path() {
     exit 1
   fi
   rm -rf -- "$target"
+}
+
+release_path_in_use() {
+  local target="$1"
+  local resolved_target
+  local cwd_link
+  local process_cwd
+  resolved_target="$(readlink -f "$target" 2>/dev/null || true)"
+  if [ -z "$resolved_target" ]; then
+    return 1
+  fi
+  for cwd_link in /proc/[0-9]*/cwd; do
+    process_cwd="$(readlink -f "$cwd_link" 2>/dev/null || true)"
+    if [ "$process_cwd" = "$resolved_target" ] || [[ "$process_cwd" == "$resolved_target/"* ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+cleanup_stale_build_dirs() {
+  local release_dir
+  while IFS= read -r -d '' release_dir; do
+    if release_path_in_use "$release_dir"; then
+      echo "[deploy] warning: stale build is still in use and was not removed: $release_dir"
+      continue
+    fi
+    echo "[deploy] removing stale incomplete build: $release_dir"
+    safe_remove_release_path "$release_dir"
+  done < <(
+    find "$RELEASES_DIR" \
+      -mindepth 1 \
+      -maxdepth 1 \
+      -type d \
+      -name '.*.building' \
+      -mmin "+$STALE_BUILD_MINUTES" \
+      -print0
+  )
 }
 
 copy_previous_static_assets() {
@@ -473,6 +557,7 @@ cleanup_old_releases() {
 }
 
 mkdir -p "$RELEASES_DIR" "$SHARED_RUNTIME_DIR"
+cleanup_stale_build_dirs
 RELEASE_STAMP="$(date -u +"%Y%m%d%H%M%S")"
 RELEASE_NAME="${FAOLLA_WEB_BUILD_ID:0:12}-${RELEASE_STAMP}"
 RELEASE_BUILD_DIR="$RELEASES_DIR/.${RELEASE_NAME}.building"
@@ -519,7 +604,22 @@ git archive --format=tar "origin/$APP_BRANCH" | tar -xf - -C "$RELEASE_BUILD_DIR
 cp -p -- "$APP_DIR/.env.local" "$RELEASE_BUILD_DIR/.env.local"
 
 cd "$RELEASE_BUILD_DIR"
-npm ci
+echo "[deploy] installing dependencies with a ${NPM_CI_TIMEOUT_SECONDS}s timeout"
+if timeout \
+  --signal=TERM \
+  --kill-after="${NPM_CI_KILL_AFTER_SECONDS}s" \
+  "${NPM_CI_TIMEOUT_SECONDS}s" \
+  npm ci; then
+  :
+else
+  npm_status=$?
+  if [ "$npm_status" -eq 124 ] || [ "$npm_status" -eq 137 ]; then
+    echo "[deploy] npm ci exceeded the ${NPM_CI_TIMEOUT_SECONDS}s timeout"
+  else
+    echo "[deploy] npm ci failed with status $npm_status"
+  fi
+  exit "$npm_status"
+fi
 
 if [ -f "$RELEASE_BUILD_DIR/node_modules/ffmpeg-static/ffmpeg" ]; then
   chmod +x "$RELEASE_BUILD_DIR/node_modules/ffmpeg-static/ffmpeg" || true
@@ -538,7 +638,22 @@ elif [ "$SUPABASE_HEALTH_STATUS" -ne 0 ]; then
   echo "[deploy] Supabase health check failed with status $SUPABASE_HEALTH_STATUS"
   exit 1
 fi
-npm run build
+echo "[deploy] building application with a ${BUILD_TIMEOUT_SECONDS}s timeout"
+if timeout \
+  --signal=TERM \
+  --kill-after="${BUILD_KILL_AFTER_SECONDS}s" \
+  "${BUILD_TIMEOUT_SECONDS}s" \
+  npm run build; then
+  :
+else
+  build_status=$?
+  if [ "$build_status" -eq 124 ] || [ "$build_status" -eq 137 ]; then
+    echo "[deploy] application build exceeded the ${BUILD_TIMEOUT_SECONDS}s timeout"
+  else
+    echo "[deploy] application build failed with status $build_status"
+  fi
+  exit "$build_status"
+fi
 
 if [ ! -f "$RELEASE_BUILD_DIR/.next/BUILD_ID" ]; then
   echo "[deploy] isolated build did not produce .next/BUILD_ID"
