@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -169,4 +169,30 @@ test("database backup manifest rejects duplicate or incomplete file sets", () =>
     }).valid,
     false,
   );
+});
+
+test("encrypted backup workflow keeps the scheduled recovery policy", async () => {
+  const workflow = await readFile(
+    new URL("../.github/workflows/database-backup.yml", import.meta.url),
+    "utf8",
+  );
+  const readinessWorkflow = await readFile(
+    new URL(
+      "../.github/workflows/database-backup-readiness.yml",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+
+  assert.match(workflow, /schedule:\s*\n\s+- cron: "17 2 \* \* \*"/);
+  assert.match(workflow, /workflow_dispatch:/);
+  assert.match(workflow, /cancel-in-progress: false/);
+  assert.match(workflow, /retention-days: 7/);
+  assert.match(workflow, /FAOLLA_BACKUP_ISOLATED_DOCKER_RESTORE=true/);
+  assert.match(workflow, /FAOLLA_STORAGE_BACKUP_ENABLED=true/);
+  assert.match(
+    readinessWorkflow,
+    /FAOLLA_BACKUP_ISOLATED_DOCKER_RESTORE=true/,
+  );
+  assert.match(readinessWorkflow, /FAOLLA_STORAGE_BACKUP_ENABLED=true/);
 });

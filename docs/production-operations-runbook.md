@@ -103,7 +103,16 @@ existing platform-admin backup is readable and internally restorable.
 
 Workflow: `.github/workflows/database-backup.yml`
 
-The workflow remains manual until its first successful production run. It:
+Frequency: daily at 02:17 UTC, with a manual dispatch option for controlled
+recovery-point creation.
+
+Production recovery evidence: manual GitHub Actions run `30299302673` on
+2026-07-27 created and verified a 420,280,352-byte encrypted archive, then
+restored it into an ephemeral no-network Postgres container. The rehearsal
+verified 15 schemas, 117 tables, 58 page rows, 12 auth users, 3,850 Storage
+metadata rows, and 3,850 Storage files.
+
+The workflow:
 
 1. Discovers the running self-hosted Supabase database and Storage containers
    without copying container secrets into GitHub.
@@ -124,7 +133,7 @@ The workflow remains manual until its first successful production run. It:
    `auth.users`, and `storage.objects`.
 9. Extracts Storage into an isolated temporary directory and verifies its
    aggregate file count and bytes.
-10. Stores the encrypted artifact off-host for 30 days and deletes every
+10. Stores the encrypted artifact off-host for 7 days and deletes every
     plaintext directory, temporary container, Docker volume, and transferred
     copy after completion or failure.
 
@@ -169,10 +178,12 @@ Run the non-secret readiness check after changing backup configuration:
 npm run check:database-backup-readiness
 ```
 
-Do not add a schedule until a manual run creates, transfers, and verifies an
-encrypted artifact and completes the isolated restore successfully. The first
-successful run establishes the current full-backup RPO; until a daily schedule
-is enabled, this workflow provides no automatic recovery point.
+The schedule was enabled only after a manual production run created,
+transferred, and verified an encrypted artifact and completed the isolated
+restore successfully. A successful daily run provides a maximum full-backup
+RPO of approximately 24 hours and retains the latest seven daily recovery
+points. A failed scheduled run must be investigated before the next recovery
+point is due.
 
 This logical disaster-recovery archive is independent from the application
 level platform-admin backup, but it is not point-in-time recovery. WAL

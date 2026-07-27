@@ -1,6 +1,8 @@
 name: Encrypted Database Backup
 
 on:
+  schedule:
+    - cron: "17 2 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -131,7 +133,7 @@ jobs:
             database-backup-restore-report.log
           if-no-files-found: error
           compression-level: 0
-          retention-days: 30
+          retention-days: 7
 
       - name: Remove Temporary Backup
         if: always()

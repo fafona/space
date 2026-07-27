@@ -55,7 +55,7 @@ jobs:
           test -n "$APP_DIR"
           set -o pipefail
           ssh -o ConnectTimeout=20 -o ConnectionAttempts=3 -o StrictHostKeyChecking=accept-new -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
-            "cd '$APP_DIR' && FAOLLA_BACKUP_ARTIFACT_TRANSPORT=true FAOLLA_BACKUP_PASSPHRASE_AVAILABLE='$PASSPHRASE_AVAILABLE' node --env-file=.env.local scripts/check-database-backup-readiness.mjs --json" \
+            "cd '$APP_DIR' && FAOLLA_BACKUP_ARTIFACT_TRANSPORT=true FAOLLA_BACKUP_PASSPHRASE_AVAILABLE='$PASSPHRASE_AVAILABLE' FAOLLA_BACKUP_ISOLATED_DOCKER_RESTORE=true FAOLLA_STORAGE_BACKUP_ENABLED=true node --env-file=.env.local scripts/check-database-backup-readiness.mjs --json" \
             | tee database-backup-readiness-report.log
 
       - name: Write Readiness Summary
