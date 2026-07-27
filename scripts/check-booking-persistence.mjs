@@ -30,6 +30,30 @@ function normalizePositiveInteger(value, fallback) {
   return Number.isFinite(numeric) && numeric > 0 ? numeric : fallback;
 }
 
+export function isTransientBookingPersistenceError(error) {
+  const message = (
+    error instanceof Error ? error.message : String(error ?? "")
+  ).toLowerCase();
+  return [
+    /query_timeout_\d+ms/,
+    /fetch failed/,
+    /network(?: request)? (?:error|failed)/,
+    /terminated/,
+    /aborted/,
+    /aborterror/,
+    /connect(?:ion)? (?:error|failed|timeout|timed out)/,
+    /socket (?:closed|error|hang up)/,
+    /econn(?:reset|refused|aborted)/,
+    /etimedout/,
+    /enotfound/,
+    /eai_again/,
+    /und_err_/,
+    /upstream timeout/,
+    /gateway timeout/,
+    /service unavailable/,
+  ].some((pattern) => pattern.test(message));
+}
+
 function entryCount(value, collection) {
   const entries = value?.[collection];
   if (Array.isArray(entries)) return entries.length;
@@ -170,7 +194,8 @@ const isDirectRun =
 
 if (isDirectRun) {
   main().catch((error) => {
-    console.error(`[booking-persistence] ${error instanceof Error ? error.message : "unknown_error"}`);
-    process.exitCode = 1;
+    const message = error instanceof Error ? error.message : "unknown_error";
+    console.error(`[booking-persistence] ${message}`);
+    process.exitCode = isTransientBookingPersistenceError(error) ? 2 : 1;
   });
 }

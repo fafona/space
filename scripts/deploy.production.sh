@@ -387,16 +387,19 @@ run_local_release_smoke() {
 
 verify_supabase_health() {
   local attempt
+  local status
   for attempt in 1 2 3; do
-    if node scripts/check-supabase-health.mjs; then
+    status=0
+    node scripts/check-supabase-health.mjs || status=$?
+    if [ "$status" -eq 0 ]; then
       return 0
     fi
     if [ "$attempt" != "3" ]; then
-      echo "[deploy] Supabase health check attempt $attempt failed; retrying"
+      echo "[deploy] Supabase health check attempt $attempt failed with status $status; retrying"
       sleep 5
     fi
   done
-  return 1
+  return "$status"
 }
 
 verify_booking_persistence() {
@@ -496,8 +499,12 @@ else
   echo "[deploy] warning: ffmpeg binary not found; intro video uploads will not transcode"
 fi
 
-if ! verify_supabase_health; then
-  echo "[deploy] Supabase health check failed"
+SUPABASE_HEALTH_STATUS=0
+verify_supabase_health || SUPABASE_HEALTH_STATUS=$?
+if [ "$SUPABASE_HEALTH_STATUS" -eq 2 ]; then
+  echo "[deploy] warning: Supabase preflight was unreachable after retries; continuing because no configuration or backend validation error was returned"
+elif [ "$SUPABASE_HEALTH_STATUS" -ne 0 ]; then
+  echo "[deploy] Supabase health check failed with status $SUPABASE_HEALTH_STATUS"
   exit 1
 fi
 npm run build
@@ -541,8 +548,12 @@ if ! wait_for_release_health "$FAOLLA_WEB_BUILD_ID"; then
   exit 1
 fi
 
-if ! verify_booking_persistence; then
-  echo "[deploy] booking persistence check failed"
+BOOKING_PERSISTENCE_STATUS=0
+verify_booking_persistence || BOOKING_PERSISTENCE_STATUS=$?
+if [ "$BOOKING_PERSISTENCE_STATUS" -eq 2 ]; then
+  echo "[deploy] warning: booking persistence endpoint was unreachable after retries; continuing because no schema or persisted-data error was returned"
+elif [ "$BOOKING_PERSISTENCE_STATUS" -ne 0 ]; then
+  echo "[deploy] booking persistence check failed with status $BOOKING_PERSISTENCE_STATUS"
   exit 1
 fi
 

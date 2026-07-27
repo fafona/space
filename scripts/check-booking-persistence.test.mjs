@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  isTransientBookingPersistenceError,
   summarizeBookingPersistenceRows,
   waitForBookingPersistence,
 } from "./check-booking-persistence.mjs";
@@ -141,5 +142,32 @@ test("booking persistence check bounds a stalled query", async () => {
         queryTimeoutMs: 10,
       }),
     /booking_persistence_query_failed:query_timeout_10ms/,
+  );
+});
+
+test("booking persistence transport classification keeps data failures strict", () => {
+  assert.equal(
+    isTransientBookingPersistenceError(
+      new Error("booking_persistence_query_failed:query_timeout_10000ms"),
+    ),
+    true,
+  );
+  assert.equal(
+    isTransientBookingPersistenceError(
+      new Error("booking_persistence_query_failed:TypeError: fetch failed"),
+    ),
+    true,
+  );
+  assert.equal(
+    isTransientBookingPersistenceError(
+      new Error("booking_persistence_query_failed:permission denied for table pages"),
+    ),
+    false,
+  );
+  assert.equal(
+    isTransientBookingPersistenceError(
+      new Error("booking_persistence_incomplete:__merchant_booking_records__:v1"),
+    ),
+    false,
   );
 });
