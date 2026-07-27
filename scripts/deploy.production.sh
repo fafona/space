@@ -11,11 +11,11 @@ SHARED_DIR="${SHARED_DIR:-${APP_DIR}.shared}"
 SHARED_RUNTIME_DIR="$SHARED_DIR/.runtime"
 RELEASE_KEEP_COUNT="${RELEASE_KEEP_COUNT:-2}"
 HEALTHCHECK_ATTEMPTS="${HEALTHCHECK_ATTEMPTS:-30}"
-PRODUCTION_SMOKE_ORIGIN="${PRODUCTION_SMOKE_ORIGIN:-https://faolla.com}"
-PRODUCTION_SMOKE_PATHS="${PRODUCTION_SMOKE_PATHS:-/,/login,/10909094}"
-PRODUCTION_SMOKE_ATTEMPTS="${PRODUCTION_SMOKE_ATTEMPTS:-8}"
-PRODUCTION_SMOKE_DELAY_MS="${PRODUCTION_SMOKE_DELAY_MS:-2000}"
-PRODUCTION_SMOKE_TIMEOUT_MS="${PRODUCTION_SMOKE_TIMEOUT_MS:-12000}"
+RELEASE_SMOKE_ORIGIN="${RELEASE_SMOKE_ORIGIN:-http://127.0.0.1:${APP_PORT}}"
+RELEASE_SMOKE_PATHS="${RELEASE_SMOKE_PATHS:-/,/login,/10909094}"
+RELEASE_SMOKE_ATTEMPTS="${RELEASE_SMOKE_ATTEMPTS:-4}"
+RELEASE_SMOKE_DELAY_MS="${RELEASE_SMOKE_DELAY_MS:-1000}"
+RELEASE_SMOKE_TIMEOUT_MS="${RELEASE_SMOKE_TIMEOUT_MS:-12000}"
 DISK_WARNING_THRESHOLD="${DISK_WARNING_THRESHOLD:-75}"
 DISK_CACHE_CLEANUP_THRESHOLD="${DISK_CACHE_CLEANUP_THRESHOLD:-80}"
 DISK_ABORT_THRESHOLD="${DISK_ABORT_THRESHOLD:-90}"
@@ -61,9 +61,9 @@ validate_disk_thresholds() {
     MIN_FREE_DISK_MB \
     RELEASE_KEEP_COUNT \
     HEALTHCHECK_ATTEMPTS \
-    PRODUCTION_SMOKE_ATTEMPTS \
-    PRODUCTION_SMOKE_DELAY_MS \
-    PRODUCTION_SMOKE_TIMEOUT_MS; do
+    RELEASE_SMOKE_ATTEMPTS \
+    RELEASE_SMOKE_DELAY_MS \
+    RELEASE_SMOKE_TIMEOUT_MS; do
     value="${!name}"
     if ! [[ "$value" =~ ^[0-9]+$ ]]; then
       echo "[deploy] $name must be a non-negative integer: $value"
@@ -86,12 +86,12 @@ validate_disk_thresholds() {
     echo "[deploy] HEALTHCHECK_ATTEMPTS must be at least 1"
     exit 1
   fi
-  if [ "$PRODUCTION_SMOKE_ATTEMPTS" -lt 1 ]; then
-    echo "[deploy] PRODUCTION_SMOKE_ATTEMPTS must be at least 1"
+  if [ "$RELEASE_SMOKE_ATTEMPTS" -lt 1 ]; then
+    echo "[deploy] RELEASE_SMOKE_ATTEMPTS must be at least 1"
     exit 1
   fi
-  if [ "$PRODUCTION_SMOKE_TIMEOUT_MS" -lt 250 ]; then
-    echo "[deploy] PRODUCTION_SMOKE_TIMEOUT_MS must be at least 250"
+  if [ "$RELEASE_SMOKE_TIMEOUT_MS" -lt 250 ]; then
+    echo "[deploy] RELEASE_SMOKE_TIMEOUT_MS must be at least 250"
     exit 1
   fi
 }
@@ -372,17 +372,31 @@ wait_for_release_health() {
   return 1
 }
 
-run_public_release_smoke() {
+run_local_release_smoke() {
   (
     cd "$RELEASE_DIR"
     node scripts/check-production-smoke.mjs \
-      --origin "$PRODUCTION_SMOKE_ORIGIN" \
-      --paths "$PRODUCTION_SMOKE_PATHS" \
+      --origin "$RELEASE_SMOKE_ORIGIN" \
+      --paths "$RELEASE_SMOKE_PATHS" \
       --expected-build "$FAOLLA_WEB_BUILD_ID" \
-      --attempts "$PRODUCTION_SMOKE_ATTEMPTS" \
-      --delay-ms "$PRODUCTION_SMOKE_DELAY_MS" \
-      --timeout-ms "$PRODUCTION_SMOKE_TIMEOUT_MS"
+      --attempts "$RELEASE_SMOKE_ATTEMPTS" \
+      --delay-ms "$RELEASE_SMOKE_DELAY_MS" \
+      --timeout-ms "$RELEASE_SMOKE_TIMEOUT_MS"
   )
+}
+
+verify_supabase_health() {
+  local attempt
+  for attempt in 1 2 3; do
+    if node scripts/check-supabase-health.mjs; then
+      return 0
+    fi
+    if [ "$attempt" != "3" ]; then
+      echo "[deploy] Supabase health check attempt $attempt failed; retrying"
+      sleep 5
+    fi
+  done
+  return 1
 }
 
 verify_booking_persistence() {
@@ -479,7 +493,10 @@ else
   echo "[deploy] warning: ffmpeg binary not found; intro video uploads will not transcode"
 fi
 
-node scripts/check-supabase-health.mjs
+if ! verify_supabase_health; then
+  echo "[deploy] Supabase health check failed"
+  exit 1
+fi
 npm run build
 
 if [ ! -f "$RELEASE_BUILD_DIR/.next/BUILD_ID" ]; then
@@ -526,8 +543,8 @@ if ! verify_booking_persistence; then
   exit 1
 fi
 
-if ! run_public_release_smoke; then
-  echo "[deploy] public production smoke check failed"
+if ! run_local_release_smoke; then
+  echo "[deploy] local release smoke check failed"
   exit 1
 fi
 
