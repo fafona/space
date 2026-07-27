@@ -9,8 +9,14 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const PRIMARY_BACKUP_SLUG = "__platform_admin_data_backup__";
 const SECONDARY_BACKUP_SLUG = "__platform_admin_data_backup_backup__";
 const BACKUP_SLUGS = [PRIMARY_BACKUP_SLUG, SECONDARY_BACKUP_SLUG];
-const LATEST_BACKUP_PROJECTION =
-  "latest_backup:blocks->0->props->payload->backups->0";
+const LATEST_BACKUP_PATH = "blocks->0->props->payload->backups->0";
+const SNAPSHOT_PROJECTIONS = [
+  { key: "platformState", stage: "platform_state" },
+  { key: "merchantSnapshot", stage: "merchant_snapshot" },
+  { key: "merchantConfigArchive", stage: "merchant_config_archive" },
+  { key: "supportInbox", stage: "support_inbox" },
+  { key: "merchantAccounts", stage: "merchant_accounts" },
+];
 
 function trimText(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -264,7 +270,90 @@ function normalizeSupabaseUrl(value) {
   }
 }
 
+function createBackupQuery(select) {
+  return new URLSearchParams({
+    select,
+    merchant_id: "is.null",
+    slug: `in.(${BACKUP_SLUGS.join(",")})`,
+    limit: "2",
+  });
+}
+
+async function requestBackupProjection(options, select, stage) {
+  try {
+    const params = createBackupQuery(select);
+    const result = await requestOperationsJson({
+      fetchImpl: options.fetchImpl,
+      label: `platform_admin_backup_${stage}`,
+      url: `${options.supabaseUrl}/rest/v1/pages?${params}`,
+      init: {
+        headers: {
+          apikey: options.serviceRoleKey,
+          Authorization: `Bearer ${options.serviceRoleKey}`,
+        },
+      },
+      attempts: options.requestAttempts,
+      timeoutMs: options.timeoutMs,
+    });
+    if (!Array.isArray(result.body)) {
+      const error = new Error("invalid_backup_projection_response");
+      error.backupStage = stage;
+      throw error;
+    }
+    return result.body;
+  } catch (error) {
+    if (error && typeof error === "object" && !error.backupStage) {
+      error.backupStage = stage;
+    }
+    throw error;
+  }
+}
+
+async function loadLatestBackupRows(options) {
+  const metadataRows = await requestBackupProjection(
+    options,
+    [
+      "slug",
+      `latest_id:${LATEST_BACKUP_PATH}->>id`,
+      `latest_at:${LATEST_BACKUP_PATH}->>at`,
+      `latest_source:${LATEST_BACKUP_PATH}->>source`,
+    ].join(","),
+    "metadata",
+  );
+  const rowsBySlug = new Map();
+  for (const row of metadataRows) {
+    const slug = trimText(row?.slug);
+    if (!BACKUP_SLUGS.includes(slug)) continue;
+    rowsBySlug.set(slug, {
+      slug,
+      latest_backup: {
+        id: trimText(row?.latest_id),
+        at: trimText(row?.latest_at),
+        source: trimText(row?.latest_source),
+        snapshot: {},
+      },
+    });
+  }
+
+  for (const projection of SNAPSHOT_PROJECTIONS) {
+    const projectedRows = await requestBackupProjection(
+      options,
+      `slug,snapshot_value:${LATEST_BACKUP_PATH}->snapshot->${projection.key}`,
+      projection.stage,
+    );
+    for (const row of projectedRows) {
+      const slug = trimText(row?.slug);
+      const target = rowsBySlug.get(slug);
+      if (!target) continue;
+      target.latest_backup.snapshot[projection.key] = row?.snapshot_value;
+    }
+  }
+  return [...rowsBySlug.values()];
+}
+
 function classifyBackupReadFailure(error) {
+  const stage = trimText(error?.backupStage);
+  const stageDetail = stage ? { stage } : {};
   const status = Number(error?.status);
   const code = trimText(error?.code);
   if (Number.isInteger(status) && status > 0) {
@@ -272,15 +361,18 @@ function classifyBackupReadFailure(error) {
       detail: "http_error",
       httpStatus: status,
       ...(code && /^[A-Z0-9_]{1,40}$/i.test(code) ? { errorCode: code } : {}),
+      ...stageDetail,
     };
   }
   const message =
     error instanceof Error ? `${error.name} ${error.message}` : String(error ?? "");
-  if (/timeout|abort/i.test(message)) return { detail: "request_timeout" };
-  if (/fetch|network|socket|connect/i.test(message)) {
-    return { detail: "network_error" };
+  if (/timeout|abort/i.test(message)) {
+    return { detail: "request_timeout", ...stageDetail };
   }
-  return { detail: "unexpected_request_failure" };
+  if (/fetch|network|socket|connect/i.test(message)) {
+    return { detail: "network_error", ...stageDetail };
+  }
+  return { detail: "unexpected_request_failure", ...stageDetail };
 }
 
 export async function runProductionBackupRecoveryCheck(input = {}) {
@@ -303,27 +395,15 @@ export async function runProductionBackupRecoveryCheck(input = {}) {
     };
   }
 
-  const params = new URLSearchParams({
-    select: `slug,${LATEST_BACKUP_PROJECTION}`,
-    merchant_id: "is.null",
-    slug: `in.(${BACKUP_SLUGS.join(",")})`,
-    limit: "2",
-  });
   try {
-    const result = await requestOperationsJson({
+    const rows = await loadLatestBackupRows({
       fetchImpl: input.fetchImpl ?? fetch,
-      label: "platform_admin_backup",
-      url: `${supabaseUrl}/rest/v1/pages?${params}`,
-      init: {
-        headers: {
-          apikey: serviceRoleKey,
-          Authorization: `Bearer ${serviceRoleKey}`,
-        },
-      },
-      attempts: input.requestAttempts ?? 3,
+      supabaseUrl,
+      serviceRoleKey,
+      requestAttempts: input.requestAttempts ?? 3,
       timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     });
-    return validatePlatformAdminBackupRows(result.body, {
+    return validatePlatformAdminBackupRows(rows, {
       now: input.now,
       maximumAgeHours: input.maximumAgeHours,
     });

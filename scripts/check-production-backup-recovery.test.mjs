@@ -172,23 +172,67 @@ test("production backup recovery read failure is bounded and does not expose cre
   assert.equal(report.detail, "http_error");
   assert.equal(report.httpStatus, 401);
   assert.equal(report.errorCode, "PGRST301");
+  assert.equal(report.stage, "metadata");
   assert.equal(serialized.includes("secret-service-key"), false);
 });
 
 test("production backup recovery reads only the latest platform backup from each copy", async () => {
-  let requestUrl = "";
+  const requestUrls = [];
+  const snapshot = createSnapshot();
   const report = await runProductionBackupRecoveryCheck({
     supabaseUrl: "https://project.supabase.co",
     serviceRoleKey: "secret-service-key",
     now: NOW,
     requestAttempts: 1,
     fetchImpl: async (url) => {
-      requestUrl = String(url);
+      requestUrls.push(String(url));
+      const parsedUrl = new URL(String(url));
+      const select = parsedUrl.searchParams.get("select") ?? "";
+      const rows = select.includes("latest_id:")
+        ? [
+            {
+              slug: PRIMARY,
+              latest_id: "backup-1",
+              latest_at: "2026-07-27T06:00:00.000Z",
+              latest_source: "auto",
+            },
+            {
+              slug: SECONDARY,
+              latest_id: "backup-1",
+              latest_at: "2026-07-27T06:00:00.000Z",
+              latest_source: "auto",
+            },
+          ]
+        : [
+            {
+              slug: PRIMARY,
+              snapshot_value:
+                snapshot[
+                  [
+                    "platformState",
+                    "merchantSnapshot",
+                    "merchantConfigArchive",
+                    "supportInbox",
+                    "merchantAccounts",
+                  ].find((key) => select.endsWith(`->${key}`))
+                ],
+            },
+            {
+              slug: SECONDARY,
+              snapshot_value:
+                snapshot[
+                  [
+                    "platformState",
+                    "merchantSnapshot",
+                    "merchantConfigArchive",
+                    "supportInbox",
+                    "merchantAccounts",
+                  ].find((key) => select.endsWith(`->${key}`))
+                ],
+            },
+          ];
       return new Response(
-        JSON.stringify([
-          createProjectedRow(PRIMARY),
-          createProjectedRow(SECONDARY),
-        ]),
+        JSON.stringify(rows),
         {
           status: 200,
           headers: { "content-type": "application/json" },
@@ -196,13 +240,24 @@ test("production backup recovery reads only the latest platform backup from each
       );
     },
   });
-  const parsedUrl = new URL(requestUrl);
 
   assert.equal(report.status, "healthy");
-  assert.equal(parsedUrl.searchParams.get("merchant_id"), "is.null");
-  assert.equal(parsedUrl.searchParams.get("limit"), "2");
+  assert.equal(requestUrls.length, 6);
+  requestUrls.forEach((requestUrl) => {
+    const parsedUrl = new URL(requestUrl);
+    assert.equal(parsedUrl.searchParams.get("merchant_id"), "is.null");
+    assert.equal(parsedUrl.searchParams.get("limit"), "2");
+  });
   assert.match(
-    parsedUrl.searchParams.get("select") ?? "",
-    /latest_backup:blocks->0->props->payload->backups->0/,
+    new URL(requestUrls[0]).searchParams.get("select") ?? "",
+    /latest_id:blocks->0->props->payload->backups->0->>id/,
+  );
+  assert.equal(
+    requestUrls.some((requestUrl) =>
+      /latest_backup:/.test(
+        new URL(requestUrl).searchParams.get("select") ?? "",
+      ),
+    ),
+    false,
   );
 });
