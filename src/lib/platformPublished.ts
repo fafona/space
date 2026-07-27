@@ -12,6 +12,7 @@ import {
   PLATFORM_MERCHANT_SNAPSHOT_SLUG,
   readPlatformMerchantSnapshotFromBlocks,
 } from "@/lib/platformMerchantSnapshot";
+import { resolveServerSupabaseUrl } from "@/lib/serverSupabaseUrl";
 
 type QueryErrorLike = { message?: string } | null;
 type QueryResult<T> = { data: T | null; error: QueryErrorLike };
@@ -66,7 +67,7 @@ function readEnv(key: string) {
 }
 
 function createServerSupabaseClient() {
-  const url = readEnv("NEXT_PUBLIC_SUPABASE_URL");
+  const url = resolveServerSupabaseUrl();
   const serviceRoleKey =
     readEnv("SUPABASE_SERVICE_ROLE_KEY") ||
     readEnv("NEXT_SUPABASE_SERVICE_ROLE_KEY") ||

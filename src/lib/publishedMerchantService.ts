@@ -3,6 +3,7 @@ import type { MerchantListPublishedSite } from "@/data/homeBlocks";
 import { loadStoredPlatformMerchantSnapshot, type PlatformMerchantSnapshotStoreClient } from "@/lib/platformMerchantSnapshotStore";
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import { extractMerchantPrefixFromHost } from "@/lib/siteRouting";
+import { resolveServerSupabaseUrl } from "@/lib/serverSupabaseUrl";
 import {
   getMerchantServiceState,
   normalizeServiceExpiresAt,
@@ -79,7 +80,7 @@ function isMerchantNumericId(value: string | null | undefined) {
 }
 
 function createServerSupabaseClient() {
-  const url = readEnv("NEXT_PUBLIC_SUPABASE_URL");
+  const url = resolveServerSupabaseUrl();
   const serviceRoleKey =
     readEnv("SUPABASE_SERVICE_ROLE_KEY") ||
     readEnv("NEXT_SUPABASE_SERVICE_ROLE_KEY");

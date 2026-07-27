@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
+import { resolveServerSupabaseUrl } from "@/lib/serverSupabaseUrl";
 
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
@@ -22,7 +23,7 @@ const HOP_BY_HOP_HEADERS = new Set([
 const ALLOWED_SUPABASE_PROXY_PREFIXES = ["auth/v1/", "rest/v1/", "storage/v1/"] as const;
 
 function readUpstreamBaseUrl() {
-  return (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim().replace(/\/+$/, "");
+  return resolveServerSupabaseUrl().replace(/\/+$/, "");
 }
 
 function buildUpstreamHeaders(request: Request) {

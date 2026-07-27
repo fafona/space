@@ -3,6 +3,7 @@ import { createMirroredBrowserAuthStorageAdapter } from "@/lib/browserAuthStorag
 
 const REQUIRED_SUPABASE_ENV_KEYS = ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY"] as const;
 const rawUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+const rawInternalUrl = process.env.SUPABASE_INTERNAL_URL?.trim();
 const rawAnon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
 const missingEnvKeys = REQUIRED_SUPABASE_ENV_KEYS.filter((key) => {
   if (key === "NEXT_PUBLIC_SUPABASE_URL") {
@@ -28,6 +29,7 @@ if (supabaseMissingEnvNotice && typeof window !== "undefined") {
 const fallbackUrl = isSupabaseFallbackMode ? "http://127.0.0.1:54321" : "https://invalid.supabase.local";
 const fallbackAnon = "fallback-anon-key";
 const configuredSupabaseUrl = rawUrl || fallbackUrl;
+const serverSupabaseUrl = rawInternalUrl || configuredSupabaseUrl;
 
 const supabaseSessionStorageAdapter = createMirroredBrowserAuthStorageAdapter();
 
@@ -292,7 +294,7 @@ const safeSupabaseFetch: typeof fetch = async (input, init) => {
   }
 };
 
-const browserAwareSupabaseUrl = typeof window === "undefined" ? configuredSupabaseUrl : getResolvedSupabaseUrl();
+const browserAwareSupabaseUrl = typeof window === "undefined" ? serverSupabaseUrl : getResolvedSupabaseUrl();
 
 export const supabase = createClient(browserAwareSupabaseUrl, resolvedSupabaseAnonKey, {
   global: {

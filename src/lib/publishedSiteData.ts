@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import type { Block, MerchantListPublishedSite } from "@/data/homeBlocks";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import type { PublishedMerchantServiceState } from "@/lib/publishedMerchantService";
+import { resolveServerSupabaseUrl } from "@/lib/serverSupabaseUrl";
 import {
   loadCurrentMerchantSnapshotSiteBySiteId,
   loadPublishedMerchantServiceStateBySiteId,
@@ -144,7 +145,7 @@ export function pickPublishedPageRow(rows: PublishedPageRow[]) {
 }
 
 function createPublishedSiteDataClient() {
-  const supabaseUrl = readEnv("NEXT_PUBLIC_SUPABASE_URL");
+  const supabaseUrl = resolveServerSupabaseUrl();
   const serviceRoleKey = readEnv("SUPABASE_SERVICE_ROLE_KEY") || readEnv("NEXT_SUPABASE_SERVICE_ROLE_KEY");
   if (!supabaseUrl || !serviceRoleKey) return null;
   return createClient(supabaseUrl, serviceRoleKey, {

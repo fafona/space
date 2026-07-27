@@ -40,12 +40,14 @@ const env = {
   ...envFromFile,
   ...process.env,
 };
-const url = String(env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim().replace(/\/+$/, "");
+const url = String(env.SUPABASE_INTERNAL_URL ?? env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim().replace(/\/+$/, "");
 const anon = String(env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "").trim();
 const timeoutMs = parsePositiveInt(env.SUPABASE_HEALTH_TIMEOUT_MS, 4000);
 
 if (!url || !anon) {
-  console.error("[supabase-health] Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY");
+  console.error(
+    "[supabase-health] Missing SUPABASE_INTERNAL_URL/NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY",
+  );
   process.exit(1);
 }
 

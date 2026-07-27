@@ -20,6 +20,7 @@ import {
 import { fetchPublishedSitePayloadFromSupabase } from "@/lib/publishedSiteData";
 import { buildFaollaShellHref } from "@/lib/faollaEntry";
 import { DEFAULT_LOCALE, readRequestedLocaleFromSearch } from "@/lib/i18n";
+import { resolveServerSupabaseUrl } from "@/lib/serverSupabaseUrl";
 
 type MerchantEntryPageProps = {
   params: Promise<{
@@ -88,7 +89,7 @@ function readPublicOrigin() {
 }
 
 function createServerSupabaseClient() {
-  const url = readEnv("NEXT_PUBLIC_SUPABASE_URL");
+  const url = resolveServerSupabaseUrl();
   const serviceRoleKey =
     readEnv("SUPABASE_SERVICE_ROLE_KEY") ||
     readEnv("NEXT_SUPABASE_SERVICE_ROLE_KEY") ||

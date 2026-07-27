@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { resolveTrustedPublicOrigin } from "@/lib/requestOrigin";
+import { resolveServerSupabaseUrl } from "@/lib/serverSupabaseUrl";
 
 const SUPER_ADMIN_AUTH_ENV_KEYS = [
   "SUPER_ADMIN_ACCOUNT",
@@ -56,7 +57,7 @@ export function validateSuperAdminCredentials(account: string, password: string)
 }
 
 export function createServerSupabaseAuthClient() {
-  const supabaseUrl = readEnv("NEXT_PUBLIC_SUPABASE_URL");
+  const supabaseUrl = resolveServerSupabaseUrl();
   const anonKey = readEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
   if (!supabaseUrl || !anonKey) return null;
 
@@ -70,7 +71,7 @@ export function createServerSupabaseAuthClient() {
 }
 
 export function createServerSupabaseServiceClient() {
-  const supabaseUrl = readEnv("NEXT_PUBLIC_SUPABASE_URL");
+  const supabaseUrl = resolveServerSupabaseUrl();
   const serviceRoleKey = readEnv("SUPABASE_SERVICE_ROLE_KEY") || readEnv("NEXT_SUPABASE_SERVICE_ROLE_KEY");
   if (!supabaseUrl || !serviceRoleKey) return null;
 
