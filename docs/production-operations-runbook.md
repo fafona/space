@@ -190,6 +190,76 @@ level platform-admin backup, but it is not point-in-time recovery. WAL
 archiving/PITR remains a separate follow-up control for reducing data loss
 below the scheduled full-backup interval.
 
+## PostgreSQL point-in-time recovery
+
+Workflow: `.github/workflows/pitr-readiness.yml`
+
+Local or production-host check:
+
+```powershell
+npm run check:production-pitr-readiness
+```
+
+The check is read-only. It never enables PostgreSQL archiving, installs
+software, creates a bucket, or changes retention. Add `--fail-on-blocked` only
+when the workflow must enforce a complete recovery path.
+
+The report fails closed unless all of the following are verified:
+
+1. `/etc/faolla/pitr.env` exists with owner-only permissions.
+2. The running Supabase PostgreSQL container is discoverable and queryable.
+3. `wal_level` supports recovery, `archive_mode` is enabled, an archive
+   destination is configured, and `archive_timeout` is bounded.
+4. WAL-G and its owner-only configuration file are available inside the
+   database container.
+5. WAL-G can list the off-host repository without exposing credentials.
+6. A recent physical base backup exists in that repository.
+7. PostgreSQL has successfully archived WAL and has no failed latest attempt
+   or unsafe `.ready` backlog.
+8. The database filesystem has at least 8 GiB and 20 percent free.
+9. A recent isolated, no-network PITR restore rehearsal has written valid
+   evidence to
+   `/var/lib/faolla-pitr/restore-rehearsal-evidence.json`.
+
+As of 2026-07-27, production PITR is intentionally **blocked**, not silently
+reported as protected:
+
+- PostgreSQL `archive_mode` is `off` and `archive_timeout` is `0`.
+- No WAL-G binary or off-host WAL repository is configured.
+- No physical PITR base backup or isolated PITR restore evidence exists.
+- The server filesystem is 40 GiB with approximately 11 GiB available.
+  Supabase recommends at least 80 GiB for self-hosting, so disk expansion
+  should precede production activation even though the readiness check also
+  enforces free-space headroom.
+
+The preferred target is a private S3-compatible bucket in a separate failure
+domain. Cloudflare R2 is suitable, but activating R2 may create a billable
+service and therefore requires an explicit operator decision. Use Standard
+storage, a dedicated bucket, and an Object Read & Write token restricted to
+that bucket. Store the Access Key ID and Secret Access Key only in the
+owner-only WAL-G configuration mounted inside PostgreSQL; do not put either
+value in the repository, application `.env.local`, workflow output, or shell
+arguments.
+
+Recommended activation order:
+
+1. Expand the server disk to at least 80 GiB and verify free-space monitoring.
+2. Create the private off-host bucket and bucket-scoped credentials.
+3. Install a pinned WAL-G release into the PostgreSQL runtime and write its
+   owner-only configuration.
+4. Verify repository access with `wal-g backup-list`.
+5. During a controlled maintenance window, enable `archive_mode`, set
+   `archive_timeout` to no more than the target RPO, and restart PostgreSQL.
+6. Create and verify a physical base backup.
+7. Restore that backup plus WAL into an ephemeral no-network PostgreSQL
+   instance and write the rehearsal evidence file.
+8. Run the readiness workflow with `enforce_ready=true`. Schedule enforcement
+   only after this run is ready or intentionally degraded with no blockers.
+
+Do not enable `archive_mode` with a failing or local-only archive command.
+PostgreSQL retains unarchived WAL until the command succeeds, so a broken
+destination can consume the remaining production disk.
+
 ## Security
 
 Reports contain statuses, timestamps, counts, and bounded error codes only.

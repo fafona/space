@@ -1,0 +1,91 @@
+name: PostgreSQL PITR Readiness
+
+on:
+  workflow_dispatch:
+    inputs:
+      enforce_ready:
+        description: Fail unless the complete PITR path is verified
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: pitr-readiness
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - name: Setup SSH
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          test -n "$SSH_HOST"
+          test -n "$SSH_PRIVATE_KEY"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          scan_ok=0
+          for attempt in 1 2 3 4 5; do
+            if ssh-keyscan -T 15 -p "${SSH_PORT:-22}" -H "$SSH_HOST" >> ~/.ssh/known_hosts; then
+              scan_ok=1
+              break
+            fi
+            sleep 5
+          done
+          if [ "$scan_ok" != "1" ]; then
+            echo "::warning::ssh-keyscan failed; the check will use accept-new host verification."
+          fi
+
+      - name: Inspect PostgreSQL PITR Readiness
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          APP_DIR: ${{ secrets.APP_DIR }}
+          ENFORCE_READY: ${{ inputs.enforce_ready || 'false' }}
+        shell: bash
+        run: |
+          test -n "$SSH_USER"
+          test -n "$APP_DIR"
+          set -o pipefail
+          enforce_flag=""
+          if [ "$ENFORCE_READY" = "true" ]; then
+            enforce_flag="--fail-on-blocked"
+          fi
+          ssh -o ConnectTimeout=20 -o ConnectionAttempts=3 -o StrictHostKeyChecking=accept-new -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
+            "cd '$APP_DIR' && node scripts/check-production-pitr-readiness.mjs --config-env-file=/etc/faolla/pitr.env --json $enforce_flag" \
+            | tee pitr-readiness-report.log
+
+      - name: Write PITR Summary
+        if: always()
+        shell: bash
+        run: |
+          echo "### PostgreSQL PITR readiness" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f pitr-readiness-report.log ]; then
+            echo '```text' >> "$GITHUB_STEP_SUMMARY"
+            cat pitr-readiness-report.log >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "The readiness check stopped before producing a report." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload PITR Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pitr-readiness-report
+          path: pitr-readiness-report.log
+          if-no-files-found: ignore
+          retention-days: 30
