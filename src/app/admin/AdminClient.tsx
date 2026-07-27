@@ -9820,6 +9820,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, [isPlatformEditor]);
 
   useEffect(() => {
+    if (checkingAuth) return;
     if (isPlatformEditor || explicitFaollaSectionEntry || !isMerchantNumericId(editingSiteId)) {
       setMerchantBookingAttentionSummary({ count: 0, latest: null });
       setMerchantBusinessAttentionHydrationState((current) => (current.booking ? current : { ...current, booking: true }));
@@ -9857,7 +9858,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       ? () => {}
       : scheduleAdminIdleTask(() => {
           void loadMerchantBookingAttention();
-        });
+        }, { timeoutMs: 2400, fallbackDelayMs: 1000 });
     timer = setInterval(() => {
       void loadMerchantBookingAttention();
     }, 60000);
@@ -9866,9 +9867,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       cancelInitialRefresh();
       if (timer) clearInterval(timer);
     };
-  }, [editingSiteId, explicitFaollaSectionEntry, isPlatformEditor, summarizeMerchantBookingAttention]);
+  }, [checkingAuth, editingSiteId, explicitFaollaSectionEntry, isPlatformEditor, summarizeMerchantBookingAttention]);
 
   useEffect(() => {
+    if (checkingAuth) return;
     if (isPlatformEditor || explicitFaollaSectionEntry || !isMerchantNumericId(editingSiteId)) {
       setMerchantOrderAttentionSummary({ count: 0, latest: null });
       setMerchantBusinessAttentionHydrationState((current) => (current.orders ? current : { ...current, orders: true }));
@@ -9911,7 +9913,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       ? () => {}
       : scheduleAdminIdleTask(() => {
           void loadMerchantOrderAttention();
-        });
+        }, { timeoutMs: 2400, fallbackDelayMs: 1000 });
     timer = setInterval(() => {
       void loadMerchantOrderAttention();
     }, 60000);
@@ -9920,7 +9922,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       cancelInitialRefresh();
       if (timer) clearInterval(timer);
     };
-  }, [editingSiteId, explicitFaollaSectionEntry, isPlatformEditor, summarizeMerchantOrderAttention]);
+  }, [checkingAuth, editingSiteId, explicitFaollaSectionEntry, isPlatformEditor, summarizeMerchantOrderAttention]);
 
   useEffect(() => {
     if (isPlatformEditor || typeof window === "undefined" || typeof document === "undefined") return;

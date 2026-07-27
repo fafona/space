@@ -1,6 +1,48 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolveMerchantSessionFromRequest } from "./serverMerchantSession";
+import {
+  merchantAuthorizationRecordMatchesUser,
+  resolveMerchantSessionFromRequest,
+} from "./serverMerchantSession";
+
+test("merchantAuthorizationRecordMatchesUser accepts linked ids and normalized emails only", () => {
+  const user = {
+    id: "user-linked",
+    email: "Owner@Example.com",
+  };
+
+  assert.equal(
+    merchantAuthorizationRecordMatchesUser(
+      {
+        id: "12345678",
+        owner_user_id: "user-linked",
+      },
+      user,
+    ),
+    true,
+  );
+  assert.equal(
+    merchantAuthorizationRecordMatchesUser(
+      {
+        id: "12345678",
+        contact_email: " owner@example.COM ",
+      },
+      user,
+    ),
+    true,
+  );
+  assert.equal(
+    merchantAuthorizationRecordMatchesUser(
+      {
+        id: "12345678",
+        owner_user_id: "another-user",
+        contact_email: "another@example.com",
+      },
+      user,
+    ),
+    false,
+  );
+});
 
 test("resolveMerchantSessionFromRequest does not trust unauthenticated merchant hints", async () => {
   const session = await resolveMerchantSessionFromRequest(
@@ -277,6 +319,91 @@ test("resolveMerchantSessionFromRequest falls back to older duplicate cookies wh
       merchantEmail: "owner@example.com",
       merchantName: "",
     });
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env.NEXT_PUBLIC_SUPABASE_URL = previousUrl;
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = previousAnonKey;
+    process.env.SUPABASE_SERVICE_ROLE_KEY = previousServiceRoleKey;
+  }
+});
+
+test("resolveMerchantSessionFromRequest shares concurrent hinted lookups and avoids exhaustive scans", async () => {
+  const originalFetch = globalThis.fetch;
+  const previousUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const previousAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const previousServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  let authRequestCount = 0;
+  let merchantRequestCount = 0;
+
+  process.env.NEXT_PUBLIC_SUPABASE_URL = "https://unit-test.supabase.co";
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key";
+
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const requestUrl = new URL(url);
+
+    if (requestUrl.pathname === "/auth/v1/user") {
+      authRequestCount += 1;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return new Response(
+        JSON.stringify({
+          id: "user-fast-path",
+          email: "owner-fast@example.com",
+          user_metadata: {},
+          app_metadata: {},
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        },
+      );
+    }
+
+    if (requestUrl.pathname === "/rest/v1/merchants") {
+      merchantRequestCount += 1;
+      assert.equal(requestUrl.searchParams.get("id"), "eq.24681357");
+      return new Response(
+        JSON.stringify({
+          id: "24681357",
+          user_id: "user-fast-path",
+          email: "owner-fast@example.com",
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        },
+      );
+    }
+
+    return new Response("not found", { status: 404 });
+  }) as typeof fetch;
+
+  try {
+    const makeRequest = () =>
+      new Request("https://faolla.com/api/assets/upload", {
+        headers: {
+          cookie:
+            "merchant-space-merchant-auth=access-token-fast-path; merchant-space-merchant-id=24681357",
+        },
+      });
+    const [first, second] = await Promise.all([
+      resolveMerchantSessionFromRequest(makeRequest()),
+      resolveMerchantSessionFromRequest(makeRequest()),
+    ]);
+
+    assert.deepEqual(first, {
+      merchantId: "24681357",
+      merchantEmail: "owner-fast@example.com",
+      merchantName: "",
+    });
+    assert.deepEqual(second, first);
+    assert.equal(authRequestCount, 1);
+    assert.equal(merchantRequestCount, 1);
   } finally {
     globalThis.fetch = originalFetch;
     process.env.NEXT_PUBLIC_SUPABASE_URL = previousUrl;

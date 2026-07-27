@@ -201,24 +201,10 @@ export default function MerchantNumericEntryPageClient() {
 
   useEffect(() => {
     if (!hydrated || !merchantEntry) return;
-    const likelyMerchantSession =
-      !isSupabaseEnabled ||
-      skipEntrySessionCheck ||
-      recentSignInBridgeActive ||
-      hasRecentLaunchEntry ||
-      numericAdminAuthenticated;
-    if (!likelyMerchantSession) return;
     void import("@/app/admin/AdminClient").catch(() => {
       // The dynamic component keeps its normal retry and error handling path.
     });
-  }, [
-    hasRecentLaunchEntry,
-    hydrated,
-    merchantEntry,
-    numericAdminAuthenticated,
-    recentSignInBridgeActive,
-    skipEntrySessionCheck,
-  ]);
+  }, [hydrated, merchantEntry]);
 
   useEffect(() => {
     if (!recentSignInBridgeActive) return;
