@@ -9,6 +9,8 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const PRIMARY_BACKUP_SLUG = "__platform_admin_data_backup__";
 const SECONDARY_BACKUP_SLUG = "__platform_admin_data_backup_backup__";
 const BACKUP_SLUGS = [PRIMARY_BACKUP_SLUG, SECONDARY_BACKUP_SLUG];
+const LATEST_BACKUP_PROJECTION =
+  "latest_backup:blocks->0->props->payload->backups->0";
 
 function trimText(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -45,6 +47,26 @@ function findBackupPayload(blocks) {
       item.props.isPlatformAdminDataBackup === true,
   );
   return isRecord(block?.props?.payload) ? block.props.payload : null;
+}
+
+function backupEntriesFromRow(row) {
+  if (!isRecord(row)) {
+    return { payloadValid: false, entries: [] };
+  }
+  if (Object.hasOwn(row, "latest_backup")) {
+    const entry = normalizeBackupEntry(row.latest_backup);
+    return {
+      payloadValid: isRecord(row.latest_backup),
+      entries: entry ? [entry] : [],
+    };
+  }
+  const payload = findBackupPayload(row.blocks);
+  return {
+    payloadValid: Boolean(payload),
+    entries: isArray(payload?.backups)
+      ? payload.backups.map(normalizeBackupEntry).filter(Boolean)
+      : [],
+  };
 }
 
 function validatePlatformState(value) {
@@ -145,10 +167,7 @@ export function validatePlatformAdminBackupRows(rows, options = {}) {
     const row = Array.isArray(rows)
       ? rows.find((item) => trimText(item?.slug) === slug)
       : null;
-    const payload = findBackupPayload(row?.blocks);
-    const entries = isArray(payload?.backups)
-      ? payload.backups.map(normalizeBackupEntry).filter(Boolean)
-      : [];
+    const { entries, payloadValid } = backupEntriesFromRow(row);
     entries.forEach((entry) => {
       const existing = entriesById.get(entry.id);
       if (!existing || entry.timestamp > existing.timestamp) {
@@ -157,7 +176,7 @@ export function validatePlatformAdminBackupRows(rows, options = {}) {
     });
     copies[slug] = {
       present: Boolean(row),
-      payloadValid: Boolean(payload),
+      payloadValid,
       validBackupCount: entries.length,
       backupIds: new Set(entries.map((entry) => entry.id)),
     };
@@ -245,6 +264,25 @@ function normalizeSupabaseUrl(value) {
   }
 }
 
+function classifyBackupReadFailure(error) {
+  const status = Number(error?.status);
+  const code = trimText(error?.code);
+  if (Number.isInteger(status) && status > 0) {
+    return {
+      detail: "http_error",
+      httpStatus: status,
+      ...(code && /^[A-Z0-9_]{1,40}$/i.test(code) ? { errorCode: code } : {}),
+    };
+  }
+  const message =
+    error instanceof Error ? `${error.name} ${error.message}` : String(error ?? "");
+  if (/timeout|abort/i.test(message)) return { detail: "request_timeout" };
+  if (/fetch|network|socket|connect/i.test(message)) {
+    return { detail: "network_error" };
+  }
+  return { detail: "unexpected_request_failure" };
+}
+
 export async function runProductionBackupRecoveryCheck(input = {}) {
   const supabaseUrl = normalizeSupabaseUrl(
     input.supabaseUrl || process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -266,9 +304,10 @@ export async function runProductionBackupRecoveryCheck(input = {}) {
   }
 
   const params = new URLSearchParams({
-    select: "slug,blocks,updated_at",
+    select: `slug,${LATEST_BACKUP_PROJECTION}`,
+    merchant_id: "is.null",
     slug: `in.(${BACKUP_SLUGS.join(",")})`,
-    limit: "4",
+    limit: "2",
   });
   try {
     const result = await requestOperationsJson({
@@ -288,12 +327,13 @@ export async function runProductionBackupRecoveryCheck(input = {}) {
       now: input.now,
       maximumAgeHours: input.maximumAgeHours,
     });
-  } catch {
+  } catch (error) {
     return {
       schemaVersion: 1,
       status: "critical",
       checkedAt: new Date().toISOString(),
       error: "platform_admin_backup_read_failed",
+      ...classifyBackupReadFailure(error),
       fullBusinessDatabaseCovered: false,
       coverage: "platform_admin_only",
     };

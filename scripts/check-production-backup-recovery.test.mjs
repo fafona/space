@@ -69,6 +69,13 @@ function createRow(slug, entries = [createEntry()]) {
   };
 }
 
+function createProjectedRow(slug, entry = createEntry()) {
+  return {
+    slug,
+    latest_backup: entry,
+  };
+}
+
 const PRIMARY = "__platform_admin_data_backup__";
 const SECONDARY = "__platform_admin_data_backup_backup__";
 
@@ -88,6 +95,18 @@ test("backup recovery rehearsal validates both copies and both supported scopes"
   assert.equal(report.snapshotCounts.sites, 1);
   assert.equal(report.fullBusinessDatabaseCovered, false);
   assert.equal(report.coverage, "platform_admin_only");
+});
+
+test("backup recovery rehearsal validates projected latest backup rows", () => {
+  const report = validatePlatformAdminBackupRows(
+    [createProjectedRow(PRIMARY), createProjectedRow(SECONDARY)],
+    { now: NOW },
+  );
+
+  assert.equal(report.status, "healthy");
+  assert.equal(report.validBackupCount, 1);
+  assert.equal(report.redundantCopies, 2);
+  assert.equal(report.latestBackupAgeHours, 6);
 });
 
 test("backup recovery rehearsal reports a missing redundant copy without rejecting a valid backup", () => {
@@ -150,5 +169,40 @@ test("production backup recovery read failure is bounded and does not expose cre
 
   assert.equal(report.status, "critical");
   assert.equal(report.error, "platform_admin_backup_read_failed");
+  assert.equal(report.detail, "http_error");
+  assert.equal(report.httpStatus, 401);
+  assert.equal(report.errorCode, "PGRST301");
   assert.equal(serialized.includes("secret-service-key"), false);
+});
+
+test("production backup recovery reads only the latest platform backup from each copy", async () => {
+  let requestUrl = "";
+  const report = await runProductionBackupRecoveryCheck({
+    supabaseUrl: "https://project.supabase.co",
+    serviceRoleKey: "secret-service-key",
+    now: NOW,
+    requestAttempts: 1,
+    fetchImpl: async (url) => {
+      requestUrl = String(url);
+      return new Response(
+        JSON.stringify([
+          createProjectedRow(PRIMARY),
+          createProjectedRow(SECONDARY),
+        ]),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    },
+  });
+  const parsedUrl = new URL(requestUrl);
+
+  assert.equal(report.status, "healthy");
+  assert.equal(parsedUrl.searchParams.get("merchant_id"), "is.null");
+  assert.equal(parsedUrl.searchParams.get("limit"), "2");
+  assert.match(
+    parsedUrl.searchParams.get("select") ?? "",
+    /latest_backup:blocks->0->props->payload->backups->0/,
+  );
 });
