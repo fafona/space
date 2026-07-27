@@ -1,13 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createDefaultMerchantContactVisibility, createDefaultMerchantPermissionConfig, createDefaultMerchantSortConfig } from "@/data/platformControlStore";
+import {
+  createDefaultMerchantContactVisibility,
+  createDefaultMerchantPermissionConfig,
+  createDefaultMerchantSortConfig,
+  type MerchantConfigSnapshot,
+} from "@/data/platformControlStore";
 import { derivePlatformMerchantConfigArchiveEntries } from "./platformMerchantConfigArchive";
 
-function createSnapshot(overrides: Partial<ReturnType<typeof buildConfigSnapshot>> = {}) {
+function createSnapshot(overrides: Partial<MerchantConfigSnapshot> = {}) {
   return buildConfigSnapshot(overrides);
 }
 
-function buildConfigSnapshot(overrides: Record<string, unknown> = {}) {
+function buildConfigSnapshot(overrides: Partial<MerchantConfigSnapshot> = {}): MerchantConfigSnapshot {
   return {
     serviceExpiresAt: "2027-07-07T00:00:00.000Z",
     permissionConfig: createDefaultMerchantPermissionConfig(),

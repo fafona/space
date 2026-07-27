@@ -27,7 +27,16 @@ function makeSite(input: Partial<Site> & Pick<Site, "id">): Site {
     status: input.status ?? "online",
     publishedVersion: 1,
     lastPublishedAt: null,
-    features: {},
+    features: {
+      multi_page_editor: false,
+      schedule_publish: false,
+      ai_copywriting: false,
+      custom_domain: false,
+      member_center: false,
+      ab_test: false,
+      api_access: false,
+      advanced_analytics: false,
+    },
     location: {
       countryCode: "",
       country: "",

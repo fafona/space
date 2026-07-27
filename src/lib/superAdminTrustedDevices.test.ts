@@ -59,6 +59,7 @@ test("upsertSuperAdminTrustedDevice preserves original addedAt and first login i
         firstLoginIp: "1.1.1.1",
         lastLoginIp: "1.1.1.1",
         lastLoginStatus: "success",
+        details: null,
       },
     ],
     {
@@ -140,6 +141,7 @@ test("removeSuperAdminTrustedDevice removes the requested device only", () => {
         firstLoginIp: "1.1.1.1",
         lastLoginIp: "1.1.1.1",
         lastLoginStatus: "success",
+        details: null,
       },
       {
         deviceId: "device-2",
@@ -149,6 +151,7 @@ test("removeSuperAdminTrustedDevice removes the requested device only", () => {
         firstLoginIp: "3.3.3.3",
         lastLoginIp: "3.3.3.3",
         lastLoginStatus: "success",
+        details: null,
       },
     ],
     "device-1",
@@ -170,6 +173,7 @@ test("canRegisterAnotherSuperAdminDevice blocks new devices when limit is reache
       firstLoginIp: "1.1.1.1",
       lastLoginIp: "1.1.1.1",
       lastLoginStatus: "success" as const,
+      details: null,
     },
     {
       deviceId: "device-2",
@@ -179,6 +183,7 @@ test("canRegisterAnotherSuperAdminDevice blocks new devices when limit is reache
       firstLoginIp: "3.3.3.3",
       lastLoginIp: "3.3.3.3",
       lastLoginStatus: "success" as const,
+      details: null,
     },
   ];
 
@@ -202,6 +207,7 @@ test("pickLeastRecentlyVerifiedSuperAdminTrustedDevice returns the stalest verif
       firstLoginIp: "1.1.1.1",
       lastLoginIp: "1.1.1.1",
       lastLoginStatus: "success",
+      details: null,
     },
     {
       deviceId: "device-2",
@@ -211,6 +217,7 @@ test("pickLeastRecentlyVerifiedSuperAdminTrustedDevice returns the stalest verif
       firstLoginIp: "2.2.2.2",
       lastLoginIp: "2.2.2.2",
       lastLoginStatus: "success",
+      details: null,
     },
     {
       deviceId: "device-3",
@@ -220,6 +227,7 @@ test("pickLeastRecentlyVerifiedSuperAdminTrustedDevice returns the stalest verif
       firstLoginIp: "3.3.3.3",
       lastLoginIp: "3.3.3.3",
       lastLoginStatus: "success",
+      details: null,
     },
   ]);
 

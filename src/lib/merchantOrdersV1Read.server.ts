@@ -12,6 +12,13 @@ import {
   type MerchantOrderItemV1StoredRow,
   type MerchantOrderV1StoredRow,
 } from "@/lib/merchantOrdersV1";
+import {
+  merchantOrderV1ReadCircuitBreaker,
+  resolveMerchantOrderV1ReadCircuitBreakerConfig,
+  type MerchantOrderV1ReadCircuitBreaker,
+  type MerchantOrderV1ReadCircuitBreakerConfig,
+  type MerchantOrderV1ReadCircuitPermit,
+} from "@/lib/merchantOrderV1ReadCircuitBreaker";
 
 export const MERCHANT_ORDER_V1_READ_MODES = ["off", "verify", "primary"] as const;
 
@@ -37,6 +44,7 @@ export type MerchantOrderV1ReadEvent = {
     | "v1_timeout"
     | "v1_query_failed"
     | "v1_missing"
+    | "circuit_open"
     | "legacy_missing"
     | "count_mismatch"
     | "order_id_mismatch"
@@ -458,6 +466,8 @@ export async function readMerchantOrdersWithV1Fallback<T extends MerchantOrderRe
   loadLegacy: () => Promise<T | null>;
   loadV1: () => Promise<T | null>;
   config?: MerchantOrderV1ReadConfig;
+  circuitBreaker?: MerchantOrderV1ReadCircuitBreaker;
+  circuitBreakerConfig?: MerchantOrderV1ReadCircuitBreakerConfig;
   logger?: MerchantOrderV1ReadLogger;
 }): Promise<T | null> {
   const config = input.config ?? resolveMerchantOrderV1ReadConfig();
@@ -467,11 +477,20 @@ export async function readMerchantOrdersWithV1Fallback<T extends MerchantOrderRe
 
   const verificationStartedAt = Date.now();
   const mode = config.mode as Exclude<MerchantOrderV1ReadMode, "off">;
-  const legacyTask = input.loadLegacy();
-  const v1Task = observeV1Read(input.loadV1, config.timeoutMs);
-  const legacy = await legacyTask;
-  const observedV1 = await v1Task;
+  const normalizedSiteId = trimText(input.siteId);
+  const circuitBreaker = input.circuitBreaker ?? merchantOrderV1ReadCircuitBreaker;
+  const circuitBreakerConfig =
+    input.circuitBreakerConfig ?? resolveMerchantOrderV1ReadCircuitBreakerConfig();
+  const circuitPermit: MerchantOrderV1ReadCircuitPermit | null =
+    mode === "primary"
+      ? circuitBreaker.acquire(
+          normalizedSiteId,
+          circuitBreakerConfig,
+          verificationStartedAt,
+        )
+      : null;
   const logger = input.logger ?? defaultReadLogger;
+  let legacy: T | null = null;
 
   const log = (
     outcome: MerchantOrderV1ReadEvent["outcome"],
@@ -483,7 +502,7 @@ export async function readMerchantOrdersWithV1Fallback<T extends MerchantOrderRe
       const completedAt = Date.now();
       logger({
         event: "merchant_order_v1_read",
-        siteId: trimText(input.siteId),
+        siteId: normalizedSiteId,
         mode,
         observedAt: new Date(completedAt).toISOString(),
         durationMs: Math.max(0, completedAt - verificationStartedAt),
@@ -498,30 +517,79 @@ export async function readMerchantOrdersWithV1Fallback<T extends MerchantOrderRe
     }
   };
 
+  const legacyTask = Promise.resolve().then(input.loadLegacy);
+  if (circuitPermit && !circuitPermit.allowed) {
+    legacy = await legacyTask;
+    log("fallback", "circuit_open", 0);
+    return legacy;
+  }
+
+  const v1Task = observeV1Read(input.loadV1, config.timeoutMs);
+  try {
+    legacy = await legacyTask;
+  } catch (error) {
+    if (circuitPermit) {
+      circuitBreaker.recordInconclusive(
+        normalizedSiteId,
+        circuitBreakerConfig,
+        circuitPermit,
+      );
+    }
+    throw error;
+  }
+  const observedV1 = await v1Task;
+
+  const recordCircuitFailure = () => {
+    if (!circuitPermit) return;
+    circuitBreaker.recordFailure(
+      normalizedSiteId,
+      circuitBreakerConfig,
+      circuitPermit,
+    );
+  };
+
   if (observedV1.status === "timeout") {
+    recordCircuitFailure();
     log("fallback", "v1_timeout", 0);
     return legacy;
   }
   if (observedV1.status === "failed") {
+    recordCircuitFailure();
     log("fallback", "v1_query_failed", 0);
     return legacy;
   }
   const v1 = observedV1.value;
   if (!v1) {
+    recordCircuitFailure();
     log("fallback", "v1_missing", 0);
     return legacy;
   }
   if (!legacy) {
+    if (circuitPermit) {
+      circuitBreaker.recordInconclusive(
+        normalizedSiteId,
+        circuitBreakerConfig,
+        circuitPermit,
+      );
+    }
     log("fallback", "legacy_missing", v1.orders.length);
     return legacy;
   }
 
   const comparison = compareReadEnvelopes(legacy, v1);
   if (comparison.reason !== "parity") {
+    recordCircuitFailure();
     log("fallback", comparison.reason, v1.orders.length, comparison.orderIds);
     return legacy;
   }
 
+  if (circuitPermit) {
+    circuitBreaker.recordSuccess(
+      normalizedSiteId,
+      circuitBreakerConfig,
+      circuitPermit,
+    );
+  }
   log("match", "parity", v1.orders.length);
   if (mode === "verify") return legacy;
   return {

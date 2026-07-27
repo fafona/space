@@ -33,7 +33,7 @@ function createMemoryStorage(): Storage {
 }
 
 function createBlockSet(id: string, text: string): Block[] {
-  return [
+  const blocks = [
     {
       ...homeBlocks[0],
       id,
@@ -41,8 +41,9 @@ function createBlockSet(id: string, text: string): Block[] {
         ...homeBlocks[0].props,
         commonTextBoxes: [{ id: `${id}-text`, text }],
       },
-    } as Block,
+    } as unknown as Block,
   ];
+  return JSON.parse(JSON.stringify(blocks)) as Block[];
 }
 
 function delay(ms: number) {
@@ -72,12 +73,12 @@ function withWindowHarness(run: () => Promise<void> | void) {
     .then(run)
     .finally(() => {
       if (typeof previousWindow === "undefined") {
-        delete globalTarget.window;
+        Reflect.deleteProperty(globalTarget, "window");
       } else {
         globalTarget.window = previousWindow;
       }
       if (typeof previousLocalStorage === "undefined") {
-        delete globalTarget.localStorage;
+        Reflect.deleteProperty(globalTarget, "localStorage");
       } else {
         globalTarget.localStorage = previousLocalStorage;
       }

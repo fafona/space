@@ -5,6 +5,7 @@ import {
   loadPlatformState,
   normalizeMerchantPermissionConfig,
   savePlatformState,
+  type PlanTemplate,
 } from "./platformControlStore";
 import { getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
 
@@ -184,12 +185,12 @@ test("merchant config history keeps full entries and persists details outside ma
     assert.ok(storageKeys.some((key) => (key ?? "").includes("merchant-config-history")));
   } finally {
     if (previousLocalStorage === undefined) {
-      delete globalTarget.localStorage;
+      Reflect.deleteProperty(globalTarget, "localStorage");
     } else {
       globalTarget.localStorage = previousLocalStorage;
     }
     if (previousWindow === undefined) {
-      delete globalTarget.window;
+      Reflect.deleteProperty(globalTarget, "window");
     } else {
       globalTarget.window = previousWindow;
     }
@@ -238,19 +239,19 @@ test("platform state seeds built-in starter templates within new-merchant permis
     const blockTypes = new Set(
       [...serviceConfig.plans, ...restaurantConfig.plans, ...organizationConfig.plans].flatMap((plan) =>
         plan.pages.flatMap((page) =>
-          page.blocks.map((block) => block?.type).filter((type): type is string => Boolean(type)),
+          page.blocks.map((block) => block?.type).filter(Boolean),
         ),
       ),
     );
     assert.deepEqual([...blockTypes].sort(), ["chart", "common", "contact", "hero", "list", "nav", "text"].sort());
   } finally {
     if (typeof previousWindow === "undefined") {
-      delete globalTarget.window;
+      Reflect.deleteProperty(globalTarget, "window");
     } else {
       globalTarget.window = previousWindow;
     }
     if (typeof previousLocalStorage === "undefined") {
-      delete globalTarget.localStorage;
+      Reflect.deleteProperty(globalTarget, "localStorage");
     } else {
       globalTarget.localStorage = previousLocalStorage;
     }
@@ -281,7 +282,7 @@ test("plan templates are ordered by createdAt descending instead of updatedAt", 
     const olderCreatedAt = new Date("2026-04-10T06:00:00.000Z").toISOString();
     const newerCreatedAt = new Date("2026-04-14T06:00:00.000Z").toISOString();
 
-    const customTemplates = [
+    const customTemplates: PlanTemplate[] = [
       {
         id: "template-older",
         name: "Older template",
@@ -330,12 +331,12 @@ test("plan templates are ordered by createdAt descending instead of updatedAt", 
     assert.ok(newerIndex < olderIndex);
   } finally {
     if (typeof previousWindow === "undefined") {
-      delete globalTarget.window;
+      Reflect.deleteProperty(globalTarget, "window");
     } else {
       globalTarget.window = previousWindow;
     }
     if (typeof previousLocalStorage === "undefined") {
-      delete globalTarget.localStorage;
+      Reflect.deleteProperty(globalTarget, "localStorage");
     } else {
       globalTarget.localStorage = previousLocalStorage;
     }

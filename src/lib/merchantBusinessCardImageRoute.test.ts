@@ -17,6 +17,7 @@ function createCard(input: {
     id: input.id,
     createdAt: "2026-07-18T00:00:00.000Z",
     shareKey: input.shareKey,
+    targetUrl: "https://merchant.example.com",
     imageUrl: input.imageUrl ?? "",
     ...(input.shareImageUrl ? { shareImageUrl: input.shareImageUrl } : {}),
   };

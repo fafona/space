@@ -630,7 +630,7 @@ test("business card contact helpers build downloadable vcard links and content",
       websiteUrl: "https://fafona.faolla.com/",
       note: "WhatsApp: felix",
     },
-  } as const;
+  };
 
   assert.equal(
     buildMerchantBusinessCardContactDownloadUrl({

@@ -119,10 +119,6 @@ function compareIso(left: string, right: string) {
   return leftTime - rightTime;
 }
 
-function latestIso(left: string, right: string) {
-  return compareIso(left, right) >= 0 ? left : right;
-}
-
 function earliestMessageAt(
   messages: Array<{ createdAt: string }>,
   fallback: string,

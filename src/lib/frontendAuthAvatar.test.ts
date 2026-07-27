@@ -5,7 +5,6 @@ import { readFrontendAuthMerchantIds, resolveFrontendAuthAvatarUrl } from "@/lib
 test("readFrontendAuthMerchantIds includes merchant account id", () => {
   assert.deepEqual(
     readFrontendAuthMerchantIds({
-      authenticated: true,
       accountType: "merchant",
       accountId: "10000000",
       merchantId: null,

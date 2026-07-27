@@ -355,6 +355,8 @@ test("buildMerchantBookingReminderSummary ignores already-processed reminder buc
       noShowGraceMinutes: 30,
       calendarSyncToken: "",
       calendarSyncTokenUpdatedAt: "",
+      storeColorStyles: {},
+      itemColorStyles: {},
     },
     new Date(2026, 2, 19, 9, 40, 0, 0),
   );

@@ -176,7 +176,7 @@ test("booking migration preserves and deduplicates legacy records without an id"
   );
 
   assert.deepEqual(
-    merged.map((record) => [record.id ?? "", record.value]),
+    merged.map((record) => ["id" in record ? record.id : "", record.value]),
     [
       ["duplicate", "newer"],
       ["", "legacy"],

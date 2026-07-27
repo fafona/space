@@ -4,7 +4,9 @@ import {
   findShareOwnerMerchantIdInSnapshotPayload,
   isStorageObjectMissingError,
 } from "@/app/api/business-card-share/route";
+import { createDefaultMerchantPermissionConfig } from "@/data/platformControlStore";
 import { normalizeMerchantBusinessCardSharePayload } from "@/lib/merchantBusinessCardShare";
+import { createDefaultMerchantBusinessCardDraft } from "@/lib/merchantBusinessCards";
 
 test("share delete treats common not-found storage errors as idempotent misses", () => {
   assert.equal(isStorageObjectMissingError("The resource was not found"), true);
@@ -53,17 +55,11 @@ test("share owner lookup resolves merchant ids from snapshot business cards by s
               emailHidden: false,
               businessCardHidden: false,
             },
-            permissionConfig: {
-              bookingEnabled: false,
-              bookingsEnabled: false,
-              shoppingEnabled: false,
-              musicEnabled: false,
-              productsEnabled: false,
-              businessCardEnabled: false,
-            },
+            permissionConfig: createDefaultMerchantPermissionConfig(),
             merchantCardImageOpacity: 1,
             businessCards: [
               {
+                ...createDefaultMerchantBusinessCardDraft({}),
                 id: "card-1",
                 createdAt: "2026-04-05T00:00:00.000Z",
                 mode: "link",
@@ -103,6 +99,7 @@ test("share owner lookup resolves merchant ids from snapshot business cards by s
                   tiktok: "",
                   douyin: "",
                   xiaohongshu: "",
+                  googleReview: "",
                 },
                 contactFieldOrder: ["contactName", "phone", "email", "address", "wechat", "whatsapp", "twitter", "weibo", "facebook", "instagram", "tiktok", "xiaohongshu", "douyin", "telegram", "linkedin", "discord"],
                 contactOnlyFields: {
@@ -122,6 +119,7 @@ test("share owner lookup resolves merchant ids from snapshot business cards by s
                   tiktok: false,
                   douyin: false,
                   xiaohongshu: false,
+                  googleReview: false,
                 },
                 customTexts: [],
                 textLayout: {
@@ -144,6 +142,7 @@ test("share owner lookup resolves merchant ids from snapshot business cards by s
                   tiktok: { x: 0, y: 0 },
                   douyin: { x: 0, y: 0 },
                   xiaohongshu: { x: 0, y: 0 },
+                  googleReview: { x: 0, y: 0 },
                 },
                 qr: { x: 0, y: 0, size: 120 },
                 typography: {
@@ -172,6 +171,7 @@ test("share owner lookup resolves merchant ids from snapshot business cards by s
                   tiktok: { fontFamily: "", fontSize: 16, fontColor: "#000", fontWeight: "normal", fontStyle: "normal", textDecoration: "none" },
                   douyin: { fontFamily: "", fontSize: 16, fontColor: "#000", fontWeight: "normal", fontStyle: "normal", textDecoration: "none" },
                   xiaohongshu: { fontFamily: "", fontSize: 16, fontColor: "#000", fontWeight: "normal", fontStyle: "normal", textDecoration: "none" },
+                  googleReview: { fontFamily: "", fontSize: 16, fontColor: "#000", fontWeight: "normal", fontStyle: "normal", textDecoration: "none" },
                 },
               },
             ],
@@ -255,17 +255,11 @@ test("share owner lookup resolves legacy fingerprints from snapshot business car
               emailHidden: false,
               businessCardHidden: false,
             },
-            permissionConfig: {
-              bookingEnabled: false,
-              bookingsEnabled: false,
-              shoppingEnabled: false,
-              musicEnabled: false,
-              productsEnabled: false,
-              businessCardEnabled: false,
-            },
+            permissionConfig: createDefaultMerchantPermissionConfig(),
             merchantCardImageOpacity: 1,
             businessCards: [
               {
+                ...createDefaultMerchantBusinessCardDraft({}),
                 id: "card-1",
                 createdAt: "2026-04-05T00:00:00.000Z",
                 mode: "link",
@@ -305,6 +299,7 @@ test("share owner lookup resolves legacy fingerprints from snapshot business car
                   tiktok: "",
                   douyin: "",
                   xiaohongshu: "",
+                  googleReview: "",
                 },
                 contactFieldOrder: ["contactName", "phone", "email", "address", "wechat", "whatsapp", "twitter", "weibo", "facebook", "instagram", "tiktok", "xiaohongshu", "douyin", "telegram", "linkedin", "discord"],
                 contactOnlyFields: {
@@ -324,6 +319,7 @@ test("share owner lookup resolves legacy fingerprints from snapshot business car
                   tiktok: false,
                   douyin: false,
                   xiaohongshu: false,
+                  googleReview: false,
                 },
                 customTexts: [],
                 textLayout: {
@@ -346,6 +342,7 @@ test("share owner lookup resolves legacy fingerprints from snapshot business car
                   tiktok: { x: 0, y: 0 },
                   douyin: { x: 0, y: 0 },
                   xiaohongshu: { x: 0, y: 0 },
+                  googleReview: { x: 0, y: 0 },
                 },
                 qr: { x: 0, y: 0, size: 120 },
                 typography: {
@@ -374,6 +371,7 @@ test("share owner lookup resolves legacy fingerprints from snapshot business car
                   tiktok: { fontFamily: "", fontSize: 16, fontColor: "#000", fontWeight: "normal", fontStyle: "normal", textDecoration: "none" },
                   douyin: { fontFamily: "", fontSize: 16, fontColor: "#000", fontWeight: "normal", fontStyle: "normal", textDecoration: "none" },
                   xiaohongshu: { fontFamily: "", fontSize: 16, fontColor: "#000", fontWeight: "normal", fontStyle: "normal", textDecoration: "none" },
+                  googleReview: { fontFamily: "", fontSize: 16, fontColor: "#000", fontWeight: "normal", fontStyle: "normal", textDecoration: "none" },
                 },
               },
             ],

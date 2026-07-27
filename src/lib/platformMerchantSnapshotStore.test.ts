@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  createDefaultMerchantPermissionConfig,
+  createDefaultMerchantSortConfig,
+} from "@/data/platformControlStore";
+import {
   PLATFORM_MERCHANT_SNAPSHOT_BACKUP_SLUG,
   PLATFORM_MERCHANT_SNAPSHOT_HISTORY_BACKUP_SLUG,
   PLATFORM_MERCHANT_SNAPSHOT_HISTORY_SLUG,
@@ -46,6 +50,7 @@ function createPayload(
           province: "Sevilla",
           city: "Sevilla",
         },
+        sortConfig: createDefaultMerchantSortConfig(),
         createdAt: "2026-04-01T00:00:00.000Z",
       },
     ],
@@ -62,6 +67,7 @@ function createPayload(
               before: {
                 serviceExpiresAt: null,
                 permissionConfig: {
+                  ...createDefaultMerchantPermissionConfig(),
                   planLimit: 1,
                   pageLimit: 10,
                   businessCardLimit: 1,
@@ -102,6 +108,7 @@ function createPayload(
               after: {
                 serviceExpiresAt: "2027-07-07T00:00:00.000Z",
                 permissionConfig: {
+                  ...createDefaultMerchantPermissionConfig(),
                   planLimit: 1,
                   pageLimit: 10,
                   businessCardLimit: 1,

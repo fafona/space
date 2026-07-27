@@ -43,7 +43,7 @@ function installWindowStorage() {
   const windowMock = {
     sessionStorage: new MemoryStorage(),
     localStorage: new MemoryStorage(),
-  } as Window & typeof globalThis;
+  } as unknown as Window & typeof globalThis;
   Object.assign(globalThis, { window: windowMock });
   return {
     sessionStorage: windowMock.sessionStorage,

@@ -44,10 +44,10 @@ function installBrowserHarness(connection?: { saveData?: boolean; effectiveType?
   const windowMock = {
     sessionStorage: new MemoryStorage(),
     localStorage: new MemoryStorage(),
-  } as Window & typeof globalThis;
+  } as unknown as Window & typeof globalThis;
   const navigatorMock = {
     connection: connection ?? {},
-  } as Navigator;
+  } as unknown as Navigator;
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     writable: true,

@@ -677,6 +677,365 @@ merchant allowlist are still required. Run this audit before any order
 `primary` switch; non-order domains in Stages 7 through 10 intentionally remain
 verify-only.
 
+### Stage 12: order primary rollout gate
+
+- Convert the remaining operator prerequisites into one deterministic,
+  read-only decision record before the first order `primary` canary.
+- Keep the gate separate from activation. It does not query Supabase, apply a
+  migration, edit environment variables, widen an allowlist, or switch traffic.
+
+Prepared implementation:
+
+- `npm run check:v1-rollout-gate -- --file=<manifest.json>` validates one
+  eight-digit merchant and only the `orders` transition from `verify` to
+  `primary`. Bookings, coupons, conversations, memberships, `off -> primary`,
+  and multi-merchant canaries are blocked.
+- The reviewed read allowlist must contain exactly the manifest merchant. Both
+  change and rollback owners must be present as stable operator handles.
+- Migrations `202607250001`, `202607250002`, `202607250007`, and
+  `202607250008` must be recorded as applied. Recording a migration in the
+  manifest does not apply it; the operator must obtain the applied versions
+  from the production migration registry.
+- Order dual-write must still be in `shadow` for the merchant, report zero
+  errors, have a current observation, and have been continuously healthy before
+  the first read-evidence observation for at least 168 hours.
+- Backfill evidence must be complete with zero failures and equal source and
+  written counts. A current reconciliation must report equal legacy, V1, and
+  matched counts with no missing, unexpected, or mismatched orders.
+- The embedded Stage 11 report must be scoped only to `orders`, use policy
+  values at least as strict as the defaults, contain no rejected evidence
+  lines or fallbacks, and remain current when the gate runs. A previously ready
+  but now stale report is blocked.
+- The Outbox snapshot must be scoped to the same merchant, no older than 15
+  minutes, and pass the existing health evaluator. Retry and attempt-limit
+  observations remain visible as warnings; dead letters, expired leases,
+  unknown event types, or excessive due age block rollout.
+- Timestamps more than five minutes in the future are blocked. The command
+  prints only scope, transition, required migration versions, stable blocker
+  codes, and health warnings. It does not print source evidence or business
+  identifiers.
+- Exit code `0` means the manifest satisfies the prepared canary gate. Exit
+  code `2` means valid input was evaluated but rollout is blocked. Exit code
+  `1` means the file, JSON, or command input failed.
+
+Run a prepared single-merchant decision:
+
+```powershell
+npm run check:v1-rollout-gate -- --file=.\private\order-v1-canary-10000000.json
+```
+
+The manifest is an operator evidence bundle, not a source of truth. Populate it
+from the production migration registry, a completed backfill summary, a fresh
+domain reconciliation, the Stage 11 order-only report, and a fresh
+merchant-scoped Outbox health snapshot. Store it outside the repository because
+operational owner handles and rollout timing are environment-specific.
+
+A `ready` result still requires an approved change window and a human-reviewed
+rollback command. The first activation must change only
+`MERCHANT_ORDER_V1_READ_MODE=primary` and the exact single-site
+`MERCHANT_ORDER_V1_READ_SITE_IDS` allowlist, together with the Stage 13 order
+primary circuit-breaker settings. Roll back by setting the mode to `off`; never
+delete V1 rows or reverse a migration during incident response.
+
+### Stage 13: order primary automatic circuit breaker
+
+- Protect the approved single-merchant order `primary` canary after activation.
+  This protection is process-local, read-path-only, and default-off. It does not
+  write business data, alter feature flags, or affect `verify` observations.
+- Enable it only for a Stage 12-ready order canary:
+  `MERCHANT_ORDER_V1_PRIMARY_CIRCUIT_BREAKER_ENABLED=true`.
+- A timeout, V1 query failure, missing V1 envelope, or exact-parity mismatch is
+  a circuit failure. The default threshold is three failures in 60 seconds.
+  Legacy-source failures are not counted as V1 failures.
+- When the threshold is reached, that process stops querying V1 for the merchant
+  and returns the legacy result. Each suppressed request emits the existing
+  `merchant_order_v1_read` event with `outcome=fallback` and
+  `reason=circuit_open`.
+- The default cooldown is five minutes. Once it expires, exactly one request per
+  process becomes a half-open parity probe. Concurrent requests keep using the
+  legacy source. Exact parity closes the circuit; a failed or inconclusive probe
+  restarts the cooldown.
+- Circuit state is isolated by exact eight-digit merchant ID. A failure for one
+  merchant cannot open another merchant's circuit. Process restart clears the
+  in-memory state; this is intentional because legacy fallback remains the
+  authoritative safety mechanism.
+- The values are bounded even when environment input is malformed:
+  failure threshold `2..20`, window `10000..3600000` ms, and cooldown
+  `30000..3600000` ms.
+
+Recommended canary settings:
+
+```dotenv
+MERCHANT_ORDER_V1_PRIMARY_CIRCUIT_BREAKER_ENABLED=true
+MERCHANT_ORDER_V1_PRIMARY_CIRCUIT_BREAKER_FAILURE_THRESHOLD=3
+MERCHANT_ORDER_V1_PRIMARY_CIRCUIT_BREAKER_WINDOW_MS=60000
+MERCHANT_ORDER_V1_PRIMARY_CIRCUIT_BREAKER_COOLDOWN_MS=300000
+```
+
+The circuit breaker reduces repeated V1 pressure and user-visible failures; it
+does not replace operator rollback. Any `circuit_open` event or primary fallback
+must trigger investigation and a prompt switch of
+`MERCHANT_ORDER_V1_READ_MODE=off` for the canary.
+
+### Stage 14: order primary canary watchdog
+
+- Evaluate only post-activation `merchant_order_v1_read` events for one exact
+  merchant. The activation timestamp is required so prior `verify` evidence
+  cannot make a new `primary` canary look healthy.
+- `npm run audit:v1-primary-canary` is read-only. It reads a JSONL file or
+  standard input, ignores unrelated domains, other merchants, and observations
+  before activation, and never changes environment variables or business data.
+- The default healthy threshold is 100 clean samples over 1440 minutes, with a
+  current observation no older than 15 minutes and P95 duration no greater than
+  2500 ms.
+- Any post-activation fallback immediately returns `rollback_required`, even
+  while the canary is still accumulating samples. `circuit_open` receives an
+  additional explicit rollback reason. A P95 regression also requires rollback.
+- Missing, thin, stale, future, malformed, or non-primary evidence returns
+  `observing`. This keeps low traffic and evidence-integrity problems distinct
+  from an observed V1 failure.
+- Exit code `0` means healthy, `2` means rollback required, `3` means keep
+  observing or repair evidence, and `1` means command/input failure. Automation
+  must treat every nonzero code as not healthy.
+- A rollback result prints the required action but does not execute it. Set
+  `MERCHANT_ORDER_V1_READ_MODE=off`, redeploy, and retain all V1 rows and
+  evidence for diagnosis.
+
+Audit one canary from a log file:
+
+```powershell
+npm run audit:v1-primary-canary -- --file=.\logs\order-primary.jsonl --site=10000000 --activated-at=2026-07-25T00:00:00.000Z
+```
+
+Audit streamed logs with stricter latency and freshness limits:
+
+```powershell
+Get-Content .\logs\order-primary.jsonl | npm run audit:v1-primary-canary -- --file=- --site=10000000 --activated-at=2026-07-25T00:00:00.000Z --min-samples=250 --min-window-minutes=2880 --max-p95-ms=1500 --max-last-age-minutes=10
+```
+
+Run the watchdog continuously through the deployment platform's scheduler or
+log pipeline during the entire canary. The process-local circuit breaker is the
+fast request-path guard; this watchdog is the deterministic operator and
+automation decision record.
+
+### Stage 15: scheduled canary watch and alert delivery
+
+- `npm run watch:v1-primary-canary` wraps the Stage 14 audit for a one-shot
+  scheduler invocation. It evaluates one exact merchant and activation
+  timestamp, writes a bounded state record, and optionally sends an HTTPS
+  webhook. It never edits rollout variables, redeploys, or mutates business
+  data.
+- Execution is opt-in with
+  `MERCHANT_ORDER_V1_PRIMARY_CANARY_WATCH_ENABLED=true`. Keep the deployed web
+  process default false and set true only in the scheduler command environment.
+- Store `--state-file` on persistent storage. Production releases link
+  `.runtime` to the shared runtime directory, so
+  `.runtime/order-v1-canary-<site>.json` survives release switches. A state file
+  inside an individual release directory will be removed by release cleanup and
+  must not be used.
+- The state record acts as a small delivery outbox. It is written before webhook
+  delivery; a failed delivery remains pending and is retried with the same
+  notification ID and `Idempotency-Key`. Corrupt, oversized, cross-merchant, or
+  symlinked state files fail closed instead of being overwritten.
+- Initial `observing` and `rollback_required` results send an alert. Evidence or
+  status changes send a new alert, transition back to `healthy` sends a recovery
+  event, and an unresolved rollback sends a reminder every 60 minutes by
+  default. Unchanged healthy and observing states are quiet.
+- Overlapping scheduler runs are rejected with an exclusive lock. A lock older
+  than 15 minutes is considered stale by default and can be recovered by the
+  next run.
+- The optional webhook URL must use HTTPS. The bearer token is never accepted as
+  a command-line argument or printed to logs:
+
+```dotenv
+MERCHANT_ORDER_V1_PRIMARY_CANARY_WATCH_ENABLED=false
+MERCHANT_ORDER_V1_PRIMARY_CANARY_ALERT_WEBHOOK_URL=https://alerts.example.com/hooks/faolla-canary
+MERCHANT_ORDER_V1_PRIMARY_CANARY_ALERT_BEARER_TOKEN=replace-with-secret
+```
+
+Run one scheduled check:
+
+```bash
+cd /var/www/merchant-space.current
+MERCHANT_ORDER_V1_PRIMARY_CANARY_WATCH_ENABLED=true npm run watch:v1-primary-canary -- --file=/var/log/faolla/order-primary.jsonl --state-file=.runtime/order-v1-canary-10000000.json --site=10000000 --activated-at=2026-07-25T00:00:00.000Z
+```
+
+The command supports the Stage 14 policy options plus
+`--rollback-reminder-minutes`, `--webhook-timeout-ms`, and
+`--stale-lock-minutes`. Exit code `0` is healthy, `2` is rollback required, `3`
+is observing, `4` is alert delivery failure, and `1` is invalid input or
+runtime failure. The scheduler must retain stdout/stderr and alert on every
+nonzero exit. A webhook payload contains only canary scope, status, bounded
+metrics, reasons, and the operator action; it never includes source log lines or
+credentials.
+
+### Stage 16: canary watch dead-man health check
+
+- `npm run check:v1-primary-canary-watch-health` is a read-only check for the
+  Stage 15 scheduler itself. It does not run the audit, deliver notifications,
+  edit state, change rollout variables, or touch business data.
+- Run it from a separate scheduler or uptime monitor. Using the same scheduler
+  as Stage 15 cannot detect that scheduler being stopped.
+- It fails closed when the state file is missing, unreadable, stale, scoped to a
+  different merchant or activation, internally inconsistent, or contains
+  future timestamps. A current `rollback_required` result and an overdue
+  pending notification are also critical.
+- A fresh `observing` result or a newly pending notification is degraded. A
+  fresh healthy result with no pending delivery is healthy.
+- State and evaluation freshness default to 15 minutes. Pending notification
+  delivery defaults to 5 minutes. Set thresholds above the actual Stage 15
+  schedule interval, including normal log and webhook latency.
+
+Example external health check:
+
+```bash
+cd /var/www/merchant-space.current
+npm run check:v1-primary-canary-watch-health -- --state-file=.runtime/order-v1-canary-10000000.json --site=10000000 --activated-at=2026-07-25T00:00:00.000Z --max-state-age-minutes=15 --max-pending-age-minutes=5 --format=json
+```
+
+Exit code `0` is healthy, `2` is critical, `3` is degraded, and `1` is invalid
+command input or an unexpected command failure. JSON output is bounded metadata
+only and contains no source observations or credentials. Alert immediately on
+exit `2`, and investigate repeated exit `3`.
+
+### Stage 17: deployment-time order V1 configuration contract
+
+- `npm run check:v1-deploy-config` validates the effective order V1 environment
+  before a production build. `npm run build` runs it automatically, so the
+  atomic production deployment cannot switch to a release with an unsafe
+  combination.
+- The default `off` state remains deployable. An inactive, valid read allowlist
+  is reported as a warning so an emergency rollback does not require unrelated
+  cleanup before the release can be built.
+- `verify` requires at least one exact eight-digit merchant ID and active
+  `shadow` dual write. `primary` additionally requires exactly one merchant and
+  an enabled, valid process-local circuit breaker.
+- Read, dual-write, and circuit-breaker numeric values must be canonical
+  integers inside the same ranges enforced by the request path. Misspelled
+  modes, wildcard/duplicate merchant IDs, and values that would otherwise be
+  silently clamped or defaulted block the build.
+- Scheduler and one-shot operator flags are forbidden in the deployed web
+  process. In particular,
+  `MERCHANT_ORDER_V1_PRIMARY_CANARY_WATCH_ENABLED=true` and
+  `ORDER_V1_BACKFILL_WRITE_ENABLED=true` block the build; set them only in the
+  shell running the corresponding one-shot command.
+- The check logs only mode, merchant IDs, blockers, and warnings. It never logs
+  database, OAuth, webhook, or other credential values.
+
+Manual preflight:
+
+```bash
+npm run check:v1-deploy-config -- --format=json
+```
+
+Exit code `0` means the runtime combination is safe to build, `2` means the
+configuration is blocked, and `1` means invalid command input or an unexpected
+failure. This configuration contract does not replace the Stage 12 rollout
+authorization manifest; operators must still run the rollout gate before the
+first `verify -> primary` activation.
+
+### Stage 18: signed primary deployment approval
+
+- A `primary` build requires a short-lived signed deployment receipt. The first
+  `verify -> primary` activation receipt is issued only by the Stage 12 rollout
+  gate. This closes the gap where the runtime configuration could be valid but
+  an operator could accidentally skip the evidence gate.
+- `off` and `verify` do not read an approval key or receipt. An emergency
+  rollback to `off` therefore remains available even when the receipt is
+  missing, expired, corrupt, or stored on an unavailable volume.
+- The receipt is scoped to one exact eight-digit merchant, defaults to a
+  60-minute lifetime, and is signed with HMAC-SHA256. A wrong merchant,
+  signature mismatch, future issue time, expiry, lifetime over 24 hours, weak
+  key, symlink, unreadable file, malformed JSON, or file over 16 KB blocks the
+  build.
+- Generating a new receipt first invalidates the previous file. A failed gate
+  cannot leave a previously issued approval available for an unintended
+  deployment.
+- The activation receipt contains only its authorization type, merchant scope,
+  evaluation and expiry timestamps, random nonce, and SHA-256 digest of the
+  reviewed manifest. It contains no database credentials, OAuth tokens, source
+  rows, or customer data.
+- Successful issuance also appends the complete signed receipt to
+  `<receipt-file>.audit.jsonl`. Use `--audit-file=<path>` to place this
+  append-only audit on a different durable volume. If appending the audit
+  fails, the newly written receipt is deleted and the deployment remains
+  blocked.
+
+Configure the production server with at least 32 random bytes of secret key.
+Keep the receipt path absolute because the isolated release build does not link
+`.runtime` until after the build:
+
+```dotenv
+MERCHANT_ORDER_V1_ROLLOUT_APPROVAL_KEY=replace-with-at-least-32-random-bytes
+MERCHANT_ORDER_V1_ROLLOUT_APPROVAL_RECEIPT_FILE=/var/www/merchant-space.shared/.runtime/order-v1-primary-approval.json
+```
+
+Immediately before the approved `verify -> primary` deployment, run the gate
+against current evidence and atomically issue a one-hour receipt:
+
+```bash
+cd /var/www/merchant-space
+npm run check:v1-rollout-gate -- \
+  --file=/secure/operator/order-v1-rollout-manifest.json \
+  --receipt-file=/var/www/merchant-space.shared/.runtime/order-v1-primary-approval.json \
+  --ttl-minutes=60
+```
+
+Then set the exact approved merchant in
+`MERCHANT_ORDER_V1_READ_SITE_IDS`, set read mode to `primary`, keep shadow
+writes and the circuit breaker enabled, and deploy before the receipt expires.
+`npm run build` verifies both the Stage 17 configuration and the Stage 18
+approval. Exit code `2` means the release is not authorized and must not be
+activated. Do not extend or edit a receipt manually.
+
+### Stage 19: healthy primary continuation approval
+
+- Once a merchant is already on `primary`, later releases must not pretend to
+  perform another `verify -> primary` transition. Instead, issue a
+  `continuation` receipt from the current Stage 15 canary watch state.
+- `npm run issue:v1-primary-continuation-approval` first invalidates the
+  previous receipt, then verifies the exact merchant and original activation
+  timestamp through the Stage 16 health policy. It issues only when the state
+  and evaluation are fresh, the canary status is `healthy`, and there are no
+  blockers, warnings, or pending alert deliveries.
+- Missing, unreadable, mismatched, stale, future-dated, `observing`, or
+  `rollback_required` state blocks issuance. A blocked or failed command leaves
+  no usable receipt, so an expired approval cannot silently authorize a later
+  build.
+- Continuation receipts use the same HMAC key, one-merchant scope, five-minute
+  to 24-hour lifetime, build-time validation, and fail-closed audit behavior as
+  activation receipts. Their signed evidence digest covers the normalized
+  canary state, while the receipt itself contains no observations, credentials,
+  or business data.
+- The receipt schema is version `2`. Receipts issued by the earlier activation-
+  only schema are intentionally rejected; issue a current activation or
+  continuation receipt before the first deployment containing Stage 19.
+- The Stage 16 health command remains read-only. Receipt issuance is a separate
+  operator action so monitoring cannot authorize deployments by itself.
+
+Immediately before a later `primary` deployment, issue a continuation receipt
+from the current durable watch state:
+
+```bash
+cd /var/www/merchant-space.current
+npm run issue:v1-primary-continuation-approval -- \
+  --state-file=/var/www/merchant-space.shared/.runtime/order-v1-canary-10000000.json \
+  --site=10000000 \
+  --activated-at=2026-07-25T00:00:00.000Z \
+  --receipt-file=/var/www/merchant-space.shared/.runtime/order-v1-primary-approval.json \
+  --ttl-minutes=60
+```
+
+The audit defaults to
+`/var/www/merchant-space.shared/.runtime/order-v1-primary-approval.json.audit.jsonl`.
+Pass `--audit-file=<path>` to override it. The audit file is capped at 10 MB;
+archive it before the cap is reached without modifying retained records. Exit
+code `0` means a signed continuation was issued, `2` means health evidence
+blocked issuance, and `1` means invalid input, a weak or missing signing key, or
+another runtime failure. `npm run check:v1-deploy-config` reports
+`approval-type=activation` or `approval-type=continuation` so release logs show
+which authorization was consumed.
+
 ## Required operational metrics
 
 - Mutation success and latency by domain and merchant.

@@ -125,6 +125,7 @@ test("applyPlanTemplateToBlocks preserves opted-out style and data fields", () =
         props: {
           heading: "模板联系",
           phone: "10086",
+          address: "",
         },
       },
     ]),
@@ -165,6 +166,7 @@ test("applyPlanTemplateToBlocks preserves opted-out style and data fields", () =
         props: {
           heading: "当前联系",
           phone: "123456",
+          address: "",
         },
       },
     ]),

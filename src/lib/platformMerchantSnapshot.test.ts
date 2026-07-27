@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createDefaultMerchantPermissionConfig } from "@/data/platformControlStore";
+import { createDefaultMerchantBusinessCardDraft } from "./merchantBusinessCards";
 import {
   buildPlatformMerchantSnapshotBlocks,
   buildPlatformMerchantSnapshotPayloadFromState,
@@ -24,7 +26,6 @@ test("buildPlatformMerchantSnapshotPayloadFromState keeps merchant info and card
         categoryId: "category-1",
         category: "品牌官网",
         industry: "娱乐",
-        status: "online",
         publishedVersion: 1,
         lastPublishedAt: null,
         features: {
@@ -66,6 +67,7 @@ test("buildPlatformMerchantSnapshotPayloadFromState keeps merchant info and card
             before: {
               serviceExpiresAt: null,
               permissionConfig: {
+                ...createDefaultMerchantPermissionConfig(),
                 planLimit: 1,
                 pageLimit: 10,
                 businessCardLimit: 1,
@@ -106,6 +108,7 @@ test("buildPlatformMerchantSnapshotPayloadFromState keeps merchant info and card
             after: {
               serviceExpiresAt: "2026-04-30T00:00:00.000Z",
               permissionConfig: {
+                ...createDefaultMerchantPermissionConfig(),
                 planLimit: 1,
                 pageLimit: 10,
                 businessCardLimit: 1,
@@ -147,6 +150,7 @@ test("buildPlatformMerchantSnapshotPayloadFromState keeps merchant info and card
         ],
         businessCards: [
           {
+            ...createDefaultMerchantBusinessCardDraft({}),
             id: "card-1",
             createdAt: "2026-03-29T12:00:00.000Z",
             mode: "link",
@@ -173,6 +177,7 @@ test("buildPlatformMerchantSnapshotPayloadFromState keeps merchant info and card
               tiktok: "",
               douyin: "",
               xiaohongshu: "",
+              googleReview: "",
             },
             imageUrl: "data:image/png;base64,aaa",
             shareKey: "share-card-1",
@@ -199,12 +204,13 @@ test("buildPlatformMerchantSnapshotPayloadFromState keeps merchant info and card
               tiktok: { x: 0, y: 0 },
               douyin: { x: 0, y: 0 },
               xiaohongshu: { x: 0, y: 0 },
+              googleReview: { x: 0, y: 0 },
             },
             typography: {
-              name: { color: "#000000", fontSize: 16, fontWeight: 600 },
-              title: { color: "#000000", fontSize: 14, fontWeight: 500 },
-              website: { color: "#000000", fontSize: 12, fontWeight: 400 },
-              info: { color: "#000000", fontSize: 12, fontWeight: 400 },
+              name: { fontColor: "#000000", fontSize: 16, fontWeight: "bold" },
+              title: { fontColor: "#000000", fontSize: 14, fontWeight: "bold" },
+              website: { fontColor: "#000000", fontSize: 12, fontWeight: "normal" },
+              info: { fontColor: "#000000", fontSize: 12, fontWeight: "normal" },
             },
             customTexts: [],
             websiteLabel: "",
@@ -212,25 +218,26 @@ test("buildPlatformMerchantSnapshotPayloadFromState keeps merchant info and card
             showWebsiteUrl: true,
             backgroundColor: "#ffffff",
             fieldTypography: {
-              merchantName: { color: "#000000", fontSize: 16, fontWeight: 600 },
-              title: { color: "#000000", fontSize: 14, fontWeight: 500 },
-              website: { color: "#000000", fontSize: 12, fontWeight: 400 },
-              contactName: { color: "#000000", fontSize: 12, fontWeight: 400 },
-              phone: { color: "#000000", fontSize: 12, fontWeight: 400 },
-              email: { color: "#000000", fontSize: 12, fontWeight: 400 },
-              address: { color: "#000000", fontSize: 12, fontWeight: 400 },
-              wechat: { color: "#000000", fontSize: 12, fontWeight: 400 },
-              whatsapp: { color: "#000000", fontSize: 12, fontWeight: 400 },
-              twitter: { color: "#000000", fontSize: 12, fontWeight: 400 },
-              weibo: { color: "#000000", fontSize: 12, fontWeight: 400 },
-              telegram: { color: "#000000", fontSize: 12, fontWeight: 400 },
-              linkedin: { color: "#000000", fontSize: 12, fontWeight: 400 },
-              discord: { color: "#000000", fontSize: 12, fontWeight: 400 },
-              facebook: { color: "#000000", fontSize: 12, fontWeight: 400 },
-              instagram: { color: "#000000", fontSize: 12, fontWeight: 400 },
-              tiktok: { color: "#000000", fontSize: 12, fontWeight: 400 },
-              douyin: { color: "#000000", fontSize: 12, fontWeight: 400 },
-              xiaohongshu: { color: "#000000", fontSize: 12, fontWeight: 400 },
+              merchantName: { fontColor: "#000000", fontSize: 16, fontWeight: "bold" },
+              title: { fontColor: "#000000", fontSize: 14, fontWeight: "bold" },
+              website: { fontColor: "#000000", fontSize: 12, fontWeight: "normal" },
+              contactName: { fontColor: "#000000", fontSize: 12, fontWeight: "normal" },
+              phone: { fontColor: "#000000", fontSize: 12, fontWeight: "normal" },
+              email: { fontColor: "#000000", fontSize: 12, fontWeight: "normal" },
+              address: { fontColor: "#000000", fontSize: 12, fontWeight: "normal" },
+              wechat: { fontColor: "#000000", fontSize: 12, fontWeight: "normal" },
+              whatsapp: { fontColor: "#000000", fontSize: 12, fontWeight: "normal" },
+              twitter: { fontColor: "#000000", fontSize: 12, fontWeight: "normal" },
+              weibo: { fontColor: "#000000", fontSize: 12, fontWeight: "normal" },
+              telegram: { fontColor: "#000000", fontSize: 12, fontWeight: "normal" },
+              linkedin: { fontColor: "#000000", fontSize: 12, fontWeight: "normal" },
+              discord: { fontColor: "#000000", fontSize: 12, fontWeight: "normal" },
+              facebook: { fontColor: "#000000", fontSize: 12, fontWeight: "normal" },
+              instagram: { fontColor: "#000000", fontSize: 12, fontWeight: "normal" },
+              tiktok: { fontColor: "#000000", fontSize: 12, fontWeight: "normal" },
+              douyin: { fontColor: "#000000", fontSize: 12, fontWeight: "normal" },
+              xiaohongshu: { fontColor: "#000000", fontSize: 12, fontWeight: "normal" },
+              googleReview: { fontColor: "#000000", fontSize: 12, fontWeight: "normal" },
             },
             contactFieldOrder: [
               "contactName",
@@ -267,6 +274,7 @@ test("buildPlatformMerchantSnapshotPayloadFromState keeps merchant info and card
               tiktok: false,
               douyin: false,
               xiaohongshu: false,
+              googleReview: false,
             },
             backgroundImageUrl: "data:image/png;base64,bbb",
             chatDisplayDisabled: false,
@@ -354,6 +362,7 @@ test("platform merchant snapshot blocks round-trip through storage payload", () 
           before: {
             serviceExpiresAt: null,
             permissionConfig: {
+              ...createDefaultMerchantPermissionConfig(),
               planLimit: 1,
               pageLimit: 10,
               businessCardLimit: 1,
@@ -394,6 +403,7 @@ test("platform merchant snapshot blocks round-trip through storage payload", () 
           after: {
             serviceExpiresAt: "2026-04-30T00:00:00.000Z",
             permissionConfig: {
+              ...createDefaultMerchantPermissionConfig(),
               planLimit: 1,
               pageLimit: 10,
               businessCardLimit: 1,

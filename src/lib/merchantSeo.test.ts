@@ -49,8 +49,21 @@ test("builds canonical URLs and indexable sitemap entries for complete online me
 
   const entry = buildMerchantSitemapEntry(
     {
-      ...completeProfile,
       id: "10000001",
+      merchantName: "ABC",
+      signature: "ABC restaurant in Sevilla.",
+      location: {
+        countryCode: "ES",
+        country: "Spain",
+        provinceCode: "AN",
+        province: "Sevilla",
+        city: "Sevilla",
+      },
+      contactAddress: "Calle 1",
+      contactPhone: "+34 600000000",
+      contactEmail: "abc@example.com",
+      status: "online",
+      serviceExpiresAt: "2099-01-01T00:00:00.000Z",
       name: "ABC",
       domainPrefix: "abc",
       domain: "abc.faolla.com",

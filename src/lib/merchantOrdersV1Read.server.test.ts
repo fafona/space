@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { MerchantOrderRecord } from "@/lib/merchantOrders";
+import {
+  MerchantOrderV1ReadCircuitBreaker,
+  type MerchantOrderV1ReadCircuitBreakerConfig,
+} from "@/lib/merchantOrderV1ReadCircuitBreaker";
 import type { StoredMerchantOrders, StoredMerchantOrdersWindow } from "@/lib/merchantOrdersStore";
 import {
   isMerchantOrderV1ReadEnabled,
@@ -257,4 +261,87 @@ test("V1 timeout and query failures both return legacy data", async () => {
     events.map((event) => event.reason),
     ["v1_timeout", "v1_query_failed"],
   );
+});
+
+test("primary circuit opens after clustered failures and skips subsequent V1 reads", async () => {
+  const breaker = new MerchantOrderV1ReadCircuitBreaker();
+  const circuitBreakerConfig: MerchantOrderV1ReadCircuitBreakerConfig = {
+    enabled: true,
+    failureThreshold: 2,
+    failureWindowMs: 10_000,
+    cooldownMs: 30_000,
+  };
+  const legacy = createStoredOrder();
+  const events: MerchantOrderV1ReadEvent[] = [];
+  let v1Calls = 0;
+
+  const read = () =>
+    readMerchantOrdersWithV1Fallback({
+      siteId: "10000000",
+      loadLegacy: async () => legacy,
+      loadV1: async () => {
+        v1Calls += 1;
+        return createStoredOrder(
+          createOrder({
+            customer: {
+              ...legacy.orders[0].customer,
+              name: `Mismatch ${v1Calls}`,
+            },
+          }),
+        );
+      },
+      config: {
+        mode: "primary" as const,
+        siteIds: ["10000000"],
+        timeoutMs: 2500,
+      },
+      circuitBreaker: breaker,
+      circuitBreakerConfig,
+      logger: (event) => events.push(event),
+    });
+
+  assert.equal(await read(), legacy);
+  assert.equal(await read(), legacy);
+  assert.equal(await read(), legacy);
+  assert.equal(v1Calls, 2);
+  assert.deepEqual(
+    events.map((event) => event.reason),
+    ["order_content_mismatch", "order_content_mismatch", "circuit_open"],
+  );
+});
+
+test("verify mode never consults a primary circuit breaker", async () => {
+  const breaker = new MerchantOrderV1ReadCircuitBreaker();
+  const circuitBreakerConfig: MerchantOrderV1ReadCircuitBreakerConfig = {
+    enabled: true,
+    failureThreshold: 2,
+    failureWindowMs: 10_000,
+    cooldownMs: 30_000,
+  };
+  const first = breaker.acquire("10000000", circuitBreakerConfig, 1_000);
+  breaker.recordFailure("10000000", circuitBreakerConfig, first, 1_000);
+  const second = breaker.acquire("10000000", circuitBreakerConfig, 1_001);
+  breaker.recordFailure("10000000", circuitBreakerConfig, second, 1_001);
+
+  const legacy = createStoredOrder();
+  let v1Calls = 0;
+  const result = await readMerchantOrdersWithV1Fallback({
+    siteId: "10000000",
+    loadLegacy: async () => legacy,
+    loadV1: async () => {
+      v1Calls += 1;
+      return createStoredOrder(structuredClone(legacy.orders[0]));
+    },
+    config: {
+      mode: "verify",
+      siteIds: ["10000000"],
+      timeoutMs: 2500,
+    },
+    circuitBreaker: breaker,
+    circuitBreakerConfig,
+    logger: () => undefined,
+  });
+
+  assert.equal(result, legacy);
+  assert.equal(v1Calls, 1);
 });
