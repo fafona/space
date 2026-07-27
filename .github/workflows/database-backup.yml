@@ -1,0 +1,138 @@
+name: Encrypted Database Backup
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: encrypted-database-backup
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      REMOTE_BACKUP_PATH: /tmp/faolla-database-backup-${{ github.run_id }}-${{ github.run_attempt }}.tar.enc
+      LOCAL_BACKUP_PATH: faolla-database-backup.tar.enc
+    steps:
+      - name: Checkout Backup Verifier
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          test -n "$SSH_HOST"
+          test -n "$SSH_PRIVATE_KEY"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          scan_ok=0
+          for attempt in 1 2 3 4 5; do
+            if ssh-keyscan -T 15 -p "${SSH_PORT:-22}" -H "$SSH_HOST" >> ~/.ssh/known_hosts; then
+              scan_ok=1
+              break
+            fi
+            sleep 5
+          done
+          if [ "$scan_ok" != "1" ]; then
+            echo "::warning::ssh-keyscan failed; the backup will use accept-new host verification."
+          fi
+
+      - name: Verify Backup Configuration
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          APP_DIR: ${{ secrets.APP_DIR }}
+          DATABASE_BACKUP_PASSPHRASE: ${{ secrets.DATABASE_BACKUP_PASSPHRASE }}
+        shell: bash
+        run: |
+          test -n "$SSH_USER"
+          test -n "$APP_DIR"
+          test -n "$DATABASE_BACKUP_PASSPHRASE"
+          ssh -o ConnectTimeout=20 -o ConnectionAttempts=3 -o StrictHostKeyChecking=accept-new -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
+            "cd '$APP_DIR' && FAOLLA_BACKUP_ARTIFACT_TRANSPORT=true FAOLLA_BACKUP_PASSPHRASE_AVAILABLE=true FAOLLA_BACKUP_ISOLATED_DOCKER_RESTORE=true FAOLLA_STORAGE_BACKUP_ENABLED=true node --env-file=.env.local scripts/check-database-backup-readiness.mjs --fail-on-blocked --json" \
+            | tee database-backup-readiness-report.log
+
+      - name: Create Encrypted Database Backup
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          APP_DIR: ${{ secrets.APP_DIR }}
+          DATABASE_BACKUP_PASSPHRASE: ${{ secrets.DATABASE_BACKUP_PASSPHRASE }}
+        shell: bash
+        run: |
+          set -o pipefail
+          printf '%s\n' "$DATABASE_BACKUP_PASSPHRASE" \
+            | ssh -o ConnectTimeout=20 -o ConnectionAttempts=3 -o StrictHostKeyChecking=accept-new -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
+              "umask 077; cd '$APP_DIR' && node --env-file=.env.local scripts/create-production-database-backup.mjs --passphrase-stdin --output '$REMOTE_BACKUP_PATH' --json" \
+            | tee database-backup-create-report.log
+
+      - name: Transfer Encrypted Backup
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        shell: bash
+        run: |
+          scp -o ConnectTimeout=20 -o ConnectionAttempts=3 -o StrictHostKeyChecking=accept-new -P "${SSH_PORT:-22}" \
+            "$SSH_USER@$SSH_HOST:$REMOTE_BACKUP_PATH" "$LOCAL_BACKUP_PATH"
+          test -s "$LOCAL_BACKUP_PATH"
+
+      - name: Verify Encrypted Backup
+        env:
+          DATABASE_BACKUP_PASSPHRASE: ${{ secrets.DATABASE_BACKUP_PASSPHRASE }}
+        shell: bash
+        run: |
+          set -o pipefail
+          printf '%s\n' "$DATABASE_BACKUP_PASSPHRASE" \
+            | node scripts/verify-production-database-backup.mjs --passphrase-stdin --input "$LOCAL_BACKUP_PATH" --json \
+            | tee database-backup-verify-report.log
+
+      - name: Rehearse Isolated Restore
+        env:
+          DATABASE_BACKUP_PASSPHRASE: ${{ secrets.DATABASE_BACKUP_PASSPHRASE }}
+        shell: bash
+        run: |
+          set -o pipefail
+          printf '%s\n' "$DATABASE_BACKUP_PASSPHRASE" \
+            | node scripts/rehearse-production-database-restore.mjs --passphrase-stdin --input "$LOCAL_BACKUP_PATH" --json \
+            | tee database-backup-restore-report.log
+
+      - name: Upload Encrypted Backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: faolla-encrypted-disaster-recovery-${{ github.run_id }}
+          path: |
+            ${{ env.LOCAL_BACKUP_PATH }}
+            database-backup-readiness-report.log
+            database-backup-create-report.log
+            database-backup-verify-report.log
+            database-backup-restore-report.log
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Remove Temporary Backup
+        if: always()
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        shell: bash
+        run: |
+          rm -f -- "$LOCAL_BACKUP_PATH"
+          if [ -n "${SSH_USER:-}" ] && [ -n "${SSH_HOST:-}" ]; then
+            ssh -o ConnectTimeout=20 -o ConnectionAttempts=2 -o StrictHostKeyChecking=accept-new -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
+              "rm -f -- '$REMOTE_BACKUP_PATH'" || true
+          fi

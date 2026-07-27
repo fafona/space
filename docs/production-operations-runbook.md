@@ -99,6 +99,86 @@ or provider point-in-time recovery process and perform a restore into an
 isolated environment. Until then, a healthy rehearsal proves only that the
 existing platform-admin backup is readable and internally restorable.
 
+## Encrypted database backup
+
+Workflow: `.github/workflows/database-backup.yml`
+
+The workflow remains manual until its first successful production run. It:
+
+1. Discovers the running self-hosted Supabase database and Storage containers
+   without copying container secrets into GitHub.
+2. Streams a full `pg_dumpall` role/database dump from the database container.
+3. Archives local Storage objects, the `pgsodium_root.key`, Supabase Compose
+   configuration, and the deployed application's `.env.local`.
+4. Writes per-file SHA-256 checksums, source image tags, and the Storage
+   backend into a manifest.
+5. Encrypts the complete disaster-recovery archive before it leaves the
+   production host.
+6. Transfers only the encrypted archive to GitHub Actions.
+7. Decrypts a temporary copy on the runner and validates the outer allowlist,
+   manifest, sizes, checksums, gzip stream, nested archive paths, recovery key,
+   and required configuration files.
+8. Starts the recorded Supabase Postgres image in an ephemeral Docker
+   container with networking disabled, restores the complete SQL dump, and
+   verifies aggregate counts for schemas, tables, `public.pages`,
+   `auth.users`, and `storage.objects`.
+9. Extracts Storage into an isolated temporary directory and verifies its
+   aggregate file count and bytes.
+10. Stores the encrypted artifact off-host for 30 days and deletes every
+    plaintext directory, temporary container, Docker volume, and transferred
+    copy after completion or failure.
+
+The production host does not need a separate database URL or host PostgreSQL
+client. It needs the deployed self-hosted Supabase containers, Docker,
+OpenSSL, `tar`, and `gzip`. The database container must provide `pg_dumpall`
+and the file-backed Storage container must provide `tar`.
+
+Required GitHub Actions secret:
+
+```text
+DATABASE_BACKUP_PASSPHRASE
+```
+
+The passphrase must contain at least 24 characters. It is sent to the backup
+process over SSH standard input and is never included in a command argument or
+report.
+
+A Windows DPAPI-protected recovery copy is stored outside the repository at:
+
+```text
+D:\merchant-backups\FAOLLA_DATABASE_BACKUP_KEY.dpapi.txt
+```
+
+Only the same Windows account on this computer can decrypt that copy:
+
+```powershell
+$lines = Get-Content 'D:\merchant-backups\FAOLLA_DATABASE_BACKUP_KEY.dpapi.txt'
+$secure = ConvertTo-SecureString $lines[-1]
+$credential = [pscredential]::new('backup', $secure)
+$credential.GetNetworkCredential().Password
+```
+
+Do not place the decrypted value in the repository, a ticket, chat, workflow
+log, or shell history. A second protected copy must be kept in the operator's
+off-machine password manager; the local DPAPI copy alone is not sufficient if
+the workstation is lost.
+
+Run the non-secret readiness check after changing backup configuration:
+
+```powershell
+npm run check:database-backup-readiness
+```
+
+Do not add a schedule until a manual run creates, transfers, and verifies an
+encrypted artifact and completes the isolated restore successfully. The first
+successful run establishes the current full-backup RPO; until a daily schedule
+is enabled, this workflow provides no automatic recovery point.
+
+This logical disaster-recovery archive is independent from the application
+level platform-admin backup, but it is not point-in-time recovery. WAL
+archiving/PITR remains a separate follow-up control for reducing data loss
+below the scheduled full-backup interval.
+
 ## Security
 
 Reports contain statuses, timestamps, counts, and bounded error codes only.

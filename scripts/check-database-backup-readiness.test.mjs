@@ -166,6 +166,7 @@ test("self-hosted postgres container provides a database dump path without a URL
             pg_restore: true,
             psql: true,
             pg_isready: true,
+            tar: true,
             databaseConfigured: true,
             userConfigured: true,
           },
@@ -184,6 +185,7 @@ test("self-hosted postgres container provides a database dump path without a URL
           image: "supabase/storage-api:v1",
           backend: "file",
           bucketConfigured: false,
+          tarAvailable: true,
           probeSucceeded: true,
           mounts: [
             {
@@ -213,6 +215,60 @@ test("self-hosted postgres container provides a database dump path without a URL
     report.warnings.includes("self_hosted_pitr_not_verified"),
     true,
   );
+});
+
+test("isolated Docker restore does not require a second database URL", () => {
+  const report = buildDatabaseBackupReadinessReport({
+    env: {
+      FAOLLA_BACKUP_PASSPHRASE_AVAILABLE: "true",
+      FAOLLA_BACKUP_ARTIFACT_TRANSPORT: "true",
+      FAOLLA_BACKUP_ISOLATED_DOCKER_RESTORE: "true",
+      FAOLLA_STORAGE_BACKUP_ENABLED: "true",
+    },
+    probeCommand: toolProbe(["docker", "openssl", "tar", "gzip"]),
+    localSupabaseAvailable: false,
+    selfHostedTopology: {
+      available: true,
+      containerCount: 2,
+      databaseCandidates: [
+        {
+          name: "supabase-db",
+          image: "supabase/postgres:15",
+          probeSucceeded: true,
+          tools: {
+            pg_dump: true,
+            pg_dumpall: true,
+            pg_restore: true,
+            psql: true,
+            pg_isready: true,
+            tar: true,
+          },
+          mounts: [],
+        },
+      ],
+      storageCandidates: [
+        {
+          name: "supabase-storage",
+          image: "supabase/storage-api:v1",
+          backend: "file",
+          tarAvailable: true,
+          probeSucceeded: true,
+          mounts: [
+            {
+              type: "bind",
+              destination: "/var/lib/storage",
+              readOnly: false,
+            },
+          ],
+        },
+      ],
+      error: null,
+    },
+  });
+
+  assert.equal(report.recoveryRehearsalReady, true);
+  assert.equal(report.configuration.restoreStrategy, "ephemeral_docker");
+  assert.deepEqual(report.recoveryBlockers, []);
 });
 
 test("self-hosted topology inspection reports capabilities without secret values", () => {
@@ -268,13 +324,13 @@ test("self-hosted topology inspection reports capabilities without secret values
       return {
         ok: true,
         stdout:
-          "pg_dump=1\npg_dumpall=1\npg_restore=1\npsql=1\npg_isready=1\ndatabaseConfigured=1\nuserConfigured=1\n",
+          "pg_dump=1\npg_dumpall=1\npg_restore=1\npsql=1\npg_isready=1\ntar=1\ndatabaseConfigured=1\nuserConfigured=1\n",
       };
     }
     if (args[0] === "exec" && args[1] === "supabase-storage") {
       return {
         ok: true,
-        stdout: "backend=file\nbucketConfigured=0\n",
+        stdout: "tarAvailable=1\nbackend=file\nbucketConfigured=0\n",
       };
     }
     return responses.get(args.join(" ")) ?? { ok: false, stdout: "" };
@@ -287,6 +343,7 @@ test("self-hosted topology inspection reports capabilities without secret values
   assert.equal(topology.databaseCandidates.length, 1);
   assert.equal(topology.databaseCandidates[0].tools.pg_dump, true);
   assert.equal(topology.storageCandidates[0].backend, "file");
+  assert.equal(topology.storageCandidates[0].tarAvailable, true);
   assert.equal(serialized.includes(secret), false);
   assert.equal(serialized.includes("/secret/"), false);
 });

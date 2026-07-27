@@ -27,6 +27,7 @@ const TOOL_NAMES = [
   "rclone",
   "aws",
   "tar",
+  "gzip",
 ];
 
 const DOCKER_COMMAND_TIMEOUT_MS = 15_000;
@@ -117,11 +118,12 @@ function inspectDatabaseContainer(container, runDocker) {
     "pg_restore",
     "psql",
     "pg_isready",
+    "tar",
     "databaseConfigured",
     "userConfigured",
   ];
   const probeScript = [
-    'for tool in pg_dump pg_dumpall pg_restore psql pg_isready; do',
+    'for tool in pg_dump pg_dumpall pg_restore psql pg_isready tar; do',
     '  if command -v "$tool" >/dev/null 2>&1; then',
     '    printf "%s=1\\n" "$tool"',
     "  else",
@@ -151,6 +153,7 @@ function inspectDatabaseContainer(container, runDocker) {
 
 function inspectStorageContainer(container, runDocker) {
   const probeScript = [
+    'command -v tar >/dev/null 2>&1 && printf "tarAvailable=1\\n" || printf "tarAvailable=0\\n"',
     'case "${STORAGE_BACKEND:-}" in',
     '  file) printf "backend=file\\n" ;;',
     '  s3) printf "backend=s3\\n" ;;',
@@ -168,12 +171,14 @@ function inspectStorageContainer(container, runDocker) {
   ]);
   let backend = "unknown";
   let bucketConfigured = false;
+  let tarAvailable = false;
   if (result.ok) {
     for (const line of trimText(result.stdout).split(/\r?\n/)) {
       if (/^backend=(file|s3|unspecified|other)$/.test(line)) {
         backend = line.slice("backend=".length);
       }
       if (line === "bucketConfigured=1") bucketConfigured = true;
+      if (line === "tarAvailable=1") tarAvailable = true;
     }
   }
   return {
@@ -181,6 +186,7 @@ function inspectStorageContainer(container, runDocker) {
     image: container.image,
     backend,
     bucketConfigured,
+    tarAvailable,
     probeSucceeded: result.ok,
     mounts: inspectContainerMounts(container.name, runDocker),
   };
@@ -303,7 +309,8 @@ export function buildDatabaseBackupReadinessReport(input = {}) {
         candidate.probeSucceeded &&
         candidate.tools.pg_dump &&
         candidate.tools.pg_dumpall &&
-        candidate.tools.psql,
+        candidate.tools.psql &&
+        candidate.tools.tar,
     ) ?? null;
   const dockerDatabaseReady = tools.docker && Boolean(databaseContainer);
   const dumpStrategy = dockerDatabaseReady
@@ -354,13 +361,27 @@ export function buildDatabaseBackupReadinessReport(input = {}) {
     backupBlockers.push("offsite_transport_missing");
   }
 
+  const isolatedDockerRestore = isEnabled(
+    env.FAOLLA_BACKUP_ISOLATED_DOCKER_RESTORE,
+  );
+  const restoreStrategy = isolatedDockerRestore
+    ? "ephemeral_docker"
+    : restoreDatabaseUrlName
+      ? "database_url"
+      : "unavailable";
   const recoveryBlockers = [];
-  if (!restoreDatabaseUrlName) {
-    recoveryBlockers.push("restore_database_connection_missing");
-  } else if (!restoreTargetIsolated) {
-    recoveryBlockers.push("restore_target_not_isolated");
+  if (isolatedDockerRestore) {
+    if (!tools.docker) recoveryBlockers.push("restore_docker_missing");
+    if (!tools.tar) recoveryBlockers.push("restore_tar_missing");
+    if (!tools.gzip) recoveryBlockers.push("restore_gzip_missing");
+  } else {
+    if (!restoreDatabaseUrlName) {
+      recoveryBlockers.push("restore_database_connection_missing");
+    } else if (!restoreTargetIsolated) {
+      recoveryBlockers.push("restore_target_not_isolated");
+    }
+    if (!tools.psql) recoveryBlockers.push("psql_missing");
   }
-  if (!tools.psql) recoveryBlockers.push("psql_missing");
 
   const warnings = [];
   if (
@@ -377,6 +398,20 @@ export function buildDatabaseBackupReadinessReport(input = {}) {
           ["bind", "volume"].includes(mount.type) && !mount.readOnly,
       ),
     );
+  const fileStorageContainer =
+    selfHostedTopology.storageCandidates.find(
+      (candidate) =>
+        candidate.probeSucceeded &&
+        ["file", "unspecified"].includes(candidate.backend),
+    ) ?? null;
+  if (
+    dockerDatabaseReady &&
+    (!fileStorageContainer ||
+      !fileStorageContainer.tarAvailable ||
+      !persistentStorageMountDetected)
+  ) {
+    backupBlockers.push("storage_backup_path_unavailable");
+  }
   if (!isEnabled(env.FAOLLA_STORAGE_BACKUP_ENABLED)) {
     warnings.push("storage_object_backup_not_configured");
   }
@@ -418,6 +453,7 @@ export function buildDatabaseBackupReadinessReport(input = {}) {
       databaseConnection: databaseUrlName,
       restoreDatabaseConnection: restoreDatabaseUrlName,
       restoreTargetIsolated,
+      restoreStrategy,
       dumpStrategy,
       encryptionStrategy,
       offsiteStrategy,
