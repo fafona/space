@@ -17,6 +17,9 @@ RELEASE_SMOKE_PATHS="${RELEASE_SMOKE_PATHS:-/,/login,/10909094}"
 RELEASE_SMOKE_ATTEMPTS="${RELEASE_SMOKE_ATTEMPTS:-4}"
 RELEASE_SMOKE_DELAY_MS="${RELEASE_SMOKE_DELAY_MS:-1000}"
 RELEASE_SMOKE_TIMEOUT_MS="${RELEASE_SMOKE_TIMEOUT_MS:-12000}"
+GIT_FETCH_ATTEMPTS="${GIT_FETCH_ATTEMPTS:-4}"
+GIT_FETCH_DELAY_SECONDS="${GIT_FETCH_DELAY_SECONDS:-8}"
+GIT_FETCH_LOW_SPEED_TIME_SECONDS="${GIT_FETCH_LOW_SPEED_TIME_SECONDS:-30}"
 DISK_WARNING_THRESHOLD="${DISK_WARNING_THRESHOLD:-75}"
 DISK_CACHE_CLEANUP_THRESHOLD="${DISK_CACHE_CLEANUP_THRESHOLD:-80}"
 DISK_ABORT_THRESHOLD="${DISK_ABORT_THRESHOLD:-90}"
@@ -64,7 +67,10 @@ validate_disk_thresholds() {
     HEALTHCHECK_ATTEMPTS \
     RELEASE_SMOKE_ATTEMPTS \
     RELEASE_SMOKE_DELAY_MS \
-    RELEASE_SMOKE_TIMEOUT_MS; do
+    RELEASE_SMOKE_TIMEOUT_MS \
+    GIT_FETCH_ATTEMPTS \
+    GIT_FETCH_DELAY_SECONDS \
+    GIT_FETCH_LOW_SPEED_TIME_SECONDS; do
     value="${!name}"
     if ! [[ "$value" =~ ^[0-9]+$ ]]; then
       echo "[deploy] $name must be a non-negative integer: $value"
@@ -93,6 +99,10 @@ validate_disk_thresholds() {
   fi
   if [ "$RELEASE_SMOKE_TIMEOUT_MS" -lt 250 ]; then
     echo "[deploy] RELEASE_SMOKE_TIMEOUT_MS must be at least 250"
+    exit 1
+  fi
+  if [ "$GIT_FETCH_ATTEMPTS" -lt 1 ] || [ "$GIT_FETCH_LOW_SPEED_TIME_SECONDS" -lt 1 ]; then
+    echo "[deploy] Git fetch attempts and low-speed timeout must be at least 1"
     exit 1
   fi
 }
@@ -186,6 +196,24 @@ decode_base64_value() {
   printf '%s' "$value" | base64 -d
 }
 
+fetch_deploy_branch() {
+  local attempt
+  for attempt in $(seq 1 "$GIT_FETCH_ATTEMPTS"); do
+    if git \
+      -c http.lowSpeedLimit=1024 \
+      -c "http.lowSpeedTime=$GIT_FETCH_LOW_SPEED_TIME_SECONDS" \
+      fetch origin "$APP_BRANCH" --prune; then
+      return 0
+    fi
+    if [ "$attempt" = "$GIT_FETCH_ATTEMPTS" ]; then
+      echo "[deploy] Git fetch failed after $GIT_FETCH_ATTEMPTS attempts"
+      return 1
+    fi
+    echo "[deploy] Git fetch attempt $attempt failed; retrying in ${GIT_FETCH_DELAY_SECONDS}s"
+    sleep "$GIT_FETCH_DELAY_SECONDS"
+  done
+}
+
 write_env_value "WEB_PUSH_PUBLIC_KEY" "${WEB_PUSH_PUBLIC_KEY:-}"
 write_env_value "NEXT_PUBLIC_WEB_PUSH_PUBLIC_KEY" "${WEB_PUSH_PUBLIC_KEY:-}"
 write_env_value "WEB_PUSH_PRIVATE_KEY" "${WEB_PUSH_PRIVATE_KEY:-}"
@@ -205,7 +233,7 @@ write_env_value "SUPER_ADMIN_PASSWORD" "${SUPER_ADMIN_PASSWORD:-}"
 write_env_value "SUPER_ADMIN_VERIFICATION_EMAIL" "${SUPER_ADMIN_VERIFICATION_EMAIL:-}"
 write_env_value "SUPER_ADMIN_VERIFICATION_SECRET" "${SUPER_ADMIN_VERIFICATION_SECRET:-}"
 
-git fetch origin "$APP_BRANCH" --prune
+fetch_deploy_branch
 git checkout "$APP_BRANCH"
 git reset --hard "origin/$APP_BRANCH"
 
