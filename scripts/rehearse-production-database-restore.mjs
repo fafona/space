@@ -1,5 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
+import { Transform } from "node:stream";
+import { StringDecoder } from "node:string_decoder";
 import {
   chmod,
   mkdir,
@@ -21,6 +23,12 @@ const RESTORE_DATABASE_IMAGE_PATTERN =
 const RESTORE_BOOTSTRAP_USER = "restore_bootstrap";
 const RESTORE_CONTROL_DATABASE = "restore_control";
 const RESTORE_TIMEOUT_MS = 45 * 60 * 1000;
+const DEFERRED_GRAPHQL_ACL_ROLES = new Set([
+  "postgres",
+  "anon",
+  "authenticated",
+  "service_role",
+]);
 
 export class DatabaseRestoreRehearsalError extends Error {
   constructor(code) {
@@ -48,6 +56,47 @@ function hasFlag(name) {
 
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+export function isDeferredGraphqlAclStatement(line) {
+  const match = String(line).match(
+    /^GRANT ALL ON FUNCTION graphql_public\.graphql\([^;\r\n]+\) TO ([a-z_]+);$/,
+  );
+  return Boolean(match && DEFERRED_GRAPHQL_ACL_ROLES.has(match[1]));
+}
+
+function createRestoreSqlCompatibilityFilter() {
+  const decoder = new StringDecoder("utf8");
+  let pending = "";
+  let skippedGraphqlPublicAclCount = 0;
+  const pushLine = (stream, line, newline = "") => {
+    if (isDeferredGraphqlAclStatement(line)) {
+      skippedGraphqlPublicAclCount += 1;
+      return;
+    }
+    stream.push(`${line}${newline}`);
+  };
+  const filter = new Transform({
+    transform(chunk, _encoding, callback) {
+      pending += decoder.write(chunk);
+      let newlineIndex = pending.indexOf("\n");
+      while (newlineIndex >= 0) {
+        pushLine(this, pending.slice(0, newlineIndex), "\n");
+        pending = pending.slice(newlineIndex + 1);
+        newlineIndex = pending.indexOf("\n");
+      }
+      callback();
+    },
+    flush(callback) {
+      pending += decoder.end();
+      if (pending) pushLine(this, pending);
+      callback();
+    },
+  });
+  Object.defineProperty(filter, "skippedGraphqlPublicAclCount", {
+    get: () => skippedGraphqlPublicAclCount,
+  });
+  return filter;
 }
 
 function runCommand(command, args, options = {}) {
@@ -122,6 +171,7 @@ function restoreSqlStream(databaseDumpPath, containerName) {
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
+    const compatibilityFilter = createRestoreSqlCompatibilityFilter();
     const restore = spawn(
       "docker",
       [
@@ -147,57 +197,85 @@ function restoreSqlStream(databaseDumpPath, containerName) {
     let gzipCode = null;
     let restoreCode = null;
     let timedOut = false;
+    let filterFailed = false;
     let timer;
+    const stopGzip = () => {
+      gzip.stdout.unpipe(compatibilityFilter);
+      gzip.stdout.destroy();
+      compatibilityFilter.destroy();
+      gzip.kill("SIGTERM");
+    };
+    const stopRestore = () => {
+      restore.stdin.destroy();
+      restore.kill("SIGTERM");
+    };
     const finish = () => {
       if (settled || !gzipClosed || !restoreClosed) return;
       settled = true;
       clearTimeout(timer);
       if (timedOut) {
         reject(new DatabaseRestoreRehearsalError("database_restore_timeout"));
-      } else if (gzipCode !== 0) {
+      } else if (filterFailed) {
         reject(
           new DatabaseRestoreRehearsalError(
-            "database_restore_decompression_failed",
+            "database_restore_filter_failed",
           ),
         );
       } else if (restoreCode !== 0) {
         reject(
           new DatabaseRestoreRehearsalError("database_restore_failed"),
         );
+      } else if (gzipCode !== 0) {
+        reject(
+          new DatabaseRestoreRehearsalError(
+            "database_restore_decompression_failed",
+          ),
+        );
       } else {
-        resolve();
+        resolve({
+          skippedGraphqlPublicAclCount:
+            compatibilityFilter.skippedGraphqlPublicAclCount,
+        });
       }
     };
     gzip.stderr.resume();
     restore.stderr.resume();
+    gzip.stdout.on("error", () => {});
     restore.stdin.on("error", () => {});
+    compatibilityFilter.on("error", () => {
+      filterFailed = true;
+      if (!gzipClosed) stopGzip();
+      if (!restoreClosed) stopRestore();
+    });
     gzip.on("error", () => {
       gzipClosed = true;
       gzipCode = -1;
-      restore.kill("SIGTERM");
+      stopRestore();
       finish();
     });
     restore.on("error", () => {
       restoreClosed = true;
       restoreCode = -1;
-      gzip.kill("SIGTERM");
+      stopGzip();
       finish();
     });
     gzip.on("close", (code) => {
       gzipClosed = true;
       gzipCode = code;
+      if (code !== 0 && !restoreClosed) stopRestore();
       finish();
     });
     restore.on("close", (code) => {
       restoreClosed = true;
       restoreCode = code;
+      if (code !== 0 && !gzipClosed) stopGzip();
       finish();
     });
-    gzip.stdout.pipe(restore.stdin);
+    gzip.stdout.pipe(compatibilityFilter).pipe(restore.stdin);
     timer = setTimeout(() => {
       timedOut = true;
-      gzip.kill("SIGTERM");
-      restore.kill("SIGTERM");
+      stopGzip();
+      stopRestore();
       setTimeout(() => {
         gzip.kill("SIGKILL");
         restore.kill("SIGKILL");
@@ -300,6 +378,58 @@ async function queryCount(commandRunner, containerName, sql, errorCode) {
     );
   }
   return value;
+}
+
+async function repairDeferredGraphqlAcl(commandRunner, containerName) {
+  const sql = [
+    "SET ROLE supabase_admin;",
+    "CREATE OR REPLACE FUNCTION graphql_public.graphql(",
+    '  "operationName" text DEFAULT NULL,',
+    "  query text DEFAULT NULL,",
+    "  variables jsonb DEFAULT NULL,",
+    "  extensions jsonb DEFAULT NULL",
+    ") RETURNS jsonb",
+    "LANGUAGE sql",
+    "AS $faolla_graphql$",
+    "  SELECT graphql.resolve(",
+    "    query := query,",
+    "    variables := coalesce(variables, '{}'::jsonb),",
+    '    "operationName" := "operationName",',
+    "    extensions := extensions",
+    "  );",
+    "$faolla_graphql$;",
+    'GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO postgres, anon, authenticated, service_role;',
+    "GRANT USAGE ON SCHEMA graphql TO postgres, anon, authenticated, service_role;",
+    "GRANT SELECT ON ALL TABLES IN SCHEMA graphql TO postgres, anon, authenticated, service_role;",
+    "GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA graphql TO postgres, anon, authenticated, service_role;",
+    "GRANT ALL ON ALL SEQUENCES IN SCHEMA graphql TO postgres, anon, authenticated, service_role;",
+    "ALTER DEFAULT PRIVILEGES IN SCHEMA graphql GRANT ALL ON TABLES TO postgres, anon, authenticated, service_role;",
+    "ALTER DEFAULT PRIVILEGES IN SCHEMA graphql GRANT ALL ON FUNCTIONS TO postgres, anon, authenticated, service_role;",
+    "ALTER DEFAULT PRIVILEGES IN SCHEMA graphql GRANT ALL ON SEQUENCES TO postgres, anon, authenticated, service_role;",
+    "GRANT USAGE ON SCHEMA graphql_public TO postgres WITH GRANT OPTION;",
+    "GRANT USAGE ON SCHEMA graphql TO postgres WITH GRANT OPTION;",
+  ].join("\n");
+  await commandRunner(
+    "docker",
+    [
+      "exec",
+      containerName,
+      "psql",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-1",
+      "-U",
+      RESTORE_BOOTSTRAP_USER,
+      "-d",
+      "postgres",
+      "-c",
+      sql,
+    ],
+    {
+      errorCode: "restore_graphql_public_function_repair_failed",
+      timeoutMs: 60_000,
+    },
+  );
 }
 
 export async function rehearseVerifiedDatabaseBackup(input) {
@@ -421,7 +551,7 @@ export async function rehearseVerifiedDatabaseBackup(input) {
         `type=bind,src=${rootKeyPath},dst=/source/pgsodium_root.key,readonly`,
         databaseImage,
         "-c",
-        "install -d -m 700 -o postgres -g postgres /target && install -m 600 -o postgres -g postgres /source/pgsodium_root.key /target/pgsodium_root.key",
+        "cp -a /etc/postgresql-custom/. /target/ && chown -R postgres:postgres /target && install -m 600 -o postgres -g postgres /source/pgsodium_root.key /target/pgsodium_root.key",
       ],
       {
         errorCode: "restore_key_stage_failed",
@@ -462,27 +592,24 @@ export async function rehearseVerifiedDatabaseBackup(input) {
     containerCreated = true;
     await waitForPostgres(commandRunner, containerName, sleep);
 
-    await commandRunner(
-      "docker",
-      [
-        "exec",
-        containerName,
-        "psql",
-        "-v",
-        "ON_ERROR_STOP=1",
-        "-U",
-        RESTORE_BOOTSTRAP_USER,
-        "-d",
-        RESTORE_CONTROL_DATABASE,
-        "-c",
-        "DROP DATABASE IF EXISTS postgres WITH (FORCE);",
-      ],
-      { errorCode: "restore_target_prepare_failed" },
-    );
-    await restoreSql(
+    // pg_dumpall connects to the standard postgres database without creating it.
+    const restoreCompatibility = await restoreSql(
       path.join(input.directory, "database.sql.gz"),
       containerName,
     );
+    const skippedGraphqlPublicAclCount =
+      Number(restoreCompatibility?.skippedGraphqlPublicAclCount) || 0;
+    if (
+      skippedGraphqlPublicAclCount !== 0 &&
+      skippedGraphqlPublicAclCount !== DEFERRED_GRAPHQL_ACL_ROLES.size
+    ) {
+      throw new DatabaseRestoreRehearsalError(
+        "restore_graphql_acl_count_unexpected",
+      );
+    }
+    if (skippedGraphqlPublicAclCount > 0) {
+      await repairDeferredGraphqlAcl(commandRunner, containerName);
+    }
 
     const database = {
       schemas: await queryCount(
@@ -515,7 +642,38 @@ export async function rehearseVerifiedDatabaseBackup(input) {
         "SELECT count(*) FROM storage.objects;",
         "restore_storage_objects_check_failed",
       ),
+      graphqlPublicFunctions: await queryCount(
+        commandRunner,
+        containerName,
+        "SELECT CASE WHEN to_regprocedure('graphql_public.graphql(text,text,jsonb,jsonb)') IS NULL THEN 0 ELSE 1 END;",
+        "restore_graphql_public_function_check_failed",
+      ),
     };
+    database.graphqlExecuteRoles =
+      database.graphqlPublicFunctions === 1
+        ? await queryCount(
+            commandRunner,
+            containerName,
+            "SELECT count(*) FROM (VALUES ('postgres'), ('anon'), ('authenticated'), ('service_role')) AS expected(role_name) WHERE has_function_privilege(role_name, 'graphql_public.graphql(text,text,jsonb,jsonb)', 'EXECUTE');",
+            "restore_graphql_acl_check_failed",
+          )
+        : 0;
+    if (
+      skippedGraphqlPublicAclCount > 0 &&
+      database.graphqlPublicFunctions !== 1
+    ) {
+      throw new DatabaseRestoreRehearsalError(
+        "restore_graphql_public_function_validation_failed",
+      );
+    }
+    if (
+      skippedGraphqlPublicAclCount > 0 &&
+      database.graphqlExecuteRoles !== DEFERRED_GRAPHQL_ACL_ROLES.size
+    ) {
+      throw new DatabaseRestoreRehearsalError(
+        "restore_graphql_acl_validation_failed",
+      );
+    }
 
     return {
       schemaVersion: 1,

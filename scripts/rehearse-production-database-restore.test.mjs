@@ -9,7 +9,10 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { rehearseVerifiedDatabaseBackup } from "./rehearse-production-database-restore.mjs";
+import {
+  isDeferredGraphqlAclStatement,
+  rehearseVerifiedDatabaseBackup,
+} from "./rehearse-production-database-restore.mjs";
 
 function restoreManifest(image = "supabase/postgres:15.8.1.085") {
   return {
@@ -66,6 +69,10 @@ test("database restore rehearsal uses an isolated container and validates key da
         if (sql.includes("public.pages")) return { stdout: "3\n" };
         if (sql.includes("auth.users")) return { stdout: "4\n" };
         if (sql.includes("storage.objects")) return { stdout: "5\n" };
+        if (sql.includes("to_regprocedure")) return { stdout: "1\n" };
+        if (sql.includes("has_function_privilege")) {
+          return { stdout: "4\n" };
+        }
       }
       return { stdout: "" };
     };
@@ -78,6 +85,7 @@ test("database restore rehearsal uses an isolated container and validates key da
         restored = true;
         assert.equal(dumpPath, path.join(directory, "database.sql.gz"));
         assert.match(containerName, /^faolla-restore-test$/);
+        return { skippedGraphqlPublicAclCount: 4 };
       },
       sleep: async () => {},
       resourceSuffix: "test",
@@ -92,6 +100,8 @@ test("database restore rehearsal uses an isolated container and validates key da
       pages: 3,
       authUsers: 4,
       storageObjects: 5,
+      graphqlPublicFunctions: 1,
+      graphqlExecuteRoles: 4,
     });
     assert.equal(report.storage.files, 1);
     assert.equal(
@@ -141,6 +151,9 @@ test("database restore rehearsal uses an isolated container and validates key da
           args.includes("--entrypoint") &&
           args.includes("sh") &&
           args.some((entry) =>
+            entry.includes("cp -a /etc/postgresql-custom/. /target/"),
+          ) &&
+          args.some((entry) =>
             entry.includes("dst=/source/pgsodium_root.key,readonly"),
           ),
       ),
@@ -151,6 +164,28 @@ test("database restore rehearsal uses an isolated container and validates key da
         (args) =>
           args[0] === "docker" &&
           args[1] === "restart",
+      ),
+      false,
+    );
+    assert.equal(
+      calls.some((args) =>
+        args.some(
+          (entry) =>
+            typeof entry === "string" &&
+            entry.includes(
+              "CREATE OR REPLACE FUNCTION graphql_public.graphql(",
+            ),
+        ),
+      ),
+      true,
+    );
+    assert.equal(
+      calls.some((args) =>
+        args.some(
+          (entry) =>
+            typeof entry === "string" &&
+            entry.includes("DROP DATABASE"),
+        ),
       ),
       false,
     );
@@ -184,6 +219,27 @@ test("database restore rehearsal uses an isolated container and validates key da
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("database restore defers only the known GraphQL public ACL statements", () => {
+  assert.equal(
+    isDeferredGraphqlAclStatement(
+      'GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO authenticated;',
+    ),
+    true,
+  );
+  assert.equal(
+    isDeferredGraphqlAclStatement(
+      'GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO unknown_role;',
+    ),
+    false,
+  );
+  assert.equal(
+    isDeferredGraphqlAclStatement(
+      '\tGRANT ALL ON FUNCTION graphql_public.graphql(text,text,jsonb,jsonb) TO postgres;',
+    ),
+    false,
+  );
 });
 
 test("database restore rehearsal rejects an unexpected image", async () => {
