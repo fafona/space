@@ -1,0 +1,59 @@
+name: Backup Recovery Rehearsal
+
+on:
+  schedule:
+    - cron: "41 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: backup-recovery-rehearsal
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  rehearse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      FAOLLA_BACKUP_MAXIMUM_AGE_HOURS: "96"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+
+      - name: Rehearse Backup Recovery
+        run: >
+          node scripts/check-production-backup-recovery.mjs
+          --fail-on-degraded
+          --output backup-recovery-report.json
+
+      - name: Write Rehearsal Summary
+        if: always()
+        shell: bash
+        run: |
+          echo "### Read-only backup recovery rehearsal" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f backup-recovery-report.json ]; then
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat backup-recovery-report.json >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "The rehearsal stopped before producing a report." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload Rehearsal Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backup-recovery-report
+          path: backup-recovery-report.json
+          if-no-files-found: ignore
+          retention-days: 30

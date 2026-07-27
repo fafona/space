@@ -1,5 +1,8 @@
 # Data architecture migration
 
+Production monitoring and recovery procedures are documented in
+`docs/production-operations-runbook.md`.
+
 ## Objective
 
 Move transactional merchant data out of `pages.blocks` without interrupting
