@@ -85,9 +85,17 @@ jobs:
           SSH_USER: ${{ secrets.SSH_USER }}
         shell: bash
         run: |
-          scp -o ConnectTimeout=20 -o ConnectionAttempts=3 -o StrictHostKeyChecking=accept-new -P "${SSH_PORT:-22}" \
+          transfer_started_at="$(date +%s)"
+          timeout --signal=TERM 75m scp -o ConnectTimeout=20 -o ConnectionAttempts=3 \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+            -o StrictHostKeyChecking=accept-new -P "${SSH_PORT:-22}" \
             "$SSH_USER@$SSH_HOST:$REMOTE_BACKUP_PATH" "$LOCAL_BACKUP_PATH"
           test -s "$LOCAL_BACKUP_PATH"
+          transfer_finished_at="$(date +%s)"
+          transfer_bytes="$(stat -c '%s' "$LOCAL_BACKUP_PATH")"
+          printf '[database-backup-transfer] TRANSFERRED bytes=%s durationSeconds=%s\n' \
+            "$transfer_bytes" "$((transfer_finished_at - transfer_started_at))" \
+            | tee database-backup-transfer-report.log
 
       - name: Verify Encrypted Backup
         env:
@@ -110,6 +118,7 @@ jobs:
             | tee database-backup-restore-report.log
 
       - name: Upload Encrypted Backup
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: faolla-encrypted-disaster-recovery-${{ github.run_id }}
@@ -117,6 +126,7 @@ jobs:
             ${{ env.LOCAL_BACKUP_PATH }}
             database-backup-readiness-report.log
             database-backup-create-report.log
+            database-backup-transfer-report.log
             database-backup-verify-report.log
             database-backup-restore-report.log
           if-no-files-found: error

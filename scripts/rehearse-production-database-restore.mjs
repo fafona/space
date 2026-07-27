@@ -317,6 +317,7 @@ export async function rehearseVerifiedDatabaseBackup(input) {
     `${process.pid}-${randomBytes(4).toString("hex")}`;
   const containerName = `faolla-restore-${suffix}`;
   const volumeName = `faolla-restore-data-${suffix}`;
+  const configVolumeName = `faolla-restore-config-${suffix}`;
   const runtimeDirectory = path.join(input.directory, "restore-runtime");
   const postgresConfigDirectory = path.join(
     runtimeDirectory,
@@ -324,8 +325,10 @@ export async function rehearseVerifiedDatabaseBackup(input) {
   );
   const storageDirectory = path.join(runtimeDirectory, "storage");
   const environmentPath = path.join(runtimeDirectory, "postgres.env");
+  const identityMapPath = path.join(runtimeDirectory, "pg_ident.conf");
   let containerCreated = false;
   let volumeCreated = false;
+  let configVolumeCreated = false;
 
   await mkdir(postgresConfigDirectory, { recursive: true });
   await mkdir(storageDirectory, { recursive: true });
@@ -376,6 +379,16 @@ export async function rehearseVerifiedDatabaseBackup(input) {
       { encoding: "utf8", mode: 0o600 },
     );
     await chmod(environmentPath, 0o600);
+    await writeFile(
+      identityMapPath,
+      [
+        `supabase_map postgres ${RESTORE_BOOTSTRAP_USER}`,
+        `supabase_map root ${RESTORE_BOOTSTRAP_USER}`,
+        "",
+      ].join("\n"),
+      { encoding: "utf8", mode: 0o644 },
+    );
+    await chmod(identityMapPath, 0o644);
 
     await commandRunner("docker", ["pull", databaseImage], {
       errorCode: "restore_database_image_pull_failed",
@@ -385,6 +398,36 @@ export async function rehearseVerifiedDatabaseBackup(input) {
       errorCode: "restore_database_volume_create_failed",
     });
     volumeCreated = true;
+    await commandRunner(
+      "docker",
+      ["volume", "create", configVolumeName],
+      {
+        errorCode: "restore_database_config_volume_create_failed",
+      },
+    );
+    configVolumeCreated = true;
+    await commandRunner(
+      "docker",
+      [
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--entrypoint",
+        "sh",
+        "--mount",
+        `type=volume,src=${configVolumeName},dst=/target`,
+        "--mount",
+        `type=bind,src=${rootKeyPath},dst=/source/pgsodium_root.key,readonly`,
+        databaseImage,
+        "-c",
+        "install -d -m 700 -o postgres -g postgres /target && install -m 600 -o postgres -g postgres /source/pgsodium_root.key /target/pgsodium_root.key",
+      ],
+      {
+        errorCode: "restore_key_stage_failed",
+        timeoutMs: 60_000,
+      },
+    );
     await commandRunner(
       "docker",
       [
@@ -398,10 +441,17 @@ export async function rehearseVerifiedDatabaseBackup(input) {
         "4g",
         "--cpus",
         "2",
+        "--no-healthcheck",
         "--env-file",
         environmentPath,
+        "--tmpfs",
+        "/docker-entrypoint-initdb.d:rw,noexec,nosuid,size=65536",
         "--mount",
         `type=volume,src=${volumeName},dst=/var/lib/postgresql/data`,
+        "--mount",
+        `type=volume,src=${configVolumeName},dst=/etc/postgresql-custom`,
+        "--mount",
+        `type=bind,src=${identityMapPath},dst=/etc/postgresql/pg_ident.conf,readonly`,
         databaseImage,
       ],
       {
@@ -410,43 +460,6 @@ export async function rehearseVerifiedDatabaseBackup(input) {
       },
     );
     containerCreated = true;
-    await waitForPostgres(commandRunner, containerName, sleep);
-
-    await commandRunner(
-      "docker",
-      [
-        "exec",
-        containerName,
-        "sh",
-        "-lc",
-        "install -d -m 700 -o postgres -g postgres /etc/postgresql-custom",
-      ],
-      { errorCode: "restore_key_directory_prepare_failed" },
-    );
-    await commandRunner(
-      "docker",
-      [
-        "cp",
-        rootKeyPath,
-        `${containerName}:/etc/postgresql-custom/pgsodium_root.key`,
-      ],
-      { errorCode: "restore_key_copy_failed" },
-    );
-    await commandRunner(
-      "docker",
-      [
-        "exec",
-        containerName,
-        "sh",
-        "-lc",
-        "chown postgres:postgres /etc/postgresql-custom/pgsodium_root.key && chmod 600 /etc/postgresql-custom/pgsodium_root.key",
-      ],
-      { errorCode: "restore_key_permissions_failed" },
-    );
-    await commandRunner("docker", ["restart", containerName], {
-      errorCode: "restore_database_restart_failed",
-      timeoutMs: 60_000,
-    });
     await waitForPostgres(commandRunner, containerName, sleep);
 
     await commandRunner(
@@ -530,6 +543,16 @@ export async function rehearseVerifiedDatabaseBackup(input) {
         ["volume", "rm", "-f", volumeName],
         {
           errorCode: "restore_database_volume_cleanup_failed",
+          timeoutMs: 60_000,
+        },
+      ).catch(() => {});
+    }
+    if (configVolumeCreated) {
+      await commandRunner(
+        "docker",
+        ["volume", "rm", "-f", configVolumeName],
+        {
+          errorCode: "restore_database_config_volume_cleanup_failed",
           timeoutMs: 60_000,
         },
       ).catch(() => {});

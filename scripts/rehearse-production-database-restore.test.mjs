@@ -104,6 +104,56 @@ test("database restore rehearsal uses an isolated container and validates key da
       ),
       true,
     );
+    const databaseRun = calls.find(
+      (args) =>
+        args[0] === "docker" &&
+        args[1] === "run" &&
+        args.includes("--name") &&
+        args.includes("faolla-restore-test"),
+    );
+    assert.ok(databaseRun);
+    assert.equal(databaseRun.includes("--no-healthcheck"), true);
+    assert.equal(
+      databaseRun.includes(
+        "/docker-entrypoint-initdb.d:rw,noexec,nosuid,size=65536",
+      ),
+      true,
+    );
+    assert.equal(
+      databaseRun.some((entry) =>
+        entry.includes(
+          "faolla-restore-config-test,dst=/etc/postgresql-custom",
+        ),
+      ),
+      true,
+    );
+    assert.equal(
+      databaseRun.some((entry) =>
+        entry.includes("dst=/etc/postgresql/pg_ident.conf,readonly"),
+      ),
+      true,
+    );
+    assert.equal(
+      calls.some(
+        (args) =>
+          args[0] === "docker" &&
+          args[1] === "run" &&
+          args.includes("--entrypoint") &&
+          args.includes("sh") &&
+          args.some((entry) =>
+            entry.includes("dst=/source/pgsodium_root.key,readonly"),
+          ),
+      ),
+      true,
+    );
+    assert.equal(
+      calls.some(
+        (args) =>
+          args[0] === "docker" &&
+          args[1] === "restart",
+      ),
+      false,
+    );
     assert.equal(
       calls.some(
         (args) =>
@@ -121,6 +171,15 @@ test("database restore rehearsal uses an isolated container and validates key da
           args[2] === "rm",
       ),
       true,
+    );
+    assert.equal(
+      calls.filter(
+        (args) =>
+          args[0] === "docker" &&
+          args[1] === "volume" &&
+          args[2] === "rm",
+      ).length,
+      2,
     );
   } finally {
     await rm(directory, { recursive: true, force: true });
