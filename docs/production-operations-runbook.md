@@ -3,6 +3,12 @@
 This runbook covers the read-only production monitor and backup recovery
 rehearsal. Neither scheduled job writes to production data.
 
+Both GitHub Actions workflows connect to the production host over SSH and run
+the checked-in scripts from the deployed application directory. The scripts
+load the server's existing `.env.local`; production database credentials are
+not copied into GitHub. Only the bounded, redacted report output is returned
+to the workflow log and artifact.
+
 ## Scheduled checks
 
 ### Production Monitor

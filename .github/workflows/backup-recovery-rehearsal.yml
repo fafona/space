@@ -18,32 +18,55 @@ jobs:
     timeout-minutes: 10
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
-      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-      FAOLLA_BACKUP_MAXIMUM_AGE_HOURS: "96"
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Setup Node
-        uses: actions/setup-node@v5
-        with:
-          node-version: 20
+      - name: Setup SSH
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          test -n "$SSH_HOST"
+          test -n "$SSH_PRIVATE_KEY"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          scan_ok=0
+          for attempt in 1 2 3 4 5; do
+            if ssh-keyscan -T 15 -p "${SSH_PORT:-22}" -H "$SSH_HOST" >> ~/.ssh/known_hosts; then
+              scan_ok=1
+              break
+            fi
+            sleep 5
+          done
+          if [ "$scan_ok" != "1" ]; then
+            echo "::warning::ssh-keyscan failed; the rehearsal will use accept-new host verification."
+          fi
 
       - name: Rehearse Backup Recovery
-        run: >
-          node scripts/check-production-backup-recovery.mjs
-          --fail-on-degraded
-          --output backup-recovery-report.json
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          APP_DIR: ${{ secrets.APP_DIR }}
+        shell: bash
+        run: |
+          test -n "$SSH_USER"
+          test -n "$APP_DIR"
+          set -o pipefail
+          ssh -o ConnectTimeout=20 -o ConnectionAttempts=3 -o StrictHostKeyChecking=accept-new -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
+            "cd '$APP_DIR' && node --env-file=.env.local scripts/check-production-backup-recovery.mjs --maximum-age-hours 96 --fail-on-degraded --json" \
+            | tee backup-recovery-report.log
 
       - name: Write Rehearsal Summary
         if: always()
         shell: bash
         run: |
           echo "### Read-only backup recovery rehearsal" >> "$GITHUB_STEP_SUMMARY"
-          if [ -f backup-recovery-report.json ]; then
-            echo '```json' >> "$GITHUB_STEP_SUMMARY"
-            cat backup-recovery-report.json >> "$GITHUB_STEP_SUMMARY"
+          if [ -f backup-recovery-report.log ]; then
+            echo '```text' >> "$GITHUB_STEP_SUMMARY"
+            cat backup-recovery-report.log >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           else
             echo "The rehearsal stopped before producing a report." >> "$GITHUB_STEP_SUMMARY"
@@ -54,6 +77,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: backup-recovery-report
-          path: backup-recovery-report.json
+          path: backup-recovery-report.log
           if-no-files-found: ignore
           retention-days: 30
