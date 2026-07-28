@@ -1636,6 +1636,9 @@ export default function MerchantPointRedemptionCashier({
       if (cachedCoupons) setCoupons(cachedCoupons.data);
     }
     if (cachedMemberships && cachedSettings && cachedCoupons) {
+      if (cachedMemberships.fresh && cachedSettings.fresh && cachedCoupons.fresh) {
+        return;
+      }
       void loadCashierDataFromServer().catch(() => {});
       return;
     }

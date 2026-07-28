@@ -15632,6 +15632,17 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     if (!editingSiteId) {
       setMerchantSiteIdOverride((current) => current || merchantWorkspaceSiteId);
     }
+    if (defaultMerchantDesktopSection === "pointRedemption") {
+      void loadMerchantPointRedemptionCashier().catch(() => undefined);
+    } else if (defaultMerchantDesktopSection === "booking") {
+      void loadMerchantBookingManagerDialog().catch(() => undefined);
+    } else if (defaultMerchantDesktopSection === "orders") {
+      void loadMerchantOrderManagerDialog().catch(() => undefined);
+    } else if (defaultMerchantDesktopSection === "members") {
+      void loadMerchantMemberManager().catch(() => undefined);
+    } else if (defaultMerchantDesktopSection === "coupons") {
+      void loadMerchantCouponManager().catch(() => undefined);
+    }
     setMerchantDesktopSection(defaultMerchantDesktopSection);
   }, [
     checkingAuth,
@@ -15643,6 +15654,35 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     merchantSiteIdOverride,
     storeScope,
   ]);
+  useEffect(() => {
+    if (
+      checkingAuth ||
+      !isDesktopMerchantWorkspace ||
+      merchantEditorOnly ||
+      typeof window === "undefined"
+    ) {
+      return;
+    }
+
+    let cancelIdleTask = () => {};
+    const preloadDelayId = window.setTimeout(() => {
+      cancelIdleTask = scheduleAdminIdleTask(
+        () => {
+          void loadMerchantBusinessCardManager()
+            .catch(() => undefined)
+            .finally(() => {
+              void loadMerchantPrintSettingsPanel().catch(() => undefined);
+            });
+        },
+        { timeoutMs: 4000, fallbackDelayMs: 900 },
+      );
+    }, 2600);
+
+    return () => {
+      window.clearTimeout(preloadDelayId);
+      cancelIdleTask();
+    };
+  }, [checkingAuth, isDesktopMerchantWorkspace, merchantEditorOnly]);
   useEffect(() => {
     if (!isDesktopMerchantWorkspace || merchantEditorOnly) return;
     if (merchantDesktopPointRedemptionCenterActive && !canUsePointsRedemption) {

@@ -21,6 +21,10 @@ export type MerchantAdminDataCacheSnapshot<T> = {
 
 const adminDataInFlightRequests = new Map<string, Promise<unknown>>();
 const adminDataRequestSerials = new Map<string, number>();
+const adminDataParsedEnvelopes = new Map<
+  string,
+  { raw: string; envelope: CacheEnvelope<unknown> }
+>();
 
 function normalizeCachePart(value: string) {
   return String(value ?? "")
@@ -36,25 +40,57 @@ export function makeMerchantAdminDataCacheKey(...parts: Array<string | number | 
   return `${CACHE_PREFIX}:${parts.map((part) => normalizeCachePart(String(part ?? ""))).join(":")}`;
 }
 
-export function readMerchantAdminDataCache<T>(key: string, maxAgeMs = DEFAULT_MAX_AGE_MS): T | null {
+function removeMerchantAdminDataCacheEntry(key: string) {
+  adminDataParsedEnvelopes.delete(key);
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+function readMerchantAdminDataCacheEnvelope<T>(key: string): CacheEnvelope<T> | null {
   if (typeof window === "undefined" || !key) return null;
   try {
     const raw = window.localStorage.getItem(key);
-    if (!raw) return null;
-    if (raw.length > MAX_CACHE_PAYLOAD_CHARS) {
-      window.localStorage.removeItem(key);
+    if (!raw) {
+      adminDataParsedEnvelopes.delete(key);
       return null;
+    }
+    if (raw.length > MAX_CACHE_PAYLOAD_CHARS) {
+      removeMerchantAdminDataCacheEntry(key);
+      return null;
+    }
+    const memoized = adminDataParsedEnvelopes.get(key);
+    if (memoized?.raw === raw) {
+      return memoized.envelope as CacheEnvelope<T>;
     }
     const parsed = JSON.parse(raw) as Partial<CacheEnvelope<T>> | null;
-    const savedAt = Number(parsed?.savedAt ?? 0);
-    if (!Number.isFinite(savedAt) || savedAt <= 0 || Date.now() - savedAt > maxAgeMs) {
-      window.localStorage.removeItem(key);
+    if (!parsed || typeof parsed !== "object" || parsed.data === undefined) {
+      removeMerchantAdminDataCacheEntry(key);
       return null;
     }
-    return parsed?.data ?? null;
+    const envelope = parsed as CacheEnvelope<T>;
+    adminDataParsedEnvelopes.set(key, {
+      raw,
+      envelope: envelope as CacheEnvelope<unknown>,
+    });
+    return envelope;
   } catch {
+    adminDataParsedEnvelopes.delete(key);
     return null;
   }
+}
+
+export function readMerchantAdminDataCache<T>(key: string, maxAgeMs = DEFAULT_MAX_AGE_MS): T | null {
+  const envelope = readMerchantAdminDataCacheEnvelope<T>(key);
+  if (!envelope) return null;
+  const savedAt = Number(envelope.savedAt ?? 0);
+  if (!Number.isFinite(savedAt) || savedAt <= 0 || Date.now() - savedAt > maxAgeMs) {
+    removeMerchantAdminDataCacheEntry(key);
+    return null;
+  }
+  return envelope.data ?? null;
 }
 
 export function readMerchantAdminDataCacheSnapshot<T>(
@@ -62,30 +98,20 @@ export function readMerchantAdminDataCacheSnapshot<T>(
   freshAgeMs = MERCHANT_ADMIN_DATA_CACHE_TTL_MS,
   maxAgeMs = DEFAULT_MAX_AGE_MS,
 ): MerchantAdminDataCacheSnapshot<T> | null {
-  if (typeof window === "undefined" || !key) return null;
-  try {
-    const raw = window.localStorage.getItem(key);
-    if (!raw) return null;
-    if (raw.length > MAX_CACHE_PAYLOAD_CHARS) {
-      window.localStorage.removeItem(key);
-      return null;
-    }
-    const parsed = JSON.parse(raw) as Partial<CacheEnvelope<T>> | null;
-    const savedAt = Number(parsed?.savedAt ?? 0);
-    const ageMs = Date.now() - savedAt;
-    if (!Number.isFinite(savedAt) || savedAt <= 0 || ageMs > maxAgeMs || parsed?.data === undefined) {
-      window.localStorage.removeItem(key);
-      return null;
-    }
-    return {
-      data: parsed.data,
-      savedAt,
-      fresh: ageMs <= freshAgeMs,
-      version: typeof parsed.version === "string" && parsed.version.trim() ? parsed.version.trim() : null,
-    };
-  } catch {
+  const envelope = readMerchantAdminDataCacheEnvelope<T>(key);
+  if (!envelope) return null;
+  const savedAt = Number(envelope.savedAt ?? 0);
+  const ageMs = Date.now() - savedAt;
+  if (!Number.isFinite(savedAt) || savedAt <= 0 || ageMs > maxAgeMs) {
+    removeMerchantAdminDataCacheEntry(key);
     return null;
   }
+  return {
+    data: envelope.data,
+    savedAt,
+    fresh: ageMs <= freshAgeMs,
+    version: typeof envelope.version === "string" && envelope.version.trim() ? envelope.version.trim() : null,
+  };
 }
 
 export function readLatestMerchantAdminDataCacheSnapshot<T>(
@@ -105,16 +131,21 @@ export function readLatestMerchantAdminDataCacheSnapshot<T>(
 export function writeMerchantAdminDataCache<T>(key: string, data: T, options: { version?: string | null } = {}) {
   if (typeof window === "undefined" || !key) return;
   try {
-    const payload = JSON.stringify({
+    const envelope = {
       savedAt: Date.now(),
       data,
       version: typeof options.version === "string" && options.version.trim() ? options.version.trim() : null,
-    } satisfies CacheEnvelope<T>);
+    } satisfies CacheEnvelope<T>;
+    const payload = JSON.stringify(envelope);
     if (payload.length > MAX_CACHE_PAYLOAD_CHARS) {
-      window.localStorage.removeItem(key);
+      removeMerchantAdminDataCacheEntry(key);
       return;
     }
     window.localStorage.setItem(key, payload);
+    adminDataParsedEnvelopes.set(key, {
+      raw: payload,
+      envelope: envelope as CacheEnvelope<unknown>,
+    });
   } catch {
     // Ignore cache quota and private-mode failures.
   }
@@ -123,6 +154,7 @@ export function writeMerchantAdminDataCache<T>(key: string, data: T, options: { 
 export function invalidateMerchantAdminDataCache(key: string) {
   adminDataInFlightRequests.delete(key);
   adminDataRequestSerials.set(key, (adminDataRequestSerials.get(key) ?? 0) + 1);
+  adminDataParsedEnvelopes.delete(key);
   if (typeof window === "undefined" || !key) return;
   try {
     window.localStorage.removeItem(key);
@@ -137,6 +169,9 @@ export function invalidateMerchantAdminDataCachePrefix(prefix: string) {
       adminDataInFlightRequests.delete(key);
       adminDataRequestSerials.set(key, (adminDataRequestSerials.get(key) ?? 0) + 1);
     }
+  }
+  for (const key of adminDataParsedEnvelopes.keys()) {
+    if (key.startsWith(prefix)) adminDataParsedEnvelopes.delete(key);
   }
   if (typeof window === "undefined" || !prefix) return;
   try {
