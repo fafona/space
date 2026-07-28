@@ -4,6 +4,7 @@ import { useCallback, useDeferredValue, useEffect, useMemo, useState, type Mouse
 import { createPortal } from "react-dom";
 import OrderStatusFilterDropdown from "@/components/admin/OrderStatusFilterDropdown";
 import { showGlobalToast } from "@/lib/globalToast";
+import { fetchWithAdminPerformance } from "@/lib/performanceTelemetry";
 import {
   MERCHANT_ORDER_STATUSES,
   formatMerchantOrderAmount,
@@ -331,7 +332,7 @@ export default function MerchantOrderManagerDialog({
     }
     setError("");
     try {
-      const response = await fetch(
+      const response = await fetchWithAdminPerformance(
         `/api/orders?siteId=${encodeURIComponent(siteId)}&offset=0&limit=${MERCHANT_ORDER_FETCH_LIMIT}`,
         {
           cache: "no-store",
@@ -362,7 +363,7 @@ export default function MerchantOrderManagerDialog({
     setLoadingMoreRecords(true);
     setError("");
     try {
-      const response = await fetch(
+      const response = await fetchWithAdminPerformance(
         `/api/orders?siteId=${encodeURIComponent(siteId)}&offset=${records.length}&limit=${MERCHANT_ORDER_FETCH_LIMIT}`,
         {
           cache: "no-store",
@@ -496,7 +497,7 @@ export default function MerchantOrderManagerDialog({
 
   const requestOrderAction = useCallback(
     async (orderId: string, action: MerchantOrderAction) => {
-      const response = await fetch("/api/orders", {
+      const response = await fetchWithAdminPerformance("/api/orders", {
         method: "PATCH",
         keepalive: action === "touch",
         headers: {
@@ -525,7 +526,7 @@ export default function MerchantOrderManagerDialog({
       status: MerchantOrderStatus,
       items?: MerchantOrderLineItemInput[],
     ) => {
-      const response = await fetch("/api/orders", {
+      const response = await fetchWithAdminPerformance("/api/orders", {
         method: "PATCH",
         headers: {
           "content-type": "application/json",
@@ -550,7 +551,7 @@ export default function MerchantOrderManagerDialog({
 
   const requestBatchOrderStatusUpdate = useCallback(
     async (orderIds: string[], status: MerchantOrderStatus) => {
-      const response = await fetch("/api/orders", {
+      const response = await fetchWithAdminPerformance("/api/orders", {
         method: "PATCH",
         headers: {
           "content-type": "application/json",

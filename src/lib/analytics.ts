@@ -18,7 +18,7 @@ export type PublishEvent = {
   reason?: string;
 };
 type RemoteEventInput = {
-  eventType: "page_view" | "contact_click" | "publish";
+  eventType: "page_view" | "contact_click" | "publish" | "performance";
   channel?: string;
   pagePath?: string;
   success?: boolean;
@@ -344,6 +344,27 @@ export function trackPublishEvent(input: {
     bytes: input.bytes,
     changedBlocks: input.changedBlocks,
     reason: input.reason,
+  });
+}
+
+export function trackPerformanceMetric(input: {
+  kind: "web_vital" | "admin_api";
+  name: string;
+  value: number;
+  rating: "good" | "needs-improvement" | "poor";
+  pagePath: string;
+  detail?: string;
+}) {
+  const name = input.name.trim().slice(0, 120);
+  const pagePath = input.pagePath.trim().slice(0, 180);
+  if (!name || !pagePath || !Number.isFinite(input.value) || input.value < 0) return;
+  void trackRemoteEvent({
+    eventType: "performance",
+    channel: `${input.kind}:${name}`.slice(0, 180),
+    pagePath,
+    success: input.rating !== "poor",
+    bytes: input.value,
+    reason: `rating=${input.rating};${input.detail ?? ""}`.slice(0, 240),
   });
 }
 

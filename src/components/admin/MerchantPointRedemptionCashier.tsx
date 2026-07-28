@@ -20,6 +20,7 @@ import {
 } from "@/lib/merchantAdminDataCache";
 import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
 import { createClientMutationOperationId } from "@/lib/mutationOperationId";
+import { fetchWithAdminPerformance } from "@/lib/performanceTelemetry";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
   quoteMerchantMemberRechargeCancellation,
@@ -199,7 +200,7 @@ async function fetchPointRedemptionJson(
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(input, {
+    return await fetchWithAdminPerformance(input, {
       ...init,
       signal: controller.signal,
     });
@@ -2090,7 +2091,7 @@ export default function MerchantPointRedemptionCashier({
     setError("");
     setNotice("");
     try {
-      const response = await fetch("/api/memberships", {
+      const response = await fetchWithAdminPerformance("/api/memberships", {
         method: "PATCH",
         credentials: "same-origin",
         headers: { "content-type": "application/json", accept: "application/json" },
@@ -2641,7 +2642,7 @@ export default function MerchantPointRedemptionCashier({
     }));
     setSaving(true);
     try {
-      const response = await fetch("/api/memberships", {
+      const response = await fetchWithAdminPerformance("/api/memberships", {
         method: "PATCH",
         credentials: "same-origin",
         headers: { "content-type": "application/json", accept: "application/json" },

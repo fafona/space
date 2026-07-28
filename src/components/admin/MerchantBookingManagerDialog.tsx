@@ -6,6 +6,7 @@ import BookingWorkbenchDialog from "@/components/admin/BookingWorkbenchDialog";
 import BookingStatusFilterDropdown from "@/components/admin/BookingStatusFilterDropdown";
 import { useI18n } from "@/components/I18nProvider";
 import { showGlobalToast } from "@/lib/globalToast";
+import { fetchWithAdminPerformance } from "@/lib/performanceTelemetry";
 import BookingDateTimeInput from "@/components/booking/BookingDateTimeInput";
 import BookingQuickTimeRangePicker from "@/components/booking/BookingQuickTimeRangePicker";
 import {
@@ -609,9 +610,12 @@ export default function MerchantBookingManagerDialog({
     if (!siteId) return defaultCustomerEmailLocale;
     if (customerEmailLocaleLoaded) return customerEmailLocale;
     try {
-      const response = await fetch(`/api/bookings/workbench?siteId=${encodeURIComponent(siteId)}`, {
-        cache: "no-store",
-      });
+      const response = await fetchWithAdminPerformance(
+        `/api/bookings/workbench?siteId=${encodeURIComponent(siteId)}`,
+        {
+          cache: "no-store",
+        },
+      );
       const json = (await response.json().catch(() => null)) as
         | { ok?: boolean; settings?: unknown }
         | null;
@@ -655,7 +659,7 @@ export default function MerchantBookingManagerDialog({
       }
       setError("");
       try {
-        const response = await fetch(
+        const response = await fetchWithAdminPerformance(
           `/api/bookings?siteId=${encodeURIComponent(siteId)}&offset=0&limit=${MERCHANT_BOOKING_FETCH_LIMIT}`,
           {
             cache: "no-store",
@@ -694,7 +698,7 @@ export default function MerchantBookingManagerDialog({
     setLoadingMoreRecords(true);
     setError("");
     try {
-      const response = await fetch(
+      const response = await fetchWithAdminPerformance(
         `/api/bookings?siteId=${encodeURIComponent(siteId)}&offset=${records.length}&limit=${MERCHANT_BOOKING_FETCH_LIMIT}`,
         {
           cache: "no-store",
@@ -861,7 +865,7 @@ export default function MerchantBookingManagerDialog({
     setError("");
     try {
       const currentRecord = records.find((item) => item.id === bookingId) ?? null;
-      const response = await fetch("/api/bookings", {
+      const response = await fetchWithAdminPerformance("/api/bookings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -898,7 +902,7 @@ export default function MerchantBookingManagerDialog({
     setBusyKey(`batch:${busyLabel}`);
     setError("");
     try {
-      const response = await fetch("/api/bookings", {
+      const response = await fetchWithAdminPerformance("/api/bookings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -939,7 +943,7 @@ export default function MerchantBookingManagerDialog({
       current.map((item) => (item.id === bookingId ? { ...item, merchantTouchedAt: touchedAt } : item)),
     );
     try {
-      const response = await fetch("/api/bookings", {
+      const response = await fetchWithAdminPerformance("/api/bookings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

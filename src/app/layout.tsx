@@ -7,6 +7,7 @@ import GlobalLanguageSwitcher from "@/components/GlobalLanguageSwitcher";
 import GlobalToastViewport from "@/components/GlobalToastViewport";
 import { I18nProvider } from "@/components/I18nProvider";
 import MobileSwipeBack from "@/components/MobileSwipeBack";
+import PerformanceTelemetry from "@/components/PerformanceTelemetry";
 import PwaBootstrapLoader from "@/components/PwaBootstrapLoader";
 import UnhandledRejectionGuard from "@/components/UnhandledRejectionGuard";
 import "./globals.css";
@@ -1440,11 +1441,17 @@ export default async function RootLayout({
   const cookieLocale = cookieStore.get(I18N_COOKIE_KEY)?.value ?? "";
   const acceptLanguageLocale = readPreferredLocaleFromAcceptLanguage(headerStore.get("accept-language"));
   const initialLocale = resolveSupportedLocale(cookieLocale || acceptLanguageLocale || DEFAULT_LOCALE);
-  const faollaInlineCacheRefreshScript = buildFaollaInlineCacheRefreshScript(resolveFaollaWebBuildId());
-  const faollaClientErrorRecoveryScript = buildFaollaClientErrorRecoveryScript(resolveFaollaWebBuildId());
+  const faollaWebBuildId = resolveFaollaWebBuildId();
+  const faollaInlineCacheRefreshScript = buildFaollaInlineCacheRefreshScript(faollaWebBuildId);
+  const faollaClientErrorRecoveryScript = buildFaollaClientErrorRecoveryScript(faollaWebBuildId);
 
   return (
-    <html lang={initialLocale} data-ui-locale={initialLocale} suppressHydrationWarning>
+    <html
+      lang={initialLocale}
+      data-ui-locale={initialLocale}
+      data-faolla-build={faollaWebBuildId}
+      suppressHydrationWarning
+    >
       <head>
         <meta name="google" content="notranslate" />
         <meta httpEquiv="Content-Language" content="zh-CN,zh-TW,ja-JP,ko-KR,en-GB" />
@@ -1498,6 +1505,7 @@ export default async function RootLayout({
           <ClientDomTranslator />
           <CapacitorAppBridge />
           <UnhandledRejectionGuard />
+          <PerformanceTelemetry />
           <PwaBootstrapLoader />
           <GlobalLanguageSwitcher />
           <MobileSwipeBack />

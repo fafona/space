@@ -16,6 +16,7 @@ import {
   parseMerchantCouponDateTimeWindow,
 } from "@/lib/merchantCouponClaimWindows";
 import { createClientMutationOperationId } from "@/lib/mutationOperationId";
+import { fetchWithAdminPerformance } from "@/lib/performanceTelemetry";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
   MERCHANT_COUPON_BEHAVIOR_TRIGGERS,
@@ -1547,7 +1548,7 @@ export default function MerchantCouponManager({
     const loadCouponsFromServer = async () => {
       const params = new URLSearchParams({ siteId });
       if (cachedSnapshot?.version) params.set("knownVersion", cachedSnapshot.version);
-      const response = await fetch(`/api/coupons?${params.toString()}`, {
+      const response = await fetchWithAdminPerformance(`/api/coupons?${params.toString()}`, {
         credentials: "same-origin",
         cache: "no-store",
       });
@@ -2034,7 +2035,7 @@ export default function MerchantCouponManager({
           operationSummary: `在优惠券 > 优惠券管理上传优惠券背景图：${form.title.trim() || "未命名优惠券"}`,
         },
         () =>
-          fetch("/api/assets/upload", {
+          fetchWithAdminPerformance("/api/assets/upload", {
             method: "POST",
             credentials: "same-origin",
             body: formData,
@@ -2067,7 +2068,7 @@ export default function MerchantCouponManager({
     setTip("");
     try {
       const editing = Boolean(form.id);
-      const response = await fetch("/api/coupons", {
+      const response = await fetchWithAdminPerformance("/api/coupons", {
         method: editing ? "PATCH" : "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
@@ -2104,7 +2105,7 @@ export default function MerchantCouponManager({
     setError("");
     setTip("");
     try {
-      const response = await fetch("/api/coupons", {
+      const response = await fetchWithAdminPerformance("/api/coupons", {
         method: "PATCH",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
@@ -2148,7 +2149,7 @@ export default function MerchantCouponManager({
     setTip("");
     try {
       const operationId = createClientMutationOperationId("coupon-redeem");
-      const response = await fetch("/api/coupons/redeem", {
+      const response = await fetchWithAdminPerformance("/api/coupons/redeem", {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
@@ -2183,7 +2184,7 @@ export default function MerchantCouponManager({
     setError("");
     setTip("");
     try {
-      const response = await fetch("/api/coupons", {
+      const response = await fetchWithAdminPerformance("/api/coupons", {
         method: "DELETE",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },

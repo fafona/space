@@ -19,6 +19,7 @@ import {
   writeMerchantAdminDataCache,
 } from "@/lib/merchantAdminDataCache";
 import { createClientMutationOperationId } from "@/lib/mutationOperationId";
+import { fetchWithAdminPerformance } from "@/lib/performanceTelemetry";
 import type {
   MerchantMemberLevel,
   MerchantMemberRechargePlan,
@@ -253,7 +254,7 @@ async function fetchMemberJson(input: RequestInfo | URL, init: RequestInit = {})
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), MERCHANT_MEMBER_REQUEST_TIMEOUT_MS);
   try {
-    return await fetch(input, {
+    return await fetchWithAdminPerformance(input, {
       ...init,
       signal: controller.signal,
     });
