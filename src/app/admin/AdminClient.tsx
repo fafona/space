@@ -14,8 +14,46 @@ import {
   type MouseEvent as ReactMouseEvent,
   type TouchEvent,
 } from "react";
-import dynamic from "next/dynamic";
 import { createPortal } from "react-dom";
+import {
+  AccountSwitcherDialog,
+  BlockRenderer,
+  ChatBusinessCardDialog,
+  ColorOrGradientPicker,
+  FaollaMobileSettingsContent,
+  FaollaQrPanel,
+  MemoizedInlineEditorBlock,
+  MerchantBookingManagerDialog,
+  MerchantBookingMobilePanel,
+  MerchantBusinessCardManager,
+  MerchantCouponManager,
+  MerchantMemberManager,
+  MerchantMembershipSettingsPanel,
+  MerchantOrderManagerDialog,
+  MerchantOrderMobilePanel,
+  MerchantPointRedemptionCashier,
+  MerchantPrintSettingsPanel,
+  MerchantProfileDialog,
+  MerchantRedemptionSettingsPanel,
+  RecentColorBar,
+  SupportMessageContent,
+  SupportMessageImagePreviewOverlay,
+  loadAccountSwitcherDialog,
+  loadEditorAssetProcessing,
+  loadEditorThemeProcessing,
+  loadFaollaQrPanel,
+  loadMerchantBookingManagerDialog,
+  loadMerchantBusinessCardManager,
+  loadMerchantCouponManager,
+  loadMerchantMemberManager,
+  loadMerchantMembershipSettingsPanel,
+  loadMerchantOrderManagerDialog,
+  loadMerchantPointRedemptionCashier,
+  loadMerchantPrintSettingsPanel,
+  loadMerchantProfileDialog,
+  loadSupportMessageContent,
+  preloadEditorPreviewComponents,
+} from "@/components/admin/AdminDeferredComponents";
 import {
   homeBlocks,
   type BackgroundEditableProps,
@@ -264,22 +302,6 @@ import { clearTankBattleLobbyReturnTarget, readTankBattleLobbyReturnTarget } fro
 import { useFaollaAndroidAppUpdate } from "@/lib/useFaollaAndroidAppUpdate";
 import { useMobilePortraitOrientationLock } from "@/lib/useMobilePortraitOrientationLock";
 
-function DeferredAdminPanelLoading({ label }: { label: string }) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm text-slate-500 shadow-sm">
-      {label}
-    </div>
-  );
-}
-
-function DeferredEditorPreviewLoading({ label }: { label: string }) {
-  return (
-    <div className="flex min-h-24 items-center justify-center rounded-lg border border-dashed border-slate-200 bg-white/70 px-4 text-xs text-slate-500">
-      {label}
-    </div>
-  );
-}
-
 function readSameOriginFrameHref(frame: HTMLIFrameElement | null) {
   try {
     return frame?.contentWindow?.location.href ?? "";
@@ -320,167 +342,6 @@ function scheduleAdminIdleTask(
     }
   };
 }
-
-const loadMerchantBusinessCardManager = () => import("@/components/admin/MerchantBusinessCardManager");
-const loadMerchantCouponManager = () => import("@/components/admin/MerchantCouponManager");
-const loadMerchantMemberManager = () => import("@/components/admin/MerchantMemberManager");
-const loadMerchantMembershipSettingsPanel = () => import("@/components/admin/MerchantMembershipSettingsPanel");
-const loadMerchantPointRedemptionCashier = () => import("@/components/admin/MerchantPointRedemptionCashier");
-const loadMerchantPrintSettingsPanel = () => import("@/components/admin/MerchantPrintSettingsPanel");
-const loadMerchantBookingManagerDialog = () => import("@/components/admin/MerchantBookingManagerDialog");
-const loadMerchantOrderManagerDialog = () => import("@/components/admin/MerchantOrderManagerDialog");
-const loadMerchantProfileDialog = () => import("@/components/admin/MerchantProfileDialog");
-const loadMerchantBookingMobilePanel = () => import("@/components/admin/MerchantBookingMobilePanel");
-const loadMerchantOrderMobilePanel = () => import("@/components/admin/MerchantOrderMobilePanel");
-const loadChatBusinessCardDialog = () => import("@/components/admin/ChatBusinessCardDialog");
-const loadSupportMessageImagePreviewOverlay = () =>
-  import("@/components/support/SupportMessageImagePreviewOverlay");
-const loadSupportMessageContent = () => import("@/components/support/SupportMessageContent");
-const loadFaollaQrPanel = () => import("@/components/FaollaQrPanel");
-const loadAccountSwitcherDialog = () => import("@/components/AccountSwitcherDialog");
-const loadFaollaMobileSettingsContent = () => import("@/components/FaollaMobileSettingsPages");
-const loadEditorColorControls = () => import("@/components/admin/EditorColorControls");
-const loadEditorFormControls = () => import("@/components/admin/EditorFormControls");
-const loadEditorAssetProcessing = () => import("@/lib/editorAssetProcessing");
-const loadEditorThemeProcessing = () => import("@/lib/editorThemeProcessing");
-const loadInlineEditorBlock = () => import("@/components/admin/InlineEditorBlock");
-const loadEditorBlockRenderer = () => import("@/components/blocks/BlockRenderer");
-const loadEditorBookingBlock = () => import("@/components/blocks/BookingBlock");
-const loadEditorCouponBlock = () => import("@/components/blocks/CouponBlock");
-const loadEditorGoogleReviewsBlock = () => import("@/components/blocks/GoogleReviewsBlock");
-
-function preloadEditorPreviewComponents() {
-  void Promise.allSettled([
-    loadEditorColorControls(),
-    loadEditorFormControls(),
-    loadEditorAssetProcessing(),
-    loadEditorThemeProcessing(),
-    loadInlineEditorBlock(),
-    loadEditorBlockRenderer(),
-    loadEditorBookingBlock(),
-    loadEditorCouponBlock(),
-    loadEditorGoogleReviewsBlock(),
-  ]);
-}
-
-const MerchantBusinessCardManager = dynamic(loadMerchantBusinessCardManager, {
-  ssr: false,
-  loading: () => <DeferredAdminPanelLoading label="名片夹加载中..." />,
-});
-
-const MerchantCouponManager = dynamic(loadMerchantCouponManager, {
-  ssr: false,
-  loading: () => <DeferredAdminPanelLoading label="优惠券加载中..." />,
-});
-
-const MerchantMemberManager = dynamic(loadMerchantMemberManager, {
-  ssr: false,
-  loading: () => <DeferredAdminPanelLoading label="会员管理加载中..." />,
-});
-
-const MerchantMembershipSettingsPanel = dynamic(loadMerchantMembershipSettingsPanel, {
-  ssr: false,
-  loading: () => <DeferredAdminPanelLoading label="会员配置加载中..." />,
-});
-
-const MerchantRedemptionSettingsPanel = dynamic(loadMerchantMembershipSettingsPanel, {
-  ssr: false,
-  loading: () => <DeferredAdminPanelLoading label="项目配置加载中..." />,
-});
-
-const MerchantPointRedemptionCashier = dynamic(loadMerchantPointRedemptionCashier, {
-  ssr: false,
-  loading: () => <DeferredAdminPanelLoading label="积分兑换加载中..." />,
-});
-
-const MerchantPrintSettingsPanel = dynamic(loadMerchantPrintSettingsPanel, {
-  ssr: false,
-  loading: () => <DeferredAdminPanelLoading label="打印配置加载中..." />,
-});
-
-const MerchantBookingManagerDialog = dynamic(loadMerchantBookingManagerDialog, {
-  ssr: false,
-  loading: () => <DeferredAdminPanelLoading label="预约管理加载中..." />,
-});
-
-const MerchantOrderManagerDialog = dynamic(loadMerchantOrderManagerDialog, {
-  ssr: false,
-  loading: () => <DeferredAdminPanelLoading label="订单管理加载中..." />,
-});
-
-const MerchantProfileDialog = dynamic(loadMerchantProfileDialog, {
-  ssr: false,
-  loading: () => <DeferredAdminPanelLoading label="商户资料加载中..." />,
-});
-
-const MerchantBookingMobilePanel = dynamic(loadMerchantBookingMobilePanel, {
-  ssr: false,
-  loading: () => <DeferredAdminPanelLoading label="预约列表加载中..." />,
-});
-
-const MerchantOrderMobilePanel = dynamic(loadMerchantOrderMobilePanel, {
-  ssr: false,
-  loading: () => <DeferredAdminPanelLoading label="订单列表加载中..." />,
-});
-
-const ChatBusinessCardDialog = dynamic(loadChatBusinessCardDialog, {
-  ssr: false,
-  loading: () => null,
-});
-
-const SupportMessageImagePreviewOverlay = dynamic(loadSupportMessageImagePreviewOverlay, {
-  ssr: false,
-  loading: () => null,
-});
-
-const SupportMessageContent = dynamic(loadSupportMessageContent, {
-  ssr: false,
-  loading: () => null,
-});
-
-const FaollaQrPanel = dynamic(loadFaollaQrPanel, {
-  ssr: false,
-  loading: () => <DeferredAdminPanelLoading label="二维码加载中..." />,
-});
-
-const AccountSwitcherDialog = dynamic(loadAccountSwitcherDialog, {
-  ssr: false,
-  loading: () => null,
-});
-
-const FaollaMobileSettingsContent = dynamic(
-  () => loadFaollaMobileSettingsContent().then((module) => module.FaollaMobileSettingsContent),
-  {
-    ssr: false,
-    loading: () => <DeferredAdminPanelLoading label="设置加载中..." />,
-  },
-);
-
-const ColorOrGradientPicker = dynamic(
-  () => loadEditorColorControls().then((module) => module.ColorOrGradientPicker),
-  {
-    ssr: false,
-    loading: () => <div className="h-10 w-full animate-pulse rounded border bg-white/70" />,
-  },
-);
-
-const RecentColorBar = dynamic(
-  () => loadEditorColorControls().then((module) => module.RecentColorBar),
-  {
-    ssr: false,
-    loading: () => <div className="h-8 w-full animate-pulse rounded border border-dashed bg-white/70" />,
-  },
-);
-
-const MemoizedInlineEditorBlock = dynamic(loadInlineEditorBlock, {
-  ssr: false,
-  loading: () => <DeferredEditorPreviewLoading label="区块编辑器加载中..." />,
-});
-
-const BlockRenderer = dynamic(loadEditorBlockRenderer, {
-  ssr: false,
-  loading: () => <DeferredEditorPreviewLoading label="页面预览加载中..." />,
-});
 
 const IMAGE_FILL_VALUES: ImageFillMode[] = [
   "cover",
