@@ -417,15 +417,6 @@ function productInitial(item: MerchantMemberRedemptionItem) {
   return trimText(item.name, 2) || trimText(item.code, 2) || "项";
 }
 
-function stockLabel(item: MerchantMemberRedemptionItem) {
-  if (item.stock === null) return "∞";
-  return item.stock > 0 ? `库存 ${item.stock}` : "无库存";
-}
-
-function shouldShowStock(settings: MerchantMembershipSettings | null) {
-  return settings?.redemptionShowStock !== false;
-}
-
 function operationErrorMessage(message: unknown, fallback: string, operationType: "redeem" | "recharge" = "redeem") {
   const text = trimText(message, 1000);
   if (text === "membership_not_found") return "会员不存在或数据已更新，请刷新后重新选择会员。";
@@ -4986,7 +4977,7 @@ export default function MerchantPointRedemptionCashier({
         .merchant-pos-cashier .product-footer {
           display: grid;
           grid-template-columns: minmax(0, 1fr) auto;
-          grid-template-rows: auto auto;
+          grid-template-rows: auto;
           gap: 8px;
           align-items: end;
         }
@@ -5004,7 +4995,7 @@ export default function MerchantPointRedemptionCashier({
         }
 
         .merchant-pos-cashier .product-tile-text {
-          grid-template-columns: 64px minmax(0, 1fr) auto auto;
+          grid-template-columns: 64px minmax(0, 1fr) auto;
           grid-template-rows: 1fr;
           align-items: center;
           min-height: 42px;
@@ -5022,27 +5013,9 @@ export default function MerchantPointRedemptionCashier({
           font-weight: 900;
         }
 
-        .merchant-pos-cashier .product-stock {
-          grid-column: 1 / -1;
-          color: var(--pos-muted);
-          font-size: 12px;
-          font-weight: 800;
-          text-align: right;
-        }
-
-        .merchant-pos-cashier .product-tile-text .product-stock {
-          grid-column: auto;
-          min-width: 58px;
-          white-space: nowrap;
-        }
-
         .merchant-pos-cashier .product-tile-text .product-price {
           min-width: 42px;
           justify-self: end;
-        }
-
-        .merchant-pos-cashier .product-stock.danger {
-          color: var(--pos-danger);
         }
 
         .merchant-pos-cashier .catalog-empty {
@@ -5769,9 +5742,7 @@ export default function MerchantPointRedemptionCashier({
                               ? row.couponDiscountLabel || "卡券兑换"
                               : row.custom
                                 ? "快捷兑换"
-                                : row.item && shouldShowStock(settings)
-                                  ? `${categoryName(enabledCategories, row.categoryId)} / ${stockLabel(row.item)}`
-                                  : categoryName(enabledCategories, row.categoryId)}
+                                : categoryName(enabledCategories, row.categoryId)}
                           </span>
                         </strong>
                         <span>{row.couponPointDiscount > 0 ? `-${formatPoints(row.couponPointDiscount)}` : formatPoints(row.unitPoints)}</span>
@@ -6072,7 +6043,6 @@ export default function MerchantPointRedemptionCashier({
                 const itemImageUrl = normalizePublicAssetUrl(item.imageUrl || "");
                 const pointsUnavailable = item.pointsCost === null;
                 const itemDisabled = outOfStock || pointsUnavailable;
-                const showStock = shouldShowStock(settings);
 
                 if (viewMode === "text") {
                   return (
@@ -6086,7 +6056,6 @@ export default function MerchantPointRedemptionCashier({
                       <span className="product-code">{item.code || item.id}</span>
                       <strong>{item.name}</strong>
                       <span className="product-price">{pointsUnavailable ? "-" : formatPoints(unitPoints)}</span>
-                      {showStock ? <span className={`product-stock ${outOfStock ? "danger" : ""}`}>{stockLabel(item)}</span> : null}
                     </button>
                   );
                 }
@@ -6115,12 +6084,6 @@ export default function MerchantPointRedemptionCashier({
                     <div className="product-footer">
                       <strong>{item.name}</strong>
                       <span className="product-price">{pointsUnavailable ? "-" : formatPoints(unitPoints)}</span>
-                      {showStock ? (
-                        <span className={`product-stock ${outOfStock ? "danger" : ""}`}>
-                          {stockLabel(item)}
-                          {inCartQuantity ? ` / 已选 ${inCartQuantity}` : ""}
-                        </span>
-                      ) : null}
                     </div>
                   </button>
                 );
