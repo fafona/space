@@ -26,6 +26,7 @@ import {
   MerchantBookingManagerDialog,
   MerchantBookingMobilePanel,
   MerchantBusinessCardManager,
+  MerchantCustomerManager,
   MerchantCouponManager,
   MerchantMemberManager,
   MerchantMembershipSettingsPanel,
@@ -44,6 +45,7 @@ import {
   loadFaollaQrPanel,
   loadMerchantBookingManagerDialog,
   loadMerchantBusinessCardManager,
+  loadMerchantCustomerManager,
   loadMerchantCouponManager,
   loadMerchantMemberManager,
   loadMerchantMembershipSettingsPanel,
@@ -647,6 +649,7 @@ type MerchantDesktopSection =
   | "editor"
   | "profile"
   | "cards"
+  | "customers"
   | "coupons"
   | "couponRedeemWorkbench"
   | "couponClaims"
@@ -12625,6 +12628,17 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setMerchantDesktopSection("cards");
   }
 
+  async function openMerchantCustomersPanel() {
+    void loadMerchantCustomerManager().catch(() => undefined);
+    const resolvedSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
+    if (!resolvedSiteId) {
+      showTip("当前商户还没准备好客户资料，请稍后重试");
+      return;
+    }
+    setMerchantSiteIdOverride(resolvedSiteId);
+    setMerchantDesktopSection("customers");
+  }
+
   function openMerchantCouponsPanel(
     section: "coupons" | "couponRedeemWorkbench" | "couponClaims" | "couponRedemptions" | "couponDailyStats" = "coupons",
   ) {
@@ -18215,6 +18229,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     merchantDesktopSection === "editor" ||
     merchantDesktopSection === "business" ||
     merchantDesktopSection === "cards" ||
+    merchantDesktopSection === "customers" ||
     merchantDesktopSection === "logs" ||
     merchantDesktopSection === "printer";
   const merchantDesktopCouponCenterActive =
@@ -19156,6 +19171,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             merchantBusinessCenterContent
           ) : merchantDesktopSection === "cards" && merchantBusinessCardManagerCommonProps ? (
             <MerchantBusinessCardManager {...merchantBusinessCardManagerCommonProps} folderViewMode="page" />
+          ) : merchantDesktopSection === "customers" ? (
+            <MerchantCustomerManager
+              siteId={editingSiteId || merchantSiteIdOverride || ""}
+              siteName={effectiveMerchantDisplayName || merchantDisplayName}
+              className="min-h-[calc(100vh-14rem)]"
+            />
           ) : merchantDesktopCouponCenterActive && merchantCouponManagerCommonProps ? (
             <MerchantCouponManager {...merchantCouponManagerCommonProps} view={merchantCouponManagerView} />
           ) : merchantDesktopSection === "printer" ? (
@@ -19819,6 +19840,19 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         <span className="min-w-8 rounded-full bg-blue-50 px-2 py-0.5 text-center text-[11px] font-bold text-blue-700 ring-1 ring-blue-100">
                           {merchantBusinessCardCount}
                         </span>
+                      </button>
+                      <button
+                        type="button"
+                        className={getMerchantDesktopSubmenuButtonClassName(merchantDesktopSection === "customers")}
+                        onPointerEnter={() => {
+                          void loadMerchantCustomerManager().catch(() => undefined);
+                        }}
+                        onFocus={() => {
+                          void loadMerchantCustomerManager().catch(() => undefined);
+                        }}
+                        onClick={openMerchantCustomersPanel}
+                      >
+                        客户管理
                       </button>
                       <button
                         type="button"
