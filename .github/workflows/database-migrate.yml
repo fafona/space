@@ -1,0 +1,159 @@
+name: Apply Production Database Migrations
+
+on:
+  workflow_dispatch:
+    inputs:
+      through:
+        description: Latest 12-digit migration version in the target commit
+        required: true
+        default: "202607310001"
+      backup_run_id:
+        description: Successful Encrypted Database Backup run created within the last 24 hours
+        required: true
+      confirmation:
+        description: Type APPLY to confirm the production migration
+        required: true
+
+concurrency:
+  # Share the application deploy lock so code and schema changes cannot overlap.
+  group: production-deploy
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+      - name: Checkout Migration Source
+        uses: actions/checkout@v5
+
+      - name: Validate Migration Request And Backup
+        env:
+          BACKUP_RUN_ID: ${{ inputs.backup_run_id }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          GH_TOKEN: ${{ github.token }}
+          THROUGH_VERSION: ${{ inputs.through }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$CONFIRMATION" = "APPLY"
+          test "$GITHUB_REF" = "refs/heads/main"
+          [[ "$THROUGH_VERSION" =~ ^[0-9]{12}$ ]]
+          [[ "$BACKUP_RUN_ID" =~ ^[0-9]+$ ]]
+          migration_count="$(find scripts/supabase-migrations -maxdepth 1 -type f \
+            -name "${THROUGH_VERSION}_*.sql" | wc -l)"
+          test "$migration_count" = "1"
+          latest_migration="$(find scripts/supabase-migrations -maxdepth 1 -type f \
+            -name '[0-9]*_*.sql' -printf '%f\n' | sort | tail -n 1)"
+          test "${latest_migration%%_*}" = "$THROUGH_VERSION"
+
+          backup_json="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${BACKUP_RUN_ID}")"
+          jq -e '
+            .name == "Encrypted Database Backup" and
+            .path == ".github/workflows/database-backup.yml" and
+            .event == "workflow_dispatch" and
+            .head_branch == "main" and
+            .status == "completed" and
+            .conclusion == "success"
+          ' <<<"$backup_json" >/dev/null
+
+          artifact_json="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${BACKUP_RUN_ID}/artifacts?per_page=100")"
+          jq -e --arg artifact_name \
+            "faolla-encrypted-disaster-recovery-${BACKUP_RUN_ID}" '
+              [.artifacts[] |
+                select(
+                  .name == $artifact_name and
+                  .expired == false and
+                  .size_in_bytes > 0
+                )
+              ] | length == 1
+            ' <<<"$artifact_json" >/dev/null
+
+          completed_at="$(jq -r '.updated_at' <<<"$backup_json")"
+          completed_epoch="$(date -u -d "$completed_at" +%s)"
+          current_epoch="$(date -u +%s)"
+          backup_age_seconds="$((current_epoch - completed_epoch))"
+          test "$backup_age_seconds" -ge 0
+          test "$backup_age_seconds" -le 86400
+          printf '[migration] verified backup run=%s ageSeconds=%s\n' \
+            "$BACKUP_RUN_ID" "$backup_age_seconds"
+
+      - name: Verify Target Release Is Live
+        shell: bash
+        run: |
+          node scripts/check-production-smoke.mjs \
+            --origin https://faolla.com \
+            --paths /,/login,/admin \
+            --expected-build "$GITHUB_SHA" \
+            --attempts 8 \
+            --delay-ms 2000 \
+            --timeout-ms 12000
+
+      - name: Setup SSH
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SSH_HOST"
+          test -n "$SSH_PRIVATE_KEY"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          scan_ok=0
+          for attempt in 1 2 3 4 5; do
+            if ssh-keyscan -T 15 -p "${SSH_PORT:-22}" -H "$SSH_HOST" \
+              >> ~/.ssh/known_hosts; then
+              scan_ok=1
+              break
+            fi
+            sleep 5
+          done
+          test "$scan_ok" = "1"
+
+      - name: Apply Forward Migrations
+        env:
+          APP_DIR: ${{ secrets.APP_DIR }}
+          EXPECTED_COMMIT: ${{ github.sha }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          THROUGH_VERSION: ${{ inputs.through }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$APP_DIR"
+          test -n "$SSH_USER"
+          [[ "$APP_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]]
+          ssh -o ConnectTimeout=20 -o ConnectionAttempts=3 \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=5 \
+            -o StrictHostKeyChecking=yes -p "${SSH_PORT:-22}" \
+            "$SSH_USER@$SSH_HOST" \
+            "cd '$APP_DIR' && test \"\$(git rev-parse HEAD)\" = '$EXPECTED_COMMIT' && test -z \"\$(git status --porcelain --untracked-files=all -- scripts/apply-production-database-migrations.mjs scripts/check-database-backup-readiness.mjs scripts/check-supabase-migrations.mjs scripts/supabase-migrations)\" && node --env-file=.env.local scripts/apply-production-database-migrations.mjs --apply --through='$THROUGH_VERSION' --json"
+
+      - name: Verify Production Migration Health
+        env:
+          APP_DIR: ${{ secrets.APP_DIR }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -o ConnectTimeout=20 -o ConnectionAttempts=3 \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=5 \
+            -o StrictHostKeyChecking=yes -p "${SSH_PORT:-22}" \
+            "$SSH_USER@$SSH_HOST" \
+            "cd '$APP_DIR' && node --env-file=.env.local scripts/check-production-operations.mjs --origin https://faolla.com --require-v1-ready --json"
