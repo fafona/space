@@ -3,15 +3,19 @@ import test from "node:test";
 import {
   addMerchantTaskComment,
   bootstrapMerchantEnterpriseWorkspace,
+  createMerchantEnterpriseEmployee,
+  createMerchantTaskChecklistItem,
   createMerchantTaskBoard,
   createMerchantTaskColumn,
   createMerchantTask,
   loadMerchantEnterpriseSnapshot,
+  loadMerchantTaskChecklistItems,
   loadMerchantTaskEvents,
   moveMerchantTask,
   updateMerchantEnterpriseEmployee,
   updateMerchantTaskBoard,
   updateMerchantTaskColumn,
+  updateMerchantTaskChecklistItem,
   updateMerchantTask,
   type MerchantEnterpriseStoreClient,
 } from "@/lib/merchantEnterpriseStore.server";
@@ -70,6 +74,25 @@ function taskEventRow(eventType = "commented") {
   };
 }
 
+function checklistItemRow(
+  version = 1,
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    merchant_id: "10000000",
+    task_id: "11111111-1111-4111-8111-111111111111",
+    text: "Confirm inventory",
+    position: 1024,
+    completed_at: null,
+    archived_at: null,
+    version,
+    created_at: "2026-07-31T08:30:00.000Z",
+    updated_at: "2026-07-31T08:30:00.000Z",
+    ...overrides,
+  };
+}
+
 function boardRow(
   id = "22222222-2222-4222-8222-222222222222",
   version = 1,
@@ -107,6 +130,73 @@ function columnRow(
     updated_at: "2026-07-31T08:00:00.000Z",
   };
 }
+
+test("employee creation strictly validates normalized auth email input", async () => {
+  let called = false;
+  const client = {
+    from() {
+      called = true;
+      throw new Error("invalid email must stop before persistence");
+    },
+    async rpc() {
+      throw new Error("unexpected RPC");
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+
+  for (const email of ["missing-domain@", "two words@example.com", "x".repeat(255)]) {
+    await assert.rejects(
+      createMerchantEnterpriseEmployee(client, {
+        siteId: "10000000",
+        email,
+        displayName: "Staff",
+        roleId: "99999999-9999-4999-8999-999999999999",
+      }),
+      /invalid_employee_email/,
+    );
+  }
+  assert.equal(called, false);
+});
+
+test("employee creation preserves the merchant email uniqueness conflict", async () => {
+  const client = {
+    from(table: string) {
+      assert.equal(table, "merchant_enterprise_employees");
+      const builder = {
+        insert(payload: Record<string, unknown>) {
+          assert.equal(payload.email, "staff@example.com");
+          return builder;
+        },
+        select() {
+          return builder;
+        },
+        async single() {
+          return {
+            data: null,
+            error: {
+              code: "23505",
+              message:
+                'duplicate key value violates unique constraint "merchant_enterprise_employees_email_unique_idx"',
+            },
+          };
+        },
+      };
+      return builder;
+    },
+    async rpc() {
+      throw new Error("unexpected RPC");
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+
+  await assert.rejects(
+    createMerchantEnterpriseEmployee(client, {
+      siteId: "10000000",
+      email: " Staff@Example.com ",
+      displayName: "Staff",
+      roleId: "99999999-9999-4999-8999-999999999999",
+    }),
+    /^Error: employee_email_in_use$/,
+  );
+});
 
 test("employee invite reservation uses merchant, id and version CAS while updating invited_at", async () => {
   const invitedAt = "2026-07-31T09:30:00.000Z";
@@ -538,6 +628,244 @@ test("task comments reject empty and oversized text before the RPC", async () =>
     );
   }
   assert.equal(rpcCalled, false);
+});
+
+test("task checklist reads stay merchant and task scoped with a bounded stable order", async () => {
+  const filters: Array<[string, unknown]> = [];
+  const nullFilters: Array<[string, unknown]> = [];
+  const orders: Array<[string, { ascending: boolean }]> = [];
+  let selectedColumns = "";
+  let requestedLimit = 0;
+  const client = {
+    from(table: string) {
+      assert.equal(table, "merchant_task_checklist_items");
+      const builder = {
+        select(columns: string) {
+          selectedColumns = columns;
+          return builder;
+        },
+        eq(column: string, value: unknown) {
+          filters.push([column, value]);
+          return builder;
+        },
+        is(column: string, value: unknown) {
+          nullFilters.push([column, value]);
+          return builder;
+        },
+        order(column: string, options: { ascending: boolean }) {
+          orders.push([column, options]);
+          return builder;
+        },
+        async limit(value: number) {
+          requestedLimit = value;
+          return {
+            data: [
+              checklistItemRow(2, {
+                completed_at: "2026-07-31T09:00:00.000Z",
+              }),
+              checklistItemRow(3, {
+                id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                merchant_id: "99999999",
+              }),
+            ],
+            error: null,
+          };
+        },
+      };
+      return builder;
+    },
+    async rpc() {
+      throw new Error("checklist reads must not call RPCs");
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+
+  const items = await loadMerchantTaskChecklistItems(
+    client,
+    "10000000",
+    "11111111-1111-4111-8111-111111111111",
+  );
+
+  assert.match(selectedColumns, /completed_at,archived_at,version/);
+  assert.deepEqual(filters, [
+    ["merchant_id", "10000000"],
+    ["task_id", "11111111-1111-4111-8111-111111111111"],
+  ]);
+  assert.deepEqual(nullFilters, [["archived_at", null]]);
+  assert.deepEqual(orders, [
+    ["position", { ascending: true }],
+    ["created_at", { ascending: true }],
+    ["id", { ascending: true }],
+  ]);
+  assert.equal(requestedLimit, 100);
+  assert.equal(items.length, 1);
+  assert.equal(items[0]?.siteId, "10000000");
+  assert.equal(items[0]?.completed, true);
+});
+
+test("task checklist creation uses one scoped idempotent RPC", async () => {
+  const calls: Array<{ functionName: string; args: Record<string, unknown> }> = [];
+  const client = {
+    from() {
+      throw new Error("checklist creation must not issue direct table writes");
+    },
+    async rpc(functionName: string, args: Record<string, unknown>) {
+      calls.push({ functionName, args });
+      return { data: { item: checklistItemRow() }, error: null };
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+
+  const item = await createMerchantTaskChecklistItem(client, {
+    siteId: "10000000",
+    taskId: "11111111-1111-4111-8111-111111111111",
+    text: " Confirm inventory ",
+    actorType: "owner",
+    actorId: "44444444-4444-4444-8444-444444444444",
+    operationId: "task-checklist-create-1",
+  });
+
+  assert.equal(calls[0]?.functionName, "faolla_create_merchant_task_checklist_item_v1");
+  assert.deepEqual(calls[0]?.args.p_input, {
+    merchant_id: "10000000",
+    task_id: "11111111-1111-4111-8111-111111111111",
+    text: "Confirm inventory",
+    actor_type: "owner",
+    actor_id: "44444444-4444-4444-8444-444444444444",
+    operation_id: "task-checklist-create-1",
+  });
+  assert.equal(item.text, "Confirm inventory");
+  assert.equal(item.version, 1);
+});
+
+test("task checklist updates carry task scope, item CAS and each supported action", async () => {
+  const changes = [
+    { text: "Count final stock" },
+    { completed: true },
+    { completed: false },
+    { archived: true },
+    { archived: false },
+  ] as const;
+
+  for (const [index, change] of changes.entries()) {
+    const calls: Array<{ functionName: string; args: Record<string, unknown> }> = [];
+    const client = {
+      from() {
+        throw new Error("checklist updates must not issue direct table writes");
+      },
+      async rpc(functionName: string, args: Record<string, unknown>) {
+        calls.push({ functionName, args });
+        return {
+          data: {
+            item: checklistItemRow(8, {
+              ...(change && "completed" in change && change.completed
+                ? { completed_at: "2026-07-31T09:00:00.000Z" }
+                : {}),
+              ...(change && "archived" in change && change.archived
+                ? { archived_at: "2026-07-31T09:00:00.000Z" }
+                : {}),
+            }),
+          },
+          error: null,
+        };
+      },
+    } as unknown as MerchantEnterpriseStoreClient;
+
+    const item = await updateMerchantTaskChecklistItem(client, {
+      siteId: "10000000",
+      taskId: "11111111-1111-4111-8111-111111111111",
+      itemId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      version: 7,
+      actorType: "employee",
+      actorId: "55555555-5555-4555-8555-555555555555",
+      operationId: `task-checklist-update-${index}`,
+      ...change,
+    });
+
+    assert.equal(calls[0]?.functionName, "faolla_update_merchant_task_checklist_item_v1");
+    assert.deepEqual(calls[0]?.args.p_input, {
+      merchant_id: "10000000",
+      task_id: "11111111-1111-4111-8111-111111111111",
+      item_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      expected_version: 7,
+      actor_type: "employee",
+      actor_id: "55555555-5555-4555-8555-555555555555",
+      operation_id: `task-checklist-update-${index}`,
+      ...change,
+    });
+    assert.equal(item.version, 8);
+  }
+});
+
+test("task checklist rejects invalid text and versions before persistence", async () => {
+  let rpcCalled = false;
+  const client = {
+    from() {
+      throw new Error("unexpected table access");
+    },
+    async rpc() {
+      rpcCalled = true;
+      throw new Error("unexpected RPC");
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+
+  for (const text of ["   ", "x".repeat(501)]) {
+    await assert.rejects(
+      createMerchantTaskChecklistItem(client, {
+        siteId: "10000000",
+        taskId: "11111111-1111-4111-8111-111111111111",
+        text,
+        actorType: "owner",
+        actorId: "44444444-4444-4444-8444-444444444444",
+      }),
+      /invalid_task_checklist_create/,
+    );
+  }
+  await assert.rejects(
+    updateMerchantTaskChecklistItem(client, {
+      siteId: "10000000",
+      taskId: "11111111-1111-4111-8111-111111111111",
+      itemId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      version: 0,
+      text: "Updated",
+      actorType: "owner",
+      actorId: "44444444-4444-4444-8444-444444444444",
+    }),
+    /invalid_task_checklist_update/,
+  );
+  assert.equal(rpcCalled, false);
+});
+
+test("task checklist RPC errors preserve actionable public codes", async () => {
+  for (const code of [
+    "enterprise_version_conflict",
+    "enterprise_operation_in_progress",
+    "task_not_found",
+    "task_checklist_item_not_found",
+    "task_checklist_limit_reached",
+    "invalid_task_checklist_archived",
+  ]) {
+    const client = {
+      from() {
+        throw new Error("unexpected table access");
+      },
+      async rpc() {
+        return { data: null, error: { code: "P0001", message: code } };
+      },
+    } as unknown as MerchantEnterpriseStoreClient;
+
+    await assert.rejects(
+      updateMerchantTaskChecklistItem(client, {
+        siteId: "10000000",
+        taskId: "11111111-1111-4111-8111-111111111111",
+        itemId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        version: 7,
+        completed: true,
+        actorType: "owner",
+        actorId: "44444444-4444-4444-8444-444444444444",
+        operationId: `task-checklist-error-${code}`,
+      }),
+      new RegExp(code),
+    );
+  }
 });
 
 test("assignee-only task update still goes through the version-locking RPC", async () => {

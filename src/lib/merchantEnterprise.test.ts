@@ -5,6 +5,7 @@ import {
   buildMerchantTaskEditChanges,
   DEFAULT_MERCHANT_ENTERPRISE_ROLES,
   filterMerchantTasks,
+  getMerchantTaskCompletionTransition,
   getMissingMerchantEnterprisePermissionDependencies,
   hasMerchantEnterprisePermission,
   isMerchantEnterpriseSchemaMissingError,
@@ -20,6 +21,7 @@ import {
   toggleMerchantEnterprisePermissionSelection,
   type MerchantEnterpriseActor,
   type MerchantTask,
+  type MerchantTaskColumn,
 } from "@/lib/merchantEnterprise";
 
 test("enterprise permission normalization removes unknown and duplicate permissions", () => {
@@ -130,6 +132,11 @@ test("task event normalization exposes only bounded activity payload fields", ()
       toColumnId: "column-2",
       assigneeIds: ["employee-1", "employee-1"],
       targetIndex: 3,
+      checklistItemId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      completed: true,
+      previousCompleted: false,
+      archived: "false",
+      previousArchived: false,
       unsafe: { nested: "secret" },
     },
     created_at: "2026-07-31T08:00:00.000Z",
@@ -139,6 +146,14 @@ test("task event normalization exposes only bounded activity payload fields", ()
   assert.deepEqual(event?.payload.fields, ["title", "description"]);
   assert.deepEqual(event?.payload.assigneeIds, ["employee-1"]);
   assert.equal(event?.payload.targetIndex, 3);
+  assert.equal(
+    event?.payload.checklistItemId,
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  );
+  assert.equal(event?.payload.completed, true);
+  assert.equal(event?.payload.previousCompleted, false);
+  assert.equal(event?.payload.previousArchived, false);
+  assert.equal("archived" in (event?.payload ?? {}), false);
   assert.equal("unsafe" in (event?.payload ?? {}), false);
   assert.equal(normalizeMerchantTaskEvent({ event_type: "commented" }), null);
 });
@@ -260,6 +275,108 @@ test("task filters combine archive, priority, assignee and text criteria", () =>
       archive: "archived",
     }).map((item) => item.id),
     ["task-2"],
+  );
+});
+
+test("task completion transitions use the first active opposite-state column in the same board", () => {
+  const task = {
+    id: "task-1",
+    siteId: "10000000",
+    boardId: "board-1",
+    columnId: "doing",
+    title: "准备库存",
+    description: "",
+    priority: "normal",
+    dueAt: null,
+    completedAt: null,
+    archivedAt: null,
+    position: 1,
+    sourceType: "",
+    sourceId: "",
+    createdByEmployeeId: "",
+    assigneeIds: [],
+    version: 1,
+    createdAt: "2026-07-31T08:00:00.000Z",
+    updatedAt: "2026-07-31T08:00:00.000Z",
+  } satisfies MerchantTask;
+  const column = (
+    id: string,
+    boardId: string,
+    position: number,
+    isDone: boolean,
+    status: "active" | "archived" = "active",
+  ) =>
+    ({
+      id,
+      siteId: "10000000",
+      boardId,
+      name: id,
+      color: "#64748b",
+      position,
+      isDone,
+      status,
+      version: 1,
+      createdAt: "2026-07-31T08:00:00.000Z",
+      updatedAt: "2026-07-31T08:00:00.000Z",
+    }) satisfies MerchantTaskColumn;
+  const columns = [
+    column("todo", "board-1", 0, false),
+    column("doing", "board-1", 1, false),
+    column("done-archived", "board-1", 2, true, "archived"),
+    column("done-first", "board-1", 3, true),
+    column("done-second", "board-1", 4, true),
+    column("other-board-done", "board-2", 0, true),
+  ];
+
+  assert.deepEqual(getMerchantTaskCompletionTransition(task, columns), {
+    action: "complete",
+    targetColumnId: "done-first",
+    targetColumnName: "done-first",
+  });
+  assert.deepEqual(
+    getMerchantTaskCompletionTransition(
+      { ...task, columnId: "done-first" },
+      columns,
+    ),
+    {
+      action: "reopen",
+      targetColumnId: "todo",
+      targetColumnName: "todo",
+    },
+  );
+});
+
+test("task completion transitions reject archived tasks and incomplete column structures", () => {
+  const task = {
+    boardId: "board-1",
+    columnId: "doing",
+    archivedAt: null,
+  };
+  const columns = [
+    {
+      id: "doing",
+      boardId: "board-1",
+      name: "进行中",
+      position: 0,
+      status: "active" as const,
+      isDone: false,
+    },
+  ];
+
+  assert.equal(getMerchantTaskCompletionTransition(task, columns), null);
+  assert.equal(
+    getMerchantTaskCompletionTransition(
+      { ...task, archivedAt: "2026-08-01T08:00:00.000Z" },
+      columns,
+    ),
+    null,
+  );
+  assert.equal(
+    getMerchantTaskCompletionTransition(
+      { ...task, columnId: "missing" },
+      columns,
+    ),
+    null,
   );
 });
 

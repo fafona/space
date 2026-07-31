@@ -13,6 +13,8 @@ export const MERCHANT_ENTERPRISE_PERMISSIONS = [
 ] as const;
 
 export const MAX_MERCHANT_TASK_ASSIGNEES = 50;
+export const MAX_MERCHANT_TASK_CHECKLIST_ITEMS = 100;
+export const MAX_MERCHANT_TASK_CHECKLIST_TEXT_LENGTH = 500;
 
 export type MerchantEnterprisePermission = (typeof MERCHANT_ENTERPRISE_PERMISSIONS)[number];
 
@@ -154,6 +156,20 @@ export type MerchantTask = {
   updatedAt: string;
 };
 
+export type MerchantTaskChecklistItem = {
+  id: string;
+  siteId: string;
+  taskId: string;
+  text: string;
+  position: number;
+  completed: boolean;
+  completedAt: string | null;
+  archivedAt: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type MerchantTaskEventActorType = "owner" | "employee" | "system";
 
 export type MerchantTaskEventPayload = {
@@ -168,6 +184,11 @@ export type MerchantTaskEventPayload = {
   targetIndex?: number;
   position?: number;
   completedAt?: string | null;
+  checklistItemId?: string;
+  completed?: boolean;
+  previousCompleted?: boolean;
+  archived?: boolean;
+  previousArchived?: boolean;
 };
 
 export type MerchantTaskEvent = {
@@ -589,6 +610,23 @@ export function normalizeMerchantTaskEvent(value: unknown): MerchantTaskEvent | 
     if (completedAt) payload.completedAt = completedAt;
   }
 
+  const checklistItemId = normalizeText(rawPayload.checklistItemId, 80);
+  if (
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      checklistItemId,
+    )
+  ) {
+    payload.checklistItemId = checklistItemId;
+  }
+  for (const key of [
+    "completed",
+    "previousCompleted",
+    "archived",
+    "previousArchived",
+  ] as const) {
+    if (typeof rawPayload[key] === "boolean") payload[key] = rawPayload[key];
+  }
+
   return {
     id,
     siteId,
@@ -677,6 +715,45 @@ export function buildMerchantTaskEditChanges(
   }
 
   return { ok: true, changes };
+}
+
+export type MerchantTaskCompletionTransition = {
+  action: "complete" | "reopen";
+  targetColumnId: string;
+  targetColumnName: string;
+};
+
+export function getMerchantTaskCompletionTransition(
+  task: Pick<MerchantTask, "boardId" | "columnId" | "archivedAt">,
+  columns: readonly Pick<
+    MerchantTaskColumn,
+    "id" | "boardId" | "name" | "position" | "status" | "isDone"
+  >[],
+): MerchantTaskCompletionTransition | null {
+  if (task.archivedAt) return null;
+  const currentColumn = columns.find(
+    (column) =>
+      column.id === task.columnId &&
+      column.boardId === task.boardId &&
+      column.status === "active",
+  );
+  if (!currentColumn) return null;
+
+  const targetColumn = columns
+    .filter(
+      (column) =>
+        column.boardId === task.boardId &&
+        column.status === "active" &&
+        column.isDone !== currentColumn.isDone,
+    )
+    .sort((left, right) => left.position - right.position || left.id.localeCompare(right.id))[0];
+  if (!targetColumn) return null;
+
+  return {
+    action: currentColumn.isDone ? "reopen" : "complete",
+    targetColumnId: targetColumn.id,
+    targetColumnName: targetColumn.name,
+  };
 }
 
 export function filterMerchantTasks(

@@ -21,6 +21,7 @@ import {
   PATCH as updateEmployee,
   POST as createEmployee,
   reserveEmployeeInvitationResend,
+  toPublicMerchantEnterpriseEmployee,
 } from "@/app/api/merchant-enterprise/employees/route";
 import { POST as acceptEmployee } from "@/app/api/merchant-enterprise/employees/accept/route";
 import {
@@ -39,6 +40,12 @@ import {
   POST as createTaskComment,
   toPublicMerchantTaskEvent,
 } from "@/app/api/merchant-enterprise/task-events/route";
+import {
+  GET as getTaskChecklist,
+  PATCH as updateTaskChecklistItem,
+  POST as createTaskChecklistItem,
+  getMerchantTaskChecklistErrorResponse,
+} from "@/app/api/merchant-enterprise/task-checklist/route";
 import type {
   MerchantEnterpriseActor,
   MerchantEnterpriseEmployee,
@@ -94,12 +101,13 @@ test("employee invitation resend enforces a 60-second cooldown without reserving
     { status: "cooldown", employee, retryAfterSeconds: 31 },
   );
   const response = createEmployeeInvitationCooldownResponse(employee, 31);
+  const publicEmployee = toPublicMerchantEnterpriseEmployee(employee);
   assert.equal(response.status, 429);
   assert.equal(response.headers.get("Retry-After"), "31");
   assert.deepEqual(await response.json(), {
     ok: false,
     error: "employee_invitation_cooldown",
-    employee,
+    employee: publicEmployee,
     retryAfterSeconds: 31,
   });
 });
@@ -164,8 +172,101 @@ test("eligible employee invitation resend reserves a new version before email de
   });
   assert.deepEqual(await response.json(), {
     ok: true,
-    employee: result.employee,
+    employee: toPublicMerchantEnterpriseEmployee(result.employee),
     invitation: { status: "failed", error: "invite_unavailable" },
+  });
+});
+
+test("employee mutation responses never expose the Supabase auth user id", () => {
+  const employee = pendingEmployee("2026-07-31T09:58:59.999Z");
+  const publicEmployee = toPublicMerchantEnterpriseEmployee(employee);
+  assert.equal("authUserId" in publicEmployee, false);
+  assert.equal(publicEmployee.email, employee.email);
+  assert.equal(publicEmployee.id, employee.id);
+});
+
+test("employee creation rejects malformed emails before authentication", async () => {
+  for (const email of ["missing-domain@", "two words@example.com", "x".repeat(255)]) {
+    const response = await createEmployee(
+      new Request("https://www.faolla.com/api/merchant-enterprise/employees", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://www.faolla.com",
+        },
+        body: JSON.stringify({
+          siteId: "10000000",
+          displayName: "Staff",
+          email,
+          roleId: "99999999-9999-4999-8999-999999999999",
+        }),
+      }),
+    );
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      ok: false,
+      error: "invalid_employee_email",
+    });
+  }
+});
+
+test("employee email cannot be changed through the generic update path", async () => {
+  const response = await updateEmployee(
+    new Request("https://www.faolla.com/api/merchant-enterprise/employees", {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        origin: "https://www.faolla.com",
+      },
+      body: JSON.stringify({
+        siteId: "10000000",
+        employeeId: "77777777-7777-4777-8777-777777777777",
+        version: 7,
+        email: "replacement@example.com",
+      }),
+    }),
+  );
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), {
+    ok: false,
+    error: "employee_email_change_requires_reinvite",
+  });
+});
+
+test("pending invitation removal is a recognized, isolated employee action", async () => {
+  const base = {
+    siteId: "10000000",
+    employeeId: "77777777-7777-4777-8777-777777777777",
+    version: 7,
+    action: "remove_invite",
+  };
+  const recognized = await updateEmployee(
+    new Request("https://www.faolla.com/api/merchant-enterprise/employees", {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        origin: "https://www.faolla.com",
+      },
+      body: JSON.stringify(base),
+    }),
+  );
+  assert.equal(recognized.status, 401);
+  assert.deepEqual(await recognized.json(), { ok: false, error: "unauthorized" });
+
+  const mixed = await updateEmployee(
+    new Request("https://www.faolla.com/api/merchant-enterprise/employees", {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        origin: "https://www.faolla.com",
+      },
+      body: JSON.stringify({ ...base, displayName: "Unexpected edit" }),
+    }),
+  );
+  assert.equal(mixed.status, 400);
+  assert.deepEqual(await mixed.json(), {
+    ok: false,
+    error: "invalid_employee_action",
   });
 });
 
@@ -905,6 +1006,240 @@ test("task event routes validate site, task, comment and operation ids before au
     );
     assert.equal(response.status, 400);
   }
+});
+
+test("task checklist reads validate site and task ids before authorization", async () => {
+  const taskId = "11111111-1111-4111-8111-111111111111";
+  for (const [url, error] of [
+    [
+      `https://www.faolla.com/api/merchant-enterprise/task-checklist?siteId=bad&taskId=${taskId}`,
+      "invalid_site_id",
+    ],
+    [
+      "https://www.faolla.com/api/merchant-enterprise/task-checklist?siteId=10000000&taskId=bad",
+      "invalid_task_id",
+    ],
+  ] as const) {
+    const response = await getTaskChecklist(new Request(url));
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { ok: false, error });
+  }
+});
+
+test("task checklist creation validates ids, text and operation id before authorization", async () => {
+  const validBody = {
+    siteId: "10000000",
+    taskId: "11111111-1111-4111-8111-111111111111",
+    text: "Confirm delivery address",
+    operationId: "task-checklist-create-1",
+  };
+  const cases = [
+    [{ ...validBody, siteId: "bad" }, "invalid_site_id"],
+    [{ ...validBody, taskId: "bad" }, "invalid_task_id"],
+    [{ ...validBody, text: "   " }, "invalid_task_checklist_text"],
+    [{ ...validBody, text: 42 }, "invalid_task_checklist_text"],
+    [{ ...validBody, text: "x".repeat(501) }, "invalid_task_checklist_text"],
+    [{ ...validBody, operationId: "not valid" }, "invalid_operation_id"],
+    [
+      { ...validBody, completed: true },
+      "invalid_task_checklist_create",
+    ],
+  ] as const;
+
+  for (const [body, error] of cases) {
+    const response = await createTaskChecklistItem(
+      new Request("https://www.faolla.com/api/merchant-enterprise/task-checklist", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://www.faolla.com",
+        },
+        body: JSON.stringify(body),
+      }),
+    );
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { ok: false, error });
+  }
+});
+
+test("task checklist updates require one validated field and optimistic version", async () => {
+  const validBody = {
+    siteId: "10000000",
+    taskId: "11111111-1111-4111-8111-111111111111",
+    itemId: "22222222-2222-4222-8222-222222222222",
+    version: 1,
+    operationId: "task-checklist-update-1",
+  };
+  const cases = [
+    [{ ...validBody, siteId: "bad", completed: true }, "invalid_site_id"],
+    [{ ...validBody, taskId: "bad", completed: true }, "invalid_task_id"],
+    [
+      { ...validBody, itemId: "bad", completed: true },
+      "invalid_task_checklist_item_id",
+    ],
+    [
+      { ...validBody, version: 0, completed: true },
+      "invalid_task_checklist_version",
+    ],
+    [
+      { ...validBody, version: "1", completed: true },
+      "invalid_task_checklist_version",
+    ],
+    [
+      { ...validBody, version: 1.5, completed: true },
+      "invalid_task_checklist_version",
+    ],
+    [validBody, "invalid_task_checklist_update"],
+    [
+      { ...validBody, text: "Renamed", completed: true },
+      "invalid_task_checklist_update",
+    ],
+    [
+      { ...validBody, completed: true, unexpected: "field" },
+      "invalid_task_checklist_update",
+    ],
+    [{ ...validBody, text: "   " }, "invalid_task_checklist_text"],
+    [
+      { ...validBody, completed: "yes" },
+      "invalid_task_checklist_completed",
+    ],
+    [
+      { ...validBody, archived: "yes" },
+      "invalid_task_checklist_archived",
+    ],
+    [
+      { ...validBody, completed: true, operationId: "not valid" },
+      "invalid_operation_id",
+    ],
+  ] as const;
+
+  for (const [body, error] of cases) {
+    const response = await updateTaskChecklistItem(
+      new Request("https://www.faolla.com/api/merchant-enterprise/task-checklist", {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://www.faolla.com",
+        },
+        body: JSON.stringify(body),
+      }),
+    );
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { ok: false, error });
+  }
+});
+
+test("task checklist mutations reject untrusted cross-origin requests", async () => {
+  const baseBody = {
+    siteId: "10000000",
+    taskId: "11111111-1111-4111-8111-111111111111",
+    operationId: "task-checklist-cross-origin",
+  };
+  for (const [handler, method, body] of [
+    [createTaskChecklistItem, "POST", { ...baseBody, text: "Checklist item" }],
+    [
+      updateTaskChecklistItem,
+      "PATCH",
+      {
+        ...baseBody,
+        itemId: "22222222-2222-4222-8222-222222222222",
+        version: 1,
+        completed: true,
+      },
+    ],
+  ] as const) {
+    const response = await handler(
+      new Request("https://www.faolla.com/api/merchant-enterprise/task-checklist", {
+        method,
+        headers: {
+          "content-type": "application/json",
+          origin: "https://example.invalid",
+        },
+        body: JSON.stringify(body),
+      }),
+    );
+    assert.equal(response.status, 403);
+  }
+});
+
+test("valid task checklist operations require their enterprise permissions", async () => {
+  const taskId = "11111111-1111-4111-8111-111111111111";
+  const itemId = "22222222-2222-4222-8222-222222222222";
+  const getResponse = await getTaskChecklist(
+    new Request(
+      `https://www.faolla.com/api/merchant-enterprise/task-checklist?siteId=10000000&taskId=${taskId}`,
+    ),
+  );
+  assert.equal(getResponse.status, 401);
+  assert.deepEqual(await getResponse.json(), { ok: false, error: "unauthorized" });
+
+  const createResponse = await createTaskChecklistItem(
+    new Request("https://www.faolla.com/api/merchant-enterprise/task-checklist", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "https://www.faolla.com",
+      },
+      body: JSON.stringify({
+        siteId: "10000000",
+        taskId,
+        text: "Confirm delivery address",
+        operationId: "task-checklist-create-unauthorized",
+      }),
+    }),
+  );
+  assert.equal(createResponse.status, 401);
+  assert.deepEqual(await createResponse.json(), { ok: false, error: "unauthorized" });
+
+  for (const change of [
+    { text: "Confirm the final delivery address" },
+    { completed: true },
+    { archived: true },
+  ]) {
+    const response = await updateTaskChecklistItem(
+      new Request("https://www.faolla.com/api/merchant-enterprise/task-checklist", {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://www.faolla.com",
+        },
+        body: JSON.stringify({
+          siteId: "10000000",
+          taskId,
+          itemId,
+          version: 1,
+          operationId: "task-checklist-update-unauthorized",
+          ...change,
+        }),
+      }),
+    );
+    assert.equal(response.status, 401);
+    assert.deepEqual(await response.json(), { ok: false, error: "unauthorized" });
+  }
+});
+
+test("task checklist route preserves known service error statuses", async () => {
+  for (const error of ["task_not_found", "task_checklist_item_not_found"]) {
+    const response = getMerchantTaskChecklistErrorResponse(new Error(error));
+    assert.equal(response.status, 404);
+    assert.deepEqual(await response.json(), { ok: false, error });
+  }
+  for (const error of [
+    "enterprise_version_conflict",
+    "enterprise_operation_in_progress",
+    "task_checklist_limit_reached",
+    "invalid_task_archived",
+  ]) {
+    const response = getMerchantTaskChecklistErrorResponse(new Error(error));
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), { ok: false, error });
+  }
+  const response = getMerchantTaskChecklistErrorResponse(new Error("store_failed"));
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), {
+    ok: false,
+    error: "enterprise_request_failed",
+  });
 });
 
 test("valid task activity reads and comments require their enterprise permissions", async () => {

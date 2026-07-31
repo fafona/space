@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import {
   isMerchantEnterpriseSchemaMissingError,
+  MAX_MERCHANT_TASK_CHECKLIST_ITEMS,
+  MAX_MERCHANT_TASK_CHECKLIST_TEXT_LENGTH,
   MAX_MERCHANT_TASK_ASSIGNEES,
   normalizeMerchantEnterpriseEmployee,
   normalizeMerchantEnterprisePermissions,
@@ -17,10 +19,15 @@ import {
   type MerchantTask,
   type MerchantTaskBoard,
   type MerchantTaskColumn,
+  type MerchantTaskChecklistItem,
   type MerchantTaskEvent,
   type MerchantTaskEventActorType,
   type MerchantTaskPriority,
 } from "@/lib/merchantEnterprise";
+import {
+  isValidAuthEmail,
+  normalizeAuthEmail,
+} from "@/lib/authCredentialValidation";
 import { normalizeMutationOperationId } from "@/lib/mutationOperationId";
 
 export type MerchantEnterpriseStoreClient = {
@@ -30,6 +37,12 @@ export type MerchantEnterpriseStoreClient = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   rpc: (functionName: string, args: Record<string, unknown>) => any;
 };
+
+export {
+  MAX_MERCHANT_TASK_CHECKLIST_ITEMS,
+  MAX_MERCHANT_TASK_CHECKLIST_TEXT_LENGTH,
+};
+export type { MerchantTaskChecklistItem };
 
 const DEFAULT_ROLE_SYSTEM_KEYS = ["administrator", "supervisor", "employee"] as const;
 const DEFAULT_COLUMN_SYSTEM_KEYS = ["todo", "in_progress", "blocked", "done"] as const;
@@ -46,6 +59,8 @@ const TASK_COLUMNS =
   "id,merchant_id,board_id,column_id,title,description,priority,due_at,completed_at,archived_at,position,source_type,source_id,created_by_employee_id,version,created_at,updated_at";
 const TASK_EVENT_COLUMNS =
   "id,merchant_id,task_id,event_type,actor_type,actor_id,payload,created_at";
+const TASK_CHECKLIST_ITEM_COLUMNS =
+  "id,merchant_id,task_id,text,position,completed_at,archived_at,version,created_at,updated_at";
 
 function normalizeText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
@@ -99,6 +114,49 @@ function throwTaskCommentRpcError(operation: string, error: unknown): never {
   throw new Error(`${operation}:${message}`);
 }
 
+function throwTaskChecklistRpcError(operation: string, error: unknown): never {
+  if (isMerchantEnterpriseSchemaMissingError(error)) {
+    throw new Error("enterprise_schema_unavailable");
+  }
+  const message = toErrorMessage(error);
+  const knownCode = [
+    "enterprise_version_conflict",
+    "enterprise_operation_in_progress",
+    "task_not_found",
+    "task_checklist_item_not_found",
+    "task_checklist_limit_reached",
+    "invalid_task_archived",
+    "invalid_task_board",
+    "invalid_task_actor",
+    "invalid_task_checklist_payload",
+    "invalid_task_checklist_create",
+    "invalid_task_checklist_item",
+    "invalid_task_checklist_update",
+    "invalid_task_checklist_completed",
+    "invalid_task_checklist_archived",
+  ].find((code) => message.includes(code));
+  if (knownCode) throw new Error(knownCode);
+  if (message.includes("enterprise_idempotency_conflict")) {
+    throw new Error("invalid_operation_id");
+  }
+  throw new Error(`${operation}:${message}`);
+}
+
+const MERCHANT_ENTERPRISE_TASK_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function normalizeTaskChecklistText(value: unknown, errorCode: string) {
+  if (typeof value !== "string") throw new Error(errorCode);
+  const normalized = value.trim();
+  if (
+    !normalized ||
+    normalized.length > MAX_MERCHANT_TASK_CHECKLIST_TEXT_LENGTH
+  ) {
+    throw new Error(errorCode);
+  }
+  return normalized;
+}
+
 const ENTERPRISE_WORKSPACE_CONFLICT_CODES = [
   "enterprise_version_conflict",
   "enterprise_operation_in_progress",
@@ -140,7 +198,13 @@ function throwEnterpriseWorkspaceRpcError(operation: string, error: unknown): ne
 
 function resolveTaskOperationId(
   value: unknown,
-  scope: "create" | "update" | "move" | "comment",
+  scope:
+    | "create"
+    | "update"
+    | "move"
+    | "comment"
+    | "checklist-create"
+    | "checklist-update",
 ) {
   const normalized = normalizeMutationOperationId(value);
   return normalized || `enterprise-task-${scope}:${randomUUID()}`;
@@ -201,6 +265,76 @@ function normalizeTaskEventMutationResponse(value: unknown, operation: string) {
   const event = normalizeMerchantTaskEvent(record.event);
   if (!event) throw new Error(`${operation}:invalid_response`);
   return event;
+}
+
+function normalizeChecklistTimestamp(value: unknown) {
+  const normalized = normalizeText(value, 80);
+  return normalized && Number.isFinite(Date.parse(normalized))
+    ? new Date(normalized).toISOString()
+    : null;
+}
+
+function normalizeMerchantTaskChecklistItem(
+  value: unknown,
+): MerchantTaskChecklistItem | null {
+  const record =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const id = normalizeText(record.id, 80);
+  const siteId = normalizeText(record.siteId ?? record.merchant_id, 80);
+  const taskId = normalizeText(record.taskId ?? record.task_id, 80);
+  const rawText = typeof record.text === "string" ? record.text.trim() : "";
+  const text =
+    rawText.length <= MAX_MERCHANT_TASK_CHECKLIST_TEXT_LENGTH ? rawText : "";
+  const position = Number(record.position);
+  const version = Number(record.version);
+  const createdAt = normalizeChecklistTimestamp(record.createdAt ?? record.created_at);
+  const updatedAt = normalizeChecklistTimestamp(record.updatedAt ?? record.updated_at);
+  const completedAt = normalizeChecklistTimestamp(
+    record.completedAt ?? record.completed_at,
+  );
+  const archivedAt = normalizeChecklistTimestamp(record.archivedAt ?? record.archived_at);
+  if (
+    !id ||
+    !siteId ||
+    !taskId ||
+    !text ||
+    !Number.isSafeInteger(position) ||
+    position < 0 ||
+    !Number.isSafeInteger(version) ||
+    version <= 0 ||
+    !createdAt ||
+    !updatedAt
+  ) {
+    return null;
+  }
+  return {
+    id,
+    siteId,
+    taskId,
+    text,
+    position,
+    completed: completedAt !== null,
+    completedAt,
+    archivedAt,
+    version,
+    createdAt,
+    updatedAt,
+  };
+}
+
+function normalizeTaskChecklistMutationResponse(
+  value: unknown,
+  operation: string,
+) {
+  const record =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const item = normalizeMerchantTaskChecklistItem(record.item);
+  if (!item) throw new Error(`${operation}:invalid_response`);
+  return item;
 }
 
 function normalizeRows<T>(
@@ -323,6 +457,38 @@ export async function loadMerchantTaskEvents(
     .limit(50);
   if (result.error) throwStoreError("enterprise_task_events_read_failed", result.error);
   return normalizeRows(result.data, normalizeMerchantTaskEvent);
+}
+
+export async function loadMerchantTaskChecklistItems(
+  client: MerchantEnterpriseStoreClient,
+  siteIdValue: string,
+  taskIdValue: string,
+): Promise<MerchantTaskChecklistItem[]> {
+  const siteId = normalizeText(siteIdValue, 80);
+  const taskId = normalizeText(taskIdValue, 80);
+  if (!/^\d{8}$/.test(siteId) || !MERCHANT_ENTERPRISE_TASK_ID_PATTERN.test(taskId)) {
+    throw new Error("invalid_task_checklist_query");
+  }
+
+  const result = await client
+    .from("merchant_task_checklist_items")
+    .select(TASK_CHECKLIST_ITEM_COLUMNS)
+    .eq("merchant_id", siteId)
+    .eq("task_id", taskId)
+    .is("archived_at", null)
+    .order("position", { ascending: true })
+    .order("created_at", { ascending: true })
+    .order("id", { ascending: true })
+    .limit(MAX_MERCHANT_TASK_CHECKLIST_ITEMS);
+  if (result.error) {
+    throwStoreError("enterprise_task_checklist_read_failed", result.error);
+  }
+  return normalizeRows(result.data, normalizeMerchantTaskChecklistItem).filter(
+    (item) =>
+      item.siteId === siteId &&
+      item.taskId === taskId &&
+      item.archivedAt === null,
+  );
 }
 
 async function insertOne<T>(
@@ -709,25 +875,37 @@ export async function createMerchantEnterpriseEmployee(
   },
 ): Promise<MerchantEnterpriseEmployee> {
   const siteId = normalizeText(input.siteId, 80);
-  const email = normalizeText(input.email, 320).toLowerCase();
+  const email = normalizeAuthEmail(input.email);
   const displayName = normalizeText(input.displayName, 120);
-  if (!siteId || !email || !displayName || !email.includes("@")) throw new Error("invalid_employee");
-  return insertOne(
-    client,
-    "merchant_enterprise_employees",
-    {
-      merchant_id: siteId,
-      email,
-      display_name: displayName,
-      role_id: normalizeText(input.roleId, 80) || null,
-      auth_user_id: normalizeText(input.authUserId, 80) || null,
-      status: "invited",
-      invited_at: input.invitedAt ?? new Date().toISOString(),
-    },
-    EMPLOYEE_COLUMNS,
-    normalizeMerchantEnterpriseEmployee,
-    "enterprise_employee_create_failed",
-  );
+  if (!siteId || !displayName) throw new Error("invalid_employee");
+  if (!isValidAuthEmail(email)) throw new Error("invalid_employee_email");
+  try {
+    return await insertOne(
+      client,
+      "merchant_enterprise_employees",
+      {
+        merchant_id: siteId,
+        email,
+        display_name: displayName,
+        role_id: normalizeText(input.roleId, 80) || null,
+        auth_user_id: normalizeText(input.authUserId, 80) || null,
+        status: "invited",
+        invited_at: input.invitedAt ?? new Date().toISOString(),
+      },
+      EMPLOYEE_COLUMNS,
+      normalizeMerchantEnterpriseEmployee,
+      "enterprise_employee_create_failed",
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message.toLowerCase() : "";
+    if (
+      message.includes("merchant_enterprise_employees_email_unique_idx") ||
+      (message.includes("23505") && message.includes("email"))
+    ) {
+      throw new Error("employee_email_in_use");
+    }
+    throw error;
+  }
 }
 
 export async function updateMerchantEnterpriseEmployee(
@@ -903,6 +1081,138 @@ export async function addMerchantTaskComment(
   return normalizeTaskEventMutationResponse(
     result.data,
     "enterprise_task_comment_failed",
+  );
+}
+
+export async function createMerchantTaskChecklistItem(
+  client: MerchantEnterpriseStoreClient,
+  input: {
+    siteId: string;
+    taskId: string;
+    text: string;
+    actorType: Exclude<MerchantTaskEventActorType, "system">;
+    actorId: string;
+    operationId?: string;
+  },
+): Promise<MerchantTaskChecklistItem> {
+  const siteId = normalizeText(input.siteId, 80);
+  const taskId = normalizeText(input.taskId, 80);
+  const actorId = normalizeText(input.actorId, 120);
+  if (
+    !/^\d{8}$/.test(siteId) ||
+    !MERCHANT_ENTERPRISE_TASK_ID_PATTERN.test(taskId) ||
+    (input.actorType !== "owner" && input.actorType !== "employee") ||
+    !MERCHANT_ENTERPRISE_TASK_ID_PATTERN.test(actorId)
+  ) {
+    throw new Error("invalid_task_checklist_create");
+  }
+  const itemText = normalizeTaskChecklistText(
+    input.text,
+    "invalid_task_checklist_create",
+  );
+  const result = await client.rpc(
+    "faolla_create_merchant_task_checklist_item_v1",
+    {
+      p_input: {
+        merchant_id: siteId,
+        task_id: taskId,
+        text: itemText,
+        actor_type: input.actorType,
+        actor_id: actorId,
+        operation_id: resolveTaskOperationId(
+          input.operationId,
+          "checklist-create",
+        ),
+      },
+    },
+  );
+  if (result.error) {
+    throwTaskChecklistRpcError(
+      "enterprise_task_checklist_create_failed",
+      result.error,
+    );
+  }
+  return normalizeTaskChecklistMutationResponse(
+    result.data,
+    "enterprise_task_checklist_create_failed",
+  );
+}
+
+export async function updateMerchantTaskChecklistItem(
+  client: MerchantEnterpriseStoreClient,
+  input: {
+    siteId: string;
+    taskId: string;
+    itemId: string;
+    version: number;
+    actorType: Exclude<MerchantTaskEventActorType, "system">;
+    actorId: string;
+    operationId?: string;
+    text?: string;
+    completed?: boolean;
+    archived?: boolean;
+  },
+): Promise<MerchantTaskChecklistItem> {
+  const siteId = normalizeText(input.siteId, 80);
+  const taskId = normalizeText(input.taskId, 80);
+  const itemId = normalizeText(input.itemId, 80);
+  const actorId = normalizeText(input.actorId, 120);
+  const version = Number(input.version);
+  const hasText = input.text !== undefined;
+  const hasCompleted = input.completed !== undefined;
+  const hasArchived = input.archived !== undefined;
+  if (
+    !/^\d{8}$/.test(siteId) ||
+    !MERCHANT_ENTERPRISE_TASK_ID_PATTERN.test(taskId) ||
+    !MERCHANT_ENTERPRISE_TASK_ID_PATTERN.test(itemId) ||
+    !Number.isSafeInteger(version) ||
+    version <= 0 ||
+    (input.actorType !== "owner" && input.actorType !== "employee") ||
+    !MERCHANT_ENTERPRISE_TASK_ID_PATTERN.test(actorId) ||
+    (!hasText && !hasCompleted && !hasArchived) ||
+    (hasCompleted && typeof input.completed !== "boolean") ||
+    (hasArchived && typeof input.archived !== "boolean")
+  ) {
+    throw new Error("invalid_task_checklist_update");
+  }
+
+  const patch: Record<string, unknown> = {};
+  if (hasText) {
+    patch.text = normalizeTaskChecklistText(
+      input.text,
+      "invalid_task_checklist_item",
+    );
+  }
+  if (hasCompleted) patch.completed = input.completed;
+  if (hasArchived) patch.archived = input.archived;
+
+  const result = await client.rpc(
+    "faolla_update_merchant_task_checklist_item_v1",
+    {
+      p_input: {
+        merchant_id: siteId,
+        task_id: taskId,
+        item_id: itemId,
+        expected_version: version,
+        actor_type: input.actorType,
+        actor_id: actorId,
+        operation_id: resolveTaskOperationId(
+          input.operationId,
+          "checklist-update",
+        ),
+        ...patch,
+      },
+    },
+  );
+  if (result.error) {
+    throwTaskChecklistRpcError(
+      "enterprise_task_checklist_update_failed",
+      result.error,
+    );
+  }
+  return normalizeTaskChecklistMutationResponse(
+    result.data,
+    "enterprise_task_checklist_update_failed",
   );
 }
 

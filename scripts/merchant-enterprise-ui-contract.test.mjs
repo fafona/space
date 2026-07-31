@@ -482,6 +482,50 @@ test("task editor separates detail updates from atomic column movement", () => {
   );
 });
 
+test("task cards and editor expose a safe completion shortcut", () => {
+  assert.match(source, /getMerchantTaskCompletionTransition/);
+
+  const taskEditorSource = sliceBetween(
+    /function\s+TaskEditor\b/,
+    /function\s+RoleEditor\b/,
+    "TaskEditor",
+  );
+  assert.match(
+    taskEditorSource,
+    /function\s+taskEditorDraft\(nextColumnId\s*=\s*columnId\)[\s\S]{0,400}title,[\s\S]{0,100}description,[\s\S]{0,100}priority,[\s\S]{0,100}dueAt,[\s\S]{0,100}columnId:\s*nextColumnId,[\s\S]{0,100}assigneeIds/,
+  );
+  assert.match(taskEditorSource, /aria-label=["']任务完成状态["']/);
+  assert.match(taskEditorSource, /保存并完成/);
+  assert.match(taskEditorSource, /保存并重新打开/);
+  assert.match(taskEditorSource, /disabled=\{busy\s*\|\|\s*!title\.trim\(\)\}/);
+  assert.match(
+    taskEditorSource,
+    /onSave\([\s\S]{0,100}task,[\s\S]{0,100}taskEditorDraft\(completionTransition\.targetColumnId\)/,
+  );
+  assert.match(taskEditorSource, /当前看板没有可用的完成工作列/);
+  assert.match(taskEditorSource, /当前看板没有可用的进行中工作列/);
+
+  const taskCardSource = sliceBetween(
+    /\{tasks\.map\(\(task,\s*taskIndex\)\s*=>\s*\{/,
+    /\{tasks\.length\s*===\s*0\s*\?/,
+    "task card list",
+  );
+  assert.match(
+    taskCardSource,
+    /getMerchantTaskCompletionTransition\([\s\S]{0,100}task,[\s\S]{0,100}activeColumns/,
+  );
+  assert.match(
+    taskCardSource,
+    /taskArchiveView\s*===\s*["']active["'][\s\S]{0,150}!task\.archivedAt[\s\S]{0,150}can\(actor,\s*["']tasks\.update["']\)[\s\S]{0,150}Boolean\(completionTransition\)/,
+  );
+  assert.match(taskCardSource, /min-h-11[\s\S]{0,500}aria-label=\{`\$\{/);
+  assert.match(
+    taskCardSource,
+    /moveTask\(task,\s*completionTransition\.targetColumnId\)/,
+  );
+  assert.match(taskCardSource, /completionTransition\.targetColumnName/);
+});
+
 test("merchant admin moves enterprise subviews into the contextual sidebar menu", () => {
   assert.match(
     adminClientSource,
@@ -517,6 +561,50 @@ test("merchant admin moves enterprise subviews into the contextual sidebar menu"
   const supportButtonIndex = adminClientSource.indexOf("<span>会话</span>", enterpriseButtonIndex);
   assert.ok(orderButtonIndex >= 0 && orderButtonIndex < enterpriseButtonIndex);
   assert.ok(enterpriseButtonIndex < supportButtonIndex);
+});
+
+test("pending employee invitations have a safe responsive management flow", () => {
+  const inviteEmployeeSource = sliceBetween(
+    /async\s+function\s+inviteEmployee\b/,
+    /async\s+function\s+sendEmployeeInvitation\b/,
+    "inviteEmployee",
+  );
+  assert.match(inviteEmployeeSource, /normalizeAuthEmail\(employeeEmail\)/);
+  assert.match(inviteEmployeeSource, /isValidAuthEmail\(normalizedEmail\)/);
+  assert.match(inviteEmployeeSource, /email:\s*normalizedEmail/);
+
+  const saveInvitationSource = sliceBetween(
+    /async\s+function\s+savePendingEmployeeInvitation\b/,
+    /async\s+function\s+removePendingEmployeeInvitation\b/,
+    "savePendingEmployeeInvitation",
+  );
+  assert.match(saveInvitationSource, /["']PATCH["']/);
+  assert.match(saveInvitationSource, /displayName,\s*\n\s*roleId/);
+  assert.doesNotMatch(saveInvitationSource, /email\s*:/);
+
+  const removeInvitationSource = sliceBetween(
+    /async\s+function\s+removePendingEmployeeInvitation\b/,
+    /async\s+function\s+saveRole\b/,
+    "removePendingEmployeeInvitation",
+  );
+  assert.match(removeInvitationSource, /window\.confirm\(/);
+  assert.match(removeInvitationSource, /action:\s*["']remove_invite["']/);
+  assert.match(removeInvitationSource, /setEmployeeName\(reInviteName\)/);
+  assert.match(removeInvitationSource, /setEmployeeEmail\(["']["']\)/);
+  assert.match(removeInvitationSource, /setEmployeeRoleId\(/);
+
+  assert.match(
+    source,
+    /const\s+invitationNeedsAction\s*=\s*employee\.status\s*===\s*["']invited["']/,
+  );
+  assert.match(
+    source,
+    /const\s+canManageInvitation\s*=[\s\S]{0,300}invitationNeedsAction[\s\S]{0,300}!\(actor\.type\s*===\s*["']employee["']\s*&&\s*actor\.id\s*===\s*employee\.id\)/,
+  );
+  assert.match(source, /aria-controls=\{`employee-invitation-manager-\$\{employee\.id\}`\}/);
+  assert.match(source, /邀请邮箱（不可直接修改）[\s\S]{0,400}readOnly/);
+  assert.match(source, /邮箱有误时请移除后重新邀请/);
+  assert.match(source, /min-h-11[\s\S]{0,500}管理邀请/);
 });
 
 test("external enterprise navigation stays permission-aware while standalone keeps its tabs", () => {
@@ -827,4 +915,81 @@ test("task details expose a permission-aware activity timeline and idempotent co
   );
   assert.match(source, /onLoadEvents=\{loadTaskEvents\}/);
   assert.match(source, /onComment=\{createTaskComment\}/);
+});
+
+test("task details expose a permission-aware checklist with progress and local reloads", () => {
+  const editor = sliceBetween(
+    /function\s+TaskEditor\(/,
+    /function\s+RoleEditor\(/,
+    "task editor checklist",
+  );
+  const checklist = sliceSourceBetween(
+    editor,
+    /<section\s+aria-labelledby=["']enterprise-task-checklist-title["']/,
+    /<fieldset\s+className=["']rounded-2xl border border-slate-200 p-4["']/,
+    "task checklist section",
+  );
+
+  assert.match(editor, /onLoadChecklist\(task\.id,\s*signal\)/);
+  assert.match(editor, /void\s+refreshChecklist\(controller\.signal\)/);
+  assert.match(editor, /onLoadEvents\(task\.id,\s*signal\)/);
+  assert.match(editor, /checklistCreateMutationRef\.current\?\.text\s*!==\s*text/);
+  assert.match(
+    editor,
+    /text\.includes\(["']重新加载["']\)\)\s*await\s+refreshChecklist\(\)/,
+    "conflicts must independently reload the checklist without clearing the add-item draft",
+  );
+  assert.match(checklist, /任务清单/);
+  assert.match(checklist, /completedChecklistItemCount\}\/\{checklistItems\.length\}\s*已完成/);
+  assert.match(checklist, /role=["']progressbar["']/);
+  assert.match(checklist, /aria-valuenow=\{checklistProgress\}/);
+  assert.match(checklist, /aria-valuemax=\{100\}/);
+  assert.match(checklist, /style=\{\{\s*width:\s*`\$\{checklistProgress\}%`\s*\}\}/);
+
+  assert.match(
+    checklist,
+    /canUpdate\s*&&\s*!task\.archivedAt\s*\?\s*\([\s\S]{0,1600}maxLength=\{MAX_MERCHANT_TASK_CHECKLIST_TEXT_LENGTH\}/,
+    "only task updaters may see the add-item workflow",
+  );
+  assert.match(checklist, /\{\s*completed:\s*!item\.completed\s*\}/);
+  assert.match(checklist, /\{\s*text\s*\}/);
+  assert.match(checklist, /\{\s*archived:\s*true\s*\}/);
+  assert.match(checklist, /当前账号可查看任务清单，但没有修改权限。/);
+  assert.match(checklist, /正在加载任务清单…/);
+  assert.match(checklist, /暂无清单项/);
+  assert.match(checklist, /任务清单暂时不可用/);
+  assert.match(checklist, /MAX_MERCHANT_TASK_CHECKLIST_ITEMS/);
+  assert.match(checklist, /\bmin-h-11\b/);
+  assert.doesNotMatch(checklist, /(?:javascript|ms-settings|ms-windows-store|wscript):/i);
+
+  assert.match(
+    source,
+    /apiFetch\(\s*`\/api\/merchant-enterprise\/task-checklist\?\$\{params\.toString\(\)\}`/,
+  );
+  assert.match(
+    source,
+    /apiFetch\(["']\/api\/merchant-enterprise\/task-checklist["'][\s\S]{0,700}method:\s*["']POST["'][\s\S]{0,700}taskId:\s*task\.id[\s\S]{0,700}operationId/,
+  );
+  assert.match(
+    source,
+    /apiFetch\(["']\/api\/merchant-enterprise\/task-checklist["'][\s\S]{0,900}method:\s*["']PATCH["'][\s\S]{0,900}taskId:\s*task\.id[\s\S]{0,900}itemId:\s*item\.id[\s\S]{0,900}version:\s*item\.version[\s\S]{0,900}operationId/,
+  );
+  assert.match(source, /onLoadChecklist=\{loadTaskChecklist\}/);
+  assert.match(source, /onCreateChecklistItem=\{createTaskChecklistItem\}/);
+  assert.match(source, /onUpdateChecklistItem=\{updateTaskChecklistItem\}/);
+  assert.match(source, /canUpdate=\{can\(actor,\s*["']tasks\.update["']\)\}/);
+
+  for (const label of [
+    "新增了清单项",
+    "修改了清单项",
+    "完成了清单项",
+    "恢复了清单项",
+    "移除了清单项",
+  ]) {
+    assert.ok(source.includes(label), `task activity must describe checklist event: ${label}`);
+  }
+  assert.match(
+    source,
+    /event\.eventType\s*===\s*["']checklist_item_archived["'][\s\S]{0,100}移除了清单项/,
+  );
 });

@@ -34,9 +34,12 @@ import {
   buildMerchantEnterpriseTaskOverview,
   buildMerchantTaskEditChanges,
   filterMerchantTasks,
+  getMerchantTaskCompletionTransition,
   hasMerchantEnterprisePermission,
   merchantEnterprisePermissionsFitActor,
   MAX_MERCHANT_TASK_ASSIGNEES,
+  MAX_MERCHANT_TASK_CHECKLIST_ITEMS,
+  MAX_MERCHANT_TASK_CHECKLIST_TEXT_LENGTH,
   MERCHANT_ENTERPRISE_PERMISSION_CATALOG,
   toggleMerchantEnterprisePermissionSelection,
   type MerchantEnterpriseActor,
@@ -46,10 +49,12 @@ import {
   type MerchantEnterpriseSnapshot,
   type MerchantTask,
   type MerchantTaskBoard,
+  type MerchantTaskChecklistItem,
   type MerchantTaskColumn,
   type MerchantTaskEvent,
   type MerchantTaskPriority,
 } from "@/lib/merchantEnterprise";
+import { isValidAuthEmail, normalizeAuthEmail } from "@/lib/authCredentialValidation";
 import { createClientMutationOperationId } from "@/lib/mutationOperationId";
 import {
   planMerchantTaskReorder,
@@ -103,6 +108,18 @@ type TaskEventsPayload = {
   events?: MerchantTaskEvent[];
   event?: MerchantTaskEvent;
 };
+
+type TaskChecklistPayload = {
+  ok?: boolean;
+  error?: string;
+  items?: MerchantTaskChecklistItem[];
+  item?: MerchantTaskChecklistItem;
+};
+
+type TaskChecklistItemChange =
+  | { text: string }
+  | { completed: boolean }
+  | { archived: boolean };
 
 const EMPTY_SNAPSHOT: MerchantEnterpriseSnapshot = {
   roles: [],
@@ -186,6 +203,12 @@ function taskEventDescription(
   if (event.eventType === "archived") return "归档了任务";
   if (event.eventType === "restored") return "恢复了任务";
   if (event.eventType === "commented") return "发表了评论";
+  if (event.eventType === "checklist_item_created") return "新增了清单项";
+  if (event.eventType === "checklist_item_updated") return "修改了清单项";
+  if (event.eventType === "checklist_item_completed") return "完成了清单项";
+  if (event.eventType === "checklist_item_reopened") return "恢复了清单项";
+  if (event.eventType === "checklist_item_archived") return "移除了清单项";
+  if (event.eventType === "checklist_item_restored") return "恢复了清单项";
   if (event.eventType === "moved") {
     const payload = taskEventPayload(event);
     const fromColumnId = typeof payload.fromColumnId === "string" ? payload.fromColumnId : "";
@@ -389,18 +412,37 @@ function readApiError(payload: unknown, fallback: string) {
   if (code === "merchant_role_invalid") return "当前员工角色的权限配置不完整，请联系企业负责人修正。";
   if (code === "enterprise_version_conflict") return "数据已被其他人更新，已为你重新加载。";
   if (code === "invalid_version") return "数据版本无效，请重新加载后再试。";
+  if (code === "invalid_employee_email") return "请输入有效的员工邮箱地址。";
+  if (code === "employee_email_in_use") return "该邮箱已存在于当前企业的员工列表中。";
+  if (code === "employee_email_change_requires_reinvite") return "员工邮箱不能直接修改；请移除待接受账号后使用正确邮箱重新邀请。";
   if (code === "employee_email_already_registered") return "该邮箱已注册为其他 Faolla 身份，请使用独立的员工邮箱。";
+  if (code === "employee_not_found") return "该员工记录已不存在，已为你重新加载。";
   if (code === "employee_invitation_cooldown") return "邀请刚刚发送过，请稍后再试。";
   if (code === "employee_invitation_not_accepted") return "员工尚未接受邀请，不能直接启用账号。";
   if (code === "employee_invitation_revoke_required") return "待接受账号请使用“撤销邀请”，不能直接停用。";
-  if (code === "employee_invitation_not_pending") return "该员工当前没有可操作的待处理邀请。";
+  if (code === "employee_invitation_not_pending") return "邀请状态已变化，已为你重新加载。";
   if (code === "employee_invitation_revoked") return "该邀请已经撤销，请刷新后重新生成邀请。";
   if (code === "employee_invitation_expired") return "该邀请已经过期，请重新生成邀请。";
   if (code === "employee_invitation_superseded") return "邀请已被更新，请刷新后再试。";
   if (code === "employee_invitation_renew_required") return "该邀请已失效，请生成一封新邀请。";
   if (code === "employee_invitation_renew_not_required") return "当前邀请仍然有效，请使用重发邀请。";
+  if (code === "employee_invitation_in_use") return "该待接受账号仍关联任务，请先移除相关任务负责人后再移除邀请。";
   if (code === "unauthorized") return "登录状态已失效，请重新登录。";
   return fallback;
+}
+
+function readChecklistApiError(payload: unknown, fallback: string) {
+  const code =
+    payload && typeof payload === "object" && typeof (payload as { error?: unknown }).error === "string"
+      ? (payload as { error: string }).error
+      : "";
+  if (code === "task_checklist_limit_reached") return "当前任务的清单项已达上限。";
+  if (code === "task_checklist_item_not_found") return "该清单项已不存在，已为你重新加载。";
+  if (code === "invalid_task_checklist_text") return "清单项需为 1–500 个字符。";
+  if (code === "invalid_task_checklist_version") return "清单数据版本无效，已为你重新加载。";
+  if (code === "invalid_task_archived") return "已归档任务不能修改清单。";
+  if (code === "enterprise_operation_in_progress") return "操作正在处理中，请稍后重试。";
+  return readApiError(payload, fallback);
 }
 
 type TaskDraft = {
@@ -675,6 +717,9 @@ function TaskEditor({
   onArchive,
   onLoadEvents,
   onComment,
+  onLoadChecklist,
+  onCreateChecklistItem,
+  onUpdateChecklistItem,
   onClose,
 }: {
   task: MerchantTask;
@@ -693,6 +738,21 @@ function TaskEditor({
     text: string,
     operationId: string,
   ) => Promise<MerchantTaskEvent>;
+  onLoadChecklist: (
+    taskId: string,
+    signal?: AbortSignal,
+  ) => Promise<MerchantTaskChecklistItem[]>;
+  onCreateChecklistItem: (
+    task: MerchantTask,
+    text: string,
+    operationId: string,
+  ) => Promise<MerchantTaskChecklistItem>;
+  onUpdateChecklistItem: (
+    task: MerchantTask,
+    item: MerchantTaskChecklistItem,
+    change: TaskChecklistItemChange,
+    operationId: string,
+  ) => Promise<MerchantTaskChecklistItem>;
   onClose: () => void;
 }) {
   const [title, setTitle] = useState(task.title);
@@ -707,7 +767,22 @@ function TaskEditor({
   const [commentText, setCommentText] = useState("");
   const [commentBusy, setCommentBusy] = useState(false);
   const [commentNotice, setCommentNotice] = useState("");
+  const [checklistItems, setChecklistItems] = useState<MerchantTaskChecklistItem[]>([]);
+  const [checklistLoading, setChecklistLoading] = useState(true);
+  const [checklistError, setChecklistError] = useState("");
+  const [checklistNotice, setChecklistNotice] = useState<{
+    kind: "error" | "success";
+    text: string;
+  } | null>(null);
+  const [checklistDraft, setChecklistDraft] = useState("");
+  const [checklistMutationId, setChecklistMutationId] = useState("");
+  const [editingChecklistItemId, setEditingChecklistItemId] = useState("");
+  const [editingChecklistText, setEditingChecklistText] = useState("");
   const commentMutationRef = useRef<{ text: string; operationId: string } | null>(null);
+  const checklistCreateMutationRef = useRef<{
+    text: string;
+    operationId: string;
+  } | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -772,6 +847,106 @@ function TaskEditor({
     return () => controller.abort();
   }, [refreshEvents]);
 
+  const refreshChecklist = useCallback(
+    async (signal?: AbortSignal) => {
+      setChecklistLoading(true);
+      setChecklistError("");
+      try {
+        const items = await onLoadChecklist(task.id, signal);
+        if (!signal?.aborted) setChecklistItems(items);
+      } catch (error) {
+        if (signal?.aborted) return;
+        setChecklistError(
+          error instanceof Error ? error.message : "任务清单加载失败，请稍后重试。",
+        );
+      } finally {
+        if (!signal?.aborted) setChecklistLoading(false);
+      }
+    },
+    [onLoadChecklist, task.id],
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void refreshChecklist(controller.signal);
+    return () => controller.abort();
+  }, [refreshChecklist]);
+
+  function replaceChecklistItem(item: MerchantTaskChecklistItem) {
+    setChecklistItems((current) => {
+      if (item.archivedAt) return current.filter((candidate) => candidate.id !== item.id);
+      const nextItems = current.some((candidate) => candidate.id === item.id)
+        ? current.map((candidate) => (candidate.id === item.id ? item : candidate))
+        : [...current, item];
+      return nextItems.sort(
+        (left, right) =>
+          left.position - right.position ||
+          left.createdAt.localeCompare(right.createdAt) ||
+          left.id.localeCompare(right.id),
+      );
+    });
+  }
+
+  async function submitChecklistItem() {
+    const text = checklistDraft.trim();
+    if (!text || busy || checklistMutationId || task.archivedAt) return;
+    if (checklistCreateMutationRef.current?.text !== text) {
+      checklistCreateMutationRef.current = {
+        text,
+        operationId: createClientMutationOperationId("enterprise-task-checklist-create"),
+      };
+    }
+    setChecklistMutationId("create");
+    setChecklistNotice(null);
+    try {
+      const item = await onCreateChecklistItem(
+        task,
+        text,
+        checklistCreateMutationRef.current.operationId,
+      );
+      replaceChecklistItem(item);
+      setChecklistDraft("");
+      setChecklistNotice({ kind: "success", text: "清单项已新增。" });
+      checklistCreateMutationRef.current = null;
+      await refreshEvents();
+    } catch (error) {
+      const text = error instanceof Error ? error.message : "清单项新增失败，请稍后重试。";
+      setChecklistNotice({ kind: "error", text });
+      if (text.includes("重新加载")) await refreshChecklist();
+    } finally {
+      setChecklistMutationId("");
+    }
+  }
+
+  async function updateChecklistItem(
+    item: MerchantTaskChecklistItem,
+    change: TaskChecklistItemChange,
+    success: string,
+  ) {
+    if (busy || checklistMutationId || task.archivedAt) return;
+    setChecklistMutationId(item.id);
+    setChecklistNotice(null);
+    try {
+      const updatedItem = await onUpdateChecklistItem(
+        task,
+        item,
+        change,
+        createClientMutationOperationId("enterprise-task-checklist-update"),
+      );
+      replaceChecklistItem(updatedItem);
+      setEditingChecklistItemId("");
+      setEditingChecklistText("");
+      setChecklistNotice({ kind: "success", text: success });
+      await refreshEvents();
+    } catch (error) {
+      const text = error instanceof Error ? error.message : "清单项保存失败，请稍后重试。";
+      setChecklistNotice({ kind: "error", text });
+      if (text.includes("重新加载")) await refreshChecklist();
+    } finally {
+      setChecklistMutationId("");
+    }
+  }
+
   async function submitComment() {
     const text = commentText.trim();
     if (!text || text.length > 2000 || commentBusy || task.archivedAt) return;
@@ -804,6 +979,35 @@ function TaskEditor({
     (employee) => employee.status === "active" || task.assigneeIds.includes(employee.id),
   );
   const canSave = canUpdate || canAssign;
+  const currentColumn = columns.find((column) => column.id === task.columnId);
+  const taskCompleted = currentColumn ? currentColumn.isDone : Boolean(task.completedAt);
+  const completionTransition = getMerchantTaskCompletionTransition(task, columns);
+  const completionUnavailableMessage = task.archivedAt
+    ? "已归档任务需先恢复，才能更改完成状态。"
+    : !canUpdate
+      ? "当前账号没有修改任务完成状态的权限。"
+      : !currentColumn
+        ? "任务所在工作列不可用，暂时不能切换完成状态。"
+        : taskCompleted
+          ? "当前看板没有可用的进行中工作列，请先在看板设置中配置。"
+          : "当前看板没有可用的完成工作列，请先在看板设置中配置。";
+  const completedChecklistItemCount = checklistItems.filter((item) => item.completed).length;
+  const checklistProgress = checklistItems.length > 0
+    ? Math.round((completedChecklistItemCount / checklistItems.length) * 100)
+    : 0;
+  const checklistAtLimit = checklistItems.length >= MAX_MERCHANT_TASK_CHECKLIST_ITEMS;
+  const checklistBusy = busy || Boolean(checklistMutationId);
+
+  function taskEditorDraft(nextColumnId = columnId): TaskDraft {
+    return {
+      title,
+      description,
+      priority,
+      dueAt,
+      columnId: nextColumnId,
+      assigneeIds,
+    };
+  }
 
   return (
     <div
@@ -895,6 +1099,338 @@ function TaskEditor({
               />
             </label>
           </div>
+
+          <section
+            aria-label="任务完成状态"
+            className={`flex flex-col gap-3 rounded-2xl border p-4 sm:flex-row sm:items-center sm:justify-between ${
+              taskCompleted
+                ? "border-emerald-200 bg-emerald-50/70"
+                : "border-blue-100 bg-blue-50/60"
+            }`}
+          >
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                  taskCompleted
+                    ? "bg-emerald-100 text-emerald-700"
+                    : "bg-blue-100 text-blue-700"
+                }`}>
+                  {taskCompleted ? "已完成" : "进行中"}
+                </span>
+                <span className="text-sm font-semibold text-slate-900">任务状态</span>
+              </div>
+              {canUpdate && !task.archivedAt && completionTransition ? (
+                <p className="mt-1.5 text-xs leading-5 text-slate-600">
+                  {completionTransition.action === "complete" ? "完成后" : "重新打开后"}
+                  将移至“{completionTransition.targetColumnName}”；上方尚未保存的修改会一并保存。
+                </p>
+              ) : (
+                <p className="mt-1.5 text-xs leading-5 text-slate-600">
+                  {completionUnavailableMessage}
+                </p>
+              )}
+            </div>
+            {canUpdate && !task.archivedAt && completionTransition ? (
+              <button
+                type="button"
+                className={`min-h-11 shrink-0 rounded-xl px-4 py-2 text-sm font-semibold text-white disabled:opacity-45 ${
+                  completionTransition.action === "complete"
+                    ? "bg-emerald-600"
+                    : "bg-blue-600"
+                }`}
+                disabled={busy || !title.trim()}
+                aria-label={`${
+                  completionTransition.action === "complete" ? "完成任务" : "重新打开任务"
+                }：${task.title}，移至${completionTransition.targetColumnName}`}
+                onClick={() =>
+                  void onSave(
+                    task,
+                    taskEditorDraft(completionTransition.targetColumnId),
+                  )
+                }
+              >
+                {completionTransition.action === "complete" ? "保存并完成" : "保存并重新打开"}
+              </button>
+            ) : null}
+          </section>
+
+          <section
+            aria-labelledby="enterprise-task-checklist-title"
+            className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 id="enterprise-task-checklist-title" className="font-semibold text-slate-900">
+                    任务清单
+                  </h3>
+                  <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-600">
+                    {completedChecklistItemCount}/{checklistItems.length} 已完成
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-slate-500">把任务拆成可逐项确认的小步骤。</p>
+              </div>
+              <button
+                type="button"
+                className="min-h-11 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 disabled:opacity-45 sm:min-h-0"
+                disabled={checklistLoading || checklistBusy}
+                onClick={() => void refreshChecklist()}
+              >
+                {checklistLoading ? "刷新中…" : "刷新清单"}
+              </button>
+            </div>
+
+            <div
+              role="progressbar"
+              aria-label="任务清单完成进度"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={checklistProgress}
+              aria-valuetext={`${completedChecklistItemCount}/${checklistItems.length} 已完成`}
+              className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200"
+            >
+              <div
+                className="h-full rounded-full bg-emerald-500 transition-[width]"
+                style={{ width: `${checklistProgress}%` }}
+              />
+            </div>
+
+            {canUpdate && !task.archivedAt ? (
+              <form
+                className="mt-4 flex flex-col gap-2 sm:flex-row"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void submitChecklistItem();
+                }}
+              >
+                <label className="sr-only" htmlFor="enterprise-task-checklist-new-item">
+                  新清单项
+                </label>
+                <input
+                  id="enterprise-task-checklist-new-item"
+                  className="min-h-11 min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm disabled:bg-slate-100"
+                  value={checklistDraft}
+                  maxLength={MAX_MERCHANT_TASK_CHECKLIST_TEXT_LENGTH}
+                  placeholder="例如：联系供应商确认库存"
+                  disabled={
+                    checklistBusy || checklistLoading || Boolean(checklistError) || checklistAtLimit
+                  }
+                  onChange={(event) => {
+                    setChecklistDraft(event.target.value);
+                    setChecklistNotice(null);
+                  }}
+                />
+                <button
+                  type="submit"
+                  className="min-h-11 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-45"
+                  disabled={
+                    checklistBusy ||
+                    checklistLoading ||
+                    Boolean(checklistError) ||
+                    checklistAtLimit ||
+                    !checklistDraft.trim()
+                  }
+                >
+                  {checklistMutationId === "create" ? "新增中…" : "新增清单项"}
+                </button>
+              </form>
+            ) : (
+              <div className="mt-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+                {task.archivedAt
+                  ? "已归档任务保留清单，恢复任务后可继续修改。"
+                  : "当前账号可查看任务清单，但没有修改权限。"}
+              </div>
+            )}
+
+            {canUpdate && !task.archivedAt && checklistAtLimit ? (
+              <div className="mt-2 text-xs text-amber-700">
+                当前任务已达到 {MAX_MERCHANT_TASK_CHECKLIST_ITEMS} 个清单项上限。
+              </div>
+            ) : null}
+
+            {checklistNotice ? (
+              <div
+                role={checklistNotice.kind === "error" ? "alert" : "status"}
+                aria-live="polite"
+                className={`mt-3 text-sm ${
+                  checklistNotice.kind === "error" ? "text-rose-700" : "text-emerald-700"
+                }`}
+              >
+                {checklistNotice.text}
+              </div>
+            ) : null}
+
+            {checklistError ? (
+              <div
+                role="alert"
+                className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700"
+              >
+                {checklistError}
+              </div>
+            ) : null}
+
+            <div className="mt-4">
+              {checklistError && checklistItems.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-6 text-center text-sm text-slate-500">
+                  任务清单暂时不可用，请点击“刷新清单”重试。
+                </div>
+              ) : checklistLoading && checklistItems.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-6 text-center text-sm text-slate-500">
+                  正在加载任务清单…
+                </div>
+              ) : checklistItems.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-6 text-center text-sm text-slate-500">
+                  暂无清单项{canUpdate && !task.archivedAt ? "，可在上方添加第一项。" : "。"}
+                </div>
+              ) : (
+                <ul className="space-y-2">
+                  {checklistItems.map((item) => {
+                    const itemBusy = checklistMutationId === item.id;
+                    const editing = editingChecklistItemId === item.id;
+                    return (
+                      <li
+                        key={item.id}
+                        className="rounded-xl border border-slate-200 bg-white px-3 py-2"
+                      >
+                        {editing ? (
+                          <form
+                            className="flex flex-col gap-2 sm:flex-row sm:items-center"
+                            onSubmit={(event) => {
+                              event.preventDefault();
+                              const text = editingChecklistText.trim();
+                              if (!text || text === item.text) {
+                                setEditingChecklistItemId("");
+                                setEditingChecklistText("");
+                                return;
+                              }
+                              void updateChecklistItem(item, { text }, "清单项名称已更新。");
+                            }}
+                          >
+                            <label className="sr-only" htmlFor={`enterprise-checklist-edit-${item.id}`}>
+                              修改清单项名称
+                            </label>
+                            <input
+                              id={`enterprise-checklist-edit-${item.id}`}
+                              className="min-h-11 min-w-0 flex-1 rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                              value={editingChecklistText}
+                              maxLength={MAX_MERCHANT_TASK_CHECKLIST_TEXT_LENGTH}
+                              autoFocus
+                              disabled={checklistBusy || Boolean(checklistError)}
+                              onChange={(event) => setEditingChecklistText(event.target.value)}
+                            />
+                            <div className="flex gap-2">
+                              <button
+                                type="submit"
+                                className="min-h-11 flex-1 rounded-xl bg-blue-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-45 sm:flex-none"
+                                disabled={
+                                  checklistBusy ||
+                                  Boolean(checklistError) ||
+                                  !editingChecklistText.trim()
+                                }
+                              >
+                                {itemBusy ? "保存中…" : "保存改名"}
+                              </button>
+                              <button
+                                type="button"
+                                className="min-h-11 flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 disabled:opacity-45 sm:flex-none"
+                                disabled={checklistBusy}
+                                onClick={() => {
+                                  setEditingChecklistItemId("");
+                                  setEditingChecklistText("");
+                                }}
+                              >
+                                取消
+                              </button>
+                            </div>
+                          </form>
+                        ) : (
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                            {canUpdate && !task.archivedAt ? (
+                              <label className="flex min-h-11 min-w-0 flex-1 cursor-pointer items-center gap-3 py-1 text-sm text-slate-800">
+                                <input
+                                  type="checkbox"
+                                  className="h-5 w-5 shrink-0 accent-emerald-600"
+                                  checked={item.completed}
+                                  disabled={checklistBusy || Boolean(checklistError)}
+                                  aria-label={`${item.completed ? "恢复" : "完成"}清单项：${item.text}`}
+                                  onChange={() =>
+                                    void updateChecklistItem(
+                                      item,
+                                      { completed: !item.completed },
+                                      item.completed ? "清单项已恢复。" : "清单项已完成。",
+                                    )
+                                  }
+                                />
+                                <span className={`min-w-0 break-words ${item.completed ? "text-slate-400 line-through" : ""}`}>
+                                  {item.text}
+                                </span>
+                              </label>
+                            ) : (
+                              <div className="flex min-h-11 min-w-0 flex-1 items-center gap-3 py-1 text-sm text-slate-800">
+                                <span
+                                  aria-hidden="true"
+                                  className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs ${
+                                    item.completed
+                                      ? "border-emerald-500 bg-emerald-500 text-white"
+                                      : "border-slate-300 bg-white"
+                                  }`}
+                                >
+                                  {item.completed ? "✓" : ""}
+                                </span>
+                                <span className={`min-w-0 break-words ${item.completed ? "text-slate-400 line-through" : ""}`}>
+                                  {item.text}
+                                </span>
+                              </div>
+                            )}
+                            {canUpdate && !task.archivedAt ? (
+                              <div className="flex gap-2 sm:shrink-0">
+                                {itemBusy ? (
+                                  <span
+                                    role="status"
+                                    className="flex min-h-11 items-center rounded-xl bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700"
+                                  >
+                                    保存中…
+                                  </span>
+                                ) : (
+                                  <>
+                                    <button
+                                      type="button"
+                                      className="min-h-11 flex-1 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 disabled:opacity-45 sm:flex-none"
+                                      disabled={checklistBusy || Boolean(checklistError)}
+                                      aria-label={`修改清单项名称：${item.text}`}
+                                      onClick={() => {
+                                        setEditingChecklistItemId(item.id);
+                                        setEditingChecklistText(item.text);
+                                        setChecklistNotice(null);
+                                      }}
+                                    >
+                                      改名
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="min-h-11 flex-1 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 disabled:opacity-45 sm:flex-none"
+                                      disabled={checklistBusy || Boolean(checklistError)}
+                                      aria-label={`移除清单项：${item.text}`}
+                                      onClick={() => {
+                                        if (!window.confirm(`确认移除清单项“${item.text}”吗？`)) return;
+                                        void updateChecklistItem(item, { archived: true }, "清单项已移除。");
+                                      }}
+                                    >
+                                      移除
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            ) : null}
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          </section>
 
           <fieldset className="rounded-2xl border border-slate-200 p-4" disabled={!canAssign}>
             <legend className="px-1 text-sm font-semibold text-slate-800">负责人（可多选）</legend>
@@ -1072,16 +1608,7 @@ function TaskEditor({
               type="button"
               className="rounded-xl bg-blue-600 px-5 py-2 text-sm font-semibold text-white disabled:opacity-45"
               disabled={busy || (canUpdate && !title.trim())}
-              onClick={() =>
-                void onSave(task, {
-                  title,
-                  description,
-                  priority,
-                  dueAt,
-                  columnId,
-                  assigneeIds,
-                })
-              }
+              onClick={() => void onSave(task, taskEditorDraft())}
             >
               保存任务
             </button>
@@ -1777,6 +2304,11 @@ function MerchantEnterpriseManagerContent({
   const [employeeName, setEmployeeName] = useState("");
   const [employeeEmail, setEmployeeEmail] = useState("");
   const [employeeRoleId, setEmployeeRoleId] = useState("");
+  const [managedInvitationEmployeeId, setManagedInvitationEmployeeId] = useState("");
+  const [managedInvitationName, setManagedInvitationName] = useState("");
+  const [managedInvitationRoleId, setManagedInvitationRoleId] = useState("");
+  const employeeInviteFormRef = useRef<HTMLElement | null>(null);
+  const employeeEmailInputRef = useRef<HTMLInputElement | null>(null);
   const [failedInvitationEmployeeIds, setFailedInvitationEmployeeIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -1833,6 +2365,69 @@ function MerchantEnterpriseManagerContent({
         throw new Error(readApiError(payload, "评论发布失败，请稍后重试。"));
       }
       return payload.event;
+    },
+    [apiFetch, siteId],
+  );
+
+  const loadTaskChecklist = useCallback(
+    async (taskId: string, signal?: AbortSignal) => {
+      const params = new URLSearchParams({ siteId, taskId });
+      const response = await apiFetch(
+        `/api/merchant-enterprise/task-checklist?${params.toString()}`,
+        { signal },
+      );
+      const payload = (await response.json().catch(() => null)) as TaskChecklistPayload | null;
+      if (!response.ok || !payload?.ok || !Array.isArray(payload.items)) {
+        throw new Error(readChecklistApiError(payload, "任务清单加载失败，请稍后重试。"));
+      }
+      return payload.items;
+    },
+    [apiFetch, siteId],
+  );
+
+  const createTaskChecklistItem = useCallback(
+    async (task: MerchantTask, text: string, operationId: string) => {
+      const response = await apiFetch("/api/merchant-enterprise/task-checklist", {
+        method: "POST",
+        body: JSON.stringify({
+          siteId,
+          taskId: task.id,
+          text,
+          operationId,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as TaskChecklistPayload | null;
+      if (!response.ok || !payload?.ok || !payload.item) {
+        throw new Error(readChecklistApiError(payload, "清单项新增失败，请稍后重试。"));
+      }
+      return payload.item;
+    },
+    [apiFetch, siteId],
+  );
+
+  const updateTaskChecklistItem = useCallback(
+    async (
+      task: MerchantTask,
+      item: MerchantTaskChecklistItem,
+      change: TaskChecklistItemChange,
+      operationId: string,
+    ) => {
+      const response = await apiFetch("/api/merchant-enterprise/task-checklist", {
+        method: "PATCH",
+        body: JSON.stringify({
+          siteId,
+          taskId: task.id,
+          itemId: item.id,
+          version: item.version,
+          ...change,
+          operationId,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as TaskChecklistPayload | null;
+      if (!response.ok || !payload?.ok || !payload.item) {
+        throw new Error(readChecklistApiError(payload, "清单项保存失败，请稍后重试。"));
+      }
+      return payload.item;
     },
     [apiFetch, siteId],
   );
@@ -2463,8 +3058,14 @@ function MerchantEnterpriseManagerContent({
   }
 
   async function inviteEmployee() {
-    if (!employeeName.trim() || !employeeEmail.trim() || !employeeRoleId) {
+    const normalizedEmail = normalizeAuthEmail(employeeEmail);
+    if (!employeeName.trim() || !employeeRoleId) {
       setMessage({ kind: "error", text: "请填写员工姓名、邮箱并选择角色。" });
+      return;
+    }
+    if (!isValidAuthEmail(normalizedEmail)) {
+      setMessage({ kind: "error", text: "请输入有效的员工邮箱地址。" });
+      employeeEmailInputRef.current?.focus();
       return;
     }
     const payload = await mutate(
@@ -2472,7 +3073,7 @@ function MerchantEnterpriseManagerContent({
       "POST",
       {
         displayName: employeeName,
-        email: employeeEmail,
+        email: normalizedEmail,
         roleId: employeeRoleId,
       },
       "员工记录已创建。",
@@ -2607,6 +3208,91 @@ function MerchantEnterpriseManagerContent({
       setRoleDescription("");
       setRolePermissions(["enterprise.view"]);
     }
+  }
+
+  function toggleEmployeeInvitationManager(employee: MerchantEnterpriseEmployee) {
+    if (managedInvitationEmployeeId === employee.id) {
+      setManagedInvitationEmployeeId("");
+      return;
+    }
+    setManagedInvitationEmployeeId(employee.id);
+    setManagedInvitationName(employee.displayName);
+    setManagedInvitationRoleId(employee.roleId);
+  }
+
+  async function savePendingEmployeeInvitation(employee: MerchantEnterpriseEmployee) {
+    const displayName = managedInvitationName.trim();
+    const roleId = managedInvitationRoleId.trim();
+    if (!displayName || !roleId) {
+      setMessage({ kind: "error", text: "请填写员工姓名并选择角色。" });
+      return;
+    }
+    if (!assignableRoles.some((role) => role.id === roleId)) {
+      setMessage({ kind: "error", text: "当前账号不能为该员工分配所选角色。" });
+      return;
+    }
+    if (displayName === employee.displayName && roleId === employee.roleId) {
+      setMessage({ kind: "info", text: "邀请资料没有需要保存的修改。" });
+      return;
+    }
+    const payload = await mutate(
+      "/api/merchant-enterprise/employees",
+      "PATCH",
+      {
+        employeeId: employee.id,
+        version: employee.version,
+        displayName,
+        roleId,
+      },
+      "邀请姓名和角色已更新。",
+    );
+    if (!payload) return;
+    setManagedInvitationName(displayName);
+    setManagedInvitationRoleId(roleId);
+  }
+
+  async function removePendingEmployeeInvitation(employee: MerchantEnterpriseEmployee) {
+    if (
+      !window.confirm(
+        `确认移除“${employee.displayName}”（${employee.email || "无邮箱"}）的待接受邀请吗？该账号将从员工列表删除，旧邀请会失效。`,
+      )
+    ) {
+      return;
+    }
+    const reInviteName =
+      managedInvitationEmployeeId === employee.id && managedInvitationName.trim()
+        ? managedInvitationName.trim()
+        : employee.displayName;
+    const reInviteRoleId =
+      managedInvitationEmployeeId === employee.id && managedInvitationRoleId
+        ? managedInvitationRoleId
+        : employee.roleId;
+    const payload = await mutate(
+      "/api/merchant-enterprise/employees",
+      "PATCH",
+      {
+        action: "remove_invite",
+        employeeId: employee.id,
+        version: employee.version,
+      },
+      "待接受邀请已移除，可修正邮箱后重新邀请。",
+    );
+    if (!payload) return;
+    setFailedInvitationEmployeeIds((current) => {
+      const next = new Set(current);
+      next.delete(employee.id);
+      return next;
+    });
+    setManagedInvitationEmployeeId("");
+    setEmployeeName(reInviteName);
+    setEmployeeEmail("");
+    setEmployeeRoleId(
+      assignableRoles.some((role) => role.id === reInviteRoleId) ? reInviteRoleId : "",
+    );
+    window.requestAnimationFrame(() => {
+      employeeInviteFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      employeeEmailInputRef.current?.focus({ preventScroll: true });
+    });
   }
 
   async function saveRole(
@@ -3165,6 +3851,15 @@ function MerchantEnterpriseManagerContent({
                                 .join("、");
                               const overdue = Boolean(task.dueAt && !task.completedAt && Date.parse(task.dueAt) < Date.now());
                               const reorderControlsDisabled = busy || hasTaskFilters;
+                              const completionTransition = getMerchantTaskCompletionTransition(
+                                task,
+                                activeColumns,
+                              );
+                              const showCompletionAction =
+                                taskArchiveView === "active" &&
+                                !task.archivedAt &&
+                                can(actor, "tasks.update") &&
+                                Boolean(completionTransition);
                               return (
                                 <SortableTaskShell
                                   key={task.id}
@@ -3186,15 +3881,36 @@ function MerchantEnterpriseManagerContent({
                                     </div>
                                   ) : null}
                                   <div className="mt-3 text-xs text-slate-500">负责人：{assigned || "未分派"}</div>
-                                  <button
-                                    type="button"
-                                    className="mt-3 w-full rounded-lg border border-blue-200 bg-blue-50 px-2 py-1.5 text-xs font-semibold text-blue-700"
-                                    onClick={() => setEditingTaskId(task.id)}
-                                  >
-                                    {can(actor, "tasks.update") || can(actor, "tasks.assign") || can(actor, "tasks.archive")
-                                      ? "管理任务"
-                                      : "查看详情"}
-                                  </button>
+                                  <div className={`mt-3 grid gap-2 ${showCompletionAction ? "grid-cols-2" : "grid-cols-1"}`}>
+                                    <button
+                                      type="button"
+                                      className="min-h-11 rounded-lg border border-blue-200 bg-blue-50 px-2 py-1.5 text-xs font-semibold text-blue-700 sm:min-h-0"
+                                      onClick={() => setEditingTaskId(task.id)}
+                                    >
+                                      {can(actor, "tasks.update") || can(actor, "tasks.assign") || can(actor, "tasks.archive")
+                                        ? "管理任务"
+                                        : "查看详情"}
+                                    </button>
+                                    {showCompletionAction && completionTransition ? (
+                                      <button
+                                        type="button"
+                                        className={`min-h-11 rounded-lg border px-2 py-1.5 text-xs font-semibold disabled:opacity-45 sm:min-h-0 ${
+                                          completionTransition.action === "complete"
+                                            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                            : "border-blue-200 bg-white text-blue-700"
+                                        }`}
+                                        disabled={busy}
+                                        aria-label={`${
+                                          completionTransition.action === "complete" ? "完成任务" : "重新打开任务"
+                                        }：${task.title}，移至${completionTransition.targetColumnName}`}
+                                        onClick={() =>
+                                          void moveTask(task, completionTransition.targetColumnId)
+                                        }
+                                      >
+                                        {completionTransition.action === "complete" ? "完成" : "重新打开"}
+                                      </button>
+                                    ) : null}
+                                  </div>
                                   {taskArchiveView === "active" && can(actor, "tasks.update") ? (
                                     <div className="mt-3 grid grid-cols-2 gap-2">
                                       <button
@@ -3266,7 +3982,10 @@ function MerchantEnterpriseManagerContent({
         {!needsBootstrap && tab === "employees" ? (
           <div className="mt-5 space-y-5">
             {can(actor, "employees.manage") ? (
-              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+              <section
+                ref={employeeInviteFormRef}
+                className="scroll-mt-5 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"
+              >
                 <h2 className="text-lg font-semibold text-slate-950">开设员工账号</h2>
                 <p className="mt-1 text-sm text-slate-500">员工通过邮件邀请加入；不会获得商户负责人的订单、发布等全权身份。</p>
                 <div className="mt-4 grid gap-3 md:grid-cols-[1fr_1.2fr_1fr_auto]">
@@ -3277,10 +3996,13 @@ function MerchantEnterpriseManagerContent({
                     onChange={(event) => setEmployeeName(event.target.value)}
                   />
                   <input
+                    ref={employeeEmailInputRef}
                     type="email"
                     className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
                     placeholder="员工邮箱"
                     value={employeeEmail}
+                    maxLength={254}
+                    autoComplete="email"
                     onChange={(event) => setEmployeeEmail(event.target.value)}
                   />
                   <select
@@ -3316,14 +4038,34 @@ function MerchantEnterpriseManagerContent({
                   const invitationNeedsRenewal =
                     invitationPresentation.state === "expired" ||
                     invitationPresentation.state === "revoked";
+                  const currentEmployeeRole = roleById.get(employee.roleId);
+                  const canManageInvitation =
+                    can(actor, "employees.manage") &&
+                    invitationNeedsAction &&
+                    !(actor.type === "employee" && actor.id === employee.id) &&
+                    (actor?.type === "owner" ||
+                      Boolean(
+                        currentEmployeeRole &&
+                          merchantEnterprisePermissionsFitActor(
+                            actor,
+                            currentEmployeeRole.permissions,
+                          ),
+                      ));
+                  const invitationManagerOpen =
+                    canManageInvitation && managedInvitationEmployeeId === employee.id;
+                  const invitationRoleAssignable = assignableRoles.some(
+                    (role) => role.id === employee.roleId,
+                  );
                   return (
-                    <div key={employee.id} className="flex flex-wrap items-center justify-between gap-4 px-5 py-4">
-                      <div className="min-w-0">
-                        <div className="font-semibold text-slate-900">{employee.displayName}</div>
-                        <div className="mt-1 truncate text-sm text-slate-500">{employee.email || "邮箱仅管理员可见"}</div>
-                      </div>
-                      <div className="flex max-w-full flex-wrap items-center justify-end gap-3">
+                    <div key={employee.id} className="px-5 py-4">
+                      <div className="flex flex-wrap items-center justify-between gap-4">
+                        <div className="min-w-0">
+                          <div className="font-semibold text-slate-900">{employee.displayName}</div>
+                          <div className="mt-1 truncate text-sm text-slate-500">{employee.email || "邮箱仅管理员可见"}</div>
+                        </div>
+                        <div className="flex max-w-full flex-wrap items-center justify-end gap-3">
                         {can(actor, "employees.manage") &&
+                        employee.status !== "invited" &&
                         !(actor.type === "employee" && actor.id === employee.id) &&
                         assignableRoles.some((role) => role.id === employee.roleId) ? (
                           <select
@@ -3351,35 +4093,16 @@ function MerchantEnterpriseManagerContent({
                             {invitationPresentation.detail}
                           </span>
                         ) : null}
-                        {can(actor, "employees.manage") && invitationNeedsAction ? (
+                        {canManageInvitation ? (
                           <button
                             type="button"
-                            className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 disabled:opacity-45"
+                            className="min-h-11 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 disabled:opacity-45"
                             disabled={busy}
-                            onClick={() =>
-                              void sendEmployeeInvitation(
-                                employee,
-                                invitationNeedsRenewal ? "renew_invite" : "resend_invite",
-                              )
-                            }
+                            aria-expanded={invitationManagerOpen}
+                            aria-controls={`employee-invitation-manager-${employee.id}`}
+                            onClick={() => toggleEmployeeInvitationManager(employee)}
                           >
-                            {invitationNeedsRenewal
-                              ? "生成新邀请"
-                              : previousInvitationFailed || invitationPresentation.state === "failed"
-                                ? "重试邀请"
-                                : "重发邀请"}
-                          </button>
-                        ) : null}
-                        {can(actor, "employees.manage") &&
-                        invitationNeedsAction &&
-                        !invitationNeedsRenewal ? (
-                          <button
-                            type="button"
-                            className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 disabled:opacity-45"
-                            disabled={busy}
-                            onClick={() => void revokeEmployeeInvitation(employee)}
-                          >
-                            撤销邀请
+                            {invitationManagerOpen ? "收起管理" : "管理邀请"}
                           </button>
                         ) : null}
                         {can(actor, "employees.manage") &&
@@ -3394,7 +4117,120 @@ function MerchantEnterpriseManagerContent({
                             {employee.status === "disabled" ? "恢复" : "停用"}
                           </button>
                         ) : null}
+                        </div>
                       </div>
+                      {invitationManagerOpen ? (
+                        <div
+                          id={`employee-invitation-manager-${employee.id}`}
+                          className="mt-4 rounded-2xl border border-blue-100 bg-blue-50/40 p-4"
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                              <h3 className="font-semibold text-slate-900">管理待接受邀请</h3>
+                              <p className="mt-1 text-xs leading-5 text-slate-500">
+                                可修改姓名和角色。邀请邮箱与登录身份绑定，邮箱有误时请移除后重新邀请。
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              className="min-h-11 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 disabled:opacity-45"
+                              disabled={busy}
+                              onClick={() => setManagedInvitationEmployeeId("")}
+                            >
+                              关闭
+                            </button>
+                          </div>
+                          <div className="mt-4 grid gap-3 md:grid-cols-2">
+                            <label className="block text-xs font-medium text-slate-600">
+                              员工姓名
+                              <input
+                                className="mt-1.5 min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                                value={managedInvitationName}
+                                maxLength={120}
+                                disabled={busy}
+                                onChange={(event) => setManagedInvitationName(event.target.value)}
+                              />
+                            </label>
+                            <label className="block text-xs font-medium text-slate-600">
+                              员工角色
+                              <select
+                                className="mt-1.5 min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                                value={managedInvitationRoleId}
+                                disabled={busy || !invitationRoleAssignable}
+                                onChange={(event) => setManagedInvitationRoleId(event.target.value)}
+                              >
+                                {!invitationRoleAssignable ? (
+                                  <option value={employee.roleId}>
+                                    {roleById.get(employee.roleId)?.name || "当前角色"}
+                                  </option>
+                                ) : null}
+                                {assignableRoles.map((role) => (
+                                  <option key={role.id} value={role.id}>{role.name}</option>
+                                ))}
+                              </select>
+                            </label>
+                            <label className="block text-xs font-medium text-slate-600 md:col-span-2">
+                              邀请邮箱（不可直接修改）
+                              <input
+                                type="email"
+                                className="mt-1.5 min-h-11 w-full rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-600"
+                                value={employee.email || ""}
+                                readOnly
+                              />
+                            </label>
+                          </div>
+                          <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                            <button
+                              type="button"
+                              className="min-h-11 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-45"
+                              disabled={
+                                busy ||
+                                !managedInvitationName.trim() ||
+                                !managedInvitationRoleId ||
+                                !invitationRoleAssignable
+                              }
+                              onClick={() => void savePendingEmployeeInvitation(employee)}
+                            >
+                              保存姓名和角色
+                            </button>
+                            <button
+                              type="button"
+                              className="min-h-11 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-700 disabled:opacity-45"
+                              disabled={busy}
+                              onClick={() =>
+                                void sendEmployeeInvitation(
+                                  employee,
+                                  invitationNeedsRenewal ? "renew_invite" : "resend_invite",
+                                )
+                              }
+                            >
+                              {invitationNeedsRenewal
+                                ? "生成新邀请"
+                                : previousInvitationFailed || invitationPresentation.state === "failed"
+                                  ? "重试邀请"
+                                  : "重发邀请"}
+                            </button>
+                            {!invitationNeedsRenewal ? (
+                              <button
+                                type="button"
+                                className="min-h-11 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 disabled:opacity-45"
+                                disabled={busy}
+                                onClick={() => void revokeEmployeeInvitation(employee)}
+                              >
+                                撤销邀请
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              className="min-h-11 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700 disabled:opacity-45"
+                              disabled={busy}
+                              onClick={() => void removePendingEmployeeInvitation(employee)}
+                            >
+                              移除待接受账号
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                   );
                 })}
@@ -3518,6 +4354,9 @@ function MerchantEnterpriseManagerContent({
             onArchive={setTaskArchived}
             onLoadEvents={loadTaskEvents}
             onComment={createTaskComment}
+            onLoadChecklist={loadTaskChecklist}
+            onCreateChecklistItem={createTaskChecklistItem}
+            onUpdateChecklistItem={updateTaskChecklistItem}
             onClose={() => setEditingTaskId("")}
           />
         ) : null}

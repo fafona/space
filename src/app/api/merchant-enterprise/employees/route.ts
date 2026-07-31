@@ -21,9 +21,14 @@ import {
   createMerchantEnterpriseInvitationSecret,
   finalizeMerchantEnterpriseEmployeeInvitation,
   MERCHANT_ENTERPRISE_INVITATION_TTL_MS,
+  removeMerchantEnterpriseEmployeeInvitation,
   reserveMerchantEnterpriseEmployeeInvitation,
   revokeMerchantEnterpriseEmployeeInvitation,
 } from "@/lib/merchantEnterpriseInvitationStore.server";
+import {
+  isValidAuthEmail,
+  normalizeAuthEmail,
+} from "@/lib/authCredentialValidation";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import {
   hasImmutableMerchantStaffPrincipal,
@@ -76,6 +81,30 @@ const EMPLOYEE_INVITATION_RESEND_COOLDOWN_MS = 60_000;
 
 function text(value: unknown, max = 4096) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
+}
+
+export function toPublicMerchantEnterpriseEmployee(
+  employee: MerchantEnterpriseEmployee,
+) {
+  return {
+    id: employee.id,
+    siteId: employee.siteId,
+    email: employee.email,
+    displayName: employee.displayName,
+    roleId: employee.roleId,
+    status: employee.status,
+    invitedAt: employee.invitedAt,
+    acceptedAt: employee.acceptedAt,
+    lastActiveAt: employee.lastActiveAt,
+    invitationVersion: employee.invitationVersion,
+    invitationExpiresAt: employee.invitationExpiresAt,
+    invitationRevokedAt: employee.invitationRevokedAt,
+    invitationSentAt: employee.invitationSentAt,
+    invitationDeliveryStatus: employee.invitationDeliveryStatus,
+    version: employee.version,
+    createdAt: employee.createdAt,
+    updatedAt: employee.updatedAt,
+  };
 }
 
 export function getEmployeeInvitationRetryAfterSeconds(
@@ -172,7 +201,7 @@ export function createEmployeeInvitationCooldownResponse(
     {
       ok: false,
       error: "employee_invitation_cooldown",
-      employee,
+      employee: toPublicMerchantEnterpriseEmployee(employee),
       retryAfterSeconds,
     },
     {
@@ -188,7 +217,7 @@ export function createEmployeeInvitationResendResponse(input: {
 }) {
   return NextResponse.json({
     ok: true,
-    employee: input.employee,
+    employee: toPublicMerchantEnterpriseEmployee(input.employee),
     invitation: input.invitation,
   });
 }
@@ -490,10 +519,16 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, error: "invalid_site_id" }, { status: 400 });
     }
     const displayName = text(body?.displayName, 120);
-    const email = text(body?.email, 320).toLowerCase();
+    const email = normalizeAuthEmail(body?.email);
     const roleId = text(body?.roleId, 80);
-    if (!displayName || !email.includes("@") || !roleId) {
+    if (!displayName || !roleId) {
       return NextResponse.json({ ok: false, error: "invalid_employee" }, { status: 400 });
+    }
+    if (!isValidAuthEmail(email)) {
+      return NextResponse.json(
+        { ok: false, error: "invalid_employee_email" },
+        { status: 400 },
+      );
     }
     const actor = await authorize(request, siteId);
     const service = serviceClient();
@@ -506,6 +541,12 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { ok: false, error: assignmentError },
         { status: assignmentError === "permission_escalation_denied" ? 403 : 400 },
+      );
+    }
+    if (snapshot.employees.some((employee) => employee.email === email)) {
+      return NextResponse.json(
+        { ok: false, error: "employee_email_in_use" },
+        { status: 409 },
       );
     }
     let employee = await createMerchantEnterpriseEmployee(
@@ -552,7 +593,11 @@ export async function POST(request: Request) {
         { status: 409 },
       );
     }
-    return NextResponse.json({ ok: true, employee, invitation });
+    return NextResponse.json({
+      ok: true,
+      employee: toPublicMerchantEnterpriseEmployee(employee),
+      invitation,
+    });
   } catch (error) {
     return fail(error);
   }
@@ -578,9 +623,28 @@ export async function PATCH(request: Request) {
       action &&
       action !== "resend_invite" &&
       action !== "renew_invite" &&
-      action !== "revoke_invite"
+      action !== "revoke_invite" &&
+      action !== "remove_invite"
     ) {
       return NextResponse.json({ ok: false, error: "invalid_employee_action" }, { status: 400 });
+    }
+    if (
+      action &&
+      (body?.email !== undefined ||
+        body?.displayName !== undefined ||
+        body?.roleId !== undefined ||
+        body?.status !== undefined)
+    ) {
+      return NextResponse.json(
+        { ok: false, error: "invalid_employee_action" },
+        { status: 400 },
+      );
+    }
+    if (!action && body?.email !== undefined) {
+      return NextResponse.json(
+        { ok: false, error: "employee_email_change_requires_reinvite" },
+        { status: 400 },
+      );
     }
 
     const actor = await authorize(request, siteId);
@@ -606,8 +670,8 @@ export async function PATCH(request: Request) {
     const currentRole = snapshot.roles.find((item) => item.id === currentEmployee.roleId);
     if (
       actor.type === "employee" &&
-      currentRole &&
-      !merchantEnterprisePermissionsFitActor(actor, currentRole.permissions)
+      (!currentRole ||
+        !merchantEnterprisePermissionsFitActor(actor, currentRole.permissions))
     ) {
       return NextResponse.json(
         { ok: false, error: "permission_escalation_denied" },
@@ -616,7 +680,7 @@ export async function PATCH(request: Request) {
     }
 
     if (action === "revoke_invite") {
-      if (currentEmployee.status !== "invited") {
+      if (currentEmployee.status !== "invited" || currentEmployee.acceptedAt) {
         return NextResponse.json(
           { ok: false, error: "employee_invitation_not_pending" },
           { status: 409 },
@@ -627,11 +691,33 @@ export async function PATCH(request: Request) {
         employeeId: currentEmployee.id,
         version: currentEmployee.version,
       });
-      return NextResponse.json({ ok: true, employee: revoked.employee });
+      return NextResponse.json({
+        ok: true,
+        employee: toPublicMerchantEnterpriseEmployee(revoked.employee),
+      });
+    }
+
+    if (action === "remove_invite") {
+      if (currentEmployee.status !== "invited" || currentEmployee.acceptedAt) {
+        return NextResponse.json(
+          { ok: false, error: "employee_invitation_not_pending" },
+          { status: 409 },
+        );
+      }
+      const removed = await removeMerchantEnterpriseEmployeeInvitation(store, {
+        siteId,
+        employeeId: currentEmployee.id,
+        version: currentEmployee.version,
+      });
+      return NextResponse.json({
+        ok: true,
+        employeeId: removed.employeeId,
+        removed: true,
+      });
     }
 
     if (action === "resend_invite" || action === "renew_invite") {
-      if (currentEmployee.status !== "invited") {
+      if (currentEmployee.status !== "invited" || currentEmployee.acceptedAt) {
         return NextResponse.json(
           { ok: false, error: "employee_invitation_not_pending" },
           { status: 409 },
@@ -725,7 +811,10 @@ export async function PATCH(request: Request) {
         ? { status: body.status }
         : {}),
     });
-    return NextResponse.json({ ok: true, employee });
+    return NextResponse.json({
+      ok: true,
+      employee: toPublicMerchantEnterpriseEmployee(employee),
+    });
   } catch (error) {
     return fail(error);
   }

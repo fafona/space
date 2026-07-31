@@ -33,12 +33,31 @@ function throwInvitationStoreError(operation: string, error: unknown): never {
     "employee_invitation_expired",
     "employee_invitation_superseded",
     "employee_invitation_credentials_required",
+    "employee_invitation_in_use",
     "employee_auth_user_conflict",
     "employee_not_found",
     "invalid_employee_invitation",
   ].find((code) => message.includes(code));
   if (knownCode) throw new Error(knownCode);
   throw new Error(`${operation}:${message}`);
+}
+
+function normalizeInvitationRemoval(
+  value: unknown,
+  operation: string,
+): {
+  removed: true;
+  employeeId: string;
+} {
+  const record =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const employeeId = normalizeText(record.employee_id ?? record.employeeId, 80);
+  if (record.removed !== true || !employeeId) {
+    throw new Error(`${operation}:invalid_response`);
+  }
+  return { removed: true, employeeId };
 }
 
 function normalizeInvitationMutation(
@@ -157,6 +176,36 @@ export async function revokeMerchantEnterpriseEmployeeInvitation(
   return normalizeInvitationMutation(
     result.data,
     "enterprise_employee_invitation_revoke_failed",
+  );
+}
+
+export async function removeMerchantEnterpriseEmployeeInvitation(
+  client: MerchantEnterpriseStoreClient,
+  input: {
+    siteId: string;
+    employeeId: string;
+    version: number;
+  },
+) {
+  const siteId = normalizeText(input.siteId, 80);
+  const employeeId = normalizeText(input.employeeId, 80);
+  const version = Number(input.version);
+  if (!siteId || !employeeId || !Number.isSafeInteger(version) || version <= 0) {
+    throw new Error("invalid_employee_invitation");
+  }
+  const result = await client.rpc("faolla_remove_merchant_employee_invitation_v1", {
+    p_input: {
+      merchant_id: siteId,
+      employee_id: employeeId,
+      expected_version: version,
+    },
+  });
+  if (result.error) {
+    throwInvitationStoreError("enterprise_employee_invitation_remove_failed", result.error);
+  }
+  return normalizeInvitationRemoval(
+    result.data,
+    "enterprise_employee_invitation_remove_failed",
   );
 }
 

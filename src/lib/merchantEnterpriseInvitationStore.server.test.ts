@@ -11,6 +11,7 @@ import {
   bindMerchantEnterpriseEmployeeInvitationAuthUser,
   createMerchantEnterpriseInvitationSecret,
   finalizeMerchantEnterpriseEmployeeInvitation,
+  removeMerchantEnterpriseEmployeeInvitation,
   reserveMerchantEnterpriseEmployeeInvitation,
   revokeMerchantEnterpriseEmployeeInvitation,
 } from "@/lib/merchantEnterpriseInvitationStore.server";
@@ -251,6 +252,74 @@ test("revocation sends only the employee row version and normalizes its rotated 
   });
   assert.equal(result.invitationVersion, 5);
   assert.equal(result.employee.version, 12);
+});
+
+test("removal sends the pending invitation row version and normalizes the deleted employee id", async () => {
+  let captured:
+    | { functionName: string; args: Record<string, unknown> }
+    | undefined;
+  const client = rpcClient(async (functionName, args) => {
+    captured = { functionName, args };
+    return {
+      data: {
+        removed: true,
+        employee_id: employeeId,
+      },
+      error: null,
+    };
+  });
+  const result = await removeMerchantEnterpriseEmployeeInvitation(client, {
+    siteId: "10000000",
+    employeeId,
+    version: 12,
+  });
+
+  assert.equal(
+    captured?.functionName,
+    "faolla_remove_merchant_employee_invitation_v1",
+  );
+  assert.deepEqual(captured?.args, {
+    p_input: {
+      merchant_id: "10000000",
+      employee_id: employeeId,
+      expected_version: 12,
+    },
+  });
+  assert.deepEqual(result, { removed: true, employeeId });
+});
+
+test("removal rejects invalid CAS input before any database call", async () => {
+  let called = false;
+  const client = rpcClient(async () => {
+    called = true;
+    return { data: null, error: null };
+  });
+
+  await assert.rejects(
+    removeMerchantEnterpriseEmployeeInvitation(client, {
+      siteId: "10000000",
+      employeeId,
+      version: 0,
+    }),
+    /invalid_employee_invitation/,
+  );
+  assert.equal(called, false);
+});
+
+test("removal preserves the actionable in-use conflict from the database", async () => {
+  const client = rpcClient(async () => ({
+    data: null,
+    error: { code: "P0001", message: "employee_invitation_in_use" },
+  }));
+
+  await assert.rejects(
+    removeMerchantEnterpriseEmployeeInvitation(client, {
+      siteId: "10000000",
+      employeeId,
+      version: 12,
+    }),
+    /^Error: employee_invitation_in_use$/,
+  );
 });
 
 test("accept RPC lifecycle failures retain their actionable HTTP status", () => {

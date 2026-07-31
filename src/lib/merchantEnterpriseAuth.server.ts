@@ -192,6 +192,14 @@ export async function resolveMerchantEnterpriseActor(
   return actor;
 }
 
+const MERCHANT_ENTERPRISE_CONFLICT_ERRORS = new Set([
+  "enterprise_version_conflict",
+  "enterprise_invitation_remove_conflict",
+  "employee_invitation_in_use",
+  "employee_invitation_not_pending",
+  "employee_email_in_use",
+]);
+
 export function toMerchantEnterpriseAccessResponse(error: unknown) {
   if (error instanceof MerchantEnterpriseAccessError) {
     return {
@@ -203,7 +211,9 @@ export function toMerchantEnterpriseAccessResponse(error: unknown) {
   const status =
     message === "enterprise_schema_unavailable"
       ? 503
-      : message === "enterprise_version_conflict"
+      : message === "employee_not_found"
+        ? 404
+      : MERCHANT_ENTERPRISE_CONFLICT_ERRORS.has(message)
         ? 409
         : message.startsWith("invalid_")
           ? 400
@@ -215,11 +225,9 @@ export function toMerchantEnterpriseAccessResponse(error: unknown) {
       error:
         message === "enterprise_schema_unavailable"
           ? message
-          : status === 409
+          : status === 400 || status === 404 || status === 409
             ? message
-            : status === 400
-              ? message
-              : "enterprise_request_failed",
+            : "enterprise_request_failed",
     },
   };
 }

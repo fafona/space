@@ -7,6 +7,7 @@ import {
   MerchantEnterpriseAccessError,
   readMerchantEnterpriseRequestAccessTokens,
   requireMerchantEnterpriseEntitlement,
+  toMerchantEnterpriseAccessResponse,
 } from "@/lib/merchantEnterpriseAuth.server";
 import {
   createEnterpriseBrowserAuthStorageAdapter,
@@ -120,6 +121,29 @@ test("enterprise actor resolution is read-only and gates before membership looku
     /getMissingMerchantEnterprisePermissionDependencies\(role\.permissions\)/,
   );
   assert.doesNotMatch(source, /merchant_employee_activation_failed/);
+});
+
+test("enterprise invitation removal failures keep actionable HTTP statuses", () => {
+  for (const [code, status] of [
+    ["employee_not_found", 404],
+    ["enterprise_version_conflict", 409],
+    ["employee_invitation_not_pending", 409],
+    ["employee_invitation_in_use", 409],
+    ["employee_email_in_use", 409],
+    ["invalid_employee_invitation", 400],
+  ] as const) {
+    assert.deepEqual(toMerchantEnterpriseAccessResponse(new Error(code)), {
+      status,
+      body: { ok: false, error: code },
+    });
+  }
+  assert.deepEqual(
+    toMerchantEnterpriseAccessResponse(new Error("internal database detail")),
+    {
+      status: 503,
+      body: { ok: false, error: "enterprise_request_failed" },
+    },
+  );
 });
 
 test("enterprise employee sessions remain tab-scoped and do not mirror tokens", () => {
