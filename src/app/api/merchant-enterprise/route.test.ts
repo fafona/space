@@ -571,6 +571,42 @@ test("valid task reorder requires an authenticated tasks updater", async () => {
   assert.deepEqual(await response.json(), { ok: false, error: "unauthorized" });
 });
 
+test("task moves must use the atomic target-index shape", async () => {
+  const cases = [
+    {
+      columnId: "33333333-3333-4333-8333-333333333333",
+    },
+    {
+      position: 2,
+    },
+    {
+      columnId: "33333333-3333-4333-8333-333333333333",
+      targetIndex: 0,
+      title: "Mixed move and edit",
+    },
+  ];
+
+  for (const fields of cases) {
+    const response = await updateTask(
+      new Request("https://www.faolla.com/api/merchant-enterprise/tasks", {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://www.faolla.com",
+        },
+        body: JSON.stringify({
+          siteId: "10000000",
+          taskId: "11111111-1111-4111-8111-111111111111",
+          version: 1,
+          ...fields,
+        }),
+      }),
+    );
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { ok: false, error: "invalid_task_move" });
+  }
+});
+
 test("task patch requires a positive optimistic-lock version before authorization", async () => {
   for (const version of [undefined, "1", 0, 1.5]) {
     const response = await updateTask(

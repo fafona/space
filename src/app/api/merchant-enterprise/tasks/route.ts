@@ -221,14 +221,6 @@ export async function PATCH(request: Request) {
       ? targetIndex(body?.targetIndex)
       : undefined;
     const taskId = uuid(body?.taskId);
-    const actor = await resolveMerchantEnterpriseActor(request, {
-      siteId,
-      requiredPermission: requiredPermissions[0],
-    });
-    await requireMerchantEnterpriseEntitlement(siteId);
-    if (requiredPermissions.some((permission) => !hasMerchantEnterprisePermission(actor, permission))) {
-      return NextResponse.json({ ok: false, error: "permission_denied" }, { status: 403 });
-    }
     if (requestedTargetIndex !== undefined) {
       if (
         !hasOwn(body, "columnId") ||
@@ -242,6 +234,18 @@ export async function PATCH(request: Request) {
       ) {
         throw new Error("invalid_task_move");
       }
+    } else if (hasOwn(body, "columnId") || requestedPosition !== undefined) {
+      throw new Error("invalid_task_move");
+    }
+    const actor = await resolveMerchantEnterpriseActor(request, {
+      siteId,
+      requiredPermission: requiredPermissions[0],
+    });
+    await requireMerchantEnterpriseEntitlement(siteId);
+    if (requiredPermissions.some((permission) => !hasMerchantEnterprisePermission(actor, permission))) {
+      return NextResponse.json({ ok: false, error: "permission_denied" }, { status: 403 });
+    }
+    if (requestedTargetIndex !== undefined) {
       const task = await moveMerchantTask(client(), {
         siteId,
         taskId,
@@ -260,12 +264,10 @@ export async function PATCH(request: Request) {
       version: parsedVersion,
       actorType: actor.type,
       actorId: actor.id,
-      ...(body?.columnId !== undefined ? { columnId: uuid(body.columnId, "invalid_task_column") } : {}),
       ...(body?.title !== undefined ? { title: text(body.title, 240) } : {}),
       ...(body?.description !== undefined ? { description: text(body.description, 10000) } : {}),
       ...(requestedPriority !== undefined ? { priority: requestedPriority } : {}),
       ...(requestedDueAt !== undefined ? { dueAt: requestedDueAt } : {}),
-      ...(requestedPosition !== undefined ? { position: requestedPosition } : {}),
       ...(hasOwn(body, "archived") ? { archived: body?.archived as boolean } : {}),
       ...(requestedAssignees !== undefined ? { assigneeIds: requestedAssignees } : {}),
       operationId: operationId(request, body),

@@ -1,6 +1,35 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  closestCorners,
+  DndContext,
+  DragOverlay,
+  KeyboardSensor,
+  MouseSensor,
+  TouchSensor,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type Announcements,
+  type DragEndEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import {
   buildMerchantTaskEditChanges,
   filterMerchantTasks,
@@ -20,6 +49,10 @@ import {
   type MerchantTaskPriority,
 } from "@/lib/merchantEnterprise";
 import { createClientMutationOperationId } from "@/lib/mutationOperationId";
+import {
+  planMerchantTaskReorder,
+  sortMerchantTaskOrderItems,
+} from "@/lib/merchantTaskOrdering";
 
 type EnterpriseTab = "overview" | "tasks" | "employees" | "roles";
 
@@ -78,6 +111,83 @@ type InvitationAwareEmployee = MerchantEnterpriseEmployee & {
   invitationRevokedAt?: string | null;
   invitationSentAt?: string | null;
   invitationDeliveryStatus?: "none" | "legacy" | "sending" | "sent" | "failed" | "revoked";
+};
+
+const TASK_DND_PREFIX = "enterprise-task:";
+const COLUMN_DND_PREFIX = "enterprise-column:";
+
+type TaskDndData = {
+  type: "task";
+  taskId: string;
+  columnId: string;
+  taskTitle: string;
+};
+
+type ColumnDndData = {
+  type: "column";
+  columnId: string;
+  columnName: string;
+};
+
+function taskDndId(taskId: string) {
+  return `${TASK_DND_PREFIX}${taskId}`;
+}
+
+function columnDndId(columnId: string) {
+  return `${COLUMN_DND_PREFIX}${columnId}`;
+}
+
+function taskDndData(value: unknown): TaskDndData | null {
+  if (!value || typeof value !== "object") return null;
+  const data = value as Partial<TaskDndData>;
+  return data.type === "task" && typeof data.taskId === "string" && typeof data.columnId === "string"
+    ? {
+        type: "task",
+        taskId: data.taskId,
+        columnId: data.columnId,
+        taskTitle: typeof data.taskTitle === "string" ? data.taskTitle : "任务",
+      }
+    : null;
+}
+
+function columnDndData(value: unknown): ColumnDndData | null {
+  if (!value || typeof value !== "object") return null;
+  const data = value as Partial<ColumnDndData>;
+  return data.type === "column" && typeof data.columnId === "string"
+    ? {
+        type: "column",
+        columnId: data.columnId,
+        columnName: typeof data.columnName === "string" ? data.columnName : "工作列",
+      }
+    : null;
+}
+
+const TASK_DND_ANNOUNCEMENTS: Announcements = {
+  onDragStart({ active }) {
+    const task = taskDndData(active.data.current);
+    return task ? `已拿起任务“${task.taskTitle}”。` : "已开始移动任务。";
+  },
+  onDragOver({ over }) {
+    const task = taskDndData(over?.data.current);
+    if (task) return `当前位于任务“${task.taskTitle}”附近。`;
+    const column = columnDndData(over?.data.current);
+    return column ? `当前位于“${column.columnName}”工作列。` : undefined;
+  },
+  onDragEnd({ active, over }) {
+    const task = taskDndData(active.data.current);
+    if (!over) return task ? `任务“${task.taskTitle}”未移动。` : "任务未移动。";
+    return task
+      ? `已放下任务“${task.taskTitle}”。位置变化将自动保存。`
+      : "已放下任务，位置变化将自动保存。";
+  },
+  onDragCancel({ active }) {
+    const task = taskDndData(active.data.current);
+    return task ? `已取消移动任务“${task.taskTitle}”。` : "已取消移动任务。";
+  },
+};
+
+const TASK_DND_SCREEN_READER_INSTRUCTIONS = {
+  draggable: "按空格键拿起任务，使用方向键移动，按空格键放下，按 Esc 键取消。",
 };
 
 function employeeInvitationPresentation(employee: MerchantEnterpriseEmployee, nowMs = Date.now()) {
@@ -161,6 +271,9 @@ function readApiError(payload: unknown, fallback: string) {
   if (code === "invalid_task_board") return "任务看板已变更，请刷新后重新操作。";
   if (code === "invalid_task_column") return "目标工作列已变更或不可用，请刷新后重新操作。";
   if (code === "invalid_task_due_at") return "截止日期无效，请重新选择。";
+  if (code === "invalid_task_move" || code === "invalid_task_target_index") {
+    return "任务排序位置无效，请刷新后重新操作。";
+  }
   if (code === "merchant_access_denied") return "当前账号不属于这个企业。";
   if (code === "merchant_role_invalid") return "当前员工角色的权限配置不完整，请联系企业负责人修正。";
   if (code === "enterprise_version_conflict") return "数据已被其他人更新，已为你重新加载。";
@@ -299,6 +412,142 @@ function EnterpriseDateField({
         onChange={(event) => onChange(event.target.value)}
       />
     </span>
+  );
+}
+
+function TaskDragHandleIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4" fill="currentColor">
+      <circle cx="6" cy="5" r="1.25" />
+      <circle cx="14" cy="5" r="1.25" />
+      <circle cx="6" cy="10" r="1.25" />
+      <circle cx="14" cy="10" r="1.25" />
+      <circle cx="6" cy="15" r="1.25" />
+      <circle cx="14" cy="15" r="1.25" />
+    </svg>
+  );
+}
+
+function SortableTaskShell({
+  task,
+  dragDisabled,
+  dragDisabledReason,
+  showDragHandle,
+  children,
+}: {
+  task: MerchantTask;
+  dragDisabled: boolean;
+  dragDisabledReason: string;
+  showDragHandle: boolean;
+  children: ReactNode;
+}) {
+  const {
+    attributes,
+    listeners,
+    setActivatorNodeRef,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
+    id: taskDndId(task.id),
+    disabled: dragDisabled,
+    data: {
+      type: "task",
+      taskId: task.id,
+      columnId: task.columnId,
+      taskTitle: task.title,
+    } satisfies TaskDndData,
+  });
+  const style: CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+
+  return (
+    <article
+      ref={setNodeRef}
+      style={style}
+      className={`relative rounded-2xl border bg-white p-4 shadow-sm transition-shadow ${
+        isDragging
+          ? "z-10 border-blue-300 opacity-35 shadow-lg"
+          : task.archivedAt
+            ? "border-amber-200"
+            : "border-slate-200"
+      }`}
+    >
+      {showDragHandle ? (
+        <button
+          ref={setActivatorNodeRef}
+          type="button"
+          className="absolute right-2 top-2 inline-flex h-8 w-8 touch-none items-center justify-center rounded-lg border border-transparent text-slate-400 transition hover:border-slate-200 hover:bg-slate-50 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-300 disabled:cursor-not-allowed disabled:opacity-35"
+          {...attributes}
+          {...listeners}
+          aria-label={`拖动任务：${task.title}`}
+          title={dragDisabled ? dragDisabledReason : "拖动任务排序"}
+          disabled={dragDisabled}
+        >
+          <TaskDragHandleIcon />
+        </button>
+      ) : null}
+      <div className={showDragHandle ? "pr-7" : ""}>{children}</div>
+    </article>
+  );
+}
+
+function SortableTaskColumn({
+  column,
+  taskIds,
+  dragDisabled,
+  children,
+}: {
+  column: MerchantTaskColumn;
+  taskIds: string[];
+  dragDisabled: boolean;
+  children: ReactNode;
+}) {
+  const { isOver, setNodeRef } = useDroppable({
+    id: columnDndId(column.id),
+    disabled: dragDisabled,
+    data: {
+      type: "column",
+      columnId: column.id,
+      columnName: column.name,
+    } satisfies ColumnDndData,
+  });
+
+  return (
+    <div
+      ref={setNodeRef}
+      className={`min-h-[420px] rounded-3xl border p-3 transition-colors ${
+        isOver && !dragDisabled
+          ? "border-blue-300 bg-blue-50/80"
+          : "border-slate-200 bg-slate-100/80"
+      }`}
+    >
+      <SortableContext items={taskIds.map(taskDndId)} strategy={verticalListSortingStrategy}>
+        {children}
+      </SortableContext>
+    </div>
+  );
+}
+
+function TaskDragPreview({ task }: { task: MerchantTask }) {
+  return (
+    <article
+      aria-hidden="true"
+      className="w-[260px] rotate-1 rounded-2xl border border-blue-300 bg-white p-4 shadow-2xl"
+    >
+      <div className="flex items-start justify-between gap-2">
+        <h4 className="font-semibold leading-5 text-slate-950">{task.title}</h4>
+        <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-bold ${PRIORITY_META[task.priority].className}`}>
+          {PRIORITY_META[task.priority].label}
+        </span>
+      </div>
+      {task.description ? (
+        <p className="mt-2 line-clamp-2 text-xs leading-5 text-slate-600">{task.description}</p>
+      ) : null}
+    </article>
   );
 }
 
@@ -1163,6 +1412,11 @@ function MerchantEnterpriseManagerContent({
   const overviewRequestSequenceRef = useRef(0);
   const overviewAbortControllerRef = useRef<AbortController | null>(null);
   const taskCreateMutationRef = useRef<{ fingerprint: string; operationId: string } | null>(null);
+  const taskSensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
 
   const [taskTitle, setTaskTitle] = useState("");
   const [taskDescription, setTaskDescription] = useState("");
@@ -1322,6 +1576,23 @@ function MerchantEnterpriseManagerContent({
     priority: taskPriorityFilter,
     assigneeId: taskAssigneeFilter,
   });
+  const hasTaskFilters =
+    Boolean(taskQuery.trim()) ||
+    taskPriorityFilter !== "all" ||
+    taskAssigneeFilter !== "all";
+  const taskDragEnabled =
+    taskArchiveView === "active" &&
+    can(actor, "tasks.update") &&
+    !busy &&
+    !hasTaskFilters;
+  const taskDragDisabledReason = hasTaskFilters
+    ? "清除任务筛选后可拖动排序"
+    : busy
+      ? "正在保存，请稍候"
+      : taskArchiveView !== "active"
+        ? "归档任务不能移动"
+        : "当前账号没有移动任务的权限";
+  const draggingTask = visibleTasks.find((task) => task.id === draggingTaskId) ?? null;
   const editingTask =
     snapshot.tasks.find((task) => task.id === editingTaskId) ?? null;
   const recentTasks = [...visibleTasks].sort((left, right) => {
@@ -1345,7 +1616,13 @@ function MerchantEnterpriseManagerContent({
   );
 
   const mutate = useCallback(
-    async (path: string, method: "POST" | "PATCH", body: Record<string, unknown>, success: string) => {
+    async (
+      path: string,
+      method: "POST" | "PATCH",
+      body: Record<string, unknown>,
+      success: string,
+      options?: { reload?: boolean },
+    ) => {
       setBusy(true);
       setMessage({ kind: "info", text: "正在保存..." });
       try {
@@ -1356,6 +1633,10 @@ function MerchantEnterpriseManagerContent({
         const payload = await response.json().catch(() => null);
         if (!response.ok || !payload?.ok) {
           throw new Error(readApiError(payload, "保存失败，请稍后重试。"));
+        }
+        if (options?.reload === false) {
+          setMessage({ kind: "success", text: success });
+          return payload;
         }
         const reloaded = await loadOverview({ preserveData: true });
         if (!reloaded) {
@@ -1572,20 +1853,97 @@ function MerchantEnterpriseManagerContent({
     }
   }
 
-  async function moveTask(task: MerchantTask, columnId: string) {
-    if (task.columnId === columnId || busy) return;
-    await mutate(
+  async function reorderTask(task: MerchantTask, columnId: string, targetIndex: number) {
+    if (busy || !can(actor, "tasks.update")) return null;
+    return mutate(
       "/api/merchant-enterprise/tasks",
       "PATCH",
       {
         taskId: task.id,
         version: task.version,
         columnId,
-        position: Date.now(),
-        operationId: createClientMutationOperationId("enterprise-task-move"),
+        targetIndex,
+        operationId: createClientMutationOperationId("enterprise-task-reorder"),
       },
-      "任务状态已更新。",
+      task.columnId === columnId ? "任务顺序已更新。" : "任务状态已更新。",
     );
+  }
+
+  async function moveTask(task: MerchantTask, columnId: string) {
+    const plan = planMerchantTaskReorder(visibleTasks, {
+      taskId: task.id,
+      targetColumnId: columnId,
+      placement: "end",
+    });
+    if (plan.kind === "move") await reorderTask(task, plan.columnId, plan.targetIndex);
+  }
+
+  async function moveTaskWithinColumn(task: MerchantTask, direction: -1 | 1) {
+    const columnTasks = sortMerchantTaskOrderItems(
+      visibleTasks.filter((candidate) => candidate.columnId === task.columnId),
+    );
+    const taskIndex = columnTasks.findIndex((candidate) => candidate.id === task.id);
+    const targetTask = columnTasks[taskIndex + direction];
+    if (taskIndex < 0 || !targetTask) return;
+    const plan = planMerchantTaskReorder(visibleTasks, {
+      taskId: task.id,
+      targetColumnId: task.columnId,
+      targetTaskId: targetTask.id,
+      placement: direction < 0 ? "before" : "after",
+    });
+    if (plan.kind === "move") await reorderTask(task, plan.columnId, plan.targetIndex);
+  }
+
+  function handleTaskDragStart(event: DragStartEvent) {
+    if (!taskDragEnabled) return;
+    const task = taskDndData(event.active.data.current);
+    setDraggingTaskId(task?.taskId ?? "");
+  }
+
+  function handleTaskDragEnd(event: DragEndEvent) {
+    setDraggingTaskId("");
+    if (!taskDragEnabled || !event.over) return;
+    const activeData = taskDndData(event.active.data.current);
+    if (!activeData) return;
+    const activeTask = visibleTasks.find((task) => task.id === activeData.taskId);
+    if (!activeTask) return;
+
+    const overTask = taskDndData(event.over.data.current);
+    const overColumn = columnDndData(event.over.data.current);
+    const targetColumnId = overTask?.columnId ?? overColumn?.columnId ?? "";
+    if (!targetColumnId) return;
+
+    let placement: "before" | "after" | "end" = "end";
+    if (overTask) {
+      if (activeTask.columnId === overTask.columnId) {
+        const orderedIds = sortMerchantTaskOrderItems(
+          visibleTasks.filter((task) => task.columnId === activeTask.columnId),
+        ).map((task) => task.id);
+        placement = orderedIds.indexOf(activeTask.id) < orderedIds.indexOf(overTask.taskId)
+          ? "after"
+          : "before";
+      } else placement = "before";
+    }
+
+    const plan = planMerchantTaskReorder(visibleTasks, {
+      taskId: activeTask.id,
+      targetColumnId,
+      ...(overTask ? { targetTaskId: overTask.taskId } : {}),
+      placement,
+    });
+    if (plan.kind === "move") {
+      void reorderTask(activeTask, plan.columnId, plan.targetIndex);
+    }
+  }
+
+  async function reconcilePartiallySavedTaskMove() {
+    const reloaded = await loadOverview({ preserveData: true });
+    setMessage({
+      kind: "error",
+      text: reloaded
+        ? "任务详情已保存，但刚才无法确认所在列更新结果；已刷新最新状态，请核对后再操作。"
+        : "任务详情已保存，但无法确认所在列更新结果；请手动刷新页面后核对。",
+    });
   }
 
   async function saveTask(task: MerchantTask, draft: TaskDraft) {
@@ -1625,23 +1983,54 @@ function MerchantEnterpriseManagerContent({
       }
       return;
     }
-    const patch: Record<string, unknown> = {
-      taskId: task.id,
-      version: task.version,
-      operationId: createClientMutationOperationId("enterprise-task-edit"),
-      ...result.changes,
-    };
-    if (Object.keys(patch).length === 3) {
+    const targetColumnId =
+      typeof result.changes.columnId === "string" ? result.changes.columnId : "";
+    const editChanges: Record<string, unknown> = { ...result.changes };
+    delete editChanges.columnId;
+    const hasDetailChanges = Object.keys(editChanges).length > 0;
+    const hasColumnChange = Boolean(targetColumnId && targetColumnId !== task.columnId);
+    if (!hasDetailChanges && !hasColumnChange) {
       setMessage({ kind: "info", text: "任务没有需要保存的修改。" });
       return;
     }
-    const payload = await mutate(
-      "/api/merchant-enterprise/tasks",
-      "PATCH",
-      patch,
-      "任务已保存。",
-    );
-    if (payload) setEditingTaskId("");
+
+    let taskForMove = task;
+    if (hasDetailChanges) {
+      const payload = await mutate(
+        "/api/merchant-enterprise/tasks",
+        "PATCH",
+        {
+          taskId: task.id,
+          version: task.version,
+          operationId: createClientMutationOperationId("enterprise-task-edit"),
+          ...editChanges,
+        },
+        hasColumnChange ? "任务详情已保存，正在更新所在列。" : "任务已保存。",
+        hasColumnChange ? { reload: false } : undefined,
+      );
+      if (!payload) return;
+      if (payload.task) taskForMove = payload.task as MerchantTask;
+    }
+
+    if (hasColumnChange) {
+      const plan = planMerchantTaskReorder(visibleTasks, {
+        taskId: task.id,
+        targetColumnId,
+        placement: "end",
+      });
+      if (plan.kind !== "move") {
+        if (hasDetailChanges) await reconcilePartiallySavedTaskMove();
+        else setMessage({ kind: "error", text: "无法确定任务的新位置，请刷新页面后重试。" });
+        return;
+      }
+      const payload = await reorderTask(taskForMove, plan.columnId, plan.targetIndex);
+      if (!payload) {
+        if (hasDetailChanges) await reconcilePartiallySavedTaskMove();
+        return;
+      }
+    }
+
+    setEditingTaskId("");
   }
 
   async function setTaskArchived(task: MerchantTask, archived: boolean) {
@@ -2277,114 +2666,150 @@ function MerchantEnterpriseManagerContent({
                 当前没有可用的任务看板或工作列，请由管理员重新初始化工作区。
               </section>
             ) : (
-            <section className="overflow-x-auto pb-3">
-              <div className="grid min-w-[920px] gap-4" style={{ gridTemplateColumns: `repeat(${Math.max(activeColumns.length, 1)}, minmax(230px, 1fr))` }}>
-                {activeColumns.map((column, columnIndex) => {
-                  const tasks = filteredTasks.filter((task) => task.columnId === column.id);
-                  return (
-                    <div
-                      key={column.id}
-                      className="min-h-[420px] rounded-3xl border border-slate-200 bg-slate-100/80 p-3"
-                      onDragOver={(event) => {
-                        if (taskArchiveView === "active" && can(actor, "tasks.update")) event.preventDefault();
-                      }}
-                      onDrop={(event) => {
-                        event.preventDefault();
-                        const task = visibleTasks.find((item) => item.id === draggingTaskId);
-                        setDraggingTaskId("");
-                        if (task) void moveTask(task, column.id);
-                      }}
-                    >
-                      <div className="flex items-center justify-between gap-2 px-1 py-2">
-                        <div className="flex items-center gap-2">
-                          <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: column.color }} />
-                          <h3 className="font-semibold text-slate-900">{column.name}</h3>
-                        </div>
-                        <span className="rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-slate-600">{tasks.length}</span>
-                      </div>
-                      <div className="mt-2 space-y-3">
-                        {tasks.map((task) => {
-                          const assigned = task.assigneeIds
-                            .map((id) => employeeById.get(id)?.displayName)
-                            .filter(Boolean)
-                            .join("、");
-                          const overdue = Boolean(task.dueAt && !task.completedAt && Date.parse(task.dueAt) < Date.now());
-                          return (
-                            <article
-                              key={task.id}
-                              draggable={taskArchiveView === "active" && can(actor, "tasks.update")}
-                              onDragStart={() => setDraggingTaskId(task.id)}
-                              onDragEnd={() => setDraggingTaskId("")}
-                              className={`rounded-2xl border bg-white p-4 shadow-sm transition ${
-                                draggingTaskId === task.id
-                                  ? "opacity-45"
-                                  : task.archivedAt
-                                    ? "border-amber-200"
-                                    : "border-slate-200"
-                              }`}
-                            >
-                              <div className="flex items-start justify-between gap-2">
-                                <h4 className="font-semibold leading-5 text-slate-950">{task.title}</h4>
-                                <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-bold ${PRIORITY_META[task.priority].className}`}>
-                                  {PRIORITY_META[task.priority].label}
-                                </span>
-                              </div>
-                              {task.description ? <p className="mt-2 line-clamp-3 text-xs leading-5 text-slate-600">{task.description}</p> : null}
-                              {task.dueAt ? (
-                                <div className={`mt-3 text-xs font-medium ${overdue ? "text-rose-600" : "text-slate-500"}`}>
-                                  {overdue ? "已逾期 · " : "截止 · "}{formatDate(task.dueAt)}
-                                </div>
-                              ) : null}
-                              <div className="mt-3 text-xs text-slate-500">负责人：{assigned || "未分派"}</div>
-                              <button
-                                type="button"
-                                className="mt-3 w-full rounded-lg border border-blue-200 bg-blue-50 px-2 py-1.5 text-xs font-semibold text-blue-700"
-                                onClick={() => setEditingTaskId(task.id)}
-                              >
-                                {can(actor, "tasks.update") || can(actor, "tasks.assign") || can(actor, "tasks.archive")
-                                  ? "管理任务"
-                                  : "查看详情"}
-                              </button>
-                              {taskArchiveView === "active" && can(actor, "tasks.update") ? (
-                                <div className="mt-3 flex gap-2">
-                                  <button
-                                    type="button"
-                                    className="flex-1 rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-semibold text-slate-600 disabled:opacity-35"
-                                    disabled={busy || columnIndex === 0}
-                                    onClick={() => {
-                                      const previous = activeColumns[columnIndex - 1];
-                                      if (previous) void moveTask(task, previous.id);
-                                    }}
-                                  >
-                                    上一步
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="flex-1 rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-semibold text-slate-600 disabled:opacity-35"
-                                    disabled={busy || columnIndex === activeColumns.length - 1}
-                                    onClick={() => {
-                                      const next = activeColumns[columnIndex + 1];
-                                      if (next) void moveTask(task, next.id);
-                                    }}
-                                  >
-                                    下一步
-                                  </button>
-                                </div>
-                              ) : null}
-                            </article>
-                          );
-                        })}
-                        {tasks.length === 0 ? (
-                          <div className="rounded-2xl border border-dashed border-slate-300 px-3 py-8 text-center text-xs text-slate-400">
-                            此列暂无匹配任务
+              <DndContext
+                accessibility={{
+                  announcements: TASK_DND_ANNOUNCEMENTS,
+                  screenReaderInstructions: TASK_DND_SCREEN_READER_INSTRUCTIONS,
+                }}
+                sensors={taskSensors}
+                collisionDetection={closestCorners}
+                onDragStart={handleTaskDragStart}
+                onDragCancel={() => setDraggingTaskId("")}
+                onDragEnd={handleTaskDragEnd}
+              >
+                {taskArchiveView === "active" && can(actor, "tasks.update") ? (
+                  <div className={`rounded-2xl border px-4 py-3 text-xs ${
+                    hasTaskFilters
+                      ? "border-amber-200 bg-amber-50 text-amber-800"
+                      : "border-blue-100 bg-blue-50 text-blue-700"
+                  }`}>
+                    {hasTaskFilters
+                      ? "当前有筛选条件。清除筛选后可拖动卡片排序。"
+                      : "拖动卡片右上角手柄可跨列移动或调整同列顺序；也可使用键盘或卡片下方按钮。"}
+                  </div>
+                ) : null}
+                <section className="overflow-x-auto pb-3 pt-3">
+                  <div className="grid min-w-[920px] gap-4" style={{ gridTemplateColumns: `repeat(${Math.max(activeColumns.length, 1)}, minmax(230px, 1fr))` }}>
+                    {activeColumns.map((column, columnIndex) => {
+                      const tasks = sortMerchantTaskOrderItems(
+                        filteredTasks.filter((task) => task.columnId === column.id),
+                      );
+                      return (
+                        <SortableTaskColumn
+                          key={column.id}
+                          column={column}
+                          taskIds={tasks.map((task) => task.id)}
+                          dragDisabled={!taskDragEnabled}
+                        >
+                          <div className="flex items-center justify-between gap-2 px-1 py-2">
+                            <div className="flex items-center gap-2">
+                              <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: column.color }} />
+                              <h3 className="font-semibold text-slate-900">{column.name}</h3>
+                            </div>
+                            <span className="rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-slate-600">{tasks.length}</span>
                           </div>
-                        ) : null}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
+                          <div className="mt-2 space-y-3">
+                            {tasks.map((task, taskIndex) => {
+                              const assigned = task.assigneeIds
+                                .map((id) => employeeById.get(id)?.displayName)
+                                .filter(Boolean)
+                                .join("、");
+                              const overdue = Boolean(task.dueAt && !task.completedAt && Date.parse(task.dueAt) < Date.now());
+                              const reorderControlsDisabled = busy || hasTaskFilters;
+                              return (
+                                <SortableTaskShell
+                                  key={task.id}
+                                  task={task}
+                                  dragDisabled={!taskDragEnabled}
+                                  dragDisabledReason={taskDragDisabledReason}
+                                  showDragHandle={taskArchiveView === "active" && can(actor, "tasks.update")}
+                                >
+                                  <div className="flex items-start justify-between gap-2">
+                                    <h4 className="font-semibold leading-5 text-slate-950">{task.title}</h4>
+                                    <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-bold ${PRIORITY_META[task.priority].className}`}>
+                                      {PRIORITY_META[task.priority].label}
+                                    </span>
+                                  </div>
+                                  {task.description ? <p className="mt-2 line-clamp-3 text-xs leading-5 text-slate-600">{task.description}</p> : null}
+                                  {task.dueAt ? (
+                                    <div className={`mt-3 text-xs font-medium ${overdue ? "text-rose-600" : "text-slate-500"}`}>
+                                      {overdue ? "已逾期 · " : "截止 · "}{formatDate(task.dueAt)}
+                                    </div>
+                                  ) : null}
+                                  <div className="mt-3 text-xs text-slate-500">负责人：{assigned || "未分派"}</div>
+                                  <button
+                                    type="button"
+                                    className="mt-3 w-full rounded-lg border border-blue-200 bg-blue-50 px-2 py-1.5 text-xs font-semibold text-blue-700"
+                                    onClick={() => setEditingTaskId(task.id)}
+                                  >
+                                    {can(actor, "tasks.update") || can(actor, "tasks.assign") || can(actor, "tasks.archive")
+                                      ? "管理任务"
+                                      : "查看详情"}
+                                  </button>
+                                  {taskArchiveView === "active" && can(actor, "tasks.update") ? (
+                                    <div className="mt-3 grid grid-cols-2 gap-2">
+                                      <button
+                                        type="button"
+                                        className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-semibold text-slate-600 disabled:opacity-35"
+                                        disabled={reorderControlsDisabled || taskIndex === 0}
+                                        onClick={() => void moveTaskWithinColumn(task, -1)}
+                                      >
+                                        上移
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-semibold text-slate-600 disabled:opacity-35"
+                                        disabled={reorderControlsDisabled || taskIndex === tasks.length - 1}
+                                        onClick={() => void moveTaskWithinColumn(task, 1)}
+                                      >
+                                        下移
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-semibold text-slate-600 disabled:opacity-35"
+                                        disabled={reorderControlsDisabled || columnIndex === 0}
+                                        onClick={() => {
+                                          const previous = activeColumns[columnIndex - 1];
+                                          if (previous) void moveTask(task, previous.id);
+                                        }}
+                                      >
+                                        上一列
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-semibold text-slate-600 disabled:opacity-35"
+                                        disabled={reorderControlsDisabled || columnIndex === activeColumns.length - 1}
+                                        onClick={() => {
+                                          const next = activeColumns[columnIndex + 1];
+                                          if (next) void moveTask(task, next.id);
+                                        }}
+                                      >
+                                        下一列
+                                      </button>
+                                    </div>
+                                  ) : null}
+                                </SortableTaskShell>
+                              );
+                            })}
+                            {tasks.length === 0 ? (
+                              <div className={`rounded-2xl border border-dashed px-3 py-8 text-center text-xs ${
+                                draggingTask && taskDragEnabled
+                                  ? "border-blue-300 bg-blue-50/50 text-blue-500"
+                                  : "border-slate-300 text-slate-400"
+                              }`}>
+                                {draggingTask && taskDragEnabled ? "拖到这里" : "此列暂无匹配任务"}
+                              </div>
+                            ) : null}
+                          </div>
+                        </SortableTaskColumn>
+                      );
+                    })}
+                  </div>
+                </section>
+                <DragOverlay>
+                  {draggingTask ? <TaskDragPreview task={draggingTask} /> : null}
+                </DragOverlay>
+              </DndContext>
             )}
           </div>
         ) : null}
