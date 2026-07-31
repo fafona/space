@@ -14,6 +14,7 @@ import {
   normalizeMerchantEnterprisePermissions,
   normalizeMerchantTaskBoard,
   normalizeMerchantTask,
+  normalizeMerchantTaskEvent,
   parseMerchantEnterprisePermissionsStrict,
   toggleMerchantEnterprisePermissionSelection,
   type MerchantEnterpriseActor,
@@ -111,6 +112,34 @@ test("task normalization keeps assignees unique and rejects incomplete rows", ()
   );
   assert.deepEqual(task?.assigneeIds, ["employee-1"]);
   assert.equal(normalizeMerchantTask({ title: "missing scope" }), null);
+});
+
+test("task event normalization exposes only bounded activity payload fields", () => {
+  const event = normalizeMerchantTaskEvent({
+    id: "event-1",
+    merchant_id: "10000000",
+    task_id: "task-1",
+    event_type: "commented",
+    actor_type: "employee",
+    actor_id: "employee-1",
+    payload: {
+      text: `  ${"x".repeat(2100)}  `,
+      fields: ["title", "title", 17, "description"],
+      fromColumnId: "column-1",
+      toColumnId: "column-2",
+      assigneeIds: ["employee-1", "employee-1"],
+      targetIndex: 3,
+      unsafe: { nested: "secret" },
+    },
+    created_at: "2026-07-31T08:00:00.000Z",
+  });
+
+  assert.equal(event?.payload.text?.length, 2000);
+  assert.deepEqual(event?.payload.fields, ["title", "description"]);
+  assert.deepEqual(event?.payload.assigneeIds, ["employee-1"]);
+  assert.equal(event?.payload.targetIndex, 3);
+  assert.equal("unsafe" in (event?.payload ?? {}), false);
+  assert.equal(normalizeMerchantTaskEvent({ event_type: "commented" }), null);
 });
 
 test("enterprise schema missing errors are recognized without masking unrelated failures", () => {

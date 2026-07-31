@@ -3563,7 +3563,7 @@ type SupportContactRow = {
   isOfficial: boolean;
 };
 
-type SupportMobileHomeTab = "conversations" | "business" | "faolla" | "self";
+type SupportMobileHomeTab = "conversations" | "business" | "enterprise" | "faolla" | "self";
 type SupportSelfSectionView = "home" | "profile" | "cards" | "coupons" | "tools" | "games" | "qr" | FaollaMobileSettingsView;
 type SupportNotificationPreferences = {
   systemNotificationsEnabled: boolean;
@@ -10475,6 +10475,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     };
   }, [resetSupportFaollaBackendFrame]);
   const openSupportMobileHomeTab = useCallback((tab: SupportMobileHomeTab) => {
+    if (tab === "enterprise") {
+      void loadMerchantEnterpriseManager().catch(() => undefined);
+      setSupportMobileView("list");
+    }
     setSupportMobileHomeTab(tab);
   }, []);
   const openSupportShuangkouScoreTool = useCallback(() => {
@@ -10875,6 +10879,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         closeMobileSupportThread();
         return;
       }
+      if (supportMobileHomeTab === "enterprise") {
+        event.preventDefault();
+        openSupportMobileHomeTab("conversations");
+        return;
+      }
       if (supportMobileHomeTab === "self" && supportSelfSectionView !== "home") {
         event.preventDefault();
         if (isFaollaMobileSettingsView(supportSelfSectionView)) {
@@ -10892,6 +10901,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, [
     closeMobileSupportThread,
     isMobileSupportDialog,
+    openSupportMobileHomeTab,
     supportInterfaceOpen,
     supportMerchantInfoSheetOpen,
     supportMobileHomeTab,
@@ -10905,6 +10915,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       isMobileSupportDialog &&
       (supportMerchantInfoSheetOpen ||
         supportMobileView === "thread" ||
+        supportMobileHomeTab === "enterprise" ||
         (supportMobileHomeTab === "self" && supportSelfSectionView !== "home"));
     if (active) {
       document.documentElement.dataset.faollaMobileSwipeBackActive = "true";
@@ -15318,6 +15329,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     Boolean(merchantPermissionConfig?.allowOrderManagement);
   const canUseEnterpriseManagement =
     !isPlatformEditor && Boolean(merchantPermissionConfig?.allowEnterpriseManagement);
+  useEffect(() => {
+    if (supportMobileHomeTab !== "enterprise" || canUseEnterpriseManagement) return;
+    openSupportMobileHomeTab("conversations");
+  }, [canUseEnterpriseManagement, openSupportMobileHomeTab, supportMobileHomeTab]);
   const canUseMembershipManagement = !isPlatformEditor && Boolean(merchantPermissionConfig?.allowMembershipManagement);
   const canUsePointsRedemption =
     canUseMembershipManagement && Boolean(merchantPermissionConfig?.allowPointsRedemption);
@@ -16454,6 +16469,58 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     </>
   );
 
+  const supportMobileEnterpriseContent = (
+    <div
+      data-enterprise-mobile-panel
+      className={`flex h-full min-h-0 flex-1 flex-col overflow-hidden ${supportMobileBackgroundClassName}`}
+    >
+      <header className="shrink-0 border-b border-slate-200/80 bg-white/95 px-3 pb-3 pt-[calc(var(--faolla-mobile-safe-top)+0.55rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+        <div className="flex min-w-0 items-center gap-3">
+          <button
+            type="button"
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-slate-900 transition hover:bg-slate-100 active:bg-slate-200"
+            onClick={() => openSupportMobileHomeTab("conversations")}
+            aria-label="返回会话"
+          >
+            <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" aria-hidden="true">
+              <path
+                d="M19 12H7M12 7l-5 5 5 5"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+          <div className="min-w-0">
+            <div className="truncate text-base font-semibold text-slate-950">企业管理</div>
+            <div className="mt-0.5 truncate text-xs text-slate-500">
+              {effectiveMerchantDisplayName || merchantDisplayName || supportMobileBookingSiteId || "企业工作区"}
+            </div>
+          </div>
+        </div>
+      </header>
+      <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-3 pb-[calc(var(--faolla-mobile-safe-bottom)+1rem)]">
+        {canUseEnterpriseManagement && supportMobileBookingSiteId ? (
+          <MerchantEnterpriseManager
+            siteId={supportMobileBookingSiteId}
+            siteName={effectiveMerchantDisplayName || merchantDisplayName}
+            className="!min-h-0 !py-3"
+          />
+        ) : (
+          <section className="mt-4 rounded-[28px] border border-amber-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+            <div className="text-base font-semibold text-slate-900">企业管理暂不可用</div>
+            <div className="mt-2 text-sm leading-6 text-slate-500">
+              {canUseEnterpriseManagement
+                ? "当前商户信息还没准备好，请稍后刷新再试。"
+                : "当前账号未开通企业管理。"}
+            </div>
+          </section>
+        )}
+      </div>
+    </div>
+  );
+
   const supportMobileSelfContent =
     supportSelfSectionView === "qr" ? (
       <FaollaQrPanel
@@ -17084,7 +17151,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       ? supportMobileConversationsContent
       : supportMobileHomeTab === "business"
         ? supportMobileBusinessContent
-        : supportMobileSelfContent;
+        : supportMobileHomeTab === "enterprise"
+          ? supportMobileEnterpriseContent
+          : supportMobileSelfContent;
   const supportMobileListTabContent = (
     <>
       <div className={supportMobileHomeTab === "faolla" ? "hidden" : "contents"}>{supportMobilePrimaryTabContent}</div>
@@ -17145,6 +17214,26 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 />
               ),
             },
+            ...(canUseEnterpriseManagement
+              ? [
+                  {
+                    key: "enterprise" as const,
+                    label: "企业",
+                    icon: (
+                      <>
+                        <path
+                          d="M5 20V7.5A1.5 1.5 0 0 1 6.5 6h7A1.5 1.5 0 0 1 15 7.5V20M15 11h2.5a1.5 1.5 0 0 1 1.5 1.5V20M3 20h18M8 10h1m3 0h1m-5 3h1m3 0h1m-5 3h1m3 0h1"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </>
+                    ),
+                  },
+                ]
+              : []),
             {
               key: "faolla",
               label: "Faolla",
@@ -17210,7 +17299,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     </div>
   );
   const supportMobileBottomNavOverlay =
-    isMobileSupportDialog && !showMobileSupportThread && !isSupportMobileKeyboardVisible
+    isMobileSupportDialog &&
+    !showMobileSupportThread &&
+    supportMobileHomeTab !== "enterprise" &&
+    !isSupportMobileKeyboardVisible
       ? renderTopMostOverlay(supportMobileBottomNav)
       : null;
   const selectedSupportPeerMessagePage = selectedSupportPeerMerchantId

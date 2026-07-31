@@ -46,6 +46,7 @@ import {
   type MerchantTask,
   type MerchantTaskBoard,
   type MerchantTaskColumn,
+  type MerchantTaskEvent,
   type MerchantTaskPriority,
 } from "@/lib/merchantEnterprise";
 import { createClientMutationOperationId } from "@/lib/mutationOperationId";
@@ -95,6 +96,13 @@ type OverviewPayload = {
   needsBootstrap?: boolean;
 };
 
+type TaskEventsPayload = {
+  ok?: boolean;
+  error?: string;
+  events?: MerchantTaskEvent[];
+  event?: MerchantTaskEvent;
+};
+
 const EMPTY_SNAPSHOT: MerchantEnterpriseSnapshot = {
   roles: [],
   employees: [],
@@ -126,6 +134,83 @@ function formatDate(value: string | null | undefined) {
     month: "2-digit",
     day: "2-digit",
   }).format(date);
+}
+
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+}
+
+function taskEventPayload(event: MerchantTaskEvent) {
+  return event.payload && typeof event.payload === "object" && !Array.isArray(event.payload)
+    ? (event.payload as Record<string, unknown>)
+    : {};
+}
+
+function taskEventActorLabel(
+  event: MerchantTaskEvent,
+  actor: MerchantEnterpriseActor,
+  employees: readonly MerchantEnterpriseEmployee[],
+) {
+  if (event.actorType === "system") return "系统";
+  if (event.actorType === "employee") {
+    return employees.find((employee) => employee.id === event.actorId)?.displayName || "企业员工";
+  }
+  return event.actorId && event.actorId === actor.id ? actor.displayName : "企业负责人";
+}
+
+const TASK_EVENT_FIELD_LABELS: Record<string, string> = {
+  title: "标题",
+  description: "说明",
+  priority: "优先级",
+  due_at: "截止日期",
+  dueAt: "截止日期",
+  assigneeIds: "负责人",
+};
+
+function taskEventDescription(
+  event: MerchantTaskEvent,
+  columns: readonly MerchantTaskColumn[],
+) {
+  if (event.eventType === "created") return "创建了任务";
+  if (event.eventType === "archived") return "归档了任务";
+  if (event.eventType === "restored") return "恢复了任务";
+  if (event.eventType === "commented") return "发表了评论";
+  if (event.eventType === "moved") {
+    const payload = taskEventPayload(event);
+    const fromColumnId = typeof payload.fromColumnId === "string" ? payload.fromColumnId : "";
+    const toColumnId = typeof payload.toColumnId === "string" ? payload.toColumnId : "";
+    if (fromColumnId && toColumnId && fromColumnId !== toColumnId) {
+      const fromColumn = columns.find((column) => column.id === fromColumnId)?.name || "原工作列";
+      const toColumn = columns.find((column) => column.id === toColumnId)?.name || "新工作列";
+      return `将任务从“${fromColumn}”移动到“${toColumn}”`;
+    }
+    return "调整了任务顺序";
+  }
+  if (event.eventType === "updated") {
+    const fields = taskEventPayload(event).fields;
+    const labels = Array.isArray(fields)
+      ? Array.from(
+          new Set(
+            fields
+              .filter((field): field is string => typeof field === "string")
+              .map((field) => TASK_EVENT_FIELD_LABELS[field] || "")
+              .filter(Boolean),
+          ),
+        )
+      : [];
+    return labels.length > 0 ? `更新了${labels.join("、")}` : "更新了任务";
+  }
+  return "更新了任务动态";
 }
 
 type InvitationAwareEmployee = MerchantEnterpriseEmployee & {
@@ -294,6 +379,8 @@ function readApiError(payload: unknown, fallback: string) {
   if (code === "invalid_task_board") return "任务看板已变更，请刷新后重新操作。";
   if (code === "invalid_task_column") return "目标工作列已变更或不可用，请刷新后重新操作。";
   if (code === "invalid_task_due_at") return "截止日期无效，请重新选择。";
+  if (code === "invalid_task_comment") return "评论需为 1–2000 个字符。";
+  if (code === "invalid_task_archived") return "已归档任务不能继续发表评论。";
   if (code === "invalid_task_move" || code === "invalid_task_target_index") {
     return "任务排序位置无效，请刷新后重新操作。";
   }
@@ -503,7 +590,7 @@ function SortableTaskShell({
         <button
           ref={setActivatorNodeRef}
           type="button"
-          className="absolute right-2 top-2 inline-flex h-8 w-8 touch-none items-center justify-center rounded-lg border border-transparent text-slate-400 transition hover:border-slate-200 hover:bg-slate-50 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-300 disabled:cursor-not-allowed disabled:opacity-35"
+          className="absolute right-2 top-2 hidden h-11 w-11 touch-none items-center justify-center rounded-lg border border-transparent text-slate-400 transition hover:border-slate-200 hover:bg-slate-50 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-300 disabled:cursor-not-allowed disabled:opacity-35 sm:inline-flex sm:h-8 sm:w-8"
           {...attributes}
           {...listeners}
           aria-label={`拖动任务：${task.title}`}
@@ -513,7 +600,7 @@ function SortableTaskShell({
           <TaskDragHandleIcon />
         </button>
       ) : null}
-      <div className={showDragHandle ? "pr-7" : ""}>{children}</div>
+      <div className={showDragHandle ? "sm:pr-7" : ""}>{children}</div>
     </article>
   );
 }
@@ -542,7 +629,7 @@ function SortableTaskColumn({
   return (
     <div
       ref={setNodeRef}
-      className={`min-h-[420px] rounded-3xl border p-3 transition-colors ${
+      className={`min-h-[360px] w-[calc(100dvw-3.75rem)] shrink-0 snap-start rounded-3xl border p-3 transition-colors sm:min-h-[420px] sm:w-auto ${
         isOver && !dragDisabled
           ? "border-blue-300 bg-blue-50/80"
           : "border-slate-200 bg-slate-100/80"
@@ -576,6 +663,7 @@ function TaskDragPreview({ task }: { task: MerchantTask }) {
 
 function TaskEditor({
   task,
+  actor,
   columns,
   employees,
   busy,
@@ -584,9 +672,12 @@ function TaskEditor({
   canArchive,
   onSave,
   onArchive,
+  onLoadEvents,
+  onComment,
   onClose,
 }: {
   task: MerchantTask;
+  actor: MerchantEnterpriseActor;
   columns: MerchantEnterpriseSnapshot["columns"];
   employees: MerchantEnterpriseEmployee[];
   busy: boolean;
@@ -595,6 +686,12 @@ function TaskEditor({
   canArchive: boolean;
   onSave: (task: MerchantTask, draft: TaskDraft) => Promise<void>;
   onArchive: (task: MerchantTask, archived: boolean) => Promise<void>;
+  onLoadEvents: (taskId: string, signal?: AbortSignal) => Promise<MerchantTaskEvent[]>;
+  onComment: (
+    task: MerchantTask,
+    text: string,
+    operationId: string,
+  ) => Promise<MerchantTaskEvent>;
   onClose: () => void;
 }) {
   const [title, setTitle] = useState(task.title);
@@ -603,6 +700,44 @@ function TaskEditor({
   const [dueAt, setDueAt] = useState(taskDateInputValue(task.dueAt));
   const [columnId, setColumnId] = useState(task.columnId);
   const [assigneeIds, setAssigneeIds] = useState<string[]>(task.assigneeIds);
+  const [events, setEvents] = useState<MerchantTaskEvent[]>([]);
+  const [eventsLoading, setEventsLoading] = useState(true);
+  const [eventsError, setEventsError] = useState("");
+  const [commentText, setCommentText] = useState("");
+  const [commentBusy, setCommentBusy] = useState(false);
+  const [commentNotice, setCommentNotice] = useState("");
+  const commentMutationRef = useRef<{ text: string; operationId: string } | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || busy) return;
+      event.preventDefault();
+      onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [busy, onClose]);
+
+  useEffect(() => {
+    if (typeof document === "undefined" || typeof window === "undefined") return;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusFrame = window.requestAnimationFrame(() => closeButtonRef.current?.focus());
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
+    };
+  }, []);
 
   useEffect(() => {
     setTitle(task.title);
@@ -613,6 +748,57 @@ function TaskEditor({
     setAssigneeIds(task.assigneeIds);
   }, [task]);
 
+  const refreshEvents = useCallback(
+    async (signal?: AbortSignal) => {
+      setEventsLoading(true);
+      setEventsError("");
+      try {
+        const nextEvents = await onLoadEvents(task.id, signal);
+        if (!signal?.aborted) setEvents(nextEvents);
+      } catch (error) {
+        if (signal?.aborted) return;
+        setEventsError(error instanceof Error ? error.message : "任务动态加载失败，请稍后重试。");
+      } finally {
+        if (!signal?.aborted) setEventsLoading(false);
+      }
+    },
+    [onLoadEvents, task.id],
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void refreshEvents(controller.signal);
+    return () => controller.abort();
+  }, [refreshEvents]);
+
+  async function submitComment() {
+    const text = commentText.trim();
+    if (!text || text.length > 2000 || commentBusy || task.archivedAt) return;
+    if (commentMutationRef.current?.text !== text) {
+      commentMutationRef.current = {
+        text,
+        operationId: createClientMutationOperationId("enterprise-task-comment"),
+      };
+    }
+    setCommentBusy(true);
+    setCommentNotice("");
+    try {
+      const event = await onComment(
+        task,
+        text,
+        commentMutationRef.current.operationId,
+      );
+      setEvents((current) => [event, ...current.filter((item) => item.id !== event.id)]);
+      setCommentText("");
+      setCommentNotice("评论已发布。");
+      commentMutationRef.current = null;
+    } catch (error) {
+      setCommentNotice(error instanceof Error ? error.message : "评论发布失败，请稍后重试。");
+    } finally {
+      setCommentBusy(false);
+    }
+  }
+
   const selectableEmployees = employees.filter(
     (employee) => employee.status === "active" || task.assigneeIds.includes(employee.id),
   );
@@ -620,7 +806,7 @@ function TaskEditor({
 
   return (
     <div
-      className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/55 p-3 backdrop-blur-sm sm:p-6"
+      className="fixed inset-0 z-[120] flex items-stretch justify-center bg-slate-950/55 p-0 backdrop-blur-sm sm:items-center sm:p-6"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget && !busy) onClose();
       }}
@@ -629,10 +815,10 @@ function TaskEditor({
         role="dialog"
         aria-modal="true"
         aria-labelledby="enterprise-task-editor-title"
-        className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-3xl bg-white p-5 shadow-2xl sm:p-6"
+        className="flex h-[100dvh] max-h-[100dvh] w-full max-w-2xl flex-col overflow-hidden rounded-none bg-white shadow-2xl sm:block sm:h-auto sm:max-h-[92vh] sm:overflow-y-auto sm:rounded-3xl sm:p-6"
       >
-        <div className="flex items-start justify-between gap-4">
-          <div>
+        <div className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-200 px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] sm:border-0 sm:p-0">
+          <div className="min-w-0">
             <h2 id="enterprise-task-editor-title" className="!text-xl !font-bold !text-slate-950">
               {canSave ? "编辑任务" : "任务详情"}
             </h2>
@@ -641,8 +827,9 @@ function TaskEditor({
             </p>
           </div>
           <button
+            ref={closeButtonRef}
             type="button"
-            className="rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-600"
+            className="min-h-11 shrink-0 rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-600 sm:min-h-0"
             disabled={busy}
             onClick={onClose}
           >
@@ -650,7 +837,7 @@ function TaskEditor({
           </button>
         </div>
 
-        <div className="mt-5 space-y-4">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:mt-5 sm:block sm:overflow-visible sm:p-0">
           <label className="block text-sm font-medium text-slate-700">
             任务标题
             <input
@@ -747,9 +934,124 @@ function TaskEditor({
               ) : null}
             </div>
           </fieldset>
+
+          <section
+            aria-labelledby="enterprise-task-events-title"
+            className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 id="enterprise-task-events-title" className="font-semibold text-slate-900">
+                  任务动态
+                </h3>
+                <p className="mt-1 text-xs text-slate-500">最近 50 条操作与评论，最新内容在前。</p>
+              </div>
+              <button
+                type="button"
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 disabled:opacity-45"
+                disabled={eventsLoading || commentBusy}
+                onClick={() => void refreshEvents()}
+              >
+                {eventsLoading ? "刷新中…" : "刷新动态"}
+              </button>
+            </div>
+
+            {canUpdate && !task.archivedAt ? (
+              <form
+                className="mt-4 rounded-2xl border border-slate-200 bg-white p-3"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void submitComment();
+                }}
+              >
+                <label className="block text-sm font-medium text-slate-700">
+                  添加评论
+                  <textarea
+                    className="mt-1.5 min-h-20 w-full resize-y rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                    value={commentText}
+                    maxLength={2000}
+                    placeholder="记录进展、问题或交接说明"
+                    disabled={commentBusy}
+                    onChange={(event) => {
+                      setCommentText(event.target.value);
+                      setCommentNotice("");
+                    }}
+                  />
+                </label>
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+                  <span className="text-xs text-slate-400">{commentText.length}/2000</span>
+                  <button
+                    type="submit"
+                    className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-45"
+                    disabled={commentBusy || !commentText.trim()}
+                  >
+                    {commentBusy ? "发布中…" : "发表评论"}
+                  </button>
+                </div>
+              </form>
+            ) : task.archivedAt ? (
+              <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                已归档任务保留历史动态，恢复后可继续评论。
+              </div>
+            ) : null}
+
+            {commentNotice ? (
+              <div
+                role="status"
+                aria-live="polite"
+                className={`mt-3 text-sm ${commentNotice === "评论已发布。" ? "text-emerald-700" : "text-rose-700"}`}
+              >
+                {commentNotice}
+              </div>
+            ) : null}
+
+            <div className="mt-4">
+              {eventsError ? (
+                <div role="alert" className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                  {eventsError}
+                </div>
+              ) : null}
+              {eventsError && events.length === 0 ? null : eventsLoading && events.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-6 text-center text-sm text-slate-500">
+                  正在加载任务动态…
+                </div>
+              ) : events.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-6 text-center text-sm text-slate-500">
+                  暂无任务动态。
+                </div>
+              ) : (
+                <ol className="space-y-3 pr-1 sm:max-h-80 sm:overflow-y-auto">
+                  {events.map((event) => {
+                    const payload = taskEventPayload(event);
+                    const comment = typeof payload.text === "string" ? payload.text : "";
+                    return (
+                      <li key={event.id} className="rounded-xl border border-slate-200 bg-white px-3 py-3">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="text-sm text-slate-700">
+                            <span className="font-semibold text-slate-900">
+                              {taskEventActorLabel(event, actor, employees)}
+                            </span>{" "}
+                            {taskEventDescription(event, columns)}
+                          </div>
+                          <time className="shrink-0 text-[11px] text-slate-400" dateTime={event.createdAt}>
+                            {formatDateTime(event.createdAt)}
+                          </time>
+                        </div>
+                        {event.eventType === "commented" && comment ? (
+                          <div className="mt-2 whitespace-pre-wrap break-words rounded-xl bg-slate-50 px-3 py-2 text-sm leading-6 text-slate-700">
+                            {comment}
+                          </div>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ol>
+              )}
+            </div>
+          </section>
         </div>
 
-        <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-white px-4 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-3 sm:mt-6 sm:border-0 sm:p-0">
           {canArchive ? (
             <button
               type="button"
@@ -1468,6 +1770,7 @@ function MerchantEnterpriseManagerContent({
   const [taskArchiveView, setTaskArchiveView] = useState<"active" | "archived">("active");
   const [selectedBoardId, setSelectedBoardId] = useState("");
   const [showBoardSettings, setShowBoardSettings] = useState(false);
+  const [mobileTaskComposerOpen, setMobileTaskComposerOpen] = useState(false);
 
   const [employeeName, setEmployeeName] = useState("");
   const [employeeEmail, setEmployeeEmail] = useState("");
@@ -1495,6 +1798,41 @@ function MerchantEnterpriseManagerContent({
       });
     },
     [accessToken],
+  );
+
+  const loadTaskEvents = useCallback(
+    async (taskId: string, signal?: AbortSignal) => {
+      const params = new URLSearchParams({ siteId, taskId });
+      const response = await apiFetch(`/api/merchant-enterprise/task-events?${params.toString()}`, {
+        signal,
+      });
+      const payload = (await response.json().catch(() => null)) as TaskEventsPayload | null;
+      if (!response.ok || !payload?.ok || !Array.isArray(payload.events)) {
+        throw new Error(readApiError(payload, "任务动态加载失败，请稍后重试。"));
+      }
+      return payload.events;
+    },
+    [apiFetch, siteId],
+  );
+
+  const createTaskComment = useCallback(
+    async (task: MerchantTask, text: string, operationId: string) => {
+      const response = await apiFetch("/api/merchant-enterprise/task-events", {
+        method: "POST",
+        body: JSON.stringify({
+          siteId,
+          taskId: task.id,
+          text,
+          operationId,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as TaskEventsPayload | null;
+      if (!response.ok || !payload?.ok || !payload.event) {
+        throw new Error(readApiError(payload, "评论发布失败，请稍后重试。"));
+      }
+      return payload.event;
+    },
+    [apiFetch, siteId],
   );
 
   const loadOverview = useCallback(async (options: { preserveData?: boolean } = {}) => {
@@ -1627,6 +1965,17 @@ function MerchantEnterpriseManagerContent({
     Boolean(taskQuery.trim()) ||
     taskPriorityFilter !== "all" ||
     taskAssigneeFilter !== "all";
+  const activeTaskFilterCount =
+    Number(Boolean(taskQuery.trim())) +
+    Number(taskPriorityFilter !== "all") +
+    Number(taskAssigneeFilter !== "all") +
+    Number(taskArchiveView !== "active");
+  function clearTaskFilters() {
+    setTaskQuery("");
+    setTaskPriorityFilter("all");
+    setTaskAssigneeFilter("all");
+    setTaskArchiveView("active");
+  }
   const taskDragEnabled =
     taskArchiveView === "active" &&
     can(actor, "tasks.update") &&
@@ -1897,6 +2246,7 @@ function MerchantEnterpriseManagerContent({
       setTaskPriority("normal");
       setTaskDueAt("");
       setTaskAssigneeIds([]);
+      setMobileTaskComposerOpen(false);
     }
   }
 
@@ -2303,9 +2653,11 @@ function MerchantEnterpriseManagerContent({
     return { editable: true, reason: "" };
   }
 
+  const mobileSafeControlClassName =
+    "[&_input]:!text-base [&_select]:!text-base [&_textarea]:!text-base sm:[&_input]:!text-sm sm:[&_select]:!text-sm sm:[&_textarea]:!text-sm";
   const wrapperClassName = standalone
-    ? `min-h-screen bg-[#f3f6fb] p-4 sm:p-6 ${className}`
-    : `min-h-[calc(100vh-8rem)] py-6 ${className}`;
+    ? `min-h-screen min-w-0 overflow-x-hidden bg-[#f3f6fb] p-4 sm:p-6 ${mobileSafeControlClassName} ${className}`
+    : `min-h-[calc(100vh-8rem)] min-w-0 overflow-x-hidden py-6 ${mobileSafeControlClassName} ${className}`;
 
   if (loading) {
     return (
@@ -2343,18 +2695,18 @@ function MerchantEnterpriseManagerContent({
   return (
     <div className={wrapperClassName}>
       <div className="mx-auto max-w-7xl">
-        <header className="overflow-hidden rounded-3xl bg-[linear-gradient(135deg,#0f172a,#1e3a5f_58%,#0f766e)] px-6 py-6 text-white shadow-[0_20px_50px_rgba(15,23,42,0.18)]">
+        <header className="overflow-hidden rounded-3xl bg-[linear-gradient(135deg,#0f172a,#1e3a5f_58%,#0f766e)] px-4 py-5 text-white shadow-[0_20px_50px_rgba(15,23,42,0.18)] sm:px-6 sm:py-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
+            <div className="min-w-0 flex-1">
               <div className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-100/80">Enterprise workspace</div>
               <h1 className="mt-2 !text-2xl !font-bold !text-white">企业管理</h1>
-              <p className="mt-2 text-sm text-slate-200">
+              <p className="mt-2 break-words text-sm text-slate-200">
                 {siteName || siteId} · 任务、员工和角色权限统一管理
               </p>
             </div>
-            <div className="rounded-2xl border border-white/15 bg-white/10 px-4 py-3 text-right backdrop-blur">
+            <div className="w-full min-w-0 rounded-2xl border border-white/15 bg-white/10 px-4 py-3 text-left backdrop-blur sm:w-auto sm:text-right">
               <div className="text-xs text-slate-200">当前身份</div>
-              <div className="mt-1 text-sm font-semibold">
+              <div className="mt-1 break-words text-sm font-semibold">
                 {actor.displayName} · {actor.type === "owner" ? "企业负责人" : "员工"}
               </div>
             </div>
@@ -2364,7 +2716,7 @@ function MerchantEnterpriseManagerContent({
         {!usesExternalNavigation ? (
           <nav
             aria-label="企业管理功能"
-            className="mt-5 flex gap-2 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-sm"
+            className="mt-5 grid grid-cols-2 gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm sm:flex sm:overflow-x-auto"
           >
             {MERCHANT_ENTERPRISE_VIEW_ITEMS
               .filter((item) => can(actor, item.permission))
@@ -2372,7 +2724,7 @@ function MerchantEnterpriseManagerContent({
               <button
                 key={key}
                 type="button"
-                className={`shrink-0 rounded-xl px-4 py-2 text-sm font-semibold transition ${
+                className={`min-h-11 w-full rounded-xl px-3 py-2 text-sm font-semibold transition sm:w-auto sm:shrink-0 sm:px-4 ${
                   tab === key ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-100"
                 }`}
                 aria-current={tab === key ? "page" : undefined}
@@ -2552,7 +2904,21 @@ function MerchantEnterpriseManagerContent({
             ) : null}
 
             {can(actor, "tasks.create") ? (
-              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+              <>
+                <button
+                  type="button"
+                  className="flex min-h-11 w-full items-center justify-between rounded-2xl bg-blue-600 px-4 py-3 text-left text-sm font-semibold text-white shadow-sm sm:hidden"
+                  aria-expanded={mobileTaskComposerOpen}
+                  aria-controls="merchant-enterprise-task-composer"
+                  onClick={() => setMobileTaskComposerOpen((current) => !current)}
+                >
+                  <span>{mobileTaskComposerOpen ? "收起新建任务" : "新建任务"}</span>
+                  <span aria-hidden="true">{mobileTaskComposerOpen ? "−" : "+"}</span>
+                </button>
+                <section
+                  id="merchant-enterprise-task-composer"
+                  className={`${mobileTaskComposerOpen ? "block" : "hidden"} rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:block`}
+                >
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <h2 className="text-lg font-semibold text-slate-950">新建任务</h2>
@@ -2560,7 +2926,7 @@ function MerchantEnterpriseManagerContent({
                   </div>
                   <button
                     type="button"
-                    className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-45"
+                    className="hidden rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-45 sm:inline-flex"
                     disabled={busy || !taskTitle.trim() || !activeBoard || activeColumns.length === 0}
                     onClick={() => void createTask()}
                   >
@@ -2637,12 +3003,21 @@ function MerchantEnterpriseManagerContent({
                     </fieldset>
                   ) : null}
                 </div>
-              </section>
+                <button
+                  type="button"
+                  className="mt-4 min-h-11 w-full rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-45 sm:hidden"
+                  disabled={busy || !taskTitle.trim() || !activeBoard || activeColumns.length === 0}
+                  onClick={() => void createTask()}
+                >
+                  创建任务
+                </button>
+                </section>
+              </>
             ) : null}
 
             <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
               <div className="flex flex-wrap items-end gap-3">
-                <label className="min-w-[220px] flex-1 text-xs font-medium text-slate-600">
+                <label className="min-w-0 w-full flex-1 text-xs font-medium text-slate-600 sm:min-w-[220px]">
                   搜索任务
                   <input
                     type="search"
@@ -2652,10 +3027,10 @@ function MerchantEnterpriseManagerContent({
                     onChange={(event) => setTaskQuery(event.target.value)}
                   />
                 </label>
-                <label className="text-xs font-medium text-slate-600">
+                <label className="w-full min-w-0 text-xs font-medium text-slate-600 sm:w-auto">
                   优先级
                   <select
-                    className="mt-1.5 block rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                    className="mt-1.5 block w-full min-w-0 rounded-xl border border-slate-300 px-3 py-2 text-sm"
                     value={taskPriorityFilter}
                     onChange={(event) => setTaskPriorityFilter(event.target.value as MerchantTaskPriority | "all")}
                   >
@@ -2665,10 +3040,10 @@ function MerchantEnterpriseManagerContent({
                     ))}
                   </select>
                 </label>
-                <label className="text-xs font-medium text-slate-600">
+                <label className="w-full min-w-0 text-xs font-medium text-slate-600 sm:w-auto">
                   负责人
                   <select
-                    className="mt-1.5 block rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                    className="mt-1.5 block w-full min-w-0 rounded-xl border border-slate-300 px-3 py-2 text-sm"
                     value={taskAssigneeFilter}
                     onChange={(event) => setTaskAssigneeFilter(event.target.value)}
                   >
@@ -2679,10 +3054,10 @@ function MerchantEnterpriseManagerContent({
                     ))}
                   </select>
                 </label>
-                <div className="flex rounded-xl bg-slate-100 p-1" aria-label="任务归档状态">
+                <div className="flex w-full rounded-xl bg-slate-100 p-1 sm:w-auto" aria-label="任务归档状态">
                   <button
                     type="button"
-                    className={`rounded-lg px-3 py-2 text-sm font-semibold ${
+                    className={`min-h-11 flex-1 rounded-lg px-3 py-2 text-sm font-semibold sm:min-h-0 sm:flex-none ${
                       taskArchiveView === "active" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500"
                     }`}
                     onClick={() => setTaskArchiveView("active")}
@@ -2691,7 +3066,7 @@ function MerchantEnterpriseManagerContent({
                   </button>
                   <button
                     type="button"
-                    className={`rounded-lg px-3 py-2 text-sm font-semibold ${
+                    className={`min-h-11 flex-1 rounded-lg px-3 py-2 text-sm font-semibold sm:min-h-0 sm:flex-none ${
                       taskArchiveView === "archived" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500"
                     }`}
                     onClick={() => setTaskArchiveView("archived")}
@@ -2699,6 +3074,15 @@ function MerchantEnterpriseManagerContent({
                     已归档 {archivedTaskCount > 0 ? `(${archivedTaskCount})` : ""}
                   </button>
                 </div>
+                {activeTaskFilterCount > 0 ? (
+                  <button
+                    type="button"
+                    className="min-h-11 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 sm:min-h-0"
+                    onClick={clearTaskFilters}
+                  >
+                    清除筛选 ({activeTaskFilterCount})
+                  </button>
+                ) : null}
                 <div className="pb-2 text-xs text-slate-500">筛选结果 {filteredTasks.length} 项</div>
               </div>
             </section>
@@ -2730,8 +3114,14 @@ function MerchantEnterpriseManagerContent({
                       : "拖动卡片右上角手柄可跨列移动或调整同列顺序；也可使用键盘或卡片下方按钮。"}
                   </div>
                 ) : null}
-                <section className="overflow-x-auto pb-3 pt-3">
-                  <div className="grid min-w-[920px] gap-4" style={{ gridTemplateColumns: `repeat(${Math.max(activeColumns.length, 1)}, minmax(230px, 1fr))` }}>
+                <section
+                  data-enterprise-board-scroll
+                  className="-mx-1 snap-x snap-mandatory overflow-x-auto overscroll-x-contain px-1 pb-3 pt-3 sm:mx-0 sm:snap-none sm:px-0"
+                >
+                  <div
+                    className="flex w-max min-w-full gap-3 sm:grid sm:w-auto sm:min-w-[920px] sm:gap-4"
+                    style={{ gridTemplateColumns: `repeat(${Math.max(activeColumns.length, 1)}, minmax(230px, 1fr))` }}
+                  >
                     {activeColumns.map((column, columnIndex) => {
                       const tasks = sortMerchantTaskOrderItems(
                         filteredTasks.filter((task) => task.columnId === column.id),
@@ -2792,7 +3182,7 @@ function MerchantEnterpriseManagerContent({
                                     <div className="mt-3 grid grid-cols-2 gap-2">
                                       <button
                                         type="button"
-                                        className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-semibold text-slate-600 disabled:opacity-35"
+                                        className="min-h-11 rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-semibold text-slate-600 disabled:opacity-35 sm:min-h-0"
                                         disabled={reorderControlsDisabled || taskIndex === 0}
                                         onClick={() => void moveTaskWithinColumn(task, -1)}
                                       >
@@ -2800,7 +3190,7 @@ function MerchantEnterpriseManagerContent({
                                       </button>
                                       <button
                                         type="button"
-                                        className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-semibold text-slate-600 disabled:opacity-35"
+                                        className="min-h-11 rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-semibold text-slate-600 disabled:opacity-35 sm:min-h-0"
                                         disabled={reorderControlsDisabled || taskIndex === tasks.length - 1}
                                         onClick={() => void moveTaskWithinColumn(task, 1)}
                                       >
@@ -2808,7 +3198,7 @@ function MerchantEnterpriseManagerContent({
                                       </button>
                                       <button
                                         type="button"
-                                        className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-semibold text-slate-600 disabled:opacity-35"
+                                        className="min-h-11 rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-semibold text-slate-600 disabled:opacity-35 sm:min-h-0"
                                         disabled={reorderControlsDisabled || columnIndex === 0}
                                         onClick={() => {
                                           const previous = activeColumns[columnIndex - 1];
@@ -2819,7 +3209,7 @@ function MerchantEnterpriseManagerContent({
                                       </button>
                                       <button
                                         type="button"
-                                        className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-semibold text-slate-600 disabled:opacity-35"
+                                        className="min-h-11 rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-semibold text-slate-600 disabled:opacity-35 sm:min-h-0"
                                         disabled={reorderControlsDisabled || columnIndex === activeColumns.length - 1}
                                         onClick={() => {
                                           const next = activeColumns[columnIndex + 1];
@@ -3098,6 +3488,7 @@ function MerchantEnterpriseManagerContent({
           <TaskEditor
             key={`${editingTask.id}:${editingTask.version}`}
             task={editingTask}
+            actor={actor}
             columns={snapshot.columns.filter(
               (column) => column.boardId === editingTask.boardId && column.status === "active",
             )}
@@ -3108,6 +3499,8 @@ function MerchantEnterpriseManagerContent({
             canArchive={can(actor, "tasks.archive")}
             onSave={saveTask}
             onArchive={setTaskArchived}
+            onLoadEvents={loadTaskEvents}
+            onComment={createTaskComment}
             onClose={() => setEditingTaskId("")}
           />
         ) : null}

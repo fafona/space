@@ -34,10 +34,16 @@ import {
   PATCH as updateTask,
   POST as createTask,
 } from "@/app/api/merchant-enterprise/tasks/route";
+import {
+  GET as getTaskEvents,
+  POST as createTaskComment,
+  toPublicMerchantTaskEvent,
+} from "@/app/api/merchant-enterprise/task-events/route";
 import type {
   MerchantEnterpriseActor,
   MerchantEnterpriseEmployee,
   MerchantEnterpriseSnapshot,
+  MerchantTaskEvent,
 } from "@/lib/merchantEnterprise";
 import type { MerchantEnterpriseStoreClient } from "@/lib/merchantEnterpriseStore.server";
 
@@ -214,6 +220,14 @@ test("enterprise mutations reject untrusted cross-origin requests", async () => 
     [acceptEmployee, "/api/merchant-enterprise/employees/accept", {}],
     [createRole, "/api/merchant-enterprise/roles", { name: "Staff" }],
     [createTask, "/api/merchant-enterprise/tasks", { title: "Task" }],
+    [
+      createTaskComment,
+      "/api/merchant-enterprise/task-events",
+      {
+        taskId: "11111111-1111-4111-8111-111111111111",
+        text: "Ready for review",
+      },
+    ],
   ] as const;
   for (const [handler, path, body] of requests) {
     const response = await handler(
@@ -841,4 +855,106 @@ test("valid board and column mutations require an authenticated boards manager",
     assert.equal(response.status, 401);
     assert.deepEqual(await response.json(), { ok: false, error: "unauthorized" });
   }
+});
+
+test("task event routes validate site, task, comment and operation ids before auth", async () => {
+  for (const url of [
+    "https://www.faolla.com/api/merchant-enterprise/task-events?siteId=bad&taskId=11111111-1111-4111-8111-111111111111",
+    "https://www.faolla.com/api/merchant-enterprise/task-events?siteId=10000000&taskId=bad",
+  ]) {
+    const response = await getTaskEvents(new Request(url));
+    assert.equal(response.status, 400);
+  }
+
+  const invalidBodies = [
+    {
+      siteId: "10000000",
+      taskId: "not-a-task",
+      text: "Comment",
+      operationId: "task-comment-1",
+    },
+    {
+      siteId: "10000000",
+      taskId: "11111111-1111-4111-8111-111111111111",
+      text: "   ",
+      operationId: "task-comment-1",
+    },
+    {
+      siteId: "10000000",
+      taskId: "11111111-1111-4111-8111-111111111111",
+      text: "x".repeat(2001),
+      operationId: "task-comment-1",
+    },
+    {
+      siteId: "10000000",
+      taskId: "11111111-1111-4111-8111-111111111111",
+      text: "Comment",
+      operationId: "task comment with spaces",
+    },
+  ];
+  for (const body of invalidBodies) {
+    const response = await createTaskComment(
+      new Request("https://www.faolla.com/api/merchant-enterprise/task-events", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://www.faolla.com",
+        },
+        body: JSON.stringify(body),
+      }),
+    );
+    assert.equal(response.status, 400);
+  }
+});
+
+test("valid task activity reads and comments require their enterprise permissions", async () => {
+  const taskId = "11111111-1111-4111-8111-111111111111";
+  const getResponse = await getTaskEvents(
+    new Request(
+      `https://www.faolla.com/api/merchant-enterprise/task-events?siteId=10000000&taskId=${taskId}`,
+    ),
+  );
+  assert.equal(getResponse.status, 401);
+  assert.deepEqual(await getResponse.json(), { ok: false, error: "unauthorized" });
+
+  const postResponse = await createTaskComment(
+    new Request("https://www.faolla.com/api/merchant-enterprise/task-events", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "https://www.faolla.com",
+      },
+      body: JSON.stringify({
+        siteId: "10000000",
+        taskId,
+        text: "Ready for review",
+        operationId: "task-comment-unauthorized",
+      }),
+    }),
+  );
+  assert.equal(postResponse.status, 401);
+  assert.deepEqual(await postResponse.json(), { ok: false, error: "unauthorized" });
+});
+
+test("task activity responses hide owner auth ids but retain employee ids", () => {
+  const baseEvent: MerchantTaskEvent = {
+    id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    siteId: "10000000",
+    taskId: "11111111-1111-4111-8111-111111111111",
+    eventType: "updated",
+    actorType: "owner",
+    actorId: "44444444-4444-4444-8444-444444444444",
+    payload: { fields: ["title"] },
+    createdAt: "2026-07-31T10:00:00.000Z",
+  };
+  assert.equal(toPublicMerchantTaskEvent(baseEvent).actorId, "");
+  assert.equal(baseEvent.actorId, "44444444-4444-4444-8444-444444444444");
+  assert.equal(
+    toPublicMerchantTaskEvent({
+      ...baseEvent,
+      actorType: "employee",
+      actorId: "55555555-5555-4555-8555-555555555555",
+    }).actorId,
+    "55555555-5555-4555-8555-555555555555",
+  );
 });

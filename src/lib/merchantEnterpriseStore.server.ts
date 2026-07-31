@@ -8,6 +8,7 @@ import {
   normalizeMerchantTask,
   normalizeMerchantTaskBoard,
   normalizeMerchantTaskColumn,
+  normalizeMerchantTaskEvent,
   type MerchantEnterpriseEmployee,
   type MerchantEnterpriseEmployeeStatus,
   type MerchantEnterprisePermission,
@@ -16,6 +17,8 @@ import {
   type MerchantTask,
   type MerchantTaskBoard,
   type MerchantTaskColumn,
+  type MerchantTaskEvent,
+  type MerchantTaskEventActorType,
   type MerchantTaskPriority,
 } from "@/lib/merchantEnterprise";
 import { normalizeMutationOperationId } from "@/lib/mutationOperationId";
@@ -41,6 +44,8 @@ const COLUMN_COLUMNS =
   "id,merchant_id,board_id,name,color,position,is_done,status,version,created_at,updated_at";
 const TASK_COLUMNS =
   "id,merchant_id,board_id,column_id,title,description,priority,due_at,completed_at,archived_at,position,source_type,source_id,created_by_employee_id,version,created_at,updated_at";
+const TASK_EVENT_COLUMNS =
+  "id,merchant_id,task_id,event_type,actor_type,actor_id,payload,created_at";
 
 function normalizeText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
@@ -72,6 +77,23 @@ function throwTaskRpcError(operation: string, error: unknown): never {
   if (message.includes("enterprise_idempotency_conflict")) {
     throw new Error("invalid_operation_id");
   }
+  const invalidCode = message.match(/\b(invalid_task(?:_[a-z_]+)?)\b/i)?.[1];
+  if (invalidCode) throw new Error(invalidCode.toLowerCase());
+  throw new Error(`${operation}:${message}`);
+}
+
+function throwTaskCommentRpcError(operation: string, error: unknown): never {
+  if (isMerchantEnterpriseSchemaMissingError(error)) {
+    throw new Error("enterprise_schema_unavailable");
+  }
+  const message = toErrorMessage(error);
+  if (message.includes("enterprise_operation_in_progress")) {
+    throw new Error("enterprise_operation_in_progress");
+  }
+  if (message.includes("enterprise_idempotency_conflict")) {
+    throw new Error("invalid_operation_id");
+  }
+  if (message.includes("task_not_found")) throw new Error("task_not_found");
   const invalidCode = message.match(/\b(invalid_task(?:_[a-z_]+)?)\b/i)?.[1];
   if (invalidCode) throw new Error(invalidCode.toLowerCase());
   throw new Error(`${operation}:${message}`);
@@ -116,7 +138,10 @@ function throwEnterpriseWorkspaceRpcError(operation: string, error: unknown): ne
   throw new Error(`${operation}:${message}`);
 }
 
-function resolveTaskOperationId(value: unknown, scope: "create" | "update" | "move") {
+function resolveTaskOperationId(
+  value: unknown,
+  scope: "create" | "update" | "move" | "comment",
+) {
   const normalized = normalizeMutationOperationId(value);
   return normalized || `enterprise-task-${scope}:${randomUUID()}`;
 }
@@ -166,6 +191,16 @@ function normalizeColumnMutationResponse(value: unknown, operation: string) {
   const column = normalizeMerchantTaskColumn(record.column);
   if (!column) throw new Error(`${operation}:invalid_response`);
   return column;
+}
+
+function normalizeTaskEventMutationResponse(value: unknown, operation: string) {
+  const record =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const event = normalizeMerchantTaskEvent(record.event);
+  if (!event) throw new Error(`${operation}:invalid_response`);
+  return event;
 }
 
 function normalizeRows<T>(
@@ -267,6 +302,27 @@ export async function loadMerchantEnterpriseSnapshot(
       })
       .filter((item): item is MerchantTask => Boolean(item)),
   };
+}
+
+export async function loadMerchantTaskEvents(
+  client: MerchantEnterpriseStoreClient,
+  siteIdValue: string,
+  taskIdValue: string,
+): Promise<MerchantTaskEvent[]> {
+  const siteId = normalizeText(siteIdValue, 80);
+  const taskId = normalizeText(taskIdValue, 80);
+  if (!siteId || !taskId) throw new Error("invalid_task_event_query");
+
+  const result = await client
+    .from("merchant_task_events")
+    .select(TASK_EVENT_COLUMNS)
+    .eq("merchant_id", siteId)
+    .eq("task_id", taskId)
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(50);
+  if (result.error) throwStoreError("enterprise_task_events_read_failed", result.error);
+  return normalizeRows(result.data, normalizeMerchantTaskEvent);
 }
 
 async function insertOne<T>(
@@ -804,6 +860,50 @@ export async function createMerchantTask(
   });
   if (result.error) throwTaskRpcError("enterprise_task_create_failed", result.error);
   return normalizeTaskMutationResponse(result.data, "enterprise_task_create_failed");
+}
+
+export async function addMerchantTaskComment(
+  client: MerchantEnterpriseStoreClient,
+  input: {
+    siteId: string;
+    taskId: string;
+    text: string;
+    actorType: Exclude<MerchantTaskEventActorType, "system">;
+    actorId: string;
+    operationId?: string;
+  },
+): Promise<MerchantTaskEvent> {
+  const siteId = normalizeText(input.siteId, 80);
+  const taskId = normalizeText(input.taskId, 80);
+  const commentText = normalizeText(input.text, 2000);
+  const actorId = normalizeText(input.actorId, 120);
+  if (
+    !siteId ||
+    !taskId ||
+    !commentText ||
+    input.text.trim().length > 2000 ||
+    (input.actorType !== "owner" && input.actorType !== "employee") ||
+    !actorId
+  ) {
+    throw new Error("invalid_task_comment");
+  }
+  const result = await client.rpc("faolla_add_merchant_task_comment_v1", {
+    p_input: {
+      merchant_id: siteId,
+      task_id: taskId,
+      text: commentText,
+      actor_type: input.actorType,
+      actor_id: actorId,
+      operation_id: resolveTaskOperationId(input.operationId, "comment"),
+    },
+  });
+  if (result.error) {
+    throwTaskCommentRpcError("enterprise_task_comment_failed", result.error);
+  }
+  return normalizeTaskEventMutationResponse(
+    result.data,
+    "enterprise_task_comment_failed",
+  );
 }
 
 export async function moveMerchantTask(

@@ -154,6 +154,33 @@ export type MerchantTask = {
   updatedAt: string;
 };
 
+export type MerchantTaskEventActorType = "owner" | "employee" | "system";
+
+export type MerchantTaskEventPayload = {
+  text?: string;
+  fields?: string[];
+  columnId?: string;
+  fromColumnId?: string;
+  toColumnId?: string;
+  priority?: MerchantTaskPriority;
+  assigneeIds?: string[];
+  requestedTargetIndex?: number;
+  targetIndex?: number;
+  position?: number;
+  completedAt?: string | null;
+};
+
+export type MerchantTaskEvent = {
+  id: string;
+  siteId: string;
+  taskId: string;
+  eventType: string;
+  actorType: MerchantTaskEventActorType;
+  actorId: string;
+  payload: MerchantTaskEventPayload;
+  createdAt: string;
+};
+
 export type MerchantEnterpriseSnapshot = {
   roles: MerchantEnterpriseRole[];
   employees: MerchantEnterpriseEmployee[];
@@ -492,6 +519,85 @@ export function normalizeMerchantTask(
     version: normalizeVersion(record.version),
     createdAt: normalizeTimestamp(readValue(record, "createdAt", "created_at")),
     updatedAt: normalizeTimestamp(readValue(record, "updatedAt", "updated_at")),
+  };
+}
+
+function normalizeEventInteger(value: unknown) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function normalizeEventTextArray(value: unknown, maxItems: number, maxLength: number) {
+  if (!Array.isArray(value)) return undefined;
+  return Array.from(
+    new Set(
+      value
+        .slice(0, maxItems)
+        .map((item) => normalizeText(item, maxLength))
+        .filter(Boolean),
+    ),
+  );
+}
+
+export function normalizeMerchantTaskEvent(value: unknown): MerchantTaskEvent | null {
+  const record = readRecord(value);
+  const id = normalizeText(record.id, 80);
+  const siteId = normalizeText(readValue(record, "siteId", "merchant_id"), 80);
+  const taskId = normalizeText(readValue(record, "taskId", "task_id"), 80);
+  const eventType = normalizeText(readValue(record, "eventType", "event_type"), 80);
+  if (!id || !siteId || !taskId || !eventType) return null;
+
+  const actorTypeValue = normalizeText(
+    readValue(record, "actorType", "actor_type"),
+    20,
+  );
+  const actorType: MerchantTaskEventActorType =
+    actorTypeValue === "owner" || actorTypeValue === "employee"
+      ? actorTypeValue
+      : "system";
+  const rawPayload = readRecord(record.payload);
+  const payload: MerchantTaskEventPayload = {};
+
+  const commentText = normalizeText(rawPayload.text, 2000);
+  if (commentText) payload.text = commentText;
+  const fields = normalizeEventTextArray(rawPayload.fields, 32, 80);
+  if (fields?.length) payload.fields = fields;
+
+  for (const key of ["columnId", "fromColumnId", "toColumnId"] as const) {
+    const normalized = normalizeText(rawPayload[key], 80);
+    if (normalized) payload[key] = normalized;
+  }
+
+  const priorityValue = normalizeText(rawPayload.priority, 20) as MerchantTaskPriority;
+  if (MERCHANT_TASK_PRIORITIES.includes(priorityValue)) payload.priority = priorityValue;
+  const assigneeIds = normalizeEventTextArray(
+    rawPayload.assigneeIds,
+    MAX_MERCHANT_TASK_ASSIGNEES,
+    80,
+  );
+  if (assigneeIds?.length) payload.assigneeIds = assigneeIds;
+
+  for (const key of ["requestedTargetIndex", "targetIndex", "position"] as const) {
+    const normalized = normalizeEventInteger(rawPayload[key]);
+    if (normalized !== undefined) payload[key] = normalized;
+  }
+
+  if (rawPayload.completedAt === null) {
+    payload.completedAt = null;
+  } else {
+    const completedAt = normalizeNullableTimestamp(rawPayload.completedAt);
+    if (completedAt) payload.completedAt = completedAt;
+  }
+
+  return {
+    id,
+    siteId,
+    taskId,
+    eventType,
+    actorType,
+    actorId: normalizeText(readValue(record, "actorId", "actor_id"), 120),
+    payload,
+    createdAt: normalizeTimestamp(readValue(record, "createdAt", "created_at")),
   };
 }
 

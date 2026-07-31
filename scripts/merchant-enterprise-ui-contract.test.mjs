@@ -27,14 +27,18 @@ const enterprisePortalSource = readFileSync(
   "utf8",
 );
 
-function sliceBetween(startPattern, endPattern, label) {
-  const startMatch = startPattern.exec(source);
+function sliceSourceBetween(targetSource, startPattern, endPattern, label) {
+  const startMatch = startPattern.exec(targetSource);
   assert.ok(startMatch, `${label} start marker is missing`);
   const start = startMatch.index;
-  const endMatch = endPattern.exec(source.slice(start + startMatch[0].length));
+  const endMatch = endPattern.exec(targetSource.slice(start + startMatch[0].length));
   assert.ok(endMatch, `${label} end marker is missing`);
   const end = start + startMatch[0].length + endMatch.index;
-  return source.slice(start, end);
+  return targetSource.slice(start, end);
+}
+
+function sliceBetween(startPattern, endPattern, label) {
+  return sliceSourceBetween(source, startPattern, endPattern, label);
 }
 
 function escapeRegExp(value) {
@@ -492,4 +496,287 @@ test("external enterprise navigation stays permission-aware while standalone kee
     /<MerchantEnterpriseManager[\s\S]{0,300}\bnavigation=/,
     "the standalone employee portal must keep the manager's internal tab navigation",
   );
+});
+
+test("merchant mobile shell gates the enterprise entry and routes it to enterprise content", () => {
+  assert.match(
+    adminClientSource,
+    /type\s+SupportMobileHomeTab\s*=\s*[^;]*["']enterprise["'][^;]*;/,
+    "the merchant mobile shell must model enterprise as a first-class home tab",
+  );
+
+  const openMobileTabSource = sliceSourceBetween(
+    adminClientSource,
+    /const\s+openSupportMobileHomeTab\s*=\s*useCallback\b/,
+    /const\s+openSupportShuangkouScoreTool\s*=/,
+    "openSupportMobileHomeTab",
+  );
+  assert.match(openMobileTabSource, /tab\s*===\s*["']enterprise["']/);
+  assert.match(openMobileTabSource, /loadMerchantEnterpriseManager\(\)/);
+  assert.match(openMobileTabSource, /setSupportMobileView\(["']list["']\)/);
+
+  const entitlementSource = sliceSourceBetween(
+    adminClientSource,
+    /const\s+canUseEnterpriseManagement\s*=/,
+    /const\s+canUseMembershipManagement\s*=/,
+    "mobile enterprise entitlement guard",
+  );
+  assert.match(
+    entitlementSource,
+    /supportMobileHomeTab\s*!==\s*["']enterprise["']\s*\|\|\s*canUseEnterpriseManagement/,
+  );
+  assert.match(
+    entitlementSource,
+    /openSupportMobileHomeTab\(["']conversations["']\)/,
+    "revoking the entitlement while enterprise is active must return to the conversation list",
+  );
+
+  const bottomNavSource = sliceSourceBetween(
+    adminClientSource,
+    /const\s+supportMobileBottomNav\s*=/,
+    /const\s+supportMobileBottomNavOverlay\s*=/,
+    "mobile bottom navigation",
+  );
+  const enterpriseItemIndex = bottomNavSource.search(/\bkey:\s*["']enterprise["']/);
+  assert.ok(enterpriseItemIndex >= 0, "the mobile bottom navigation must contain an enterprise entry");
+  assert.match(
+    bottomNavSource.slice(Math.max(0, enterpriseItemIndex - 700), enterpriseItemIndex + 700),
+    /canUseEnterpriseManagement/,
+    "the enterprise entry must be created or filtered by canUseEnterpriseManagement",
+  );
+  assert.match(
+    bottomNavSource.slice(enterpriseItemIndex, enterpriseItemIndex + 260),
+    /label:\s*["']企业(?:管理)?["']/,
+  );
+
+  const mobileEnterpriseContent = sliceSourceBetween(
+    adminClientSource,
+    /const\s+supportMobileEnterpriseContent\s*=/,
+    /const\s+supportMobilePrimaryTabContent\s*=/,
+    "mobile enterprise content",
+  );
+  assert.match(mobileEnterpriseContent, /<MerchantEnterpriseManager\b/);
+  assert.match(mobileEnterpriseContent, /siteId=\{(?:editingSiteId|supportMobileBookingSiteId|merchantSiteIdOverride)/);
+
+  const mobileContentRouter = sliceSourceBetween(
+    adminClientSource,
+    /const\s+supportMobilePrimaryTabContent\s*=/,
+    /const\s+supportMobileListTabContent\s*=/,
+    "mobile primary tab router",
+  );
+  assert.match(
+    mobileContentRouter,
+    /supportMobileHomeTab\s*===\s*["']enterprise["'][\s\S]{0,180}supportMobileEnterpriseContent/,
+    "enterprise must not fall through to the self-tab content",
+  );
+});
+
+test("mobile enterprise back controls and native swipe-back return to conversations", () => {
+  const mobileEnterpriseContent = sliceSourceBetween(
+    adminClientSource,
+    /const\s+supportMobileEnterpriseContent\s*=/,
+    /const\s+supportMobilePrimaryTabContent\s*=/,
+    "mobile enterprise content",
+  );
+  const backButton = mobileEnterpriseContent.match(
+    /<button\b[\s\S]{0,900}?aria-label=["']返回会话(?:列表)?["'][\s\S]{0,500}?<\/button>/,
+  )?.[0];
+  assert.ok(backButton, "mobile enterprise needs a semantic back-to-conversations button");
+  assert.match(
+    backButton,
+    /openSupportMobileHomeTab\(["']conversations["']\)/,
+    "the visible back button must return to conversations",
+  );
+
+  const swipeBackSource = sliceSourceBetween(
+    adminClientSource,
+    /const\s+handleMobileSwipeBack\s*=\s*\(event:\s*Event\)\s*=>\s*\{/,
+    /window\.addEventListener\(MOBILE_SWIPE_BACK_EVENT/,
+    "mobile swipe-back handler",
+  );
+  assert.match(
+    swipeBackSource,
+    /supportMobileHomeTab\s*===\s*["']enterprise["'][\s\S]{0,220}event\.preventDefault\(\)[\s\S]{0,220}openSupportMobileHomeTab\(["']conversations["']\)[\s\S]{0,120}return/,
+  );
+
+  const swipeBackActivationSource = sliceSourceBetween(
+    adminClientSource,
+    /const\s+active\s*=\s*supportInterfaceOpen\s*&&\s*isMobileSupportDialog\s*&&/,
+    /if\s*\(active\)\s*\{/,
+    "mobile swipe-back activation",
+  );
+  assert.match(
+    swipeBackActivationSource,
+    /supportMobileHomeTab\s*===\s*["']enterprise["']/,
+    "enterprise must activate the mobile swipe-back interception layer",
+  );
+});
+
+test("mobile owner enterprise keeps internal tabs while desktop navigation remains external", () => {
+  const mobileEnterpriseContent = sliceSourceBetween(
+    adminClientSource,
+    /const\s+supportMobileEnterpriseContent\s*=/,
+    /const\s+supportMobilePrimaryTabContent\s*=/,
+    "mobile enterprise content",
+  );
+  const mobileManager = mobileEnterpriseContent.match(
+    /<MerchantEnterpriseManager\b[\s\S]*?\/>/,
+  )?.[0];
+  assert.ok(mobileManager, "mobile enterprise must embed MerchantEnterpriseManager");
+  assert.doesNotMatch(
+    mobileManager,
+    /\bnavigation=/,
+    "mobile owner enterprise must retain the manager's permission-aware internal tabs",
+  );
+
+  const desktopWorkspaceSource = sliceSourceBetween(
+    adminClientSource,
+    /const\s+desktopMerchantWorkspaceContent\s*=/,
+    /\n\s*return\s*\(\s*\n\s*<main\b/,
+    "desktop merchant workspace",
+  );
+  const desktopEnterpriseBranch = sliceSourceBetween(
+    desktopWorkspaceSource,
+    /merchantDesktopSection\s*===\s*["']enterprise["']\s*&&\s*canUseEnterpriseManagement\s*\?\s*\(/,
+    /:\s*merchantDesktopSection\s*===\s*["']logs["']/,
+    "desktop enterprise branch",
+  );
+  assert.match(desktopEnterpriseBranch, /<MerchantEnterpriseManager\b/);
+  assert.match(desktopEnterpriseBranch, /navigation=\{\{/);
+  assert.match(desktopEnterpriseBranch, /mode:\s*["']external["']/);
+  assert.match(desktopEnterpriseBranch, /activeView:\s*merchantEnterpriseView/);
+
+  assert.match(source, /\{!usesExternalNavigation\s*\?\s*\([\s\S]{0,300}<nav/);
+  assert.match(
+    source,
+    /MERCHANT_ENTERPRISE_VIEW_ITEMS[\s\S]{0,250}filter\(\(item\)\s*=>\s*can\(actor,\s*item\.permission\)\)/,
+    "internal tabs must continue to honor the authenticated enterprise actor's permissions",
+  );
+});
+
+test("mobile enterprise contains navigation, board scrolling and compact task workflows", () => {
+  const bottomNavOverlay = sliceSourceBetween(
+    adminClientSource,
+    /const\s+supportMobileBottomNavOverlay\s*=/,
+    /const\s+selectedSupportPeerMessagePage\s*=/,
+    "mobile bottom navigation overlay",
+  );
+  assert.match(
+    bottomNavOverlay,
+    /isMobileSupportDialog\s*&&[\s\S]{0,180}supportMobileHomeTab\s*!==\s*["']enterprise["'][\s\S]{0,180}\?\s*renderTopMostOverlay\(supportMobileBottomNav\)/,
+    "the global mobile bottom navigation must not cover the enterprise workspace",
+  );
+
+  const internalNavigation = sliceBetween(
+    /\{!usesExternalNavigation\s*\?\s*\(/,
+    /\{message\s*\?\s*\(/,
+    "internal enterprise navigation",
+  );
+  assert.match(internalNavigation, /<nav[\s\S]{0,240}grid-cols-2/);
+  assert.match(internalNavigation, /grid-cols-2[\s\S]{0,160}sm:flex/);
+  assert.match(internalNavigation, /className=\{`[^`]*\bw-full\b[^`]*\bsm:w-auto\b/);
+
+  const taskBoard = sliceBetween(
+    /<DndContext\b/,
+    /<DragOverlay>/,
+    "mobile enterprise task board",
+  );
+  assert.match(taskBoard, /<section\s+data-enterprise-board-scroll/);
+  assert.match(taskBoard, /data-enterprise-board-scroll[\s\S]{0,220}\boverflow-x-auto\b/);
+  assert.match(taskBoard, /data-enterprise-board-scroll[\s\S]{0,220}\boverscroll-x-contain\b/);
+
+  const taskEditor = sliceBetween(
+    /function\s+TaskEditor\(/,
+    /function\s+RoleEditor\(/,
+    "mobile task editor",
+  );
+  const dialog = taskEditor.match(
+    /<section[\s\S]{0,350}?role=["']dialog["'][\s\S]{0,500}?>/,
+  )?.[0];
+  assert.ok(dialog, "TaskEditor must expose its dialog shell");
+  assert.match(dialog, /(?:^|\s)h-\[100dvh\](?:\s|$)/);
+  assert.match(dialog, /(?:^|\s)max-h-\[100dvh\](?:\s|$)/);
+  assert.match(dialog, /\bflex-col\b/);
+  assert.match(dialog, /\boverflow-hidden\b/);
+  assert.match(dialog, /\bsm:overflow-y-auto\b/);
+  assert.match(
+    taskEditor,
+    /className=["'][^"']*\bshrink-0\b[^"']*["'][\s\S]{0,900}className=["'][^"']*\bmin-h-0\b[^"']*\bflex-1\b[^"']*\boverflow-y-auto\b[^"']*["']/,
+    "the mobile dialog header must stay fixed while one central body owns vertical scrolling",
+  );
+  assert.match(
+    taskEditor,
+    /className=["'][^"']*\bshrink-0\b[^"']*\bborder-t\b[^"']*["']/,
+    "the mobile task action footer must remain outside the scrolling body",
+  );
+  const mobileVerticalScrollOwners = [...taskEditor.matchAll(/className=["']([^"']*)["']/g)]
+    .flatMap((match) => match[1].split(/\s+/))
+    .filter((token) => token === "overflow-y-auto");
+  assert.equal(
+    mobileVerticalScrollOwners.length,
+    1,
+    "TaskEditor must have exactly one unprefixed mobile vertical scroll owner",
+  );
+
+  assert.match(
+    source,
+    /const\s+\[mobileTaskComposerOpen,\s*setMobileTaskComposerOpen\]\s*=\s*useState\(false\)/,
+    "the mobile new-task composer must be collapsed by default",
+  );
+  const taskComposer = sliceBetween(
+    /\{can\(actor,\s*["']tasks\.create["']\)\s*\?\s*\(/,
+    /<section\s+className=["']rounded-3xl border border-slate-200 bg-white p-4 shadow-sm["']>/,
+    "mobile task composer",
+  );
+  assert.match(taskComposer, /aria-expanded=\{mobileTaskComposerOpen\}/);
+  assert.match(taskComposer, /aria-controls=["']merchant-enterprise-task-composer["']/);
+  assert.match(taskComposer, /setMobileTaskComposerOpen\(\(current\)\s*=>\s*!current\)/);
+  assert.match(
+    taskComposer,
+    /id=["']merchant-enterprise-task-composer["'][\s\S]{0,220}mobileTaskComposerOpen\s*\?\s*["']block["']\s*:\s*["']hidden["'][\s\S]{0,180}\bsm:block\b/,
+  );
+
+  const clearFilters = sliceBetween(
+    /function\s+clearTaskFilters\(\)\s*\{/,
+    /const\s+taskDragEnabled\s*=/,
+    "clear task filters",
+  );
+  assert.match(clearFilters, /setTaskQuery\(["']{2}\)/);
+  assert.match(clearFilters, /setTaskPriorityFilter\(["']all["']\)/);
+  assert.match(clearFilters, /setTaskAssigneeFilter\(["']all["']\)/);
+  assert.match(clearFilters, /setTaskArchiveView\(["']active["']\)/);
+  assert.match(
+    source,
+    /activeTaskFilterCount\s*>\s*0\s*\?\s*\([\s\S]{0,500}onClick=\{clearTaskFilters\}[\s\S]{0,200}清除筛选/,
+    "active mobile filters need one visible reset action",
+  );
+});
+
+test("task details expose a permission-aware activity timeline and idempotent comments", () => {
+  const editor = sliceBetween(
+    /function\s+TaskEditor\(/,
+    /function\s+RoleEditor\(/,
+    "task editor",
+  );
+  assert.match(editor, /任务动态/);
+  assert.match(editor, /最近 50 条操作与评论/);
+  assert.match(editor, /onLoadEvents\(task\.id,\s*signal\)/);
+  assert.match(editor, /events\.map\(\(event\)\s*=>/);
+  assert.match(editor, /event\.eventType\s*===\s*["']commented["']/);
+  assert.match(editor, /canUpdate\s*&&\s*!task\.archivedAt/);
+  assert.match(editor, /maxLength=\{2000\}/);
+  assert.match(editor, /createClientMutationOperationId\(["']enterprise-task-comment["']\)/);
+  assert.match(editor, /commentMutationRef\.current\?\.text\s*!==\s*text/);
+  assert.match(editor, /onComment\([\s\S]{0,180}commentMutationRef\.current\.operationId/);
+
+  assert.match(
+    source,
+    /apiFetch\(`\/api\/merchant-enterprise\/task-events\?\$\{params\.toString\(\)\}`/,
+  );
+  assert.match(
+    source,
+    /apiFetch\(["']\/api\/merchant-enterprise\/task-events["'][\s\S]{0,350}method:\s*["']POST["'][\s\S]{0,350}operationId/,
+  );
+  assert.match(source, /onLoadEvents=\{loadTaskEvents\}/);
+  assert.match(source, /onComment=\{createTaskComment\}/);
 });
