@@ -157,6 +157,10 @@ function readApiError(payload: unknown, fallback: string) {
   if (code === "board_has_no_active_columns") return "启用看板前至少需要保留一个可用工作列。";
   if (code === "board_name_conflict") return "当前企业已有同名的启用看板。";
   if (code === "column_name_conflict") return "当前看板已有同名的启用工作列。";
+  if (code === "invalid_task_assignees") return "负责人中包含已停用或不属于本企业的员工，请重新选择。";
+  if (code === "invalid_task_board") return "任务看板已变更，请刷新后重新操作。";
+  if (code === "invalid_task_column") return "目标工作列已变更或不可用，请刷新后重新操作。";
+  if (code === "invalid_task_due_at") return "截止日期无效，请重新选择。";
   if (code === "merchant_access_denied") return "当前账号不属于这个企业。";
   if (code === "merchant_role_invalid") return "当前员工角色的权限配置不完整，请联系企业负责人修正。";
   if (code === "enterprise_version_conflict") return "数据已被其他人更新，已为你重新加载。";
@@ -191,6 +195,111 @@ function taskDateInputValue(value: string | null) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function EnterpriseCalendarIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+      <path
+        d="M6 2.75v2.5M14 2.75v2.5M3.75 7.25h12.5M5.5 4.5h9a1.75 1.75 0 0 1 1.75 1.75v8.25A1.75 1.75 0 0 1 14.5 16.25h-9A1.75 1.75 0 0 1 3.75 14.5V6.25A1.75 1.75 0 0 1 5.5 4.5Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function openEnterpriseDatePicker(input: HTMLInputElement | null) {
+  if (!input) return;
+  const pickerInput = input as HTMLInputElement & { showPicker?: () => void };
+  try {
+    pickerInput.focus({ preventScroll: true });
+  } catch {
+    pickerInput.focus();
+  }
+  if (typeof pickerInput.showPicker === "function") {
+    try {
+      pickerInput.showPicker();
+      return;
+    } catch {
+      // Fall back to a native click for embedded browsers without showPicker support.
+    }
+  }
+  try {
+    pickerInput.click();
+  } catch {
+    // Some embedded browsers do not expose a native date picker.
+  }
+}
+
+function EnterpriseDateField({
+  value,
+  disabled = false,
+  onChange,
+}: {
+  value: string;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}) {
+  const pickerInputRef = useRef<HTMLInputElement>(null);
+  const openPicker = () => {
+    if (!disabled) openEnterpriseDatePicker(pickerInputRef.current);
+  };
+
+  return (
+    <span className="relative mt-1.5 block">
+      <input
+        type="text"
+        readOnly
+        inputMode="numeric"
+        autoComplete="off"
+        data-no-translate="1"
+        translate="no"
+        className="w-full cursor-pointer rounded-xl border border-slate-300 bg-white px-3 py-2 pr-16 text-sm disabled:cursor-not-allowed disabled:bg-slate-50"
+        value={value}
+        placeholder="YYYY-MM-DD"
+        disabled={disabled}
+        onClick={openPicker}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          openPicker();
+        }}
+      />
+      {value ? (
+        <button
+          type="button"
+          className="absolute inset-y-0 right-9 inline-flex w-7 items-center justify-center rounded-lg text-base text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-45"
+          aria-label="清除截止日期"
+          disabled={disabled}
+          onClick={() => onChange("")}
+        >
+          ×
+        </button>
+      ) : null}
+      <button
+        type="button"
+        className="absolute inset-y-0 right-1 inline-flex w-8 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-45"
+        aria-label="打开截止日期选择器"
+        disabled={disabled}
+        onClick={openPicker}
+      >
+        <EnterpriseCalendarIcon />
+      </button>
+      <input
+        ref={pickerInputRef}
+        type="date"
+        tabIndex={-1}
+        aria-hidden="true"
+        className="pointer-events-none absolute right-1 top-1/2 h-8 w-8 -translate-y-1/2 opacity-0"
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </span>
+  );
 }
 
 function TaskEditor({
@@ -319,12 +428,10 @@ function TaskEditor({
             </label>
             <label className="block text-sm font-medium text-slate-700">
               截止日期
-              <input
-                type="date"
-                className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
+              <EnterpriseDateField
                 value={dueAt}
                 disabled={!canUpdate}
-                onChange={(event) => setDueAt(event.target.value)}
+                onChange={setDueAt}
               />
             </label>
           </div>
@@ -1055,6 +1162,7 @@ function MerchantEnterpriseManagerContent({
   const [editingTaskId, setEditingTaskId] = useState("");
   const overviewRequestSequenceRef = useRef(0);
   const overviewAbortControllerRef = useRef<AbortController | null>(null);
+  const taskCreateMutationRef = useRef<{ fingerprint: string; operationId: string } | null>(null);
 
   const [taskTitle, setTaskTitle] = useState("");
   const [taskDescription, setTaskDescription] = useState("");
@@ -1250,8 +1358,11 @@ function MerchantEnterpriseManagerContent({
           throw new Error(readApiError(payload, "保存失败，请稍后重试。"));
         }
         const reloaded = await loadOverview({ preserveData: true });
-        if (!reloaded) return null;
-        setMessage({ kind: "success", text: success });
+        if (!reloaded) {
+          setMessage({ kind: "info", text: "已保存，但列表刷新失败，请手动刷新页面确认。" });
+        } else {
+          setMessage({ kind: "success", text: success });
+        }
         return payload;
       } catch (error) {
         const text = error instanceof Error ? error.message : "保存失败，请稍后重试。";
@@ -1425,22 +1536,34 @@ function MerchantEnterpriseManagerContent({
       setMessage({ kind: "error", text: "请先填写任务标题。" });
       return;
     }
+    const taskInput = {
+      boardId: activeBoard.id,
+      columnId: activeColumns[0].id,
+      title: taskTitle.trim(),
+      description: taskDescription.trim(),
+      priority: taskPriority,
+      dueAt: taskDueAt ? new Date(`${taskDueAt}T23:59:59`).toISOString() : null,
+      assigneeIds: can(actor, "tasks.assign") ? taskAssigneeIds : [],
+    };
+    const fingerprint = JSON.stringify(taskInput);
+    if (taskCreateMutationRef.current?.fingerprint !== fingerprint) {
+      taskCreateMutationRef.current = {
+        fingerprint,
+        operationId: createClientMutationOperationId("enterprise-task-create"),
+      };
+    }
+    const operationId = taskCreateMutationRef.current.operationId;
     const payload = await mutate(
       "/api/merchant-enterprise/tasks",
       "POST",
       {
-        boardId: activeBoard.id,
-        columnId: activeColumns[0].id,
-        title: taskTitle,
-        description: taskDescription,
-        priority: taskPriority,
-        dueAt: taskDueAt ? new Date(`${taskDueAt}T23:59:59`).toISOString() : null,
-        assigneeIds: can(actor, "tasks.assign") ? taskAssigneeIds : [],
-        operationId: createClientMutationOperationId("enterprise-task-create"),
+        ...taskInput,
+        operationId,
       },
       "任务已创建。",
     );
     if (payload) {
+      taskCreateMutationRef.current = null;
       setTaskTitle("");
       setTaskDescription("");
       setTaskPriority("normal");
@@ -2038,11 +2161,9 @@ function MerchantEnterpriseManagerContent({
                   </label>
                   <label className="block text-xs font-medium text-slate-600">
                     截止日期
-                    <input
-                      type="date"
-                      className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                    <EnterpriseDateField
                       value={taskDueAt}
-                      onChange={(event) => setTaskDueAt(event.target.value)}
+                      onChange={setTaskDueAt}
                     />
                   </label>
                   <label className="block text-xs font-medium text-slate-600 md:col-span-2">
