@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { MerchantListPublishedSite } from "@/data/homeBlocks";
 import type { MerchantConfigHistoryEntry } from "@/data/platformControlStore";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
@@ -20,7 +20,11 @@ import {
   type PlatformAccountType,
 } from "@/lib/platformAccounts";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
-import { createServerSupabaseAuthClient, maskEmailAddress } from "@/lib/superAdminServer";
+import {
+  createServerSupabaseAuthClient,
+  createServerSupabaseServiceClient as createServerSupabaseClient,
+  maskEmailAddress,
+} from "@/lib/superAdminServer";
 import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
 
 export const dynamic = "force-dynamic";
@@ -130,10 +134,6 @@ type MerchantRowsLoadResult = {
   rows: MerchantRow[];
   errorMessage: string;
 };
-
-function readEnv(name: string) {
-  return (process.env[name] ?? "").trim();
-}
 
 function normalizeEmail(...values: Array<string | null | undefined>) {
   for (const value of values) {
@@ -572,25 +572,6 @@ function choosePreferredMerchantAccount(current: MerchantAccountItem | undefined
   const currentTs = new Date(current.createdAt ?? 0).getTime();
   const candidateTs = new Date(candidate.createdAt ?? 0).getTime();
   return candidateTs > currentTs ? candidate : current;
-}
-
-function createServerSupabaseClient() {
-  const supabaseUrl = readEnv("NEXT_PUBLIC_SUPABASE_URL");
-  const serviceRoleKey =
-    readEnv("SUPABASE_SERVICE_ROLE_KEY") ||
-    readEnv("NEXT_SUPABASE_SERVICE_ROLE_KEY");
-
-  if (!supabaseUrl || !serviceRoleKey) {
-    return null;
-  }
-
-  return createClient(supabaseUrl, serviceRoleKey, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-      detectSessionInUrl: false,
-    },
-  });
 }
 
 function unauthorizedJson() {

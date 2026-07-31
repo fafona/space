@@ -5,7 +5,7 @@ import test from "node:test";
 test("platform merchant snapshot success response returns only the saved revision in payload", async () => {
   const routeSource = await readFile(new URL("./route.ts", import.meta.url), "utf8");
   const successResponse = routeSource.match(
-    /const savedPayload = saveResult\.payload \?\? payload;[\s\S]*?return NextResponse\.json\(\{([\s\S]*?)\n  \}\);\n\}/,
+    /const savedPayload = saveResult\.payload \?\? payload;[\s\S]*?return NextResponse\.json\(\{([\s\S]*?)\r?\n  \}\);\r?\n\}/,
   )?.[1];
 
   assert.ok(successResponse, "success response contract was not found");
@@ -14,4 +14,12 @@ test("platform merchant snapshot success response returns only the saved revisio
   assert.match(successResponse, /revision,/);
   assert.match(successResponse, /payload: \{ revision \}/);
   assert.doesNotMatch(successResponse, /payload:\s*savedPayload/);
+});
+
+test("platform merchant snapshot uses the internal-first service client and scoped retry fetch", async () => {
+  const routeSource = await readFile(new URL("./route.ts", import.meta.url), "utf8");
+
+  assert.match(routeSource, /createServerSupabaseServiceClient/);
+  assert.match(routeSource, /createPlatformMerchantSnapshotFetch/);
+  assert.doesNotMatch(routeSource, /readEnv\("NEXT_PUBLIC_SUPABASE_URL"\)/);
 });

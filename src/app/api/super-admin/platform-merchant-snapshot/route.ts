@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
 import {
   normalizePlatformMerchantSnapshotPayload,
 } from "@/lib/platformMerchantSnapshot";
+import { createPlatformMerchantSnapshotFetch } from "@/lib/platformMerchantSnapshotFetch";
 import {
   loadStoredPlatformMerchantSnapshot,
   savePlatformMerchantSnapshot,
@@ -10,43 +10,15 @@ import {
 } from "@/lib/platformMerchantSnapshotStore";
 import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
+import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type SaveErrorLike = { message?: string } | null;
-
-type LooseQueryBuilder = PromiseLike<{ data?: unknown; error: SaveErrorLike }> & {
-  select: (columns: string) => LooseQueryBuilder;
-  update: (payload: Record<string, unknown>) => LooseQueryBuilder;
-  insert: (payload: Record<string, unknown>) => Promise<{ data?: unknown; error: SaveErrorLike }>;
-  is: (column: string, value: unknown) => LooseQueryBuilder;
-  eq: (column: string, value: unknown) => LooseQueryBuilder;
-  limit: (value: number) => LooseQueryBuilder;
-  maybeSingle: () => Promise<{ data?: unknown; error: SaveErrorLike }>;
-};
-
-type LooseSupabaseClient = {
-  from: (table: string) => LooseQueryBuilder;
-};
-
-function readEnv(name: string) {
-  return String(process.env[name] ?? "").trim();
-}
-
 function createServerSupabaseClient() {
-  const supabaseUrl = readEnv("NEXT_PUBLIC_SUPABASE_URL");
-  const serviceRoleKey =
-    readEnv("SUPABASE_SERVICE_ROLE_KEY") ||
-    readEnv("NEXT_SUPABASE_SERVICE_ROLE_KEY");
-  if (!supabaseUrl || !serviceRoleKey) return null;
-  return createClient(supabaseUrl, serviceRoleKey, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-      detectSessionInUrl: false,
-    },
-  }) as unknown as LooseSupabaseClient;
+  return createServerSupabaseServiceClient({
+    fetch: createPlatformMerchantSnapshotFetch(),
+  });
 }
 
 export async function GET(request: Request) {

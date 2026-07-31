@@ -1,34 +1,15 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
 import { loadMerchantIdRulesFromStore, saveMerchantIdRulesToStore } from "@/lib/merchantIdRuleStore";
 import { parseMerchantIdRuleInput, sortMerchantIdRules, type MerchantIdRule } from "@/lib/merchantIdRules";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
+import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-function readEnv(name: string) {
-  return (process.env[name] ?? "").trim();
-}
-
 function createServerSupabaseClient() {
-  const supabaseUrl = readEnv("NEXT_PUBLIC_SUPABASE_URL");
-  const serviceRoleKey =
-    readEnv("SUPABASE_SERVICE_ROLE_KEY") ||
-    readEnv("NEXT_SUPABASE_SERVICE_ROLE_KEY");
-
-  if (!supabaseUrl || !serviceRoleKey) {
-    return null;
-  }
-
-  return createClient(supabaseUrl, serviceRoleKey, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-      detectSessionInUrl: false,
-    },
-  });
+  return createServerSupabaseServiceClient();
 }
 
 function unauthorizedJson() {

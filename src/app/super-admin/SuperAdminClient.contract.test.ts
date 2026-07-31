@@ -22,3 +22,12 @@ test("merchant config save reconciles a timed-out request before reporting failu
   assert.match(source, /服务器响应较慢，正在核对实际保存结果/);
   assert.match(source, /服务器响应较慢，但已核对确认配置保存成功/);
 });
+
+test("merchant config save maps server fetch failures to a readable network error", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+
+  assert.match(
+    source,
+    /failed to fetch\|fetch failed\|networkerror\|load failed/,
+  );
+});
