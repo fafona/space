@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   hasMerchantEnterprisePermission,
+  MAX_MERCHANT_TASK_ASSIGNEES,
 } from "@/lib/merchantEnterprise";
 import {
   requireMerchantEnterpriseEntitlement,
@@ -71,7 +72,9 @@ function priority(value: unknown, allowMissing = true) {
 }
 
 function assignees(value: unknown) {
-  if (!Array.isArray(value)) throw new Error("invalid_task_assignees");
+  if (!Array.isArray(value) || value.length > MAX_MERCHANT_TASK_ASSIGNEES) {
+    throw new Error("invalid_task_assignees");
+  }
   const values = value.map((item) => uuid(item, "invalid_task_assignees"));
   return Array.from(new Set(values));
 }

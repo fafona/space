@@ -2,15 +2,21 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  buildMerchantTaskEditChanges,
+  filterMerchantTasks,
   hasMerchantEnterprisePermission,
   merchantEnterprisePermissionsFitActor,
+  MAX_MERCHANT_TASK_ASSIGNEES,
   MERCHANT_ENTERPRISE_PERMISSION_CATALOG,
+  toggleMerchantEnterprisePermissionSelection,
   type MerchantEnterpriseActor,
   type MerchantEnterpriseEmployee,
   type MerchantEnterprisePermission,
   type MerchantEnterpriseRole,
   type MerchantEnterpriseSnapshot,
   type MerchantTask,
+  type MerchantTaskBoard,
+  type MerchantTaskColumn,
   type MerchantTaskPriority,
 } from "@/lib/merchantEnterprise";
 import { createClientMutationOperationId } from "@/lib/mutationOperationId";
@@ -66,6 +72,67 @@ function formatDate(value: string | null | undefined) {
   }).format(date);
 }
 
+type InvitationAwareEmployee = MerchantEnterpriseEmployee & {
+  invitationVersion?: number;
+  invitationExpiresAt?: string | null;
+  invitationRevokedAt?: string | null;
+  invitationSentAt?: string | null;
+  invitationDeliveryStatus?: "none" | "legacy" | "sending" | "sent" | "failed" | "revoked";
+};
+
+function employeeInvitationPresentation(employee: MerchantEnterpriseEmployee, nowMs = Date.now()) {
+  const value = employee as InvitationAwareEmployee;
+  if (employee.status === "active") {
+    return { state: "joined" as const, label: "已加入", detail: "", tone: "bg-emerald-50 text-emerald-700" };
+  }
+  if (employee.status === "disabled") {
+    return { state: "disabled" as const, label: "已停用", detail: "", tone: "bg-rose-50 text-rose-700" };
+  }
+  const expiresAtMs = value.invitationExpiresAt
+    ? Date.parse(value.invitationExpiresAt)
+    : Number.NaN;
+  if (value.invitationRevokedAt || value.invitationDeliveryStatus === "revoked") {
+    return {
+      state: "revoked" as const,
+      label: "邀请已撤销",
+      detail: "可生成一封全新的邀请邮件",
+      tone: "bg-slate-100 text-slate-700",
+    };
+  }
+  if (Number.isFinite(expiresAtMs) && expiresAtMs <= nowMs) {
+    return {
+      state: "expired" as const,
+      label: "邀请已过期",
+      detail: "旧邮件已失效",
+      tone: "bg-rose-50 text-rose-700",
+    };
+  }
+  if (value.invitationDeliveryStatus === "failed") {
+    return {
+      state: "failed" as const,
+      label: "发送失败",
+      detail: "员工记录已保留",
+      tone: "bg-amber-50 text-amber-700",
+    };
+  }
+  if (value.invitationDeliveryStatus === "sending") {
+    return {
+      state: "sending" as const,
+      label: "正在发送",
+      detail: "如长时间未完成可重新发送",
+      tone: "bg-blue-50 text-blue-700",
+    };
+  }
+  return {
+    state: "pending" as const,
+    label: "待接受",
+    detail: value.invitationExpiresAt
+      ? `有效期至 ${formatDate(value.invitationExpiresAt)}`
+      : "等待员工从邀请邮件加入",
+    tone: "bg-amber-50 text-amber-700",
+  };
+}
+
 function readApiError(payload: unknown, fallback: string) {
   const code =
     payload && typeof payload === "object" && typeof (payload as { error?: unknown }).error === "string"
@@ -75,57 +142,364 @@ function readApiError(payload: unknown, fallback: string) {
   if (code === "enterprise_management_disabled") return "当前商户尚未开通企业管理。";
   if (code === "permission_denied") return "当前账号没有执行此操作的权限。";
   if (code === "permission_escalation_denied") return "不能授予高于当前账号的权限，也不能修改自己的管理角色。";
+  if (code === "invalid_permission_dependencies") return "权限组合不完整，请保留关联的查看权限。";
+  if (code === "role_in_use") return "该角色仍分配给员工，请先为这些员工更换角色。";
+  if (code === "system_role_protected") return "系统预设角色不能归档。";
+  if (code === "role_name_conflict") return "已有同名的启用角色，请先修改其中一个角色名称。";
+  if (code === "board_in_use") return "该看板仍有未归档任务，请先处理或归档这些任务。";
+  if (code === "column_in_use") return "该工作列仍有未归档任务，暂时不能归档或改变完成属性。";
+  if (code === "last_active_board") return "至少需要保留一个启用的看板。";
+  if (code === "last_active_column") return "每个启用看板至少需要保留一个工作列。";
+  if (code === "board_limit_reached" || code === "board_limit_exceeded") return "当前企业最多可启用 50 个看板。";
+  if (code === "column_limit_reached" || code === "column_limit_exceeded") return "每个看板最多可启用 30 个工作列。";
+  if (code === "inactive_board") return "该看板已归档，请先恢复看板。";
+  if (code === "inactive_column") return "该工作列已归档，请先恢复工作列。";
+  if (code === "board_has_no_active_columns") return "启用看板前至少需要保留一个可用工作列。";
+  if (code === "board_name_conflict") return "当前企业已有同名的启用看板。";
+  if (code === "column_name_conflict") return "当前看板已有同名的启用工作列。";
   if (code === "merchant_access_denied") return "当前账号不属于这个企业。";
+  if (code === "merchant_role_invalid") return "当前员工角色的权限配置不完整，请联系企业负责人修正。";
   if (code === "enterprise_version_conflict") return "数据已被其他人更新，已为你重新加载。";
   if (code === "invalid_version") return "数据版本无效，请重新加载后再试。";
   if (code === "employee_email_already_registered") return "该邮箱已注册为其他 Faolla 身份，请使用独立的员工邮箱。";
+  if (code === "employee_invitation_cooldown") return "邀请刚刚发送过，请稍后再试。";
+  if (code === "employee_invitation_not_accepted") return "员工尚未接受邀请，不能直接启用账号。";
+  if (code === "employee_invitation_revoke_required") return "待接受账号请使用“撤销邀请”，不能直接停用。";
+  if (code === "employee_invitation_not_pending") return "该员工当前没有可操作的待处理邀请。";
+  if (code === "employee_invitation_revoked") return "该邀请已经撤销，请刷新后重新生成邀请。";
+  if (code === "employee_invitation_expired") return "该邀请已经过期，请重新生成邀请。";
+  if (code === "employee_invitation_superseded") return "邀请已被更新，请刷新后再试。";
+  if (code === "employee_invitation_renew_required") return "该邀请已失效，请生成一封新邀请。";
+  if (code === "employee_invitation_renew_not_required") return "当前邀请仍然有效，请使用重发邀请。";
   if (code === "unauthorized") return "登录状态已失效，请重新登录。";
   return fallback;
+}
+
+type TaskDraft = {
+  title: string;
+  description: string;
+  priority: MerchantTaskPriority;
+  dueAt: string;
+  columnId: string;
+  assigneeIds: string[];
+};
+
+function taskDateInputValue(value: string | null) {
+  if (!value || !Number.isFinite(Date.parse(value))) return "";
+  const date = new Date(value);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function TaskEditor({
+  task,
+  columns,
+  employees,
+  busy,
+  canUpdate,
+  canAssign,
+  canArchive,
+  onSave,
+  onArchive,
+  onClose,
+}: {
+  task: MerchantTask;
+  columns: MerchantEnterpriseSnapshot["columns"];
+  employees: MerchantEnterpriseEmployee[];
+  busy: boolean;
+  canUpdate: boolean;
+  canAssign: boolean;
+  canArchive: boolean;
+  onSave: (task: MerchantTask, draft: TaskDraft) => Promise<void>;
+  onArchive: (task: MerchantTask, archived: boolean) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [title, setTitle] = useState(task.title);
+  const [description, setDescription] = useState(task.description);
+  const [priority, setPriority] = useState<MerchantTaskPriority>(task.priority);
+  const [dueAt, setDueAt] = useState(taskDateInputValue(task.dueAt));
+  const [columnId, setColumnId] = useState(task.columnId);
+  const [assigneeIds, setAssigneeIds] = useState<string[]>(task.assigneeIds);
+
+  useEffect(() => {
+    setTitle(task.title);
+    setDescription(task.description);
+    setPriority(task.priority);
+    setDueAt(taskDateInputValue(task.dueAt));
+    setColumnId(task.columnId);
+    setAssigneeIds(task.assigneeIds);
+  }, [task]);
+
+  const selectableEmployees = employees.filter(
+    (employee) => employee.status === "active" || task.assigneeIds.includes(employee.id),
+  );
+  const canSave = canUpdate || canAssign;
+
+  return (
+    <div
+      className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/55 p-3 backdrop-blur-sm sm:p-6"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) onClose();
+      }}
+    >
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="enterprise-task-editor-title"
+        className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-3xl bg-white p-5 shadow-2xl sm:p-6"
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 id="enterprise-task-editor-title" className="!text-xl !font-bold !text-slate-950">
+              {canSave ? "编辑任务" : "任务详情"}
+            </h2>
+            <p className="mt-1 text-sm text-slate-500">
+              {task.archivedAt ? `已归档于 ${formatDate(task.archivedAt)}` : `更新于 ${formatDate(task.updatedAt)}`}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-600"
+            disabled={busy}
+            onClick={onClose}
+          >
+            关闭
+          </button>
+        </div>
+
+        <div className="mt-5 space-y-4">
+          <label className="block text-sm font-medium text-slate-700">
+            任务标题
+            <input
+              className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
+              value={title}
+              maxLength={240}
+              disabled={!canUpdate}
+              onChange={(event) => setTitle(event.target.value)}
+            />
+          </label>
+          <label className="block text-sm font-medium text-slate-700">
+            任务说明
+            <textarea
+              className="mt-1.5 min-h-28 w-full resize-y rounded-xl border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
+              value={description}
+              maxLength={10000}
+              disabled={!canUpdate}
+              onChange={(event) => setDescription(event.target.value)}
+            />
+          </label>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <label className="block text-sm font-medium text-slate-700">
+              所在列
+              <select
+                className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
+                value={columnId}
+                disabled={!canUpdate || Boolean(task.archivedAt)}
+                onChange={(event) => setColumnId(event.target.value)}
+              >
+                {columns.map((column) => (
+                  <option key={column.id} value={column.id}>{column.name}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block text-sm font-medium text-slate-700">
+              优先级
+              <select
+                className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
+                value={priority}
+                disabled={!canUpdate}
+                onChange={(event) => setPriority(event.target.value as MerchantTaskPriority)}
+              >
+                {(Object.keys(PRIORITY_META) as MerchantTaskPriority[]).map((item) => (
+                  <option key={item} value={item}>{PRIORITY_META[item].label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block text-sm font-medium text-slate-700">
+              截止日期
+              <input
+                type="date"
+                className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
+                value={dueAt}
+                disabled={!canUpdate}
+                onChange={(event) => setDueAt(event.target.value)}
+              />
+            </label>
+          </div>
+
+          <fieldset className="rounded-2xl border border-slate-200 p-4" disabled={!canAssign}>
+            <legend className="px-1 text-sm font-semibold text-slate-800">负责人（可多选）</legend>
+            <div className="mt-1 grid gap-2 sm:grid-cols-2">
+              {selectableEmployees.map((employee) => {
+                const checked = assigneeIds.includes(employee.id);
+                return (
+                  <label key={employee.id} className="flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={
+                        !checked &&
+                        assigneeIds.length >= MAX_MERCHANT_TASK_ASSIGNEES
+                      }
+                      onChange={(event) => {
+                        setAssigneeIds((current) =>
+                          event.target.checked
+                            ? Array.from(new Set([...current, employee.id]))
+                            : current.filter((id) => id !== employee.id),
+                        );
+                      }}
+                    />
+                    <span>{employee.displayName}</span>
+                    {employee.status !== "active" ? (
+                      <span className="ml-auto text-xs text-amber-700">非活跃</span>
+                    ) : null}
+                  </label>
+                );
+              })}
+              {selectableEmployees.length === 0 ? (
+                <div className="text-sm text-slate-500">暂无可分派的员工。</div>
+              ) : null}
+              {assigneeIds.length >= MAX_MERCHANT_TASK_ASSIGNEES ? (
+                <div className="text-sm text-amber-700 sm:col-span-2">
+                  每个任务最多可分派 {MAX_MERCHANT_TASK_ASSIGNEES} 名员工。
+                </div>
+              ) : null}
+            </div>
+          </fieldset>
+        </div>
+
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+          {canArchive ? (
+            <button
+              type="button"
+              className={`rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-45 ${
+                task.archivedAt
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                  : "border-rose-200 bg-rose-50 text-rose-700"
+              }`}
+              disabled={busy}
+              onClick={() => void onArchive(task, !task.archivedAt)}
+            >
+              {task.archivedAt ? "恢复任务" : "归档任务"}
+            </button>
+          ) : <span />}
+          {canSave ? (
+            <button
+              type="button"
+              className="rounded-xl bg-blue-600 px-5 py-2 text-sm font-semibold text-white disabled:opacity-45"
+              disabled={busy || (canUpdate && !title.trim())}
+              onClick={() =>
+                void onSave(task, {
+                  title,
+                  description,
+                  priority,
+                  dueAt,
+                  columnId,
+                  assigneeIds,
+                })
+              }
+            >
+              保存任务
+            </button>
+          ) : null}
+        </div>
+      </section>
+    </div>
+  );
 }
 
 function RoleEditor({
   role,
   busy,
+  editable,
+  unavailableReason,
+  grantablePermissions,
   onSave,
+  onStatusChange,
 }: {
   role: MerchantEnterpriseRole;
   busy: boolean;
-  onSave: (role: MerchantEnterpriseRole, permissions: MerchantEnterprisePermission[]) => Promise<void>;
+  editable: boolean;
+  unavailableReason?: string;
+  grantablePermissions: readonly MerchantEnterprisePermission[];
+  onSave: (
+    role: MerchantEnterpriseRole,
+    input: { name: string; description: string; permissions: MerchantEnterprisePermission[] },
+  ) => Promise<void>;
+  onStatusChange: (role: MerchantEnterpriseRole, status: "active" | "archived") => Promise<void>;
 }) {
+  const [name, setName] = useState(role.name);
+  const [description, setDescription] = useState(role.description);
   const [permissions, setPermissions] = useState<MerchantEnterprisePermission[]>(role.permissions);
 
   useEffect(() => {
+    setName(role.name);
+    setDescription(role.description);
     setPermissions(role.permissions);
   }, [role]);
 
   return (
     <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="font-semibold text-slate-950">{role.name}</div>
-          <div className="mt-1 text-xs leading-5 text-slate-500">{role.description || "未填写角色说明"}</div>
+        <div className="flex flex-wrap gap-2">
+          {role.isSystem ? (
+            <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-600">系统角色</span>
+          ) : null}
+          {role.status === "archived" ? (
+            <span className="rounded-full bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-700">已归档</span>
+          ) : null}
         </div>
-        {role.isSystem ? (
-          <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-600">系统角色</span>
+        {!editable && unavailableReason ? (
+          <span className="text-right text-xs leading-5 text-slate-500">{unavailableReason}</span>
         ) : null}
+      </div>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <label className="block text-xs font-medium text-slate-600">
+          角色名称
+          <input
+            className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
+            value={name}
+            maxLength={80}
+            disabled={!editable}
+            onChange={(event) => setName(event.target.value)}
+          />
+        </label>
+        <label className="block text-xs font-medium text-slate-600">
+          角色说明
+          <input
+            className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
+            value={description}
+            maxLength={1000}
+            disabled={!editable}
+            onChange={(event) => setDescription(event.target.value)}
+          />
+        </label>
       </div>
       <div className="mt-4 grid gap-2 sm:grid-cols-2">
         {MERCHANT_ENTERPRISE_PERMISSION_CATALOG.map((permission) => {
           const checked = permissions.includes(permission.key);
+          const canGrant = grantablePermissions.includes(permission.key);
           return (
             <label
               key={`${role.id}-${permission.key}`}
-              className="flex items-start gap-2 rounded-xl border border-slate-200 px-3 py-2"
+              className={`flex items-start gap-2 rounded-xl border border-slate-200 px-3 py-2 ${
+                editable && canGrant ? "" : "bg-slate-50 opacity-70"
+              }`}
             >
               <input
                 type="checkbox"
                 className="mt-0.5"
                 checked={checked}
+                disabled={!editable || !canGrant}
                 onChange={(event) => {
                   setPermissions((current) =>
-                    event.target.checked
-                      ? Array.from(new Set([...current, permission.key]))
-                      : current.filter((item) => item !== permission.key),
+                    toggleMerchantEnterprisePermissionSelection(
+                      current,
+                      permission.key,
+                      event.target.checked,
+                    ),
                   );
                 }}
               />
@@ -137,14 +511,522 @@ function RoleEditor({
           );
         })}
       </div>
-      <button
-        type="button"
-        className="mt-4 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-45"
-        disabled={busy}
-        onClick={() => void onSave(role, permissions)}
-      >
-        保存权限
-      </button>
+      {editable ? (
+        <div className="mt-4 flex flex-wrap justify-between gap-3">
+          {!role.isSystem ? (
+            <button
+              type="button"
+              className={`rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-45 ${
+                role.status === "archived"
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                  : "border-rose-200 bg-rose-50 text-rose-700"
+              }`}
+              disabled={busy}
+              onClick={() => void onStatusChange(role, role.status === "archived" ? "active" : "archived")}
+            >
+              {role.status === "archived" ? "恢复角色" : "归档角色"}
+            </button>
+          ) : <span />}
+          <button
+            type="button"
+            className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-45"
+            disabled={busy || !name.trim()}
+            onClick={() => void onSave(role, { name, description, permissions })}
+          >
+            保存角色
+          </button>
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function BoardSettings({
+  boards,
+  columns,
+  selectedBoardId,
+  busy,
+  onSelectBoard,
+  onCreateBoard,
+  onSaveBoard,
+  onSetBoardStatus,
+  onMoveBoard,
+  onCreateColumn,
+  onSaveColumn,
+  onSetColumnStatus,
+  onMoveColumn,
+}: {
+  boards: MerchantTaskBoard[];
+  columns: MerchantTaskColumn[];
+  selectedBoardId: string;
+  busy: boolean;
+  onSelectBoard: (boardId: string) => void;
+  onCreateBoard: (input: { name: string; description: string }) => Promise<MerchantTaskBoard | null>;
+  onSaveBoard: (
+    board: MerchantTaskBoard,
+    input: { name: string; description: string },
+  ) => Promise<void>;
+  onSetBoardStatus: (
+    board: MerchantTaskBoard,
+    status: "active" | "archived",
+  ) => Promise<void>;
+  onMoveBoard: (board: MerchantTaskBoard, position: number) => Promise<void>;
+  onCreateColumn: (
+    board: MerchantTaskBoard,
+    input: { name: string; color: string; isDone: boolean },
+  ) => Promise<boolean>;
+  onSaveColumn: (
+    column: MerchantTaskColumn,
+    input: { name: string; color: string; isDone: boolean },
+  ) => Promise<void>;
+  onSetColumnStatus: (
+    column: MerchantTaskColumn,
+    status: "active" | "archived",
+  ) => Promise<void>;
+  onMoveColumn: (column: MerchantTaskColumn, position: number) => Promise<void>;
+}) {
+  const sortedBoards = [...boards].sort(
+    (left, right) => left.position - right.position || left.createdAt.localeCompare(right.createdAt),
+  );
+  const selectedBoard =
+    sortedBoards.find((board) => board.id === selectedBoardId && board.status === "active") ??
+    sortedBoards.find((board) => board.status === "active") ??
+    null;
+  const selectedColumns = [...columns]
+    .filter((column) => column.boardId === selectedBoard?.id)
+    .sort((left, right) => left.position - right.position || left.createdAt.localeCompare(right.createdAt));
+  const activeBoardOrder = sortedBoards.filter((board) => board.status === "active");
+  const activeColumnOrder = selectedColumns.filter((column) => column.status === "active");
+  const [newBoardName, setNewBoardName] = useState("");
+  const [newBoardDescription, setNewBoardDescription] = useState("");
+  const [newColumnName, setNewColumnName] = useState("");
+  const [newColumnColor, setNewColumnColor] = useState("#64748b");
+  const [newColumnIsDone, setNewColumnIsDone] = useState(false);
+
+  return (
+    <section className="rounded-3xl border border-cyan-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-950">看板与工作列设置</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            归档不会删除历史数据；有进行中任务的看板或工作列需要先清空。
+          </p>
+        </div>
+        <span className="rounded-full bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-700">
+          {activeBoardOrder.length} 个启用看板
+        </span>
+      </div>
+
+      <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)]">
+        <div className="space-y-3">
+          <div className="rounded-2xl border border-dashed border-slate-300 p-3">
+            <div className="grid gap-2 sm:grid-cols-[1fr_1.3fr_auto]">
+              <input
+                className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                placeholder="新看板名称"
+                maxLength={120}
+                value={newBoardName}
+                onChange={(event) => setNewBoardName(event.target.value)}
+              />
+              <input
+                className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                placeholder="看板说明（可选）"
+                maxLength={2000}
+                value={newBoardDescription}
+                onChange={(event) => setNewBoardDescription(event.target.value)}
+              />
+              <button
+                type="button"
+                className="rounded-xl bg-cyan-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-45"
+                disabled={busy || !newBoardName.trim()}
+                onClick={() => {
+                  void onCreateBoard({
+                    name: newBoardName,
+                    description: newBoardDescription,
+                  }).then((created) => {
+                    if (!created) return;
+                    setNewBoardName("");
+                    setNewBoardDescription("");
+                    onSelectBoard(created.id);
+                  });
+                }}
+              >
+                新建看板
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            {sortedBoards.map((board) => {
+              const activeIndex = activeBoardOrder.findIndex((item) => item.id === board.id);
+              return (
+                <BoardSettingsRow
+                  key={board.id}
+                  board={board}
+                  selected={selectedBoard?.id === board.id}
+                  busy={busy}
+                  activeIndex={activeIndex}
+                  activeCount={activeBoardOrder.length}
+                  onSelect={onSelectBoard}
+                  onSave={onSaveBoard}
+                  onStatus={onSetBoardStatus}
+                  onMove={onMoveBoard}
+                />
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="rounded-2xl bg-slate-50 p-4">
+          {!selectedBoard ? (
+            <div className="grid min-h-48 place-items-center text-center text-sm text-slate-500">
+              请先恢复或新建一个看板。
+            </div>
+          ) : (
+            <>
+              <div>
+                <h3 className="font-semibold text-slate-950">{selectedBoard.name} · 工作列</h3>
+                <p className="mt-1 text-xs text-slate-500">
+                  “完成列”中的任务会自动记录完成时间；改变已有列属性前需先清空任务。
+                </p>
+              </div>
+              <div className="mt-4 grid gap-2 sm:grid-cols-[1fr_auto_auto_auto]">
+                <input
+                  className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                  placeholder="新工作列名称"
+                  maxLength={80}
+                  value={newColumnName}
+                  onChange={(event) => setNewColumnName(event.target.value)}
+                />
+                <label className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs text-slate-600">
+                  <input
+                    type="color"
+                    className="h-6 w-7 cursor-pointer border-0 bg-transparent p-0"
+                    value={newColumnColor}
+                    onChange={(event) => setNewColumnColor(event.target.value)}
+                  />
+                  颜色
+                </label>
+                <label className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={newColumnIsDone}
+                    onChange={(event) => setNewColumnIsDone(event.target.checked)}
+                  />
+                  完成列
+                </label>
+                <button
+                  type="button"
+                  className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-45"
+                  disabled={busy || !newColumnName.trim()}
+                  onClick={() => {
+                    void onCreateColumn(selectedBoard, {
+                      name: newColumnName,
+                      color: newColumnColor,
+                      isDone: newColumnIsDone,
+                    }).then((created) => {
+                      if (!created) return;
+                      setNewColumnName("");
+                      setNewColumnColor("#64748b");
+                      setNewColumnIsDone(false);
+                    });
+                  }}
+                >
+                  新增工作列
+                </button>
+              </div>
+
+              <div className="mt-4 space-y-2">
+                {selectedColumns.map((column) => {
+                  const activeIndex = activeColumnOrder.findIndex((item) => item.id === column.id);
+                  return (
+                    <ColumnSettingsRow
+                      key={column.id}
+                      column={column}
+                      busy={busy}
+                      activeIndex={activeIndex}
+                      activeCount={activeColumnOrder.length}
+                      onSave={onSaveColumn}
+                      onStatus={onSetColumnStatus}
+                      onMove={onMoveColumn}
+                    />
+                  );
+                })}
+                {selectedColumns.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-slate-300 px-3 py-8 text-center text-sm text-slate-500">
+                    这个看板还没有工作列。
+                  </div>
+                ) : null}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function BoardSettingsRow({
+  board,
+  selected,
+  busy,
+  activeIndex,
+  activeCount,
+  onSelect,
+  onSave,
+  onStatus,
+  onMove,
+}: {
+  board: MerchantTaskBoard;
+  selected: boolean;
+  busy: boolean;
+  activeIndex: number;
+  activeCount: number;
+  onSelect: (boardId: string) => void;
+  onSave: (
+    board: MerchantTaskBoard,
+    input: { name: string; description: string },
+  ) => Promise<void>;
+  onStatus: (board: MerchantTaskBoard, status: "active" | "archived") => Promise<void>;
+  onMove: (board: MerchantTaskBoard, position: number) => Promise<void>;
+}) {
+  const [name, setName] = useState(board.name);
+  const [description, setDescription] = useState(board.description);
+
+  useEffect(() => {
+    setName(board.name);
+    setDescription(board.description);
+  }, [board]);
+
+  return (
+    <article
+      className={`rounded-2xl border p-3 ${
+        selected ? "border-cyan-400 bg-cyan-50/50" : "border-slate-200 bg-white"
+      } ${board.status === "archived" ? "opacity-70" : ""}`}
+    >
+      <div className="grid gap-2 sm:grid-cols-[1fr_1.2fr_auto]">
+        <input
+          className="min-w-0 rounded-lg border border-slate-300 px-2.5 py-2 text-sm font-semibold"
+          value={name}
+          maxLength={120}
+          disabled={busy}
+          onFocus={() => {
+            if (board.status === "active") onSelect(board.id);
+          }}
+          onChange={(event) => setName(event.target.value)}
+        />
+        <input
+          className="min-w-0 rounded-lg border border-slate-300 px-2.5 py-2 text-xs"
+          value={description}
+          maxLength={2000}
+          placeholder="说明"
+          disabled={busy}
+          onChange={(event) => setDescription(event.target.value)}
+        />
+        <button
+          type="button"
+          className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-45"
+          disabled={busy || !name.trim() || (name === board.name && description === board.description)}
+          onClick={() => void onSave(board, { name, description })}
+        >
+          保存
+        </button>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-1">
+          {board.status === "active" ? (
+            <>
+              <button
+                type="button"
+                aria-label={`将看板“${board.name}”前移`}
+                className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-600 disabled:opacity-30"
+                disabled={busy || activeIndex <= 0}
+                onClick={() => void onMove(board, Math.max(0, board.position - 1))}
+              >
+                ←
+              </button>
+              <button
+                type="button"
+                aria-label={`将看板“${board.name}”后移`}
+                className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-600 disabled:opacity-30"
+                disabled={busy || activeIndex < 0 || activeIndex >= activeCount - 1}
+                onClick={() => void onMove(board, board.position + 1)}
+              >
+                →
+              </button>
+              {!selected ? (
+                <button
+                  type="button"
+                  className="rounded-lg border border-cyan-200 bg-cyan-50 px-2.5 py-1 text-xs font-semibold text-cyan-700"
+                  onClick={() => onSelect(board.id)}
+                >
+                  管理工作列
+                </button>
+              ) : (
+                <span className="rounded-full bg-cyan-100 px-2.5 py-1 text-xs font-semibold text-cyan-800">
+                  当前看板
+                </span>
+              )}
+            </>
+          ) : (
+            <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800">
+              已归档
+            </span>
+          )}
+        </div>
+        <button
+          type="button"
+          className={`rounded-lg border px-2.5 py-1 text-xs font-semibold disabled:opacity-45 ${
+            board.status === "archived"
+              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+              : "border-rose-200 bg-rose-50 text-rose-700"
+          }`}
+          disabled={busy}
+          onClick={() => {
+            const nextStatus = board.status === "archived" ? "active" : "archived";
+            if (
+              nextStatus === "archived" &&
+              !window.confirm(`确认归档看板“${board.name}”吗？有进行中任务时将不会执行。`)
+            ) {
+              return;
+            }
+            void onStatus(board, nextStatus);
+          }}
+        >
+          {board.status === "archived" ? "恢复" : "归档"}
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function ColumnSettingsRow({
+  column,
+  busy,
+  activeIndex,
+  activeCount,
+  onSave,
+  onStatus,
+  onMove,
+}: {
+  column: MerchantTaskColumn;
+  busy: boolean;
+  activeIndex: number;
+  activeCount: number;
+  onSave: (
+    column: MerchantTaskColumn,
+    input: { name: string; color: string; isDone: boolean },
+  ) => Promise<void>;
+  onStatus: (column: MerchantTaskColumn, status: "active" | "archived") => Promise<void>;
+  onMove: (column: MerchantTaskColumn, position: number) => Promise<void>;
+}) {
+  const [name, setName] = useState(column.name);
+  const [color, setColor] = useState(column.color);
+  const [isDone, setIsDone] = useState(column.isDone);
+
+  useEffect(() => {
+    setName(column.name);
+    setColor(column.color);
+    setIsDone(column.isDone);
+  }, [column]);
+
+  return (
+    <article
+      className={`rounded-xl border border-slate-200 bg-white p-3 ${
+        column.status === "archived" ? "opacity-65" : ""
+      }`}
+    >
+      <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto_auto]">
+        <input
+          className="min-w-0 rounded-lg border border-slate-300 px-2.5 py-2 text-sm font-semibold"
+          value={name}
+          maxLength={80}
+          disabled={busy}
+          onChange={(event) => setName(event.target.value)}
+        />
+        <label className="flex items-center gap-2 rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs text-slate-600">
+          <input
+            type="color"
+            className="h-6 w-7 cursor-pointer border-0 bg-transparent p-0"
+            value={color}
+            disabled={busy}
+            onChange={(event) => setColor(event.target.value)}
+          />
+          颜色
+        </label>
+        <label className="flex items-center gap-2 rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs text-slate-600">
+          <input
+            type="checkbox"
+            checked={isDone}
+            disabled={busy}
+            onChange={(event) => setIsDone(event.target.checked)}
+          />
+          完成列
+        </label>
+        <button
+          type="button"
+          className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-45"
+          disabled={
+            busy ||
+            !name.trim() ||
+            (name === column.name && color === column.color && isDone === column.isDone)
+          }
+          onClick={() => void onSave(column, { name, color, isDone })}
+        >
+          保存
+        </button>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-1">
+          {column.status === "active" ? (
+            <>
+              <button
+                type="button"
+                aria-label={`将工作列“${column.name}”前移`}
+                className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-600 disabled:opacity-30"
+                disabled={busy || activeIndex <= 0}
+                onClick={() => void onMove(column, Math.max(0, column.position - 1))}
+              >
+                ←
+              </button>
+              <button
+                type="button"
+                aria-label={`将工作列“${column.name}”后移`}
+                className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-600 disabled:opacity-30"
+                disabled={busy || activeIndex < 0 || activeIndex >= activeCount - 1}
+                onClick={() => void onMove(column, column.position + 1)}
+              >
+                →
+              </button>
+            </>
+          ) : (
+            <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800">
+              已归档
+            </span>
+          )}
+        </div>
+        <button
+          type="button"
+          className={`rounded-lg border px-2.5 py-1 text-xs font-semibold disabled:opacity-45 ${
+            column.status === "archived"
+              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+              : "border-rose-200 bg-rose-50 text-rose-700"
+          }`}
+          disabled={busy}
+          onClick={() => {
+            const nextStatus = column.status === "archived" ? "active" : "archived";
+            if (
+              nextStatus === "archived" &&
+              !window.confirm(`确认归档工作列“${column.name}”吗？有进行中任务时将不会执行。`)
+            ) {
+              return;
+            }
+            void onStatus(column, nextStatus);
+          }}
+        >
+          {column.status === "archived" ? "恢复" : "归档"}
+        </button>
+      </div>
     </article>
   );
 }
@@ -170,6 +1052,7 @@ function MerchantEnterpriseManagerContent({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: "error" | "success" | "info"; text: string } | null>(null);
   const [draggingTaskId, setDraggingTaskId] = useState("");
+  const [editingTaskId, setEditingTaskId] = useState("");
   const overviewRequestSequenceRef = useRef(0);
   const overviewAbortControllerRef = useRef<AbortController | null>(null);
 
@@ -177,7 +1060,13 @@ function MerchantEnterpriseManagerContent({
   const [taskDescription, setTaskDescription] = useState("");
   const [taskPriority, setTaskPriority] = useState<MerchantTaskPriority>("normal");
   const [taskDueAt, setTaskDueAt] = useState("");
-  const [taskAssigneeId, setTaskAssigneeId] = useState("");
+  const [taskAssigneeIds, setTaskAssigneeIds] = useState<string[]>([]);
+  const [taskQuery, setTaskQuery] = useState("");
+  const [taskPriorityFilter, setTaskPriorityFilter] = useState<MerchantTaskPriority | "all">("all");
+  const [taskAssigneeFilter, setTaskAssigneeFilter] = useState("all");
+  const [taskArchiveView, setTaskArchiveView] = useState<"active" | "archived">("active");
+  const [selectedBoardId, setSelectedBoardId] = useState("");
+  const [showBoardSettings, setShowBoardSettings] = useState(false);
 
   const [employeeName, setEmployeeName] = useState("");
   const [employeeEmail, setEmployeeEmail] = useState("");
@@ -188,6 +1077,9 @@ function MerchantEnterpriseManagerContent({
 
   const [roleName, setRoleName] = useState("");
   const [roleDescription, setRoleDescription] = useState("");
+  const [rolePermissions, setRolePermissions] = useState<MerchantEnterprisePermission[]>([
+    "enterprise.view",
+  ]);
 
   const apiFetch = useCallback(
     async (path: string, init: RequestInit = {}) => {
@@ -197,22 +1089,25 @@ function MerchantEnterpriseManagerContent({
       return fetch(path, {
         ...init,
         headers,
-        credentials: "include",
+        credentials: accessToken ? "omit" : "include",
         cache: "no-store",
       });
     },
     [accessToken],
   );
 
-  const loadOverview = useCallback(async () => {
+  const loadOverview = useCallback(async (options: { preserveData?: boolean } = {}) => {
+    const preserveData = options.preserveData === true;
     const requestSequence = overviewRequestSequenceRef.current + 1;
     overviewRequestSequenceRef.current = requestSequence;
     overviewAbortControllerRef.current?.abort();
     overviewAbortControllerRef.current = null;
-    setActor(null);
-    setSnapshot(EMPTY_SNAPSHOT);
-    setNeedsBootstrap(false);
-    setMessage(null);
+    if (!preserveData) {
+      setActor(null);
+      setSnapshot(EMPTY_SNAPSHOT);
+      setNeedsBootstrap(false);
+      setMessage(null);
+    }
 
     if (!/^\d{8}$/.test(siteId)) {
       setMessage({ kind: "error", text: "缺少有效的商户编号。" });
@@ -222,7 +1117,7 @@ function MerchantEnterpriseManagerContent({
 
     const controller = new AbortController();
     overviewAbortControllerRef.current = controller;
-    setLoading(true);
+    if (!preserveData) setLoading(true);
     try {
       const response = await apiFetch(
         `/api/merchant-enterprise/overview?siteId=${encodeURIComponent(siteId)}`,
@@ -241,7 +1136,7 @@ function MerchantEnterpriseManagerContent({
       setActor(payload.actor);
       setSnapshot(payload.snapshot);
       setNeedsBootstrap(payload.needsBootstrap === true);
-      setMessage(null);
+      if (!preserveData) setMessage(null);
       return true;
     } catch (error) {
       if (
@@ -250,10 +1145,12 @@ function MerchantEnterpriseManagerContent({
       ) {
         return false;
       }
-      setActor(null);
-      setSnapshot(EMPTY_SNAPSHOT);
-      setNeedsBootstrap(false);
-      setFailedInvitationEmployeeIds(new Set());
+      if (!preserveData) {
+        setActor(null);
+        setSnapshot(EMPTY_SNAPSHOT);
+        setNeedsBootstrap(false);
+        setFailedInvitationEmployeeIds(new Set());
+      }
       setMessage({
         kind: "error",
         text: error instanceof Error ? error.message : "企业管理加载失败。",
@@ -267,7 +1164,7 @@ function MerchantEnterpriseManagerContent({
         if (overviewAbortControllerRef.current === controller) {
           overviewAbortControllerRef.current = null;
         }
-        setLoading(false);
+        if (!preserveData) setLoading(false);
       }
     }
   }, [apiFetch, siteId]);
@@ -281,19 +1178,55 @@ function MerchantEnterpriseManagerContent({
     };
   }, [loadOverview]);
 
+  useEffect(() => {
+    if (!actor) return;
+    const requiredPermission: Record<EnterpriseTab, MerchantEnterprisePermission> = {
+      overview: "enterprise.view",
+      tasks: "tasks.view",
+      employees: "employees.view",
+      roles: "roles.view",
+    };
+    if (!can(actor, requiredPermission[tab])) setTab("overview");
+  }, [actor, tab]);
+
   const activeRoles = snapshot.roles.filter((role) => role.status === "active");
   const assignableRoles = actor
     ? activeRoles.filter((role) => merchantEnterprisePermissionsFitActor(actor, role.permissions))
     : [];
   const activeEmployees = snapshot.employees.filter((employee) => employee.status === "active");
   const activeBoards = snapshot.boards.filter((board) => board.status === "active");
-  const activeBoard = activeBoards[0] ?? null;
+  const activeBoard =
+    activeBoards.find((board) => board.id === selectedBoardId) ??
+    activeBoards[0] ??
+    null;
+  useEffect(() => {
+    const resolvedBoardId = activeBoard?.id ?? "";
+    if (selectedBoardId !== resolvedBoardId) setSelectedBoardId(resolvedBoardId);
+  }, [activeBoard?.id, selectedBoardId]);
   const activeColumns = snapshot.columns
     .filter((column) => column.status === "active" && column.boardId === activeBoard?.id)
     .sort((left, right) => left.position - right.position);
-  const visibleTasks = snapshot.tasks.filter(
-    (task) => !task.archivedAt && task.boardId === activeBoard?.id,
-  );
+  const boardTasks = snapshot.tasks.filter((task) => task.boardId === activeBoard?.id);
+  const visibleTasks = filterMerchantTasks(boardTasks, { archive: "active" });
+  const filteredTasks = filterMerchantTasks(boardTasks, {
+    archive: taskArchiveView,
+    query: taskQuery,
+    priority: taskPriorityFilter,
+    assigneeId: taskAssigneeFilter,
+  });
+  const editingTask =
+    snapshot.tasks.find((task) => task.id === editingTaskId) ?? null;
+  const recentTasks = [...visibleTasks].sort((left, right) => {
+    const leftDue = left.dueAt ? Date.parse(left.dueAt) : Number.POSITIVE_INFINITY;
+    const rightDue = right.dueAt ? Date.parse(right.dueAt) : Number.POSITIVE_INFINITY;
+    if (leftDue !== rightDue) return leftDue - rightDue;
+    return Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
+  });
+  const archivedTaskCount = boardTasks.filter((task) => Boolean(task.archivedAt)).length;
+  const grantablePermissions =
+    actor?.type === "owner"
+      ? MERCHANT_ENTERPRISE_PERMISSION_CATALOG.map((permission) => permission.key)
+      : actor?.permissions ?? [];
   const employeeById = useMemo(
     () => new Map(snapshot.employees.map((employee) => [employee.id, employee] as const)),
     [snapshot.employees],
@@ -316,14 +1249,14 @@ function MerchantEnterpriseManagerContent({
         if (!response.ok || !payload?.ok) {
           throw new Error(readApiError(payload, "保存失败，请稍后重试。"));
         }
-        const reloaded = await loadOverview();
+        const reloaded = await loadOverview({ preserveData: true });
         if (!reloaded) return null;
         setMessage({ kind: "success", text: success });
         return payload;
       } catch (error) {
         const text = error instanceof Error ? error.message : "保存失败，请稍后重试。";
         setMessage({ kind: "error", text });
-        if (text.includes("重新加载")) await loadOverview();
+        if (text.includes("重新加载")) await loadOverview({ preserveData: true });
         return null;
       } finally {
         setBusy(false);
@@ -345,6 +1278,148 @@ function MerchantEnterpriseManagerContent({
     }
   }
 
+  async function createBoard(input: {
+    name: string;
+    description: string;
+  }): Promise<MerchantTaskBoard | null> {
+    const payload = await mutate(
+      "/api/merchant-enterprise/boards",
+      "POST",
+      {
+        name: input.name,
+        description: input.description,
+        operationId: createClientMutationOperationId("enterprise-board-create"),
+      },
+      "看板和默认工作列已创建。",
+    );
+    return payload?.board ? (payload.board as MerchantTaskBoard) : null;
+  }
+
+  async function saveBoard(
+    board: MerchantTaskBoard,
+    input: { name: string; description: string },
+  ) {
+    await mutate(
+      "/api/merchant-enterprise/boards",
+      "PATCH",
+      {
+        boardId: board.id,
+        version: board.version,
+        name: input.name,
+        description: input.description,
+        operationId: createClientMutationOperationId("enterprise-board-edit"),
+      },
+      "看板信息已保存。",
+    );
+  }
+
+  async function setBoardStatus(
+    board: MerchantTaskBoard,
+    status: "active" | "archived",
+  ) {
+    await mutate(
+      "/api/merchant-enterprise/boards",
+      "PATCH",
+      {
+        boardId: board.id,
+        version: board.version,
+        status,
+        operationId: createClientMutationOperationId(
+          status === "archived" ? "enterprise-board-archive" : "enterprise-board-restore",
+        ),
+      },
+      status === "archived" ? "看板已归档。" : "看板已恢复。",
+    );
+  }
+
+  async function moveBoard(board: MerchantTaskBoard, position: number) {
+    await mutate(
+      "/api/merchant-enterprise/boards",
+      "PATCH",
+      {
+        boardId: board.id,
+        version: board.version,
+        position,
+        operationId: createClientMutationOperationId("enterprise-board-move"),
+      },
+      "看板顺序已更新。",
+    );
+  }
+
+  async function createColumn(
+    board: MerchantTaskBoard,
+    input: { name: string; color: string; isDone: boolean },
+  ) {
+    const payload = await mutate(
+      "/api/merchant-enterprise/columns",
+      "POST",
+      {
+        boardId: board.id,
+        name: input.name,
+        color: input.color,
+        isDone: input.isDone,
+        operationId: createClientMutationOperationId("enterprise-column-create"),
+      },
+      "工作列已创建。",
+    );
+    return Boolean(payload?.column);
+  }
+
+  async function saveColumn(
+    column: MerchantTaskColumn,
+    input: { name: string; color: string; isDone: boolean },
+  ) {
+    await mutate(
+      "/api/merchant-enterprise/columns",
+      "PATCH",
+      {
+        boardId: column.boardId,
+        columnId: column.id,
+        version: column.version,
+        name: input.name,
+        color: input.color,
+        isDone: input.isDone,
+        operationId: createClientMutationOperationId("enterprise-column-edit"),
+      },
+      "工作列已保存。",
+    );
+  }
+
+  async function setColumnStatus(
+    column: MerchantTaskColumn,
+    status: "active" | "archived",
+  ) {
+    await mutate(
+      "/api/merchant-enterprise/columns",
+      "PATCH",
+      {
+        boardId: column.boardId,
+        columnId: column.id,
+        version: column.version,
+        status,
+        operationId: createClientMutationOperationId(
+          status === "archived" ? "enterprise-column-archive" : "enterprise-column-restore",
+        ),
+      },
+      status === "archived" ? "工作列已归档。" : "工作列已恢复。",
+    );
+  }
+
+  async function moveColumn(column: MerchantTaskColumn, position: number) {
+    await mutate(
+      "/api/merchant-enterprise/columns",
+      "PATCH",
+      {
+        boardId: column.boardId,
+        columnId: column.id,
+        version: column.version,
+        position,
+        operationId: createClientMutationOperationId("enterprise-column-move"),
+      },
+      "工作列顺序已更新。",
+    );
+  }
+
   async function createTask() {
     if (!activeBoard || !activeColumns[0] || !taskTitle.trim()) {
       setMessage({ kind: "error", text: "请先填写任务标题。" });
@@ -360,7 +1435,7 @@ function MerchantEnterpriseManagerContent({
         description: taskDescription,
         priority: taskPriority,
         dueAt: taskDueAt ? new Date(`${taskDueAt}T23:59:59`).toISOString() : null,
-        assigneeIds: taskAssigneeId ? [taskAssigneeId] : [],
+        assigneeIds: can(actor, "tasks.assign") ? taskAssigneeIds : [],
         operationId: createClientMutationOperationId("enterprise-task-create"),
       },
       "任务已创建。",
@@ -370,7 +1445,7 @@ function MerchantEnterpriseManagerContent({
       setTaskDescription("");
       setTaskPriority("normal");
       setTaskDueAt("");
-      setTaskAssigneeId("");
+      setTaskAssigneeIds([]);
     }
   }
 
@@ -390,18 +1465,80 @@ function MerchantEnterpriseManagerContent({
     );
   }
 
-  async function assignTask(task: MerchantTask, employeeId: string) {
-    await mutate(
+  async function saveTask(task: MerchantTask, draft: TaskDraft) {
+    if (!actor) return;
+    const nextDueAt =
+      draft.dueAt === taskDateInputValue(task.dueAt)
+        ? task.dueAt
+        : draft.dueAt
+          ? new Date(`${draft.dueAt}T23:59:59`).toISOString()
+          : null;
+    const result = buildMerchantTaskEditChanges(
+      actor,
+      task,
+      {
+        title: draft.title,
+        description: draft.description,
+        priority: draft.priority,
+        dueAt: nextDueAt,
+        columnId: draft.columnId,
+        assigneeIds: draft.assigneeIds,
+      },
+      snapshot.employees,
+    );
+    if (!result.ok) {
+      if (result.error === "inactive_assignee") {
+        const inactiveAssigneeName =
+          employeeById.get(result.employeeId ?? "")?.displayName || "未知员工";
+        setMessage({
+          kind: "error",
+          text: `请先移除非活跃员工“${inactiveAssigneeName}”，再保存负责人。`,
+        });
+      } else {
+        setMessage({
+          kind: "error",
+          text: `每个任务最多可分派 ${MAX_MERCHANT_TASK_ASSIGNEES} 名员工。`,
+        });
+      }
+      return;
+    }
+    const patch: Record<string, unknown> = {
+      taskId: task.id,
+      version: task.version,
+      operationId: createClientMutationOperationId("enterprise-task-edit"),
+      ...result.changes,
+    };
+    if (Object.keys(patch).length === 3) {
+      setMessage({ kind: "info", text: "任务没有需要保存的修改。" });
+      return;
+    }
+    const payload = await mutate(
+      "/api/merchant-enterprise/tasks",
+      "PATCH",
+      patch,
+      "任务已保存。",
+    );
+    if (payload) setEditingTaskId("");
+  }
+
+  async function setTaskArchived(task: MerchantTask, archived: boolean) {
+    if (archived && !window.confirm(`确认归档任务“${task.title}”吗？之后可从归档任务中恢复。`)) {
+      return;
+    }
+    const payload = await mutate(
       "/api/merchant-enterprise/tasks",
       "PATCH",
       {
         taskId: task.id,
         version: task.version,
-        assigneeIds: employeeId ? [employeeId] : [],
-        operationId: createClientMutationOperationId("enterprise-task-assign"),
+        archived,
+        operationId: createClientMutationOperationId(
+          archived ? "enterprise-task-archive" : "enterprise-task-restore",
+        ),
       },
-      "任务负责人已更新。",
+      archived ? "任务已归档。" : "任务已恢复。",
     );
+    if (payload) setEditingTaskId("");
   }
 
   async function inviteEmployee() {
@@ -444,16 +1581,19 @@ function MerchantEnterpriseManagerContent({
     }
   }
 
-  async function resendEmployeeInvitation(employee: MerchantEnterpriseEmployee) {
+  async function sendEmployeeInvitation(
+    employee: MerchantEnterpriseEmployee,
+    action: "resend_invite" | "renew_invite",
+  ) {
     const payload = await mutate(
       "/api/merchant-enterprise/employees",
       "PATCH",
       {
-        action: "resend_invite",
+        action,
         employeeId: employee.id,
         version: employee.version,
       },
-      "邀请邮件已重新发送。",
+      action === "renew_invite" ? "新邀请邮件已发送。" : "邀请邮件已重新发送。",
     );
     if (!payload) return;
     const invitationSent = payload.invitation?.status === "sent";
@@ -468,6 +1608,28 @@ function MerchantEnterpriseManagerContent({
       text: invitationSent
         ? "邀请邮件已重新发送，员工接受后即可进入企业工作台。"
         : "邀请邮件暂未发出，请稍后重试。",
+    });
+  }
+
+  async function revokeEmployeeInvitation(employee: MerchantEnterpriseEmployee) {
+    if (!window.confirm(`确认撤销发给“${employee.displayName}”的邀请吗？旧邮件将立即失效。`)) {
+      return;
+    }
+    const payload = await mutate(
+      "/api/merchant-enterprise/employees",
+      "PATCH",
+      {
+        action: "revoke_invite",
+        employeeId: employee.id,
+        version: employee.version,
+      },
+      "邀请已撤销，旧邮件不再有效。",
+    );
+    if (!payload) return;
+    setFailedInvitationEmployeeIds((current) => {
+      const next = new Set(current);
+      next.delete(employee.id);
+      return next;
     });
   }
 
@@ -515,26 +1677,71 @@ function MerchantEnterpriseManagerContent({
       {
         name: roleName,
         description: roleDescription,
-        permissions: ["enterprise.view", "tasks.view"],
+        permissions: rolePermissions,
       },
       "角色已创建。",
     );
     if (payload) {
       setRoleName("");
       setRoleDescription("");
+      setRolePermissions(["enterprise.view"]);
     }
   }
 
   async function saveRole(
     role: MerchantEnterpriseRole,
-    permissions: MerchantEnterprisePermission[],
+    input: {
+      name: string;
+      description: string;
+      permissions: MerchantEnterprisePermission[];
+    },
   ) {
     await mutate(
       "/api/merchant-enterprise/roles",
       "PATCH",
-      { roleId: role.id, version: role.version, permissions },
-      "角色权限已保存。",
+      {
+        roleId: role.id,
+        version: role.version,
+        name: input.name,
+        description: input.description,
+        permissions: input.permissions,
+      },
+      "角色已保存。",
     );
+  }
+
+  async function updateRoleStatus(
+    role: MerchantEnterpriseRole,
+    status: "active" | "archived",
+  ) {
+    if (
+      status === "archived" &&
+      !window.confirm(`确认归档角色“${role.name}”吗？已分配给员工的角色无法归档。`)
+    ) {
+      return;
+    }
+    await mutate(
+      "/api/merchant-enterprise/roles",
+      "PATCH",
+      { roleId: role.id, version: role.version, status },
+      status === "archived" ? "角色已归档。" : "角色已恢复。",
+    );
+  }
+
+  function roleEditAvailability(role: MerchantEnterpriseRole) {
+    if (!actor) {
+      return { editable: false, reason: "正在验证当前账号。" };
+    }
+    if (!can(actor, "roles.manage")) {
+      return { editable: false, reason: "当前账号只能查看角色。" };
+    }
+    if (actor.type === "owner") return { editable: true, reason: "" };
+    if (role.isSystem) return { editable: false, reason: "员工不能修改系统角色。" };
+    if (actor.roleId === role.id) return { editable: false, reason: "不能修改自己的角色。" };
+    if (!merchantEnterprisePermissionsFitActor(actor, role.permissions)) {
+      return { editable: false, reason: "该角色权限高于当前账号。" };
+    }
+    return { editable: true, reason: "" };
   }
 
   const wrapperClassName = standalone
@@ -581,7 +1788,7 @@ function MerchantEnterpriseManagerContent({
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <div className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-100/80">Enterprise workspace</div>
-              <h1 className="mt-2 text-2xl font-bold">企业管理</h1>
+              <h1 className="mt-2 !text-2xl !font-bold !text-white">企业管理</h1>
               <p className="mt-2 text-sm text-slate-200">
                 {siteName || siteId} · 任务、员工和角色权限统一管理
               </p>
@@ -595,7 +1802,10 @@ function MerchantEnterpriseManagerContent({
           </div>
         </header>
 
-        <nav className="mt-5 flex gap-2 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
+        <nav
+          aria-label="企业管理功能"
+          className="mt-5 flex gap-2 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-sm"
+        >
           {(
             [
               ["overview", "工作台", "enterprise.view"],
@@ -612,6 +1822,7 @@ function MerchantEnterpriseManagerContent({
                 className={`shrink-0 rounded-xl px-4 py-2 text-sm font-semibold transition ${
                   tab === key ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-100"
                 }`}
+                aria-current={tab === key ? "page" : undefined}
                 onClick={() => setTab(key)}
               >
                 {label}
@@ -621,6 +1832,8 @@ function MerchantEnterpriseManagerContent({
 
         {message ? (
           <div
+            role={message.kind === "error" ? "alert" : "status"}
+            aria-live="polite"
             className={`mt-4 rounded-2xl border px-4 py-3 text-sm ${
               message.kind === "error"
                 ? "border-rose-200 bg-rose-50 text-rose-700"
@@ -654,8 +1867,20 @@ function MerchantEnterpriseManagerContent({
           <div className="mt-5 space-y-5">
             <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {[
-                { label: "未完成任务", value: visibleTasks.filter((task) => !task.completedAt).length, tone: "text-blue-700" },
-                { label: "已完成任务", value: visibleTasks.filter((task) => task.completedAt).length, tone: "text-emerald-700" },
+                {
+                  label: "未完成任务",
+                  value: can(actor, "tasks.view")
+                    ? visibleTasks.filter((task) => !task.completedAt).length
+                    : "—",
+                  tone: "text-blue-700",
+                },
+                {
+                  label: "已完成任务",
+                  value: can(actor, "tasks.view")
+                    ? visibleTasks.filter((task) => task.completedAt).length
+                    : "—",
+                  tone: "text-emerald-700",
+                },
                 {
                   label: "团队成员",
                   value: can(actor, "employees.view") ? activeEmployees.length : "—",
@@ -663,9 +1888,11 @@ function MerchantEnterpriseManagerContent({
                 },
                 {
                   label: "已逾期",
-                  value: visibleTasks.filter(
-                    (task) => task.dueAt && !task.completedAt && Date.parse(task.dueAt) < Date.now(),
-                  ).length,
+                  value: can(actor, "tasks.view")
+                    ? visibleTasks.filter(
+                        (task) => task.dueAt && !task.completedAt && Date.parse(task.dueAt) < Date.now(),
+                      ).length
+                    : "—",
                   tone: "text-rose-700",
                 },
               ].map((item) => (
@@ -688,7 +1915,12 @@ function MerchantEnterpriseManagerContent({
                 ) : null}
               </div>
               <div className="mt-4 divide-y divide-slate-100">
-                {visibleTasks.slice(0, 6).map((task) => (
+                {!can(actor, "tasks.view") ? (
+                  <div className="py-8 text-center text-sm text-slate-500">
+                    当前角色没有查看任务的权限。
+                  </div>
+                ) : null}
+                {can(actor, "tasks.view") ? recentTasks.slice(0, 6).map((task) => (
                   <div key={task.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
                     <div>
                       <div className="font-medium text-slate-900">{task.title}</div>
@@ -701,8 +1933,8 @@ function MerchantEnterpriseManagerContent({
                       {PRIORITY_META[task.priority].label}
                     </span>
                   </div>
-                ))}
-                {visibleTasks.length === 0 ? (
+                )) : null}
+                {can(actor, "tasks.view") && visibleTasks.length === 0 ? (
                   <div className="py-8 text-center text-sm text-slate-500">还没有任务，可以从任务看板创建第一项工作。</div>
                 ) : null}
               </div>
@@ -712,68 +1944,228 @@ function MerchantEnterpriseManagerContent({
 
         {!needsBootstrap && tab === "tasks" ? (
           <div className="mt-5 space-y-5">
+            <section className="flex flex-wrap items-end justify-between gap-3 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+              <label className="min-w-[240px] text-xs font-medium text-slate-600">
+                当前看板
+                <select
+                  className="mt-1.5 block w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-800"
+                  value={activeBoard?.id ?? ""}
+                  disabled={activeBoards.length === 0}
+                  onChange={(event) => setSelectedBoardId(event.target.value)}
+                >
+                  {activeBoards.length === 0 ? <option value="">暂无启用看板</option> : null}
+                  {activeBoards.map((board) => (
+                    <option key={board.id} value={board.id}>{board.name}</option>
+                  ))}
+                </select>
+              </label>
+              <div className="flex flex-wrap items-center gap-3">
+                {activeBoard?.description ? (
+                  <span className="max-w-xl text-xs leading-5 text-slate-500">{activeBoard.description}</span>
+                ) : null}
+                {can(actor, "boards.manage") ? (
+                  <button
+                    type="button"
+                    className={`rounded-xl border px-4 py-2 text-sm font-semibold ${
+                      showBoardSettings
+                        ? "border-cyan-700 bg-cyan-700 text-white"
+                        : "border-cyan-200 bg-cyan-50 text-cyan-700"
+                    }`}
+                    onClick={() => setShowBoardSettings((current) => !current)}
+                  >
+                    {showBoardSettings ? "收起看板设置" : "管理看板与工作列"}
+                  </button>
+                ) : null}
+              </div>
+            </section>
+
+            {can(actor, "boards.manage") && showBoardSettings ? (
+              <BoardSettings
+                boards={snapshot.boards}
+                columns={snapshot.columns}
+                selectedBoardId={activeBoard?.id ?? ""}
+                busy={busy}
+                onSelectBoard={setSelectedBoardId}
+                onCreateBoard={createBoard}
+                onSaveBoard={saveBoard}
+                onSetBoardStatus={setBoardStatus}
+                onMoveBoard={moveBoard}
+                onCreateColumn={createColumn}
+                onSaveColumn={saveColumn}
+                onSetColumnStatus={setColumnStatus}
+                onMoveColumn={moveColumn}
+              />
+            ) : null}
+
             {can(actor, "tasks.create") ? (
               <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_140px_160px_180px_auto]">
-                  <input
-                    className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
-                    placeholder="任务标题"
-                    value={taskTitle}
-                    onChange={(event) => setTaskTitle(event.target.value)}
-                  />
-                  <input
-                    className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
-                    placeholder="简要说明（可选）"
-                    value={taskDescription}
-                    onChange={(event) => setTaskDescription(event.target.value)}
-                  />
-                  <select
-                    className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
-                    value={taskPriority}
-                    onChange={(event) => setTaskPriority(event.target.value as MerchantTaskPriority)}
-                  >
-                    {(Object.keys(PRIORITY_META) as MerchantTaskPriority[]).map((item) => (
-                      <option key={item} value={item}>{PRIORITY_META[item].label}优先级</option>
-                    ))}
-                  </select>
-                  <input
-                    type="date"
-                    className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
-                    value={taskDueAt}
-                    onChange={(event) => setTaskDueAt(event.target.value)}
-                  />
-                  <select
-                    className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
-                    value={taskAssigneeId}
-                    onChange={(event) => setTaskAssigneeId(event.target.value)}
-                    disabled={!can(actor, "tasks.assign")}
-                  >
-                    <option value="">暂不分派</option>
-                    {activeEmployees.map((employee) => (
-                      <option key={employee.id} value={employee.id}>{employee.displayName}</option>
-                    ))}
-                  </select>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-950">新建任务</h2>
+                    <p className="mt-1 text-sm text-slate-500">任务创建后可继续补充详情或跨列推进。</p>
+                  </div>
                   <button
                     type="button"
                     className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-45"
-                    disabled={busy || !taskTitle.trim()}
+                    disabled={busy || !taskTitle.trim() || !activeBoard || activeColumns.length === 0}
                     onClick={() => void createTask()}
                   >
                     新建任务
                   </button>
                 </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+                  <label className="block text-xs font-medium text-slate-600 md:col-span-2">
+                    任务标题
+                    <input
+                      className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                      placeholder="例如：确认周五交付清单"
+                      value={taskTitle}
+                      maxLength={240}
+                      onChange={(event) => setTaskTitle(event.target.value)}
+                    />
+                  </label>
+                  <label className="block text-xs font-medium text-slate-600">
+                    优先级
+                    <select
+                      className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                      value={taskPriority}
+                      onChange={(event) => setTaskPriority(event.target.value as MerchantTaskPriority)}
+                    >
+                      {(Object.keys(PRIORITY_META) as MerchantTaskPriority[]).map((item) => (
+                        <option key={item} value={item}>{PRIORITY_META[item].label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block text-xs font-medium text-slate-600">
+                    截止日期
+                    <input
+                      type="date"
+                      className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                      value={taskDueAt}
+                      onChange={(event) => setTaskDueAt(event.target.value)}
+                    />
+                  </label>
+                  <label className="block text-xs font-medium text-slate-600 md:col-span-2">
+                    简要说明
+                    <input
+                      className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                      placeholder="可选"
+                      value={taskDescription}
+                      onChange={(event) => setTaskDescription(event.target.value)}
+                    />
+                  </label>
+                  {can(actor, "tasks.assign") ? (
+                    <fieldset className="rounded-2xl border border-slate-200 px-3 pb-3 md:col-span-2">
+                      <legend className="px-1 text-xs font-medium text-slate-600">负责人（可多选）</legend>
+                      <div className="mt-1 flex max-h-24 flex-wrap gap-2 overflow-y-auto">
+                        {activeEmployees.map((employee) => (
+                          <label key={employee.id} className="flex items-center gap-1.5 rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs text-slate-700">
+                            <input
+                              type="checkbox"
+                              checked={taskAssigneeIds.includes(employee.id)}
+                              disabled={
+                                !taskAssigneeIds.includes(employee.id) &&
+                                taskAssigneeIds.length >= MAX_MERCHANT_TASK_ASSIGNEES
+                              }
+                              onChange={(event) => {
+                                setTaskAssigneeIds((current) =>
+                                  event.target.checked
+                                    ? Array.from(new Set([...current, employee.id]))
+                                    : current.filter((id) => id !== employee.id),
+                                );
+                              }}
+                            />
+                            {employee.displayName}
+                          </label>
+                        ))}
+                        {activeEmployees.length === 0 ? (
+                          <span className="text-xs text-slate-500">暂无可分派员工</span>
+                        ) : null}
+                      </div>
+                    </fieldset>
+                  ) : null}
+                </div>
               </section>
             ) : null}
+
+            <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex flex-wrap items-end gap-3">
+                <label className="min-w-[220px] flex-1 text-xs font-medium text-slate-600">
+                  搜索任务
+                  <input
+                    type="search"
+                    className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                    placeholder="搜索标题或说明"
+                    value={taskQuery}
+                    onChange={(event) => setTaskQuery(event.target.value)}
+                  />
+                </label>
+                <label className="text-xs font-medium text-slate-600">
+                  优先级
+                  <select
+                    className="mt-1.5 block rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                    value={taskPriorityFilter}
+                    onChange={(event) => setTaskPriorityFilter(event.target.value as MerchantTaskPriority | "all")}
+                  >
+                    <option value="all">全部优先级</option>
+                    {(Object.keys(PRIORITY_META) as MerchantTaskPriority[]).map((item) => (
+                      <option key={item} value={item}>{PRIORITY_META[item].label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="text-xs font-medium text-slate-600">
+                  负责人
+                  <select
+                    className="mt-1.5 block rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                    value={taskAssigneeFilter}
+                    onChange={(event) => setTaskAssigneeFilter(event.target.value)}
+                  >
+                    <option value="all">全部负责人</option>
+                    <option value="unassigned">未分派</option>
+                    {snapshot.employees.map((employee) => (
+                      <option key={employee.id} value={employee.id}>{employee.displayName}</option>
+                    ))}
+                  </select>
+                </label>
+                <div className="flex rounded-xl bg-slate-100 p-1" aria-label="任务归档状态">
+                  <button
+                    type="button"
+                    className={`rounded-lg px-3 py-2 text-sm font-semibold ${
+                      taskArchiveView === "active" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500"
+                    }`}
+                    onClick={() => setTaskArchiveView("active")}
+                  >
+                    进行中
+                  </button>
+                  <button
+                    type="button"
+                    className={`rounded-lg px-3 py-2 text-sm font-semibold ${
+                      taskArchiveView === "archived" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500"
+                    }`}
+                    onClick={() => setTaskArchiveView("archived")}
+                  >
+                    已归档 {archivedTaskCount > 0 ? `(${archivedTaskCount})` : ""}
+                  </button>
+                </div>
+                <div className="pb-2 text-xs text-slate-500">筛选结果 {filteredTasks.length} 项</div>
+              </div>
+            </section>
+
+            {!activeBoard || activeColumns.length === 0 ? (
+              <section className="rounded-3xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-800">
+                当前没有可用的任务看板或工作列，请由管理员重新初始化工作区。
+              </section>
+            ) : (
             <section className="overflow-x-auto pb-3">
-              <div className="grid min-w-[980px] gap-4" style={{ gridTemplateColumns: `repeat(${Math.max(activeColumns.length, 1)}, minmax(230px, 1fr))` }}>
+              <div className="grid min-w-[920px] gap-4" style={{ gridTemplateColumns: `repeat(${Math.max(activeColumns.length, 1)}, minmax(230px, 1fr))` }}>
                 {activeColumns.map((column, columnIndex) => {
-                  const tasks = visibleTasks.filter((task) => task.columnId === column.id);
+                  const tasks = filteredTasks.filter((task) => task.columnId === column.id);
                   return (
                     <div
                       key={column.id}
                       className="min-h-[420px] rounded-3xl border border-slate-200 bg-slate-100/80 p-3"
                       onDragOver={(event) => {
-                        if (can(actor, "tasks.update")) event.preventDefault();
+                        if (taskArchiveView === "active" && can(actor, "tasks.update")) event.preventDefault();
                       }}
                       onDrop={(event) => {
                         event.preventDefault();
@@ -799,11 +2191,15 @@ function MerchantEnterpriseManagerContent({
                           return (
                             <article
                               key={task.id}
-                              draggable={can(actor, "tasks.update")}
+                              draggable={taskArchiveView === "active" && can(actor, "tasks.update")}
                               onDragStart={() => setDraggingTaskId(task.id)}
                               onDragEnd={() => setDraggingTaskId("")}
                               className={`rounded-2xl border bg-white p-4 shadow-sm transition ${
-                                draggingTaskId === task.id ? "opacity-45" : "border-slate-200"
+                                draggingTaskId === task.id
+                                  ? "opacity-45"
+                                  : task.archivedAt
+                                    ? "border-amber-200"
+                                    : "border-slate-200"
                               }`}
                             >
                               <div className="flex items-start justify-between gap-2">
@@ -819,20 +2215,16 @@ function MerchantEnterpriseManagerContent({
                                 </div>
                               ) : null}
                               <div className="mt-3 text-xs text-slate-500">负责人：{assigned || "未分派"}</div>
-                              {can(actor, "tasks.assign") ? (
-                                <select
-                                  className="mt-2 w-full rounded-lg border border-slate-200 px-2 py-1.5 text-xs"
-                                  value={task.assigneeIds[0] ?? ""}
-                                  onChange={(event) => void assignTask(task, event.target.value)}
-                                  disabled={busy}
-                                >
-                                  <option value="">未分派</option>
-                                  {activeEmployees.map((employee) => (
-                                    <option key={employee.id} value={employee.id}>{employee.displayName}</option>
-                                  ))}
-                                </select>
-                              ) : null}
-                              {can(actor, "tasks.update") ? (
+                              <button
+                                type="button"
+                                className="mt-3 w-full rounded-lg border border-blue-200 bg-blue-50 px-2 py-1.5 text-xs font-semibold text-blue-700"
+                                onClick={() => setEditingTaskId(task.id)}
+                              >
+                                {can(actor, "tasks.update") || can(actor, "tasks.assign") || can(actor, "tasks.archive")
+                                  ? "管理任务"
+                                  : "查看详情"}
+                              </button>
+                              {taskArchiveView === "active" && can(actor, "tasks.update") ? (
                                 <div className="mt-3 flex gap-2">
                                   <button
                                     type="button"
@@ -861,12 +2253,18 @@ function MerchantEnterpriseManagerContent({
                             </article>
                           );
                         })}
+                        {tasks.length === 0 ? (
+                          <div className="rounded-2xl border border-dashed border-slate-300 px-3 py-8 text-center text-xs text-slate-400">
+                            此列暂无匹配任务
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   );
                 })}
               </div>
             </section>
+            )}
           </div>
         ) : null}
 
@@ -916,21 +2314,25 @@ function MerchantEnterpriseManagerContent({
               </div>
               <div className="divide-y divide-slate-100">
                 {snapshot.employees.map((employee) => {
-                  const invitationNeedsRetry =
-                    failedInvitationEmployeeIds.has(employee.id) ||
-                    employee.status === "invited";
+                  const previousInvitationFailed =
+                    failedInvitationEmployeeIds.has(employee.id);
+                  const invitationPresentation = employeeInvitationPresentation(employee);
+                  const invitationNeedsAction = employee.status === "invited";
+                  const invitationNeedsRenewal =
+                    invitationPresentation.state === "expired" ||
+                    invitationPresentation.state === "revoked";
                   return (
                     <div key={employee.id} className="flex flex-wrap items-center justify-between gap-4 px-5 py-4">
                       <div className="min-w-0">
                         <div className="font-semibold text-slate-900">{employee.displayName}</div>
                         <div className="mt-1 truncate text-sm text-slate-500">{employee.email || "邮箱仅管理员可见"}</div>
                       </div>
-                      <div className="flex items-center gap-3">
+                      <div className="flex max-w-full flex-wrap items-center justify-end gap-3">
                         {can(actor, "employees.manage") &&
                         !(actor.type === "employee" && actor.id === employee.id) &&
                         assignableRoles.some((role) => role.id === employee.roleId) ? (
                           <select
-                            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700"
+                            className="max-w-[12rem] rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700"
                             value={employee.roleId}
                             disabled={busy}
                             onChange={(event) => void updateEmployeeRole(employee, event.target.value)}
@@ -944,26 +2346,50 @@ function MerchantEnterpriseManagerContent({
                             {roleById.get(employee.roleId)?.name || "未分配角色"}
                           </span>
                         )}
-                        <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-                          employee.status === "active"
-                            ? "bg-emerald-50 text-emerald-700"
-                            : employee.status === "disabled"
-                              ? "bg-rose-50 text-rose-700"
-                              : "bg-amber-50 text-amber-700"
-                        }`}>
-                          {employee.status === "active" ? "已加入" : employee.status === "disabled" ? "已停用" : "待接受"}
+                        <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${invitationPresentation.tone}`}>
+                          {previousInvitationFailed && invitationPresentation.state === "pending"
+                            ? "发送失败"
+                            : invitationPresentation.label}
                         </span>
-                        {can(actor, "employees.manage") && invitationNeedsRetry ? (
+                        {invitationPresentation.detail ? (
+                          <span className="max-w-[13rem] text-right text-[11px] leading-4 text-slate-500">
+                            {invitationPresentation.detail}
+                          </span>
+                        ) : null}
+                        {can(actor, "employees.manage") && invitationNeedsAction ? (
                           <button
                             type="button"
                             className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 disabled:opacity-45"
                             disabled={busy}
-                            onClick={() => void resendEmployeeInvitation(employee)}
+                            onClick={() =>
+                              void sendEmployeeInvitation(
+                                employee,
+                                invitationNeedsRenewal ? "renew_invite" : "resend_invite",
+                              )
+                            }
                           >
-                            重发邀请
+                            {invitationNeedsRenewal
+                              ? "生成新邀请"
+                              : previousInvitationFailed || invitationPresentation.state === "failed"
+                                ? "重试邀请"
+                                : "重发邀请"}
                           </button>
                         ) : null}
-                        {can(actor, "employees.manage") && employee.status !== "invited" ? (
+                        {can(actor, "employees.manage") &&
+                        invitationNeedsAction &&
+                        !invitationNeedsRenewal ? (
+                          <button
+                            type="button"
+                            className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 disabled:opacity-45"
+                            disabled={busy}
+                            onClick={() => void revokeEmployeeInvitation(employee)}
+                          >
+                            撤销邀请
+                          </button>
+                        ) : null}
+                        {can(actor, "employees.manage") &&
+                        employee.status !== "invited" &&
+                        !(actor.type === "employee" && actor.id === employee.id) ? (
                           <button
                             type="button"
                             className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600"
@@ -990,50 +2416,112 @@ function MerchantEnterpriseManagerContent({
             {can(actor, "roles.manage") ? (
               <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
                 <h2 className="text-lg font-semibold text-slate-950">新建角色</h2>
+                <p className="mt-1 text-sm text-slate-500">勾选管理权限时会自动补齐所需的查看权限。</p>
                 <div className="mt-4 grid gap-3 md:grid-cols-[1fr_2fr_auto]">
-                  <input
-                    className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
-                    placeholder="角色名称"
-                    value={roleName}
-                    onChange={(event) => setRoleName(event.target.value)}
-                  />
-                  <input
-                    className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
-                    placeholder="角色说明"
-                    value={roleDescription}
-                    onChange={(event) => setRoleDescription(event.target.value)}
-                  />
+                  <label className="block text-xs font-medium text-slate-600">
+                    角色名称
+                    <input
+                      className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                      value={roleName}
+                      maxLength={80}
+                      onChange={(event) => setRoleName(event.target.value)}
+                    />
+                  </label>
+                  <label className="block text-xs font-medium text-slate-600">
+                    角色说明
+                    <input
+                      className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                      value={roleDescription}
+                      maxLength={1000}
+                      onChange={(event) => setRoleDescription(event.target.value)}
+                    />
+                  </label>
                   <button
                     type="button"
-                    className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-45"
-                    disabled={busy}
+                    className="self-end rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-45"
+                    disabled={busy || !roleName.trim()}
                     onClick={() => void createRole()}
                   >
                     创建角色
                   </button>
                 </div>
+                <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {MERCHANT_ENTERPRISE_PERMISSION_CATALOG.map((permission) => {
+                    const checked = rolePermissions.includes(permission.key);
+                    const canGrant = grantablePermissions.includes(permission.key);
+                    return (
+                      <label
+                        key={`new-${permission.key}`}
+                        className={`flex items-start gap-2 rounded-xl border border-slate-200 px-3 py-2 ${
+                          canGrant ? "" : "bg-slate-50 opacity-60"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          className="mt-0.5"
+                          checked={checked}
+                          disabled={!canGrant}
+                          onChange={(event) =>
+                            setRolePermissions((current) =>
+                              toggleMerchantEnterprisePermissionSelection(
+                                current,
+                                permission.key,
+                                event.target.checked,
+                              ),
+                            )
+                          }
+                        />
+                        <span>
+                          <span className="block text-sm font-medium text-slate-800">{permission.label}</span>
+                          <span className="mt-0.5 block text-[11px] leading-4 text-slate-500">{permission.description}</span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
               </section>
             ) : null}
             <section className="grid gap-4 lg:grid-cols-2">
-              {activeRoles.map((role) =>
-                can(actor, "roles.manage") ? (
-                  <RoleEditor key={role.id} role={role} busy={busy} onSave={saveRole} />
-                ) : (
-                  <article key={role.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                    <div className="font-semibold text-slate-950">{role.name}</div>
-                    <div className="mt-1 text-sm text-slate-500">{role.description}</div>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {role.permissions.map((permission) => (
-                        <span key={permission} className="rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-600">
-                          {MERCHANT_ENTERPRISE_PERMISSION_CATALOG.find((item) => item.key === permission)?.label || permission}
-                        </span>
-                      ))}
-                    </div>
-                  </article>
-                ),
-              )}
+              {snapshot.roles.map((role) => {
+                const availability = roleEditAvailability(role);
+                return (
+                  <RoleEditor
+                    key={role.id}
+                    role={role}
+                    busy={busy}
+                    editable={availability.editable}
+                    unavailableReason={availability.reason}
+                    grantablePermissions={grantablePermissions}
+                    onSave={saveRole}
+                    onStatusChange={updateRoleStatus}
+                  />
+                );
+              })}
+              {snapshot.roles.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-5 py-10 text-center text-sm text-slate-500 lg:col-span-2">
+                  还没有角色，请先初始化企业工作区。
+                </div>
+              ) : null}
             </section>
           </div>
+        ) : null}
+
+        {editingTask ? (
+          <TaskEditor
+            key={`${editingTask.id}:${editingTask.version}`}
+            task={editingTask}
+            columns={snapshot.columns.filter(
+              (column) => column.boardId === editingTask.boardId && column.status === "active",
+            )}
+            employees={snapshot.employees}
+            busy={busy}
+            canUpdate={can(actor, "tasks.update")}
+            canAssign={can(actor, "tasks.assign")}
+            canArchive={can(actor, "tasks.archive")}
+            onSave={saveTask}
+            onArchive={setTaskArchived}
+            onClose={() => setEditingTaskId("")}
+          />
         ) : null}
       </div>
     </div>

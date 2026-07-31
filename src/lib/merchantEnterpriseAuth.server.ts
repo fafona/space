@@ -1,4 +1,5 @@
 import {
+  getMissingMerchantEnterprisePermissionDependencies,
   hasMerchantEnterprisePermission,
   normalizeMerchantEnterpriseEmployee,
   normalizeMerchantEnterpriseRole,
@@ -28,6 +29,15 @@ function normalizeText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
 
+export function readMerchantEnterpriseRequestAccessTokens(request: Request) {
+  const headerName = "x-merchant-access-token";
+  if (request.headers.has(headerName)) {
+    const explicitAccessToken = request.headers.get(headerName)?.trim() ?? "";
+    return explicitAccessToken ? [explicitAccessToken] : [];
+  }
+  return readMerchantRequestAccessTokens(request);
+}
+
 function strictOwnerFilter(authUserId: string) {
   const escaped = authUserId.replace(/[^a-fA-F0-9-]/g, "");
   if (!escaped) return "";
@@ -43,7 +53,7 @@ function strictOwnerFilter(authUserId: string) {
 }
 
 export async function resolveValidatedMerchantEnterpriseAuthUser(request: Request) {
-  const tokens = readMerchantRequestAccessTokens(request);
+  const tokens = readMerchantEnterpriseRequestAccessTokens(request);
   if (tokens.length === 0) throw new MerchantEnterpriseAccessError("unauthorized", 401);
   const authClient = createServerSupabaseAuthClient();
   if (!authClient) throw new MerchantEnterpriseAccessError("enterprise_auth_unavailable", 503);
@@ -159,6 +169,9 @@ export async function resolveMerchantEnterpriseActor(
   const role = normalizeMerchantEnterpriseRole(roleResult.data);
   if (!role || role.siteId !== siteId) {
     throw new MerchantEnterpriseAccessError("merchant_access_denied", 403);
+  }
+  if (getMissingMerchantEnterprisePermissionDependencies(role.permissions).length > 0) {
+    throw new MerchantEnterpriseAccessError("merchant_role_invalid", 403);
   }
 
   const actor: MerchantEnterpriseActor = {

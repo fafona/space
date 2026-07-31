@@ -1,8 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
-  DEFAULT_MERCHANT_ENTERPRISE_ROLES,
-  DEFAULT_MERCHANT_TASK_COLUMNS,
   isMerchantEnterpriseSchemaMissingError,
+  MAX_MERCHANT_TASK_ASSIGNEES,
   normalizeMerchantEnterpriseEmployee,
   normalizeMerchantEnterprisePermissions,
   normalizeMerchantEnterpriseRole,
@@ -35,9 +34,9 @@ const DEFAULT_COLUMN_SYSTEM_KEYS = ["todo", "in_progress", "blocked", "done"] as
 const ROLE_COLUMNS =
   "id,merchant_id,name,description,permissions,status,is_system,version,created_at,updated_at";
 const EMPLOYEE_COLUMNS =
-  "id,merchant_id,auth_user_id,email,display_name,role_id,status,invited_at,accepted_at,last_active_at,version,created_at,updated_at";
+  "id,merchant_id,auth_user_id,email,display_name,role_id,status,invited_at,accepted_at,last_active_at,invitation_version,invitation_expires_at,invitation_revoked_at,invitation_sent_at,invitation_delivery_status,version,created_at,updated_at";
 const BOARD_COLUMNS =
-  "id,merchant_id,name,description,status,version,created_at,updated_at";
+  "id,merchant_id,name,description,position,status,version,created_at,updated_at";
 const COLUMN_COLUMNS =
   "id,merchant_id,board_id,name,color,position,is_done,status,version,created_at,updated_at";
 const TASK_COLUMNS =
@@ -78,9 +77,66 @@ function throwTaskRpcError(operation: string, error: unknown): never {
   throw new Error(`${operation}:${message}`);
 }
 
+const ENTERPRISE_WORKSPACE_CONFLICT_CODES = [
+  "enterprise_version_conflict",
+  "enterprise_operation_in_progress",
+  "board_limit_reached",
+  "column_limit_reached",
+  "board_in_use",
+  "column_in_use",
+  "last_active_board",
+  "last_active_column",
+  "inactive_board",
+  "inactive_column",
+  "board_has_no_active_columns",
+] as const;
+
+function throwEnterpriseWorkspaceRpcError(operation: string, error: unknown): never {
+  if (isMerchantEnterpriseSchemaMissingError(error)) {
+    throw new Error("enterprise_schema_unavailable");
+  }
+  const message = toErrorMessage(error);
+  if (message.includes("enterprise_idempotency_conflict")) {
+    throw new Error("invalid_operation_id");
+  }
+  const conflictCode = ENTERPRISE_WORKSPACE_CONFLICT_CODES.find((code) =>
+    message.includes(code),
+  );
+  if (conflictCode) throw new Error(conflictCode);
+  const invalidCode = message.match(
+    /\b(invalid_(?:site_id|enterprise_bootstrap(?:_[a-z_]+)?|board(?:_[a-z_]+)?|column(?:_[a-z_]+)?))\b/i,
+  )?.[1];
+  if (invalidCode) {
+    throw new Error(
+      invalidCode.toLowerCase() === "invalid_column_done_state"
+        ? "invalid_column_is_done"
+        : invalidCode.toLowerCase(),
+    );
+  }
+  throw new Error(`${operation}:${message}`);
+}
+
 function resolveTaskOperationId(value: unknown, scope: "create" | "update") {
   const normalized = normalizeMutationOperationId(value);
   return normalized || `enterprise-task-${scope}:${randomUUID()}`;
+}
+
+function resolveWorkspaceOperationId(value: unknown, scope: string) {
+  const normalized = normalizeMutationOperationId(value);
+  return normalized || `enterprise-${scope}:${randomUUID()}`;
+}
+
+function normalizeOptionalPosition(value: unknown, errorCode: string) {
+  if (value === undefined) return undefined;
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < 0 ||
+    value > 1_000_000
+  ) {
+    throw new Error(errorCode);
+  }
+  return value;
 }
 
 function normalizeTaskMutationResponse(value: unknown, operation: string) {
@@ -90,6 +146,26 @@ function normalizeTaskMutationResponse(value: unknown, operation: string) {
   const task = normalizeMerchantTask(record.task, record.assignee_ids);
   if (!task) throw new Error(`${operation}:invalid_response`);
   return task;
+}
+
+function normalizeBoardMutationResponse(value: unknown, operation: string) {
+  const record =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const board = normalizeMerchantTaskBoard(record.board);
+  if (!board) throw new Error(`${operation}:invalid_response`);
+  return board;
+}
+
+function normalizeColumnMutationResponse(value: unknown, operation: string) {
+  const record =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const column = normalizeMerchantTaskColumn(record.column);
+  if (!column) throw new Error(`${operation}:invalid_response`);
+  return column;
 }
 
 function normalizeRows<T>(
@@ -141,7 +217,7 @@ export async function loadMerchantEnterpriseSnapshot(
     await Promise.all([
       selectMerchantRows(client, "merchant_enterprise_roles", ROLE_COLUMNS, siteId),
       selectMerchantRows(client, "merchant_enterprise_employees", EMPLOYEE_COLUMNS, siteId),
-      selectMerchantRows(client, "merchant_task_boards", BOARD_COLUMNS, siteId),
+      selectMerchantRows(client, "merchant_task_boards", BOARD_COLUMNS, siteId, "position"),
       selectMerchantRows(client, "merchant_task_columns", COLUMN_COLUMNS, siteId, "position"),
       selectMerchantRows(client, "merchant_tasks", TASK_COLUMNS, siteId, "position"),
       selectMerchantRows(
@@ -168,8 +244,15 @@ export async function loadMerchantEnterpriseSnapshot(
   return {
     roles: normalizeRows(roleRows, normalizeMerchantEnterpriseRole),
     employees: normalizeRows(employeeRows, normalizeMerchantEnterpriseEmployee),
-    boards: normalizeRows(boardRows, normalizeMerchantTaskBoard),
-    columns: normalizeRows(columnRows, normalizeMerchantTaskColumn),
+    boards: normalizeRows(boardRows, normalizeMerchantTaskBoard).sort(
+      (left, right) => left.position - right.position || left.id.localeCompare(right.id),
+    ),
+    columns: normalizeRows(columnRows, normalizeMerchantTaskColumn).sort(
+      (left, right) =>
+        left.boardId.localeCompare(right.boardId) ||
+        left.position - right.position ||
+        left.id.localeCompare(right.id),
+    ),
     tasks: (Array.isArray(taskRows) ? taskRows : [])
       .map((row) => {
         const record = row && typeof row === "object" ? (row as Record<string, unknown>) : {};
@@ -197,84 +280,22 @@ async function insertOne<T>(
 export async function bootstrapMerchantEnterpriseWorkspace(
   client: MerchantEnterpriseStoreClient,
   siteIdValue: string,
+  operationIdValue?: string,
 ) {
   const siteId = normalizeText(siteIdValue, 80);
   if (!siteId) throw new Error("invalid_site_id");
-  const roleBootstrap = await client
-    .from("merchant_enterprise_roles")
-    .upsert(
-      DEFAULT_MERCHANT_ENTERPRISE_ROLES.map((role, index) => ({
-        merchant_id: siteId,
-        name: role.name,
-        system_key: DEFAULT_ROLE_SYSTEM_KEYS[index],
-        description: role.description,
-        permissions: role.permissions,
-        status: "active",
-        is_system: true,
-      })),
-      {
-        onConflict: "merchant_id,system_key",
-        ignoreDuplicates: true,
-      },
-    );
-  if (roleBootstrap.error) {
-    throwStoreError("enterprise_roles_bootstrap_failed", roleBootstrap.error);
+  const result = await client.rpc("faolla_bootstrap_merchant_enterprise_v2", {
+    p_input: {
+      merchant_id: siteId,
+      operation_id: resolveWorkspaceOperationId(
+        operationIdValue,
+        "workspace-bootstrap",
+      ),
+    },
+  });
+  if (result.error) {
+    throwEnterpriseWorkspaceRpcError("enterprise_bootstrap_failed", result.error);
   }
-
-  const boardBootstrap = await client
-    .from("merchant_task_boards")
-    .upsert(
-      {
-        merchant_id: siteId,
-        name: "团队任务",
-        system_key: "default",
-        description: "集中安排和推进团队工作。",
-        status: "active",
-      },
-      {
-        onConflict: "merchant_id,system_key",
-        ignoreDuplicates: true,
-      },
-    );
-  if (boardBootstrap.error) {
-    throwStoreError("enterprise_board_bootstrap_failed", boardBootstrap.error);
-  }
-
-  const boardResult = await client
-    .from("merchant_task_boards")
-    .select(BOARD_COLUMNS)
-    .eq("merchant_id", siteId)
-    .eq("system_key", "default")
-    .limit(1)
-    .maybeSingle();
-  if (boardResult.error) {
-    throwStoreError("enterprise_board_bootstrap_read_failed", boardResult.error);
-  }
-  const board = normalizeMerchantTaskBoard(boardResult.data);
-  if (!board) throw new Error("enterprise_board_bootstrap_failed:invalid_response");
-
-  const columnBootstrap = await client
-    .from("merchant_task_columns")
-    .upsert(
-      DEFAULT_MERCHANT_TASK_COLUMNS.map((column, index) => ({
-        merchant_id: siteId,
-        board_id: board.id,
-        name: column.name,
-        system_key: DEFAULT_COLUMN_SYSTEM_KEYS[index],
-        color: column.color,
-        position: index,
-        is_done: DEFAULT_COLUMN_SYSTEM_KEYS[index] === "done",
-        status: "active",
-      })),
-      {
-        onConflict: "merchant_id,board_id,system_key",
-        ignoreDuplicates: true,
-      },
-    );
-  if (columnBootstrap.error) {
-    throwStoreError("enterprise_columns_bootstrap_failed", columnBootstrap.error);
-  }
-
   return loadMerchantEnterpriseSnapshot(client, siteId);
 }
 
@@ -326,6 +347,225 @@ export async function merchantEnterpriseWorkspaceNeedsBootstrap(
       .filter(Boolean),
   );
   return DEFAULT_COLUMN_SYSTEM_KEYS.some((key) => !columnKeys.has(key));
+}
+
+export async function createMerchantTaskBoard(
+  client: MerchantEnterpriseStoreClient,
+  input: {
+    siteId: string;
+    name: string;
+    description?: string;
+    position?: number;
+    operationId?: string;
+  },
+): Promise<{ board: MerchantTaskBoard; columns: MerchantTaskColumn[] }> {
+  const siteId = normalizeText(input.siteId, 80);
+  const name = normalizeText(input.name, 120);
+  const position = normalizeOptionalPosition(input.position, "invalid_board_position");
+  if (!siteId || !name) throw new Error("invalid_board");
+  const result = await client.rpc("faolla_create_merchant_task_board_v1", {
+    p_input: {
+      merchant_id: siteId,
+      name,
+      description: normalizeText(input.description, 2000),
+      ...(position !== undefined ? { position } : {}),
+      operation_id: resolveWorkspaceOperationId(
+        input.operationId,
+        "board-create",
+      ),
+    },
+  });
+  if (result.error) {
+    throwEnterpriseWorkspaceRpcError("enterprise_board_create_failed", result.error);
+  }
+  const board = normalizeBoardMutationResponse(
+    result.data,
+    "enterprise_board_create_failed",
+  );
+  const record =
+    result.data && typeof result.data === "object" && !Array.isArray(result.data)
+      ? (result.data as Record<string, unknown>)
+      : {};
+  const columnRows = Array.isArray(record.columns) ? record.columns : [];
+  const columns = normalizeRows(columnRows, normalizeMerchantTaskColumn).sort(
+    (left, right) => left.position - right.position || left.id.localeCompare(right.id),
+  );
+  if (columns.length !== columnRows.length || columns.length === 0) {
+    throw new Error("enterprise_board_create_failed:invalid_response");
+  }
+  return { board, columns };
+}
+
+export async function updateMerchantTaskBoard(
+  client: MerchantEnterpriseStoreClient,
+  input: {
+    siteId: string;
+    boardId: string;
+    version: number;
+    name?: string;
+    description?: string;
+    status?: "active" | "archived";
+    position?: number;
+    operationId?: string;
+  },
+): Promise<MerchantTaskBoard> {
+  const siteId = normalizeText(input.siteId, 80);
+  const boardId = normalizeText(input.boardId, 80);
+  const version = Number(input.version);
+  const patch: Record<string, unknown> = {};
+  if (input.name !== undefined) patch.name = normalizeText(input.name, 120);
+  if (input.description !== undefined) {
+    patch.description = normalizeText(input.description, 2000);
+  }
+  if (input.status === "active" || input.status === "archived") {
+    patch.status = input.status;
+  }
+  const position = normalizeOptionalPosition(input.position, "invalid_board_position");
+  if (position !== undefined) patch.position = position;
+  if (
+    !siteId ||
+    !boardId ||
+    !Number.isSafeInteger(version) ||
+    version <= 0 ||
+    Object.keys(patch).length === 0
+  ) {
+    throw new Error("invalid_board_update");
+  }
+  const result = await client.rpc("faolla_update_merchant_task_board_v1", {
+    p_input: {
+      merchant_id: siteId,
+      board_id: boardId,
+      expected_version: version,
+      operation_id: resolveWorkspaceOperationId(
+        input.operationId,
+        "board-update",
+      ),
+      ...patch,
+    },
+  });
+  if (result.error) {
+    throwEnterpriseWorkspaceRpcError("enterprise_board_update_failed", result.error);
+  }
+  return normalizeBoardMutationResponse(
+    result.data,
+    "enterprise_board_update_failed",
+  );
+}
+
+export async function createMerchantTaskColumn(
+  client: MerchantEnterpriseStoreClient,
+  input: {
+    siteId: string;
+    boardId: string;
+    name: string;
+    color?: string;
+    isDone?: boolean;
+    position?: number;
+    operationId?: string;
+  },
+): Promise<MerchantTaskColumn> {
+  const siteId = normalizeText(input.siteId, 80);
+  const boardId = normalizeText(input.boardId, 80);
+  const name = normalizeText(input.name, 80);
+  const color = normalizeText(input.color, 40) || "#64748b";
+  const position = normalizeOptionalPosition(input.position, "invalid_column_position");
+  if (
+    !siteId ||
+    !boardId ||
+    !name ||
+    !/^#[0-9a-f]{6}$/i.test(color) ||
+    (input.isDone !== undefined && typeof input.isDone !== "boolean")
+  ) {
+    throw new Error("invalid_column");
+  }
+  const result = await client.rpc("faolla_create_merchant_task_column_v1", {
+    p_input: {
+      merchant_id: siteId,
+      board_id: boardId,
+      name,
+      color,
+      is_done: input.isDone === true,
+      ...(position !== undefined ? { position } : {}),
+      operation_id: resolveWorkspaceOperationId(
+        input.operationId,
+        "column-create",
+      ),
+    },
+  });
+  if (result.error) {
+    throwEnterpriseWorkspaceRpcError("enterprise_column_create_failed", result.error);
+  }
+  return normalizeColumnMutationResponse(
+    result.data,
+    "enterprise_column_create_failed",
+  );
+}
+
+export async function updateMerchantTaskColumn(
+  client: MerchantEnterpriseStoreClient,
+  input: {
+    siteId: string;
+    boardId: string;
+    columnId: string;
+    version: number;
+    name?: string;
+    color?: string;
+    isDone?: boolean;
+    status?: "active" | "archived";
+    position?: number;
+    operationId?: string;
+  },
+): Promise<MerchantTaskColumn> {
+  const siteId = normalizeText(input.siteId, 80);
+  const boardId = normalizeText(input.boardId, 80);
+  const columnId = normalizeText(input.columnId, 80);
+  const version = Number(input.version);
+  const patch: Record<string, unknown> = {};
+  if (input.name !== undefined) patch.name = normalizeText(input.name, 80);
+  if (input.color !== undefined) {
+    const color = normalizeText(input.color, 40);
+    if (!/^#[0-9a-f]{6}$/i.test(color)) throw new Error("invalid_column_color");
+    patch.color = color;
+  }
+  if (input.isDone !== undefined) {
+    if (typeof input.isDone !== "boolean") throw new Error("invalid_column_is_done");
+    patch.is_done = input.isDone;
+  }
+  if (input.status === "active" || input.status === "archived") {
+    patch.status = input.status;
+  }
+  const position = normalizeOptionalPosition(input.position, "invalid_column_position");
+  if (position !== undefined) patch.position = position;
+  if (
+    !siteId ||
+    !boardId ||
+    !columnId ||
+    !Number.isSafeInteger(version) ||
+    version <= 0 ||
+    Object.keys(patch).length === 0
+  ) {
+    throw new Error("invalid_column_update");
+  }
+  const result = await client.rpc("faolla_update_merchant_task_column_v1", {
+    p_input: {
+      merchant_id: siteId,
+      board_id: boardId,
+      column_id: columnId,
+      expected_version: version,
+      operation_id: resolveWorkspaceOperationId(
+        input.operationId,
+        "column-update",
+      ),
+      ...patch,
+    },
+  });
+  if (result.error) {
+    throwEnterpriseWorkspaceRpcError("enterprise_column_update_failed", result.error);
+  }
+  return normalizeColumnMutationResponse(
+    result.data,
+    "enterprise_column_update_failed",
+  );
 }
 
 export async function createMerchantEnterpriseRole(
@@ -523,8 +763,12 @@ export async function createMerchantTask(
     input.priority === "low" || input.priority === "high" || input.priority === "urgent"
       ? input.priority
       : "normal";
+  const requestedAssigneeIds = input.assigneeIds ?? [];
+  if (requestedAssigneeIds.length > MAX_MERCHANT_TASK_ASSIGNEES) {
+    throw new Error("invalid_task_assignees");
+  }
   const assigneeIds = Array.from(
-    new Set((input.assigneeIds ?? []).map((item) => normalizeText(item, 80)).filter(Boolean)),
+    new Set(requestedAssigneeIds.map((item) => normalizeText(item, 80)).filter(Boolean)),
   ).sort();
   const actorType = input.actorType === "employee" ? "employee" : "owner";
   const actorId = normalizeText(input.actorId, 120);
@@ -598,6 +842,9 @@ export async function updateMerchantTask(
   }
   let assigneeIds: string[] | undefined;
   if (input.assigneeIds !== undefined) {
+    if (input.assigneeIds.length > MAX_MERCHANT_TASK_ASSIGNEES) {
+      throw new Error("invalid_task_assignees");
+    }
     assigneeIds = Array.from(
       new Set(input.assigneeIds.map((item) => normalizeText(item, 80)).filter(Boolean)),
     ).sort();

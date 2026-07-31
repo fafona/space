@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import {
+  getMissingMerchantEnterprisePermissionDependencies,
   isMerchantEnterpriseVersion,
   merchantEnterprisePermissionsFitActor,
   parseMerchantEnterprisePermissionsStrict,
+  type MerchantEnterpriseEmployee,
+  type MerchantEnterpriseRole,
 } from "@/lib/merchantEnterprise";
 import {
   requireMerchantEnterpriseEntitlement,
@@ -35,6 +38,39 @@ type RoleBody = {
   status?: unknown;
 };
 
+export type MerchantEnterpriseRoleArchiveConflict =
+  | "system_role_protected"
+  | "role_in_use";
+
+export function getMerchantEnterpriseRoleArchiveConflict(
+  role: Pick<MerchantEnterpriseRole, "id" | "isSystem">,
+  employees: readonly Pick<MerchantEnterpriseEmployee, "roleId" | "status">[],
+  nextStatus: unknown,
+): MerchantEnterpriseRoleArchiveConflict | null {
+  if (nextStatus !== "archived") return null;
+  if (role.isSystem) return "system_role_protected";
+  return employees.some((employee) => employee.roleId === role.id)
+    ? "role_in_use"
+    : null;
+}
+
+export function getMerchantEnterpriseRoleActivationConflict(
+  role: Pick<MerchantEnterpriseRole, "id" | "name" | "status">,
+  roles: readonly Pick<MerchantEnterpriseRole, "id" | "name" | "status">[],
+  nextStatus: unknown,
+) {
+  if (nextStatus !== "active" || role.status !== "archived") return null;
+  const normalizedName = role.name.trim().toLocaleLowerCase();
+  return roles.some(
+    (candidate) =>
+      candidate.id !== role.id &&
+      candidate.status === "active" &&
+      candidate.name.trim().toLocaleLowerCase() === normalizedName,
+  )
+    ? ("role_name_conflict" as const)
+    : null;
+}
+
 function text(value: unknown, max = 4096) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
@@ -46,6 +82,16 @@ function client() {
 }
 
 function fail(error: unknown) {
+  const message = error instanceof Error ? error.message : "";
+  if (
+    message.includes("enterprise_role_") &&
+    message.includes("23505")
+  ) {
+    return NextResponse.json(
+      { ok: false, error: "role_name_conflict" },
+      { status: 409 },
+    );
+  }
   const resolved = toMerchantEnterpriseAccessResponse(error);
   return NextResponse.json(resolved.body, { status: resolved.status });
 }
@@ -71,6 +117,18 @@ export async function POST(request: Request) {
     const permissions = parseMerchantEnterprisePermissionsStrict(body?.permissions);
     if (!name || !permissions) {
       return NextResponse.json({ ok: false, error: "invalid_role" }, { status: 400 });
+    }
+    const missingPermissions =
+      getMissingMerchantEnterprisePermissionDependencies(permissions);
+    if (missingPermissions.length > 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "invalid_permission_dependencies",
+          missingPermissions,
+        },
+        { status: 400 },
+      );
     }
     const actor = await authorize(request, siteId);
     if (!merchantEnterprisePermissionsFitActor(actor, permissions)) {
@@ -116,6 +174,20 @@ export async function PATCH(request: Request) {
     if (body?.permissions !== undefined && !permissions) {
       return NextResponse.json({ ok: false, error: "invalid_permissions" }, { status: 400 });
     }
+    if (permissions) {
+      const missingPermissions =
+        getMissingMerchantEnterprisePermissionDependencies(permissions);
+      if (missingPermissions.length > 0) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "invalid_permission_dependencies",
+            missingPermissions,
+          },
+          { status: 400 },
+        );
+      }
+    }
 
     const actor = await authorize(request, siteId);
     const store = client();
@@ -140,6 +212,28 @@ export async function PATCH(request: Request) {
           { status: 403 },
         );
       }
+    }
+    const archiveConflict = getMerchantEnterpriseRoleArchiveConflict(
+      targetRole,
+      snapshot.employees,
+      body?.status,
+    );
+    if (archiveConflict) {
+      return NextResponse.json(
+        { ok: false, error: archiveConflict },
+        { status: 409 },
+      );
+    }
+    const activationConflict = getMerchantEnterpriseRoleActivationConflict(
+      targetRole,
+      snapshot.roles,
+      body?.status,
+    );
+    if (activationConflict) {
+      return NextResponse.json(
+        { ok: false, error: activationConflict },
+        { status: 409 },
+      );
     }
 
     const role = await updateMerchantEnterpriseRole(store, {

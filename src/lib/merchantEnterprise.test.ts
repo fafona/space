@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildMerchantTaskEditChanges,
   DEFAULT_MERCHANT_ENTERPRISE_ROLES,
+  filterMerchantTasks,
+  getMissingMerchantEnterprisePermissionDependencies,
   hasMerchantEnterprisePermission,
   isMerchantEnterpriseSchemaMissingError,
   isMerchantEnterpriseVersion,
@@ -9,9 +12,12 @@ import {
   merchantEnterprisePermissionsFitActor,
   normalizeMerchantEnterpriseEmployee,
   normalizeMerchantEnterprisePermissions,
+  normalizeMerchantTaskBoard,
   normalizeMerchantTask,
   parseMerchantEnterprisePermissionsStrict,
+  toggleMerchantEnterprisePermissionSelection,
   type MerchantEnterpriseActor,
+  type MerchantTask,
 } from "@/lib/merchantEnterprise";
 
 test("enterprise permission normalization removes unknown and duplicate permissions", () => {
@@ -73,6 +79,20 @@ test("enterprise row normalization accepts database snake-case fields", () => {
   assert.equal(employee?.email, "staff@example.com");
   assert.equal(employee?.roleId, "role-1");
   assert.equal(employee?.version, 2);
+
+  const board = normalizeMerchantTaskBoard({
+    id: "board-1",
+    merchant_id: "10000000",
+    name: "Operations",
+    description: "",
+    position: 7,
+    status: "active",
+    version: 3,
+    created_at: "2026-07-31T08:00:00.000Z",
+    updated_at: "2026-07-31T09:00:00.000Z",
+  });
+  assert.equal(board?.position, 7);
+  assert.equal(board?.version, 3);
 });
 
 test("task normalization keeps assignees unique and rejects incomplete rows", () => {
@@ -136,4 +156,151 @@ test("enterprise mutations require a positive safe integer version", () => {
   assert.equal(isMerchantEnterpriseVersion(1.5), false);
   assert.equal(isMerchantEnterpriseVersion("1"), false);
   assert.equal(isMerchantEnterpriseVersion(undefined), false);
+});
+
+test("role permission selection adds dependencies and removes unreachable dependents", () => {
+  assert.deepEqual(
+    toggleMerchantEnterprisePermissionSelection([], "tasks.assign", true),
+    ["enterprise.view", "tasks.view", "tasks.assign"],
+  );
+  assert.deepEqual(
+    toggleMerchantEnterprisePermissionSelection(
+      ["enterprise.view", "tasks.view", "tasks.create", "tasks.assign"],
+      "tasks.view",
+      false,
+    ),
+    ["enterprise.view"],
+  );
+  assert.deepEqual(
+    getMissingMerchantEnterprisePermissionDependencies(["employees.manage"]),
+    ["enterprise.view", "employees.view", "roles.view"],
+  );
+  assert.deepEqual(
+    getMissingMerchantEnterprisePermissionDependencies([
+      "enterprise.view",
+      "employees.view",
+      "employees.manage",
+      "roles.view",
+    ]),
+    [],
+  );
+});
+
+test("task filters combine archive, priority, assignee and text criteria", () => {
+  const task = {
+    id: "task-1",
+    siteId: "10000000",
+    boardId: "board-1",
+    columnId: "column-1",
+    title: "联系 VIP 客户",
+    description: "确认周五交付",
+    priority: "urgent",
+    dueAt: null,
+    completedAt: null,
+    archivedAt: null,
+    position: 1,
+    sourceType: "",
+    sourceId: "",
+    createdByEmployeeId: "",
+    assigneeIds: ["employee-1", "employee-2"],
+    version: 1,
+    createdAt: "2026-07-31T08:00:00.000Z",
+    updatedAt: "2026-07-31T08:00:00.000Z",
+  } satisfies MerchantTask;
+  const archived = {
+    ...task,
+    id: "task-2",
+    title: "归档任务",
+    archivedAt: "2026-07-31T09:00:00.000Z",
+    assigneeIds: [],
+  } satisfies MerchantTask;
+
+  assert.deepEqual(
+    filterMerchantTasks([task, archived], {
+      query: "vip",
+      priority: "urgent",
+      assigneeId: "employee-2",
+      archive: "active",
+    }).map((item) => item.id),
+    ["task-1"],
+  );
+  assert.deepEqual(
+    filterMerchantTasks([task, archived], {
+      assigneeId: "unassigned",
+      archive: "archived",
+    }).map((item) => item.id),
+    ["task-2"],
+  );
+});
+
+test("task edit changes honor update and assignment permissions independently", () => {
+  const task = {
+    id: "task-1",
+    siteId: "10000000",
+    boardId: "board-1",
+    columnId: "column-1",
+    title: "原任务",
+    description: "",
+    priority: "normal",
+    dueAt: null,
+    completedAt: null,
+    archivedAt: null,
+    position: 1,
+    sourceType: "",
+    sourceId: "",
+    createdByEmployeeId: "",
+    assigneeIds: ["employee-1"],
+    version: 1,
+    createdAt: "2026-07-31T08:00:00.000Z",
+    updatedAt: "2026-07-31T08:00:00.000Z",
+  } satisfies MerchantTask;
+  const values = {
+    title: "新任务",
+    description: "",
+    priority: "normal" as const,
+    dueAt: null,
+    columnId: "column-1",
+    assigneeIds: ["employee-2"],
+  };
+  const employees = [
+    { id: "employee-1", status: "active" as const },
+    { id: "employee-2", status: "active" as const },
+    { id: "employee-3", status: "disabled" as const },
+  ];
+  const updateActor: MerchantEnterpriseActor = {
+    type: "employee",
+    id: "employee-1",
+    siteId: "10000000",
+    displayName: "更新者",
+    email: "update@example.com",
+    roleId: "role-update",
+    permissions: ["enterprise.view", "tasks.view", "tasks.update"],
+  };
+  const assignActor: MerchantEnterpriseActor = {
+    ...updateActor,
+    roleId: "role-assign",
+    permissions: ["enterprise.view", "tasks.view", "tasks.assign"],
+  };
+
+  assert.deepEqual(
+    buildMerchantTaskEditChanges(updateActor, task, values, employees),
+    { ok: true, changes: { title: "新任务" } },
+  );
+  assert.deepEqual(
+    buildMerchantTaskEditChanges(assignActor, task, values, employees),
+    { ok: true, changes: { assigneeIds: ["employee-2"] } },
+  );
+  assert.deepEqual(
+    buildMerchantTaskEditChanges(
+      assignActor,
+      task,
+      { ...values, assigneeIds: ["employee-3"] },
+      employees,
+    ),
+    {
+      ok: false,
+      error: "inactive_assignee",
+      employeeId: "employee-3",
+    },
+  );
 });

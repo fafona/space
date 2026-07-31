@@ -1,19 +1,36 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import MerchantEnterpriseManager from "@/components/admin/MerchantEnterpriseManager";
 import { merchantEnterpriseSupabase as supabase } from "@/lib/merchantEnterpriseSupabase";
 
-async function acceptEnterpriseMembership(siteId: string, accessToken: string) {
+type InvitationCredential = {
+  invitationVersion: number;
+  invitationToken: string;
+};
+
+async function acceptEnterpriseMembership(
+  siteId: string,
+  accessToken: string,
+  invitation: InvitationCredential | null,
+) {
   const response = await fetch("/api/merchant-enterprise/employees/accept", {
     method: "POST",
     headers: {
       "content-type": "application/json",
       "x-merchant-access-token": accessToken,
     },
-    credentials: "include",
+    credentials: "omit",
     cache: "no-store",
-    body: JSON.stringify({ siteId }),
+    body: JSON.stringify({
+      siteId,
+      ...(invitation
+        ? {
+            invitationVersion: invitation.invitationVersion,
+            invitationToken: invitation.invitationToken,
+          }
+        : {}),
+    }),
   });
   const payload = (await response.json().catch(() => null)) as {
     ok?: boolean;
@@ -29,6 +46,21 @@ async function acceptEnterpriseMembership(siteId: string, accessToken: string) {
   if (payload?.error === "merchant_access_denied") {
     throw new Error("邀请对应的角色已停用，请联系企业负责人。");
   }
+  if (payload?.error === "employee_account_disabled") {
+    throw new Error("员工账号已停用，请联系企业负责人。");
+  }
+  if (payload?.error === "employee_invitation_expired") {
+    throw new Error("这封邀请已过期，请联系企业负责人重新发送。");
+  }
+  if (payload?.error === "employee_invitation_revoked") {
+    throw new Error("这封邀请已被撤销，请联系企业负责人。");
+  }
+  if (payload?.error === "employee_invitation_superseded") {
+    throw new Error("这不是最新的邀请邮件，请打开最近收到的那一封。");
+  }
+  if (payload?.error === "employee_invitation_credentials_required") {
+    throw new Error("请从最新的邀请邮件进入企业工作台。");
+  }
   throw new Error("员工邀请确认失败，请稍后重试。");
 }
 
@@ -40,6 +72,30 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
   const [newPassword, setNewPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const invitationCredentialRef = useRef<InvitationCredential | null>(null);
+  const acceptedAccessTokenRef = useRef("");
+  const acceptanceInFlightRef = useRef<Promise<void> | null>(null);
+
+  const ensureMembershipAccepted = useCallback(
+    async (token: string) => {
+      if (!token || acceptedAccessTokenRef.current === token) return;
+      if (acceptanceInFlightRef.current) return acceptanceInFlightRef.current;
+      const invitation = invitationCredentialRef.current;
+      const acceptance = acceptEnterpriseMembership(siteId, token, invitation)
+        .then(() => {
+          acceptedAccessTokenRef.current = token;
+          invitationCredentialRef.current = null;
+        })
+        .finally(() => {
+          if (acceptanceInFlightRef.current === acceptance) {
+            acceptanceInFlightRef.current = null;
+          }
+        });
+      acceptanceInFlightRef.current = acceptance;
+      return acceptance;
+    },
+    [siteId],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -48,11 +104,32 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
         if (typeof window !== "undefined") {
           const url = new URL(window.location.href);
           const code = url.searchParams.get("code")?.trim() ?? "";
+          const invitationVersionText = url.searchParams.get("iv")?.trim() ?? "";
+          const invitationToken = url.searchParams.get("it")?.trim() ?? "";
+          const invitationVersion = Number(invitationVersionText);
+          if (
+            Number.isSafeInteger(invitationVersion) &&
+            invitationVersion > 0 &&
+            /^[A-Za-z0-9_-]{32,256}$/.test(invitationToken)
+          ) {
+            invitationCredentialRef.current = {
+              invitationVersion,
+              invitationToken,
+            };
+          }
+          if (code || invitationVersionText || invitationToken) {
+            url.searchParams.delete("code");
+            url.searchParams.delete("iv");
+            url.searchParams.delete("it");
+            window.history.replaceState(
+              window.history.state,
+              "",
+              `${url.pathname}${url.search}${url.hash}`,
+            );
+          }
           if (code) {
             const exchanged = await supabase.auth.exchangeCodeForSession(code);
             if (exchanged.error) throw exchanged.error;
-            url.searchParams.delete("code");
-            window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
           } else if (url.hash) {
             const hash = new URLSearchParams(url.hash.replace(/^#/, ""));
             const hashAccessToken = hash.get("access_token")?.trim() ?? "";
@@ -70,7 +147,7 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
         const result = await supabase.auth.getSession();
         if (result.error) throw result.error;
         const token = result.data.session?.access_token ?? "";
-        if (token) await acceptEnterpriseMembership(siteId, token);
+        if (token) await ensureMembershipAccepted(token);
         if (!cancelled) setAccessToken(token);
       } catch (error) {
         if (!cancelled) {
@@ -88,7 +165,7 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
         return;
       }
       void Promise.resolve()
-        .then(() => acceptEnterpriseMembership(siteId, token))
+        .then(() => ensureMembershipAccepted(token))
         .then(() => {
           if (!cancelled) setAccessToken(token);
         })
@@ -103,7 +180,7 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
       cancelled = true;
       listener.data.subscription.unsubscribe();
     };
-  }, [siteId]);
+  }, [ensureMembershipAccepted, siteId]);
 
   async function signIn() {
     setBusy(true);
@@ -116,7 +193,7 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
       if (result.error) throw result.error;
       const token = result.data.session?.access_token ?? "";
       if (!token) throw new Error("登录未返回有效会话。");
-      await acceptEnterpriseMembership(siteId, token);
+      await ensureMembershipAccepted(token);
       setAccessToken(token);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "登录失败，请检查邮箱和密码。");

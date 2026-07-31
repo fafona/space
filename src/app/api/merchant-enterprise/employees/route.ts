@@ -11,12 +11,19 @@ import {
   toMerchantEnterpriseAccessResponse,
 } from "@/lib/merchantEnterpriseAuth.server";
 import {
-  bindMerchantEnterpriseEmployeeAuthUser,
   createMerchantEnterpriseEmployee,
   loadMerchantEnterpriseSnapshot,
   updateMerchantEnterpriseEmployee,
   type MerchantEnterpriseStoreClient,
 } from "@/lib/merchantEnterpriseStore.server";
+import {
+  bindMerchantEnterpriseEmployeeInvitationAuthUser,
+  createMerchantEnterpriseInvitationSecret,
+  finalizeMerchantEnterpriseEmployeeInvitation,
+  MERCHANT_ENTERPRISE_INVITATION_TTL_MS,
+  reserveMerchantEnterpriseEmployeeInvitation,
+  revokeMerchantEnterpriseEmployeeInvitation,
+} from "@/lib/merchantEnterpriseInvitationStore.server";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import {
   hasImmutableMerchantStaffPrincipal,
@@ -46,6 +53,13 @@ type EmployeeBody = {
 };
 
 type ServiceClient = NonNullable<ReturnType<typeof createServerSupabaseServiceClient>>;
+type InvitationAwareEmployee = MerchantEnterpriseEmployee & {
+  invitationVersion: number;
+  invitationExpiresAt: string | null;
+  invitationRevokedAt: string | null;
+  invitationSentAt: string | null;
+  invitationDeliveryStatus: "none" | "legacy" | "sending" | "sent" | "failed" | "revoked";
+};
 type InvitationResult =
   | { status: "sent" }
   | {
@@ -76,28 +90,78 @@ export function getEmployeeInvitationRetryAfterSeconds(
   return remainingMs > 0 ? Math.ceil(remainingMs / 1000) : 0;
 }
 
+export function getMerchantEnterpriseEmployeeStatusTransitionError(
+  employee: Pick<MerchantEnterpriseEmployee, "status" | "acceptedAt">,
+  nextStatus: unknown,
+) {
+  if (nextStatus === undefined || nextStatus === employee.status) return null;
+  if (nextStatus === "active" && !employee.acceptedAt) {
+    return "employee_invitation_not_accepted" as const;
+  }
+  if (employee.status === "invited" && nextStatus === "disabled") {
+    return "employee_invitation_revoke_required" as const;
+  }
+  if (nextStatus === "invited" && employee.status !== "invited") {
+    return "invalid_employee_status_transition" as const;
+  }
+  return null;
+}
+
+export function getMerchantEnterpriseInvitationActionError(
+  employee: MerchantEnterpriseEmployee,
+  action: "resend_invite" | "renew_invite",
+  nowMs = Date.now(),
+) {
+  const invitation = employee as InvitationAwareEmployee;
+  const expired =
+    Boolean(invitation.invitationExpiresAt) &&
+    Date.parse(invitation.invitationExpiresAt ?? "") <= nowMs;
+  const revoked = Boolean(invitation.invitationRevokedAt);
+  if (action === "renew_invite" && !expired && !revoked) {
+    return "employee_invitation_renew_not_required" as const;
+  }
+  if (action === "resend_invite" && (expired || revoked)) {
+    return "employee_invitation_renew_required" as const;
+  }
+  return null;
+}
+
 export async function reserveEmployeeInvitationResend(
   store: MerchantEnterpriseStoreClient,
   employee: MerchantEnterpriseEmployee,
   nowMs = Date.now(),
+  bypassCooldown = false,
 ): Promise<
   | { status: "cooldown"; employee: MerchantEnterpriseEmployee; retryAfterSeconds: number }
-  | { status: "reserved"; employee: MerchantEnterpriseEmployee }
+  | {
+      status: "reserved";
+      employee: MerchantEnterpriseEmployee;
+      invitationVersion: number;
+      invitationToken: string;
+    }
 > {
+  const invitationAwareEmployee = employee as InvitationAwareEmployee;
   const retryAfterSeconds = getEmployeeInvitationRetryAfterSeconds(
-    employee.invitedAt,
+    invitationAwareEmployee.invitationSentAt ?? employee.invitedAt,
     nowMs,
   );
-  if (retryAfterSeconds > 0) {
+  if (!bypassCooldown && retryAfterSeconds > 0) {
     return { status: "cooldown", employee, retryAfterSeconds };
   }
-  const reservedEmployee = await updateMerchantEnterpriseEmployee(store, {
+  const secret = createMerchantEnterpriseInvitationSecret();
+  const reserved = await reserveMerchantEnterpriseEmployeeInvitation(store, {
     siteId: employee.siteId,
     employeeId: employee.id,
     version: employee.version,
-    invitedAt: new Date(nowMs).toISOString(),
+    tokenHash: secret.tokenHash,
+    expiresAt: new Date(nowMs + MERCHANT_ENTERPRISE_INVITATION_TTL_MS).toISOString(),
   });
-  return { status: "reserved", employee: reservedEmployee };
+  return {
+    status: "reserved",
+    employee: reserved.employee,
+    invitationVersion: reserved.invitationVersion,
+    invitationToken: secret.token,
+  };
 }
 
 export function createEmployeeInvitationCooldownResponse(
@@ -149,10 +213,21 @@ async function authorize(request: Request, siteId: string) {
   return actor;
 }
 
-function invitationRedirect(request: Request, siteId: string) {
+function invitationRedirect(
+  request: Request,
+  siteId: string,
+  invitationVersion: number,
+  invitationToken: string,
+) {
   const requestUrl = new URL(request.url);
   const redirectOrigin = resolvePublicOrigin(request, requestUrl);
-  return `${redirectOrigin}/enterprise/${encodeURIComponent(siteId)}`;
+  const redirect = new URL(
+    `/enterprise/${encodeURIComponent(siteId)}`,
+    redirectOrigin,
+  );
+  redirect.searchParams.set("iv", String(invitationVersion));
+  redirect.searchParams.set("it", invitationToken);
+  return redirect.toString();
 }
 
 async function findAuthUserByEmail(service: ServiceClient, email: string) {
@@ -215,16 +290,20 @@ async function bindEmployeeToStaffUser(
   service: ServiceClient,
   employee: MerchantEnterpriseEmployee,
   authUserId: string,
+  invitationVersion: number,
 ) {
   try {
-    return await bindMerchantEnterpriseEmployeeAuthUser(
+    const result = await bindMerchantEnterpriseEmployeeInvitationAuthUser(
       service as unknown as MerchantEnterpriseStoreClient,
       {
         siteId: employee.siteId,
         employeeId: employee.id,
         authUserId,
+        version: employee.version,
+        invitationVersion,
       },
     );
+    return result.employee;
   } catch {
     return null;
   }
@@ -235,6 +314,7 @@ async function ensureEmployeeInvitation(
   input: {
     employee: MerchantEnterpriseEmployee;
     redirectTo: string;
+    invitationVersion: number;
   },
 ): Promise<{ employee: MerchantEnterpriseEmployee; invitation: InvitationResult }> {
   let employee = input.employee;
@@ -296,6 +376,7 @@ async function ensureEmployeeInvitation(
           service,
           employee,
           authUser.id,
+          input.invitationVersion,
         );
         if (quarantinedEmployee) employee = quarantinedEmployee;
       }
@@ -315,7 +396,12 @@ async function ensureEmployeeInvitation(
     };
   }
 
-  const boundEmployee = await bindEmployeeToStaffUser(service, employee, authUser.id);
+  const boundEmployee = await bindEmployeeToStaffUser(
+    service,
+    employee,
+    authUser.id,
+    input.invitationVersion,
+  );
   if (!boundEmployee) {
     return {
       employee,
@@ -338,6 +424,46 @@ async function ensureEmployeeInvitation(
     }
   }
   return { employee, invitation: { status: "sent" } };
+}
+
+async function deliverReservedEmployeeInvitation(
+  service: ServiceClient,
+  request: Request,
+  siteId: string,
+  reservation: {
+    employee: MerchantEnterpriseEmployee;
+    invitationVersion: number;
+    invitationToken: string;
+  },
+) {
+  const delivered = await ensureEmployeeInvitation(service, {
+    employee: reservation.employee,
+    invitationVersion: reservation.invitationVersion,
+    redirectTo: invitationRedirect(
+      request,
+      siteId,
+      reservation.invitationVersion,
+      reservation.invitationToken,
+    ),
+  });
+  const sent = delivered.invitation.status === "sent";
+  const finalized = await finalizeMerchantEnterpriseEmployeeInvitation(
+    service as unknown as MerchantEnterpriseStoreClient,
+    {
+      siteId,
+      employeeId: reservation.employee.id,
+      invitationVersion: reservation.invitationVersion,
+      deliveryStatus: sent ? "sent" : "failed",
+      sentAt: sent ? new Date().toISOString() : null,
+    },
+  );
+  return {
+    employee: finalized.employee,
+    invitation:
+      finalized.applied === false
+        ? ({ status: "failed", error: "invite_unavailable" } as const)
+        : delivered.invitation,
+  };
 }
 
 function roleAssignmentError(
@@ -391,10 +517,21 @@ export async function POST(request: Request) {
         roleId,
       },
     );
-    const invitationResult = await ensureEmployeeInvitation(service, {
+    const reservation = await reserveEmployeeInvitationResend(
+      service as unknown as MerchantEnterpriseStoreClient,
       employee,
-      redirectTo: invitationRedirect(request, siteId),
-    });
+      Date.now(),
+      true,
+    );
+    if (reservation.status !== "reserved") {
+      throw new Error("enterprise_employee_invitation_reserve_failed");
+    }
+    const invitationResult = await deliverReservedEmployeeInvitation(
+      service,
+      request,
+      siteId,
+      reservation,
+    );
     employee = invitationResult.employee;
     const invitation = invitationResult.invitation;
     if (
@@ -437,7 +574,12 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ ok: false, error: "invalid_employee" }, { status: 400 });
     }
     const action = text(body?.action, 40);
-    if (action && action !== "resend_invite") {
+    if (
+      action &&
+      action !== "resend_invite" &&
+      action !== "renew_invite" &&
+      action !== "revoke_invite"
+    ) {
       return NextResponse.json({ ok: false, error: "invalid_employee_action" }, { status: 400 });
     }
 
@@ -473,16 +615,43 @@ export async function PATCH(request: Request) {
       );
     }
 
-    if (action === "resend_invite") {
+    if (action === "revoke_invite") {
       if (currentEmployee.status !== "invited") {
         return NextResponse.json(
           { ok: false, error: "employee_invitation_not_pending" },
           { status: 409 },
         );
       }
+      const revoked = await revokeMerchantEnterpriseEmployeeInvitation(store, {
+        siteId,
+        employeeId: currentEmployee.id,
+        version: currentEmployee.version,
+      });
+      return NextResponse.json({ ok: true, employee: revoked.employee });
+    }
+
+    if (action === "resend_invite" || action === "renew_invite") {
+      if (currentEmployee.status !== "invited") {
+        return NextResponse.json(
+          { ok: false, error: "employee_invitation_not_pending" },
+          { status: 409 },
+        );
+      }
+      const actionError = getMerchantEnterpriseInvitationActionError(
+        currentEmployee,
+        action,
+      );
+      if (actionError) {
+        return NextResponse.json(
+          { ok: false, error: actionError },
+          { status: 409 },
+        );
+      }
       const reservation = await reserveEmployeeInvitationResend(
         store,
         currentEmployee,
+        Date.now(),
+        action === "renew_invite",
       );
       if (reservation.status === "cooldown") {
         return createEmployeeInvitationCooldownResponse(
@@ -490,10 +659,12 @@ export async function PATCH(request: Request) {
           reservation.retryAfterSeconds,
         );
       }
-      const result = await ensureEmployeeInvitation(service, {
-        employee: reservation.employee,
-        redirectTo: invitationRedirect(request, siteId),
-      });
+      const result = await deliverReservedEmployeeInvitation(
+        service,
+        request,
+        siteId,
+        reservation,
+      );
       return createEmployeeInvitationResendResponse(result);
     }
 
@@ -507,6 +678,17 @@ export async function PATCH(request: Request) {
     }
     if (body?.displayName !== undefined && !text(body.displayName, 120)) {
       return NextResponse.json({ ok: false, error: "invalid_employee" }, { status: 400 });
+    }
+    const statusTransitionError =
+      getMerchantEnterpriseEmployeeStatusTransitionError(
+        currentEmployee,
+        body?.status,
+      );
+    if (statusTransitionError) {
+      return NextResponse.json(
+        { ok: false, error: statusTransitionError },
+        { status: statusTransitionError.startsWith("invalid_") ? 400 : 409 },
+      );
     }
     const requestedRoleId =
       body?.roleId === undefined ? undefined : text(body.roleId, 80);

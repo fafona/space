@@ -12,6 +12,8 @@ export const MERCHANT_ENTERPRISE_PERMISSIONS = [
   "roles.manage",
 ] as const;
 
+export const MAX_MERCHANT_TASK_ASSIGNEES = 50;
+
 export type MerchantEnterprisePermission = (typeof MERCHANT_ENTERPRISE_PERMISSIONS)[number];
 
 export const MERCHANT_ENTERPRISE_PERMISSION_CATALOG: ReadonlyArray<{
@@ -33,14 +35,40 @@ export const MERCHANT_ENTERPRISE_PERMISSION_CATALOG: ReadonlyArray<{
   { key: "roles.manage", label: "管理角色", group: "角色", description: "创建、修改和归档角色。" },
 ];
 
+const MERCHANT_ENTERPRISE_PERMISSION_DEPENDENCIES: Readonly<
+  Record<MerchantEnterprisePermission, readonly MerchantEnterprisePermission[]>
+> = {
+  "enterprise.view": [],
+  "tasks.view": ["enterprise.view"],
+  "tasks.create": ["enterprise.view", "tasks.view"],
+  "tasks.update": ["enterprise.view", "tasks.view"],
+  "tasks.assign": ["enterprise.view", "tasks.view"],
+  "tasks.archive": ["enterprise.view", "tasks.view"],
+  "boards.manage": ["enterprise.view", "tasks.view"],
+  "employees.view": ["enterprise.view", "roles.view"],
+  "employees.manage": ["enterprise.view", "employees.view", "roles.view"],
+  "roles.view": ["enterprise.view"],
+  "roles.manage": ["enterprise.view", "roles.view"],
+};
+
 export const MERCHANT_ENTERPRISE_ROLE_STATUSES = ["active", "archived"] as const;
 export const MERCHANT_ENTERPRISE_EMPLOYEE_STATUSES = ["invited", "active", "disabled"] as const;
+export const MERCHANT_ENTERPRISE_INVITATION_DELIVERY_STATUSES = [
+  "none",
+  "legacy",
+  "sending",
+  "sent",
+  "failed",
+  "revoked",
+] as const;
 export const MERCHANT_TASK_BOARD_STATUSES = ["active", "archived"] as const;
 export const MERCHANT_TASK_COLUMN_STATUSES = ["active", "archived"] as const;
 export const MERCHANT_TASK_PRIORITIES = ["low", "normal", "high", "urgent"] as const;
 
 export type MerchantEnterpriseRoleStatus = (typeof MERCHANT_ENTERPRISE_ROLE_STATUSES)[number];
 export type MerchantEnterpriseEmployeeStatus = (typeof MERCHANT_ENTERPRISE_EMPLOYEE_STATUSES)[number];
+export type MerchantEnterpriseInvitationDeliveryStatus =
+  (typeof MERCHANT_ENTERPRISE_INVITATION_DELIVERY_STATUSES)[number];
 export type MerchantTaskBoardStatus = (typeof MERCHANT_TASK_BOARD_STATUSES)[number];
 export type MerchantTaskColumnStatus = (typeof MERCHANT_TASK_COLUMN_STATUSES)[number];
 export type MerchantTaskPriority = (typeof MERCHANT_TASK_PRIORITIES)[number];
@@ -69,6 +97,11 @@ export type MerchantEnterpriseEmployee = {
   invitedAt: string | null;
   acceptedAt: string | null;
   lastActiveAt: string | null;
+  invitationVersion: number;
+  invitationExpiresAt: string | null;
+  invitationRevokedAt: string | null;
+  invitationSentAt: string | null;
+  invitationDeliveryStatus: MerchantEnterpriseInvitationDeliveryStatus;
   version: number;
   createdAt: string;
   updatedAt: string;
@@ -79,6 +112,7 @@ export type MerchantTaskBoard = {
   siteId: string;
   name: string;
   description: string;
+  position: number;
   status: MerchantTaskBoardStatus;
   version: number;
   createdAt: string;
@@ -252,6 +286,58 @@ export function parseMerchantEnterprisePermissionsStrict(
   return normalized;
 }
 
+function normalizeInvitationVersion(value: unknown) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? Math.max(0, parsed) : 0;
+}
+
+export function getMissingMerchantEnterprisePermissionDependencies(
+  permissions: readonly MerchantEnterprisePermission[],
+) {
+  const selected = new Set(permissions);
+  return Array.from(
+    new Set(
+      permissions.flatMap((permission) =>
+        MERCHANT_ENTERPRISE_PERMISSION_DEPENDENCIES[permission].filter(
+          (dependency) => !selected.has(dependency),
+        ),
+      ),
+    ),
+  );
+}
+
+export function toggleMerchantEnterprisePermissionSelection(
+  permissions: readonly MerchantEnterprisePermission[],
+  permission: MerchantEnterprisePermission,
+  checked: boolean,
+) {
+  const selected = new Set(permissions);
+  if (checked) {
+    selected.add(permission);
+    for (const dependency of MERCHANT_ENTERPRISE_PERMISSION_DEPENDENCIES[permission]) {
+      selected.add(dependency);
+    }
+  } else {
+    selected.delete(permission);
+    let removedDependent = true;
+    while (removedDependent) {
+      removedDependent = false;
+      for (const candidate of MERCHANT_ENTERPRISE_PERMISSIONS) {
+        if (
+          selected.has(candidate) &&
+          MERCHANT_ENTERPRISE_PERMISSION_DEPENDENCIES[candidate].some(
+            (dependency) => !selected.has(dependency),
+          )
+        ) {
+          selected.delete(candidate);
+          removedDependent = true;
+        }
+      }
+    }
+  }
+  return MERCHANT_ENTERPRISE_PERMISSIONS.filter((candidate) => selected.has(candidate));
+}
+
 export function merchantEnterprisePermissionsFitActor(
   actor: MerchantEnterpriseActor,
   permissions: readonly MerchantEnterprisePermission[],
@@ -291,6 +377,10 @@ export function normalizeMerchantEnterpriseEmployee(value: unknown): MerchantEnt
   const displayName = normalizeText(readValue(record, "displayName", "display_name"), 120);
   if (!id || !siteId || !email || !displayName) return null;
   const statusValue = normalizeText(record.status, 20);
+  const deliveryStatusValue = normalizeText(
+    readValue(record, "invitationDeliveryStatus", "invitation_delivery_status"),
+    20,
+  ) as MerchantEnterpriseInvitationDeliveryStatus;
   return {
     id,
     siteId,
@@ -302,6 +392,23 @@ export function normalizeMerchantEnterpriseEmployee(value: unknown): MerchantEnt
     invitedAt: normalizeNullableTimestamp(readValue(record, "invitedAt", "invited_at")),
     acceptedAt: normalizeNullableTimestamp(readValue(record, "acceptedAt", "accepted_at")),
     lastActiveAt: normalizeNullableTimestamp(readValue(record, "lastActiveAt", "last_active_at")),
+    invitationVersion: normalizeInvitationVersion(
+      readValue(record, "invitationVersion", "invitation_version"),
+    ),
+    invitationExpiresAt: normalizeNullableTimestamp(
+      readValue(record, "invitationExpiresAt", "invitation_expires_at"),
+    ),
+    invitationRevokedAt: normalizeNullableTimestamp(
+      readValue(record, "invitationRevokedAt", "invitation_revoked_at"),
+    ),
+    invitationSentAt: normalizeNullableTimestamp(
+      readValue(record, "invitationSentAt", "invitation_sent_at"),
+    ),
+    invitationDeliveryStatus: MERCHANT_ENTERPRISE_INVITATION_DELIVERY_STATUSES.includes(
+      deliveryStatusValue,
+    )
+      ? deliveryStatusValue
+      : "none",
     version: normalizeVersion(record.version),
     createdAt: normalizeTimestamp(readValue(record, "createdAt", "created_at")),
     updatedAt: normalizeTimestamp(readValue(record, "updatedAt", "updated_at")),
@@ -319,6 +426,7 @@ export function normalizeMerchantTaskBoard(value: unknown): MerchantTaskBoard | 
     siteId,
     name,
     description: normalizeText(record.description, 2000),
+    position: normalizePosition(record.position),
     status: normalizeText(record.status, 20) === "archived" ? "archived" : "active",
     version: normalizeVersion(record.version),
     createdAt: normalizeTimestamp(readValue(record, "createdAt", "created_at")),
@@ -385,6 +493,115 @@ export function normalizeMerchantTask(
     createdAt: normalizeTimestamp(readValue(record, "createdAt", "created_at")),
     updatedAt: normalizeTimestamp(readValue(record, "updatedAt", "updated_at")),
   };
+}
+
+export type MerchantTaskFilter = {
+  query?: string;
+  priority?: MerchantTaskPriority | "all";
+  assigneeId?: string;
+  archive?: "active" | "archived" | "all";
+};
+
+export type MerchantTaskEditValues = {
+  title: string;
+  description: string;
+  priority: MerchantTaskPriority;
+  dueAt: string | null;
+  columnId: string;
+  assigneeIds: string[];
+};
+
+export type MerchantTaskEditBuildResult =
+  | {
+      ok: true;
+      changes: Partial<MerchantTaskEditValues>;
+    }
+  | {
+      ok: false;
+      error: "inactive_assignee" | "too_many_assignees";
+      employeeId?: string;
+    };
+
+export function buildMerchantTaskEditChanges(
+  actor: MerchantEnterpriseActor,
+  task: MerchantTask,
+  values: MerchantTaskEditValues,
+  employees: readonly Pick<MerchantEnterpriseEmployee, "id" | "status">[],
+): MerchantTaskEditBuildResult {
+  const changes: Partial<MerchantTaskEditValues> = {};
+  if (hasMerchantEnterprisePermission(actor, "tasks.update")) {
+    const title = normalizeText(values.title, 240);
+    const description = normalizeText(values.description, 10000);
+    const columnId = normalizeText(values.columnId, 80);
+    const dueAt =
+      values.dueAt && Number.isFinite(Date.parse(values.dueAt))
+        ? new Date(values.dueAt).toISOString()
+        : null;
+    if (title !== task.title) changes.title = title;
+    if (description !== task.description) changes.description = description;
+    if (values.priority !== task.priority) changes.priority = values.priority;
+    if (dueAt !== task.dueAt) changes.dueAt = dueAt;
+    if (columnId !== task.columnId) changes.columnId = columnId;
+  }
+
+  if (hasMerchantEnterprisePermission(actor, "tasks.assign")) {
+    if (values.assigneeIds.length > MAX_MERCHANT_TASK_ASSIGNEES) {
+      return { ok: false, error: "too_many_assignees" };
+    }
+    const currentAssigneeIds = [...task.assigneeIds].sort();
+    const nextAssigneeIds = Array.from(
+      new Set(values.assigneeIds.map((id) => normalizeText(id, 80)).filter(Boolean)),
+    ).sort();
+    if (currentAssigneeIds.join("\n") !== nextAssigneeIds.join("\n")) {
+      const employeeStatusById = new Map(
+        employees.map((employee) => [employee.id, employee.status] as const),
+      );
+      const inactiveAssigneeId = nextAssigneeIds.find(
+        (id) => employeeStatusById.get(id) !== "active",
+      );
+      if (inactiveAssigneeId) {
+        return {
+          ok: false,
+          error: "inactive_assignee",
+          employeeId: inactiveAssigneeId,
+        };
+      }
+      changes.assigneeIds = nextAssigneeIds;
+    }
+  }
+
+  return { ok: true, changes };
+}
+
+export function filterMerchantTasks(
+  tasks: readonly MerchantTask[],
+  filter: MerchantTaskFilter,
+) {
+  const query = normalizeText(filter.query, 240).toLocaleLowerCase();
+  const priority = filter.priority ?? "all";
+  const assigneeId = normalizeText(filter.assigneeId, 80);
+  const archive = filter.archive ?? "active";
+  return tasks.filter((task) => {
+    if (archive === "active" && task.archivedAt) return false;
+    if (archive === "archived" && !task.archivedAt) return false;
+    if (priority !== "all" && task.priority !== priority) return false;
+    if (assigneeId === "unassigned" && task.assigneeIds.length > 0) return false;
+    if (
+      assigneeId &&
+      assigneeId !== "all" &&
+      assigneeId !== "unassigned" &&
+      !task.assigneeIds.includes(assigneeId)
+    ) {
+      return false;
+    }
+    if (
+      query &&
+      !`${task.title}\n${task.description}`.toLocaleLowerCase().includes(query)
+    ) {
+      return false;
+    }
+    return true;
+  });
 }
 
 export function isMerchantEnterpriseSchemaMissingError(error: unknown) {

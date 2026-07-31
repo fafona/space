@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { normalizeMerchantEnterpriseEmployee } from "@/lib/merchantEnterprise";
 import {
@@ -25,16 +26,88 @@ function fail(error: unknown) {
   return NextResponse.json(resolved.body, { status: resolved.status });
 }
 
+function invitationTokenHash(token: string) {
+  return createHash("sha256").update(token, "utf8").digest("hex");
+}
+
+function rpcErrorText(error: unknown) {
+  if (!error || typeof error !== "object") return "";
+  const value = error as { code?: unknown; message?: unknown; details?: unknown };
+  return [value.code, value.message, value.details]
+    .filter((item): item is string => typeof item === "string")
+    .join(":")
+    .toLowerCase();
+}
+
+export function merchantEmployeeInvitationAcceptError(error: unknown) {
+  const message = rpcErrorText(error);
+  if (message.includes("employee_invitation_expired")) {
+    return new MerchantEnterpriseAccessError("employee_invitation_expired", 410);
+  }
+  if (message.includes("employee_invitation_revoked")) {
+    return new MerchantEnterpriseAccessError("employee_invitation_revoked", 410);
+  }
+  if (
+    message.includes("employee_invitation_superseded") ||
+    message.includes("employee_invitation_token_invalid")
+  ) {
+    return new MerchantEnterpriseAccessError("employee_invitation_superseded", 410);
+  }
+  if (message.includes("employee_invitation_credentials_required")) {
+    return new MerchantEnterpriseAccessError("employee_invitation_credentials_required", 403);
+  }
+  if (message.includes("employee_account_disabled")) {
+    return new MerchantEnterpriseAccessError("employee_account_disabled", 403);
+  }
+  if (message.includes("merchant_role_invalid") || message.includes("merchant_access_denied")) {
+    return new MerchantEnterpriseAccessError("merchant_access_denied", 403);
+  }
+  if (
+    message.includes("merchant_employee_not_invited") ||
+    message.includes("employee_not_found")
+  ) {
+    return new MerchantEnterpriseAccessError("merchant_employee_not_invited", 403);
+  }
+  if (
+    message.includes("enterprise_version_conflict") ||
+    message.includes("enterprise_invitation_accept_conflict")
+  ) {
+    return new MerchantEnterpriseAccessError("merchant_employee_accept_conflict", 409);
+  }
+  return new MerchantEnterpriseAccessError("merchant_employee_accept_failed", 503);
+}
+
 export async function POST(request: Request) {
   if (!isTrustedSameOriginMutationRequest(request)) {
     return getTrustedMutationRequestErrorResponse();
   }
 
   try {
-    const body = (await request.json().catch(() => null)) as { siteId?: unknown } | null;
+    const body = (await request.json().catch(() => null)) as {
+      siteId?: unknown;
+      invitationVersion?: unknown;
+      invitationToken?: unknown;
+    } | null;
     const siteId = text(body?.siteId, 80);
     if (!isMerchantNumericId(siteId)) {
       return NextResponse.json({ ok: false, error: "invalid_site_id" }, { status: 400 });
+    }
+
+    const invitationToken = text(body?.invitationToken, 256);
+    const invitationVersion = Number(body?.invitationVersion);
+    const hasInvitationVersion = body?.invitationVersion !== undefined;
+    const hasInvitationToken = Boolean(invitationToken);
+    if (
+      hasInvitationVersion !== hasInvitationToken ||
+      (hasInvitationVersion &&
+        (!Number.isSafeInteger(invitationVersion) ||
+          invitationVersion <= 0 ||
+          !/^[A-Za-z0-9_-]{32,256}$/.test(invitationToken)))
+    ) {
+      return NextResponse.json(
+        { ok: false, error: "invalid_employee_invitation_credentials" },
+        { status: 400 },
+      );
     }
 
     const user = await resolveValidatedMerchantEnterpriseAuthUser(request);
@@ -44,89 +117,32 @@ export async function POST(request: Request) {
       throw new MerchantEnterpriseAccessError("enterprise_store_unavailable", 503);
     }
 
-    const employeeResult = await service
-      .from("merchant_enterprise_employees")
-      .select(
-        "id,merchant_id,auth_user_id,email,display_name,role_id,status,invited_at,accepted_at,last_active_at,version,created_at,updated_at",
-      )
-      .eq("merchant_id", siteId)
-      .eq("auth_user_id", text(user.id, 80))
-      .in("status", ["invited", "active"])
-      .limit(1)
-      .maybeSingle();
-    if (employeeResult.error) {
+    const result = await service.rpc("faolla_accept_merchant_employee_invitation_v1", {
+      p_input: {
+        merchant_id: siteId,
+        auth_user_id: text(user.id, 80),
+        ...(hasInvitationVersion
+          ? {
+              invitation_version: invitationVersion,
+              token_hash: invitationTokenHash(invitationToken),
+            }
+          : {}),
+      },
+    });
+    if (result.error) throw merchantEmployeeInvitationAcceptError(result.error);
+    const record =
+      result.data && typeof result.data === "object" && !Array.isArray(result.data)
+        ? (result.data as Record<string, unknown>)
+        : {};
+    const employee = normalizeMerchantEnterpriseEmployee(record.employee);
+    if (!employee || employee.status !== "active") {
       throw new MerchantEnterpriseAccessError("merchant_employee_accept_failed", 503);
     }
-    const employee = normalizeMerchantEnterpriseEmployee(employeeResult.data);
-    if (!employee || !employee.roleId) {
-      throw new MerchantEnterpriseAccessError("merchant_employee_not_invited", 403);
-    }
-
-    const roleResult = await service
-      .from("merchant_enterprise_roles")
-      .select("id")
-      .eq("merchant_id", siteId)
-      .eq("id", employee.roleId)
-      .eq("status", "active")
-      .limit(1)
-      .maybeSingle();
-    if (roleResult.error) {
-      throw new MerchantEnterpriseAccessError("merchant_role_check_failed", 503);
-    }
-    if (!roleResult.data) {
-      throw new MerchantEnterpriseAccessError("merchant_access_denied", 403);
-    }
-
-    if (employee.status === "active") {
-      return NextResponse.json({ ok: true, employee });
-    }
-
-    const acceptedAt = new Date().toISOString();
-    const activated = await service
-      .from("merchant_enterprise_employees")
-      .update({
-        status: "active",
-        accepted_at: acceptedAt,
-        last_active_at: acceptedAt,
-      })
-      .eq("merchant_id", siteId)
-      .eq("id", employee.id)
-      .eq("auth_user_id", text(user.id, 80))
-      .eq("status", "invited")
-      .eq("version", employee.version)
-      .select(
-        "id,merchant_id,auth_user_id,email,display_name,role_id,status,invited_at,accepted_at,last_active_at,version,created_at,updated_at",
-      )
-      .maybeSingle();
-    if (activated.error) {
-      throw new MerchantEnterpriseAccessError("merchant_employee_accept_failed", 503);
-    }
-    const activeEmployee = normalizeMerchantEnterpriseEmployee(activated.data);
-    if (activeEmployee?.status === "active") {
-      return NextResponse.json({ ok: true, employee: activeEmployee });
-    }
-
-    // A simultaneous portal/session callback may have accepted the same invite.
-    // Re-read the exact membership so acceptance stays idempotent.
-    const current = await service
-      .from("merchant_enterprise_employees")
-      .select(
-        "id,merchant_id,auth_user_id,email,display_name,role_id,status,invited_at,accepted_at,last_active_at,version,created_at,updated_at",
-      )
-      .eq("merchant_id", siteId)
-      .eq("id", employee.id)
-      .eq("auth_user_id", text(user.id, 80))
-      .eq("status", "active")
-      .limit(1)
-      .maybeSingle();
-    if (current.error) {
-      throw new MerchantEnterpriseAccessError("merchant_employee_accept_failed", 503);
-    }
-    const concurrentlyAcceptedEmployee = normalizeMerchantEnterpriseEmployee(current.data);
-    if (!concurrentlyAcceptedEmployee) {
-      throw new MerchantEnterpriseAccessError("merchant_employee_accept_conflict", 409);
-    }
-    return NextResponse.json({ ok: true, employee: concurrentlyAcceptedEmployee });
+    return NextResponse.json({
+      ok: true,
+      employee,
+      alreadyActive: record.already_active === true,
+    });
   } catch (error) {
     return fail(error);
   }

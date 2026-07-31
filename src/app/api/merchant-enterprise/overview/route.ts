@@ -16,6 +16,7 @@ import {
   type MerchantEnterpriseStoreClient,
 } from "@/lib/merchantEnterpriseStore.server";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
+import { normalizeMutationOperationId } from "@/lib/mutationOperationId";
 import {
   getTrustedMutationRequestErrorResponse,
   isTrustedSameOriginMutationRequest,
@@ -32,6 +33,14 @@ function storeClient() {
 }
 
 function errorResponse(error: unknown) {
+  const message = error instanceof Error ? error.message : "";
+  if (
+    message === "enterprise_operation_in_progress" ||
+    message === "board_limit_reached" ||
+    message === "column_limit_reached"
+  ) {
+    return NextResponse.json({ ok: false, error: message }, { status: 409 });
+  }
   const resolved = toMerchantEnterpriseAccessResponse(error);
   return NextResponse.json(resolved.body, { status: resolved.status });
 }
@@ -45,28 +54,39 @@ export function buildVisibleMerchantEnterpriseSnapshot(
   snapshot: MerchantEnterpriseSnapshot,
 ) {
   const canViewTasks = hasMerchantEnterprisePermission(actor, "tasks.view");
+  const canAssignTasks = hasMerchantEnterprisePermission(actor, "tasks.assign");
   const canViewEmployees = hasMerchantEnterprisePermission(actor, "employees.view");
   const canViewRoles = hasMerchantEnterprisePermission(actor, "roles.view");
   const tasks = canViewTasks ? snapshot.tasks : [];
   const visibleAssigneeIds = new Set(tasks.flatMap((task) => task.assigneeIds));
+  const sanitizeEmployee = (employee: MerchantEnterpriseSnapshot["employees"][number]) => ({
+    ...employee,
+    authUserId: "",
+    email: "",
+    roleId: "",
+    invitedAt: null,
+    acceptedAt: null,
+    lastActiveAt: null,
+    invitationVersion: 0,
+    invitationExpiresAt: null,
+    invitationRevokedAt: null,
+    invitationSentAt: null,
+    invitationDeliveryStatus: "none" as const,
+    version: 1,
+    createdAt: "",
+    updatedAt: "",
+  });
   return {
     roles: canViewRoles ? snapshot.roles : [],
     employees: canViewEmployees
-      ? snapshot.employees
+      ? snapshot.employees.map((employee) => ({ ...employee, authUserId: "" }))
       : snapshot.employees
-          .filter((employee) => visibleAssigneeIds.has(employee.id))
-          .map((employee) => ({
-            ...employee,
-            authUserId: "",
-            email: "",
-            roleId: "",
-            invitedAt: null,
-            acceptedAt: null,
-            lastActiveAt: null,
-            version: 1,
-            createdAt: "",
-            updatedAt: "",
-          })),
+          .filter((employee) =>
+            canAssignTasks
+              ? employee.status === "active" || visibleAssigneeIds.has(employee.id)
+              : visibleAssigneeIds.has(employee.id),
+          )
+          .map(sanitizeEmployee),
     boards: canViewTasks ? snapshot.boards : [],
     columns: canViewTasks ? snapshot.columns : [],
     tasks,
@@ -106,10 +126,34 @@ export async function POST(request: Request) {
     return getTrustedMutationRequestErrorResponse();
   }
   try {
-    const body = (await request.json().catch(() => null)) as { siteId?: unknown } | null;
+    const body = (await request.json().catch(() => null)) as {
+      siteId?: unknown;
+      operationId?: unknown;
+    } | null;
     const siteId = typeof body?.siteId === "string" ? body.siteId.trim() : "";
     if (!isMerchantNumericId(siteId)) {
       return NextResponse.json({ ok: false, error: "invalid_site_id" }, { status: 400 });
+    }
+    const rawOperationId =
+      body?.operationId ?? request.headers.get("idempotency-key") ?? undefined;
+    if (
+      rawOperationId !== undefined &&
+      (typeof rawOperationId !== "string" || !rawOperationId.trim())
+    ) {
+      return NextResponse.json(
+        { ok: false, error: "invalid_operation_id" },
+        { status: 400 },
+      );
+    }
+    const operationId =
+      typeof rawOperationId === "string"
+        ? normalizeMutationOperationId(rawOperationId)
+        : "";
+    if (rawOperationId !== undefined && !operationId) {
+      return NextResponse.json(
+        { ok: false, error: "invalid_operation_id" },
+        { status: 400 },
+      );
     }
     const actor = await resolveMerchantEnterpriseActor(request, {
       siteId,
@@ -119,8 +163,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, error: "permission_denied" }, { status: 403 });
     }
     await requireMerchantEnterpriseEntitlement(siteId);
-    await bootstrapMerchantEnterpriseWorkspace(storeClient(), siteId);
-    return NextResponse.json({ ok: true, actor });
+    const enterpriseStore = storeClient();
+    await bootstrapMerchantEnterpriseWorkspace(
+      enterpriseStore,
+      siteId,
+      operationId,
+    );
+    const snapshot = await loadMerchantEnterpriseSnapshot(enterpriseStore, siteId);
+    return NextResponse.json({
+      ok: true,
+      actor,
+      snapshot: buildVisibleMerchantEnterpriseSnapshot(actor, snapshot),
+      needsBootstrap: false,
+    });
   } catch (error) {
     return errorResponse(error);
   }
