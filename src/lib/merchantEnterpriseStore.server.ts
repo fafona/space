@@ -116,7 +116,7 @@ function throwEnterpriseWorkspaceRpcError(operation: string, error: unknown): ne
   throw new Error(`${operation}:${message}`);
 }
 
-function resolveTaskOperationId(value: unknown, scope: "create" | "update") {
+function resolveTaskOperationId(value: unknown, scope: "create" | "update" | "move") {
   const normalized = normalizeMutationOperationId(value);
   return normalized || `enterprise-task-${scope}:${randomUUID()}`;
 }
@@ -219,7 +219,14 @@ export async function loadMerchantEnterpriseSnapshot(
       selectMerchantRows(client, "merchant_enterprise_employees", EMPLOYEE_COLUMNS, siteId),
       selectMerchantRows(client, "merchant_task_boards", BOARD_COLUMNS, siteId, "position"),
       selectMerchantRows(client, "merchant_task_columns", COLUMN_COLUMNS, siteId, "position"),
-      selectMerchantRows(client, "merchant_tasks", TASK_COLUMNS, siteId, "position"),
+      selectMerchantRows(
+        client,
+        "merchant_tasks",
+        TASK_COLUMNS,
+        siteId,
+        "position",
+        ["created_at", "id"],
+      ),
       selectMerchantRows(
         client,
         "merchant_task_assignees",
@@ -797,6 +804,53 @@ export async function createMerchantTask(
   });
   if (result.error) throwTaskRpcError("enterprise_task_create_failed", result.error);
   return normalizeTaskMutationResponse(result.data, "enterprise_task_create_failed");
+}
+
+export async function moveMerchantTask(
+  client: MerchantEnterpriseStoreClient,
+  input: {
+    siteId: string;
+    taskId: string;
+    version: number;
+    columnId: string;
+    targetIndex: number;
+    actorType: "owner" | "employee";
+    actorId?: string;
+    operationId?: string;
+  },
+): Promise<MerchantTask> {
+  const siteId = normalizeText(input.siteId, 80);
+  const taskId = normalizeText(input.taskId, 80);
+  const columnId = normalizeText(input.columnId, 80);
+  const version = Number(input.version);
+  const targetIndex = Number(input.targetIndex);
+  if (
+    !siteId ||
+    !taskId ||
+    !columnId ||
+    !Number.isSafeInteger(version) ||
+    version <= 0 ||
+    !Number.isSafeInteger(targetIndex) ||
+    targetIndex < 0 ||
+    targetIndex > 10_000
+  ) {
+    throw new Error("invalid_task_move");
+  }
+  const operationId = resolveTaskOperationId(input.operationId, "move");
+  const result = await client.rpc("faolla_move_merchant_task_v1", {
+    p_input: {
+      merchant_id: siteId,
+      task_id: taskId,
+      expected_version: version,
+      target_column_id: columnId,
+      target_index: targetIndex,
+      actor_type: input.actorType,
+      actor_id: normalizeText(input.actorId, 120),
+      operation_id: operationId,
+    },
+  });
+  if (result.error) throwTaskRpcError("enterprise_task_move_failed", result.error);
+  return normalizeTaskMutationResponse(result.data, "enterprise_task_move_failed");
 }
 
 export async function updateMerchantTask(

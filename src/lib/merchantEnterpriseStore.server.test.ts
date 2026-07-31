@@ -6,6 +6,7 @@ import {
   createMerchantTaskColumn,
   createMerchantTask,
   loadMerchantEnterpriseSnapshot,
+  moveMerchantTask,
   updateMerchantEnterpriseEmployee,
   updateMerchantTaskBoard,
   updateMerchantTaskColumn,
@@ -445,6 +446,77 @@ test("assignee-only task update still goes through the version-locking RPC", asy
   assert.equal(input.replace_assignees, true);
   assert.equal(input.operation_id, "task-assign-1");
   assert.equal(task.version, 8);
+});
+
+test("task reordering sends a zero-based target index through one atomic RPC", async () => {
+  const calls: Array<{ functionName: string; args: Record<string, unknown> }> = [];
+  const client = {
+    from() {
+      throw new Error("task reordering must not issue direct table writes");
+    },
+    async rpc(functionName: string, args: Record<string, unknown>) {
+      calls.push({ functionName, args });
+      return {
+        data: {
+          task: { ...taskRow(8), position: 2_048 },
+          assignee_ids: ["55555555-5555-4555-8555-555555555555"],
+        },
+        error: null,
+      };
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+
+  const task = await moveMerchantTask(client, {
+    siteId: "10000000",
+    taskId: "11111111-1111-4111-8111-111111111111",
+    version: 7,
+    columnId: "33333333-3333-4333-8333-333333333333",
+    targetIndex: 2,
+    actorType: "employee",
+    actorId: "55555555-5555-4555-8555-555555555555",
+    operationId: "task-reorder-1",
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.functionName, "faolla_move_merchant_task_v1");
+  assert.deepEqual(calls[0]?.args.p_input, {
+    merchant_id: "10000000",
+    task_id: "11111111-1111-4111-8111-111111111111",
+    expected_version: 7,
+    target_column_id: "33333333-3333-4333-8333-333333333333",
+    target_index: 2,
+    actor_type: "employee",
+    actor_id: "55555555-5555-4555-8555-555555555555",
+    operation_id: "task-reorder-1",
+  });
+  assert.equal(task.position, 2_048);
+  assert.deepEqual(task.assigneeIds, ["55555555-5555-4555-8555-555555555555"]);
+});
+
+test("task reordering rejects invalid target indices before calling the RPC", async () => {
+  let rpcCalled = false;
+  const client = {
+    from() {
+      throw new Error("unexpected table access");
+    },
+    async rpc() {
+      rpcCalled = true;
+      throw new Error("unexpected RPC");
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+
+  await assert.rejects(
+    moveMerchantTask(client, {
+      siteId: "10000000",
+      taskId: "11111111-1111-4111-8111-111111111111",
+      version: 7,
+      columnId: "33333333-3333-4333-8333-333333333333",
+      targetIndex: -1,
+      actorType: "owner",
+    }),
+    /invalid_task_move/,
+  );
+  assert.equal(rpcCalled, false);
 });
 
 test("task archive and restore use versioned idempotent RPC events", async () => {

@@ -10,6 +10,7 @@ import {
 } from "@/lib/merchantEnterpriseAuth.server";
 import {
   createMerchantTask,
+  moveMerchantTask,
   updateMerchantTask,
   type MerchantEnterpriseStoreClient,
 } from "@/lib/merchantEnterpriseStore.server";
@@ -35,6 +36,7 @@ type TaskBody = {
   priority?: unknown;
   dueAt?: unknown;
   position?: unknown;
+  targetIndex?: unknown;
   archived?: unknown;
   assigneeIds?: unknown;
   sourceType?: unknown;
@@ -96,6 +98,13 @@ function position(value: unknown) {
   return parsed;
 }
 
+function targetIndex(value: unknown) {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > 10_000) {
+    throw new Error("invalid_task_target_index");
+  }
+  return value;
+}
+
 function dueAt(value: unknown) {
   if (value === null || value === "") return null;
   if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) {
@@ -123,7 +132,8 @@ export function getMerchantTaskPatchRequiredPermissions(body: TaskBody | null) {
     hasOwn(body, "description") ||
     hasOwn(body, "priority") ||
     hasOwn(body, "dueAt") ||
-    hasOwn(body, "position")
+    hasOwn(body, "position") ||
+    hasOwn(body, "targetIndex")
   ) {
     required.push("tasks.update");
   }
@@ -207,6 +217,9 @@ export async function PATCH(request: Request) {
     const requestedPriority = hasOwn(body, "priority") ? priority(body?.priority, false) : undefined;
     const requestedDueAt = hasOwn(body, "dueAt") ? dueAt(body?.dueAt) : undefined;
     const requestedPosition = hasOwn(body, "position") ? position(body?.position) : undefined;
+    const requestedTargetIndex = hasOwn(body, "targetIndex")
+      ? targetIndex(body?.targetIndex)
+      : undefined;
     const taskId = uuid(body?.taskId);
     const actor = await resolveMerchantEnterpriseActor(request, {
       siteId,
@@ -215,6 +228,31 @@ export async function PATCH(request: Request) {
     await requireMerchantEnterpriseEntitlement(siteId);
     if (requiredPermissions.some((permission) => !hasMerchantEnterprisePermission(actor, permission))) {
       return NextResponse.json({ ok: false, error: "permission_denied" }, { status: 403 });
+    }
+    if (requestedTargetIndex !== undefined) {
+      if (
+        !hasOwn(body, "columnId") ||
+        hasOwn(body, "title") ||
+        hasOwn(body, "description") ||
+        hasOwn(body, "priority") ||
+        hasOwn(body, "dueAt") ||
+        hasOwn(body, "position") ||
+        hasOwn(body, "archived") ||
+        hasOwn(body, "assigneeIds")
+      ) {
+        throw new Error("invalid_task_move");
+      }
+      const task = await moveMerchantTask(client(), {
+        siteId,
+        taskId,
+        version: parsedVersion,
+        columnId: uuid(body?.columnId, "invalid_task_column"),
+        targetIndex: requestedTargetIndex,
+        actorType: actor.type,
+        actorId: actor.id,
+        operationId: operationId(request, body),
+      });
+      return NextResponse.json({ ok: true, task });
     }
     const task = await updateMerchantTask(client(), {
       siteId,

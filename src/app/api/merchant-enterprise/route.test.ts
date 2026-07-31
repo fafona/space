@@ -514,6 +514,61 @@ test("task patch permissions are derived from every mutated field", () => {
     getMerchantTaskPatchRequiredPermissions({ assigneeIds: [] }),
     ["tasks.assign"],
   );
+  assert.deepEqual(
+    getMerchantTaskPatchRequiredPermissions({
+      columnId: "33333333-3333-4333-8333-333333333333",
+      targetIndex: 2,
+    }),
+    ["tasks.update"],
+  );
+});
+
+test("task reorder rejects invalid target indices before authorization", async () => {
+  for (const targetIndex of [-1, 1.5, "1", 10_001]) {
+    const response = await updateTask(
+      new Request("https://www.faolla.com/api/merchant-enterprise/tasks", {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://www.faolla.com",
+        },
+        body: JSON.stringify({
+          siteId: "10000000",
+          taskId: "11111111-1111-4111-8111-111111111111",
+          version: 1,
+          columnId: "33333333-3333-4333-8333-333333333333",
+          targetIndex,
+        }),
+      }),
+    );
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      ok: false,
+      error: "invalid_task_target_index",
+    });
+  }
+});
+
+test("valid task reorder requires an authenticated tasks updater", async () => {
+  const response = await updateTask(
+    new Request("https://www.faolla.com/api/merchant-enterprise/tasks", {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        origin: "https://www.faolla.com",
+      },
+      body: JSON.stringify({
+        siteId: "10000000",
+        taskId: "11111111-1111-4111-8111-111111111111",
+        version: 1,
+        columnId: "33333333-3333-4333-8333-333333333333",
+        targetIndex: 0,
+        operationId: "task-reorder-unauthorized",
+      }),
+    }),
+  );
+  assert.equal(response.status, 401);
+  assert.deepEqual(await response.json(), { ok: false, error: "unauthorized" });
 });
 
 test("task patch requires a positive optimistic-lock version before authorization", async () => {
