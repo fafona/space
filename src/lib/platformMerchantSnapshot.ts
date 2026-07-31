@@ -234,15 +234,17 @@ export function mergePlatformMerchantConfigHistoryBySiteId(
   return next;
 }
 
-function compactSnapshotChatBusinessCard(
+function compactSnapshotBusinessCard(
   card: MerchantBusinessCardAsset | null | undefined,
 ): MerchantBusinessCardAsset | null {
   if (!card) return null;
   const shareImageUrl = normalizeText(card.shareImageUrl);
   const contactPagePublicImageUrl = normalizeText(card.contactPagePublicImageUrl);
+  const publicImageUrl = shareImageUrl || contactPagePublicImageUrl;
+  if (!publicImageUrl) return card;
   return {
     ...card,
-    imageUrl: shareImageUrl || contactPagePublicImageUrl,
+    imageUrl: publicImageUrl,
     shareImageUrl: shareImageUrl || undefined,
     contactPageImageUrl: "",
     contactPagePublicImageUrl: contactPagePublicImageUrl || undefined,
@@ -251,9 +253,15 @@ function compactSnapshotChatBusinessCard(
   };
 }
 
+function compactSnapshotBusinessCards(cards: MerchantBusinessCardAsset[]) {
+  return cards
+    .map((card) => compactSnapshotBusinessCard(card))
+    .filter((card): card is MerchantBusinessCardAsset => !!card);
+}
+
 function normalizeSnapshotChatBusinessCard(value: unknown): MerchantBusinessCardAsset | null {
   if (!value || typeof value !== "object") return null;
-  return compactSnapshotChatBusinessCard(normalizeMerchantBusinessCards([value])[0] ?? null);
+  return compactSnapshotBusinessCard(normalizeMerchantBusinessCards([value])[0] ?? null);
 }
 
 function normalizeSnapshotSite(input: unknown): MerchantListPublishedSite | null {
@@ -267,7 +275,7 @@ function normalizeSnapshotSite(input: unknown): MerchantListPublishedSite | null
   const domainPrefix = normalizePublicDomainPrefix(value.domainPrefix);
   const domainSuffix = normalizePublicDomainPrefix(value.domainSuffix);
   const domain = normalizePublicDomainPrefix(value.domain) || domainPrefix || domainSuffix || id;
-  const businessCards = normalizeMerchantBusinessCards(value.businessCards);
+  const businessCards = compactSnapshotBusinessCards(normalizeMerchantBusinessCards(value.businessCards));
   return {
     id,
     merchantName,
@@ -290,7 +298,7 @@ function normalizeSnapshotSite(input: unknown): MerchantListPublishedSite | null
     merchantCardImageOpacity: normalizeUnitInterval(value.merchantCardImageOpacity, 1),
     businessCards,
     chatBusinessCard:
-      compactSnapshotChatBusinessCard(resolveMerchantBusinessCardForChatDisplay(businessCards)) ??
+      compactSnapshotBusinessCard(resolveMerchantBusinessCardForChatDisplay(businessCards)) ??
       normalizeSnapshotChatBusinessCard(value.chatBusinessCard),
     status: normalizeSiteStatus(value.status),
     serviceExpiresAt: normalizeServiceExpiresAt(value.serviceExpiresAt),
@@ -365,8 +373,8 @@ export function buildPlatformMerchantSnapshotPayloadFromSites(
       contactVisibility: normalizeMerchantContactVisibility(site.contactVisibility),
       permissionConfig: normalizeMerchantPermissionConfig(site.permissionConfig),
       merchantCardImageOpacity: normalizeUnitInterval(site.merchantCardImageOpacity, 1),
-      businessCards: normalizeMerchantBusinessCards(site.businessCards),
-      chatBusinessCard: compactSnapshotChatBusinessCard(resolveMerchantBusinessCardForChatDisplay(site.businessCards ?? [])),
+      businessCards: compactSnapshotBusinessCards(normalizeMerchantBusinessCards(site.businessCards)),
+      chatBusinessCard: compactSnapshotBusinessCard(resolveMerchantBusinessCardForChatDisplay(site.businessCards ?? [])),
       status: normalizeSiteStatus(site.status),
       serviceExpiresAt: normalizeServiceExpiresAt(site.serviceExpiresAt),
       sortConfig: normalizeMerchantSortConfig(site.sortConfig),

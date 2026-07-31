@@ -122,10 +122,13 @@ export async function POST(request: Request) {
     );
   }
 
+  const savedPayload = saveResult.payload ?? payload;
+  const revision = savedPayload.revision;
   return NextResponse.json({
     ok: true,
-    count: saveResult.payload?.snapshot.length ?? payload.snapshot.length,
-    defaultSortRule: saveResult.payload?.defaultSortRule ?? payload.defaultSortRule,
-    payload: saveResult.payload ?? payload,
+    count: savedPayload.snapshot.length,
+    defaultSortRule: savedPayload.defaultSortRule,
+    revision,
+    payload: { revision },
   });
 }

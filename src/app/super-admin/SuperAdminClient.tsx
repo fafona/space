@@ -168,7 +168,7 @@ const SUPPORT_THREADS_IDLE_POLL_INTERVAL_MS = 5000;
 const SUPER_ADMIN_SUPPORT_LAST_READ_STORAGE_KEY_PREFIX = "super-admin-support-last-read:";
 const SUPER_ADMIN_PAGE_VIEW_DAILY_KEY = "merchant-space:page-views-daily:v1";
 const PLATFORM_MERCHANT_SNAPSHOT_LOAD_TIMEOUT_MS = 45_000;
-const PLATFORM_MERCHANT_SNAPSHOT_SAVE_TIMEOUT_MS = 25_000;
+const PLATFORM_MERCHANT_SNAPSHOT_SAVE_TIMEOUT_MS = 60_000;
 const PLATFORM_MERCHANT_SNAPSHOT_BACKGROUND_SYNC_TIMEOUT_MS = 15_000;
 
 function isAbortRequestError(error: unknown) {
@@ -2397,6 +2397,7 @@ export default function SuperAdminClient() {
   const [logEndAt, setLogEndAt] = useState("");
   const checklistStorageKeyRef = useRef(releaseChecklistStorageKeyForToday());
   const platformSnapshotRevisionRef = useRef("");
+  const platformSnapshotBackgroundSyncBaselineRef = useRef("");
   const [releaseChecklistState, setReleaseChecklistState] = useState<Record<string, boolean>>(() =>
     loadReleaseChecklistStateFromStorage(),
   );
@@ -2512,6 +2513,7 @@ export default function SuperAdminClient() {
         signal?: AbortSignal;
         failureTip?: string;
         conflictTip?: string;
+        markBackgroundSyncBaseline?: boolean;
       } = {},
     ) => {
       const response = await fetchWithTimeout(
@@ -2535,6 +2537,9 @@ export default function SuperAdminClient() {
         throw new Error(raw?.message || raw?.error || "platform_merchant_snapshot_load_failed");
       }
       const payload = normalizePlatformMerchantSnapshotPayload(raw?.payload ?? {});
+      if (options.markBackgroundSyncBaseline) {
+        platformSnapshotBackgroundSyncBaselineRef.current = `${payload.revision}:${payload.snapshot.length}`;
+      }
       hydratePlatformMerchantSnapshotFromServerPayload(payload, {
         conflictTip: options.conflictTip,
       });
@@ -2646,6 +2651,7 @@ export default function SuperAdminClient() {
       try {
         await loadPlatformMerchantSnapshotFromServer({
           signal: controller.signal,
+          markBackgroundSyncBaseline: true,
         });
       } catch (error) {
         if (controller.signal.aborted) return;
@@ -2672,6 +2678,11 @@ export default function SuperAdminClient() {
     if (isMobileSupportOnlyMode) return;
     if (!platformSnapshotServerReady) return;
     if (platformMerchantSnapshotPayload.snapshot.length === 0) return;
+    const baselineKey = `${platformSnapshotRevisionRef.current}:${platformMerchantSnapshotPayload.snapshot.length}`;
+    if (platformSnapshotBackgroundSyncBaselineRef.current === baselineKey) {
+      platformSnapshotBackgroundSyncBaselineRef.current = "";
+      return;
+    }
     const timer = window.setTimeout(() => {
       const payload = buildPlatformMerchantSnapshotSyncPayload(stateRef.current);
       void fetchWithTimeout(
@@ -6867,11 +6878,43 @@ export default function SuperAdminClient() {
 
     let stateToPersist = buildAuditedConfigState(stateRef.current, "配置已更新");
     let mergedAfterConflict = false;
+    let confirmedAfterTimeout = false;
+    const reconcileTimedOutConfigSave = async () => {
+      const intendedState = stateToPersist;
+      setMerchantConfigSaveMessage({ kind: "info", text: "服务器响应较慢，正在核对实际保存结果..." });
+      try {
+        await loadPlatformMerchantSnapshotFromServer();
+      } catch {
+        return false;
+      }
+      const latestSite = stateRef.current.sites.find((site) => site.id === selectedMerchantSite.id) ?? null;
+      if (!latestSite || buildMerchantConfigDiffLines(createMerchantConfigSnapshot(latestSite), afterSnapshot).length > 0) {
+        return false;
+      }
+      const intendedSite = intendedState.sites.find((site) => site.id === selectedMerchantSite.id) ?? null;
+      stateToPersist = {
+        ...stateRef.current,
+        sites: stateRef.current.sites.map((site) =>
+          site.id === selectedMerchantSite.id && intendedSite
+            ? { ...site, configHistory: intendedSite.configHistory }
+            : site,
+        ),
+        audits: intendedState.audits,
+      };
+      return true;
+    };
     try {
       await syncPlatformMerchantSnapshotToServer(stateToPersist, { siteIds: [selectedMerchantSite.id] });
     } catch (error) {
       const message = describePlatformMerchantSnapshotRequestError(error, "unknown_error");
-      if (message === "platform_merchant_snapshot_conflict") {
+      if (error instanceof Error && error.message === "request_timeout") {
+        if (await reconcileTimedOutConfigSave()) {
+          confirmedAfterTimeout = true;
+        } else {
+          stopMerchantConfigSaveWithError("服务端响应超时，暂时无法确认保存结果；请刷新配置后核对，避免重复提交");
+          return;
+        }
+      } else if (message === "platform_merchant_snapshot_conflict") {
         const retryPreviewRaw = buildConfigState(stateRef.current);
         const retryPreview = compactPlatformStateForStorage(retryPreviewRaw);
         const retryBytes = estimateUtf8Size(JSON.stringify(retryPreview));
@@ -6882,16 +6925,25 @@ export default function SuperAdminClient() {
         stateToPersist = buildAuditedConfigState(stateRef.current, "配置已更新（合并服务端最新版本）");
         try {
           await syncPlatformMerchantSnapshotToServer(stateToPersist, { siteIds: [selectedMerchantSite.id] });
-          mergedAfterConflict = true;
         } catch (retryError) {
           const retryMessage = describePlatformMerchantSnapshotRequestError(retryError, "unknown_error");
-          stopMerchantConfigSaveWithError(
-            retryMessage === "platform_merchant_snapshot_conflict"
-              ? "服务端配置刚刚又被更新，请重新打开配置后再保存"
-              : `服务端配置保存失败：${retryMessage}`,
-          );
-          return;
+          if (retryError instanceof Error && retryError.message === "request_timeout") {
+            if (await reconcileTimedOutConfigSave()) {
+              confirmedAfterTimeout = true;
+            } else {
+              stopMerchantConfigSaveWithError("服务端响应超时，暂时无法确认保存结果；请刷新配置后核对，避免重复提交");
+              return;
+            }
+          } else {
+            stopMerchantConfigSaveWithError(
+              retryMessage === "platform_merchant_snapshot_conflict"
+                ? "服务端配置刚刚又被更新，请重新打开配置后再保存"
+                : `服务端配置保存失败：${retryMessage}`,
+            );
+            return;
+          }
         }
+        mergedAfterConflict = true;
       } else {
         stopMerchantConfigSaveWithError(`服务端配置保存失败：${message}`);
         return;
@@ -6906,7 +6958,11 @@ export default function SuperAdminClient() {
     if (persistedSite) {
       updateBackendMerchantAccountProfileSnapshot(persistedSite);
     }
-    const successMessage = mergedAfterConflict ? "检测到服务端已有更新，已合并并保存本次配置" : SUPER_ADMIN_MESSAGES.configSaved;
+    const successMessage = confirmedAfterTimeout
+      ? "服务器响应较慢，但已核对确认配置保存成功"
+      : mergedAfterConflict
+        ? "检测到服务端已有更新，已合并并保存本次配置"
+        : SUPER_ADMIN_MESSAGES.configSaved;
     setTip(successMessage);
     setMerchantConfigSaveMessage({ kind: "success", text: successMessage });
     setMerchantConfigSubmitting(false);

@@ -195,7 +195,12 @@ function createPayloadWithSite(revision: string, siteId: string, merchantName: s
   };
 }
 
-function createMockSnapshotStore(initialRows: PageRow[]) {
+function createMockSnapshotStore(
+  initialRows: PageRow[],
+  options: {
+    beforeUpdate?: (row: PageRow | null) => void | Promise<void>;
+  } = {},
+) {
   let rows = initialRows.map((row) => ({ ...row }));
   let nextId = rows.reduce((max, row) => Math.max(max, row.id), 0) + 1;
 
@@ -261,15 +266,20 @@ function createMockSnapshotStore(initialRows: PageRow[]) {
       if (this.action !== "update" || !this.payload) {
         return Promise.resolve({ data: null, error: null }).then(onfulfilled, onrejected);
       }
-      rows = rows.map((row) =>
-        this.filters.every((filter) => filter(row))
-          ? {
-              ...row,
-              ...this.payload,
-            }
-          : row,
-      );
-      return Promise.resolve({ data: null, error: null }).then(onfulfilled, onrejected);
+      const matchedRow = rows.find((row) => this.filters.every((filter) => filter(row))) ?? null;
+      return Promise.resolve(options.beforeUpdate?.(matchedRow))
+        .then(() => {
+          rows = rows.map((row) =>
+            this.filters.every((filter) => filter(row))
+              ? {
+                  ...row,
+                  ...this.payload,
+                }
+              : row,
+          );
+          return { data: null, error: null } as const;
+        })
+        .then(onfulfilled, onrejected);
     }
   }
 
@@ -318,6 +328,59 @@ test("savePlatformMerchantSnapshot preserves existing history when incoming payl
   );
   const merged = await loadStoredPlatformMerchantSnapshot(client, { bypassCache: true });
   assert.equal(merged?.merchantConfigHistoryBySiteId["10000000"]?.length, 1);
+});
+
+test("savePlatformMerchantSnapshot starts primary and history writes in parallel", async () => {
+  let releasePrimary: (() => void) | undefined;
+  let releaseHistory: (() => void) | undefined;
+  const primaryReleased = new Promise<void>((resolve) => {
+    releasePrimary = resolve;
+  });
+  const historyReleased = new Promise<void>((resolve) => {
+    releaseHistory = resolve;
+  });
+  let markBothStarted: (() => void) | undefined;
+  const bothStarted = new Promise<void>((resolve) => {
+    markBothStarted = resolve;
+  });
+  const startedIds = new Set<number>();
+  const client = createMockSnapshotStore(
+    [
+      createStoredRow(1, PLATFORM_MERCHANT_SNAPSHOT_SLUG, createPayload("revision-main", 0)),
+      createStoredRow(2, PLATFORM_MERCHANT_SNAPSHOT_HISTORY_SLUG, createPayload("revision-history", 0)),
+    ],
+    {
+      beforeUpdate: (row) => {
+        if (row?.id !== 1 && row?.id !== 2) return;
+        startedIds.add(row.id);
+        if (startedIds.size === 2) {
+          markBothStarted?.();
+        }
+        return row.id === 1 ? primaryReleased : historyReleased;
+      },
+    },
+  );
+
+  const savePromise = savePlatformMerchantSnapshot(client, createPayload("revision-main", 0), {
+    expectedRevision: "revision-main",
+  });
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      bothStarted,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error("main snapshot writes did not start in parallel")), 500);
+      }),
+    ]);
+    assert.deepEqual([...startedIds].sort(), [1, 2]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    releasePrimary?.();
+    releaseHistory?.();
+  }
+
+  const result = await savePromise;
+  assert.equal(result.error, null);
 });
 
 test("savePlatformMerchantSnapshot rejects stale revisions without writing", async () => {

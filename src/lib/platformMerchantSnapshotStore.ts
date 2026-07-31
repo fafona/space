@@ -423,12 +423,22 @@ export async function savePlatformMerchantSnapshot(
     return updatePayload(buildPersistPayload(slug, false));
   };
 
-  const primarySave = await persistBySlug(PLATFORM_MERCHANT_SNAPSHOT_SLUG, primaryEntry);
+  const [primarySave, historySave] = await Promise.all([
+    persistBySlug(PLATFORM_MERCHANT_SNAPSHOT_SLUG, primaryEntry),
+    persistBySlug(PLATFORM_MERCHANT_SNAPSHOT_HISTORY_SLUG, historyEntry),
+  ]);
   if (primarySave.error) {
+    if (historySave.error) {
+      return {
+        error: [
+          `platform_merchant_snapshot_primary_save_failed:${primarySave.error}`,
+          `platform_merchant_snapshot_history_save_failed:${historySave.error}`,
+        ].join(";"),
+      };
+    }
     return { error: primarySave.error };
   }
 
-  const historySave = await persistBySlug(PLATFORM_MERCHANT_SNAPSHOT_HISTORY_SLUG, historyEntry);
   if (historySave.error) {
     return { error: `platform_merchant_snapshot_history_save_failed:${historySave.error}` };
   }
