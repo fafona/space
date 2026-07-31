@@ -33,7 +33,8 @@ test("production deployment is serialized before mutable work", () => {
 test("dependency installation and workflow runtime are bounded", () => {
   assert.match(deployScript, /NPM_CI_TIMEOUT_SECONDS="\$\{[^}]+:-1800\}"/);
   assert.match(deployScript, /--kill-after="\$\{NPM_CI_KILL_AFTER_SECONDS\}s"/);
-  assert.match(deployScript, /"\$\{NPM_CI_TIMEOUT_SECONDS\}s" \\\n  npm ci/);
+  assert.match(deployScript, /npm_remaining_seconds=\$\(\(NPM_CI_TIMEOUT_SECONDS - npm_elapsed_seconds\)\)/);
+  assert.match(deployScript, /"\$\{npm_remaining_seconds\}s" \\\n    npm ci/);
   assert.match(deployScript, /BUILD_TIMEOUT_SECONDS="\$\{[^}]+:-1800\}"/);
   assert.match(deployScript, /--kill-after="\$\{BUILD_KILL_AFTER_SECONDS\}s"/);
   assert.match(
@@ -41,6 +42,23 @@ test("dependency installation and workflow runtime are bounded", () => {
     /"\$\{BUILD_TIMEOUT_SECONDS\}s" \\\n  npm run build/,
   );
   assert.match(deployWorkflow, /timeout-minutes:\s*70/);
+});
+
+test("dependency installation retries transient registry failures with bounded cache-aware fetches", () => {
+  assert.match(deployScript, /NPM_CI_ATTEMPTS="\$\{[^}]+:-3\}"/);
+  assert.match(deployScript, /NPM_CI_RETRY_DELAY_SECONDS="\$\{[^}]+:-15\}"/);
+  assert.match(deployScript, /NPM_FETCH_RETRIES="\$\{[^}]+:-5\}"/);
+  assert.match(
+    deployScript,
+    /for \(\(npm_attempt = 1; npm_attempt <= NPM_CI_ATTEMPTS; npm_attempt\+\+\)\)/,
+  );
+  assert.match(deployScript, /--prefer-offline/);
+  assert.match(deployScript, /--no-audit/);
+  assert.match(deployScript, /--fetch-retries="\$NPM_FETCH_RETRIES"/);
+  assert.match(
+    deployScript,
+    /npm ci attempt \$\{npm_attempt\} failed with status \$\{npm_status\}; retrying/,
+  );
 });
 
 test("stale incomplete releases are removed only when unused", () => {

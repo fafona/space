@@ -24,6 +24,11 @@ DEPLOY_LOCK_FILE="${DEPLOY_LOCK_FILE:-${APP_DIR}.deploy.lock}"
 DEPLOY_LOCK_WAIT_SECONDS="${DEPLOY_LOCK_WAIT_SECONDS:-120}"
 NPM_CI_TIMEOUT_SECONDS="${NPM_CI_TIMEOUT_SECONDS:-1800}"
 NPM_CI_KILL_AFTER_SECONDS="${NPM_CI_KILL_AFTER_SECONDS:-30}"
+NPM_CI_ATTEMPTS="${NPM_CI_ATTEMPTS:-3}"
+NPM_CI_RETRY_DELAY_SECONDS="${NPM_CI_RETRY_DELAY_SECONDS:-15}"
+NPM_FETCH_RETRIES="${NPM_FETCH_RETRIES:-5}"
+NPM_FETCH_RETRY_MIN_TIMEOUT_MS="${NPM_FETCH_RETRY_MIN_TIMEOUT_MS:-10000}"
+NPM_FETCH_RETRY_MAX_TIMEOUT_MS="${NPM_FETCH_RETRY_MAX_TIMEOUT_MS:-120000}"
 BUILD_TIMEOUT_SECONDS="${BUILD_TIMEOUT_SECONDS:-1800}"
 BUILD_KILL_AFTER_SECONDS="${BUILD_KILL_AFTER_SECONDS:-30}"
 STALE_BUILD_MINUTES="${STALE_BUILD_MINUTES:-45}"
@@ -91,6 +96,11 @@ validate_disk_thresholds() {
     DEPLOY_LOCK_WAIT_SECONDS \
     NPM_CI_TIMEOUT_SECONDS \
     NPM_CI_KILL_AFTER_SECONDS \
+    NPM_CI_ATTEMPTS \
+    NPM_CI_RETRY_DELAY_SECONDS \
+    NPM_FETCH_RETRIES \
+    NPM_FETCH_RETRY_MIN_TIMEOUT_MS \
+    NPM_FETCH_RETRY_MAX_TIMEOUT_MS \
     BUILD_TIMEOUT_SECONDS \
     BUILD_KILL_AFTER_SECONDS \
     STALE_BUILD_MINUTES; do
@@ -131,6 +141,10 @@ validate_disk_thresholds() {
   if [ "$DEPLOY_LOCK_WAIT_SECONDS" -lt 1 ] \
     || [ "$NPM_CI_TIMEOUT_SECONDS" -lt 60 ] \
     || [ "$NPM_CI_KILL_AFTER_SECONDS" -lt 1 ] \
+    || [ "$NPM_CI_ATTEMPTS" -lt 1 ] \
+    || [ "$NPM_FETCH_RETRIES" -lt 1 ] \
+    || [ "$NPM_FETCH_RETRY_MIN_TIMEOUT_MS" -lt 1 ] \
+    || [ "$NPM_FETCH_RETRY_MAX_TIMEOUT_MS" -lt "$NPM_FETCH_RETRY_MIN_TIMEOUT_MS" ] \
     || [ "$BUILD_TIMEOUT_SECONDS" -lt 60 ] \
     || [ "$BUILD_KILL_AFTER_SECONDS" -lt 1 ] \
     || [ "$STALE_BUILD_MINUTES" -lt 1 ]; then
@@ -604,19 +618,57 @@ git archive --format=tar "origin/$APP_BRANCH" | tar -xf - -C "$RELEASE_BUILD_DIR
 cp -p -- "$APP_DIR/.env.local" "$RELEASE_BUILD_DIR/.env.local"
 
 cd "$RELEASE_BUILD_DIR"
-echo "[deploy] installing dependencies with a ${NPM_CI_TIMEOUT_SECONDS}s timeout"
-if timeout \
-  --signal=TERM \
-  --kill-after="${NPM_CI_KILL_AFTER_SECONDS}s" \
-  "${NPM_CI_TIMEOUT_SECONDS}s" \
-  npm ci; then
-  :
-else
+echo "[deploy] installing dependencies with up to ${NPM_CI_ATTEMPTS} attempts and a ${NPM_CI_TIMEOUT_SECONDS}s total timeout"
+npm_ci_started_at=$SECONDS
+npm_status=1
+for ((npm_attempt = 1; npm_attempt <= NPM_CI_ATTEMPTS; npm_attempt++)); do
+  npm_elapsed_seconds=$((SECONDS - npm_ci_started_at))
+  npm_remaining_seconds=$((NPM_CI_TIMEOUT_SECONDS - npm_elapsed_seconds))
+  if [ "$npm_remaining_seconds" -lt 1 ]; then
+    npm_status=124
+    break
+  fi
+
+  echo "[deploy] npm ci attempt ${npm_attempt}/${NPM_CI_ATTEMPTS}"
+  set +e
+  timeout \
+    --signal=TERM \
+    --kill-after="${NPM_CI_KILL_AFTER_SECONDS}s" \
+    "${npm_remaining_seconds}s" \
+    npm ci \
+      --prefer-offline \
+      --no-audit \
+      --fetch-retries="$NPM_FETCH_RETRIES" \
+      --fetch-retry-mintimeout="$NPM_FETCH_RETRY_MIN_TIMEOUT_MS" \
+      --fetch-retry-maxtimeout="$NPM_FETCH_RETRY_MAX_TIMEOUT_MS"
   npm_status=$?
+  set -e
+
+  if [ "$npm_status" -eq 0 ]; then
+    break
+  fi
   if [ "$npm_status" -eq 124 ] || [ "$npm_status" -eq 137 ]; then
-    echo "[deploy] npm ci exceeded the ${NPM_CI_TIMEOUT_SECONDS}s timeout"
+    break
+  fi
+  if [ "$npm_attempt" -ge "$NPM_CI_ATTEMPTS" ]; then
+    break
+  fi
+
+  npm_elapsed_seconds=$((SECONDS - npm_ci_started_at))
+  npm_remaining_seconds=$((NPM_CI_TIMEOUT_SECONDS - npm_elapsed_seconds))
+  if [ "$npm_remaining_seconds" -le "$NPM_CI_RETRY_DELAY_SECONDS" ]; then
+    npm_status=124
+    break
+  fi
+  echo "[deploy] npm ci attempt ${npm_attempt} failed with status ${npm_status}; retrying in ${NPM_CI_RETRY_DELAY_SECONDS}s"
+  sleep "$NPM_CI_RETRY_DELAY_SECONDS"
+done
+
+if [ "$npm_status" -ne 0 ]; then
+  if [ "$npm_status" -eq 124 ] || [ "$npm_status" -eq 137 ]; then
+    echo "[deploy] npm ci exceeded the ${NPM_CI_TIMEOUT_SECONDS}s total timeout"
   else
-    echo "[deploy] npm ci failed with status $npm_status"
+    echo "[deploy] npm ci failed after ${NPM_CI_ATTEMPTS} attempts with status $npm_status"
   fi
   exit "$npm_status"
 fi
