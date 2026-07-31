@@ -10,8 +10,30 @@ const migrationPath = path.join(
   "202607310002_merchant_enterprise_board_workflows.sql",
 );
 
+const foundationMigrationPath = path.join(
+  process.cwd(),
+  "scripts",
+  "supabase-migrations",
+  "202607310001_merchant_enterprise_foundation.sql",
+);
+
+const bootstrapPermissionFixMigrationPath = path.join(
+  process.cwd(),
+  "scripts",
+  "supabase-migrations",
+  "202607310004_merchant_enterprise_bootstrap_permission_array_fix.sql",
+);
+
 function readMigration() {
   return fs.readFileSync(migrationPath, "utf8");
+}
+
+function readFoundationMigration() {
+  return fs.readFileSync(foundationMigrationPath, "utf8");
+}
+
+function readBootstrapPermissionFixMigration() {
+  return fs.readFileSync(bootstrapPermissionFixMigrationPath, "utf8");
 }
 
 function readFunction(source, name) {
@@ -91,6 +113,46 @@ test("board workflow migration exposes the complete transactional RPC contract",
     "faolla_update_merchant_task_column_v1",
   );
   assert.match(columnUpdate, /'column', to_jsonb\(v_column\) - 'system_key'/i);
+});
+
+test("bootstrap permission repair preserves the text-array schema contract", () => {
+  const foundation = readFoundationMigration();
+  const repair = readBootstrapPermissionFixMigration();
+  const bootstrap = readFunction(
+    repair,
+    "faolla_bootstrap_merchant_enterprise_v2",
+  );
+
+  assert.match(
+    foundation,
+    /permissions text\[\] not null default '\{\}'::text\[\]/i,
+  );
+  assert.match(
+    bootstrap,
+    /insert into public\.merchant_enterprise_roles[\s\S]+permissions/i,
+  );
+  assert.equal(
+    bootstrap.match(/\]\s*::text\[\]/gi)?.length,
+    3,
+    "all three default roles must write text[] permissions",
+  );
+  const roleInsert = bootstrap.match(
+    /insert into public\.merchant_enterprise_roles[\s\S]+?on conflict \(merchant_id, system_key\) do nothing;/i,
+  )?.[0];
+  assert.ok(roleInsert, "bootstrap must insert the three default roles");
+  assert.doesNotMatch(
+    roleInsert,
+    /::jsonb/i,
+  );
+  assert.match(
+    repair,
+    /grant execute on function public\.faolla_bootstrap_merchant_enterprise_v2\(jsonb\)\s+to service_role/i,
+  );
+  assert.match(repair, /notify pgrst, 'reload schema'/i);
+  assert.match(
+    repair,
+    /values \(202607310004, 'merchant_enterprise_bootstrap_permission_array_fix'\)/i,
+  );
 });
 
 test("bootstrap and structure creates are conflict-safe and replayable", () => {
