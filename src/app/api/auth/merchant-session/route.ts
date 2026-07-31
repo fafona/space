@@ -25,6 +25,10 @@ import {
   readPersonalAccountServiceConfigFromMetadata,
   type PersonalAccountServiceConfig,
 } from "@/lib/personalAccountServiceConfig";
+import {
+  assertLegacyMerchantIdentityAllowed,
+  isMerchantStaffPrincipalError,
+} from "@/lib/merchantStaffPrincipal.server";
 import { createFrontendAuthProof } from "@/lib/frontendAuthProof.server";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 
@@ -581,8 +585,10 @@ export async function GET(request: Request) {
     const cookieRefreshTokens = readMerchantRequestRefreshTokens(request);
     const cookieAccessToken = cookieAccessTokens[0] ?? readMerchantAuthCookie(request);
     const cookieRefreshToken = cookieRefreshTokens[0] ?? readMerchantAuthRefreshCookie(request);
+    const adminSupabase = createServiceRoleSupabaseClient();
     const cached = readMerchantSessionCacheFromCandidates(cookieAccessTokens, cookieRefreshTokens);
     if (cached) {
+      await assertLegacyMerchantIdentityAllowed(adminSupabase, cached.user);
       const needsAccountSwitchRefreshToken =
         shouldIncludeAccountSwitchTokens(request) &&
         !String(cached.refreshToken ?? "").trim() &&
@@ -593,7 +599,6 @@ export async function GET(request: Request) {
     }
 
     const supabase = createServerSupabaseClient();
-    const adminSupabase = createServiceRoleSupabaseClient();
     if (!supabase) {
       return noStoreJson({ error: "merchant_session_env_missing" }, { status: 503 });
     }
@@ -659,6 +664,7 @@ export async function GET(request: Request) {
         return null;
       }
 
+      await assertLegacyMerchantIdentityAllowed(adminSupabase, user);
       const platformIdentity = await resolveMerchantSessionPlatformIdentity(adminSupabase, user);
       const personalServiceConfig =
         platformIdentity.accountType === "personal" ? readPersonalAccountServiceConfigFromMetadata(user) : null;
@@ -697,7 +703,15 @@ export async function GET(request: Request) {
         merchantSessionInflight.delete(cacheKey);
       }
     }
-  } catch {
+  } catch (error) {
+    if (isMerchantStaffPrincipalError(error)) {
+      const response = noStoreJson(
+        { authenticated: false, error: error.code },
+        { status: error.status },
+      );
+      if (error.status === 403) clearMerchantAuthCookies(response, request);
+      return response;
+    }
     return noStoreJson({ authenticated: false, error: "merchant_session_unavailable" }, { status: 503 });
   }
 }
@@ -799,6 +813,7 @@ export async function POST(request: Request) {
       return response;
     }
 
+    await assertLegacyMerchantIdentityAllowed(adminSupabase, user);
     const requestedPreferredAccountType = normalizeSessionPreferredAccountType(payload?.preferredAccountType);
     const platformIdentity = await resolveMerchantSessionPlatformIdentity(adminSupabase, user, {
       preferredAccountType: requestedPreferredAccountType,
@@ -846,7 +861,15 @@ export async function POST(request: Request) {
       preserveRefreshToken: !verifiedRefreshToken,
     }, request);
     return response;
-  } catch {
+  } catch (error) {
+    if (isMerchantStaffPrincipalError(error)) {
+      const response = noStoreJson(
+        { ok: false, error: error.code },
+        { status: error.status },
+      );
+      if (error.status === 403) clearMerchantAuthCookies(response, request);
+      return response;
+    }
     return noStoreJson({ ok: false, error: "merchant_session_sync_unavailable" }, { status: 503 });
   }
 }

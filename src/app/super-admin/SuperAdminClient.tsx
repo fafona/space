@@ -1736,6 +1736,7 @@ function describePermissionValue(
     key === "allowMusicBlock" ||
     key === "allowProductBlock" ||
     key === "allowOrderManagement" ||
+    key === "allowEnterpriseManagement" ||
     key === "allowCouponModule" ||
     key === "allowCouponBlock" ||
     key === "allowMembershipManagement" ||
@@ -1791,6 +1792,7 @@ function buildMerchantConfigDiffLines(current: MerchantConfigSnapshot, target: M
     { key: "allowMusicBlock", label: "可音乐区块" },
     { key: "allowProductBlock", label: "可产品区块" },
     { key: "allowOrderManagement", label: "可订单管理" },
+    { key: "allowEnterpriseManagement", label: "可企业管理" },
     { key: "allowCouponModule", label: "可优惠券模块" },
     { key: "allowCouponBlock", label: "可优惠券区块" },
     { key: "allowMembershipManagement", label: "可会员管理" },
@@ -2204,6 +2206,7 @@ export default function SuperAdminClient() {
   const [configAllowMusicBlock, setConfigAllowMusicBlock] = useState(false);
   const [configAllowProductBlock, setConfigAllowProductBlock] = useState(false);
   const [configAllowOrderManagement, setConfigAllowOrderManagement] = useState(false);
+  const [configAllowEnterpriseManagement, setConfigAllowEnterpriseManagement] = useState(false);
   const [configAllowCouponModule, setConfigAllowCouponModule] = useState(false);
   const [configAllowCouponBlock, setConfigAllowCouponBlock] = useState(false);
   const [configAllowMembershipManagement, setConfigAllowMembershipManagement] = useState(false);
@@ -4476,6 +4479,7 @@ export default function SuperAdminClient() {
     setConfigAllowMusicBlock(permission.allowMusicBlock);
     setConfigAllowProductBlock(permission.allowProductBlock);
     setConfigAllowOrderManagement(permission.allowProductBlock && permission.allowOrderManagement);
+    setConfigAllowEnterpriseManagement(permission.allowEnterpriseManagement);
     setConfigAllowCouponModule(permission.allowCouponModule);
     setConfigAllowCouponBlock(permission.allowCouponModule && permission.allowCouponBlock);
     setConfigAllowMembershipManagement(permission.allowMembershipManagement);
@@ -6680,6 +6684,13 @@ export default function SuperAdminClient() {
         )}`,
       );
     }
+    if (prevPermission.allowEnterpriseManagement !== configAllowEnterpriseManagement) {
+      pendingChanges.push(
+        `企业管理：${formatBool(prevPermission.allowEnterpriseManagement)} -> ${formatBool(
+          configAllowEnterpriseManagement,
+        )}`,
+      );
+    }
     if (prevPermission.allowCouponModule !== configAllowCouponModule) {
       pendingChanges.push(`优惠券模块：${formatBool(prevPermission.allowCouponModule)} -> ${formatBool(configAllowCouponModule)}`);
     }
@@ -6780,6 +6791,7 @@ export default function SuperAdminClient() {
         allowMusicBlock: configAllowMusicBlock,
         allowProductBlock: configAllowProductBlock,
         allowOrderManagement: configAllowProductBlock && configAllowOrderManagement,
+        allowEnterpriseManagement: configAllowEnterpriseManagement,
         allowCouponModule: configAllowCouponModule,
         allowCouponBlock: configAllowCouponModule && configAllowCouponBlock,
         allowMembershipManagement: configAllowMembershipManagement,
@@ -9440,6 +9452,14 @@ export default function SuperAdminClient() {
                                   disabled={!configAllowProductBlock}
                                 />
                                 订单管理
+                              </label>
+                              <label className="flex items-center gap-2 rounded border px-2 py-1.5">
+                                <input
+                                  type="checkbox"
+                                  checked={configAllowEnterpriseManagement}
+                                  onChange={(e) => setConfigAllowEnterpriseManagement(e.target.checked)}
+                                />
+                                企业管理
                               </label>
                               <label className="flex items-center gap-2 rounded border px-2 py-1.5">
                                 <input

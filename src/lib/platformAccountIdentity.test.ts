@@ -1,6 +1,26 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { resolvePlatformAccountIdentityForUser } from "@/lib/platformAccountIdentity";
+import { MerchantStaffPrincipalError } from "@/lib/merchantStaffPrincipal.server";
+
+test("platform identity refuses immutable merchant staff principals before legacy allocation", async () => {
+  await assert.rejects(
+    () =>
+      resolvePlatformAccountIdentityForUser(null, {
+        id: "staff-user",
+        email: "staff@example.com",
+        user_metadata: {
+          merchant_id: "12345678",
+        },
+        app_metadata: {
+          principal_type: "merchant_staff",
+        },
+      }),
+    (error: unknown) =>
+      error instanceof MerchantStaffPrincipalError &&
+      error.code === "merchant_staff_identity_forbidden",
+  );
+});
 
 test("personal platform identity allocates from the personal range and persists metadata", async () => {
   const updates: Array<{ userId: string; user_metadata?: Record<string, unknown>; app_metadata?: Record<string, unknown> }> =

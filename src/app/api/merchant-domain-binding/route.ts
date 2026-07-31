@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import type { MerchantContactVisibility, MerchantIndustry, SiteLocation } from "@/data/platformControlStore";
 import { readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
+import { assertLegacyMerchantIdentityAllowed } from "@/lib/merchantStaffPrincipal.server";
 import {
   getMerchantProfileContactNameError,
   validateMerchantProfileBindingPayload,
@@ -207,6 +208,14 @@ async function isAuthorizedForMerchant(
   for (const accessToken of accessTokens) {
     const authResult = await supabase.auth.getUser(accessToken);
     if (authResult.error || !authResult.data.user) continue;
+    const legacyIdentityAllowed = await assertLegacyMerchantIdentityAllowed(
+      supabase,
+      authResult.data.user,
+    ).then(
+      () => true,
+      () => false,
+    );
+    if (!legacyIdentityAllowed) continue;
 
     const authorizedMerchantIds = await getAuthorizedMerchantIds(
       supabase,

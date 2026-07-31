@@ -2,6 +2,57 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { GET, POST } from "@/app/api/auth/merchant-session/route";
 
+test("merchant-session rejects an immutable merchant staff principal", async () => {
+  const originalFetch = globalThis.fetch;
+  const previousUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const previousAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const previousServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  process.env.NEXT_PUBLIC_SUPABASE_URL = "https://unit-test-staff.supabase.co";
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key";
+
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const requestUrl = new URL(url);
+    if (requestUrl.pathname === "/auth/v1/user") {
+      return new Response(
+        JSON.stringify({
+          id: "99999999-9999-4999-8999-999999999999",
+          email: "staff@example.com",
+          user_metadata: { merchant_id: "12345678" },
+          app_metadata: { principal_type: "merchant_staff" },
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }
+    return new Response("not found", { status: 404 });
+  }) as typeof fetch;
+
+  try {
+    const response = await GET(
+      new Request("https://www.faolla.com/api/auth/merchant-session", {
+        headers: {
+          cookie: "merchant-space-merchant-auth=staff-access-token",
+        },
+      }),
+    );
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), {
+      authenticated: false,
+      error: "merchant_staff_identity_forbidden",
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env.NEXT_PUBLIC_SUPABASE_URL = previousUrl;
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = previousAnonKey;
+    process.env.SUPABASE_SERVICE_ROLE_KEY = previousServiceRoleKey;
+  }
+});
+
 test("merchant-session GET falls back to an older duplicate cookie when the newest token is stale", async () => {
   const originalFetch = globalThis.fetch;
   const previousUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -63,6 +114,13 @@ test("merchant-session GET falls back to an older duplicate cookie when the newe
           },
         },
       );
+    }
+
+    if (requestUrl.pathname === "/rest/v1/merchant_enterprise_employees") {
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
     }
 
     if (requestUrl.pathname === "/rest/v1/merchants") {
@@ -215,6 +273,13 @@ test("merchant-session account switch GET returns refreshed tokens", async () =>
       );
     }
 
+    if (requestUrl.pathname === "/rest/v1/merchant_enterprise_employees") {
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
     if (requestUrl.pathname === "/rest/v1/merchants") {
       return new Response(JSON.stringify([{ id: "87654321" }]), {
         status: 200,
@@ -268,7 +333,7 @@ test("merchant-session POST exchanges Google OAuth code before browser session s
 
   process.env.NEXT_PUBLIC_SUPABASE_URL = "https://unit-test-oauth.supabase.co";
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
-  delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key";
 
   const googleUser = {
     id: "33333333-3333-4333-8333-333333333333",
@@ -311,6 +376,13 @@ test("merchant-session POST exchanges Google OAuth code before browser session s
         headers: {
           "content-type": "application/json",
         },
+      });
+    }
+
+    if (requestUrl.pathname === "/rest/v1/merchant_enterprise_employees") {
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
       });
     }
 

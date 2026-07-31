@@ -12,7 +12,14 @@ import {
   type MerchantAuthUserSummary,
   normalizeMerchantEmail,
 } from "@/lib/merchantAuthIdentity";
-import { setMerchantAuthCookies } from "@/lib/merchantAuthSession";
+import {
+  clearMerchantAuthCookies,
+  setMerchantAuthCookies,
+} from "@/lib/merchantAuthSession";
+import {
+  assertLegacyMerchantIdentityAllowed,
+  isMerchantStaffPrincipalError,
+} from "@/lib/merchantStaffPrincipal.server";
 import {
   resolvePlatformAccountIdentityForUser,
   type PlatformIdentitySupabaseClient,
@@ -499,6 +506,19 @@ export async function POST(request: Request) {
       upstreamPayload?.user && typeof upstreamPayload.user === "object"
         ? (upstreamPayload.user as MerchantAuthUserSummary)
         : null;
+    try {
+      await assertLegacyMerchantIdentityAllowed(supabase, authUser);
+    } catch (error) {
+      if (isMerchantStaffPrincipalError(error)) {
+        const response = noStoreJson(
+          { error: error.code },
+          { status: error.status },
+        );
+        if (error.status === 403) clearMerchantAuthCookies(response, request);
+        return response;
+      }
+      throw error;
+    }
     const matchedMerchantIds = await listMerchantIdsForUser(supabase, authUser).catch(() => [] as string[]);
     const existingAccountType =
       readExistingAccountType(authUser, resolvedAccount.accountType) || (matchedMerchantIds.length > 0 ? "merchant" : "");

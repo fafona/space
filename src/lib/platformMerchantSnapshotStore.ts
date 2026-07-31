@@ -48,6 +48,11 @@ export type PlatformMerchantSnapshotLoadOptions = {
   includeHistory?: boolean;
 };
 
+export type AuthoritativePlatformMerchantSnapshotLoadResult = {
+  payload: PlatformMerchantSnapshotPayload | null;
+  error: string | null;
+};
+
 const PLATFORM_MERCHANT_SNAPSHOT_CACHE_TTL_MS = 30_000;
 const PLATFORM_MERCHANT_SNAPSHOT_AUXILIARY_SAVE_TIMEOUT_MS = 3_500;
 let platformMerchantSnapshotCache:
@@ -305,6 +310,31 @@ export async function loadStoredPlatformMerchantSnapshot(
     value: normalizedPayload,
   };
   return normalizedPayload;
+}
+
+export async function loadAuthoritativeStoredPlatformMerchantSnapshot(
+  supabase: PlatformMerchantSnapshotStoreClient,
+): Promise<AuthoritativePlatformMerchantSnapshotLoadResult> {
+  const primaryEntry = await loadStoredPlatformMerchantSnapshotEntryBySlug(
+    supabase,
+    PLATFORM_MERCHANT_SNAPSHOT_SLUG,
+  );
+  if (primaryEntry.error) {
+    return {
+      payload: null,
+      error: primaryEntry.error,
+    };
+  }
+  if (!primaryEntry.payload) {
+    return {
+      payload: null,
+      error: "platform_merchant_snapshot_missing",
+    };
+  }
+  return {
+    payload: primaryEntry.payload,
+    error: null,
+  };
 }
 
 export async function savePlatformMerchantSnapshot(

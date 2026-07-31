@@ -14,10 +14,13 @@ test("faolla subscription plans are available but rules are not finalized", () =
 
   assert.equal(basic.permissionConfig.businessCardLimit, 1);
   assert.equal(basic.permissionConfig.allowOrderManagement, false);
+  assert.equal(basic.permissionConfig.allowEnterpriseManagement, false);
   assert.equal(advanced.permissionConfig.businessCardLimit, 1);
   assert.equal(advanced.permissionConfig.allowOrderManagement, false);
+  assert.equal(advanced.permissionConfig.allowEnterpriseManagement, false);
   assert.equal(pro.permissionConfig.allowMembershipManagement, false);
   assert.equal(pro.permissionConfig.allowPointsRedemption, false);
+  assert.equal(pro.permissionConfig.allowEnterpriseManagement, false);
   assert.equal(pro.allowMerchantConnectPayments, false);
   assert.equal(basic.rulesFinalized, false);
   assert.equal(advanced.rulesFinalized, false);

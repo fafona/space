@@ -14,6 +14,10 @@ import {
   PERSONAL_ACCOUNT_ID_MAX,
   PERSONAL_ACCOUNT_ID_MIN,
 } from "@/lib/platformAccounts";
+import {
+  assertLegacyMerchantIdentityAllowed,
+  type MerchantStaffPrincipalStoreClient,
+} from "@/lib/merchantStaffPrincipal.server";
 
 type AuthUserRecord = {
   id: string;
@@ -140,6 +144,10 @@ export async function resolvePlatformAccountIdentityForUser(
   user: MerchantAuthUserSummary | null,
   options: PlatformAccountIdentityOptions = {},
 ) {
+  await assertLegacyMerchantIdentityAllowed(
+    supabase as MerchantStaffPrincipalStoreClient | null,
+    user,
+  );
   const metadataAccountType = readPlatformAccountTypeHintFromMetadata(user, "");
   const currentAccountId = readPlatformAccountIdFromMetadata(user);
   const inferredAccountType = metadataAccountType || (currentAccountId ? "merchant" : "");
