@@ -54,7 +54,29 @@ import {
   sortMerchantTaskOrderItems,
 } from "@/lib/merchantTaskOrdering";
 
-type EnterpriseTab = "overview" | "tasks" | "employees" | "roles";
+export type MerchantEnterpriseView = "overview" | "tasks" | "employees" | "roles";
+
+export type MerchantEnterpriseExternalNavigation = {
+  mode: "external";
+  activeView: MerchantEnterpriseView;
+  onViewChange: (view: MerchantEnterpriseView) => void;
+  onAvailableViewsChange?: (views: readonly MerchantEnterpriseView[]) => void;
+};
+
+const MERCHANT_ENTERPRISE_VIEW_ITEMS = [
+  { key: "overview", label: "工作台", permission: "enterprise.view" },
+  { key: "tasks", label: "任务看板", permission: "tasks.view" },
+  { key: "employees", label: "员工账号", permission: "employees.view" },
+  { key: "roles", label: "角色权限", permission: "roles.view" },
+] as const satisfies ReadonlyArray<{
+  key: MerchantEnterpriseView;
+  label: string;
+  permission: MerchantEnterprisePermission;
+}>;
+
+const MERCHANT_ENTERPRISE_VIEW_PERMISSIONS = Object.fromEntries(
+  MERCHANT_ENTERPRISE_VIEW_ITEMS.map((item) => [item.key, item.permission]),
+) as Record<MerchantEnterpriseView, MerchantEnterprisePermission>;
 
 type MerchantEnterpriseManagerProps = {
   siteId: string;
@@ -62,6 +84,7 @@ type MerchantEnterpriseManagerProps = {
   accessToken?: string;
   className?: string;
   standalone?: boolean;
+  navigation?: MerchantEnterpriseExternalNavigation;
 };
 
 type OverviewPayload = {
@@ -1399,8 +1422,9 @@ function MerchantEnterpriseManagerContent({
   accessToken = "",
   className = "",
   standalone = false,
+  navigation,
 }: MerchantEnterpriseManagerProps) {
-  const [tab, setTab] = useState<EnterpriseTab>("overview");
+  const [internalView, setInternalView] = useState<MerchantEnterpriseView>("overview");
   const [actor, setActor] = useState<MerchantEnterpriseActor | null>(null);
   const [snapshot, setSnapshot] = useState<MerchantEnterpriseSnapshot>(EMPTY_SNAPSHOT);
   const [needsBootstrap, setNeedsBootstrap] = useState(false);
@@ -1416,6 +1440,21 @@ function MerchantEnterpriseManagerContent({
     useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+  const usesExternalNavigation = navigation?.mode === "external";
+  const requestedView = usesExternalNavigation ? navigation.activeView : internalView;
+  const requestedViewAllowed = actor
+    ? can(actor, MERCHANT_ENTERPRISE_VIEW_PERMISSIONS[requestedView])
+    : true;
+  const tab = requestedViewAllowed ? requestedView : "overview";
+  const onExternalViewChange = navigation?.onViewChange;
+  const onAvailableViewsChange = navigation?.onAvailableViewsChange;
+  const selectView = useCallback(
+    (view: MerchantEnterpriseView) => {
+      if (!usesExternalNavigation) setInternalView(view);
+      onExternalViewChange?.(view);
+    },
+    [onExternalViewChange, usesExternalNavigation],
   );
 
   const [taskTitle, setTaskTitle] = useState("");
@@ -1542,14 +1581,22 @@ function MerchantEnterpriseManagerContent({
 
   useEffect(() => {
     if (!actor) return;
-    const requiredPermission: Record<EnterpriseTab, MerchantEnterprisePermission> = {
-      overview: "enterprise.view",
-      tasks: "tasks.view",
-      employees: "employees.view",
-      roles: "roles.view",
-    };
-    if (!can(actor, requiredPermission[tab])) setTab("overview");
-  }, [actor, tab]);
+    if (requestedView !== tab) selectView(tab);
+  }, [actor, requestedView, selectView, tab]);
+
+  const availableViewKey = actor
+    ? MERCHANT_ENTERPRISE_VIEW_ITEMS
+        .filter((item) => can(actor, item.permission))
+        .map((item) => item.key)
+        .join("|")
+    : "";
+  useEffect(() => {
+    if (!usesExternalNavigation || !onAvailableViewsChange) return;
+    const views = availableViewKey
+      ? (availableViewKey.split("|") as MerchantEnterpriseView[])
+      : [];
+    onAvailableViewsChange(views);
+  }, [availableViewKey, onAvailableViewsChange, usesExternalNavigation]);
 
   const activeRoles = snapshot.roles.filter((role) => role.status === "active");
   const assignableRoles = actor
@@ -2314,20 +2361,14 @@ function MerchantEnterpriseManagerContent({
           </div>
         </header>
 
-        <nav
-          aria-label="企业管理功能"
-          className="mt-5 flex gap-2 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-sm"
-        >
-          {(
-            [
-              ["overview", "工作台", "enterprise.view"],
-              ["tasks", "任务看板", "tasks.view"],
-              ["employees", "员工账号", "employees.view"],
-              ["roles", "角色权限", "roles.view"],
-            ] as const
-          )
-            .filter((item) => can(actor, item[2]))
-            .map(([key, label]) => (
+        {!usesExternalNavigation ? (
+          <nav
+            aria-label="企业管理功能"
+            className="mt-5 flex gap-2 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-sm"
+          >
+            {MERCHANT_ENTERPRISE_VIEW_ITEMS
+              .filter((item) => can(actor, item.permission))
+              .map(({ key, label }) => (
               <button
                 key={key}
                 type="button"
@@ -2335,12 +2376,13 @@ function MerchantEnterpriseManagerContent({
                   tab === key ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-100"
                 }`}
                 aria-current={tab === key ? "page" : undefined}
-                onClick={() => setTab(key)}
+                onClick={() => selectView(key)}
               >
                 {label}
               </button>
-            ))}
-        </nav>
+              ))}
+          </nav>
+        ) : null}
 
         {message ? (
           <div
@@ -2421,7 +2463,7 @@ function MerchantEnterpriseManagerContent({
                   <p className="mt-1 text-sm text-slate-500">优先显示即将到期和最近更新的工作。</p>
                 </div>
                 {can(actor, "tasks.view") ? (
-                  <button type="button" className="text-sm font-semibold text-blue-700" onClick={() => setTab("tasks")}>
+                  <button type="button" className="text-sm font-semibold text-blue-700" onClick={() => selectView("tasks")}>
                     查看看板
                   </button>
                 ) : null}

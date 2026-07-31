@@ -11,6 +11,21 @@ const managerPath = path.join(
   "MerchantEnterpriseManager.tsx",
 );
 const source = readFileSync(managerPath, "utf8");
+const adminClientSource = readFileSync(
+  path.join(process.cwd(), "src", "app", "admin", "AdminClient.tsx"),
+  "utf8",
+);
+const enterprisePortalSource = readFileSync(
+  path.join(
+    process.cwd(),
+    "src",
+    "app",
+    "enterprise",
+    "[siteId]",
+    "EnterprisePortalClient.tsx",
+  ),
+  "utf8",
+);
 
 function sliceBetween(startPattern, endPattern, label) {
   const startMatch = startPattern.exec(source);
@@ -412,5 +427,69 @@ test("task editor separates detail updates from atomic column movement", () => {
     saveTaskSource.match(/const\s+editChanges[\s\S]*?await\s+mutate\([\s\S]*?\);/)?.[0] ?? "",
     /columnId:\s*targetColumnId/,
     "ordinary detail updates must not move a task through the legacy patch path",
+  );
+});
+
+test("merchant admin moves enterprise subviews into the contextual sidebar menu", () => {
+  assert.match(
+    adminClientSource,
+    /const\s+MERCHANT_ENTERPRISE_CONTEXT_MENU_ITEMS[\s\S]{0,500}任务看板[\s\S]{0,200}员工账号[\s\S]{0,200}角色权限/,
+  );
+  assert.match(
+    adminClientSource,
+    /const\s+\[merchantEnterpriseView,\s*setMerchantEnterpriseView\]\s*=\s*useState<MerchantEnterpriseView>\(["']overview["']\)/,
+  );
+  assert.match(
+    adminClientSource,
+    /async\s+function\s+openMerchantEnterprisePanel\(view:\s*MerchantEnterpriseView\s*=\s*["']overview["']\)[\s\S]{0,900}setMerchantEnterpriseView\(view\)[\s\S]{0,200}setMerchantDesktopSection\(["']enterprise["']\)/,
+  );
+  assert.match(
+    adminClientSource,
+    /merchantDesktopSection\s*===\s*["']enterprise["']\s*&&\s*canUseEnterpriseManagement[\s\S]{0,700}MERCHANT_ENTERPRISE_CONTEXT_MENU_ITEMS[\s\S]{0,500}merchantEnterpriseAvailableViews\.includes\(item\.view\)[\s\S]{0,600}openMerchantEnterprisePanel\(item\.view\)/,
+  );
+  assert.match(
+    adminClientSource,
+    /aria-current=\{merchantEnterpriseView\s*===\s*item\.view\s*\?\s*["']page["']/,
+  );
+  assert.match(
+    adminClientSource,
+    /aria-controls=["']merchant-enterprise-context-menu["'][\s\S]{0,150}aria-expanded=\{merchantDesktopSection\s*===\s*["']enterprise["']\}/,
+  );
+  assert.match(
+    adminClientSource,
+    /<nav\s+id=["']merchant-enterprise-context-menu["']\s+aria-label=["']企业管理子菜单["']/,
+  );
+
+  const orderButtonIndex = adminClientSource.indexOf("<span>订单管理</span>");
+  const enterpriseButtonIndex = adminClientSource.indexOf("<span>企业管理</span>");
+  const supportButtonIndex = adminClientSource.indexOf("<span>会话</span>", enterpriseButtonIndex);
+  assert.ok(orderButtonIndex >= 0 && orderButtonIndex < enterpriseButtonIndex);
+  assert.ok(enterpriseButtonIndex < supportButtonIndex);
+});
+
+test("external enterprise navigation stays permission-aware while standalone keeps its tabs", () => {
+  assert.match(source, /export\s+type\s+MerchantEnterpriseExternalNavigation/);
+  assert.match(source, /const\s+usesExternalNavigation\s*=\s*navigation\?\.mode\s*===\s*["']external["']/);
+  assert.match(
+    source,
+    /const\s+requestedViewAllowed\s*=\s*actor[\s\S]{0,200}MERCHANT_ENTERPRISE_VIEW_PERMISSIONS\[requestedView\]/,
+  );
+  assert.match(source, /const\s+tab\s*=\s*requestedViewAllowed\s*\?\s*requestedView\s*:\s*["']overview["']/);
+  assert.match(source, /if\s*\(requestedView\s*!==\s*tab\)\s*selectView\(tab\)/);
+  assert.match(
+    source,
+    /MERCHANT_ENTERPRISE_VIEW_ITEMS[\s\S]{0,250}filter\(\(item\)\s*=>\s*can\(actor,\s*item\.permission\)\)[\s\S]{0,300}onAvailableViewsChange\(views\)/,
+  );
+  assert.match(source, /\{!usesExternalNavigation\s*\?\s*\([\s\S]{0,300}<nav/);
+  assert.match(source, /onClick=\{\(\)\s*=>\s*selectView\(["']tasks["']\)\}/);
+
+  assert.match(
+    adminClientSource,
+    /<MerchantEnterpriseManager[\s\S]{0,500}navigation=\{\{[\s\S]{0,300}mode:\s*["']external["'][\s\S]{0,300}activeView:\s*merchantEnterpriseView/,
+  );
+  assert.doesNotMatch(
+    enterprisePortalSource,
+    /<MerchantEnterpriseManager[\s\S]{0,300}\bnavigation=/,
+    "the standalone employee portal must keep the manager's internal tab navigation",
   );
 });

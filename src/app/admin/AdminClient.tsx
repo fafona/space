@@ -58,6 +58,7 @@ import {
   loadSupportMessageContent,
   preloadEditorPreviewComponents,
 } from "@/components/admin/AdminDeferredComponents";
+import type { MerchantEnterpriseView } from "@/components/admin/MerchantEnterpriseManager";
 import {
   homeBlocks,
   type BackgroundEditableProps,
@@ -645,6 +646,14 @@ const MERCHANT_MEMBER_CONTEXT_MENU_ITEMS: Array<{ label: string; view: Exclude<M
   { label: "充值方案", view: "rechargePlans" },
   { label: "等级&权益", view: "levels" },
   { label: "积分规则", view: "pointsRules" },
+];
+const MERCHANT_ENTERPRISE_CONTEXT_MENU_ITEMS: Array<{
+  label: string;
+  view: Exclude<MerchantEnterpriseView, "overview">;
+}> = [
+  { label: "任务看板", view: "tasks" },
+  { label: "员工账号", view: "employees" },
+  { label: "角色权限", view: "roles" },
 ];
 type ViewportKey = "desktop" | "mobile";
 type MerchantDesktopSection =
@@ -4159,6 +4168,10 @@ export default function AdminClient({
   const [accountSwitchError, setAccountSwitchError] = useState("");
   const [merchantDesktopSection, setMerchantDesktopSection] = useState<MerchantDesktopSection>("editor");
   const [merchantMemberSettingsView, setMerchantMemberSettingsView] = useState<MerchantMemberSettingsView>("list");
+  const [merchantEnterpriseView, setMerchantEnterpriseView] = useState<MerchantEnterpriseView>("overview");
+  const [merchantEnterpriseAvailableViews, setMerchantEnterpriseAvailableViews] = useState<
+    readonly MerchantEnterpriseView[]
+  >([]);
   const merchantDesktopDefaultSectionSiteRef = useRef("");
   const [merchantLogFailureSnapshots, setMerchantLogFailureSnapshots] = useState<
     ReturnType<typeof readPublishFailureSnapshots>
@@ -12775,7 +12788,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setMerchantDesktopSection("orders");
   }
 
-  async function openMerchantEnterprisePanel() {
+  async function openMerchantEnterprisePanel(view: MerchantEnterpriseView = "overview") {
     if (!canUseEnterpriseManagement) {
       showTip("当前商户未开通企业管理");
       return;
@@ -12787,6 +12800,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       return;
     }
     setMerchantSiteIdOverride(resolvedSiteId);
+    setMerchantEnterpriseView(view);
     setMerchantDesktopSection("enterprise");
   }
 
@@ -19292,6 +19306,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               siteId={editingSiteId || merchantSiteIdOverride || ""}
               siteName={effectiveMerchantDisplayName || merchantDisplayName}
               className="min-h-[calc(100vh-14rem)]"
+              navigation={{
+                mode: "external",
+                activeView: merchantEnterpriseView,
+                onViewChange: setMerchantEnterpriseView,
+                onAvailableViewsChange: setMerchantEnterpriseAvailableViews,
+              }}
             />
           ) : merchantDesktopSection === "logs" ? (
             merchantLogsPanelContent
@@ -19585,6 +19605,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         onClick={() => {
                           void openMerchantEnterprisePanel();
                         }}
+                        aria-controls="merchant-enterprise-context-menu"
+                        aria-expanded={merchantDesktopSection === "enterprise"}
                       >
                         <span className="inline-flex min-w-0 items-center gap-2">
                           <MerchantDesktopMenuIcon name="enterprise" />
@@ -19845,6 +19867,37 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         订单工作台
                       </button>
                     </div>
+                  ) : merchantDesktopSection === "enterprise" && canUseEnterpriseManagement ? (
+                    <nav
+                      id="merchant-enterprise-context-menu"
+                      aria-label="企业管理子菜单"
+                      className="grid gap-2"
+                    >
+                      {MERCHANT_ENTERPRISE_CONTEXT_MENU_ITEMS
+                        .filter((item) => merchantEnterpriseAvailableViews.includes(item.view))
+                        .map((item) => (
+                          <button
+                            key={item.view}
+                            type="button"
+                            className={getMerchantDesktopSubmenuButtonClassName(
+                              merchantEnterpriseView === item.view,
+                            )}
+                            onClick={() => void openMerchantEnterprisePanel(item.view)}
+                            aria-current={merchantEnterpriseView === item.view ? "page" : undefined}
+                          >
+                            {item.label}
+                          </button>
+                        ))}
+                      {merchantEnterpriseAvailableViews.length === 0 ? (
+                        <div className="px-3 py-2 text-xs leading-5 text-[#8fa39b]">
+                          正在验证企业功能权限…
+                        </div>
+                      ) : merchantEnterpriseAvailableViews.length === 1 ? (
+                        <div className="px-3 py-2 text-xs leading-5 text-[#8fa39b]">
+                          当前账号仅可访问企业工作台。
+                        </div>
+                      ) : null}
+                    </nav>
                   ) : merchantDesktopCouponCenterActive ? (
                     <div className="grid gap-2">
                       <button
