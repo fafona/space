@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildMerchantEnterpriseTaskOverview,
   buildMerchantTaskEditChanges,
   DEFAULT_MERCHANT_ENTERPRISE_ROLES,
   filterMerchantTasks,
@@ -259,6 +260,70 @@ test("task filters combine archive, priority, assignee and text criteria", () =>
       archive: "archived",
     }).map((item) => item.id),
     ["task-2"],
+  );
+});
+
+test("enterprise overview aggregates active tasks across every active board", () => {
+  const task = {
+    id: "task-open-a",
+    siteId: "10000000",
+    boardId: "board-a",
+    columnId: "column-a",
+    title: "看板 A 待处理",
+    description: "",
+    priority: "normal",
+    dueAt: "2026-07-30T08:00:00.000Z",
+    completedAt: null,
+    archivedAt: null,
+    position: 0,
+    sourceType: "",
+    sourceId: "",
+    createdByEmployeeId: "",
+    assigneeIds: [],
+    version: 1,
+    createdAt: "2026-07-29T08:00:00.000Z",
+    updatedAt: "2026-07-29T08:00:00.000Z",
+  } satisfies MerchantTask;
+  const summary = buildMerchantEnterpriseTaskOverview(
+    {
+      boards: [
+        { id: "board-a", status: "active" },
+        { id: "board-b", status: "active" },
+        { id: "board-archived", status: "archived" },
+      ],
+      tasks: [
+        task,
+        {
+          ...task,
+          id: "task-done-b",
+          boardId: "board-b",
+          columnId: "column-b",
+          title: "看板 B 已完成",
+          completedAt: "2026-07-30T09:00:00.000Z",
+        },
+        {
+          ...task,
+          id: "task-archived",
+          archivedAt: "2026-07-30T10:00:00.000Z",
+        },
+        {
+          ...task,
+          id: "task-in-archived-board",
+          boardId: "board-archived",
+        },
+      ],
+    },
+    Date.parse("2026-07-31T08:00:00.000Z"),
+  );
+
+  assert.deepEqual(summary.tasks.map((item) => item.id), ["task-open-a", "task-done-b"]);
+  assert.equal(summary.incompleteTaskCount, 1);
+  assert.equal(summary.completedTaskCount, 1);
+  assert.equal(summary.overdueTaskCount, 1);
+  assert.deepEqual(
+    summary.recentTasks.map((item) => item.id),
+    ["task-done-b", "task-open-a"],
+    "equal due and update times must use a deterministic id tie-breaker",
   );
 });
 

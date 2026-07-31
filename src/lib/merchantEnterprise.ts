@@ -710,6 +710,42 @@ export function filterMerchantTasks(
   });
 }
 
+export function buildMerchantEnterpriseTaskOverview(
+  input: {
+    boards: readonly Pick<MerchantTaskBoard, "id" | "status">[];
+    tasks: readonly MerchantTask[];
+  },
+  nowMs = Date.now(),
+) {
+  const activeBoardIds = new Set(
+    input.boards.filter((board) => board.status === "active").map((board) => board.id),
+  );
+  const tasks = filterMerchantTasks(
+    input.tasks.filter((task) => activeBoardIds.has(task.boardId)),
+    { archive: "active" },
+  );
+  const recentTasks = [...tasks].sort((left, right) => {
+    const leftDue = left.dueAt ? Date.parse(left.dueAt) : Number.POSITIVE_INFINITY;
+    const rightDue = right.dueAt ? Date.parse(right.dueAt) : Number.POSITIVE_INFINITY;
+    if (leftDue !== rightDue) return leftDue - rightDue;
+    const updatedDifference = Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
+    if (updatedDifference !== 0) return updatedDifference;
+    return left.id.localeCompare(right.id);
+  });
+
+  return {
+    tasks,
+    recentTasks,
+    incompleteTaskCount: tasks.filter((task) => !task.completedAt).length,
+    completedTaskCount: tasks.filter((task) => Boolean(task.completedAt)).length,
+    overdueTaskCount: tasks.filter((task) => {
+      if (!task.dueAt || task.completedAt) return false;
+      const dueAtMs = Date.parse(task.dueAt);
+      return Number.isFinite(dueAtMs) && dueAtMs < nowMs;
+    }).length,
+  };
+}
+
 export function isMerchantEnterpriseSchemaMissingError(error: unknown) {
   const record = readRecord(error);
   const code = normalizeText(record.code, 40);

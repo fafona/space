@@ -31,6 +31,7 @@ import {
   type ReactNode,
 } from "react";
 import {
+  buildMerchantEnterpriseTaskOverview,
   buildMerchantTaskEditChanges,
   filterMerchantTasks,
   hasMerchantEnterprisePermission,
@@ -1771,6 +1772,7 @@ function MerchantEnterpriseManagerContent({
   const [selectedBoardId, setSelectedBoardId] = useState("");
   const [showBoardSettings, setShowBoardSettings] = useState(false);
   const [mobileTaskComposerOpen, setMobileTaskComposerOpen] = useState(false);
+  const [overviewNowMs, setOverviewNowMs] = useState(() => Date.now());
 
   const [employeeName, setEmployeeName] = useState("");
   const [employeeEmail, setEmployeeEmail] = useState("");
@@ -1918,6 +1920,11 @@ function MerchantEnterpriseManagerContent({
   }, [loadOverview]);
 
   useEffect(() => {
+    const intervalId = window.setInterval(() => setOverviewNowMs(Date.now()), 60_000);
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  useEffect(() => {
     if (!actor) return;
     if (requestedView !== tab) selectView(tab);
   }, [actor, requestedView, selectView, tab]);
@@ -1955,6 +1962,17 @@ function MerchantEnterpriseManagerContent({
     .sort((left, right) => left.position - right.position);
   const boardTasks = snapshot.tasks.filter((task) => task.boardId === activeBoard?.id);
   const visibleTasks = filterMerchantTasks(boardTasks, { archive: "active" });
+  const overviewTaskSummary = useMemo(
+    () =>
+      buildMerchantEnterpriseTaskOverview(
+        {
+          boards: snapshot.boards,
+          tasks: snapshot.tasks,
+        },
+        overviewNowMs,
+      ),
+    [overviewNowMs, snapshot.boards, snapshot.tasks],
+  );
   const filteredTasks = filterMerchantTasks(boardTasks, {
     archive: taskArchiveView,
     query: taskQuery,
@@ -1991,12 +2009,6 @@ function MerchantEnterpriseManagerContent({
   const draggingTask = visibleTasks.find((task) => task.id === draggingTaskId) ?? null;
   const editingTask =
     snapshot.tasks.find((task) => task.id === editingTaskId) ?? null;
-  const recentTasks = [...visibleTasks].sort((left, right) => {
-    const leftDue = left.dueAt ? Date.parse(left.dueAt) : Number.POSITIVE_INFINITY;
-    const rightDue = right.dueAt ? Date.parse(right.dueAt) : Number.POSITIVE_INFINITY;
-    if (leftDue !== rightDue) return leftDue - rightDue;
-    return Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
-  });
   const archivedTaskCount = boardTasks.filter((task) => Boolean(task.archivedAt)).length;
   const grantablePermissions =
     actor?.type === "owner"
@@ -2776,14 +2788,14 @@ function MerchantEnterpriseManagerContent({
                 {
                   label: "未完成任务",
                   value: can(actor, "tasks.view")
-                    ? visibleTasks.filter((task) => !task.completedAt).length
+                    ? overviewTaskSummary.incompleteTaskCount
                     : "—",
                   tone: "text-blue-700",
                 },
                 {
                   label: "已完成任务",
                   value: can(actor, "tasks.view")
-                    ? visibleTasks.filter((task) => task.completedAt).length
+                    ? overviewTaskSummary.completedTaskCount
                     : "—",
                   tone: "text-emerald-700",
                 },
@@ -2795,9 +2807,7 @@ function MerchantEnterpriseManagerContent({
                 {
                   label: "已逾期",
                   value: can(actor, "tasks.view")
-                    ? visibleTasks.filter(
-                        (task) => task.dueAt && !task.completedAt && Date.parse(task.dueAt) < Date.now(),
-                      ).length
+                    ? overviewTaskSummary.overdueTaskCount
                     : "—",
                   tone: "text-rose-700",
                 },
@@ -2812,7 +2822,7 @@ function MerchantEnterpriseManagerContent({
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h2 className="text-lg font-semibold text-slate-950">最近任务</h2>
-                  <p className="mt-1 text-sm text-slate-500">优先显示即将到期和最近更新的工作。</p>
+                  <p className="mt-1 text-sm text-slate-500">汇总全部启用看板，优先显示即将到期和最近更新的工作。</p>
                 </div>
                 {can(actor, "tasks.view") ? (
                   <button type="button" className="text-sm font-semibold text-blue-700" onClick={() => selectView("tasks")}>
@@ -2826,21 +2836,28 @@ function MerchantEnterpriseManagerContent({
                     当前角色没有查看任务的权限。
                   </div>
                 ) : null}
-                {can(actor, "tasks.view") ? recentTasks.slice(0, 6).map((task) => (
-                  <div key={task.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
-                    <div>
-                      <div className="font-medium text-slate-900">{task.title}</div>
-                      <div className="mt-1 text-xs text-slate-500">
-                        {activeColumns.find((column) => column.id === task.columnId)?.name || "未分类"}
-                        {task.dueAt ? ` · 截止 ${formatDate(task.dueAt)}` : ""}
-                      </div>
-                    </div>
-                    <span className={`rounded-full px-2 py-1 text-xs font-semibold ${PRIORITY_META[task.priority].className}`}>
-                      {PRIORITY_META[task.priority].label}
-                    </span>
-                  </div>
-                )) : null}
-                {can(actor, "tasks.view") && visibleTasks.length === 0 ? (
+                {can(actor, "tasks.view")
+                  ? overviewTaskSummary.recentTasks.slice(0, 6).map((task) => {
+                      const boardName = snapshot.boards.find((board) => board.id === task.boardId)?.name;
+                      const columnName = snapshot.columns.find((column) => column.id === task.columnId)?.name;
+                      return (
+                        <div key={task.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
+                          <div>
+                            <div className="font-medium text-slate-900">{task.title}</div>
+                            <div className="mt-1 text-xs text-slate-500">
+                              {boardName ? `${boardName} · ` : ""}
+                              {columnName || "未分类"}
+                              {task.dueAt ? ` · 截止 ${formatDate(task.dueAt)}` : ""}
+                            </div>
+                          </div>
+                          <span className={`rounded-full px-2 py-1 text-xs font-semibold ${PRIORITY_META[task.priority].className}`}>
+                            {PRIORITY_META[task.priority].label}
+                          </span>
+                        </div>
+                      );
+                    })
+                  : null}
+                {can(actor, "tasks.view") && overviewTaskSummary.tasks.length === 0 ? (
                   <div className="py-8 text-center text-sm text-slate-500">还没有任务，可以从任务看板创建第一项工作。</div>
                 ) : null}
               </div>

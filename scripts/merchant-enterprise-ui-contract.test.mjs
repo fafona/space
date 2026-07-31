@@ -121,6 +121,54 @@ test("a successful mutation returns its payload even when the overview refresh f
   );
 });
 
+test("enterprise overview aggregates every active board while task filtering stays board-scoped", () => {
+  const overviewSummarySource = sliceBetween(
+    /const\s+overviewTaskSummary\s*=/,
+    /const\s+filteredTasks\s*=/,
+    "enterprise overview summary",
+  );
+  assert.match(
+    overviewSummarySource,
+    /useMemo\([\s\S]*buildMerchantEnterpriseTaskOverview\(\s*\{[\s\S]*boards:\s*snapshot\.boards,[\s\S]*tasks:\s*snapshot\.tasks/,
+  );
+  assert.match(
+    source,
+    /window\.setInterval\(\(\)\s*=>\s*setOverviewNowMs\(Date\.now\(\)\),\s*60_000\)/,
+    "overdue totals must refresh while the workspace stays open",
+  );
+  assert.match(
+    overviewSummarySource,
+    /\},\s*overviewNowMs,\s*\)[\s\S]*\[overviewNowMs,\s*snapshot\.boards,\s*snapshot\.tasks\]/,
+  );
+  assert.match(
+    source,
+    /const\s+boardTasks\s*=\s*snapshot\.tasks\.filter\(\(task\)\s*=>\s*task\.boardId\s*===\s*activeBoard\?\.id\)/,
+    "the task board must remain scoped to the selected board",
+  );
+
+  const overviewSource = sliceBetween(
+    /!needsBootstrap\s*&&\s*tab\s*===\s*["']overview["']/,
+    /!needsBootstrap\s*&&\s*tab\s*===\s*["']tasks["']/,
+    "enterprise overview",
+  );
+  for (const field of [
+    "overviewTaskSummary.incompleteTaskCount",
+    "overviewTaskSummary.completedTaskCount",
+    "overviewTaskSummary.overdueTaskCount",
+    "overviewTaskSummary.recentTasks",
+    "overviewTaskSummary.tasks.length",
+  ]) {
+    assert.ok(overviewSource.includes(field), `overview must use ${field}`);
+  }
+  assert.doesNotMatch(
+    overviewSource,
+    /\bvisibleTasks\b/,
+    "overview totals must not depend on the currently selected board",
+  );
+  assert.match(overviewSource, /汇总全部启用看板/);
+  assert.match(overviewSource, /const\s+boardName\s*=\s*snapshot\.boards\.find/);
+});
+
 test("create-task retries reuse an operation id only while the form fingerprint is unchanged", () => {
   const reusableRefMatch = source.match(
     /const\s+([A-Za-z_$][\w$]*)\s*=\s*useRef<\{(?=[\s\S]{0,500}\b(?:fingerprint|signature|draftKey|key)\s*:\s*string)(?=[\s\S]{0,500}\boperationId\s*:\s*string)[\s\S]{0,500}?\}\s*\|\s*null>\(null\)/,
