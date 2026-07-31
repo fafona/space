@@ -27,6 +27,7 @@ import {
   MerchantBookingMobilePanel,
   MerchantBusinessCardManager,
   MerchantCustomerManager,
+  MerchantEnterpriseManager,
   MerchantCouponManager,
   MerchantMemberManager,
   MerchantMembershipSettingsPanel,
@@ -46,6 +47,7 @@ import {
   loadMerchantBookingManagerDialog,
   loadMerchantBusinessCardManager,
   loadMerchantCustomerManager,
+  loadMerchantEnterpriseManager,
   loadMerchantCouponManager,
   loadMerchantMemberManager,
   loadMerchantMembershipSettingsPanel,
@@ -662,6 +664,7 @@ type MerchantDesktopSection =
   | "redemptionItems"
   | "booking"
   | "orders"
+  | "enterprise"
   | "logs"
   | "printer"
   | "business"
@@ -1569,7 +1572,7 @@ function getMerchantDesktopSubmenuButtonClassName(active: boolean, tone: "defaul
   return `flex h-10 w-full items-center justify-between gap-2 rounded-lg border-0 bg-transparent px-3 text-left text-sm font-semibold text-[#dbeafe] transition ${toneClassName}`;
 }
 
-function MerchantDesktopMenuIcon({ name }: { name: "points" | "booking" | "orders" | "support" | "members" | "coupons" | "business" }) {
+function MerchantDesktopMenuIcon({ name }: { name: "points" | "booking" | "orders" | "enterprise" | "support" | "members" | "coupons" | "business" }) {
   const commonProps = {
     className: "h-[18px] w-[18px] shrink-0",
     fill: "none",
@@ -1603,6 +1606,14 @@ function MerchantDesktopMenuIcon({ name }: { name: "points" | "booking" | "order
       <svg {...commonProps}>
         <path d="M7 3h10l2 3v18l-2-1-2 1-2-1-2 1-2-1-2 1V3Z" />
         <path d="M9 9h6M9 13h6M9 17h4" />
+      </svg>
+    );
+  }
+  if (name === "enterprise") {
+    return (
+      <svg {...commonProps}>
+        <path d="M4 21V8l8-4 8 4v13" />
+        <path d="M8 21v-5h8v5M8 10h.01M12 10h.01M16 10h.01M8 13h.01M12 13h.01M16 13h.01" />
       </svg>
     );
   }
@@ -12764,6 +12775,21 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setMerchantDesktopSection("orders");
   }
 
+  async function openMerchantEnterprisePanel() {
+    if (!canUseEnterpriseManagement) {
+      showTip("当前商户未开通企业管理");
+      return;
+    }
+    void loadMerchantEnterpriseManager().catch(() => undefined);
+    const resolvedSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
+    if (!resolvedSiteId) {
+      showTip("当前商户还没准备好企业管理资料，请稍后重试");
+      return;
+    }
+    setMerchantSiteIdOverride(resolvedSiteId);
+    setMerchantDesktopSection("enterprise");
+  }
+
   function openMerchantLogsPanel() {
     setMerchantDesktopSection("logs");
   }
@@ -15276,6 +15302,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     !isPlatformEditor &&
     Boolean(merchantPermissionConfig?.allowProductBlock) &&
     Boolean(merchantPermissionConfig?.allowOrderManagement);
+  const canUseEnterpriseManagement =
+    !isPlatformEditor && Boolean(merchantPermissionConfig?.allowEnterpriseManagement);
   const canUseMembershipManagement = !isPlatformEditor && Boolean(merchantPermissionConfig?.allowMembershipManagement);
   const canUsePointsRedemption =
     canUseMembershipManagement && Boolean(merchantPermissionConfig?.allowPointsRedemption);
@@ -15456,6 +15484,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       ? "booking"
       : canUseOrderManagement
         ? "orders"
+        : canUseEnterpriseManagement
+          ? "enterprise"
         : canUseMembershipManagement
           ? "members"
           : canUseCouponModule
@@ -15513,6 +15543,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       void loadMerchantBookingManagerDialog().catch(() => undefined);
     } else if (defaultMerchantDesktopSection === "orders") {
       void loadMerchantOrderManagerDialog().catch(() => undefined);
+    } else if (defaultMerchantDesktopSection === "enterprise") {
+      void loadMerchantEnterpriseManager().catch(() => undefined);
     } else if (defaultMerchantDesktopSection === "members") {
       void loadMerchantMemberManager().catch(() => undefined);
     } else if (defaultMerchantDesktopSection === "coupons") {
@@ -15566,8 +15598,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     }
     if (merchantDesktopSection === "members" && !canUseMembershipManagement) {
       setMerchantDesktopSection(defaultMerchantDesktopSection);
+      return;
+    }
+    if (merchantDesktopSection === "enterprise" && !canUseEnterpriseManagement) {
+      setMerchantDesktopSection(defaultMerchantDesktopSection);
     }
   }, [
+    canUseEnterpriseManagement,
     canUseMembershipManagement,
     canUsePointsRedemption,
     defaultMerchantDesktopSection,
@@ -19250,6 +19287,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               onWorkbenchOpenChange={setMerchantOrderWorkbenchOpen}
               className="min-h-[calc(100vh-14rem)]"
             />
+          ) : merchantDesktopSection === "enterprise" && canUseEnterpriseManagement ? (
+            <MerchantEnterpriseManager
+              siteId={editingSiteId || merchantSiteIdOverride || ""}
+              siteName={effectiveMerchantDisplayName || merchantDisplayName}
+              className="min-h-[calc(100vh-14rem)]"
+            />
           ) : merchantDesktopSection === "logs" ? (
             merchantLogsPanelContent
           ) : merchantDesktopSection === "support" ? (
@@ -19527,6 +19570,26 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                             {merchantOrderAttentionSummary.count > 99 ? "99+" : merchantOrderAttentionSummary.count}
                           </span>
                         ) : null}
+                      </button>
+                    ) : null}
+                    {canUseEnterpriseManagement ? (
+                      <button
+                        type="button"
+                        className={getMerchantDesktopMenuButtonClassName(merchantDesktopSection === "enterprise")}
+                        onPointerEnter={() => {
+                          void loadMerchantEnterpriseManager().catch(() => undefined);
+                        }}
+                        onFocus={() => {
+                          void loadMerchantEnterpriseManager().catch(() => undefined);
+                        }}
+                        onClick={() => {
+                          void openMerchantEnterprisePanel();
+                        }}
+                      >
+                        <span className="inline-flex min-w-0 items-center gap-2">
+                          <MerchantDesktopMenuIcon name="enterprise" />
+                          <span>企业管理</span>
+                        </span>
                       </button>
                     ) : null}
                     <button

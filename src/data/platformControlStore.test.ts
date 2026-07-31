@@ -43,6 +43,7 @@ test("merchant permission config includes default business card background image
   assert.equal(permission.galleryBlockImageLimitKb, 300);
   assert.equal(permission.allowBookingEmailPrefill, false);
   assert.equal(permission.allowOrderManagement, false);
+  assert.equal(permission.allowEnterpriseManagement, false);
   assert.equal(permission.allowCouponModule, false);
   assert.equal(permission.allowCouponBlock, false);
   assert.equal(permission.allowMembershipManagement, false);
@@ -55,6 +56,18 @@ test("merchant permission config keeps order management disabled for legacy prod
   });
   assert.equal(permission.allowProductBlock, true);
   assert.equal(permission.allowOrderManagement, false);
+});
+
+test("merchant enterprise management permission is independent and defaults closed for legacy configs", () => {
+  assert.equal(normalizeMerchantPermissionConfig({}).allowEnterpriseManagement, false);
+  assert.equal(
+    normalizeMerchantPermissionConfig({
+      allowEnterpriseManagement: true,
+      allowProductBlock: false,
+      allowOrderManagement: false,
+    }).allowEnterpriseManagement,
+    true,
+  );
 });
 
 test("merchant permission config keeps coupon block disabled without coupon module", () => {
@@ -138,6 +151,7 @@ test("merchant config history keeps full entries and persists details outside ma
         permissionConfig: {
           ...createDefaultMerchantPermissionConfig(),
           planLimit: index + 1,
+          allowEnterpriseManagement: index === 0,
         },
         merchantCardImageUrl: "",
         merchantCardImageOpacity: 1,
@@ -174,6 +188,10 @@ test("merchant config history keeps full entries and persists details outside ma
     const reloaded = loadPlatformState();
     assert.equal(reloaded.sites[0]?.configHistory?.length, 35);
     assert.deepEqual(reloaded.sites[0]?.configHistory?.[0]?.changes, ["field 1: before -> after"]);
+    assert.equal(
+      reloaded.sites[0]?.configHistory?.[0]?.after.permissionConfig.allowEnterpriseManagement,
+      true,
+    );
 
     const primaryStateRaw = localStorage.getItem("merchant-space:platform-control-center:v1");
     assert.ok(primaryStateRaw);

@@ -107,6 +107,7 @@ export type MerchantServicePermissionConfig = {
   allowMusicBlock: boolean;
   allowProductBlock: boolean;
   allowOrderManagement: boolean;
+  allowEnterpriseManagement: boolean;
   allowCouponModule: boolean;
   allowCouponBlock: boolean;
   allowMembershipManagement: boolean;
@@ -434,6 +435,7 @@ export function createDefaultMerchantPermissionConfig(): MerchantServicePermissi
     allowMusicBlock: false,
     allowProductBlock: false,
     allowOrderManagement: false,
+    allowEnterpriseManagement: false,
     allowCouponModule: false,
     allowCouponBlock: false,
     allowMembershipManagement: false,
@@ -538,6 +540,10 @@ export function normalizeMerchantPermissionConfig(value: unknown): MerchantServi
     allowMusicBlock: typeof source.allowMusicBlock === "boolean" ? source.allowMusicBlock : fallback.allowMusicBlock,
     allowProductBlock,
     allowOrderManagement: allowProductBlock && allowOrderManagementRaw,
+    allowEnterpriseManagement:
+      typeof source.allowEnterpriseManagement === "boolean"
+        ? source.allowEnterpriseManagement
+        : fallback.allowEnterpriseManagement,
     allowCouponModule,
     allowCouponBlock: allowCouponModule && allowCouponBlockRaw,
     allowMembershipManagement,

@@ -1,6 +1,10 @@
 import { createClient } from "@supabase/supabase-js";
 import type { MerchantListPublishedSite } from "@/data/homeBlocks";
-import { loadStoredPlatformMerchantSnapshot, type PlatformMerchantSnapshotStoreClient } from "@/lib/platformMerchantSnapshotStore";
+import {
+  loadAuthoritativeStoredPlatformMerchantSnapshot,
+  loadStoredPlatformMerchantSnapshot,
+  type PlatformMerchantSnapshotStoreClient,
+} from "@/lib/platformMerchantSnapshotStore";
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import { extractMerchantPrefixFromHost } from "@/lib/siteRouting";
 import { resolveServerSupabaseUrl } from "@/lib/serverSupabaseUrl";
@@ -184,6 +188,24 @@ async function loadCurrentSnapshotSites() {
 
 export async function loadCurrentMerchantSnapshotSites() {
   return loadCurrentSnapshotSites();
+}
+
+export async function loadAuthoritativeCurrentMerchantSnapshotSites() {
+  const supabase = createServerSupabaseServiceClient();
+  if (!supabase) {
+    throw new Error("platform_merchant_snapshot_store_unavailable");
+  }
+  const result = await loadAuthoritativeStoredPlatformMerchantSnapshot(
+    supabase as unknown as PlatformMerchantSnapshotStoreClient,
+  );
+  if (result.error || !result.payload) {
+    throw new Error(
+      result.error
+        ? `platform_merchant_snapshot_load_failed:${result.error}`
+        : "platform_merchant_snapshot_load_failed",
+    );
+  }
+  return result.payload.snapshot;
 }
 
 function buildPublishedMerchantServiceState(site: MerchantListPublishedSite): PublishedMerchantServiceState {

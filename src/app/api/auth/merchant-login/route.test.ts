@@ -28,6 +28,67 @@ test("merchant-login rejects invalid bounded credentials before backend access",
   assert.deepEqual(await oversizedAccountResponse.json(), { error: "invalid_account" });
 });
 
+test("merchant-login refuses a merchant staff principal after password verification", async () => {
+  const originalFetch = globalThis.fetch;
+  const previousUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const previousAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const previousServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  process.env.NEXT_PUBLIC_SUPABASE_URL = "https://unit-test-staff-login.supabase.co";
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key";
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const requestUrl = new URL(url);
+    if (requestUrl.pathname === "/auth/v1/token") {
+      return new Response(
+        JSON.stringify({
+          access_token: "staff-access-token",
+          refresh_token: "staff-refresh-token",
+          expires_in: 3600,
+          user: {
+            id: "77777777-7777-4777-8777-777777777777",
+            email: "staff-login@example.com",
+            user_metadata: {
+              merchant_id: "12345678",
+            },
+            app_metadata: {
+              principal_type: "merchant_staff",
+            },
+          },
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }
+    return new Response("not found", { status: 404 });
+  }) as typeof fetch;
+
+  try {
+    const response = await POST(
+      createLoginRequest({
+        account: "staff-login@example.com",
+        password: "secret123",
+        preferredAccountType: "merchant",
+      }),
+    );
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), {
+      error: "merchant_staff_identity_forbidden",
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousUrl === undefined) delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+    else process.env.NEXT_PUBLIC_SUPABASE_URL = previousUrl;
+    if (previousAnonKey === undefined) delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    else process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = previousAnonKey;
+    if (previousServiceRoleKey === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+    else process.env.SUPABASE_SERVICE_ROLE_KEY = previousServiceRoleKey;
+  }
+});
+
 test("merchant-login forwards a rate limit without retrying the password grant", async () => {
   const originalFetch = globalThis.fetch;
   const previousUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;

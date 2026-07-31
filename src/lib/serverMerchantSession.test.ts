@@ -143,6 +143,13 @@ test("resolveMerchantSessionFromRequest accepts an authorized hinted merchant id
       return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
     }
 
+    if (requestUrl.pathname === "/rest/v1/merchant_enterprise_employees") {
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
     if (requestUrl.pathname === "/rest/v1/merchants") {
       return new Response(JSON.stringify([{ id: "12345678" }, { id: "87654321" }]), {
         status: 200,
@@ -215,6 +222,13 @@ test("resolveMerchantSessionFromRequest rejects unauthorized hinted merchant ids
         );
       }
       return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
+    }
+
+    if (requestUrl.pathname === "/rest/v1/merchant_enterprise_employees") {
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
     }
 
     if (requestUrl.pathname === "/rest/v1/merchants") {
@@ -291,6 +305,13 @@ test("resolveMerchantSessionFromRequest falls back to older duplicate cookies wh
       return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
     }
 
+    if (requestUrl.pathname === "/rest/v1/merchant_enterprise_employees") {
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
     if (requestUrl.pathname === "/rest/v1/merchants") {
       return new Response(JSON.stringify([{ id: "12345678" }]), {
         status: 200,
@@ -360,6 +381,13 @@ test("resolveMerchantSessionFromRequest shares concurrent hinted lookups and avo
           },
         },
       );
+    }
+
+    if (requestUrl.pathname === "/rest/v1/merchant_enterprise_employees") {
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
     }
 
     if (requestUrl.pathname === "/rest/v1/merchants") {

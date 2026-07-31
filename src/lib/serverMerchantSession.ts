@@ -4,6 +4,7 @@ import {
   readMerchantAuthMerchantIdCookie,
   readMerchantRequestAccessTokens,
 } from "@/lib/merchantAuthSession";
+import { assertLegacyMerchantIdentityAllowed } from "@/lib/merchantStaffPrincipal.server";
 
 type AuthUserSummary = {
   id?: string | null;
@@ -13,6 +14,7 @@ type AuthUserSummary = {
 };
 
 type CachedMerchantSession = {
+  authUserId: string;
   merchantId: string;
   merchantEmail: string;
   merchantName: string;
@@ -330,6 +332,17 @@ export async function resolveMerchantSessionFromRequest(
 
   const cached = readCachedSession(accessToken, hintedMerchantId);
   if (cached) {
+    const legacyIdentityAllowed = await withTimeout(
+      assertLegacyMerchantIdentityAllowed(
+        createServerSupabaseServiceClient(),
+        { id: cached.authUserId },
+      )
+        .then(() => true)
+        .catch(() => false),
+      MERCHANT_SESSION_LOOKUP_TIMEOUT_MS,
+      false,
+    );
+    if (!legacyIdentityAllowed) return null;
     return {
       merchantId: cached.merchantId,
       merchantEmail: cached.merchantEmail || hintedEmail,
@@ -366,6 +379,15 @@ export async function resolveMerchantSessionFromRequest(
       return null;
     }
 
+    const legacyIdentityAllowed = await withTimeout(
+      assertLegacyMerchantIdentityAllowed(createServerSupabaseServiceClient(), user)
+        .then(() => true)
+        .catch(() => false),
+      MERCHANT_SESSION_LOOKUP_TIMEOUT_MS,
+      false,
+    );
+    if (!legacyIdentityAllowed) return null;
+
     const authorizedHintedMerchantId = await resolveAuthorizedHintedMerchantId(user, hintedMerchantId);
     let merchantId = authorizedHintedMerchantId;
     if (!merchantId) {
@@ -379,12 +401,17 @@ export async function resolveMerchantSessionFromRequest(
     if (!merchantId) return null;
 
     const resolved = {
+      authUserId: trimText(user.id),
       merchantId,
       merchantEmail: normalizeEmail(user.email, hintedEmail),
       merchantName: hintedName,
     } satisfies CachedMerchantSession;
     writeCachedSession(validatedAccessToken, hintedMerchantId, resolved);
-    return resolved;
+    return {
+      merchantId: resolved.merchantId,
+      merchantEmail: resolved.merchantEmail,
+      merchantName: resolved.merchantName,
+    };
   })();
 
   if (cacheKey) merchantSessionInflight.set(cacheKey, task);

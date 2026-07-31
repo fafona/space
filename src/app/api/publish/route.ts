@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import type { Block } from "@/data/homeBlocks";
 import { createDefaultMerchantPermissionConfig } from "@/data/platformControlStore";
 import { readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
+import { assertLegacyMerchantIdentityAllowed } from "@/lib/merchantStaffPrincipal.server";
 import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
 import { saveMerchantBookingRulesSnapshotForSites } from "@/lib/merchantBookingRulesStore";
 import { saveStoredMerchantDraft, type MerchantDraftStoreClient } from "@/lib/merchantDraftStore";
@@ -278,6 +279,14 @@ async function isAuthorizedForMerchantIds(
   for (const accessToken of accessTokens) {
     const authResult = await supabase.auth.getUser(accessToken);
     if (authResult.error || !authResult.data.user) continue;
+    const legacyIdentityAllowed = await assertLegacyMerchantIdentityAllowed(
+      supabase,
+      authResult.data.user,
+    ).then(
+      () => true,
+      () => false,
+    );
+    if (!legacyIdentityAllowed) continue;
 
     readMetadataMerchantIds(authResult.data.user).forEach((merchantId) => {
       authorizedMerchantIds.add(merchantId);

@@ -14,6 +14,7 @@ import {
   type PlatformMerchantSnapshotPayload,
 } from "./platformMerchantSnapshot";
 import {
+  loadAuthoritativeStoredPlatformMerchantSnapshot,
   loadStoredPlatformMerchantSnapshot,
   savePlatformMerchantSnapshot,
   type PlatformMerchantSnapshotStoreClient,
@@ -385,4 +386,32 @@ test("loadStoredPlatformMerchantSnapshot can return lightweight current snapshot
   assert.equal(lightweight.revision, "revision-main");
   assert.equal(lightweight.merchantConfigHistoryBySiteId["10000000"]?.length ?? 0, 0);
   assert.equal(full?.merchantConfigHistoryBySiteId["10000000"]?.length, 5);
+});
+
+test("authoritative snapshot loading never falls back to a stale backup", async () => {
+  const missingPrimaryClient = createMockSnapshotStore([
+    createStoredRow(
+      2,
+      PLATFORM_MERCHANT_SNAPSHOT_BACKUP_SLUG,
+      createPayload("revision-backup", 0),
+    ),
+  ]);
+  const missingPrimary = await loadAuthoritativeStoredPlatformMerchantSnapshot(
+    missingPrimaryClient,
+  );
+  assert.equal(missingPrimary.payload, null);
+  assert.equal(missingPrimary.error, "platform_merchant_snapshot_missing");
+
+  const primaryClient = createMockSnapshotStore([
+    createStoredRow(
+      1,
+      PLATFORM_MERCHANT_SNAPSHOT_SLUG,
+      createPayload("revision-primary", 0),
+    ),
+  ]);
+  const primary = await loadAuthoritativeStoredPlatformMerchantSnapshot(
+    primaryClient,
+  );
+  assert.equal(primary.error, null);
+  assert.equal(primary.payload?.revision, "revision-primary");
 });
