@@ -50,7 +50,10 @@ const REGISTRY_QUERY_SQL = [
   "\\gset",
   "\\echo __FAOLLA_REGISTRY__ :faolla_registry_exists",
   "\\if :faolla_registry_exists",
-  "SELECT version::text",
+  "SELECT json_build_object(",
+  "  'version', version::text,",
+  "  'name', name",
+  ")::text",
   "FROM public.faolla_schema_migrations",
   "ORDER BY version;",
   "\\endif",
@@ -534,22 +537,43 @@ function parseMigrationRegistryOutput(stdout) {
     throw migrationError("migration_registry_output_invalid");
   }
 
-  const versions = [];
+  const entries = [];
   const seen = new Set();
   for (const line of lines) {
-    if (!VERSION_PATTERN.test(line) || seen.has(line)) {
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
       throw migrationError("migration_registry_output_invalid");
     }
-    seen.add(line);
-    versions.push(line);
+    if (
+      !entry ||
+      Array.isArray(entry) ||
+      typeof entry !== "object" ||
+      !VERSION_PATTERN.test(entry.version) ||
+      seen.has(entry.version)
+    ) {
+      throw migrationError("migration_registry_output_invalid");
+    }
+    if (typeof entry.name !== "string" || entry.name.length === 0) {
+      throw migrationError("migration_registry_name_missing", {
+        version: entry.version,
+      });
+    }
+    seen.add(entry.version);
+    entries.push({
+      version: entry.version,
+      name: entry.name,
+    });
   }
-  versions.sort(compareAscii);
-  if (match[1] === "false" && versions.length > 0) {
+  entries.sort((left, right) => compareAscii(left.version, right.version));
+  if (match[1] === "false" && entries.length > 0) {
     throw migrationError("migration_registry_output_invalid");
   }
   return {
     exists: match[1] === "true",
-    versions,
+    entries,
+    versions: entries.map((entry) => entry.version),
   };
 }
 
@@ -573,6 +597,19 @@ function assertRegistryIsContinuousPrefix(registry, migrations) {
     )
   ) {
     throw migrationError("migration_registry_not_contiguous");
+  }
+
+  for (const entry of registry.entries) {
+    const localMigration = migrations.find(
+      (migration) => migration.version === entry.version,
+    );
+    if (entry.name !== localMigration.name) {
+      throw migrationError("migration_registry_name_mismatch", {
+        version: entry.version,
+        registeredName: entry.name,
+        localName: localMigration.name,
+      });
+    }
   }
 }
 
@@ -649,6 +686,7 @@ export async function applyProductionDatabaseMigrations(input = {}) {
       discovered: discovery.migrations.map(reportMigration),
       selected: discovery.selected.map(reportMigration),
       registeredVersions: registry.versions,
+      registered: registry.entries,
       pending: pending.map(reportMigration),
       executed: [],
     };
@@ -692,6 +730,7 @@ export async function applyProductionDatabaseMigrations(input = {}) {
       status: executed.length > 0 ? "applied" : "up_to_date",
       registryExists: registry.exists,
       registeredVersions: registry.versions,
+      registered: registry.entries,
       executed,
     };
   } finally {

@@ -25,6 +25,11 @@ const VERSIONS = [
   "202607250002",
   "202607310001",
 ];
+const VERSION_NAMES = new Map([
+  [VERSIONS[0], "core_transaction_foundation"],
+  [VERSIONS[1], "order_shadow_write_rpc"],
+  [VERSIONS[2], "merchant_enterprise_foundation"],
+]);
 
 function migrationSource(version, name) {
   return `begin;
@@ -87,6 +92,17 @@ function selfHostedTopology(name = "supabase-db") {
 
 function createRegistryCommandRunner(input = {}) {
   const applied = new Set(input.applied ?? []);
+  const registeredNames = new Map(
+    [...applied].map((version) => [
+      version,
+      VERSION_NAMES.get(version) ?? "unknown_migration",
+    ]),
+  );
+  for (const [version, name] of Object.entries(
+    input.registeredNames ?? {},
+  )) {
+    registeredNames.set(version, name);
+  }
   let registryExists = input.registryExists ?? applied.size > 0;
   const calls = [];
   const runner = async (command, args, options = {}) => {
@@ -101,7 +117,12 @@ function createRegistryCommandRunner(input = {}) {
         status: 0,
         stdout: [
           `__FAOLLA_REGISTRY__ ${registryExists ? "true" : "false"}`,
-          ...versions,
+          ...versions.map((version) =>
+            JSON.stringify({
+              version,
+              name: registeredNames.get(version),
+            }),
+          ),
           "",
         ].join("\n"),
         stderr: "",
@@ -109,9 +130,10 @@ function createRegistryCommandRunner(input = {}) {
       };
     }
 
-    const version = options.input.match(
-      /values\s*\(\s*(\d{12})\s*,/i,
-    )?.[1];
+    const registration = options.input.match(
+      /values\s*\(\s*(\d{12})\s*,\s*'([a-z0-9_]+)'/i,
+    );
+    const version = registration?.[1];
     assert.match(version ?? "", /^\d{12}$/);
     if (version === input.failVersion) {
       return {
@@ -122,6 +144,7 @@ function createRegistryCommandRunner(input = {}) {
       };
     }
     applied.add(version);
+    registeredNames.set(version, registration[2]);
     registryExists = true;
     return {
       status: 0,
@@ -292,6 +315,8 @@ test("default execution is dry-run, treats a missing registry as empty, and neve
   );
   assert.deepEqual(report.executed, []);
   assert.equal(commands.calls.length, 1);
+  assert.match(commands.calls[0].options.input, /json_build_object/);
+  assert.match(commands.calls[0].options.input, /'name', name/);
   assert.equal(await exists(lockPath), false);
 
   const serializedCommands = JSON.stringify(commands.calls);
@@ -400,6 +425,45 @@ test("registered versions must be a known continuous prefix of local migrations"
     }),
     (error) =>
       assertMigrationError(error, "migration_registry_not_contiguous"),
+  );
+});
+
+test("registered migration names must be present and match local filename suffixes", async (t) => {
+  const fixture = await createFixture(t);
+  const mismatch = createRegistryCommandRunner({
+    applied: [VERSIONS[0]],
+    registryExists: true,
+    registeredNames: {
+      [VERSIONS[0]]: "wrong_foundation",
+    },
+  });
+  await assert.rejects(
+    applyProductionDatabaseMigrations({
+      rootDir: fixture.root,
+      selfHostedTopology: selfHostedTopology(),
+      runCommand: mismatch.runner,
+      lockPath: path.join(fixture.root, "name-mismatch.lock"),
+    }),
+    (error) =>
+      assertMigrationError(error, "migration_registry_name_mismatch"),
+  );
+
+  const missing = createRegistryCommandRunner({
+    applied: [VERSIONS[0]],
+    registryExists: true,
+    registeredNames: {
+      [VERSIONS[0]]: null,
+    },
+  });
+  await assert.rejects(
+    applyProductionDatabaseMigrations({
+      rootDir: fixture.root,
+      selfHostedTopology: selfHostedTopology(),
+      runCommand: missing.runner,
+      lockPath: path.join(fixture.root, "name-missing.lock"),
+    }),
+    (error) =>
+      assertMigrationError(error, "migration_registry_name_missing"),
   );
 });
 
