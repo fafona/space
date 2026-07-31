@@ -199,6 +199,8 @@ function createMockSnapshotStore(
   initialRows: PageRow[],
   options: {
     beforeUpdate?: (row: PageRow | null) => void | Promise<void>;
+    onUpdate?: (row: PageRow | null) => void;
+    selectErrorBySlug?: Record<string, string>;
   } = {},
 ) {
   let rows = initialRows.map((row) => ({ ...row }));
@@ -206,6 +208,7 @@ function createMockSnapshotStore(
 
   class QueryBuilder {
     private readonly filters: Array<(row: PageRow) => boolean> = [];
+    private readonly filterValues = new Map<string, unknown>();
     private action: "select" | "update" | null = null;
     private payload: Record<string, unknown> | null = null;
 
@@ -242,11 +245,13 @@ function createMockSnapshotStore(
 
     is(column: string, value: unknown) {
       this.filters.push((row) => (row as Record<string, unknown>)[column] === value);
+      this.filterValues.set(column, value);
       return this;
     }
 
     eq(column: string, value: unknown) {
       this.filters.push((row) => (row as Record<string, unknown>)[column] === value);
+      this.filterValues.set(column, value);
       return this;
     }
 
@@ -255,6 +260,14 @@ function createMockSnapshotStore(
     }
 
     maybeSingle() {
+      const slug = String(this.filterValues.get("slug") ?? "");
+      const selectError = options.selectErrorBySlug?.[slug];
+      if (selectError) {
+        return Promise.resolve({
+          data: null,
+          error: { message: selectError },
+        });
+      }
       const matched = rows.find((row) => this.filters.every((filter) => filter(row))) ?? null;
       return Promise.resolve({ data: matched, error: null });
     }
@@ -267,6 +280,7 @@ function createMockSnapshotStore(
         return Promise.resolve({ data: null, error: null }).then(onfulfilled, onrejected);
       }
       const matchedRow = rows.find((row) => this.filters.every((filter) => filter(row))) ?? null;
+      options.onUpdate?.(matchedRow);
       return Promise.resolve(options.beforeUpdate?.(matchedRow))
         .then(() => {
           rows = rows.map((row) =>
@@ -381,6 +395,36 @@ test("savePlatformMerchantSnapshot starts primary and history writes in parallel
 
   const result = await savePromise;
   assert.equal(result.error, null);
+});
+
+test("savePlatformMerchantSnapshot never writes when a required snapshot read fails", async () => {
+  let updateCalls = 0;
+  const client = createMockSnapshotStore(
+    [
+      createStoredRow(1, PLATFORM_MERCHANT_SNAPSHOT_SLUG, createPayload("revision-main", 0)),
+      createStoredRow(2, PLATFORM_MERCHANT_SNAPSHOT_HISTORY_SLUG, createPayload("revision-history", 1)),
+    ],
+    {
+      selectErrorBySlug: {
+        [PLATFORM_MERCHANT_SNAPSHOT_SLUG]: "TypeError: fetch failed",
+      },
+      onUpdate: () => {
+        updateCalls += 1;
+      },
+    },
+  );
+
+  const result = await savePlatformMerchantSnapshot(client, createPayload("revision-main", 1), {
+    expectedRevision: "revision-main",
+  });
+
+  assert.equal(
+    result.error,
+    "platform_merchant_snapshot_primary_load_failed:TypeError: fetch failed",
+  );
+  assert.equal(updateCalls, 0);
+  assert.equal(client.read(PLATFORM_MERCHANT_SNAPSHOT_SLUG)?.revision, "revision-main");
+  assert.equal(client.read(PLATFORM_MERCHANT_SNAPSHOT_HISTORY_SLUG)?.revision, "revision-history");
 });
 
 test("savePlatformMerchantSnapshot rejects stale revisions without writing", async () => {

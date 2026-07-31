@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
 import {
   normalizePlatformMerchantConfigArchivePayload,
   type PlatformMerchantConfigArchivePayload,
@@ -8,38 +7,14 @@ import {
   loadStoredPlatformMerchantConfigArchive,
   type PlatformMerchantConfigArchiveStoreClient,
 } from "@/lib/platformMerchantConfigArchiveStore";
+import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type QueryBuilder = PromiseLike<{ data?: unknown; error: { message?: string } | null }> & {
-  select: (columns: string) => QueryBuilder;
-  is: (column: string, value: unknown) => QueryBuilder;
-  eq: (column: string, value: unknown) => QueryBuilder;
-  limit: (value: number) => QueryBuilder;
-  maybeSingle: () => Promise<{ data?: unknown; error: { message?: string } | null }>;
-};
-
-type LooseSupabaseClient = {
-  from: (table: string) => QueryBuilder;
-};
-
-function readEnv(name: string) {
-  return String(process.env[name] ?? "").trim();
-}
-
 function createServerSupabaseClient() {
-  const supabaseUrl = readEnv("NEXT_PUBLIC_SUPABASE_URL");
-  const serviceRoleKey = readEnv("SUPABASE_SERVICE_ROLE_KEY") || readEnv("NEXT_SUPABASE_SERVICE_ROLE_KEY");
-  if (!supabaseUrl || !serviceRoleKey) return null;
-  return createClient(supabaseUrl, serviceRoleKey, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-      detectSessionInUrl: false,
-    },
-  }) as unknown as LooseSupabaseClient;
+  return createServerSupabaseServiceClient();
 }
 
 function clampLimit(value: string | null) {

@@ -11,6 +11,10 @@ const SUPER_ADMIN_AUTH_ENV_KEYS = [
 
 const SUPER_ADMIN_SUPABASE_AUTH_ENV_KEYS = ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY"] as const;
 
+type ServerSupabaseServiceClientOptions = {
+  fetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+};
+
 function readEnv(name: string) {
   return (process.env[name] ?? "").trim();
 }
@@ -70,7 +74,9 @@ export function createServerSupabaseAuthClient() {
   });
 }
 
-export function createServerSupabaseServiceClient() {
+export function createServerSupabaseServiceClient(
+  options: ServerSupabaseServiceClientOptions = {},
+) {
   const supabaseUrl = resolveServerSupabaseUrl();
   const serviceRoleKey = readEnv("SUPABASE_SERVICE_ROLE_KEY") || readEnv("NEXT_SUPABASE_SERVICE_ROLE_KEY");
   if (!supabaseUrl || !serviceRoleKey) return null;
@@ -81,6 +87,13 @@ export function createServerSupabaseServiceClient() {
       autoRefreshToken: false,
       detectSessionInUrl: false,
     },
+    ...(options.fetch
+      ? {
+          global: {
+            fetch: options.fetch,
+          },
+        }
+      : {}),
   });
 }
 

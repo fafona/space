@@ -183,7 +183,7 @@ function describePlatformMerchantSnapshotRequestError(error: unknown, fallback: 
     if (error.message === "request_timeout" || isAbortRequestError(error)) {
       return "请求超时，请检查网络后重试";
     }
-    if (/failed to fetch|networkerror|load failed/i.test(error.message)) {
+    if (/failed to fetch|fetch failed|networkerror|load failed/i.test(error.message)) {
       return "网络请求失败，请检查连接后重试";
     }
     return error.message || fallback;

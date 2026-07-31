@@ -348,6 +348,19 @@ export async function savePlatformMerchantSnapshot(
     loadStoredPlatformMerchantSnapshotEntryBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_SLUG),
     loadStoredPlatformMerchantSnapshotEntryBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_HISTORY_SLUG),
   ]);
+  const requiredLoadErrors = [
+    primaryEntry.error
+      ? `platform_merchant_snapshot_primary_load_failed:${primaryEntry.error}`
+      : "",
+    historyEntry.error
+      ? `platform_merchant_snapshot_history_load_failed:${historyEntry.error}`
+      : "",
+  ].filter(Boolean);
+  if (requiredLoadErrors.length > 0) {
+    return {
+      error: requiredLoadErrors.join(";"),
+    };
+  }
   const backupEntry =
     primaryEntry.payload || primaryEntry.error
       ? null
