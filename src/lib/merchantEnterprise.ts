@@ -191,6 +191,11 @@ export type MerchantTaskEventPayload = {
   position?: number;
   completedAt?: string | null;
   checklistItemId?: string;
+  employeeId?: string;
+  offboardedEmployeeId?: string;
+  replacementEmployeeId?: string;
+  oldRoleId?: string;
+  newRoleId?: string;
   completed?: boolean;
   previousCompleted?: boolean;
   archived?: boolean;
@@ -486,6 +491,62 @@ export function merchantEnterpriseRoleFitsActor(
   );
 }
 
+export function getMerchantEmployeeRoleTransitionAffectedTasks(
+  employee: Pick<MerchantEnterpriseEmployee, "id">,
+  targetRole: {
+    permissions: readonly MerchantEnterprisePermission[];
+    accessScope: MerchantEnterpriseBoardAccessScope;
+    allowedBoardIds: readonly string[];
+  },
+  tasks: readonly MerchantTask[],
+) {
+  const canViewTasks = targetRole.permissions.includes("tasks.view");
+  const allowedBoardIds =
+    targetRole.accessScope === "restricted"
+      ? new Set(targetRole.allowedBoardIds)
+      : null;
+
+  return tasks.filter(
+    (task) =>
+      task.assigneeIds.includes(employee.id) &&
+      !task.archivedAt &&
+      !task.completedAt &&
+      (!canViewTasks || Boolean(allowedBoardIds && !allowedBoardIds.has(task.boardId))),
+  );
+}
+
+export function canMerchantEnterpriseEmployeeCoverBoards(
+  employee:
+    | Pick<MerchantEnterpriseEmployee, "roleId" | "status">
+    | null
+    | undefined,
+  role:
+    | {
+        id: string;
+        permissions: readonly MerchantEnterprisePermission[];
+        accessScope: MerchantEnterpriseBoardAccessScope;
+        allowedBoardIds: readonly string[];
+        status: MerchantEnterpriseRoleStatus;
+      }
+    | null
+    | undefined,
+  boardIds: readonly string[],
+) {
+  if (
+    !employee ||
+    employee.status !== "active" ||
+    !role ||
+    role.status !== "active" ||
+    employee.roleId !== role.id ||
+    !role.permissions.includes("tasks.view")
+  ) {
+    return false;
+  }
+  if (role.accessScope === "all") return true;
+  const allowedBoardIds = new Set(role.allowedBoardIds);
+  return boardIds.every((boardId) => allowedBoardIds.has(boardId));
+}
+
 export function getMerchantEnterpriseDefaultRoleBoardAccess(
   actor: MerchantEnterpriseActor,
 ): MerchantEnterpriseBoardAccess {
@@ -726,7 +787,16 @@ export function normalizeMerchantTaskEvent(value: unknown): MerchantTaskEvent | 
   const fields = normalizeEventTextArray(rawPayload.fields, 32, 80);
   if (fields?.length) payload.fields = fields;
 
-  for (const key of ["columnId", "fromColumnId", "toColumnId"] as const) {
+  for (const key of [
+    "columnId",
+    "fromColumnId",
+    "toColumnId",
+    "employeeId",
+    "offboardedEmployeeId",
+    "replacementEmployeeId",
+    "oldRoleId",
+    "newRoleId",
+  ] as const) {
     const normalized = normalizeText(rawPayload[key], 80);
     if (normalized) payload[key] = normalized;
   }

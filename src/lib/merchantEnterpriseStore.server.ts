@@ -329,6 +329,9 @@ function throwEmployeeRpcError(operation: string, error: unknown): never {
     "employee_open_tasks_require_resolution",
     "employee_offboarding_replacement_invalid",
     "employee_offboarding_scope_denied",
+    "employee_role_transition_required",
+    "employee_role_transition_replacement_invalid",
+    "employee_role_transition_scope_denied",
     "permission_escalation_denied",
     "permission_denied",
     "employee_board_access_in_use",
@@ -1026,6 +1029,7 @@ export async function createMerchantEnterpriseEmployee(
 }
 
 export type MerchantEnterpriseEmployeeOffboardingMode = "unassign" | "reassign";
+export type MerchantEnterpriseEmployeeRoleTransitionMode = "unassign" | "reassign";
 
 export async function updateMerchantEnterpriseEmployee(
   client: MerchantEnterpriseStoreClient,
@@ -1037,6 +1041,8 @@ export async function updateMerchantEnterpriseEmployee(
     roleId?: string;
     status?: MerchantEnterpriseEmployeeStatus;
     offboardingMode?: MerchantEnterpriseEmployeeOffboardingMode;
+    roleVersion?: number;
+    roleTransitionMode?: MerchantEnterpriseEmployeeRoleTransitionMode;
     replacementEmployeeId?: string;
     actorType: "owner" | "employee";
     actorId: string;
@@ -1064,23 +1070,66 @@ export async function updateMerchantEnterpriseEmployee(
   }
 
   const offboardingMode = input.offboardingMode;
+  const roleTransitionMode = input.roleTransitionMode;
   const replacementEmployeeId = normalizeText(input.replacementEmployeeId, 80);
+  const hasRoleTransition =
+    input.roleVersion !== undefined || roleTransitionMode !== undefined;
+  if (offboardingMode !== undefined && roleTransitionMode !== undefined) {
+    throw new Error("invalid_employee_role_transition");
+  }
   if (
     (offboardingMode !== undefined &&
       offboardingMode !== "unassign" &&
       offboardingMode !== "reassign") ||
-    ((offboardingMode !== undefined || input.replacementEmployeeId !== undefined) &&
-      input.status !== "disabled") ||
+    (offboardingMode !== undefined && input.status !== "disabled") ||
     (offboardingMode === "unassign" && Boolean(replacementEmployeeId)) ||
-    (offboardingMode === "reassign" && !replacementEmployeeId) ||
-    (input.replacementEmployeeId !== undefined && offboardingMode !== "reassign")
+    (offboardingMode === "reassign" && !replacementEmployeeId)
   ) {
     throw new Error("invalid_employee_offboarding");
   }
-  if (replacementEmployeeId && replacementEmployeeId === employeeId) {
+  if (
+    offboardingMode === "reassign" &&
+    replacementEmployeeId === employeeId
+  ) {
     throw new Error("employee_offboarding_replacement_invalid");
   }
+  if (
+    input.replacementEmployeeId !== undefined &&
+    offboardingMode === undefined &&
+    roleTransitionMode === undefined &&
+    input.status === "disabled"
+  ) {
+    throw new Error("invalid_employee_offboarding");
+  }
   if (offboardingMode !== undefined) patch.offboarding_mode = offboardingMode;
+
+  if (
+    (hasRoleTransition && input.roleId === undefined) ||
+    (input.roleId !== undefined &&
+      (!Number.isSafeInteger(input.roleVersion) || Number(input.roleVersion) < 1)) ||
+    (roleTransitionMode !== undefined &&
+      roleTransitionMode !== "unassign" &&
+      roleTransitionMode !== "reassign") ||
+    (roleTransitionMode === "unassign" && Boolean(replacementEmployeeId)) ||
+    (roleTransitionMode === "reassign" && !replacementEmployeeId) ||
+    (input.replacementEmployeeId !== undefined &&
+      offboardingMode === undefined &&
+      roleTransitionMode !== "reassign")
+  ) {
+    throw new Error("invalid_employee_role_transition");
+  }
+  if (
+    roleTransitionMode === "reassign" &&
+    replacementEmployeeId === employeeId
+  ) {
+    throw new Error("employee_role_transition_replacement_invalid");
+  }
+  if (input.roleId !== undefined) {
+    patch.expected_role_version = input.roleVersion;
+  }
+  if (roleTransitionMode !== undefined) {
+    patch.role_transition_mode = roleTransitionMode;
+  }
   if (replacementEmployeeId) patch.replacement_employee_id = replacementEmployeeId;
 
   if (!siteId || !employeeId || Object.keys(patch).length === 0) {

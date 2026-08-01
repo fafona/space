@@ -866,7 +866,8 @@ test("pending employee invitations have a safe responsive management flow", () =
     "savePendingEmployeeInvitation",
   );
   assert.match(saveInvitationSource, /["']PATCH["']/);
-  assert.match(saveInvitationSource, /displayName,\s*\n\s*roleId/);
+  assert.match(saveInvitationSource, /roleId\s*!==\s*employee\.roleId/);
+  assert.match(saveInvitationSource, /roleVersion:\s*targetRole\.version/);
   assert.doesNotMatch(saveInvitationSource, /email\s*:/);
 
   const removeInvitationSource = sliceBetween(
@@ -932,7 +933,7 @@ test("active employees use a confirmed offboarding flow with atomic task resolut
 
   const confirmSource = sliceBetween(
     /async\s+function\s+confirmEmployeeOffboarding\b/,
-    /async\s+function\s+updateEmployeeRole\b/,
+    /function\s+updateEmployeeRole\b/,
     "confirmEmployeeOffboarding",
   );
   assert.match(confirmSource, /status:\s*["']disabled["']/);
@@ -947,6 +948,66 @@ test("active employees use a confirmed offboarding flow with atomic task resolut
   assert.match(
     source,
     /<EmployeeOffboardingDialog[\s\S]{0,900}onConfirm=\{confirmEmployeeOffboarding\}/,
+  );
+});
+
+test("employee role changes preview and atomically resolve incompatible open tasks", () => {
+  const dialogSource = sliceBetween(
+    /function\s+EmployeeRoleTransitionDialog\b/,
+    /type\s+RoleBoardAccessValue\b/,
+    "EmployeeRoleTransitionDialog",
+  );
+  assert.match(dialogSource, /role=["']dialog["']/);
+  assert.match(dialogSource, /确认员工角色变更/);
+  assert.match(dialogSource, /受影响的未完成任务/);
+  assert.match(dialogSource, /只从新角色无法访问的任务中移除该员工/);
+  assert.match(dialogSource, /value=["']unassign["']/);
+  assert.match(dialogSource, /value=["']reassign["']/);
+  assert.match(dialogSource, /请选择接手员工/);
+  assert.match(dialogSource, /现有任务负责人无需调整/);
+  assert.match(dialogSource, /replacementCandidateAvailable/);
+  assert.match(dialogSource, /role=["']alert["'][\s\S]{0,220}\{errorMessage\}/);
+  assert.match(dialogSource, /max-h-\[calc\(100dvh-1rem\)\]/);
+
+  const impactSource = sliceBetween(
+    /const\s+roleTransitionEmployee\s*=/,
+    /const\s+mutate\s*=\s*useCallback\b/,
+    "role transition impact",
+  );
+  assert.match(
+    impactSource,
+    /getMerchantEmployeeRoleTransitionAffectedTasks\([\s\S]{0,220}snapshot\.tasks/,
+  );
+  assert.match(
+    impactSource,
+    /canMerchantEnterpriseEmployeeCoverBoards\([\s\S]{0,220}roleTransitionAffectedBoardIds/,
+  );
+  assert.match(impactSource, /employee\.id\s*===\s*roleTransitionEmployee\.id/);
+
+  const requestSource = sliceBetween(
+    /function\s+updateEmployeeRole\b/,
+    /async\s+function\s+confirmEmployeeRoleTransition\b/,
+    "updateEmployeeRole",
+  );
+  assert.doesNotMatch(requestSource, /await\s+mutate\(/);
+  assert.match(requestSource, /setRoleTransitionRequest\(\{\s*employeeId:\s*employee\.id,\s*targetRoleId:\s*targetRole\.id\s*\}\)/);
+
+  const confirmSource = sliceBetween(
+    /async\s+function\s+confirmEmployeeRoleTransition\b/,
+    /async\s+function\s+createRole\b/,
+    "confirmEmployeeRoleTransition",
+  );
+  assert.match(confirmSource, /roleId:\s*roleTransitionTargetRole\.id/);
+  assert.match(confirmSource, /roleVersion:\s*roleTransitionTargetRole\.version/);
+  assert.match(confirmSource, /roleTransitionMode:\s*mode/);
+  assert.match(confirmSource, /replacementEmployeeId/);
+  assert.match(confirmSource, /setRoleTransitionRequest\(null\)/);
+
+  assert.match(source, /!offboardingEmployeeId[\s\S]{0,120}!roleTransitionRequest[\s\S]{0,120}!draggingTaskId/);
+  assert.match(source, /event\.eventType\s*===\s*["']employee_role_transitioned["']/);
+  assert.match(
+    source,
+    /<EmployeeRoleTransitionDialog[\s\S]{0,1200}onConfirm=\{confirmEmployeeRoleTransition\}/,
   );
 });
 

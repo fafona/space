@@ -33,8 +33,10 @@ import {
 import {
   buildMerchantEnterpriseTaskOverview,
   buildMerchantTaskEditChanges,
+  canMerchantEnterpriseEmployeeCoverBoards,
   canCreateMerchantEnterpriseBoards,
   filterMerchantTasks,
+  getMerchantEmployeeRoleTransitionAffectedTasks,
   getMerchantEnterpriseDefaultTaskAssigneeFilter,
   getMerchantEnterpriseDefaultRoleBoardAccess,
   getMerchantTaskCompletionTransition,
@@ -221,6 +223,11 @@ function taskEventDescription(
       ? "因员工停用转交了负责人"
       : "因员工停用解除了负责人";
   }
+  if (event.eventType === "employee_role_transitioned") {
+    return typeof taskEventPayload(event).replacementEmployeeId === "string"
+      ? "因员工角色变更转交了负责人"
+      : "因员工角色变更解除了负责人";
+  }
   if (event.eventType === "moved") {
     const payload = taskEventPayload(event);
     const fromColumnId = typeof payload.fromColumnId === "string" ? payload.fromColumnId : "";
@@ -399,6 +406,16 @@ function readApiError(payload: unknown, fallback: string) {
   if (code === "invalid_role_board_access") return "看板访问范围无效，请重新选择后保存。";
   if (code === "role_board_access_in_use") return "该角色仍有员工负责新范围之外的未完成任务，请先调整负责人或任务。";
   if (code === "employee_board_access_in_use") return "该员工仍有新角色无法访问的未完成任务，请先调整负责人。";
+  if (code === "employee_role_transition_required") {
+    return "员工任务状态已变化，请重新加载后选择解除负责人或转交任务。";
+  }
+  if (code === "employee_role_transition_replacement_invalid") {
+    return "接手员工当前不可用，或无权访问全部受影响看板。";
+  }
+  if (code === "employee_role_transition_scope_denied") {
+    return "当前账号无权调整此次角色变更涉及的全部任务，请由企业负责人处理。";
+  }
+  if (code === "invalid_employee_role_transition") return "员工角色变更参数无效，请重新选择。";
   if (code === "task_assignee_board_access_denied") return "部分负责人无权访问当前看板，请调整角色范围或负责人。";
   if (code === "invalid_permission_dependencies") return "权限组合不完整，请保留关联的查看权限。";
   if (code === "role_in_use") return "该角色仍分配给员工，请先为这些员工更换角色。";
@@ -480,6 +497,7 @@ type TaskDraft = {
 };
 
 type EmployeeOffboardingMode = "unassign" | "reassign";
+type EmployeeRoleTransitionMode = "unassign" | "reassign";
 
 function taskDateInputValue(value: string | null) {
   if (!value || !Number.isFinite(Date.parse(value))) return "";
@@ -1848,6 +1866,261 @@ function EmployeeOffboardingDialog({
   );
 }
 
+function EmployeeRoleTransitionDialog({
+  employee,
+  currentRole,
+  targetRole,
+  affectedTasks,
+  affectedBoardNames,
+  taskCountExact,
+  replacementCandidates,
+  allowTaskResolution,
+  busy,
+  errorMessage,
+  onConfirm,
+  onClose,
+}: {
+  employee: MerchantEnterpriseEmployee;
+  currentRole: MerchantEnterpriseRole | null;
+  targetRole: MerchantEnterpriseRole;
+  affectedTasks: Array<Pick<MerchantTask, "id" | "title">>;
+  affectedBoardNames: string[];
+  taskCountExact: boolean;
+  replacementCandidates: Array<Pick<MerchantEnterpriseEmployee, "id" | "displayName">>;
+  allowTaskResolution: boolean;
+  busy: boolean;
+  errorMessage: string;
+  onConfirm: (mode?: EmployeeRoleTransitionMode, replacementEmployeeId?: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [mode, setMode] = useState<EmployeeRoleTransitionMode>("unassign");
+  const [replacementEmployeeId, setReplacementEmployeeId] = useState("");
+  const cancelButtonRef = useRef<HTMLButtonElement>(null);
+  const busyRef = useRef(busy);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    busyRef.current = busy;
+    onCloseRef.current = onClose;
+  }, [busy, onClose]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || busyRef.current) return;
+      event.preventDefault();
+      onCloseRef.current();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    const focusFrame = window.requestAnimationFrame(() => cancelButtonRef.current?.focus());
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.cancelAnimationFrame(focusFrame);
+    };
+  }, []);
+
+  const hasAffectedTasks = affectedTasks.length > 0;
+  const replacementCandidateAvailable = replacementCandidates.some(
+    (candidate) => candidate.id === replacementEmployeeId,
+  );
+  const canSubmit =
+    !hasAffectedTasks ||
+    (allowTaskResolution &&
+      (mode === "unassign" || (mode === "reassign" && replacementCandidateAvailable)));
+  const taskSummary = taskCountExact
+    ? hasAffectedTasks
+      ? `新角色无法访问该员工当前负责的 ${affectedTasks.length} 个未完成任务。`
+      : "新角色与该员工当前负责的未完成任务兼容。"
+    : hasAffectedTasks
+      ? `当前可见范围内有 ${affectedTasks.length} 个任务受影响；服务器保存时还会复核全部任务。`
+      : "当前可见范围内没有受影响任务；服务器保存时还会复核全部任务。";
+  const targetScopeLabel =
+    targetRole.accessScope === "all"
+      ? "全部看板"
+      : `指定看板 ${targetRole.allowedBoardIds.length} 个`;
+
+  return (
+    <div
+      className="fixed inset-0 z-[145] flex items-end justify-center bg-slate-950/55 p-0 backdrop-blur-sm sm:items-center sm:p-6"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) onClose();
+      }}
+    >
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="enterprise-employee-role-transition-title"
+        aria-describedby="enterprise-employee-role-transition-summary"
+        className="max-h-[calc(100dvh-1rem)] w-full max-w-2xl rounded-t-3xl bg-white p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] shadow-2xl sm:max-h-[calc(100dvh-3rem)] sm:rounded-3xl sm:p-6"
+        style={{ overflowY: "auto" }}
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h2 id="enterprise-employee-role-transition-title" className="!text-xl !font-bold !text-slate-950">
+              确认员工角色变更
+            </h2>
+            <p
+              id="enterprise-employee-role-transition-summary"
+              className="mt-2 text-sm leading-6 text-slate-600"
+            >
+              将“{employee.displayName}”从“{currentRole?.name || "未分配角色"}”调整为“{targetRole.name}”。{taskSummary}
+            </p>
+          </div>
+          <button
+            ref={cancelButtonRef}
+            type="button"
+            className="min-h-11 shrink-0 rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 disabled:opacity-45"
+            disabled={busy}
+            onClick={onClose}
+          >
+            取消
+          </button>
+        </div>
+
+        <div className="mt-5 grid gap-3 sm:grid-cols-2">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <div className="text-xs font-medium text-slate-500">当前角色</div>
+            <div className="mt-1 font-semibold text-slate-900">{currentRole?.name || "未分配角色"}</div>
+          </div>
+          <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4">
+            <div className="text-xs font-medium text-blue-600">目标角色</div>
+            <div className="mt-1 font-semibold text-slate-900">{targetRole.name}</div>
+            <div className="mt-1 text-xs text-slate-500">{targetScopeLabel}</div>
+          </div>
+        </div>
+
+        {hasAffectedTasks ? (
+          <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+            <div className="text-sm font-semibold text-amber-900">受影响的未完成任务</div>
+            {affectedBoardNames.length > 0 ? (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {affectedBoardNames.map((boardName) => (
+                  <span key={boardName} className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-amber-800">
+                    {boardName}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            <ul className="mt-3 space-y-1.5 text-xs leading-5 text-amber-900">
+              {affectedTasks.slice(0, 5).map((task) => (
+                <li key={task.id}>• {task.title}</li>
+              ))}
+              {affectedTasks.length > 5 ? <li>• 另有 {affectedTasks.length - 5} 个任务</li> : null}
+            </ul>
+          </div>
+        ) : (
+          <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+            现有任务负责人无需调整，确认后只会更新员工角色。
+          </div>
+        )}
+
+        {hasAffectedTasks ? (
+          <fieldset className="mt-5 space-y-3" disabled={busy || !allowTaskResolution}>
+            <legend className="text-sm font-semibold text-slate-900">受影响任务处理方式</legend>
+            <label className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-4 ${
+              mode === "unassign" ? "border-blue-400 bg-blue-50" : "border-slate-200 bg-white"
+            }`}>
+              <input
+                type="radio"
+                name="employee-role-transition-mode"
+                value="unassign"
+                checked={mode === "unassign"}
+                onChange={() => setMode("unassign")}
+              />
+              <span>
+                <span className="block text-sm font-semibold text-slate-900">解除该员工的负责人</span>
+                <span className="mt-1 block text-xs leading-5 text-slate-500">
+                  只从新角色无法访问的任务中移除该员工，其他任务和负责人保持不变。
+                </span>
+              </span>
+            </label>
+            <label className={`flex items-start gap-3 rounded-2xl border p-4 ${
+              mode === "reassign" ? "border-blue-400 bg-blue-50" : "border-slate-200 bg-white"
+            } ${replacementCandidates.length > 0 ? "cursor-pointer" : "opacity-60"}`}>
+              <input
+                type="radio"
+                name="employee-role-transition-mode"
+                value="reassign"
+                checked={mode === "reassign"}
+                disabled={replacementCandidates.length === 0}
+                onChange={() => setMode("reassign")}
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-semibold text-slate-900">转交给另一名员工</span>
+                <span className="mt-1 block text-xs leading-5 text-slate-500">
+                  接手员工必须处于启用状态，并能访问全部受影响看板。
+                </span>
+                {mode === "reassign" ? (
+                  <select
+                    className="mt-3 min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                    value={replacementEmployeeId}
+                    onChange={(event) => setReplacementEmployeeId(event.target.value)}
+                  >
+                    <option value="">请选择接手员工</option>
+                    {replacementCandidates.map((candidate) => (
+                      <option key={candidate.id} value={candidate.id}>{candidate.displayName}</option>
+                    ))}
+                  </select>
+                ) : null}
+              </span>
+            </label>
+          </fieldset>
+        ) : null}
+
+        {hasAffectedTasks && !allowTaskResolution ? (
+          <p className="mt-3 text-xs leading-5 text-amber-700">
+            当前账号没有任务分派权限，不能处理此次角色变更影响。请由企业负责人或具有任务分派权限的员工操作。
+          </p>
+        ) : hasAffectedTasks && replacementCandidates.length === 0 ? (
+          <p className="mt-3 text-xs leading-5 text-amber-700">
+            暂无能够访问全部受影响看板的启用员工，可选择解除负责人。
+          </p>
+        ) : null}
+
+        {errorMessage ? (
+          <p role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm leading-6 text-rose-700">
+            {errorMessage}
+          </p>
+        ) : null}
+
+        <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <button
+            type="button"
+            className="min-h-11 rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 disabled:opacity-45"
+            disabled={busy}
+            onClick={onClose}
+          >
+            返回员工列表
+          </button>
+          <button
+            type="button"
+            className="min-h-11 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-45"
+            disabled={busy || !canSubmit}
+            onClick={() => void onConfirm(hasAffectedTasks ? mode : undefined, replacementEmployeeId)}
+          >
+            {busy
+              ? "正在保存…"
+              : hasAffectedTasks
+                ? mode === "reassign"
+                  ? "更换角色并转交任务"
+                  : "更换角色并解除负责人"
+                : "确认更换角色"}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 type RoleBoardAccessValue = Pick<
   MerchantEnterpriseRole,
   "accessScope" | "allowedBoardIds"
@@ -2750,6 +3023,10 @@ function MerchantEnterpriseManagerContent({
   const [managedInvitationName, setManagedInvitationName] = useState("");
   const [managedInvitationRoleId, setManagedInvitationRoleId] = useState("");
   const [offboardingEmployeeId, setOffboardingEmployeeId] = useState("");
+  const [roleTransitionRequest, setRoleTransitionRequest] = useState<{
+    employeeId: string;
+    targetRoleId: string;
+  } | null>(null);
   const employeeInviteFormRef = useRef<HTMLElement | null>(null);
   const employeeEmailInputRef = useRef<HTMLInputElement | null>(null);
   const [failedInvitationEmployeeIds, setFailedInvitationEmployeeIds] = useState<Set<string>>(
@@ -3048,6 +3325,7 @@ function MerchantEnterpriseManagerContent({
       !busy &&
       !editingTaskId &&
       !offboardingEmployeeId &&
+      !roleTransitionRequest &&
       !draggingTaskId &&
       (tab === "overview" ||
         (tab === "tasks" &&
@@ -3268,6 +3546,65 @@ function MerchantEnterpriseManagerContent({
         );
       })
     : [];
+  const roleTransitionEmployee = roleTransitionRequest
+    ? snapshot.employees.find(
+        (employee) => employee.id === roleTransitionRequest.employeeId,
+      ) ?? null
+    : null;
+  const roleTransitionTargetRole = roleTransitionRequest
+    ? snapshot.roles.find(
+        (role) =>
+          role.id === roleTransitionRequest.targetRoleId && role.status === "active",
+      ) ?? null
+    : null;
+  const roleTransitionCurrentRole = roleTransitionEmployee
+    ? roleById.get(roleTransitionEmployee.roleId) ?? null
+    : null;
+  useEffect(() => {
+    if (
+      roleTransitionRequest &&
+      (!roleTransitionEmployee ||
+        !roleTransitionTargetRole ||
+        roleTransitionEmployee.roleId === roleTransitionTargetRole.id)
+    ) {
+      setRoleTransitionRequest(null);
+    }
+  }, [
+    roleTransitionEmployee,
+    roleTransitionRequest,
+    roleTransitionTargetRole,
+  ]);
+  const roleTransitionAffectedTasks =
+    roleTransitionEmployee && roleTransitionTargetRole
+      ? getMerchantEmployeeRoleTransitionAffectedTasks(
+          roleTransitionEmployee,
+          roleTransitionTargetRole,
+          snapshot.tasks,
+        )
+      : [];
+  const roleTransitionAffectedBoardIds = Array.from(
+    new Set(roleTransitionAffectedTasks.map((task) => task.boardId)),
+  );
+  const roleTransitionAffectedBoardNames = snapshot.boards
+    .filter((board) => roleTransitionAffectedBoardIds.includes(board.id))
+    .map((board) => board.name);
+  const roleTransitionReplacementCandidates = roleTransitionEmployee
+    ? activeEmployees.filter((employee) => {
+        if (employee.id === roleTransitionEmployee.id) return false;
+        const role = roleById.get(employee.roleId);
+        return Boolean(
+          role &&
+            canMerchantEnterpriseEmployeeCoverBoards(
+              employee,
+              role,
+              roleTransitionAffectedBoardIds,
+            ),
+        );
+      })
+    : [];
+  const allowRoleTransitionTaskResolution = Boolean(
+    actor && (actor.type === "owner" || can(actor, "tasks.assign")),
+  );
 
   const mutate = useCallback(
     async (
@@ -3858,21 +4195,46 @@ function MerchantEnterpriseManagerContent({
     if (payload) setOffboardingEmployeeId("");
   }
 
-  async function updateEmployeeRole(
+  function updateEmployeeRole(
     employee: MerchantEnterpriseEmployee,
     roleId: string,
   ) {
     if (!roleId || roleId === employee.roleId) return;
-    await mutate(
+    const targetRole = assignableRoles.find((role) => role.id === roleId);
+    if (!targetRole) {
+      setMessage({ kind: "error", text: "当前账号不能为该员工分配所选角色。" });
+      return;
+    }
+    setMessage(null);
+    setRoleTransitionRequest({ employeeId: employee.id, targetRoleId: targetRole.id });
+  }
+
+  async function confirmEmployeeRoleTransition(
+    mode?: EmployeeRoleTransitionMode,
+    replacementEmployeeId = "",
+  ) {
+    if (!roleTransitionEmployee || !roleTransitionTargetRole) return;
+    const hasAffectedTasks = roleTransitionAffectedTasks.length > 0;
+    const payload = await mutate(
       "/api/merchant-enterprise/employees",
       "PATCH",
       {
-        employeeId: employee.id,
-        version: employee.version,
-        roleId,
+        employeeId: roleTransitionEmployee.id,
+        version: roleTransitionEmployee.version,
+        roleId: roleTransitionTargetRole.id,
+        roleVersion: roleTransitionTargetRole.version,
+        ...(hasAffectedTasks && mode ? { roleTransitionMode: mode } : {}),
+        ...(hasAffectedTasks && mode === "reassign"
+          ? { replacementEmployeeId }
+          : {}),
       },
-      "员工角色已更新。",
+      hasAffectedTasks
+        ? mode === "reassign"
+          ? "员工角色已更新，受影响任务已转交。"
+          : "员工角色已更新，受影响任务已解除负责人。"
+        : "员工角色已更新。",
     );
+    if (payload) setRoleTransitionRequest(null);
   }
 
   async function createRole() {
@@ -3927,7 +4289,8 @@ function MerchantEnterpriseManagerContent({
       setMessage({ kind: "error", text: "请填写员工姓名并选择角色。" });
       return;
     }
-    if (!assignableRoles.some((role) => role.id === roleId)) {
+    const targetRole = assignableRoles.find((role) => role.id === roleId);
+    if (!targetRole) {
       setMessage({ kind: "error", text: "当前账号不能为该员工分配所选角色。" });
       return;
     }
@@ -3942,7 +4305,9 @@ function MerchantEnterpriseManagerContent({
         employeeId: employee.id,
         version: employee.version,
         displayName,
-        roleId,
+        ...(roleId !== employee.roleId
+          ? { roleId, roleVersion: targetRole.version }
+          : {}),
       },
       "邀请姓名和角色已更新。",
     );
@@ -5176,6 +5541,26 @@ function MerchantEnterpriseManagerContent({
             errorMessage={message?.kind === "error" ? message.text : ""}
             onConfirm={confirmEmployeeOffboarding}
             onClose={() => setOffboardingEmployeeId("")}
+          />
+        ) : null}
+        {roleTransitionEmployee && roleTransitionTargetRole && actor ? (
+          <EmployeeRoleTransitionDialog
+            key={`${roleTransitionEmployee.id}:${roleTransitionEmployee.version}:${roleTransitionTargetRole.id}:${roleTransitionTargetRole.version}`}
+            employee={roleTransitionEmployee}
+            currentRole={roleTransitionCurrentRole}
+            targetRole={roleTransitionTargetRole}
+            affectedTasks={roleTransitionAffectedTasks}
+            affectedBoardNames={roleTransitionAffectedBoardNames}
+            taskCountExact={
+              actor.type === "owner" ||
+              (can(actor, "tasks.view") && actor.accessScope === "all")
+            }
+            replacementCandidates={roleTransitionReplacementCandidates}
+            allowTaskResolution={allowRoleTransitionTaskResolution}
+            busy={busy}
+            errorMessage={message?.kind === "error" ? message.text : ""}
+            onConfirm={confirmEmployeeRoleTransition}
+            onClose={() => setRoleTransitionRequest(null)}
           />
         ) : null}
       </div>

@@ -18,9 +18,11 @@ import {
   createEmployeeInvitationResendResponse,
   getMerchantEnterpriseEmployeeMutationActor,
   getMerchantEnterpriseEmployeeMutationErrorResponse,
+  getMerchantEnterpriseEmployeeRoleTransitionValidation,
   getMerchantEnterpriseEmployeeStatusTransitionError,
   getEmployeeInvitationRetryAfterSeconds,
   parseMerchantEnterpriseEmployeeOffboarding,
+  parseMerchantEnterpriseEmployeeRoleTransition,
   PATCH as updateEmployee,
   POST as createEmployee,
   reserveEmployeeInvitationResend,
@@ -222,6 +224,9 @@ test("employee lifecycle RPC errors have stable API statuses", () => {
   for (const code of [
     "employee_open_tasks_require_resolution",
     "employee_offboarding_replacement_invalid",
+    "employee_role_transition_required",
+    "employee_role_transition_replacement_invalid",
+    "enterprise_version_conflict",
     "employee_board_access_in_use",
     "employee_email_in_use",
   ]) {
@@ -232,6 +237,7 @@ test("employee lifecycle RPC errors have stable API statuses", () => {
   }
   for (const code of [
     "employee_offboarding_scope_denied",
+    "employee_role_transition_scope_denied",
     "permission_escalation_denied",
     "permission_denied",
   ]) {
@@ -296,6 +302,169 @@ test("employee offboarding parser only accepts valid disable resolution payloads
       error: "employee_offboarding_replacement_invalid",
       status: 409,
     },
+  );
+});
+
+test("employee role transition parser requires target-role CAS and one resolution mode", () => {
+  const employeeId = "77777777-7777-4777-8777-777777777777";
+  const roleId = "44444444-4444-4444-8444-444444444444";
+  const replacementEmployeeId = "66666666-6666-4666-8666-666666666666";
+  assert.deepEqual(
+    parseMerchantEnterpriseEmployeeRoleTransition({
+      employeeId,
+      roleId,
+      roleVersion: 3,
+    }),
+    { ok: true, payload: { roleVersion: 3 } },
+  );
+  assert.deepEqual(
+    parseMerchantEnterpriseEmployeeRoleTransition({
+      employeeId,
+      roleId,
+      roleVersion: 3,
+      roleTransitionMode: "unassign",
+    }),
+    {
+      ok: true,
+      payload: { roleVersion: 3, roleTransitionMode: "unassign" },
+    },
+  );
+  assert.deepEqual(
+    parseMerchantEnterpriseEmployeeRoleTransition({
+      employeeId,
+      roleId,
+      roleVersion: 3,
+      roleTransitionMode: "reassign",
+      replacementEmployeeId,
+    }),
+    {
+      ok: true,
+      payload: {
+        roleVersion: 3,
+        roleTransitionMode: "reassign",
+        replacementEmployeeId,
+      },
+    },
+  );
+  for (const payload of [
+    { roleId },
+    { roleVersion: 3 },
+    { roleId, roleVersion: 0 },
+    { roleId, roleVersion: 3, roleTransitionMode: "reassign" },
+    { roleId, roleVersion: 3, roleTransitionMode: "unassign", replacementEmployeeId },
+    {
+      roleId,
+      roleVersion: 3,
+      roleTransitionMode: "unassign",
+      offboardingMode: "unassign",
+    },
+  ]) {
+    assert.deepEqual(
+      parseMerchantEnterpriseEmployeeRoleTransition({ employeeId, ...payload }),
+      { ok: false, error: "invalid_employee_role_transition", status: 400 },
+    );
+  }
+  assert.deepEqual(
+    parseMerchantEnterpriseEmployeeRoleTransition({
+      employeeId,
+      roleId,
+      roleVersion: 3,
+      roleTransitionMode: "reassign",
+      replacementEmployeeId: employeeId,
+    }),
+    {
+      ok: false,
+      error: "employee_role_transition_replacement_invalid",
+      status: 409,
+    },
+  );
+});
+
+test("employee role transition validation checks role version, delegation and replacement activity", () => {
+  const currentEmployee = {
+    ...pendingEmployee("2026-07-31T09:58:59.999Z"),
+    status: "active" as const,
+    roleId: "99999999-9999-4999-8999-999999999999",
+  };
+  const replacement = {
+    ...currentEmployee,
+    id: "66666666-6666-4666-8666-666666666666",
+    email: "replacement@example.com",
+  };
+  const requestedRole = {
+    id: "44444444-4444-4444-8444-444444444444",
+    siteId: "10000000",
+    name: "Operator",
+    description: "",
+    permissions: ["enterprise.view", "tasks.view"] as const,
+    accessScope: "all" as const,
+    allowedBoardIds: [],
+    status: "active" as const,
+    isSystem: false,
+    version: 3,
+    createdAt: "2026-07-31T08:00:00.000Z",
+    updatedAt: "2026-07-31T08:00:00.000Z",
+  };
+  const snapshot = {
+    roles: [requestedRole],
+    employees: [currentEmployee, replacement],
+    boards: [],
+    columns: [],
+    tasks: [],
+  } as unknown as MerchantEnterpriseSnapshot;
+  const owner: MerchantEnterpriseActor = {
+    type: "owner",
+    id: "88888888-8888-4888-8888-888888888888",
+    siteId: "10000000",
+    displayName: "Owner",
+    email: "owner@example.com",
+    permissions: [],
+    accessScope: "all",
+    allowedBoardIds: [],
+  };
+  const base = {
+    actor: owner,
+    snapshot,
+    currentEmployee,
+    requestedRoleId: requestedRole.id,
+    roleVersion: requestedRole.version,
+    roleTransitionMode: "reassign" as const,
+    replacementEmployeeId: replacement.id,
+  };
+  assert.deepEqual(
+    getMerchantEnterpriseEmployeeRoleTransitionValidation(base),
+    { ok: true, roleChanged: true },
+  );
+  assert.deepEqual(
+    getMerchantEnterpriseEmployeeRoleTransitionValidation({ ...base, roleVersion: 2 }),
+    { ok: false, error: "enterprise_version_conflict", status: 409 },
+  );
+  assert.deepEqual(
+    getMerchantEnterpriseEmployeeRoleTransitionValidation({
+      ...base,
+      snapshot: {
+        ...snapshot,
+        employees: [currentEmployee, { ...replacement, status: "disabled" }],
+      },
+    }),
+    {
+      ok: false,
+      error: "employee_role_transition_replacement_invalid",
+      status: 409,
+    },
+  );
+  const restrictedActor: MerchantEnterpriseActor = {
+    ...owner,
+    type: "employee",
+    roleId: currentEmployee.roleId,
+    permissions: ["enterprise.view"],
+  };
+  assert.deepEqual(
+    getMerchantEnterpriseEmployeeRoleTransitionValidation({
+      ...base,
+      actor: restrictedActor,
+    }),
+    { ok: false, error: "permission_escalation_denied", status: 403 },
   );
 });
 
@@ -390,6 +559,62 @@ test("malformed employee offboarding payloads are rejected before authorization"
   }
 });
 
+test("malformed employee role transitions are rejected before authorization", async () => {
+  const base = {
+    siteId: "10000000",
+    employeeId: "77777777-7777-4777-8777-777777777777",
+    version: 7,
+  };
+  const roleId = "44444444-4444-4444-8444-444444444444";
+  for (const [payload, status, error] of [
+    [{ roleId }, 400, "invalid_employee_role_transition"],
+    [{ roleVersion: 3 }, 400, "invalid_employee_role_transition"],
+    [
+      {
+        roleId,
+        roleVersion: 3,
+        roleTransitionMode: "reassign",
+      },
+      400,
+      "invalid_employee_role_transition",
+    ],
+    [
+      {
+        roleId,
+        roleVersion: 3,
+        roleTransitionMode: "unassign",
+        offboardingMode: "unassign",
+        status: "disabled",
+      },
+      400,
+      "invalid_employee_role_transition",
+    ],
+    [
+      {
+        roleId,
+        roleVersion: 3,
+        roleTransitionMode: "reassign",
+        replacementEmployeeId: base.employeeId,
+      },
+      409,
+      "employee_role_transition_replacement_invalid",
+    ],
+  ] as const) {
+    const response = await updateEmployee(
+      new Request("https://www.faolla.com/api/merchant-enterprise/employees", {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://www.faolla.com",
+        },
+        body: JSON.stringify({ ...base, ...payload }),
+      }),
+    );
+    assert.equal(response.status, status);
+    assert.deepEqual(await response.json(), { ok: false, error });
+  }
+});
+
 test("pending invitation removal is a recognized, isolated employee action", async () => {
   const base = {
     siteId: "10000000",
@@ -438,6 +663,26 @@ test("pending invitation removal is a recognized, isolated employee action", asy
   );
   assert.equal(mixedOffboarding.status, 400);
   assert.deepEqual(await mixedOffboarding.json(), {
+    ok: false,
+    error: "invalid_employee_action",
+  });
+
+  const mixedRoleTransition = await updateEmployee(
+    new Request("https://www.faolla.com/api/merchant-enterprise/employees", {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        origin: "https://www.faolla.com",
+      },
+      body: JSON.stringify({
+        ...base,
+        roleVersion: 3,
+        roleTransitionMode: "unassign",
+      }),
+    }),
+  );
+  assert.equal(mixedRoleTransition.status, 400);
+  assert.deepEqual(await mixedRoleTransition.json(), {
     ok: false,
     error: "invalid_employee_action",
   });

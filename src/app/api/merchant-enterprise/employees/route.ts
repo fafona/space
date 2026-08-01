@@ -54,6 +54,8 @@ type EmployeeBody = {
   email?: unknown;
   displayName?: unknown;
   roleId?: unknown;
+  roleVersion?: unknown;
+  roleTransitionMode?: unknown;
   status?: unknown;
   offboardingMode?: unknown;
   replacementEmployeeId?: unknown;
@@ -98,6 +100,7 @@ export function parseMerchantEnterpriseEmployeeOffboarding(input: {
   employeeId?: unknown;
   status?: unknown;
   offboardingMode?: unknown;
+  roleTransitionMode?: unknown;
   replacementEmployeeId?: unknown;
 }):
   | {
@@ -115,7 +118,9 @@ export function parseMerchantEnterpriseEmployeeOffboarding(input: {
       status: 400 | 409;
     } {
   const hasMode = input.offboardingMode !== undefined;
-  const hasReplacement = input.replacementEmployeeId !== undefined;
+  const hasReplacement =
+    input.replacementEmployeeId !== undefined &&
+    input.roleTransitionMode === undefined;
   if (!hasMode && !hasReplacement) return { ok: true, payload: {} };
   if (input.status !== "disabled") {
     return { ok: false, error: "invalid_employee_offboarding", status: 400 };
@@ -146,12 +151,82 @@ export function parseMerchantEnterpriseEmployeeOffboarding(input: {
   };
 }
 
+export function parseMerchantEnterpriseEmployeeRoleTransition(input: {
+  employeeId?: unknown;
+  roleId?: unknown;
+  roleVersion?: unknown;
+  roleTransitionMode?: unknown;
+  offboardingMode?: unknown;
+  replacementEmployeeId?: unknown;
+}):
+  | {
+      ok: true;
+      payload: {
+        roleVersion?: number;
+        roleTransitionMode?: "unassign" | "reassign";
+        replacementEmployeeId?: string;
+      };
+    }
+  | {
+      ok: false;
+      error:
+        | "invalid_employee_role_transition"
+        | "employee_role_transition_replacement_invalid";
+      status: 400 | 409;
+    } {
+  const hasRoleVersion = input.roleVersion !== undefined;
+  const hasMode = input.roleTransitionMode !== undefined;
+  const hasRoleId = input.roleId !== undefined;
+  const hasOffboardingMode = input.offboardingMode !== undefined;
+  if (hasOffboardingMode && hasMode) {
+    return { ok: false, error: "invalid_employee_role_transition", status: 400 };
+  }
+  if (!hasRoleVersion && !hasMode) {
+    return hasRoleId
+      ? { ok: false, error: "invalid_employee_role_transition", status: 400 }
+      : { ok: true, payload: {} };
+  }
+  const roleId = text(input.roleId, 80);
+  const mode = text(input.roleTransitionMode, 20);
+  const replacementEmployeeId = text(input.replacementEmployeeId, 80);
+  if (
+    !roleId ||
+    !isMerchantEnterpriseVersion(input.roleVersion) ||
+    (hasMode && mode !== "unassign" && mode !== "reassign") ||
+    (mode === "unassign" && input.replacementEmployeeId !== undefined) ||
+    (mode === "reassign" && !replacementEmployeeId) ||
+    (!hasMode && !hasOffboardingMode && input.replacementEmployeeId !== undefined)
+  ) {
+    return { ok: false, error: "invalid_employee_role_transition", status: 400 };
+  }
+  if (replacementEmployeeId === text(input.employeeId, 80)) {
+    return {
+      ok: false,
+      error: "employee_role_transition_replacement_invalid",
+      status: 409,
+    };
+  }
+  return {
+    ok: true,
+    payload: {
+      roleVersion: Number(input.roleVersion),
+      ...(hasMode
+        ? {
+            roleTransitionMode: mode as "unassign" | "reassign",
+            ...(mode === "reassign" ? { replacementEmployeeId } : {}),
+          }
+        : {}),
+    },
+  };
+}
+
 export function getMerchantEnterpriseEmployeeMutationErrorResponse(
   error: unknown,
 ) {
   const code = error instanceof Error ? error.message : "";
   if (
     code === "employee_offboarding_scope_denied" ||
+    code === "employee_role_transition_scope_denied" ||
     code === "permission_escalation_denied" ||
     code === "permission_denied"
   ) {
@@ -160,6 +235,9 @@ export function getMerchantEnterpriseEmployeeMutationErrorResponse(
   if (
     code === "employee_open_tasks_require_resolution" ||
     code === "employee_offboarding_replacement_invalid" ||
+    code === "employee_role_transition_required" ||
+    code === "employee_role_transition_replacement_invalid" ||
+    code === "enterprise_version_conflict" ||
     code === "employee_board_access_in_use" ||
     code === "employee_email_in_use"
   ) {
@@ -599,6 +677,58 @@ function roleAssignmentError(
   return "";
 }
 
+export function getMerchantEnterpriseEmployeeRoleTransitionValidation(input: {
+  actor: MerchantEnterpriseActor;
+  snapshot: Awaited<ReturnType<typeof loadMerchantEnterpriseSnapshot>>;
+  currentEmployee: MerchantEnterpriseEmployee;
+  requestedRoleId?: string;
+  roleVersion?: unknown;
+  roleTransitionMode?: "unassign" | "reassign";
+  offboardingMode?: "unassign" | "reassign";
+  replacementEmployeeId?: string;
+}):
+  | { ok: true; roleChanged: boolean }
+  | { ok: false; error: string; status: 400 | 403 | 409 } {
+  const roleChanged = Boolean(
+    input.requestedRoleId && input.requestedRoleId !== input.currentEmployee.roleId,
+  );
+  const hasTransitionPayload =
+    input.roleVersion !== undefined || input.roleTransitionMode !== undefined;
+  if (!roleChanged) {
+    return hasTransitionPayload
+      ? { ok: false, error: "invalid_employee_role_transition", status: 400 }
+      : { ok: true, roleChanged: false };
+  }
+  if (!isMerchantEnterpriseVersion(input.roleVersion)) {
+    return { ok: false, error: "invalid_employee_role_transition", status: 400 };
+  }
+  const requestedRole = input.snapshot.roles.find(
+    (role) => role.id === input.requestedRoleId && role.status === "active",
+  );
+  if (!requestedRole) {
+    return { ok: false, error: "invalid_employee_role", status: 400 };
+  }
+  if (!merchantEnterpriseRoleFitsActor(input.actor, requestedRole)) {
+    return { ok: false, error: "permission_escalation_denied", status: 403 };
+  }
+  if (requestedRole.version !== input.roleVersion) {
+    return { ok: false, error: "enterprise_version_conflict", status: 409 };
+  }
+  if (input.roleTransitionMode === "reassign") {
+    const replacement = input.snapshot.employees.find(
+      (employee) => employee.id === input.replacementEmployeeId,
+    );
+    if (!replacement || replacement.status !== "active") {
+      return {
+        ok: false,
+        error: "employee_role_transition_replacement_invalid",
+        status: 409,
+      };
+    }
+  }
+  return { ok: true, roleChanged: true };
+}
+
 export async function POST(request: Request) {
   if (!isTrustedSameOriginMutationRequest(request)) return getTrustedMutationRequestErrorResponse();
   try {
@@ -723,6 +853,8 @@ export async function PATCH(request: Request) {
       (body?.email !== undefined ||
         body?.displayName !== undefined ||
         body?.roleId !== undefined ||
+        body?.roleVersion !== undefined ||
+        body?.roleTransitionMode !== undefined ||
         body?.status !== undefined ||
         body?.offboardingMode !== undefined ||
         body?.replacementEmployeeId !== undefined)
@@ -738,10 +870,25 @@ export async function PATCH(request: Request) {
         { status: 400 },
       );
     }
+    const roleTransition = parseMerchantEnterpriseEmployeeRoleTransition({
+      employeeId,
+      roleId: body?.roleId,
+      roleVersion: body?.roleVersion,
+      roleTransitionMode: body?.roleTransitionMode,
+      offboardingMode: body?.offboardingMode,
+      replacementEmployeeId: body?.replacementEmployeeId,
+    });
+    if (!roleTransition.ok) {
+      return NextResponse.json(
+        { ok: false, error: roleTransition.error },
+        { status: roleTransition.status },
+      );
+    }
     const offboarding = parseMerchantEnterpriseEmployeeOffboarding({
       employeeId,
       status: body?.status,
       offboardingMode: body?.offboardingMode,
+      roleTransitionMode: body?.roleTransitionMode,
       replacementEmployeeId: body?.replacementEmployeeId,
     });
     if (!offboarding.ok) {
@@ -885,14 +1032,22 @@ export async function PATCH(request: Request) {
     if (body?.roleId !== undefined && !requestedRoleId) {
       return NextResponse.json({ ok: false, error: "invalid_employee_role" }, { status: 400 });
     }
-    if (requestedRoleId) {
-      const assignmentError = roleAssignmentError(actor, snapshot, requestedRoleId);
-      if (assignmentError) {
-        return NextResponse.json(
-          { ok: false, error: assignmentError },
-          { status: assignmentError === "permission_escalation_denied" ? 403 : 400 },
-        );
-      }
+    const roleTransitionValidation =
+      getMerchantEnterpriseEmployeeRoleTransitionValidation({
+        actor,
+        snapshot,
+        currentEmployee,
+        requestedRoleId,
+        roleVersion: body?.roleVersion,
+        roleTransitionMode: roleTransition.payload.roleTransitionMode,
+        offboardingMode: offboarding.payload.offboardingMode,
+        replacementEmployeeId: roleTransition.payload.replacementEmployeeId,
+      });
+    if (!roleTransitionValidation.ok) {
+      return NextResponse.json(
+        { ok: false, error: roleTransitionValidation.error },
+        { status: roleTransitionValidation.status },
+      );
     }
     if (offboarding.payload.offboardingMode === "reassign") {
       const replacement = snapshot.employees.find(
@@ -907,7 +1062,7 @@ export async function PATCH(request: Request) {
     }
     if (
       body?.displayName === undefined &&
-      body?.roleId === undefined &&
+      !roleTransitionValidation.roleChanged &&
       body?.status === undefined
     ) {
       return NextResponse.json(
@@ -921,7 +1076,9 @@ export async function PATCH(request: Request) {
       employeeId,
       version: body.version,
       ...(body?.displayName !== undefined ? { displayName: text(body.displayName, 120) } : {}),
-      ...(requestedRoleId ? { roleId: requestedRoleId } : {}),
+      ...(roleTransitionValidation.roleChanged && requestedRoleId
+        ? { roleId: requestedRoleId, ...roleTransition.payload }
+        : {}),
       ...(body?.status === "invited" || body?.status === "active" || body?.status === "disabled"
         ? { status: body.status }
         : {}),

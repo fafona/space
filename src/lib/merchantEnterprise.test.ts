@@ -4,9 +4,11 @@ import {
   buildMerchantEnterpriseTaskOverview,
   buildMerchantTaskEditChanges,
   DEFAULT_MERCHANT_ENTERPRISE_ROLES,
+  canMerchantEnterpriseEmployeeCoverBoards,
   canCreateMerchantEnterpriseBoards,
   filterMerchantEnterpriseSnapshotByBoardAccess,
   filterMerchantTasks,
+  getMerchantEmployeeRoleTransitionAffectedTasks,
   getMerchantEnterpriseDefaultRoleBoardAccess,
   getMerchantEnterpriseDefaultTaskAssigneeFilter,
   getMerchantTaskCompletionTransition,
@@ -195,6 +197,210 @@ test("role board access cannot exceed a restricted employee's own boards", () =>
   });
 });
 
+test("role transitions report only assigned open tasks the target role cannot view", () => {
+  const employee = { id: "employee-1" };
+  const baseTask = {
+    id: "task-covered",
+    siteId: "10000000",
+    boardId: "board-covered",
+    columnId: "column-1",
+    title: "Covered task",
+    description: "",
+    priority: "normal",
+    dueAt: null,
+    completedAt: null,
+    archivedAt: null,
+    position: 0,
+    sourceType: "",
+    sourceId: "",
+    createdByEmployeeId: "",
+    assigneeIds: [employee.id],
+    version: 1,
+    createdAt: "2026-07-31T08:00:00.000Z",
+    updatedAt: "2026-07-31T08:00:00.000Z",
+  } satisfies MerchantTask;
+  const tasks = [
+    baseTask,
+    { ...baseTask, id: "task-uncovered", boardId: "board-uncovered" },
+    {
+      ...baseTask,
+      id: "task-completed",
+      boardId: "board-uncovered",
+      completedAt: "2026-07-31T09:00:00.000Z",
+    },
+    {
+      ...baseTask,
+      id: "task-archived",
+      boardId: "board-uncovered",
+      archivedAt: "2026-07-31T09:00:00.000Z",
+    },
+    {
+      ...baseTask,
+      id: "task-other-assignee",
+      boardId: "board-uncovered",
+      assigneeIds: ["employee-2"],
+    },
+  ] satisfies MerchantTask[];
+
+  assert.deepEqual(
+    getMerchantEmployeeRoleTransitionAffectedTasks(
+      employee,
+      {
+        permissions: ["enterprise.view", "tasks.view"],
+        accessScope: "restricted",
+        allowedBoardIds: ["board-covered"],
+      },
+      tasks,
+    ).map((task) => task.id),
+    ["task-uncovered"],
+  );
+});
+
+test("all-board task viewing preserves assignments while missing tasks.view affects every open assignment", () => {
+  const tasks = [
+    {
+      id: "task-a",
+      siteId: "10000000",
+      boardId: "board-a",
+      columnId: "column-a",
+      title: "Task A",
+      description: "",
+      priority: "normal",
+      dueAt: null,
+      completedAt: null,
+      archivedAt: null,
+      position: 0,
+      sourceType: "",
+      sourceId: "",
+      createdByEmployeeId: "",
+      assigneeIds: ["employee-1"],
+      version: 1,
+      createdAt: "2026-07-31T08:00:00.000Z",
+      updatedAt: "2026-07-31T08:00:00.000Z",
+    },
+    {
+      id: "task-b",
+      siteId: "10000000",
+      boardId: "board-b",
+      columnId: "column-b",
+      title: "Task B",
+      description: "",
+      priority: "high",
+      dueAt: null,
+      completedAt: null,
+      archivedAt: null,
+      position: 1,
+      sourceType: "",
+      sourceId: "",
+      createdByEmployeeId: "",
+      assigneeIds: ["employee-1", "employee-2"],
+      version: 1,
+      createdAt: "2026-07-31T08:00:00.000Z",
+      updatedAt: "2026-07-31T08:00:00.000Z",
+    },
+  ] satisfies MerchantTask[];
+
+  assert.deepEqual(
+    getMerchantEmployeeRoleTransitionAffectedTasks(
+      { id: "employee-1" },
+      {
+        permissions: ["enterprise.view", "tasks.view"],
+        accessScope: "all",
+        allowedBoardIds: [],
+      },
+      tasks,
+    ),
+    [],
+  );
+  assert.deepEqual(
+    getMerchantEmployeeRoleTransitionAffectedTasks(
+      { id: "employee-1" },
+      {
+        permissions: ["enterprise.view"],
+        accessScope: "all",
+        allowedBoardIds: [],
+      },
+      tasks,
+    ).map((task) => task.id),
+    ["task-a", "task-b"],
+  );
+});
+
+test("active replacement employees cover boards only through their matching active view role", () => {
+  const employee = {
+    roleId: "role-1",
+    status: "active" as const,
+  };
+  const restrictedRole = {
+    id: "role-1",
+    status: "active" as const,
+    permissions: ["enterprise.view", "tasks.view"] as const,
+    accessScope: "restricted" as const,
+    allowedBoardIds: ["board-a", "board-b"],
+  };
+
+  assert.equal(
+    canMerchantEnterpriseEmployeeCoverBoards(employee, restrictedRole, ["board-a", "board-b"]),
+    true,
+  );
+  assert.equal(
+    canMerchantEnterpriseEmployeeCoverBoards(employee, restrictedRole, ["board-a", "board-c"]),
+    false,
+  );
+  assert.equal(
+    canMerchantEnterpriseEmployeeCoverBoards(
+      employee,
+      { ...restrictedRole, accessScope: "all", allowedBoardIds: [] },
+      ["board-a", "board-c"],
+    ),
+    true,
+  );
+  assert.equal(
+    canMerchantEnterpriseEmployeeCoverBoards(
+      employee,
+      { ...restrictedRole, permissions: ["enterprise.view"] },
+      [],
+    ),
+    false,
+  );
+});
+
+test("invalid replacement employees or roles cannot cover boards", () => {
+  const activeRole = {
+    id: "role-1",
+    status: "active" as const,
+    permissions: ["enterprise.view", "tasks.view"] as const,
+    accessScope: "all" as const,
+    allowedBoardIds: [],
+  };
+
+  assert.equal(canMerchantEnterpriseEmployeeCoverBoards(null, activeRole, []), false);
+  assert.equal(
+    canMerchantEnterpriseEmployeeCoverBoards(
+      { roleId: "role-1", status: "disabled" },
+      activeRole,
+      [],
+    ),
+    false,
+  );
+  assert.equal(
+    canMerchantEnterpriseEmployeeCoverBoards(
+      { roleId: "role-2", status: "active" },
+      activeRole,
+      [],
+    ),
+    false,
+  );
+  assert.equal(
+    canMerchantEnterpriseEmployeeCoverBoards(
+      { roleId: "role-1", status: "active" },
+      { ...activeRole, status: "archived" },
+      [],
+    ),
+    false,
+  );
+});
+
 test("restricted enterprise snapshots expose only allowed board resources", () => {
   const boardA = "11111111-1111-4111-8111-111111111111";
   const boardB = "22222222-2222-4222-8222-222222222222";
@@ -298,6 +504,11 @@ test("task event normalization exposes only bounded activity payload fields", ()
       assigneeIds: ["employee-1", "employee-1"],
       targetIndex: 3,
       checklistItemId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      employeeId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      offboardedEmployeeId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      replacementEmployeeId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      oldRoleId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      newRoleId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
       completed: true,
       previousCompleted: false,
       archived: "false",
@@ -315,6 +526,17 @@ test("task event normalization exposes only bounded activity payload fields", ()
     event?.payload.checklistItemId,
     "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
   );
+  assert.equal(event?.payload.employeeId, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+  assert.equal(
+    event?.payload.offboardedEmployeeId,
+    "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+  );
+  assert.equal(
+    event?.payload.replacementEmployeeId,
+    "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+  );
+  assert.equal(event?.payload.oldRoleId, "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
+  assert.equal(event?.payload.newRoleId, "ffffffff-ffff-4fff-8fff-ffffffffffff");
   assert.equal(event?.payload.completed, true);
   assert.equal(event?.payload.previousCompleted, false);
   assert.equal(event?.payload.previousArchived, false);

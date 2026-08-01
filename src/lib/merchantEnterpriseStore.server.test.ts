@@ -272,6 +272,9 @@ test("employee RPC failures preserve lifecycle conflict and authorization codes"
     "employee_open_tasks_require_resolution",
     "employee_offboarding_replacement_invalid",
     "employee_offboarding_scope_denied",
+    "employee_role_transition_required",
+    "employee_role_transition_replacement_invalid",
+    "employee_role_transition_scope_denied",
     "permission_escalation_denied",
     "permission_denied",
     "employee_board_access_in_use",
@@ -370,6 +373,106 @@ test("employee offboarding payload combinations are validated before the RPC", a
       replacementEmployeeId: base.employeeId,
     }),
     /^Error: employee_offboarding_replacement_invalid$/,
+  );
+  assert.equal(calls, 0);
+});
+
+test("employee role transitions carry target-role CAS and task resolution to the atomic RPC", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const employeeId = "77777777-7777-4777-8777-777777777777";
+  const roleId = "44444444-4444-4444-8444-444444444444";
+  const replacementEmployeeId = "66666666-6666-4666-8666-666666666666";
+  const client = {
+    from() {
+      throw new Error("employee role transitions must stay transactional");
+    },
+    async rpc(functionName: string, args: Record<string, unknown>) {
+      assert.equal(functionName, "faolla_update_merchant_enterprise_employee_v1");
+      calls.push(args.p_input as Record<string, unknown>);
+      return {
+        data: { employee: employeeRow(8, "2026-07-31T09:30:00.000Z", { role_id: roleId }) },
+        error: null,
+      };
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+
+  const employee = await updateMerchantEnterpriseEmployee(client, {
+    siteId: "10000000",
+    employeeId,
+    version: 7,
+    roleId,
+    roleVersion: 3,
+    roleTransitionMode: "reassign",
+    replacementEmployeeId,
+    actorType: "owner",
+    actorId: "88888888-8888-4888-8888-888888888888",
+  });
+
+  assert.equal(employee.roleId, roleId);
+  assert.deepEqual(calls, [
+    {
+      merchant_id: "10000000",
+      employee_id: employeeId,
+      expected_version: 7,
+      actor_type: "owner",
+      actor_id: "88888888-8888-4888-8888-888888888888",
+      role_id: roleId,
+      expected_role_version: 3,
+      role_transition_mode: "reassign",
+      replacement_employee_id: replacementEmployeeId,
+    },
+  ]);
+});
+
+test("employee role transition payloads fail closed before persistence", async () => {
+  let calls = 0;
+  const employeeId = "77777777-7777-4777-8777-777777777777";
+  const roleId = "44444444-4444-4444-8444-444444444444";
+  const replacementEmployeeId = "66666666-6666-4666-8666-666666666666";
+  const client = {
+    from() {
+      throw new Error("employee role transitions must stay transactional");
+    },
+    async rpc() {
+      calls += 1;
+      throw new Error("invalid payload must stop before persistence");
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+  const base = {
+    siteId: "10000000",
+    employeeId,
+    version: 7,
+    actorType: "owner" as const,
+    actorId: "88888888-8888-4888-8888-888888888888",
+  };
+  for (const payload of [
+    { roleId },
+    { roleVersion: 3 },
+    { roleId, roleVersion: 0 },
+    { roleId, roleVersion: 3, roleTransitionMode: "reassign" as const },
+    { roleId, roleVersion: 3, roleTransitionMode: "unassign" as const, replacementEmployeeId },
+    {
+      roleId,
+      roleVersion: 3,
+      roleTransitionMode: "unassign" as const,
+      offboardingMode: "unassign" as const,
+      status: "disabled" as const,
+    },
+  ]) {
+    await assert.rejects(
+      updateMerchantEnterpriseEmployee(client, { ...base, ...payload }),
+      /^Error: invalid_employee_role_transition$/,
+    );
+  }
+  await assert.rejects(
+    updateMerchantEnterpriseEmployee(client, {
+      ...base,
+      roleId,
+      roleVersion: 3,
+      roleTransitionMode: "reassign",
+      replacementEmployeeId: employeeId,
+    }),
+    /^Error: employee_role_transition_replacement_invalid$/,
   );
   assert.equal(calls, 0);
 });
