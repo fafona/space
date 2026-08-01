@@ -196,3 +196,107 @@ test("encrypted backup workflow keeps the scheduled recovery policy", async () =
   );
   assert.match(readinessWorkflow, /FAOLLA_STORAGE_BACKUP_ENABLED=true/);
 });
+
+test("encrypted backup workflow validates complete transfers and discards partial files", async () => {
+  const workflow = await readFile(
+    new URL("../.github/workflows/database-backup.yml", import.meta.url),
+    "utf8",
+  );
+  const jobTimeoutMatch = workflow.match(/timeout-minutes:\s*(\d+)/);
+  const transferTimeoutMatch = workflow.match(
+    /timeout --signal=TERM --kill-after=30s (\d+)m sftp/,
+  );
+  const transferAttemptsMatch = workflow.match(
+    /MAX_BACKUP_TRANSFER_ATTEMPTS:\s*(\d+)/,
+  );
+
+  assert.ok(jobTimeoutMatch, "backup job must have a timeout");
+  assert.ok(transferTimeoutMatch, "backup transfer must have a timeout");
+  assert.ok(transferAttemptsMatch, "backup transfer retries must be bounded");
+
+  const jobTimeoutMinutes = Number(jobTimeoutMatch[1]);
+  const transferTimeoutMinutes = Number(transferTimeoutMatch[1]);
+  const transferAttempts = Number(transferAttemptsMatch[1]);
+  assert.ok(
+    transferTimeoutMinutes > 75,
+    "transfer timeout must cover the observed network variance",
+  );
+  assert.ok(
+    transferTimeoutMinutes * transferAttempts <= jobTimeoutMinutes - 60,
+    "all transfer attempts must leave an hour for creation, restore, and cleanup",
+  );
+  assert.equal(transferAttempts, 2);
+
+  assert.match(workflow, /LOCAL_BACKUP_PART_PATH: .*\.part/);
+  assert.match(workflow, /\.outputBytes \| select/);
+  assert.match(workflow, /\.outputSha256 \| select/);
+  assert.match(
+    workflow,
+    /"stat -c '%s' -- '\$REMOTE_BACKUP_PATH'"/,
+    "the workflow must read the complete remote artifact size",
+  );
+  assert.match(
+    workflow,
+    /if \[ "\$remote_backup_bytes" -ne "\$expected_backup_bytes" \]; then/,
+    "the remote artifact must match the creation report",
+  );
+  assert.match(
+    workflow,
+    /if \[ "\$local_backup_bytes" -ne "\$expected_backup_bytes" \]; then/,
+    "the workflow must reject truncated transfers",
+  );
+  assert.match(
+    workflow,
+    /if \[ "\$local_backup_sha256" != "\$expected_backup_sha256" \]; then/,
+    "the workflow must reject corrupted transfers",
+  );
+  assert.match(
+    workflow,
+    /printf 'reget %s %s\\n' "\$REMOTE_BACKUP_PATH" "\$LOCAL_BACKUP_PART_PATH"/,
+    "retries must resume into the temporary local path",
+  );
+  assert.match(
+    workflow,
+    /fail_transfer\(\) \{[\s\S]*?rm -f -- "\$LOCAL_BACKUP_PATH" "\$LOCAL_BACKUP_PART_PATH"[\s\S]*?exit "\$failure_exit_code"/,
+    "a failed transfer must remove its partial local artifact",
+  );
+  const retryLoop = workflow.match(
+    /while \[ "\$transfer_attempt"[\s\S]*?(?=\n\s+if \[ "\$transfer_status" -ne 0 \])/,
+  );
+  assert.ok(retryLoop, "bounded transfer retry loop must exist");
+  assert.match(retryLoop[0], /record_transfer RETRYING/);
+  assert.doesNotMatch(
+    retryLoop[0],
+    /rm -f -- "\$LOCAL_BACKUP_PART_PATH"/,
+    "a retry must preserve the partial file for reget",
+  );
+  assert.match(
+    workflow,
+    /mv -- "\$LOCAL_BACKUP_PART_PATH" "\$LOCAL_BACKUP_PATH"/,
+    "only a validated transfer may be promoted to the official local path",
+  );
+  assert.match(
+    workflow,
+    /expectedBytes=%s remoteBytes=%s transferredBytes=%s percentBasisPoints=%s averageBytesPerSecond=%s durationSeconds=%s exitCode=%s/,
+    "transfer diagnostics must include completeness, speed, and status",
+  );
+
+  const verifiedArtifactStep = workflow.match(
+    /- name: Upload Verified Encrypted Backup([\s\S]*?)(?=\n\s+- name:)/,
+  );
+  const failureArtifactStep = workflow.match(
+    /- name: Upload Backup Failure Diagnostics([\s\S]*?)(?=\n\s+- name:)/,
+  );
+  assert.ok(verifiedArtifactStep, "verified artifact upload step must exist");
+  assert.ok(failureArtifactStep, "failure diagnostics upload step must exist");
+  assert.match(verifiedArtifactStep[1], /if: success\(\)/);
+  assert.match(verifiedArtifactStep[1], /\$\{\{ env\.LOCAL_BACKUP_PATH \}\}/);
+  assert.doesNotMatch(verifiedArtifactStep[1], /database-backup-.*-report\.log/);
+  assert.match(failureArtifactStep[1], /if: failure\(\)/);
+  assert.doesNotMatch(failureArtifactStep[1], /LOCAL_BACKUP_(?:PATH|PART_PATH)/);
+  assert.match(
+    workflow,
+    /- name: Confirm Backup Is Ready For Upload[\s\S]*?test -s "\$LOCAL_BACKUP_PATH"[\s\S]*?sha256sum "\$LOCAL_BACKUP_PATH"/,
+    "the verified archive must be rechecked immediately before upload",
+  );
+});

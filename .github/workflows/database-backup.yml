@@ -15,11 +15,13 @@ permissions:
 jobs:
   backup:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 360
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       REMOTE_BACKUP_PATH: /tmp/faolla-database-backup-${{ github.run_id }}-${{ github.run_attempt }}.tar.enc
       LOCAL_BACKUP_PATH: faolla-database-backup.tar.enc
+      LOCAL_BACKUP_PART_PATH: faolla-database-backup.tar.enc.part
+      MAX_BACKUP_TRANSFER_ATTEMPTS: 2
     steps:
       - name: Checkout Backup Verifier
         uses: actions/checkout@v4
@@ -87,17 +89,173 @@ jobs:
           SSH_USER: ${{ secrets.SSH_USER }}
         shell: bash
         run: |
+          set -o pipefail
           transfer_started_at="$(date +%s)"
-          timeout --signal=TERM 75m scp -o ConnectTimeout=20 -o ConnectionAttempts=3 \
-            -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
-            -o StrictHostKeyChecking=accept-new -P "${SSH_PORT:-22}" \
-            "$SSH_USER@$SSH_HOST:$REMOTE_BACKUP_PATH" "$LOCAL_BACKUP_PATH"
-          test -s "$LOCAL_BACKUP_PATH"
-          transfer_finished_at="$(date +%s)"
-          transfer_bytes="$(stat -c '%s' "$LOCAL_BACKUP_PATH")"
-          printf '[database-backup-transfer] TRANSFERRED bytes=%s durationSeconds=%s\n' \
-            "$transfer_bytes" "$((transfer_finished_at - transfer_started_at))" \
-            | tee database-backup-transfer-report.log
+
+          record_transfer() {
+            local outcome="$1"
+            local reason="$2"
+            local expected_bytes="$3"
+            local remote_bytes="$4"
+            local transferred_bytes="$5"
+            local exit_code="$6"
+            local duration_seconds="$(( $(date +%s) - transfer_started_at ))"
+            local average_bytes_per_second=0
+            local percent_basis_points=unknown
+            local transferred_for_metrics
+            case "$transferred_bytes" in
+              ''|*[!0-9]*) transferred_for_metrics=0 ;;
+              *) transferred_for_metrics="$transferred_bytes" ;;
+            esac
+            if [ "$duration_seconds" -gt 0 ]; then
+              average_bytes_per_second="$((transferred_for_metrics / duration_seconds))"
+            fi
+            case "$expected_bytes" in
+              ''|*[!0-9]*) ;;
+              *)
+                if [ "$expected_bytes" -gt 0 ]; then
+                  percent_basis_points="$((transferred_for_metrics * 10000 / expected_bytes))"
+                fi
+                ;;
+            esac
+            printf '[database-backup-transfer] %s reason=%s expectedBytes=%s remoteBytes=%s transferredBytes=%s percentBasisPoints=%s averageBytesPerSecond=%s durationSeconds=%s exitCode=%s\n' \
+              "$outcome" "$reason" "$expected_bytes" "$remote_bytes" \
+              "$transferred_bytes" "$percent_basis_points" \
+              "$average_bytes_per_second" "$duration_seconds" "$exit_code" \
+              | tee -a database-backup-transfer-report.log
+          }
+
+          fail_transfer() {
+            local failure_reason="$1"
+            local expected_bytes="$2"
+            local remote_bytes="$3"
+            local transferred_bytes="$4"
+            local failure_exit_code="$5"
+            rm -f -- "$LOCAL_BACKUP_PATH" "$LOCAL_BACKUP_PART_PATH" || true
+            record_transfer FAILED "$failure_reason" "$expected_bytes" \
+              "$remote_bytes" "$transferred_bytes" "$failure_exit_code" || true
+            exit "$failure_exit_code"
+          }
+
+          if ! rm -f -- "$LOCAL_BACKUP_PATH" "$LOCAL_BACKUP_PART_PATH" \
+            database-backup-transfer-report.log
+          then
+            fail_transfer initial_cleanup_failed unknown unknown 0 1
+          fi
+
+          if ! create_report_json="$(tail -n 1 database-backup-create-report.log)"; then
+            fail_transfer invalid_create_report unknown unknown 0 1
+          fi
+          if ! expected_backup_bytes="$(
+            printf '%s\n' "$create_report_json" \
+              | jq -er '.outputBytes | select(type == "number" and . > 0 and floor == .)'
+          )"; then
+            fail_transfer invalid_create_report unknown unknown 0 1
+          fi
+          if ! expected_backup_sha256="$(
+            printf '%s\n' "$create_report_json" \
+              | jq -er '.outputSha256 | select(type == "string" and test("^[0-9a-f]{64}$"))'
+          )"; then
+            fail_transfer invalid_create_report "$expected_backup_bytes" unknown 0 1
+          fi
+
+          if ! remote_backup_bytes="$(
+            ssh -o ConnectTimeout=20 -o ConnectionAttempts=3 \
+              -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+              -o StrictHostKeyChecking=accept-new -p "${SSH_PORT:-22}" \
+              "$SSH_USER@$SSH_HOST" "stat -c '%s' -- '$REMOTE_BACKUP_PATH'"
+          )"; then
+            fail_transfer remote_size_unavailable "$expected_backup_bytes" unknown 0 1
+          fi
+
+          case "$remote_backup_bytes" in
+            ''|*[!0-9]*)
+              fail_transfer invalid_remote_size "$expected_backup_bytes" \
+                "${remote_backup_bytes:-unknown}" 0 1
+              ;;
+          esac
+          if [ "$remote_backup_bytes" -le 0 ]; then
+            fail_transfer empty_remote_backup "$expected_backup_bytes" \
+              "$remote_backup_bytes" 0 1
+          fi
+          if [ "$remote_backup_bytes" -ne "$expected_backup_bytes" ]; then
+            fail_transfer remote_size_mismatch "$expected_backup_bytes" \
+              "$remote_backup_bytes" 0 1
+          fi
+
+          case "$MAX_BACKUP_TRANSFER_ATTEMPTS" in
+            ''|*[!0-9]*)
+              fail_transfer invalid_transfer_attempts "$expected_backup_bytes" \
+                "$remote_backup_bytes" 0 1
+              ;;
+          esac
+          if [ "$MAX_BACKUP_TRANSFER_ATTEMPTS" -le 0 ]; then
+            fail_transfer invalid_transfer_attempts "$expected_backup_bytes" \
+              "$remote_backup_bytes" 0 1
+          fi
+
+          transfer_attempt=1
+          transfer_status=1
+          local_backup_bytes=0
+          while [ "$transfer_attempt" -le "$MAX_BACKUP_TRANSFER_ATTEMPTS" ]; do
+            set +e
+            printf 'reget %s %s\n' "$REMOTE_BACKUP_PATH" "$LOCAL_BACKUP_PART_PATH" \
+              | timeout --signal=TERM --kill-after=30s 110m sftp -b - \
+                -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=3 \
+                -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+                -o StrictHostKeyChecking=accept-new -P "${SSH_PORT:-22}" \
+                "$SSH_USER@$SSH_HOST"
+            transfer_status="$?"
+            set -e
+
+            local_backup_bytes=0
+            if [ -f "$LOCAL_BACKUP_PART_PATH" ]; then
+              if ! local_backup_bytes="$(stat -c '%s' "$LOCAL_BACKUP_PART_PATH")"; then
+                fail_transfer local_size_unavailable "$expected_backup_bytes" \
+                  "$remote_backup_bytes" unknown 1
+              fi
+            fi
+            if [ "$transfer_status" -eq 0 ]; then
+              break
+            fi
+            if [ "$transfer_attempt" -ge "$MAX_BACKUP_TRANSFER_ATTEMPTS" ]; then
+              break
+            fi
+
+            record_transfer RETRYING "sftp_failed_attempt_${transfer_attempt}" \
+              "$expected_backup_bytes" "$remote_backup_bytes" \
+              "$local_backup_bytes" "$transfer_status" || true
+            sleep 10
+            transfer_attempt="$((transfer_attempt + 1))"
+          done
+
+          if [ "$transfer_status" -ne 0 ]; then
+            fail_transfer "sftp_failed_after_${transfer_attempt}_attempts" \
+              "$expected_backup_bytes" "$remote_backup_bytes" \
+              "$local_backup_bytes" "$transfer_status"
+          fi
+
+          if [ "$local_backup_bytes" -ne "$expected_backup_bytes" ]; then
+            fail_transfer size_mismatch "$expected_backup_bytes" \
+              "$remote_backup_bytes" "$local_backup_bytes" 1
+          fi
+
+          if ! local_backup_sha256="$(sha256sum "$LOCAL_BACKUP_PART_PATH" | awk '{print $1}')"; then
+            fail_transfer local_checksum_unavailable "$expected_backup_bytes" \
+              "$remote_backup_bytes" "$local_backup_bytes" 1
+          fi
+          if [ "$local_backup_sha256" != "$expected_backup_sha256" ]; then
+            fail_transfer checksum_mismatch "$expected_backup_bytes" \
+              "$remote_backup_bytes" "$local_backup_bytes" 1
+          fi
+
+          if ! mv -- "$LOCAL_BACKUP_PART_PATH" "$LOCAL_BACKUP_PATH"; then
+            fail_transfer promote_failed "$expected_backup_bytes" \
+              "$remote_backup_bytes" "$local_backup_bytes" 1
+          fi
+          record_transfer TRANSFERRED "verified_after_${transfer_attempt}_attempts" \
+            "$expected_backup_bytes" "$remote_backup_bytes" \
+            "$local_backup_bytes" 0
 
       - name: Verify Encrypted Backup
         env:
@@ -119,20 +277,69 @@ jobs:
             | node scripts/rehearse-production-database-restore.mjs --passphrase-stdin --input "$LOCAL_BACKUP_PATH" --json \
             | tee database-backup-restore-report.log
 
-      - name: Upload Encrypted Backup
-        if: always()
+      - name: Confirm Backup Is Ready For Upload
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$LOCAL_BACKUP_PATH"
+          test ! -e "$LOCAL_BACKUP_PART_PATH"
+          for report_path in \
+            database-backup-readiness-report.log \
+            database-backup-create-report.log \
+            database-backup-transfer-report.log \
+            database-backup-verify-report.log \
+            database-backup-restore-report.log
+          do
+            test -s "$report_path"
+          done
+          create_report_json="$(tail -n 1 database-backup-create-report.log)"
+          expected_backup_bytes="$(
+            printf '%s\n' "$create_report_json" \
+              | jq -er '.outputBytes | select(type == "number" and . > 0 and floor == .)'
+          )"
+          expected_backup_sha256="$(
+            printf '%s\n' "$create_report_json" \
+              | jq -er '.outputSha256 | select(type == "string" and test("^[0-9a-f]{64}$"))'
+          )"
+          test "$(stat -c '%s' "$LOCAL_BACKUP_PATH")" = "$expected_backup_bytes"
+          test "$(sha256sum "$LOCAL_BACKUP_PATH" | awk '{print $1}')" = "$expected_backup_sha256"
+
+      - name: Upload Verified Encrypted Backup
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: faolla-encrypted-disaster-recovery-${{ github.run_id }}
+          path: ${{ env.LOCAL_BACKUP_PATH }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+      - name: Upload Backup Verification Reports
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: faolla-backup-verification-reports-${{ github.run_id }}
           path: |
-            ${{ env.LOCAL_BACKUP_PATH }}
             database-backup-readiness-report.log
             database-backup-create-report.log
             database-backup-transfer-report.log
             database-backup-verify-report.log
             database-backup-restore-report.log
           if-no-files-found: error
-          compression-level: 0
+          retention-days: 7
+
+      - name: Upload Backup Failure Diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: faolla-backup-failure-diagnostics-${{ github.run_id }}
+          path: |
+            database-backup-readiness-report.log
+            database-backup-create-report.log
+            database-backup-transfer-report.log
+            database-backup-verify-report.log
+            database-backup-restore-report.log
+          if-no-files-found: warn
           retention-days: 7
 
       - name: Remove Temporary Backup
@@ -143,7 +350,7 @@ jobs:
           SSH_USER: ${{ secrets.SSH_USER }}
         shell: bash
         run: |
-          rm -f -- "$LOCAL_BACKUP_PATH"
+          rm -f -- "$LOCAL_BACKUP_PATH" "$LOCAL_BACKUP_PART_PATH"
           if [ -n "${SSH_USER:-}" ] && [ -n "${SSH_HOST:-}" ]; then
             ssh -o ConnectTimeout=20 -o ConnectionAttempts=2 -o StrictHostKeyChecking=accept-new -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
               "rm -f -- '$REMOTE_BACKUP_PATH'" || true
