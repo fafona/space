@@ -46,6 +46,10 @@ import {
   type MerchantOrderTaskRouteDependencies,
 } from "@/app/api/merchant-enterprise/order-tasks/route";
 import {
+  handleMerchantOrderSourceGet,
+  type MerchantOrderSourceRouteDependencies,
+} from "@/app/api/merchant-enterprise/order-sources/route";
+import {
   GET as getTaskEvents,
   POST as createTaskComment,
   toPublicMerchantTaskEvent,
@@ -65,6 +69,7 @@ import type {
 } from "@/lib/merchantEnterprise";
 import type { MerchantEnterpriseStoreClient } from "@/lib/merchantEnterpriseStore.server";
 import { MerchantEnterpriseAccessError } from "@/lib/merchantEnterpriseAuth.server";
+import type { MerchantOrderRecord } from "@/lib/merchantOrders";
 
 function pendingEmployee(
   invitedAt: string | null,
@@ -1202,6 +1207,36 @@ function merchantOrderTaskOwner(): MerchantEnterpriseActor {
   };
 }
 
+function merchantSourceOrder(
+  overrides: Partial<MerchantOrderRecord> = {},
+): MerchantOrderRecord {
+  return {
+    id: ORDER_TASK_ORDER_ID,
+    siteId: ORDER_TASK_SITE_ID,
+    siteName: "fafona",
+    blockId: "products",
+    createdAt: "2026-08-01T10:00:00.000Z",
+    updatedAt: "2026-08-01T10:00:00.000Z",
+    status: "confirmed",
+    customer: {
+      name: "Private Customer",
+      phone: "+34 600 123 456",
+      email: "private@example.com",
+      note: "Private delivery note",
+    },
+    items: [],
+    totalQuantity: 2,
+    totalAmount: 24,
+    pricePrefix: "€",
+    confirmedAt: "2026-08-01T10:05:00.000Z",
+    completedAt: null,
+    cancelledAt: null,
+    printedAt: null,
+    printCount: 0,
+    ...overrides,
+  };
+}
+
 test("order task input parsing is strict and normalizes bounded task fields", () => {
   assert.deepEqual(parseMerchantOrderTaskInput(merchantOrderTaskRequestBody()), {
     ...merchantOrderTaskRequestBody(),
@@ -1531,6 +1566,257 @@ test("order task creation rejects untrusted cross-origin requests before parsing
     }),
   );
   assert.equal(response.status, 403);
+});
+
+function merchantOrderSourceRequest(query = {
+  siteId: ORDER_TASK_SITE_ID,
+  orderId: ORDER_TASK_ORDER_ID,
+}) {
+  const searchParams = new URLSearchParams(query);
+  return new Request(
+    `https://www.faolla.com/api/merchant-enterprise/order-sources?${searchParams.toString()}`,
+  );
+}
+
+test("source order lookup strictly validates one siteId and orderId before authorization", async () => {
+  let authorizationCalls = 0;
+  const invalidUrls = [
+    "https://www.faolla.com/api/merchant-enterprise/order-sources",
+    `https://www.faolla.com/api/merchant-enterprise/order-sources?siteId=${ORDER_TASK_SITE_ID}`,
+    `https://www.faolla.com/api/merchant-enterprise/order-sources?orderId=${ORDER_TASK_ORDER_ID}`,
+    `https://www.faolla.com/api/merchant-enterprise/order-sources?siteId=${ORDER_TASK_SITE_ID}&siteId=${ORDER_TASK_SITE_ID}&orderId=${ORDER_TASK_ORDER_ID}`,
+    `https://www.faolla.com/api/merchant-enterprise/order-sources?siteId=${ORDER_TASK_SITE_ID}&orderId=${ORDER_TASK_ORDER_ID}&orderId=${ORDER_TASK_ORDER_ID}`,
+    `https://www.faolla.com/api/merchant-enterprise/order-sources?siteId=${ORDER_TASK_SITE_ID}&orderId=${ORDER_TASK_ORDER_ID}&extra=1`,
+    `https://www.faolla.com/api/merchant-enterprise/order-sources?siteId=not-a-site&orderId=${ORDER_TASK_ORDER_ID}`,
+    `https://www.faolla.com/api/merchant-enterprise/order-sources?siteId=${ORDER_TASK_SITE_ID}&orderId=..%2Fother-order`,
+    `https://www.faolla.com/api/merchant-enterprise/order-sources?siteId=%20${ORDER_TASK_SITE_ID}%20&orderId=${ORDER_TASK_ORDER_ID}`,
+  ];
+
+  for (const url of invalidUrls) {
+    const response = await handleMerchantOrderSourceGet(new Request(url), {
+      async resolveActor() {
+        authorizationCalls += 1;
+        return merchantOrderTaskOwner();
+      },
+    });
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      ok: false,
+      error: "invalid_source_order_request",
+    });
+    assert.equal(response.headers.get("cache-control"), "private, no-store");
+  }
+  assert.equal(authorizationCalls, 0);
+});
+
+test("source order lookup returns one exact owner-scoped record with private no-store", async () => {
+  const order = merchantSourceOrder();
+  const calls: Array<{ operation: string; values: unknown[] }> = [];
+  const dependencies: MerchantOrderSourceRouteDependencies = {
+    async resolveActor(_request, input) {
+      calls.push({ operation: "resolveActor", values: [input] });
+      return merchantOrderTaskOwner();
+    },
+    async requireEnterpriseEntitlement(siteId) {
+      calls.push({ operation: "requireEnterpriseEntitlement", values: [siteId] });
+      return {
+        permissionConfig: {
+          allowProductBlock: true,
+          allowOrderManagement: true,
+        },
+      };
+    },
+    async getOrder(siteId, orderId) {
+      calls.push({ operation: "getOrder", values: [siteId, orderId] });
+      return order;
+    },
+  };
+
+  const response = await handleMerchantOrderSourceGet(
+    merchantOrderSourceRequest(),
+    dependencies,
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "private, no-store");
+  assert.deepEqual(await response.json(), { ok: true, order });
+  assert.deepEqual(calls, [
+    {
+      operation: "resolveActor",
+      values: [
+        {
+          siteId: ORDER_TASK_SITE_ID,
+          requiredPermission: "enterprise.view",
+        },
+      ],
+    },
+    {
+      operation: "requireEnterpriseEntitlement",
+      values: [ORDER_TASK_SITE_ID],
+    },
+    {
+      operation: "getOrder",
+      values: [ORDER_TASK_SITE_ID, ORDER_TASK_ORDER_ID],
+    },
+  ]);
+});
+
+test("source order lookup rejects employees before entitlement or order reads", async () => {
+  let downstreamCalls = 0;
+  const employee: MerchantEnterpriseActor = {
+    type: "employee",
+    id: "66666666-6666-4666-8666-666666666666",
+    siteId: ORDER_TASK_SITE_ID,
+    displayName: "Employee",
+    email: "employee@example.com",
+    roleId: "77777777-7777-4777-8777-777777777777",
+    permissions: ["enterprise.view", "tasks.view"],
+    accessScope: "all",
+    allowedBoardIds: [],
+  };
+  const response = await handleMerchantOrderSourceGet(
+    merchantOrderSourceRequest(),
+    {
+      async resolveActor() {
+        return employee;
+      },
+      async requireEnterpriseEntitlement() {
+        downstreamCalls += 1;
+        return null;
+      },
+      async getOrder() {
+        downstreamCalls += 1;
+        return merchantSourceOrder();
+      },
+    },
+  );
+
+  assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), { ok: false, error: "permission_denied" });
+  assert.equal(response.headers.get("cache-control"), "private, no-store");
+  assert.equal(downstreamCalls, 0);
+});
+
+test("source order lookup preserves anonymous 401 before entitlement or order reads", async () => {
+  let downstreamCalls = 0;
+  const response = await handleMerchantOrderSourceGet(
+    merchantOrderSourceRequest(),
+    {
+      async resolveActor() {
+        throw new MerchantEnterpriseAccessError("unauthorized", 401);
+      },
+      async requireEnterpriseEntitlement() {
+        downstreamCalls += 1;
+        return null;
+      },
+      async getOrder() {
+        downstreamCalls += 1;
+        return merchantSourceOrder();
+      },
+    },
+  );
+
+  assert.equal(response.status, 401);
+  assert.deepEqual(await response.json(), { ok: false, error: "unauthorized" });
+  assert.equal(response.headers.get("cache-control"), "private, no-store");
+  assert.equal(downstreamCalls, 0);
+});
+
+test("source order lookup requires both authoritative order entitlements and fails closed", async () => {
+  let orderReads = 0;
+  const entitlementCases = [
+    { allowProductBlock: false, allowOrderManagement: true },
+    { allowProductBlock: true, allowOrderManagement: false },
+  ];
+
+  for (const permissionConfig of entitlementCases) {
+    const response = await handleMerchantOrderSourceGet(
+      merchantOrderSourceRequest(),
+      {
+        async resolveActor() {
+          return merchantOrderTaskOwner();
+        },
+        async requireEnterpriseEntitlement() {
+          return { permissionConfig };
+        },
+        async getOrder() {
+          orderReads += 1;
+          return merchantSourceOrder();
+        },
+      },
+    );
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), {
+      ok: false,
+      error: "order_management_disabled",
+    });
+  }
+
+  const unavailableResponse = await handleMerchantOrderSourceGet(
+    merchantOrderSourceRequest(),
+    {
+      async resolveActor() {
+        return merchantOrderTaskOwner();
+      },
+      async requireEnterpriseEntitlement() {
+        throw new MerchantEnterpriseAccessError(
+          "enterprise_entitlement_unavailable",
+          503,
+        );
+      },
+      async getOrder() {
+        orderReads += 1;
+        return merchantSourceOrder();
+      },
+    },
+  );
+  assert.equal(unavailableResponse.status, 503);
+  assert.deepEqual(await unavailableResponse.json(), {
+    ok: false,
+    error: "enterprise_entitlement_unavailable",
+  });
+  assert.equal(orderReads, 0);
+});
+
+test("source order lookup returns 404 for missing or cross-tenant records", async () => {
+  const exactReads: Array<[string, string]> = [];
+  const candidates: Array<MerchantOrderRecord | null> = [
+    null,
+    merchantSourceOrder({ siteId: "20000000" }),
+    merchantSourceOrder({ id: "O10000000202608010002" }),
+  ];
+
+  for (const candidate of candidates) {
+    const response = await handleMerchantOrderSourceGet(
+      merchantOrderSourceRequest(),
+      {
+        async resolveActor() {
+          return merchantOrderTaskOwner();
+        },
+        async requireEnterpriseEntitlement() {
+          return {
+            permissionConfig: {
+              allowProductBlock: true,
+              allowOrderManagement: true,
+            },
+          };
+        },
+        async getOrder(siteId, orderId) {
+          exactReads.push([siteId, orderId]);
+          return candidate;
+        },
+      },
+    );
+    assert.equal(response.status, 404);
+    assert.deepEqual(await response.json(), { ok: false, error: "order_not_found" });
+    assert.equal(response.headers.get("cache-control"), "private, no-store");
+  }
+
+  assert.deepEqual(exactReads, [
+    [ORDER_TASK_SITE_ID, ORDER_TASK_ORDER_ID],
+    [ORDER_TASK_SITE_ID, ORDER_TASK_ORDER_ID],
+    [ORDER_TASK_SITE_ID, ORDER_TASK_ORDER_ID],
+  ]);
 });
 
 test("task patch permissions are derived from every mutated field", () => {

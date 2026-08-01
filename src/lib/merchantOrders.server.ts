@@ -15,12 +15,14 @@ import {
 import { syncMerchantMembershipPointsForOrderTransitions } from "@/lib/merchantMemberships.server";
 import {
   listStoredMerchantOrdersByCustomer,
+  loadStoredMerchantOrder,
   loadStoredMerchantOrders,
   loadStoredMerchantOrdersWindow,
   saveStoredMerchantOrders,
 } from "@/lib/merchantOrdersStore";
 import { mirrorMerchantOrderTransitions } from "@/lib/merchantOrderDualWrite.server";
 import {
+  loadMerchantOrderV1,
   loadMerchantOrdersV1,
   loadMerchantOrdersV1Window,
   readMerchantOrdersWithV1Fallback,
@@ -64,6 +66,24 @@ export async function listMerchantOrders(siteId: string) {
     loadV1: () => loadMerchantOrdersV1(supabase, siteId),
   });
   return stored?.orders ?? [];
+}
+
+export async function getMerchantOrderBySite(
+  siteId: string,
+  orderId: string,
+): Promise<MerchantOrderRecord | null> {
+  const normalizedSiteId = trimText(siteId);
+  const normalizedOrderId = trimText(orderId);
+  if (!normalizedSiteId || !normalizedOrderId) return null;
+  const supabase = requireOrdersStoreClient();
+  const stored = await readMerchantOrdersWithV1Fallback({
+    siteId: normalizedSiteId,
+    loadLegacy: () =>
+      loadStoredMerchantOrder(supabase, normalizedSiteId, normalizedOrderId),
+    loadV1: () =>
+      loadMerchantOrderV1(supabase, normalizedSiteId, normalizedOrderId),
+  });
+  return stored?.orders[0] ?? null;
 }
 
 export async function listMerchantOrdersWindow(

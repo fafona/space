@@ -242,6 +242,8 @@ import {
 } from "@/lib/merchantOrders";
 import {
   buildMerchantOrderTaskDraft,
+  getMerchantOrderSourceErrorMessage,
+  type MerchantOrderSourceDetailIntent,
   type MerchantOrderTaskDraftIntent,
 } from "@/lib/merchantOrderEnterprise";
 import { createClientMutationOperationId } from "@/lib/mutationOperationId";
@@ -4176,6 +4178,8 @@ export default function AdminClient({
   const [merchantEnterpriseView, setMerchantEnterpriseView] = useState<MerchantEnterpriseView>("overview");
   const [merchantEnterpriseTaskIntent, setMerchantEnterpriseTaskIntent] =
     useState<MerchantOrderTaskDraftIntent | null>(null);
+  const [merchantOrderSourceIntent, setMerchantOrderSourceIntent] =
+    useState<MerchantOrderSourceDetailIntent | null>(null);
   const [merchantEnterpriseAvailableViews, setMerchantEnterpriseAvailableViews] = useState<
     readonly MerchantEnterpriseView[]
   >([]);
@@ -15538,6 +15542,77 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       current?.requestId === requestId ? null : current,
     );
   }
+
+  async function openMerchantEnterpriseSourceOrder(
+    input: { siteId: string; orderId: string },
+    surface: "desktop" | "mobile",
+  ) {
+    if (!canUseEnterpriseManagement || !canUseOrderManagement) {
+      throw new Error(
+        getMerchantOrderSourceErrorMessage(
+          canUseEnterpriseManagement
+            ? "order_management_disabled"
+            : "enterprise_management_disabled",
+        ),
+      );
+    }
+    const params = new URLSearchParams({
+      siteId: input.siteId,
+      orderId: input.orderId,
+    });
+    const requestController = new AbortController();
+    const timeoutId = window.setTimeout(() => requestController.abort(), 15_000);
+    let response: Response;
+    try {
+      response = await fetch(`/api/merchant-enterprise/order-sources?${params.toString()}`, {
+        cache: "no-store",
+        credentials: "same-origin",
+        signal: requestController.signal,
+      });
+    } catch (error) {
+      if (requestController.signal.aborted) {
+        throw new Error("来源订单读取超时，请检查网络后重试。");
+      }
+      throw new Error(
+        error instanceof Error && error.message
+          ? error.message
+          : "来源订单读取失败，请稍后重试。",
+      );
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+    const payload = (await response.json().catch(() => null)) as
+      | { ok?: boolean; error?: string; order?: MerchantOrderRecord }
+      | null;
+    if (!response.ok) {
+      throw new Error(getMerchantOrderSourceErrorMessage(payload?.error));
+    }
+    const order = payload?.order;
+    if (!order || order.siteId !== input.siteId || order.id !== input.orderId) {
+      throw new Error(getMerchantOrderSourceErrorMessage("invalid_source_order_request"));
+    }
+    setMerchantSiteIdOverride(order.siteId);
+    setMerchantOrderSourceIntent({
+      siteId: order.siteId,
+      orderId: order.id,
+      order,
+      requestId: createClientMutationOperationId("merchant-source-order"),
+    });
+    setMerchantOrderWorkbenchOpen(false);
+    if (surface === "mobile") {
+      setSupportMobileBusinessSection("orders");
+      openSupportMobileHomeTab("business");
+      return;
+    }
+    setMerchantOrderManagerOpen(false);
+    setMerchantDesktopSection("orders");
+  }
+
+  function handleMerchantOrderSourceIntentHandled(requestId: string) {
+    setMerchantOrderSourceIntent((current) =>
+      current?.requestId === requestId ? null : current,
+    );
+  }
   const merchantDesktopPointRedemptionCenterActive =
     merchantDesktopSection === "pointRedemption" ||
     merchantDesktopSection === "redemptionRecords" ||
@@ -16475,6 +16550,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         openMerchantOrderEnterpriseTask(order, "mobile"),
                     }
                   : {})}
+                sourceOrderIntent={
+                  merchantOrderSourceIntent?.siteId === supportMobileBookingSiteId
+                    ? merchantOrderSourceIntent
+                    : null
+                }
+                onSourceOrderIntentHandled={handleMerchantOrderSourceIntentHandled}
                 onSectionChange={setSupportMobileBusinessSection}
               />
             ) : (
@@ -16555,6 +16636,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 : null
             }
             onTaskDraftIntentHandled={handleMerchantEnterpriseTaskIntentHandled}
+            {...(canUseOrderManagement
+              ? {
+                  onOpenSourceOrder: (input: { siteId: string; orderId: string }) =>
+                    openMerchantEnterpriseSourceOrder(input, "mobile"),
+                }
+              : {})}
           />
         ) : (
           <section className="mt-4 rounded-[28px] border border-amber-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
@@ -18465,10 +18552,16 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const merchantOrderManagerDialogCommonProps =
     canUseOrderManagement
       ? {
-          siteId: editingSiteId || "",
+          siteId: editingSiteId || merchantSiteIdOverride || "",
           siteName: effectiveMerchantDisplayName || merchantDisplayName,
           onOrdersChange: handleMerchantOrderRecordsChange,
           onOpenConversation: openSupportConversationFromBusinessRecord,
+          sourceOrderIntent:
+            merchantOrderSourceIntent?.siteId ===
+            (editingSiteId || merchantSiteIdOverride || "")
+              ? merchantOrderSourceIntent
+              : null,
+          onSourceOrderIntentHandled: handleMerchantOrderSourceIntentHandled,
           ...(canUseEnterpriseManagement
             ? {
                 onOpenEnterpriseTask: (order: MerchantOrderRecord) =>
@@ -19460,6 +19553,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   : null
               }
               onTaskDraftIntentHandled={handleMerchantEnterpriseTaskIntentHandled}
+              {...(canUseOrderManagement
+                ? {
+                    onOpenSourceOrder: (input: { siteId: string; orderId: string }) =>
+                      openMerchantEnterpriseSourceOrder(input, "desktop"),
+                  }
+                : {})}
               navigation={{
                 mode: "external",
                 activeView: merchantEnterpriseView,

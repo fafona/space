@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useDeferredValue, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import OrderStatusFilterDropdown from "@/components/admin/OrderStatusFilterDropdown";
 import { showGlobalToast } from "@/lib/globalToast";
@@ -20,6 +20,7 @@ import {
   type MerchantOrderHistoryVisibility,
   type MerchantOrderSortMode,
 } from "@/lib/merchantOrderManagerPreferences";
+import type { MerchantOrderSourceDetailIntent } from "@/lib/merchantOrderEnterprise";
 import { useMerchantOrderManagerPreferences } from "@/lib/useMerchantManagerPreferences";
 import {
   buildMerchantAdminDataCacheKey,
@@ -40,6 +41,8 @@ type MerchantOrderManagerDialogProps = {
   onOrdersChange?: (records: MerchantOrderRecord[]) => void;
   onOpenConversation?: (target: { accountId?: string; email?: string; name?: string }) => void;
   onOpenEnterpriseTask?: (order: MerchantOrderRecord) => void;
+  sourceOrderIntent?: MerchantOrderSourceDetailIntent | null;
+  onSourceOrderIntentHandled?: (requestId: string) => void;
   onClose: () => void;
 };
 
@@ -257,6 +260,8 @@ export default function MerchantOrderManagerDialog({
   onOrdersChange,
   onOpenConversation,
   onOpenEnterpriseTask,
+  sourceOrderIntent = null,
+  onSourceOrderIntentHandled,
   onClose,
 }: MerchantOrderManagerDialogProps) {
   const isInline = mode === "inline";
@@ -281,7 +286,9 @@ export default function MerchantOrderManagerDialog({
   const [busyKey, setBusyKey] = useState("");
   const [internalWorkbenchOpen, setInternalWorkbenchOpen] = useState(false);
   const [detailOrderId, setDetailOrderId] = useState("");
+  const [externalDetailOrder, setExternalDetailOrder] = useState<MerchantOrderRecord | null>(null);
   const [detailQuantityDrafts, setDetailQuantityDrafts] = useState<Record<string, string>>({});
+  const handledSourceOrderIntentRef = useRef("");
   const deferredSearch = useDeferredValue(search);
   const isWorkbenchOpenControlled = controlledWorkbenchOpen !== undefined;
   const workbenchOpen = controlledWorkbenchOpen ?? internalWorkbenchOpen;
@@ -351,6 +358,11 @@ export default function MerchantOrderManagerDialog({
       setHasMoreRemoteRecords(Boolean(payload?.hasMore));
       writeCachedOrderRecords(siteId, nextRecords);
       setRecords(nextRecords);
+      setExternalDetailOrder((current) =>
+        current
+          ? nextRecords.find((record) => record.id === current.id) ?? current
+          : current,
+      );
       onOrdersChange?.(nextRecords);
     } catch (nextError) {
       setHasMoreRemoteRecords(false);
@@ -380,6 +392,11 @@ export default function MerchantOrderManagerDialog({
       }
       const nextRecords = Array.isArray(payload?.orders) ? payload.orders : [];
       setHasMoreRemoteRecords(Boolean(payload?.hasMore));
+      setExternalDetailOrder((current) =>
+        current
+          ? nextRecords.find((record) => record.id === current.id) ?? current
+          : current,
+      );
       setRecords((current) => {
         const existingIds = new Set(current.map((record) => record.id));
         const mergedRecords = [...current, ...nextRecords.filter((record) => !existingIds.has(record.id))];
@@ -393,6 +410,37 @@ export default function MerchantOrderManagerDialog({
       setLoadingMoreRecords(false);
     }
   }, [hasMoreRemoteRecords, loading, loadingMoreRecords, onOrdersChange, records.length, siteId]);
+
+  useEffect(() => {
+    handledSourceOrderIntentRef.current = "";
+    setExternalDetailOrder(null);
+    setDetailOrderId("");
+  }, [siteId]);
+
+  useEffect(() => {
+    if (!open || !sourceOrderIntent || sourceOrderIntent.siteId !== siteId) return;
+    if (handledSourceOrderIntentRef.current === sourceOrderIntent.requestId) return;
+    handledSourceOrderIntentRef.current = sourceOrderIntent.requestId;
+    const sourceOrder = sourceOrderIntent.order;
+    if (
+      sourceOrderIntent.orderId !== sourceOrder.id ||
+      sourceOrder.siteId !== siteId
+    ) {
+      setError("来源订单信息无效，请返回企业任务后重试。");
+      onSourceOrderIntentHandled?.(sourceOrderIntent.requestId);
+      return;
+    }
+    setExternalDetailOrder(sourceOrder);
+    setDetailOrderId(sourceOrder.id);
+    setWorkbenchOpen(false);
+    onSourceOrderIntentHandled?.(sourceOrderIntent.requestId);
+  }, [
+    onSourceOrderIntentHandled,
+    open,
+    setWorkbenchOpen,
+    siteId,
+    sourceOrderIntent,
+  ]);
 
   useEffect(() => {
     if (!open || !siteId) return;
@@ -475,8 +523,13 @@ export default function MerchantOrderManagerDialog({
   const visibleRecordIdSet = useMemo(() => new Set(filteredRecords.map((record) => record.id)), [filteredRecords]);
   const selectedRecordSet = useMemo(() => new Set(selectedOrderIds), [selectedOrderIds]);
   const detailOrder = useMemo(
-    () => (detailOrderId ? records.find((record) => record.id === detailOrderId) ?? null : null),
-    [detailOrderId, records],
+    () =>
+      detailOrderId
+        ? externalDetailOrder?.id === detailOrderId
+          ? externalDetailOrder
+          : records.find((record) => record.id === detailOrderId) ?? null
+        : null,
+    [detailOrderId, externalDetailOrder, records],
   );
 
   useEffect(() => {
@@ -678,6 +731,9 @@ export default function MerchantOrderManagerDialog({
             : undefined;
         const nextOrder = await requestOrderStatusUpdate(order.id, status, draftItems);
         setRecords((current) => current.map((item) => (item.id === order.id ? nextOrder : item)));
+        setExternalDetailOrder((current) =>
+          current?.id === order.id ? nextOrder : current,
+        );
       } catch (nextError) {
         const message =
           nextError instanceof Error && nextError.message ? nextError.message : "订单保存失败，请稍后重试。";
@@ -706,6 +762,9 @@ export default function MerchantOrderManagerDialog({
         }
         const nextOrder = await requestOrderAction(order.id, "print");
         setRecords((current) => current.map((item) => (item.id === order.id ? nextOrder : item)));
+        setExternalDetailOrder((current) =>
+          current?.id === order.id ? nextOrder : current,
+        );
       } catch (nextError) {
         setError(nextError instanceof Error && nextError.message ? nextError.message : "订单操作失败");
       } finally {
@@ -764,10 +823,12 @@ export default function MerchantOrderManagerDialog({
 
   const closeDetailDialog = useCallback(() => {
     setDetailOrderId("");
+    setExternalDetailOrder(null);
   }, []);
 
   const openDetailDialog = useCallback(
     (record: MerchantOrderRecord) => {
+      setExternalDetailOrder(null);
       setDetailOrderId(record.id);
       void markOrderTouched(record.id);
     },

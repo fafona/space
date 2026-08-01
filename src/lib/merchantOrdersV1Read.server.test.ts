@@ -2,13 +2,19 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { MerchantOrderRecord } from "@/lib/merchantOrders";
+import { buildMerchantOrderShadowMutation } from "@/lib/merchantOrderDualWrite.server";
 import {
   MerchantOrderV1ReadCircuitBreaker,
   type MerchantOrderV1ReadCircuitBreakerConfig,
 } from "@/lib/merchantOrderV1ReadCircuitBreaker";
-import type { StoredMerchantOrders, StoredMerchantOrdersWindow } from "@/lib/merchantOrdersStore";
+import type {
+  MerchantOrdersStoreClient,
+  StoredMerchantOrders,
+  StoredMerchantOrdersWindow,
+} from "@/lib/merchantOrdersStore";
 import {
   isMerchantOrderV1ReadEnabled,
+  loadMerchantOrderV1,
   readMerchantOrdersWithV1Fallback,
   resolveMerchantOrderV1ReadConfig,
   type MerchantOrderV1ReadEvent,
@@ -73,6 +79,57 @@ function createStoredOrder(
   };
 }
 
+function createExactV1ReadClient(input: {
+  orderRows: unknown[];
+  itemRows?: unknown[];
+}) {
+  const calls: Array<{
+    table: string;
+    filters: Array<[string, unknown]>;
+    orderColumns: string[];
+    limit: number | null;
+  }> = [];
+  const client: MerchantOrdersStoreClient = {
+    from: (table: string) => {
+      const call = {
+        table,
+        filters: [] as Array<[string, unknown]>,
+        orderColumns: [] as string[],
+        limit: null as number | null,
+      };
+      calls.push(call);
+      const result = {
+        data:
+          table === "merchant_orders"
+            ? input.orderRows
+            : table === "merchant_order_items"
+              ? (input.itemRows ?? [])
+              : [],
+        error: null,
+      };
+      const query = {
+        select: () => query,
+        eq: (column: string, value: unknown) => {
+          call.filters.push([column, value]);
+          return query;
+        },
+        order: (column: string) => {
+          call.orderColumns.push(column);
+          return query;
+        },
+        limit: (value: number) => {
+          call.limit = value;
+          return query;
+        },
+        then: (resolve: (value: typeof result) => unknown, reject: (reason: unknown) => unknown) =>
+          Promise.resolve(result).then(resolve, reject),
+      };
+      return query;
+    },
+  };
+  return { client, calls };
+}
+
 test("read config is default-off and only accepts exact merchant ids", () => {
   const config = resolveMerchantOrderV1ReadConfig({
     MERCHANT_ORDER_V1_READ_MODE: "primary",
@@ -94,6 +151,68 @@ test("read config is default-off and only accepts exact merchant ids", () => {
     }).mode,
     "off",
   );
+});
+
+test("single V1 order reads scope both order and item queries to merchant and order ids", async () => {
+  const order = createOrder();
+  const shadow = buildMerchantOrderShadowMutation({ next: order });
+  const itemRows = shadow.items.map((item, index) => ({
+    merchant_id: order.siteId,
+    order_id: order.id,
+    line_number: index + 1,
+    ...item,
+  }));
+  const { client, calls } = createExactV1ReadClient({
+    orderRows: [shadow.order],
+    itemRows,
+  });
+
+  const stored = await loadMerchantOrderV1(client, order.siteId, order.id);
+
+  assert.deepEqual(stored.orders, [order]);
+  assert.equal(stored.updatedAt, order.updatedAt);
+  assert.deepEqual(
+    calls.map((call) => ({
+      table: call.table,
+      filters: call.filters,
+      orderColumns: call.orderColumns,
+      limit: call.limit,
+    })),
+    [
+      {
+        table: "merchant_orders",
+        filters: [
+          ["merchant_id", order.siteId],
+          ["id", order.id],
+        ],
+        orderColumns: [],
+        limit: 1,
+      },
+      {
+        table: "merchant_order_items",
+        filters: [
+          ["merchant_id", order.siteId],
+          ["order_id", order.id],
+        ],
+        orderColumns: ["line_number"],
+        limit: null,
+      },
+    ],
+  );
+});
+
+test("single V1 order reads return an empty envelope without querying items when missing", async () => {
+  const { client, calls } = createExactV1ReadClient({ orderRows: [] });
+
+  assert.deepEqual(
+    await loadMerchantOrderV1(client, "10000000", "missing-order"),
+    {
+      siteId: "10000000",
+      orders: [],
+      updatedAt: null,
+    },
+  );
+  assert.deepEqual(calls.map((call) => call.table), ["merchant_orders"]);
 });
 
 test("disabled reads never invoke the V1 loader", async () => {

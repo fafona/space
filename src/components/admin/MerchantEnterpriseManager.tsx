@@ -63,7 +63,10 @@ import {
 } from "@/lib/merchantEnterprise";
 import { isValidAuthEmail, normalizeAuthEmail } from "@/lib/authCredentialValidation";
 import { createClientMutationOperationId } from "@/lib/mutationOperationId";
-import type { MerchantOrderTaskDraftIntent } from "@/lib/merchantOrderEnterprise";
+import {
+  getMerchantOrderTaskSource,
+  type MerchantOrderTaskDraftIntent,
+} from "@/lib/merchantOrderEnterprise";
 import {
   planMerchantTaskReorder,
   sortMerchantTaskOrderItems,
@@ -102,6 +105,7 @@ type MerchantEnterpriseManagerProps = {
   navigation?: MerchantEnterpriseExternalNavigation;
   taskDraftIntent?: MerchantOrderTaskDraftIntent | null;
   onTaskDraftIntentHandled?: (requestId: string) => void;
+  onOpenSourceOrder?: (input: { siteId: string; orderId: string }) => Promise<void> | void;
 };
 
 type OverviewPayload = {
@@ -768,6 +772,7 @@ function TaskEditor({
   onLoadChecklist,
   onCreateChecklistItem,
   onUpdateChecklistItem,
+  onOpenSourceOrder,
   onClose,
 }: {
   task: MerchantTask;
@@ -801,6 +806,7 @@ function TaskEditor({
     change: TaskChecklistItemChange,
     operationId: string,
   ) => Promise<MerchantTaskChecklistItem>;
+  onOpenSourceOrder?: (orderId: string) => Promise<void> | void;
   onClose: () => void;
 }) {
   const [title, setTitle] = useState(task.title);
@@ -826,6 +832,8 @@ function TaskEditor({
   const [checklistMutationId, setChecklistMutationId] = useState("");
   const [editingChecklistItemId, setEditingChecklistItemId] = useState("");
   const [editingChecklistText, setEditingChecklistText] = useState("");
+  const [sourceOrderBusy, setSourceOrderBusy] = useState(false);
+  const [sourceOrderError, setSourceOrderError] = useState("");
   const commentMutationRef = useRef<{ text: string; operationId: string } | null>(null);
   const checklistCreateMutationRef = useRef<{
     text: string;
@@ -1045,6 +1053,38 @@ function TaskEditor({
     : 0;
   const checklistAtLimit = checklistItems.length >= MAX_MERCHANT_TASK_CHECKLIST_ITEMS;
   const checklistBusy = busy || Boolean(checklistMutationId);
+  const orderSource = getMerchantOrderTaskSource(task);
+  const draftDueAtTimestamp = dueAt ? Date.parse(`${dueAt}T23:59:59`) : Number.NaN;
+  const normalizedDraftDueAt =
+    dueAt === taskDateInputValue(task.dueAt)
+      ? task.dueAt
+      : Number.isFinite(draftDueAtTimestamp)
+        ? new Date(draftDueAtTimestamp).toISOString()
+        : null;
+  const taskDraftChanges = buildMerchantTaskEditChanges(
+    actor,
+    task,
+    {
+      title,
+      description,
+      priority,
+      dueAt: normalizedDraftDueAt,
+      columnId,
+      assigneeIds,
+    },
+    employees,
+  );
+  const editedChecklistItem = checklistItems.find(
+    (item) => item.id === editingChecklistItemId,
+  );
+  const hasUnsavedSourceExitDraft =
+    (!taskDraftChanges.ok || Object.keys(taskDraftChanges.changes).length > 0) ||
+    Boolean(commentText.trim()) ||
+    Boolean(checklistDraft.trim()) ||
+    Boolean(
+      editedChecklistItem &&
+      editingChecklistText.trim() !== editedChecklistItem.text,
+    );
 
   function taskEditorDraft(nextColumnId = columnId): TaskDraft {
     return {
@@ -1055,6 +1095,32 @@ function TaskEditor({
       columnId: nextColumnId,
       assigneeIds,
     };
+  }
+
+  async function openSourceOrder() {
+    if (!orderSource || !onOpenSourceOrder || sourceOrderBusy || checklistBusy || commentBusy) {
+      return;
+    }
+    if (
+      hasUnsavedSourceExitDraft &&
+      typeof window !== "undefined" &&
+      !window.confirm("当前任务有尚未保存的修改或输入。查看来源订单将离开任务详情，是否继续？")
+    ) {
+      return;
+    }
+    setSourceOrderBusy(true);
+    setSourceOrderError("");
+    try {
+      await onOpenSourceOrder(orderSource.sourceId);
+    } catch (error) {
+      setSourceOrderError(
+        error instanceof Error && error.message
+          ? error.message
+          : "来源订单读取失败，请稍后重试。",
+      );
+    } finally {
+      setSourceOrderBusy(false);
+    }
   }
 
   return (
@@ -1091,6 +1157,42 @@ function TaskEditor({
         </div>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:mt-5 sm:block sm:overflow-visible sm:p-0">
+          {orderSource ? (
+            <section
+              data-enterprise-task-order-source
+              aria-label="来源订单"
+              className="rounded-2xl border border-cyan-200 bg-cyan-50/80 p-4"
+            >
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-700">
+                    来源订单
+                  </div>
+                  <div className="mt-1 break-all text-sm font-semibold text-cyan-950" data-no-translate="1">
+                    #{orderSource.sourceId}
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-cyan-800">
+                    来源关联不可修改；编辑任务标题或说明不会改变原订单。
+                  </p>
+                </div>
+                {actor.type === "owner" && onOpenSourceOrder ? (
+                  <button
+                    type="button"
+                    className="min-h-11 shrink-0 rounded-xl border border-cyan-300 bg-white px-4 py-2 text-sm font-semibold text-cyan-800 disabled:opacity-45 sm:min-h-0"
+                    disabled={busy || sourceOrderBusy || checklistBusy || commentBusy}
+                    onClick={() => void openSourceOrder()}
+                  >
+                    {sourceOrderBusy ? "读取中…" : "查看来源订单"}
+                  </button>
+                ) : null}
+              </div>
+              {sourceOrderError ? (
+                <div role="alert" className="mt-3 text-sm text-rose-700">
+                  {sourceOrderError}
+                </div>
+              ) : null}
+            </section>
+          ) : null}
           <label className="block text-sm font-medium text-slate-700">
             任务标题
             <input
@@ -2966,6 +3068,7 @@ function MerchantEnterpriseManagerContent({
   navigation,
   taskDraftIntent = null,
   onTaskDraftIntentHandled,
+  onOpenSourceOrder,
 }: MerchantEnterpriseManagerProps) {
   const [internalView, setInternalView] = useState<MerchantEnterpriseView>("overview");
   const [actor, setActor] = useState<MerchantEnterpriseActor | null>(null);
@@ -5159,6 +5262,7 @@ function MerchantEnterpriseManagerContent({
                                 .filter(Boolean)
                                 .join("、");
                               const overdue = Boolean(task.dueAt && !task.completedAt && Date.parse(task.dueAt) < Date.now());
+                              const taskOrderSource = getMerchantOrderTaskSource(task);
                               const reorderControlsDisabled = busy || hasTaskFilters;
                               const completionTransition = getMerchantTaskCompletionTransition(
                                 task,
@@ -5184,6 +5288,15 @@ function MerchantEnterpriseManagerContent({
                                     </span>
                                   </div>
                                   {task.description ? <p className="mt-2 line-clamp-3 text-xs leading-5 text-slate-600">{task.description}</p> : null}
+                                  {taskOrderSource ? (
+                                    <div
+                                      data-enterprise-task-order-source
+                                      className="mt-3 rounded-lg border border-cyan-200 bg-cyan-50 px-2.5 py-2 text-xs font-semibold text-cyan-800"
+                                    >
+                                      <span>来源订单 · </span>
+                                      <span className="break-all" data-no-translate="1">#{taskOrderSource.sourceId}</span>
+                                    </div>
+                                  ) : null}
                                   {task.dueAt ? (
                                     <div className={`mt-3 text-xs font-medium ${overdue ? "text-rose-600" : "text-slate-500"}`}>
                                       {overdue ? "已逾期 · " : "截止 · "}{formatDate(task.dueAt)}
@@ -5677,6 +5790,12 @@ function MerchantEnterpriseManagerContent({
             onLoadChecklist={loadTaskChecklist}
             onCreateChecklistItem={createTaskChecklistItem}
             onUpdateChecklistItem={updateTaskChecklistItem}
+            {...(actor.type === "owner" && onOpenSourceOrder
+              ? {
+                  onOpenSourceOrder: (orderId: string) =>
+                    onOpenSourceOrder({ siteId, orderId }),
+                }
+              : {})}
             onClose={() => setEditingTaskId("")}
           />
         ) : null}

@@ -1100,6 +1100,268 @@ test("enterprise manager consumes each order intent once and creates through the
   assert.match(taskComposerSource, /onClick=\{\(\)\s*=>\s*setTaskSource\(null\)\}/);
 });
 
+test("linked tasks keep their source order visible and immutable while only owners can open it", () => {
+  const propsSource = sliceBetween(
+    /type\s+MerchantEnterpriseManagerProps\s*=\s*\{/,
+    /\n\};/,
+    "enterprise manager source-order props",
+  );
+  assert.match(
+    propsSource,
+    /onOpenSourceOrder\?\s*:\s*\(input:\s*\{\s*siteId:\s*string;\s*orderId:\s*string\s*\}\)\s*=>\s*Promise<void>\s*\|\s*void/,
+  );
+
+  const taskEditorSource = sliceBetween(
+    /function\s+TaskEditor\b/,
+    /function\s+EmployeeOffboardingDialog\b/,
+    "source-aware task editor",
+  );
+  assert.match(taskEditorSource, /const\s+orderSource\s*=\s*getMerchantOrderTaskSource\(task\)/);
+  assert.match(taskEditorSource, /data-enterprise-task-order-source/);
+  assert.match(taskEditorSource, /aria-label=["']来源订单["']/);
+  assert.match(taskEditorSource, /#\{orderSource\.sourceId\}/);
+  assert.match(
+    taskEditorSource,
+    /来源关联不可修改；编辑任务标题或说明不会改变原订单。/,
+    "task editing must explicitly preserve the canonical source association",
+  );
+  assert.match(
+    taskEditorSource,
+    /actor\.type\s*===\s*["']owner["']\s*&&\s*onOpenSourceOrder\s*\?\s*\(/,
+    "employee task details must never render the source-order action",
+  );
+
+  const openSourceOrderSource = sliceSourceBetween(
+    taskEditorSource,
+    /async\s+function\s+openSourceOrder\b/,
+    /\n\s*return\s*\(/,
+    "task editor source-order action",
+  );
+  assert.match(
+    openSourceOrderSource,
+    /hasUnsavedSourceExitDraft[\s\S]*window\.confirm\(["']当前任务有尚未保存的修改或输入。查看来源订单将离开任务详情，是否继续？["']\)/,
+  );
+  assert.match(
+    taskEditorSource,
+    /editedChecklistItem\s*&&\s*editingChecklistText\.trim\(\)\s*!==\s*editedChecklistItem\.text/,
+    "clearing an edited checklist item must still count as unsaved input",
+  );
+  assert.match(openSourceOrderSource, /await\s+onOpenSourceOrder\(orderSource\.sourceId\)/);
+  assert.ok(
+    openSourceOrderSource.indexOf("window.confirm") <
+      openSourceOrderSource.indexOf("await onOpenSourceOrder"),
+    "unsaved task input must be confirmed before navigating away",
+  );
+  assert.match(taskEditorSource, /\{sourceOrderError\s*\?\s*\([\s\S]{0,180}role=["']alert["']/);
+
+  const taskCardSource = sliceBetween(
+    /const\s+taskOrderSource\s*=\s*getMerchantOrderTaskSource\(task\)/,
+    /<div\s+className=["']mt-3 text-xs text-slate-500["']>负责人：/,
+    "source-aware task card",
+  );
+  assert.match(taskCardSource, /taskOrderSource\s*\?\s*\(/);
+  assert.match(taskCardSource, /data-enterprise-task-order-source/);
+  assert.match(taskCardSource, /来源订单\s*·/);
+  assert.match(taskCardSource, /#\{taskOrderSource\.sourceId\}/);
+
+  const taskEditorHandoffSource = sliceBetween(
+    /\{editingTask\s*\?\s*\(/,
+    /\{offboardingEmployee\s*&&\s*actor\s*\?\s*\(/,
+    "task editor source-order handoff",
+  );
+  assert.match(
+    taskEditorHandoffSource,
+    /actor\.type\s*===\s*["']owner["']\s*&&\s*onOpenSourceOrder[\s\S]*onOpenSourceOrder:\s*\(orderId:\s*string\)\s*=>[\s\S]*onOpenSourceOrder\(\{\s*siteId,\s*orderId\s*\}\)/,
+  );
+});
+
+test("merchant admin resolves source orders exactly and hands off a request-scoped intent", () => {
+  assert.match(
+    adminClientSource,
+    /const\s+\[merchantOrderSourceIntent,\s*setMerchantOrderSourceIntent\]\s*=\s*\n?\s*useState<MerchantOrderSourceDetailIntent\s*\|\s*null>\(null\)/,
+  );
+
+  const openSourceOrderSource = sliceSourceBetween(
+    adminClientSource,
+    /async\s+function\s+openMerchantEnterpriseSourceOrder\b/,
+    /function\s+handleMerchantOrderSourceIntentHandled\b/,
+    "merchant source-order resolver",
+  );
+  assert.match(
+    openSourceOrderSource,
+    /if\s*\(\s*!canUseEnterpriseManagement\s*\|\|\s*!canUseOrderManagement\s*\)/,
+    "source-order reads require both product entitlements",
+  );
+  assert.match(
+    openSourceOrderSource,
+    /new\s+URLSearchParams\(\{\s*siteId:\s*input\.siteId,\s*orderId:\s*input\.orderId,?\s*\}\)/,
+  );
+  assert.match(
+    openSourceOrderSource,
+    /fetch\(`\/api\/merchant-enterprise\/order-sources\?\$\{params\.toString\(\)\}`,[\s\S]*cache:\s*["']no-store["']/,
+    "the source order must come from the exact-read endpoint rather than the paged order list",
+  );
+  assert.match(
+    openSourceOrderSource,
+    /!order\s*\|\|\s*order\.siteId\s*!==\s*input\.siteId\s*\|\|\s*order\.id\s*!==\s*input\.orderId/,
+    "the client must reject a mismatched tenant or order response",
+  );
+  assert.match(
+    openSourceOrderSource,
+    /setMerchantOrderSourceIntent\(\{\s*siteId:\s*order\.siteId,\s*orderId:\s*order\.id,\s*order,\s*requestId:\s*createClientMutationOperationId\(["']merchant-source-order["']\)/,
+  );
+  assert.match(openSourceOrderSource, /setSupportMobileBusinessSection\(["']orders["']\)/);
+  assert.match(openSourceOrderSource, /openSupportMobileHomeTab\(["']business["']\)/);
+  assert.match(openSourceOrderSource, /setMerchantDesktopSection\(["']orders["']\)/);
+
+  const handledIntentSource = sliceSourceBetween(
+    adminClientSource,
+    /function\s+handleMerchantOrderSourceIntentHandled\b/,
+    /const\s+merchantDesktopPointRedemptionCenterActive\b/,
+    "handled source-order intent",
+  );
+  assert.match(
+    handledIntentSource,
+    /setMerchantOrderSourceIntent\(\(current\)\s*=>[\s\S]*current\?\.requestId\s*===\s*requestId\s*\?\s*null\s*:\s*current/,
+    "finishing an old request must not clear a newer source-order intent",
+  );
+
+  const mobileEnterpriseSurface = sliceSourceBetween(
+    adminClientSource,
+    /const\s+supportMobileEnterpriseContent\s*=/,
+    /const\s+supportMobileSelfContent\s*=/,
+    "mobile source-order entitlement handoff",
+  );
+  assert.match(
+    mobileEnterpriseSurface,
+    /canUseOrderManagement\s*\?\s*\{[\s\S]*onOpenSourceOrder:[\s\S]*openMerchantEnterpriseSourceOrder\(input,\s*["']mobile["']\)/,
+    "mobile task details receive the source-order action only when order management is enabled",
+  );
+
+  const desktopWorkspaceSource = sliceSourceBetween(
+    adminClientSource,
+    /const\s+desktopMerchantWorkspaceContent\s*=/,
+    /\n\s*return\s*\(\s*\n\s*<main\b/,
+    "desktop source-order entitlement handoff",
+  );
+  const desktopEnterpriseBranch = sliceSourceBetween(
+    desktopWorkspaceSource,
+    /merchantDesktopSection\s*===\s*["']enterprise["']\s*&&\s*canUseEnterpriseManagement\s*\?\s*\(/,
+    /:\s*merchantDesktopSection\s*===\s*["']logs["']/,
+    "desktop source-order enterprise branch",
+  );
+  assert.match(
+    desktopEnterpriseBranch,
+    /canUseOrderManagement\s*\?\s*\{[\s\S]*onOpenSourceOrder:[\s\S]*openMerchantEnterpriseSourceOrder\(input,\s*["']desktop["']\)/,
+    "desktop task details receive the source-order action only when order management is enabled",
+  );
+});
+
+test("desktop and mobile order managers consume exact source-order intents once without touching them", () => {
+  const variants = [
+    {
+      label: "desktop order manager",
+      targetSource: desktopOrderManagerSource,
+      propsStart: /type\s+MerchantOrderManagerDialogProps\s*=\s*\{/,
+      intentStart:
+        /useEffect\(\(\)\s*=>\s*\{\s*if\s*\(!open\s*\|\|\s*!sourceOrderIntent\s*\|\|\s*sourceOrderIntent\.siteId\s*!==\s*siteId\)\s*return/,
+      intentEnd:
+        /useEffect\(\(\)\s*=>\s*\{\s*if\s*\(!open\s*\|\|\s*!siteId\)\s*return/,
+    },
+    {
+      label: "mobile order manager",
+      targetSource: mobileOrderManagerSource,
+      propsStart: /type\s+MerchantOrderMobilePanelProps\s*=\s*\{/,
+      intentStart:
+        /useEffect\(\(\)\s*=>\s*\{\s*if\s*\(!sourceOrderIntent\s*\|\|\s*sourceOrderIntent\.siteId\s*!==\s*siteId\)\s*return/,
+      intentEnd:
+        /useEffect\(\(\)\s*=>\s*\{\s*if\s*\(!siteId\)\s*return/,
+    },
+  ];
+
+  for (const variant of variants) {
+    const propsSource = sliceSourceBetween(
+      variant.targetSource,
+      variant.propsStart,
+      /\n\};/,
+      `${variant.label} source-order props`,
+    );
+    assert.match(
+      propsSource,
+      /sourceOrderIntent\?\s*:\s*MerchantOrderSourceDetailIntent\s*\|\s*null/,
+    );
+    assert.match(
+      propsSource,
+      /onSourceOrderIntentHandled\?\s*:\s*\(requestId:\s*string\)\s*=>\s*void/,
+    );
+    assert.match(
+      variant.targetSource,
+      /const\s+handledSourceOrderIntentRef\s*=\s*useRef\(["']{2}\)/,
+    );
+    assert.match(
+      variant.targetSource,
+      /const\s+\[externalDetailOrder,\s*setExternalDetailOrder\]\s*=\s*useState<MerchantOrderRecord\s*\|\s*null>\(null\)/,
+    );
+
+    const intentEffectSource = sliceSourceBetween(
+      variant.targetSource,
+      variant.intentStart,
+      variant.intentEnd,
+      `${variant.label} source-order intent effect`,
+    );
+    assert.match(
+      intentEffectSource,
+      /handledSourceOrderIntentRef\.current\s*===\s*sourceOrderIntent\.requestId/,
+    );
+    assert.match(
+      intentEffectSource,
+      /handledSourceOrderIntentRef\.current\s*=\s*sourceOrderIntent\.requestId/,
+    );
+    assert.ok(
+      intentEffectSource.indexOf(
+        "handledSourceOrderIntentRef.current === sourceOrderIntent.requestId",
+      ) <
+        intentEffectSource.indexOf(
+          "handledSourceOrderIntentRef.current = sourceOrderIntent.requestId",
+        ),
+      `${variant.label} must reject a duplicate before marking the request handled`,
+    );
+    assert.match(
+      intentEffectSource,
+      /sourceOrderIntent\.orderId\s*!==\s*sourceOrder\.id\s*\|\|[\s\S]*sourceOrder\.siteId\s*!==\s*siteId/,
+    );
+    assert.match(intentEffectSource, /setExternalDetailOrder\(sourceOrder\)/);
+    assert.match(intentEffectSource, /setDetailOrderId\(sourceOrder\.id\)/);
+    assert.match(
+      intentEffectSource,
+      /onSourceOrderIntentHandled\?\.\(sourceOrderIntent\.requestId\)/,
+    );
+    assert.doesNotMatch(
+      intentEffectSource,
+      /markOrderTouched|openDetailDialog|setRecords/,
+      `${variant.label} must not mutate, touch, or merge an order merely because a task opened it`,
+    );
+
+    const detailOrderSource = sliceSourceBetween(
+      variant.targetSource,
+      /const\s+detailOrder\s*=\s*useMemo\(/,
+      /\n\s*useEffect\(\(\)\s*=>\s*\{/,
+      `${variant.label} exact detail-order resolver`,
+    );
+    assert.match(
+      detailOrderSource,
+      /externalDetailOrder\?\.id\s*===\s*detailOrderId\s*\?\s*externalDetailOrder\s*:\s*records\.find\(/,
+      `${variant.label} must open an exact source order even when it is absent from the first 500 records`,
+    );
+    assert.match(
+      variant.targetSource,
+      /setExternalDetailOrder\(\(current\)\s*=>\s*current\s*\?\s*nextRecords\.find\(\(record\)\s*=>\s*record\.id\s*===\s*current\.id\)\s*\?\?\s*current\s*:\s*current\s*,?\s*\)/,
+      `${variant.label} must refresh an exact detail with a later list response when available`,
+    );
+    assert.match(variant.targetSource, /MERCHANT_ORDER_FETCH_LIMIT\s*=\s*500/);
+  }
+});
+
 test("pending employee invitations have a safe responsive management flow", () => {
   const inviteEmployeeSource = sliceBetween(
     /async\s+function\s+inviteEmployee\b/,

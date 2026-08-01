@@ -352,6 +352,45 @@ async function listStoredMerchantOrdersRowsBySlugs(
   return Array.isArray(data) ? data : [];
 }
 
+async function listStoredMerchantOrderRows(
+  supabase: MerchantOrdersStoreClient,
+  siteId: string,
+  orderId: string,
+) {
+  const normalizedSiteId = normalizeSiteId(siteId);
+  const normalizedOrderId = normalizeText(orderId);
+  if (!normalizedSiteId || !normalizedOrderId) return [] as StoredMerchantOrdersRow[];
+  const slugPrefix = `${buildOrdersSlug(normalizedSiteId)}%`;
+  let includeMerchantId = true;
+  let includeUpdatedAt = true;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    let query = supabase
+      .from("pages")
+      .select(includeUpdatedAt ? "id,slug,blocks,updated_at" : "id,slug,blocks");
+    if (includeMerchantId) query = query.eq("merchant_id", normalizedSiteId);
+    const result = await query
+      .like("slug", slugPrefix)
+      .contains("blocks", [{ id: normalizedOrderId }]);
+    const data = (result.data ?? []) as StoredMerchantOrdersRow[];
+    if (!result.error) return Array.isArray(data) ? data : [];
+
+    const message = toErrorMessage(result.error);
+    if (isMissingSlugColumn(message)) return [];
+    if (includeMerchantId && isMissingMerchantIdColumn(message)) {
+      includeMerchantId = false;
+      continue;
+    }
+    if (includeUpdatedAt && isMissingUpdatedAtColumn(message)) {
+      includeUpdatedAt = false;
+      continue;
+    }
+    throwOrdersStoreQueryError(result.error);
+  }
+
+  return [];
+}
+
 async function listStoredMerchantOrdersRowsBySlugPrefix(supabase: MerchantOrdersStoreClient) {
   const pageSize = 1000;
   const rows: StoredMerchantOrdersRow[] = [];
@@ -430,6 +469,59 @@ export async function loadStoredMerchantOrders(
   if (!normalizedSiteId) return null;
   const rows = await listStoredMerchantOrdersRows(supabase, normalizedSiteId);
   return mergeStoredMerchantOrdersRows(normalizedSiteId, rows);
+}
+
+export async function loadStoredMerchantOrder(
+  supabase: MerchantOrdersStoreClient,
+  siteId: string,
+  orderId: string,
+): Promise<StoredMerchantOrders> {
+  const normalizedSiteId = normalizeSiteId(siteId);
+  const normalizedOrderId = normalizeText(orderId);
+  if (!normalizedSiteId || !normalizedOrderId) {
+    return { siteId: normalizedSiteId, orders: [], updatedAt: null };
+  }
+
+  const [metadataRows, rows] = await Promise.all([
+    listStoredMerchantOrdersRowMetadata(supabase, normalizedSiteId),
+    listStoredMerchantOrderRows(supabase, normalizedSiteId, normalizedOrderId),
+  ]);
+  const storageHasChunks = metadataRows
+    .map((row) => attachMerchantOrderChunkIndex(normalizedSiteId, row))
+    .some((row) => (row.chunkIndex ?? -1) >= 0);
+  const withSlug = rows
+    .map((row) => attachMerchantOrderChunkIndex(normalizedSiteId, row))
+    .filter((row) => row.chunkIndex !== null);
+  const preferredRows =
+    storageHasChunks || withSlug.some((row) => (row.chunkIndex ?? -1) >= 0)
+    ? withSlug
+        .filter((row) => (row.chunkIndex ?? -1) >= 0)
+        .sort((left, right) => (left.chunkIndex ?? 0) - (right.chunkIndex ?? 0))
+    : withSlug.filter((row) => row.chunkIndex === -1);
+
+  let matchedOrder: MerchantOrderRecord | null = null;
+  let updatedAt: string | null = null;
+  for (const row of preferredRows) {
+    const order = normalizeMerchantOrderRecords(row.blocks).find(
+      (candidate) =>
+        candidate.siteId === normalizedSiteId && candidate.id === normalizedOrderId,
+    );
+    if (!order) continue;
+    if (!matchedOrder) matchedOrder = order;
+    const rowUpdatedAt = normalizeText(row.updated_at);
+    if (
+      rowUpdatedAt &&
+      (!updatedAt || Date.parse(rowUpdatedAt) > Date.parse(updatedAt))
+    ) {
+      updatedAt = rowUpdatedAt;
+    }
+  }
+
+  return {
+    siteId: normalizedSiteId,
+    orders: matchedOrder ? [matchedOrder] : [],
+    updatedAt: matchedOrder ? updatedAt : null,
+  };
 }
 
 export async function loadStoredMerchantOrdersWindow(

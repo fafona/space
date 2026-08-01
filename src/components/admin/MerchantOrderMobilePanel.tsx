@@ -15,6 +15,7 @@ import {
   readMerchantAdminDataCache,
   writeMerchantAdminDataCache,
 } from "@/lib/merchantAdminDataCache";
+import type { MerchantOrderSourceDetailIntent } from "@/lib/merchantOrderEnterprise";
 
 type MerchantOrderMobilePanelProps = {
   siteId: string;
@@ -23,6 +24,8 @@ type MerchantOrderMobilePanelProps = {
   onOrdersChange?: (records: MerchantOrderRecord[]) => void;
   onOpenConversation?: (target: { accountId?: string; email?: string; name?: string }) => void;
   onOpenEnterpriseTask?: (order: MerchantOrderRecord) => void;
+  sourceOrderIntent?: MerchantOrderSourceDetailIntent | null;
+  onSourceOrderIntentHandled?: (requestId: string) => void;
   onSectionChange?: (section: "booking" | "orders") => void;
 };
 
@@ -194,6 +197,8 @@ export default function MerchantOrderMobilePanel({
   onOrdersChange,
   onOpenConversation,
   onOpenEnterpriseTask,
+  sourceOrderIntent = null,
+  onSourceOrderIntentHandled,
   onSectionChange,
 }: MerchantOrderMobilePanelProps) {
   const overflowMenuRef = useRef<HTMLDivElement>(null);
@@ -211,8 +216,10 @@ export default function MerchantOrderMobilePanel({
   const [overflowMenuOpen, setOverflowMenuOpen] = useState(false);
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const [detailOrderId, setDetailOrderId] = useState("");
+  const [externalDetailOrder, setExternalDetailOrder] = useState<MerchantOrderRecord | null>(null);
   const [detailQuantityDrafts, setDetailQuantityDrafts] = useState<Record<string, string>>({});
   const [mobileCustomerInfoOpen, setMobileCustomerInfoOpen] = useState(false);
+  const handledSourceOrderIntentRef = useRef("");
 
   const cardClassName = darkMode
     ? "rounded-[26px] border border-white/10 bg-[rgba(15,23,42,0.84)] p-4 shadow-[0_20px_44px_rgba(2,6,23,0.28)]"
@@ -276,6 +283,11 @@ export default function MerchantOrderMobilePanel({
       setHasMoreRemoteRecords(Boolean(payload?.hasMore));
       writeCachedOrderRecords(siteId, nextRecords);
       setRecords(nextRecords);
+      setExternalDetailOrder((current) =>
+        current
+          ? nextRecords.find((record) => record.id === current.id) ?? current
+          : current,
+      );
     } catch (nextError) {
       setHasMoreRemoteRecords(false);
       setError(cachedRecords.length > 0 ? "" : nextError instanceof Error && nextError.message ? nextError.message : "订单读取失败");
@@ -304,6 +316,11 @@ export default function MerchantOrderMobilePanel({
       }
       const nextRecords = Array.isArray(payload?.orders) ? payload.orders : [];
       setHasMoreRemoteRecords(Boolean(payload?.hasMore));
+      setExternalDetailOrder((current) =>
+        current
+          ? nextRecords.find((record) => record.id === current.id) ?? current
+          : current,
+      );
       setRecords((current) => {
         const existingIds = new Set(current.map((record) => record.id));
         const mergedRecords = [...current, ...nextRecords.filter((record) => !existingIds.has(record.id))];
@@ -316,6 +333,32 @@ export default function MerchantOrderMobilePanel({
       setLoadingMoreRecords(false);
     }
   }, [hasMoreRemoteRecords, loading, loadingMoreRecords, records.length, siteId]);
+
+  useEffect(() => {
+    handledSourceOrderIntentRef.current = "";
+    setExternalDetailOrder(null);
+    setDetailOrderId("");
+  }, [siteId]);
+
+  useEffect(() => {
+    if (!sourceOrderIntent || sourceOrderIntent.siteId !== siteId) return;
+    if (handledSourceOrderIntentRef.current === sourceOrderIntent.requestId) return;
+    handledSourceOrderIntentRef.current = sourceOrderIntent.requestId;
+    const sourceOrder = sourceOrderIntent.order;
+    if (
+      sourceOrderIntent.orderId !== sourceOrder.id ||
+      sourceOrder.siteId !== siteId
+    ) {
+      setError("来源订单信息无效，请返回企业任务后重试。");
+      onSourceOrderIntentHandled?.(sourceOrderIntent.requestId);
+      return;
+    }
+    setExternalDetailOrder(sourceOrder);
+    setDetailOrderId(sourceOrder.id);
+    setMobileCustomerInfoOpen(false);
+    setWorkbenchOpen(false);
+    onSourceOrderIntentHandled?.(sourceOrderIntent.requestId);
+  }, [onSourceOrderIntentHandled, siteId, sourceOrderIntent]);
 
   useEffect(() => {
     if (!siteId) return;
@@ -398,8 +441,13 @@ export default function MerchantOrderMobilePanel({
   );
 
   const detailOrder = useMemo(
-    () => (detailOrderId ? records.find((record) => record.id === detailOrderId) ?? null : null),
-    [detailOrderId, records],
+    () =>
+      detailOrderId
+        ? externalDetailOrder?.id === detailOrderId
+          ? externalDetailOrder
+          : records.find((record) => record.id === detailOrderId) ?? null
+        : null,
+    [detailOrderId, externalDetailOrder, records],
   );
 
   useEffect(() => {
@@ -567,6 +615,9 @@ export default function MerchantOrderMobilePanel({
             : undefined;
         const nextOrder = await requestOrderStatusUpdate(order.id, status, draftItems);
         setRecords((current) => current.map((item) => (item.id === order.id ? nextOrder : item)));
+        setExternalDetailOrder((current) =>
+          current?.id === order.id ? nextOrder : current,
+        );
       } catch (nextError) {
         const message =
           nextError instanceof Error && nextError.message ? nextError.message : "订单保存失败，请稍后重试。";
@@ -595,6 +646,9 @@ export default function MerchantOrderMobilePanel({
         }
         const nextOrder = await requestOrderAction(order.id, "print");
         setRecords((current) => current.map((item) => (item.id === order.id ? nextOrder : item)));
+        setExternalDetailOrder((current) =>
+          current?.id === order.id ? nextOrder : current,
+        );
       } catch (nextError) {
         setError(nextError instanceof Error && nextError.message ? nextError.message : "订单操作失败");
       } finally {
@@ -606,6 +660,7 @@ export default function MerchantOrderMobilePanel({
 
   const openDetailDialog = useCallback(
     (order: MerchantOrderRecord) => {
+      setExternalDetailOrder(null);
       setDetailOrderId(order.id);
       void markOrderTouched(order.id);
     },
@@ -614,6 +669,7 @@ export default function MerchantOrderMobilePanel({
 
   const closeDetailDialog = useCallback(() => {
     setDetailOrderId("");
+    setExternalDetailOrder(null);
   }, []);
 
   const handleDetailQuantityDraftChange = useCallback((orderId: string, itemIndex: number, value: string) => {
@@ -1037,7 +1093,7 @@ export default function MerchantOrderMobilePanel({
                       : "border border-cyan-200 bg-cyan-50 text-cyan-800"
                   }`}
                   onClick={() => {
-                    setDetailOrderId("");
+                    closeDetailDialog();
                     onOpenEnterpriseTask(detailOrder);
                   }}
                 >

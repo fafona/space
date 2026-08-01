@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildMerchantOrderTaskDraft,
+  getMerchantOrderSourceErrorMessage,
+  getMerchantOrderTaskSource,
   MERCHANT_ORDER_TASK_SOURCE_TYPE,
 } from "@/lib/merchantOrderEnterprise";
 import type { MerchantOrderRecord } from "@/lib/merchantOrders";
@@ -63,4 +65,34 @@ test("order task draft source and title stay within persisted task limits", () =
   assert.equal(draft.sourceId.length, 200);
   assert.ok(draft.title.length <= 240);
   assert.ok(draft.description.length <= 10_000);
+});
+
+test("order task sources remain visible independently from editable task text", () => {
+  assert.deepEqual(
+    getMerchantOrderTaskSource({
+      sourceType: MERCHANT_ORDER_TASK_SOURCE_TYPE,
+      sourceId: "  O10000000202608010001  ",
+    }),
+    {
+      sourceType: MERCHANT_ORDER_TASK_SOURCE_TYPE,
+      sourceId: "O10000000202608010001",
+    },
+  );
+  assert.equal(getMerchantOrderTaskSource({ sourceType: "", sourceId: "" }), null);
+  assert.equal(getMerchantOrderTaskSource({ sourceType: "booking", sourceId: "B1" }), null);
+});
+
+test("source order failures have actionable owner-facing messages", () => {
+  assert.equal(
+    getMerchantOrderSourceErrorMessage("order_not_found"),
+    "来源订单当前不可用，可能已被删除。",
+  );
+  assert.equal(
+    getMerchantOrderSourceErrorMessage("permission_denied"),
+    "当前账号无权查看来源订单。",
+  );
+  assert.equal(
+    getMerchantOrderSourceErrorMessage("unexpected"),
+    "来源订单读取失败，请稍后重试。",
+  );
 });

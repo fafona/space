@@ -215,6 +215,22 @@ async function readOrderWindowRows(
   );
 }
 
+async function readSingleOrderRows(
+  client: MerchantOrderV1ReadClient,
+  siteId: string,
+  orderId: string,
+) {
+  return readRows<MerchantOrderV1StoredRow>(
+    client
+      .from("merchant_orders")
+      .select(ORDER_SELECT_COLUMNS)
+      .eq("merchant_id", siteId)
+      .eq("id", orderId)
+      .limit(1),
+    "order_query",
+  );
+}
+
 function chunkValues<T>(values: T[], size: number) {
   const chunks: T[][] = [];
   for (let index = 0; index < values.length; index += size) {
@@ -254,6 +270,22 @@ async function readItemRows(
     }
   }
   return rows;
+}
+
+async function readSingleOrderItemRows(
+  client: MerchantOrderV1ReadClient,
+  siteId: string,
+  orderId: string,
+) {
+  return readRows<MerchantOrderItemV1StoredRow>(
+    client
+      .from("merchant_order_items")
+      .select(ITEM_SELECT_COLUMNS)
+      .eq("merchant_id", siteId)
+      .eq("order_id", orderId)
+      .order("line_number", { ascending: true }),
+    "order_items_query",
+  );
 }
 
 function convertRowsOrThrow(input: {
@@ -312,6 +344,52 @@ export async function loadMerchantOrdersV1(
     client,
     normalizedSiteId,
     orderRows.map((row) => trimText(row.id)).filter(Boolean),
+  );
+  const orders = convertRowsOrThrow({
+    siteId: normalizedSiteId,
+    orderRows,
+    itemRows,
+  });
+  return {
+    siteId: normalizedSiteId,
+    orders,
+    updatedAt: buildUpdatedAt(orders),
+  };
+}
+
+export async function loadMerchantOrderV1(
+  client: MerchantOrderV1ReadClient,
+  siteId: string,
+  orderId: string,
+): Promise<StoredMerchantOrders> {
+  const normalizedSiteId = trimText(siteId);
+  const normalizedOrderId = trimText(orderId);
+  if (!normalizedSiteId || !normalizedOrderId) {
+    return { siteId: normalizedSiteId, orders: [], updatedAt: null };
+  }
+
+  const orderRows = await readSingleOrderRows(
+    client,
+    normalizedSiteId,
+    normalizedOrderId,
+  );
+  if (orderRows.length === 0) {
+    return { siteId: normalizedSiteId, orders: [], updatedAt: null };
+  }
+  if (
+    orderRows.some(
+      (row) =>
+        trimText(row.merchant_id) !== normalizedSiteId ||
+        trimText(row.id) !== normalizedOrderId,
+    )
+  ) {
+    throwV1ReadError("order_query", "scope_mismatch");
+  }
+
+  const itemRows = await readSingleOrderItemRows(
+    client,
+    normalizedSiteId,
+    normalizedOrderId,
   );
   const orders = convertRowsOrThrow({
     siteId: normalizedSiteId,
