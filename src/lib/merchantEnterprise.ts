@@ -787,10 +787,17 @@ export function filterMerchantTasks(
   });
 }
 
+export function getMerchantEnterpriseDefaultTaskAssigneeFilter(
+  actor: Pick<MerchantEnterpriseActor, "type" | "id">,
+) {
+  return actor.type === "employee" ? actor.id : "all";
+}
+
 export function buildMerchantEnterpriseTaskOverview(
   input: {
     boards: readonly Pick<MerchantTaskBoard, "id" | "status">[];
     tasks: readonly MerchantTask[];
+    assigneeId?: string;
   },
   nowMs = Date.now(),
 ) {
@@ -799,7 +806,7 @@ export function buildMerchantEnterpriseTaskOverview(
   );
   const tasks = filterMerchantTasks(
     input.tasks.filter((task) => activeBoardIds.has(task.boardId)),
-    { archive: "active" },
+    { archive: "active", assigneeId: input.assigneeId },
   );
   const recentTasks = [...tasks].sort((left, right) => {
     const leftDue = left.dueAt ? Date.parse(left.dueAt) : Number.POSITIVE_INFINITY;

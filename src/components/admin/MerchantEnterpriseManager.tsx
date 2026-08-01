@@ -34,6 +34,7 @@ import {
   buildMerchantEnterpriseTaskOverview,
   buildMerchantTaskEditChanges,
   filterMerchantTasks,
+  getMerchantEnterpriseDefaultTaskAssigneeFilter,
   getMerchantTaskCompletionTransition,
   hasMerchantEnterprisePermission,
   merchantEnterprisePermissionsFitActor,
@@ -2259,12 +2260,18 @@ function MerchantEnterpriseManagerContent({
   const [snapshot, setSnapshot] = useState<MerchantEnterpriseSnapshot>(EMPTY_SNAPSHOT);
   const [needsBootstrap, setNeedsBootstrap] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [overviewRefreshing, setOverviewRefreshing] = useState(false);
+  const [lastSyncedAtMs, setLastSyncedAtMs] = useState(0);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: "error" | "success" | "info"; text: string } | null>(null);
   const [draggingTaskId, setDraggingTaskId] = useState("");
   const [editingTaskId, setEditingTaskId] = useState("");
   const overviewRequestSequenceRef = useRef(0);
   const overviewAbortControllerRef = useRef<AbortController | null>(null);
+  const silentOverviewRequestRef = useRef<AbortController | null>(null);
+  const canAutoRefreshOnFocusRef = useRef(false);
+  const lastSyncedAtRef = useRef(0);
+  const defaultTaskAssigneeScopeRef = useRef("");
   const taskCreateMutationRef = useRef<{ fingerprint: string; operationId: string } | null>(null);
   const taskSensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
@@ -2432,12 +2439,20 @@ function MerchantEnterpriseManagerContent({
     [apiFetch, siteId],
   );
 
-  const loadOverview = useCallback(async (options: { preserveData?: boolean } = {}) => {
+  const loadOverview = useCallback(async (
+    options: { preserveData?: boolean; silent?: boolean } = {},
+  ) => {
     const preserveData = options.preserveData === true;
+    const silent = options.silent === true;
     const requestSequence = overviewRequestSequenceRef.current + 1;
     overviewRequestSequenceRef.current = requestSequence;
-    overviewAbortControllerRef.current?.abort();
+    const previousController = overviewAbortControllerRef.current;
+    previousController?.abort();
+    if (silentOverviewRequestRef.current === previousController) {
+      silentOverviewRequestRef.current = null;
+    }
     overviewAbortControllerRef.current = null;
+    setOverviewRefreshing(preserveData);
     if (!preserveData) {
       setActor(null);
       setSnapshot(EMPTY_SNAPSHOT);
@@ -2446,13 +2461,15 @@ function MerchantEnterpriseManagerContent({
     }
 
     if (!/^\d{8}$/.test(siteId)) {
-      setMessage({ kind: "error", text: "缺少有效的商户编号。" });
+      if (!silent) setMessage({ kind: "error", text: "缺少有效的商户编号。" });
       setLoading(false);
+      if (preserveData) setOverviewRefreshing(false);
       return false;
     }
 
     const controller = new AbortController();
     overviewAbortControllerRef.current = controller;
+    if (silent) silentOverviewRequestRef.current = controller;
     if (!preserveData) setLoading(true);
     try {
       const response = await apiFetch(
@@ -2466,12 +2483,17 @@ function MerchantEnterpriseManagerContent({
       ) {
         return false;
       }
+      if (silent && !canAutoRefreshOnFocusRef.current) return false;
       if (!response.ok || !payload?.ok || !payload.actor || !payload.snapshot) {
         throw new Error(readApiError(payload, "企业管理加载失败。"));
       }
       setActor(payload.actor);
       setSnapshot(payload.snapshot);
       setNeedsBootstrap(payload.needsBootstrap === true);
+      const syncedAt = Date.now();
+      lastSyncedAtRef.current = syncedAt;
+      setLastSyncedAtMs(syncedAt);
+      setOverviewNowMs(syncedAt);
       if (!preserveData) setMessage(null);
       return true;
     } catch (error) {
@@ -2487,10 +2509,12 @@ function MerchantEnterpriseManagerContent({
         setNeedsBootstrap(false);
         setFailedInvitationEmployeeIds(new Set());
       }
-      setMessage({
-        kind: "error",
-        text: error instanceof Error ? error.message : "企业管理加载失败。",
-      });
+      if (!silent) {
+        setMessage({
+          kind: "error",
+          text: error instanceof Error ? error.message : "企业管理加载失败。",
+        });
+      }
       return false;
     } finally {
       if (
@@ -2500,10 +2524,28 @@ function MerchantEnterpriseManagerContent({
         if (overviewAbortControllerRef.current === controller) {
           overviewAbortControllerRef.current = null;
         }
+        if (silentOverviewRequestRef.current === controller) {
+          silentOverviewRequestRef.current = null;
+        }
         if (!preserveData) setLoading(false);
+        if (preserveData) setOverviewRefreshing(false);
       }
     }
   }, [apiFetch, siteId]);
+
+  const refreshOverview = useCallback(async () => {
+    if (overviewAbortControllerRef.current) return;
+    if (
+      !canAutoRefreshOnFocusRef.current &&
+      !window.confirm("当前页面可能包含未保存的编辑。刷新将放弃这些修改，是否继续？")
+    ) {
+      return;
+    }
+    const refreshed = await loadOverview({ preserveData: true });
+    if (refreshed) {
+      setMessage({ kind: "success", text: "已同步最新协作数据。" });
+    }
+  }, [loadOverview]);
 
   useEffect(() => {
     void loadOverview();
@@ -2511,6 +2553,7 @@ function MerchantEnterpriseManagerContent({
       overviewRequestSequenceRef.current += 1;
       overviewAbortControllerRef.current?.abort();
       overviewAbortControllerRef.current = null;
+      silentOverviewRequestRef.current = null;
     };
   }, [loadOverview]);
 
@@ -2518,6 +2561,64 @@ function MerchantEnterpriseManagerContent({
     const intervalId = window.setInterval(() => setOverviewNowMs(Date.now()), 60_000);
     return () => window.clearInterval(intervalId);
   }, []);
+
+  useEffect(() => {
+    if (!actor) return;
+    const scopeKey = `${actor.type}:${actor.id}`;
+    if (defaultTaskAssigneeScopeRef.current === scopeKey) return;
+    defaultTaskAssigneeScopeRef.current = scopeKey;
+    setTaskAssigneeFilter(getMerchantEnterpriseDefaultTaskAssigneeFilter(actor));
+  }, [actor]);
+
+  const taskComposerHasDraft =
+    Boolean(taskTitle.trim()) ||
+    Boolean(taskDescription.trim()) ||
+    Boolean(taskDueAt) ||
+    taskPriority !== "normal" ||
+    taskAssigneeIds.length > 0;
+  const canAutoRefreshOnFocus = Boolean(
+    actor &&
+      !busy &&
+      !editingTaskId &&
+      !draggingTaskId &&
+      (tab === "overview" ||
+        (tab === "tasks" &&
+          !showBoardSettings &&
+          !mobileTaskComposerOpen &&
+          !taskComposerHasDraft)),
+  );
+  canAutoRefreshOnFocusRef.current = canAutoRefreshOnFocus;
+  useEffect(() => {
+    if (canAutoRefreshOnFocus) return;
+    const controller = silentOverviewRequestRef.current;
+    if (!controller) return;
+    controller.abort();
+    silentOverviewRequestRef.current = null;
+    if (overviewAbortControllerRef.current === controller) {
+      overviewAbortControllerRef.current = null;
+    }
+    overviewRequestSequenceRef.current += 1;
+    setOverviewRefreshing(false);
+  }, [canAutoRefreshOnFocus]);
+  useEffect(() => {
+    const refreshIfStale = () => {
+      if (
+        !canAutoRefreshOnFocus ||
+        document.visibilityState !== "visible" ||
+        overviewAbortControllerRef.current ||
+        Date.now() - lastSyncedAtRef.current < 30_000
+      ) {
+        return;
+      }
+      void loadOverview({ preserveData: true, silent: true });
+    };
+    window.addEventListener("focus", refreshIfStale);
+    document.addEventListener("visibilitychange", refreshIfStale);
+    return () => {
+      window.removeEventListener("focus", refreshIfStale);
+      document.removeEventListener("visibilitychange", refreshIfStale);
+    };
+  }, [canAutoRefreshOnFocus, loadOverview]);
 
   useEffect(() => {
     if (!actor) return;
@@ -2563,10 +2664,14 @@ function MerchantEnterpriseManagerContent({
         {
           boards: snapshot.boards,
           tasks: snapshot.tasks,
+          assigneeId:
+            actor?.type === "employee"
+              ? getMerchantEnterpriseDefaultTaskAssigneeFilter(actor)
+              : undefined,
         },
         overviewNowMs,
       ),
-    [overviewNowMs, snapshot.boards, snapshot.tasks],
+    [actor, overviewNowMs, snapshot.boards, snapshot.tasks],
   );
   const filteredTasks = filterMerchantTasks(boardTasks, {
     archive: taskArchiveView,
@@ -2588,6 +2693,26 @@ function MerchantEnterpriseManagerContent({
     setTaskPriorityFilter("all");
     setTaskAssigneeFilter("all");
     setTaskArchiveView("active");
+  }
+  function openTaskBoardFromOverview() {
+    setTaskQuery("");
+    setTaskPriorityFilter("all");
+    setTaskArchiveView("active");
+    setTaskAssigneeFilter(
+      actor ? getMerchantEnterpriseDefaultTaskAssigneeFilter(actor) : "all",
+    );
+    selectView("tasks");
+  }
+  function openTaskFromOverview(task: MerchantTask) {
+    setSelectedBoardId(task.boardId);
+    setTaskQuery("");
+    setTaskPriorityFilter("all");
+    setTaskArchiveView("active");
+    setTaskAssigneeFilter(
+      actor ? getMerchantEnterpriseDefaultTaskAssigneeFilter(actor) : "all",
+    );
+    selectView("tasks");
+    setEditingTaskId(task.id);
   }
   const taskDragEnabled =
     taskArchiveView === "active" &&
@@ -3407,6 +3532,23 @@ function MerchantEnterpriseManagerContent({
               <div className="mt-1 break-words text-sm font-semibold">
                 {actor.displayName} · {actor.type === "owner" ? "企业负责人" : "员工"}
               </div>
+              <div className="mt-3 flex flex-wrap items-center gap-2 sm:justify-end">
+                <span className="text-[11px] text-slate-200" aria-live="polite">
+                  {overviewRefreshing
+                    ? "正在同步…"
+                    : lastSyncedAtMs > 0
+                      ? `最后同步 ${formatDateTime(new Date(lastSyncedAtMs).toISOString())}`
+                      : "尚未同步"}
+                </span>
+                <button
+                  type="button"
+                  className="min-h-9 rounded-lg border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-white/20 disabled:opacity-45"
+                  disabled={busy || overviewRefreshing}
+                  onClick={() => void refreshOverview()}
+                >
+                  {overviewRefreshing ? "刷新中…" : "刷新数据"}
+                </button>
+              </div>
             </div>
           </div>
         </header>
@@ -3472,14 +3614,14 @@ function MerchantEnterpriseManagerContent({
             <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {[
                 {
-                  label: "未完成任务",
+                  label: actor.type === "employee" ? "我的未完成" : "未完成任务",
                   value: can(actor, "tasks.view")
                     ? overviewTaskSummary.incompleteTaskCount
                     : "—",
                   tone: "text-blue-700",
                 },
                 {
-                  label: "已完成任务",
+                  label: actor.type === "employee" ? "我的已完成" : "已完成任务",
                   value: can(actor, "tasks.view")
                     ? overviewTaskSummary.completedTaskCount
                     : "—",
@@ -3491,7 +3633,7 @@ function MerchantEnterpriseManagerContent({
                   tone: "text-violet-700",
                 },
                 {
-                  label: "已逾期",
+                  label: actor.type === "employee" ? "我的已逾期" : "已逾期",
                   value: can(actor, "tasks.view")
                     ? overviewTaskSummary.overdueTaskCount
                     : "—",
@@ -3507,12 +3649,18 @@ function MerchantEnterpriseManagerContent({
             <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-lg font-semibold text-slate-950">最近任务</h2>
-                  <p className="mt-1 text-sm text-slate-500">汇总全部启用看板，优先显示即将到期和最近更新的工作。</p>
+                  <h2 className="text-lg font-semibold text-slate-950">
+                    {actor.type === "employee" ? "我的最近任务" : "最近任务"}
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {actor.type === "employee"
+                      ? "汇总所有启用看板中分派给我的工作，优先显示即将到期和最近更新的任务。"
+                      : "汇总全部启用看板，优先显示即将到期和最近更新的工作。"}
+                  </p>
                 </div>
                 {can(actor, "tasks.view") ? (
-                  <button type="button" className="text-sm font-semibold text-blue-700" onClick={() => selectView("tasks")}>
-                    查看看板
+                  <button type="button" className="text-sm font-semibold text-blue-700" onClick={openTaskBoardFromOverview}>
+                    {actor.type === "employee" ? "查看我的任务" : "查看看板"}
                   </button>
                 ) : null}
               </div>
@@ -3527,24 +3675,36 @@ function MerchantEnterpriseManagerContent({
                       const boardName = snapshot.boards.find((board) => board.id === task.boardId)?.name;
                       const columnName = snapshot.columns.find((column) => column.id === task.columnId)?.name;
                       return (
-                        <div key={task.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
-                          <div>
-                            <div className="font-medium text-slate-900">{task.title}</div>
-                            <div className="mt-1 text-xs text-slate-500">
+                        <button
+                          key={task.id}
+                          type="button"
+                          className="flex w-full flex-wrap items-center justify-between gap-3 rounded-xl px-2 py-3 text-left transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                          aria-label={`打开任务：${task.title}，看板：${boardName || "未知看板"}，工作列：${columnName || "未分类"}${
+                            task.dueAt ? `，截止：${formatDate(task.dueAt)}` : ""
+                          }`}
+                          onClick={() => openTaskFromOverview(task)}
+                        >
+                          <span className="min-w-0">
+                            <span className="block font-medium text-slate-900">{task.title}</span>
+                            <span className="mt-1 block text-xs text-slate-500">
                               {boardName ? `${boardName} · ` : ""}
                               {columnName || "未分类"}
                               {task.dueAt ? ` · 截止 ${formatDate(task.dueAt)}` : ""}
-                            </div>
-                          </div>
+                            </span>
+                          </span>
                           <span className={`rounded-full px-2 py-1 text-xs font-semibold ${PRIORITY_META[task.priority].className}`}>
                             {PRIORITY_META[task.priority].label}
                           </span>
-                        </div>
+                        </button>
                       );
                     })
                   : null}
                 {can(actor, "tasks.view") && overviewTaskSummary.tasks.length === 0 ? (
-                  <div className="py-8 text-center text-sm text-slate-500">还没有任务，可以从任务看板创建第一项工作。</div>
+                  <div className="py-8 text-center text-sm text-slate-500">
+                    {actor.type === "employee"
+                      ? "目前没有分派给你的任务。可切换到全部任务查看团队工作。"
+                      : "还没有任务，可以从任务看板创建第一项工作。"}
+                  </div>
                 ) : null}
               </div>
             </section>
@@ -3720,6 +3880,42 @@ function MerchantEnterpriseManagerContent({
 
             <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
               <div className="flex flex-wrap items-end gap-3">
+                {actor.type === "employee" ? (
+                  <div className="flex w-full flex-wrap items-center justify-between gap-3 rounded-2xl border border-blue-100 bg-blue-50/70 px-3 py-2.5">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">任务范围</div>
+                      <div className="mt-0.5 text-xs text-slate-500">
+                        默认聚焦分派给我的任务；需要拖动排序时，请切换到全部任务。
+                      </div>
+                    </div>
+                    <div className="flex rounded-xl bg-white p-1 shadow-sm" aria-label="任务范围筛选">
+                      <button
+                        type="button"
+                        className={`min-h-10 rounded-lg px-3 py-2 text-sm font-semibold ${
+                          taskAssigneeFilter === actor.id
+                            ? "bg-slate-950 text-white"
+                            : "text-slate-600 hover:bg-slate-100"
+                        }`}
+                        aria-pressed={taskAssigneeFilter === actor.id}
+                        onClick={() => setTaskAssigneeFilter(actor.id)}
+                      >
+                        我的任务
+                      </button>
+                      <button
+                        type="button"
+                        className={`min-h-10 rounded-lg px-3 py-2 text-sm font-semibold ${
+                          taskAssigneeFilter === "all"
+                            ? "bg-slate-950 text-white"
+                            : "text-slate-600 hover:bg-slate-100"
+                        }`}
+                        aria-pressed={taskAssigneeFilter === "all"}
+                        onClick={() => setTaskAssigneeFilter("all")}
+                      >
+                        全部任务
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
                 <label className="min-w-0 w-full flex-1 text-xs font-medium text-slate-600 sm:min-w-[220px]">
                   搜索任务
                   <input

@@ -5,6 +5,7 @@ import {
   buildMerchantTaskEditChanges,
   DEFAULT_MERCHANT_ENTERPRISE_ROLES,
   filterMerchantTasks,
+  getMerchantEnterpriseDefaultTaskAssigneeFilter,
   getMerchantTaskCompletionTransition,
   getMissingMerchantEnterprisePermissionDependencies,
   hasMerchantEnterprisePermission,
@@ -442,6 +443,114 @@ test("enterprise overview aggregates active tasks across every active board", ()
     ["task-done-b", "task-open-a"],
     "equal due and update times must use a deterministic id tie-breaker",
   );
+});
+
+test("enterprise task overview defaults owners to the team and employees to their own work", () => {
+  const owner: MerchantEnterpriseActor = {
+    type: "owner",
+    id: "owner-1",
+    siteId: "10000000",
+    displayName: "负责人",
+    email: "owner@example.com",
+    permissions: MERCHANT_ENTERPRISE_PERMISSIONS.slice(),
+  };
+  const employee: MerchantEnterpriseActor = {
+    type: "employee",
+    id: "employee-1",
+    siteId: "10000000",
+    displayName: "员工一",
+    email: "employee-1@example.com",
+    roleId: "role-employee",
+    permissions: ["enterprise.view", "tasks.view"],
+  };
+
+  assert.equal(getMerchantEnterpriseDefaultTaskAssigneeFilter(owner), "all");
+  assert.equal(getMerchantEnterpriseDefaultTaskAssigneeFilter(employee), "employee-1");
+});
+
+test("enterprise task overview keeps the owner team view and scopes employee work across boards", () => {
+  const baseTask = {
+    id: "task-mine-a",
+    siteId: "10000000",
+    boardId: "board-a",
+    columnId: "column-a",
+    title: "我的看板 A 任务",
+    description: "",
+    priority: "normal",
+    dueAt: "2026-07-30T08:00:00.000Z",
+    completedAt: null,
+    archivedAt: null,
+    position: 0,
+    sourceType: "",
+    sourceId: "",
+    createdByEmployeeId: "",
+    assigneeIds: ["employee-1"],
+    version: 1,
+    createdAt: "2026-07-29T08:00:00.000Z",
+    updatedAt: "2026-07-29T08:00:00.000Z",
+  } satisfies MerchantTask;
+  const input = {
+    boards: [
+      { id: "board-a", status: "active" as const },
+      { id: "board-b", status: "active" as const },
+    ],
+    tasks: [
+      baseTask,
+      {
+        ...baseTask,
+        id: "task-mine-b",
+        boardId: "board-b",
+        columnId: "column-b",
+        title: "我的看板 B 已完成任务",
+        completedAt: "2026-07-30T09:00:00.000Z",
+      },
+      {
+        ...baseTask,
+        id: "task-other",
+        title: "其他员工任务",
+        assigneeIds: ["employee-2"],
+      },
+      {
+        ...baseTask,
+        id: "task-unassigned",
+        title: "未分派任务",
+        assigneeIds: [],
+      },
+    ],
+  };
+  const nowMs = Date.parse("2026-07-31T08:00:00.000Z");
+  const ownerSummary = buildMerchantEnterpriseTaskOverview(
+    {
+      ...input,
+      assigneeId: getMerchantEnterpriseDefaultTaskAssigneeFilter({
+        type: "owner",
+        id: "owner-1",
+      }),
+    },
+    nowMs,
+  );
+  const summary = buildMerchantEnterpriseTaskOverview(
+    {
+      ...input,
+      assigneeId: getMerchantEnterpriseDefaultTaskAssigneeFilter({
+        type: "employee",
+        id: "employee-1",
+      }),
+    },
+    nowMs,
+  );
+
+  assert.deepEqual(
+    ownerSummary.tasks.map((task) => task.id),
+    ["task-mine-a", "task-mine-b", "task-other", "task-unassigned"],
+  );
+  assert.equal(ownerSummary.incompleteTaskCount, 3);
+  assert.equal(ownerSummary.completedTaskCount, 1);
+  assert.deepEqual(summary.tasks.map((task) => task.id), ["task-mine-a", "task-mine-b"]);
+  assert.equal(summary.incompleteTaskCount, 1);
+  assert.equal(summary.completedTaskCount, 1);
+  assert.equal(summary.overdueTaskCount, 1);
+  assert.deepEqual(summary.recentTasks.map((task) => task.id), ["task-mine-a", "task-mine-b"]);
 });
 
 test("task edit changes honor update and assignment permissions independently", () => {

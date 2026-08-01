@@ -138,7 +138,12 @@ test("enterprise overview aggregates every active board while task filtering sta
   );
   assert.match(
     overviewSummarySource,
-    /\},\s*overviewNowMs,\s*\)[\s\S]*\[overviewNowMs,\s*snapshot\.boards,\s*snapshot\.tasks\]/,
+    /\},\s*overviewNowMs,\s*\)[\s\S]*\[actor,\s*overviewNowMs,\s*snapshot\.boards,\s*snapshot\.tasks\]/,
+  );
+  assert.match(
+    overviewSummarySource,
+    /assigneeId:\s*actor\?\.type\s*===\s*["']employee["'][\s\S]{0,160}getMerchantEnterpriseDefaultTaskAssigneeFilter\(actor\)[\s\S]{0,80}:\s*undefined/,
+    "employee overview totals must be scoped to the signed-in employee while owners retain the team view",
   );
   assert.match(
     source,
@@ -167,6 +172,288 @@ test("enterprise overview aggregates every active board while task filtering sta
   );
   assert.match(overviewSource, /汇总全部启用看板/);
   assert.match(overviewSource, /const\s+boardName\s*=\s*snapshot\.boards\.find/);
+});
+
+test("employees default to their own tasks and can explicitly switch to the team view", () => {
+  const defaultScopeSource = sliceBetween(
+    /const\s+defaultTaskAssigneeScopeRef\s*=/,
+    /const\s+taskComposerHasDraft\s*=/,
+    "employee default task scope",
+  );
+  assert.match(
+    defaultScopeSource,
+    /const\s+scopeKey\s*=\s*`\$\{actor\.type\}:\$\{actor\.id\}`/,
+    "the default scope must be applied once per authenticated actor rather than resetting a manual choice",
+  );
+  assert.match(
+    defaultScopeSource,
+    /if\s*\(defaultTaskAssigneeScopeRef\.current\s*===\s*scopeKey\)\s*return/,
+  );
+  assert.match(
+    defaultScopeSource,
+    /setTaskAssigneeFilter\(getMerchantEnterpriseDefaultTaskAssigneeFilter\(actor\)\)/,
+  );
+
+  const taskViewSource = sliceBetween(
+    /!needsBootstrap\s*&&\s*tab\s*===\s*["']tasks["']/,
+    /!needsBootstrap\s*&&\s*tab\s*===\s*["']employees["']/,
+    "employee task view",
+  );
+  const quickScopeSource = sliceSourceBetween(
+    taskViewSource,
+    /\{actor\.type\s*===\s*["']employee["']\s*\?\s*\(/,
+    /<label\s+className=["'][^"']*flex-1[^"']*["']>/,
+    "employee task range shortcuts",
+  );
+  assert.match(quickScopeSource, /aria-label=["']任务范围筛选["']/);
+  assert.match(
+    quickScopeSource,
+    /aria-pressed=\{taskAssigneeFilter\s*===\s*actor\.id\}[\s\S]{0,160}setTaskAssigneeFilter\(actor\.id\)[\s\S]{0,100}我的任务/,
+  );
+  assert.match(
+    quickScopeSource,
+    /aria-pressed=\{taskAssigneeFilter\s*===\s*["']all["']\}[\s\S]{0,160}setTaskAssigneeFilter\(["']all["']\)[\s\S]{0,100}全部任务/,
+  );
+});
+
+test("employee overview is personalized and opens a task on its source board", () => {
+  const overviewSource = sliceBetween(
+    /!needsBootstrap\s*&&\s*tab\s*===\s*["']overview["']/,
+    /!needsBootstrap\s*&&\s*tab\s*===\s*["']tasks["']/,
+    "personalized enterprise overview",
+  );
+  for (const label of ["我的未完成", "我的已完成", "我的已逾期", "我的最近任务"]) {
+    assert.ok(overviewSource.includes(label), `employee overview must expose ${label}`);
+  }
+  assert.match(overviewSource, /overviewTaskSummary\.recentTasks\.slice\(0,\s*6\)\.map\(\(task\)\s*=>/);
+  assert.match(overviewSource, /const\s+boardName\s*=\s*snapshot\.boards\.find/);
+  const recentTaskButton = overviewSource.match(
+    /<button\s+key=\{task\.id\}[\s\S]{0,900}?onClick=\{\(\)\s*=>\s*openTaskFromOverview\(task\)\}[\s\S]{0,120}?>/,
+  )?.[0];
+  assert.ok(recentTaskButton, "each recent cross-board task must be directly actionable");
+  const recentTaskAriaLabel = recentTaskButton.match(/aria-label=\{`[\s\S]*?`\}/)?.[0] ?? "";
+  for (const context of ["task.title", "boardName", "columnName"]) {
+    assert.ok(
+      recentTaskAriaLabel.includes(`\${${context}`),
+      `recent-task accessible names must include ${context} so duplicate titles remain distinguishable`,
+    );
+  }
+  assert.match(
+    recentTaskAriaLabel,
+    /看板[\s\S]*工作列/,
+    "the accessible name must describe the source board and column",
+  );
+
+  const openTaskSource = sliceBetween(
+    /function\s+openTaskBoardFromOverview\(\)\s*\{/,
+    /const\s+taskDragEnabled\s*=/,
+    "overview task navigation",
+  );
+  assert.match(
+    openTaskSource,
+    /function\s+openTaskFromOverview\(task:\s*MerchantTask\)[\s\S]{0,500}setSelectedBoardId\(task\.boardId\)/,
+  );
+  assert.match(
+    openTaskSource,
+    /setSelectedBoardId\(task\.boardId\)[\s\S]{0,400}selectView\(["']tasks["']\)[\s\S]{0,160}setEditingTaskId\(task\.id\)/,
+    "opening a recent task must select its board, enter the board view and open the existing editor",
+  );
+  for (const reset of [
+    'setTaskQuery("")',
+    'setTaskPriorityFilter("all")',
+    'setTaskArchiveView("active")',
+  ]) {
+    assert.ok(
+      openTaskSource.includes(reset),
+      `opening a recent task must reset stale filters via ${reset}`,
+    );
+  }
+  assert.ok(
+    /actor\?\.type\s*===\s*["']employee["'][\s\S]{0,180}setTaskAssigneeFilter\(getMerchantEnterpriseDefaultTaskAssigneeFilter\(actor\)\)/.test(
+      openTaskSource,
+    ) ||
+      /setTaskAssigneeFilter\(\s*actor\s*\?\s*getMerchantEnterpriseDefaultTaskAssigneeFilter\(actor\)\s*:\s*["']all["']\s*,?\s*\)/.test(
+        openTaskSource,
+      ),
+    "overview navigation must restore the actor's default task scope",
+  );
+});
+
+test("enterprise workspace exposes manual refresh and the last successful sync time", () => {
+  const loadOverviewSource = sliceBetween(
+    /const\s+loadOverview\s*=\s*useCallback\b/,
+    /const\s+refreshOverview\s*=\s*useCallback\b/,
+    "loadOverview sync tracking",
+  );
+  assert.match(loadOverviewSource, /options:\s*\{\s*preserveData\?:\s*boolean;\s*silent\?:\s*boolean\s*\}/);
+  assert.match(
+    loadOverviewSource,
+    /const\s+syncedAt\s*=\s*Date\.now\(\)[\s\S]{0,180}lastSyncedAtRef\.current\s*=\s*syncedAt[\s\S]{0,180}setLastSyncedAtMs\(syncedAt\)/,
+    "only a successful overview response may advance the last-sync clock",
+  );
+
+  const refreshSource = sliceBetween(
+    /const\s+refreshOverview\s*=\s*useCallback\b/,
+    /useEffect\(\(\)\s*=>\s*\{\s*void\s+loadOverview\(\)/,
+    "manual overview refresh",
+  );
+  assert.match(refreshSource, /overviewAbortControllerRef\.current\)\s*return/);
+  assert.match(
+    refreshSource,
+    /!canAutoRefreshOnFocusRef\.current[\s\S]{0,180}!window\.confirm\([\s\S]{0,180}\)\s*\{\s*return;/,
+    "manual refresh must require confirmation before discarding an active editor or draft",
+  );
+  assert.match(refreshSource, /loadOverview\(\{\s*preserveData:\s*true\s*\}\)/);
+
+  const headerSource = sliceBetween(
+    /<header\s+className=/,
+    /\{!usesExternalNavigation\s*\?\s*\(/,
+    "enterprise workspace header",
+  );
+  assert.match(headerSource, /lastSyncedAtMs\s*>\s*0[\s\S]{0,220}最后同步/);
+  assert.match(headerSource, /aria-live=["']polite["']/);
+  assert.match(
+    headerSource,
+    /disabled=\{busy\s*\|\|\s*overviewRefreshing\}[\s\S]{0,160}onClick=\{\(\)\s*=>\s*void\s+refreshOverview\(\)\}[\s\S]{0,120}刷新数据/,
+  );
+});
+
+test("focus refresh is throttled and never overwrites active task work", () => {
+  const autoRefreshSource = sliceBetween(
+    /const\s+taskComposerHasDraft\s*=/,
+    /useEffect\(\(\)\s*=>\s*\{\s*if\s*\(\s*!actor\s*\)\s*return;\s*if\s*\(requestedView\s*!==\s*tab\)/,
+    "focus and visibility overview refresh",
+  );
+  for (const draftState of [
+    "taskTitle.trim()",
+    "taskDescription.trim()",
+    "taskDueAt",
+    'taskPriority !== "normal"',
+    "taskAssigneeIds.length > 0",
+  ]) {
+    assert.ok(autoRefreshSource.includes(draftState), `task draft guard must include ${draftState}`);
+  }
+  const refreshSafetySource = sliceSourceBetween(
+    autoRefreshSource,
+    /const\s+canAutoRefreshOnFocus\s*=\s*Boolean\(/,
+    /\);\s*[A-Za-z_$][\w$]*Ref\.current\s*=\s*canAutoRefreshOnFocus/,
+    "foreground refresh safety expression",
+  );
+  for (const unsafeState of [
+    "!busy",
+    "!draggingTaskId",
+    "!editingTaskId",
+    "!showBoardSettings",
+    "!mobileTaskComposerOpen",
+    "!taskComposerHasDraft",
+  ]) {
+    assert.ok(
+      refreshSafetySource.includes(unsafeState),
+      `foreground refresh safety must include ${unsafeState}`,
+    );
+  }
+  assert.match(autoRefreshSource, /document\.visibilityState\s*!==\s*["']visible["']/);
+  assert.match(autoRefreshSource, /overviewAbortControllerRef\.current/);
+  assert.match(
+    autoRefreshSource,
+    /Date\.now\(\)\s*-\s*lastSyncedAtRef\.current\s*<\s*30_000/,
+    "foreground refreshes must have a 30-second minimum interval",
+  );
+  assert.match(
+    autoRefreshSource,
+    /loadOverview\(\{\s*preserveData:\s*true,\s*silent:\s*true\s*\}\)/,
+  );
+  for (const registration of [
+    'window.addEventListener("focus", refreshIfStale)',
+    'document.addEventListener("visibilitychange", refreshIfStale)',
+    'window.removeEventListener("focus", refreshIfStale)',
+    'document.removeEventListener("visibilitychange", refreshIfStale)',
+  ]) {
+    assert.ok(autoRefreshSource.includes(registration), `missing refresh lifecycle: ${registration}`);
+  }
+});
+
+test("silent foreground refresh revalidates safety and cancels when interaction starts", () => {
+  const loadOverviewSource = sliceBetween(
+    /const\s+loadOverview\s*=\s*useCallback\b/,
+    /const\s+refreshOverview\s*=\s*useCallback\b/,
+    "silent loadOverview lifecycle",
+  );
+  const autoRefreshSource = sliceBetween(
+    /const\s+taskComposerHasDraft\s*=/,
+    /useEffect\(\(\)\s*=>\s*\{\s*if\s*\(\s*!actor\s*\)\s*return;\s*if\s*\(requestedView\s*!==\s*tab\)/,
+    "silent foreground refresh safety lifecycle",
+  );
+
+  const safetyRefMatch = autoRefreshSource.match(
+    /([A-Za-z_$][\w$]*Ref)\.current\s*=\s*canAutoRefreshOnFocus/,
+  );
+  assert.ok(
+    safetyRefMatch,
+    "the latest foreground-refresh safety state must be mirrored in a ref for async response checks",
+  );
+  const safetyRef = escapeRegExp(safetyRefMatch[1]);
+
+  const silentRequestRefMatch = loadOverviewSource.match(
+    /if\s*\(\s*silent\s*\)\s*([A-Za-z_$][\w$]*Ref)\.current\s*=\s*controller\s*;/,
+  );
+  assert.ok(
+    silentRequestRefMatch,
+    "loadOverview must identify the currently active request as silent",
+  );
+  const silentRequestRef = escapeRegExp(silentRequestRefMatch[1]);
+
+  const responseSafetyGuard = new RegExp(
+    `if\\s*\\(\\s*silent\\s*&&\\s*!${safetyRef}\\.current\\s*\\)\\s*(?:\\{\\s*)?return\\s+false\\s*;`,
+  );
+  assert.match(
+    loadOverviewSource,
+    responseSafetyGuard,
+    "a silent response must be discarded when task interaction became unsafe while it was in flight",
+  );
+  const responseSafetyGuardIndex = loadOverviewSource.search(responseSafetyGuard);
+  const payloadApplyIndex = loadOverviewSource.indexOf("setActor(payload.actor)");
+  assert.ok(responseSafetyGuardIndex >= 0 && responseSafetyGuardIndex < payloadApplyIndex);
+
+  const cancellationControllerMatch = autoRefreshSource.match(
+    new RegExp(
+      `const\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*${silentRequestRef}\\.current\\s*;`,
+    ),
+  );
+  assert.ok(cancellationControllerMatch, "unsafe-state cancellation must read the silent request");
+  const cancellationController = escapeRegExp(cancellationControllerMatch[1]);
+  assert.match(
+    autoRefreshSource,
+    new RegExp(
+      `useEffect\\(\\(\\)\\s*=>\\s*\\{[\\s\\S]{0,300}(?:if\\s*\\(\\s*canAutoRefreshOnFocus\\s*\\)\\s*return|!canAutoRefreshOnFocus)[\\s\\S]{0,500}${cancellationController}\\.abort\\(\\)[\\s\\S]{0,500}\\},\\s*\\[canAutoRefreshOnFocus\\]\\)`,
+    ),
+    "starting a draft, edit, settings session or drag must immediately abort an in-flight silent refresh",
+  );
+
+  assert.ok(
+    /if\s*\(preserveData\)\s*setOverviewRefreshing\(true\)/.test(loadOverviewSource) ||
+      /setOverviewRefreshing\(preserveData\)/.test(loadOverviewSource),
+    "silent preserved-data refreshes must expose their in-flight state to the toolbar",
+  );
+  assert.match(
+    loadOverviewSource,
+    /if\s*\(preserveData\)\s*setOverviewRefreshing\(false\)/,
+    "all preserved-data refresh paths must clear the toolbar's in-flight state",
+  );
+  assert.doesNotMatch(
+    loadOverviewSource,
+    /preserveData\s*&&\s*!silent[^\n]*setOverviewRefreshing/,
+    "silent refreshes must not leave the manual refresh control enabled",
+  );
+
+  const headerSource = sliceBetween(
+    /<header\s+className=/,
+    /\{!usesExternalNavigation\s*\?\s*\(/,
+    "silent-refresh toolbar state",
+  );
+  assert.match(headerSource, /overviewRefreshing\s*\?\s*["']正在同步…["']/);
+  assert.match(headerSource, /disabled=\{busy\s*\|\|\s*overviewRefreshing\}/);
+  assert.match(headerSource, /overviewRefreshing\s*\?\s*["']刷新中…["']/);
 });
 
 test("create-task retries reuse an operation id only while the form fingerprint is unchanged", () => {
@@ -621,7 +908,11 @@ test("external enterprise navigation stays permission-aware while standalone kee
     /MERCHANT_ENTERPRISE_VIEW_ITEMS[\s\S]{0,250}filter\(\(item\)\s*=>\s*can\(actor,\s*item\.permission\)\)[\s\S]{0,300}onAvailableViewsChange\(views\)/,
   );
   assert.match(source, /\{!usesExternalNavigation\s*\?\s*\([\s\S]{0,300}<nav/);
-  assert.match(source, /onClick=\{\(\)\s*=>\s*selectView\(["']tasks["']\)\}/);
+  assert.match(
+    source,
+    /function\s+openTaskBoardFromOverview\(\)[\s\S]{0,400}selectView\(["']tasks["']\)/,
+  );
+  assert.match(source, /onClick=\{openTaskBoardFromOverview\}/);
 
   assert.match(
     adminClientSource,
