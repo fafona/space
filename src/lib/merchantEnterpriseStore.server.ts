@@ -4,6 +4,7 @@ import {
   MAX_MERCHANT_TASK_CHECKLIST_ITEMS,
   MAX_MERCHANT_TASK_CHECKLIST_TEXT_LENGTH,
   MAX_MERCHANT_TASK_ASSIGNEES,
+  normalizeMerchantEnterpriseBoardIds,
   normalizeMerchantEnterpriseEmployee,
   normalizeMerchantEnterprisePermissions,
   normalizeMerchantEnterpriseRole,
@@ -13,6 +14,7 @@ import {
   normalizeMerchantTaskEvent,
   type MerchantEnterpriseEmployee,
   type MerchantEnterpriseEmployeeStatus,
+  type MerchantEnterpriseBoardAccessScope,
   type MerchantEnterprisePermission,
   type MerchantEnterpriseRole,
   type MerchantEnterpriseSnapshot,
@@ -48,7 +50,7 @@ const DEFAULT_ROLE_SYSTEM_KEYS = ["administrator", "supervisor", "employee"] as 
 const DEFAULT_COLUMN_SYSTEM_KEYS = ["todo", "in_progress", "blocked", "done"] as const;
 
 const ROLE_COLUMNS =
-  "id,merchant_id,name,description,permissions,status,is_system,version,created_at,updated_at";
+  "id,merchant_id,name,description,permissions,access_scope,status,is_system,version,created_at,updated_at";
 const EMPLOYEE_COLUMNS =
   "id,merchant_id,auth_user_id,email,display_name,role_id,status,invited_at,accepted_at,last_active_at,invitation_version,invitation_expires_at,invitation_revoked_at,invitation_sent_at,invitation_delivery_status,version,created_at,updated_at";
 const BOARD_COLUMNS =
@@ -78,7 +80,15 @@ function throwStoreError(operation: string, error: unknown): never {
   if (isMerchantEnterpriseSchemaMissingError(error)) {
     throw new Error("enterprise_schema_unavailable");
   }
-  throw new Error(`${operation}:${toErrorMessage(error)}`);
+  const message = toErrorMessage(error);
+  for (const code of [
+    "employee_board_access_in_use",
+    "role_board_access_in_use",
+    "task_assignee_board_access_denied",
+  ]) {
+    if (message.includes(code)) throw new Error(code);
+  }
+  throw new Error(`${operation}:${message}`);
 }
 
 function throwTaskRpcError(operation: string, error: unknown): never {
@@ -91,6 +101,9 @@ function throwTaskRpcError(operation: string, error: unknown): never {
   }
   if (message.includes("enterprise_idempotency_conflict")) {
     throw new Error("invalid_operation_id");
+  }
+  if (message.includes("task_assignee_board_access_denied")) {
+    throw new Error("task_assignee_board_access_denied");
   }
   const invalidCode = message.match(/\b(invalid_task(?:_[a-z_]+)?)\b/i)?.[1];
   if (invalidCode) throw new Error(invalidCode.toLowerCase());
@@ -257,6 +270,44 @@ function normalizeColumnMutationResponse(value: unknown, operation: string) {
   return column;
 }
 
+function normalizeRoleMutationResponse(value: unknown, operation: string) {
+  const record =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const roleRecord =
+    record.role && typeof record.role === "object" && !Array.isArray(record.role)
+      ? (record.role as Record<string, unknown>)
+      : {};
+  const role = normalizeMerchantEnterpriseRole({
+    ...roleRecord,
+    allowed_board_ids: normalizeMerchantEnterpriseBoardIds(record.allowed_board_ids),
+  });
+  if (!role) throw new Error(`${operation}:invalid_response`);
+  return role;
+}
+
+function throwRoleRpcError(operation: string, error: unknown): never {
+  if (isMerchantEnterpriseSchemaMissingError(error)) {
+    throw new Error("enterprise_schema_unavailable");
+  }
+  const message = toErrorMessage(error);
+  for (const code of [
+    "enterprise_version_conflict",
+    "role_board_access_in_use",
+    "role_name_conflict",
+    "role_not_found",
+    "system_role_protected",
+    "role_in_use",
+  ]) {
+    if (message.includes(code)) throw new Error(code);
+  }
+  const invalidCode = message.match(/\b(invalid_role(?:_[a-z_]+)?)\b/i)?.[1];
+  if (invalidCode) throw new Error(invalidCode.toLowerCase());
+  if (message.includes("23505")) throw new Error("role_name_conflict");
+  throw new Error(`${operation}:${message}`);
+}
+
 function normalizeTaskEventMutationResponse(value: unknown, operation: string) {
   const record =
     value && typeof value === "object" && !Array.isArray(value)
@@ -382,9 +433,17 @@ export async function loadMerchantEnterpriseSnapshot(
   const siteId = normalizeText(siteIdValue, 80);
   if (!siteId) throw new Error("invalid_site_id");
 
-  const [roleRows, employeeRows, boardRows, columnRows, taskRows, assigneeRows] =
+  const [roleRows, roleBoardRows, employeeRows, boardRows, columnRows, taskRows, assigneeRows] =
     await Promise.all([
       selectMerchantRows(client, "merchant_enterprise_roles", ROLE_COLUMNS, siteId),
+      selectMerchantRows(
+        client,
+        "merchant_enterprise_role_boards",
+        "merchant_id,role_id,board_id,created_at",
+        siteId,
+        "created_at",
+        ["role_id", "board_id"],
+      ),
       selectMerchantRows(client, "merchant_enterprise_employees", EMPLOYEE_COLUMNS, siteId),
       selectMerchantRows(client, "merchant_task_boards", BOARD_COLUMNS, siteId, "position"),
       selectMerchantRows(client, "merchant_task_columns", COLUMN_COLUMNS, siteId, "position"),
@@ -406,6 +465,17 @@ export async function loadMerchantEnterpriseSnapshot(
       ),
     ]);
 
+  const boardIdsByRole = new Map<string, string[]>();
+  roleBoardRows.forEach((row: unknown) => {
+    const record = row && typeof row === "object" ? (row as Record<string, unknown>) : {};
+    const roleId = normalizeText(record.role_id, 80);
+    const boardId = normalizeText(record.board_id, 80);
+    if (!roleId || !boardId) return;
+    const current = boardIdsByRole.get(roleId) ?? [];
+    if (!current.includes(boardId)) current.push(boardId);
+    boardIdsByRole.set(roleId, current);
+  });
+
   const assigneesByTask = new Map<string, string[]>();
   assigneeRows.forEach((row: unknown) => {
     const record = row && typeof row === "object" ? (row as Record<string, unknown>) : {};
@@ -418,7 +488,15 @@ export async function loadMerchantEnterpriseSnapshot(
   });
 
   return {
-    roles: normalizeRows(roleRows, normalizeMerchantEnterpriseRole),
+    roles: (Array.isArray(roleRows) ? roleRows : [])
+      .map((row) => {
+        const record = row && typeof row === "object" ? (row as Record<string, unknown>) : {};
+        return normalizeMerchantEnterpriseRole({
+          ...record,
+          allowed_board_ids: boardIdsByRole.get(normalizeText(record.id, 80)) ?? [],
+        });
+      })
+      .filter((role): role is MerchantEnterpriseRole => Boolean(role)),
     employees: normalizeRows(employeeRows, normalizeMerchantEnterpriseEmployee),
     boards: normalizeRows(boardRows, normalizeMerchantTaskBoard).sort(
       (left, right) => left.position - right.position || left.id.localeCompare(right.id),
@@ -457,6 +535,27 @@ export async function loadMerchantTaskEvents(
     .limit(50);
   if (result.error) throwStoreError("enterprise_task_events_read_failed", result.error);
   return normalizeRows(result.data, normalizeMerchantTaskEvent);
+}
+
+export async function loadMerchantTaskBoardIdForAccess(
+  client: MerchantEnterpriseStoreClient,
+  siteIdValue: string,
+  taskIdValue: string,
+) {
+  const siteId = normalizeText(siteIdValue, 80);
+  const taskId = normalizeText(taskIdValue, 80);
+  if (!siteId || !taskId) throw new Error("invalid_task_query");
+  const result = await client
+    .from("merchant_tasks")
+    .select("board_id")
+    .eq("merchant_id", siteId)
+    .eq("id", taskId)
+    .limit(1)
+    .maybeSingle();
+  if (result.error) throwStoreError("enterprise_task_access_check_failed", result.error);
+  const boardId = normalizeText(result.data?.board_id, 80);
+  if (!boardId) throw new Error("task_not_found");
+  return boardId;
 }
 
 export async function loadMerchantTaskChecklistItems(
@@ -804,26 +903,25 @@ export async function createMerchantEnterpriseRole(
     name: string;
     description?: string;
     permissions?: unknown;
+    accessScope: MerchantEnterpriseBoardAccessScope;
+    allowedBoardIds: string[];
   },
 ): Promise<MerchantEnterpriseRole> {
   const siteId = normalizeText(input.siteId, 80);
   const name = normalizeText(input.name, 80);
   if (!siteId || !name) throw new Error("invalid_role");
-  return insertOne(
-    client,
-    "merchant_enterprise_roles",
-    {
+  const result = await client.rpc("faolla_create_merchant_enterprise_role_v1", {
+    p_input: {
       merchant_id: siteId,
       name,
       description: normalizeText(input.description, 1000),
       permissions: normalizeMerchantEnterprisePermissions(input.permissions),
-      status: "active",
-      is_system: false,
+      access_scope: input.accessScope,
+      allowed_board_ids: input.accessScope === "all" ? [] : input.allowedBoardIds,
     },
-    ROLE_COLUMNS,
-    normalizeMerchantEnterpriseRole,
-    "enterprise_role_create_failed",
-  );
+  });
+  if (result.error) throwRoleRpcError("enterprise_role_create_failed", result.error);
+  return normalizeRoleMutationResponse(result.data, "enterprise_role_create_failed");
 }
 
 export async function updateMerchantEnterpriseRole(
@@ -835,6 +933,8 @@ export async function updateMerchantEnterpriseRole(
     name?: string;
     description?: string;
     permissions?: unknown;
+    accessScope?: MerchantEnterpriseBoardAccessScope;
+    allowedBoardIds?: string[];
     status?: "active" | "archived";
   },
 ): Promise<MerchantEnterpriseRole> {
@@ -846,21 +946,23 @@ export async function updateMerchantEnterpriseRole(
   if (input.permissions !== undefined) {
     patch.permissions = normalizeMerchantEnterprisePermissions(input.permissions);
   }
+  if (input.accessScope !== undefined) {
+    patch.access_scope = input.accessScope;
+    patch.allowed_board_ids =
+      input.accessScope === "all" ? [] : (input.allowedBoardIds ?? []);
+  }
   if (input.status === "active" || input.status === "archived") patch.status = input.status;
   if (!siteId || !roleId || Object.keys(patch).length === 0) throw new Error("invalid_role_update");
-  const result = await client
-    .from("merchant_enterprise_roles")
-    .update(patch)
-    .eq("merchant_id", siteId)
-    .eq("id", roleId)
-    .eq("version", Math.max(1, Math.round(Number(input.version) || 1)))
-    .select(ROLE_COLUMNS)
-    .maybeSingle();
-  if (result.error) throwStoreError("enterprise_role_update_failed", result.error);
-  if (!result.data) throw new Error("enterprise_version_conflict");
-  const role = normalizeMerchantEnterpriseRole(result.data);
-  if (!role) throw new Error("enterprise_role_update_failed:invalid_response");
-  return role;
+  const result = await client.rpc("faolla_update_merchant_enterprise_role_v1", {
+    p_input: {
+      merchant_id: siteId,
+      role_id: roleId,
+      expected_version: Math.max(1, Math.round(Number(input.version) || 1)),
+      ...patch,
+    },
+  });
+  if (result.error) throwRoleRpcError("enterprise_role_update_failed", result.error);
+  return normalizeRoleMutationResponse(result.data, "enterprise_role_update_failed");
 }
 
 export async function createMerchantEnterpriseEmployee(

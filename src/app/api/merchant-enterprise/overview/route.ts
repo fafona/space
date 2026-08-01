@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 import {
+  filterMerchantEnterpriseSnapshotByBoardAccess,
   hasMerchantEnterprisePermission,
   type MerchantEnterpriseActor,
   type MerchantEnterpriseSnapshot,
 } from "@/lib/merchantEnterprise";
 import {
   requireMerchantEnterpriseEntitlement,
+  requireMerchantEnterpriseAllBoardAccess,
   resolveMerchantEnterpriseActor,
   toMerchantEnterpriseAccessResponse,
 } from "@/lib/merchantEnterpriseAuth.server";
@@ -53,11 +55,13 @@ export function buildVisibleMerchantEnterpriseSnapshot(
   actor: MerchantEnterpriseActor,
   snapshot: MerchantEnterpriseSnapshot,
 ) {
+  const scopedSnapshot = filterMerchantEnterpriseSnapshotByBoardAccess(actor, snapshot);
   const canViewTasks = hasMerchantEnterprisePermission(actor, "tasks.view");
   const canAssignTasks = hasMerchantEnterprisePermission(actor, "tasks.assign");
   const canViewEmployees = hasMerchantEnterprisePermission(actor, "employees.view");
   const canViewRoles = hasMerchantEnterprisePermission(actor, "roles.view");
-  const tasks = canViewTasks ? snapshot.tasks : [];
+  const canManageRoles = hasMerchantEnterprisePermission(actor, "roles.manage");
+  const tasks = canViewTasks ? scopedSnapshot.tasks : [];
   const visibleAssigneeIds = new Set(tasks.flatMap((task) => task.assigneeIds));
   const sanitizeEmployee = (employee: MerchantEnterpriseSnapshot["employees"][number]) => ({
     ...employee,
@@ -87,8 +91,8 @@ export function buildVisibleMerchantEnterpriseSnapshot(
               : visibleAssigneeIds.has(employee.id),
           )
           .map(sanitizeEmployee),
-    boards: canViewTasks ? snapshot.boards : [],
-    columns: canViewTasks ? snapshot.columns : [],
+    boards: canViewTasks || canManageRoles ? scopedSnapshot.boards : [],
+    columns: canViewTasks ? scopedSnapshot.columns : [],
     tasks,
   } satisfies MerchantEnterpriseSnapshot;
 }
@@ -162,6 +166,7 @@ export async function POST(request: Request) {
     if (!hasMerchantEnterprisePermission(actor, "roles.manage")) {
       return NextResponse.json({ ok: false, error: "permission_denied" }, { status: 403 });
     }
+    requireMerchantEnterpriseAllBoardAccess(actor);
     await requireMerchantEnterpriseEntitlement(siteId);
     const enterpriseStore = storeClient();
     await bootstrapMerchantEnterpriseWorkspace(

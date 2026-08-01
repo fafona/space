@@ -5,11 +5,13 @@ import {
 } from "@/lib/merchantEnterprise";
 import {
   requireMerchantEnterpriseEntitlement,
+  requireMerchantEnterpriseBoardAccess,
   resolveMerchantEnterpriseActor,
   toMerchantEnterpriseAccessResponse,
 } from "@/lib/merchantEnterpriseAuth.server";
 import {
   createMerchantTask,
+  loadMerchantTaskBoardIdForAccess,
   moveMerchantTask,
   updateMerchantTask,
   type MerchantEnterpriseStoreClient,
@@ -162,6 +164,7 @@ export async function POST(request: Request) {
     }
     const boardId = uuid(body?.boardId, "invalid_task_board");
     const columnId = uuid(body?.columnId, "invalid_task_column");
+    requireMerchantEnterpriseBoardAccess(actor, boardId, "board_not_found");
     const requestedAssignees = hasOwn(body, "assigneeIds") ? assignees(body?.assigneeIds) : [];
     if (requestedAssignees.length > 0 && !hasMerchantEnterprisePermission(actor, "tasks.assign")) {
       return NextResponse.json({ ok: false, error: "permission_denied" }, { status: 403 });
@@ -245,8 +248,15 @@ export async function PATCH(request: Request) {
     if (requiredPermissions.some((permission) => !hasMerchantEnterprisePermission(actor, permission))) {
       return NextResponse.json({ ok: false, error: "permission_denied" }, { status: 403 });
     }
+    const enterpriseStore = client();
+    const taskBoardId = await loadMerchantTaskBoardIdForAccess(
+      enterpriseStore,
+      siteId,
+      taskId,
+    );
+    requireMerchantEnterpriseBoardAccess(actor, taskBoardId, "task_not_found");
     if (requestedTargetIndex !== undefined) {
-      const task = await moveMerchantTask(client(), {
+      const task = await moveMerchantTask(enterpriseStore, {
         siteId,
         taskId,
         version: parsedVersion,
@@ -258,7 +268,7 @@ export async function PATCH(request: Request) {
       });
       return NextResponse.json({ ok: true, task });
     }
-    const task = await updateMerchantTask(client(), {
+    const task = await updateMerchantTask(enterpriseStore, {
       siteId,
       taskId,
       version: parsedVersion,

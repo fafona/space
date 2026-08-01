@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
 import type { MerchantTaskEvent } from "@/lib/merchantEnterprise";
 import {
+  requireMerchantEnterpriseBoardAccess,
   resolveMerchantEnterpriseActor,
   toMerchantEnterpriseAccessResponse,
 } from "@/lib/merchantEnterpriseAuth.server";
 import {
   addMerchantTaskComment,
   loadMerchantTaskEvents,
+  loadMerchantTaskBoardIdForAccess,
   type MerchantEnterpriseStoreClient,
 } from "@/lib/merchantEnterpriseStore.server";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
@@ -96,12 +98,19 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const requestedSiteId = siteId(url.searchParams.get("siteId"));
     const requestedTaskId = taskId(url.searchParams.get("taskId"));
-    await resolveMerchantEnterpriseActor(request, {
+    const actor = await resolveMerchantEnterpriseActor(request, {
       siteId: requestedSiteId,
       requiredPermission: "tasks.view",
     });
+    const store = storeClient();
+    const boardId = await loadMerchantTaskBoardIdForAccess(
+      store,
+      requestedSiteId,
+      requestedTaskId,
+    );
+    requireMerchantEnterpriseBoardAccess(actor, boardId, "task_not_found");
     const events = await loadMerchantTaskEvents(
-      storeClient(),
+      store,
       requestedSiteId,
       requestedTaskId,
     );
@@ -128,7 +137,14 @@ export async function POST(request: Request) {
       siteId: requestedSiteId,
       requiredPermission: "tasks.update",
     });
-    const event = await addMerchantTaskComment(storeClient(), {
+    const store = storeClient();
+    const boardId = await loadMerchantTaskBoardIdForAccess(
+      store,
+      requestedSiteId,
+      requestedTaskId,
+    );
+    requireMerchantEnterpriseBoardAccess(actor, boardId, "task_not_found");
+    const event = await addMerchantTaskComment(store, {
       siteId: requestedSiteId,
       taskId: requestedTaskId,
       text: requestedText,

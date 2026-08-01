@@ -33,11 +33,15 @@ import {
 import {
   buildMerchantEnterpriseTaskOverview,
   buildMerchantTaskEditChanges,
+  canCreateMerchantEnterpriseBoards,
   filterMerchantTasks,
   getMerchantEnterpriseDefaultTaskAssigneeFilter,
+  getMerchantEnterpriseDefaultRoleBoardAccess,
   getMerchantTaskCompletionTransition,
   hasMerchantEnterprisePermission,
+  merchantEnterpriseBoardAccessFitsActor,
   merchantEnterprisePermissionsFitActor,
+  merchantEnterpriseRoleFitsActor,
   MAX_MERCHANT_TASK_ASSIGNEES,
   MAX_MERCHANT_TASK_CHECKLIST_ITEMS,
   MAX_MERCHANT_TASK_CHECKLIST_TEXT_LENGTH,
@@ -385,6 +389,10 @@ function readApiError(payload: unknown, fallback: string) {
   if (code === "enterprise_management_disabled") return "当前商户尚未开通企业管理。";
   if (code === "permission_denied") return "当前账号没有执行此操作的权限。";
   if (code === "permission_escalation_denied") return "不能授予高于当前账号的权限，也不能修改自己的管理角色。";
+  if (code === "invalid_role_board_access") return "看板访问范围无效，请重新选择后保存。";
+  if (code === "role_board_access_in_use") return "该角色仍有员工负责新范围之外的未完成任务，请先调整负责人或任务。";
+  if (code === "employee_board_access_in_use") return "该员工仍有新角色无法访问的未完成任务，请先调整负责人。";
+  if (code === "task_assignee_board_access_denied") return "部分负责人无权访问当前看板，请调整角色范围或负责人。";
   if (code === "invalid_permission_dependencies") return "权限组合不完整，请保留关联的查看权限。";
   if (code === "role_in_use") return "该角色仍分配给员工，请先为这些员工更换角色。";
   if (code === "system_role_protected") return "系统预设角色不能归档。";
@@ -1620,34 +1628,210 @@ function TaskEditor({
   );
 }
 
+type RoleBoardAccessValue = Pick<
+  MerchantEnterpriseRole,
+  "accessScope" | "allowedBoardIds"
+>;
+
+function RoleBoardAccessEditor({
+  idPrefix,
+  accessScope,
+  allowedBoardIds,
+  boards,
+  editable,
+  canGrantAllBoards,
+  onChange,
+}: {
+  idPrefix: string;
+  accessScope: RoleBoardAccessValue["accessScope"];
+  allowedBoardIds: readonly string[];
+  boards: readonly MerchantTaskBoard[];
+  editable: boolean;
+  canGrantAllBoards: boolean;
+  onChange: (value: RoleBoardAccessValue) => void;
+}) {
+  const descriptionId = `${idPrefix}-board-access-description`;
+  const boardOptionsId = `${idPrefix}-board-access-options`;
+  const selectedBoardIds = new Set(allowedBoardIds);
+  const sortedBoards = [...boards].sort(
+    (left, right) =>
+      Number(left.status === "archived") - Number(right.status === "archived") ||
+      left.position - right.position ||
+      left.name.localeCompare(right.name),
+  );
+  const scopeSummary =
+    accessScope === "all"
+      ? "全部看板（包括以后新增的看板）"
+      : allowedBoardIds.length > 0
+        ? `指定 ${allowedBoardIds.length} 个看板`
+        : "不访问任何看板";
+
+  return (
+    <fieldset
+      className="mt-4 rounded-2xl border border-cyan-100 bg-cyan-50/40 p-4 disabled:opacity-70"
+      disabled={!editable}
+      aria-describedby={descriptionId}
+    >
+      <legend className="px-1 text-sm font-semibold text-slate-900">看板访问范围</legend>
+      <p id={descriptionId} className="text-xs leading-5 text-slate-600">
+        {scopeSummary}。访问范围控制任务数据；修改看板结构仍需“管理看板”权限。
+      </p>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        <label
+          className={`flex min-h-11 items-start gap-2 rounded-xl border px-3 py-2 ${
+            accessScope === "all"
+              ? "border-cyan-300 bg-white"
+              : "border-slate-200 bg-white/70"
+          } ${editable && canGrantAllBoards ? "cursor-pointer" : ""}`}
+        >
+          <input
+            type="radio"
+            className="mt-0.5"
+            name={`${idPrefix}-board-access-scope`}
+            value="all"
+            checked={accessScope === "all"}
+            disabled={!editable || !canGrantAllBoards}
+            onChange={() => onChange({ accessScope: "all", allowedBoardIds: [] })}
+          />
+          <span>
+            <span className="block text-sm font-medium text-slate-800">全部看板</span>
+            <span className="mt-0.5 block text-[11px] leading-4 text-slate-500">
+              自动包含当前及以后新增的看板。
+            </span>
+          </span>
+        </label>
+        <label
+          className={`flex min-h-11 items-start gap-2 rounded-xl border px-3 py-2 ${
+            accessScope === "restricted"
+              ? "border-cyan-300 bg-white"
+              : "border-slate-200 bg-white/70"
+          } ${editable ? "cursor-pointer" : ""}`}
+        >
+          <input
+            type="radio"
+            className="mt-0.5"
+            name={`${idPrefix}-board-access-scope`}
+            value="restricted"
+            checked={accessScope === "restricted"}
+            disabled={!editable}
+            onChange={() =>
+              onChange({ accessScope: "restricted", allowedBoardIds: [...allowedBoardIds] })
+            }
+          />
+          <span>
+            <span className="block text-sm font-medium text-slate-800">指定看板</span>
+            <span className="mt-0.5 block text-[11px] leading-4 text-slate-500">
+              只允许访问下方勾选的看板。
+            </span>
+          </span>
+        </label>
+      </div>
+
+      {!canGrantAllBoards && editable ? (
+        <p className="mt-2 text-xs leading-5 text-amber-700">
+          当前账号只能把自己可访问的指定看板授予该角色，不能授予全部看板。
+        </p>
+      ) : null}
+
+      {accessScope === "restricted" ? (
+        <div className="mt-3">
+          <div
+            id={boardOptionsId}
+            role="group"
+            aria-label="选择角色可以访问的看板"
+            className="grid max-h-52 gap-2 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 sm:grid-cols-2"
+          >
+            {sortedBoards.map((board) => {
+              const checked = selectedBoardIds.has(board.id);
+              return (
+                <label
+                  key={`${idPrefix}-${board.id}`}
+                  className={`flex min-h-11 items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
+                    checked
+                      ? "border-cyan-300 bg-cyan-50 text-cyan-950"
+                      : "border-slate-200 bg-white text-slate-700"
+                  } ${editable ? "cursor-pointer" : ""}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    disabled={!editable}
+                    onChange={(event) => {
+                      const nextBoardIds = new Set(allowedBoardIds);
+                      if (event.target.checked) nextBoardIds.add(board.id);
+                      else nextBoardIds.delete(board.id);
+                      onChange({
+                        accessScope: "restricted",
+                        allowedBoardIds: Array.from(nextBoardIds),
+                      });
+                    }}
+                  />
+                  <span className="min-w-0 flex-1 truncate">{board.name}</span>
+                  {board.status === "archived" ? (
+                    <span className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                      已归档
+                    </span>
+                  ) : null}
+                </label>
+              );
+            })}
+            {sortedBoards.length === 0 ? (
+              <p className="px-2 py-3 text-sm text-slate-500 sm:col-span-2">当前没有可授权的看板。</p>
+            ) : null}
+          </div>
+          {allowedBoardIds.length === 0 ? (
+            <p className="mt-2 text-xs font-medium text-amber-700" role="status" aria-live="polite">
+              未选择看板，该角色将无法访问任何任务看板。
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+    </fieldset>
+  );
+}
+
 function RoleEditor({
   role,
+  boards,
   busy,
   editable,
   unavailableReason,
   grantablePermissions,
+  canGrantAllBoards,
   onSave,
   onStatusChange,
 }: {
   role: MerchantEnterpriseRole;
+  boards: readonly MerchantTaskBoard[];
   busy: boolean;
   editable: boolean;
   unavailableReason?: string;
   grantablePermissions: readonly MerchantEnterprisePermission[];
+  canGrantAllBoards: boolean;
   onSave: (
     role: MerchantEnterpriseRole,
-    input: { name: string; description: string; permissions: MerchantEnterprisePermission[] },
+    input: {
+      name: string;
+      description: string;
+      permissions: MerchantEnterprisePermission[];
+      accessScope: RoleBoardAccessValue["accessScope"];
+      allowedBoardIds: string[];
+    },
   ) => Promise<void>;
   onStatusChange: (role: MerchantEnterpriseRole, status: "active" | "archived") => Promise<void>;
 }) {
   const [name, setName] = useState(role.name);
   const [description, setDescription] = useState(role.description);
   const [permissions, setPermissions] = useState<MerchantEnterprisePermission[]>(role.permissions);
+  const [accessScope, setAccessScope] = useState(role.accessScope);
+  const [allowedBoardIds, setAllowedBoardIds] = useState<string[]>(role.allowedBoardIds);
 
   useEffect(() => {
     setName(role.name);
     setDescription(role.description);
     setPermissions(role.permissions);
+    setAccessScope(role.accessScope);
+    setAllowedBoardIds(role.allowedBoardIds);
   }, [role]);
 
   return (
@@ -1687,6 +1871,18 @@ function RoleEditor({
           />
         </label>
       </div>
+      <RoleBoardAccessEditor
+        idPrefix={`role-${role.id}`}
+        accessScope={accessScope}
+        allowedBoardIds={allowedBoardIds}
+        boards={boards}
+        editable={editable}
+        canGrantAllBoards={canGrantAllBoards}
+        onChange={(value) => {
+          setAccessScope(value.accessScope);
+          setAllowedBoardIds(value.allowedBoardIds);
+        }}
+      />
       <div className="mt-4 grid gap-2 sm:grid-cols-2">
         {MERCHANT_ENTERPRISE_PERMISSION_CATALOG.map((permission) => {
           const checked = permissions.includes(permission.key);
@@ -1741,7 +1937,15 @@ function RoleEditor({
             type="button"
             className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-45"
             disabled={busy || !name.trim()}
-            onClick={() => void onSave(role, { name, description, permissions })}
+            onClick={() =>
+              void onSave(role, {
+                name,
+                description,
+                permissions,
+                accessScope,
+                allowedBoardIds: accessScope === "all" ? [] : allowedBoardIds,
+              })
+            }
           >
             保存角色
           </button>
@@ -1756,6 +1960,7 @@ function BoardSettings({
   columns,
   selectedBoardId,
   busy,
+  canCreateBoard,
   onSelectBoard,
   onCreateBoard,
   onSaveBoard,
@@ -1770,6 +1975,7 @@ function BoardSettings({
   columns: MerchantTaskColumn[];
   selectedBoardId: string;
   busy: boolean;
+  canCreateBoard: boolean;
   onSelectBoard: (boardId: string) => void;
   onCreateBoard: (input: { name: string; description: string }) => Promise<MerchantTaskBoard | null>;
   onSaveBoard: (
@@ -1829,42 +2035,50 @@ function BoardSettings({
 
       <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)]">
         <div className="space-y-3">
-          <div className="rounded-2xl border border-dashed border-slate-300 p-3">
-            <div className="grid gap-2 sm:grid-cols-[1fr_1.3fr_auto]">
-              <input
-                className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
-                placeholder="新看板名称"
-                maxLength={120}
-                value={newBoardName}
-                onChange={(event) => setNewBoardName(event.target.value)}
-              />
-              <input
-                className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
-                placeholder="看板说明（可选）"
-                maxLength={2000}
-                value={newBoardDescription}
-                onChange={(event) => setNewBoardDescription(event.target.value)}
-              />
-              <button
-                type="button"
-                className="rounded-xl bg-cyan-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-45"
-                disabled={busy || !newBoardName.trim()}
-                onClick={() => {
-                  void onCreateBoard({
-                    name: newBoardName,
-                    description: newBoardDescription,
-                  }).then((created) => {
-                    if (!created) return;
-                    setNewBoardName("");
-                    setNewBoardDescription("");
-                    onSelectBoard(created.id);
-                  });
-                }}
-              >
-                新建看板
-              </button>
+          {canCreateBoard ? (
+            <div className="rounded-2xl border border-dashed border-slate-300 p-3">
+              <div className="grid gap-2 sm:grid-cols-[1fr_1.3fr_auto]">
+                <input
+                  className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                  placeholder="新看板名称"
+                  aria-label="新看板名称"
+                  maxLength={120}
+                  value={newBoardName}
+                  onChange={(event) => setNewBoardName(event.target.value)}
+                />
+                <input
+                  className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                  placeholder="看板说明（可选）"
+                  aria-label="新看板说明"
+                  maxLength={2000}
+                  value={newBoardDescription}
+                  onChange={(event) => setNewBoardDescription(event.target.value)}
+                />
+                <button
+                  type="button"
+                  className="rounded-xl bg-cyan-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-45"
+                  disabled={busy || !newBoardName.trim()}
+                  onClick={() => {
+                    void onCreateBoard({
+                      name: newBoardName,
+                      description: newBoardDescription,
+                    }).then((created) => {
+                      if (!created) return;
+                      setNewBoardName("");
+                      setNewBoardDescription("");
+                      onSelectBoard(created.id);
+                    });
+                  }}
+                >
+                  新建看板
+                </button>
+              </div>
             </div>
-          </div>
+          ) : (
+            <p className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800">
+              当前账号只能访问指定看板，不能新建看板；仍可维护下方已有看板及其工作列。
+            </p>
+          )}
 
           <div className="space-y-2">
             {sortedBoards.map((board) => {
@@ -2272,6 +2486,7 @@ function MerchantEnterpriseManagerContent({
   const canAutoRefreshOnFocusRef = useRef(false);
   const lastSyncedAtRef = useRef(0);
   const defaultTaskAssigneeScopeRef = useRef("");
+  const defaultRoleBoardAccessActorRef = useRef("");
   const taskCreateMutationRef = useRef<{ fingerprint: string; operationId: string } | null>(null);
   const taskSensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
@@ -2325,6 +2540,8 @@ function MerchantEnterpriseManagerContent({
   const [rolePermissions, setRolePermissions] = useState<MerchantEnterprisePermission[]>([
     "enterprise.view",
   ]);
+  const [roleAccessScope, setRoleAccessScope] = useState<RoleBoardAccessValue["accessScope"]>("all");
+  const [roleAllowedBoardIds, setRoleAllowedBoardIds] = useState<string[]>([]);
 
   const apiFetch = useCallback(
     async (path: string, init: RequestInit = {}) => {
@@ -2570,6 +2787,16 @@ function MerchantEnterpriseManagerContent({
     setTaskAssigneeFilter(getMerchantEnterpriseDefaultTaskAssigneeFilter(actor));
   }, [actor]);
 
+  useEffect(() => {
+    if (!actor) return;
+    const actorKey = `${actor.type}:${actor.id}`;
+    if (defaultRoleBoardAccessActorRef.current === actorKey) return;
+    defaultRoleBoardAccessActorRef.current = actorKey;
+    const defaultAccess = getMerchantEnterpriseDefaultRoleBoardAccess(actor);
+    setRoleAccessScope(defaultAccess.accessScope);
+    setRoleAllowedBoardIds([...defaultAccess.allowedBoardIds]);
+  }, [actor]);
+
   const taskComposerHasDraft =
     Boolean(taskTitle.trim()) ||
     Boolean(taskDescription.trim()) ||
@@ -2640,9 +2867,30 @@ function MerchantEnterpriseManagerContent({
   }, [availableViewKey, onAvailableViewsChange, usesExternalNavigation]);
 
   const activeRoles = snapshot.roles.filter((role) => role.status === "active");
+  const canGrantAllBoards = actor
+    ? merchantEnterpriseBoardAccessFitsActor(actor, {
+        accessScope: "all",
+        allowedBoardIds: [],
+      })
+    : false;
+  const canCreateBoards = canCreateMerchantEnterpriseBoards(actor);
   const assignableRoles = actor
-    ? activeRoles.filter((role) => merchantEnterprisePermissionsFitActor(actor, role.permissions))
+    ? activeRoles.filter((role) => merchantEnterpriseRoleFitsActor(actor, role))
     : [];
+  useEffect(() => {
+    if (
+      !actor ||
+      merchantEnterpriseBoardAccessFitsActor(actor, {
+        accessScope: roleAccessScope,
+        allowedBoardIds: roleAccessScope === "all" ? [] : roleAllowedBoardIds,
+      })
+    ) {
+      return;
+    }
+    const defaultAccess = getMerchantEnterpriseDefaultRoleBoardAccess(actor);
+    setRoleAccessScope(defaultAccess.accessScope);
+    setRoleAllowedBoardIds([...defaultAccess.allowedBoardIds]);
+  }, [actor, roleAccessScope, roleAllowedBoardIds]);
   const activeEmployees = snapshot.employees.filter((employee) => employee.status === "active");
   const activeBoards = snapshot.boards.filter((board) => board.status === "active");
   const activeBoard =
@@ -2786,6 +3034,10 @@ function MerchantEnterpriseManagerContent({
   );
 
   async function bootstrap() {
+    if (!canCreateBoards || !can(actor, "roles.manage")) {
+      setMessage({ kind: "error", text: "当前账号不能初始化新的企业工作区。" });
+      return;
+    }
     const payload = await mutate(
       "/api/merchant-enterprise/overview",
       "POST",
@@ -2802,6 +3054,10 @@ function MerchantEnterpriseManagerContent({
     name: string;
     description: string;
   }): Promise<MerchantTaskBoard | null> {
+    if (!canCreateBoards) {
+      setMessage({ kind: "error", text: "当前账号只能访问指定看板，不能新建看板。" });
+      return null;
+    }
     const payload = await mutate(
       "/api/merchant-enterprise/boards",
       "POST",
@@ -3318,6 +3574,14 @@ function MerchantEnterpriseManagerContent({
       setMessage({ kind: "error", text: "请填写角色名称。" });
       return;
     }
+    const boardAccess: RoleBoardAccessValue = {
+      accessScope: roleAccessScope,
+      allowedBoardIds: roleAccessScope === "all" ? [] : roleAllowedBoardIds,
+    };
+    if (!actor || !merchantEnterpriseBoardAccessFitsActor(actor, boardAccess)) {
+      setMessage({ kind: "error", text: "不能授予超出当前账号范围的看板访问权。" });
+      return;
+    }
     const payload = await mutate(
       "/api/merchant-enterprise/roles",
       "POST",
@@ -3325,6 +3589,8 @@ function MerchantEnterpriseManagerContent({
         name: roleName,
         description: roleDescription,
         permissions: rolePermissions,
+        accessScope: boardAccess.accessScope,
+        allowedBoardIds: boardAccess.allowedBoardIds,
       },
       "角色已创建。",
     );
@@ -3332,6 +3598,9 @@ function MerchantEnterpriseManagerContent({
       setRoleName("");
       setRoleDescription("");
       setRolePermissions(["enterprise.view"]);
+      const defaultAccess = getMerchantEnterpriseDefaultRoleBoardAccess(actor);
+      setRoleAccessScope(defaultAccess.accessScope);
+      setRoleAllowedBoardIds([...defaultAccess.allowedBoardIds]);
     }
   }
 
@@ -3426,8 +3695,14 @@ function MerchantEnterpriseManagerContent({
       name: string;
       description: string;
       permissions: MerchantEnterprisePermission[];
+      accessScope: RoleBoardAccessValue["accessScope"];
+      allowedBoardIds: string[];
     },
   ) {
+    if (!actor || !merchantEnterpriseBoardAccessFitsActor(actor, input)) {
+      setMessage({ kind: "error", text: "不能授予超出当前账号范围的看板访问权。" });
+      return;
+    }
     await mutate(
       "/api/merchant-enterprise/roles",
       "PATCH",
@@ -3437,6 +3712,8 @@ function MerchantEnterpriseManagerContent({
         name: input.name,
         description: input.description,
         permissions: input.permissions,
+        accessScope: input.accessScope,
+        allowedBoardIds: input.accessScope === "all" ? [] : input.allowedBoardIds,
       },
       "角色已保存。",
     );
@@ -3472,6 +3749,9 @@ function MerchantEnterpriseManagerContent({
     if (actor.roleId === role.id) return { editable: false, reason: "不能修改自己的角色。" };
     if (!merchantEnterprisePermissionsFitActor(actor, role.permissions)) {
       return { editable: false, reason: "该角色权限高于当前账号。" };
+    }
+    if (!merchantEnterpriseBoardAccessFitsActor(actor, role)) {
+      return { editable: false, reason: "该角色的看板访问范围高于当前账号。" };
     }
     return { editable: true, reason: "" };
   }
@@ -3601,11 +3881,16 @@ function MerchantEnterpriseManagerContent({
             <button
               type="button"
               className="mt-4 rounded-xl bg-amber-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-45"
-              disabled={busy || !can(actor, "boards.manage") || !can(actor, "roles.manage")}
+              disabled={busy || !canCreateBoards || !can(actor, "roles.manage")}
               onClick={() => void bootstrap()}
             >
               开始初始化
             </button>
+            {can(actor, "boards.manage") && !canCreateBoards ? (
+              <p className="mt-2 text-xs leading-5 text-amber-800">
+                当前账号只能访问指定看板，不能创建或初始化新的看板。
+              </p>
+            ) : null}
           </section>
         ) : null}
 
@@ -3754,6 +4039,7 @@ function MerchantEnterpriseManagerContent({
                 columns={snapshot.columns}
                 selectedBoardId={activeBoard?.id ?? ""}
                 busy={busy}
+                canCreateBoard={canCreateBoards}
                 onSelectBoard={setSelectedBoardId}
                 onCreateBoard={createBoard}
                 onSaveBoard={saveBoard}
@@ -3988,7 +4274,9 @@ function MerchantEnterpriseManagerContent({
 
             {!activeBoard || activeColumns.length === 0 ? (
               <section className="rounded-3xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-800">
-                当前没有可用的任务看板或工作列，请由管理员重新初始化工作区。
+                {!activeBoard && actor.type === "employee" && !canGrantAllBoards
+                  ? "当前角色没有获分配可访问的任务看板，请联系企业管理员调整角色范围。"
+                  : "当前没有可用的任务看板或工作列，请由管理员重新初始化工作区。"}
               </section>
             ) : (
               <DndContext
@@ -4242,10 +4530,7 @@ function MerchantEnterpriseManagerContent({
                     (actor?.type === "owner" ||
                       Boolean(
                         currentEmployeeRole &&
-                          merchantEnterprisePermissionsFitActor(
-                            actor,
-                            currentEmployeeRole.permissions,
-                          ),
+                          merchantEnterpriseRoleFitsActor(actor, currentEmployeeRole),
                       ));
                   const invitationManagerOpen =
                     canManageInvitation && managedInvitationEmployeeId === employee.id;
@@ -4472,6 +4757,18 @@ function MerchantEnterpriseManagerContent({
                     创建角色
                   </button>
                 </div>
+                <RoleBoardAccessEditor
+                  idPrefix="new-role"
+                  accessScope={roleAccessScope}
+                  allowedBoardIds={roleAllowedBoardIds}
+                  boards={snapshot.boards}
+                  editable={!busy}
+                  canGrantAllBoards={canGrantAllBoards}
+                  onChange={(value) => {
+                    setRoleAccessScope(value.accessScope);
+                    setRoleAllowedBoardIds(value.allowedBoardIds);
+                  }}
+                />
                 <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                   {MERCHANT_ENTERPRISE_PERMISSION_CATALOG.map((permission) => {
                     const checked = rolePermissions.includes(permission.key);
@@ -4515,10 +4812,12 @@ function MerchantEnterpriseManagerContent({
                   <RoleEditor
                     key={role.id}
                     role={role}
+                    boards={snapshot.boards}
                     busy={busy}
                     editable={availability.editable}
                     unavailableReason={availability.reason}
                     grantablePermissions={grantablePermissions}
+                    canGrantAllBoards={canGrantAllBoards}
                     onSave={saveRole}
                     onStatusChange={updateRoleStatus}
                   />

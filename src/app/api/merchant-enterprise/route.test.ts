@@ -448,6 +448,79 @@ test("role permission dependencies are rejected before authorization", async () 
   }
 });
 
+test("role board access payloads are strict while legacy creates default safely", async () => {
+  const requests = [
+    {
+      method: "POST",
+      body: {
+        siteId: "10000000",
+        name: "Invalid all scope",
+        permissions: ["enterprise.view"],
+        accessScope: "all",
+        allowedBoardIds: ["11111111-1111-4111-8111-111111111111"],
+      },
+    },
+    {
+      method: "POST",
+      body: {
+        siteId: "10000000",
+        name: "Duplicate restricted scope",
+        permissions: ["enterprise.view"],
+        accessScope: "restricted",
+        allowedBoardIds: [
+          "11111111-1111-4111-8111-111111111111",
+          "11111111-1111-4111-8111-111111111111",
+        ],
+      },
+    },
+    {
+      method: "PATCH",
+      body: {
+        siteId: "10000000",
+        roleId: "22222222-2222-4222-8222-222222222222",
+        version: 1,
+        accessScope: "restricted",
+      },
+    },
+  ] as const;
+
+  for (const request of requests) {
+    const handler = request.method === "POST" ? createRole : updateRole;
+    const response = await handler(
+      new Request("https://www.faolla.com/api/merchant-enterprise/roles", {
+        method: request.method,
+        headers: {
+          "content-type": "application/json",
+          origin: "https://www.faolla.com",
+        },
+        body: JSON.stringify(request.body),
+      }),
+    );
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      ok: false,
+      error: "invalid_role_board_access",
+    });
+  }
+
+  const legacyResponse = await createRole(
+    new Request("https://www.faolla.com/api/merchant-enterprise/roles", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "https://www.faolla.com",
+      },
+      body: JSON.stringify({
+        siteId: "10000000",
+        name: "Legacy role",
+        permissions: ["enterprise.view"],
+      }),
+    }),
+  );
+  assert.equal(legacyResponse.status, 401);
+  assert.deepEqual(await legacyResponse.json(), { ok: false, error: "unauthorized" });
+});
+
 test("role archive conflicts protect system roles and every assigned employee status", () => {
   const customRole = { id: "role-1", isSystem: false };
   const systemRole = { id: "system-role", isSystem: true };
@@ -525,6 +598,8 @@ test("overview returns only the assignee directory when employee viewing is deni
     email: "staff@example.com",
     roleId: "role-1",
     permissions: ["enterprise.view", "tasks.view"],
+    accessScope: "all",
+    allowedBoardIds: [],
   };
   const employeeBase = {
     siteId: "10000000",
@@ -610,6 +685,40 @@ test("overview returns only the assignee directory when employee viewing is deni
   employeeViewingSnapshot.employees.forEach((employee) => {
     assert.equal(employee.authUserId, "");
   });
+});
+
+test("restricted role managers receive only scoped board metadata", () => {
+  const allowedBoardId = "11111111-1111-4111-8111-111111111111";
+  const deniedBoardId = "22222222-2222-4222-8222-222222222222";
+  const actor: MerchantEnterpriseActor = {
+    type: "employee",
+    id: "33333333-3333-4333-8333-333333333333",
+    siteId: "10000000",
+    displayName: "区域主管",
+    email: "manager@example.com",
+    roleId: "44444444-4444-4444-8444-444444444444",
+    permissions: ["enterprise.view", "roles.view", "roles.manage"],
+    accessScope: "restricted",
+    allowedBoardIds: [allowedBoardId],
+  };
+  const snapshot = {
+    roles: [],
+    employees: [],
+    boards: [{ id: allowedBoardId }, { id: deniedBoardId }],
+    columns: [
+      { id: "column-allowed", boardId: allowedBoardId },
+      { id: "column-denied", boardId: deniedBoardId },
+    ],
+    tasks: [
+      { id: "task-allowed", boardId: allowedBoardId, assigneeIds: [] },
+      { id: "task-denied", boardId: deniedBoardId, assigneeIds: [] },
+    ],
+  } as unknown as MerchantEnterpriseSnapshot;
+
+  const visible = buildVisibleMerchantEnterpriseSnapshot(actor, snapshot);
+  assert.deepEqual(visible.boards.map((board) => board.id), [allowedBoardId]);
+  assert.deepEqual(visible.columns, []);
+  assert.deepEqual(visible.tasks, []);
 });
 
 test("task patch permissions are derived from every mutated field", () => {

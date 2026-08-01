@@ -4,6 +4,7 @@ import {
   addMerchantTaskComment,
   bootstrapMerchantEnterpriseWorkspace,
   createMerchantEnterpriseEmployee,
+  createMerchantEnterpriseRole,
   createMerchantTaskChecklistItem,
   createMerchantTaskBoard,
   createMerchantTaskColumn,
@@ -11,8 +12,10 @@ import {
   loadMerchantEnterpriseSnapshot,
   loadMerchantTaskChecklistItems,
   loadMerchantTaskEvents,
+  loadMerchantTaskBoardIdForAccess,
   moveMerchantTask,
   updateMerchantEnterpriseEmployee,
+  updateMerchantEnterpriseRole,
   updateMerchantTaskBoard,
   updateMerchantTaskColumn,
   updateMerchantTaskChecklistItem,
@@ -57,6 +60,22 @@ function employeeRow(version: number, invitedAt: string) {
     version,
     created_at: "2026-07-31T08:00:00.000Z",
     updated_at: invitedAt,
+  };
+}
+
+function roleRow(version: number, accessScope: "all" | "restricted" = "all") {
+  return {
+    id: "99999999-9999-4999-8999-999999999999",
+    merchant_id: "10000000",
+    name: "Staff",
+    description: "",
+    permissions: ["enterprise.view", "tasks.view"],
+    access_scope: accessScope,
+    status: "active",
+    is_system: false,
+    version,
+    created_at: "2026-08-01T00:00:00.000Z",
+    updated_at: "2026-08-01T00:00:00.000Z",
   };
 }
 
@@ -278,6 +297,139 @@ test("replaying an employee invite reservation with the consumed version conflic
     }),
     /enterprise_version_conflict/,
   );
+});
+
+test("role creation and updates persist board access through atomic RPCs", async () => {
+  const boardId = "22222222-2222-4222-8222-222222222222";
+  const calls: Array<{ functionName: string; input: Record<string, unknown> }> = [];
+  const client = {
+    from() {
+      throw new Error("role mutations must stay transactional");
+    },
+    async rpc(functionName: string, args: Record<string, unknown>) {
+      const input = args.p_input as Record<string, unknown>;
+      calls.push({ functionName, input });
+      const isCreate = functionName === "faolla_create_merchant_enterprise_role_v1";
+      return {
+        data: {
+          role: roleRow(isCreate ? 1 : 2, "restricted"),
+          allowed_board_ids: [boardId],
+        },
+        error: null,
+      };
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+
+  const created = await createMerchantEnterpriseRole(client, {
+    siteId: "10000000",
+    name: "Staff",
+    permissions: ["enterprise.view", "tasks.view"],
+    accessScope: "restricted",
+    allowedBoardIds: [boardId],
+  });
+  const updated = await updateMerchantEnterpriseRole(client, {
+    siteId: "10000000",
+    roleId: created.id,
+    version: created.version,
+    accessScope: "restricted",
+    allowedBoardIds: [boardId],
+  });
+
+  assert.equal(created.accessScope, "restricted");
+  assert.deepEqual(created.allowedBoardIds, [boardId]);
+  assert.equal(updated.version, 2);
+  assert.deepEqual(calls, [
+    {
+      functionName: "faolla_create_merchant_enterprise_role_v1",
+      input: {
+        merchant_id: "10000000",
+        name: "Staff",
+        description: "",
+        permissions: ["enterprise.view", "tasks.view"],
+        access_scope: "restricted",
+        allowed_board_ids: [boardId],
+      },
+    },
+    {
+      functionName: "faolla_update_merchant_enterprise_role_v1",
+      input: {
+        merchant_id: "10000000",
+        role_id: created.id,
+        expected_version: 1,
+        access_scope: "restricted",
+        allowed_board_ids: [boardId],
+      },
+    },
+  ]);
+});
+
+test("role RPC lifecycle conflicts keep their public error codes", async () => {
+  for (const code of [
+    "role_not_found",
+    "system_role_protected",
+    "role_in_use",
+    "role_board_access_in_use",
+  ]) {
+    const client = {
+      from() {
+        throw new Error("role mutations must stay transactional");
+      },
+      async rpc() {
+        return { data: null, error: { code: "P0001", message: code } };
+      },
+    } as unknown as MerchantEnterpriseStoreClient;
+
+    await assert.rejects(
+      updateMerchantEnterpriseRole(client, {
+        siteId: "10000000",
+        roleId: "11111111-1111-4111-8111-111111111111",
+        version: 1,
+        description: "Updated",
+      }),
+      new RegExp(code),
+    );
+  }
+});
+
+test("task access lookup resolves the board without exposing task contents", async () => {
+  const calls: string[] = [];
+  const builder = {
+    select(columns: string) {
+      calls.push(columns);
+      return builder;
+    },
+    eq() {
+      return builder;
+    },
+    limit() {
+      return builder;
+    },
+    async maybeSingle() {
+      return {
+        data: { board_id: "22222222-2222-4222-8222-222222222222" },
+        error: null,
+      };
+    },
+  };
+  const client = {
+    from(table: string) {
+      assert.equal(table, "merchant_tasks");
+      return builder;
+    },
+    async rpc() {
+      throw new Error("unexpected RPC");
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+
+  assert.equal(
+    await loadMerchantTaskBoardIdForAccess(
+      client,
+      "10000000",
+      "11111111-1111-4111-8111-111111111111",
+    ),
+    "22222222-2222-4222-8222-222222222222",
+  );
+  assert.deepEqual(calls, ["board_id"]);
 });
 
 test("board and column creation use operation-scoped transactional RPCs", async () => {
@@ -1168,7 +1320,7 @@ test("enterprise snapshot reads use explicit bounded pagination", async () => {
     columns: [],
     tasks: [],
   });
-  assert.equal(ranges.length, 6);
+  assert.equal(ranges.length, 7);
   ranges.forEach((range) => {
     assert.equal(range.from, 0);
     assert.equal(range.to, 499);
@@ -1235,5 +1387,31 @@ test("enterprise snapshot sorts boards and columns by position with stable ids",
       [3, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"],
       [3, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"],
     ],
+  );
+});
+
+test("task assignment board-scope errors remain actionable", async () => {
+  const client = {
+    from() {
+      throw new Error("unexpected table access");
+    },
+    async rpc() {
+      return {
+        data: null,
+        error: { code: "P0001", message: "task_assignee_board_access_denied" },
+      };
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+
+  await assert.rejects(
+    updateMerchantTask(client, {
+      siteId: "10000000",
+      taskId: "11111111-1111-4111-8111-111111111111",
+      version: 7,
+      actorType: "owner",
+      assigneeIds: ["22222222-2222-4222-8222-222222222222"],
+      operationId: "task-assignment-scope-1",
+    }),
+    /task_assignee_board_access_denied/,
   );
 });

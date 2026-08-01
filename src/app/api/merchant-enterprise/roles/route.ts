@@ -2,8 +2,12 @@ import { NextResponse } from "next/server";
 import {
   getMissingMerchantEnterprisePermissionDependencies,
   isMerchantEnterpriseVersion,
+  merchantEnterpriseBoardAccessFitsActor,
   merchantEnterprisePermissionsFitActor,
+  merchantEnterpriseRoleFitsActor,
+  parseMerchantEnterpriseBoardAccessStrict,
   parseMerchantEnterprisePermissionsStrict,
+  type MerchantEnterpriseBoardAccess,
   type MerchantEnterpriseEmployee,
   type MerchantEnterpriseRole,
 } from "@/lib/merchantEnterprise";
@@ -35,6 +39,8 @@ type RoleBody = {
   name?: unknown;
   description?: unknown;
   permissions?: unknown;
+  accessScope?: unknown;
+  allowedBoardIds?: unknown;
   status?: unknown;
 };
 
@@ -75,6 +81,28 @@ function text(value: unknown, max = 4096) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
 
+function hasOwn(body: RoleBody | null, key: keyof RoleBody) {
+  return Boolean(body && Object.prototype.hasOwnProperty.call(body, key));
+}
+
+function roleBoardAccess(
+  body: RoleBody | null,
+  options: { defaultAll: boolean },
+): MerchantEnterpriseBoardAccess | undefined {
+  const hasScope = hasOwn(body, "accessScope");
+  const hasBoardIds = hasOwn(body, "allowedBoardIds");
+  if (!hasScope && !hasBoardIds) {
+    return options.defaultAll ? { accessScope: "all", allowedBoardIds: [] } : undefined;
+  }
+  if (!hasScope || !hasBoardIds) throw new Error("invalid_role_board_access");
+  const parsed = parseMerchantEnterpriseBoardAccessStrict(
+    body?.accessScope,
+    body?.allowedBoardIds,
+  );
+  if (!parsed) throw new Error("invalid_role_board_access");
+  return parsed;
+}
+
 function client() {
   const value = createServerSupabaseServiceClient();
   if (!value) throw new Error("enterprise_store_unavailable");
@@ -83,9 +111,12 @@ function client() {
 
 function fail(error: unknown) {
   const message = error instanceof Error ? error.message : "";
+  if (message === "role_board_access_in_use") {
+    return NextResponse.json({ ok: false, error: message }, { status: 409 });
+  }
   if (
-    message.includes("enterprise_role_") &&
-    message.includes("23505")
+    message === "role_name_conflict" ||
+    (message.includes("enterprise_role_") && message.includes("23505"))
   ) {
     return NextResponse.json(
       { ok: false, error: "role_name_conflict" },
@@ -115,6 +146,7 @@ export async function POST(request: Request) {
     }
     const name = text(body?.name, 80);
     const permissions = parseMerchantEnterprisePermissionsStrict(body?.permissions);
+    const access = roleBoardAccess(body, { defaultAll: true });
     if (!name || !permissions) {
       return NextResponse.json({ ok: false, error: "invalid_role" }, { status: 400 });
     }
@@ -134,11 +166,16 @@ export async function POST(request: Request) {
     if (!merchantEnterprisePermissionsFitActor(actor, permissions)) {
       return NextResponse.json({ ok: false, error: "permission_escalation_denied" }, { status: 403 });
     }
+    if (!access || !merchantEnterpriseBoardAccessFitsActor(actor, access)) {
+      return NextResponse.json({ ok: false, error: "permission_escalation_denied" }, { status: 403 });
+    }
     const role = await createMerchantEnterpriseRole(client(), {
       siteId,
       name,
       description: text(body?.description, 1000),
       permissions,
+      accessScope: access.accessScope,
+      allowedBoardIds: access.allowedBoardIds,
     });
     return NextResponse.json({ ok: true, role });
   } catch (error) {
@@ -171,6 +208,7 @@ export async function PATCH(request: Request) {
       body?.permissions === undefined
         ? undefined
         : parseMerchantEnterprisePermissionsStrict(body.permissions);
+    const access = roleBoardAccess(body, { defaultAll: false });
     if (body?.permissions !== undefined && !permissions) {
       return NextResponse.json({ ok: false, error: "invalid_permissions" }, { status: 400 });
     }
@@ -205,7 +243,9 @@ export async function PATCH(request: Request) {
         targetRole.isSystem ||
         changesOwnRole ||
         !merchantEnterprisePermissionsFitActor(actor, targetRole.permissions) ||
-        (permissions && !merchantEnterprisePermissionsFitActor(actor, permissions))
+        !merchantEnterpriseRoleFitsActor(actor, targetRole) ||
+        (permissions && !merchantEnterprisePermissionsFitActor(actor, permissions)) ||
+        (access && !merchantEnterpriseBoardAccessFitsActor(actor, access))
       ) {
         return NextResponse.json(
           { ok: false, error: "permission_escalation_denied" },
@@ -243,6 +283,12 @@ export async function PATCH(request: Request) {
       ...(body?.name !== undefined ? { name: text(body.name, 80) } : {}),
       ...(body?.description !== undefined ? { description: text(body.description, 1000) } : {}),
       ...(permissions ? { permissions } : {}),
+      ...(access
+        ? {
+            accessScope: access.accessScope,
+            allowedBoardIds: access.allowedBoardIds,
+          }
+        : {}),
       ...(body?.status === "active" || body?.status === "archived" ? { status: body.status } : {}),
     });
     return NextResponse.json({ ok: true, role });

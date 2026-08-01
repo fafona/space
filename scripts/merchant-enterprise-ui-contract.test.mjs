@@ -774,7 +774,7 @@ test("task cards and editor expose a safe completion shortcut", () => {
 
   const taskEditorSource = sliceBetween(
     /function\s+TaskEditor\b/,
-    /function\s+RoleEditor\b/,
+    /function\s+RoleBoardAccessEditor\b/,
     "TaskEditor",
   );
   assert.match(
@@ -1114,7 +1114,7 @@ test("mobile enterprise contains navigation, board scrolling and compact task wo
 
   const taskEditor = sliceBetween(
     /function\s+TaskEditor\(/,
-    /function\s+RoleEditor\(/,
+    /function\s+RoleBoardAccessEditor\(/,
     "mobile task editor",
   );
   const dialog = taskEditor.match(
@@ -1182,7 +1182,7 @@ test("mobile enterprise contains navigation, board scrolling and compact task wo
 test("task details expose a permission-aware activity timeline and idempotent comments", () => {
   const editor = sliceBetween(
     /function\s+TaskEditor\(/,
-    /function\s+RoleEditor\(/,
+    /function\s+RoleBoardAccessEditor\(/,
     "task editor",
   );
   assert.match(editor, /任务动态/);
@@ -1211,7 +1211,7 @@ test("task details expose a permission-aware activity timeline and idempotent co
 test("task details expose a permission-aware checklist with progress and local reloads", () => {
   const editor = sliceBetween(
     /function\s+TaskEditor\(/,
-    /function\s+RoleEditor\(/,
+    /function\s+RoleBoardAccessEditor\(/,
     "task editor checklist",
   );
   const checklist = sliceSourceBetween(
@@ -1283,4 +1283,150 @@ test("task details expose a permission-aware checklist with progress and local r
     source,
     /event\.eventType\s*===\s*["']checklist_item_archived["'][\s\S]{0,100}移除了清单项/,
   );
+});
+
+test("role board access editor exposes accessible all and restricted board scopes", () => {
+  const boardAccessEditor = sliceBetween(
+    /function\s+RoleBoardAccessEditor\(/,
+    /function\s+RoleEditor\(/,
+    "role board access editor",
+  );
+
+  assert.match(boardAccessEditor, /<fieldset[\s\S]{0,500}<legend[^>]*>看板访问范围<\/legend>/);
+  assert.match(boardAccessEditor, /name=\{`\$\{idPrefix\}-board-access-scope`\}/);
+  assert.match(boardAccessEditor, /type=["']radio["'][\s\S]{0,250}value=["']all["']/);
+  assert.match(boardAccessEditor, /全部看板/);
+  assert.match(boardAccessEditor, /包括以后新增的看板/);
+  assert.match(boardAccessEditor, /type=["']radio["'][\s\S]{0,250}value=["']restricted["']/);
+  assert.match(boardAccessEditor, /指定看板/);
+  assert.match(boardAccessEditor, /role=["']group["']/);
+  assert.match(boardAccessEditor, /aria-label=["']选择角色可以访问的看板["']/);
+  assert.match(boardAccessEditor, /type=["']checkbox["']/);
+  assert.match(boardAccessEditor, /board\.status\s*===\s*["']archived["']/);
+  assert.match(boardAccessEditor, /已归档/);
+  assert.match(boardAccessEditor, /未选择看板，该角色将无法访问任何任务看板。/);
+  assert.match(boardAccessEditor, /role=["']status["']/);
+  assert.match(boardAccessEditor, /disabled=\{!editable\s*\|\|\s*!canGrantAllBoards\}/);
+  assert.doesNotMatch(
+    boardAccessEditor,
+    /can\(actor,\s*["']boards\.manage["']\)/,
+    "role board authorization must not depend on the board-structure permission",
+  );
+});
+
+test("role create and edit workflows submit and preserve canonical board access", () => {
+  assert.match(
+    source,
+    /const\s+\[roleAccessScope,\s*setRoleAccessScope\]\s*=\s*useState<RoleBoardAccessValue\[["']accessScope["']\]>\(["']all["']\)/,
+  );
+  assert.match(
+    source,
+    /const\s+\[roleAllowedBoardIds,\s*setRoleAllowedBoardIds\]\s*=\s*useState<string\[]>\(\[\]\)/,
+  );
+  assert.match(
+    source,
+    /getMerchantEnterpriseDefaultRoleBoardAccess\(actor\)[\s\S]{0,250}setRoleAccessScope\(defaultAccess\.accessScope\)[\s\S]{0,250}setRoleAllowedBoardIds\(\[\.\.\.defaultAccess\.allowedBoardIds\]\)/,
+  );
+
+  const createRole = sliceBetween(
+    /async\s+function\s+createRole\(\)\s*\{/,
+    /function\s+toggleEmployeeInvitationManager\(/,
+    "create role workflow",
+  );
+  assert.match(createRole, /merchantEnterpriseBoardAccessFitsActor\(actor,\s*boardAccess\)/);
+  assert.match(createRole, /accessScope:\s*boardAccess\.accessScope/);
+  assert.match(createRole, /allowedBoardIds:\s*boardAccess\.allowedBoardIds/);
+  assert.match(createRole, /getMerchantEnterpriseDefaultRoleBoardAccess\(actor\)/);
+
+  const saveRole = sliceBetween(
+    /async\s+function\s+saveRole\(/,
+    /async\s+function\s+updateRoleStatus\(/,
+    "save role workflow",
+  );
+  assert.match(saveRole, /merchantEnterpriseBoardAccessFitsActor\(actor,\s*input\)/);
+  assert.match(saveRole, /accessScope:\s*input\.accessScope/);
+  assert.match(
+    saveRole,
+    /allowedBoardIds:\s*input\.accessScope\s*===\s*["']all["']\s*\?\s*\[\]\s*:\s*input\.allowedBoardIds/,
+  );
+
+  const statusOnlyRoleUpdate = sliceBetween(
+    /async\s+function\s+updateRoleStatus\(/,
+    /function\s+roleEditAvailability\(/,
+    "status-only role update",
+  );
+  assert.match(statusOnlyRoleUpdate, /\{\s*roleId:\s*role\.id,\s*version:\s*role\.version,\s*status\s*\}/);
+  assert.doesNotMatch(statusOnlyRoleUpdate, /accessScope|allowedBoardIds/);
+
+  const roleEditor = sliceBetween(
+    /function\s+RoleEditor\(/,
+    /function\s+BoardSettings\(/,
+    "role editor board access state",
+  );
+  assert.match(roleEditor, /useState\(role\.accessScope\)/);
+  assert.match(roleEditor, /useState<string\[]>\(role\.allowedBoardIds\)/);
+  assert.match(roleEditor, /setAccessScope\(role\.accessScope\)/);
+  assert.match(roleEditor, /setAllowedBoardIds\(role\.allowedBoardIds\)/);
+  assert.match(roleEditor, /<RoleBoardAccessEditor/);
+  assert.match(roleEditor, /allowedBoardIds:\s*accessScope\s*===\s*["']all["']\s*\?\s*\[\]/);
+
+  assert.match(
+    source,
+    /idPrefix=["']new-role["'][\s\S]{0,500}boards=\{snapshot\.boards\}/,
+  );
+  assert.match(
+    source,
+    /<RoleEditor[\s\S]{0,300}boards=\{snapshot\.boards\}[\s\S]{0,300}canGrantAllBoards=\{canGrantAllBoards\}/,
+  );
+});
+
+test("restricted role managers cannot escalate scopes or create unscoped boards", () => {
+  const assignableRoles = sliceBetween(
+    /const\s+activeRoles\s*=/,
+    /const\s+activeEmployees\s*=/,
+    "assignable roles",
+  );
+  assert.match(assignableRoles, /merchantEnterpriseRoleFitsActor\(actor,\s*role\)/);
+  assert.match(assignableRoles, /canCreateMerchantEnterpriseBoards\(actor\)/);
+  assert.match(
+    assignableRoles,
+    /merchantEnterpriseBoardAccessFitsActor\(actor,[\s\S]{0,160}accessScope:\s*["']all["'][\s\S]{0,160}allowedBoardIds:\s*\[\]/,
+  );
+  assert.match(
+    source,
+    /currentEmployeeRole\s*&&\s*merchantEnterpriseRoleFitsActor\(actor,\s*currentEmployeeRole\)/,
+    "a restricted manager must not manage employees whose current role exceeds its own scope",
+  );
+
+  const availability = sliceBetween(
+    /function\s+roleEditAvailability\(/,
+    /const\s+mobileSafeControlClassName\s*=/,
+    "role edit availability",
+  );
+  assert.match(availability, /merchantEnterpriseBoardAccessFitsActor\(actor,\s*role\)/);
+  assert.match(availability, /该角色的看板访问范围高于当前账号。/);
+
+  const createBoard = sliceBetween(
+    /async\s+function\s+createBoard\(/,
+    /async\s+function\s+saveBoard\(/,
+    "restricted board creation guard",
+  );
+  assert.match(createBoard, /if\s*\(!canCreateBoards\)/);
+  assert.match(createBoard, /当前账号只能访问指定看板，不能新建看板。/);
+
+  const boardSettings = sliceBetween(
+    /function\s+BoardSettings\(/,
+    /function\s+BoardSettingsRow\(/,
+    "board settings creation guard",
+  );
+  assert.match(boardSettings, /canCreateBoard:\s*boolean/);
+  assert.match(boardSettings, /\{canCreateBoard\s*\?\s*\(/);
+  assert.match(boardSettings, /当前账号只能访问指定看板，不能新建看板/);
+  assert.match(source, /<BoardSettings[\s\S]{0,350}canCreateBoard=\{canCreateBoards\}/);
+  assert.match(
+    source,
+    /disabled=\{busy\s*\|\|\s*!canCreateBoards\s*\|\|\s*!can\(actor,\s*["']roles\.manage["']\)\}/,
+    "workspace bootstrap must not create a board for a restricted actor",
+  );
+  assert.match(source, /当前角色没有获分配可访问的任务看板/);
 });

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   isMerchantEnterpriseVersion,
-  merchantEnterprisePermissionsFitActor,
+  merchantEnterpriseRoleFitsActor,
   type MerchantEnterpriseActor,
   type MerchantEnterpriseEmployee,
 } from "@/lib/merchantEnterprise";
@@ -504,7 +504,7 @@ function roleAssignmentError(
     (item) => item.id === roleId && item.status === "active",
   );
   if (!role) return "invalid_employee_role";
-  if (!merchantEnterprisePermissionsFitActor(actor, role.permissions)) {
+  if (!merchantEnterpriseRoleFitsActor(actor, role)) {
     return "permission_escalation_denied";
   }
   return "";
@@ -671,7 +671,7 @@ export async function PATCH(request: Request) {
     if (
       actor.type === "employee" &&
       (!currentRole ||
-        !merchantEnterprisePermissionsFitActor(actor, currentRole.permissions))
+        !merchantEnterpriseRoleFitsActor(actor, currentRole))
     ) {
       return NextResponse.json(
         { ok: false, error: "permission_escalation_denied" },

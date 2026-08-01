@@ -4,23 +4,32 @@ import {
   buildMerchantEnterpriseTaskOverview,
   buildMerchantTaskEditChanges,
   DEFAULT_MERCHANT_ENTERPRISE_ROLES,
+  canCreateMerchantEnterpriseBoards,
+  filterMerchantEnterpriseSnapshotByBoardAccess,
   filterMerchantTasks,
+  getMerchantEnterpriseDefaultRoleBoardAccess,
   getMerchantEnterpriseDefaultTaskAssigneeFilter,
   getMerchantTaskCompletionTransition,
   getMissingMerchantEnterprisePermissionDependencies,
   hasMerchantEnterprisePermission,
+  hasMerchantEnterpriseBoardAccess,
   isMerchantEnterpriseSchemaMissingError,
   isMerchantEnterpriseVersion,
   MERCHANT_ENTERPRISE_PERMISSIONS,
   merchantEnterprisePermissionsFitActor,
+  merchantEnterpriseBoardAccessFitsActor,
+  merchantEnterpriseRoleFitsActor,
   normalizeMerchantEnterpriseEmployee,
   normalizeMerchantEnterprisePermissions,
+  normalizeMerchantEnterpriseRole,
   normalizeMerchantTaskBoard,
   normalizeMerchantTask,
   normalizeMerchantTaskEvent,
   parseMerchantEnterprisePermissionsStrict,
+  parseMerchantEnterpriseBoardAccessStrict,
   toggleMerchantEnterprisePermissionSelection,
   type MerchantEnterpriseActor,
+  type MerchantEnterpriseSnapshot,
   type MerchantTask,
   type MerchantTaskColumn,
 } from "@/lib/merchantEnterprise";
@@ -45,6 +54,8 @@ test("owner has every enterprise permission while employees use their assigned p
     displayName: "Owner",
     email: "owner@example.com",
     permissions: [],
+    accessScope: "all" as const,
+    allowedBoardIds: [],
   };
   assert.equal(hasMerchantEnterprisePermission(owner, "roles.manage"), true);
   assert.equal(
@@ -57,6 +68,8 @@ test("owner has every enterprise permission while employees use their assigned p
         email: "employee@example.com",
         roleId: "role-1",
         permissions: ["tasks.view"],
+        accessScope: "all",
+        allowedBoardIds: [],
       },
       "roles.manage",
     ),
@@ -66,6 +79,157 @@ test("owner has every enterprise permission while employees use their assigned p
 
 test("default administrator role covers the complete initial permission catalog", () => {
   assert.deepEqual(DEFAULT_MERCHANT_ENTERPRISE_ROLES[0]?.permissions, [...MERCHANT_ENTERPRISE_PERMISSIONS]);
+});
+
+test("enterprise role board access normalization is backward compatible and fail-closed", () => {
+  const boardA = "11111111-1111-4111-8111-111111111111";
+  const baseRole = {
+    id: "22222222-2222-4222-8222-222222222222",
+    merchant_id: "10000000",
+    name: "仓库员工",
+    permissions: ["enterprise.view", "tasks.view"],
+    status: "active",
+    is_system: false,
+    version: 1,
+    created_at: "2026-08-01T00:00:00.000Z",
+    updated_at: "2026-08-01T00:00:00.000Z",
+  };
+
+  const legacy = normalizeMerchantEnterpriseRole(baseRole);
+  assert.equal(legacy?.accessScope, "all");
+  assert.deepEqual(legacy?.allowedBoardIds, []);
+
+  const restricted = normalizeMerchantEnterpriseRole({
+    ...baseRole,
+    access_scope: "restricted",
+    allowed_board_ids: [boardA, boardA, "invalid"],
+  });
+  assert.equal(restricted?.accessScope, "restricted");
+  assert.deepEqual(restricted?.allowedBoardIds, [boardA]);
+
+  assert.equal(normalizeMerchantEnterpriseRole({ ...baseRole, access_scope: null }), null);
+  assert.equal(normalizeMerchantEnterpriseRole({ ...baseRole, access_scope: "unknown" }), null);
+  assert.deepEqual(
+    normalizeMerchantEnterpriseRole({
+      ...baseRole,
+      access_scope: "all",
+      allowed_board_ids: [boardA],
+    })?.allowedBoardIds,
+    [],
+  );
+});
+
+test("strict role board access parsing rejects ambiguous or malformed scopes", () => {
+  const boardA = "11111111-1111-4111-8111-111111111111";
+  assert.deepEqual(parseMerchantEnterpriseBoardAccessStrict("all", []), {
+    accessScope: "all",
+    allowedBoardIds: [],
+  });
+  assert.deepEqual(parseMerchantEnterpriseBoardAccessStrict("restricted", [boardA]), {
+    accessScope: "restricted",
+    allowedBoardIds: [boardA],
+  });
+  assert.equal(parseMerchantEnterpriseBoardAccessStrict("all", [boardA]), null);
+  assert.equal(parseMerchantEnterpriseBoardAccessStrict("restricted", [boardA, boardA]), null);
+  assert.equal(parseMerchantEnterpriseBoardAccessStrict("restricted", ["invalid"]), null);
+  assert.equal(parseMerchantEnterpriseBoardAccessStrict(null, []), null);
+});
+
+test("role board access cannot exceed a restricted employee's own boards", () => {
+  const boardA = "11111111-1111-4111-8111-111111111111";
+  const boardB = "22222222-2222-4222-8222-222222222222";
+  const actor: MerchantEnterpriseActor = {
+    type: "employee",
+    id: "employee-1",
+    siteId: "10000000",
+    displayName: "区域主管",
+    email: "lead@example.com",
+    roleId: "role-lead",
+    permissions: ["enterprise.view", "tasks.view", "boards.manage", "roles.view", "roles.manage"],
+    accessScope: "restricted",
+    allowedBoardIds: [boardA],
+  };
+
+  assert.equal(hasMerchantEnterpriseBoardAccess(actor, boardA), true);
+  assert.equal(hasMerchantEnterpriseBoardAccess(actor, boardB), false);
+  assert.equal(
+    merchantEnterpriseBoardAccessFitsActor(actor, {
+      accessScope: "restricted",
+      allowedBoardIds: [],
+    }),
+    true,
+  );
+  assert.equal(
+    merchantEnterpriseBoardAccessFitsActor(actor, {
+      accessScope: "restricted",
+      allowedBoardIds: [boardA],
+    }),
+    true,
+  );
+  assert.equal(
+    merchantEnterpriseBoardAccessFitsActor(actor, {
+      accessScope: "restricted",
+      allowedBoardIds: [boardB],
+    }),
+    false,
+  );
+  assert.equal(
+    merchantEnterpriseBoardAccessFitsActor(actor, {
+      accessScope: "all",
+      allowedBoardIds: [],
+    }),
+    false,
+  );
+  assert.equal(
+    merchantEnterpriseRoleFitsActor(actor, {
+      permissions: ["enterprise.view", "tasks.view"],
+      accessScope: "restricted",
+      allowedBoardIds: [boardA],
+    }),
+    true,
+  );
+  assert.equal(canCreateMerchantEnterpriseBoards(actor), false);
+  assert.deepEqual(getMerchantEnterpriseDefaultRoleBoardAccess(actor), {
+    accessScope: "restricted",
+    allowedBoardIds: [boardA],
+  });
+});
+
+test("restricted enterprise snapshots expose only allowed board resources", () => {
+  const boardA = "11111111-1111-4111-8111-111111111111";
+  const boardB = "22222222-2222-4222-8222-222222222222";
+  const actor: MerchantEnterpriseActor = {
+    type: "employee",
+    id: "employee-1",
+    siteId: "10000000",
+    displayName: "员工",
+    email: "employee@example.com",
+    roleId: "role-1",
+    permissions: ["enterprise.view", "tasks.view"],
+    accessScope: "restricted",
+    allowedBoardIds: [boardA],
+  };
+  const snapshot = {
+    roles: [],
+    employees: [],
+    boards: [
+      { id: boardA, siteId: "10000000" },
+      { id: boardB, siteId: "10000000" },
+    ],
+    columns: [
+      { id: "column-a", boardId: boardA },
+      { id: "column-b", boardId: boardB },
+    ],
+    tasks: [
+      { id: "task-a", boardId: boardA },
+      { id: "task-b", boardId: boardB },
+    ],
+  } as unknown as MerchantEnterpriseSnapshot;
+
+  const visible = filterMerchantEnterpriseSnapshotByBoardAccess(actor, snapshot);
+  assert.deepEqual(visible.boards.map((board) => board.id), [boardA]);
+  assert.deepEqual(visible.columns.map((column) => column.id), ["column-a"]);
+  assert.deepEqual(visible.tasks.map((task) => task.id), ["task-a"]);
 });
 
 test("enterprise row normalization accepts database snake-case fields", () => {
@@ -184,6 +348,8 @@ test("employee permission grants cannot exceed the acting employee", () => {
     email: "lead@example.com",
     roleId: "role-1",
     permissions: ["enterprise.view", "tasks.view", "tasks.assign"],
+    accessScope: "all",
+    allowedBoardIds: [],
   };
   assert.equal(
     merchantEnterprisePermissionsFitActor(actor, ["enterprise.view", "tasks.view"]),
@@ -453,6 +619,8 @@ test("enterprise task overview defaults owners to the team and employees to thei
     displayName: "负责人",
     email: "owner@example.com",
     permissions: MERCHANT_ENTERPRISE_PERMISSIONS.slice(),
+    accessScope: "all",
+    allowedBoardIds: [],
   };
   const employee: MerchantEnterpriseActor = {
     type: "employee",
@@ -462,6 +630,8 @@ test("enterprise task overview defaults owners to the team and employees to thei
     email: "employee-1@example.com",
     roleId: "role-employee",
     permissions: ["enterprise.view", "tasks.view"],
+    accessScope: "all",
+    allowedBoardIds: [],
   };
 
   assert.equal(getMerchantEnterpriseDefaultTaskAssigneeFilter(owner), "all");
@@ -595,6 +765,8 @@ test("task edit changes honor update and assignment permissions independently", 
     email: "update@example.com",
     roleId: "role-update",
     permissions: ["enterprise.view", "tasks.view", "tasks.update"],
+    accessScope: "all",
+    allowedBoardIds: [],
   };
   const assignActor: MerchantEnterpriseActor = {
     ...updateActor,

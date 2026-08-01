@@ -1,6 +1,8 @@
 import {
   getMissingMerchantEnterprisePermissionDependencies,
+  hasMerchantEnterpriseBoardAccess,
   hasMerchantEnterprisePermission,
+  normalizeMerchantEnterpriseBoardIds,
   normalizeMerchantEnterpriseEmployee,
   normalizeMerchantEnterpriseRole,
   type MerchantEnterpriseActor,
@@ -130,6 +132,8 @@ export async function resolveMerchantEnterpriseActor(
         displayName: normalizeText(ownerResult.data.name, 120) || email || "商户负责人",
         email,
         permissions: [],
+        accessScope: "all",
+        allowedBoardIds: [],
       };
     }
   }
@@ -157,7 +161,7 @@ export async function resolveMerchantEnterpriseActor(
   }
   const roleResult = await service
     .from("merchant_enterprise_roles")
-    .select("id,merchant_id,name,description,permissions,status,is_system,version,created_at,updated_at")
+    .select("id,merchant_id,name,description,permissions,access_scope,status,is_system,version,created_at,updated_at")
     .eq("merchant_id", siteId)
     .eq("id", employee.roleId)
     .eq("status", "active")
@@ -173,6 +177,27 @@ export async function resolveMerchantEnterpriseActor(
   if (getMissingMerchantEnterprisePermissionDependencies(role.permissions).length > 0) {
     throw new MerchantEnterpriseAccessError("merchant_role_invalid", 403);
   }
+  let allowedBoardIds: string[] = [];
+  if (role.accessScope === "restricted") {
+    const accessResult = await service
+      .from("merchant_enterprise_role_boards")
+      .select("board_id")
+      .eq("merchant_id", siteId)
+      .eq("role_id", role.id)
+      .order("board_id", { ascending: true });
+    if (accessResult.error) {
+      const code = normalizeText(accessResult.error.code, 40);
+      if (code === "42P01" || code === "PGRST205") {
+        throw new MerchantEnterpriseAccessError("enterprise_schema_unavailable", 503);
+      }
+      throw new MerchantEnterpriseAccessError("merchant_role_check_failed", 503);
+    }
+    allowedBoardIds = normalizeMerchantEnterpriseBoardIds(
+      (Array.isArray(accessResult.data) ? accessResult.data : []).map(
+        (row: { board_id?: unknown }) => row.board_id,
+      ),
+    );
+  }
 
   const actor: MerchantEnterpriseActor = {
     type: "employee",
@@ -182,6 +207,8 @@ export async function resolveMerchantEnterpriseActor(
     email: employee.email,
     roleId: role.id,
     permissions: role.permissions,
+    accessScope: role.accessScope,
+    allowedBoardIds,
   };
   if (
     input.requiredPermission &&
@@ -192,12 +219,40 @@ export async function resolveMerchantEnterpriseActor(
   return actor;
 }
 
+export function requireMerchantEnterpriseBoardAccess(
+  actor: MerchantEnterpriseActor,
+  boardId: string,
+  notFoundCode = "resource_not_found",
+) {
+  if (!hasMerchantEnterpriseBoardAccess(actor, boardId)) {
+    throw new MerchantEnterpriseAccessError(notFoundCode, 404);
+  }
+}
+
+export function requireMerchantEnterpriseAllBoardAccess(
+  actor: MerchantEnterpriseActor,
+) {
+  if (actor.type === "employee" && actor.accessScope !== "all") {
+    throw new MerchantEnterpriseAccessError("permission_denied", 403);
+  }
+}
+
 const MERCHANT_ENTERPRISE_CONFLICT_ERRORS = new Set([
   "enterprise_version_conflict",
   "enterprise_invitation_remove_conflict",
   "employee_invitation_in_use",
   "employee_invitation_not_pending",
   "employee_email_in_use",
+  "employee_board_access_in_use",
+  "role_board_access_in_use",
+  "task_assignee_board_access_denied",
+  "system_role_protected",
+  "role_in_use",
+]);
+
+const MERCHANT_ENTERPRISE_NOT_FOUND_ERRORS = new Set([
+  "employee_not_found",
+  "role_not_found",
 ]);
 
 export function toMerchantEnterpriseAccessResponse(error: unknown) {
@@ -211,7 +266,7 @@ export function toMerchantEnterpriseAccessResponse(error: unknown) {
   const status =
     message === "enterprise_schema_unavailable"
       ? 503
-      : message === "employee_not_found"
+      : MERCHANT_ENTERPRISE_NOT_FOUND_ERRORS.has(message)
         ? 404
       : MERCHANT_ENTERPRISE_CONFLICT_ERRORS.has(message)
         ? 409

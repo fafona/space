@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { isMerchantEnterpriseVersion } from "@/lib/merchantEnterprise";
 import {
   requireMerchantEnterpriseEntitlement,
+  requireMerchantEnterpriseBoardAccess,
   resolveMerchantEnterpriseActor,
   toMerchantEnterpriseAccessResponse,
 } from "@/lib/merchantEnterpriseAuth.server";
@@ -140,7 +141,8 @@ export async function POST(request: Request) {
       throw new Error("invalid_column_is_done");
     }
     const requestedOperationId = operationId(request, body);
-    await authorize(request, siteId);
+    const actor = await authorize(request, siteId);
+    requireMerchantEnterpriseBoardAccess(actor, requestedBoardId, "board_not_found");
     const column = await createMerchantTaskColumn(client(), {
       siteId,
       boardId: requestedBoardId,
@@ -197,7 +199,8 @@ export async function PATCH(request: Request) {
       throw new Error("invalid_column_update");
     }
     const requestedOperationId = operationId(request, body);
-    await authorize(request, siteId);
+    const actor = await authorize(request, siteId);
+    requireMerchantEnterpriseBoardAccess(actor, requestedBoardId, "board_not_found");
     const column = await updateMerchantTaskColumn(client(), {
       siteId,
       boardId: requestedBoardId,

@@ -6,9 +6,12 @@ import { createDefaultMerchantPermissionConfig } from "@/data/platformControlSto
 import {
   MerchantEnterpriseAccessError,
   readMerchantEnterpriseRequestAccessTokens,
+  requireMerchantEnterpriseAllBoardAccess,
+  requireMerchantEnterpriseBoardAccess,
   requireMerchantEnterpriseEntitlement,
   toMerchantEnterpriseAccessResponse,
 } from "@/lib/merchantEnterpriseAuth.server";
+import type { MerchantEnterpriseActor } from "@/lib/merchantEnterprise";
 import {
   createEnterpriseBrowserAuthStorageAdapter,
   isEnterpriseOAuthTransientStorageKey,
@@ -123,13 +126,53 @@ test("enterprise actor resolution is read-only and gates before membership looku
   assert.doesNotMatch(source, /merchant_employee_activation_failed/);
 });
 
+test("restricted enterprise actors cannot access or create outside their board scope", () => {
+  const allowedBoardId = "11111111-1111-4111-8111-111111111111";
+  const deniedBoardId = "22222222-2222-4222-8222-222222222222";
+  const actor: MerchantEnterpriseActor = {
+    type: "employee",
+    id: "33333333-3333-4333-8333-333333333333",
+    siteId: "10000000",
+    displayName: "区域主管",
+    email: "manager@example.com",
+    roleId: "44444444-4444-4444-8444-444444444444",
+    permissions: ["enterprise.view", "boards.manage", "tasks.view"],
+    accessScope: "restricted",
+    allowedBoardIds: [allowedBoardId],
+  };
+
+  assert.doesNotThrow(() =>
+    requireMerchantEnterpriseBoardAccess(actor, allowedBoardId, "board_not_found"),
+  );
+  assert.throws(
+    () => requireMerchantEnterpriseBoardAccess(actor, deniedBoardId, "board_not_found"),
+    (error: unknown) =>
+      error instanceof MerchantEnterpriseAccessError &&
+      error.code === "board_not_found" &&
+      error.status === 404,
+  );
+  assert.throws(
+    () => requireMerchantEnterpriseAllBoardAccess(actor),
+    (error: unknown) =>
+      error instanceof MerchantEnterpriseAccessError &&
+      error.code === "permission_denied" &&
+      error.status === 403,
+  );
+});
+
 test("enterprise invitation removal failures keep actionable HTTP statuses", () => {
   for (const [code, status] of [
     ["employee_not_found", 404],
+    ["role_not_found", 404],
     ["enterprise_version_conflict", 409],
     ["employee_invitation_not_pending", 409],
     ["employee_invitation_in_use", 409],
     ["employee_email_in_use", 409],
+    ["employee_board_access_in_use", 409],
+    ["role_board_access_in_use", 409],
+    ["task_assignee_board_access_denied", 409],
+    ["system_role_protected", 409],
+    ["role_in_use", 409],
     ["invalid_employee_invitation", 400],
   ] as const) {
     assert.deepEqual(toMerchantEnterpriseAccessResponse(new Error(code)), {

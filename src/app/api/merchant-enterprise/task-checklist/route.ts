@@ -4,12 +4,14 @@ import {
   MAX_MERCHANT_TASK_CHECKLIST_TEXT_LENGTH,
 } from "@/lib/merchantEnterprise";
 import {
+  requireMerchantEnterpriseBoardAccess,
   resolveMerchantEnterpriseActor,
   toMerchantEnterpriseAccessResponse,
 } from "@/lib/merchantEnterpriseAuth.server";
 import {
   createMerchantTaskChecklistItem,
   loadMerchantTaskChecklistItems,
+  loadMerchantTaskBoardIdForAccess,
   updateMerchantTaskChecklistItem,
   type MerchantEnterpriseStoreClient,
 } from "@/lib/merchantEnterpriseStore.server";
@@ -128,11 +130,14 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const siteId = requestedSiteId(url.searchParams.get("siteId"));
     const taskId = uuid(url.searchParams.get("taskId"), "invalid_task_id");
-    await resolveMerchantEnterpriseActor(request, {
+    const actor = await resolveMerchantEnterpriseActor(request, {
       siteId,
       requiredPermission: "tasks.view",
     });
-    const items = await loadMerchantTaskChecklistItems(storeClient(), siteId, taskId);
+    const store = storeClient();
+    const boardId = await loadMerchantTaskBoardIdForAccess(store, siteId, taskId);
+    requireMerchantEnterpriseBoardAccess(actor, boardId, "task_not_found");
+    const items = await loadMerchantTaskChecklistItems(store, siteId, taskId);
     return NextResponse.json({ ok: true, items });
   } catch (error) {
     return getMerchantTaskChecklistErrorResponse(error);
@@ -156,7 +161,10 @@ export async function POST(request: Request) {
       siteId,
       requiredPermission: "tasks.update",
     });
-    const item = await createMerchantTaskChecklistItem(storeClient(), {
+    const store = storeClient();
+    const boardId = await loadMerchantTaskBoardIdForAccess(store, siteId, taskId);
+    requireMerchantEnterpriseBoardAccess(actor, boardId, "task_not_found");
+    const item = await createMerchantTaskChecklistItem(store, {
       siteId,
       taskId,
       text,
@@ -203,7 +211,10 @@ export async function PATCH(request: Request) {
       siteId,
       requiredPermission: "tasks.update",
     });
-    const item = await updateMerchantTaskChecklistItem(storeClient(), {
+    const store = storeClient();
+    const boardId = await loadMerchantTaskBoardIdForAccess(store, siteId, taskId);
+    requireMerchantEnterpriseBoardAccess(actor, boardId, "task_not_found");
+    const item = await updateMerchantTaskChecklistItem(store, {
       siteId,
       taskId,
       itemId,

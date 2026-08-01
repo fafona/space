@@ -15,6 +15,7 @@ export const MERCHANT_ENTERPRISE_PERMISSIONS = [
 export const MAX_MERCHANT_TASK_ASSIGNEES = 50;
 export const MAX_MERCHANT_TASK_CHECKLIST_ITEMS = 100;
 export const MAX_MERCHANT_TASK_CHECKLIST_TEXT_LENGTH = 500;
+export const MAX_MERCHANT_ENTERPRISE_ROLE_BOARDS = 100;
 
 export type MerchantEnterprisePermission = (typeof MERCHANT_ENTERPRISE_PERMISSIONS)[number];
 
@@ -54,6 +55,7 @@ const MERCHANT_ENTERPRISE_PERMISSION_DEPENDENCIES: Readonly<
 };
 
 export const MERCHANT_ENTERPRISE_ROLE_STATUSES = ["active", "archived"] as const;
+export const MERCHANT_ENTERPRISE_BOARD_ACCESS_SCOPES = ["all", "restricted"] as const;
 export const MERCHANT_ENTERPRISE_EMPLOYEE_STATUSES = ["invited", "active", "disabled"] as const;
 export const MERCHANT_ENTERPRISE_INVITATION_DELIVERY_STATUSES = [
   "none",
@@ -68,6 +70,8 @@ export const MERCHANT_TASK_COLUMN_STATUSES = ["active", "archived"] as const;
 export const MERCHANT_TASK_PRIORITIES = ["low", "normal", "high", "urgent"] as const;
 
 export type MerchantEnterpriseRoleStatus = (typeof MERCHANT_ENTERPRISE_ROLE_STATUSES)[number];
+export type MerchantEnterpriseBoardAccessScope =
+  (typeof MERCHANT_ENTERPRISE_BOARD_ACCESS_SCOPES)[number];
 export type MerchantEnterpriseEmployeeStatus = (typeof MERCHANT_ENTERPRISE_EMPLOYEE_STATUSES)[number];
 export type MerchantEnterpriseInvitationDeliveryStatus =
   (typeof MERCHANT_ENTERPRISE_INVITATION_DELIVERY_STATUSES)[number];
@@ -81,6 +85,8 @@ export type MerchantEnterpriseRole = {
   name: string;
   description: string;
   permissions: MerchantEnterprisePermission[];
+  accessScope: MerchantEnterpriseBoardAccessScope;
+  allowedBoardIds: string[];
   status: MerchantEnterpriseRoleStatus;
   isSystem: boolean;
   version: number;
@@ -218,6 +224,8 @@ export type MerchantEnterpriseActor =
       displayName: string;
       email: string;
       permissions: MerchantEnterprisePermission[];
+      accessScope: "all";
+      allowedBoardIds: string[];
     }
   | {
       type: "employee";
@@ -227,7 +235,14 @@ export type MerchantEnterpriseActor =
       email: string;
       roleId: string;
       permissions: MerchantEnterprisePermission[];
+      accessScope: MerchantEnterpriseBoardAccessScope;
+      allowedBoardIds: string[];
     };
+
+export type MerchantEnterpriseBoardAccess = Pick<
+  MerchantEnterpriseRole,
+  "accessScope" | "allowedBoardIds"
+>;
 
 export const DEFAULT_MERCHANT_TASK_COLUMNS = [
   { name: "待处理", color: "#64748b" },
@@ -297,6 +312,47 @@ function normalizeVersion(value: unknown) {
 function normalizePosition(value: unknown) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : 0;
+}
+
+const MERCHANT_ENTERPRISE_UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function normalizeMerchantEnterpriseBoardIds(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return Array.from(
+    new Set(
+      value
+        .map((item) => normalizeText(item, 80))
+        .filter((item) => MERCHANT_ENTERPRISE_UUID_PATTERN.test(item)),
+    ),
+  ).slice(0, MAX_MERCHANT_ENTERPRISE_ROLE_BOARDS);
+}
+
+export function parseMerchantEnterpriseBoardIdsStrict(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length > MAX_MERCHANT_ENTERPRISE_ROLE_BOARDS) return null;
+  const requested = value.map((item) => normalizeText(item, 80));
+  if (
+    requested.some((item) => !MERCHANT_ENTERPRISE_UUID_PATTERN.test(item)) ||
+    new Set(requested).size !== requested.length
+  ) {
+    return null;
+  }
+  return requested;
+}
+
+export function parseMerchantEnterpriseBoardAccessStrict(
+  accessScopeValue: unknown,
+  allowedBoardIdsValue: unknown,
+): MerchantEnterpriseBoardAccess | null {
+  if (accessScopeValue !== "all" && accessScopeValue !== "restricted") return null;
+  const allowedBoardIds = parseMerchantEnterpriseBoardIdsStrict(allowedBoardIdsValue);
+  if (!allowedBoardIds || (accessScopeValue === "all" && allowedBoardIds.length > 0)) {
+    return null;
+  }
+  return {
+    accessScope: accessScopeValue,
+    allowedBoardIds: accessScopeValue === "all" ? [] : allowedBoardIds,
+  };
 }
 
 export function normalizeMerchantEnterprisePermissions(value: unknown): MerchantEnterprisePermission[] {
@@ -396,6 +452,72 @@ export function merchantEnterprisePermissionsFitActor(
   );
 }
 
+export function hasMerchantEnterpriseBoardAccess(
+  actor: MerchantEnterpriseActor,
+  boardId: string,
+) {
+  return (
+    actor.type === "owner" ||
+    actor.accessScope === "all" ||
+    actor.allowedBoardIds.includes(boardId)
+  );
+}
+
+export function merchantEnterpriseBoardAccessFitsActor(
+  actor: MerchantEnterpriseActor,
+  access: MerchantEnterpriseBoardAccess,
+) {
+  if (actor.type === "owner" || actor.accessScope === "all") return true;
+  if (access.accessScope === "all") return false;
+  const actorBoardIds = new Set(actor.allowedBoardIds);
+  return access.allowedBoardIds.every((boardId) => actorBoardIds.has(boardId));
+}
+
+export function merchantEnterpriseRoleFitsActor(
+  actor: MerchantEnterpriseActor,
+  role: Pick<
+    MerchantEnterpriseRole,
+    "permissions" | "accessScope" | "allowedBoardIds"
+  >,
+) {
+  return (
+    merchantEnterprisePermissionsFitActor(actor, role.permissions) &&
+    merchantEnterpriseBoardAccessFitsActor(actor, role)
+  );
+}
+
+export function getMerchantEnterpriseDefaultRoleBoardAccess(
+  actor: MerchantEnterpriseActor,
+): MerchantEnterpriseBoardAccess {
+  return actor.type === "employee" && actor.accessScope === "restricted"
+    ? { accessScope: "restricted", allowedBoardIds: [...actor.allowedBoardIds] }
+    : { accessScope: "all", allowedBoardIds: [] };
+}
+
+export function canCreateMerchantEnterpriseBoards(
+  actor: MerchantEnterpriseActor | null | undefined,
+) {
+  return Boolean(
+    actor &&
+      hasMerchantEnterprisePermission(actor, "boards.manage") &&
+      (actor.type === "owner" || actor.accessScope === "all"),
+  );
+}
+
+export function filterMerchantEnterpriseSnapshotByBoardAccess(
+  actor: MerchantEnterpriseActor,
+  snapshot: MerchantEnterpriseSnapshot,
+): MerchantEnterpriseSnapshot {
+  if (actor.type === "owner" || actor.accessScope === "all") return snapshot;
+  const allowedBoardIds = new Set(actor.allowedBoardIds);
+  return {
+    ...snapshot,
+    boards: snapshot.boards.filter((board) => allowedBoardIds.has(board.id)),
+    columns: snapshot.columns.filter((column) => allowedBoardIds.has(column.boardId)),
+    tasks: snapshot.tasks.filter((task) => allowedBoardIds.has(task.boardId)),
+  };
+}
+
 export function normalizeMerchantEnterpriseRole(value: unknown): MerchantEnterpriseRole | null {
   const record = readRecord(value);
   const id = normalizeText(record.id, 80);
@@ -403,12 +525,32 @@ export function normalizeMerchantEnterpriseRole(value: unknown): MerchantEnterpr
   const name = normalizeText(record.name, 80);
   if (!id || !siteId || !name) return null;
   const statusValue = normalizeText(record.status, 20);
+  const hasExplicitAccessScope =
+    Object.prototype.hasOwnProperty.call(record, "accessScope") ||
+    Object.prototype.hasOwnProperty.call(record, "access_scope");
+  const accessScopeValue = readValue(record, "accessScope", "access_scope");
+  if (
+    hasExplicitAccessScope &&
+    accessScopeValue !== "all" &&
+    accessScopeValue !== "restricted"
+  ) {
+    return null;
+  }
+  const accessScope = accessScopeValue === "restricted" ? "restricted" : "all";
+  const allowedBoardIds =
+    accessScope === "restricted"
+      ? normalizeMerchantEnterpriseBoardIds(
+          readValue(record, "allowedBoardIds", "allowed_board_ids") ?? record.board_ids,
+        )
+      : [];
   return {
     id,
     siteId,
     name,
     description: normalizeText(record.description, 1000),
     permissions: normalizeMerchantEnterprisePermissions(record.permissions),
+    accessScope,
+    allowedBoardIds,
     status: statusValue === "archived" ? "archived" : "active",
     isSystem: readValue(record, "isSystem", "is_system") === true,
     version: normalizeVersion(record.version),

@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { isMerchantEnterpriseVersion } from "@/lib/merchantEnterprise";
 import {
   requireMerchantEnterpriseEntitlement,
+  requireMerchantEnterpriseAllBoardAccess,
+  requireMerchantEnterpriseBoardAccess,
   resolveMerchantEnterpriseActor,
   toMerchantEnterpriseAccessResponse,
 } from "@/lib/merchantEnterpriseAuth.server";
@@ -131,7 +133,8 @@ export async function POST(request: Request) {
     const description = optionalDescription(body);
     const position = optionalPosition(body);
     const requestedOperationId = operationId(request, body);
-    await authorize(request, siteId);
+    const actor = await authorize(request, siteId);
+    requireMerchantEnterpriseAllBoardAccess(actor);
     const result = await createMerchantTaskBoard(client(), {
       siteId,
       name,
@@ -181,7 +184,8 @@ export async function PATCH(request: Request) {
       throw new Error("invalid_board_update");
     }
     const requestedOperationId = operationId(request, body);
-    await authorize(request, siteId);
+    const actor = await authorize(request, siteId);
+    requireMerchantEnterpriseBoardAccess(actor, requestedBoardId, "board_not_found");
     const board = await updateMerchantTaskBoard(client(), {
       siteId,
       boardId: requestedBoardId,
