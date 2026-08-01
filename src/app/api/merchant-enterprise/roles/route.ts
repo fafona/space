@@ -48,6 +48,35 @@ export type MerchantEnterpriseRoleArchiveConflict =
   | "system_role_protected"
   | "role_in_use";
 
+export function getMerchantEnterpriseRoleMutationActor(
+  actor: Awaited<ReturnType<typeof resolveMerchantEnterpriseActor>>,
+) {
+  return {
+    actorType: actor.type,
+    actorId: actor.id,
+  } as const;
+}
+
+export function getMerchantEnterpriseRoleMutationErrorResponse(error: unknown) {
+  const code = error instanceof Error ? error.message : "";
+  if (code === "permission_escalation_denied" || code === "permission_denied") {
+    return { status: 403, body: { ok: false, error: code } } as const;
+  }
+  if (code === "role_board_access_in_use") {
+    return { status: 409, body: { ok: false, error: code } } as const;
+  }
+  if (
+    code === "role_name_conflict" ||
+    (code.includes("enterprise_role_") && code.includes("23505"))
+  ) {
+    return {
+      status: 409,
+      body: { ok: false, error: "role_name_conflict" },
+    } as const;
+  }
+  return null;
+}
+
 export function getMerchantEnterpriseRoleArchiveConflict(
   role: Pick<MerchantEnterpriseRole, "id" | "isSystem">,
   employees: readonly Pick<MerchantEnterpriseEmployee, "roleId" | "status">[],
@@ -110,18 +139,9 @@ function client() {
 }
 
 function fail(error: unknown) {
-  const message = error instanceof Error ? error.message : "";
-  if (message === "role_board_access_in_use") {
-    return NextResponse.json({ ok: false, error: message }, { status: 409 });
-  }
-  if (
-    message === "role_name_conflict" ||
-    (message.includes("enterprise_role_") && message.includes("23505"))
-  ) {
-    return NextResponse.json(
-      { ok: false, error: "role_name_conflict" },
-      { status: 409 },
-    );
+  const mutationError = getMerchantEnterpriseRoleMutationErrorResponse(error);
+  if (mutationError) {
+    return NextResponse.json(mutationError.body, { status: mutationError.status });
   }
   const resolved = toMerchantEnterpriseAccessResponse(error);
   return NextResponse.json(resolved.body, { status: resolved.status });
@@ -176,6 +196,7 @@ export async function POST(request: Request) {
       permissions,
       accessScope: access.accessScope,
       allowedBoardIds: access.allowedBoardIds,
+      ...getMerchantEnterpriseRoleMutationActor(actor),
     });
     return NextResponse.json({ ok: true, role });
   } catch (error) {
@@ -290,6 +311,7 @@ export async function PATCH(request: Request) {
           }
         : {}),
       ...(body?.status === "active" || body?.status === "archived" ? { status: body.status } : {}),
+      ...getMerchantEnterpriseRoleMutationActor(actor),
     });
     return NextResponse.json({ ok: true, role });
   } catch (error) {

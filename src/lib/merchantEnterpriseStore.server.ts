@@ -307,6 +307,8 @@ function throwRoleRpcError(operation: string, error: unknown): never {
   const message = toErrorMessage(error);
   for (const code of [
     "enterprise_version_conflict",
+    "permission_escalation_denied",
+    "permission_denied",
     "role_board_access_in_use",
     "role_name_conflict",
     "role_not_found",
@@ -990,12 +992,18 @@ export async function createMerchantEnterpriseRole(
     permissions?: unknown;
     accessScope: MerchantEnterpriseBoardAccessScope;
     allowedBoardIds: string[];
+    actorType: "owner" | "employee";
+    actorId: string;
   },
 ): Promise<MerchantEnterpriseRole> {
   const siteId = normalizeText(input.siteId, 80);
   const name = normalizeText(input.name, 80);
+  const actorId = normalizeText(input.actorId, 120);
   if (!siteId || !name) throw new Error("invalid_role");
-  const result = await client.rpc("faolla_create_merchant_enterprise_role_v1", {
+  if ((input.actorType !== "owner" && input.actorType !== "employee") || !actorId) {
+    throw new Error("invalid_role_actor");
+  }
+  const result = await client.rpc("faolla_create_merchant_enterprise_role_v2", {
     p_input: {
       merchant_id: siteId,
       name,
@@ -1003,6 +1011,8 @@ export async function createMerchantEnterpriseRole(
       permissions: normalizeMerchantEnterprisePermissions(input.permissions),
       access_scope: input.accessScope,
       allowed_board_ids: input.accessScope === "all" ? [] : input.allowedBoardIds,
+      actor_type: input.actorType,
+      actor_id: actorId,
     },
   });
   if (result.error) throwRoleRpcError("enterprise_role_create_failed", result.error);
@@ -1021,10 +1031,13 @@ export async function updateMerchantEnterpriseRole(
     accessScope?: MerchantEnterpriseBoardAccessScope;
     allowedBoardIds?: string[];
     status?: "active" | "archived";
+    actorType: "owner" | "employee";
+    actorId: string;
   },
 ): Promise<MerchantEnterpriseRole> {
   const siteId = normalizeText(input.siteId, 80);
   const roleId = normalizeText(input.roleId, 80);
+  const actorId = normalizeText(input.actorId, 120);
   const patch: Record<string, unknown> = {};
   if (input.name !== undefined) patch.name = normalizeText(input.name, 80);
   if (input.description !== undefined) patch.description = normalizeText(input.description, 1000);
@@ -1038,11 +1051,16 @@ export async function updateMerchantEnterpriseRole(
   }
   if (input.status === "active" || input.status === "archived") patch.status = input.status;
   if (!siteId || !roleId || Object.keys(patch).length === 0) throw new Error("invalid_role_update");
-  const result = await client.rpc("faolla_update_merchant_enterprise_role_v1", {
+  if ((input.actorType !== "owner" && input.actorType !== "employee") || !actorId) {
+    throw new Error("invalid_role_actor");
+  }
+  const result = await client.rpc("faolla_update_merchant_enterprise_role_v2", {
     p_input: {
       merchant_id: siteId,
       role_id: roleId,
       expected_version: Math.max(1, Math.round(Number(input.version) || 1)),
+      actor_type: input.actorType,
+      actor_id: actorId,
       ...patch,
     },
   });

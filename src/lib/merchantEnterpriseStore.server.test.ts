@@ -499,7 +499,7 @@ test("role creation and updates persist board access through atomic RPCs", async
     async rpc(functionName: string, args: Record<string, unknown>) {
       const input = args.p_input as Record<string, unknown>;
       calls.push({ functionName, input });
-      const isCreate = functionName === "faolla_create_merchant_enterprise_role_v1";
+      const isCreate = functionName === "faolla_create_merchant_enterprise_role_v2";
       return {
         data: {
           role: roleRow(isCreate ? 1 : 2, "restricted"),
@@ -516,6 +516,8 @@ test("role creation and updates persist board access through atomic RPCs", async
     permissions: ["enterprise.view", "tasks.view"],
     accessScope: "restricted",
     allowedBoardIds: [boardId],
+    actorType: "employee",
+    actorId: "77777777-7777-4777-8777-777777777777",
   });
   const updated = await updateMerchantEnterpriseRole(client, {
     siteId: "10000000",
@@ -523,6 +525,8 @@ test("role creation and updates persist board access through atomic RPCs", async
     version: created.version,
     accessScope: "restricted",
     allowedBoardIds: [boardId],
+    actorType: "owner",
+    actorId: "88888888-8888-4888-8888-888888888888",
   });
 
   assert.equal(created.accessScope, "restricted");
@@ -530,7 +534,7 @@ test("role creation and updates persist board access through atomic RPCs", async
   assert.equal(updated.version, 2);
   assert.deepEqual(calls, [
     {
-      functionName: "faolla_create_merchant_enterprise_role_v1",
+      functionName: "faolla_create_merchant_enterprise_role_v2",
       input: {
         merchant_id: "10000000",
         name: "Staff",
@@ -538,14 +542,18 @@ test("role creation and updates persist board access through atomic RPCs", async
         permissions: ["enterprise.view", "tasks.view"],
         access_scope: "restricted",
         allowed_board_ids: [boardId],
+        actor_type: "employee",
+        actor_id: "77777777-7777-4777-8777-777777777777",
       },
     },
     {
-      functionName: "faolla_update_merchant_enterprise_role_v1",
+      functionName: "faolla_update_merchant_enterprise_role_v2",
       input: {
         merchant_id: "10000000",
         role_id: created.id,
         expected_version: 1,
+        actor_type: "owner",
+        actor_id: "88888888-8888-4888-8888-888888888888",
         access_scope: "restricted",
         allowed_board_ids: [boardId],
       },
@@ -559,6 +567,8 @@ test("role RPC lifecycle conflicts keep their public error codes", async () => {
     "system_role_protected",
     "role_in_use",
     "role_board_access_in_use",
+    "permission_escalation_denied",
+    "permission_denied",
   ]) {
     const client = {
       from() {
@@ -575,6 +585,8 @@ test("role RPC lifecycle conflicts keep their public error codes", async () => {
         roleId: "11111111-1111-4111-8111-111111111111",
         version: 1,
         description: "Updated",
+        actorType: "owner",
+        actorId: "88888888-8888-4888-8888-888888888888",
       }),
       new RegExp(code),
     );

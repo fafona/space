@@ -30,8 +30,10 @@ import {
 } from "@/app/api/merchant-enterprise/employees/route";
 import { POST as acceptEmployee } from "@/app/api/merchant-enterprise/employees/accept/route";
 import {
+  getMerchantEnterpriseRoleMutationActor,
   getMerchantEnterpriseRoleActivationConflict,
   getMerchantEnterpriseRoleArchiveConflict,
+  getMerchantEnterpriseRoleMutationErrorResponse,
   PATCH as updateRole,
   POST as createRole,
 } from "@/app/api/merchant-enterprise/roles/route";
@@ -202,7 +204,7 @@ test("employee mutation responses never expose the Supabase auth user id", () =>
   assert.equal(publicEmployee.id, employee.id);
 });
 
-test("employee mutation actor payload preserves owner and employee identities", () => {
+test("employee and role mutation actor payloads preserve owner and employee identities", () => {
   const shared = {
     siteId: "10000000",
     displayName: "Actor",
@@ -227,6 +229,14 @@ test("employee mutation actor payload preserves owner and employee identities", 
     actorId: owner.id,
   });
   assert.deepEqual(getMerchantEnterpriseEmployeeMutationActor(employee), {
+    actorType: "employee",
+    actorId: employee.id,
+  });
+  assert.deepEqual(getMerchantEnterpriseRoleMutationActor(owner), {
+    actorType: "owner",
+    actorId: owner.id,
+  });
+  assert.deepEqual(getMerchantEnterpriseRoleMutationActor(employee), {
     actorType: "employee",
     actorId: employee.id,
   });
@@ -260,6 +270,31 @@ test("employee lifecycle RPC errors have stable API statuses", () => {
   }
   assert.equal(
     getMerchantEnterpriseEmployeeMutationErrorResponse(new Error("unknown_error")),
+    null,
+  );
+});
+
+test("role RPC authorization errors have stable API statuses", () => {
+  for (const code of ["permission_escalation_denied", "permission_denied"]) {
+    assert.deepEqual(
+      getMerchantEnterpriseRoleMutationErrorResponse(new Error(code)),
+      { status: 403, body: { ok: false, error: code } },
+    );
+  }
+  for (const code of ["role_board_access_in_use", "role_name_conflict"]) {
+    assert.deepEqual(
+      getMerchantEnterpriseRoleMutationErrorResponse(new Error(code)),
+      { status: 409, body: { ok: false, error: code } },
+    );
+  }
+  assert.deepEqual(
+    getMerchantEnterpriseRoleMutationErrorResponse(
+      new Error("enterprise_role_create_failed:23505"),
+    ),
+    { status: 409, body: { ok: false, error: "role_name_conflict" } },
+  );
+  assert.equal(
+    getMerchantEnterpriseRoleMutationErrorResponse(new Error("unknown_error")),
     null,
   );
 });
