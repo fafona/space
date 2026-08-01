@@ -287,6 +287,16 @@ function normalizeRoleMutationResponse(value: unknown, operation: string) {
   return role;
 }
 
+function normalizeEmployeeMutationResponse(value: unknown, operation: string) {
+  const record =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const employee = normalizeMerchantEnterpriseEmployee(record.employee);
+  if (!employee) throw new Error(`${operation}:invalid_response`);
+  return employee;
+}
+
 function throwRoleRpcError(operation: string, error: unknown): never {
   if (isMerchantEnterpriseSchemaMissingError(error)) {
     throw new Error("enterprise_schema_unavailable");
@@ -305,6 +315,35 @@ function throwRoleRpcError(operation: string, error: unknown): never {
   const invalidCode = message.match(/\b(invalid_role(?:_[a-z_]+)?)\b/i)?.[1];
   if (invalidCode) throw new Error(invalidCode.toLowerCase());
   if (message.includes("23505")) throw new Error("role_name_conflict");
+  throw new Error(`${operation}:${message}`);
+}
+
+function throwEmployeeRpcError(operation: string, error: unknown): never {
+  if (isMerchantEnterpriseSchemaMissingError(error)) {
+    throw new Error("enterprise_schema_unavailable");
+  }
+  const message = toErrorMessage(error);
+  for (const code of [
+    "enterprise_version_conflict",
+    "employee_not_found",
+    "employee_open_tasks_require_resolution",
+    "employee_offboarding_replacement_invalid",
+    "employee_offboarding_scope_denied",
+    "permission_escalation_denied",
+    "permission_denied",
+    "employee_board_access_in_use",
+    "employee_email_in_use",
+  ]) {
+    if (message.includes(code)) throw new Error(code);
+  }
+  const invalidCode = message.match(/\b(invalid_employee(?:_[a-z_]+)?)\b/i)?.[1];
+  if (invalidCode) throw new Error(invalidCode.toLowerCase());
+  if (
+    message.includes("merchant_enterprise_employees_email_unique_idx") ||
+    (message.includes("23505") && message.includes("email"))
+  ) {
+    throw new Error("employee_email_in_use");
+  }
   throw new Error(`${operation}:${message}`);
 }
 
@@ -588,21 +627,6 @@ export async function loadMerchantTaskChecklistItems(
       item.taskId === taskId &&
       item.archivedAt === null,
   );
-}
-
-async function insertOne<T>(
-  client: MerchantEnterpriseStoreClient,
-  table: string,
-  payload: Record<string, unknown>,
-  columns: string,
-  normalizer: (value: unknown) => T | null,
-  operation: string,
-) {
-  const result = await client.from(table).insert(payload).select(columns).single();
-  if (result.error) throwStoreError(operation, result.error);
-  const normalized = normalizer(result.data);
-  if (!normalized) throw new Error(`${operation}:invalid_response`);
-  return normalized;
 }
 
 export async function bootstrapMerchantEnterpriseWorkspace(
@@ -971,44 +995,37 @@ export async function createMerchantEnterpriseEmployee(
     siteId: string;
     email: string;
     displayName: string;
-    roleId?: string;
-    authUserId?: string;
-    invitedAt?: string | null;
+    roleId: string;
+    actorType: "owner" | "employee";
+    actorId: string;
   },
 ): Promise<MerchantEnterpriseEmployee> {
   const siteId = normalizeText(input.siteId, 80);
   const email = normalizeAuthEmail(input.email);
   const displayName = normalizeText(input.displayName, 120);
+  const roleId = normalizeText(input.roleId, 80);
+  const actorId = normalizeText(input.actorId, 80);
   if (!siteId || !displayName) throw new Error("invalid_employee");
   if (!isValidAuthEmail(email)) throw new Error("invalid_employee_email");
-  try {
-    return await insertOne(
-      client,
-      "merchant_enterprise_employees",
-      {
-        merchant_id: siteId,
-        email,
-        display_name: displayName,
-        role_id: normalizeText(input.roleId, 80) || null,
-        auth_user_id: normalizeText(input.authUserId, 80) || null,
-        status: "invited",
-        invited_at: input.invitedAt ?? new Date().toISOString(),
-      },
-      EMPLOYEE_COLUMNS,
-      normalizeMerchantEnterpriseEmployee,
-      "enterprise_employee_create_failed",
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message.toLowerCase() : "";
-    if (
-      message.includes("merchant_enterprise_employees_email_unique_idx") ||
-      (message.includes("23505") && message.includes("email"))
-    ) {
-      throw new Error("employee_email_in_use");
-    }
-    throw error;
+  if (!roleId) throw new Error("invalid_employee_role");
+  if ((input.actorType !== "owner" && input.actorType !== "employee") || !actorId) {
+    throw new Error("invalid_employee_actor");
   }
+  const result = await client.rpc("faolla_create_merchant_enterprise_employee_v1", {
+    p_input: {
+      merchant_id: siteId,
+      email,
+      display_name: displayName,
+      role_id: roleId,
+      actor_type: input.actorType,
+      actor_id: actorId,
+    },
+  });
+  if (result.error) throwEmployeeRpcError("enterprise_employee_create_failed", result.error);
+  return normalizeEmployeeMutationResponse(result.data, "enterprise_employee_create_failed");
 }
+
+export type MerchantEnterpriseEmployeeOffboardingMode = "unassign" | "reassign";
 
 export async function updateMerchantEnterpriseEmployee(
   client: MerchantEnterpriseStoreClient,
@@ -1017,36 +1034,76 @@ export async function updateMerchantEnterpriseEmployee(
     employeeId: string;
     version: number;
     displayName?: string;
-    roleId?: string | null;
+    roleId?: string;
     status?: MerchantEnterpriseEmployeeStatus;
-    invitedAt?: string | null;
+    offboardingMode?: MerchantEnterpriseEmployeeOffboardingMode;
+    replacementEmployeeId?: string;
+    actorType: "owner" | "employee";
+    actorId: string;
   },
 ): Promise<MerchantEnterpriseEmployee> {
   const siteId = normalizeText(input.siteId, 80);
   const employeeId = normalizeText(input.employeeId, 80);
+  const actorId = normalizeText(input.actorId, 80);
   const patch: Record<string, unknown> = {};
-  if (input.displayName !== undefined) patch.display_name = normalizeText(input.displayName, 120);
-  if (input.roleId !== undefined) patch.role_id = normalizeText(input.roleId, 80) || null;
-  if (input.status && ["invited", "active", "disabled"].includes(input.status)) patch.status = input.status;
-  if (input.invitedAt !== undefined) {
-    patch.invited_at = normalizeText(input.invitedAt, 80) || null;
+  if (input.displayName !== undefined) {
+    const displayName = normalizeText(input.displayName, 120);
+    if (!displayName) throw new Error("invalid_employee");
+    patch.display_name = displayName;
   }
+  if (input.roleId !== undefined) {
+    const roleId = normalizeText(input.roleId, 80);
+    if (!roleId) throw new Error("invalid_employee_role");
+    patch.role_id = roleId;
+  }
+  if (input.status !== undefined) {
+    if (!["invited", "active", "disabled"].includes(input.status)) {
+      throw new Error("invalid_employee_status");
+    }
+    patch.status = input.status;
+  }
+
+  const offboardingMode = input.offboardingMode;
+  const replacementEmployeeId = normalizeText(input.replacementEmployeeId, 80);
+  if (
+    (offboardingMode !== undefined &&
+      offboardingMode !== "unassign" &&
+      offboardingMode !== "reassign") ||
+    ((offboardingMode !== undefined || input.replacementEmployeeId !== undefined) &&
+      input.status !== "disabled") ||
+    (offboardingMode === "unassign" && Boolean(replacementEmployeeId)) ||
+    (offboardingMode === "reassign" && !replacementEmployeeId) ||
+    (input.replacementEmployeeId !== undefined && offboardingMode !== "reassign")
+  ) {
+    throw new Error("invalid_employee_offboarding");
+  }
+  if (replacementEmployeeId && replacementEmployeeId === employeeId) {
+    throw new Error("employee_offboarding_replacement_invalid");
+  }
+  if (offboardingMode !== undefined) patch.offboarding_mode = offboardingMode;
+  if (replacementEmployeeId) patch.replacement_employee_id = replacementEmployeeId;
+
   if (!siteId || !employeeId || Object.keys(patch).length === 0) {
     throw new Error("invalid_employee_update");
   }
-  const result = await client
-    .from("merchant_enterprise_employees")
-    .update(patch)
-    .eq("merchant_id", siteId)
-    .eq("id", employeeId)
-    .eq("version", Math.max(1, Math.round(Number(input.version) || 1)))
-    .select(EMPLOYEE_COLUMNS)
-    .maybeSingle();
-  if (result.error) throwStoreError("enterprise_employee_update_failed", result.error);
-  if (!result.data) throw new Error("enterprise_version_conflict");
-  const employee = normalizeMerchantEnterpriseEmployee(result.data);
-  if (!employee) throw new Error("enterprise_employee_update_failed:invalid_response");
-  return employee;
+  if (!Number.isSafeInteger(input.version) || input.version < 1) {
+    throw new Error("invalid_version");
+  }
+  if ((input.actorType !== "owner" && input.actorType !== "employee") || !actorId) {
+    throw new Error("invalid_employee_actor");
+  }
+  const result = await client.rpc("faolla_update_merchant_enterprise_employee_v1", {
+    p_input: {
+      merchant_id: siteId,
+      employee_id: employeeId,
+      expected_version: input.version,
+      actor_type: input.actorType,
+      actor_id: actorId,
+      ...patch,
+    },
+  });
+  if (result.error) throwEmployeeRpcError("enterprise_employee_update_failed", result.error);
+  return normalizeEmployeeMutationResponse(result.data, "enterprise_employee_update_failed");
 }
 
 export async function bindMerchantEnterpriseEmployeeAuthUser(

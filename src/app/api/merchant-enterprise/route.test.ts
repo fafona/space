@@ -16,8 +16,11 @@ import {
 import {
   createEmployeeInvitationCooldownResponse,
   createEmployeeInvitationResendResponse,
+  getMerchantEnterpriseEmployeeMutationActor,
+  getMerchantEnterpriseEmployeeMutationErrorResponse,
   getMerchantEnterpriseEmployeeStatusTransitionError,
   getEmployeeInvitationRetryAfterSeconds,
+  parseMerchantEnterpriseEmployeeOffboarding,
   PATCH as updateEmployee,
   POST as createEmployee,
   reserveEmployeeInvitationResend,
@@ -185,6 +188,117 @@ test("employee mutation responses never expose the Supabase auth user id", () =>
   assert.equal(publicEmployee.id, employee.id);
 });
 
+test("employee mutation actor payload preserves owner and employee identities", () => {
+  const shared = {
+    siteId: "10000000",
+    displayName: "Actor",
+    email: "actor@example.com",
+    permissions: ["enterprise.view"] as MerchantEnterpriseActor["permissions"],
+    accessScope: "all" as const,
+    allowedBoardIds: [],
+  };
+  const owner: MerchantEnterpriseActor = {
+    ...shared,
+    type: "owner",
+    id: "88888888-8888-4888-8888-888888888888",
+  };
+  const employee: MerchantEnterpriseActor = {
+    ...shared,
+    type: "employee",
+    id: "77777777-7777-4777-8777-777777777777",
+    roleId: "99999999-9999-4999-8999-999999999999",
+  };
+  assert.deepEqual(getMerchantEnterpriseEmployeeMutationActor(owner), {
+    actorType: "owner",
+    actorId: owner.id,
+  });
+  assert.deepEqual(getMerchantEnterpriseEmployeeMutationActor(employee), {
+    actorType: "employee",
+    actorId: employee.id,
+  });
+});
+
+test("employee lifecycle RPC errors have stable API statuses", () => {
+  for (const code of [
+    "employee_open_tasks_require_resolution",
+    "employee_offboarding_replacement_invalid",
+    "employee_board_access_in_use",
+    "employee_email_in_use",
+  ]) {
+    assert.deepEqual(
+      getMerchantEnterpriseEmployeeMutationErrorResponse(new Error(code)),
+      { status: 409, body: { ok: false, error: code } },
+    );
+  }
+  for (const code of [
+    "employee_offboarding_scope_denied",
+    "permission_escalation_denied",
+    "permission_denied",
+  ]) {
+    assert.deepEqual(
+      getMerchantEnterpriseEmployeeMutationErrorResponse(new Error(code)),
+      { status: 403, body: { ok: false, error: code } },
+    );
+  }
+  assert.equal(
+    getMerchantEnterpriseEmployeeMutationErrorResponse(new Error("unknown_error")),
+    null,
+  );
+});
+
+test("employee offboarding parser only accepts valid disable resolution payloads", () => {
+  const employeeId = "77777777-7777-4777-8777-777777777777";
+  const replacementEmployeeId = "66666666-6666-4666-8666-666666666666";
+  assert.deepEqual(
+    parseMerchantEnterpriseEmployeeOffboarding({
+      employeeId,
+      status: "disabled",
+      offboardingMode: "unassign",
+    }),
+    { ok: true, payload: { offboardingMode: "unassign" } },
+  );
+  assert.deepEqual(
+    parseMerchantEnterpriseEmployeeOffboarding({
+      employeeId,
+      status: "disabled",
+      offboardingMode: "reassign",
+      replacementEmployeeId,
+    }),
+    {
+      ok: true,
+      payload: { offboardingMode: "reassign", replacementEmployeeId },
+    },
+  );
+  for (const payload of [
+    { status: "active", offboardingMode: "unassign" },
+    { status: "disabled", offboardingMode: "reassign" },
+    {
+      status: "disabled",
+      offboardingMode: "unassign",
+      replacementEmployeeId,
+    },
+    { status: "disabled", replacementEmployeeId },
+  ]) {
+    assert.deepEqual(
+      parseMerchantEnterpriseEmployeeOffboarding({ employeeId, ...payload }),
+      { ok: false, error: "invalid_employee_offboarding", status: 400 },
+    );
+  }
+  assert.deepEqual(
+    parseMerchantEnterpriseEmployeeOffboarding({
+      employeeId,
+      status: "disabled",
+      offboardingMode: "reassign",
+      replacementEmployeeId: employeeId,
+    }),
+    {
+      ok: false,
+      error: "employee_offboarding_replacement_invalid",
+      status: 409,
+    },
+  );
+});
+
 test("employee creation rejects malformed emails before authentication", async () => {
   for (const email of ["missing-domain@", "two words@example.com", "x".repeat(255)]) {
     const response = await createEmployee(
@@ -233,6 +347,49 @@ test("employee email cannot be changed through the generic update path", async (
   });
 });
 
+test("malformed employee offboarding payloads are rejected before authorization", async () => {
+  const base = {
+    siteId: "10000000",
+    employeeId: "77777777-7777-4777-8777-777777777777",
+    version: 7,
+  };
+  for (const [payload, status, error] of [
+    [{ status: "active", offboardingMode: "unassign" }, 400, "invalid_employee_offboarding"],
+    [{ status: "disabled", offboardingMode: "reassign" }, 400, "invalid_employee_offboarding"],
+    [
+      {
+        status: "disabled",
+        offboardingMode: "unassign",
+        replacementEmployeeId: "66666666-6666-4666-8666-666666666666",
+      },
+      400,
+      "invalid_employee_offboarding",
+    ],
+    [
+      {
+        status: "disabled",
+        offboardingMode: "reassign",
+        replacementEmployeeId: base.employeeId,
+      },
+      409,
+      "employee_offboarding_replacement_invalid",
+    ],
+  ] as const) {
+    const response = await updateEmployee(
+      new Request("https://www.faolla.com/api/merchant-enterprise/employees", {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://www.faolla.com",
+        },
+        body: JSON.stringify({ ...base, ...payload }),
+      }),
+    );
+    assert.equal(response.status, status);
+    assert.deepEqual(await response.json(), { ok: false, error });
+  }
+});
+
 test("pending invitation removal is a recognized, isolated employee action", async () => {
   const base = {
     siteId: "10000000",
@@ -265,6 +422,22 @@ test("pending invitation removal is a recognized, isolated employee action", asy
   );
   assert.equal(mixed.status, 400);
   assert.deepEqual(await mixed.json(), {
+    ok: false,
+    error: "invalid_employee_action",
+  });
+
+  const mixedOffboarding = await updateEmployee(
+    new Request("https://www.faolla.com/api/merchant-enterprise/employees", {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        origin: "https://www.faolla.com",
+      },
+      body: JSON.stringify({ ...base, offboardingMode: "unassign" }),
+    }),
+  );
+  assert.equal(mixedOffboarding.status, 400);
+  assert.deepEqual(await mixedOffboarding.json(), {
     ok: false,
     error: "invalid_employee_action",
   });

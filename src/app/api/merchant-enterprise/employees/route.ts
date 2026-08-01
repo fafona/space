@@ -55,6 +55,8 @@ type EmployeeBody = {
   displayName?: unknown;
   roleId?: unknown;
   status?: unknown;
+  offboardingMode?: unknown;
+  replacementEmployeeId?: unknown;
 };
 
 type ServiceClient = NonNullable<ReturnType<typeof createServerSupabaseServiceClient>>;
@@ -81,6 +83,89 @@ const EMPLOYEE_INVITATION_RESEND_COOLDOWN_MS = 60_000;
 
 function text(value: unknown, max = 4096) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
+}
+
+export function getMerchantEnterpriseEmployeeMutationActor(
+  actor: MerchantEnterpriseActor,
+) {
+  return {
+    actorType: actor.type,
+    actorId: actor.id,
+  } as const;
+}
+
+export function parseMerchantEnterpriseEmployeeOffboarding(input: {
+  employeeId?: unknown;
+  status?: unknown;
+  offboardingMode?: unknown;
+  replacementEmployeeId?: unknown;
+}):
+  | {
+      ok: true;
+      payload: {
+        offboardingMode?: "unassign" | "reassign";
+        replacementEmployeeId?: string;
+      };
+    }
+  | {
+      ok: false;
+      error:
+        | "invalid_employee_offboarding"
+        | "employee_offboarding_replacement_invalid";
+      status: 400 | 409;
+    } {
+  const hasMode = input.offboardingMode !== undefined;
+  const hasReplacement = input.replacementEmployeeId !== undefined;
+  if (!hasMode && !hasReplacement) return { ok: true, payload: {} };
+  if (input.status !== "disabled") {
+    return { ok: false, error: "invalid_employee_offboarding", status: 400 };
+  }
+  const mode = text(input.offboardingMode, 20);
+  const replacementEmployeeId = text(input.replacementEmployeeId, 80);
+  if (
+    (mode !== "unassign" && mode !== "reassign") ||
+    (mode === "unassign" && hasReplacement) ||
+    (mode === "reassign" && !replacementEmployeeId) ||
+    (!hasMode && hasReplacement)
+  ) {
+    return { ok: false, error: "invalid_employee_offboarding", status: 400 };
+  }
+  if (replacementEmployeeId === text(input.employeeId, 80)) {
+    return {
+      ok: false,
+      error: "employee_offboarding_replacement_invalid",
+      status: 409,
+    };
+  }
+  return {
+    ok: true,
+    payload:
+      mode === "reassign"
+        ? { offboardingMode: mode, replacementEmployeeId }
+        : { offboardingMode: "unassign" },
+  };
+}
+
+export function getMerchantEnterpriseEmployeeMutationErrorResponse(
+  error: unknown,
+) {
+  const code = error instanceof Error ? error.message : "";
+  if (
+    code === "employee_offboarding_scope_denied" ||
+    code === "permission_escalation_denied" ||
+    code === "permission_denied"
+  ) {
+    return { status: 403, body: { ok: false, error: code } } as const;
+  }
+  if (
+    code === "employee_open_tasks_require_resolution" ||
+    code === "employee_offboarding_replacement_invalid" ||
+    code === "employee_board_access_in_use" ||
+    code === "employee_email_in_use"
+  ) {
+    return { status: 409, body: { ok: false, error: code } } as const;
+  }
+  return null;
 }
 
 export function toPublicMerchantEnterpriseEmployee(
@@ -229,6 +314,10 @@ function serviceClient() {
 }
 
 function fail(error: unknown) {
+  const mutationError = getMerchantEnterpriseEmployeeMutationErrorResponse(error);
+  if (mutationError) {
+    return NextResponse.json(mutationError.body, { status: mutationError.status });
+  }
   const resolved = toMerchantEnterpriseAccessResponse(error);
   return NextResponse.json(resolved.body, { status: resolved.status });
 }
@@ -556,6 +645,7 @@ export async function POST(request: Request) {
         email,
         displayName,
         roleId,
+        ...getMerchantEnterpriseEmployeeMutationActor(actor),
       },
     );
     const reservation = await reserveEmployeeInvitationResend(
@@ -633,7 +723,9 @@ export async function PATCH(request: Request) {
       (body?.email !== undefined ||
         body?.displayName !== undefined ||
         body?.roleId !== undefined ||
-        body?.status !== undefined)
+        body?.status !== undefined ||
+        body?.offboardingMode !== undefined ||
+        body?.replacementEmployeeId !== undefined)
     ) {
       return NextResponse.json(
         { ok: false, error: "invalid_employee_action" },
@@ -644,6 +736,18 @@ export async function PATCH(request: Request) {
       return NextResponse.json(
         { ok: false, error: "employee_email_change_requires_reinvite" },
         { status: 400 },
+      );
+    }
+    const offboarding = parseMerchantEnterpriseEmployeeOffboarding({
+      employeeId,
+      status: body?.status,
+      offboardingMode: body?.offboardingMode,
+      replacementEmployeeId: body?.replacementEmployeeId,
+    });
+    if (!offboarding.ok) {
+      return NextResponse.json(
+        { ok: false, error: offboarding.error },
+        { status: offboarding.status },
       );
     }
 
@@ -790,6 +894,17 @@ export async function PATCH(request: Request) {
         );
       }
     }
+    if (offboarding.payload.offboardingMode === "reassign") {
+      const replacement = snapshot.employees.find(
+        (item) => item.id === offboarding.payload.replacementEmployeeId,
+      );
+      if (!replacement || replacement.status !== "active") {
+        return NextResponse.json(
+          { ok: false, error: "employee_offboarding_replacement_invalid" },
+          { status: 409 },
+        );
+      }
+    }
     if (
       body?.displayName === undefined &&
       body?.roleId === undefined &&
@@ -810,6 +925,8 @@ export async function PATCH(request: Request) {
       ...(body?.status === "invited" || body?.status === "active" || body?.status === "disabled"
         ? { status: body.status }
         : {}),
+      ...offboarding.payload,
+      ...getMerchantEnterpriseEmployeeMutationActor(actor),
     });
     return NextResponse.json({
       ok: true,

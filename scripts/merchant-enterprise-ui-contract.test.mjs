@@ -886,12 +886,68 @@ test("pending employee invitations have a safe responsive management flow", () =
   );
   assert.match(
     source,
-    /const\s+canManageInvitation\s*=[\s\S]{0,300}invitationNeedsAction[\s\S]{0,300}!\(actor\.type\s*===\s*["']employee["']\s*&&\s*actor\.id\s*===\s*employee\.id\)/,
+    /const\s+canManageEmployeeLifecycle\s*=[\s\S]{0,300}!\(actor\.type\s*===\s*["']employee["']\s*&&\s*actor\.id\s*===\s*employee\.id\)[\s\S]{0,300}merchantEnterpriseRoleFitsActor\(actor,\s*currentEmployeeRole\)/,
+  );
+  assert.match(
+    source,
+    /const\s+canManageInvitation\s*=[\s\S]{0,160}canManageEmployeeLifecycle[\s\S]{0,160}invitationNeedsAction/,
   );
   assert.match(source, /aria-controls=\{`employee-invitation-manager-\$\{employee\.id\}`\}/);
   assert.match(source, /邀请邮箱（不可直接修改）[\s\S]{0,400}readOnly/);
   assert.match(source, /邮箱有误时请移除后重新邀请/);
   assert.match(source, /min-h-11[\s\S]{0,500}管理邀请/);
+});
+
+test("active employees use a confirmed offboarding flow with atomic task resolution", () => {
+  const dialogSource = sliceBetween(
+    /function\s+EmployeeOffboardingDialog\b/,
+    /type\s+RoleBoardAccessValue\b/,
+    "EmployeeOffboardingDialog",
+  );
+  assert.match(dialogSource, /role=["']dialog["']/);
+  assert.match(dialogSource, /安全停用员工/);
+  assert.match(dialogSource, /未完成任务处理方式/);
+  assert.match(dialogSource, /value=["']unassign["']/);
+  assert.match(dialogSource, /value=["']reassign["']/);
+  assert.match(dialogSource, /请选择接手员工/);
+  assert.match(dialogSource, /停用并解除负责人/);
+  assert.match(dialogSource, /停用并转交任务/);
+  assert.match(dialogSource, /replacementCandidateAvailable/);
+  assert.match(dialogSource, /knownTaskResolutionBlocked/);
+  assert.match(dialogSource, /role=["']alert["'][\s\S]{0,200}\{errorMessage\}/);
+  assert.match(dialogSource, /max-h-\[calc\(100dvh-1rem\)\]/);
+
+  const statusSource = sliceBetween(
+    /async\s+function\s+updateEmployeeStatus\b/,
+    /async\s+function\s+confirmEmployeeOffboarding\b/,
+    "updateEmployeeStatus",
+  );
+  assert.match(
+    statusSource,
+    /status\s*===\s*["']disabled["'][\s\S]{0,160}setOffboardingEmployeeId\(employee\.id\)[\s\S]{0,80}return/,
+    "the ordinary disable button must open the resolution dialog instead of mutating immediately",
+  );
+  assert.match(statusSource, /确认恢复/);
+  assert.match(statusSource, /setMessage\(null\)[\s\S]{0,80}setOffboardingEmployeeId/);
+
+  const confirmSource = sliceBetween(
+    /async\s+function\s+confirmEmployeeOffboarding\b/,
+    /async\s+function\s+updateEmployeeRole\b/,
+    "confirmEmployeeOffboarding",
+  );
+  assert.match(confirmSource, /status:\s*["']disabled["']/);
+  assert.match(confirmSource, /offboardingMode:\s*mode/);
+  assert.match(confirmSource, /replacementEmployeeId/);
+  assert.match(confirmSource, /setOffboardingEmployeeId\(["']["']\)/);
+
+  assert.match(source, /!offboardingEmployeeId[\s\S]{0,100}!draggingTaskId/);
+  assert.match(source, /event\.eventType\s*===\s*["']employee_offboarded["']/);
+  assert.match(source, /MERCHANT_ENTERPRISE_REQUEST_TIMEOUT_MS\s*=\s*30_000/);
+  assert.match(source, /new\s+AbortController\(\)[\s\S]{0,800}请求超时，请检查网络后重试/);
+  assert.match(
+    source,
+    /<EmployeeOffboardingDialog[\s\S]{0,900}onConfirm=\{confirmEmployeeOffboarding\}/,
+  );
 });
 
 test("external enterprise navigation stays permission-aware while standalone keeps its tabs", () => {

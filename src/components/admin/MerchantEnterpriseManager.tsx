@@ -134,6 +134,8 @@ const EMPTY_SNAPSHOT: MerchantEnterpriseSnapshot = {
   tasks: [],
 };
 
+const MERCHANT_ENTERPRISE_REQUEST_TIMEOUT_MS = 30_000;
+
 const PRIORITY_META: Record<MerchantTaskPriority, { label: string; className: string }> = {
   low: { label: "低", className: "bg-slate-100 text-slate-600" },
   normal: { label: "普通", className: "bg-blue-50 text-blue-700" },
@@ -214,6 +216,11 @@ function taskEventDescription(
   if (event.eventType === "checklist_item_reopened") return "恢复了清单项";
   if (event.eventType === "checklist_item_archived") return "移除了清单项";
   if (event.eventType === "checklist_item_restored") return "恢复了清单项";
+  if (event.eventType === "employee_offboarded") {
+    return typeof taskEventPayload(event).replacementEmployeeId === "string"
+      ? "因员工停用转交了负责人"
+      : "因员工停用解除了负责人";
+  }
   if (event.eventType === "moved") {
     const payload = taskEventPayload(event);
     const fromColumnId = typeof payload.fromColumnId === "string" ? payload.fromColumnId : "";
@@ -429,6 +436,15 @@ function readApiError(payload: unknown, fallback: string) {
   if (code === "employee_invitation_cooldown") return "邀请刚刚发送过，请稍后再试。";
   if (code === "employee_invitation_not_accepted") return "员工尚未接受邀请，不能直接启用账号。";
   if (code === "employee_invitation_revoke_required") return "待接受账号请使用“撤销邀请”，不能直接停用。";
+  if (code === "employee_open_tasks_require_resolution") {
+    return "该员工仍负责未完成任务，请选择解除负责人或转交后再停用。";
+  }
+  if (code === "employee_offboarding_replacement_invalid") {
+    return "接手员工当前不可用，或无权访问相关任务看板。";
+  }
+  if (code === "employee_offboarding_scope_denied") {
+    return "当前账号无权调整该员工负责的全部任务，请由企业负责人处理。";
+  }
   if (code === "employee_invitation_not_pending") return "邀请状态已变化，已为你重新加载。";
   if (code === "employee_invitation_revoked") return "该邀请已经撤销，请刷新后重新生成邀请。";
   if (code === "employee_invitation_expired") return "该邀请已经过期，请重新生成邀请。";
@@ -462,6 +478,8 @@ type TaskDraft = {
   columnId: string;
   assigneeIds: string[];
 };
+
+type EmployeeOffboardingMode = "unassign" | "reassign";
 
 function taskDateInputValue(value: string | null) {
   if (!value || !Number.isFinite(Date.parse(value))) return "";
@@ -1628,6 +1646,208 @@ function TaskEditor({
   );
 }
 
+function EmployeeOffboardingDialog({
+  employee,
+  openTaskCount,
+  taskCountExact,
+  replacementCandidates,
+  allowReassign,
+  busy,
+  errorMessage,
+  onConfirm,
+  onClose,
+}: {
+  employee: MerchantEnterpriseEmployee;
+  openTaskCount: number;
+  taskCountExact: boolean;
+  replacementCandidates: Array<Pick<MerchantEnterpriseEmployee, "id" | "displayName">>;
+  allowReassign: boolean;
+  busy: boolean;
+  errorMessage: string;
+  onConfirm: (mode: EmployeeOffboardingMode, replacementEmployeeId: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [mode, setMode] = useState<EmployeeOffboardingMode>("unassign");
+  const [replacementEmployeeId, setReplacementEmployeeId] = useState("");
+  const cancelButtonRef = useRef<HTMLButtonElement>(null);
+  const busyRef = useRef(busy);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    busyRef.current = busy;
+    onCloseRef.current = onClose;
+  }, [busy, onClose]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || busyRef.current) return;
+      event.preventDefault();
+      onCloseRef.current();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    const focusFrame = window.requestAnimationFrame(() => cancelButtonRef.current?.focus());
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.cancelAnimationFrame(focusFrame);
+    };
+  }, []);
+
+  const replacementCandidateAvailable = replacementCandidates.some(
+    (candidate) => candidate.id === replacementEmployeeId,
+  );
+  const knownTaskResolutionBlocked = !allowReassign && openTaskCount > 0;
+  const canSubmit =
+    !knownTaskResolutionBlocked &&
+    (mode === "unassign" || (allowReassign && replacementCandidateAvailable));
+  const taskSummary = taskCountExact
+    ? openTaskCount > 0
+      ? `该员工仍负责 ${openTaskCount} 个未完成任务。`
+      : "该员工当前没有未完成任务。"
+    : openTaskCount > 0
+      ? `当前可见范围内有 ${openTaskCount} 个未完成任务；服务器还会检查全部任务。`
+      : "服务器将在停用时检查该员工负责的全部未完成任务。";
+
+  return (
+    <div
+      className="fixed inset-0 z-[140] flex items-end justify-center bg-slate-950/55 p-0 backdrop-blur-sm sm:items-center sm:p-6"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) onClose();
+      }}
+    >
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="enterprise-employee-offboarding-title"
+        aria-describedby="enterprise-employee-offboarding-summary"
+        className="max-h-[calc(100dvh-1rem)] w-full max-w-xl rounded-t-3xl bg-white p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] shadow-2xl sm:max-h-[calc(100dvh-3rem)] sm:rounded-3xl sm:p-6"
+        style={{ overflowY: "auto" }}
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h2 id="enterprise-employee-offboarding-title" className="!text-xl !font-bold !text-slate-950">
+              安全停用员工
+            </h2>
+            <p
+              id="enterprise-employee-offboarding-summary"
+              className="mt-2 text-sm leading-6 text-slate-600"
+            >
+              将停用“{employee.displayName}”的企业账号。{taskSummary}
+            </p>
+          </div>
+          <button
+            ref={cancelButtonRef}
+            type="button"
+            className="min-h-11 shrink-0 rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 disabled:opacity-45"
+            disabled={busy}
+            onClick={onClose}
+          >
+            取消
+          </button>
+        </div>
+
+        <fieldset className="mt-5 space-y-3" disabled={busy}>
+          <legend className="text-sm font-semibold text-slate-900">未完成任务处理方式</legend>
+          <label className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-4 ${
+            mode === "unassign" ? "border-blue-400 bg-blue-50" : "border-slate-200 bg-white"
+          }`}>
+            <input
+              type="radio"
+              name="employee-offboarding-mode"
+              value="unassign"
+              checked={mode === "unassign"}
+              onChange={() => setMode("unassign")}
+            />
+            <span>
+              <span className="block text-sm font-semibold text-slate-900">解除该员工的负责人</span>
+              <span className="mt-1 block text-xs leading-5 text-slate-500">
+                未完成任务保留在原工作列，之后可重新分派。
+              </span>
+            </span>
+          </label>
+          <label className={`flex items-start gap-3 rounded-2xl border p-4 ${
+            mode === "reassign" ? "border-blue-400 bg-blue-50" : "border-slate-200 bg-white"
+          } ${allowReassign && replacementCandidates.length > 0 ? "cursor-pointer" : "opacity-60"}`}>
+            <input
+              type="radio"
+              name="employee-offboarding-mode"
+              value="reassign"
+              checked={mode === "reassign"}
+              disabled={!allowReassign || replacementCandidates.length === 0}
+              onChange={() => setMode("reassign")}
+            />
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold text-slate-900">转交给另一名员工</span>
+              <span className="mt-1 block text-xs leading-5 text-slate-500">
+                接手员工必须处于启用状态，并有权访问全部相关看板。
+              </span>
+              {mode === "reassign" ? (
+                <select
+                  className="mt-3 min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                  value={replacementEmployeeId}
+                  onChange={(event) => setReplacementEmployeeId(event.target.value)}
+                >
+                  <option value="">请选择接手员工</option>
+                  {replacementCandidates.map((candidate) => (
+                    <option key={candidate.id} value={candidate.id}>{candidate.displayName}</option>
+                  ))}
+                </select>
+              ) : null}
+            </span>
+          </label>
+        </fieldset>
+
+        {!allowReassign ? (
+          <p className="mt-3 text-xs leading-5 text-amber-700">
+            当前账号没有任务分派权限；如该员工仍有未完成任务，需要由企业负责人或具有任务分派权限的员工处理。
+          </p>
+        ) : allowReassign && replacementCandidates.length === 0 ? (
+          <p className="mt-3 text-xs leading-5 text-amber-700">
+            暂无能够访问全部相关看板的启用员工，只能解除负责人。
+          </p>
+        ) : null}
+
+        {errorMessage ? (
+          <p
+            role="alert"
+            className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm leading-6 text-rose-700"
+          >
+            {errorMessage}
+          </p>
+        ) : null}
+
+        <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <button
+            type="button"
+            className="min-h-11 rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 disabled:opacity-45"
+            disabled={busy}
+            onClick={onClose}
+          >
+            返回员工列表
+          </button>
+          <button
+            type="button"
+            className="min-h-11 rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-45"
+            disabled={busy || !canSubmit}
+            onClick={() => void onConfirm(mode, replacementEmployeeId)}
+          >
+            {busy ? "正在停用…" : mode === "reassign" ? "停用并转交任务" : "停用并解除负责人"}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 type RoleBoardAccessValue = Pick<
   MerchantEnterpriseRole,
   "accessScope" | "allowedBoardIds"
@@ -2529,6 +2749,7 @@ function MerchantEnterpriseManagerContent({
   const [managedInvitationEmployeeId, setManagedInvitationEmployeeId] = useState("");
   const [managedInvitationName, setManagedInvitationName] = useState("");
   const [managedInvitationRoleId, setManagedInvitationRoleId] = useState("");
+  const [offboardingEmployeeId, setOffboardingEmployeeId] = useState("");
   const employeeInviteFormRef = useRef<HTMLElement | null>(null);
   const employeeEmailInputRef = useRef<HTMLInputElement | null>(null);
   const [failedInvitationEmployeeIds, setFailedInvitationEmployeeIds] = useState<Set<string>>(
@@ -2548,12 +2769,31 @@ function MerchantEnterpriseManagerContent({
       const headers = new Headers(init.headers);
       if (init.body && !headers.has("content-type")) headers.set("content-type", "application/json");
       if (accessToken) headers.set("x-merchant-access-token", accessToken);
-      return fetch(path, {
-        ...init,
-        headers,
-        credentials: accessToken ? "omit" : "include",
-        cache: "no-store",
-      });
+      const requestController = new AbortController();
+      const callerSignal = init.signal;
+      let timedOut = false;
+      const abortFromCaller = () => requestController.abort(callerSignal?.reason);
+      if (callerSignal?.aborted) abortFromCaller();
+      else callerSignal?.addEventListener("abort", abortFromCaller, { once: true });
+      const timeoutId = setTimeout(() => {
+        timedOut = true;
+        requestController.abort();
+      }, MERCHANT_ENTERPRISE_REQUEST_TIMEOUT_MS);
+      try {
+        return await fetch(path, {
+          ...init,
+          headers,
+          credentials: accessToken ? "omit" : "include",
+          cache: "no-store",
+          signal: requestController.signal,
+        });
+      } catch (error) {
+        if (timedOut) throw new Error("请求超时，请检查网络后重试。");
+        throw error;
+      } finally {
+        clearTimeout(timeoutId);
+        callerSignal?.removeEventListener("abort", abortFromCaller);
+      }
     },
     [accessToken],
   );
@@ -2807,6 +3047,7 @@ function MerchantEnterpriseManagerContent({
     actor &&
       !busy &&
       !editingTaskId &&
+      !offboardingEmployeeId &&
       !draggingTaskId &&
       (tab === "overview" ||
         (tab === "tasks" &&
@@ -2990,6 +3231,43 @@ function MerchantEnterpriseManagerContent({
     () => new Map(snapshot.roles.map((role) => [role.id, role] as const)),
     [snapshot.roles],
   );
+  const offboardingEmployee = offboardingEmployeeId
+    ? snapshot.employees.find(
+        (employee) => employee.id === offboardingEmployeeId && employee.status === "active",
+      ) ?? null
+    : null;
+  useEffect(() => {
+    if (offboardingEmployeeId && !offboardingEmployee) {
+      setOffboardingEmployeeId("");
+    }
+  }, [offboardingEmployee, offboardingEmployeeId]);
+  const offboardingOpenTasks = offboardingEmployee
+    ? snapshot.tasks.filter(
+        (task) =>
+          !task.archivedAt &&
+          !task.completedAt &&
+          task.assigneeIds.includes(offboardingEmployee.id),
+      )
+    : [];
+  const offboardingBoardIds = new Set(
+    offboardingOpenTasks.map((task) => task.boardId),
+  );
+  const allowOffboardingReassign = Boolean(
+    actor && (actor.type === "owner" || can(actor, "tasks.assign")),
+  );
+  const offboardingReplacementCandidates = offboardingEmployee
+    ? activeEmployees.filter((employee) => {
+        if (employee.id === offboardingEmployee.id) return false;
+        const role = roleById.get(employee.roleId);
+        if (!role || role.status !== "active" || !role.permissions.includes("tasks.view")) {
+          return false;
+        }
+        return (
+          role.accessScope === "all" ||
+          [...offboardingBoardIds].every((boardId) => role.allowedBoardIds.includes(boardId))
+        );
+      })
+    : [];
 
   const mutate = useCallback(
     async (
@@ -3540,6 +3818,12 @@ function MerchantEnterpriseManagerContent({
     employee: MerchantEnterpriseEmployee,
     status: "active" | "disabled",
   ) {
+    if (status === "disabled") {
+      setMessage(null);
+      setOffboardingEmployeeId(employee.id);
+      return;
+    }
+    if (!window.confirm(`确认恢复“${employee.displayName}”的企业账号吗？`)) return;
     await mutate(
       "/api/merchant-enterprise/employees",
       "PATCH",
@@ -3548,8 +3832,30 @@ function MerchantEnterpriseManagerContent({
         version: employee.version,
         status,
       },
-      status === "disabled" ? "员工账号已停用。" : "员工账号已恢复。",
+      "员工账号已恢复。",
     );
+  }
+
+  async function confirmEmployeeOffboarding(
+    mode: EmployeeOffboardingMode,
+    replacementEmployeeId: string,
+  ) {
+    if (!offboardingEmployee) return;
+    const payload = await mutate(
+      "/api/merchant-enterprise/employees",
+      "PATCH",
+      {
+        employeeId: offboardingEmployee.id,
+        version: offboardingEmployee.version,
+        status: "disabled",
+        offboardingMode: mode,
+        ...(mode === "reassign" ? { replacementEmployeeId } : {}),
+      },
+      mode === "reassign"
+        ? "员工账号已停用，未完成任务已转交。"
+        : "员工账号已停用，未完成任务已解除负责人。",
+    );
+    if (payload) setOffboardingEmployeeId("");
   }
 
   async function updateEmployeeRole(
@@ -4523,15 +4829,18 @@ function MerchantEnterpriseManagerContent({
                     invitationPresentation.state === "expired" ||
                     invitationPresentation.state === "revoked";
                   const currentEmployeeRole = roleById.get(employee.roleId);
-                  const canManageInvitation =
+                  const canManageEmployeeLifecycle =
                     can(actor, "employees.manage") &&
-                    invitationNeedsAction &&
                     !(actor.type === "employee" && actor.id === employee.id) &&
-                    (actor?.type === "owner" ||
+                    (actor.type === "owner" ||
                       Boolean(
                         currentEmployeeRole &&
                           merchantEnterpriseRoleFitsActor(actor, currentEmployeeRole),
                       ));
+                  const canManageInvitation =
+                    canManageEmployeeLifecycle &&
+                    invitationNeedsAction &&
+                    employee.status === "invited";
                   const invitationManagerOpen =
                     canManageInvitation && managedInvitationEmployeeId === employee.id;
                   const invitationRoleAssignable = assignableRoles.some(
@@ -4545,9 +4854,8 @@ function MerchantEnterpriseManagerContent({
                           <div className="mt-1 truncate text-sm text-slate-500">{employee.email || "邮箱仅管理员可见"}</div>
                         </div>
                         <div className="flex max-w-full flex-wrap items-center justify-end gap-3">
-                        {can(actor, "employees.manage") &&
+                        {canManageEmployeeLifecycle &&
                         employee.status !== "invited" &&
-                        !(actor.type === "employee" && actor.id === employee.id) &&
                         assignableRoles.some((role) => role.id === employee.roleId) ? (
                           <select
                             className="max-w-[12rem] rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700"
@@ -4586,9 +4894,7 @@ function MerchantEnterpriseManagerContent({
                             {invitationManagerOpen ? "收起管理" : "管理邀请"}
                           </button>
                         ) : null}
-                        {can(actor, "employees.manage") &&
-                        employee.status !== "invited" &&
-                        !(actor.type === "employee" && actor.id === employee.id) ? (
+                        {canManageEmployeeLifecycle && employee.status !== "invited" ? (
                           <button
                             type="button"
                             className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600"
@@ -4853,6 +5159,23 @@ function MerchantEnterpriseManagerContent({
             onCreateChecklistItem={createTaskChecklistItem}
             onUpdateChecklistItem={updateTaskChecklistItem}
             onClose={() => setEditingTaskId("")}
+          />
+        ) : null}
+        {offboardingEmployee && actor ? (
+          <EmployeeOffboardingDialog
+            key={`${offboardingEmployee.id}:${offboardingEmployee.version}`}
+            employee={offboardingEmployee}
+            openTaskCount={offboardingOpenTasks.length}
+            taskCountExact={
+              actor.type === "owner" ||
+              (can(actor, "tasks.view") && actor.accessScope === "all")
+            }
+            replacementCandidates={offboardingReplacementCandidates}
+            allowReassign={allowOffboardingReassign}
+            busy={busy}
+            errorMessage={message?.kind === "error" ? message.text : ""}
+            onConfirm={confirmEmployeeOffboarding}
+            onClose={() => setOffboardingEmployeeId("")}
           />
         ) : null}
       </div>

@@ -45,7 +45,11 @@ function taskRow(version: number) {
   };
 }
 
-function employeeRow(version: number, invitedAt: string) {
+function employeeRow(
+  version: number,
+  invitedAt: string,
+  overrides: Record<string, unknown> = {},
+) {
   return {
     id: "77777777-7777-4777-8777-777777777777",
     merchant_id: "10000000",
@@ -57,9 +61,15 @@ function employeeRow(version: number, invitedAt: string) {
     invited_at: invitedAt,
     accepted_at: null,
     last_active_at: null,
+    invitation_version: 1,
+    invitation_expires_at: null,
+    invitation_revoked_at: null,
+    invitation_sent_at: invitedAt,
+    invitation_delivery_status: "sent",
     version,
     created_at: "2026-07-31T08:00:00.000Z",
     updated_at: invitedAt,
+    ...overrides,
   };
 }
 
@@ -154,11 +164,11 @@ test("employee creation strictly validates normalized auth email input", async (
   let called = false;
   const client = {
     from() {
-      called = true;
-      throw new Error("invalid email must stop before persistence");
+      throw new Error("employee creation must not use direct table writes");
     },
     async rpc() {
-      throw new Error("unexpected RPC");
+      called = true;
+      throw new Error("invalid email must stop before persistence");
     },
   } as unknown as MerchantEnterpriseStoreClient;
 
@@ -169,6 +179,8 @@ test("employee creation strictly validates normalized auth email input", async (
         email,
         displayName: "Staff",
         roleId: "99999999-9999-4999-8999-999999999999",
+        actorType: "owner",
+        actorId: "88888888-8888-4888-8888-888888888888",
       }),
       /invalid_employee_email/,
     );
@@ -176,127 +188,190 @@ test("employee creation strictly validates normalized auth email input", async (
   assert.equal(called, false);
 });
 
-test("employee creation preserves the merchant email uniqueness conflict", async () => {
+test("employee create and offboarding update use atomic RPCs with actor context", async () => {
+  const calls: Array<{ functionName: string; input: Record<string, unknown> }> = [];
+  const invitedAt = "2026-07-31T09:30:00.000Z";
+  const replacementEmployeeId = "66666666-6666-4666-8666-666666666666";
   const client = {
-    from(table: string) {
-      assert.equal(table, "merchant_enterprise_employees");
-      const builder = {
-        insert(payload: Record<string, unknown>) {
-          assert.equal(payload.email, "staff@example.com");
-          return builder;
-        },
-        select() {
-          return builder;
-        },
-        async single() {
-          return {
-            data: null,
-            error: {
-              code: "23505",
-              message:
-                'duplicate key value violates unique constraint "merchant_enterprise_employees_email_unique_idx"',
-            },
-          };
-        },
-      };
-      return builder;
+    from() {
+      throw new Error("employee lifecycle mutations must stay transactional");
     },
-    async rpc() {
-      throw new Error("unexpected RPC");
+    async rpc(functionName: string, args: Record<string, unknown>) {
+      const input = args.p_input as Record<string, unknown>;
+      calls.push({ functionName, input });
+      return {
+        data: {
+          employee: employeeRow(
+            functionName === "faolla_create_merchant_enterprise_employee_v1" ? 1 : 2,
+            invitedAt,
+            functionName === "faolla_update_merchant_enterprise_employee_v1"
+              ? { status: "disabled" }
+              : {},
+          ),
+        },
+        error: null,
+      };
     },
   } as unknown as MerchantEnterpriseStoreClient;
 
+  const created = await createMerchantEnterpriseEmployee(client, {
+    siteId: "10000000",
+    email: " Staff@Example.com ",
+    displayName: "Staff",
+    roleId: "99999999-9999-4999-8999-999999999999",
+    actorType: "owner",
+    actorId: "88888888-8888-4888-8888-888888888888",
+  });
+  const updated = await updateMerchantEnterpriseEmployee(client, {
+    siteId: "10000000",
+    employeeId: created.id,
+    version: created.version,
+    displayName: "Former Staff",
+    status: "disabled",
+    offboardingMode: "reassign",
+    replacementEmployeeId,
+    actorType: "employee",
+    actorId: "55555555-5555-4555-8555-555555555555",
+  });
+
+  assert.equal(created.email, "staff@example.com");
+  assert.equal(updated.status, "disabled");
+  assert.deepEqual(calls, [
+    {
+      functionName: "faolla_create_merchant_enterprise_employee_v1",
+      input: {
+        merchant_id: "10000000",
+        email: "staff@example.com",
+        display_name: "Staff",
+        role_id: "99999999-9999-4999-8999-999999999999",
+        actor_type: "owner",
+        actor_id: "88888888-8888-4888-8888-888888888888",
+      },
+    },
+    {
+      functionName: "faolla_update_merchant_enterprise_employee_v1",
+      input: {
+        merchant_id: "10000000",
+        employee_id: created.id,
+        expected_version: 1,
+        actor_type: "employee",
+        actor_id: "55555555-5555-4555-8555-555555555555",
+        display_name: "Former Staff",
+        status: "disabled",
+        offboarding_mode: "reassign",
+        replacement_employee_id: replacementEmployeeId,
+      },
+    },
+  ]);
+});
+
+test("employee RPC failures preserve lifecycle conflict and authorization codes", async () => {
+  for (const code of [
+    "enterprise_version_conflict",
+    "employee_not_found",
+    "employee_open_tasks_require_resolution",
+    "employee_offboarding_replacement_invalid",
+    "employee_offboarding_scope_denied",
+    "permission_escalation_denied",
+    "permission_denied",
+    "employee_board_access_in_use",
+    "employee_email_in_use",
+  ]) {
+    const client = {
+      from() {
+        throw new Error("employee lifecycle mutations must stay transactional");
+      },
+      async rpc() {
+        return { data: null, error: { code: "P0001", message: code } };
+      },
+    } as unknown as MerchantEnterpriseStoreClient;
+    await assert.rejects(
+      updateMerchantEnterpriseEmployee(client, {
+        siteId: "10000000",
+        employeeId: "77777777-7777-4777-8777-777777777777",
+        version: 7,
+        displayName: "Updated Staff",
+        actorType: "owner",
+        actorId: "88888888-8888-4888-8888-888888888888",
+      }),
+      new RegExp(`^Error: ${code}$`),
+    );
+  }
+
+  const duplicateClient = {
+    from() {
+      throw new Error("employee lifecycle mutations must stay transactional");
+    },
+    async rpc() {
+      return {
+        data: null,
+        error: {
+          code: "23505",
+          message:
+            'duplicate key value violates unique constraint "merchant_enterprise_employees_email_unique_idx"',
+        },
+      };
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
   await assert.rejects(
-    createMerchantEnterpriseEmployee(client, {
+    createMerchantEnterpriseEmployee(duplicateClient, {
       siteId: "10000000",
-      email: " Staff@Example.com ",
+      email: "staff@example.com",
       displayName: "Staff",
       roleId: "99999999-9999-4999-8999-999999999999",
+      actorType: "owner",
+      actorId: "88888888-8888-4888-8888-888888888888",
     }),
     /^Error: employee_email_in_use$/,
   );
 });
 
-test("employee invite reservation uses merchant, id and version CAS while updating invited_at", async () => {
-  const invitedAt = "2026-07-31T09:30:00.000Z";
-  const updates: Array<Record<string, unknown>> = [];
-  const filters: Array<[string, unknown]> = [];
+test("employee offboarding payload combinations are validated before the RPC", async () => {
+  let calls = 0;
   const client = {
-    from(table: string) {
-      assert.equal(table, "merchant_enterprise_employees");
-      const builder = {
-        update(patch: Record<string, unknown>) {
-          updates.push(patch);
-          return builder;
-        },
-        eq(column: string, value: unknown) {
-          filters.push([column, value]);
-          return builder;
-        },
-        select() {
-          return builder;
-        },
-        async maybeSingle() {
-          return { data: employeeRow(8, invitedAt), error: null };
-        },
-      };
-      return builder;
+    from() {
+      throw new Error("employee lifecycle mutations must stay transactional");
     },
     async rpc() {
-      throw new Error("employee updates must not call RPCs");
+      calls += 1;
+      throw new Error("invalid payload must stop before persistence");
     },
   } as unknown as MerchantEnterpriseStoreClient;
-
-  const employee = await updateMerchantEnterpriseEmployee(client, {
+  const base = {
     siteId: "10000000",
     employeeId: "77777777-7777-4777-8777-777777777777",
     version: 7,
-    invitedAt,
-  });
-
-  assert.deepEqual(updates, [{ invited_at: invitedAt }]);
-  assert.deepEqual(filters, [
-    ["merchant_id", "10000000"],
-    ["id", "77777777-7777-4777-8777-777777777777"],
-    ["version", 7],
-  ]);
-  assert.equal(employee.version, 8);
-  assert.equal(employee.invitedAt, invitedAt);
-});
-
-test("replaying an employee invite reservation with the consumed version conflicts", async () => {
-  const client = {
-    from() {
-      const builder = {
-        update() {
-          return builder;
-        },
-        eq() {
-          return builder;
-        },
-        select() {
-          return builder;
-        },
-        async maybeSingle() {
-          return { data: null, error: null };
-        },
-      };
-      return builder;
+    actorType: "owner" as const,
+    actorId: "88888888-8888-4888-8888-888888888888",
+  };
+  for (const payload of [
+    { status: "active" as const, offboardingMode: "unassign" as const },
+    { status: "disabled" as const, offboardingMode: "reassign" as const },
+    {
+      status: "disabled" as const,
+      offboardingMode: "unassign" as const,
+      replacementEmployeeId: "66666666-6666-4666-8666-666666666666",
     },
-    async rpc() {
-      throw new Error("employee updates must not call RPCs");
+    {
+      status: "disabled" as const,
+      replacementEmployeeId: "66666666-6666-4666-8666-666666666666",
     },
-  } as unknown as MerchantEnterpriseStoreClient;
-
+  ]) {
+    await assert.rejects(
+      updateMerchantEnterpriseEmployee(client, { ...base, ...payload }),
+      /^Error: invalid_employee_offboarding$/,
+    );
+  }
   await assert.rejects(
     updateMerchantEnterpriseEmployee(client, {
-      siteId: "10000000",
-      employeeId: "77777777-7777-4777-8777-777777777777",
-      version: 7,
-      invitedAt: "2026-07-31T09:30:00.000Z",
+      ...base,
+      status: "disabled",
+      offboardingMode: "reassign",
+      replacementEmployeeId: base.employeeId,
     }),
-    /enterprise_version_conflict/,
+    /^Error: employee_offboarding_replacement_invalid$/,
   );
+  assert.equal(calls, 0);
 });
 
 test("role creation and updates persist board access through atomic RPCs", async () => {
