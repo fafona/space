@@ -87,6 +87,10 @@ function hasOwn(body: TaskBody | null, key: keyof TaskBody) {
   return Boolean(body && Object.prototype.hasOwnProperty.call(body, key));
 }
 
+function hasSourceReferenceFields(body: TaskBody | null) {
+  return hasOwn(body, "sourceType") || hasOwn(body, "sourceId");
+}
+
 function expectedVersion(value: unknown) {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
     throw new Error("invalid_task_version");
@@ -152,6 +156,7 @@ export async function POST(request: Request) {
     if (!isMerchantNumericId(siteId)) {
       return NextResponse.json({ ok: false, error: "invalid_site_id" }, { status: 400 });
     }
+    if (hasSourceReferenceFields(body)) throw new Error("invalid_task_source");
     const actor = await resolveMerchantEnterpriseActor(request, {
       siteId,
       requiredPermission: "tasks.create",
@@ -181,8 +186,6 @@ export async function POST(request: Request) {
       priority: requestedPriority,
       dueAt: requestedDueAt,
       ...(requestedPosition !== undefined ? { position: requestedPosition } : {}),
-      sourceType: text(body?.sourceType, 80),
-      sourceId: text(body?.sourceId, 200),
       createdByEmployeeId: actor.type === "employee" ? actor.id : "",
       assigneeIds: requestedAssignees,
       actorType: actor.type,
@@ -203,6 +206,7 @@ export async function PATCH(request: Request) {
     if (!isMerchantNumericId(siteId)) {
       return NextResponse.json({ ok: false, error: "invalid_site_id" }, { status: 400 });
     }
+    if (hasSourceReferenceFields(body)) throw new Error("invalid_task_source");
     const requiredPermissions = getMerchantTaskPatchRequiredPermissions(body);
     if (requiredPermissions.length === 0) throw new Error("invalid_task_update");
     if (hasOwn(body, "archived") && typeof body?.archived !== "boolean") {
