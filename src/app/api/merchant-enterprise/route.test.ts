@@ -41,6 +41,11 @@ import {
   POST as createTask,
 } from "@/app/api/merchant-enterprise/tasks/route";
 import {
+  handleMerchantOrderTaskPost,
+  parseMerchantOrderTaskInput,
+  type MerchantOrderTaskRouteDependencies,
+} from "@/app/api/merchant-enterprise/order-tasks/route";
+import {
   GET as getTaskEvents,
   POST as createTaskComment,
   toPublicMerchantTaskEvent,
@@ -55,9 +60,11 @@ import type {
   MerchantEnterpriseActor,
   MerchantEnterpriseEmployee,
   MerchantEnterpriseSnapshot,
+  MerchantTask,
   MerchantTaskEvent,
 } from "@/lib/merchantEnterprise";
 import type { MerchantEnterpriseStoreClient } from "@/lib/merchantEnterpriseStore.server";
+import { MerchantEnterpriseAccessError } from "@/lib/merchantEnterpriseAuth.server";
 
 function pendingEmployee(
   invitedAt: string | null,
@@ -1137,6 +1144,393 @@ test("restricted role managers receive only scoped board metadata", () => {
   assert.deepEqual(visible.boards.map((board) => board.id), [allowedBoardId]);
   assert.deepEqual(visible.columns, []);
   assert.deepEqual(visible.tasks, []);
+});
+
+const ORDER_TASK_SITE_ID = "10000000";
+const ORDER_TASK_BOARD_ID = "11111111-1111-4111-8111-111111111111";
+const ORDER_TASK_COLUMN_ID = "22222222-2222-4222-8222-222222222222";
+const ORDER_TASK_ORDER_ID = "O10000000202608010001";
+
+function merchantOrderTaskRequestBody() {
+  return {
+    siteId: ORDER_TASK_SITE_ID,
+    orderId: ORDER_TASK_ORDER_ID,
+    boardId: ORDER_TASK_BOARD_ID,
+    columnId: ORDER_TASK_COLUMN_ID,
+    title: `Order ${ORDER_TASK_ORDER_ID}`,
+    description: "2 items · EUR 24.00",
+    priority: "high" as const,
+    dueAt: "2026-08-02T18:00:00.000Z",
+    assigneeIds: ["33333333-3333-4333-8333-333333333333"],
+    operationId: "enterprise-order-task:create:1",
+  };
+}
+
+function merchantOrderTaskRecord(): MerchantTask {
+  return {
+    id: "44444444-4444-4444-8444-444444444444",
+    siteId: ORDER_TASK_SITE_ID,
+    boardId: ORDER_TASK_BOARD_ID,
+    columnId: ORDER_TASK_COLUMN_ID,
+    title: `Order ${ORDER_TASK_ORDER_ID}`,
+    description: "2 items · EUR 24.00",
+    priority: "high",
+    dueAt: "2026-08-02T18:00:00.000Z",
+    completedAt: null,
+    archivedAt: null,
+    position: 0,
+    sourceType: "order",
+    sourceId: ORDER_TASK_ORDER_ID,
+    createdByEmployeeId: "",
+    assigneeIds: ["33333333-3333-4333-8333-333333333333"],
+    version: 1,
+    createdAt: "2026-08-01T10:00:00.000Z",
+    updatedAt: "2026-08-01T10:00:00.000Z",
+  };
+}
+
+function merchantOrderTaskOwner(): MerchantEnterpriseActor {
+  return {
+    type: "owner",
+    id: "55555555-5555-4555-8555-555555555555",
+    siteId: ORDER_TASK_SITE_ID,
+    displayName: "Owner",
+    email: "owner@example.com",
+    permissions: [],
+    accessScope: "all",
+    allowedBoardIds: [],
+  };
+}
+
+test("order task input parsing is strict and normalizes bounded task fields", () => {
+  assert.deepEqual(parseMerchantOrderTaskInput(merchantOrderTaskRequestBody()), {
+    ...merchantOrderTaskRequestBody(),
+    dueAt: "2026-08-02T18:00:00.000Z",
+  });
+  const headerOperationBody = {
+    ...merchantOrderTaskRequestBody(),
+    priority: undefined,
+    dueAt: "",
+    description: undefined,
+    assigneeIds: [
+      "33333333-3333-4333-8333-333333333333",
+      "33333333-3333-4333-8333-333333333333",
+    ],
+  } as Record<string, unknown>;
+  delete headerOperationBody.operationId;
+  assert.deepEqual(
+    parseMerchantOrderTaskInput(
+      headerOperationBody,
+      "enterprise-order-task:create:header",
+    ),
+    {
+      ...merchantOrderTaskRequestBody(),
+      priority: "normal",
+      dueAt: null,
+      description: "",
+      assigneeIds: ["33333333-3333-4333-8333-333333333333"],
+      operationId: "enterprise-order-task:create:header",
+    },
+  );
+
+  const cases: Array<[unknown, string]> = [
+    [null, "invalid_order_task_request"],
+    [{ ...merchantOrderTaskRequestBody(), customerEmail: "private@example.com" }, "invalid_order_task_request"],
+    [{ ...merchantOrderTaskRequestBody(), siteId: 10000000 }, "invalid_site_id"],
+    [{ ...merchantOrderTaskRequestBody(), orderId: "../other-order" }, "invalid_order_id"],
+    [{ ...merchantOrderTaskRequestBody(), boardId: "board-1" }, "invalid_task_board"],
+    [{ ...merchantOrderTaskRequestBody(), columnId: "column-1" }, "invalid_task_column"],
+    [{ ...merchantOrderTaskRequestBody(), title: "   " }, "invalid_task_title"],
+    [{ ...merchantOrderTaskRequestBody(), description: 42 }, "invalid_task_description"],
+    [{ ...merchantOrderTaskRequestBody(), priority: "critical" }, "invalid_task_priority"],
+    [{ ...merchantOrderTaskRequestBody(), dueAt: "tomorrow" }, "invalid_task_due_at"],
+    [{ ...merchantOrderTaskRequestBody(), assigneeIds: "employee-1" }, "invalid_task_assignees"],
+    [{ ...merchantOrderTaskRequestBody(), assigneeIds: ["employee-1"] }, "invalid_task_assignees"],
+    [{ ...merchantOrderTaskRequestBody(), operationId: "bad operation" }, "invalid_operation_id"],
+    [{ ...merchantOrderTaskRequestBody(), operationId: "" }, "invalid_operation_id"],
+  ];
+  for (const [input, error] of cases) {
+    assert.throws(() => parseMerchantOrderTaskInput(input), { message: error });
+  }
+});
+
+test("generic task mutations reject every client-supplied source field", async () => {
+  const sourceFields = [
+    { sourceType: "order" },
+    { sourceId: ORDER_TASK_ORDER_ID },
+    { sourceType: "" },
+    { sourceId: "" },
+  ];
+  for (const sourceField of sourceFields) {
+    const createResponse = await createTask(
+      new Request("https://www.faolla.com/api/merchant-enterprise/tasks", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://www.faolla.com",
+        },
+        body: JSON.stringify({
+          siteId: ORDER_TASK_SITE_ID,
+          boardId: ORDER_TASK_BOARD_ID,
+          columnId: ORDER_TASK_COLUMN_ID,
+          title: "Forged source",
+          ...sourceField,
+        }),
+      }),
+    );
+    assert.equal(createResponse.status, 400);
+    assert.deepEqual(await createResponse.json(), {
+      ok: false,
+      error: "invalid_task_source",
+    });
+
+    const updateResponse = await updateTask(
+      new Request("https://www.faolla.com/api/merchant-enterprise/tasks", {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://www.faolla.com",
+        },
+        body: JSON.stringify({
+          siteId: ORDER_TASK_SITE_ID,
+          taskId: "44444444-4444-4444-8444-444444444444",
+          version: 1,
+          title: "Forged source update",
+          ...sourceField,
+        }),
+      }),
+    );
+    assert.equal(updateResponse.status, 400);
+    assert.deepEqual(await updateResponse.json(), {
+      ok: false,
+      error: "invalid_task_source",
+    });
+  }
+});
+
+test("merchant owners create or reuse an authoritative order task without copying customer PII", async () => {
+  const actor = merchantOrderTaskOwner();
+  const task = merchantOrderTaskRecord();
+  const store = {} as MerchantEnterpriseStoreClient;
+  const calls = {
+    enterpriseEntitlement: 0,
+    orderLookup: 0,
+    create: 0,
+  };
+  let capturedInput: Parameters<MerchantOrderTaskRouteDependencies["createOrGetTask"]>[1] | null = null;
+  const dependencies: MerchantOrderTaskRouteDependencies = {
+    async resolveActor(_request, input) {
+      assert.deepEqual(input, {
+        siteId: ORDER_TASK_SITE_ID,
+        requiredPermission: "tasks.create",
+      });
+      return actor;
+    },
+    async requireEnterpriseEntitlement(siteId) {
+      calls.enterpriseEntitlement += 1;
+      assert.equal(siteId, ORDER_TASK_SITE_ID);
+      return {
+        permissionConfig: {
+          allowProductBlock: true,
+          allowOrderManagement: true,
+        },
+      };
+    },
+    async listOrders(siteId) {
+      calls.orderLookup += 1;
+      assert.equal(siteId, ORDER_TASK_SITE_ID);
+      return [
+        {
+          id: ORDER_TASK_ORDER_ID,
+          siteId: ORDER_TASK_SITE_ID,
+          customer: {
+            name: "Private Customer",
+            email: "private@example.com",
+            phone: "+34 600 000 000",
+          },
+        },
+      ];
+    },
+    async createOrGetTask(client, input) {
+      calls.create += 1;
+      assert.equal(client, store);
+      capturedInput = input;
+      return { task, created: true };
+    },
+    createStoreClient() {
+      return store;
+    },
+  };
+  const response = await handleMerchantOrderTaskPost(
+    new Request("https://www.faolla.com/api/merchant-enterprise/order-tasks", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "https://www.faolla.com",
+      },
+      body: JSON.stringify(merchantOrderTaskRequestBody()),
+    }),
+    dependencies,
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true, task, created: true });
+  assert.deepEqual(calls, {
+    enterpriseEntitlement: 1,
+    orderLookup: 1,
+    create: 1,
+  });
+  assert.deepEqual(capturedInput, {
+    siteId: ORDER_TASK_SITE_ID,
+    orderId: ORDER_TASK_ORDER_ID,
+    boardId: ORDER_TASK_BOARD_ID,
+    columnId: ORDER_TASK_COLUMN_ID,
+    title: `Order ${ORDER_TASK_ORDER_ID}`,
+    description: "2 items · EUR 24.00",
+    priority: "high",
+    dueAt: "2026-08-02T18:00:00.000Z",
+    createdByEmployeeId: "",
+    assigneeIds: ["33333333-3333-4333-8333-333333333333"],
+    actorType: "owner",
+    actorId: actor.id,
+    operationId: "enterprise-order-task:create:1",
+  });
+  assert.doesNotMatch(JSON.stringify(capturedInput), /Private Customer|private@example|600 000/);
+});
+
+test("order task creation rejects employees before reading orders", async () => {
+  let downstreamCalls = 0;
+  const dependencies: MerchantOrderTaskRouteDependencies = {
+    async resolveActor() {
+      return {
+        type: "employee",
+        id: "66666666-6666-4666-8666-666666666666",
+        siteId: ORDER_TASK_SITE_ID,
+        displayName: "Employee",
+        email: "employee@example.com",
+        roleId: "77777777-7777-4777-8777-777777777777",
+        permissions: ["enterprise.view", "tasks.view", "tasks.create", "tasks.assign"],
+        accessScope: "all",
+        allowedBoardIds: [],
+      };
+    },
+    async requireEnterpriseEntitlement() {
+      downstreamCalls += 1;
+      return null;
+    },
+    async listOrders() {
+      downstreamCalls += 1;
+      return [];
+    },
+    async createOrGetTask() {
+      downstreamCalls += 1;
+      return { task: merchantOrderTaskRecord(), created: true };
+    },
+    createStoreClient() {
+      downstreamCalls += 1;
+      return {} as MerchantEnterpriseStoreClient;
+    },
+  };
+  const response = await handleMerchantOrderTaskPost(
+    new Request("https://www.faolla.com/api/merchant-enterprise/order-tasks", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "https://www.faolla.com",
+      },
+      body: JSON.stringify(merchantOrderTaskRequestBody()),
+    }),
+    dependencies,
+  );
+
+  assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), { ok: false, error: "permission_denied" });
+  assert.equal(downstreamCalls, 0);
+});
+
+test("order task creation requires order management and an authoritative matching order", async () => {
+  const actor = merchantOrderTaskOwner();
+  const baseDependencies: MerchantOrderTaskRouteDependencies = {
+    async resolveActor() {
+      return actor;
+    },
+    async requireEnterpriseEntitlement() {
+      return {
+        permissionConfig: {
+          allowProductBlock: false,
+          allowOrderManagement: true,
+        },
+      };
+    },
+    async listOrders() {
+      return [];
+    },
+    async createOrGetTask() {
+      throw new Error("must not create without an authoritative order");
+    },
+    createStoreClient() {
+      throw new Error("must not create a store client before order validation");
+    },
+  };
+  const request = () =>
+    new Request("https://www.faolla.com/api/merchant-enterprise/order-tasks", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "https://www.faolla.com",
+      },
+      body: JSON.stringify(merchantOrderTaskRequestBody()),
+    });
+
+  const disabledResponse = await handleMerchantOrderTaskPost(request(), baseDependencies);
+  assert.equal(disabledResponse.status, 403);
+  assert.deepEqual(await disabledResponse.json(), {
+    ok: false,
+    error: "order_management_disabled",
+  });
+
+  const missingResponse = await handleMerchantOrderTaskPost(request(), {
+    ...baseDependencies,
+    async requireEnterpriseEntitlement() {
+      return {
+        permissionConfig: {
+          allowProductBlock: true,
+          allowOrderManagement: true,
+        },
+      };
+    },
+  });
+  assert.equal(missingResponse.status, 404);
+  assert.deepEqual(await missingResponse.json(), {
+    ok: false,
+    error: "order_not_found",
+  });
+
+  const unavailableResponse = await handleMerchantOrderTaskPost(request(), {
+    ...baseDependencies,
+    async requireEnterpriseEntitlement() {
+      throw new MerchantEnterpriseAccessError("enterprise_entitlement_unavailable", 503);
+    },
+  });
+  assert.equal(unavailableResponse.status, 503);
+  assert.deepEqual(await unavailableResponse.json(), {
+    ok: false,
+    error: "enterprise_entitlement_unavailable",
+  });
+});
+
+test("order task creation rejects untrusted cross-origin requests before parsing", async () => {
+  const response = await handleMerchantOrderTaskPost(
+    new Request("https://www.faolla.com/api/merchant-enterprise/order-tasks", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "https://example.invalid",
+      },
+      body: JSON.stringify(merchantOrderTaskRequestBody()),
+    }),
+  );
+  assert.equal(response.status, 403);
 });
 
 test("task patch permissions are derived from every mutated field", () => {

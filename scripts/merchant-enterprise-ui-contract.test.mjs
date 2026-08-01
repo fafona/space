@@ -15,6 +15,26 @@ const adminClientSource = readFileSync(
   path.join(process.cwd(), "src", "app", "admin", "AdminClient.tsx"),
   "utf8",
 );
+const desktopOrderManagerSource = readFileSync(
+  path.join(
+    process.cwd(),
+    "src",
+    "components",
+    "admin",
+    "MerchantOrderManagerDialog.tsx",
+  ),
+  "utf8",
+);
+const mobileOrderManagerSource = readFileSync(
+  path.join(
+    process.cwd(),
+    "src",
+    "components",
+    "admin",
+    "MerchantOrderMobilePanel.tsx",
+  ),
+  "utf8",
+);
 const enterprisePortalSource = readFileSync(
   path.join(
     process.cwd(),
@@ -500,7 +520,7 @@ test("create-task retries reuse an operation id only while the form fingerprint 
   }
   assert.match(
     createTaskSource,
-    /const\s+fingerprint\s*=\s*JSON\.stringify\(taskInput\)/,
+    /const\s+fingerprint\s*=\s*JSON\.stringify\(\s*(?:taskInput|\{\s*\.\.\.taskInput,\s*source\s*\})\s*\)/,
     "the idempotency key must be tied to the complete submitted task payload",
   );
 
@@ -515,11 +535,11 @@ test("create-task retries reuse an operation id only while the form fingerprint 
   );
   assert.match(
     createTaskSource,
-    /createClientMutationOperationId\(\s*["']enterprise-task-create["']\s*\)/,
+    /createClientMutationOperationId\([\s\S]{0,180}["']enterprise-task-create["'][\s\S]{0,80}\)/,
   );
   assert.match(
     createTaskSource,
-    /\.\.\.taskInput,\s*operationId,/,
+    /\.\.\.taskInput,[\s\S]{0,180}\boperationId,/,
     "the retained operation id must be sent with the submitted task payload",
   );
   assert.match(
@@ -850,6 +870,236 @@ test("merchant admin moves enterprise subviews into the contextual sidebar menu"
   assert.ok(enterpriseButtonIndex < supportButtonIndex);
 });
 
+test("desktop and mobile order managers expose the enterprise-task action only in order details", () => {
+  const variants = [
+    {
+      label: "desktop order manager",
+      targetSource: desktopOrderManagerSource,
+      propsStart: /type\s+MerchantOrderManagerDialogProps\s*=\s*\{/,
+      detailStart: /const\s+detailDialog\s*=\s*detailOrder/,
+      detailEnd: /const\s+content\s*=/,
+    },
+    {
+      label: "mobile order manager",
+      targetSource: mobileOrderManagerSource,
+      propsStart: /type\s+MerchantOrderMobilePanelProps\s*=\s*\{/,
+      detailStart: /const\s+detailOverlay\s*=\s*detailOrder/,
+      detailEnd: /const\s+workbenchDialog\s*=/,
+    },
+  ];
+
+  for (const variant of variants) {
+    const propsSource = sliceSourceBetween(
+      variant.targetSource,
+      variant.propsStart,
+      /\n\};/,
+      `${variant.label} props`,
+    );
+    assert.match(
+      propsSource,
+      /onOpenEnterpriseTask\?\s*:\s*\(order:\s*MerchantOrderRecord\)\s*=>\s*void/,
+      `${variant.label} must keep the integration optional`,
+    );
+
+    const detailSource = sliceSourceBetween(
+      variant.targetSource,
+      variant.detailStart,
+      variant.detailEnd,
+      `${variant.label} detail action area`,
+    );
+    assert.match(detailSource, /\{onOpenEnterpriseTask\s*\?\s*\(/);
+    assert.match(detailSource, /onOpenEnterpriseTask\(detailOrder\)/);
+    assert.match(detailSource, /创建\/查看企业任务/);
+
+    const outsideDetailSource = variant.targetSource.replace(detailSource, "");
+    assert.doesNotMatch(
+      outsideDetailSource,
+      /onOpenEnterpriseTask\s*\(\s*(?:record|order)\s*\)/,
+      `${variant.label} must not add enterprise-task actions to order lists or batch actions`,
+    );
+    assert.equal(
+      [...variant.targetSource.matchAll(/创建\/查看企业任务/g)].length,
+      1,
+      `${variant.label} must render one detail-only enterprise-task entry`,
+    );
+  }
+});
+
+test("merchant admin gates order-task entry points and forwards one request-scoped intent", () => {
+  assert.match(
+    adminClientSource,
+    /const\s+\[merchantEnterpriseTaskIntent,\s*setMerchantEnterpriseTaskIntent\]\s*=\s*\n?\s*useState<MerchantOrderTaskDraftIntent\s*\|\s*null>\(null\)/,
+  );
+
+  const openOrderTaskSource = sliceSourceBetween(
+    adminClientSource,
+    /function\s+openMerchantOrderEnterpriseTask\b/,
+    /function\s+handleMerchantEnterpriseTaskIntentHandled\b/,
+    "open order enterprise task",
+  );
+  assert.match(openOrderTaskSource, /if\s*\(!canUseEnterpriseManagement\)/);
+  assert.match(openOrderTaskSource, /buildMerchantOrderTaskDraft\(order\)/);
+  assert.match(
+    openOrderTaskSource,
+    /requestId:\s*createClientMutationOperationId\(["']merchant-order-task["']\)/,
+  );
+  assert.match(openOrderTaskSource, /setMerchantEnterpriseView\(["']tasks["']\)/);
+  assert.match(openOrderTaskSource, /setMerchantEnterpriseTaskIntent\(\{/);
+
+  const handledIntentSource = sliceSourceBetween(
+    adminClientSource,
+    /function\s+handleMerchantEnterpriseTaskIntentHandled\b/,
+    /const\s+merchantDesktopPointRedemptionCenterActive\b/,
+    "handled order task intent",
+  );
+  assert.match(
+    handledIntentSource,
+    /setMerchantEnterpriseTaskIntent\(\(current\)\s*=>[\s\S]*current\?\.requestId\s*===\s*requestId\s*\?\s*null\s*:\s*current/,
+    "finishing an old request must not clear a newer order-task intent",
+  );
+
+  const mobileOrderSurface = sliceSourceBetween(
+    adminClientSource,
+    /const\s+supportMobileBusinessContent\s*=/,
+    /const\s+supportMobileEnterpriseContent\s*=/,
+    "mobile order surface",
+  );
+  assert.match(
+    mobileOrderSurface,
+    /canUseEnterpriseManagement\s*\?\s*\{[\s\S]*onOpenEnterpriseTask:[\s\S]*openMerchantOrderEnterpriseTask\(order,\s*["']mobile["']\)/,
+    "mobile orders must receive the task action only with enterprise entitlement",
+  );
+
+  const desktopOrderProps = sliceSourceBetween(
+    adminClientSource,
+    /const\s+merchantOrderManagerDialogCommonProps\s*=/,
+    /const\s+merchantVisibleCouponRecords\s*=/,
+    "desktop order manager props",
+  );
+  assert.match(
+    desktopOrderProps,
+    /canUseEnterpriseManagement\s*\?\s*\{[\s\S]*onOpenEnterpriseTask:[\s\S]*openMerchantOrderEnterpriseTask\(order,\s*["']desktop["']\)/,
+    "desktop orders must receive the task action only with enterprise entitlement",
+  );
+
+  const mobileEnterpriseSurface = sliceSourceBetween(
+    adminClientSource,
+    /const\s+supportMobileEnterpriseContent\s*=/,
+    /const\s+supportMobilePrimaryTabContent\s*=/,
+    "mobile enterprise intent handoff",
+  );
+  assert.match(mobileEnterpriseSurface, /taskDraftIntent=\{/);
+  assert.match(
+    mobileEnterpriseSurface,
+    /merchantEnterpriseTaskIntent\?\.siteId\s*===\s*supportMobileBookingSiteId/,
+  );
+  assert.match(
+    mobileEnterpriseSurface,
+    /onTaskDraftIntentHandled=\{handleMerchantEnterpriseTaskIntentHandled\}/,
+  );
+
+  const desktopWorkspaceSource = sliceSourceBetween(
+    adminClientSource,
+    /const\s+desktopMerchantWorkspaceContent\s*=/,
+    /\n\s*return\s*\(\s*\n\s*<main\b/,
+    "desktop enterprise intent handoff",
+  );
+  const desktopEnterpriseBranch = sliceSourceBetween(
+    desktopWorkspaceSource,
+    /merchantDesktopSection\s*===\s*["']enterprise["']\s*&&\s*canUseEnterpriseManagement\s*\?\s*\(/,
+    /:\s*merchantDesktopSection\s*===\s*["']logs["']/,
+    "desktop enterprise intent branch",
+  );
+  assert.match(desktopEnterpriseBranch, /taskDraftIntent=\{/);
+  assert.match(desktopEnterpriseBranch, /merchantEnterpriseTaskIntent\?\.siteId\s*===/);
+  assert.match(
+    desktopEnterpriseBranch,
+    /onTaskDraftIntentHandled=\{handleMerchantEnterpriseTaskIntentHandled\}/,
+  );
+});
+
+test("enterprise manager consumes each order intent once and creates through the dedicated endpoint", () => {
+  const propsSource = sliceBetween(
+    /type\s+MerchantEnterpriseManagerProps\s*=\s*\{/,
+    /\n\};/,
+    "enterprise manager props",
+  );
+  assert.match(
+    propsSource,
+    /taskDraftIntent\?\s*:\s*MerchantOrderTaskDraftIntent\s*\|\s*null/,
+  );
+  assert.match(
+    propsSource,
+    /onTaskDraftIntentHandled\?\s*:\s*\(requestId:\s*string\)\s*=>\s*void/,
+  );
+  assert.match(source, /const\s+handledTaskDraftIntentRef\s*=\s*useRef\(["']{2}\)/);
+
+  const intentEffectSource = sliceBetween(
+    /useEffect\(\(\)\s*=>\s*\{\s*\n\s*if\s*\(loading\s*\|\|\s*!actor\s*\|\|\s*!taskDraftIntent\)\s*return/,
+    /const\s+boardTasks\s*=/,
+    "order task intent effect",
+  );
+  assert.match(
+    intentEffectSource,
+    /if\s*\(handledTaskDraftIntentRef\.current\s*===\s*taskDraftIntent\.requestId\)\s*return/,
+  );
+  assert.match(
+    intentEffectSource,
+    /handledTaskDraftIntentRef\.current\s*=\s*taskDraftIntent\.requestId/,
+  );
+  assert.match(
+    intentEffectSource,
+    /onTaskDraftIntentHandled\?\.\(taskDraftIntent\.requestId\)/,
+  );
+  assert.ok(
+    intentEffectSource.indexOf("handledTaskDraftIntentRef.current === taskDraftIntent.requestId") <
+      intentEffectSource.indexOf("handledTaskDraftIntentRef.current = taskDraftIntent.requestId"),
+    "the duplicate guard must run before an intent is marked handled",
+  );
+  assert.match(intentEffectSource, /taskDraftIntent\.sourceType\s*!==\s*["']order["']/);
+  assert.match(
+    intentEffectSource,
+    /snapshot\.tasks\.find\([\s\S]*task\.sourceType\s*===\s*taskDraftIntent\.sourceType[\s\S]*task\.sourceId\s*===\s*taskDraftIntent\.sourceId/,
+    "an existing active or archived source task must open instead of creating a duplicate draft",
+  );
+  assert.match(intentEffectSource, /actor\.type\s*!==\s*["']owner["']/);
+  assert.match(intentEffectSource, /!can\(actor,\s*["']tasks\.create["']\)/);
+  assert.match(
+    intentEffectSource,
+    /setTaskSource\(\{[\s\S]*sourceType:\s*taskDraftIntent\.sourceType,[\s\S]*sourceId:\s*taskDraftIntent\.sourceId/,
+  );
+
+  const createTaskSource = sliceBetween(
+    /async\s+function\s+createTask\b/,
+    /async\s+function\s+reorderTask\b/,
+    "order-aware createTask",
+  );
+  assert.match(
+    createTaskSource,
+    /const\s+fingerprint\s*=\s*JSON\.stringify\(\{\s*\.\.\.taskInput,\s*source\s*\}\)/,
+    "linked and manual drafts must not share an idempotency fingerprint",
+  );
+  assert.match(
+    createTaskSource,
+    /source\s*\?\s*["']\/api\/merchant-enterprise\/order-tasks["']\s*:\s*["']\/api\/merchant-enterprise\/tasks["']/,
+  );
+  assert.match(
+    createTaskSource,
+    /\.\.\.\(source\s*\?\s*\{\s*orderId:\s*source\.sourceId\s*\}\s*:\s*\{\}\)/,
+    "the dedicated route must receive only the canonical order id as source input",
+  );
+  assert.match(createTaskSource, /setTaskSource\(null\)/);
+
+  const taskComposerSource = sliceBetween(
+    /id=["']merchant-enterprise-task-composer["']/,
+    /<section\s+className=["']rounded-3xl border border-slate-200 bg-white p-4 shadow-sm["']>/,
+    "order-aware task composer",
+  );
+  assert.match(taskComposerSource, /来源订单：/);
+  assert.match(taskComposerSource, /taskSource\.sourceId/);
+  assert.match(taskComposerSource, /onClick=\{\(\)\s*=>\s*setTaskSource\(null\)\}/);
+});
+
 test("pending employee invitations have a safe responsive management flow", () => {
   const inviteEmployeeSource = sliceBetween(
     /async\s+function\s+inviteEmployee\b/,
@@ -1033,7 +1283,7 @@ test("external enterprise navigation stays permission-aware while standalone kee
 
   assert.match(
     adminClientSource,
-    /<MerchantEnterpriseManager[\s\S]{0,500}navigation=\{\{[\s\S]{0,300}mode:\s*["']external["'][\s\S]{0,300}activeView:\s*merchantEnterpriseView/,
+    /<MerchantEnterpriseManager[\s\S]{0,1400}navigation=\{\{[\s\S]{0,300}mode:\s*["']external["'][\s\S]{0,300}activeView:\s*merchantEnterpriseView/,
   );
   assert.doesNotMatch(
     enterprisePortalSource,

@@ -63,6 +63,7 @@ import {
 } from "@/lib/merchantEnterprise";
 import { isValidAuthEmail, normalizeAuthEmail } from "@/lib/authCredentialValidation";
 import { createClientMutationOperationId } from "@/lib/mutationOperationId";
+import type { MerchantOrderTaskDraftIntent } from "@/lib/merchantOrderEnterprise";
 import {
   planMerchantTaskReorder,
   sortMerchantTaskOrderItems,
@@ -99,6 +100,8 @@ type MerchantEnterpriseManagerProps = {
   className?: string;
   standalone?: boolean;
   navigation?: MerchantEnterpriseExternalNavigation;
+  taskDraftIntent?: MerchantOrderTaskDraftIntent | null;
+  onTaskDraftIntentHandled?: (requestId: string) => void;
 };
 
 type OverviewPayload = {
@@ -2961,6 +2964,8 @@ function MerchantEnterpriseManagerContent({
   className = "",
   standalone = false,
   navigation,
+  taskDraftIntent = null,
+  onTaskDraftIntentHandled,
 }: MerchantEnterpriseManagerProps) {
   const [internalView, setInternalView] = useState<MerchantEnterpriseView>("overview");
   const [actor, setActor] = useState<MerchantEnterpriseActor | null>(null);
@@ -2980,6 +2985,7 @@ function MerchantEnterpriseManagerContent({
   const lastSyncedAtRef = useRef(0);
   const defaultTaskAssigneeScopeRef = useRef("");
   const defaultRoleBoardAccessActorRef = useRef("");
+  const handledTaskDraftIntentRef = useRef("");
   const taskCreateMutationRef = useRef<{ fingerprint: string; operationId: string } | null>(null);
   const taskSensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
@@ -3007,6 +3013,10 @@ function MerchantEnterpriseManagerContent({
   const [taskPriority, setTaskPriority] = useState<MerchantTaskPriority>("normal");
   const [taskDueAt, setTaskDueAt] = useState("");
   const [taskAssigneeIds, setTaskAssigneeIds] = useState<string[]>([]);
+  const [taskSource, setTaskSource] = useState<{
+    sourceType: "order";
+    sourceId: string;
+  } | null>(null);
   const [taskQuery, setTaskQuery] = useState("");
   const [taskPriorityFilter, setTaskPriorityFilter] = useState<MerchantTaskPriority | "all">("all");
   const [taskAssigneeFilter, setTaskAssigneeFilter] = useState("all");
@@ -3319,7 +3329,8 @@ function MerchantEnterpriseManagerContent({
     Boolean(taskDescription.trim()) ||
     Boolean(taskDueAt) ||
     taskPriority !== "normal" ||
-    taskAssigneeIds.length > 0;
+    taskAssigneeIds.length > 0 ||
+    Boolean(taskSource);
   const canAutoRefreshOnFocus = Boolean(
     actor &&
       !busy &&
@@ -3423,6 +3434,107 @@ function MerchantEnterpriseManagerContent({
   const activeColumns = snapshot.columns
     .filter((column) => column.status === "active" && column.boardId === activeBoard?.id)
     .sort((left, right) => left.position - right.position);
+  useEffect(() => {
+    if (loading || !actor || !taskDraftIntent) return;
+    if (handledTaskDraftIntentRef.current === taskDraftIntent.requestId) return;
+
+    handledTaskDraftIntentRef.current = taskDraftIntent.requestId;
+    const acknowledgeIntent = () => {
+      onTaskDraftIntentHandled?.(taskDraftIntent.requestId);
+    };
+
+    if (
+      taskDraftIntent.siteId !== siteId ||
+      taskDraftIntent.sourceType !== "order" ||
+      !taskDraftIntent.sourceId.trim()
+    ) {
+      setMessage({ kind: "error", text: "订单任务来源无效，请返回订单详情后重试。" });
+      acknowledgeIntent();
+      return;
+    }
+
+    const existingTask = snapshot.tasks.find(
+      (task) =>
+        task.sourceType === taskDraftIntent.sourceType &&
+        task.sourceId === taskDraftIntent.sourceId,
+    );
+    if (existingTask) {
+      setSelectedBoardId(existingTask.boardId);
+      setTaskQuery("");
+      setTaskPriorityFilter("all");
+      setTaskAssigneeFilter("all");
+      setTaskArchiveView(existingTask.archivedAt ? "archived" : "active");
+      setTaskSource(null);
+      setMobileTaskComposerOpen(false);
+      selectView("tasks");
+      setEditingTaskId(existingTask.id);
+      setMessage({ kind: "info", text: "该订单已有企业任务，已为你打开。" });
+      acknowledgeIntent();
+      return;
+    }
+
+    if (actor.type !== "owner" || !can(actor, "tasks.create")) {
+      setMessage({ kind: "error", text: "仅企业负责人可从订单创建企业任务。" });
+      acknowledgeIntent();
+      return;
+    }
+
+    const boardForDraft =
+      activeBoards.find(
+        (board) =>
+          board.id === selectedBoardId &&
+          snapshot.columns.some(
+            (column) => column.boardId === board.id && column.status === "active",
+          ),
+      ) ??
+      activeBoards.find((board) =>
+        snapshot.columns.some(
+          (column) => column.boardId === board.id && column.status === "active",
+        ),
+      );
+    if (!boardForDraft) {
+      setMessage({
+        kind: "error",
+        text: needsBootstrap
+          ? "请先初始化企业工作区，再从订单创建任务。"
+          : "请先准备一个启用中的看板和工作列。",
+      });
+      acknowledgeIntent();
+      return;
+    }
+
+    setSelectedBoardId(boardForDraft.id);
+    setTaskQuery("");
+    setTaskPriorityFilter("all");
+    setTaskAssigneeFilter("all");
+    setTaskArchiveView("active");
+    setEditingTaskId("");
+    setTaskTitle(taskDraftIntent.title);
+    setTaskDescription(taskDraftIntent.description);
+    setTaskPriority(taskDraftIntent.priority);
+    setTaskDueAt("");
+    setTaskAssigneeIds([]);
+    setTaskSource({
+      sourceType: taskDraftIntent.sourceType,
+      sourceId: taskDraftIntent.sourceId,
+    });
+    setMobileTaskComposerOpen(true);
+    selectView("tasks");
+    setMessage({ kind: "info", text: "已从订单预填任务，请确认后创建。" });
+    acknowledgeIntent();
+  }, [
+    activeBoards,
+    actor,
+    loading,
+    needsBootstrap,
+    onTaskDraftIntentHandled,
+    selectView,
+    selectedBoardId,
+    siteId,
+    snapshot.columns,
+    snapshot.tasks,
+    taskDraftIntent,
+  ]);
   const boardTasks = snapshot.tasks.filter((task) => task.boardId === activeBoard?.id);
   const visibleTasks = filterMerchantTasks(boardTasks, { archive: "active" });
   const overviewTaskSummary = useMemo(
@@ -3816,6 +3928,7 @@ function MerchantEnterpriseManagerContent({
       setMessage({ kind: "error", text: "请先填写任务标题。" });
       return;
     }
+    const source = taskSource;
     const taskInput = {
       boardId: activeBoard.id,
       columnId: activeColumns[0].id,
@@ -3825,22 +3938,27 @@ function MerchantEnterpriseManagerContent({
       dueAt: taskDueAt ? new Date(`${taskDueAt}T23:59:59`).toISOString() : null,
       assigneeIds: can(actor, "tasks.assign") ? taskAssigneeIds : [],
     };
-    const fingerprint = JSON.stringify(taskInput);
+    const fingerprint = JSON.stringify({ ...taskInput, source });
     if (taskCreateMutationRef.current?.fingerprint !== fingerprint) {
       taskCreateMutationRef.current = {
         fingerprint,
-        operationId: createClientMutationOperationId("enterprise-task-create"),
+        operationId: createClientMutationOperationId(
+          source ? "enterprise-order-task-create" : "enterprise-task-create",
+        ),
       };
     }
     const operationId = taskCreateMutationRef.current.operationId;
     const payload = await mutate(
-      "/api/merchant-enterprise/tasks",
+      source
+        ? "/api/merchant-enterprise/order-tasks"
+        : "/api/merchant-enterprise/tasks",
       "POST",
       {
         ...taskInput,
+        ...(source ? { orderId: source.sourceId } : {}),
         operationId,
       },
-      "任务已创建。",
+      source ? "订单任务已创建。" : "任务已创建。",
     );
     if (payload) {
       taskCreateMutationRef.current = null;
@@ -3849,7 +3967,28 @@ function MerchantEnterpriseManagerContent({
       setTaskPriority("normal");
       setTaskDueAt("");
       setTaskAssigneeIds([]);
+      setTaskSource(null);
       setMobileTaskComposerOpen(false);
+      if (source && payload.task) {
+        const sourceTask = payload.task as MerchantTask;
+        setSnapshot((current) => ({
+          ...current,
+          tasks: [
+            ...current.tasks.filter((task) => task.id !== sourceTask.id),
+            sourceTask,
+          ],
+        }));
+        setSelectedBoardId(sourceTask.boardId);
+        setTaskArchiveView(sourceTask.archivedAt ? "archived" : "active");
+        setEditingTaskId(sourceTask.id);
+        setMessage({
+          kind: payload.created === false ? "info" : "success",
+          text:
+            payload.created === false
+              ? "该订单已有企业任务，已为你打开。"
+              : "订单任务已创建并打开。",
+        });
+      }
     }
   }
 
@@ -4753,6 +4892,21 @@ function MerchantEnterpriseManagerContent({
                     新建任务
                   </button>
                 </div>
+                {taskSource ? (
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-cyan-200 bg-cyan-50 px-4 py-3 text-sm text-cyan-900">
+                    <div className="min-w-0">
+                      <span className="font-semibold">来源订单：</span>
+                      <span className="break-all" data-no-translate="1">{taskSource.sourceId}</span>
+                    </div>
+                    <button
+                      type="button"
+                      className="rounded-lg border border-cyan-300 bg-white px-3 py-1.5 text-xs font-semibold text-cyan-800 hover:bg-cyan-100"
+                      onClick={() => setTaskSource(null)}
+                    >
+                      取消关联
+                    </button>
+                  </div>
+                ) : null}
                 <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
                   <label className="block text-xs font-medium text-slate-600 md:col-span-2">
                     任务标题

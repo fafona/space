@@ -22,6 +22,7 @@ type MerchantOrderMobilePanelProps = {
   darkMode?: boolean;
   onOrdersChange?: (records: MerchantOrderRecord[]) => void;
   onOpenConversation?: (target: { accountId?: string; email?: string; name?: string }) => void;
+  onOpenEnterpriseTask?: (order: MerchantOrderRecord) => void;
   onSectionChange?: (section: "booking" | "orders") => void;
 };
 
@@ -192,6 +193,7 @@ export default function MerchantOrderMobilePanel({
   darkMode = false,
   onOrdersChange,
   onOpenConversation,
+  onOpenEnterpriseTask,
   onSectionChange,
 }: MerchantOrderMobilePanelProps) {
   const overflowMenuRef = useRef<HTMLDivElement>(null);
@@ -1024,6 +1026,22 @@ export default function MerchantOrderMobilePanel({
                   disabled={detailOrderBusy}
                 >
                   {isDetailOrderActionBusy("uncomplete") ? "处理中" : "取消完成"}
+                </button>
+              ) : null}
+              {onOpenEnterpriseTask ? (
+                <button
+                  type="button"
+                  className={`rounded-full px-4 py-2 text-sm font-semibold ${
+                    darkMode
+                      ? "border border-cyan-400/30 bg-cyan-400/10 text-cyan-100"
+                      : "border border-cyan-200 bg-cyan-50 text-cyan-800"
+                  }`}
+                  onClick={() => {
+                    setDetailOrderId("");
+                    onOpenEnterpriseTask(detailOrder);
+                  }}
+                >
+                  创建/查看企业任务
                 </button>
               ) : null}
               <button

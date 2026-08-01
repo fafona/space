@@ -39,6 +39,7 @@ type MerchantOrderManagerDialogProps = {
   onWorkbenchOpenChange?: (open: boolean) => void;
   onOrdersChange?: (records: MerchantOrderRecord[]) => void;
   onOpenConversation?: (target: { accountId?: string; email?: string; name?: string }) => void;
+  onOpenEnterpriseTask?: (order: MerchantOrderRecord) => void;
   onClose: () => void;
 };
 
@@ -255,6 +256,7 @@ export default function MerchantOrderManagerDialog({
   onWorkbenchOpenChange,
   onOrdersChange,
   onOpenConversation,
+  onOpenEnterpriseTask,
   onClose,
 }: MerchantOrderManagerDialogProps) {
   const isInline = mode === "inline";
@@ -1036,6 +1038,18 @@ export default function MerchantOrderManagerDialog({
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
+                {onOpenEnterpriseTask ? (
+                  <button
+                    type="button"
+                    className="rounded border border-cyan-200 bg-cyan-50 px-3 py-1.5 text-[13px] font-semibold leading-5 text-cyan-800 hover:bg-cyan-100"
+                    onClick={() => {
+                      closeDetailDialog();
+                      onOpenEnterpriseTask(detailOrder);
+                    }}
+                  >
+                    创建/查看企业任务
+                  </button>
+                ) : null}
                 {renderOrderActions(detailOrder, { persistDetailDraft: true })}
                 <button
                   type="button"

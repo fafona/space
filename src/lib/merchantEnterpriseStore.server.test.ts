@@ -9,10 +9,12 @@ import {
   createMerchantTaskBoard,
   createMerchantTaskColumn,
   createMerchantTask,
+  createOrGetMerchantOrderTask,
   loadMerchantEnterpriseSnapshot,
   loadMerchantTaskChecklistItems,
   loadMerchantTaskEvents,
   loadMerchantTaskBoardIdForAccess,
+  loadMerchantTaskBySource,
   moveMerchantTask,
   updateMerchantEnterpriseEmployee,
   updateMerchantEnterpriseRole,
@@ -70,6 +72,16 @@ function employeeRow(
     created_at: "2026-07-31T08:00:00.000Z",
     updated_at: invitedAt,
     ...overrides,
+  };
+}
+
+function orderTaskRow(version = 1, archivedAt: string | null = null) {
+  return {
+    ...taskRow(version),
+    title: "Process order O-1001",
+    source_type: "order",
+    source_id: "O-1001",
+    archived_at: archivedAt,
   };
 }
 
@@ -845,6 +857,233 @@ test("task creation sends task, assignees and event through one idempotent RPC",
     "66666666-6666-4666-8666-666666666666",
   ]);
   assert.equal(task.assigneeIds.length, 2);
+});
+
+test("source task lookup is merchant scoped, includes archived tasks, and loads assignees", async () => {
+  const calls: Array<{ table: string; method: string; args: unknown[] }> = [];
+  const archivedAt = "2026-08-01T09:00:00.000Z";
+  const client = {
+    from(table: string) {
+      const builder = {
+        select(...args: unknown[]) {
+          calls.push({ table, method: "select", args });
+          return builder;
+        },
+        eq(...args: unknown[]) {
+          calls.push({ table, method: "eq", args });
+          return builder;
+        },
+        order(...args: unknown[]) {
+          calls.push({ table, method: "order", args });
+          return builder;
+        },
+        limit(...args: unknown[]) {
+          calls.push({ table, method: "limit", args });
+          if (table === "merchant_task_assignees") {
+            return Promise.resolve({
+              data: [
+                { employee_id: "55555555-5555-4555-8555-555555555555" },
+                { employee_id: "66666666-6666-4666-8666-666666666666" },
+              ],
+              error: null,
+            });
+          }
+          return builder;
+        },
+        async maybeSingle() {
+          calls.push({ table, method: "maybeSingle", args: [] });
+          return { data: orderTaskRow(4, archivedAt), error: null };
+        },
+      };
+      return builder;
+    },
+    async rpc() {
+      throw new Error("source lookup must not call RPCs");
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+
+  const task = await loadMerchantTaskBySource(client, "10000000", "order", "O-1001");
+
+  assert.equal(task?.archivedAt, archivedAt);
+  assert.deepEqual(task?.assigneeIds, [
+    "55555555-5555-4555-8555-555555555555",
+    "66666666-6666-4666-8666-666666666666",
+  ]);
+  assert.deepEqual(
+    calls.filter((call) => call.method === "eq"),
+    [
+      { table: "merchant_tasks", method: "eq", args: ["merchant_id", "10000000"] },
+      { table: "merchant_tasks", method: "eq", args: ["source_type", "order"] },
+      { table: "merchant_tasks", method: "eq", args: ["source_id", "O-1001"] },
+      {
+        table: "merchant_task_assignees",
+        method: "eq",
+        args: ["merchant_id", "10000000"],
+      },
+      {
+        table: "merchant_task_assignees",
+        method: "eq",
+        args: ["task_id", "11111111-1111-4111-8111-111111111111"],
+      },
+    ],
+  );
+  assert.equal(calls.some((call) => call.method === "is"), false);
+});
+
+test("order task creation fixes the source and reports a new task", async () => {
+  const rpcInputs: Record<string, unknown>[] = [];
+  const client = {
+    from(table: string) {
+      assert.equal(table, "merchant_tasks");
+      const builder = {
+        select() { return builder; },
+        eq() { return builder; },
+        order() { return builder; },
+        limit() { return builder; },
+        async maybeSingle() { return { data: null, error: null }; },
+      };
+      return builder;
+    },
+    async rpc(functionName: string, args: Record<string, unknown>) {
+      assert.equal(functionName, "faolla_create_merchant_task_v1");
+      rpcInputs.push(args.p_input as Record<string, unknown>);
+      return {
+        data: { task: orderTaskRow(), assignee_ids: [] },
+        error: null,
+      };
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+
+  const result = await createOrGetMerchantOrderTask(client, {
+    siteId: "10000000",
+    orderId: "O-1001",
+    boardId: "22222222-2222-4222-8222-222222222222",
+    columnId: "33333333-3333-4333-8333-333333333333",
+    title: "Process order O-1001",
+    actorType: "owner",
+    actorId: "44444444-4444-4444-8444-444444444444",
+    operationId: "order-task-create-1",
+  });
+
+  assert.equal(result.created, true);
+  assert.equal(result.task.sourceType, "order");
+  assert.equal(result.task.sourceId, "O-1001");
+  assert.equal(rpcInputs[0]?.source_type, "order");
+  assert.equal(rpcInputs[0]?.source_id, "O-1001");
+  assert.equal(rpcInputs[0]?.operation_id, "order-task-create-1");
+});
+
+test("order task creation returns an existing task without writing", async () => {
+  let rpcCalls = 0;
+  const client = {
+    from(table: string) {
+      const builder = {
+        select() { return builder; },
+        eq() { return builder; },
+        order() { return builder; },
+        limit() {
+          return table === "merchant_task_assignees"
+            ? Promise.resolve({ data: [], error: null })
+            : builder;
+        },
+        async maybeSingle() { return { data: orderTaskRow(2), error: null }; },
+      };
+      return builder;
+    },
+    async rpc() {
+      rpcCalls += 1;
+      throw new Error("existing order tasks must not be recreated");
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+
+  const result = await createOrGetMerchantOrderTask(client, {
+    siteId: "10000000",
+    orderId: "O-1001",
+    boardId: "22222222-2222-4222-8222-222222222222",
+    columnId: "33333333-3333-4333-8333-333333333333",
+    title: "Ignored because the task exists",
+  });
+
+  assert.equal(result.created, false);
+  assert.equal(result.task.version, 2);
+  assert.equal(rpcCalls, 0);
+});
+
+test("order task creation rereads after a stable concurrent-create conflict", async () => {
+  const taskReads = [null, orderTaskRow(3)];
+  let rpcCalls = 0;
+  const client = {
+    from(table: string) {
+      const builder = {
+        select() { return builder; },
+        eq() { return builder; },
+        order() { return builder; },
+        limit() {
+          return table === "merchant_task_assignees"
+            ? Promise.resolve({
+                data: [{ employee_id: "55555555-5555-4555-8555-555555555555" }],
+                error: null,
+              })
+            : builder;
+        },
+        async maybeSingle() { return { data: taskReads.shift() ?? null, error: null }; },
+      };
+      return builder;
+    },
+    async rpc() {
+      rpcCalls += 1;
+      return {
+        data: null,
+        error: { code: "P0001", message: "merchant_order_task_exists" },
+      };
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+
+  const result = await createOrGetMerchantOrderTask(client, {
+    siteId: "10000000",
+    orderId: "O-1001",
+    boardId: "22222222-2222-4222-8222-222222222222",
+    columnId: "33333333-3333-4333-8333-333333333333",
+    title: "Process order O-1001",
+  });
+
+  assert.equal(result.created, false);
+  assert.equal(result.task.version, 3);
+  assert.deepEqual(result.task.assigneeIds, ["55555555-5555-4555-8555-555555555555"]);
+  assert.equal(rpcCalls, 1);
+  assert.equal(taskReads.length, 0);
+});
+
+test("order task creation preserves non-conflict errors and missing conflict rereads", async () => {
+  for (const errorMessage of ["invalid_task_board", "merchant_order_task_exists"]) {
+    const client = {
+      from(table: string) {
+        assert.equal(table, "merchant_tasks");
+        const builder = {
+          select() { return builder; },
+          eq() { return builder; },
+          order() { return builder; },
+          limit() { return builder; },
+          async maybeSingle() { return { data: null, error: null }; },
+        };
+        return builder;
+      },
+      async rpc() {
+        return { data: null, error: { code: "P0001", message: errorMessage } };
+      },
+    } as unknown as MerchantEnterpriseStoreClient;
+
+    await assert.rejects(
+      createOrGetMerchantOrderTask(client, {
+        siteId: "10000000",
+        orderId: "O-1001",
+        boardId: "22222222-2222-4222-8222-222222222222",
+        columnId: "33333333-3333-4333-8333-333333333333",
+        title: "Process order O-1001",
+      }),
+      new RegExp(`^Error: ${errorMessage}$`),
+    );
+  }
 });
 
 test("task activity reads only the latest 50 merchant-scoped events", async () => {

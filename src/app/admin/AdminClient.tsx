@@ -241,6 +241,11 @@ import {
   type MerchantOrderRecord,
 } from "@/lib/merchantOrders";
 import {
+  buildMerchantOrderTaskDraft,
+  type MerchantOrderTaskDraftIntent,
+} from "@/lib/merchantOrderEnterprise";
+import { createClientMutationOperationId } from "@/lib/mutationOperationId";
+import {
   getVisibleMerchantCoupons,
   normalizeMerchantCouponRecords,
   type MerchantCouponRecord,
@@ -4169,6 +4174,8 @@ export default function AdminClient({
   const [merchantDesktopSection, setMerchantDesktopSection] = useState<MerchantDesktopSection>("editor");
   const [merchantMemberSettingsView, setMerchantMemberSettingsView] = useState<MerchantMemberSettingsView>("list");
   const [merchantEnterpriseView, setMerchantEnterpriseView] = useState<MerchantEnterpriseView>("overview");
+  const [merchantEnterpriseTaskIntent, setMerchantEnterpriseTaskIntent] =
+    useState<MerchantOrderTaskDraftIntent | null>(null);
   const [merchantEnterpriseAvailableViews, setMerchantEnterpriseAvailableViews] = useState<
     readonly MerchantEnterpriseView[]
   >([]);
@@ -15501,6 +15508,36 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const shouldShowPublishActions = showPublishActions ?? !isPlatformEditor;
   const isDesktopMerchantWorkspace = desktopMerchantWorkspaceActive && !merchantEditorOnly;
   const showDesktopMerchantSupportPanel = isDesktopMerchantWorkspace && merchantDesktopSection === "support";
+
+  function openMerchantOrderEnterpriseTask(
+    order: MerchantOrderRecord,
+    surface: "desktop" | "mobile",
+  ) {
+    if (!canUseEnterpriseManagement) {
+      showTip("当前商户未开通企业管理");
+      return;
+    }
+    void loadMerchantEnterpriseManager().catch(() => undefined);
+    setMerchantSiteIdOverride(order.siteId);
+    setMerchantEnterpriseTaskIntent({
+      ...buildMerchantOrderTaskDraft(order),
+      siteId: order.siteId,
+      requestId: createClientMutationOperationId("merchant-order-task"),
+    });
+    setMerchantEnterpriseView("tasks");
+    if (surface === "mobile") {
+      openSupportMobileHomeTab("enterprise");
+      return;
+    }
+    setMerchantOrderManagerOpen(false);
+    setMerchantDesktopSection("enterprise");
+  }
+
+  function handleMerchantEnterpriseTaskIntentHandled(requestId: string) {
+    setMerchantEnterpriseTaskIntent((current) =>
+      current?.requestId === requestId ? null : current,
+    );
+  }
   const merchantDesktopPointRedemptionCenterActive =
     merchantDesktopSection === "pointRedemption" ||
     merchantDesktopSection === "redemptionRecords" ||
@@ -16432,6 +16469,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 darkMode={supportMobileDarkMode}
                 onOrdersChange={handleMerchantOrderRecordsChange}
                 onOpenConversation={openSupportConversationFromBusinessRecord}
+                {...(canUseEnterpriseManagement
+                  ? {
+                      onOpenEnterpriseTask: (order: MerchantOrderRecord) =>
+                        openMerchantOrderEnterpriseTask(order, "mobile"),
+                    }
+                  : {})}
                 onSectionChange={setSupportMobileBusinessSection}
               />
             ) : (
@@ -16506,6 +16549,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             siteId={supportMobileBookingSiteId}
             siteName={effectiveMerchantDisplayName || merchantDisplayName}
             className="!min-h-0 !py-3"
+            taskDraftIntent={
+              merchantEnterpriseTaskIntent?.siteId === supportMobileBookingSiteId
+                ? merchantEnterpriseTaskIntent
+                : null
+            }
+            onTaskDraftIntentHandled={handleMerchantEnterpriseTaskIntentHandled}
           />
         ) : (
           <section className="mt-4 rounded-[28px] border border-amber-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
@@ -18420,6 +18469,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           siteName: effectiveMerchantDisplayName || merchantDisplayName,
           onOrdersChange: handleMerchantOrderRecordsChange,
           onOpenConversation: openSupportConversationFromBusinessRecord,
+          ...(canUseEnterpriseManagement
+            ? {
+                onOpenEnterpriseTask: (order: MerchantOrderRecord) =>
+                  openMerchantOrderEnterpriseTask(order, "desktop"),
+              }
+            : {}),
           onClose: () => {
             setMerchantOrderManagerOpen(false);
             if (isDesktopMerchantWorkspace) {
@@ -19398,6 +19453,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               siteId={editingSiteId || merchantSiteIdOverride || ""}
               siteName={effectiveMerchantDisplayName || merchantDisplayName}
               className="min-h-[calc(100vh-14rem)]"
+              taskDraftIntent={
+                merchantEnterpriseTaskIntent?.siteId ===
+                (editingSiteId || merchantSiteIdOverride || "")
+                  ? merchantEnterpriseTaskIntent
+                  : null
+              }
+              onTaskDraftIntentHandled={handleMerchantEnterpriseTaskIntentHandled}
               navigation={{
                 mode: "external",
                 activeView: merchantEnterpriseView,

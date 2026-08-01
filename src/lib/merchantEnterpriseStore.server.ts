@@ -105,6 +105,9 @@ function throwTaskRpcError(operation: string, error: unknown): never {
   if (message.includes("task_assignee_board_access_denied")) {
     throw new Error("task_assignee_board_access_denied");
   }
+  if (message.includes("merchant_order_task_exists")) {
+    throw new Error("merchant_order_task_exists");
+  }
   const invalidCode = message.match(/\b(invalid_task(?:_[a-z_]+)?)\b/i)?.[1];
   if (invalidCode) throw new Error(invalidCode.toLowerCase());
   throw new Error(`${operation}:${message}`);
@@ -598,6 +601,61 @@ export async function loadMerchantTaskBoardIdForAccess(
   const boardId = normalizeText(result.data?.board_id, 80);
   if (!boardId) throw new Error("task_not_found");
   return boardId;
+}
+
+export async function loadMerchantTaskBySource(
+  client: MerchantEnterpriseStoreClient,
+  siteIdValue: string,
+  sourceTypeValue: string,
+  sourceIdValue: string,
+): Promise<MerchantTask | null> {
+  const siteId = normalizeText(siteIdValue, 80);
+  const sourceType = normalizeText(sourceTypeValue, 80);
+  const sourceId = normalizeText(sourceIdValue, 200);
+  if (!siteId || !sourceType || !sourceId) {
+    throw new Error("invalid_task_source_query");
+  }
+
+  const taskResult = await client
+    .from("merchant_tasks")
+    .select(TASK_COLUMNS)
+    .eq("merchant_id", siteId)
+    .eq("source_type", sourceType)
+    .eq("source_id", sourceId)
+    .order("created_at", { ascending: true })
+    .order("id", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (taskResult.error) {
+    throwStoreError("enterprise_task_source_read_failed", taskResult.error);
+  }
+  if (!taskResult.data) return null;
+
+  const taskId = normalizeText(taskResult.data.id, 80);
+  if (!taskId) {
+    throw new Error("enterprise_task_source_read_failed:invalid_response");
+  }
+  const assigneeResult = await client
+    .from("merchant_task_assignees")
+    .select("employee_id")
+    .eq("merchant_id", siteId)
+    .eq("task_id", taskId)
+    .order("employee_id", { ascending: true })
+    .limit(MAX_MERCHANT_TASK_ASSIGNEES);
+  if (assigneeResult.error) {
+    throwStoreError("enterprise_task_source_assignees_read_failed", assigneeResult.error);
+  }
+  const assigneeIds = (Array.isArray(assigneeResult.data) ? assigneeResult.data : [])
+    .map((row: unknown) => {
+      const record = row && typeof row === "object" ? (row as Record<string, unknown>) : {};
+      return normalizeText(record.employee_id, 80);
+    })
+    .filter(Boolean);
+  const task = normalizeMerchantTask(taskResult.data, assigneeIds);
+  if (!task || task.siteId !== siteId || task.sourceType !== sourceType || task.sourceId !== sourceId) {
+    throw new Error("enterprise_task_source_read_failed:invalid_response");
+  }
+  return task;
 }
 
 export async function loadMerchantTaskChecklistItems(
@@ -1183,25 +1241,27 @@ export async function bindMerchantEnterpriseEmployeeAuthUser(
   return employee;
 }
 
+export type CreateMerchantTaskInput = {
+  siteId: string;
+  boardId: string;
+  columnId: string;
+  title: string;
+  description?: string;
+  priority?: MerchantTaskPriority;
+  dueAt?: string | null;
+  position?: number;
+  sourceType?: string;
+  sourceId?: string;
+  createdByEmployeeId?: string;
+  assigneeIds?: string[];
+  actorType?: "owner" | "employee";
+  actorId?: string;
+  operationId?: string;
+};
+
 export async function createMerchantTask(
   client: MerchantEnterpriseStoreClient,
-  input: {
-    siteId: string;
-    boardId: string;
-    columnId: string;
-    title: string;
-    description?: string;
-    priority?: MerchantTaskPriority;
-    dueAt?: string | null;
-    position?: number;
-    sourceType?: string;
-    sourceId?: string;
-    createdByEmployeeId?: string;
-    assigneeIds?: string[];
-    actorType?: "owner" | "employee";
-    actorId?: string;
-    operationId?: string;
-  },
+  input: CreateMerchantTaskInput,
 ): Promise<MerchantTask> {
   const siteId = normalizeText(input.siteId, 80);
   const boardId = normalizeText(input.boardId, 80);
@@ -1246,6 +1306,37 @@ export async function createMerchantTask(
   });
   if (result.error) throwTaskRpcError("enterprise_task_create_failed", result.error);
   return normalizeTaskMutationResponse(result.data, "enterprise_task_create_failed");
+}
+
+export async function createOrGetMerchantOrderTask(
+  client: MerchantEnterpriseStoreClient,
+  input: Omit<CreateMerchantTaskInput, "sourceType" | "sourceId"> & {
+    orderId: string;
+  },
+): Promise<{ task: MerchantTask; created: boolean }> {
+  const siteId = normalizeText(input.siteId, 80);
+  const orderId = normalizeText(input.orderId, 200);
+  if (!siteId || !orderId) throw new Error("invalid_task_source");
+
+  const existing = await loadMerchantTaskBySource(client, siteId, "order", orderId);
+  if (existing) return { task: existing, created: false };
+
+  try {
+    const task = await createMerchantTask(client, {
+      ...input,
+      siteId,
+      sourceType: "order",
+      sourceId: orderId,
+    });
+    return { task, created: true };
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== "merchant_order_task_exists") {
+      throw error;
+    }
+    const concurrent = await loadMerchantTaskBySource(client, siteId, "order", orderId);
+    if (concurrent) return { task: concurrent, created: false };
+    throw error;
+  }
 }
 
 export async function addMerchantTaskComment(
