@@ -160,6 +160,8 @@ function throwTaskChecklistRpcError(operation: string, error: unknown): never {
 
 const MERCHANT_ENTERPRISE_TASK_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MERCHANT_LINKED_ORDER_SOURCE_ID_PATTERN =
+  /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 
 function normalizeTaskChecklistText(value: unknown, errorCode: string) {
   if (typeof value !== "string") throw new Error(errorCode);
@@ -603,6 +605,57 @@ export async function loadMerchantTaskBoardIdForAccess(
   const boardId = normalizeText(result.data?.board_id, 80);
   if (!boardId) throw new Error("task_not_found");
   return boardId;
+}
+
+export async function authorizeMerchantLinkedOrderSummarySource(
+  client: MerchantEnterpriseStoreClient,
+  input: {
+    siteId: string;
+    taskId: string;
+    employeeId: string;
+  },
+) {
+  const siteId = normalizeText(input.siteId, 80);
+  const taskId = normalizeText(input.taskId, 80);
+  const employeeId = normalizeText(input.employeeId, 80);
+  if (
+    !/^\d{8}$/.test(siteId) ||
+    !MERCHANT_ENTERPRISE_TASK_ID_PATTERN.test(taskId) ||
+    !MERCHANT_ENTERPRISE_TASK_ID_PATTERN.test(employeeId)
+  ) {
+    throw new Error("invalid_linked_order_summary_query");
+  }
+
+  const result = await client.rpc(
+    "faolla_authorize_merchant_linked_order_summary_v1",
+    {
+      p_input: {
+        merchant_id: siteId,
+        task_id: taskId,
+        employee_id: employeeId,
+      },
+    },
+  );
+  if (result.error) {
+    if (isMerchantEnterpriseSchemaMissingError(result.error)) {
+      throw new Error("enterprise_schema_unavailable");
+    }
+    const message = toErrorMessage(result.error);
+    if (message.includes("task_not_found")) throw new Error("task_not_found");
+    throw new Error(`enterprise_linked_order_summary_authorization_failed:${message}`);
+  }
+
+  const record =
+    result.data && typeof result.data === "object" && !Array.isArray(result.data)
+      ? (result.data as Record<string, unknown>)
+      : {};
+  const sourceId = normalizeText(record.source_id, 200);
+  if (!MERCHANT_LINKED_ORDER_SOURCE_ID_PATTERN.test(sourceId)) {
+    throw new Error(
+      "enterprise_linked_order_summary_authorization_failed:invalid_response",
+    );
+  }
+  return sourceId;
 }
 
 export async function loadMerchantTaskBySource(

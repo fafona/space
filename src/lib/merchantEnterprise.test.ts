@@ -60,6 +60,7 @@ test("owner has every enterprise permission while employees use their assigned p
     allowedBoardIds: [],
   };
   assert.equal(hasMerchantEnterprisePermission(owner, "roles.manage"), true);
+  assert.equal(hasMerchantEnterprisePermission(owner, "orders.linked.view"), true);
   assert.equal(
     hasMerchantEnterprisePermission(
       {
@@ -79,8 +80,11 @@ test("owner has every enterprise permission while employees use their assigned p
   );
 });
 
-test("default administrator role covers the complete initial permission catalog", () => {
-  assert.deepEqual(DEFAULT_MERCHANT_ENTERPRISE_ROLES[0]?.permissions, [...MERCHANT_ENTERPRISE_PERMISSIONS]);
+test("linked order summaries remain opt-in for every default employee role", () => {
+  assert.ok(MERCHANT_ENTERPRISE_PERMISSIONS.includes("orders.linked.view"));
+  for (const role of DEFAULT_MERCHANT_ENTERPRISE_ROLES) {
+    assert.equal(role.permissions.includes("orders.linked.view"), false);
+  }
 });
 
 test("enterprise role board access normalization is backward compatible and fail-closed", () => {
@@ -553,8 +557,12 @@ test("enterprise schema missing errors are recognized without masking unrelated 
 
 test("strict enterprise permission parsing rejects unknown and malformed values", () => {
   assert.deepEqual(
-    parseMerchantEnterprisePermissionsStrict(["enterprise.view", "tasks.view"]),
-    ["enterprise.view", "tasks.view"],
+    parseMerchantEnterprisePermissionsStrict([
+      "enterprise.view",
+      "tasks.view",
+      "orders.linked.view",
+    ]),
+    ["enterprise.view", "tasks.view", "orders.linked.view"],
   );
   assert.equal(parseMerchantEnterprisePermissionsStrict(["enterprise.view", "unknown"]), null);
   assert.equal(parseMerchantEnterprisePermissionsStrict("enterprise.view"), null);
@@ -593,6 +601,10 @@ test("enterprise mutations require a positive safe integer version", () => {
 });
 
 test("role permission selection adds dependencies and removes unreachable dependents", () => {
+  assert.deepEqual(
+    toggleMerchantEnterprisePermissionSelection([], "orders.linked.view", true),
+    ["enterprise.view", "tasks.view", "orders.linked.view"],
+  );
   assert.deepEqual(
     toggleMerchantEnterprisePermissionSelection([], "tasks.assign", true),
     ["enterprise.view", "tasks.view", "tasks.assign"],

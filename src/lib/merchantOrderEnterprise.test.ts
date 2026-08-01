@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildMerchantLinkedOrderSummary,
   buildMerchantOrderTaskDraft,
+  getMerchantLinkedOrderSummaryErrorMessage,
   getMerchantOrderSourceErrorMessage,
   getMerchantOrderTaskSource,
   MERCHANT_ORDER_TASK_SOURCE_TYPE,
@@ -59,6 +61,79 @@ test("order task drafts contain operational order facts without customer PII", (
   }
 });
 
+test("linked order summaries expose only the explicit operational whitelist", () => {
+  const order = buildOrder({
+    clientRequestId: "private-client-request",
+    customerAccountId: "private-account-id",
+    customerUserId: "private-user-id",
+    customerLoginEmail: "login-private@example.com",
+    customerGuestHash: "private-guest-hash",
+    items: [
+      {
+        productId: "private-product-id",
+        code: "SKU-1",
+        name: "Coffee",
+        description: "Large / hot",
+        imageUrl: "https://private.example/product.jpg",
+        tag: "private-category",
+        quantity: 3,
+        unitPrice: 4.5,
+        unitPriceText: "€4.50 private display",
+        subtotal: 13.5,
+      },
+    ],
+    totalQuantity: 3,
+    totalAmount: 13.5,
+  });
+
+  const summary = buildMerchantLinkedOrderSummary(order);
+
+  assert.deepEqual(Object.keys(summary), [
+    "id",
+    "status",
+    "createdAt",
+    "items",
+    "totalQuantity",
+    "totalAmount",
+    "pricePrefix",
+  ]);
+  assert.deepEqual(Object.keys(summary.items[0] ?? {}), [
+    "name",
+    "code",
+    "specification",
+    "quantity",
+    "unitPrice",
+    "subtotal",
+  ]);
+  assert.deepEqual(summary.items[0], {
+    name: "Coffee",
+    code: "SKU-1",
+    specification: "Large / hot",
+    quantity: 3,
+    unitPrice: 4.5,
+    subtotal: 13.5,
+  });
+
+  const serialized = JSON.stringify(summary);
+  for (const privateValue of [
+    ...Object.values(order.customer),
+    order.clientRequestId,
+    order.customerAccountId,
+    order.customerUserId,
+    order.customerLoginEmail,
+    order.customerGuestHash,
+    order.items[0]?.productId,
+    order.items[0]?.imageUrl,
+    order.items[0]?.tag,
+    order.items[0]?.unitPriceText,
+  ]) {
+    assert.ok(
+      !privateValue || !serialized.includes(privateValue),
+      `summary must omit private value: ${privateValue}`,
+    );
+  }
+});
+
 test("order task draft source and title stay within persisted task limits", () => {
   const draft = buildMerchantOrderTaskDraft(buildOrder({ id: `O${"1".repeat(400)}` }));
 
@@ -94,5 +169,20 @@ test("source order failures have actionable owner-facing messages", () => {
   assert.equal(
     getMerchantOrderSourceErrorMessage("unexpected"),
     "来源订单读取失败，请稍后重试。",
+  );
+});
+
+test("linked order summary failures avoid revealing task or order existence", () => {
+  assert.equal(
+    getMerchantLinkedOrderSummaryErrorMessage("task_not_found"),
+    "当前任务没有可查看的关联订单摘要。",
+  );
+  assert.equal(
+    getMerchantLinkedOrderSummaryErrorMessage("permission_denied"),
+    "当前账号无权查看关联订单摘要。",
+  );
+  assert.equal(
+    getMerchantLinkedOrderSummaryErrorMessage("unexpected"),
+    "关联订单摘要读取失败，请稍后重试。",
   );
 });

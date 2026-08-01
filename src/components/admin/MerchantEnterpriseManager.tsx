@@ -64,9 +64,15 @@ import {
 import { isValidAuthEmail, normalizeAuthEmail } from "@/lib/authCredentialValidation";
 import { createClientMutationOperationId } from "@/lib/mutationOperationId";
 import {
+  getMerchantLinkedOrderSummaryErrorMessage,
   getMerchantOrderTaskSource,
+  type MerchantLinkedOrderSummary,
   type MerchantOrderTaskDraftIntent,
 } from "@/lib/merchantOrderEnterprise";
+import {
+  formatMerchantOrderAmount,
+  getMerchantOrderStatusLabel,
+} from "@/lib/merchantOrders";
 import {
   planMerchantTaskReorder,
   sortMerchantTaskOrderItems,
@@ -128,6 +134,12 @@ type TaskChecklistPayload = {
   error?: string;
   items?: MerchantTaskChecklistItem[];
   item?: MerchantTaskChecklistItem;
+};
+
+type LinkedOrderSummaryPayload = {
+  ok?: boolean;
+  error?: string;
+  summary?: MerchantLinkedOrderSummary;
 };
 
 type TaskChecklistItemChange =
@@ -772,6 +784,7 @@ function TaskEditor({
   onLoadChecklist,
   onCreateChecklistItem,
   onUpdateChecklistItem,
+  onLoadLinkedOrderSummary,
   onOpenSourceOrder,
   onClose,
 }: {
@@ -806,6 +819,10 @@ function TaskEditor({
     change: TaskChecklistItemChange,
     operationId: string,
   ) => Promise<MerchantTaskChecklistItem>;
+  onLoadLinkedOrderSummary?: (
+    taskId: string,
+    signal?: AbortSignal,
+  ) => Promise<MerchantLinkedOrderSummary>;
   onOpenSourceOrder?: (orderId: string) => Promise<void> | void;
   onClose: () => void;
 }) {
@@ -834,6 +851,11 @@ function TaskEditor({
   const [editingChecklistText, setEditingChecklistText] = useState("");
   const [sourceOrderBusy, setSourceOrderBusy] = useState(false);
   const [sourceOrderError, setSourceOrderError] = useState("");
+  const [linkedOrderSummary, setLinkedOrderSummary] =
+    useState<MerchantLinkedOrderSummary | null>(null);
+  const [linkedOrderSummaryBusy, setLinkedOrderSummaryBusy] = useState(false);
+  const [linkedOrderSummaryError, setLinkedOrderSummaryError] = useState("");
+  const linkedOrderSummaryAbortRef = useRef<AbortController | null>(null);
   const commentMutationRef = useRef<{ text: string; operationId: string } | null>(null);
   const checklistCreateMutationRef = useRef<{
     text: string;
@@ -879,6 +901,18 @@ function TaskEditor({
     setColumnId(task.columnId);
     setAssigneeIds(task.assigneeIds);
   }, [task]);
+
+  useEffect(() => {
+    linkedOrderSummaryAbortRef.current?.abort();
+    linkedOrderSummaryAbortRef.current = null;
+    setLinkedOrderSummary(null);
+    setLinkedOrderSummaryBusy(false);
+    setLinkedOrderSummaryError("");
+    return () => {
+      linkedOrderSummaryAbortRef.current?.abort();
+      linkedOrderSummaryAbortRef.current = null;
+    };
+  }, [task.id]);
 
   const refreshEvents = useCallback(
     async (signal?: AbortSignal) => {
@@ -1054,6 +1088,13 @@ function TaskEditor({
   const checklistAtLimit = checklistItems.length >= MAX_MERCHANT_TASK_CHECKLIST_ITEMS;
   const checklistBusy = busy || Boolean(checklistMutationId);
   const orderSource = getMerchantOrderTaskSource(task);
+  const canViewLinkedOrderSummary = Boolean(
+    orderSource &&
+      actor.type === "employee" &&
+      can(actor, "orders.linked.view") &&
+      task.assigneeIds.includes(actor.id) &&
+      onLoadLinkedOrderSummary,
+  );
   const draftDueAtTimestamp = dueAt ? Date.parse(`${dueAt}T23:59:59`) : Number.NaN;
   const normalizedDraftDueAt =
     dueAt === taskDateInputValue(task.dueAt)
@@ -1123,6 +1164,37 @@ function TaskEditor({
     }
   }
 
+  async function showLinkedOrderSummary() {
+    if (
+      !canViewLinkedOrderSummary ||
+      !onLoadLinkedOrderSummary ||
+      linkedOrderSummaryBusy
+    ) {
+      return;
+    }
+    linkedOrderSummaryAbortRef.current?.abort();
+    const controller = new AbortController();
+    linkedOrderSummaryAbortRef.current = controller;
+    setLinkedOrderSummaryBusy(true);
+    setLinkedOrderSummaryError("");
+    try {
+      const summary = await onLoadLinkedOrderSummary(task.id, controller.signal);
+      if (!controller.signal.aborted) setLinkedOrderSummary(summary);
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      setLinkedOrderSummaryError(
+        error instanceof Error && error.message
+          ? error.message
+          : getMerchantLinkedOrderSummaryErrorMessage("linked_order_summary_failed"),
+      );
+    } finally {
+      if (linkedOrderSummaryAbortRef.current === controller) {
+        linkedOrderSummaryAbortRef.current = null;
+        setLinkedOrderSummaryBusy(false);
+      }
+    }
+  }
+
   return (
     <div
       className="fixed inset-0 z-[120] flex items-stretch justify-center bg-slate-950/55 p-0 backdrop-blur-sm sm:items-center sm:p-6"
@@ -1175,20 +1247,89 @@ function TaskEditor({
                     来源关联不可修改；编辑任务标题或说明不会改变原订单。
                   </p>
                 </div>
-                {actor.type === "owner" && onOpenSourceOrder ? (
-                  <button
-                    type="button"
-                    className="min-h-11 shrink-0 rounded-xl border border-cyan-300 bg-white px-4 py-2 text-sm font-semibold text-cyan-800 disabled:opacity-45 sm:min-h-0"
-                    disabled={busy || sourceOrderBusy || checklistBusy || commentBusy}
-                    onClick={() => void openSourceOrder()}
-                  >
-                    {sourceOrderBusy ? "读取中…" : "查看来源订单"}
-                  </button>
-                ) : null}
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  {actor.type === "owner" && onOpenSourceOrder ? (
+                    <button
+                      type="button"
+                      className="min-h-11 rounded-xl border border-cyan-300 bg-white px-4 py-2 text-sm font-semibold text-cyan-800 disabled:opacity-45 sm:min-h-0"
+                      disabled={busy || sourceOrderBusy || checklistBusy || commentBusy}
+                      onClick={() => void openSourceOrder()}
+                    >
+                      {sourceOrderBusy ? "读取中…" : "查看来源订单"}
+                    </button>
+                  ) : null}
+                  {canViewLinkedOrderSummary ? (
+                    <button
+                      type="button"
+                      className="min-h-11 rounded-xl border border-cyan-300 bg-white px-4 py-2 text-sm font-semibold text-cyan-800 disabled:opacity-45 sm:min-h-0"
+                      disabled={busy || linkedOrderSummaryBusy}
+                      onClick={() => void showLinkedOrderSummary()}
+                    >
+                      {linkedOrderSummaryBusy
+                        ? "读取中…"
+                        : linkedOrderSummary
+                          ? "刷新订单摘要"
+                          : "查看订单摘要"}
+                    </button>
+                  ) : null}
+                </div>
               </div>
               {sourceOrderError ? (
                 <div role="alert" className="mt-3 text-sm text-rose-700">
                   {sourceOrderError}
+                </div>
+              ) : null}
+              {linkedOrderSummaryError ? (
+                <div role="alert" className="mt-3 text-sm text-rose-700">
+                  {linkedOrderSummaryError}
+                </div>
+              ) : null}
+              {linkedOrderSummary ? (
+                <div
+                  data-enterprise-linked-order-summary
+                  className="mt-4 rounded-xl border border-cyan-200 bg-white p-3"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                    <span className="font-semibold text-slate-900">
+                      {getMerchantOrderStatusLabel(linkedOrderSummary.status)} · {formatDateTime(linkedOrderSummary.createdAt)}
+                    </span>
+                    <span className="font-semibold text-cyan-800">
+                      {linkedOrderSummary.totalQuantity} 件 · {formatMerchantOrderAmount(
+                        linkedOrderSummary.totalAmount,
+                        linkedOrderSummary.pricePrefix,
+                      )}
+                    </span>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {linkedOrderSummary.items.map((item, index) => (
+                      <div
+                        key={`${item.code}:${item.name}:${index}`}
+                        className="rounded-lg bg-slate-50 px-3 py-2 text-sm"
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="font-medium text-slate-900">{item.name || item.code || "商品"}</div>
+                            {item.code ? (
+                              <div className="mt-0.5 text-xs text-slate-500" data-no-translate="1">
+                                {item.code}
+                              </div>
+                            ) : null}
+                            {item.specification ? (
+                              <div className="mt-1 whitespace-pre-wrap text-xs text-slate-600">
+                                {item.specification}
+                              </div>
+                            ) : null}
+                          </div>
+                          <div className="shrink-0 text-right text-xs text-slate-600">
+                            <div>{item.quantity} × {formatMerchantOrderAmount(item.unitPrice, linkedOrderSummary.pricePrefix)}</div>
+                            <div className="mt-1 font-semibold text-slate-900">
+                              {formatMerchantOrderAmount(item.subtotal, linkedOrderSummary.pricePrefix)}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               ) : null}
             </section>
@@ -3235,6 +3376,26 @@ function MerchantEnterpriseManagerContent({
         throw new Error(readChecklistApiError(payload, "任务清单加载失败，请稍后重试。"));
       }
       return payload.items;
+    },
+    [apiFetch, siteId],
+  );
+
+  const loadLinkedOrderSummary = useCallback(
+    async (taskId: string, signal?: AbortSignal) => {
+      const params = new URLSearchParams({ siteId, taskId });
+      const response = await apiFetch(
+        `/api/merchant-enterprise/linked-order-summary?${params.toString()}`,
+        { signal },
+      );
+      const payload = (await response.json().catch(() => null)) as
+        | LinkedOrderSummaryPayload
+        | null;
+      if (!response.ok || !payload?.ok || !payload.summary) {
+        throw new Error(
+          getMerchantLinkedOrderSummaryErrorMessage(payload?.error),
+        );
+      }
+      return payload.summary;
     },
     [apiFetch, siteId],
   );
@@ -5790,6 +5951,9 @@ function MerchantEnterpriseManagerContent({
             onLoadChecklist={loadTaskChecklist}
             onCreateChecklistItem={createTaskChecklistItem}
             onUpdateChecklistItem={updateTaskChecklistItem}
+            {...(actor.type === "employee" && can(actor, "orders.linked.view")
+              ? { onLoadLinkedOrderSummary: loadLinkedOrderSummary }
+              : {})}
             {...(actor.type === "owner" && onOpenSourceOrder
               ? {
                   onOpenSourceOrder: (orderId: string) =>

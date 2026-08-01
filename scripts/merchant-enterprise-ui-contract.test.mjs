@@ -1175,6 +1175,64 @@ test("linked tasks keep their source order visible and immutable while only owne
   );
 });
 
+test("assigned employees can lazily load only the linked-order redacted summary", () => {
+  const taskEditorSource = sliceBetween(
+    /function\s+TaskEditor\b/,
+    /function\s+EmployeeOffboardingDialog\b/,
+    "linked-order summary task editor",
+  );
+  assert.match(
+    taskEditorSource,
+    /onLoadLinkedOrderSummary\?\s*:\s*\([\s\S]*taskId:\s*string[\s\S]*signal\?:\s*AbortSignal[\s\S]*Promise<MerchantLinkedOrderSummary>/,
+  );
+  assert.match(
+    taskEditorSource,
+    /const\s+canViewLinkedOrderSummary\s*=\s*Boolean\([\s\S]*orderSource[\s\S]*actor\.type\s*===\s*["']employee["'][\s\S]*can\(actor,\s*["']orders\.linked\.view["']\)[\s\S]*task\.assigneeIds\.includes\(actor\.id\)[\s\S]*onLoadLinkedOrderSummary/,
+    "the client action must require an employee, the opt-in permission, and a persisted assignment",
+  );
+
+  const loadActionSource = sliceSourceBetween(
+    taskEditorSource,
+    /async\s+function\s+showLinkedOrderSummary\b/,
+    /\n\s*return\s*\(/,
+    "linked-order summary lazy action",
+  );
+  assert.match(loadActionSource, /new\s+AbortController\(\)/);
+  assert.match(
+    loadActionSource,
+    /await\s+onLoadLinkedOrderSummary\(task\.id,\s*controller\.signal\)/,
+    "the employee must submit only the visible task id, never an order id",
+  );
+  assert.doesNotMatch(loadActionSource, /orderSource\.sourceId|onOpenSourceOrder/);
+  assert.match(taskEditorSource, /data-enterprise-linked-order-summary/);
+  assert.match(taskEditorSource, /linkedOrderSummary\.items\.map\(/);
+
+  const apiLoaderSource = sliceBetween(
+    /const\s+loadLinkedOrderSummary\s*=\s*useCallback\(/,
+    /const\s+createTaskChecklistItem\s*=\s*useCallback\(/,
+    "linked-order summary API loader",
+  );
+  assert.match(
+    apiLoaderSource,
+    /new\s+URLSearchParams\(\{\s*siteId,\s*taskId\s*\}\)/,
+  );
+  assert.match(
+    apiLoaderSource,
+    /["'`]\/api\/merchant-enterprise\/linked-order-summary\?\$\{params\.toString\(\)\}["'`]/,
+  );
+  assert.doesNotMatch(apiLoaderSource, /orderId|sourceId/);
+
+  const taskEditorHandoffSource = sliceBetween(
+    /\{editingTask\s*\?\s*\(/,
+    /\{offboardingEmployee\s*&&\s*actor\s*\?\s*\(/,
+    "linked-order summary task editor handoff",
+  );
+  assert.match(
+    taskEditorHandoffSource,
+    /actor\.type\s*===\s*["']employee["']\s*&&\s*can\(actor,\s*["']orders\.linked\.view["']\)[\s\S]*onLoadLinkedOrderSummary:\s*loadLinkedOrderSummary/,
+  );
+});
+
 test("merchant admin resolves source orders exactly and hands off a request-scoped intent", () => {
   assert.match(
     adminClientSource,

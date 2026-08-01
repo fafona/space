@@ -5,6 +5,7 @@ export const MERCHANT_ENTERPRISE_PERMISSIONS = [
   "tasks.update",
   "tasks.assign",
   "tasks.archive",
+  "orders.linked.view",
   "boards.manage",
   "employees.view",
   "employees.manage",
@@ -22,7 +23,7 @@ export type MerchantEnterprisePermission = (typeof MERCHANT_ENTERPRISE_PERMISSIO
 export const MERCHANT_ENTERPRISE_PERMISSION_CATALOG: ReadonlyArray<{
   key: MerchantEnterprisePermission;
   label: string;
-  group: "工作台" | "任务" | "员工" | "角色";
+  group: "工作台" | "任务" | "订单" | "员工" | "角色";
   description: string;
 }> = [
   { key: "enterprise.view", label: "进入企业管理", group: "工作台", description: "查看企业管理工作台。" },
@@ -31,6 +32,7 @@ export const MERCHANT_ENTERPRISE_PERMISSION_CATALOG: ReadonlyArray<{
   { key: "tasks.update", label: "更新任务", group: "任务", description: "修改任务内容和流转状态。" },
   { key: "tasks.assign", label: "分派任务", group: "任务", description: "给员工分派或取消分派任务。" },
   { key: "tasks.archive", label: "归档任务", group: "任务", description: "归档不再处理的任务。" },
+  { key: "orders.linked.view", label: "查看关联订单摘要", group: "订单", description: "查看本人负责的任务所关联的脱敏订单摘要。" },
   { key: "boards.manage", label: "管理看板", group: "任务", description: "创建看板和维护工作列。" },
   { key: "employees.view", label: "查看员工", group: "员工", description: "查看员工账号、角色和状态。" },
   { key: "employees.manage", label: "管理员工", group: "员工", description: "邀请、停用员工并分配角色。" },
@@ -47,6 +49,7 @@ const MERCHANT_ENTERPRISE_PERMISSION_DEPENDENCIES: Readonly<
   "tasks.update": ["enterprise.view", "tasks.view"],
   "tasks.assign": ["enterprise.view", "tasks.view"],
   "tasks.archive": ["enterprise.view", "tasks.view"],
+  "orders.linked.view": ["enterprise.view", "tasks.view"],
   "boards.manage": ["enterprise.view", "tasks.view"],
   "employees.view": ["enterprise.view", "roles.view"],
   "employees.manage": ["enterprise.view", "employees.view", "roles.view"],
@@ -256,6 +259,11 @@ export const DEFAULT_MERCHANT_TASK_COLUMNS = [
   { name: "已完成", color: "#16a34a" },
 ] as const;
 
+const DEFAULT_MERCHANT_ENTERPRISE_ROLE_PERMISSIONS =
+  MERCHANT_ENTERPRISE_PERMISSIONS.filter(
+    (permission) => permission !== "orders.linked.view",
+  );
+
 export const DEFAULT_MERCHANT_ENTERPRISE_ROLES: ReadonlyArray<{
   name: string;
   description: string;
@@ -264,7 +272,7 @@ export const DEFAULT_MERCHANT_ENTERPRISE_ROLES: ReadonlyArray<{
   {
     name: "管理员",
     description: "管理企业协作模块内的员工、角色、看板和任务。",
-    permissions: [...MERCHANT_ENTERPRISE_PERMISSIONS],
+    permissions: [...DEFAULT_MERCHANT_ENTERPRISE_ROLE_PERMISSIONS],
   },
   {
     name: "主管",

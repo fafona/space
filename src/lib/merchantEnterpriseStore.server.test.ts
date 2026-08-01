@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   addMerchantTaskComment,
+  authorizeMerchantLinkedOrderSummarySource,
   bootstrapMerchantEnterpriseWorkspace,
   createMerchantEnterpriseEmployee,
   createMerchantEnterpriseRole,
@@ -1842,5 +1843,101 @@ test("task assignment board-scope errors remain actionable", async () => {
       operationId: "task-assignment-scope-1",
     }),
     /task_assignee_board_access_denied/,
+  );
+});
+
+test("linked-order summary authorization uses one atomic source-derivation RPC", async () => {
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const client = {
+    from() {
+      throw new Error("linked-order authorization must not use direct table reads");
+    },
+    async rpc(name: string, args: Record<string, unknown>) {
+      calls.push({ name, args });
+      return {
+        data: { source_id: "O10000000202608010001" },
+        error: null,
+      };
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+
+  const sourceId = await authorizeMerchantLinkedOrderSummarySource(client, {
+    siteId: "10000000",
+    taskId: "11111111-1111-4111-8111-111111111111",
+    employeeId: "77777777-7777-4777-8777-777777777777",
+  });
+
+  assert.equal(sourceId, "O10000000202608010001");
+  assert.deepEqual(calls, [
+    {
+      name: "faolla_authorize_merchant_linked_order_summary_v1",
+      args: {
+        p_input: {
+          merchant_id: "10000000",
+          task_id: "11111111-1111-4111-8111-111111111111",
+          employee_id: "77777777-7777-4777-8777-777777777777",
+        },
+      },
+    },
+  ]);
+});
+
+test("linked-order summary authorization fails closed before exposing a source", async () => {
+  let rpcCalls = 0;
+  const invalidInputClient = {
+    from() {
+      throw new Error("unexpected table access");
+    },
+    async rpc() {
+      rpcCalls += 1;
+      return { data: { source_id: "O-1001" }, error: null };
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+
+  await assert.rejects(
+    authorizeMerchantLinkedOrderSummarySource(invalidInputClient, {
+      siteId: "10000000",
+      taskId: "not-a-task",
+      employeeId: "77777777-7777-4777-8777-777777777777",
+    }),
+    { message: "invalid_linked_order_summary_query" },
+  );
+  assert.equal(rpcCalls, 0);
+
+  const invisibleTaskClient = {
+    from() {
+      throw new Error("unexpected table access");
+    },
+    async rpc() {
+      return {
+        data: null,
+        error: { code: "P0001", message: "task_not_found" },
+      };
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+  await assert.rejects(
+    authorizeMerchantLinkedOrderSummarySource(invisibleTaskClient, {
+      siteId: "10000000",
+      taskId: "11111111-1111-4111-8111-111111111111",
+      employeeId: "77777777-7777-4777-8777-777777777777",
+    }),
+    { message: "task_not_found" },
+  );
+
+  const malformedResponseClient = {
+    from() {
+      throw new Error("unexpected table access");
+    },
+    async rpc() {
+      return { data: { source_id: "../private-order" }, error: null };
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+  await assert.rejects(
+    authorizeMerchantLinkedOrderSummarySource(malformedResponseClient, {
+      siteId: "10000000",
+      taskId: "11111111-1111-4111-8111-111111111111",
+      employeeId: "77777777-7777-4777-8777-777777777777",
+    }),
+    /enterprise_linked_order_summary_authorization_failed:invalid_response/,
   );
 });
