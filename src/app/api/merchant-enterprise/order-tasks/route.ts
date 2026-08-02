@@ -201,6 +201,13 @@ export function parseMerchantOrderTaskInput(
 }
 
 function fail(error: unknown) {
+  const message = error instanceof Error ? error.message : "";
+  if (message === "permission_denied") {
+    return NextResponse.json({ ok: false, error: message }, { status: 403 });
+  }
+  if (message === "board_not_found") {
+    return NextResponse.json({ ok: false, error: message }, { status: 404 });
+  }
   const resolved = toMerchantEnterpriseAccessResponse(error);
   return NextResponse.json(resolved.body, { status: resolved.status });
 }

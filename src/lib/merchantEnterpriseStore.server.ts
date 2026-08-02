@@ -108,6 +108,9 @@ function throwTaskRpcError(operation: string, error: unknown): never {
   if (message.includes("merchant_order_task_exists")) {
     throw new Error("merchant_order_task_exists");
   }
+  for (const code of ["permission_denied", "task_not_found", "board_not_found"]) {
+    if (message.includes(code)) throw new Error(code);
+  }
   const invalidCode = message.match(/\b(invalid_task(?:_[a-z_]+)?)\b/i)?.[1];
   if (invalidCode) throw new Error(invalidCode.toLowerCase());
   throw new Error(`${operation}:${message}`);
@@ -124,6 +127,7 @@ function throwTaskCommentRpcError(operation: string, error: unknown): never {
   if (message.includes("enterprise_idempotency_conflict")) {
     throw new Error("invalid_operation_id");
   }
+  if (message.includes("permission_denied")) throw new Error("permission_denied");
   if (message.includes("task_not_found")) throw new Error("task_not_found");
   const invalidCode = message.match(/\b(invalid_task(?:_[a-z_]+)?)\b/i)?.[1];
   if (invalidCode) throw new Error(invalidCode.toLowerCase());
@@ -138,6 +142,7 @@ function throwTaskChecklistRpcError(operation: string, error: unknown): never {
   const knownCode = [
     "enterprise_version_conflict",
     "enterprise_operation_in_progress",
+    "permission_denied",
     "task_not_found",
     "task_checklist_item_not_found",
     "task_checklist_limit_reached",
@@ -162,6 +167,20 @@ const MERCHANT_ENTERPRISE_TASK_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MERCHANT_LINKED_ORDER_SOURCE_ID_PATTERN =
   /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
+
+function normalizeMerchantTaskMutationActor(
+  input: { actorType: unknown; actorId: unknown },
+  errorCode = "invalid_task_actor",
+) {
+  const actorId = normalizeText(input.actorId, 120);
+  if (
+    (input.actorType !== "owner" && input.actorType !== "employee") ||
+    !MERCHANT_ENTERPRISE_TASK_ID_PATTERN.test(actorId)
+  ) {
+    throw new Error(errorCode);
+  }
+  return { actorType: input.actorType, actorId } as const;
+}
 
 function normalizeTaskChecklistText(value: unknown, errorCode: string) {
   if (typeof value !== "string") throw new Error(errorCode);
@@ -1325,8 +1344,8 @@ export type CreateMerchantTaskInput = {
   sourceId?: string;
   createdByEmployeeId?: string;
   assigneeIds?: string[];
-  actorType?: "owner" | "employee";
-  actorId?: string;
+  actorType: "owner" | "employee";
+  actorId: string;
   operationId?: string;
 };
 
@@ -1350,8 +1369,7 @@ export async function createMerchantTask(
   const assigneeIds = Array.from(
     new Set(requestedAssigneeIds.map((item) => normalizeText(item, 80)).filter(Boolean)),
   ).sort();
-  const actorType = input.actorType === "employee" ? "employee" : "owner";
-  const actorId = normalizeText(input.actorId, 120);
+  const actor = normalizeMerchantTaskMutationActor(input);
   const operationId = resolveTaskOperationId(input.operationId, "create");
   const result = await client.rpc("faolla_create_merchant_task_v1", {
     p_input: {
@@ -1369,8 +1387,8 @@ export async function createMerchantTask(
       source_id: normalizeText(input.sourceId, 200),
       created_by_employee_id: normalizeText(input.createdByEmployeeId, 80) || null,
       assignee_ids: assigneeIds,
-      actor_type: actorType,
-      actor_id: actorId,
+      actor_type: actor.actorType,
+      actor_id: actor.actorId,
       operation_id: operationId,
       event_payload: { columnId, priority, assigneeIds },
     },
@@ -1388,6 +1406,7 @@ export async function createOrGetMerchantOrderTask(
   const siteId = normalizeText(input.siteId, 80);
   const orderId = normalizeText(input.orderId, 200);
   if (!siteId || !orderId) throw new Error("invalid_task_source");
+  normalizeMerchantTaskMutationActor(input);
 
   const existing = await loadMerchantTaskBySource(client, siteId, "order", orderId);
   if (existing) return { task: existing, created: false };
@@ -1424,14 +1443,13 @@ export async function addMerchantTaskComment(
   const siteId = normalizeText(input.siteId, 80);
   const taskId = normalizeText(input.taskId, 80);
   const commentText = normalizeText(input.text, 2000);
-  const actorId = normalizeText(input.actorId, 120);
+  const actor = normalizeMerchantTaskMutationActor(input, "invalid_task_comment");
   if (
     !siteId ||
     !taskId ||
     !commentText ||
     input.text.trim().length > 2000 ||
-    (input.actorType !== "owner" && input.actorType !== "employee") ||
-    !actorId
+    (input.actorType !== "owner" && input.actorType !== "employee")
   ) {
     throw new Error("invalid_task_comment");
   }
@@ -1440,8 +1458,8 @@ export async function addMerchantTaskComment(
       merchant_id: siteId,
       task_id: taskId,
       text: commentText,
-      actor_type: input.actorType,
-      actor_id: actorId,
+      actor_type: actor.actorType,
+      actor_id: actor.actorId,
       operation_id: resolveTaskOperationId(input.operationId, "comment"),
     },
   });
@@ -1467,12 +1485,14 @@ export async function createMerchantTaskChecklistItem(
 ): Promise<MerchantTaskChecklistItem> {
   const siteId = normalizeText(input.siteId, 80);
   const taskId = normalizeText(input.taskId, 80);
-  const actorId = normalizeText(input.actorId, 120);
+  const actor = normalizeMerchantTaskMutationActor(
+    input,
+    "invalid_task_checklist_create",
+  );
   if (
     !/^\d{8}$/.test(siteId) ||
     !MERCHANT_ENTERPRISE_TASK_ID_PATTERN.test(taskId) ||
-    (input.actorType !== "owner" && input.actorType !== "employee") ||
-    !MERCHANT_ENTERPRISE_TASK_ID_PATTERN.test(actorId)
+    (input.actorType !== "owner" && input.actorType !== "employee")
   ) {
     throw new Error("invalid_task_checklist_create");
   }
@@ -1487,8 +1507,8 @@ export async function createMerchantTaskChecklistItem(
         merchant_id: siteId,
         task_id: taskId,
         text: itemText,
-        actor_type: input.actorType,
-        actor_id: actorId,
+        actor_type: actor.actorType,
+        actor_id: actor.actorId,
         operation_id: resolveTaskOperationId(
           input.operationId,
           "checklist-create",
@@ -1526,7 +1546,10 @@ export async function updateMerchantTaskChecklistItem(
   const siteId = normalizeText(input.siteId, 80);
   const taskId = normalizeText(input.taskId, 80);
   const itemId = normalizeText(input.itemId, 80);
-  const actorId = normalizeText(input.actorId, 120);
+  const actor = normalizeMerchantTaskMutationActor(
+    input,
+    "invalid_task_checklist_update",
+  );
   const version = Number(input.version);
   const hasText = input.text !== undefined;
   const hasCompleted = input.completed !== undefined;
@@ -1538,7 +1561,6 @@ export async function updateMerchantTaskChecklistItem(
     !Number.isSafeInteger(version) ||
     version <= 0 ||
     (input.actorType !== "owner" && input.actorType !== "employee") ||
-    !MERCHANT_ENTERPRISE_TASK_ID_PATTERN.test(actorId) ||
     (!hasText && !hasCompleted && !hasArchived) ||
     (hasCompleted && typeof input.completed !== "boolean") ||
     (hasArchived && typeof input.archived !== "boolean")
@@ -1564,8 +1586,8 @@ export async function updateMerchantTaskChecklistItem(
         task_id: taskId,
         item_id: itemId,
         expected_version: version,
-        actor_type: input.actorType,
-        actor_id: actorId,
+        actor_type: actor.actorType,
+        actor_id: actor.actorId,
         operation_id: resolveTaskOperationId(
           input.operationId,
           "checklist-update",
@@ -1595,7 +1617,7 @@ export async function moveMerchantTask(
     columnId: string;
     targetIndex: number;
     actorType: "owner" | "employee";
-    actorId?: string;
+    actorId: string;
     operationId?: string;
   },
 ): Promise<MerchantTask> {
@@ -1616,6 +1638,7 @@ export async function moveMerchantTask(
   ) {
     throw new Error("invalid_task_move");
   }
+  const actor = normalizeMerchantTaskMutationActor(input);
   const operationId = resolveTaskOperationId(input.operationId, "move");
   const result = await client.rpc("faolla_move_merchant_task_v1", {
     p_input: {
@@ -1624,8 +1647,8 @@ export async function moveMerchantTask(
       expected_version: version,
       target_column_id: columnId,
       target_index: targetIndex,
-      actor_type: input.actorType,
-      actor_id: normalizeText(input.actorId, 120),
+      actor_type: actor.actorType,
+      actor_id: actor.actorId,
       operation_id: operationId,
     },
   });
@@ -1640,7 +1663,7 @@ export async function updateMerchantTask(
     taskId: string;
     version: number;
     actorType: "owner" | "employee";
-    actorId?: string;
+    actorId: string;
     columnId?: string;
     title?: string;
     description?: string;
@@ -1674,6 +1697,7 @@ export async function updateMerchantTask(
   ) {
     throw new Error("invalid_task_update");
   }
+  const actor = normalizeMerchantTaskMutationActor(input);
   let assigneeIds: string[] | undefined;
   if (input.assigneeIds !== undefined) {
     if (input.assigneeIds.length > MAX_MERCHANT_TASK_ASSIGNEES) {
@@ -1697,8 +1721,8 @@ export async function updateMerchantTask(
       merchant_id: siteId,
       task_id: taskId,
       expected_version: version,
-      actor_type: input.actorType,
-      actor_id: normalizeText(input.actorId, 120),
+      actor_type: actor.actorType,
+      actor_id: actor.actorId,
       operation_id: operationId,
       replace_assignees: assigneeIds !== undefined,
       ...(assigneeIds !== undefined ? { assignee_ids: assigneeIds } : {}),

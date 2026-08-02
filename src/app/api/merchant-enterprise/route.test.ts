@@ -38,6 +38,7 @@ import {
   POST as createRole,
 } from "@/app/api/merchant-enterprise/roles/route";
 import {
+  getMerchantTaskErrorResponse,
   getMerchantTaskPatchRequiredPermissions,
   PATCH as updateTask,
   POST as createTask,
@@ -53,6 +54,7 @@ import {
 } from "@/app/api/merchant-enterprise/order-sources/route";
 import {
   GET as getTaskEvents,
+  getMerchantTaskEventErrorResponse,
   POST as createTaskComment,
   toPublicMerchantTaskEvent,
 } from "@/app/api/merchant-enterprise/task-events/route";
@@ -1518,6 +1520,56 @@ test("order task creation rejects employees before reading orders", async () => 
   assert.equal(downstreamCalls, 0);
 });
 
+test("order task creation preserves atomic owner and board authorization failures", async () => {
+  const store = {} as MerchantEnterpriseStoreClient;
+  const baseDependencies: MerchantOrderTaskRouteDependencies = {
+    async resolveActor() {
+      return merchantOrderTaskOwner();
+    },
+    async requireEnterpriseEntitlement() {
+      return {
+        permissionConfig: {
+          allowProductBlock: true,
+          allowOrderManagement: true,
+        },
+      };
+    },
+    async listOrders() {
+      return [{ id: ORDER_TASK_ORDER_ID, siteId: ORDER_TASK_SITE_ID }];
+    },
+    async createOrGetTask() {
+      throw new Error("unexpected_order_task_error");
+    },
+    createStoreClient() {
+      return store;
+    },
+  };
+  const request = () =>
+    new Request("https://www.faolla.com/api/merchant-enterprise/order-tasks", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "https://www.faolla.com",
+      },
+      body: JSON.stringify(merchantOrderTaskRequestBody()),
+    });
+
+  for (const [error, status] of [
+    ["permission_denied", 403],
+    ["board_not_found", 404],
+  ] as const) {
+    const response = await handleMerchantOrderTaskPost(request(), {
+      ...baseDependencies,
+      async createOrGetTask(client) {
+        assert.equal(client, store);
+        throw new Error(error);
+      },
+    });
+    assert.equal(response.status, status);
+    assert.deepEqual(await response.json(), { ok: false, error });
+  }
+});
+
 test("order task creation requires order management and an authoritative matching order", async () => {
   const actor = merchantOrderTaskOwner();
   const baseDependencies: MerchantOrderTaskRouteDependencies = {
@@ -2476,11 +2528,49 @@ test("task checklist route preserves known service error statuses", async () => 
     assert.equal(response.status, 409);
     assert.deepEqual(await response.json(), { ok: false, error });
   }
+  const permissionResponse = getMerchantTaskChecklistErrorResponse(
+    new Error("permission_denied"),
+  );
+  assert.equal(permissionResponse.status, 403);
+  assert.deepEqual(await permissionResponse.json(), {
+    ok: false,
+    error: "permission_denied",
+  });
   const response = getMerchantTaskChecklistErrorResponse(new Error("store_failed"));
   assert.equal(response.status, 503);
   assert.deepEqual(await response.json(), {
     ok: false,
     error: "enterprise_request_failed",
+  });
+});
+
+test("task routes preserve atomic authorization failures without leaking inaccessible tasks", async () => {
+  for (const getResponse of [
+    getMerchantTaskErrorResponse,
+    getMerchantTaskEventErrorResponse,
+  ]) {
+    const permissionResponse = getResponse(new Error("permission_denied"));
+    assert.equal(permissionResponse.status, 403);
+    assert.deepEqual(await permissionResponse.json(), {
+      ok: false,
+      error: "permission_denied",
+    });
+
+    const hiddenTaskResponse = getResponse(new Error("task_not_found"));
+    assert.equal(hiddenTaskResponse.status, 404);
+    assert.deepEqual(await hiddenTaskResponse.json(), {
+      ok: false,
+      error: "task_not_found",
+    });
+  }
+
+  const hiddenBoardResponse = getMerchantTaskErrorResponse(
+    new Error("board_not_found"),
+  );
+  assert.equal(hiddenBoardResponse.status, 404);
+  assert.deepEqual(await hiddenBoardResponse.json(), {
+    ok: false,
+    error: "board_not_found",
   });
 });
 

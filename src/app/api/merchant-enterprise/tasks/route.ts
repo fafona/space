@@ -64,7 +64,14 @@ function client() {
   return value as unknown as MerchantEnterpriseStoreClient;
 }
 
-function fail(error: unknown) {
+export function getMerchantTaskErrorResponse(error: unknown) {
+  const message = error instanceof Error ? error.message : "";
+  if (message === "task_not_found" || message === "board_not_found") {
+    return NextResponse.json({ ok: false, error: message }, { status: 404 });
+  }
+  if (message === "permission_denied") {
+    return NextResponse.json({ ok: false, error: message }, { status: 403 });
+  }
   const resolved = toMerchantEnterpriseAccessResponse(error);
   return NextResponse.json(resolved.body, { status: resolved.status });
 }
@@ -194,7 +201,7 @@ export async function POST(request: Request) {
     });
     return NextResponse.json({ ok: true, task });
   } catch (error) {
-    return fail(error);
+    return getMerchantTaskErrorResponse(error);
   }
 }
 
@@ -288,6 +295,6 @@ export async function PATCH(request: Request) {
     });
     return NextResponse.json({ ok: true, task });
   } catch (error) {
-    return fail(error);
+    return getMerchantTaskErrorResponse(error);
   }
 }

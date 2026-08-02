@@ -118,6 +118,9 @@ export function getMerchantTaskChecklistErrorResponse(error: unknown) {
   if (NOT_FOUND_ERRORS.has(message)) {
     return NextResponse.json({ ok: false, error: message }, { status: 404 });
   }
+  if (message === "permission_denied") {
+    return NextResponse.json({ ok: false, error: message }, { status: 403 });
+  }
   if (CONFLICT_ERRORS.has(message)) {
     return NextResponse.json({ ok: false, error: message }, { status: 409 });
   }

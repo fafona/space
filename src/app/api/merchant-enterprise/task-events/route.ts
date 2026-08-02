@@ -68,10 +68,13 @@ function operationId(request: Request, body: TaskEventBody | null) {
   return normalized;
 }
 
-function fail(error: unknown) {
+export function getMerchantTaskEventErrorResponse(error: unknown) {
   const message = error instanceof Error ? error.message : "";
   if (message === "task_not_found") {
     return NextResponse.json({ ok: false, error: message }, { status: 404 });
+  }
+  if (message === "permission_denied") {
+    return NextResponse.json({ ok: false, error: message }, { status: 403 });
   }
   if (
     message === "invalid_task_archived" ||
@@ -119,7 +122,7 @@ export async function GET(request: Request) {
       events: events.map(toPublicMerchantTaskEvent),
     });
   } catch (error) {
-    return fail(error);
+    return getMerchantTaskEventErrorResponse(error);
   }
 }
 
@@ -154,6 +157,6 @@ export async function POST(request: Request) {
     });
     return NextResponse.json({ ok: true, event: toPublicMerchantTaskEvent(event) });
   } catch (error) {
-    return fail(error);
+    return getMerchantTaskEventErrorResponse(error);
   }
 }

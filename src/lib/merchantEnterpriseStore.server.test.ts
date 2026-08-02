@@ -869,6 +869,8 @@ test("task creation sends task, assignees and event through one idempotent RPC",
     "55555555-5555-4555-8555-555555555555",
     "66666666-6666-4666-8666-666666666666",
   ]);
+  assert.equal(input.actor_type, "owner");
+  assert.equal(input.actor_id, "44444444-4444-4444-8444-444444444444");
   assert.equal(task.assigneeIds.length, 2);
 });
 
@@ -1015,6 +1017,8 @@ test("order task creation returns an existing task without writing", async () =>
     boardId: "22222222-2222-4222-8222-222222222222",
     columnId: "33333333-3333-4333-8333-333333333333",
     title: "Ignored because the task exists",
+    actorType: "owner",
+    actorId: "44444444-4444-4444-8444-444444444444",
   });
 
   assert.equal(result.created, false);
@@ -1058,6 +1062,8 @@ test("order task creation rereads after a stable concurrent-create conflict", as
     boardId: "22222222-2222-4222-8222-222222222222",
     columnId: "33333333-3333-4333-8333-333333333333",
     title: "Process order O-1001",
+    actorType: "owner",
+    actorId: "44444444-4444-4444-8444-444444444444",
   });
 
   assert.equal(result.created, false);
@@ -1093,6 +1099,8 @@ test("order task creation preserves non-conflict errors and missing conflict rer
         boardId: "22222222-2222-4222-8222-222222222222",
         columnId: "33333333-3333-4333-8333-333333333333",
         title: "Process order O-1001",
+        actorType: "owner",
+        actorId: "44444444-4444-4444-8444-444444444444",
       }),
       new RegExp(`^Error: ${errorMessage}$`),
     );
@@ -1552,6 +1560,7 @@ test("task reordering rejects invalid target indices before calling the RPC", as
       columnId: "33333333-3333-4333-8333-333333333333",
       targetIndex: -1,
       actorType: "owner",
+      actorId: "44444444-4444-4444-8444-444444444444",
     }),
     /invalid_task_move/,
   );
@@ -1582,6 +1591,7 @@ test("task archive and restore use versioned idempotent RPC events", async () =>
       taskId: "11111111-1111-4111-8111-111111111111",
       version: 7,
       actorType: "owner",
+      actorId: "44444444-4444-4444-8444-444444444444",
       archived,
       operationId: archived ? "task-archive-1" : "task-restore-1",
     });
@@ -1624,6 +1634,7 @@ test("task store rejects more than the supported assignee limit before RPC", asy
       taskId: "11111111-1111-4111-8111-111111111111",
       version: 7,
       actorType: "owner",
+      actorId: "44444444-4444-4444-8444-444444444444",
       assigneeIds,
     }),
     /invalid_task_assignees/,
@@ -1650,6 +1661,7 @@ test("task RPC version errors preserve the public conflict code", async () => {
       taskId: "11111111-1111-4111-8111-111111111111",
       version: 7,
       actorType: "owner",
+      actorId: "44444444-4444-4444-8444-444444444444",
       title: "Updated",
       operationId: "task-update-1",
     }),
@@ -1820,6 +1832,242 @@ test("enterprise snapshot sorts boards and columns by position with stable ids",
   );
 });
 
+test("task mutation stores reject malformed actors before calling an RPC", async () => {
+  let rpcCalls = 0;
+  const client = {
+    from() {
+      throw new Error("unexpected table access");
+    },
+    async rpc() {
+      rpcCalls += 1;
+      throw new Error("unexpected RPC");
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+
+  const cases: Array<{ expected: RegExp; invoke: () => Promise<unknown> }> = [
+    {
+      expected: /invalid_task_actor/,
+      invoke: () =>
+        createMerchantTask(client, {
+          siteId: "10000000",
+          boardId: "22222222-2222-4222-8222-222222222222",
+          columnId: "33333333-3333-4333-8333-333333333333",
+          title: "Prepare launch",
+          actorType: "owner",
+          actorId: "not-a-uuid",
+        }),
+    },
+    {
+      expected: /invalid_task_actor/,
+      invoke: () =>
+        createOrGetMerchantOrderTask(client, {
+          siteId: "10000000",
+          orderId: "order-1001",
+          boardId: "22222222-2222-4222-8222-222222222222",
+          columnId: "33333333-3333-4333-8333-333333333333",
+          title: "Process order",
+          actorType: "owner",
+          actorId: "not-a-uuid",
+        }),
+    },
+    {
+      expected: /invalid_task_actor/,
+      invoke: () =>
+        updateMerchantTask(client, {
+          siteId: "10000000",
+          taskId: "11111111-1111-4111-8111-111111111111",
+          version: 7,
+          title: "Updated",
+          actorType: "employee",
+          actorId: "not-a-uuid",
+        }),
+    },
+    {
+      expected: /invalid_task_actor/,
+      invoke: () =>
+        moveMerchantTask(client, {
+          siteId: "10000000",
+          taskId: "11111111-1111-4111-8111-111111111111",
+          version: 7,
+          columnId: "33333333-3333-4333-8333-333333333333",
+          targetIndex: 2,
+          actorType: "employee",
+          actorId: "not-a-uuid",
+        }),
+    },
+    {
+      expected: /invalid_task_comment/,
+      invoke: () =>
+        addMerchantTaskComment(client, {
+          siteId: "10000000",
+          taskId: "11111111-1111-4111-8111-111111111111",
+          text: "Ready",
+          actorType: "employee",
+          actorId: "not-a-uuid",
+        }),
+    },
+    {
+      expected: /invalid_task_checklist_create/,
+      invoke: () =>
+        createMerchantTaskChecklistItem(client, {
+          siteId: "10000000",
+          taskId: "11111111-1111-4111-8111-111111111111",
+          text: "Confirm stock",
+          actorType: "employee",
+          actorId: "not-a-uuid",
+        }),
+    },
+    {
+      expected: /invalid_task_checklist_update/,
+      invoke: () =>
+        updateMerchantTaskChecklistItem(client, {
+          siteId: "10000000",
+          taskId: "11111111-1111-4111-8111-111111111111",
+          itemId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          version: 7,
+          completed: true,
+          actorType: "employee",
+          actorId: "not-a-uuid",
+        }),
+    },
+  ];
+
+  for (const taskCase of cases) {
+    await assert.rejects(taskCase.invoke(), taskCase.expected);
+  }
+  assert.equal(rpcCalls, 0);
+});
+
+test("atomic task authorization errors remain stable across every mutation store", async () => {
+  const cases: Array<{
+    code: string;
+    invoke: (client: MerchantEnterpriseStoreClient) => Promise<unknown>;
+  }> = [
+    {
+      code: "permission_denied",
+      invoke: (client) =>
+        createMerchantTask(client, {
+          siteId: "10000000",
+          boardId: "22222222-2222-4222-8222-222222222222",
+          columnId: "33333333-3333-4333-8333-333333333333",
+          title: "Prepare launch",
+          actorType: "employee",
+          actorId: "55555555-5555-4555-8555-555555555555",
+        }),
+    },
+    {
+      code: "board_not_found",
+      invoke: (client) =>
+        createMerchantTask(client, {
+          siteId: "10000000",
+          boardId: "22222222-2222-4222-8222-222222222222",
+          columnId: "33333333-3333-4333-8333-333333333333",
+          title: "Prepare launch",
+          actorType: "employee",
+          actorId: "55555555-5555-4555-8555-555555555555",
+        }),
+    },
+    {
+      code: "invalid_task_actor",
+      invoke: (client) =>
+        createMerchantTask(client, {
+          siteId: "10000000",
+          boardId: "22222222-2222-4222-8222-222222222222",
+          columnId: "33333333-3333-4333-8333-333333333333",
+          title: "Prepare launch",
+          actorType: "owner",
+          actorId: "44444444-4444-4444-8444-444444444444",
+        }),
+    },
+    {
+      code: "task_not_found",
+      invoke: (client) =>
+        updateMerchantTask(client, {
+          siteId: "10000000",
+          taskId: "11111111-1111-4111-8111-111111111111",
+          version: 7,
+          title: "Updated",
+          actorType: "employee",
+          actorId: "55555555-5555-4555-8555-555555555555",
+        }),
+    },
+    {
+      code: "permission_denied",
+      invoke: (client) =>
+        moveMerchantTask(client, {
+          siteId: "10000000",
+          taskId: "11111111-1111-4111-8111-111111111111",
+          version: 7,
+          columnId: "33333333-3333-4333-8333-333333333333",
+          targetIndex: 2,
+          actorType: "employee",
+          actorId: "55555555-5555-4555-8555-555555555555",
+        }),
+    },
+    {
+      code: "permission_denied",
+      invoke: (client) =>
+        addMerchantTaskComment(client, {
+          siteId: "10000000",
+          taskId: "11111111-1111-4111-8111-111111111111",
+          text: "Ready",
+          actorType: "employee",
+          actorId: "55555555-5555-4555-8555-555555555555",
+        }),
+    },
+    {
+      code: "task_not_found",
+      invoke: (client) =>
+        addMerchantTaskComment(client, {
+          siteId: "10000000",
+          taskId: "11111111-1111-4111-8111-111111111111",
+          text: "Ready",
+          actorType: "employee",
+          actorId: "55555555-5555-4555-8555-555555555555",
+        }),
+    },
+    {
+      code: "permission_denied",
+      invoke: (client) =>
+        createMerchantTaskChecklistItem(client, {
+          siteId: "10000000",
+          taskId: "11111111-1111-4111-8111-111111111111",
+          text: "Confirm stock",
+          actorType: "employee",
+          actorId: "55555555-5555-4555-8555-555555555555",
+        }),
+    },
+    {
+      code: "task_not_found",
+      invoke: (client) =>
+        updateMerchantTaskChecklistItem(client, {
+          siteId: "10000000",
+          taskId: "11111111-1111-4111-8111-111111111111",
+          itemId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          version: 7,
+          completed: true,
+          actorType: "employee",
+          actorId: "55555555-5555-4555-8555-555555555555",
+        }),
+    },
+  ];
+
+  for (const taskCase of cases) {
+    const client = {
+      from() {
+        throw new Error("unexpected table access");
+      },
+      async rpc() {
+        return {
+          data: null,
+          error: { code: "P0001", message: taskCase.code },
+        };
+      },
+    } as unknown as MerchantEnterpriseStoreClient;
+    await assert.rejects(taskCase.invoke(client), { message: taskCase.code });
+  }
+});
+
 test("task assignment board-scope errors remain actionable", async () => {
   const client = {
     from() {
@@ -1839,6 +2087,7 @@ test("task assignment board-scope errors remain actionable", async () => {
       taskId: "11111111-1111-4111-8111-111111111111",
       version: 7,
       actorType: "owner",
+      actorId: "44444444-4444-4444-8444-444444444444",
       assigneeIds: ["22222222-2222-4222-8222-222222222222"],
       operationId: "task-assignment-scope-1",
     }),
