@@ -113,10 +113,27 @@ async function authorize(request: Request, siteId: string) {
   return actor;
 }
 
-function fail(error: unknown) {
+export function getMerchantTaskColumnErrorResponse(error: unknown) {
   const message = error instanceof Error ? error.message : "";
   if (CONFLICT_ERRORS.has(message)) {
     return NextResponse.json({ ok: false, error: message }, { status: 409 });
+  }
+  if (
+    message === "permission_denied" ||
+    message === "merchant_access_denied" ||
+    message === "employee_not_found" ||
+    message === "employee_account_disabled" ||
+    message === "role_not_found" ||
+    message === "role_inactive" ||
+    message === "merchant_role_invalid"
+  ) {
+    return NextResponse.json(
+      { ok: false, error: "permission_denied" },
+      { status: 403 },
+    );
+  }
+  if (message === "board_not_found" || message === "column_not_found") {
+    return NextResponse.json({ ok: false, error: message }, { status: 404 });
   }
   const resolved = toMerchantEnterpriseAccessResponse(error);
   return NextResponse.json(resolved.body, { status: resolved.status });
@@ -145,6 +162,8 @@ export async function POST(request: Request) {
     requireMerchantEnterpriseBoardAccess(actor, requestedBoardId, "board_not_found");
     const column = await createMerchantTaskColumn(client(), {
       siteId,
+      actorType: actor.type,
+      actorId: actor.id,
       boardId: requestedBoardId,
       name,
       color,
@@ -154,7 +173,7 @@ export async function POST(request: Request) {
     });
     return NextResponse.json({ ok: true, column });
   } catch (error) {
-    return fail(error);
+    return getMerchantTaskColumnErrorResponse(error);
   }
 }
 
@@ -203,6 +222,8 @@ export async function PATCH(request: Request) {
     requireMerchantEnterpriseBoardAccess(actor, requestedBoardId, "board_not_found");
     const column = await updateMerchantTaskColumn(client(), {
       siteId,
+      actorType: actor.type,
+      actorId: actor.id,
       boardId: requestedBoardId,
       columnId: requestedColumnId,
       version: body.version,
@@ -217,6 +238,6 @@ export async function PATCH(request: Request) {
     });
     return NextResponse.json({ ok: true, column });
   } catch (error) {
-    return fail(error);
+    return getMerchantTaskColumnErrorResponse(error);
   }
 }

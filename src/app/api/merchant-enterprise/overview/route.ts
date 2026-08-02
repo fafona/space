@@ -34,7 +34,12 @@ function storeClient() {
   return client as unknown as MerchantEnterpriseStoreClient;
 }
 
-function errorResponse(error: unknown) {
+function getMerchantEnterpriseOverviewReadErrorResponse(error: unknown) {
+  const resolved = toMerchantEnterpriseAccessResponse(error);
+  return NextResponse.json(resolved.body, { status: resolved.status });
+}
+
+export function getMerchantEnterpriseOverviewMutationErrorResponse(error: unknown) {
   const message = error instanceof Error ? error.message : "";
   if (
     message === "enterprise_operation_in_progress" ||
@@ -42,6 +47,23 @@ function errorResponse(error: unknown) {
     message === "column_limit_reached"
   ) {
     return NextResponse.json({ ok: false, error: message }, { status: 409 });
+  }
+  if (
+    message === "permission_denied" ||
+    message === "merchant_access_denied" ||
+    message === "employee_not_found" ||
+    message === "employee_account_disabled" ||
+    message === "role_not_found" ||
+    message === "role_inactive" ||
+    message === "merchant_role_invalid"
+  ) {
+    return NextResponse.json(
+      { ok: false, error: "permission_denied" },
+      { status: 403 },
+    );
+  }
+  if (message === "board_not_found" || message === "column_not_found") {
+    return NextResponse.json({ ok: false, error: message }, { status: 404 });
   }
   const resolved = toMerchantEnterpriseAccessResponse(error);
   return NextResponse.json(resolved.body, { status: resolved.status });
@@ -121,7 +143,7 @@ export async function GET(request: Request) {
       needsBootstrap,
     });
   } catch (error) {
-    return errorResponse(error);
+    return getMerchantEnterpriseOverviewReadErrorResponse(error);
   }
 }
 
@@ -169,11 +191,12 @@ export async function POST(request: Request) {
     requireMerchantEnterpriseAllBoardAccess(actor);
     await requireMerchantEnterpriseEntitlement(siteId);
     const enterpriseStore = storeClient();
-    await bootstrapMerchantEnterpriseWorkspace(
-      enterpriseStore,
+    await bootstrapMerchantEnterpriseWorkspace(enterpriseStore, {
       siteId,
+      actorType: actor.type,
+      actorId: actor.id,
       operationId,
-    );
+    });
     const snapshot = await loadMerchantEnterpriseSnapshot(enterpriseStore, siteId);
     return NextResponse.json({
       ok: true,
@@ -182,6 +205,6 @@ export async function POST(request: Request) {
       needsBootstrap: false,
     });
   } catch (error) {
-    return errorResponse(error);
+    return getMerchantEnterpriseOverviewMutationErrorResponse(error);
   }
 }

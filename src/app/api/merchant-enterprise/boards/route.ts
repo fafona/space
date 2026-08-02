@@ -109,10 +109,27 @@ async function authorize(request: Request, siteId: string) {
   return actor;
 }
 
-function fail(error: unknown) {
+export function getMerchantTaskBoardErrorResponse(error: unknown) {
   const message = error instanceof Error ? error.message : "";
   if (CONFLICT_ERRORS.has(message)) {
     return NextResponse.json({ ok: false, error: message }, { status: 409 });
+  }
+  if (
+    message === "permission_denied" ||
+    message === "merchant_access_denied" ||
+    message === "employee_not_found" ||
+    message === "employee_account_disabled" ||
+    message === "role_not_found" ||
+    message === "role_inactive" ||
+    message === "merchant_role_invalid"
+  ) {
+    return NextResponse.json(
+      { ok: false, error: "permission_denied" },
+      { status: 403 },
+    );
+  }
+  if (message === "board_not_found" || message === "column_not_found") {
+    return NextResponse.json({ ok: false, error: message }, { status: 404 });
   }
   const resolved = toMerchantEnterpriseAccessResponse(error);
   return NextResponse.json(resolved.body, { status: resolved.status });
@@ -137,6 +154,8 @@ export async function POST(request: Request) {
     requireMerchantEnterpriseAllBoardAccess(actor);
     const result = await createMerchantTaskBoard(client(), {
       siteId,
+      actorType: actor.type,
+      actorId: actor.id,
       name,
       ...(description !== undefined ? { description } : {}),
       ...(position !== undefined ? { position } : {}),
@@ -144,7 +163,7 @@ export async function POST(request: Request) {
     });
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
-    return fail(error);
+    return getMerchantTaskBoardErrorResponse(error);
   }
 }
 
@@ -186,8 +205,11 @@ export async function PATCH(request: Request) {
     const requestedOperationId = operationId(request, body);
     const actor = await authorize(request, siteId);
     requireMerchantEnterpriseBoardAccess(actor, requestedBoardId, "board_not_found");
+    if (position !== undefined) requireMerchantEnterpriseAllBoardAccess(actor);
     const board = await updateMerchantTaskBoard(client(), {
       siteId,
+      actorType: actor.type,
+      actorId: actor.id,
       boardId: requestedBoardId,
       version: body.version,
       ...(name !== undefined ? { name } : {}),
@@ -200,6 +222,6 @@ export async function PATCH(request: Request) {
     });
     return NextResponse.json({ ok: true, board });
   } catch (error) {
-    return fail(error);
+    return getMerchantTaskBoardErrorResponse(error);
   }
 }

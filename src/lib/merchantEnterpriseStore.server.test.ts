@@ -26,6 +26,15 @@ import {
   type MerchantEnterpriseStoreClient,
 } from "@/lib/merchantEnterpriseStore.server";
 
+const WORKSPACE_OWNER_ACTOR = {
+  actorType: "owner" as const,
+  actorId: "88888888-8888-4888-8888-888888888888",
+};
+const WORKSPACE_EMPLOYEE_ACTOR = {
+  actorType: "employee" as const,
+  actorId: "77777777-7777-4777-8777-777777777777",
+};
+
 function taskRow(version: number) {
   return {
     id: "11111111-1111-4111-8111-111111111111",
@@ -665,6 +674,7 @@ test("board and column creation use operation-scoped transactional RPCs", async 
 
   const boardResult = await createMerchantTaskBoard(client, {
     siteId: "10000000",
+    ...WORKSPACE_OWNER_ACTOR,
     name: "Operations",
     description: "Daily work",
     position: 2,
@@ -672,6 +682,7 @@ test("board and column creation use operation-scoped transactional RPCs", async 
   });
   const column = await createMerchantTaskColumn(client, {
     siteId: "10000000",
+    ...WORKSPACE_EMPLOYEE_ACTOR,
     boardId: boardResult.board.id,
     name: "To do",
     color: "#64748b",
@@ -687,6 +698,8 @@ test("board and column creation use operation-scoped transactional RPCs", async 
       functionName: "faolla_create_merchant_task_board_v1",
       input: {
         merchant_id: "10000000",
+        actor_type: "owner",
+        actor_id: WORKSPACE_OWNER_ACTOR.actorId,
         name: "Operations",
         description: "Daily work",
         position: 2,
@@ -697,6 +710,8 @@ test("board and column creation use operation-scoped transactional RPCs", async 
       functionName: "faolla_create_merchant_task_column_v1",
       input: {
         merchant_id: "10000000",
+        actor_type: "employee",
+        actor_id: WORKSPACE_EMPLOYEE_ACTOR.actorId,
         board_id: "22222222-2222-4222-8222-222222222222",
         name: "To do",
         color: "#64748b",
@@ -727,6 +742,7 @@ test("board and column updates carry versions, positions and operation ids", asy
 
   const board = await updateMerchantTaskBoard(client, {
     siteId: "10000000",
+    ...WORKSPACE_OWNER_ACTOR,
     boardId: "22222222-2222-4222-8222-222222222222",
     version: 7,
     status: "archived",
@@ -735,6 +751,7 @@ test("board and column updates carry versions, positions and operation ids", asy
   });
   const column = await updateMerchantTaskColumn(client, {
     siteId: "10000000",
+    ...WORKSPACE_OWNER_ACTOR,
     boardId: "22222222-2222-4222-8222-222222222222",
     columnId: "33333333-3333-4333-8333-333333333333",
     version: 8,
@@ -751,6 +768,8 @@ test("board and column updates carry versions, positions and operation ids", asy
     functionName: "faolla_update_merchant_task_board_v1",
     input: {
       merchant_id: "10000000",
+      actor_type: "owner",
+      actor_id: WORKSPACE_OWNER_ACTOR.actorId,
       board_id: "22222222-2222-4222-8222-222222222222",
       expected_version: 7,
       operation_id: "board-update-1",
@@ -762,6 +781,8 @@ test("board and column updates carry versions, positions and operation ids", asy
     functionName: "faolla_update_merchant_task_column_v1",
     input: {
       merchant_id: "10000000",
+      actor_type: "owner",
+      actor_id: WORKSPACE_OWNER_ACTOR.actorId,
       board_id: "22222222-2222-4222-8222-222222222222",
       column_id: "33333333-3333-4333-8333-333333333333",
       expected_version: 8,
@@ -787,6 +808,7 @@ test("workspace RPC errors preserve explicit conflict and validation codes", asy
   await assert.rejects(
     createMerchantTaskBoard(makeClient("board_limit_reached"), {
       siteId: "10000000",
+      ...WORKSPACE_OWNER_ACTOR,
       name: "Overflow",
       operationId: "board-create-limit",
     }),
@@ -795,6 +817,7 @@ test("workspace RPC errors preserve explicit conflict and validation codes", asy
   await assert.rejects(
     updateMerchantTaskColumn(makeClient("enterprise_version_conflict"), {
       siteId: "10000000",
+      ...WORKSPACE_OWNER_ACTOR,
       boardId: "22222222-2222-4222-8222-222222222222",
       columnId: "33333333-3333-4333-8333-333333333333",
       version: 2,
@@ -806,6 +829,7 @@ test("workspace RPC errors preserve explicit conflict and validation codes", asy
   await assert.rejects(
     createMerchantTaskColumn(makeClient("invalid_column_color"), {
       siteId: "10000000",
+      ...WORKSPACE_OWNER_ACTOR,
       boardId: "22222222-2222-4222-8222-222222222222",
       name: "Invalid",
       operationId: "column-create-invalid",
@@ -815,6 +839,7 @@ test("workspace RPC errors preserve explicit conflict and validation codes", asy
   await assert.rejects(
     updateMerchantTaskColumn(makeClient("invalid_column_done_state"), {
       siteId: "10000000",
+      ...WORKSPACE_OWNER_ACTOR,
       boardId: "22222222-2222-4222-8222-222222222222",
       columnId: "33333333-3333-4333-8333-333333333333",
       version: 2,
@@ -822,6 +847,139 @@ test("workspace RPC errors preserve explicit conflict and validation codes", asy
       operationId: "column-update-done-state",
     }),
     /invalid_column_is_done/,
+  );
+});
+
+test("workspace mutation stores reject malformed actors before calling an RPC", async () => {
+  let rpcCalls = 0;
+  const client = {
+    from() {
+      throw new Error("unexpected table access");
+    },
+    async rpc() {
+      rpcCalls += 1;
+      throw new Error("unexpected RPC");
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+  const invalidActor = {
+    actorType: "employee" as const,
+    actorId: "not-a-uuid",
+  };
+  const cases = [
+    () =>
+      bootstrapMerchantEnterpriseWorkspace(client, {
+        siteId: "10000000",
+        ...invalidActor,
+      }),
+    () =>
+      createMerchantTaskBoard(client, {
+        siteId: "10000000",
+        ...invalidActor,
+        name: "Operations",
+      }),
+    () =>
+      updateMerchantTaskBoard(client, {
+        siteId: "10000000",
+        ...invalidActor,
+        boardId: "22222222-2222-4222-8222-222222222222",
+        version: 1,
+        name: "Updated",
+      }),
+    () =>
+      createMerchantTaskColumn(client, {
+        siteId: "10000000",
+        ...invalidActor,
+        boardId: "22222222-2222-4222-8222-222222222222",
+        name: "To do",
+      }),
+    () =>
+      updateMerchantTaskColumn(client, {
+        siteId: "10000000",
+        ...invalidActor,
+        boardId: "22222222-2222-4222-8222-222222222222",
+        columnId: "33333333-3333-4333-8333-333333333333",
+        version: 1,
+        name: "Doing",
+      }),
+  ];
+
+  for (const invoke of cases) {
+    await assert.rejects(invoke(), { message: "invalid_enterprise_actor" });
+  }
+  await assert.rejects(
+    createMerchantTaskBoard(client, {
+      siteId: "10000000",
+      actorType: "system" as never,
+      actorId: WORKSPACE_OWNER_ACTOR.actorId,
+      name: "Operations",
+    }),
+    { message: "invalid_enterprise_actor" },
+  );
+  assert.equal(rpcCalls, 0);
+});
+
+test("workspace atomic authorization errors stay non-disclosing and actionable", async () => {
+  const makeClient = (message: string) =>
+    ({
+      from() {
+        throw new Error("unexpected table access");
+      },
+      async rpc() {
+        return { data: null, error: { code: "P0001", message } };
+      },
+    }) as unknown as MerchantEnterpriseStoreClient;
+
+  await assert.rejects(
+    bootstrapMerchantEnterpriseWorkspace(makeClient("permission_denied"), {
+      siteId: "10000000",
+      ...WORKSPACE_OWNER_ACTOR,
+    }),
+    { message: "permission_denied" },
+  );
+  for (const internalCode of [
+    "employee_not_found",
+    "employee_account_disabled",
+    "role_not_found",
+    "role_inactive",
+  ]) {
+    await assert.rejects(
+      createMerchantTaskBoard(makeClient(internalCode), {
+        siteId: "10000000",
+        ...WORKSPACE_OWNER_ACTOR,
+        name: "Operations",
+      }),
+      { message: "permission_denied" },
+    );
+  }
+  await assert.rejects(
+    updateMerchantTaskBoard(makeClient("board_not_found"), {
+      siteId: "10000000",
+      ...WORKSPACE_OWNER_ACTOR,
+      boardId: "22222222-2222-4222-8222-222222222222",
+      version: 1,
+      name: "Updated",
+    }),
+    { message: "board_not_found" },
+  );
+  await assert.rejects(
+    updateMerchantTaskColumn(makeClient("column_not_found"), {
+      siteId: "10000000",
+      ...WORKSPACE_OWNER_ACTOR,
+      boardId: "22222222-2222-4222-8222-222222222222",
+      columnId: "33333333-3333-4333-8333-333333333333",
+      version: 1,
+      name: "Doing",
+    }),
+    { message: "column_not_found" },
+  );
+  await assert.rejects(
+    createMerchantTaskColumn(makeClient("invalid_workspace_actor"), {
+      siteId: "10000000",
+      ...WORKSPACE_OWNER_ACTOR,
+      boardId: "22222222-2222-4222-8222-222222222222",
+      name: "To do",
+    }),
+    { message: "invalid_enterprise_actor" },
   );
 });
 
@@ -1702,11 +1860,11 @@ test("bootstrap uses one transactional idempotent RPC before reading the snapsho
     },
   } as unknown as MerchantEnterpriseStoreClient;
 
-  const snapshot = await bootstrapMerchantEnterpriseWorkspace(
-    client,
-    "10000000",
-    "bootstrap-1",
-  );
+  const snapshot = await bootstrapMerchantEnterpriseWorkspace(client, {
+    siteId: "10000000",
+    ...WORKSPACE_OWNER_ACTOR,
+    operationId: "bootstrap-1",
+  });
 
   assert.deepEqual(snapshot, {
     roles: [],
@@ -1721,6 +1879,8 @@ test("bootstrap uses one transactional idempotent RPC before reading the snapsho
       args: {
         p_input: {
           merchant_id: "10000000",
+          actor_type: "owner",
+          actor_id: WORKSPACE_OWNER_ACTOR.actorId,
           operation_id: "bootstrap-1",
         },
       },

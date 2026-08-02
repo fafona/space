@@ -3,13 +3,16 @@ import test from "node:test";
 import {
   buildVisibleMerchantEnterpriseSnapshot,
   GET as getOverview,
+  getMerchantEnterpriseOverviewMutationErrorResponse,
   POST as bootstrapOverview,
 } from "@/app/api/merchant-enterprise/overview/route";
 import {
+  getMerchantTaskBoardErrorResponse,
   PATCH as updateBoard,
   POST as createBoard,
 } from "@/app/api/merchant-enterprise/boards/route";
 import {
+  getMerchantTaskColumnErrorResponse,
   PATCH as updateColumn,
   POST as createColumn,
 } from "@/app/api/merchant-enterprise/columns/route";
@@ -299,6 +302,46 @@ test("role RPC authorization errors have stable API statuses", () => {
     getMerchantEnterpriseRoleMutationErrorResponse(new Error("unknown_error")),
     null,
   );
+});
+
+test("workspace RPC authorization errors have non-disclosing API statuses", async () => {
+  const responders = [
+    getMerchantEnterpriseOverviewMutationErrorResponse,
+    getMerchantTaskBoardErrorResponse,
+    getMerchantTaskColumnErrorResponse,
+  ];
+  for (const respond of responders) {
+    for (const internalCode of [
+      "permission_denied",
+      "merchant_access_denied",
+      "employee_not_found",
+      "employee_account_disabled",
+      "role_not_found",
+      "role_inactive",
+      "merchant_role_invalid",
+    ]) {
+      const response = respond(new Error(internalCode));
+      assert.equal(response.status, 403);
+      assert.deepEqual(await response.json(), {
+        ok: false,
+        error: "permission_denied",
+      });
+    }
+    for (const notFoundCode of ["board_not_found", "column_not_found"]) {
+      const response = respond(new Error(notFoundCode));
+      assert.equal(response.status, 404);
+      assert.deepEqual(await response.json(), {
+        ok: false,
+        error: notFoundCode,
+      });
+    }
+    const invalidActorResponse = respond(new Error("invalid_enterprise_actor"));
+    assert.equal(invalidActorResponse.status, 400);
+    assert.deepEqual(await invalidActorResponse.json(), {
+      ok: false,
+      error: "invalid_enterprise_actor",
+    });
+  }
 });
 
 test("employee offboarding parser only accepts valid disable resolution payloads", () => {

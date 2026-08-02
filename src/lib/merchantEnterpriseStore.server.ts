@@ -165,8 +165,28 @@ function throwTaskChecklistRpcError(operation: string, error: unknown): never {
 
 const MERCHANT_ENTERPRISE_TASK_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MERCHANT_ENTERPRISE_ACTOR_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MERCHANT_LINKED_ORDER_SOURCE_ID_PATTERN =
   /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
+
+type MerchantEnterpriseMutationActorInput = {
+  actorType: "owner" | "employee";
+  actorId: string;
+};
+
+function normalizeMerchantEnterpriseMutationActor(
+  input: { actorType: unknown; actorId: unknown },
+) {
+  const actorId = normalizeText(input.actorId, 80);
+  if (
+    (input.actorType !== "owner" && input.actorType !== "employee") ||
+    !MERCHANT_ENTERPRISE_ACTOR_ID_PATTERN.test(actorId)
+  ) {
+    throw new Error("invalid_enterprise_actor");
+  }
+  return { actorType: input.actorType, actorId } as const;
+}
 
 function normalizeMerchantTaskMutationActor(
   input: { actorType: unknown; actorId: unknown },
@@ -216,6 +236,27 @@ function throwEnterpriseWorkspaceRpcError(operation: string, error: unknown): ne
   if (message.includes("enterprise_idempotency_conflict")) {
     throw new Error("invalid_operation_id");
   }
+  if (
+    message.includes("invalid_enterprise_actor") ||
+    message.includes("invalid_workspace_actor")
+  ) {
+    throw new Error("invalid_enterprise_actor");
+  }
+  if (
+    [
+      "permission_denied",
+      "merchant_access_denied",
+      "employee_not_found",
+      "employee_account_disabled",
+      "role_not_found",
+      "role_inactive",
+      "merchant_role_invalid",
+    ].some((code) => message.includes(code))
+  ) {
+    throw new Error("permission_denied");
+  }
+  if (message.includes("column_not_found")) throw new Error("column_not_found");
+  if (message.includes("board_not_found")) throw new Error("board_not_found");
   const conflictCode = ENTERPRISE_WORKSPACE_CONFLICT_CODES.find((code) =>
     message.includes(code),
   );
@@ -766,16 +807,21 @@ export async function loadMerchantTaskChecklistItems(
 
 export async function bootstrapMerchantEnterpriseWorkspace(
   client: MerchantEnterpriseStoreClient,
-  siteIdValue: string,
-  operationIdValue?: string,
+  input: MerchantEnterpriseMutationActorInput & {
+    siteId: string;
+    operationId?: string;
+  },
 ) {
-  const siteId = normalizeText(siteIdValue, 80);
+  const siteId = normalizeText(input.siteId, 80);
   if (!siteId) throw new Error("invalid_site_id");
+  const actor = normalizeMerchantEnterpriseMutationActor(input);
   const result = await client.rpc("faolla_bootstrap_merchant_enterprise_v2", {
     p_input: {
       merchant_id: siteId,
+      actor_type: actor.actorType,
+      actor_id: actor.actorId,
       operation_id: resolveWorkspaceOperationId(
-        operationIdValue,
+        input.operationId,
         "workspace-bootstrap",
       ),
     },
@@ -840,6 +886,8 @@ export async function createMerchantTaskBoard(
   client: MerchantEnterpriseStoreClient,
   input: {
     siteId: string;
+    actorType: "owner" | "employee";
+    actorId: string;
     name: string;
     description?: string;
     position?: number;
@@ -847,12 +895,15 @@ export async function createMerchantTaskBoard(
   },
 ): Promise<{ board: MerchantTaskBoard; columns: MerchantTaskColumn[] }> {
   const siteId = normalizeText(input.siteId, 80);
+  const actor = normalizeMerchantEnterpriseMutationActor(input);
   const name = normalizeText(input.name, 120);
   const position = normalizeOptionalPosition(input.position, "invalid_board_position");
   if (!siteId || !name) throw new Error("invalid_board");
   const result = await client.rpc("faolla_create_merchant_task_board_v1", {
     p_input: {
       merchant_id: siteId,
+      actor_type: actor.actorType,
+      actor_id: actor.actorId,
       name,
       description: normalizeText(input.description, 2000),
       ...(position !== undefined ? { position } : {}),
@@ -887,6 +938,8 @@ export async function updateMerchantTaskBoard(
   client: MerchantEnterpriseStoreClient,
   input: {
     siteId: string;
+    actorType: "owner" | "employee";
+    actorId: string;
     boardId: string;
     version: number;
     name?: string;
@@ -897,6 +950,7 @@ export async function updateMerchantTaskBoard(
   },
 ): Promise<MerchantTaskBoard> {
   const siteId = normalizeText(input.siteId, 80);
+  const actor = normalizeMerchantEnterpriseMutationActor(input);
   const boardId = normalizeText(input.boardId, 80);
   const version = Number(input.version);
   const patch: Record<string, unknown> = {};
@@ -921,6 +975,8 @@ export async function updateMerchantTaskBoard(
   const result = await client.rpc("faolla_update_merchant_task_board_v1", {
     p_input: {
       merchant_id: siteId,
+      actor_type: actor.actorType,
+      actor_id: actor.actorId,
       board_id: boardId,
       expected_version: version,
       operation_id: resolveWorkspaceOperationId(
@@ -943,6 +999,8 @@ export async function createMerchantTaskColumn(
   client: MerchantEnterpriseStoreClient,
   input: {
     siteId: string;
+    actorType: "owner" | "employee";
+    actorId: string;
     boardId: string;
     name: string;
     color?: string;
@@ -952,6 +1010,7 @@ export async function createMerchantTaskColumn(
   },
 ): Promise<MerchantTaskColumn> {
   const siteId = normalizeText(input.siteId, 80);
+  const actor = normalizeMerchantEnterpriseMutationActor(input);
   const boardId = normalizeText(input.boardId, 80);
   const name = normalizeText(input.name, 80);
   const color = normalizeText(input.color, 40) || "#64748b";
@@ -968,6 +1027,8 @@ export async function createMerchantTaskColumn(
   const result = await client.rpc("faolla_create_merchant_task_column_v1", {
     p_input: {
       merchant_id: siteId,
+      actor_type: actor.actorType,
+      actor_id: actor.actorId,
       board_id: boardId,
       name,
       color,
@@ -992,6 +1053,8 @@ export async function updateMerchantTaskColumn(
   client: MerchantEnterpriseStoreClient,
   input: {
     siteId: string;
+    actorType: "owner" | "employee";
+    actorId: string;
     boardId: string;
     columnId: string;
     version: number;
@@ -1004,6 +1067,7 @@ export async function updateMerchantTaskColumn(
   },
 ): Promise<MerchantTaskColumn> {
   const siteId = normalizeText(input.siteId, 80);
+  const actor = normalizeMerchantEnterpriseMutationActor(input);
   const boardId = normalizeText(input.boardId, 80);
   const columnId = normalizeText(input.columnId, 80);
   const version = Number(input.version);
@@ -1036,6 +1100,8 @@ export async function updateMerchantTaskColumn(
   const result = await client.rpc("faolla_update_merchant_task_column_v1", {
     p_input: {
       merchant_id: siteId,
+      actor_type: actor.actorType,
+      actor_id: actor.actorId,
       board_id: boardId,
       column_id: columnId,
       expected_version: version,
