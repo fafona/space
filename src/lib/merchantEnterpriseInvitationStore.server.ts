@@ -8,6 +8,14 @@ import type { MerchantEnterpriseStoreClient } from "@/lib/merchantEnterpriseStor
 
 export const MERCHANT_ENTERPRISE_INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
+const MERCHANT_ENTERPRISE_INVITATION_ACTOR_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+type MerchantEnterpriseInvitationMutationActor = {
+  actorType: "owner" | "employee";
+  actorId: string;
+};
+
 function normalizeText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
@@ -19,6 +27,19 @@ function errorText(error: unknown) {
     .filter((item): item is string => typeof item === "string")
     .join(":")
     .toLowerCase();
+}
+
+function normalizeInvitationMutationActor(
+  input: { actorType: unknown; actorId: unknown },
+): MerchantEnterpriseInvitationMutationActor {
+  const actorId = normalizeText(input.actorId, 80);
+  if (
+    (input.actorType !== "owner" && input.actorType !== "employee") ||
+    !MERCHANT_ENTERPRISE_INVITATION_ACTOR_ID_PATTERN.test(actorId)
+  ) {
+    throw new Error("invalid_enterprise_actor");
+  }
+  return { actorType: input.actorType, actorId };
 }
 
 function throwInvitationStoreError(operation: string, error: unknown): never {
@@ -37,6 +58,9 @@ function throwInvitationStoreError(operation: string, error: unknown): never {
     "employee_auth_user_conflict",
     "employee_not_found",
     "invalid_employee_invitation",
+    "invalid_enterprise_actor",
+    "permission_escalation_denied",
+    "permission_denied",
   ].find((code) => message.includes(code));
   if (knownCode) throw new Error(knownCode);
   throw new Error(`${operation}:${message}`);
@@ -112,8 +136,9 @@ export async function reserveMerchantEnterpriseEmployeeInvitation(
     version: number;
     tokenHash: string;
     expiresAt?: string;
-  },
+  } & MerchantEnterpriseInvitationMutationActor,
 ) {
+  const actor = normalizeInvitationMutationActor(input);
   const siteId = normalizeText(input.siteId, 80);
   const employeeId = normalizeText(input.employeeId, 80);
   const version = Number(input.version);
@@ -138,6 +163,8 @@ export async function reserveMerchantEnterpriseEmployeeInvitation(
       expected_version: version,
       token_hash: tokenHash,
       expires_at: new Date(expiresAt).toISOString(),
+      actor_type: actor.actorType,
+      actor_id: actor.actorId,
     },
   });
   if (result.error) {
@@ -155,8 +182,9 @@ export async function revokeMerchantEnterpriseEmployeeInvitation(
     siteId: string;
     employeeId: string;
     version: number;
-  },
+  } & MerchantEnterpriseInvitationMutationActor,
 ) {
+  const actor = normalizeInvitationMutationActor(input);
   const siteId = normalizeText(input.siteId, 80);
   const employeeId = normalizeText(input.employeeId, 80);
   const version = Number(input.version);
@@ -168,6 +196,8 @@ export async function revokeMerchantEnterpriseEmployeeInvitation(
       merchant_id: siteId,
       employee_id: employeeId,
       expected_version: version,
+      actor_type: actor.actorType,
+      actor_id: actor.actorId,
     },
   });
   if (result.error) {
@@ -185,8 +215,9 @@ export async function removeMerchantEnterpriseEmployeeInvitation(
     siteId: string;
     employeeId: string;
     version: number;
-  },
+  } & MerchantEnterpriseInvitationMutationActor,
 ) {
+  const actor = normalizeInvitationMutationActor(input);
   const siteId = normalizeText(input.siteId, 80);
   const employeeId = normalizeText(input.employeeId, 80);
   const version = Number(input.version);
@@ -198,6 +229,8 @@ export async function removeMerchantEnterpriseEmployeeInvitation(
       merchant_id: siteId,
       employee_id: employeeId,
       expected_version: version,
+      actor_type: actor.actorType,
+      actor_id: actor.actorId,
     },
   });
   if (result.error) {

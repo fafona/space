@@ -20,6 +20,10 @@ import type { MerchantEnterpriseStoreClient } from "@/lib/merchantEnterpriseStor
 const employeeId = "77777777-7777-4777-8777-777777777777";
 const authUserId = "88888888-8888-4888-8888-888888888888";
 const roleId = "99999999-9999-4999-8999-999999999999";
+const ownerActor = {
+  actorType: "owner",
+  actorId: authUserId,
+} as const;
 
 function employeeRow(input: {
   version?: number;
@@ -92,6 +96,7 @@ test("invitation secrets are high-entropy URL-safe values and only their SHA-256
     version: 1,
     tokenHash: secret.tokenHash,
     expiresAt: "2026-08-07T10:00:00.000Z",
+    ...ownerActor,
   });
 
   assert.equal(
@@ -105,6 +110,8 @@ test("invitation secrets are high-entropy URL-safe values and only their SHA-256
       expected_version: 1,
       token_hash: secret.tokenHash,
       expires_at: "2026-08-07T10:00:00.000Z",
+      actor_type: "owner",
+      actor_id: authUserId,
     },
   });
   assert.doesNotMatch(JSON.stringify(captured?.args), new RegExp(secret.token));
@@ -125,10 +132,54 @@ test("reserve rejects a raw invitation token before any database call", async ()
       version: 1,
       tokenHash: "raw-invitation-token",
       expiresAt: "2026-08-07T10:00:00.000Z",
+      ...ownerActor,
     }),
     /invalid_employee_invitation/,
   );
   assert.equal(called, false);
+});
+
+test("invitation reserve, revoke and remove reject malformed actors before any database call", async () => {
+  let calls = 0;
+  const client = rpcClient(async () => {
+    calls += 1;
+    return { data: null, error: null };
+  });
+  const invalidActor = {
+    actorType: "owner" as const,
+    actorId: "not-an-actor-id",
+  };
+
+  await assert.rejects(
+    reserveMerchantEnterpriseEmployeeInvitation(client, {
+      siteId: "10000000",
+      employeeId,
+      version: 1,
+      tokenHash: "a".repeat(64),
+      expiresAt: "2026-08-07T10:00:00.000Z",
+      ...invalidActor,
+    }),
+    /^Error: invalid_enterprise_actor$/,
+  );
+  await assert.rejects(
+    revokeMerchantEnterpriseEmployeeInvitation(client, {
+      siteId: "10000000",
+      employeeId,
+      version: 1,
+      ...invalidActor,
+    }),
+    /^Error: invalid_enterprise_actor$/,
+  );
+  await assert.rejects(
+    removeMerchantEnterpriseEmployeeInvitation(client, {
+      siteId: "10000000",
+      employeeId,
+      version: 1,
+      ...invalidActor,
+    }),
+    /^Error: invalid_enterprise_actor$/,
+  );
+  assert.equal(calls, 0);
 });
 
 test("finalize accepts the RPC contract's row-level invitation generation and sends exact CAS parameters", async () => {
@@ -215,7 +266,7 @@ test("auth binding accepts the RPC contract's row-level invitation generation an
   assert.equal(result.employee.authUserId, authUserId);
 });
 
-test("revocation sends only the employee row version and normalizes its rotated generation", async () => {
+test("revocation sends the employee row version and actor context and normalizes its rotated generation", async () => {
   let captured:
     | { functionName: string; args: Record<string, unknown> }
     | undefined;
@@ -237,6 +288,7 @@ test("revocation sends only the employee row version and normalizes its rotated 
     siteId: "10000000",
     employeeId,
     version: 11,
+    ...ownerActor,
   });
 
   assert.equal(
@@ -248,13 +300,15 @@ test("revocation sends only the employee row version and normalizes its rotated 
       merchant_id: "10000000",
       employee_id: employeeId,
       expected_version: 11,
+      actor_type: "owner",
+      actor_id: authUserId,
     },
   });
   assert.equal(result.invitationVersion, 5);
   assert.equal(result.employee.version, 12);
 });
 
-test("removal sends the pending invitation row version and normalizes the deleted employee id", async () => {
+test("removal sends the pending invitation row version and actor context and normalizes the deleted employee id", async () => {
   let captured:
     | { functionName: string; args: Record<string, unknown> }
     | undefined;
@@ -272,6 +326,7 @@ test("removal sends the pending invitation row version and normalizes the delete
     siteId: "10000000",
     employeeId,
     version: 12,
+    ...ownerActor,
   });
 
   assert.equal(
@@ -283,6 +338,8 @@ test("removal sends the pending invitation row version and normalizes the delete
       merchant_id: "10000000",
       employee_id: employeeId,
       expected_version: 12,
+      actor_type: "owner",
+      actor_id: authUserId,
     },
   });
   assert.deepEqual(result, { removed: true, employeeId });
@@ -300,6 +357,7 @@ test("removal rejects invalid CAS input before any database call", async () => {
       siteId: "10000000",
       employeeId,
       version: 0,
+      ...ownerActor,
     }),
     /invalid_employee_invitation/,
   );
@@ -317,9 +375,34 @@ test("removal preserves the actionable in-use conflict from the database", async
       siteId: "10000000",
       employeeId,
       version: 12,
+      ...ownerActor,
     }),
     /^Error: employee_invitation_in_use$/,
   );
+});
+
+test("invitation authorization and version errors retain stable public codes", async () => {
+  for (const code of [
+    "invalid_enterprise_actor",
+    "permission_escalation_denied",
+    "permission_denied",
+    "enterprise_version_conflict",
+    "employee_not_found",
+  ]) {
+    const client = rpcClient(async () => ({
+      data: null,
+      error: { code: "P0001", message: code },
+    }));
+    await assert.rejects(
+      revokeMerchantEnterpriseEmployeeInvitation(client, {
+        siteId: "10000000",
+        employeeId,
+        version: 12,
+        ...ownerActor,
+      }),
+      new RegExp(`^Error: ${code}$`),
+    );
+  }
 });
 
 test("accept RPC lifecycle failures retain their actionable HTTP status", () => {

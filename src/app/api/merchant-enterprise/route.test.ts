@@ -104,6 +104,11 @@ function pendingEmployee(
   };
 }
 
+const ownerInvitationMutationActor = {
+  actorType: "owner",
+  actorId: "88888888-8888-4888-8888-888888888888",
+} as const;
+
 test("employee invitation resend enforces a 60-second cooldown without reserving", async () => {
   const nowMs = Date.parse("2026-07-31T10:00:00.000Z");
   const employee = pendingEmployee("2026-07-31T09:59:30.250Z");
@@ -121,7 +126,12 @@ test("employee invitation resend enforces a 60-second cooldown without reserving
     31,
   );
   assert.deepEqual(
-    await reserveEmployeeInvitationResend(store, employee, nowMs),
+    await reserveEmployeeInvitationResend(
+      store,
+      employee,
+      ownerInvitationMutationActor,
+      nowMs,
+    ),
     { status: "cooldown", employee, retryAfterSeconds: 31 },
   );
   const response = createEmployeeInvitationCooldownResponse(employee, 31);
@@ -176,7 +186,12 @@ test("eligible employee invitation resend reserves a new version before email de
     },
   } as unknown as MerchantEnterpriseStoreClient;
 
-  const result = await reserveEmployeeInvitationResend(store, employee, nowMs);
+  const result = await reserveEmployeeInvitationResend(
+    store,
+    employee,
+    ownerInvitationMutationActor,
+    nowMs,
+  );
 
   assert.equal(result.status, "reserved");
   assert.equal(result.employee.version, 8);
@@ -188,6 +203,8 @@ test("eligible employee invitation resend reserves a new version before email de
   assert.equal(rpcInput.employee_id, employee.id);
   assert.equal(rpcInput.expected_version, 7);
   assert.equal(rpcInput.expires_at, "2026-08-07T10:00:00.000Z");
+  assert.equal(rpcInput.actor_type, "owner");
+  assert.equal(rpcInput.actor_id, ownerInvitationMutationActor.actorId);
   assert.match(String(rpcInput.token_hash), /^[a-f0-9]{64}$/);
 
   const response = createEmployeeInvitationResendResponse({

@@ -321,6 +321,7 @@ export function getMerchantEnterpriseInvitationActionError(
 export async function reserveEmployeeInvitationResend(
   store: MerchantEnterpriseStoreClient,
   employee: MerchantEnterpriseEmployee,
+  mutationActor: ReturnType<typeof getMerchantEnterpriseEmployeeMutationActor>,
   nowMs = Date.now(),
   bypassCooldown = false,
 ): Promise<
@@ -347,6 +348,7 @@ export async function reserveEmployeeInvitationResend(
     version: employee.version,
     tokenHash: secret.tokenHash,
     expiresAt: new Date(nowMs + MERCHANT_ENTERPRISE_INVITATION_TTL_MS).toISOString(),
+    ...mutationActor,
   });
   return {
     status: "reserved",
@@ -751,8 +753,10 @@ export async function POST(request: Request) {
     }
     const actor = await authorize(request, siteId);
     const service = serviceClient();
+    const store = service as unknown as MerchantEnterpriseStoreClient;
+    const mutationActor = getMerchantEnterpriseEmployeeMutationActor(actor);
     const snapshot = await loadMerchantEnterpriseSnapshot(
-      service as unknown as MerchantEnterpriseStoreClient,
+      store,
       siteId,
     );
     const assignmentError = roleAssignmentError(actor, snapshot, roleId);
@@ -769,18 +773,19 @@ export async function POST(request: Request) {
       );
     }
     let employee = await createMerchantEnterpriseEmployee(
-      service as unknown as MerchantEnterpriseStoreClient,
+      store,
       {
         siteId,
         email,
         displayName,
         roleId,
-        ...getMerchantEnterpriseEmployeeMutationActor(actor),
+        ...mutationActor,
       },
     );
     const reservation = await reserveEmployeeInvitationResend(
-      service as unknown as MerchantEnterpriseStoreClient,
+      store,
       employee,
+      mutationActor,
       Date.now(),
       true,
     );
@@ -800,14 +805,12 @@ export async function POST(request: Request) {
       invitation.error === "employee_email_already_registered" &&
       !employee.authUserId
     ) {
-      const rolledBack = await service
-        .from("merchant_enterprise_employees")
-        .delete()
-        .eq("merchant_id", siteId)
-        .eq("id", employee.id)
-        .eq("status", "invited")
-        .is("auth_user_id", null);
-      if (rolledBack.error) throw new Error("enterprise_employee_invite_rollback_failed");
+      await removeMerchantEnterpriseEmployeeInvitation(store, {
+        siteId,
+        employeeId: employee.id,
+        version: employee.version,
+        ...mutationActor,
+      });
       return NextResponse.json(
         { ok: false, error: invitation.error },
         { status: 409 },
@@ -901,6 +904,7 @@ export async function PATCH(request: Request) {
     const actor = await authorize(request, siteId);
     const service = serviceClient();
     const store = service as unknown as MerchantEnterpriseStoreClient;
+    const mutationActor = getMerchantEnterpriseEmployeeMutationActor(actor);
     const snapshot = await loadMerchantEnterpriseSnapshot(store, siteId);
     const currentEmployee = snapshot.employees.find((item) => item.id === employeeId);
     if (!currentEmployee) {
@@ -941,6 +945,7 @@ export async function PATCH(request: Request) {
         siteId,
         employeeId: currentEmployee.id,
         version: currentEmployee.version,
+        ...mutationActor,
       });
       return NextResponse.json({
         ok: true,
@@ -959,6 +964,7 @@ export async function PATCH(request: Request) {
         siteId,
         employeeId: currentEmployee.id,
         version: currentEmployee.version,
+        ...mutationActor,
       });
       return NextResponse.json({
         ok: true,
@@ -987,6 +993,7 @@ export async function PATCH(request: Request) {
       const reservation = await reserveEmployeeInvitationResend(
         store,
         currentEmployee,
+        mutationActor,
         Date.now(),
         action === "renew_invite",
       );
@@ -1083,7 +1090,7 @@ export async function PATCH(request: Request) {
         ? { status: body.status }
         : {}),
       ...offboarding.payload,
-      ...getMerchantEnterpriseEmployeeMutationActor(actor),
+      ...mutationActor,
     });
     return NextResponse.json({
       ok: true,

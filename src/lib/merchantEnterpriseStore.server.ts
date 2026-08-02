@@ -1369,34 +1369,6 @@ export async function updateMerchantEnterpriseEmployee(
   return normalizeEmployeeMutationResponse(result.data, "enterprise_employee_update_failed");
 }
 
-export async function bindMerchantEnterpriseEmployeeAuthUser(
-  client: MerchantEnterpriseStoreClient,
-  input: {
-    siteId: string;
-    employeeId: string;
-    authUserId: string;
-  },
-): Promise<MerchantEnterpriseEmployee> {
-  const siteId = normalizeText(input.siteId, 80);
-  const employeeId = normalizeText(input.employeeId, 80);
-  const authUserId = normalizeText(input.authUserId, 80);
-  if (!siteId || !employeeId || !authUserId) throw new Error("invalid_employee_auth_binding");
-  const result = await client
-    .from("merchant_enterprise_employees")
-    .update({
-      auth_user_id: authUserId,
-      invited_at: new Date().toISOString(),
-    })
-    .eq("merchant_id", siteId)
-    .eq("id", employeeId)
-    .select(EMPLOYEE_COLUMNS)
-    .maybeSingle();
-  if (result.error) throwStoreError("enterprise_employee_auth_binding_failed", result.error);
-  const employee = normalizeMerchantEnterpriseEmployee(result.data);
-  if (!employee) throw new Error("enterprise_employee_auth_binding_failed:invalid_response");
-  return employee;
-}
-
 export type CreateMerchantTaskInput = {
   siteId: string;
   boardId: string;

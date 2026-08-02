@@ -287,6 +287,52 @@ test("employee create and offboarding update use atomic RPCs with actor context"
   ]);
 });
 
+test("employee display-name updates send only identity, version, actor, and the new name", async () => {
+  const employeeId = "77777777-7777-4777-8777-777777777777";
+  const actorId = "88888888-8888-4888-8888-888888888888";
+  let rpcCall: { functionName: string; args: Record<string, unknown> } | null = null;
+  const client = {
+    from() {
+      throw new Error("employee profile mutations must stay transactional");
+    },
+    async rpc(functionName: string, args: Record<string, unknown>) {
+      rpcCall = { functionName, args };
+      return {
+        data: {
+          employee: employeeRow(8, "2026-07-31T09:30:00.000Z", {
+            display_name: "Updated Staff",
+          }),
+        },
+        error: null,
+      };
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+
+  const employee = await updateMerchantEnterpriseEmployee(client, {
+    siteId: "10000000",
+    employeeId,
+    version: 7,
+    displayName: "Updated Staff",
+    actorType: "owner",
+    actorId,
+  });
+
+  assert.equal(employee.displayName, "Updated Staff");
+  assert.deepEqual(rpcCall, {
+    functionName: "faolla_update_merchant_enterprise_employee_v1",
+    args: {
+      p_input: {
+        merchant_id: "10000000",
+        employee_id: employeeId,
+        expected_version: 7,
+        actor_type: "owner",
+        actor_id: actorId,
+        display_name: "Updated Staff",
+      },
+    },
+  });
+});
+
 test("employee RPC failures preserve lifecycle conflict and authorization codes", async () => {
   for (const code of [
     "enterprise_version_conflict",

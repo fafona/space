@@ -1469,6 +1469,53 @@ test("pending employee invitations have a safe responsive management flow", () =
   assert.match(source, /min-h-11[\s\S]{0,500}管理邀请/);
 });
 
+test("joined employees expose scoped display-name editing without changing login identity", () => {
+  const profileSource = sliceBetween(
+    /function\s+toggleEmployeeProfileEditor\b/,
+    /async\s+function\s+updateEmployeeStatus\b/,
+    "employee profile editor",
+  );
+  assert.match(profileSource, /setManagedInvitationEmployeeId\(["']["']\)/);
+  assert.match(profileSource, /setManagedEmployeeProfileVersion\(employee\.version\)/);
+  assert.match(
+    profileSource,
+    /employee\.version\s*!==\s*managedEmployeeProfileVersion[\s\S]{0,300}setManagedEmployeeProfileName\(employee\.displayName\)[\s\S]{0,200}setManagedEmployeeProfileVersion\(employee\.version\)/,
+  );
+  assert.match(profileSource, /managedEmployeeProfileName\.trim\(\)/);
+  assert.match(profileSource, /请填写员工姓名/);
+  assert.match(profileSource, /员工资料没有需要保存的修改/);
+  assert.match(profileSource, /["']PATCH["']/);
+  assert.match(profileSource, /employeeId:\s*employee\.id/);
+  assert.match(profileSource, /version:\s*managedEmployeeProfileVersion/);
+  assert.match(profileSource, /displayName\s*,/);
+  assert.match(profileSource, /员工姓名已更新/);
+  assert.doesNotMatch(profileSource, /\b(?:email|roleId|status)\s*:/);
+
+  assert.match(
+    source,
+    /const\s+canManageEmployeeProfile\s*=\s*canManageEmployeeLifecycle\s*&&\s*employee\.status\s*!==\s*["']invited["']/,
+  );
+  assert.match(
+    source,
+    /aria-controls=\{`employee-profile-editor-\$\{employee\.id\}`\}/,
+  );
+  assert.match(source, /编辑员工资料/);
+  assert.match(source, /登录邮箱（不可直接修改）[\s\S]{0,400}readOnly/);
+  assert.match(
+    source,
+    /value=\{managedEmployeeProfileName\}[\s\S]{0,160}maxLength=\{120\}/,
+  );
+  assert.match(
+    source,
+    /managedEmployeeProfileName\.trim\(\)\s*===\s*employee\.displayName/,
+  );
+  assert.match(
+    source,
+    /const\s+employeeProfileStale\s*=[\s\S]{0,160}managedEmployeeProfileVersion\s*!==\s*employee\.version/,
+  );
+  assert.match(source, /employeeProfileStale\s*\?\s*["']重新载入资料["']\s*:\s*["']保存姓名["']/);
+});
+
 test("active employees use a confirmed offboarding flow with atomic task resolution", () => {
   const dialogSource = sliceBetween(
     /function\s+EmployeeOffboardingDialog\b/,
