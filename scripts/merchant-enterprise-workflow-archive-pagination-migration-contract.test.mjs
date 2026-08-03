@@ -106,6 +106,10 @@ test("archive RPC validates limits, filters, and a paired typed cursor", () => {
     /array\['updated_at', 'id'\][\s\S]+\? 'updated_at'[\s\S]+\? 'id'/i,
   );
   assert.match(list, /::timestamptz[\s\S]+invalid_workflow_cursor/i);
+  assert.match(
+    list,
+    /invalid_text_representation[\s\S]+invalid_datetime_format[\s\S]+datetime_field_overflow/i,
+  );
   assert.match(list, /v_cursor_id_text !~\*/i);
 });
 

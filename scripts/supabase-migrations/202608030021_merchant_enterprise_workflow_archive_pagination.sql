@@ -173,7 +173,10 @@ begin
       v_cursor_updated_at := nullif(
         btrim(p_input -> 'cursor' ->> 'updated_at'), ''
       )::timestamptz;
-    exception when invalid_text_representation or datetime_field_overflow then
+    exception
+      when invalid_text_representation
+        or invalid_datetime_format
+        or datetime_field_overflow then
       raise exception 'invalid_workflow_cursor';
     end;
     v_cursor_id_text := nullif(btrim(p_input -> 'cursor' ->> 'id'), '');
