@@ -11,6 +11,7 @@ export const MERCHANT_ENTERPRISE_PERMISSIONS = [
   "employees.manage",
   "roles.view",
   "roles.manage",
+  "audit.view",
 ] as const;
 
 export const MAX_MERCHANT_TASK_ASSIGNEES = 50;
@@ -23,7 +24,7 @@ export type MerchantEnterprisePermission = (typeof MERCHANT_ENTERPRISE_PERMISSIO
 export const MERCHANT_ENTERPRISE_PERMISSION_CATALOG: ReadonlyArray<{
   key: MerchantEnterprisePermission;
   label: string;
-  group: "工作台" | "任务" | "订单" | "员工" | "角色";
+  group: "工作台" | "任务" | "订单" | "员工" | "角色" | "审计";
   description: string;
 }> = [
   { key: "enterprise.view", label: "进入企业管理", group: "工作台", description: "查看企业管理工作台。" },
@@ -38,6 +39,7 @@ export const MERCHANT_ENTERPRISE_PERMISSION_CATALOG: ReadonlyArray<{
   { key: "employees.manage", label: "管理员工", group: "员工", description: "邀请、停用员工并分配角色。" },
   { key: "roles.view", label: "查看角色", group: "角色", description: "查看角色及其权限。" },
   { key: "roles.manage", label: "管理角色", group: "角色", description: "创建、修改和归档角色。" },
+  { key: "audit.view", label: "查看审计记录", group: "审计", description: "查看企业设置和员工账号的不可变操作记录。" },
 ];
 
 const MERCHANT_ENTERPRISE_PERMISSION_DEPENDENCIES: Readonly<
@@ -55,6 +57,7 @@ const MERCHANT_ENTERPRISE_PERMISSION_DEPENDENCIES: Readonly<
   "employees.manage": ["enterprise.view", "employees.view", "roles.view"],
   "roles.view": ["enterprise.view"],
   "roles.manage": ["enterprise.view", "roles.view"],
+  "audit.view": ["enterprise.view"],
 };
 
 export const MERCHANT_ENTERPRISE_ROLE_STATUSES = ["active", "archived"] as const;
@@ -71,6 +74,43 @@ export const MERCHANT_ENTERPRISE_INVITATION_DELIVERY_STATUSES = [
 export const MERCHANT_TASK_BOARD_STATUSES = ["active", "archived"] as const;
 export const MERCHANT_TASK_COLUMN_STATUSES = ["active", "archived"] as const;
 export const MERCHANT_TASK_PRIORITIES = ["low", "normal", "high", "urgent"] as const;
+export const MERCHANT_ENTERPRISE_NOTIFICATION_TYPES = [
+  "task_assigned",
+  "task_unassigned",
+  "task_commented",
+  "task_due_changed",
+] as const;
+export const MERCHANT_ENTERPRISE_AUDIT_EVENT_TYPES = [
+  "workspace.bootstrapped",
+  "role.created",
+  "role.updated",
+  "role.board_scope_changed",
+  "board.created",
+  "board.updated",
+  "column.created",
+  "column.updated",
+  "employee.created",
+  "employee.updated",
+  "employee.renamed",
+  "employee.role_changed",
+  "employee.disabled",
+  "employee.restored",
+  "employee.removed",
+  "invitation.reserved",
+  "invitation.revoked",
+  "invitation.removed",
+  "invitation.accepted",
+  "invitation.delivery_finalized",
+  "invitation.auth_bound",
+] as const;
+export const MERCHANT_ENTERPRISE_AUDIT_ENTITY_TYPES = [
+  "workspace",
+  "role",
+  "board",
+  "column",
+  "employee",
+  "invitation",
+] as const;
 
 export type MerchantEnterpriseRoleStatus = (typeof MERCHANT_ENTERPRISE_ROLE_STATUSES)[number];
 export type MerchantEnterpriseBoardAccessScope =
@@ -81,6 +121,12 @@ export type MerchantEnterpriseInvitationDeliveryStatus =
 export type MerchantTaskBoardStatus = (typeof MERCHANT_TASK_BOARD_STATUSES)[number];
 export type MerchantTaskColumnStatus = (typeof MERCHANT_TASK_COLUMN_STATUSES)[number];
 export type MerchantTaskPriority = (typeof MERCHANT_TASK_PRIORITIES)[number];
+export type MerchantEnterpriseNotificationType =
+  (typeof MERCHANT_ENTERPRISE_NOTIFICATION_TYPES)[number];
+export type MerchantEnterpriseAuditEventType =
+  (typeof MERCHANT_ENTERPRISE_AUDIT_EVENT_TYPES)[number];
+export type MerchantEnterpriseAuditEntityType =
+  (typeof MERCHANT_ENTERPRISE_AUDIT_ENTITY_TYPES)[number];
 
 export type MerchantEnterpriseRole = {
   id: string;
@@ -216,6 +262,54 @@ export type MerchantTaskEvent = {
   createdAt: string;
 };
 
+export type MerchantEnterpriseNotificationPayload = {
+  dueAt?: string | null;
+};
+
+export type MerchantEnterpriseNotification = {
+  id: string;
+  siteId: string;
+  taskId: string;
+  type: MerchantEnterpriseNotificationType;
+  actorType: MerchantTaskEventActorType;
+  actorId: string;
+  payload: MerchantEnterpriseNotificationPayload;
+  readAt: string | null;
+  createdAt: string;
+};
+
+export type MerchantEnterpriseAuditDataValue =
+  | string
+  | number
+  | boolean
+  | null
+  | readonly string[];
+
+export type MerchantEnterpriseAuditData = Readonly<
+  Record<string, MerchantEnterpriseAuditDataValue>
+>;
+
+export type MerchantEnterpriseAuditEvent = {
+  id: string;
+  siteId: string;
+  eventType: MerchantEnterpriseAuditEventType;
+  entityType: MerchantEnterpriseAuditEntityType;
+  entityId: string | null;
+  actorType: MerchantTaskEventActorType;
+  actorId: string | null;
+  actorLabel: string;
+  targetLabel: string;
+  beforeData: MerchantEnterpriseAuditData;
+  afterData: MerchantEnterpriseAuditData;
+  operationId: string;
+  createdAt: string;
+};
+
+export type MerchantEnterpriseAuditCursor = {
+  beforeCreatedAt: string;
+  beforeId: string;
+};
+
 export type MerchantEnterpriseSnapshot = {
   roles: MerchantEnterpriseRole[];
   employees: MerchantEnterpriseEmployee[];
@@ -261,7 +355,8 @@ export const DEFAULT_MERCHANT_TASK_COLUMNS = [
 
 const DEFAULT_MERCHANT_ENTERPRISE_ROLE_PERMISSIONS =
   MERCHANT_ENTERPRISE_PERMISSIONS.filter(
-    (permission) => permission !== "orders.linked.view",
+    (permission) =>
+      permission !== "orders.linked.view" && permission !== "audit.view",
   );
 
 export const DEFAULT_MERCHANT_ENTERPRISE_ROLES: ReadonlyArray<{
@@ -856,6 +951,304 @@ export function normalizeMerchantTaskEvent(value: unknown): MerchantTaskEvent | 
     actorId: normalizeText(readValue(record, "actorId", "actor_id"), 120),
     payload,
     createdAt: normalizeTimestamp(readValue(record, "createdAt", "created_at")),
+  };
+}
+
+export function normalizeMerchantEnterpriseNotification(
+  value: unknown,
+): MerchantEnterpriseNotification | null {
+  const record = readRecord(value);
+  const id = normalizeText(record.id, 80);
+  const siteId = normalizeText(readValue(record, "siteId", "merchant_id"), 80);
+  const taskId = normalizeText(readValue(record, "taskId", "task_id"), 80);
+  const typeValue = normalizeText(
+    readValue(record, "type", "notification_type"),
+    80,
+  ) as MerchantEnterpriseNotificationType;
+  if (
+    !MERCHANT_ENTERPRISE_UUID_PATTERN.test(id) ||
+    !/^\d{8}$/.test(siteId) ||
+    !MERCHANT_ENTERPRISE_UUID_PATTERN.test(taskId) ||
+    !MERCHANT_ENTERPRISE_NOTIFICATION_TYPES.includes(typeValue)
+  ) {
+    return null;
+  }
+
+  const actorTypeValue = normalizeText(
+    readValue(record, "actorType", "actor_type"),
+    20,
+  );
+  const actorType: MerchantTaskEventActorType =
+    actorTypeValue === "owner" || actorTypeValue === "employee"
+      ? actorTypeValue
+      : "system";
+  const rawPayload = readRecord(record.payload);
+  const payload: MerchantEnterpriseNotificationPayload = {};
+  if (rawPayload.dueAt === null || rawPayload.due_at === null) {
+    payload.dueAt = null;
+  } else {
+    const dueAt = normalizeNullableTimestamp(
+      readValue(rawPayload, "dueAt", "due_at"),
+    );
+    if (dueAt) payload.dueAt = dueAt;
+  }
+
+  return {
+    id,
+    siteId,
+    taskId,
+    type: typeValue,
+    actorType,
+    actorId: normalizeText(readValue(record, "actorId", "actor_id"), 120),
+    payload,
+    readAt: normalizeNullableTimestamp(readValue(record, "readAt", "read_at")),
+    createdAt: normalizeTimestamp(readValue(record, "createdAt", "created_at")),
+  };
+}
+
+const MERCHANT_ENTERPRISE_AUDIT_DATA_KEYS: Readonly<
+  Record<MerchantEnterpriseAuditEntityType, ReadonlySet<string>>
+> = {
+  workspace: new Set(["initialized"]),
+  role: new Set([
+    "name",
+    "description",
+    "permissions",
+    "status",
+    "is_system",
+    "access_scope",
+    "system_key",
+    "board_id",
+  ]),
+  board: new Set(["name", "description", "status", "position", "system_key"]),
+  column: new Set([
+    "board_id",
+    "name",
+    "color",
+    "position",
+    "is_done",
+    "status",
+    "system_key",
+  ]),
+  employee: new Set([
+    "display_name",
+    "role_id",
+    "status",
+    "auth_bound",
+    "invitation_version",
+    "invitation_delivery_status",
+    "invitation_sent_at",
+    "invitation_expires_at",
+    "invitation_revoked_at",
+    "accepted_at",
+  ]),
+  invitation: new Set([
+    "display_name",
+    "role_id",
+    "status",
+    "auth_bound",
+    "invitation_version",
+    "invitation_delivery_status",
+    "invitation_sent_at",
+    "invitation_expires_at",
+    "invitation_revoked_at",
+    "accepted_at",
+  ]),
+};
+
+function auditEventMatchesEntity(
+  eventType: MerchantEnterpriseAuditEventType,
+  entityType: MerchantEnterpriseAuditEntityType,
+) {
+  if (eventType.startsWith("workspace.")) return entityType === "workspace";
+  if (eventType.startsWith("role.")) return entityType === "role";
+  if (eventType.startsWith("board.")) return entityType === "board";
+  if (eventType.startsWith("column.")) return entityType === "column";
+  if (eventType.startsWith("employee.")) return entityType === "employee";
+  return eventType.startsWith("invitation.") && entityType === "invitation";
+}
+
+function normalizeAuditTimestampValue(value: unknown) {
+  if (value === null) return null;
+  if (typeof value !== "string" || value.length > 80) return undefined;
+  return normalizeNullableTimestamp(value) ?? undefined;
+}
+
+function normalizeMerchantEnterpriseAuditData(
+  value: unknown,
+  entityType: MerchantEnterpriseAuditEntityType,
+): MerchantEnterpriseAuditData | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const allowedKeys = MERCHANT_ENTERPRISE_AUDIT_DATA_KEYS[entityType];
+  if (Object.keys(record).some((key) => !allowedKeys.has(key))) return null;
+
+  const normalized: Record<string, MerchantEnterpriseAuditDataValue> = {};
+  for (const [key, rawValue] of Object.entries(record)) {
+    if (key === "permissions") {
+      const permissions = parseMerchantEnterprisePermissionsStrict(rawValue);
+      if (!permissions) return null;
+      normalized[key] = permissions;
+      continue;
+    }
+    if (key === "position" || key === "invitation_version") {
+      if (!Number.isSafeInteger(rawValue) || Number(rawValue) < 0) return null;
+      normalized[key] = Number(rawValue);
+      continue;
+    }
+    if (key === "initialized" || key === "is_system" || key === "is_done" || key === "auth_bound") {
+      if (typeof rawValue !== "boolean") return null;
+      normalized[key] = rawValue;
+      continue;
+    }
+    if ([
+      "invitation_sent_at",
+      "invitation_expires_at",
+      "invitation_revoked_at",
+      "accepted_at",
+    ].includes(key)) {
+      const timestamp = normalizeAuditTimestampValue(rawValue);
+      if (timestamp === undefined) return null;
+      normalized[key] = timestamp;
+      continue;
+    }
+    if (key === "role_id" || key === "board_id") {
+      if (rawValue === null) {
+        normalized[key] = null;
+      } else if (
+        typeof rawValue === "string" &&
+        MERCHANT_ENTERPRISE_UUID_PATTERN.test(rawValue)
+      ) {
+        normalized[key] = rawValue;
+      } else {
+        return null;
+      }
+      continue;
+    }
+    if (rawValue === null && key === "system_key") {
+      normalized[key] = null;
+      continue;
+    }
+    if (typeof rawValue !== "string") return null;
+    const maxLength = key === "description" ? 2000 : key === "display_name" ? 120 : 160;
+    if (rawValue.length > maxLength) return null;
+    if (key === "color" && !/^#[0-9a-f]{6}$/i.test(rawValue)) return null;
+    if (key === "access_scope" && rawValue !== "all" && rawValue !== "restricted") {
+      return null;
+    }
+    if (
+      key === "invitation_delivery_status" &&
+      !MERCHANT_ENTERPRISE_INVITATION_DELIVERY_STATUSES.includes(
+        rawValue as MerchantEnterpriseInvitationDeliveryStatus,
+      )
+    ) {
+      return null;
+    }
+    normalized[key] = rawValue;
+  }
+  return normalized;
+}
+
+export function normalizeMerchantEnterpriseAuditEvent(
+  value: unknown,
+): MerchantEnterpriseAuditEvent | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const id = readValue(record, "id", "id");
+  const siteId = readValue(record, "siteId", "merchant_id");
+  const eventType = readValue(record, "eventType", "event_type");
+  const entityType = readValue(record, "entityType", "entity_type");
+  const entityId = readValue(record, "entityId", "entity_id");
+  const actorType = readValue(record, "actorType", "actor_type");
+  const actorId = readValue(record, "actorId", "actor_id");
+  const actorLabel = readValue(record, "actorLabel", "actor_label");
+  const targetLabel = readValue(record, "targetLabel", "target_label");
+  const operationId = readValue(record, "operationId", "operation_id");
+  const createdAt = normalizeAuditTimestampValue(
+    readValue(record, "createdAt", "created_at"),
+  );
+  if (
+    typeof id !== "string" ||
+    !MERCHANT_ENTERPRISE_UUID_PATTERN.test(id) ||
+    typeof siteId !== "string" ||
+    !/^\d{8}$/.test(siteId) ||
+    typeof eventType !== "string" ||
+    !MERCHANT_ENTERPRISE_AUDIT_EVENT_TYPES.includes(
+      eventType as MerchantEnterpriseAuditEventType,
+    ) ||
+    typeof entityType !== "string" ||
+    !MERCHANT_ENTERPRISE_AUDIT_ENTITY_TYPES.includes(
+      entityType as MerchantEnterpriseAuditEntityType,
+    ) ||
+    (actorType !== "owner" && actorType !== "employee" && actorType !== "system") ||
+    typeof actorLabel !== "string" ||
+    actorLabel.trim() !== actorLabel ||
+    actorLabel.length < 1 ||
+    actorLabel.length > 160 ||
+    typeof targetLabel !== "string" ||
+    targetLabel.trim() !== targetLabel ||
+    targetLabel.length < 1 ||
+    targetLabel.length > 160 ||
+    typeof operationId !== "string" ||
+    operationId.length > 160 ||
+    createdAt === null ||
+    createdAt === undefined
+  ) {
+    return null;
+  }
+  const resolvedEventType = eventType as MerchantEnterpriseAuditEventType;
+  const resolvedEntityType = entityType as MerchantEnterpriseAuditEntityType;
+  if (!auditEventMatchesEntity(resolvedEventType, resolvedEntityType)) return null;
+  const normalizedEntityId =
+    entityId === null
+      ? null
+      : typeof entityId === "string" && MERCHANT_ENTERPRISE_UUID_PATTERN.test(entityId)
+        ? entityId
+        : undefined;
+  if (
+    normalizedEntityId === undefined ||
+    (resolvedEntityType === "workspace" && normalizedEntityId !== null) ||
+    (resolvedEntityType !== "workspace" && normalizedEntityId === null)
+  ) {
+    return null;
+  }
+  const normalizedActorId =
+    actorId === null
+      ? null
+      : typeof actorId === "string" && MERCHANT_ENTERPRISE_UUID_PATTERN.test(actorId)
+        ? actorId
+        : undefined;
+  if (
+    normalizedActorId === undefined ||
+    (actorType === "employee" && normalizedActorId === null) ||
+    (actorType !== "employee" && normalizedActorId !== null)
+  ) {
+    return null;
+  }
+  const beforeData = normalizeMerchantEnterpriseAuditData(
+    readValue(record, "beforeData", "before_data"),
+    resolvedEntityType,
+  );
+  const afterData = normalizeMerchantEnterpriseAuditData(
+    readValue(record, "afterData", "after_data"),
+    resolvedEntityType,
+  );
+  if (!beforeData || !afterData) return null;
+
+  return {
+    id,
+    siteId,
+    eventType: resolvedEventType,
+    entityType: resolvedEntityType,
+    entityId: normalizedEntityId,
+    actorType,
+    actorId: normalizedActorId,
+    actorLabel,
+    targetLabel,
+    beforeData,
+    afterData,
+    operationId,
+    createdAt,
   };
 }
 

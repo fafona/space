@@ -22,6 +22,7 @@ import {
   merchantEnterpriseBoardAccessFitsActor,
   merchantEnterpriseRoleFitsActor,
   normalizeMerchantEnterpriseEmployee,
+  normalizeMerchantEnterpriseAuditEvent,
   normalizeMerchantEnterprisePermissions,
   normalizeMerchantEnterpriseRole,
   normalizeMerchantTaskBoard,
@@ -85,6 +86,77 @@ test("linked order summaries remain opt-in for every default employee role", () 
   for (const role of DEFAULT_MERCHANT_ENTERPRISE_ROLES) {
     assert.equal(role.permissions.includes("orders.linked.view"), false);
   }
+});
+
+test("enterprise audit permission is explicit and depends on workspace access", () => {
+  assert.ok(MERCHANT_ENTERPRISE_PERMISSIONS.includes("audit.view"));
+  assert.deepEqual(
+    getMissingMerchantEnterprisePermissionDependencies(["audit.view"]),
+    ["enterprise.view"],
+  );
+  for (const role of DEFAULT_MERCHANT_ENTERPRISE_ROLES) {
+    assert.equal(role.permissions.includes("audit.view"), false);
+  }
+});
+
+test("enterprise audit normalization accepts only sanitized immutable event rows", () => {
+  const event = normalizeMerchantEnterpriseAuditEvent({
+    id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    merchant_id: "10000000",
+    event_type: "employee.renamed",
+    entity_type: "employee",
+    entity_id: "77777777-7777-4777-8777-777777777777",
+    actor_type: "owner",
+    actor_id: null,
+    actor_label: "企业负责人",
+    target_label: "仓库员工",
+    before_data: { display_name: "旧名称", role_id: null },
+    after_data: { display_name: "新名称", role_id: null },
+    operation_id: "employee-update-1",
+    created_at: "2026-08-02T12:00:00+00:00",
+  });
+  assert.ok(event);
+  assert.deepEqual(event, {
+    id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    siteId: "10000000",
+    eventType: "employee.renamed",
+    entityType: "employee",
+    entityId: "77777777-7777-4777-8777-777777777777",
+    actorType: "owner",
+    actorId: null,
+    actorLabel: "企业负责人",
+    targetLabel: "仓库员工",
+    beforeData: { display_name: "旧名称", role_id: null },
+    afterData: { display_name: "新名称", role_id: null },
+    operationId: "employee-update-1",
+    createdAt: "2026-08-02T12:00:00.000Z",
+  });
+
+  assert.equal(
+    normalizeMerchantEnterpriseAuditEvent({
+      ...event,
+      eventType: "employee.renamed",
+      entityType: "employee",
+      actorType: "owner",
+      actorId: "88888888-8888-4888-8888-888888888888",
+    }),
+    null,
+  );
+  assert.equal(
+    normalizeMerchantEnterpriseAuditEvent({
+      ...event,
+      beforeData: { display_name: "旧名称", invitation_token_hash: "secret" },
+    }),
+    null,
+  );
+  assert.equal(
+    normalizeMerchantEnterpriseAuditEvent({
+      ...event,
+      eventType: "role.updated",
+      entityType: "employee",
+    }),
+    null,
+  );
 });
 
 test("enterprise role board access normalization is backward compatible and fail-closed", () => {

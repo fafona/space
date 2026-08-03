@@ -153,7 +153,7 @@ test("enterprise overview aggregates every active board while task filtering sta
   );
   assert.match(
     source,
-    /window\.setInterval\(\(\)\s*=>\s*setOverviewNowMs\(Date\.now\(\)\),\s*60_000\)/,
+    /window\.setInterval\(\s*\(\)\s*=>\s*setOverviewNowMs\(Date\.now\(\)\),\s*resolvedCollaborationRefreshIntervalMs,?\s*\)/,
     "overdue totals must refresh while the workspace stays open",
   );
   assert.match(
@@ -275,7 +275,7 @@ test("employee overview is personalized and opens a task on its source board", (
   );
   assert.match(
     openTaskSource,
-    /setSelectedBoardId\(task\.boardId\)[\s\S]{0,400}selectView\(["']tasks["']\)[\s\S]{0,160}setEditingTaskId\(task\.id\)/,
+    /setSelectedBoardId\(task\.boardId\)[\s\S]{0,400}commitViewChange\(["']tasks["']\)[\s\S]{0,160}setEditingTaskId\(task\.id\)/,
     "opening a recent task must select its board, enter the board view and open the existing editor",
   );
   for (const reset of [
@@ -338,7 +338,7 @@ test("enterprise workspace exposes manual refresh and the last successful sync t
   );
 });
 
-test("focus refresh is throttled and never overwrites active task work", () => {
+test("foreground polling is throttled and never overwrites active enterprise work", () => {
   const autoRefreshSource = sliceBetween(
     /const\s+taskComposerHasDraft\s*=/,
     /useEffect\(\(\)\s*=>\s*\{\s*if\s*\(\s*!actor\s*\)\s*return;\s*if\s*\(requestedView\s*!==\s*tab\)/,
@@ -350,8 +350,15 @@ test("focus refresh is throttled and never overwrites active task work", () => {
     "taskDueAt",
     'taskPriority !== "normal"',
     "taskAssigneeIds.length > 0",
+    "employeeName.trim()",
+    "employeeEmail.trim()",
+    "employeeRoleId",
+    "roleName.trim()",
+    "roleDescription.trim()",
+    "rolePermissions",
+    "roleAllowedBoardIds",
   ]) {
-    assert.ok(autoRefreshSource.includes(draftState), `task draft guard must include ${draftState}`);
+    assert.ok(autoRefreshSource.includes(draftState), `draft guard must include ${draftState}`);
   }
   const refreshSafetySource = sliceSourceBetween(
     autoRefreshSource,
@@ -363,9 +370,16 @@ test("focus refresh is throttled and never overwrites active task work", () => {
     "!busy",
     "!draggingTaskId",
     "!editingTaskId",
+    "!offboardingEmployeeId",
+    "!roleTransitionRequest",
     "!showBoardSettings",
     "!mobileTaskComposerOpen",
     "!taskComposerHasDraft",
+    "!employeeInviteHasDraft",
+    "!managedEmployeeProfileId",
+    "!managedInvitationEmployeeId",
+    "!roleComposerHasDraft",
+    "dirtyRoleIds.size === 0",
   ]) {
     assert.ok(
       refreshSafetySource.includes(unsafeState),
@@ -376,7 +390,7 @@ test("focus refresh is throttled and never overwrites active task work", () => {
   assert.match(autoRefreshSource, /overviewAbortControllerRef\.current/);
   assert.match(
     autoRefreshSource,
-    /Date\.now\(\)\s*-\s*lastSyncedAtRef\.current\s*<\s*30_000/,
+    /Date\.now\(\)\s*-\s*lastSyncedAtRef\.current\s*<\s*resolvedCollaborationRefreshIntervalMs/,
     "foreground refreshes must have a 30-second minimum interval",
   );
   assert.match(
@@ -384,6 +398,9 @@ test("focus refresh is throttled and never overwrites active task work", () => {
     /loadOverview\(\{\s*preserveData:\s*true,\s*silent:\s*true\s*\}\)/,
   );
   for (const registration of [
+    "refreshIfStale();",
+    "window.setInterval(",
+    "window.clearInterval(intervalId)",
     'window.addEventListener("focus", refreshIfStale)',
     'document.addEventListener("visibilitychange", refreshIfStale)',
     'window.removeEventListener("focus", refreshIfStale)',
@@ -391,6 +408,69 @@ test("focus refresh is throttled and never overwrites active task work", () => {
   ]) {
     assert.ok(autoRefreshSource.includes(registration), `missing refresh lifecycle: ${registration}`);
   }
+  assert.match(
+    source,
+    /const\s+DEFAULT_MERCHANT_ENTERPRISE_COLLABORATION_REFRESH_INTERVAL_MS\s*=\s*30_000/,
+  );
+  assert.match(
+    source,
+    /const\s+MIN_MERCHANT_ENTERPRISE_COLLABORATION_REFRESH_INTERVAL_MS\s*=\s*250/,
+  );
+  assert.match(
+    source,
+    /collaborationRefreshIntervalMs\?:\s*number/,
+    "the test harness needs an explicit accelerated collaboration interval",
+  );
+  assert.match(
+    source,
+    /normalizeCollaborationRefreshInterval\(\s*collaborationRefreshIntervalMs,?\s*\)/,
+  );
+});
+
+test("enterprise toolbar warns when collaboration data is stale and explains paused recovery", () => {
+  const autoRefreshSource = sliceBetween(
+    /const\s+taskComposerHasDraft\s*=/,
+    /useEffect\(\(\)\s*=>\s*\{\s*if\s*\(\s*!actor\s*\)\s*return;\s*if\s*\(requestedView\s*!==\s*tab\)/,
+    "enterprise stale-data state",
+  );
+  assert.match(
+    source,
+    /const\s+MERCHANT_ENTERPRISE_STALE_INTERVAL_MULTIPLIER\s*=\s*3/,
+  );
+  assert.match(
+    autoRefreshSource,
+    /lastSyncedAtMs\s*>\s*0\s*&&\s*overviewNowMs\s*-\s*lastSyncedAtMs\s*>=\s*collaborationStaleAfterMs/,
+  );
+  assert.match(
+    autoRefreshSource,
+    /enterpriseAutoRefreshPaused\s*=\s*Boolean\(actor\s*&&\s*!canAutoRefreshOnFocus\)/,
+  );
+
+  const headerSource = sliceBetween(
+    /<header\s+className=/,
+    /\{!usesExternalNavigation\s*\?\s*\(/,
+    "enterprise stale-data toolbar",
+  );
+  assert.match(headerSource, /data-enterprise-sync-stale/);
+  assert.match(headerSource, /数据可能不是最新/);
+  assert.match(headerSource, /完成当前操作后自动同步/);
+  assert.match(headerSource, /正在等待自动同步/);
+});
+
+test("role editor reports unsaved local changes so polling cannot reset them", () => {
+  const roleEditorSource = sliceBetween(
+    /function\s+RoleEditor\s*\(/,
+    /function\s+BoardSettings\s*\(/,
+    "role editor refresh guard",
+  );
+  assert.match(roleEditorSource, /onDirtyChange:\s*\(roleId:\s*string,\s*dirty:\s*boolean\)\s*=>\s*void/);
+  assert.match(
+    roleEditorSource,
+    /const\s+roleEditorIsDirty\s*=[\s\S]{0,500}name\s*!==\s*role\.name[\s\S]{0,500}permissions[\s\S]{0,500}allowedBoardIds/,
+  );
+  assert.match(roleEditorSource, /onDirtyChange\(role\.id,\s*roleEditorIsDirty\)/);
+  assert.match(roleEditorSource, /onDirtyChange\(role\.id,\s*false\)/);
+  assert.match(source, /onDirtyChange=\{handleRoleEditorDirtyChange\}/);
 });
 
 test("silent foreground refresh revalidates safety and cancels when interaction starts", () => {
@@ -1636,7 +1716,7 @@ test("external enterprise navigation stays permission-aware while standalone kee
     /const\s+requestedViewAllowed\s*=\s*actor[\s\S]{0,200}MERCHANT_ENTERPRISE_VIEW_PERMISSIONS\[requestedView\]/,
   );
   assert.match(source, /const\s+tab\s*=\s*requestedViewAllowed\s*\?\s*requestedView\s*:\s*["']overview["']/);
-  assert.match(source, /if\s*\(requestedView\s*!==\s*tab\)\s*selectView\(tab\)/);
+  assert.match(source, /if\s*\(requestedView\s*!==\s*tab\)\s*commitViewChange\(tab\)/);
   assert.match(
     source,
     /MERCHANT_ENTERPRISE_VIEW_ITEMS[\s\S]{0,250}filter\(\(item\)\s*=>\s*can\(actor,\s*item\.permission\)\)[\s\S]{0,300}onAvailableViewsChange\(views\)/,
@@ -1644,7 +1724,7 @@ test("external enterprise navigation stays permission-aware while standalone kee
   assert.match(source, /\{!usesExternalNavigation\s*\?\s*\([\s\S]{0,300}<nav/);
   assert.match(
     source,
-    /function\s+openTaskBoardFromOverview\(\)[\s\S]{0,400}selectView\(["']tasks["']\)/,
+    /function\s+openTaskBoardFromOverview\(\)[\s\S]{0,400}commitViewChange\(["']tasks["']\)/,
   );
   assert.match(source, /onClick=\{openTaskBoardFromOverview\}/);
 
@@ -2163,4 +2243,140 @@ test("restricted role managers cannot escalate scopes or create unscoped boards"
     "workspace bootstrap must not create a board for a restricted actor",
   );
   assert.match(source, /当前角色没有获分配可访问的任务看板/);
+});
+
+test("enterprise drafts are guarded across task closing, submenu changes and workspace exits", () => {
+  const taskEditor = sliceBetween(
+    /function\s+TaskEditor\(/,
+    /function\s+EmployeeOffboardingDialog\(/,
+    "task editor draft guard",
+  );
+  assert.match(taskEditor, /function\s+requestClose\(\)/);
+  assert.match(taskEditor, /hasUnsavedSourceExitDraft[\s\S]{0,240}window\.confirm/);
+  assert.match(taskEditor, /requestCloseRef\.current\(\)/);
+  assert.match(taskEditor, /event\.target\s*===\s*event\.currentTarget[\s\S]{0,80}requestClose\(\)/);
+  assert.match(taskEditor, /onClick=\{requestClose\}/);
+
+  assert.match(source, /const\s+confirmViewChange\s*=\s*useCallback/);
+  assert.match(source, /切换功能将放弃这些修改/);
+  assert.match(source, /navigation\.registerViewChangeGuard\(confirmViewChange\)/);
+  assert.match(source, /onClick=\{\(\)\s*=>\s*requestViewChange\(key\)\}/);
+  assert.match(source, /window\.addEventListener\(["']beforeunload["'],\s*preventUnsavedUnload\)/);
+
+  assert.match(
+    adminClientSource,
+    /merchantDesktopSectionRef\.current\s*===\s*["']enterprise["'][\s\S]{0,220}merchantEnterpriseLeaveGuardRef\.current\(\)/,
+  );
+  assert.match(
+    adminClientSource,
+    /registerViewChangeGuard:\s*\(guard\)[\s\S]{0,140}merchantEnterpriseViewChangeGuardRef\.current\s*=\s*guard/,
+  );
+  assert.match(source, /registerLeaveGuard\(\(\)\s*=>\s*confirmViewChange\(null\)\)/);
+  assert.match(
+    adminClientSource,
+    /supportMobileHomeTabRef\.current\s*===\s*["']enterprise["'][\s\S]{0,220}supportMobileEnterpriseLeaveGuardRef\.current\(\)/,
+  );
+  assert.match(
+    adminClientSource,
+    /registerLeaveGuard=\{\(guard\)\s*=>\s*\{[\s\S]{0,120}supportMobileEnterpriseLeaveGuardRef\.current\s*=\s*guard/,
+  );
+});
+
+test("board settings and employee inline editors confirm before discarding local drafts", () => {
+  const boardSettings = sliceBetween(
+    /function\s+BoardSettings\(/,
+    /function\s+BoardSettingsRow\(/,
+    "board settings draft guard",
+  );
+  assert.match(boardSettings, /onDirtyChange:\s*\(dirty:\s*boolean\)\s*=>\s*void/);
+  assert.match(
+    boardSettings,
+    /const\s+newBoardHasDraft\s*=[\s\S]{0,180}newBoardName[\s\S]{0,180}newBoardDescription/,
+  );
+  assert.match(
+    boardSettings,
+    /const\s+newColumnHasDraft\s*=[\s\S]{0,220}newColumnName[\s\S]{0,220}newColumnColor[\s\S]{0,220}newColumnIsDone/,
+  );
+  assert.match(boardSettings, /dirtyBoardIds\.size\s*>\s*0/);
+  assert.match(boardSettings, /dirtyColumnIds\.size\s*>\s*0/);
+  assert.match(boardSettings, /onDirtyChange\(boardSettingsHasDraft\)/);
+  assert.match(
+    boardSettings,
+    /key=\{JSON\.stringify\(\[board\.id,\s*board\.name,\s*board\.description\]\)\}/,
+    "unchanged board rows must retain drafts across unrelated overview reloads",
+  );
+  assert.match(
+    boardSettings,
+    /key=\{JSON\.stringify\(\[[\s\S]{0,180}column\.id[\s\S]{0,180}column\.name[\s\S]{0,180}column\.color[\s\S]{0,180}column\.isDone[\s\S]{0,80}\]\)\}/,
+    "unchanged column rows must retain drafts across unrelated overview reloads",
+  );
+
+  const boardRow = sliceBetween(
+    /function\s+BoardSettingsRow\(/,
+    /function\s+ColumnSettingsRow\(/,
+    "board row draft guard",
+  );
+  assert.match(boardRow, /name\s*!==\s*board\.name/);
+  assert.match(boardRow, /description\s*!==\s*board\.description/);
+  assert.match(boardRow, /onDirtyChange\(board\.id,\s*boardRowIsDirty\)/);
+
+  const columnRow = sliceBetween(
+    /function\s+ColumnSettingsRow\(/,
+    /export\s+default\s+function\s+MerchantEnterpriseManager\(/,
+    "column row draft guard",
+  );
+  assert.match(columnRow, /name\s*!==\s*column\.name/);
+  assert.match(columnRow, /color\s*!==\s*column\.color/);
+  assert.match(columnRow, /isDone\s*!==\s*column\.isDone/);
+  assert.match(columnRow, /onDirtyChange\(column\.id,\s*columnRowIsDirty\)/);
+
+  assert.match(source, /function\s+requestBoardSelection\(/);
+  assert.match(
+    source,
+    /boardSettingsHasDraft[\s\S]{0,300}切换看板将放弃这些修改/,
+  );
+  assert.match(source, /function\s+toggleBoardSettingsVisibility\(/);
+  assert.match(source, /收起设置将放弃这些修改/);
+  assert.match(source, /onClick=\{toggleBoardSettingsVisibility\}/);
+  assert.match(
+    source,
+    /function\s+setBoardStatusWithDraftGuard\([\s\S]{0,500}status\s*===\s*"archived"[\s\S]{0,500}boardSettingsHasDraft[\s\S]{0,500}归档当前看板将放弃这些修改/,
+    "archiving the active board must confirm before its keyed settings are replaced",
+  );
+  assert.match(
+    source,
+    /key=\{`board-settings:\$\{activeBoard\?\.id\s*\?\?\s*"none"\}:\$\{boardSettingsResetVersion\}`\}/,
+    "a confirmed board change must remount settings so column drafts cannot leak to another board",
+  );
+  assert.match(source, /onSelectBoard=\{requestBoardSelection\}/);
+  assert.match(source, /onSetBoardStatus=\{setBoardStatusWithDraftGuard\}/);
+  assert.match(source, /onDirtyChange=\{handleBoardSettingsDirtyChange\}/);
+
+  const employeeEditors = sliceBetween(
+    /function\s+managedEmployeeProfileHasDraft\(/,
+    /async\s+function\s+createRole\(/,
+    "employee editor draft guard",
+  );
+  assert.match(
+    employeeEditors,
+    /managedEmployeeProfileName\s*!==\s*employee\.displayName/,
+  );
+  assert.match(
+    employeeEditors,
+    /managedInvitationName\s*!==\s*employee\.displayName[\s\S]{0,160}managedInvitationRoleId\s*!==\s*employee\.roleId/,
+  );
+  assert.match(employeeEditors, /function\s+confirmDiscardManagedEmployeeEditorDrafts\(/);
+  assert.match(employeeEditors, /window\.confirm\(messageText\)/);
+  assert.match(
+    employeeEditors,
+    /toggleEmployeeProfileEditor[\s\S]{0,500}confirmDiscardManagedEmployeeEditorDrafts/,
+  );
+  const invitationToggle = sliceBetween(
+    /function\s+toggleEmployeeInvitationManager\(/,
+    /async\s+function\s+savePendingEmployeeInvitation\(/,
+    "invitation editor switch guard",
+  );
+  assert.match(invitationToggle, /confirmDiscardManagedEmployeeEditorDrafts/);
+  assert.match(source, /onClick=\{closeManagedEmployeeProfileEditor\}/);
+  assert.match(source, /onClick=\{closeManagedInvitationEditor\}/);
 });

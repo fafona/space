@@ -1,0 +1,62 @@
+name: Enterprise PostgreSQL integration
+
+on:
+  pull_request:
+    paths:
+      - "scripts/supabase-init.sql"
+      - "scripts/supabase-migrations/**"
+      - "scripts/enterprise-integration/**"
+      - ".github/workflows/enterprise-integration.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "scripts/supabase-init.sql"
+      - "scripts/supabase-migrations/**"
+      - "scripts/enterprise-integration/**"
+      - ".github/workflows/enterprise-integration.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: enterprise-postgres-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  postgres-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: faolla_enterprise_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d faolla_enterprise_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/faolla_enterprise_test?sslmode=disable
+      ENTERPRISE_INTEGRATION_ALLOW_DISPOSABLE_DATABASE: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client
+
+      - name: Run enterprise database acceptance
+        run: bash scripts/enterprise-integration/run.sh

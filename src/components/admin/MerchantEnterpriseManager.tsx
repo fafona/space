@@ -77,14 +77,19 @@ import {
   planMerchantTaskReorder,
   sortMerchantTaskOrderItems,
 } from "@/lib/merchantTaskOrdering";
+import MerchantEnterpriseNotificationCenter from "@/components/admin/MerchantEnterpriseNotificationCenter";
+import MerchantEnterpriseAuditLog from "@/components/admin/MerchantEnterpriseAuditLog";
 
-export type MerchantEnterpriseView = "overview" | "tasks" | "employees" | "roles";
+export type MerchantEnterpriseView = "overview" | "tasks" | "employees" | "roles" | "audit";
 
 export type MerchantEnterpriseExternalNavigation = {
   mode: "external";
   activeView: MerchantEnterpriseView;
   onViewChange: (view: MerchantEnterpriseView) => void;
   onAvailableViewsChange?: (views: readonly MerchantEnterpriseView[]) => void;
+  registerViewChangeGuard?: (
+    guard: ((view: MerchantEnterpriseView | null) => boolean) | null,
+  ) => void;
 };
 
 const MERCHANT_ENTERPRISE_VIEW_ITEMS = [
@@ -92,6 +97,7 @@ const MERCHANT_ENTERPRISE_VIEW_ITEMS = [
   { key: "tasks", label: "任务看板", permission: "tasks.view" },
   { key: "employees", label: "员工账号", permission: "employees.view" },
   { key: "roles", label: "角色权限", permission: "roles.view" },
+  { key: "audit", label: "操作记录", permission: "audit.view" },
 ] as const satisfies ReadonlyArray<{
   key: MerchantEnterpriseView;
   label: string;
@@ -108,10 +114,12 @@ type MerchantEnterpriseManagerProps = {
   accessToken?: string;
   className?: string;
   standalone?: boolean;
+  collaborationRefreshIntervalMs?: number;
   navigation?: MerchantEnterpriseExternalNavigation;
   taskDraftIntent?: MerchantOrderTaskDraftIntent | null;
   onTaskDraftIntentHandled?: (requestId: string) => void;
   onOpenSourceOrder?: (input: { siteId: string; orderId: string }) => Promise<void> | void;
+  registerLeaveGuard?: (guard: (() => boolean) | null) => void;
 };
 
 type OverviewPayload = {
@@ -156,6 +164,9 @@ const EMPTY_SNAPSHOT: MerchantEnterpriseSnapshot = {
 };
 
 const MERCHANT_ENTERPRISE_REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_MERCHANT_ENTERPRISE_COLLABORATION_REFRESH_INTERVAL_MS = 30_000;
+const MIN_MERCHANT_ENTERPRISE_COLLABORATION_REFRESH_INTERVAL_MS = 250;
+const MERCHANT_ENTERPRISE_STALE_INTERVAL_MULTIPLIER = 3;
 
 const PRIORITY_META: Record<MerchantTaskPriority, { label: string; className: string }> = {
   low: { label: "低", className: "bg-slate-100 text-slate-600" },
@@ -169,6 +180,22 @@ function can(
   permission: MerchantEnterprisePermission,
 ) {
   return hasMerchantEnterprisePermission(actor, permission);
+}
+
+function haveSameStringValues(left: readonly string[], right: readonly string[]) {
+  if (left.length !== right.length) return false;
+  const rightValues = new Set(right);
+  return left.every((value) => rightValues.has(value));
+}
+
+function normalizeCollaborationRefreshInterval(value: number | undefined) {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_MERCHANT_ENTERPRISE_COLLABORATION_REFRESH_INTERVAL_MS;
+  }
+  return Math.max(
+    MIN_MERCHANT_ENTERPRISE_COLLABORATION_REFRESH_INTERVAL_MS,
+    Math.round(Number(value)),
+  );
 }
 
 function formatDate(value: string | null | undefined) {
@@ -862,6 +889,7 @@ function TaskEditor({
     operationId: string;
   } | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const requestCloseRef = useRef<() => void>(onClose);
 
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -877,7 +905,7 @@ function TaskEditor({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || busy) return;
       event.preventDefault();
-      onClose();
+      requestCloseRef.current();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
@@ -1127,6 +1155,18 @@ function TaskEditor({
       editingChecklistText.trim() !== editedChecklistItem.text,
     );
 
+  function requestClose() {
+    if (
+      hasUnsavedSourceExitDraft &&
+      typeof window !== "undefined" &&
+      !window.confirm("当前任务有尚未保存的修改或输入。关闭任务详情将放弃这些内容，是否继续？")
+    ) {
+      return;
+    }
+    onClose();
+  }
+  requestCloseRef.current = requestClose;
+
   function taskEditorDraft(nextColumnId = columnId): TaskDraft {
     return {
       title,
@@ -1199,7 +1239,7 @@ function TaskEditor({
     <div
       className="fixed inset-0 z-[120] flex items-stretch justify-center bg-slate-950/55 p-0 backdrop-blur-sm sm:items-center sm:p-6"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget && !busy) onClose();
+        if (event.target === event.currentTarget && !busy) requestClose();
       }}
     >
       <section
@@ -1222,7 +1262,7 @@ function TaskEditor({
             type="button"
             className="min-h-11 shrink-0 rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-600 sm:min-h-0"
             disabled={busy}
-            onClick={onClose}
+            onClick={requestClose}
           >
             关闭
           </button>
@@ -2539,6 +2579,7 @@ function RoleEditor({
   canGrantAllBoards,
   onSave,
   onStatusChange,
+  onDirtyChange,
 }: {
   role: MerchantEnterpriseRole;
   boards: readonly MerchantTaskBoard[];
@@ -2558,12 +2599,19 @@ function RoleEditor({
     },
   ) => Promise<void>;
   onStatusChange: (role: MerchantEnterpriseRole, status: "active" | "archived") => Promise<void>;
+  onDirtyChange: (roleId: string, dirty: boolean) => void;
 }) {
   const [name, setName] = useState(role.name);
   const [description, setDescription] = useState(role.description);
   const [permissions, setPermissions] = useState<MerchantEnterprisePermission[]>(role.permissions);
   const [accessScope, setAccessScope] = useState(role.accessScope);
   const [allowedBoardIds, setAllowedBoardIds] = useState<string[]>(role.allowedBoardIds);
+  const roleEditorIsDirty =
+    name !== role.name ||
+    description !== role.description ||
+    !haveSameStringValues(permissions, role.permissions) ||
+    accessScope !== role.accessScope ||
+    !haveSameStringValues(allowedBoardIds, role.allowedBoardIds);
 
   useEffect(() => {
     setName(role.name);
@@ -2572,6 +2620,17 @@ function RoleEditor({
     setAccessScope(role.accessScope);
     setAllowedBoardIds(role.allowedBoardIds);
   }, [role]);
+
+  useEffect(() => {
+    onDirtyChange(role.id, roleEditorIsDirty);
+  }, [onDirtyChange, role.id, roleEditorIsDirty]);
+
+  useEffect(
+    () => () => {
+      onDirtyChange(role.id, false);
+    },
+    [onDirtyChange, role.id],
+  );
 
   return (
     <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -2709,13 +2768,17 @@ function BoardSettings({
   onSaveColumn,
   onSetColumnStatus,
   onMoveColumn,
+  onDirtyChange,
 }: {
   boards: MerchantTaskBoard[];
   columns: MerchantTaskColumn[];
   selectedBoardId: string;
   busy: boolean;
   canCreateBoard: boolean;
-  onSelectBoard: (boardId: string) => void;
+  onSelectBoard: (
+    boardId: string,
+    options?: { discardCommittedNewBoardDraft?: boolean },
+  ) => boolean;
   onCreateBoard: (input: { name: string; description: string }) => Promise<MerchantTaskBoard | null>;
   onSaveBoard: (
     board: MerchantTaskBoard,
@@ -2739,6 +2802,7 @@ function BoardSettings({
     status: "active" | "archived",
   ) => Promise<void>;
   onMoveColumn: (column: MerchantTaskColumn, position: number) => Promise<void>;
+  onDirtyChange: (dirty: boolean) => void;
 }) {
   const sortedBoards = [...boards].sort(
     (left, right) => left.position - right.position || left.createdAt.localeCompare(right.createdAt),
@@ -2757,6 +2821,48 @@ function BoardSettings({
   const [newColumnName, setNewColumnName] = useState("");
   const [newColumnColor, setNewColumnColor] = useState("#64748b");
   const [newColumnIsDone, setNewColumnIsDone] = useState(false);
+  const [dirtyBoardIds, setDirtyBoardIds] = useState<Set<string>>(() => new Set());
+  const [dirtyColumnIds, setDirtyColumnIds] = useState<Set<string>>(() => new Set());
+  const newBoardHasDraft = Boolean(newBoardName || newBoardDescription);
+  const newColumnHasDraft = Boolean(
+    newColumnName || newColumnColor !== "#64748b" || newColumnIsDone,
+  );
+  const boardSettingsHasDraft = Boolean(
+    newBoardHasDraft ||
+      newColumnHasDraft ||
+      dirtyBoardIds.size > 0 ||
+      dirtyColumnIds.size > 0,
+  );
+
+  const handleBoardDirtyChange = useCallback((boardId: string, dirty: boolean) => {
+    setDirtyBoardIds((current) => {
+      if (current.has(boardId) === dirty) return current;
+      const next = new Set(current);
+      if (dirty) next.add(boardId);
+      else next.delete(boardId);
+      return next;
+    });
+  }, []);
+  const handleColumnDirtyChange = useCallback((columnId: string, dirty: boolean) => {
+    setDirtyColumnIds((current) => {
+      if (current.has(columnId) === dirty) return current;
+      const next = new Set(current);
+      if (dirty) next.add(columnId);
+      else next.delete(columnId);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    onDirtyChange(boardSettingsHasDraft);
+  }, [boardSettingsHasDraft, onDirtyChange]);
+
+  useEffect(
+    () => () => {
+      onDirtyChange(false);
+    },
+    [onDirtyChange],
+  );
 
   return (
     <section className="rounded-3xl border border-cyan-200 bg-white p-5 shadow-sm">
@@ -2803,9 +2909,15 @@ function BoardSettings({
                       description: newBoardDescription,
                     }).then((created) => {
                       if (!created) return;
+                      const hasOtherDrafts =
+                        newColumnHasDraft ||
+                        dirtyBoardIds.size > 0 ||
+                        dirtyColumnIds.size > 0;
                       setNewBoardName("");
                       setNewBoardDescription("");
-                      onSelectBoard(created.id);
+                      onSelectBoard(created.id, {
+                        discardCommittedNewBoardDraft: !hasOtherDrafts,
+                      });
                     });
                   }}
                 >
@@ -2824,7 +2936,7 @@ function BoardSettings({
               const activeIndex = activeBoardOrder.findIndex((item) => item.id === board.id);
               return (
                 <BoardSettingsRow
-                  key={board.id}
+                  key={JSON.stringify([board.id, board.name, board.description])}
                   board={board}
                   selected={selectedBoard?.id === board.id}
                   busy={busy}
@@ -2834,6 +2946,7 @@ function BoardSettings({
                   onSave={onSaveBoard}
                   onStatus={onSetBoardStatus}
                   onMove={onMoveBoard}
+                  onDirtyChange={handleBoardDirtyChange}
                 />
               );
             })}
@@ -2904,7 +3017,12 @@ function BoardSettings({
                   const activeIndex = activeColumnOrder.findIndex((item) => item.id === column.id);
                   return (
                     <ColumnSettingsRow
-                      key={column.id}
+                      key={JSON.stringify([
+                        column.id,
+                        column.name,
+                        column.color,
+                        column.isDone,
+                      ])}
                       column={column}
                       busy={busy}
                       activeIndex={activeIndex}
@@ -2912,6 +3030,7 @@ function BoardSettings({
                       onSave={onSaveColumn}
                       onStatus={onSetColumnStatus}
                       onMove={onMoveColumn}
+                      onDirtyChange={handleColumnDirtyChange}
                     />
                   );
                 })}
@@ -2939,6 +3058,7 @@ function BoardSettingsRow({
   onSave,
   onStatus,
   onMove,
+  onDirtyChange,
 }: {
   board: MerchantTaskBoard;
   selected: boolean;
@@ -2952,14 +3072,22 @@ function BoardSettingsRow({
   ) => Promise<void>;
   onStatus: (board: MerchantTaskBoard, status: "active" | "archived") => Promise<void>;
   onMove: (board: MerchantTaskBoard, position: number) => Promise<void>;
+  onDirtyChange: (boardId: string, dirty: boolean) => void;
 }) {
   const [name, setName] = useState(board.name);
   const [description, setDescription] = useState(board.description);
+  const boardRowIsDirty = name !== board.name || description !== board.description;
 
   useEffect(() => {
-    setName(board.name);
-    setDescription(board.description);
-  }, [board]);
+    onDirtyChange(board.id, boardRowIsDirty);
+  }, [board.id, boardRowIsDirty, onDirtyChange]);
+
+  useEffect(
+    () => () => {
+      onDirtyChange(board.id, false);
+    },
+    [board.id, onDirtyChange],
+  );
 
   return (
     <article
@@ -3071,6 +3199,7 @@ function ColumnSettingsRow({
   onSave,
   onStatus,
   onMove,
+  onDirtyChange,
 }: {
   column: MerchantTaskColumn;
   busy: boolean;
@@ -3082,16 +3211,24 @@ function ColumnSettingsRow({
   ) => Promise<void>;
   onStatus: (column: MerchantTaskColumn, status: "active" | "archived") => Promise<void>;
   onMove: (column: MerchantTaskColumn, position: number) => Promise<void>;
+  onDirtyChange: (columnId: string, dirty: boolean) => void;
 }) {
   const [name, setName] = useState(column.name);
   const [color, setColor] = useState(column.color);
   const [isDone, setIsDone] = useState(column.isDone);
+  const columnRowIsDirty =
+    name !== column.name || color !== column.color || isDone !== column.isDone;
 
   useEffect(() => {
-    setName(column.name);
-    setColor(column.color);
-    setIsDone(column.isDone);
-  }, [column]);
+    onDirtyChange(column.id, columnRowIsDirty);
+  }, [column.id, columnRowIsDirty, onDirtyChange]);
+
+  useEffect(
+    () => () => {
+      onDirtyChange(column.id, false);
+    },
+    [column.id, onDirtyChange],
+  );
 
   return (
     <article
@@ -3206,11 +3343,18 @@ function MerchantEnterpriseManagerContent({
   accessToken = "",
   className = "",
   standalone = false,
+  collaborationRefreshIntervalMs,
   navigation,
   taskDraftIntent = null,
   onTaskDraftIntentHandled,
   onOpenSourceOrder,
+  registerLeaveGuard,
 }: MerchantEnterpriseManagerProps) {
+  const resolvedCollaborationRefreshIntervalMs = normalizeCollaborationRefreshInterval(
+    collaborationRefreshIntervalMs,
+  );
+  const collaborationStaleAfterMs =
+    resolvedCollaborationRefreshIntervalMs * MERCHANT_ENTERPRISE_STALE_INTERVAL_MULTIPLIER;
   const [internalView, setInternalView] = useState<MerchantEnterpriseView>("overview");
   const [actor, setActor] = useState<MerchantEnterpriseActor | null>(null);
   const [snapshot, setSnapshot] = useState<MerchantEnterpriseSnapshot>(EMPTY_SNAPSHOT);
@@ -3244,7 +3388,7 @@ function MerchantEnterpriseManagerContent({
   const tab = requestedViewAllowed ? requestedView : "overview";
   const onExternalViewChange = navigation?.onViewChange;
   const onAvailableViewsChange = navigation?.onAvailableViewsChange;
-  const selectView = useCallback(
+  const commitViewChange = useCallback(
     (view: MerchantEnterpriseView) => {
       if (!usesExternalNavigation) setInternalView(view);
       onExternalViewChange?.(view);
@@ -3267,6 +3411,8 @@ function MerchantEnterpriseManagerContent({
   const [taskArchiveView, setTaskArchiveView] = useState<"active" | "archived">("active");
   const [selectedBoardId, setSelectedBoardId] = useState("");
   const [showBoardSettings, setShowBoardSettings] = useState(false);
+  const [boardSettingsHasDraft, setBoardSettingsHasDraft] = useState(false);
+  const [boardSettingsResetVersion, setBoardSettingsResetVersion] = useState(0);
   const [mobileTaskComposerOpen, setMobileTaskComposerOpen] = useState(false);
   const [overviewNowMs, setOverviewNowMs] = useState(() => Date.now());
 
@@ -3297,6 +3443,27 @@ function MerchantEnterpriseManagerContent({
   ]);
   const [roleAccessScope, setRoleAccessScope] = useState<RoleBoardAccessValue["accessScope"]>("all");
   const [roleAllowedBoardIds, setRoleAllowedBoardIds] = useState<string[]>([]);
+  const [dirtyRoleIds, setDirtyRoleIds] = useState<Set<string>>(() => new Set());
+
+  const handleRoleEditorDirtyChange = useCallback((roleId: string, dirty: boolean) => {
+    setDirtyRoleIds((current) => {
+      const hasRole = current.has(roleId);
+      if (hasRole === dirty) return current;
+      const next = new Set(current);
+      if (dirty) next.add(roleId);
+      else next.delete(roleId);
+      return next;
+    });
+  }, []);
+
+  const handleBoardSettingsDirtyChange = useCallback((dirty: boolean) => {
+    setBoardSettingsHasDraft(dirty);
+  }, []);
+
+  const discardBoardSettingsDrafts = useCallback(() => {
+    setBoardSettingsHasDraft(false);
+    setBoardSettingsResetVersion((current) => current + 1);
+  }, []);
 
   const apiFetch = useCallback(
     async (path: string, init: RequestInit = {}) => {
@@ -3569,9 +3736,12 @@ function MerchantEnterpriseManagerContent({
   }, [loadOverview]);
 
   useEffect(() => {
-    const intervalId = window.setInterval(() => setOverviewNowMs(Date.now()), 60_000);
+    const intervalId = window.setInterval(
+      () => setOverviewNowMs(Date.now()),
+      resolvedCollaborationRefreshIntervalMs,
+    );
     return () => window.clearInterval(intervalId);
-  }, []);
+  }, [resolvedCollaborationRefreshIntervalMs]);
 
   useEffect(() => {
     if (!actor) return;
@@ -3598,6 +3768,17 @@ function MerchantEnterpriseManagerContent({
     taskPriority !== "normal" ||
     taskAssigneeIds.length > 0 ||
     Boolean(taskSource);
+  const employeeInviteHasDraft =
+    Boolean(employeeName.trim()) || Boolean(employeeEmail.trim()) || Boolean(employeeRoleId);
+  const defaultRoleBoardAccess = actor
+    ? getMerchantEnterpriseDefaultRoleBoardAccess(actor)
+    : { accessScope: "all" as const, allowedBoardIds: [] as string[] };
+  const roleComposerHasDraft =
+    Boolean(roleName.trim()) ||
+    Boolean(roleDescription.trim()) ||
+    !haveSameStringValues(rolePermissions, ["enterprise.view"]) ||
+    roleAccessScope !== defaultRoleBoardAccess.accessScope ||
+    !haveSameStringValues(roleAllowedBoardIds, defaultRoleBoardAccess.allowedBoardIds);
   const canAutoRefreshOnFocus = Boolean(
     actor &&
       !busy &&
@@ -3606,10 +3787,16 @@ function MerchantEnterpriseManagerContent({
       !roleTransitionRequest &&
       !draggingTaskId &&
       (tab === "overview" ||
+        tab === "audit" ||
         (tab === "tasks" &&
           !showBoardSettings &&
           !mobileTaskComposerOpen &&
-          !taskComposerHasDraft)),
+          !taskComposerHasDraft) ||
+        (tab === "employees" &&
+          !employeeInviteHasDraft &&
+          !managedEmployeeProfileId &&
+          !managedInvitationEmployeeId) ||
+        (tab === "roles" && !roleComposerHasDraft && dirtyRoleIds.size === 0)),
   );
   canAutoRefreshOnFocusRef.current = canAutoRefreshOnFocus;
   useEffect(() => {
@@ -3630,24 +3817,89 @@ function MerchantEnterpriseManagerContent({
         !canAutoRefreshOnFocus ||
         document.visibilityState !== "visible" ||
         overviewAbortControllerRef.current ||
-        Date.now() - lastSyncedAtRef.current < 30_000
+        Date.now() - lastSyncedAtRef.current <
+          resolvedCollaborationRefreshIntervalMs
       ) {
         return;
       }
       void loadOverview({ preserveData: true, silent: true });
     };
+    refreshIfStale();
+    const intervalId = window.setInterval(
+      refreshIfStale,
+      resolvedCollaborationRefreshIntervalMs,
+    );
     window.addEventListener("focus", refreshIfStale);
     document.addEventListener("visibilitychange", refreshIfStale);
     return () => {
+      window.clearInterval(intervalId);
       window.removeEventListener("focus", refreshIfStale);
       document.removeEventListener("visibilitychange", refreshIfStale);
     };
-  }, [canAutoRefreshOnFocus, loadOverview]);
+  }, [canAutoRefreshOnFocus, loadOverview, resolvedCollaborationRefreshIntervalMs]);
+  const enterpriseDataIsStale =
+    lastSyncedAtMs > 0 && overviewNowMs - lastSyncedAtMs >= collaborationStaleAfterMs;
+  const enterpriseAutoRefreshPaused = Boolean(actor && !canAutoRefreshOnFocus);
+
+  const confirmViewChange = useCallback(
+    (view: MerchantEnterpriseView | null) => {
+      if (view !== null && view === tab) return true;
+      if (busy) {
+        setMessage({ kind: "info", text: "当前操作正在保存，请完成后再切换功能。" });
+        return false;
+      }
+      if (
+        actor &&
+        !canAutoRefreshOnFocus &&
+        !window.confirm("当前页面有未保存的内容。切换功能将放弃这些修改，是否继续？")
+      ) {
+        return false;
+      }
+      if (view !== "tasks") {
+        setEditingTaskId("");
+        setDraggingTaskId("");
+        setShowBoardSettings(false);
+        setMobileTaskComposerOpen(false);
+      }
+      return true;
+    },
+    [actor, busy, canAutoRefreshOnFocus, tab],
+  );
+  const requestViewChange = useCallback(
+    (view: MerchantEnterpriseView) => {
+      if (!confirmViewChange(view)) return false;
+      commitViewChange(view);
+      return true;
+    },
+    [commitViewChange, confirmViewChange],
+  );
+
+  useEffect(() => {
+    if (!usesExternalNavigation || !navigation?.registerViewChangeGuard) return;
+    navigation.registerViewChangeGuard(confirmViewChange);
+    return () => navigation.registerViewChangeGuard?.(null);
+  }, [confirmViewChange, navigation, usesExternalNavigation]);
+
+  useEffect(() => {
+    if (!registerLeaveGuard) return;
+    registerLeaveGuard(() => confirmViewChange(null));
+    return () => registerLeaveGuard(null);
+  }, [confirmViewChange, registerLeaveGuard]);
+
+  useEffect(() => {
+    if (!actor || canAutoRefreshOnFocus) return;
+    const preventUnsavedUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", preventUnsavedUnload);
+    return () => window.removeEventListener("beforeunload", preventUnsavedUnload);
+  }, [actor, canAutoRefreshOnFocus]);
 
   useEffect(() => {
     if (!actor) return;
-    if (requestedView !== tab) selectView(tab);
-  }, [actor, requestedView, selectView, tab]);
+    if (requestedView !== tab) commitViewChange(tab);
+  }, [actor, commitViewChange, requestedView, tab]);
 
   const availableViewKey = actor
     ? MERCHANT_ENTERPRISE_VIEW_ITEMS
@@ -3694,6 +3946,82 @@ function MerchantEnterpriseManagerContent({
     activeBoards.find((board) => board.id === selectedBoardId) ??
     activeBoards[0] ??
     null;
+
+  function confirmBoardSettingsDraftDiscard(messageText: string) {
+    return (
+      !boardSettingsHasDraft ||
+      typeof window === "undefined" ||
+      window.confirm(messageText)
+    );
+  }
+
+  function requestBoardSelection(
+    boardId: string,
+    options: { discardCommittedNewBoardDraft?: boolean } = {},
+  ) {
+    if (!boardId || boardId === activeBoard?.id) return true;
+    if (busy) {
+      setMessage({ kind: "info", text: "当前操作正在保存，请完成后再切换看板。" });
+      return false;
+    }
+    if (
+      showBoardSettings &&
+      boardSettingsHasDraft &&
+      !options.discardCommittedNewBoardDraft &&
+      !confirmBoardSettingsDraftDiscard(
+        "看板设置中有尚未保存的内容。切换看板将放弃这些修改，是否继续？",
+      )
+    ) {
+      return false;
+    }
+    if (showBoardSettings && boardSettingsHasDraft) {
+      discardBoardSettingsDrafts();
+    }
+    setSelectedBoardId(boardId);
+    return true;
+  }
+
+  function toggleBoardSettingsVisibility() {
+    if (!showBoardSettings) {
+      setShowBoardSettings(true);
+      return;
+    }
+    if (busy) {
+      setMessage({ kind: "info", text: "当前操作正在保存，请完成后再收起看板设置。" });
+      return;
+    }
+    if (
+      !confirmBoardSettingsDraftDiscard(
+        "看板设置中有尚未保存的内容。收起设置将放弃这些修改，是否继续？",
+      )
+    ) {
+      return;
+    }
+    if (boardSettingsHasDraft) discardBoardSettingsDrafts();
+    setShowBoardSettings(false);
+  }
+
+  async function setBoardStatusWithDraftGuard(
+    board: MerchantTaskBoard,
+    status: "active" | "archived",
+  ) {
+    if (
+      status === "archived" &&
+      board.id === activeBoard?.id &&
+      boardSettingsHasDraft
+    ) {
+      if (
+        !confirmBoardSettingsDraftDiscard(
+          "看板设置中有尚未保存的内容。归档当前看板将放弃这些修改，是否继续？",
+        )
+      ) {
+        return;
+      }
+      discardBoardSettingsDrafts();
+    }
+    await setBoardStatus(board, status);
+  }
+
   useEffect(() => {
     const resolvedBoardId = activeBoard?.id ?? "";
     if (selectedBoardId !== resolvedBoardId) setSelectedBoardId(resolvedBoardId);
@@ -3733,7 +4061,7 @@ function MerchantEnterpriseManagerContent({
       setTaskArchiveView(existingTask.archivedAt ? "archived" : "active");
       setTaskSource(null);
       setMobileTaskComposerOpen(false);
-      selectView("tasks");
+      commitViewChange("tasks");
       setEditingTaskId(existingTask.id);
       setMessage({ kind: "info", text: "该订单已有企业任务，已为你打开。" });
       acknowledgeIntent();
@@ -3786,7 +4114,7 @@ function MerchantEnterpriseManagerContent({
       sourceId: taskDraftIntent.sourceId,
     });
     setMobileTaskComposerOpen(true);
-    selectView("tasks");
+    commitViewChange("tasks");
     setMessage({ kind: "info", text: "已从订单预填任务，请确认后创建。" });
     acknowledgeIntent();
   }, [
@@ -3795,7 +4123,7 @@ function MerchantEnterpriseManagerContent({
     loading,
     needsBootstrap,
     onTaskDraftIntentHandled,
-    selectView,
+    commitViewChange,
     selectedBoardId,
     siteId,
     snapshot.columns,
@@ -3847,9 +4175,20 @@ function MerchantEnterpriseManagerContent({
     setTaskAssigneeFilter(
       actor ? getMerchantEnterpriseDefaultTaskAssigneeFilter(actor) : "all",
     );
-    selectView("tasks");
+    commitViewChange("tasks");
   }
   function openTaskFromOverview(task: MerchantTask) {
+    if (busy) {
+      setMessage({ kind: "info", text: "当前操作正在保存，请完成后再打开其他任务。" });
+      return false;
+    }
+    if (
+      editingTaskId !== task.id &&
+      !canAutoRefreshOnFocus &&
+      !window.confirm("当前页面有未保存的内容。打开其他任务将放弃这些修改，是否继续？")
+    ) {
+      return false;
+    }
     setSelectedBoardId(task.boardId);
     setTaskQuery("");
     setTaskPriorityFilter("all");
@@ -3857,8 +4196,9 @@ function MerchantEnterpriseManagerContent({
     setTaskAssigneeFilter(
       actor ? getMerchantEnterpriseDefaultTaskAssigneeFilter(actor) : "all",
     );
-    selectView("tasks");
+    commitViewChange("tasks");
     setEditingTaskId(task.id);
+    return true;
   }
   const taskDragEnabled =
     taskArchiveView === "active" &&
@@ -4557,9 +4897,68 @@ function MerchantEnterpriseManagerContent({
     });
   }
 
+  function managedEmployeeProfileHasDraft() {
+    if (!managedEmployeeProfileId) return false;
+    const employee = snapshot.employees.find(
+      (item) => item.id === managedEmployeeProfileId,
+    );
+    return Boolean(employee && managedEmployeeProfileName !== employee.displayName);
+  }
+
+  function managedInvitationEditorHasDraft() {
+    if (!managedInvitationEmployeeId) return false;
+    const employee = snapshot.employees.find(
+      (item) => item.id === managedInvitationEmployeeId,
+    );
+    return Boolean(
+      employee &&
+        (managedInvitationName !== employee.displayName ||
+          managedInvitationRoleId !== employee.roleId),
+    );
+  }
+
+  function confirmDiscardManagedEmployeeEditorDrafts(messageText: string) {
+    return (
+      (!managedEmployeeProfileHasDraft() && !managedInvitationEditorHasDraft()) ||
+      typeof window === "undefined" ||
+      window.confirm(messageText)
+    );
+  }
+
+  function closeManagedEmployeeProfileEditor() {
+    if (
+      !confirmDiscardManagedEmployeeEditorDrafts(
+        "员工资料中有尚未保存的修改。关闭编辑将放弃这些内容，是否继续？",
+      )
+    ) {
+      return false;
+    }
+    setManagedEmployeeProfileId("");
+    return true;
+  }
+
+  function closeManagedInvitationEditor() {
+    if (
+      !confirmDiscardManagedEmployeeEditorDrafts(
+        "邀请资料中有尚未保存的修改。关闭管理将放弃这些内容，是否继续？",
+      )
+    ) {
+      return false;
+    }
+    setManagedInvitationEmployeeId("");
+    return true;
+  }
+
   function toggleEmployeeProfileEditor(employee: MerchantEnterpriseEmployee) {
     if (managedEmployeeProfileId === employee.id) {
-      setManagedEmployeeProfileId("");
+      closeManagedEmployeeProfileEditor();
+      return;
+    }
+    if (
+      !confirmDiscardManagedEmployeeEditorDrafts(
+        "当前员工资料或邀请中有尚未保存的修改。打开其他员工将放弃这些内容，是否继续？",
+      )
+    ) {
       return;
     }
     setManagedInvitationEmployeeId("");
@@ -4723,7 +5122,14 @@ function MerchantEnterpriseManagerContent({
 
   function toggleEmployeeInvitationManager(employee: MerchantEnterpriseEmployee) {
     if (managedInvitationEmployeeId === employee.id) {
-      setManagedInvitationEmployeeId("");
+      closeManagedInvitationEditor();
+      return;
+    }
+    if (
+      !confirmDiscardManagedEmployeeEditorDrafts(
+        "当前员工资料或邀请中有尚未保存的修改。打开其他员工将放弃这些内容，是否继续？",
+      )
+    ) {
       return;
     }
     setManagedEmployeeProfileId("");
@@ -4941,6 +5347,28 @@ function MerchantEnterpriseManagerContent({
                       ? `最后同步 ${formatDateTime(new Date(lastSyncedAtMs).toISOString())}`
                       : "尚未同步"}
                 </span>
+                {enterpriseDataIsStale ? (
+                  <span
+                    data-enterprise-sync-stale
+                    role="status"
+                    className="rounded-full border border-amber-200/40 bg-amber-300/15 px-2 py-1 text-[11px] font-semibold text-amber-100"
+                  >
+                    {enterpriseAutoRefreshPaused
+                      ? "数据可能不是最新 · 完成当前操作后自动同步"
+                      : "数据可能不是最新 · 正在等待自动同步"}
+                  </span>
+                ) : null}
+                {actor.type === "employee" && can(actor, "tasks.view") ? (
+                  <MerchantEnterpriseNotificationCenter
+                    siteId={siteId}
+                    actor={actor}
+                    employees={snapshot.employees}
+                    tasks={snapshot.tasks}
+                    apiFetch={apiFetch}
+                    onOpenTask={openTaskFromOverview}
+                    refreshIntervalMs={resolvedCollaborationRefreshIntervalMs}
+                  />
+                ) : null}
                 <button
                   type="button"
                   className="min-h-9 rounded-lg border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-white/20 disabled:opacity-45"
@@ -4969,7 +5397,7 @@ function MerchantEnterpriseManagerContent({
                   tab === key ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-100"
                 }`}
                 aria-current={tab === key ? "page" : undefined}
-                onClick={() => selectView(key)}
+                onClick={() => requestViewChange(key)}
               >
                 {label}
               </button>
@@ -5126,7 +5554,11 @@ function MerchantEnterpriseManagerContent({
                   className="mt-1.5 block w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-800"
                   value={activeBoard?.id ?? ""}
                   disabled={activeBoards.length === 0}
-                  onChange={(event) => setSelectedBoardId(event.target.value)}
+                  onChange={(event) => {
+                    if (!requestBoardSelection(event.target.value)) {
+                      event.currentTarget.value = activeBoard?.id ?? "";
+                    }
+                  }}
                 >
                   {activeBoards.length === 0 ? <option value="">暂无启用看板</option> : null}
                   {activeBoards.map((board) => (
@@ -5146,7 +5578,7 @@ function MerchantEnterpriseManagerContent({
                         ? "border-cyan-700 bg-cyan-700 text-white"
                         : "border-cyan-200 bg-cyan-50 text-cyan-700"
                     }`}
-                    onClick={() => setShowBoardSettings((current) => !current)}
+                    onClick={toggleBoardSettingsVisibility}
                   >
                     {showBoardSettings ? "收起看板设置" : "管理看板与工作列"}
                   </button>
@@ -5156,20 +5588,22 @@ function MerchantEnterpriseManagerContent({
 
             {can(actor, "boards.manage") && showBoardSettings ? (
               <BoardSettings
+                key={`board-settings:${activeBoard?.id ?? "none"}:${boardSettingsResetVersion}`}
                 boards={snapshot.boards}
                 columns={snapshot.columns}
                 selectedBoardId={activeBoard?.id ?? ""}
                 busy={busy}
                 canCreateBoard={canCreateBoards}
-                onSelectBoard={setSelectedBoardId}
+                onSelectBoard={requestBoardSelection}
                 onCreateBoard={createBoard}
                 onSaveBoard={saveBoard}
-                onSetBoardStatus={setBoardStatus}
+                onSetBoardStatus={setBoardStatusWithDraftGuard}
                 onMoveBoard={moveBoard}
                 onCreateColumn={createColumn}
                 onSaveColumn={saveColumn}
                 onSetColumnStatus={setColumnStatus}
                 onMoveColumn={moveColumn}
+                onDirtyChange={handleBoardSettingsDirtyChange}
               />
             ) : null}
 
@@ -5781,7 +6215,7 @@ function MerchantEnterpriseManagerContent({
                               type="button"
                               className="min-h-11 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 disabled:opacity-45"
                               disabled={busy}
-                              onClick={() => setManagedEmployeeProfileId("")}
+                              onClick={closeManagedEmployeeProfileEditor}
                             >
                               取消
                             </button>
@@ -5845,7 +6279,7 @@ function MerchantEnterpriseManagerContent({
                               type="button"
                               className="min-h-11 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 disabled:opacity-45"
                               disabled={busy}
-                              onClick={() => setManagedInvitationEmployeeId("")}
+                              onClick={closeManagedInvitationEditor}
                             >
                               关闭
                             </button>
@@ -6049,6 +6483,7 @@ function MerchantEnterpriseManagerContent({
                     canGrantAllBoards={canGrantAllBoards}
                     onSave={saveRole}
                     onStatusChange={updateRoleStatus}
+                    onDirtyChange={handleRoleEditorDirtyChange}
                   />
                 );
               })}
@@ -6059,6 +6494,15 @@ function MerchantEnterpriseManagerContent({
               ) : null}
             </section>
           </div>
+        ) : null}
+
+        {!needsBootstrap && tab === "audit" ? (
+          <MerchantEnterpriseAuditLog
+            siteId={siteId}
+            roles={snapshot.roles}
+            boards={snapshot.boards}
+            apiFetch={apiFetch}
+          />
         ) : null}
 
         {editingTask ? (

@@ -4,8 +4,12 @@ import {
   MAX_MERCHANT_TASK_CHECKLIST_ITEMS,
   MAX_MERCHANT_TASK_CHECKLIST_TEXT_LENGTH,
   MAX_MERCHANT_TASK_ASSIGNEES,
+  MERCHANT_ENTERPRISE_AUDIT_ENTITY_TYPES,
+  MERCHANT_ENTERPRISE_AUDIT_EVENT_TYPES,
   normalizeMerchantEnterpriseBoardIds,
+  normalizeMerchantEnterpriseAuditEvent,
   normalizeMerchantEnterpriseEmployee,
+  normalizeMerchantEnterpriseNotification,
   normalizeMerchantEnterprisePermissions,
   normalizeMerchantEnterpriseRole,
   normalizeMerchantTask,
@@ -13,8 +17,13 @@ import {
   normalizeMerchantTaskColumn,
   normalizeMerchantTaskEvent,
   type MerchantEnterpriseEmployee,
+  type MerchantEnterpriseNotification,
   type MerchantEnterpriseEmployeeStatus,
   type MerchantEnterpriseBoardAccessScope,
+  type MerchantEnterpriseAuditCursor,
+  type MerchantEnterpriseAuditEntityType,
+  type MerchantEnterpriseAuditEvent,
+  type MerchantEnterpriseAuditEventType,
   type MerchantEnterprisePermission,
   type MerchantEnterpriseRole,
   type MerchantEnterpriseSnapshot,
@@ -63,6 +72,26 @@ const TASK_EVENT_COLUMNS =
   "id,merchant_id,task_id,event_type,actor_type,actor_id,payload,created_at";
 const TASK_CHECKLIST_ITEM_COLUMNS =
   "id,merchant_id,task_id,text,position,completed_at,archived_at,version,created_at,updated_at";
+
+export const MAX_MERCHANT_ENTERPRISE_NOTIFICATION_PAGE_SIZE = 50;
+
+export type MerchantEnterpriseNotificationCursor = {
+  createdAt: string;
+  id: string;
+};
+
+export type MerchantEnterpriseNotificationPage = {
+  notifications: MerchantEnterpriseNotification[];
+  unreadCount: number;
+  nextCursor: MerchantEnterpriseNotificationCursor | null;
+};
+
+export const MAX_MERCHANT_ENTERPRISE_AUDIT_PAGE_SIZE = 100;
+
+export type MerchantEnterpriseAuditPage = {
+  events: MerchantEnterpriseAuditEvent[];
+  nextCursor: MerchantEnterpriseAuditCursor | null;
+};
 
 function normalizeText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
@@ -159,6 +188,39 @@ function throwTaskChecklistRpcError(operation: string, error: unknown): never {
   if (knownCode) throw new Error(knownCode);
   if (message.includes("enterprise_idempotency_conflict")) {
     throw new Error("invalid_operation_id");
+  }
+  throw new Error(`${operation}:${message}`);
+}
+
+function throwEnterpriseNotificationRpcError(
+  operation: string,
+  error: unknown,
+): never {
+  if (isMerchantEnterpriseSchemaMissingError(error)) {
+    throw new Error("enterprise_schema_unavailable");
+  }
+  const message = toErrorMessage(error);
+  for (const code of [
+    "permission_denied",
+    "invalid_notification_actor",
+    "invalid_notification_request",
+  ]) {
+    if (message.includes(code)) throw new Error(code);
+  }
+  throw new Error(`${operation}:${message}`);
+}
+
+function throwEnterpriseAuditRpcError(operation: string, error: unknown): never {
+  if (isMerchantEnterpriseSchemaMissingError(error)) {
+    throw new Error("enterprise_schema_unavailable");
+  }
+  const message = toErrorMessage(error);
+  for (const code of [
+    "permission_denied",
+    "invalid_enterprise_audit_query",
+    "invalid_enterprise_audit_cursor",
+  ]) {
+    if (message.includes(code)) throw new Error(code);
   }
   throw new Error(`${operation}:${message}`);
 }
@@ -644,6 +706,322 @@ export async function loadMerchantTaskEvents(
     .limit(50);
   if (result.error) throwStoreError("enterprise_task_events_read_failed", result.error);
   return normalizeRows(result.data, normalizeMerchantTaskEvent);
+}
+
+function normalizeNotificationActor(input: {
+  actorType: unknown;
+  actorId: unknown;
+}) {
+  const actorId = normalizeText(input.actorId, 80);
+  if (
+    input.actorType !== "employee" ||
+    !MERCHANT_ENTERPRISE_ACTOR_ID_PATTERN.test(actorId)
+  ) {
+    throw new Error("invalid_notification_actor");
+  }
+  return { actorType: "employee" as const, actorId };
+}
+
+function normalizeNotificationCursor(
+  value: MerchantEnterpriseNotificationCursor | null | undefined,
+) {
+  if (!value) return null;
+  const id = normalizeText(value.id, 80);
+  const createdAtText = normalizeText(value.createdAt, 80);
+  if (
+    !MERCHANT_ENTERPRISE_TASK_ID_PATTERN.test(id) ||
+    !createdAtText ||
+    !Number.isFinite(Date.parse(createdAtText))
+  ) {
+    throw new Error("invalid_notification_cursor");
+  }
+  return {
+    id,
+    createdAt: new Date(createdAtText).toISOString(),
+  };
+}
+
+export async function loadMerchantEnterpriseNotifications(
+  client: MerchantEnterpriseStoreClient,
+  input: {
+    siteId: string;
+    actorType: "employee";
+    actorId: string;
+    limit?: number;
+    cursor?: MerchantEnterpriseNotificationCursor | null;
+  },
+): Promise<MerchantEnterpriseNotificationPage> {
+  const siteId = normalizeText(input.siteId, 80);
+  const actor = normalizeNotificationActor(input);
+  const requestedLimit = input.limit ?? 20;
+  if (
+    !/^\d{8}$/.test(siteId) ||
+    !Number.isSafeInteger(requestedLimit) ||
+    requestedLimit < 1 ||
+    requestedLimit > MAX_MERCHANT_ENTERPRISE_NOTIFICATION_PAGE_SIZE
+  ) {
+    throw new Error("invalid_notification_request");
+  }
+  const cursor = normalizeNotificationCursor(input.cursor);
+  const result = await client.rpc(
+    "faolla_list_merchant_enterprise_notifications_v1",
+    {
+      p_input: {
+        merchant_id: siteId,
+        actor_type: actor.actorType,
+        actor_id: actor.actorId,
+        limit: requestedLimit,
+        cursor_created_at: cursor?.createdAt ?? null,
+        cursor_id: cursor?.id ?? null,
+      },
+    },
+  );
+  if (result.error) {
+    throwEnterpriseNotificationRpcError(
+      "enterprise_notifications_read_failed",
+      result.error,
+    );
+  }
+
+  const response =
+    result.data && typeof result.data === "object" && !Array.isArray(result.data)
+      ? (result.data as Record<string, unknown>)
+      : null;
+  const rows = response && Array.isArray(response.notifications)
+    ? response.notifications
+    : null;
+  if (!response || !rows || rows.length > requestedLimit + 1) {
+    throw new Error("enterprise_notifications_read_failed:invalid_response");
+  }
+  const normalizedRows = rows.map(normalizeMerchantEnterpriseNotification);
+  if (normalizedRows.some((notification) => !notification)) {
+    throw new Error("enterprise_notifications_read_failed:invalid_response");
+  }
+  const allNotifications = normalizedRows as MerchantEnterpriseNotification[];
+  const hasMore = allNotifications.length > requestedLimit;
+  const notifications = allNotifications.slice(0, requestedLimit);
+  const lastNotification = notifications.at(-1) ?? null;
+  const unreadCountValue = Number(response.unread_count);
+  const unreadCount =
+    Number.isSafeInteger(unreadCountValue) && unreadCountValue >= 0
+      ? unreadCountValue
+      : 0;
+  return {
+    notifications,
+    unreadCount,
+    nextCursor:
+      hasMore && lastNotification
+        ? { createdAt: lastNotification.createdAt, id: lastNotification.id }
+        : null,
+  };
+}
+
+function normalizeAuditActor(input: {
+  actorType: unknown;
+  actorId: unknown;
+}) {
+  const actorId = normalizeText(input.actorId, 80);
+  if (
+    (input.actorType !== "owner" && input.actorType !== "employee") ||
+    !MERCHANT_ENTERPRISE_ACTOR_ID_PATTERN.test(actorId)
+  ) {
+    throw new Error("invalid_enterprise_audit_query");
+  }
+  return { actorType: input.actorType, actorId } as const;
+}
+
+function normalizeAuditCursor(
+  value: MerchantEnterpriseAuditCursor | null | undefined,
+) {
+  if (!value) return null;
+  const beforeId = normalizeText(value.beforeId, 80);
+  const beforeCreatedAtText = normalizeText(value.beforeCreatedAt, 80);
+  if (
+    !MERCHANT_ENTERPRISE_TASK_ID_PATTERN.test(beforeId) ||
+    !beforeCreatedAtText ||
+    !Number.isFinite(Date.parse(beforeCreatedAtText))
+  ) {
+    throw new Error("invalid_enterprise_audit_cursor");
+  }
+  return {
+    beforeId,
+    beforeCreatedAt: new Date(beforeCreatedAtText).toISOString(),
+  };
+}
+
+function normalizeAuditResponseCursor(value: unknown) {
+  if (value === null || value === undefined) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("enterprise_audit_read_failed:invalid_response");
+  }
+  const record = value as Record<string, unknown>;
+  try {
+    return normalizeAuditCursor({
+      beforeCreatedAt: normalizeText(
+        record.beforeCreatedAt ?? record.before_created_at,
+        80,
+      ),
+      beforeId: normalizeText(record.beforeId ?? record.before_id, 80),
+    });
+  } catch {
+    throw new Error("enterprise_audit_read_failed:invalid_response");
+  }
+}
+
+export async function loadMerchantEnterpriseAuditEvents(
+  client: MerchantEnterpriseStoreClient,
+  input: {
+    siteId: string;
+    actorType: "owner" | "employee";
+    actorId: string;
+    limit?: number;
+    cursor?: MerchantEnterpriseAuditCursor | null;
+    entityType?: MerchantEnterpriseAuditEntityType;
+    eventType?: MerchantEnterpriseAuditEventType;
+  },
+): Promise<MerchantEnterpriseAuditPage> {
+  const siteId = normalizeText(input.siteId, 80);
+  const actor = normalizeAuditActor(input);
+  const requestedLimit = input.limit ?? 50;
+  const entityType = input.entityType;
+  const eventType = input.eventType;
+  if (
+    !/^\d{8}$/.test(siteId) ||
+    !Number.isSafeInteger(requestedLimit) ||
+    requestedLimit < 1 ||
+    requestedLimit > MAX_MERCHANT_ENTERPRISE_AUDIT_PAGE_SIZE ||
+    (entityType !== undefined &&
+      !MERCHANT_ENTERPRISE_AUDIT_ENTITY_TYPES.includes(entityType)) ||
+    (eventType !== undefined &&
+      !MERCHANT_ENTERPRISE_AUDIT_EVENT_TYPES.includes(eventType))
+  ) {
+    throw new Error("invalid_enterprise_audit_query");
+  }
+  const cursor = normalizeAuditCursor(input.cursor);
+  const result = await client.rpc(
+    "faolla_list_merchant_enterprise_audit_events_v1",
+    {
+      p_input: {
+        merchant_id: siteId,
+        actor_type: actor.actorType,
+        actor_id: actor.actorId,
+        limit: requestedLimit,
+        ...(entityType ? { entity_type: entityType } : {}),
+        ...(eventType ? { event_type: eventType } : {}),
+        ...(cursor
+          ? {
+              before_created_at: cursor.beforeCreatedAt,
+              before_id: cursor.beforeId,
+            }
+          : {}),
+      },
+    },
+  );
+  if (result.error) {
+    throwEnterpriseAuditRpcError("enterprise_audit_read_failed", result.error);
+  }
+
+  const response =
+    result.data && typeof result.data === "object" && !Array.isArray(result.data)
+      ? (result.data as Record<string, unknown>)
+      : null;
+  const rows = response && Array.isArray(response.events) ? response.events : null;
+  if (!response || !rows || rows.length > requestedLimit) {
+    throw new Error("enterprise_audit_read_failed:invalid_response");
+  }
+  const normalized = rows.map(normalizeMerchantEnterpriseAuditEvent);
+  if (normalized.some((event) => !event)) {
+    throw new Error("enterprise_audit_read_failed:invalid_response");
+  }
+  const events = normalized as MerchantEnterpriseAuditEvent[];
+  if (
+    events.some((event) => event.siteId !== siteId) ||
+    new Set(events.map((event) => event.id)).size !== events.length
+  ) {
+    throw new Error("enterprise_audit_read_failed:invalid_response");
+  }
+  for (let index = 1; index < events.length; index += 1) {
+    const previous = events[index - 1];
+    const current = events[index];
+    if (
+      previous.createdAt < current.createdAt ||
+      (previous.createdAt === current.createdAt && previous.id < current.id)
+    ) {
+      throw new Error("enterprise_audit_read_failed:invalid_response");
+    }
+  }
+
+  const nextCursor = normalizeAuditResponseCursor(
+    response.nextCursor ?? response.next_cursor,
+  );
+  const lastEvent = events.at(-1) ?? null;
+  if (
+    nextCursor &&
+    (events.length !== requestedLimit ||
+      !lastEvent ||
+      nextCursor.beforeCreatedAt !== lastEvent.createdAt ||
+      nextCursor.beforeId !== lastEvent.id)
+  ) {
+    throw new Error("enterprise_audit_read_failed:invalid_response");
+  }
+  return { events, nextCursor };
+}
+
+export async function markMerchantEnterpriseNotificationsRead(
+  client: MerchantEnterpriseStoreClient,
+  input: {
+    siteId: string;
+    actorType: "employee";
+    actorId: string;
+    notificationId?: string;
+    all?: boolean;
+  },
+): Promise<{ markedCount: number; unreadCount: number }> {
+  const siteId = normalizeText(input.siteId, 80);
+  const actor = normalizeNotificationActor(input);
+  const notificationId = normalizeText(input.notificationId, 80);
+  const markAll = input.all === true;
+  if (
+    !/^\d{8}$/.test(siteId) ||
+    (markAll === Boolean(notificationId)) ||
+    (notificationId && !MERCHANT_ENTERPRISE_TASK_ID_PATTERN.test(notificationId))
+  ) {
+    throw new Error("invalid_notification_request");
+  }
+  const result = await client.rpc(
+    "faolla_mark_merchant_enterprise_notifications_read_v1",
+    {
+      p_input: {
+        merchant_id: siteId,
+        actor_type: actor.actorType,
+        actor_id: actor.actorId,
+        mark_all: markAll,
+        notification_id: notificationId || null,
+      },
+    },
+  );
+  if (result.error) {
+    throwEnterpriseNotificationRpcError(
+      "enterprise_notifications_mark_read_failed",
+      result.error,
+    );
+  }
+  const response =
+    result.data && typeof result.data === "object" && !Array.isArray(result.data)
+      ? (result.data as Record<string, unknown>)
+      : {};
+  const markedCountValue = Number(response.marked_count);
+  const unreadCountValue = Number(response.unread_count);
+  return {
+    markedCount:
+      Number.isSafeInteger(markedCountValue) && markedCountValue >= 0
+        ? markedCountValue
+        : 0,
+    unreadCount:
+      Number.isSafeInteger(unreadCountValue) && unreadCountValue >= 0
+        ? unreadCountValue
+        : 0,
+  };
 }
 
 export async function loadMerchantTaskBoardIdForAccess(

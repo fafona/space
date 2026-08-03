@@ -661,6 +661,7 @@ const MERCHANT_ENTERPRISE_CONTEXT_MENU_ITEMS: Array<{
   { label: "任务看板", view: "tasks" },
   { label: "员工账号", view: "employees" },
   { label: "角色权限", view: "roles" },
+  { label: "操作记录", view: "audit" },
 ];
 type ViewportKey = "desktop" | "mobile";
 type MerchantDesktopSection =
@@ -4173,9 +4174,32 @@ export default function AdminClient({
   const [accountSwitchEntries, setAccountSwitchEntries] = useState<AccountSwitchEntry[]>(() => readAccountSwitchEntries());
   const [accountSwitchBusyKey, setAccountSwitchBusyKey] = useState("");
   const [accountSwitchError, setAccountSwitchError] = useState("");
-  const [merchantDesktopSection, setMerchantDesktopSection] = useState<MerchantDesktopSection>("editor");
+  const [merchantDesktopSection, setMerchantDesktopSectionState] = useState<MerchantDesktopSection>("editor");
+  const merchantDesktopSectionRef = useRef<MerchantDesktopSection>("editor");
+  merchantDesktopSectionRef.current = merchantDesktopSection;
   const [merchantMemberSettingsView, setMerchantMemberSettingsView] = useState<MerchantMemberSettingsView>("list");
   const [merchantEnterpriseView, setMerchantEnterpriseView] = useState<MerchantEnterpriseView>("overview");
+  const merchantEnterpriseViewChangeGuardRef = useRef<
+    ((view: MerchantEnterpriseView | null) => boolean) | null
+  >(null);
+  const merchantEnterpriseLeaveGuardRef = useRef<(() => boolean) | null>(null);
+  const supportMobileEnterpriseLeaveGuardRef = useRef<(() => boolean) | null>(null);
+  const setMerchantDesktopSection = useCallback(
+    (section: MerchantDesktopSection) => {
+      if (
+        merchantDesktopSectionRef.current === "enterprise" &&
+        section !== "enterprise" &&
+        merchantEnterpriseLeaveGuardRef.current &&
+        !merchantEnterpriseLeaveGuardRef.current()
+      ) {
+        return false;
+      }
+      merchantDesktopSectionRef.current = section;
+      setMerchantDesktopSectionState(section);
+      return true;
+    },
+    [],
+  );
   const [merchantEnterpriseTaskIntent, setMerchantEnterpriseTaskIntent] =
     useState<MerchantOrderTaskDraftIntent | null>(null);
   const [merchantOrderSourceIntent, setMerchantOrderSourceIntent] =
@@ -4302,7 +4326,7 @@ export default function AdminClient({
     setSupportFaollaFrameHref(nextHref);
     setMerchantDesktopSection("faolla");
     setSupportMobileHomeTab("faolla");
-  }, [explicitFaollaSectionEntry]);
+  }, [explicitFaollaSectionEntry, setMerchantDesktopSection]);
   const [supportMobileBusinessSection, setSupportMobileBusinessSection] = useState<"booking" | "orders">("booking");
   const [supportSelfSectionView, setSupportSelfSectionView] = useState<SupportSelfSectionView>("home");
   const faollaAndroidAppUpdate = useFaollaAndroidAppUpdate({ enabled: !explicitFaollaSectionEntry });
@@ -4347,7 +4371,7 @@ export default function AdminClient({
     return () => {
       if (clearReturnTargetTimer !== null) window.clearTimeout(clearReturnTargetTimer);
     };
-  }, []);
+  }, [setMerchantDesktopSection]);
   const [supportPeerLocalMessages, setSupportPeerLocalMessages] = useState<LocalPeerSupportMessage[]>([]);
   const [supportBusinessCardDialogOpen, setSupportBusinessCardDialogOpen] = useState(false);
   const [supportMerchantInfoSheetOpen, setSupportMerchantInfoSheetOpen] = useState(false);
@@ -7374,6 +7398,7 @@ export default function AdminClient({
     justSignedIn,
     platformSeedBlocks,
     readFreshMerchantSessionIdentity,
+    setMerchantDesktopSection,
     storeScope,
   ]);
 
@@ -10486,11 +10511,21 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     };
   }, [resetSupportFaollaBackendFrame]);
   const openSupportMobileHomeTab = useCallback((tab: SupportMobileHomeTab) => {
+    if (
+      supportMobileHomeTabRef.current === "enterprise" &&
+      tab !== "enterprise" &&
+      supportMobileEnterpriseLeaveGuardRef.current &&
+      !supportMobileEnterpriseLeaveGuardRef.current()
+    ) {
+      return false;
+    }
     if (tab === "enterprise") {
       void loadMerchantEnterpriseManager().catch(() => undefined);
       setSupportMobileView("list");
     }
+    supportMobileHomeTabRef.current = tab;
     setSupportMobileHomeTab(tab);
+    return true;
   }, []);
   const openSupportShuangkouScoreTool = useCallback(() => {
     if (typeof window === "undefined") return;
@@ -12815,6 +12850,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       showTip("当前商户未开通企业管理");
       return;
     }
+    if (
+      merchantDesktopSection === "enterprise" &&
+      view !== merchantEnterpriseView &&
+      merchantEnterpriseViewChangeGuardRef.current &&
+      !merchantEnterpriseViewChangeGuardRef.current(view)
+    ) {
+      return;
+    }
     void loadMerchantEnterpriseManager().catch(() => undefined);
     const resolvedSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
     if (!resolvedSiteId) {
@@ -12974,7 +13017,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (merchantDesktopSection !== "support" && supportDialogOpen) {
       setSupportDialogOpen(false);
     }
-  }, [desktopMerchantWorkspaceActive, merchantDesktopSection, supportDialogOpen]);
+  }, [desktopMerchantWorkspaceActive, merchantDesktopSection, setMerchantDesktopSection, supportDialogOpen]);
 
   useEffect(() => {
     if (!desktopMerchantWorkspaceActive || merchantDesktopSection !== "logs") return;
@@ -15700,6 +15743,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     merchantDesktopSection,
     merchantEditorOnly,
     merchantSiteIdOverride,
+    setMerchantDesktopSection,
     storeScope,
   ]);
   useEffect(() => {
@@ -15753,6 +15797,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     merchantDesktopPointRedemptionCenterActive,
     merchantDesktopSection,
     merchantEditorOnly,
+    setMerchantDesktopSection,
   ]);
   useEffect(() => {
     if (!isDesktopMerchantWorkspace || merchantDesktopSection !== "booking") {
@@ -16636,6 +16681,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 : null
             }
             onTaskDraftIntentHandled={handleMerchantEnterpriseTaskIntentHandled}
+            registerLeaveGuard={(guard) => {
+              supportMobileEnterpriseLeaveGuardRef.current = guard;
+            }}
             {...(canUseOrderManagement
               ? {
                   onOpenSourceOrder: (input: { siteId: string; orderId: string }) =>
@@ -19564,6 +19612,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 activeView: merchantEnterpriseView,
                 onViewChange: setMerchantEnterpriseView,
                 onAvailableViewsChange: setMerchantEnterpriseAvailableViews,
+                registerViewChangeGuard: (guard) => {
+                  merchantEnterpriseViewChangeGuardRef.current = guard;
+                },
+              }}
+              registerLeaveGuard={(guard) => {
+                merchantEnterpriseLeaveGuardRef.current = guard;
               }}
             />
           ) : merchantDesktopSection === "logs" ? (

@@ -11,12 +11,15 @@ import {
   createMerchantTaskColumn,
   createMerchantTask,
   createOrGetMerchantOrderTask,
+  loadMerchantEnterpriseAuditEvents,
   loadMerchantEnterpriseSnapshot,
+  loadMerchantEnterpriseNotifications,
   loadMerchantTaskChecklistItems,
   loadMerchantTaskEvents,
   loadMerchantTaskBoardIdForAccess,
   loadMerchantTaskBySource,
   moveMerchantTask,
+  markMerchantEnterpriseNotificationsRead,
   updateMerchantEnterpriseEmployee,
   updateMerchantEnterpriseRole,
   updateMerchantTaskBoard,
@@ -2395,4 +2398,372 @@ test("linked-order summary authorization fails closed before exposing a source",
     }),
     /enterprise_linked_order_summary_authorization_failed:invalid_response/,
   );
+});
+
+test("notification listing derives the recipient from the validated employee actor and paginates", async () => {
+  const calls: Array<{ name: string; input: Record<string, unknown> }> = [];
+  const firstCreatedAt = "2026-08-02T12:00:00.000Z";
+  const secondCreatedAt = "2026-08-02T11:00:00.000Z";
+  const thirdCreatedAt = "2026-08-02T10:00:00.000Z";
+  const row = (id: string, createdAt: string, type = "task_commented") => ({
+    id,
+    merchant_id: "10000000",
+    task_id: "11111111-1111-4111-8111-111111111111",
+    notification_type: type,
+    actor_type: "employee",
+    actor_id: "66666666-6666-4666-8666-666666666666",
+    payload: {},
+    read_at: null,
+    created_at: createdAt,
+  });
+  const client = {
+    from() {
+      throw new Error("notification reads must stay behind the recipient RPC");
+    },
+    async rpc(name: string, args: Record<string, unknown>) {
+      const input = args.p_input as Record<string, unknown>;
+      calls.push({ name, input });
+      return {
+        data: {
+          notifications: [
+            row("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", firstCreatedAt),
+            row(
+              "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+              secondCreatedAt,
+              "task_due_changed",
+            ),
+            row("cccccccc-cccc-4ccc-8ccc-cccccccccccc", thirdCreatedAt),
+          ],
+          unread_count: 9,
+        },
+        error: null,
+      };
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+
+  const page = await loadMerchantEnterpriseNotifications(client, {
+    siteId: "10000000",
+    actorType: "employee",
+    actorId: "77777777-7777-4777-8777-777777777777",
+    limit: 2,
+    cursor: {
+      createdAt: "2026-08-02T13:00:00.000Z",
+      id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    },
+  });
+
+  assert.deepEqual(calls, [
+    {
+      name: "faolla_list_merchant_enterprise_notifications_v1",
+      input: {
+        merchant_id: "10000000",
+        actor_type: "employee",
+        actor_id: "77777777-7777-4777-8777-777777777777",
+        limit: 2,
+        cursor_created_at: "2026-08-02T13:00:00.000Z",
+        cursor_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      },
+    },
+  ]);
+  assert.equal("recipient_id" in calls[0]!.input, false);
+  assert.equal(page.notifications.length, 2);
+  assert.equal(page.notifications[1]?.type, "task_due_changed");
+  assert.equal(page.unreadCount, 9);
+  assert.deepEqual(page.nextCursor, {
+    createdAt: secondCreatedAt,
+    id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  });
+});
+
+test("notification mark-read is monotonic, recipient-derived and validates one-or-all", async () => {
+  const calls: Array<{ name: string; input: Record<string, unknown> }> = [];
+  const client = {
+    from() {
+      throw new Error("notification updates must stay behind the recipient RPC");
+    },
+    async rpc(name: string, args: Record<string, unknown>) {
+      calls.push({
+        name,
+        input: args.p_input as Record<string, unknown>,
+      });
+      return {
+        data: { marked_count: 1, unread_count: 3 },
+        error: null,
+      };
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+
+  const result = await markMerchantEnterpriseNotificationsRead(client, {
+    siteId: "10000000",
+    actorType: "employee",
+    actorId: "77777777-7777-4777-8777-777777777777",
+    notificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  });
+  assert.deepEqual(result, { markedCount: 1, unreadCount: 3 });
+  assert.deepEqual(calls, [
+    {
+      name: "faolla_mark_merchant_enterprise_notifications_read_v1",
+      input: {
+        merchant_id: "10000000",
+        actor_type: "employee",
+        actor_id: "77777777-7777-4777-8777-777777777777",
+        mark_all: false,
+        notification_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      },
+    },
+  ]);
+  assert.equal("recipient_id" in calls[0]!.input, false);
+
+  await assert.rejects(
+    markMerchantEnterpriseNotificationsRead(client, {
+      siteId: "10000000",
+      actorType: "employee",
+      actorId: "77777777-7777-4777-8777-777777777777",
+      notificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      all: true,
+    }),
+    { message: "invalid_notification_request" },
+  );
+});
+
+test("notification store fails closed on forged actors, oversized pages and malformed rows", async () => {
+  let calls = 0;
+  const client = {
+    from() {
+      throw new Error("unexpected table access");
+    },
+    async rpc() {
+      calls += 1;
+      return {
+        data: { notifications: [{ recipient_employee_id: "leak" }], unread_count: 1 },
+        error: null,
+      };
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+
+  await assert.rejects(
+    loadMerchantEnterpriseNotifications(client, {
+      siteId: "10000000",
+      actorType: "owner" as "employee",
+      actorId: "77777777-7777-4777-8777-777777777777",
+    }),
+    { message: "invalid_notification_actor" },
+  );
+  await assert.rejects(
+    loadMerchantEnterpriseNotifications(client, {
+      siteId: "10000000",
+      actorType: "employee",
+      actorId: "77777777-7777-4777-8777-777777777777",
+      limit: 51,
+    }),
+    { message: "invalid_notification_request" },
+  );
+  assert.equal(calls, 0);
+
+  await assert.rejects(
+    loadMerchantEnterpriseNotifications(client, {
+      siteId: "10000000",
+      actorType: "employee",
+      actorId: "77777777-7777-4777-8777-777777777777",
+    }),
+    /enterprise_notifications_read_failed:invalid_response/,
+  );
+  assert.equal(calls, 1);
+});
+
+function auditEventRow(
+  id: string,
+  createdAt: string,
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    id,
+    merchant_id: "10000000",
+    event_type: "employee.renamed",
+    entity_type: "employee",
+    entity_id: "77777777-7777-4777-8777-777777777777",
+    actor_type: "owner",
+    actor_id: null,
+    actor_label: "企业负责人",
+    target_label: "仓库员工",
+    before_data: { display_name: "旧名称" },
+    after_data: { display_name: "新名称" },
+    operation_id: "",
+    created_at: createdAt,
+    ...overrides,
+  };
+}
+
+test("audit loader uses one bounded actor-authorized RPC with exact filters and cursor", async () => {
+  const calls: Array<{ name: string; input: Record<string, unknown> }> = [];
+  const secondCreatedAt = "2026-08-02T11:00:00.000Z";
+  const client = {
+    from() {
+      throw new Error("audit reads must stay behind the authorized RPC");
+    },
+    async rpc(name: string, args: Record<string, unknown>) {
+      calls.push({ name, input: args.p_input as Record<string, unknown> });
+      return {
+        data: {
+          events: [
+            auditEventRow(
+              "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+              "2026-08-02T12:00:00.000Z",
+            ),
+            auditEventRow(
+              "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+              secondCreatedAt,
+            ),
+          ],
+          next_cursor: {
+            before_created_at: secondCreatedAt,
+            before_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          },
+        },
+        error: null,
+      };
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+
+  const page = await loadMerchantEnterpriseAuditEvents(client, {
+    siteId: "10000000",
+    actorType: "owner",
+    actorId: WORKSPACE_OWNER_ACTOR.actorId,
+    limit: 2,
+    entityType: "employee",
+    eventType: "employee.renamed",
+    cursor: {
+      beforeCreatedAt: "2026-08-02T13:00:00.000Z",
+      beforeId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    },
+  });
+
+  assert.deepEqual(calls, [
+    {
+      name: "faolla_list_merchant_enterprise_audit_events_v1",
+      input: {
+        merchant_id: "10000000",
+        actor_type: "owner",
+        actor_id: WORKSPACE_OWNER_ACTOR.actorId,
+        limit: 2,
+        entity_type: "employee",
+        event_type: "employee.renamed",
+        before_created_at: "2026-08-02T13:00:00.000Z",
+        before_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      },
+    },
+  ]);
+  assert.equal(page.events.length, 2);
+  assert.equal(page.events[0]?.actorId, null);
+  assert.deepEqual(page.nextCursor, {
+    beforeCreatedAt: secondCreatedAt,
+    beforeId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  });
+});
+
+test("audit loader rejects forged input before RPC and maps database permission denial", async () => {
+  let calls = 0;
+  const client = {
+    from() {
+      throw new Error("unexpected table access");
+    },
+    async rpc() {
+      calls += 1;
+      return { data: null, error: { message: "permission_denied" } };
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+
+  await assert.rejects(
+    loadMerchantEnterpriseAuditEvents(client, {
+      siteId: "10000000",
+      actorType: "owner",
+      actorId: "not-a-uuid",
+    }),
+    { message: "invalid_enterprise_audit_query" },
+  );
+  await assert.rejects(
+    loadMerchantEnterpriseAuditEvents(client, {
+      siteId: "10000000",
+      actorType: "employee",
+      actorId: WORKSPACE_EMPLOYEE_ACTOR.actorId,
+      limit: 101,
+    }),
+    { message: "invalid_enterprise_audit_query" },
+  );
+  await assert.rejects(
+    loadMerchantEnterpriseAuditEvents(client, {
+      siteId: "10000000",
+      actorType: "employee",
+      actorId: WORKSPACE_EMPLOYEE_ACTOR.actorId,
+      cursor: { beforeCreatedAt: "invalid", beforeId: "invalid" },
+    }),
+    { message: "invalid_enterprise_audit_cursor" },
+  );
+  assert.equal(calls, 0);
+
+  await assert.rejects(
+    loadMerchantEnterpriseAuditEvents(client, {
+      siteId: "10000000",
+      actorType: "employee",
+      actorId: WORKSPACE_EMPLOYEE_ACTOR.actorId,
+    }),
+    { message: "permission_denied" },
+  );
+  assert.equal(calls, 1);
+});
+
+test("audit loader fails closed on secret fields, cross-merchant rows and forged cursors", async () => {
+  let response: Record<string, unknown> = {
+    events: [
+      auditEventRow(
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "2026-08-02T12:00:00.000Z",
+        { before_data: { display_name: "员工", token_hash: "secret" } },
+      ),
+    ],
+    next_cursor: null,
+  };
+  const client = {
+    from() {
+      throw new Error("unexpected table access");
+    },
+    async rpc() {
+      return { data: response, error: null };
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+
+  const invoke = () =>
+    loadMerchantEnterpriseAuditEvents(client, {
+      siteId: "10000000",
+      actorType: "owner",
+      actorId: WORKSPACE_OWNER_ACTOR.actorId,
+      limit: 1,
+    });
+  await assert.rejects(invoke(), /enterprise_audit_read_failed:invalid_response/);
+
+  response = {
+    events: [
+      auditEventRow(
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "2026-08-02T12:00:00.000Z",
+        { merchant_id: "20000000" },
+      ),
+    ],
+    next_cursor: null,
+  };
+  await assert.rejects(invoke(), /enterprise_audit_read_failed:invalid_response/);
+
+  response = {
+    events: [
+      auditEventRow(
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "2026-08-02T12:00:00.000Z",
+      ),
+    ],
+    next_cursor: {
+      before_created_at: "2026-08-02T11:00:00.000Z",
+      before_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    },
+  };
+  await assert.rejects(invoke(), /enterprise_audit_read_failed:invalid_response/);
 });
