@@ -234,7 +234,7 @@ begin
        and binding.workflow_id = new.source_workflow_id
        and binding.workflow_revision_id = new.source_workflow_revision_id;
     if not found
-       or not case
+       or not (case
          when coalesce(jsonb_typeof(v_snapshot -> 'steps'), '') = 'array' then
            exists (
              select 1
@@ -242,7 +242,7 @@ begin
               where step.value ->> 'id' = new.source_workflow_step_id::text
            )
          else false
-       end then
+       end) then
       raise exception 'invalid_task_checklist_workflow_source';
     end if;
   end if;
@@ -295,12 +295,12 @@ begin
      or coalesce(jsonb_typeof(v_revision.snapshot -> 'category'), '') <> 'string'
      or char_length(v_revision.snapshot ->> 'category') > 80
      or not public.faolla_valid_merchant_workflow_tags_v1(v_revision.snapshot -> 'tags')
-     or not case
+     or not (case
        when public.faolla_valid_merchant_workflow_steps_v1(
          v_revision.snapshot -> 'steps'
        ) then jsonb_array_length(v_revision.snapshot -> 'steps') between 1 and 50
        else false
-     end then
+     end) then
     raise exception 'workflow_revision_invalid';
   end if;
 
@@ -642,12 +642,12 @@ begin
      or coalesce(jsonb_typeof(v_revision.snapshot -> 'category'), '') <> 'string'
      or char_length(v_revision.snapshot ->> 'category') > 80
      or not public.faolla_valid_merchant_workflow_tags_v1(v_revision.snapshot -> 'tags')
-     or not case
+     or not (case
        when public.faolla_valid_merchant_workflow_steps_v1(
          v_revision.snapshot -> 'steps'
        ) then jsonb_array_length(v_revision.snapshot -> 'steps') between 1 and 50
        else false
-     end then
+     end) then
     raise exception 'workflow_revision_invalid';
   end if;
   v_step_count := jsonb_array_length(v_revision.snapshot -> 'steps');
@@ -809,11 +809,11 @@ begin
          or char_length(btrim(revision.snapshot ->> 'title')) not between 1 and 160
          or coalesce(jsonb_typeof(revision.snapshot -> 'scenario'), '') <> 'string'
          or char_length(btrim(revision.snapshot ->> 'scenario')) not between 1 and 500
-         or not case
+         or not (case
            when coalesce(jsonb_typeof(revision.snapshot -> 'steps'), '') = 'array'
              then jsonb_array_length(revision.snapshot -> 'steps') between 1 and 50
            else false
-         end
+         end)
        )
   ) then
     raise exception 'workflow_revision_invalid';

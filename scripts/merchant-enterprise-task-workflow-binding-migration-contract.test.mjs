@@ -85,6 +85,11 @@ test("binding provenance never persists an owner auth UUID", () => {
 
 test("generated checklist provenance is complete, unique, immutable, and tied to the binding", () => {
   const sql = source();
+  assert.doesNotMatch(
+    sql,
+    /\bnot\s+case\b/i,
+    "boolean CASE expressions must be parenthesized for PL/pgSQL parsing",
+  );
   for (const column of [
     "source_workflow_id",
     "source_workflow_revision_id",
