@@ -4,6 +4,12 @@
 -- Walk every archived fixture through the public keyset API. Keeping the
 -- cursor as jsonb between calls proves clients can round-trip the database's
 -- full timestamp representation without rebuilding it.
+select id::text as exact_published_workflow_id
+from public.merchant_enterprise_workflows
+where merchant_id = '10000001'
+  and title = 'Published support workflow draft two'
+\gset
+
 set role service_role;
 do $$
 declare
@@ -219,12 +225,7 @@ select enterprise_integration.assert_true(
         'merchant_id', '10000001',
         'actor_type', 'employee',
         'actor_id', '71000000-0000-4000-8000-000000000003',
-        'workflow_id', (
-          select id::text
-          from public.merchant_enterprise_workflows
-          where merchant_id = '10000001'
-            and title = 'Published support workflow draft two'
-        )
+        'workflow_id', :'exact_published_workflow_id'
       )
     ) -> 'workflow' ->> 'title'
   ) = 'Published support workflow draft two',
