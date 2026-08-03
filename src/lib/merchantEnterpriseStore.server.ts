@@ -4,6 +4,10 @@ import {
   MAX_MERCHANT_TASK_CHECKLIST_ITEMS,
   MAX_MERCHANT_TASK_CHECKLIST_TEXT_LENGTH,
   MAX_MERCHANT_TASK_ASSIGNEES,
+  MAX_MERCHANT_ENTERPRISE_WORKFLOW_CATEGORY_LENGTH,
+  MAX_MERCHANT_ENTERPRISE_WORKFLOW_DESCRIPTION_LENGTH,
+  MAX_MERCHANT_ENTERPRISE_WORKFLOW_SCENARIO_LENGTH,
+  MAX_MERCHANT_ENTERPRISE_WORKFLOW_TITLE_LENGTH,
   MERCHANT_ENTERPRISE_AUDIT_ENTITY_TYPES,
   MERCHANT_ENTERPRISE_AUDIT_EVENT_TYPES,
   normalizeMerchantEnterpriseBoardIds,
@@ -12,6 +16,9 @@ import {
   normalizeMerchantEnterpriseNotification,
   normalizeMerchantEnterprisePermissions,
   normalizeMerchantEnterpriseRole,
+  normalizeMerchantEnterpriseWorkflow,
+  parseMerchantEnterpriseWorkflowStepsStrict,
+  parseMerchantEnterpriseWorkflowTagsStrict,
   normalizeMerchantTask,
   normalizeMerchantTaskBoard,
   normalizeMerchantTaskColumn,
@@ -27,6 +34,8 @@ import {
   type MerchantEnterprisePermission,
   type MerchantEnterpriseRole,
   type MerchantEnterpriseSnapshot,
+  type MerchantEnterpriseWorkflow,
+  type MerchantEnterpriseWorkflowStep,
   type MerchantTask,
   type MerchantTaskBoard,
   type MerchantTaskColumn,
@@ -110,6 +119,18 @@ function throwStoreError(operation: string, error: unknown): never {
     throw new Error("enterprise_schema_unavailable");
   }
   const message = toErrorMessage(error);
+  if (message.includes("workflow_version_conflict")) {
+    throw new Error("enterprise_version_conflict");
+  }
+  if (message.includes("workflow_requires_steps")) {
+    throw new Error("workflow_publish_incomplete");
+  }
+  if (
+    message.includes("invalid_workflow_steps") ||
+    message.includes("invalid_workflow_tags")
+  ) {
+    throw new Error("invalid_workflow_payload");
+  }
   for (const code of [
     "employee_board_access_in_use",
     "role_board_access_in_use",
@@ -221,6 +242,36 @@ function throwEnterpriseAuditRpcError(operation: string, error: unknown): never 
     "invalid_enterprise_audit_cursor",
   ]) {
     if (message.includes(code)) throw new Error(code);
+  }
+  throw new Error(`${operation}:${message}`);
+}
+
+function throwEnterpriseWorkflowRpcError(operation: string, error: unknown): never {
+  if (isMerchantEnterpriseSchemaMissingError(error)) {
+    throw new Error("enterprise_schema_unavailable");
+  }
+  const message = toErrorMessage(error);
+  if (message.includes("invalid_workflow_step")) {
+    throw new Error("invalid_workflow_payload");
+  }
+  for (const code of [
+    "permission_denied",
+    "workflow_not_found",
+    "enterprise_version_conflict",
+    "enterprise_operation_in_progress",
+    "workflow_limit_reached",
+    "workflow_publish_incomplete",
+    "workflow_archived",
+    "workflow_already_archived",
+    "workflow_not_archived",
+    "invalid_workflow_request",
+    "invalid_workflow_action",
+    "invalid_workflow_payload",
+  ]) {
+    if (message.includes(code)) throw new Error(code);
+  }
+  if (message.includes("enterprise_idempotency_conflict")) {
+    throw new Error("invalid_operation_id");
   }
   throw new Error(`${operation}:${message}`);
 }
@@ -2154,10 +2205,225 @@ export async function updateMerchantTask(
   return normalizeTaskMutationResponse(result.data, "enterprise_task_update_failed");
 }
 
+function normalizeWorkflowRequiredText(
+  value: unknown,
+  maxLength: number,
+  errorCode: string,
+) {
+  if (typeof value !== "string") throw new Error(errorCode);
+  const normalized = value.trim();
+  if (!normalized || normalized.length > maxLength) throw new Error(errorCode);
+  return normalized;
+}
+
+function normalizeWorkflowOptionalText(
+  value: unknown,
+  maxLength: number,
+  errorCode: string,
+) {
+  if (typeof value !== "string" || value.length > maxLength) {
+    throw new Error(errorCode);
+  }
+  return value.trim();
+}
+
+function normalizeWorkflowDraft(input: {
+  title: unknown;
+  scenario: unknown;
+  description: unknown;
+  category: unknown;
+  tags: unknown;
+  steps: unknown;
+}) {
+  const tags = parseMerchantEnterpriseWorkflowTagsStrict(input.tags);
+  const steps = parseMerchantEnterpriseWorkflowStepsStrict(input.steps);
+  if (!tags || !steps) throw new Error("invalid_workflow_payload");
+  return {
+    title: normalizeWorkflowRequiredText(
+      input.title,
+      MAX_MERCHANT_ENTERPRISE_WORKFLOW_TITLE_LENGTH,
+      "invalid_workflow_payload",
+    ),
+    scenario: normalizeWorkflowRequiredText(
+      input.scenario,
+      MAX_MERCHANT_ENTERPRISE_WORKFLOW_SCENARIO_LENGTH,
+      "invalid_workflow_payload",
+    ),
+    description: normalizeWorkflowOptionalText(
+      input.description,
+      MAX_MERCHANT_ENTERPRISE_WORKFLOW_DESCRIPTION_LENGTH,
+      "invalid_workflow_payload",
+    ),
+    category: normalizeWorkflowOptionalText(
+      input.category,
+      MAX_MERCHANT_ENTERPRISE_WORKFLOW_CATEGORY_LENGTH,
+      "invalid_workflow_payload",
+    ),
+    tags,
+    steps,
+  };
+}
+
+function normalizeWorkflowMutationResponse(value: unknown, operation: string) {
+  const record =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const workflow = normalizeMerchantEnterpriseWorkflow(record.workflow);
+  if (!workflow) throw new Error(`${operation}:invalid_response`);
+  return workflow;
+}
+
+export async function loadMerchantEnterpriseWorkflows(
+  client: MerchantEnterpriseStoreClient,
+  input: MerchantEnterpriseMutationActorInput & { siteId: string },
+): Promise<MerchantEnterpriseWorkflow[]> {
+  const siteId = normalizeText(input.siteId, 80);
+  if (!/^\d{8}$/.test(siteId)) throw new Error("invalid_workflow_request");
+  const actor = normalizeMerchantEnterpriseMutationActor(input);
+  const result = await client.rpc("faolla_list_merchant_enterprise_workflows_v1", {
+    p_input: {
+      merchant_id: siteId,
+      actor_type: actor.actorType,
+      actor_id: actor.actorId,
+      // Draft-capable actors need archived workflows after a refresh so they
+      // can review or restore them. The RPC still projects only currently
+      // published revisions for view-only employees.
+      include_archived: true,
+    },
+  });
+  if (result.error) {
+    throwEnterpriseWorkflowRpcError("enterprise_workflows_read_failed", result.error);
+  }
+  const response =
+    result.data && typeof result.data === "object" && !Array.isArray(result.data)
+      ? (result.data as Record<string, unknown>)
+      : null;
+  const rows = response && Array.isArray(response.workflows) ? response.workflows : null;
+  if (!rows || rows.length > 1000) {
+    throw new Error("enterprise_workflows_read_failed:invalid_response");
+  }
+  const workflows = rows.map(normalizeMerchantEnterpriseWorkflow);
+  if (
+    workflows.some((workflow) => !workflow || workflow.siteId !== siteId) ||
+    new Set(workflows.map((workflow) => workflow?.id)).size !== workflows.length
+  ) {
+    throw new Error("enterprise_workflows_read_failed:invalid_response");
+  }
+  return workflows as MerchantEnterpriseWorkflow[];
+}
+
+export async function createMerchantEnterpriseWorkflow(
+  client: MerchantEnterpriseStoreClient,
+  input: MerchantEnterpriseMutationActorInput & {
+    siteId: string;
+    title: string;
+    scenario: string;
+    description: string;
+    category: string;
+    tags: string[];
+    steps: MerchantEnterpriseWorkflowStep[];
+    operationId?: string;
+  },
+): Promise<MerchantEnterpriseWorkflow> {
+  const siteId = normalizeText(input.siteId, 80);
+  if (!/^\d{8}$/.test(siteId)) throw new Error("invalid_workflow_request");
+  const actor = normalizeMerchantEnterpriseMutationActor(input);
+  const draft = normalizeWorkflowDraft(input);
+  const result = await client.rpc("faolla_create_merchant_enterprise_workflow_v1", {
+    p_input: {
+      merchant_id: siteId,
+      actor_type: actor.actorType,
+      actor_id: actor.actorId,
+      operation_id: resolveWorkspaceOperationId(input.operationId, "workflow-create"),
+      ...draft,
+    },
+  });
+  if (result.error) {
+    throwEnterpriseWorkflowRpcError("enterprise_workflow_create_failed", result.error);
+  }
+  const workflow = normalizeWorkflowMutationResponse(
+    result.data,
+    "enterprise_workflow_create_failed",
+  );
+  if (workflow.siteId !== siteId) {
+    throw new Error("enterprise_workflow_create_failed:invalid_response");
+  }
+  return workflow;
+}
+
+export async function updateMerchantEnterpriseWorkflow(
+  client: MerchantEnterpriseStoreClient,
+  input: MerchantEnterpriseMutationActorInput & {
+    siteId: string;
+    workflowId: string;
+    version: number;
+    action: "save" | "publish" | "archive" | "restore";
+    title?: string;
+    scenario?: string;
+    description?: string;
+    category?: string;
+    tags?: string[];
+    steps?: MerchantEnterpriseWorkflowStep[];
+    operationId?: string;
+  },
+): Promise<MerchantEnterpriseWorkflow> {
+  const siteId = normalizeText(input.siteId, 80);
+  const workflowId = normalizeText(input.workflowId, 80);
+  if (
+    !/^\d{8}$/.test(siteId) ||
+    !MERCHANT_ENTERPRISE_TASK_ID_PATTERN.test(workflowId) ||
+    !Number.isSafeInteger(input.version) ||
+    input.version < 1 ||
+    !["save", "publish", "archive", "restore"].includes(input.action)
+  ) {
+    throw new Error("invalid_workflow_request");
+  }
+  const actor = normalizeMerchantEnterpriseMutationActor(input);
+  const draft =
+    input.action === "save"
+      ? normalizeWorkflowDraft({
+          title: input.title,
+          scenario: input.scenario,
+          description: input.description,
+          category: input.category,
+          tags: input.tags,
+          steps: input.steps,
+        })
+      : null;
+  const result = await client.rpc("faolla_update_merchant_enterprise_workflow_v1", {
+    p_input: {
+      merchant_id: siteId,
+      workflow_id: workflowId,
+      expected_version: input.version,
+      actor_type: actor.actorType,
+      actor_id: actor.actorId,
+      operation_id: resolveWorkspaceOperationId(
+        input.operationId,
+        `workflow-${input.action}`,
+      ),
+      action: input.action,
+      ...(draft ?? {}),
+    },
+  });
+  if (result.error) {
+    throwEnterpriseWorkflowRpcError("enterprise_workflow_update_failed", result.error);
+  }
+  const workflow = normalizeWorkflowMutationResponse(
+    result.data,
+    "enterprise_workflow_update_failed",
+  );
+  if (workflow.siteId !== siteId || workflow.id !== workflowId) {
+    throw new Error("enterprise_workflow_update_failed:invalid_response");
+  }
+  return workflow;
+}
+
 export type {
   MerchantEnterpriseEmployee,
   MerchantEnterprisePermission,
   MerchantEnterpriseRole,
+  MerchantEnterpriseWorkflow,
   MerchantTaskBoard,
   MerchantTaskColumn,
 };

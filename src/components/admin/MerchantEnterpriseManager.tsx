@@ -79,8 +79,15 @@ import {
 } from "@/lib/merchantTaskOrdering";
 import MerchantEnterpriseNotificationCenter from "@/components/admin/MerchantEnterpriseNotificationCenter";
 import MerchantEnterpriseAuditLog from "@/components/admin/MerchantEnterpriseAuditLog";
+import EnterpriseWorkflowsPanel from "@/app/enterprise/[siteId]/EnterpriseWorkflowsPanel";
 
-export type MerchantEnterpriseView = "overview" | "tasks" | "employees" | "roles" | "audit";
+export type MerchantEnterpriseView =
+  | "overview"
+  | "tasks"
+  | "workflows"
+  | "employees"
+  | "roles"
+  | "audit";
 
 export type MerchantEnterpriseExternalNavigation = {
   mode: "external";
@@ -95,6 +102,7 @@ export type MerchantEnterpriseExternalNavigation = {
 const MERCHANT_ENTERPRISE_VIEW_ITEMS = [
   { key: "overview", label: "工作台", permission: "enterprise.view" },
   { key: "tasks", label: "任务看板", permission: "tasks.view" },
+  { key: "workflows", label: "工作流程", permission: "workflows.view" },
   { key: "employees", label: "员工账号", permission: "employees.view" },
   { key: "roles", label: "角色权限", permission: "roles.view" },
   { key: "audit", label: "操作记录", permission: "audit.view" },
@@ -3444,6 +3452,12 @@ function MerchantEnterpriseManagerContent({
   const [roleAccessScope, setRoleAccessScope] = useState<RoleBoardAccessValue["accessScope"]>("all");
   const [roleAllowedBoardIds, setRoleAllowedBoardIds] = useState<string[]>([]);
   const [dirtyRoleIds, setDirtyRoleIds] = useState<Set<string>>(() => new Set());
+  const [workflowHasDraft, setWorkflowHasDraft] = useState(false);
+  const [workflowFocusRequest, setWorkflowFocusRequest] = useState<{
+    workflowId: string;
+    requestId: number;
+  } | null>(null);
+  const workflowFocusSequenceRef = useRef(0);
 
   const handleRoleEditorDirtyChange = useCallback((roleId: string, dirty: boolean) => {
     setDirtyRoleIds((current) => {
@@ -3788,6 +3802,7 @@ function MerchantEnterpriseManagerContent({
       !draggingTaskId &&
       (tab === "overview" ||
         tab === "audit" ||
+        (tab === "workflows" && !workflowHasDraft) ||
         (tab === "tasks" &&
           !showBoardSettings &&
           !mobileTaskComposerOpen &&
@@ -3873,6 +3888,33 @@ function MerchantEnterpriseManagerContent({
     },
     [commitViewChange, confirmViewChange],
   );
+  const openWorkflowFromNotification = useCallback(
+    (workflowId: string) => {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(workflowId)) {
+        return false;
+      }
+      if (
+        tab === "workflows" &&
+        workflowHasDraft &&
+        !window.confirm("当前流程有尚未保存的修改。打开通知中的流程将放弃这些修改，是否继续？")
+      ) {
+        return false;
+      }
+      if (!requestViewChange("workflows")) return false;
+      workflowFocusSequenceRef.current += 1;
+      setWorkflowFocusRequest({
+        workflowId,
+        requestId: workflowFocusSequenceRef.current,
+      });
+      return true;
+    },
+    [requestViewChange, tab, workflowHasDraft],
+  );
+  const handleWorkflowFocusHandled = useCallback((requestId: number) => {
+    setWorkflowFocusRequest((current) =>
+      current?.requestId === requestId ? null : current,
+    );
+  }, []);
 
   useEffect(() => {
     if (!usesExternalNavigation || !navigation?.registerViewChangeGuard) return;
@@ -5331,7 +5373,7 @@ function MerchantEnterpriseManagerContent({
               <div className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-100/80">Enterprise workspace</div>
               <h1 className="mt-2 !text-2xl !font-bold !text-white">企业管理</h1>
               <p className="mt-2 break-words text-sm text-slate-200">
-                {siteName || siteId} · 任务、员工和角色权限统一管理
+                {siteName || siteId} · 工作流程、任务、员工和角色权限统一管理
               </p>
             </div>
             <div className="w-full min-w-0 rounded-2xl border border-white/15 bg-white/10 px-4 py-3 text-left backdrop-blur sm:w-auto sm:text-right">
@@ -5358,7 +5400,8 @@ function MerchantEnterpriseManagerContent({
                       : "数据可能不是最新 · 正在等待自动同步"}
                   </span>
                 ) : null}
-                {actor.type === "employee" && can(actor, "tasks.view") ? (
+                {actor.type === "employee" &&
+                (can(actor, "tasks.view") || can(actor, "workflows.view")) ? (
                   <MerchantEnterpriseNotificationCenter
                     siteId={siteId}
                     actor={actor}
@@ -5366,6 +5409,7 @@ function MerchantEnterpriseManagerContent({
                     tasks={snapshot.tasks}
                     apiFetch={apiFetch}
                     onOpenTask={openTaskFromOverview}
+                    onOpenWorkflow={openWorkflowFromNotification}
                     refreshIntervalMs={resolvedCollaborationRefreshIntervalMs}
                   />
                 ) : null}
@@ -6040,6 +6084,20 @@ function MerchantEnterpriseManagerContent({
                 </DragOverlay>
               </DndContext>
             )}
+          </div>
+        ) : null}
+
+        {!needsBootstrap && tab === "workflows" ? (
+          <div className="mt-5">
+            <EnterpriseWorkflowsPanel
+              siteId={siteId}
+              actor={actor}
+              apiFetch={apiFetch}
+              focusWorkflowId={workflowFocusRequest?.workflowId ?? null}
+              focusRequestId={workflowFocusRequest?.requestId ?? 0}
+              onFocusHandled={handleWorkflowFocusHandled}
+              onDirtyChange={setWorkflowHasDraft}
+            />
           </div>
         ) : null}
 

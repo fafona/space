@@ -31,6 +31,7 @@ type MerchantEnterpriseNotificationCenterProps = {
   tasks: readonly MerchantTask[];
   apiFetch: (path: string, init?: RequestInit) => Promise<Response>;
   onOpenTask: (task: MerchantTask) => boolean;
+  onOpenWorkflow?: (workflowId: string) => boolean;
   refreshIntervalMs?: number;
 };
 
@@ -55,6 +56,7 @@ function notificationDescription(notification: MerchantEnterpriseNotification) {
   if (notification.type === "task_due_changed") {
     return notification.payload.dueAt ? "更新了任务截止时间" : "移除了任务截止时间";
   }
+  if (notification.type === "workflow_published") return "发布了工作流程";
   return "更新了任务";
 }
 
@@ -65,8 +67,8 @@ function readPayloadError(payload: unknown, fallback: string) {
     typeof (payload as { error?: unknown }).error === "string"
   ) {
     const error = (payload as { error: string }).error;
-    if (error === "permission_denied") return "当前角色已无权查看任务通知。";
-    if (error === "enterprise_schema_unavailable") return "任务通知正在升级，请稍后再试。";
+    if (error === "permission_denied") return "当前角色已无权查看企业通知。";
+    if (error === "enterprise_schema_unavailable") return "企业通知正在升级，请稍后再试。";
   }
   return fallback;
 }
@@ -78,6 +80,7 @@ export default function MerchantEnterpriseNotificationCenter({
   tasks,
   apiFetch,
   onOpenTask,
+  onOpenWorkflow,
   refreshIntervalMs = DEFAULT_NOTIFICATION_REFRESH_INTERVAL_MS,
 }: MerchantEnterpriseNotificationCenterProps) {
   const [open, setOpen] = useState(false);
@@ -117,7 +120,7 @@ export default function MerchantEnterpriseNotificationCenter({
         const payload = (await response.json().catch(() => null)) as NotificationPayload | null;
         if (!response.ok || !payload?.ok || !Array.isArray(payload.notifications)) {
           throw new Error(
-            readPayloadError(payload, "任务通知加载失败，请稍后重试。"),
+            readPayloadError(payload, "企业通知加载失败，请稍后重试。"),
           );
         }
         if (requestSequence !== requestSequenceRef.current) return;
@@ -141,7 +144,7 @@ export default function MerchantEnterpriseNotificationCenter({
           setError(
             loadError instanceof Error
               ? loadError.message
-              : "任务通知加载失败，请稍后重试。",
+              : "企业通知加载失败，请稍后重试。",
           );
         }
       } finally {
@@ -234,8 +237,12 @@ export default function MerchantEnterpriseNotificationCenter({
   }
 
   async function openNotification(notification: MerchantEnterpriseNotification) {
-    const task = taskById.get(notification.taskId);
-    if (!task || !onOpenTask(task)) return;
+    if (notification.type === "workflow_published") {
+      if (!notification.workflowId || !onOpenWorkflow?.(notification.workflowId)) return;
+    } else {
+      const task = notification.taskId ? taskById.get(notification.taskId) : undefined;
+      if (!task || !onOpenTask(task)) return;
+    }
     setOpen(false);
     if (!notification.readAt) {
       setNotifications((current) =>
@@ -260,7 +267,7 @@ export default function MerchantEnterpriseNotificationCenter({
       <button
         type="button"
         className="relative min-h-9 rounded-lg border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-white/20"
-        aria-label={`任务通知${unreadCount > 0 ? `，${unreadCount} 条未读` : "，暂无未读"}`}
+        aria-label={`企业通知${unreadCount > 0 ? `，${unreadCount} 条未读` : "，暂无未读"}`}
         aria-expanded={open}
         onClick={() => {
           setOpen((current) => !current);
@@ -278,12 +285,12 @@ export default function MerchantEnterpriseNotificationCenter({
       {open ? (
         <section
           role="dialog"
-          aria-label="任务通知"
+          aria-label="企业通知"
           className="absolute right-0 z-50 mt-2 w-[min(24rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-slate-200 bg-white text-left text-slate-900 shadow-2xl"
         >
           <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
             <div>
-              <h2 className="text-sm font-semibold">任务通知</h2>
+              <h2 className="text-sm font-semibold">企业通知</h2>
               <p className="mt-0.5 text-xs text-slate-500">
                 {unreadCount > 0 ? `${unreadCount} 条未读` : "已全部读完"}
               </p>
@@ -315,10 +322,17 @@ export default function MerchantEnterpriseNotificationCenter({
               </div>
             ) : null}
             {!loading && notifications.length === 0 && !error ? (
-              <p className="px-4 py-8 text-center text-sm text-slate-500">暂无任务通知。</p>
+              <p className="px-4 py-8 text-center text-sm text-slate-500">暂无企业通知。</p>
             ) : null}
             {notifications.map((notification) => {
-              const task = taskById.get(notification.taskId);
+              const task = notification.taskId
+                ? taskById.get(notification.taskId)
+                : undefined;
+              const workflowAvailable = Boolean(
+                notification.type === "workflow_published" &&
+                  notification.workflowId &&
+                  onOpenWorkflow,
+              );
               const actorLabel =
                 notification.actorType === "owner"
                   ? "企业负责人"
@@ -334,7 +348,7 @@ export default function MerchantEnterpriseNotificationCenter({
                   className={`block w-full border-b border-slate-100 px-4 py-3 text-left transition hover:bg-slate-50 disabled:cursor-default ${
                     notification.readAt ? "bg-white" : "bg-blue-50/70"
                   }`}
-                  disabled={!task}
+                  disabled={!task && !workflowAvailable}
                   onClick={() => void openNotification(notification)}
                 >
                   <span className="flex items-start gap-2">
@@ -350,7 +364,9 @@ export default function MerchantEnterpriseNotificationCenter({
                         {notificationDescription(notification)}
                       </span>
                       <span className="mt-1 block truncate text-sm font-medium text-slate-950">
-                        {task?.title || "该任务当前不可访问"}
+                        {notification.type === "workflow_published"
+                          ? notification.payload.workflowTitle || "工作流程"
+                          : task?.title || "该任务当前不可访问"}
                       </span>
                       <span className="mt-1 block text-xs text-slate-500">
                         {formatNotificationTime(notification.createdAt)}

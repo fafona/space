@@ -6,6 +6,7 @@ import {
   bootstrapMerchantEnterpriseWorkspace,
   createMerchantEnterpriseEmployee,
   createMerchantEnterpriseRole,
+  createMerchantEnterpriseWorkflow,
   createMerchantTaskChecklistItem,
   createMerchantTaskBoard,
   createMerchantTaskColumn,
@@ -14,6 +15,7 @@ import {
   loadMerchantEnterpriseAuditEvents,
   loadMerchantEnterpriseSnapshot,
   loadMerchantEnterpriseNotifications,
+  loadMerchantEnterpriseWorkflows,
   loadMerchantTaskChecklistItems,
   loadMerchantTaskEvents,
   loadMerchantTaskBoardIdForAccess,
@@ -22,6 +24,7 @@ import {
   markMerchantEnterpriseNotificationsRead,
   updateMerchantEnterpriseEmployee,
   updateMerchantEnterpriseRole,
+  updateMerchantEnterpriseWorkflow,
   updateMerchantTaskBoard,
   updateMerchantTaskColumn,
   updateMerchantTaskChecklistItem,
@@ -37,6 +40,34 @@ const WORKSPACE_EMPLOYEE_ACTOR = {
   actorType: "employee" as const,
   actorId: "77777777-7777-4777-8777-777777777777",
 };
+
+function workflowRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "11111111-1111-4111-8111-111111111111",
+    merchant_id: "10000000",
+    title: "客户投诉处理",
+    scenario: "客户反馈商品存在问题时",
+    description: "先确认事实，再给出解决方案。",
+    category: "客户服务",
+    tags: ["投诉", "售后"],
+    status: "draft",
+    steps: [
+      {
+        id: "22222222-2222-4222-8222-222222222222",
+        title: "记录情况",
+        instruction: "记录订单号和具体问题。",
+        position: 0,
+      },
+    ],
+    version: 1,
+    published_version: 0,
+    published_at: null,
+    has_unpublished_changes: true,
+    created_at: "2026-08-03T08:00:00.000Z",
+    updated_at: "2026-08-03T08:00:00.000Z",
+    ...overrides,
+  };
+}
 
 function taskRow(version: number) {
   return {
@@ -2766,4 +2797,210 @@ test("audit loader fails closed on secret fields, cross-merchant rows and forged
     },
   };
   await assert.rejects(invoke(), /enterprise_audit_read_failed:invalid_response/);
+});
+
+test("workflow listing requests archived manager rows while delegating safe projection to the authorized RPC", async () => {
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const client = {
+    from() {
+      throw new Error("unexpected table access");
+    },
+    async rpc(name: string, args: Record<string, unknown>) {
+      calls.push({ name, args });
+      return { data: { workflows: [workflowRow()] }, error: null };
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+  const workflows = await loadMerchantEnterpriseWorkflows(client, {
+    siteId: "10000000",
+    ...WORKSPACE_EMPLOYEE_ACTOR,
+  });
+  assert.equal(workflows.length, 1);
+  assert.equal(workflows[0]?.title, "客户投诉处理");
+  assert.deepEqual(calls, [
+    {
+      name: "faolla_list_merchant_enterprise_workflows_v1",
+      args: {
+        p_input: {
+          merchant_id: "10000000",
+          actor_type: "employee",
+          actor_id: WORKSPACE_EMPLOYEE_ACTOR.actorId,
+          include_archived: true,
+        },
+      },
+    },
+  ]);
+});
+
+test("workflow create and save use scoped idempotent CAS RPC payloads", async () => {
+  const calls: Array<{ name: string; input: Record<string, unknown> }> = [];
+  const client = {
+    from() {
+      throw new Error("unexpected table access");
+    },
+    async rpc(name: string, args: Record<string, unknown>) {
+      const input = args.p_input as Record<string, unknown>;
+      calls.push({ name, input });
+      return {
+        data: {
+          workflow: workflowRow({
+            version: name.includes("update") ? 2 : 1,
+          }),
+        },
+        error: null,
+      };
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+  const draft = {
+    title: "客户投诉处理",
+    scenario: "客户反馈商品存在问题时",
+    description: "先确认事实，再给出解决方案。",
+    category: "客户服务",
+    tags: ["投诉", "售后"],
+    steps: [
+      {
+        id: "22222222-2222-4222-8222-222222222222",
+        title: "记录情况",
+        instruction: "记录订单号和具体问题。",
+        position: 0,
+      },
+    ],
+  };
+  await createMerchantEnterpriseWorkflow(client, {
+    siteId: "10000000",
+    ...WORKSPACE_OWNER_ACTOR,
+    ...draft,
+    operationId: "workflow-create:test",
+  });
+  await updateMerchantEnterpriseWorkflow(client, {
+    siteId: "10000000",
+    ...WORKSPACE_OWNER_ACTOR,
+    workflowId: "11111111-1111-4111-8111-111111111111",
+    version: 1,
+    action: "save",
+    ...draft,
+    operationId: "workflow-save:test",
+  });
+  assert.equal(calls[0]?.name, "faolla_create_merchant_enterprise_workflow_v1");
+  assert.equal(calls[0]?.input.operation_id, "workflow-create:test");
+  assert.equal(calls[1]?.name, "faolla_update_merchant_enterprise_workflow_v1");
+  assert.equal(calls[1]?.input.expected_version, 1);
+  assert.equal(calls[1]?.input.action, "save");
+  assert.equal(calls[1]?.input.operation_id, "workflow-save:test");
+});
+
+test("workflow lifecycle actions carry only identity and CAS while failures stay actionable", async () => {
+  let responseError: { message: string } | null = null;
+  const calls: Array<Record<string, unknown>> = [];
+  const client = {
+    from() {
+      throw new Error("unexpected table access");
+    },
+    async rpc(_name: string, args: Record<string, unknown>) {
+      calls.push(args.p_input as Record<string, unknown>);
+      return responseError
+        ? { data: null, error: responseError }
+        : {
+            data: {
+              workflow: workflowRow({
+                status: "published",
+                version: 2,
+                published_version: 1,
+                published_at: "2026-08-03T09:00:00.000Z",
+                has_unpublished_changes: false,
+              }),
+            },
+            error: null,
+          };
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+  await updateMerchantEnterpriseWorkflow(client, {
+    siteId: "10000000",
+    ...WORKSPACE_OWNER_ACTOR,
+    workflowId: "11111111-1111-4111-8111-111111111111",
+    version: 1,
+    action: "publish",
+    operationId: "workflow-publish:test",
+  });
+  assert.deepEqual(Object.keys(calls[0] ?? {}).sort(), [
+    "action",
+    "actor_id",
+    "actor_type",
+    "expected_version",
+    "merchant_id",
+    "operation_id",
+    "workflow_id",
+  ]);
+  responseError = { message: "enterprise_version_conflict" };
+  await assert.rejects(
+    updateMerchantEnterpriseWorkflow(client, {
+      siteId: "10000000",
+      ...WORKSPACE_OWNER_ACTOR,
+      workflowId: "11111111-1111-4111-8111-111111111111",
+      version: 1,
+      action: "archive",
+    }),
+    { message: "enterprise_version_conflict" },
+  );
+  responseError = { message: "permission_denied" };
+  await assert.rejects(
+    loadMerchantEnterpriseWorkflows(client, {
+      siteId: "10000000",
+      ...WORKSPACE_EMPLOYEE_ACTOR,
+    }),
+    { message: "permission_denied" },
+  );
+  responseError = { message: "invalid_workflow_step" };
+  await assert.rejects(
+    updateMerchantEnterpriseWorkflow(client, {
+      siteId: "10000000",
+      ...WORKSPACE_OWNER_ACTOR,
+      workflowId: "11111111-1111-4111-8111-111111111111",
+      version: 1,
+      action: "publish",
+    }),
+    { message: "invalid_workflow_payload" },
+  );
+});
+
+test("workflow store rejects malformed drafts and forged responses before exposure", async () => {
+  let calls = 0;
+  let data: unknown = { workflows: [workflowRow({ merchant_id: "20000000" })] };
+  const client = {
+    from() {
+      throw new Error("unexpected table access");
+    },
+    async rpc() {
+      calls += 1;
+      return { data, error: null };
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+  await assert.rejects(
+    createMerchantEnterpriseWorkflow(client, {
+      siteId: "10000000",
+      ...WORKSPACE_OWNER_ACTOR,
+      title: "流程",
+      scenario: "场景",
+      description: "",
+      category: "",
+      tags: ["重复", "重复"],
+      steps: [],
+    }),
+    { message: "invalid_workflow_payload" },
+  );
+  assert.equal(calls, 0);
+  await assert.rejects(
+    loadMerchantEnterpriseWorkflows(client, {
+      siteId: "10000000",
+      ...WORKSPACE_EMPLOYEE_ACTOR,
+    }),
+    /enterprise_workflows_read_failed:invalid_response/,
+  );
+  data = { workflows: [workflowRow({ steps: [{ id: "bad" }] })] };
+  await assert.rejects(
+    loadMerchantEnterpriseWorkflows(client, {
+      siteId: "10000000",
+      ...WORKSPACE_EMPLOYEE_ACTOR,
+    }),
+    /enterprise_workflows_read_failed:invalid_response/,
+  );
 });

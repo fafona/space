@@ -14,6 +14,7 @@ const todoColumnId = "10000000-0000-4000-8000-000000000005";
 const doneColumnId = "10000000-0000-4000-8000-000000000006";
 const secondEmployeeId = "10000000-0000-4000-8000-000000000008";
 const secondBoardId = "10000000-0000-4000-8000-000000000009";
+const workflowId = "10000000-0000-4000-8000-000000000030";
 const allPermissions = [
   "enterprise.view",
   "tasks.view",
@@ -28,6 +29,9 @@ const allPermissions = [
   "roles.view",
   "roles.manage",
   "audit.view",
+  "workflows.view",
+  "workflows.manage",
+  "workflows.publish",
 ];
 
 function timestamp() {
@@ -38,6 +42,9 @@ function createSharedState() {
   const createdAt = timestamp();
   return {
     taskSequence: 10,
+    workflowSequence: 30,
+    workflowConflictNextSave: false,
+    workflows: [],
     actor: {
       type: "owner",
       id: ownerId,
@@ -201,6 +208,120 @@ function jsonClone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function nextWorkflowId(state) {
+  const suffix = String(state.workflowSequence++).padStart(12, "0");
+  return `10000000-0000-4000-8000-${suffix}`;
+}
+
+function workflowFields(input) {
+  return {
+    title: String(input.title || ""),
+    scenario: String(input.scenario || ""),
+    description: String(input.description || ""),
+    category: String(input.category || ""),
+    tags: Array.isArray(input.tags) ? input.tags.map(String) : [],
+    steps: Array.isArray(input.steps)
+      ? input.steps.map((step, position) => ({
+          id: String(step.id || ""),
+          title: String(step.title || ""),
+          instruction: String(step.instruction || ""),
+          position,
+        }))
+      : [],
+  };
+}
+
+function currentWorkflowDto(workflow) {
+  return {
+    id: workflow.id,
+    siteId: workflow.siteId,
+    ...jsonClone(workflow.draft),
+    status: workflow.status,
+    version: workflow.version,
+    publishedVersion: workflow.publishedVersion,
+    publishedAt: workflow.publishedAt,
+    hasUnpublishedChanges: workflow.hasUnpublishedChanges,
+    createdAt: workflow.createdAt,
+    updatedAt: workflow.updatedAt,
+  };
+}
+
+function publishedWorkflowDto(workflow) {
+  if (!workflow.published || workflow.status !== "published") return null;
+  return {
+    id: workflow.id,
+    siteId: workflow.siteId,
+    ...jsonClone(workflow.published.fields),
+    status: "published",
+    version: workflow.published.version,
+    publishedVersion: workflow.published.version,
+    publishedAt: workflow.published.publishedAt,
+    hasUnpublishedChanges: false,
+    createdAt: workflow.createdAt,
+    updatedAt: workflow.published.publishedAt,
+  };
+}
+
+function workflowListForActor(state, actor) {
+  const canReadDrafts =
+    actor.type === "owner" ||
+    actor.permissions.includes("workflows.manage") ||
+    actor.permissions.includes("workflows.publish");
+  return state.workflows
+    .map((workflow) =>
+      canReadDrafts ? currentWorkflowDto(workflow) : publishedWorkflowDto(workflow),
+    )
+    .filter(Boolean);
+}
+
+function actorCan(actor, permission) {
+  return actor.type === "owner" || actor.permissions.includes(permission);
+}
+
+function createWorkflow(state, input) {
+  const now = timestamp();
+  const workflow = {
+    id: nextWorkflowId(state),
+    siteId,
+    draft: workflowFields(input),
+    published: null,
+    status: "draft",
+    version: 1,
+    publishedVersion: 0,
+    publishedAt: null,
+    hasUnpublishedChanges: true,
+    createdAt: now,
+    updatedAt: now,
+  };
+  state.workflows.unshift(workflow);
+  return workflow;
+}
+
+function updateWorkflowDraft(workflow, input) {
+  workflow.draft = workflowFields(input);
+  workflow.version += 1;
+  workflow.updatedAt = timestamp();
+  workflow.hasUnpublishedChanges = true;
+  return workflow;
+}
+
+function publishWorkflow(workflow) {
+  const publishedAt = timestamp();
+  const publishedVersion = workflow.publishedVersion + 1;
+  workflow.version += 1;
+  workflow.publishedVersion = publishedVersion;
+  workflow.publishedAt = publishedAt;
+  workflow.published = {
+    fields: jsonClone(workflow.draft),
+    version: publishedVersion,
+    publishedAt,
+  };
+  workflow.status = "published";
+  workflow.hasUnpublishedChanges = false;
+  workflow.updatedAt = publishedAt;
+  return workflow;
+}
+
 async function installEnterpriseApiMock(
   context,
   state,
@@ -229,6 +350,64 @@ async function installEnterpriseApiMock(
         snapshot: jsonClone(state.snapshot),
         needsBootstrap: false,
       });
+    }
+    if (url.pathname === "/api/merchant-enterprise/workflows" && request.method() === "GET") {
+      stats.workflowGets = (stats.workflowGets || 0) + 1;
+      return respond(200, {
+        ok: true,
+        workflows: jsonClone(workflowListForActor(state, actor)),
+      });
+    }
+    if (url.pathname === "/api/merchant-enterprise/workflows" && request.method() === "POST") {
+      stats.workflowPosts = (stats.workflowPosts || 0) + 1;
+      if (!actorCan(actor, "workflows.manage")) {
+        return respond(403, { ok: false, error: "permission_denied" });
+      }
+      const input = request.postDataJSON();
+      const workflow = createWorkflow(state, input);
+      stats.workflowMutations = [
+        ...(stats.workflowMutations || []),
+        { method: "POST", action: "create", body: jsonClone(input) },
+      ];
+      return respond(200, { ok: true, workflow: currentWorkflowDto(workflow) });
+    }
+    if (url.pathname === "/api/merchant-enterprise/workflows" && request.method() === "PATCH") {
+      const input = request.postDataJSON();
+      const action = String(input.action || "");
+      const requiredPermission = action === "save" ? "workflows.manage" : "workflows.publish";
+      stats.workflowPatches = (stats.workflowPatches || 0) + 1;
+      stats.workflowMutations = [
+        ...(stats.workflowMutations || []),
+        { method: "PATCH", action, body: jsonClone(input) },
+      ];
+      if (!actorCan(actor, requiredPermission)) {
+        return respond(403, { ok: false, error: "permission_denied" });
+      }
+      const workflow = state.workflows.find((item) => item.id === input.workflowId);
+      if (!workflow) return respond(404, { ok: false, error: "workflow_not_found" });
+      if (action === "save" && state.workflowConflictNextSave) {
+        state.workflowConflictNextSave = false;
+        return respond(409, { ok: false, error: "enterprise_version_conflict" });
+      }
+      if (Number(input.version) !== workflow.version) {
+        return respond(409, { ok: false, error: "enterprise_version_conflict" });
+      }
+      if (action === "save") {
+        updateWorkflowDraft(workflow, input);
+      } else if (action === "publish") {
+        publishWorkflow(workflow);
+      } else if (action === "archive") {
+        workflow.status = "archived";
+        workflow.version += 1;
+        workflow.updatedAt = timestamp();
+      } else if (action === "restore") {
+        workflow.status = workflow.published ? "published" : "draft";
+        workflow.version += 1;
+        workflow.updatedAt = timestamp();
+      } else {
+        return respond(400, { ok: false, error: "invalid_request" });
+      }
+      return respond(200, { ok: true, workflow: currentWorkflowDto(workflow) });
     }
     if (url.pathname === "/api/merchant-enterprise/tasks" && request.method() === "POST") {
       const input = request.postDataJSON();
@@ -509,6 +688,182 @@ async function run() {
     await secondEmployeeRow.getByRole("button", { name: "编辑姓名", exact: true }).click();
     await pageA.locator(`#employee-profile-editor-${secondEmployeeId}`).waitFor();
     await firstProfileEditor.waitFor({ state: "hidden" });
+    await secondEmployeeRow.getByRole("button", { name: "收起资料", exact: true }).click();
+
+    const publishedWorkflowTitle = "客户到店接待流程";
+    const publishedStepTitle = "确认预约信息";
+    const draftWorkflowTitle = "客户到店接待流程（内部草稿）";
+    const draftOnlyDescription = "尚未发布的内部接待说明";
+    const conflictDraftDescription = "CAS 冲突时必须保留的本地正文";
+    await pageA.getByRole("button", { name: "工作流程", exact: true }).click();
+    const ownerWorkflowPanel = pageA.locator('section[aria-label="工作流程与标准作业程序"]');
+    await ownerWorkflowPanel.getByRole("heading", { name: "工作流程", exact: true }).waitFor();
+    await ownerWorkflowPanel.getByRole("button", { name: "新建流程", exact: true }).first().click();
+    await ownerWorkflowPanel.getByLabel("流程名称 *").fill(publishedWorkflowTitle);
+    await ownerWorkflowPanel.getByLabel("适用场景 *").fill("客户按预约时间到店");
+    await ownerWorkflowPanel.getByLabel("流程说明").fill("首个对员工公开的接待版本");
+    await ownerWorkflowPanel.getByRole("button", { name: "添加步骤", exact: true }).click();
+    await ownerWorkflowPanel.getByLabel("步骤标题 *").fill(publishedStepTitle);
+    await ownerWorkflowPanel.getByLabel("操作说明 *").fill("核对客户姓名和预约时间。");
+    await ownerWorkflowPanel.getByRole("button", { name: "保存并发布", exact: true }).click();
+    await ownerWorkflowPanel
+      .getByText("流程已发布，员工现在可以查看最新版本。", { exact: true })
+      .waitFor();
+    assert(state.workflows[0]?.id === workflowId, "owner workflow creation did not reach the API mock");
+    assert(
+      state.workflows[0]?.published?.fields.steps[0]?.title === publishedStepTitle,
+      "owner workflow publish did not persist its first step snapshot",
+    );
+    assert(
+      (statsA.workflowMutations || []).map((item) => item.action).slice(-2).join(",") ===
+        "create,publish",
+      "owner create-and-publish did not use separate draft and publish mutations",
+    );
+
+    await ownerWorkflowPanel.getByRole("button", { name: "关闭", exact: true }).click();
+    await ownerWorkflowPanel.getByRole("button", { name: "编辑草稿", exact: true }).click();
+    const ownerWorkflowTitle = ownerWorkflowPanel.getByLabel("流程名称 *");
+    const ownerWorkflowDescription = ownerWorkflowPanel.getByLabel("流程说明");
+    await ownerWorkflowTitle.fill(draftWorkflowTitle);
+    await ownerWorkflowDescription.fill(draftOnlyDescription);
+    await ownerWorkflowPanel.getByRole("button", { name: "保存草稿", exact: true }).click();
+    await ownerWorkflowPanel.getByText("草稿已保存。", { exact: true }).waitFor();
+    assert(
+      state.workflows[0]?.draft.title === draftWorkflowTitle &&
+        state.workflows[0]?.published?.fields.title === publishedWorkflowTitle,
+      "saving a new draft overwrote the employee-facing published snapshot",
+    );
+
+    await ownerWorkflowDescription.fill(conflictDraftDescription);
+    await ownerWorkflowPanel.getByText("有尚未保存的修改", { exact: true }).waitFor();
+    pageA.once("dialog", (dialog) => void dialog.dismiss());
+    await pageA.getByRole("button", { name: "任务看板", exact: true }).click();
+    assert(
+      (await pageA.locator('[aria-current="page"]').textContent()) === "工作流程" &&
+        (await ownerWorkflowDescription.inputValue()) === conflictDraftDescription,
+      "canceling workflow menu navigation discarded or left the local workflow draft",
+    );
+
+    state.workflowConflictNextSave = true;
+    await ownerWorkflowPanel.getByRole("button", { name: "保存草稿", exact: true }).click();
+    await ownerWorkflowPanel
+      .getByText("该流程已被其他成员更新。请重新加载最新版本后再编辑。", { exact: true })
+      .waitFor();
+    assert(
+      (await ownerWorkflowDescription.inputValue()) === conflictDraftDescription,
+      "a workflow CAS conflict replaced the editor's local body",
+    );
+    await ownerWorkflowPanel.getByRole("button", { name: "重新加载", exact: true }).waitFor();
+
+    const workflowViewActor = {
+      type: "employee",
+      id: "10000000-0000-4000-8000-000000000031",
+      siteId,
+      displayName: "流程只读员工",
+      email: "workflow-view@example.test",
+      permissions: ["enterprise.view", "workflows.view"],
+      accessScope: "all",
+      allowedBoardIds: [],
+    };
+    const workflowManageActor = {
+      ...workflowViewActor,
+      id: "10000000-0000-4000-8000-000000000032",
+      displayName: "流程编辑员工",
+      email: "workflow-manage@example.test",
+      permissions: ["enterprise.view", "workflows.view", "workflows.manage"],
+    };
+    const workflowPublishActor = {
+      ...workflowViewActor,
+      id: "10000000-0000-4000-8000-000000000033",
+      displayName: "流程发布员工",
+      email: "workflow-publish@example.test",
+      permissions: ["enterprise.view", "workflows.view", "workflows.publish"],
+    };
+    const workflowViewContext = await browser.newContext({
+      viewport: { width: 1440, height: 1000 },
+      serviceWorkers: "block",
+    });
+    const workflowManageContext = await browser.newContext({
+      viewport: { width: 1440, height: 1000 },
+      serviceWorkers: "block",
+    });
+    const workflowPublishContext = await browser.newContext({
+      viewport: { width: 1440, height: 1000 },
+      serviceWorkers: "block",
+    });
+    await Promise.all([
+      installEnterpriseApiMock(workflowViewContext, state, { overviewRequests: 0 }, {
+        actor: workflowViewActor,
+      }),
+      installEnterpriseApiMock(workflowManageContext, state, { overviewRequests: 0 }, {
+        actor: workflowManageActor,
+      }),
+      installEnterpriseApiMock(workflowPublishContext, state, { overviewRequests: 0 }, {
+        actor: workflowPublishActor,
+      }),
+    ]);
+    const [workflowViewPage, workflowManagePage, workflowPublishPage] = await Promise.all([
+      openHarness(workflowViewContext, baseUrl),
+      openHarness(workflowManageContext, baseUrl),
+      openHarness(workflowPublishContext, baseUrl),
+    ]);
+    await Promise.all([
+      workflowViewPage.getByRole("button", { name: "工作流程", exact: true }).click(),
+      workflowManagePage.getByRole("button", { name: "工作流程", exact: true }).click(),
+      workflowPublishPage.getByRole("button", { name: "工作流程", exact: true }).click(),
+    ]);
+    const viewPanel = workflowViewPage.locator('section[aria-label="工作流程与标准作业程序"]');
+    const managePanel = workflowManagePage.locator('section[aria-label="工作流程与标准作业程序"]');
+    const publishPanel = workflowPublishPage.locator('section[aria-label="工作流程与标准作业程序"]');
+    await viewPanel.getByRole("heading", { name: publishedWorkflowTitle, exact: true }).waitFor();
+    assert(
+      (await viewPanel.getByText(publishedStepTitle, { exact: true }).count()) === 1 &&
+        (await viewPanel.getByText(draftWorkflowTitle, { exact: true }).count()) === 0 &&
+        (await viewPanel.getByText(draftOnlyDescription, { exact: true }).count()) === 0,
+      "a view-only employee received draft fields instead of the prior published snapshot",
+    );
+
+    await managePanel.getByRole("heading", { name: draftWorkflowTitle, exact: true }).waitFor();
+    assert(
+      (await managePanel.getByRole("button", { name: "新建流程", exact: true }).count()) >= 1 &&
+        (await managePanel.getByRole("button", { name: "编辑草稿", exact: true }).count()) === 1 &&
+        (await managePanel.getByRole("button", { name: "发布当前草稿", exact: true }).count()) === 0 &&
+        (await managePanel.getByRole("button", { name: "归档", exact: true }).count()) === 0,
+      "workflow manage-only UI exposed publish or visibility actions",
+    );
+    await managePanel.getByRole("button", { name: "编辑草稿", exact: true }).click();
+    assert(
+      (await managePanel.getByRole("button", { name: "保存草稿", exact: true }).count()) === 1 &&
+        (await managePanel.getByRole("button", { name: "保存并发布", exact: true }).count()) === 0,
+      "workflow manage-only editor exposed save-and-publish",
+    );
+
+    await publishPanel.getByRole("heading", { name: draftWorkflowTitle, exact: true }).waitFor();
+    assert(
+      (await publishPanel.getByRole("button", { name: "新建流程", exact: true }).count()) === 0 &&
+        (await publishPanel.getByRole("button", { name: "编辑草稿", exact: true }).count()) === 0 &&
+        (await publishPanel.getByRole("button", { name: "发布当前草稿", exact: true }).count()) === 1 &&
+        (await publishPanel.getByRole("button", { name: "归档", exact: true }).count()) === 1,
+      "workflow publish-only UI did not keep draft editing separate from publication",
+    );
+    workflowPublishPage.once("dialog", (dialog) => void dialog.accept());
+    await publishPanel.getByRole("button", { name: "归档", exact: true }).click();
+    await publishPanel.getByText("流程已归档。", { exact: true }).waitFor();
+    await publishPanel.getByRole("button", { name: "刷新", exact: true }).click();
+    await publishPanel.getByLabel("状态").selectOption("all");
+    await publishPanel.getByRole("heading", { name: draftWorkflowTitle, exact: true }).waitFor();
+    await publishPanel.getByRole("button", { name: "恢复流程", exact: true }).click();
+    await publishPanel.getByText("流程已恢复。", { exact: true }).waitFor();
+    assert(
+      state.workflows[0]?.status === "published" &&
+        state.workflows[0]?.hasUnpublishedChanges === true,
+      "an archived workflow did not survive refresh and restore its prior publication state",
+    );
+    await Promise.all([
+      workflowViewContext.close(),
+      workflowManageContext.close(),
+      workflowPublishContext.close(),
+    ]);
 
     await pageB.getByRole("button", { name: "操作记录", exact: true }).click();
     await pageB.getByRole("heading", { name: "企业操作记录" }).waitFor();
@@ -568,8 +923,8 @@ async function run() {
     await employeePage.getByRole("button", { name: "任务看板", exact: true }).click();
     const employeeDraft = employeePage.getByLabel("任务标题");
     await employeeDraft.fill("通知打开前的未保存草稿");
-    await employeePage.getByRole("button", { name: /任务通知，1 条未读/ }).click();
-    const notificationDialog = employeePage.getByRole("dialog", { name: "任务通知" });
+    await employeePage.getByRole("button", { name: /企业通知，1 条未读/ }).click();
+    const notificationDialog = employeePage.getByRole("dialog", { name: "企业通知" });
     const notificationButton = notificationDialog
       .getByRole("button")
       .filter({ hasText: notificationTask.title });
@@ -610,6 +965,174 @@ async function run() {
     await taskEditor.getByRole("button", { name: "关闭", exact: true }).click();
     await taskEditor.waitFor({ state: "hidden" });
 
+    const workflowNotificationActor = {
+      type: "employee",
+      id: "10000000-0000-4000-8000-000000000034",
+      siteId,
+      displayName: "流程通知员工",
+      email: "workflow-notification@example.test",
+      permissions: ["enterprise.view", "tasks.view", "tasks.create", "workflows.view"],
+      accessScope: "all",
+      allowedBoardIds: [],
+    };
+    const workflowNotifications = [
+      {
+        id: "10000000-0000-4000-8000-000000000035",
+        siteId,
+        taskId: null,
+        workflowId,
+        type: "workflow_published",
+        actorType: "owner",
+        actorId: ownerId,
+        payload: {
+          workflowTitle: publishedWorkflowTitle,
+          publishedVersion: 1,
+        },
+        readAt: null,
+        createdAt: timestamp(),
+      },
+    ];
+    const workflowNotificationStats = {
+      overviewRequests: 0,
+      notificationGets: 0,
+      notificationPatches: 0,
+    };
+    const workflowNotificationContext = await browser.newContext({
+      viewport: { width: 1440, height: 1000 },
+      serviceWorkers: "block",
+    });
+    await Promise.all([
+      workflowNotificationContext.addInitScript(acceleratePolling),
+      installEnterpriseApiMock(
+        workflowNotificationContext,
+        state,
+        workflowNotificationStats,
+        {
+          actor: workflowNotificationActor,
+          notifications: workflowNotifications,
+        },
+      ),
+    ]);
+    const workflowNotificationPage = await openHarness(workflowNotificationContext, baseUrl);
+    await workflowNotificationPage
+      .getByRole("button", { name: "任务看板", exact: true })
+      .click();
+    const workflowNotificationDraft = workflowNotificationPage.getByLabel("任务标题");
+    await workflowNotificationDraft.fill("流程通知跳转前的未保存任务");
+    await workflowNotificationPage
+      .getByRole("button", { name: /企业通知，1 条未读/ })
+      .click();
+    const workflowNotificationDialog = workflowNotificationPage.getByRole("dialog", {
+      name: "企业通知",
+    });
+    const workflowNotificationButton = workflowNotificationDialog
+      .getByRole("button")
+      .filter({ hasText: publishedWorkflowTitle });
+    workflowNotificationPage.once("dialog", (dialog) => void dialog.dismiss());
+    await workflowNotificationButton.click();
+    assert(
+      (await workflowNotificationPage.locator('[aria-current="page"]').textContent()) ===
+        "任务看板" &&
+        (await workflowNotificationDraft.inputValue()) ===
+          "流程通知跳转前的未保存任务" &&
+        workflowNotificationStats.notificationPatches === 0,
+      "canceling workflow-notification navigation discarded the local draft or marked it read",
+    );
+    workflowNotificationPage.once("dialog", (dialog) => void dialog.accept());
+    await workflowNotificationButton.click();
+    await workflowNotificationPage
+      .locator('section[aria-label="工作流程与标准作业程序"]')
+      .getByRole("heading", { name: publishedWorkflowTitle, exact: true })
+      .waitFor();
+    await workflowNotificationPage.waitForTimeout(100);
+    assert(
+      (await workflowNotificationPage.locator('[aria-current="page"]').textContent()) ===
+        "工作流程" && workflowNotificationStats.notificationPatches === 1,
+      "workflow-published notification did not open its workflow and persist read state",
+    );
+
+    const workflowDraftNotificationActor = {
+      ...workflowNotificationActor,
+      id: "10000000-0000-4000-8000-000000000036",
+      displayName: "流程编辑通知员工",
+      email: "workflow-draft-notification@example.test",
+      permissions: ["enterprise.view", "workflows.view", "workflows.manage"],
+    };
+    const workflowDraftNotifications = [
+      {
+        ...workflowNotifications[0],
+        id: "10000000-0000-4000-8000-000000000037",
+        readAt: null,
+      },
+    ];
+    const workflowDraftNotificationStats = {
+      overviewRequests: 0,
+      notificationGets: 0,
+      notificationPatches: 0,
+    };
+    const workflowDraftNotificationContext = await browser.newContext({
+      viewport: { width: 1440, height: 1000 },
+      serviceWorkers: "block",
+    });
+    await Promise.all([
+      workflowDraftNotificationContext.addInitScript(acceleratePolling),
+      installEnterpriseApiMock(
+        workflowDraftNotificationContext,
+        state,
+        workflowDraftNotificationStats,
+        {
+          actor: workflowDraftNotificationActor,
+          notifications: workflowDraftNotifications,
+        },
+      ),
+    ]);
+    const workflowDraftNotificationPage = await openHarness(
+      workflowDraftNotificationContext,
+      baseUrl,
+    );
+    await workflowDraftNotificationPage
+      .getByRole("button", { name: "工作流程", exact: true })
+      .click();
+    const workflowDraftNotificationPanel = workflowDraftNotificationPage.locator(
+      'section[aria-label="工作流程与标准作业程序"]',
+    );
+    await workflowDraftNotificationPanel
+      .getByRole("heading", { name: draftWorkflowTitle, exact: true })
+      .waitFor();
+    await workflowDraftNotificationPanel
+      .getByRole("button", { name: "编辑草稿", exact: true })
+      .click();
+    const sameViewDirtyDescription = "同页通知跳转前未保存的流程正文";
+    const workflowDraftDescription = workflowDraftNotificationPanel.getByLabel("流程说明");
+    await workflowDraftDescription.fill(sameViewDirtyDescription);
+    await workflowDraftNotificationPage
+      .getByRole("button", { name: /企业通知，1 条未读/ })
+      .click();
+    const workflowDraftNotificationDialog = workflowDraftNotificationPage.getByRole("dialog", {
+      name: "企业通知",
+    });
+    const workflowDraftNotificationButton = workflowDraftNotificationDialog
+      .getByRole("button")
+      .filter({ hasText: publishedWorkflowTitle });
+    workflowDraftNotificationPage.once("dialog", (dialog) => void dialog.dismiss());
+    await workflowDraftNotificationButton.click();
+    assert(
+      (await workflowDraftDescription.inputValue()) === sameViewDirtyDescription &&
+        workflowDraftNotificationStats.notificationPatches === 0,
+      "canceling same-view workflow notification navigation discarded the draft or marked it read",
+    );
+    workflowDraftNotificationPage.once("dialog", (dialog) => void dialog.accept());
+    await workflowDraftNotificationButton.click();
+    await workflowDraftNotificationPanel
+      .getByRole("button", { name: "编辑草稿", exact: true })
+      .waitFor();
+    await workflowDraftNotificationPage.waitForTimeout(100);
+    assert(
+      (await workflowDraftNotificationPanel.getByLabel("流程说明").count()) === 0 &&
+        workflowDraftNotificationStats.notificationPatches === 1,
+      "confirming same-view workflow notification navigation did not consume focus exactly once",
+    );
+
     const mobileContext = await browser.newContext({
       viewport: { width: 390, height: 844 },
       serviceWorkers: "block",
@@ -630,11 +1153,31 @@ async function run() {
       viewport.scrollWidth <= viewport.innerWidth + 1,
       `enterprise mobile layout overflows horizontally:${JSON.stringify(viewport)}`,
     );
+    await mobilePage.getByRole("button", { name: "收起新建任务", exact: true }).click();
+    await mobilePage.getByRole("button", { name: "工作流程", exact: true }).click();
+    const mobileWorkflowPanel = mobilePage.locator(
+      'section[aria-label="工作流程与标准作业程序"]',
+    );
+    await mobileWorkflowPanel
+      .getByRole("heading", { name: draftWorkflowTitle, exact: true })
+      .waitFor();
+    await mobileWorkflowPanel.getByRole("button", { name: "编辑草稿", exact: true }).click();
+    await mobileWorkflowPanel.getByLabel("流程名称 *").waitFor();
+    const workflowViewport = await mobilePage.evaluate(() => ({
+      innerWidth: window.innerWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+    }));
+    assert(
+      workflowViewport.scrollWidth <= workflowViewport.innerWidth + 1,
+      `enterprise workflow mobile layout overflows horizontally:${JSON.stringify(workflowViewport)}`,
+    );
 
     await Promise.all([
       ownerContextA.close(),
       ownerContextB.close(),
       employeeContext.close(),
+      workflowNotificationContext.close(),
+      workflowDraftNotificationContext.close(),
       mobileContext.close(),
     ]);
     process.stdout.write(
@@ -646,10 +1189,18 @@ async function run() {
           "draft_safe_refresh_pause_and_resume",
           "board_settings_dirty_switch_and_collapse_guards",
           "employee_inline_editor_dirty_switch_guard",
+          "owner_workflow_draft_step_and_publish",
+          "workflow_published_snapshot_isolated_from_new_draft",
+          "workflow_manage_and_publish_ui_separation",
+          "workflow_archive_refresh_and_restore",
+          "workflow_menu_dirty_navigation_guard",
+          "workflow_cas_conflict_keeps_local_body",
           "owner_audit_listing_and_pagination",
           "employee_notification_dirty_cancel_and_mark_read",
+          "workflow_notification_dirty_cancel_and_target_navigation",
+          "workflow_notification_same_view_dirty_guard_and_single_focus",
           "task_editor_unsaved_close_guard",
-          "mobile_task_composer_and_horizontal_layout",
+          "mobile_task_and_workflow_horizontal_layout",
         ],
       }) + "\n",
     );

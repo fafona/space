@@ -42,6 +42,7 @@ function notification(
     id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     siteId: "10000000",
     taskId: "11111111-1111-4111-8111-111111111111",
+    workflowId: null,
     type: "task_commented",
     actorType: "owner",
     actorId: "88888888-8888-4888-8888-888888888888",
@@ -135,7 +136,7 @@ test("employee notification GET uses its resolved identity, entitlement and boun
     nextCursor,
   );
   assert.deepEqual(calls[0], {
-    resolve: { siteId: "10000000", requiredPermission: "tasks.view" },
+    resolve: { siteId: "10000000", requiredPermission: "enterprise.view" },
   });
   assert.deepEqual(calls[1], { entitlement: "10000000" });
   const load = calls[2]?.load as Record<string, unknown>;

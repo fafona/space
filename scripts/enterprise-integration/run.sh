@@ -43,8 +43,8 @@ mapfile -t enterprise_migrations < <(
     -print | sort
 )
 
-if [[ "${#enterprise_migrations[@]}" -ne 19 ]]; then
-  echo "Expected 19 enterprise migrations (001-019), found ${#enterprise_migrations[@]}" >&2
+if [[ "${#enterprise_migrations[@]}" -ne 20 ]]; then
+  echo "Expected 20 enterprise migrations (001-020), found ${#enterprise_migrations[@]}" >&2
   printf '  %s\n' "${enterprise_migrations[@]}" >&2
   exit 1
 fi
@@ -55,14 +55,15 @@ done
 
 registry_count="$(
   run_psql --tuples-only --no-align --command \
-    "select count(*) from public.faolla_schema_migrations where version = 202607250001 or version between 202607310001 and 202608020019;"
+    "select count(*) from public.faolla_schema_migrations where version = 202607250001 or version between 202607310001 and 202608030020;"
 )"
-if [[ "${registry_count}" -ne 20 ]]; then
-  echo "Expected 20 applied prerequisite/enterprise versions, found ${registry_count}" >&2
+if [[ "${registry_count}" -ne 21 ]]; then
+  echo "Expected 21 applied prerequisite/enterprise versions, found ${registry_count}" >&2
   exit 1
 fi
 
 run_sql_file "${SCRIPT_DIR}/10-serial-acceptance.sql"
+run_sql_file "${SCRIPT_DIR}/40-workflow-acceptance.sql"
 
 work_dir="$(mktemp -d)"
 cleanup() {
@@ -128,8 +129,18 @@ invitation_worker() {
     --file "${SCRIPT_DIR}/21-invitation-cas-worker.sql"
 }
 
+workflow_worker() {
+  local worker="$1"
+  run_psql \
+    --set "worker_title=Workflow CAS worker ${worker}" \
+    --set "worker_operation=integration-workflow-cas-${worker,,}" \
+    --file "${SCRIPT_DIR}/41-workflow-cas-worker.sql"
+}
+
 run_pair task task_worker
 run_pair invitation invitation_worker
+run_pair workflow workflow_worker
 run_sql_file "${SCRIPT_DIR}/30-post-concurrency.sql"
+run_sql_file "${SCRIPT_DIR}/42-workflow-post-concurrency.sql"
 
 echo '[enterprise-integration] all PostgreSQL migration, security, transaction, and CAS checks passed'

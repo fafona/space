@@ -659,6 +659,7 @@ const MERCHANT_ENTERPRISE_CONTEXT_MENU_ITEMS: Array<{
   view: Exclude<MerchantEnterpriseView, "overview">;
 }> = [
   { label: "任务看板", view: "tasks" },
+  { label: "工作流程", view: "workflows" },
   { label: "员工账号", view: "employees" },
   { label: "角色权限", view: "roles" },
   { label: "操作记录", view: "audit" },

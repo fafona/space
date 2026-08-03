@@ -34,6 +34,7 @@ const ENTITY_FILTERS: ReadonlyArray<{
   { value: "column", label: "工作列" },
   { value: "employee", label: "员工账号" },
   { value: "invitation", label: "员工邀请" },
+  { value: "workflow", label: "工作流程" },
 ];
 
 const EVENT_LABELS: Record<string, string> = {
@@ -58,6 +59,11 @@ const EVENT_LABELS: Record<string, string> = {
   "invitation.accepted": "接受了员工邀请",
   "invitation.delivery_finalized": "更新了邀请发送结果",
   "invitation.auth_bound": "完成了员工登录绑定",
+  "workflow.created": "创建了工作流程",
+  "workflow.updated": "更新了工作流程草稿",
+  "workflow.published": "发布了工作流程",
+  "workflow.archived": "归档了工作流程",
+  "workflow.restored": "恢复了工作流程",
 };
 
 const FIELD_LABELS: Record<string, string> = {
@@ -82,6 +88,10 @@ const FIELD_LABELS: Record<string, string> = {
   invitation_revoked_at: "撤销时间",
   accepted_at: "接受时间",
   initialized: "初始化",
+  title: "标题",
+  category: "分类",
+  published_version: "发布版本",
+  step_count: "步骤数量",
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -97,6 +107,8 @@ const STATUS_LABELS: Record<string, string> = {
   revoked: "已撤销",
   all: "全部看板",
   restricted: "指定看板",
+  draft: "草稿",
+  published: "已发布",
 };
 
 const permissionLabelByKey = new Map<string, string>(

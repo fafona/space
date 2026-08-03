@@ -135,7 +135,8 @@ function eventMatchesEntity(
   if (prefix === "board") return entityType === "board";
   if (prefix === "column") return entityType === "column";
   if (prefix === "employee") return entityType === "employee";
-  return prefix === "invitation" && entityType === "invitation";
+  if (prefix === "invitation") return entityType === "invitation";
+  return prefix === "workflow" && entityType === "workflow";
 }
 
 function parseAuditQuery(request: Request) {

@@ -45,7 +45,7 @@ type EmployeeActor = Extract<MerchantEnterpriseActor, { type: "employee" }>;
 export type MerchantEnterpriseNotificationRouteDependencies = {
   resolveActor: (
     request: Request,
-    input: { siteId: string; requiredPermission: "tasks.view" },
+    input: { siteId: string; requiredPermission: "enterprise.view" },
   ) => Promise<MerchantEnterpriseActor>;
   requireEnterpriseEntitlement: (siteId: string) => Promise<unknown>;
   loadNotifications: (input: {
@@ -232,7 +232,7 @@ export async function handleMerchantEnterpriseNotificationsGet(
     const query = parseNotificationQuery(request);
     const actor = await dependencies.resolveActor(request, {
       siteId: query.siteId,
-      requiredPermission: "tasks.view",
+      requiredPermission: "enterprise.view",
     });
     await dependencies.requireEnterpriseEntitlement(query.siteId);
     if (actor.type === "owner") {
@@ -276,7 +276,7 @@ export async function handleMerchantEnterpriseNotificationsPatch(
     );
     const actor = await dependencies.resolveActor(request, {
       siteId: body.siteId,
-      requiredPermission: "tasks.view",
+      requiredPermission: "enterprise.view",
     });
     await dependencies.requireEnterpriseEntitlement(body.siteId);
     if (actor.type === "owner") {

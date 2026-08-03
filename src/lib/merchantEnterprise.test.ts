@@ -23,13 +23,17 @@ import {
   merchantEnterpriseRoleFitsActor,
   normalizeMerchantEnterpriseEmployee,
   normalizeMerchantEnterpriseAuditEvent,
+  normalizeMerchantEnterpriseNotification,
   normalizeMerchantEnterprisePermissions,
   normalizeMerchantEnterpriseRole,
+  normalizeMerchantEnterpriseWorkflow,
   normalizeMerchantTaskBoard,
   normalizeMerchantTask,
   normalizeMerchantTaskEvent,
   parseMerchantEnterprisePermissionsStrict,
   parseMerchantEnterpriseBoardAccessStrict,
+  parseMerchantEnterpriseWorkflowStepsStrict,
+  parseMerchantEnterpriseWorkflowTagsStrict,
   toggleMerchantEnterprisePermissionSelection,
   type MerchantEnterpriseActor,
   type MerchantEnterpriseSnapshot,
@@ -97,6 +101,104 @@ test("enterprise audit permission is explicit and depends on workspace access", 
   for (const role of DEFAULT_MERCHANT_ENTERPRISE_ROLES) {
     assert.equal(role.permissions.includes("audit.view"), false);
   }
+});
+
+test("workflow authoring and publishing permissions stay independently assignable", () => {
+  for (const permission of [
+    "workflows.view",
+    "workflows.manage",
+    "workflows.publish",
+  ] as const) {
+    assert.ok(MERCHANT_ENTERPRISE_PERMISSIONS.includes(permission));
+  }
+  assert.deepEqual(
+    getMissingMerchantEnterprisePermissionDependencies(["workflows.manage"]),
+    ["enterprise.view", "workflows.view"],
+  );
+  assert.deepEqual(
+    getMissingMerchantEnterprisePermissionDependencies(["workflows.publish"]),
+    ["enterprise.view", "workflows.view"],
+  );
+  const administrator = DEFAULT_MERCHANT_ENTERPRISE_ROLES[0];
+  const supervisor = DEFAULT_MERCHANT_ENTERPRISE_ROLES[1];
+  const employee = DEFAULT_MERCHANT_ENTERPRISE_ROLES[2];
+  assert.equal(administrator?.permissions.includes("workflows.publish"), true);
+  assert.equal(supervisor?.permissions.includes("workflows.manage"), true);
+  assert.equal(supervisor?.permissions.includes("workflows.publish"), false);
+  assert.equal(employee?.permissions.includes("workflows.view"), true);
+  assert.equal(employee?.permissions.includes("workflows.manage"), false);
+});
+
+test("workflow normalization preserves ordered bounded content and publication metadata", () => {
+  const value = normalizeMerchantEnterpriseWorkflow({
+    id: "11111111-1111-4111-8111-111111111111",
+    merchant_id: "10000000",
+    title: "客户投诉处理",
+    scenario: "客户反馈商品存在问题时",
+    description: "先确认事实，再给出解决方案。",
+    category: "客户服务",
+    tags: ["投诉", "售后"],
+    status: "published",
+    steps: [
+      {
+        id: "22222222-2222-4222-8222-222222222222",
+        title: "记录情况",
+        instruction: "记录订单号和具体问题。",
+        position: 0,
+      },
+    ],
+    version: 3,
+    published_version: 2,
+    published_at: "2026-08-03T08:00:00.000Z",
+    has_unpublished_changes: true,
+    created_at: "2026-08-03T07:00:00.000Z",
+    updated_at: "2026-08-03T09:00:00.000Z",
+  });
+  assert.ok(value);
+  assert.equal(value.publishedVersion, 2);
+  assert.equal(value.hasUnpublishedChanges, true);
+  assert.deepEqual(value.tags, ["投诉", "售后"]);
+  assert.equal(value.steps[0]?.position, 0);
+  assert.equal(
+    normalizeMerchantEnterpriseWorkflow({ ...value, status: "draft" }),
+    null,
+  );
+  assert.equal(
+    parseMerchantEnterpriseWorkflowStepsStrict([
+      { ...value.steps[0], position: 1 },
+    ]),
+    null,
+  );
+  assert.equal(parseMerchantEnterpriseWorkflowTagsStrict(["重复", "重复"]), null);
+});
+
+test("enterprise notifications reject mixed targets and normalize workflow publications", () => {
+  const notification = normalizeMerchantEnterpriseNotification({
+    id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    merchant_id: "10000000",
+    task_id: null,
+    workflow_id: "11111111-1111-4111-8111-111111111111",
+    notification_type: "workflow_published",
+    actor_type: "owner",
+    actor_id: "88888888-8888-4888-8888-888888888888",
+    payload: { workflowTitle: "客户投诉处理", publishedVersion: 2 },
+    read_at: null,
+    created_at: "2026-08-03T09:00:00.000Z",
+  });
+  assert.ok(notification);
+  assert.equal(notification.taskId, null);
+  assert.equal(
+    notification.workflowId,
+    "11111111-1111-4111-8111-111111111111",
+  );
+  assert.equal(notification.payload.workflowTitle, "客户投诉处理");
+  assert.equal(
+    normalizeMerchantEnterpriseNotification({
+      ...notification,
+      taskId: "33333333-3333-4333-8333-333333333333",
+    }),
+    null,
+  );
 });
 
 test("enterprise audit normalization accepts only sanitized immutable event rows", () => {

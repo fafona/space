@@ -11,6 +11,9 @@ export const MERCHANT_ENTERPRISE_PERMISSIONS = [
   "employees.manage",
   "roles.view",
   "roles.manage",
+  "workflows.view",
+  "workflows.manage",
+  "workflows.publish",
   "audit.view",
 ] as const;
 
@@ -18,13 +21,22 @@ export const MAX_MERCHANT_TASK_ASSIGNEES = 50;
 export const MAX_MERCHANT_TASK_CHECKLIST_ITEMS = 100;
 export const MAX_MERCHANT_TASK_CHECKLIST_TEXT_LENGTH = 500;
 export const MAX_MERCHANT_ENTERPRISE_ROLE_BOARDS = 100;
+export const MAX_MERCHANT_ENTERPRISE_WORKFLOW_STEPS = 50;
+export const MAX_MERCHANT_ENTERPRISE_WORKFLOW_TAGS = 10;
+export const MAX_MERCHANT_ENTERPRISE_WORKFLOW_TITLE_LENGTH = 160;
+export const MAX_MERCHANT_ENTERPRISE_WORKFLOW_SCENARIO_LENGTH = 500;
+export const MAX_MERCHANT_ENTERPRISE_WORKFLOW_DESCRIPTION_LENGTH = 5000;
+export const MAX_MERCHANT_ENTERPRISE_WORKFLOW_CATEGORY_LENGTH = 80;
+export const MAX_MERCHANT_ENTERPRISE_WORKFLOW_TAG_LENGTH = 40;
+export const MAX_MERCHANT_ENTERPRISE_WORKFLOW_STEP_TITLE_LENGTH = 160;
+export const MAX_MERCHANT_ENTERPRISE_WORKFLOW_STEP_INSTRUCTION_LENGTH = 4000;
 
 export type MerchantEnterprisePermission = (typeof MERCHANT_ENTERPRISE_PERMISSIONS)[number];
 
 export const MERCHANT_ENTERPRISE_PERMISSION_CATALOG: ReadonlyArray<{
   key: MerchantEnterprisePermission;
   label: string;
-  group: "工作台" | "任务" | "订单" | "员工" | "角色" | "审计";
+  group: "工作台" | "任务" | "订单" | "员工" | "角色" | "流程" | "审计";
   description: string;
 }> = [
   { key: "enterprise.view", label: "进入企业管理", group: "工作台", description: "查看企业管理工作台。" },
@@ -39,6 +51,9 @@ export const MERCHANT_ENTERPRISE_PERMISSION_CATALOG: ReadonlyArray<{
   { key: "employees.manage", label: "管理员工", group: "员工", description: "邀请、停用员工并分配角色。" },
   { key: "roles.view", label: "查看角色", group: "角色", description: "查看角色及其权限。" },
   { key: "roles.manage", label: "管理角色", group: "角色", description: "创建、修改和归档角色。" },
+  { key: "workflows.view", label: "查看工作流程", group: "流程", description: "搜索和查看企业已发布的工作流程。" },
+  { key: "workflows.manage", label: "编写工作流程", group: "流程", description: "创建和编辑工作流程草稿。" },
+  { key: "workflows.publish", label: "发布工作流程", group: "流程", description: "审核并将工作流程发布给员工。" },
   { key: "audit.view", label: "查看审计记录", group: "审计", description: "查看企业设置和员工账号的不可变操作记录。" },
 ];
 
@@ -57,6 +72,9 @@ const MERCHANT_ENTERPRISE_PERMISSION_DEPENDENCIES: Readonly<
   "employees.manage": ["enterprise.view", "employees.view", "roles.view"],
   "roles.view": ["enterprise.view"],
   "roles.manage": ["enterprise.view", "roles.view"],
+  "workflows.view": ["enterprise.view"],
+  "workflows.manage": ["enterprise.view", "workflows.view"],
+  "workflows.publish": ["enterprise.view", "workflows.view"],
   "audit.view": ["enterprise.view"],
 };
 
@@ -79,6 +97,7 @@ export const MERCHANT_ENTERPRISE_NOTIFICATION_TYPES = [
   "task_unassigned",
   "task_commented",
   "task_due_changed",
+  "workflow_published",
 ] as const;
 export const MERCHANT_ENTERPRISE_AUDIT_EVENT_TYPES = [
   "workspace.bootstrapped",
@@ -102,6 +121,11 @@ export const MERCHANT_ENTERPRISE_AUDIT_EVENT_TYPES = [
   "invitation.accepted",
   "invitation.delivery_finalized",
   "invitation.auth_bound",
+  "workflow.created",
+  "workflow.updated",
+  "workflow.published",
+  "workflow.archived",
+  "workflow.restored",
 ] as const;
 export const MERCHANT_ENTERPRISE_AUDIT_ENTITY_TYPES = [
   "workspace",
@@ -110,6 +134,7 @@ export const MERCHANT_ENTERPRISE_AUDIT_ENTITY_TYPES = [
   "column",
   "employee",
   "invitation",
+  "workflow",
 ] as const;
 
 export type MerchantEnterpriseRoleStatus = (typeof MERCHANT_ENTERPRISE_ROLE_STATUSES)[number];
@@ -262,14 +287,51 @@ export type MerchantTaskEvent = {
   createdAt: string;
 };
 
+export const MERCHANT_ENTERPRISE_WORKFLOW_STATUSES = [
+  "draft",
+  "published",
+  "archived",
+] as const;
+
+export type MerchantEnterpriseWorkflowStatus =
+  (typeof MERCHANT_ENTERPRISE_WORKFLOW_STATUSES)[number];
+
+export type MerchantEnterpriseWorkflowStep = {
+  id: string;
+  title: string;
+  instruction: string;
+  position: number;
+};
+
+export type MerchantEnterpriseWorkflow = {
+  id: string;
+  siteId: string;
+  title: string;
+  scenario: string;
+  description: string;
+  category: string;
+  tags: string[];
+  status: MerchantEnterpriseWorkflowStatus;
+  steps: MerchantEnterpriseWorkflowStep[];
+  version: number;
+  publishedVersion: number;
+  publishedAt: string | null;
+  hasUnpublishedChanges: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type MerchantEnterpriseNotificationPayload = {
   dueAt?: string | null;
+  workflowTitle?: string;
+  publishedVersion?: number;
 };
 
 export type MerchantEnterpriseNotification = {
   id: string;
   siteId: string;
-  taskId: string;
+  taskId: string | null;
+  workflowId: string | null;
   type: MerchantEnterpriseNotificationType;
   actorType: MerchantTaskEventActorType;
   actorId: string;
@@ -353,11 +415,22 @@ export const DEFAULT_MERCHANT_TASK_COLUMNS = [
   { name: "已完成", color: "#16a34a" },
 ] as const;
 
-const DEFAULT_MERCHANT_ENTERPRISE_ROLE_PERMISSIONS =
-  MERCHANT_ENTERPRISE_PERMISSIONS.filter(
-    (permission) =>
-      permission !== "orders.linked.view" && permission !== "audit.view",
-  );
+const DEFAULT_MERCHANT_ENTERPRISE_ROLE_PERMISSIONS: MerchantEnterprisePermission[] = [
+  "enterprise.view",
+  "tasks.view",
+  "tasks.create",
+  "tasks.update",
+  "tasks.assign",
+  "tasks.archive",
+  "boards.manage",
+  "employees.view",
+  "employees.manage",
+  "roles.view",
+  "roles.manage",
+  "workflows.view",
+  "workflows.manage",
+  "workflows.publish",
+];
 
 export const DEFAULT_MERCHANT_ENTERPRISE_ROLES: ReadonlyArray<{
   name: string;
@@ -380,12 +453,20 @@ export const DEFAULT_MERCHANT_ENTERPRISE_ROLES: ReadonlyArray<{
       "tasks.assign",
       "employees.view",
       "roles.view",
+      "workflows.view",
+      "workflows.manage",
     ],
   },
   {
     name: "员工",
     description: "查看协作看板，并创建和推进团队任务。",
-    permissions: ["enterprise.view", "tasks.view", "tasks.create", "tasks.update"],
+    permissions: [
+      "enterprise.view",
+      "tasks.view",
+      "tasks.create",
+      "tasks.update",
+      "workflows.view",
+    ],
   },
 ];
 
@@ -682,6 +763,130 @@ export function filterMerchantEnterpriseSnapshotByBoardAccess(
   };
 }
 
+export function parseMerchantEnterpriseWorkflowTagsStrict(
+  value: unknown,
+): string[] | null {
+  if (!Array.isArray(value) || value.length > MAX_MERCHANT_ENTERPRISE_WORKFLOW_TAGS) {
+    return null;
+  }
+  const tags = value.map((item) =>
+    typeof item === "string" ? item.trim() : "",
+  );
+  if (
+    tags.some(
+      (tag, index) =>
+        !tag ||
+        tag.length > MAX_MERCHANT_ENTERPRISE_WORKFLOW_TAG_LENGTH ||
+        tags.indexOf(tag) !== index,
+    )
+  ) {
+    return null;
+  }
+  return tags;
+}
+
+export function parseMerchantEnterpriseWorkflowStepsStrict(
+  value: unknown,
+): MerchantEnterpriseWorkflowStep[] | null {
+  if (!Array.isArray(value) || value.length > MAX_MERCHANT_ENTERPRISE_WORKFLOW_STEPS) {
+    return null;
+  }
+  const steps: MerchantEnterpriseWorkflowStep[] = [];
+  for (const [index, item] of value.entries()) {
+    const record = readRecord(item);
+    const id = normalizeText(record.id, 80);
+    const title = typeof record.title === "string" ? record.title.trim() : "";
+    const instruction =
+      typeof record.instruction === "string" ? record.instruction.trim() : "";
+    if (
+      !MERCHANT_ENTERPRISE_UUID_PATTERN.test(id) ||
+      !title ||
+      title.length > MAX_MERCHANT_ENTERPRISE_WORKFLOW_STEP_TITLE_LENGTH ||
+      !instruction ||
+      instruction.length > MAX_MERCHANT_ENTERPRISE_WORKFLOW_STEP_INSTRUCTION_LENGTH ||
+      !Number.isSafeInteger(record.position) ||
+      Number(record.position) !== index ||
+      steps.some((step) => step.id === id)
+    ) {
+      return null;
+    }
+    steps.push({ id, title, instruction, position: index });
+  }
+  return steps;
+}
+
+export function normalizeMerchantEnterpriseWorkflow(
+  value: unknown,
+): MerchantEnterpriseWorkflow | null {
+  const record = readRecord(value);
+  const id = normalizeText(record.id, 80);
+  const siteId = normalizeText(readValue(record, "siteId", "merchant_id"), 80);
+  const title = normalizeText(
+    record.title,
+    MAX_MERCHANT_ENTERPRISE_WORKFLOW_TITLE_LENGTH,
+  );
+  const scenario = normalizeText(
+    record.scenario,
+    MAX_MERCHANT_ENTERPRISE_WORKFLOW_SCENARIO_LENGTH,
+  );
+  const status = normalizeText(record.status, 20) as MerchantEnterpriseWorkflowStatus;
+  const tags = parseMerchantEnterpriseWorkflowTagsStrict(record.tags);
+  const steps = parseMerchantEnterpriseWorkflowStepsStrict(record.steps);
+  const version = Number(record.version);
+  const publishedVersion = Number(
+    readValue(record, "publishedVersion", "published_version"),
+  );
+  const publishedAt = normalizeNullableTimestamp(
+    readValue(record, "publishedAt", "published_at"),
+  );
+  const hasUnpublishedChanges = readValue(
+    record,
+    "hasUnpublishedChanges",
+    "has_unpublished_changes",
+  );
+  if (
+    !MERCHANT_ENTERPRISE_UUID_PATTERN.test(id) ||
+    !/^\d{8}$/.test(siteId) ||
+    !title ||
+    !scenario ||
+    !MERCHANT_ENTERPRISE_WORKFLOW_STATUSES.includes(status) ||
+    !tags ||
+    !steps ||
+    !Number.isSafeInteger(version) ||
+    version < 1 ||
+    !Number.isSafeInteger(publishedVersion) ||
+    publishedVersion < 0 ||
+    typeof hasUnpublishedChanges !== "boolean" ||
+    ((status === "published" || publishedVersion > 0) && !publishedAt) ||
+    (status === "draft" && publishedVersion !== 0)
+  ) {
+    return null;
+  }
+  return {
+    id,
+    siteId,
+    title,
+    scenario,
+    description: normalizeText(
+      record.description,
+      MAX_MERCHANT_ENTERPRISE_WORKFLOW_DESCRIPTION_LENGTH,
+    ),
+    category: normalizeText(
+      record.category,
+      MAX_MERCHANT_ENTERPRISE_WORKFLOW_CATEGORY_LENGTH,
+    ),
+    tags,
+    status,
+    steps,
+    version,
+    publishedVersion,
+    publishedAt,
+    hasUnpublishedChanges,
+    createdAt: normalizeTimestamp(readValue(record, "createdAt", "created_at")),
+    updatedAt: normalizeTimestamp(readValue(record, "updatedAt", "updated_at")),
+  };
+}
+
 export function normalizeMerchantEnterpriseRole(value: unknown): MerchantEnterpriseRole | null {
   const record = readRecord(value);
   const id = normalizeText(record.id, 80);
@@ -961,6 +1166,10 @@ export function normalizeMerchantEnterpriseNotification(
   const id = normalizeText(record.id, 80);
   const siteId = normalizeText(readValue(record, "siteId", "merchant_id"), 80);
   const taskId = normalizeText(readValue(record, "taskId", "task_id"), 80);
+  const workflowId = normalizeText(
+    readValue(record, "workflowId", "workflow_id"),
+    80,
+  );
   const typeValue = normalizeText(
     readValue(record, "type", "notification_type"),
     80,
@@ -968,8 +1177,10 @@ export function normalizeMerchantEnterpriseNotification(
   if (
     !MERCHANT_ENTERPRISE_UUID_PATTERN.test(id) ||
     !/^\d{8}$/.test(siteId) ||
-    !MERCHANT_ENTERPRISE_UUID_PATTERN.test(taskId) ||
-    !MERCHANT_ENTERPRISE_NOTIFICATION_TYPES.includes(typeValue)
+    !MERCHANT_ENTERPRISE_NOTIFICATION_TYPES.includes(typeValue) ||
+    (typeValue === "workflow_published"
+      ? !MERCHANT_ENTERPRISE_UUID_PATTERN.test(workflowId) || Boolean(taskId)
+      : !MERCHANT_ENTERPRISE_UUID_PATTERN.test(taskId) || Boolean(workflowId))
   ) {
     return null;
   }
@@ -984,7 +1195,24 @@ export function normalizeMerchantEnterpriseNotification(
       : "system";
   const rawPayload = readRecord(record.payload);
   const payload: MerchantEnterpriseNotificationPayload = {};
-  if (rawPayload.dueAt === null || rawPayload.due_at === null) {
+  if (typeValue === "workflow_published") {
+    const workflowTitle = normalizeText(
+      readValue(rawPayload, "workflowTitle", "workflow_title"),
+      MAX_MERCHANT_ENTERPRISE_WORKFLOW_TITLE_LENGTH,
+    );
+    const publishedVersion = Number(
+      readValue(rawPayload, "publishedVersion", "published_version"),
+    );
+    if (
+      !workflowTitle ||
+      !Number.isSafeInteger(publishedVersion) ||
+      publishedVersion < 1
+    ) {
+      return null;
+    }
+    payload.workflowTitle = workflowTitle;
+    payload.publishedVersion = publishedVersion;
+  } else if (rawPayload.dueAt === null || rawPayload.due_at === null) {
     payload.dueAt = null;
   } else {
     const dueAt = normalizeNullableTimestamp(
@@ -996,7 +1224,8 @@ export function normalizeMerchantEnterpriseNotification(
   return {
     id,
     siteId,
-    taskId,
+    taskId: taskId || null,
+    workflowId: workflowId || null,
     type: typeValue,
     actorType,
     actorId: normalizeText(readValue(record, "actorId", "actor_id"), 120),
@@ -1054,6 +1283,13 @@ const MERCHANT_ENTERPRISE_AUDIT_DATA_KEYS: Readonly<
     "invitation_revoked_at",
     "accepted_at",
   ]),
+  workflow: new Set([
+    "title",
+    "category",
+    "status",
+    "published_version",
+    "step_count",
+  ]),
 };
 
 function auditEventMatchesEntity(
@@ -1065,7 +1301,8 @@ function auditEventMatchesEntity(
   if (eventType.startsWith("board.")) return entityType === "board";
   if (eventType.startsWith("column.")) return entityType === "column";
   if (eventType.startsWith("employee.")) return entityType === "employee";
-  return eventType.startsWith("invitation.") && entityType === "invitation";
+  if (eventType.startsWith("invitation.")) return entityType === "invitation";
+  return eventType.startsWith("workflow.") && entityType === "workflow";
 }
 
 function normalizeAuditTimestampValue(value: unknown) {
@@ -1091,7 +1328,12 @@ function normalizeMerchantEnterpriseAuditData(
       normalized[key] = permissions;
       continue;
     }
-    if (key === "position" || key === "invitation_version") {
+    if (
+      key === "position" ||
+      key === "invitation_version" ||
+      key === "published_version" ||
+      key === "step_count"
+    ) {
       if (!Number.isSafeInteger(rawValue) || Number(rawValue) < 0) return null;
       normalized[key] = Number(rawValue);
       continue;
@@ -1134,6 +1376,15 @@ function normalizeMerchantEnterpriseAuditData(
     if (rawValue.length > maxLength) return null;
     if (key === "color" && !/^#[0-9a-f]{6}$/i.test(rawValue)) return null;
     if (key === "access_scope" && rawValue !== "all" && rawValue !== "restricted") {
+      return null;
+    }
+    if (
+      key === "status" &&
+      entityType === "workflow" &&
+      !MERCHANT_ENTERPRISE_WORKFLOW_STATUSES.includes(
+        rawValue as MerchantEnterpriseWorkflowStatus,
+      )
+    ) {
       return null;
     }
     if (

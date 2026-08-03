@@ -27,11 +27,11 @@ const browserCheckSource = readFileSync(
   "utf8",
 );
 
-test("employee task notifications are permission-aware and open the source task", () => {
+test("employee enterprise notifications are permission-aware and open task or workflow targets", () => {
   assert.match(managerSource, /import\s+MerchantEnterpriseNotificationCenter\s+from/);
   assert.match(
     managerSource,
-    /actor\.type\s*===\s*["']employee["']\s*&&\s*can\(actor,\s*["']tasks\.view["']\)[\s\S]{0,700}<MerchantEnterpriseNotificationCenter/,
+    /actor\.type\s*===\s*["']employee["']\s*&&[\s\S]{0,120}can\(actor,\s*["']tasks\.view["']\)\s*\|\|\s*can\(actor,\s*["']workflows\.view["']\)[\s\S]{0,700}<MerchantEnterpriseNotificationCenter/,
   );
   for (const binding of [
     "siteId={siteId}",
@@ -40,12 +40,13 @@ test("employee task notifications are permission-aware and open the source task"
     "tasks={snapshot.tasks}",
     "apiFetch={apiFetch}",
     "onOpenTask={openTaskFromOverview}",
+    "onOpenWorkflow={openWorkflowFromNotification}",
   ]) {
     assert.ok(managerSource.includes(binding), `notification center must receive ${binding}`);
   }
 });
 
-test("notification center supports unread polling, pagination and non-blocking direct actions", () => {
+test("enterprise notification center supports unread polling, pagination and guarded direct actions", () => {
   assert.match(
     notificationSource,
     /\/api\/merchant-enterprise\/notifications\?\$\{query\.toString\(\)\}/,
@@ -62,8 +63,12 @@ test("notification center supports unread polling, pagination and non-blocking d
   );
   assert.match(
     notificationSource,
-    /if\s*\(\s*!task\s*\|\|\s*!onOpenTask\(task\)\s*\)\s*return;[\s\S]{0,500}void\s+markRead\(\{\s*notificationId:\s*notification\.id\s*\}\)/,
+    /notification\.type\s*===\s*["']workflow_published["'][\s\S]{0,220}!notification\.workflowId\s*\|\|\s*!onOpenWorkflow\?\.\(notification\.workflowId\)\)\s*return;[\s\S]{0,500}void\s+markRead\(\{\s*notificationId:\s*notification\.id\s*\}\)/,
     "a cancelled dirty-form navigation must keep the notification unread",
+  );
+  assert.match(
+    notificationSource,
+    /const task\s*=\s*notification\.taskId[\s\S]{0,160}!task\s*\|\|\s*!onOpenTask\(task\)\)\s*return;/,
   );
   assert.match(notificationSource, /unreadCount\s*>\s*99\s*\?\s*["']99\+["']/);
   for (const type of [
@@ -71,6 +76,7 @@ test("notification center supports unread polling, pagination and non-blocking d
     "task_unassigned",
     "task_commented",
     "task_due_changed",
+    "workflow_published",
   ]) {
     assert.ok(notificationSource.includes(type), `missing notification presentation for ${type}`);
   }
@@ -79,6 +85,9 @@ test("notification center supports unread polling, pagination and non-blocking d
     /editingTaskId\s*!==\s*task\.id[\s\S]{0,220}!canAutoRefreshOnFocus[\s\S]{0,220}window\.confirm\([\s\S]{0,180}return\s+false/,
     "notification task navigation must confirm before discarding any active enterprise draft",
   );
+  assert.match(notificationSource, /aria-label=\{`企业通知/);
+  assert.match(notificationSource, /aria-label=["']企业通知["']/);
+  assert.match(notificationSource, />企业通知<\/h2>/);
 });
 
 test("browser harness is production-closed and exercises two isolated contexts", () => {
@@ -93,5 +102,7 @@ test("browser harness is production-closed and exercises two isolated contexts",
   assert.match(browserCheckSource, /双会话创建任务/);
   assert.match(browserCheckSource, /本地未保存草稿/);
   assert.match(browserCheckSource, /foreground polling overwrote or exposed remote data/);
+  assert.match(browserCheckSource, /企业通知，1 条未读/);
+  assert.match(browserCheckSource, /workflow_notification_dirty_cancel_and_target_navigation/);
   assert.match(browserCheckSource, /scrollWidth\s*<=\s*viewport\.innerWidth\s*\+\s*1/);
 });
