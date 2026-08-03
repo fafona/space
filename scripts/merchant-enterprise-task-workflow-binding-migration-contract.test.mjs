@@ -15,6 +15,12 @@ const executionMigrationPath = path.join(
   "supabase-migrations",
   "202608040022_merchant_enterprise_workflow_execution.sql",
 );
+const integrationFixturePath = path.join(
+  process.cwd(),
+  "scripts",
+  "enterprise-integration",
+  "48-task-workflow-binding.sql",
+);
 
 function source() {
   return fs.readFileSync(migrationPath, "utf8");
@@ -55,6 +61,14 @@ test("024 creates one immutable published-revision binding per task", () => {
   );
   assert.match(sql, /enable always trigger merchant_task_workflow_bindings_append_only/i);
   assert.match(sql, /enable always trigger merchant_task_workflow_bindings_reject_truncate/i);
+});
+
+test("task binding integration choice assertion is valid aggregate SQL", () => {
+  const fixture = fs.readFileSync(integrationFixturePath, "utf8");
+  assert.match(
+    fixture,
+    /bool_and\(\(select count\(\*\) = 6 from jsonb_object_keys\(choice\)\)\)/i,
+  );
 });
 
 test("binding provenance never persists an owner auth UUID", () => {

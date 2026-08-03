@@ -166,7 +166,7 @@ select enterprise_integration.assert_true(
       and bool_and(choice ->> 'revision_id' = :'binding_revision_one')
       and bool_and(choice ->> 'revision_no' = '1')
       and bool_and(choice ->> 'step_count' = '2')
-      and bool_and((select count(*) = 6 from jsonb_object_keys(choice))
+      and bool_and((select count(*) = 6 from jsonb_object_keys(choice)))
       and bool_and(not (choice ? 'description'))
       and bool_and(not (choice ? 'steps'))
       and bool_and(not (choice ? 'has_unpublished_changes'))
