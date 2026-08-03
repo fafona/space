@@ -63,8 +63,38 @@ test("enterprise notification center supports unread polling, pagination and gua
   );
   assert.match(
     notificationSource,
-    /notification\.type\s*===\s*["']workflow_published["'][\s\S]{0,220}!notification\.workflowId\s*\|\|\s*!onOpenWorkflow\?\.\(notification\.workflowId\)\)\s*return;[\s\S]{0,500}void\s+markRead\(\{\s*notificationId:\s*notification\.id\s*\}\)/,
-    "a cancelled dirty-form navigation must keep the notification unread",
+    /onOpenWorkflow\?:\s*\(workflowId:\s*string\)\s*=>\s*Promise<boolean>/,
+    "workflow notification navigation must expose its eventual open result",
+  );
+  const openNotificationStart = notificationSource.indexOf(
+    "async function openNotification",
+  );
+  const openNotificationEnd = notificationSource.indexOf(
+    "\n  return (",
+    openNotificationStart,
+  );
+  const openNotificationSource = notificationSource.slice(
+    openNotificationStart,
+    openNotificationEnd,
+  );
+  const awaitWorkflowIndex = openNotificationSource.indexOf(
+    "await onOpenWorkflow(notification.workflowId)",
+  );
+  const openedGuardIndex = openNotificationSource.indexOf(
+    "if (!workflowOpened) return;",
+  );
+  const closeIndex = openNotificationSource.indexOf("setOpen(false)");
+  const markReadIndex = openNotificationSource.indexOf(
+    "markRead({ notificationId: notification.id })",
+  );
+  assert.ok(awaitWorkflowIndex >= 0, "workflow navigation must be awaited");
+  assert.ok(
+    openedGuardIndex > awaitWorkflowIndex,
+    "cancelled or unavailable workflow navigation must stop before changing notification state",
+  );
+  assert.ok(
+    closeIndex > openedGuardIndex && markReadIndex > closeIndex,
+    "the notification may close and become read only after the workflow is actually open",
   );
   assert.match(
     notificationSource,

@@ -13,6 +13,8 @@ import {
   createMerchantTask,
   createOrGetMerchantOrderTask,
   loadMerchantEnterpriseAuditEvents,
+  loadMerchantEnterpriseArchivedWorkflowPage,
+  loadMerchantEnterpriseWorkflowById,
   loadMerchantEnterpriseSnapshot,
   loadMerchantEnterpriseNotifications,
   loadMerchantEnterpriseWorkflows,
@@ -2799,7 +2801,7 @@ test("audit loader fails closed on secret fields, cross-merchant rows and forged
   await assert.rejects(invoke(), /enterprise_audit_read_failed:invalid_response/);
 });
 
-test("workflow listing requests archived manager rows while delegating safe projection to the authorized RPC", async () => {
+test("workflow listing requests only active rows while delegating safe projection to the authorized RPC", async () => {
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const client = {
     from() {
@@ -2824,11 +2826,241 @@ test("workflow listing requests archived manager rows while delegating safe proj
           merchant_id: "10000000",
           actor_type: "employee",
           actor_id: WORKSPACE_EMPLOYEE_ACTOR.actorId,
+          include_archived: false,
+        },
+      },
+    },
+  ]);
+});
+
+test("legacy workflow listing can request the bounded mixed active/archive projection", async () => {
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const client = {
+    from() {
+      throw new Error("unexpected table access");
+    },
+    async rpc(name: string, args: Record<string, unknown>) {
+      calls.push({ name, args });
+      return {
+        data: { workflows: [workflowRow({ status: "archived" })] },
+        error: null,
+      };
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+  const workflows = await loadMerchantEnterpriseWorkflows(client, {
+    siteId: "10000000",
+    ...WORKSPACE_OWNER_ACTOR,
+    includeArchived: true,
+  });
+  assert.equal(workflows[0]?.status, "archived");
+  assert.deepEqual(calls, [
+    {
+      name: "faolla_list_merchant_enterprise_workflows_v1",
+      args: {
+        p_input: {
+          merchant_id: "10000000",
+          actor_type: "owner",
+          actor_id: WORKSPACE_OWNER_ACTOR.actorId,
           include_archived: true,
         },
       },
     },
   ]);
+});
+
+test("workflow exact lookup delegates tenant scoping and current authorization to the RPC", async () => {
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const workflowId = "11111111-1111-4111-8111-111111111111";
+  const client = {
+    from() {
+      throw new Error("exact workflow lookup must stay inside its authorized RPC");
+    },
+    async rpc(name: string, args: Record<string, unknown>) {
+      calls.push({ name, args });
+      return {
+        data: { workflow: workflowRow({ status: "archived" }) },
+        error: null,
+      };
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+  const result = await loadMerchantEnterpriseWorkflowById(client, {
+    siteId: "10000000",
+    workflowId,
+    ...WORKSPACE_EMPLOYEE_ACTOR,
+  });
+  assert.equal(result.id, workflowId);
+  assert.equal(result.status, "archived");
+  assert.deepEqual(calls, [
+    {
+      name: "faolla_get_merchant_enterprise_workflow_v1",
+      args: {
+        p_input: {
+          merchant_id: "10000000",
+          workflow_id: workflowId,
+          actor_type: "employee",
+          actor_id: WORKSPACE_EMPLOYEE_ACTOR.actorId,
+        },
+      },
+    },
+  ]);
+});
+
+test("workflow exact lookup rejects invalid ids, RPC misses, and cross-tenant responses", async () => {
+  let response: { data: unknown; error: unknown } = {
+    data: null,
+    error: { message: "workflow_not_found" },
+  };
+  let calls = 0;
+  const client = {
+    from() {
+      throw new Error("unexpected table access");
+    },
+    async rpc() {
+      calls += 1;
+      return response;
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+  await assert.rejects(
+    loadMerchantEnterpriseWorkflowById(client, {
+      siteId: "10000000",
+      workflowId: "not-a-workflow-id",
+      ...WORKSPACE_OWNER_ACTOR,
+    }),
+    { message: "invalid_workflow_request" },
+  );
+  assert.equal(calls, 0);
+
+  await assert.rejects(
+    loadMerchantEnterpriseWorkflowById(client, {
+      siteId: "10000000",
+      workflowId: "11111111-1111-4111-8111-111111111111",
+      ...WORKSPACE_OWNER_ACTOR,
+    }),
+    { message: "workflow_not_found" },
+  );
+
+  response = {
+    data: { workflow: workflowRow({ merchant_id: "20000000" }) },
+    error: null,
+  };
+  await assert.rejects(
+    loadMerchantEnterpriseWorkflowById(client, {
+      siteId: "10000000",
+      workflowId: "11111111-1111-4111-8111-111111111111",
+      ...WORKSPACE_OWNER_ACTOR,
+    }),
+    /enterprise_workflow_read_failed:invalid_response/,
+  );
+});
+
+test("archived workflow listing preserves precise keyset cursors and strict filters", async () => {
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const preciseTimestamp = "2026-08-03 08:00:00.123456+00";
+  const cursorId = "33333333-3333-4333-8333-333333333333";
+  const client = {
+    from() {
+      throw new Error("unexpected table access");
+    },
+    async rpc(name: string, args: Record<string, unknown>) {
+      calls.push({ name, args });
+      return {
+        data: {
+          workflows: [workflowRow({ status: "archived" })],
+          next_cursor: {
+            updated_at: preciseTimestamp,
+            id: cursorId,
+          },
+        },
+        error: null,
+      };
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+  const page = await loadMerchantEnterpriseArchivedWorkflowPage(client, {
+    siteId: "10000000",
+    ...WORKSPACE_OWNER_ACTOR,
+    limit: 20,
+    cursor: { beforeUpdatedAt: preciseTimestamp, beforeId: cursorId },
+    query: "客诉",
+    scenario: "售后",
+    tag: "紧急",
+  });
+  assert.equal(page.workflows.length, 1);
+  assert.deepEqual(page.nextCursor, {
+    beforeUpdatedAt: preciseTimestamp,
+    beforeId: cursorId,
+  });
+  assert.deepEqual(calls, [
+    {
+      name: "faolla_list_merchant_enterprise_archived_workflows_v1",
+      args: {
+        p_input: {
+          merchant_id: "10000000",
+          actor_type: "owner",
+          actor_id: WORKSPACE_OWNER_ACTOR.actorId,
+          limit: 20,
+          cursor: {
+            updated_at: preciseTimestamp,
+            id: cursorId,
+          },
+          query: "客诉",
+          scenario: "售后",
+          tag: "紧急",
+        },
+      },
+    },
+  ]);
+});
+
+test("archived workflow listing rejects invalid limits, cursors and response scope", async () => {
+  let data: unknown = {
+    workflows: [workflowRow({ status: "draft" })],
+    next_cursor: null,
+  };
+  const client = {
+    from() {
+      throw new Error("unexpected table access");
+    },
+    async rpc() {
+      return { data, error: null };
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+  await assert.rejects(
+    loadMerchantEnterpriseArchivedWorkflowPage(client, {
+      siteId: "10000000",
+      ...WORKSPACE_OWNER_ACTOR,
+      limit: 51,
+    }),
+    { message: "invalid_workflow_query" },
+  );
+  await assert.rejects(
+    loadMerchantEnterpriseArchivedWorkflowPage(client, {
+      siteId: "10000000",
+      ...WORKSPACE_OWNER_ACTOR,
+      cursor: { beforeUpdatedAt: "bad", beforeId: "bad" },
+    }),
+    { message: "invalid_workflow_cursor" },
+  );
+  await assert.rejects(
+    loadMerchantEnterpriseArchivedWorkflowPage(client, {
+      siteId: "10000000",
+      ...WORKSPACE_OWNER_ACTOR,
+    }),
+    /enterprise_workflows_read_failed:invalid_response/,
+  );
+  data = {
+    workflows: [workflowRow({ status: "archived" })],
+    next_cursor: {
+      updated_at: "not-a-date",
+      id: "33333333-3333-4333-8333-333333333333",
+    },
+  };
+  await assert.rejects(
+    loadMerchantEnterpriseArchivedWorkflowPage(client, {
+      siteId: "10000000",
+      ...WORKSPACE_OWNER_ACTOR,
+    }),
+    /enterprise_workflows_read_failed:invalid_response/,
+  );
 });
 
 test("workflow create and save use scoped idempotent CAS RPC payloads", async () => {

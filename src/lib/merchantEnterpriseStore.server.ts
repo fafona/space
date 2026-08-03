@@ -102,6 +102,18 @@ export type MerchantEnterpriseAuditPage = {
   nextCursor: MerchantEnterpriseAuditCursor | null;
 };
 
+export const MAX_MERCHANT_ENTERPRISE_WORKFLOW_ARCHIVE_PAGE_SIZE = 50;
+
+export type MerchantEnterpriseWorkflowArchiveCursor = {
+  beforeUpdatedAt: string;
+  beforeId: string;
+};
+
+export type MerchantEnterpriseWorkflowArchivePage = {
+  workflows: MerchantEnterpriseWorkflow[];
+  nextCursor: MerchantEnterpriseWorkflowArchiveCursor | null;
+};
+
 function normalizeText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
@@ -264,6 +276,8 @@ function throwEnterpriseWorkflowRpcError(operation: string, error: unknown): nev
     "workflow_archived",
     "workflow_already_archived",
     "workflow_not_archived",
+    "invalid_workflow_query",
+    "invalid_workflow_cursor",
     "invalid_workflow_request",
     "invalid_workflow_action",
     "invalid_workflow_payload",
@@ -2276,20 +2290,30 @@ function normalizeWorkflowMutationResponse(value: unknown, operation: string) {
 
 export async function loadMerchantEnterpriseWorkflows(
   client: MerchantEnterpriseStoreClient,
-  input: MerchantEnterpriseMutationActorInput & { siteId: string },
+  input: MerchantEnterpriseMutationActorInput & {
+    siteId: string;
+    includeArchived?: boolean;
+  },
 ): Promise<MerchantEnterpriseWorkflow[]> {
   const siteId = normalizeText(input.siteId, 80);
   if (!/^\d{8}$/.test(siteId)) throw new Error("invalid_workflow_request");
+  if (
+    input.includeArchived !== undefined &&
+    typeof input.includeArchived !== "boolean"
+  ) {
+    throw new Error("invalid_workflow_query");
+  }
   const actor = normalizeMerchantEnterpriseMutationActor(input);
+  const includeArchived = input.includeArchived === true;
   const result = await client.rpc("faolla_list_merchant_enterprise_workflows_v1", {
     p_input: {
       merchant_id: siteId,
       actor_type: actor.actorType,
       actor_id: actor.actorId,
-      // Draft-capable actors need archived workflows after a refresh so they
-      // can review or restore them. The RPC still projects only currently
-      // published revisions for view-only employees.
-      include_archived: true,
+      // Modern clients request active rows here and use keyset pagination for
+      // archives. The mixed mode remains temporarily available to older
+      // clients during a rolling deployment.
+      include_archived: includeArchived,
     },
   });
   if (result.error) {
@@ -2300,7 +2324,7 @@ export async function loadMerchantEnterpriseWorkflows(
       ? (result.data as Record<string, unknown>)
       : null;
   const rows = response && Array.isArray(response.workflows) ? response.workflows : null;
-  if (!rows || rows.length > 1000) {
+  if (!rows || rows.length > (includeArchived ? 400 : 200)) {
     throw new Error("enterprise_workflows_read_failed:invalid_response");
   }
   const workflows = rows.map(normalizeMerchantEnterpriseWorkflow);
@@ -2311,6 +2335,171 @@ export async function loadMerchantEnterpriseWorkflows(
     throw new Error("enterprise_workflows_read_failed:invalid_response");
   }
   return workflows as MerchantEnterpriseWorkflow[];
+}
+
+export async function loadMerchantEnterpriseWorkflowById(
+  client: MerchantEnterpriseStoreClient,
+  input: MerchantEnterpriseMutationActorInput & {
+    siteId: string;
+    workflowId: string;
+  },
+): Promise<MerchantEnterpriseWorkflow> {
+  const siteId = normalizeText(input.siteId, 80);
+  const workflowIdText = normalizeText(input.workflowId, 80);
+  if (
+    !/^\d{8}$/.test(siteId) ||
+    !MERCHANT_ENTERPRISE_ACTOR_ID_PATTERN.test(workflowIdText)
+  ) {
+    throw new Error("invalid_workflow_request");
+  }
+  const workflowId = workflowIdText.toLowerCase();
+  const actor = normalizeMerchantEnterpriseMutationActor(input);
+  const result = await client.rpc("faolla_get_merchant_enterprise_workflow_v1", {
+    p_input: {
+      merchant_id: siteId,
+      workflow_id: workflowId,
+      actor_type: actor.actorType,
+      actor_id: actor.actorId,
+    },
+  });
+  if (result.error) {
+    throwEnterpriseWorkflowRpcError("enterprise_workflow_read_failed", result.error);
+  }
+  const workflow = normalizeWorkflowMutationResponse(
+    result.data,
+    "enterprise_workflow_read_failed",
+  );
+  if (workflow.siteId !== siteId || workflow.id !== workflowId) {
+    throw new Error("enterprise_workflow_read_failed:invalid_response");
+  }
+  return workflow;
+}
+
+function normalizeWorkflowArchiveCursor(
+  value: unknown,
+): MerchantEnterpriseWorkflowArchiveCursor | null {
+  if (value === null || value === undefined) return null;
+  const source =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null;
+  if (
+    !source ||
+    Object.keys(source).length !== 2 ||
+    Object.keys(source).some((key) => !["updated_at", "id"].includes(key))
+  ) {
+    throw new Error("enterprise_workflows_read_failed:invalid_response");
+  }
+  const beforeUpdatedAt = source.updated_at;
+  const beforeId = source.id;
+  if (
+    typeof beforeUpdatedAt !== "string" ||
+    beforeUpdatedAt.length > 80 ||
+    !Number.isFinite(Date.parse(beforeUpdatedAt)) ||
+    typeof beforeId !== "string" ||
+    !MERCHANT_ENTERPRISE_ACTOR_ID_PATTERN.test(beforeId)
+  ) {
+    throw new Error("enterprise_workflows_read_failed:invalid_response");
+  }
+  // Keep the database timestamp byte-for-byte. PostgreSQL can return
+  // microseconds that JavaScript Date would truncate.
+  return { beforeUpdatedAt, beforeId };
+}
+
+export async function loadMerchantEnterpriseArchivedWorkflowPage(
+  client: MerchantEnterpriseStoreClient,
+  input: MerchantEnterpriseMutationActorInput & {
+    siteId: string;
+    limit?: number;
+    cursor?: MerchantEnterpriseWorkflowArchiveCursor | null;
+    query?: string;
+    scenario?: string;
+    tag?: string;
+  },
+): Promise<MerchantEnterpriseWorkflowArchivePage> {
+  const siteId = normalizeText(input.siteId, 80);
+  if (!/^\d{8}$/.test(siteId)) throw new Error("invalid_workflow_request");
+  const actor = normalizeMerchantEnterpriseMutationActor(input);
+  const limit = input.limit ?? 20;
+  if (
+    !Number.isSafeInteger(limit) ||
+    limit < 1 ||
+    limit > MAX_MERCHANT_ENTERPRISE_WORKFLOW_ARCHIVE_PAGE_SIZE
+  ) {
+    throw new Error("invalid_workflow_query");
+  }
+  const query = normalizeText(input.query, 160);
+  const scenario = normalizeText(
+    input.scenario,
+    MAX_MERCHANT_ENTERPRISE_WORKFLOW_SCENARIO_LENGTH,
+  );
+  const tag = normalizeText(input.tag, 40);
+  if (
+    (input.query !== undefined && (typeof input.query !== "string" || input.query.trim().length > 160)) ||
+    (input.scenario !== undefined &&
+      (typeof input.scenario !== "string" ||
+        input.scenario.trim().length > MAX_MERCHANT_ENTERPRISE_WORKFLOW_SCENARIO_LENGTH)) ||
+    (input.tag !== undefined && (typeof input.tag !== "string" || input.tag.trim().length > 40))
+  ) {
+    throw new Error("invalid_workflow_query");
+  }
+  const cursor = input.cursor ?? null;
+  if (
+    cursor &&
+    (typeof cursor.beforeUpdatedAt !== "string" ||
+      cursor.beforeUpdatedAt.length > 80 ||
+      !Number.isFinite(Date.parse(cursor.beforeUpdatedAt)) ||
+      !MERCHANT_ENTERPRISE_ACTOR_ID_PATTERN.test(cursor.beforeId))
+  ) {
+    throw new Error("invalid_workflow_cursor");
+  }
+  const result = await client.rpc(
+    "faolla_list_merchant_enterprise_archived_workflows_v1",
+    {
+      p_input: {
+        merchant_id: siteId,
+        actor_type: actor.actorType,
+        actor_id: actor.actorId,
+        limit,
+        ...(cursor
+          ? {
+              cursor: {
+                updated_at: cursor.beforeUpdatedAt,
+                id: cursor.beforeId,
+              },
+            }
+          : {}),
+        ...(query ? { query } : {}),
+        ...(scenario ? { scenario } : {}),
+        ...(tag ? { tag } : {}),
+      },
+    },
+  );
+  if (result.error) {
+    throwEnterpriseWorkflowRpcError("enterprise_workflows_read_failed", result.error);
+  }
+  const response =
+    result.data && typeof result.data === "object" && !Array.isArray(result.data)
+      ? (result.data as Record<string, unknown>)
+      : null;
+  if (!response || !Array.isArray(response.workflows)) {
+    throw new Error("enterprise_workflows_read_failed:invalid_response");
+  }
+  const workflows = response.workflows.map(normalizeMerchantEnterpriseWorkflow);
+  if (
+    workflows.length > limit ||
+    workflows.some(
+      (workflow) =>
+        !workflow || workflow.siteId !== siteId || workflow.status !== "archived",
+    ) ||
+    new Set(workflows.map((workflow) => workflow?.id)).size !== workflows.length
+  ) {
+    throw new Error("enterprise_workflows_read_failed:invalid_response");
+  }
+  return {
+    workflows: workflows as MerchantEnterpriseWorkflow[],
+    nextCursor: normalizeWorkflowArchiveCursor(response.next_cursor),
+  };
 }
 
 export async function createMerchantEnterpriseWorkflow(

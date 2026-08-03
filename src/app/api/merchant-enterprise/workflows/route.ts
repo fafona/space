@@ -19,7 +19,12 @@ import {
 } from "@/lib/merchantEnterpriseAuth.server";
 import {
   createMerchantEnterpriseWorkflow,
+  loadMerchantEnterpriseArchivedWorkflowPage,
+  loadMerchantEnterpriseWorkflowById,
   loadMerchantEnterpriseWorkflows,
+  MAX_MERCHANT_ENTERPRISE_WORKFLOW_ARCHIVE_PAGE_SIZE,
+  type MerchantEnterpriseWorkflowArchiveCursor,
+  type MerchantEnterpriseWorkflowArchivePage,
   updateMerchantEnterpriseWorkflow,
   type MerchantEnterpriseStoreClient,
 } from "@/lib/merchantEnterpriseStore.server";
@@ -73,7 +78,22 @@ export type MerchantEnterpriseWorkflowRouteDependencies = {
   loadWorkflows: (input: {
     siteId: string;
     actor: MerchantEnterpriseActor;
+    includeArchived: boolean;
   }) => Promise<MerchantEnterpriseWorkflow[]>;
+  loadWorkflowById: (input: {
+    siteId: string;
+    actor: MerchantEnterpriseActor;
+    workflowId: string;
+  }) => Promise<MerchantEnterpriseWorkflow>;
+  loadArchivedWorkflows: (input: {
+    siteId: string;
+    actor: MerchantEnterpriseActor;
+    limit: number;
+    cursor: MerchantEnterpriseWorkflowArchiveCursor | null;
+    query?: string;
+    scenario?: string;
+    tag?: string;
+  }) => Promise<MerchantEnterpriseWorkflowArchivePage>;
   createWorkflow: (input: {
     siteId: string;
     actor: MerchantEnterpriseActor;
@@ -105,6 +125,25 @@ const DEFAULT_DEPENDENCIES: MerchantEnterpriseWorkflowRouteDependencies = {
       siteId: input.siteId,
       actorType: input.actor.type,
       actorId: input.actor.id,
+      includeArchived: input.includeArchived,
+    }),
+  loadWorkflowById: (input) =>
+    loadMerchantEnterpriseWorkflowById(storeClient(), {
+      siteId: input.siteId,
+      workflowId: input.workflowId,
+      actorType: input.actor.type,
+      actorId: input.actor.id,
+    }),
+  loadArchivedWorkflows: (input) =>
+    loadMerchantEnterpriseArchivedWorkflowPage(storeClient(), {
+      siteId: input.siteId,
+      actorType: input.actor.type,
+      actorId: input.actor.id,
+      limit: input.limit,
+      cursor: input.cursor,
+      ...(input.query ? { query: input.query } : {}),
+      ...(input.scenario ? { scenario: input.scenario } : {}),
+      ...(input.tag ? { tag: input.tag } : {}),
     }),
   createWorkflow: (input) =>
     createMerchantEnterpriseWorkflow(storeClient(), {
@@ -154,12 +193,145 @@ function errorResponse(error: unknown) {
     message === "invalid_workflow_request" ||
     message === "invalid_workflow_action" ||
     message === "invalid_workflow_payload" ||
+    message === "invalid_workflow_query" ||
+    message === "invalid_workflow_cursor" ||
     message === "invalid_operation_id"
   ) {
     return response({ ok: false, error: message }, 400);
   }
   const resolved = toMerchantEnterpriseAccessResponse(error);
   return response(resolved.body, resolved.status);
+}
+
+export function encodeMerchantEnterpriseWorkflowArchiveCursor(
+  cursor: MerchantEnterpriseWorkflowArchiveCursor,
+) {
+  return Buffer.from(
+    JSON.stringify(["wa1", cursor.beforeUpdatedAt, cursor.beforeId]),
+    "utf8",
+  ).toString("base64url");
+}
+
+export function parseMerchantEnterpriseWorkflowArchiveCursor(
+  value: string | null,
+): MerchantEnterpriseWorkflowArchiveCursor | null {
+  if (value === null || value === "") return null;
+  if (value.length > 240 || !/^[A-Za-z0-9_-]+$/.test(value)) {
+    throw new Error("invalid_workflow_cursor");
+  }
+  try {
+    const decoded = Buffer.from(value, "base64url").toString("utf8");
+    if (Buffer.from(decoded, "utf8").toString("base64url") !== value) {
+      throw new Error("invalid_workflow_cursor");
+    }
+    const parsed = JSON.parse(decoded) as unknown;
+    if (!Array.isArray(parsed) || parsed.length !== 3) {
+      throw new Error("invalid_workflow_cursor");
+    }
+    const [kind, beforeUpdatedAt, beforeId] = parsed;
+    if (
+      kind !== "wa1" ||
+      typeof beforeUpdatedAt !== "string" ||
+      beforeUpdatedAt.length > 80 ||
+      !Number.isFinite(Date.parse(beforeUpdatedAt)) ||
+      typeof beforeId !== "string" ||
+      !UUID_PATTERN.test(beforeId)
+    ) {
+      throw new Error("invalid_workflow_cursor");
+    }
+    return { beforeUpdatedAt, beforeId };
+  } catch (error) {
+    if (error instanceof Error && error.message === "invalid_workflow_cursor") {
+      throw error;
+    }
+    throw new Error("invalid_workflow_cursor");
+  }
+}
+
+function parseWorkflowQuery(request: Request) {
+  const searchParams = new URL(request.url).searchParams;
+  const allowedKeys = new Set([
+    "siteId",
+    "workflowId",
+    "scope",
+    "limit",
+    "cursor",
+    "q",
+    "scenario",
+    "tag",
+  ]);
+  if (
+    Array.from(searchParams.keys()).some((key) => !allowedKeys.has(key)) ||
+    searchParams.getAll("siteId").length !== 1 ||
+    ["workflowId", "scope", "limit", "cursor", "q", "scenario", "tag"].some(
+      (key) => searchParams.getAll(key).length > 1,
+    )
+  ) {
+    throw new Error("invalid_workflow_query");
+  }
+  const siteId = searchParams.get("siteId") ?? "";
+  if (siteId !== siteId.trim() || !isMerchantNumericId(siteId)) {
+    throw new Error("invalid_workflow_query");
+  }
+  const workflowId = searchParams.get("workflowId");
+  if (workflowId !== null) {
+    if (
+      workflowId !== workflowId.trim() ||
+      !UUID_PATTERN.test(workflowId) ||
+      ["scope", "limit", "cursor", "q", "scenario", "tag"].some((key) =>
+        searchParams.has(key),
+      )
+    ) {
+      throw new Error("invalid_workflow_query");
+    }
+    return {
+      siteId,
+      scope: "exact",
+      workflowId: workflowId.toLowerCase(),
+    } as const;
+  }
+  const scopeValue = searchParams.get("scope");
+  if (scopeValue === null) {
+    return { siteId, scope: "legacy" } as const;
+  }
+  const scope = scopeValue;
+  if (scope === "active") {
+    if (["limit", "cursor", "q", "scenario", "tag"].some((key) => searchParams.has(key))) {
+      throw new Error("invalid_workflow_query");
+    }
+    return { siteId, scope } as const;
+  }
+  if (scope !== "archived") throw new Error("invalid_workflow_query");
+  const limitText = searchParams.get("limit");
+  const limit = limitText === null ? 20 : Number(limitText);
+  const optionalText = (key: "q" | "scenario" | "tag", maxLength: number) => {
+    const value = searchParams.get(key);
+    if (value === null) return undefined;
+    if (!value || value !== value.trim() || value.length > maxLength) {
+      throw new Error("invalid_workflow_query");
+    }
+    return value;
+  };
+  if (
+    limitText === "" ||
+    !Number.isSafeInteger(limit) ||
+    limit < 1 ||
+    limit > MAX_MERCHANT_ENTERPRISE_WORKFLOW_ARCHIVE_PAGE_SIZE
+  ) {
+    throw new Error("invalid_workflow_query");
+  }
+  return {
+    siteId,
+    scope,
+    limit,
+    cursor: parseMerchantEnterpriseWorkflowArchiveCursor(searchParams.get("cursor")),
+    query: optionalText("q", 160),
+    scenario: optionalText(
+      "scenario",
+      MAX_MERCHANT_ENTERPRISE_WORKFLOW_SCENARIO_LENGTH,
+    ),
+    tag: optionalText("tag", 40),
+  } as const;
 }
 
 function parseSiteId(value: unknown) {
@@ -270,17 +442,45 @@ export async function handleMerchantEnterpriseWorkflowsGet(
 ) {
   const dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencyOverrides };
   try {
-    const searchParams = new URL(request.url).searchParams;
-    if (
-      searchParams.size !== 1 ||
-      searchParams.getAll("siteId").length !== 1
-    ) {
-      throw new Error("invalid_workflow_request");
+    const query = parseWorkflowQuery(request);
+    const actor = await authorize(
+      request,
+      query.siteId,
+      "workflows.view",
+      dependencies,
+    );
+    if (query.scope === "exact") {
+      const workflow = await dependencies.loadWorkflowById({
+        siteId: query.siteId,
+        actor,
+        workflowId: query.workflowId,
+      });
+      return response({ ok: true, workflow });
     }
-    const siteId = parseSiteId(searchParams.get("siteId"));
-    const actor = await authorize(request, siteId, "workflows.view", dependencies);
-    const workflows = await dependencies.loadWorkflows({ siteId, actor });
-    return response({ ok: true, workflows });
+    if (query.scope === "active" || query.scope === "legacy") {
+      const workflows = await dependencies.loadWorkflows({
+        siteId: query.siteId,
+        actor,
+        includeArchived: query.scope === "legacy",
+      });
+      return response({ ok: true, workflows, nextCursor: null });
+    }
+    const page = await dependencies.loadArchivedWorkflows({
+      siteId: query.siteId,
+      actor,
+      limit: query.limit,
+      cursor: query.cursor,
+      ...(query.query ? { query: query.query } : {}),
+      ...(query.scenario ? { scenario: query.scenario } : {}),
+      ...(query.tag ? { tag: query.tag } : {}),
+    });
+    return response({
+      ok: true,
+      workflows: page.workflows,
+      nextCursor: page.nextCursor
+        ? encodeMerchantEnterpriseWorkflowArchiveCursor(page.nextCursor)
+        : null,
+    });
   } catch (error) {
     return errorResponse(error);
   }

@@ -41,6 +41,68 @@ commit;
   assert.match(errors.join("\n"), /drop table/);
 });
 
+test("validateMigrationSource rejects an actual TRUNCATE statement", () => {
+  const errors = validateMigrationSource(
+    "202607250005_truncate_records.sql",
+    `begin;
+truncate table public.example_records;
+insert into public.faolla_schema_migrations (version, name)
+values (202607250005, 'truncate_records');
+commit;
+`,
+  );
+  assert.match(errors.join("\n"), /truncate/);
+});
+
+test("validateMigrationSource allows a BEFORE TRUNCATE protection trigger", () => {
+  const errors = validateMigrationSource(
+    "202607250006_protect_records.sql",
+    `begin;
+create trigger example_records_reject_truncate
+before truncate on public.example_records
+for each statement execute function public.reject_record_mutation();
+insert into public.faolla_schema_migrations (version, name)
+values (202607250006, 'protect_records');
+commit;
+`,
+  );
+  assert.deepEqual(errors, []);
+});
+
+test("validateMigrationSource rejects TRUNCATE inside a procedural block", () => {
+  const errors = validateMigrationSource(
+    "202607250007_hidden_truncate.sql",
+    `begin;
+do $$
+begin
+  truncate table public.example_records;
+end
+$$;
+insert into public.faolla_schema_migrations (version, name)
+values (202607250007, 'hidden_truncate');
+commit;
+`,
+  );
+  assert.match(errors.join("\n"), /truncate/);
+});
+
+test("validateMigrationSource rejects dynamic TRUNCATE SQL", () => {
+  const errors = validateMigrationSource(
+    "202607250008_dynamic_truncate.sql",
+    `begin;
+do $$
+begin
+  execute 'truncate table public.example_records';
+end
+$$;
+insert into public.faolla_schema_migrations (version, name)
+values (202607250008, 'dynamic_truncate');
+commit;
+`,
+  );
+  assert.match(errors.join("\n"), /truncate/);
+});
+
 test("validateMigrationSource requires matching version registration", () => {
   const errors = validateMigrationSource(
     "202607250003_example_records.sql",

@@ -31,7 +31,7 @@ type MerchantEnterpriseNotificationCenterProps = {
   tasks: readonly MerchantTask[];
   apiFetch: (path: string, init?: RequestInit) => Promise<Response>;
   onOpenTask: (task: MerchantTask) => boolean;
-  onOpenWorkflow?: (workflowId: string) => boolean;
+  onOpenWorkflow?: (workflowId: string) => Promise<boolean>;
   refreshIntervalMs?: number;
 };
 
@@ -238,7 +238,14 @@ export default function MerchantEnterpriseNotificationCenter({
 
   async function openNotification(notification: MerchantEnterpriseNotification) {
     if (notification.type === "workflow_published") {
-      if (!notification.workflowId || !onOpenWorkflow?.(notification.workflowId)) return;
+      if (!notification.workflowId || !onOpenWorkflow) return;
+      let workflowOpened = false;
+      try {
+        workflowOpened = await onOpenWorkflow(notification.workflowId);
+      } catch {
+        workflowOpened = false;
+      }
+      if (!workflowOpened) return;
     } else {
       const task = notification.taskId ? taskById.get(notification.taskId) : undefined;
       if (!task || !onOpenTask(task)) return;

@@ -731,58 +731,63 @@ select enterprise_integration.assert_true(
   'republish/archive/restore state machine is inconsistent'
 );
 
--- More than 200 archived rows must never crowd active drafts/publications out
--- of a manager's include-archived response. Active rows come first, followed
--- by the most recently updated archived rows, with a bounded total of 400.
+-- Seed enough archived rows to exercise the dedicated keyset-paginated archive
+-- RPC in 43-workflow-archive-pagination.sql. A few rows carry unique filter
+-- values so query/scenario/tag filtering is proven independently of paging.
+-- Fixtures 351/350 share the timestamp at the first page boundary, forcing the
+-- UUID half of the `(updated_at, id)` cursor to participate.
 insert into public.merchant_enterprise_workflows (
   id, merchant_id, title, scenario, description, category, tags,
   status, position, created_at, updated_at
 )
 select
-  gen_random_uuid(),
+  (
+    '74000000-0000-4000-8000-' ||
+    lpad(fixture.number::text, 12, '0')
+  )::uuid,
   '10000001',
   'Archived workflow fixture ' || fixture.number::text,
-  'Archived pagination fixture',
+  case when fixture.number = 447
+    then 'Exact archived scenario'
+    else 'Archived pagination fixture'
+  end,
   '',
-  'Integration',
-  '{}'::text[],
+  case when fixture.number = 448
+    then 'Quarterly Reconciliation'
+    else 'Integration'
+  end,
+  case when fixture.number = 449
+    then array['archive-special']::text[]
+    else '{}'::text[]
+  end,
   'archived',
   fixture.number,
-  statement_timestamp() - ((451 - fixture.number) * interval '1 second'),
-  statement_timestamp() - ((451 - fixture.number) * interval '1 second')
+  statement_timestamp() - (
+    case when fixture.number in (350, 351)
+      then 100
+      else 451 - fixture.number
+    end * interval '1 second'
+  ),
+  statement_timestamp() - (
+    case when fixture.number in (350, 351)
+      then 100
+      else 451 - fixture.number
+    end * interval '1 second'
+  )
 from generate_series(1, 450) as fixture(number);
 
-set role service_role;
-select enterprise_integration.assert_true(
-  (
-    select
-      jsonb_array_length(payload.workflows) = 400
-      and payload.workflows -> 0 ->> 'id' = :'workflow_main_id'
-      and payload.workflows -> 0 ->> 'status' = 'published'
-      and exists (
-        select 1
-        from jsonb_array_elements(payload.workflows) as item(value)
-        where item.value ->> 'title' = 'Archived workflow fixture 450'
-      )
-      and not exists (
-        select 1
-        from jsonb_array_elements(payload.workflows) as item(value)
-        where item.value ->> 'title' = 'Archived workflow fixture 1'
-      )
-    from (
-      select public.faolla_list_merchant_enterprise_workflows_v1(
-        '{
-          "merchant_id":"10000001",
-          "actor_type":"employee",
-          "actor_id":"71000000-0000-4000-8000-000000000002",
-          "include_archived":true
-        }'::jsonb
-      ) -> 'workflows' as workflows
-    ) as payload
-  ),
-  'archived workflow history crowded out active rows or ignored recent-first limit'
+insert into public.merchant_enterprise_workflow_steps (
+  id, merchant_id, workflow_id, title, instruction, position, status
+)
+values (
+  '74100000-0000-4000-8000-000000000446'::uuid,
+  '10000001',
+  '74000000-0000-4000-8000-000000000446'::uuid,
+  'Archived step title needle',
+  'Archived step instruction needle',
+  0,
+  'active'
 );
-reset role;
 
 -- Published revisions are immutable even to the migration owner.
 select enterprise_integration.expect_error(

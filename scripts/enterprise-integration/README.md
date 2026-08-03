@@ -7,7 +7,7 @@ load `.env` files, Supabase credentials, backups, or production data.
 Coverage includes:
 
 - `supabase-init.sql`, the shared transaction prerequisite, and all enterprise
-  migrations 001-020 in filename order;
+  migrations 001-021 in filename order;
 - owner bootstrap, roles, employee invitation acceptance, task assignment,
   task update, checklist, comments, notifications, and audit listing;
 - forged-owner, cross-merchant, low-privilege ACL, and role-escalation denial;
@@ -15,11 +15,17 @@ Coverage includes:
 - workflow author/publisher/viewer permission separation, ordered client step
   UUIDs, immutable publication revisions, draft-versus-published projection,
   publish notifications, archive/restore, idempotent replay, and tenant denial;
+- complete archive traversal with strict `(updated_at, id)` keyset cursors,
+  server-side query/scenario/tag filters, private archive ACLs, and revision
+  `TRUNCATE` rejection;
 - notification reads filtered by each employee's current task/workflow
   permissions, including historical rows after a role change;
 - two independent `psql` sessions racing the same task, invitation, and
   workflow versions, with exactly one commit and one
-  `enterprise_version_conflict` for each race.
+  `enterprise_version_conflict` for each race;
+- two concurrent restores competing for the 200th active workflow slot, with
+  one commit, one `workflow_limit_reached`, replay-safe success, and no losing
+  idempotency or audit residue.
 
 Run it only against an empty disposable database:
 

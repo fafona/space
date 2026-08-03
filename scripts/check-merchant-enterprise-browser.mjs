@@ -271,7 +271,43 @@ function workflowListForActor(state, actor) {
     .map((workflow) =>
       canReadDrafts ? currentWorkflowDto(workflow) : publishedWorkflowDto(workflow),
     )
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((workflow) => workflow.status !== "archived");
+}
+
+function archivedWorkflowListForActor(state, actor, url) {
+  const canReadDrafts =
+    actor.type === "owner" ||
+    actor.permissions.includes("workflows.manage") ||
+    actor.permissions.includes("workflows.publish");
+  if (!canReadDrafts) return null;
+  const query = (url.searchParams.get("q") || "").trim().toLocaleLowerCase();
+  const scenario = url.searchParams.get("scenario") || "";
+  const tag = url.searchParams.get("tag") || "";
+  return state.workflows
+    .filter((workflow) => workflow.status === "archived")
+    .map(currentWorkflowDto)
+    .filter((workflow) => !scenario || workflow.scenario === scenario)
+    .filter((workflow) => !tag || workflow.tags.includes(tag))
+    .filter((workflow) => {
+      if (!query) return true;
+      return [
+        workflow.title,
+        workflow.scenario,
+        workflow.description,
+        workflow.category,
+        ...workflow.tags,
+        ...workflow.steps.flatMap((step) => [step.title, step.instruction]),
+      ]
+        .join("\n")
+        .toLocaleLowerCase()
+        .includes(query);
+    })
+    .sort(
+      (left, right) =>
+        Date.parse(right.updatedAt) - Date.parse(left.updatedAt) ||
+        right.id.localeCompare(left.id),
+    );
 }
 
 function actorCan(actor, permission) {
@@ -353,9 +389,65 @@ async function installEnterpriseApiMock(
     }
     if (url.pathname === "/api/merchant-enterprise/workflows" && request.method() === "GET") {
       stats.workflowGets = (stats.workflowGets || 0) + 1;
+      const exactWorkflowId = url.searchParams.get("workflowId");
+      if (exactWorkflowId) {
+        stats.workflowExactGets = (stats.workflowExactGets || 0) + 1;
+        if (options.workflowExactDelayMs) {
+          await new Promise((resolve) => setTimeout(resolve, options.workflowExactDelayMs));
+        }
+        const source = state.workflows.find((workflow) => workflow.id === exactWorkflowId);
+        const canReadDrafts =
+          actor.type === "owner" ||
+          actor.permissions.includes("workflows.manage") ||
+          actor.permissions.includes("workflows.publish");
+        const workflow = source
+          ? canReadDrafts
+            ? currentWorkflowDto(source)
+            : publishedWorkflowDto(source)
+          : null;
+        if (!workflow) return respond(404, { ok: false, error: "workflow_not_found" });
+        return respond(200, { ok: true, workflow: jsonClone(workflow) });
+      }
+      if (url.searchParams.get("scope") === "archived") {
+        stats.workflowArchiveGets = (stats.workflowArchiveGets || 0) + 1;
+        if (options.workflowArchiveDelayMs) {
+          await new Promise((resolve) => setTimeout(resolve, options.workflowArchiveDelayMs));
+        }
+        const archived = archivedWorkflowListForActor(state, actor, url);
+        if (!archived) return respond(403, { ok: false, error: "permission_denied" });
+        const limit = Number(url.searchParams.get("limit") || "20");
+        const cursorText = url.searchParams.get("cursor") || "0";
+        const offset = Number(cursorText);
+        if (!Number.isSafeInteger(limit) || limit < 1 || !Number.isSafeInteger(offset) || offset < 0) {
+          return respond(400, { ok: false, error: "invalid_workflow_cursor" });
+        }
+        const workflows = archived.slice(offset, offset + limit);
+        const nextOffset = offset + workflows.length;
+        return respond(200, {
+          ok: true,
+          workflows: jsonClone(workflows),
+          nextCursor: nextOffset < archived.length ? String(nextOffset) : null,
+        });
+      }
+      if (!url.searchParams.has("scope")) {
+        const canReadDrafts =
+          actor.type === "owner" ||
+          actor.permissions.includes("workflows.manage") ||
+          actor.permissions.includes("workflows.publish");
+        return respond(200, {
+          ok: true,
+          workflows: jsonClone(
+            canReadDrafts
+              ? state.workflows.map(currentWorkflowDto)
+              : workflowListForActor(state, actor),
+          ),
+          nextCursor: null,
+        });
+      }
       return respond(200, {
         ok: true,
         workflows: jsonClone(workflowListForActor(state, actor)),
+        nextCursor: null,
       });
     }
     if (url.pathname === "/api/merchant-enterprise/workflows" && request.method() === "POST") {
@@ -791,6 +883,7 @@ async function run() {
       viewport: { width: 1440, height: 1000 },
       serviceWorkers: "block",
     });
+    const workflowPublishStats = { overviewRequests: 0 };
     await Promise.all([
       installEnterpriseApiMock(workflowViewContext, state, { overviewRequests: 0 }, {
         actor: workflowViewActor,
@@ -798,7 +891,7 @@ async function run() {
       installEnterpriseApiMock(workflowManageContext, state, { overviewRequests: 0 }, {
         actor: workflowManageActor,
       }),
-      installEnterpriseApiMock(workflowPublishContext, state, { overviewRequests: 0 }, {
+      installEnterpriseApiMock(workflowPublishContext, state, workflowPublishStats, {
         actor: workflowPublishActor,
       }),
     ]);
@@ -823,7 +916,12 @@ async function run() {
       "a view-only employee received draft fields instead of the prior published snapshot",
     );
 
-    await managePanel.getByRole("heading", { name: draftWorkflowTitle, exact: true }).waitFor();
+    await managePanel
+      .getByRole("heading", { name: draftWorkflowTitle, exact: true })
+      .waitFor()
+      .catch((error) => {
+        throw new Error(`manage-only workflow did not load: ${error.message}`);
+      });
     assert(
       (await managePanel.getByRole("button", { name: "新建流程", exact: true }).count()) >= 1 &&
         (await managePanel.getByRole("button", { name: "编辑草稿", exact: true }).count()) === 1 &&
@@ -838,7 +936,12 @@ async function run() {
       "workflow manage-only editor exposed save-and-publish",
     );
 
-    await publishPanel.getByRole("heading", { name: draftWorkflowTitle, exact: true }).waitFor();
+    await publishPanel
+      .getByRole("heading", { name: draftWorkflowTitle, exact: true })
+      .waitFor()
+      .catch((error) => {
+        throw new Error(`publish-only workflow did not load: ${error.message}`);
+      });
     assert(
       (await publishPanel.getByRole("button", { name: "新建流程", exact: true }).count()) === 0 &&
         (await publishPanel.getByRole("button", { name: "编辑草稿", exact: true }).count()) === 0 &&
@@ -851,13 +954,82 @@ async function run() {
     await publishPanel.getByText("流程已归档。", { exact: true }).waitFor();
     await publishPanel.getByRole("button", { name: "刷新", exact: true }).click();
     await publishPanel.getByLabel("状态").selectOption("all");
-    await publishPanel.getByRole("heading", { name: draftWorkflowTitle, exact: true }).waitFor();
+    await publishPanel
+      .getByRole("heading", { name: draftWorkflowTitle, exact: true })
+      .waitFor()
+      .catch(async (error) => {
+        throw new Error(
+          `archived workflow did not reload: ${error.message}; stats=${JSON.stringify(workflowPublishStats)}; status=${JSON.stringify(await publishPanel.getByLabel("状态").inputValue())}; panel=${JSON.stringify(await publishPanel.innerText())}`,
+        );
+      });
     await publishPanel.getByRole("button", { name: "恢复流程", exact: true }).click();
     await publishPanel.getByText("流程已恢复。", { exact: true }).waitFor();
     assert(
       state.workflows[0]?.status === "published" &&
         state.workflows[0]?.hasUnpublishedChanges === true,
       "an archived workflow did not survive refresh and restore its prior publication state",
+    );
+
+    const archiveTemplate = state.workflows[0];
+    for (let index = 1; index <= 25; index += 1) {
+      const archiveTime = new Date(Date.UTC(2026, 7, 3, 10, 0, index)).toISOString();
+      state.workflows.push({
+        ...jsonClone(archiveTemplate),
+        id: `10000000-0000-4000-8000-${String(100 + index).padStart(12, "0")}`,
+        draft: {
+          ...jsonClone(archiveTemplate.draft),
+          title: `历史流程 ${String(index).padStart(2, "0")}`,
+          scenario: "历史归档验收",
+          tags: ["历史"],
+        },
+        published: null,
+        status: "archived",
+        version: 1,
+        publishedVersion: 0,
+        publishedAt: null,
+        hasUnpublishedChanges: true,
+        createdAt: archiveTime,
+        updatedAt: archiveTime,
+      });
+    }
+    await publishPanel.getByRole("button", { name: "刷新", exact: true }).click();
+    await publishPanel
+      .getByRole("button", { name: "加载更多归档流程", exact: true })
+      .waitFor();
+    assert(
+      (await publishPanel.getByRole("heading", { name: draftWorkflowTitle, exact: true }).count()) ===
+        1,
+      "loading the first archive page changed the selected active workflow",
+    );
+    await publishPanel
+      .getByRole("button", { name: "加载更多归档流程", exact: true })
+      .click();
+    await publishPanel.getByText("历史流程 01", { exact: true }).waitFor();
+    assert(
+      (await publishPanel.locator('aside[aria-label="流程列表"] > button').count()) === 26 &&
+        (await publishPanel.getByText("已加载全部符合条件的归档流程", { exact: true }).count()) ===
+          1,
+      "archive pagination omitted or duplicated workflows",
+    );
+    await publishPanel
+      .locator('aside[aria-label="流程列表"] > button')
+      .filter({ hasText: "历史流程 01" })
+      .click();
+    await publishPanel.getByRole("heading", { name: "历史流程 01", exact: true }).waitFor();
+    await publishPanel.getByLabel("搜索").fill("历史流程");
+    await publishPanel
+      .getByRole("button", { name: "加载更多归档流程", exact: true })
+      .waitFor();
+    assert(
+      (await publishPanel.getByRole("heading", { name: "历史流程 01", exact: true }).count()) ===
+        1,
+      "a matching archive search replaced the selected workflow",
+    );
+    await publishPanel.getByRole("button", { name: "刷新", exact: true }).click();
+    await publishPanel.getByRole("heading", { name: "历史流程 01", exact: true }).waitFor();
+    assert(
+      (await publishPanel.getByLabel("搜索").inputValue()) === "历史流程",
+      "refreshing an archived selection reset its server-side filter",
     );
     await Promise.all([
       workflowViewContext.close(),
@@ -1062,6 +1234,11 @@ async function run() {
       {
         ...workflowNotifications[0],
         id: "10000000-0000-4000-8000-000000000037",
+        workflowId: "10000000-0000-4000-8000-000000000101",
+        payload: {
+          workflowTitle: "历史流程 01",
+          publishedVersion: 1,
+        },
         readAt: null,
       },
     ];
@@ -1083,6 +1260,8 @@ async function run() {
         {
           actor: workflowDraftNotificationActor,
           notifications: workflowDraftNotifications,
+          workflowArchiveDelayMs: 2_000,
+          workflowExactDelayMs: 600,
         },
       ),
     ]);
@@ -1105,6 +1284,9 @@ async function run() {
     const sameViewDirtyDescription = "同页通知跳转前未保存的流程正文";
     const workflowDraftDescription = workflowDraftNotificationPanel.getByLabel("流程说明");
     await workflowDraftDescription.fill(sameViewDirtyDescription);
+    const preservedWorkflowFilter = "保留这个筛选条件";
+    await workflowDraftNotificationPanel.getByLabel("搜索").fill(preservedWorkflowFilter);
+    await workflowDraftNotificationPanel.getByLabel("状态").selectOption("all");
     await workflowDraftNotificationPage
       .getByRole("button", { name: /企业通知，1 条未读/ })
       .click();
@@ -1113,7 +1295,7 @@ async function run() {
     });
     const workflowDraftNotificationButton = workflowDraftNotificationDialog
       .getByRole("button")
-      .filter({ hasText: publishedWorkflowTitle });
+      .filter({ hasText: "历史流程 01" });
     workflowDraftNotificationPage.once("dialog", (dialog) => void dialog.dismiss());
     await workflowDraftNotificationButton.click();
     assert(
@@ -1123,12 +1305,26 @@ async function run() {
     );
     workflowDraftNotificationPage.once("dialog", (dialog) => void dialog.accept());
     await workflowDraftNotificationButton.click();
+    await workflowDraftNotificationPage.waitForTimeout(100);
+    const changedDuringFocus = "精确查询期间产生的新修改";
+    await workflowDraftDescription.fill(changedDuringFocus);
+    await workflowDraftNotificationPage.waitForTimeout(650);
+    assert(
+      (await workflowDraftDescription.inputValue()) === changedDuringFocus &&
+        workflowDraftNotificationStats.notificationPatches === 0,
+      "a slow exact workflow lookup discarded a newer draft or marked its notification read",
+    );
+    workflowDraftNotificationPage.once("dialog", (dialog) => void dialog.accept());
+    await workflowDraftNotificationButton.click();
     await workflowDraftNotificationPanel
-      .getByRole("button", { name: "编辑草稿", exact: true })
+      .getByRole("heading", { name: "历史流程 01", exact: true })
       .waitFor();
     await workflowDraftNotificationPage.waitForTimeout(100);
     assert(
       (await workflowDraftNotificationPanel.getByLabel("流程说明").count()) === 0 &&
+        (await workflowDraftNotificationPanel.getByLabel("搜索").inputValue()) ===
+          preservedWorkflowFilter &&
+        workflowDraftNotificationStats.workflowExactGets === 2 &&
         workflowDraftNotificationStats.notificationPatches === 1,
       "confirming same-view workflow notification navigation did not consume focus exactly once",
     );
@@ -1161,6 +1357,23 @@ async function run() {
     await mobileWorkflowPanel
       .getByRole("heading", { name: draftWorkflowTitle, exact: true })
       .waitFor();
+    await mobileWorkflowPanel.getByLabel("状态").selectOption("all");
+    await mobileWorkflowPanel
+      .getByRole("button", { name: "加载更多归档流程", exact: true })
+      .waitFor();
+    const archivePagerViewport = await mobilePage.evaluate(() => ({
+      innerWidth: window.innerWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+    }));
+    assert(
+      archivePagerViewport.scrollWidth <= archivePagerViewport.innerWidth + 1,
+      `enterprise archive pager mobile layout overflows horizontally:${JSON.stringify(archivePagerViewport)}`,
+    );
+    await mobileWorkflowPanel
+      .getByRole("button", { name: "加载更多归档流程", exact: true })
+      .click();
+    await mobileWorkflowPanel.getByText("历史流程 01", { exact: true }).waitFor();
+    await mobileWorkflowPanel.getByLabel("状态").selectOption("current");
     await mobileWorkflowPanel.getByRole("button", { name: "编辑草稿", exact: true }).click();
     await mobileWorkflowPanel.getByLabel("流程名称 *").waitFor();
     const workflowViewport = await mobilePage.evaluate(() => ({
@@ -1193,14 +1406,18 @@ async function run() {
           "workflow_published_snapshot_isolated_from_new_draft",
           "workflow_manage_and_publish_ui_separation",
           "workflow_archive_refresh_and_restore",
+          "workflow_archive_keyset_pagination_without_duplicates",
+          "workflow_archive_selection_survives_filter_and_refresh",
           "workflow_menu_dirty_navigation_guard",
           "workflow_cas_conflict_keeps_local_body",
           "owner_audit_listing_and_pagination",
           "employee_notification_dirty_cancel_and_mark_read",
           "workflow_notification_dirty_cancel_and_target_navigation",
           "workflow_notification_same_view_dirty_guard_and_single_focus",
+          "workflow_notification_slow_exact_preserves_newer_draft",
           "task_editor_unsaved_close_guard",
           "mobile_task_and_workflow_horizontal_layout",
+          "mobile_workflow_archive_pager_and_second_page",
         ],
       }) + "\n",
     );

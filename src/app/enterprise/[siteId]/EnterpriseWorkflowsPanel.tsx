@@ -13,6 +13,7 @@ import styles from "./EnterpriseWorkflowsPanel.module.css";
 
 const WORKFLOW_API_PATH = "/api/merchant-enterprise/workflows";
 const REQUEST_TIMEOUT_MS = 30_000;
+const ARCHIVE_PAGE_SIZE = 20;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -73,7 +74,7 @@ export type EnterpriseWorkflowsPanelProps = {
   className?: string;
   focusWorkflowId?: string | null;
   focusRequestId?: number;
-  onFocusHandled?: (requestId: number) => void;
+  onFocusHandled?: (requestId: number, opened: boolean) => void;
   onDirtyChange?: (dirty: boolean) => void;
 };
 
@@ -82,6 +83,7 @@ type WorkflowPayload = {
   error?: string;
   workflows?: unknown;
   workflow?: unknown;
+  nextCursor?: unknown;
 };
 
 type WorkflowDraftStep = EnterpriseWorkflowStep & {
@@ -184,6 +186,17 @@ function normalizeWorkflow(value: unknown): EnterpriseWorkflow | null {
     createdAt: dateText(source.createdAt ?? source.created_at) ?? "",
     updatedAt: dateText(source.updatedAt ?? source.updated_at) ?? "",
   };
+}
+
+function sortWorkflows(items: EnterpriseWorkflow[]) {
+  return items.sort((left, right) => {
+    if (left.status === "archived" && right.status !== "archived") return 1;
+    if (right.status === "archived" && left.status !== "archived") return -1;
+    return (
+      (Date.parse(right.updatedAt) || 0) - (Date.parse(left.updatedAt) || 0) ||
+      right.id.localeCompare(left.id)
+    );
+  });
 }
 
 function blankDraft(): WorkflowDraft {
@@ -335,6 +348,15 @@ function readWorkflowError(payload: WorkflowPayload | null, fallback: string) {
   if (error === "enterprise_version_conflict" || error === "workflow_version_conflict") {
     return "该流程已被其他成员更新，请重新加载后再操作。";
   }
+  if (error === "workflow_limit_reached") {
+    return "当前企业最多保留 200 个未归档流程。请先归档不再使用的流程后再试。";
+  }
+  if (error === "workflow_archived" || error === "workflow_already_archived") {
+    return "该流程已归档，请刷新后重试。";
+  }
+  if (error === "enterprise_operation_in_progress") {
+    return "另一项流程操作正在处理中，请稍后重试。";
+  }
   if (error === "enterprise_management_disabled") return "当前企业尚未开通企业管理。";
   return fallback;
 }
@@ -370,6 +392,10 @@ export default function EnterpriseWorkflowsPanel({
   const [workflows, setWorkflows] = useState<EnterpriseWorkflow[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  const [archiveLoading, setArchiveLoading] = useState(false);
+  const [archiveLoaded, setArchiveLoaded] = useState(false);
+  const [archiveLoadError, setArchiveLoadError] = useState("");
+  const [archiveNextCursor, setArchiveNextCursor] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
   const [mutationError, setMutationError] = useState("");
   const [conflict, setConflict] = useState(false);
@@ -383,8 +409,34 @@ export default function EnterpriseWorkflowsPanel({
   const [statusFilter, setStatusFilter] = useState<"current" | "all" | EnterpriseWorkflowStatus>(
     "current",
   );
+  const [focusPinnedId, setFocusPinnedId] = useState<string | null>(null);
+  const [focusReady, setFocusReady] = useState<{
+    requestId: number;
+    workflowId: string;
+  } | null>(null);
   const loadSequenceRef = useRef(0);
+  const archiveLoadSequenceRef = useRef(0);
+  const archiveAbortRef = useRef<AbortController | null>(null);
+  const exactFocusAbortRef = useRef<AbortController | null>(null);
+  const focusAttemptRef = useRef(0);
+  const focusSettledRequestsRef = useRef(new Set<number>());
+  const renderedDraftSignature = draftSignature(draft);
+  const lastRenderedDraftSignatureRef = useRef(renderedDraftSignature);
+  const draftEpochRef = useRef(0);
+  const workflowsRef = useRef(workflows);
+  const selectedIdRef = useRef(selectedId);
+  const focusPinnedIdRef = useRef(focusPinnedId);
+  const onFocusHandledRef = useRef(onFocusHandled);
   const mutationOperationRef = useRef<{ key: string; operationId: string } | null>(null);
+
+  if (lastRenderedDraftSignatureRef.current !== renderedDraftSignature) {
+    lastRenderedDraftSignatureRef.current = renderedDraftSignature;
+    draftEpochRef.current += 1;
+  }
+  workflowsRef.current = workflows;
+  selectedIdRef.current = selectedId;
+  focusPinnedIdRef.current = focusPinnedId;
+  onFocusHandledRef.current = onFocusHandled;
 
   const canView = Boolean(
     actor &&
@@ -472,29 +524,44 @@ export default function EnterpriseWorkflowsPanel({
       setLoading(true);
       setLoadError("");
       try {
-        const params = new URLSearchParams({ siteId });
+        const params = new URLSearchParams({ siteId, scope: "active" });
         const response = await request(`${WORKFLOW_API_PATH}?${params.toString()}`);
         const payload = (await response.json().catch(() => null)) as WorkflowPayload | null;
         if (!response.ok || !payload?.ok || !Array.isArray(payload.workflows)) {
           throw new Error(readWorkflowError(payload, "工作流程加载失败，请稍后重试。"));
         }
-        const normalized = payload.workflows
+        const normalized = sortWorkflows(
+          payload.workflows
           .map(normalizeWorkflow)
           .filter((workflow): workflow is EnterpriseWorkflow => Boolean(workflow))
           .filter((workflow) => workflow.siteId === siteId)
-          .sort((left, right) => {
-            if (left.status === "archived" && right.status !== "archived") return 1;
-            if (right.status === "archived" && left.status !== "archived") return -1;
-            return (Date.parse(right.updatedAt) || 0) - (Date.parse(left.updatedAt) || 0);
-          });
+          .filter((workflow) => workflow.status !== "archived"),
+        );
         if (sequence !== loadSequenceRef.current) return;
-        setWorkflows(normalized);
+        const retainedArchived = options.preserveSelection
+          ? workflowsRef.current.filter(
+              (workflow) =>
+                workflow.siteId === siteId &&
+                workflow.status === "archived" &&
+                (workflow.id === selectedIdRef.current ||
+                  workflow.id === focusPinnedIdRef.current),
+            )
+          : [];
+        const activeIds = new Set(normalized.map((workflow) => workflow.id));
+        const merged = sortWorkflows([
+          ...normalized,
+          ...retainedArchived.filter((workflow) => !activeIds.has(workflow.id)),
+        ]);
+        setWorkflows(merged);
+        setArchiveLoaded(false);
+        setArchiveLoadError("");
+        setArchiveNextCursor(null);
         setSelectedId((current) => {
-          if (options.preserveSelection && current && normalized.some((item) => item.id === current)) {
+          if (options.preserveSelection && current && merged.some((item) => item.id === current)) {
             return current;
           }
-          const firstPublished = normalized.find((item) => item.status === "published");
-          return firstPublished?.id ?? normalized[0]?.id ?? null;
+          const firstPublished = merged.find((item) => item.status === "published");
+          return firstPublished?.id ?? merged[0]?.id ?? null;
         });
       } catch (error) {
         if (sequence !== loadSequenceRef.current) return;
@@ -509,6 +576,106 @@ export default function EnterpriseWorkflowsPanel({
   useEffect(() => {
     void loadWorkflows();
   }, [loadWorkflows]);
+
+  const archiveMode = statusFilter === "all" || statusFilter === "archived";
+
+  const cancelArchiveLoad = useCallback(() => {
+    archiveAbortRef.current?.abort();
+    archiveAbortRef.current = null;
+    archiveLoadSequenceRef.current += 1;
+    setArchiveLoading(false);
+  }, []);
+
+  const loadArchivedWorkflows = useCallback(
+    async (options: { append?: boolean; cursor?: string | null } = {}) => {
+      if ((!canManage && !canPublish) || !/^\d{8}$/.test(siteId)) return;
+      archiveAbortRef.current?.abort();
+      const controller = new AbortController();
+      archiveAbortRef.current = controller;
+      const sequence = archiveLoadSequenceRef.current + 1;
+      archiveLoadSequenceRef.current = sequence;
+      setArchiveLoading(true);
+      setArchiveLoadError("");
+      if (!options.append) {
+        setArchiveLoaded(false);
+        setArchiveNextCursor(null);
+      }
+      try {
+        const params = new URLSearchParams({
+          siteId,
+          scope: "archived",
+          limit: String(ARCHIVE_PAGE_SIZE),
+        });
+        const normalizedQuery = query.trim();
+        if (normalizedQuery) params.set("q", normalizedQuery);
+        if (scenarioFilter) params.set("scenario", scenarioFilter);
+        if (tagFilter) params.set("tag", tagFilter);
+        if (options.append && options.cursor) params.set("cursor", options.cursor);
+        const response = await request(`${WORKFLOW_API_PATH}?${params.toString()}`, {
+          signal: controller.signal,
+        });
+        const payload = (await response.json().catch(() => null)) as WorkflowPayload | null;
+        if (
+          !response.ok ||
+          !payload?.ok ||
+          !Array.isArray(payload.workflows) ||
+          (payload.nextCursor !== null && typeof payload.nextCursor !== "string")
+        ) {
+          throw new Error(readWorkflowError(payload, "归档流程加载失败，请稍后重试。"));
+        }
+        const page = payload.workflows
+          .map(normalizeWorkflow)
+          .filter((workflow): workflow is EnterpriseWorkflow => Boolean(workflow))
+          .filter(
+            (workflow) => workflow.siteId === siteId && workflow.status === "archived",
+          );
+        if (page.length !== payload.workflows.length) {
+          throw new Error("归档流程返回了无效数据，请刷新后重试。");
+        }
+        if (sequence !== archiveLoadSequenceRef.current) return;
+        setWorkflows((current) => {
+          const active = current.filter((workflow) => workflow.status !== "archived");
+          const activeIds = new Set(active.map((workflow) => workflow.id));
+          const previous = options.append
+            ? current.filter((workflow) => workflow.status === "archived")
+            : current.filter(
+                (workflow) =>
+                  workflow.status === "archived" &&
+                  (workflow.id === selectedIdRef.current ||
+                    workflow.id === focusPinnedIdRef.current),
+              );
+          const archivedById = new Map<string, EnterpriseWorkflow>();
+          for (const workflow of [...previous, ...page]) {
+            if (!activeIds.has(workflow.id)) archivedById.set(workflow.id, workflow);
+          }
+          return sortWorkflows([...active, ...archivedById.values()]);
+        });
+        setArchiveNextCursor(payload.nextCursor ?? null);
+        setArchiveLoaded(true);
+      } catch (error) {
+        if (sequence !== archiveLoadSequenceRef.current) return;
+        if (controller.signal.aborted) return;
+        setArchiveLoadError(
+          error instanceof Error ? error.message : "归档流程加载失败，请稍后重试。",
+        );
+      } finally {
+        if (sequence === archiveLoadSequenceRef.current) {
+          if (archiveAbortRef.current === controller) archiveAbortRef.current = null;
+          setArchiveLoading(false);
+        }
+      }
+    },
+    [canManage, canPublish, query, request, scenarioFilter, siteId, tagFilter],
+  );
+
+  useEffect(() => {
+    if (!archiveMode || loading) {
+      cancelArchiveLoad();
+      return;
+    }
+    void loadArchivedWorkflows();
+    return cancelArchiveLoad;
+  }, [archiveMode, cancelArchiveLoad, loadArchivedWorkflows, loading]);
 
   const scenarioOptions = useMemo(
     () =>
@@ -528,6 +695,7 @@ export default function EnterpriseWorkflowsPanel({
   const filteredWorkflows = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
     return workflows.filter((workflow) => {
+      if (workflow.id === focusPinnedId) return true;
       if (statusFilter === "current" && workflow.status === "archived") return false;
       if (statusFilter !== "current" && statusFilter !== "all" && workflow.status !== statusFilter) {
         return false;
@@ -547,18 +715,23 @@ export default function EnterpriseWorkflowsPanel({
         .toLocaleLowerCase();
       return haystack.includes(normalizedQuery);
     });
-  }, [query, scenarioFilter, statusFilter, tagFilter, workflows]);
+  }, [focusPinnedId, query, scenarioFilter, statusFilter, tagFilter, workflows]);
 
+  const selectedFromCache = workflows.find((workflow) => workflow.id === selectedId) ?? null;
+  const archiveSelectionPending =
+    archiveMode && (archiveLoading || !archiveLoaded || Boolean(archiveLoadError));
   const selectedWorkflow =
     filteredWorkflows.find((workflow) => workflow.id === selectedId) ??
+    (archiveSelectionPending ? selectedFromCache : null) ??
     filteredWorkflows[0] ??
     null;
 
   useEffect(() => {
+    if (archiveSelectionPending) return;
     if (selectedWorkflow && selectedWorkflow.id !== selectedId && !draft) {
       setSelectedId(selectedWorkflow.id);
     }
-  }, [draft, selectedId, selectedWorkflow]);
+  }, [archiveSelectionPending, draft, selectedId, selectedWorkflow]);
 
   const confirmDiscard = useCallback(() => {
     if (!isDirty) return true;
@@ -567,25 +740,117 @@ export default function EnterpriseWorkflowsPanel({
 
   useEffect(() => {
     if (!focusWorkflowId || focusRequestId <= 0 || loading || busy) return;
-    const focused = workflows.find((workflow) => workflow.id === focusWorkflowId);
-    if (focused) {
-      setDraft(null);
-      setBaselineSignature("");
-      setMutationError("");
-      setConflict(false);
-      setNotice("");
-      setQuery("");
-      setScenarioFilter("");
-      setTagFilter("");
-      setStatusFilter(focused.status === "archived" ? "all" : "current");
-      setSelectedId(focused.id);
+    if (focusAttemptRef.current === focusRequestId) return;
+    focusAttemptRef.current = focusRequestId;
+
+    const settle = (opened: boolean) => {
+      if (focusSettledRequestsRef.current.has(focusRequestId)) return;
+      focusSettledRequestsRef.current.add(focusRequestId);
+      onFocusHandledRef.current?.(focusRequestId, opened);
+    };
+    if (!UUID_PATTERN.test(focusWorkflowId)) {
+      settle(false);
+      return;
     }
-    onFocusHandled?.(focusRequestId);
-  }, [busy, focusRequestId, focusWorkflowId, loading, onFocusHandled, workflows]);
+
+    exactFocusAbortRef.current?.abort();
+    const controller = new AbortController();
+    exactFocusAbortRef.current = controller;
+    const startingDraftEpoch = draftEpochRef.current;
+
+    void (async () => {
+      try {
+        const params = new URLSearchParams({ siteId, workflowId: focusWorkflowId });
+        const response = await request(`${WORKFLOW_API_PATH}?${params.toString()}`, {
+          signal: controller.signal,
+        });
+        const payload = (await response.json().catch(() => null)) as WorkflowPayload | null;
+        const focused = normalizeWorkflow(payload?.workflow);
+        if (
+          !response.ok ||
+          !payload?.ok ||
+          !focused ||
+          focused.siteId !== siteId ||
+          focused.id !== focusWorkflowId
+        ) {
+          throw new Error(
+            readWorkflowError(payload, "通知中的工作流程已不可用或当前账号无权查看。"),
+          );
+        }
+        if (controller.signal.aborted) return;
+        if (draftEpochRef.current !== startingDraftEpoch) {
+          setMutationError("检测到新的流程修改，已取消本次通知跳转，内容不会被覆盖。");
+          settle(false);
+          return;
+        }
+
+        cancelArchiveLoad();
+        setWorkflows((current) =>
+          sortWorkflows([focused, ...current.filter((workflow) => workflow.id !== focused.id)]),
+        );
+        selectedIdRef.current = focused.id;
+        focusPinnedIdRef.current = focused.id;
+        setDraft(null);
+        setBaselineSignature("");
+        setMutationError("");
+        setConflict(false);
+        setNotice("");
+        setFocusPinnedId(focused.id);
+        setSelectedId(focused.id);
+        setFocusReady({ requestId: focusRequestId, workflowId: focused.id });
+        if (archiveMode) void loadArchivedWorkflows();
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setFocusReady(null);
+        setMutationError(
+          error instanceof Error
+            ? error.message
+            : "通知中的工作流程已不可用或当前账号无权查看。",
+        );
+        settle(false);
+      } finally {
+        if (exactFocusAbortRef.current === controller) exactFocusAbortRef.current = null;
+      }
+    })();
+
+    return () => {
+      controller.abort();
+      settle(false);
+    };
+  }, [
+    archiveMode,
+    busy,
+    cancelArchiveLoad,
+    focusRequestId,
+    focusWorkflowId,
+    loadArchivedWorkflows,
+    loading,
+    request,
+    siteId,
+  ]);
+
+  useEffect(() => {
+    if (!focusReady) return;
+    if (
+      focusReady.requestId !== focusRequestId ||
+      focusReady.workflowId !== selectedId ||
+      focusReady.workflowId !== focusPinnedId ||
+      !workflows.some((workflow) => workflow.id === focusReady.workflowId)
+    ) {
+      return;
+    }
+    if (!focusSettledRequestsRef.current.has(focusReady.requestId)) {
+      focusSettledRequestsRef.current.add(focusReady.requestId);
+      onFocusHandledRef.current?.(focusReady.requestId, true);
+    }
+    setFocusReady(null);
+  }, [focusPinnedId, focusReady, focusRequestId, selectedId, workflows]);
 
   function beginCreate() {
     if (!confirmDiscard()) return;
     const next = blankDraft();
+    focusPinnedIdRef.current = null;
+    setFocusPinnedId(null);
     setDraft(next);
     setBaselineSignature(draftSignature(next));
     setSelectedId(null);
@@ -597,6 +862,8 @@ export default function EnterpriseWorkflowsPanel({
   function beginEdit(workflow: EnterpriseWorkflow) {
     if (!confirmDiscard()) return;
     const next = draftFromWorkflow(workflow);
+    focusPinnedIdRef.current = null;
+    setFocusPinnedId(null);
     setSelectedId(workflow.id);
     setDraft(next);
     setBaselineSignature(draftSignature(next));
@@ -608,6 +875,8 @@ export default function EnterpriseWorkflowsPanel({
   function selectWorkflow(workflow: EnterpriseWorkflow) {
     if (workflow.id === selectedId && !draft) return;
     if (!confirmDiscard()) return;
+    focusPinnedIdRef.current = null;
+    setFocusPinnedId(null);
     setDraft(null);
     setBaselineSignature("");
     setSelectedId(workflow.id);
@@ -729,12 +998,9 @@ export default function EnterpriseWorkflowsPanel({
       const next = exists
         ? current.map((item) => (item.id === workflow.id ? workflow : item))
         : [workflow, ...current];
-      return next.sort((left, right) => {
-        if (left.status === "archived" && right.status !== "archived") return 1;
-        if (right.status === "archived" && left.status !== "archived") return -1;
-        return (Date.parse(right.updatedAt) || 0) - (Date.parse(left.updatedAt) || 0);
-      });
+      return sortWorkflows(next);
     });
+    selectedIdRef.current = workflow.id;
     setSelectedId(workflow.id);
   }, []);
 
@@ -856,10 +1122,16 @@ export default function EnterpriseWorkflowsPanel({
         action,
       });
       clearOperationId(operationKey);
+      if (action !== "publish") {
+        cancelArchiveLoad();
+        setArchiveLoaded(false);
+        setArchiveNextCursor(null);
+      }
       replaceWorkflow(updated);
       setDraft(null);
       setBaselineSignature("");
       setNotice(`流程已${actionLabel}。`);
+      if (action !== "publish" && archiveMode) void loadArchivedWorkflows();
     } catch (error) {
       if (error instanceof WorkflowVersionConflictError) {
         setConflict(true);
@@ -954,12 +1226,23 @@ export default function EnterpriseWorkflowsPanel({
             type="search"
             value={query}
             placeholder="搜索流程、步骤或说明"
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => {
+              focusPinnedIdRef.current = null;
+              setFocusPinnedId(null);
+              setQuery(event.target.value);
+            }}
           />
         </label>
         <label>
           <span>场景</span>
-          <select value={scenarioFilter} onChange={(event) => setScenarioFilter(event.target.value)}>
+          <select
+            value={scenarioFilter}
+            onChange={(event) => {
+              focusPinnedIdRef.current = null;
+              setFocusPinnedId(null);
+              setScenarioFilter(event.target.value);
+            }}
+          >
             <option value="">全部场景</option>
             {scenarioOptions.map((scenario) => (
               <option value={scenario} key={scenario}>
@@ -970,7 +1253,14 @@ export default function EnterpriseWorkflowsPanel({
         </label>
         <label>
           <span>标签</span>
-          <select value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}>
+          <select
+            value={tagFilter}
+            onChange={(event) => {
+              focusPinnedIdRef.current = null;
+              setFocusPinnedId(null);
+              setTagFilter(event.target.value);
+            }}
+          >
             <option value="">全部标签</option>
             {tagOptions.map((tag) => (
               <option value={tag} key={tag}>
@@ -984,9 +1274,11 @@ export default function EnterpriseWorkflowsPanel({
             <span>状态</span>
             <select
               value={statusFilter}
-              onChange={(event) =>
-                setStatusFilter(event.target.value as typeof statusFilter)
-              }
+              onChange={(event) => {
+                focusPinnedIdRef.current = null;
+                setFocusPinnedId(null);
+                setStatusFilter(event.target.value as typeof statusFilter);
+              }}
             >
               <option value="current">当前流程</option>
               <option value="all">全部状态</option>
@@ -998,6 +1290,7 @@ export default function EnterpriseWorkflowsPanel({
         ) : null}
         <div className={styles.resultCount} aria-live="polite">
           {filteredWorkflows.length} 个流程
+          {archiveMode && archiveNextCursor ? " · 还有更多归档记录" : ""}
         </div>
       </div>
 
@@ -1015,7 +1308,7 @@ export default function EnterpriseWorkflowsPanel({
             重试
           </button>
         </div>
-      ) : workflows.length === 0 && !draft ? (
+      ) : workflows.length === 0 && !draft && !archiveMode ? (
         <div className={styles.stateCard}>
           <h3>{canManage ? "从第一份标准流程开始" : "暂无已发布流程"}</h3>
           <p>
@@ -1034,8 +1327,16 @@ export default function EnterpriseWorkflowsPanel({
           <aside className={styles.workflowList} aria-label="流程列表">
             {filteredWorkflows.length === 0 ? (
               <div className={styles.noResults}>
-                <strong>没有符合条件的流程</strong>
-                <span>可以清除搜索词或切换筛选条件。</span>
+                <strong>
+                  {archiveMode && archiveLoading && !archiveLoaded
+                    ? "正在查找归档流程"
+                    : "没有符合条件的流程"}
+                </strong>
+                <span>
+                  {archiveMode && archiveLoading && !archiveLoaded
+                    ? "请稍候…"
+                    : "可以清除搜索词或切换筛选条件。"}
+                </span>
               </div>
             ) : (
               filteredWorkflows.map((workflow) => (
@@ -1048,9 +1349,10 @@ export default function EnterpriseWorkflowsPanel({
                   onClick={() => selectWorkflow(workflow)}
                 >
                   <span className={styles.cardTopline}>
-                    <span className={`${styles.statusBadge} ${styles[`status_${workflow.status}`]}`}>
-                      {workflowStatusLabel(workflow)}
-                    </span>
+                     <span className={`${styles.statusBadge} ${styles[`status_${workflow.status}`]}`}>
+                       {workflowStatusLabel(workflow)}
+                     </span>
+                    {workflow.id === focusPinnedId ? <span>通知定位</span> : null}
                     <span>{workflow.steps.length} 步</span>
                   </span>
                   <strong>{workflow.title}</strong>
@@ -1065,6 +1367,47 @@ export default function EnterpriseWorkflowsPanel({
                 </button>
               ))
             )}
+            {archiveMode ? (
+              <div className={styles.archivePager} aria-live="polite">
+                {archiveLoadError ? (
+                  <>
+                    <span role="alert">{archiveLoadError}</span>
+                    <button
+                      type="button"
+                      className={styles.secondaryButton}
+                      disabled={archiveLoading || busy}
+                      onClick={() =>
+                        void loadArchivedWorkflows(
+                          archiveLoaded && archiveNextCursor
+                            ? { append: true, cursor: archiveNextCursor }
+                            : {},
+                        )
+                      }
+                    >
+                      重试归档加载
+                    </button>
+                  </>
+                ) : archiveLoading ? (
+                  <span>正在加载归档流程…</span>
+                ) : archiveNextCursor ? (
+                  <button
+                    type="button"
+                    className={styles.secondaryButton}
+                    disabled={busy}
+                    onClick={() =>
+                      void loadArchivedWorkflows({
+                        append: true,
+                        cursor: archiveNextCursor,
+                      })
+                    }
+                  >
+                    加载更多归档流程
+                  </button>
+                ) : archiveLoaded ? (
+                  <span>已加载全部符合条件的归档流程</span>
+                ) : null}
+              </div>
+            ) : null}
           </aside>
 
           <div className={styles.contentPane}>
@@ -1352,7 +1695,11 @@ export default function EnterpriseWorkflowsPanel({
                 ) : null}
               </article>
             ) : (
-              <div className={styles.stateCard}>请选择一个流程查看步骤。</div>
+              <div className={styles.stateCard}>
+                {archiveMode
+                  ? "没有符合条件的归档流程。可以调整搜索或筛选条件。"
+                  : "请选择一个流程查看步骤。"}
+              </div>
             )}
           </div>
         </div>

@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  encodeMerchantEnterpriseWorkflowArchiveCursor,
   handleMerchantEnterpriseWorkflowsGet,
   handleMerchantEnterpriseWorkflowsPatch,
   handleMerchantEnterpriseWorkflowsPost,
+  parseMerchantEnterpriseWorkflowArchiveCursor,
   type MerchantEnterpriseWorkflowRouteDependencies,
 } from "@/app/api/merchant-enterprise/workflows/route";
 import type {
@@ -71,6 +73,12 @@ function dependencies(
     async loadWorkflows() {
       return [];
     },
+    async loadWorkflowById() {
+      return workflow();
+    },
+    async loadArchivedWorkflows() {
+      return { workflows: [], nextCursor: null };
+    },
     async createWorkflow() {
       return workflow();
     },
@@ -108,7 +116,7 @@ const draft = {
   ],
 };
 
-test("workflow GET requires view permission and returns no-store data", async () => {
+test("legacy workflow GET requires view permission and keeps the mixed active/archive response", async () => {
   const calls: Array<Record<string, unknown>> = [];
   const response = await handleMerchantEnterpriseWorkflowsGet(
     new Request(
@@ -131,12 +139,140 @@ test("workflow GET requires view permission and returns no-store data", async ()
   );
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("cache-control"), "private, no-store");
-  assert.equal((await response.json()).workflows.length, 1);
+  const payload = await response.json();
+  assert.equal(payload.workflows.length, 1);
+  assert.equal(payload.nextCursor, null);
   assert.deepEqual(calls[0], {
     resolve: { siteId: "10000000", requiredPermission: "workflows.view" },
   });
   assert.deepEqual(calls[1], { entitlement: "10000000" });
-  assert.deepEqual(calls[2], { load: { siteId: "10000000", actor } });
+  assert.deepEqual(calls[2], {
+    load: { siteId: "10000000", actor, includeArchived: true },
+  });
+});
+
+test("explicit active workflow GET excludes archived rows", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const response = await handleMerchantEnterpriseWorkflowsGet(
+    new Request(
+      "https://www.faolla.com/api/merchant-enterprise/workflows?siteId=10000000&scope=active",
+    ),
+    dependencies({
+      async loadWorkflows(input) {
+        calls.push(input);
+        return [workflow()];
+      },
+    }),
+  );
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "private, no-store");
+  assert.deepEqual(calls, [
+    { siteId: "10000000", actor, includeArchived: false },
+  ]);
+});
+
+test("workflow GET resolves one active or archived workflow by id", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const response = await handleMerchantEnterpriseWorkflowsGet(
+    new Request(
+      "https://www.faolla.com/api/merchant-enterprise/workflows?siteId=10000000&workflowId=11111111-1111-4111-8111-111111111111",
+    ),
+    dependencies({
+      async resolveActor(_request, input) {
+        calls.push({ resolve: input });
+        return actor;
+      },
+      async requireEnterpriseEntitlement(siteId) {
+        calls.push({ entitlement: siteId });
+        return {};
+      },
+      async loadWorkflowById(input) {
+        calls.push({ load: input });
+        return workflow({ status: "archived" });
+      },
+    }),
+  );
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "private, no-store");
+  assert.deepEqual(await response.json(), {
+    ok: true,
+    workflow: workflow({ status: "archived" }),
+  });
+  assert.deepEqual(calls, [
+    {
+      resolve: { siteId: "10000000", requiredPermission: "workflows.view" },
+    },
+    { entitlement: "10000000" },
+    {
+      load: {
+        siteId: "10000000",
+        actor,
+        workflowId: "11111111-1111-4111-8111-111111111111",
+      },
+    },
+  ]);
+});
+
+test("workflow exact GET returns a private 404 without falling back to a list", async () => {
+  let listCalled = false;
+  const response = await handleMerchantEnterpriseWorkflowsGet(
+    new Request(
+      "https://www.faolla.com/api/merchant-enterprise/workflows?siteId=10000000&workflowId=11111111-1111-4111-8111-111111111111",
+    ),
+    dependencies({
+      async loadWorkflows() {
+        listCalled = true;
+        return [];
+      },
+      async loadWorkflowById() {
+        throw new Error("workflow_not_found");
+      },
+    }),
+  );
+  assert.equal(response.status, 404);
+  assert.equal(response.headers.get("cache-control"), "private, no-store");
+  assert.deepEqual(await response.json(), {
+    ok: false,
+    error: "workflow_not_found",
+  });
+  assert.equal(listCalled, false);
+});
+
+test("workflow GET keyset-paginates archived workflows with an opaque precision-safe cursor", async () => {
+  const cursor = {
+    beforeUpdatedAt: "2026-08-03 08:00:00.123456+00",
+    beforeId: "33333333-3333-4333-8333-333333333333",
+  };
+  const token = encodeMerchantEnterpriseWorkflowArchiveCursor(cursor);
+  assert.deepEqual(parseMerchantEnterpriseWorkflowArchiveCursor(token), cursor);
+  const calls: Array<Record<string, unknown>> = [];
+  const response = await handleMerchantEnterpriseWorkflowsGet(
+    new Request(
+      `https://www.faolla.com/api/merchant-enterprise/workflows?siteId=10000000&scope=archived&limit=20&cursor=${token}&q=%E5%AE%A2%E8%AF%89&scenario=%E5%94%AE%E5%90%8E&tag=%E7%B4%A7%E6%80%A5`,
+    ),
+    dependencies({
+      async loadArchivedWorkflows(input) {
+        calls.push(input);
+        return {
+          workflows: [workflow({ status: "archived" })],
+          nextCursor: cursor,
+        };
+      },
+    }),
+  );
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(payload.workflows.length, 1);
+  assert.equal(payload.nextCursor, token);
+  assert.deepEqual(calls[0], {
+    siteId: "10000000",
+    actor,
+    limit: 20,
+    cursor,
+    query: "客诉",
+    scenario: "售后",
+    tag: "紧急",
+  });
 });
 
 test("workflow GET rejects unexpected or repeated query parameters before loading", async () => {
@@ -151,6 +287,16 @@ test("workflow GET rejects unexpected or repeated query parameters before loadin
     "siteId=10000000&extra=1",
     "siteId=10000000&siteId=10000000",
     "siteId=wrong",
+    "siteId=10000000&scope=legacy",
+    "siteId=10000000&scope=active&cursor=x",
+    "siteId=10000000&scope=archived&cursor=not-a-real-cursor",
+    "siteId=10000000&scope=archived&limit=51",
+    "siteId=10000000&scope=archived&q=",
+    "siteId=10000000&scope=archived&cursor=x&cursor=y",
+    "siteId=10000000&workflowId=11111111-1111-4111-8111-111111111111&scope=active",
+    "siteId=10000000&workflowId=11111111-1111-4111-8111-111111111111&limit=1",
+    "siteId=10000000&workflowId=not-a-uuid",
+    "siteId=10000000&workflowId=11111111-1111-4111-8111-111111111111&workflowId=11111111-1111-4111-8111-111111111111",
   ]) {
     const response = await handleMerchantEnterpriseWorkflowsGet(
       new Request(

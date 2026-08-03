@@ -29,6 +29,14 @@ export function validateMigrationSource(fileName, source) {
   }
 
   const normalized = stripSqlComments(source).trim();
+  // TRUNCATE is also a valid statement-level trigger event. Mask only that
+  // exact DDL phrase before applying the global destructive SQL scan so a
+  // TRUNCATE hidden inside a DO block, function body, or dynamic SQL string
+  // cannot bypass the migration gate.
+  const destructiveScanSource = normalized.replace(
+    /\bbefore\s+truncate\s+on\b/gi,
+    "before __faolla_truncate_guard_event__ on",
+  );
   if (!/^begin\s*;/i.test(normalized)) {
     errors.push(`${fileName}: migration must start with BEGIN`);
   }
@@ -37,7 +45,7 @@ export function validateMigrationSource(fileName, source) {
   }
 
   for (const destructive of destructivePatterns) {
-    if (destructive.pattern.test(normalized)) {
+    if (destructive.pattern.test(destructiveScanSource)) {
       errors.push(`${fileName}: destructive operation is not allowed (${destructive.label})`);
     }
   }

@@ -43,8 +43,8 @@ mapfile -t enterprise_migrations < <(
     -print | sort
 )
 
-if [[ "${#enterprise_migrations[@]}" -ne 20 ]]; then
-  echo "Expected 20 enterprise migrations (001-020), found ${#enterprise_migrations[@]}" >&2
+if [[ "${#enterprise_migrations[@]}" -ne 21 ]]; then
+  echo "Expected 21 enterprise migrations (001-021), found ${#enterprise_migrations[@]}" >&2
   printf '  %s\n' "${enterprise_migrations[@]}" >&2
   exit 1
 fi
@@ -55,15 +55,16 @@ done
 
 registry_count="$(
   run_psql --tuples-only --no-align --command \
-    "select count(*) from public.faolla_schema_migrations where version = 202607250001 or version between 202607310001 and 202608030020;"
+    "select count(*) from public.faolla_schema_migrations where version = 202607250001 or version between 202607310001 and 202608030021;"
 )"
-if [[ "${registry_count}" -ne 21 ]]; then
-  echo "Expected 21 applied prerequisite/enterprise versions, found ${registry_count}" >&2
+if [[ "${registry_count}" -ne 22 ]]; then
+  echo "Expected 22 applied prerequisite/enterprise versions, found ${registry_count}" >&2
   exit 1
 fi
 
 run_sql_file "${SCRIPT_DIR}/10-serial-acceptance.sql"
 run_sql_file "${SCRIPT_DIR}/40-workflow-acceptance.sql"
+run_sql_file "${SCRIPT_DIR}/43-workflow-archive-pagination.sql"
 
 work_dir="$(mktemp -d)"
 cleanup() {
@@ -73,7 +74,8 @@ trap cleanup EXIT
 
 run_pair() {
   local kind="$1"
-  shift
+  local expected_error="$2"
+  shift 2
   local log_a="${work_dir}/${kind}-a.log"
   local log_b="${work_dir}/${kind}-b.log"
   local status_a status_b
@@ -91,7 +93,7 @@ run_pair() {
 
   if ! { [[ "${status_a}" -eq 0 && "${status_b}" -ne 0 ]] || \
          [[ "${status_b}" -eq 0 && "${status_a}" -ne 0 ]]; }; then
-    echo "${kind} CAS expected one success and one conflict; got A=${status_a}, B=${status_b}" >&2
+    echo "${kind} expected one success and one ${expected_error}; got A=${status_a}, B=${status_b}" >&2
     cat "${log_a}" >&2
     cat "${log_b}" >&2
     return 1
@@ -101,8 +103,8 @@ run_pair() {
   if [[ "${status_b}" -ne 0 ]]; then
     loser_log="${log_b}"
   fi
-  if ! grep -q 'enterprise_version_conflict' "${loser_log}"; then
-    echo "${kind} losing session did not report enterprise_version_conflict" >&2
+  if ! grep -q "${expected_error}" "${loser_log}"; then
+    echo "${kind} losing session did not report ${expected_error}" >&2
     cat "${loser_log}" >&2
     return 1
   fi
@@ -137,10 +139,28 @@ workflow_worker() {
     --file "${SCRIPT_DIR}/41-workflow-cas-worker.sql"
 }
 
-run_pair task task_worker
-run_pair invitation invitation_worker
-run_pair workflow workflow_worker
+restore_limit_worker() {
+  local worker="$1"
+  local restore_target restore_operation
+  if [[ "${worker}" == A ]]; then
+    restore_target='73000000-0000-4000-8000-000000000001'
+    restore_operation='integration-workflow-restore-limit-a'
+  else
+    restore_target='73000000-0000-4000-8000-000000000002'
+    restore_operation='integration-workflow-restore-limit-b'
+  fi
+  run_psql \
+    --set "restore_target=${restore_target}" \
+    --set "restore_operation=${restore_operation}" \
+    --file "${SCRIPT_DIR}/44-workflow-restore-limit-worker.sql"
+}
+
+run_pair task enterprise_version_conflict task_worker
+run_pair invitation enterprise_version_conflict invitation_worker
+run_pair workflow enterprise_version_conflict workflow_worker
+run_pair workflow-restore-limit workflow_limit_reached restore_limit_worker
 run_sql_file "${SCRIPT_DIR}/30-post-concurrency.sql"
 run_sql_file "${SCRIPT_DIR}/42-workflow-post-concurrency.sql"
+run_sql_file "${SCRIPT_DIR}/45-workflow-restore-limit-post.sql"
 
 echo '[enterprise-integration] all PostgreSQL migration, security, transaction, and CAS checks passed'

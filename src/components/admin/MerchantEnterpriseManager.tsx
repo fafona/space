@@ -172,6 +172,7 @@ const EMPTY_SNAPSHOT: MerchantEnterpriseSnapshot = {
 };
 
 const MERCHANT_ENTERPRISE_REQUEST_TIMEOUT_MS = 30_000;
+const MERCHANT_ENTERPRISE_WORKFLOW_FOCUS_TIMEOUT_MS = 30_000;
 const DEFAULT_MERCHANT_ENTERPRISE_COLLABORATION_REFRESH_INTERVAL_MS = 30_000;
 const MIN_MERCHANT_ENTERPRISE_COLLABORATION_REFRESH_INTERVAL_MS = 250;
 const MERCHANT_ENTERPRISE_STALE_INTERVAL_MULTIPLIER = 3;
@@ -3458,6 +3459,11 @@ function MerchantEnterpriseManagerContent({
     requestId: number;
   } | null>(null);
   const workflowFocusSequenceRef = useRef(0);
+  const workflowFocusResolverRef = useRef<{
+    requestId: number;
+    timeoutId: number;
+    resolve: (opened: boolean) => void;
+  } | null>(null);
 
   const handleRoleEditorDirtyChange = useCallback((roleId: string, dirty: boolean) => {
     setDirtyRoleIds((current) => {
@@ -3888,32 +3894,69 @@ function MerchantEnterpriseManagerContent({
     },
     [commitViewChange, confirmViewChange],
   );
+  const settleWorkflowFocusRequest = useCallback(
+    (requestId: number, opened: boolean) => {
+      const pending = workflowFocusResolverRef.current;
+      if (!pending || pending.requestId !== requestId) return;
+      workflowFocusResolverRef.current = null;
+      window.clearTimeout(pending.timeoutId);
+      setWorkflowFocusRequest((current) =>
+        current?.requestId === requestId ? null : current,
+      );
+      pending.resolve(opened);
+    },
+    [],
+  );
   const openWorkflowFromNotification = useCallback(
-    (workflowId: string) => {
+    (workflowId: string): Promise<boolean> => {
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(workflowId)) {
-        return false;
+        return Promise.resolve(false);
       }
       if (
         tab === "workflows" &&
         workflowHasDraft &&
         !window.confirm("当前流程有尚未保存的修改。打开通知中的流程将放弃这些修改，是否继续？")
       ) {
-        return false;
+        return Promise.resolve(false);
       }
-      if (!requestViewChange("workflows")) return false;
+      if (!requestViewChange("workflows")) return Promise.resolve(false);
+      const previousRequest = workflowFocusResolverRef.current;
+      if (previousRequest) {
+        settleWorkflowFocusRequest(previousRequest.requestId, false);
+      }
       workflowFocusSequenceRef.current += 1;
-      setWorkflowFocusRequest({
-        workflowId,
-        requestId: workflowFocusSequenceRef.current,
+      const requestId = workflowFocusSequenceRef.current;
+      return new Promise<boolean>((resolve) => {
+        const timeoutId = window.setTimeout(() => {
+          settleWorkflowFocusRequest(requestId, false);
+        }, MERCHANT_ENTERPRISE_WORKFLOW_FOCUS_TIMEOUT_MS);
+        workflowFocusResolverRef.current = { requestId, timeoutId, resolve };
+        setWorkflowFocusRequest({ workflowId, requestId });
       });
-      return true;
     },
-    [requestViewChange, tab, workflowHasDraft],
+    [requestViewChange, settleWorkflowFocusRequest, tab, workflowHasDraft],
   );
-  const handleWorkflowFocusHandled = useCallback((requestId: number) => {
-    setWorkflowFocusRequest((current) =>
-      current?.requestId === requestId ? null : current,
-    );
+  const handleWorkflowFocusHandled = useCallback(
+    (requestId: number, opened: boolean = false) => {
+      settleWorkflowFocusRequest(requestId, opened);
+    },
+    [settleWorkflowFocusRequest],
+  );
+
+  useEffect(() => {
+    if (tab === "workflows") return;
+    const pending = workflowFocusResolverRef.current;
+    if (pending) settleWorkflowFocusRequest(pending.requestId, false);
+  }, [settleWorkflowFocusRequest, tab]);
+
+  useEffect(() => {
+    return () => {
+      const pending = workflowFocusResolverRef.current;
+      if (!pending) return;
+      workflowFocusResolverRef.current = null;
+      window.clearTimeout(pending.timeoutId);
+      pending.resolve(false);
+    };
   }, []);
 
   useEffect(() => {
