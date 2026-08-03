@@ -1,4 +1,4 @@
--- Read-only task/SOP picker plus immutable task binding. Every displayed or
+-- Read-only published task/SOP picker plus immutable task binding. Every displayed or
 -- generated value comes from a published revision snapshot; mutable draft
 -- columns and working steps are deliberately outside both projections.
 

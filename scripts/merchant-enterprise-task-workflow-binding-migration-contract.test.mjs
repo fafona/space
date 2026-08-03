@@ -7,7 +7,7 @@ const migrationPath = path.join(
   process.cwd(),
   "scripts",
   "supabase-migrations",
-  "202608040024_merchant_enterprise_published_choices.sql",
+  "202608040024_merchant_enterprise_published_choices_and_task_binding.sql",
 );
 const executionMigrationPath = path.join(
   process.cwd(),
@@ -310,6 +310,9 @@ test("binding and checklist generation are one idempotent all-or-nothing RPC", (
 
 test("024 keeps storage private and exposes only three service-role RPCs", () => {
   const sql = source();
+  const expectedMigrationName = path
+    .basename(migrationPath, ".sql")
+    .replace(/^\d+_/, "");
   assert.match(
     sql,
     /alter table public\.merchant_task_workflow_bindings enable row level security/i,
@@ -340,7 +343,7 @@ test("024 keeps storage private and exposes only three service-role RPCs", () =>
   }
   assert.match(
     sql,
-    /values \(202608040024, 'merchant_enterprise_published_choices_and_task_binding'\)/i,
+    new RegExp(`values \\(202608040024, '${expectedMigrationName}'\\)`, "i"),
   );
   assert.doesNotMatch(sql, /\bdrop\s+table\b|\bdrop\s+column\b|\bdelete\s+from\b/i);
 });
