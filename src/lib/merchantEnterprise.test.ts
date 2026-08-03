@@ -687,6 +687,11 @@ test("task event normalization exposes only bounded activity payload fields", ()
       replacementEmployeeId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
       oldRoleId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
       newRoleId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      executionId: "33333333-3333-4333-8333-333333333333",
+      workflowId: "11111111-1111-4111-8111-111111111111",
+      revisionId: "22222222-2222-4222-8222-222222222222",
+      revisionNo: 4,
+      generatedChecklistCount: 6,
       completed: true,
       previousCompleted: false,
       archived: "false",
@@ -715,6 +720,11 @@ test("task event normalization exposes only bounded activity payload fields", ()
   );
   assert.equal(event?.payload.oldRoleId, "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
   assert.equal(event?.payload.newRoleId, "ffffffff-ffff-4fff-8fff-ffffffffffff");
+  assert.equal(event?.payload.executionId, "33333333-3333-4333-8333-333333333333");
+  assert.equal(event?.payload.workflowId, "11111111-1111-4111-8111-111111111111");
+  assert.equal(event?.payload.revisionId, "22222222-2222-4222-8222-222222222222");
+  assert.equal(event?.payload.revisionNo, 4);
+  assert.equal(event?.payload.generatedChecklistCount, 6);
   assert.equal(event?.payload.completed, true);
   assert.equal(event?.payload.previousCompleted, false);
   assert.equal(event?.payload.previousArchived, false);

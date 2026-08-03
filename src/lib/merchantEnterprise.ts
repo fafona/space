@@ -270,6 +270,11 @@ export type MerchantTaskEventPayload = {
   replacementEmployeeId?: string;
   oldRoleId?: string;
   newRoleId?: string;
+  executionId?: string;
+  workflowId?: string;
+  revisionId?: string;
+  revisionNo?: number;
+  generatedChecklistCount?: number;
   completed?: boolean;
   previousCompleted?: boolean;
   archived?: boolean;
@@ -1104,6 +1109,9 @@ export function normalizeMerchantTaskEvent(value: unknown): MerchantTaskEvent | 
     "replacementEmployeeId",
     "oldRoleId",
     "newRoleId",
+    "executionId",
+    "workflowId",
+    "revisionId",
   ] as const) {
     const normalized = normalizeText(rawPayload[key], 80);
     if (normalized) payload[key] = normalized;
@@ -1118,7 +1126,13 @@ export function normalizeMerchantTaskEvent(value: unknown): MerchantTaskEvent | 
   );
   if (assigneeIds?.length) payload.assigneeIds = assigneeIds;
 
-  for (const key of ["requestedTargetIndex", "targetIndex", "position"] as const) {
+  for (const key of [
+    "requestedTargetIndex",
+    "targetIndex",
+    "position",
+    "revisionNo",
+    "generatedChecklistCount",
+  ] as const) {
     const normalized = normalizeEventInteger(rawPayload[key]);
     if (normalized !== undefined) payload[key] = normalized;
   }

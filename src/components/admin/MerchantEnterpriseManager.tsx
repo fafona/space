@@ -79,7 +79,11 @@ import {
 } from "@/lib/merchantTaskOrdering";
 import MerchantEnterpriseNotificationCenter from "@/components/admin/MerchantEnterpriseNotificationCenter";
 import MerchantEnterpriseAuditLog from "@/components/admin/MerchantEnterpriseAuditLog";
-import EnterpriseWorkflowsPanel from "@/app/enterprise/[siteId]/EnterpriseWorkflowsPanel";
+import MerchantTaskWorkflowBindingCard from "@/components/admin/MerchantTaskWorkflowBindingCard";
+import EnterpriseWorkflowsPanel, {
+  type EnterpriseWorkflowApiFetch,
+} from "@/app/enterprise/[siteId]/EnterpriseWorkflowsPanel";
+import { WorkflowPermissionGapCard } from "@/app/enterprise/[siteId]/EnterpriseWorkflowGovernance";
 
 export type MerchantEnterpriseView =
   | "overview"
@@ -273,6 +277,28 @@ function taskEventDescription(
   if (event.eventType === "checklist_item_reopened") return "恢复了清单项";
   if (event.eventType === "checklist_item_archived") return "移除了清单项";
   if (event.eventType === "checklist_item_restored") return "恢复了清单项";
+  if (event.eventType === "workflow_bound") {
+    const payload = taskEventPayload(event);
+    const revisionNo = typeof payload.revisionNo === "number" ? payload.revisionNo : null;
+    const generatedChecklistCount =
+      typeof payload.generatedChecklistCount === "number" ? payload.generatedChecklistCount : null;
+    if (revisionNo && generatedChecklistCount !== null) {
+      return `应用了工作流程 v${revisionNo}，生成 ${generatedChecklistCount} 项清单`;
+    }
+    if (revisionNo) return `应用了工作流程 v${revisionNo}`;
+    return "应用了工作流程";
+  }
+  if (event.eventType === "workflow_execution_started") {
+    const payload = taskEventPayload(event);
+    const revisionNo = typeof payload.revisionNo === "number" ? payload.revisionNo : null;
+    const generatedChecklistCount =
+      typeof payload.generatedChecklistCount === "number" ? payload.generatedChecklistCount : 0;
+    const versionLabel = revisionNo ? ` v${revisionNo}` : "";
+    const checklistLabel = generatedChecklistCount > 0
+      ? `，生成 ${generatedChecklistCount} 项清单`
+      : "";
+    return `开始执行工作流程${versionLabel}${checklistLabel}`;
+  }
   if (event.eventType === "employee_offboarded") {
     return typeof taskEventPayload(event).replacementEmployeeId === "string"
       ? "因员工停用转交了负责人"
@@ -813,6 +839,8 @@ function TaskEditor({
   canUpdate,
   canAssign,
   canArchive,
+  canViewWorkflows,
+  apiFetch,
   onSave,
   onArchive,
   onLoadEvents,
@@ -832,6 +860,8 @@ function TaskEditor({
   canUpdate: boolean;
   canAssign: boolean;
   canArchive: boolean;
+  canViewWorkflows: boolean;
+  apiFetch: EnterpriseWorkflowApiFetch;
   onSave: (task: MerchantTask, draft: TaskDraft) => Promise<void>;
   onArchive: (task: MerchantTask, archived: boolean) => Promise<void>;
   onLoadEvents: (taskId: string, signal?: AbortSignal) => Promise<MerchantTaskEvent[]>;
@@ -1493,6 +1523,17 @@ function TaskEditor({
               </button>
             ) : null}
           </section>
+
+          {canViewWorkflows ? (
+            <MerchantTaskWorkflowBindingCard
+              task={task}
+              apiFetch={apiFetch}
+              canBind={canUpdate}
+              onChecklistChanged={async () => {
+                await Promise.all([refreshChecklist(), refreshEvents()]);
+              }}
+            />
+          ) : null}
 
           <section
             aria-labelledby="enterprise-task-checklist-title"
@@ -6489,6 +6530,16 @@ function MerchantEnterpriseManagerContent({
 
         {!needsBootstrap && tab === "roles" ? (
           <div className="mt-5 space-y-5">
+            {actor.type === "owner" ? (
+              <WorkflowPermissionGapCard
+                siteId={siteId}
+                actorType={actor.type}
+                apiFetch={apiFetch}
+                onChanged={async () => {
+                  await loadOverview({ preserveData: true, silent: true });
+                }}
+              />
+            ) : null}
             {can(actor, "roles.manage") ? (
               <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
                 <h2 className="text-lg font-semibold text-slate-950">新建角色</h2>
@@ -6619,6 +6670,8 @@ function MerchantEnterpriseManagerContent({
             canUpdate={can(actor, "tasks.update")}
             canAssign={can(actor, "tasks.assign")}
             canArchive={can(actor, "tasks.archive")}
+            canViewWorkflows={can(actor, "workflows.view")}
+            apiFetch={apiFetch}
             onSave={saveTask}
             onArchive={setTaskArchived}
             onLoadEvents={loadTaskEvents}

@@ -9,6 +9,8 @@ import {
   type FormEvent,
 } from "react";
 import { createClientMutationOperationId } from "@/lib/mutationOperationId";
+import EnterpriseWorkflowExecutionPanel from "./EnterpriseWorkflowExecutionPanel";
+import { WorkflowRevisionHistory } from "./EnterpriseWorkflowGovernance";
 import styles from "./EnterpriseWorkflowsPanel.module.css";
 
 const WORKFLOW_API_PATH = "/api/merchant-enterprise/workflows";
@@ -1646,6 +1648,34 @@ export default function EnterpriseWorkflowsPanel({
                     </ol>
                   )}
                 </div>
+
+                {actor && selectedWorkflow.status === "published" ? (
+                  <EnterpriseWorkflowExecutionPanel
+                    siteId={siteId}
+                    workflow={selectedWorkflow}
+                    actor={actor}
+                    apiFetch={apiFetch}
+                  />
+                ) : null}
+
+                {(canManage || canPublish) && selectedWorkflow.publishedVersion > 0 ? (
+                  <WorkflowRevisionHistory
+                    siteId={siteId}
+                    workflow={selectedWorkflow}
+                    apiFetch={apiFetch}
+                    canManage={canManage}
+                    onRestored={(value, revisionNo) => {
+                      const restored = normalizeWorkflow(value);
+                      if (!restored || restored.siteId !== siteId || restored.id !== selectedWorkflow.id) {
+                        setMutationError("历史版本已恢复，但返回的数据无法验证，请重新加载流程。");
+                        return;
+                      }
+                      replaceWorkflow(restored);
+                      beginEdit(restored);
+                      setNotice(`已将 v${revisionNo} 复制为当前草稿，确认后请重新发布。`);
+                    }}
+                  />
+                ) : null}
 
                 {canManage || canPublish ? (
                   <div className={styles.detailActions}>

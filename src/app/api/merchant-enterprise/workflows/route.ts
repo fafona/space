@@ -398,7 +398,9 @@ function parseOperationId(request: Request, body: WorkflowBody | null) {
     throw new Error("invalid_operation_id");
   }
   const operationId = normalizeMutationOperationId(value);
-  if (!operationId) throw new Error("invalid_operation_id");
+  if (!operationId || operationId !== value.trim()) {
+    throw new Error("invalid_operation_id");
+  }
   return operationId;
 }
 

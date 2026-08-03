@@ -43,8 +43,14 @@ function createSharedState() {
   return {
     taskSequence: 10,
     workflowSequence: 30,
+    workflowRevisionSequence: 38,
+    checklistSequence: 40,
+    taskEventSequence: 50,
     workflowConflictNextSave: false,
     workflows: [],
+    taskWorkflowBindings: {},
+    taskChecklistItems: {},
+    taskEvents: {},
     actor: {
       type: "owner",
       id: ownerId,
@@ -213,6 +219,21 @@ function nextWorkflowId(state) {
   return `10000000-0000-4000-8000-${suffix}`;
 }
 
+function nextWorkflowRevisionId(state) {
+  const suffix = String(state.workflowRevisionSequence++).padStart(12, "0");
+  return `10000000-0000-4000-8000-${suffix}`;
+}
+
+function nextChecklistId(state) {
+  const suffix = String(state.checklistSequence++).padStart(12, "0");
+  return `10000000-0000-4000-8000-${suffix}`;
+}
+
+function nextTaskEventId(state) {
+  const suffix = String(state.taskEventSequence++).padStart(12, "0");
+  return `10000000-0000-4000-8000-${suffix}`;
+}
+
 function workflowFields(input) {
   return {
     title: String(input.title || ""),
@@ -341,7 +362,7 @@ function updateWorkflowDraft(workflow, input) {
   return workflow;
 }
 
-function publishWorkflow(workflow) {
+function publishWorkflow(state, workflow) {
   const publishedAt = timestamp();
   const publishedVersion = workflow.publishedVersion + 1;
   workflow.version += 1;
@@ -349,6 +370,7 @@ function publishWorkflow(workflow) {
   workflow.publishedAt = publishedAt;
   workflow.published = {
     fields: jsonClone(workflow.draft),
+    revisionId: nextWorkflowRevisionId(state),
     version: publishedVersion,
     publishedAt,
   };
@@ -487,7 +509,7 @@ async function installEnterpriseApiMock(
       if (action === "save") {
         updateWorkflowDraft(workflow, input);
       } else if (action === "publish") {
-        publishWorkflow(workflow);
+        publishWorkflow(state, workflow);
       } else if (action === "archive") {
         workflow.status = "archived";
         workflow.version += 1;
@@ -500,6 +522,213 @@ async function installEnterpriseApiMock(
         return respond(400, { ok: false, error: "invalid_request" });
       }
       return respond(200, { ok: true, workflow: currentWorkflowDto(workflow) });
+    }
+    if (
+      url.pathname === "/api/merchant-enterprise/workflow-permission-gaps" &&
+      request.method() === "GET"
+    ) {
+      stats.workflowPermissionGapGets = (stats.workflowPermissionGapGets || 0) + 1;
+      return respond(200, { ok: true, gaps: [] });
+    }
+    if (
+      url.pathname === "/api/merchant-enterprise/workflow-executions" &&
+      request.method() === "GET"
+    ) {
+      const workflow = state.workflows.find(
+        (item) => item.id === url.searchParams.get("workflowId"),
+      );
+      if (!workflow?.published || workflow.status !== "published") {
+        return respond(404, { ok: false, error: "workflow_not_found" });
+      }
+      if (url.searchParams.get("scope") === "stats") {
+        stats.workflowStatsGets = (stats.workflowStatsGets || 0) + 1;
+        return respond(200, {
+          ok: true,
+          stats: {
+            merchantId: siteId,
+            workflowId: workflow.id,
+            currentRevisionNo: workflow.published.version,
+            eligibleEmployeeCount: state.snapshot.employees.filter(
+              (employee) => employee.status === "active",
+            ).length,
+            acknowledgedEmployeeCount: 0,
+            executionCount: 0,
+            inProgressCount: 0,
+            completedCount: 0,
+            taskLinkedExecutionCount: 0,
+            generatedChecklistCount: 0,
+            feedbackCount: 0,
+            openFeedbackCount: 0,
+            averageRating: null,
+            participants: state.snapshot.employees
+              .filter((employee) => employee.status === "active")
+              .map((employee) => ({
+                employeeId: employee.id,
+                employeeName: employee.displayName,
+                acknowledgedAt: null,
+                executionCount: 0,
+                completedCount: 0,
+                lastActivityAt: null,
+              })),
+            recentFeedback: [],
+          },
+        });
+      }
+      stats.workflowMineGets = (stats.workflowMineGets || 0) + 1;
+      return respond(200, {
+        ok: true,
+        currentRevisionNo: workflow.published.version,
+        acknowledgement: null,
+        executions: [],
+      });
+    }
+    if (
+      url.pathname === "/api/merchant-enterprise/workflow-revisions" &&
+      request.method() === "GET"
+    ) {
+      stats.workflowRevisionGets = (stats.workflowRevisionGets || 0) + 1;
+      const workflow = state.workflows.find(
+        (item) => item.id === url.searchParams.get("workflowId"),
+      );
+      if (!workflow?.published) {
+        return respond(404, { ok: false, error: "workflow_not_found" });
+      }
+      const revision = {
+        id: workflow.published.revisionId,
+        revisionNo: workflow.published.version,
+        publishedAt: workflow.published.publishedAt,
+        snapshot: jsonClone(workflow.published.fields),
+      };
+      if (url.searchParams.has("revision")) {
+        if (Number(url.searchParams.get("revision")) !== revision.revisionNo) {
+          return respond(404, { ok: false, error: "workflow_revision_not_found" });
+        }
+        return respond(200, {
+          ok: true,
+          revision,
+          previousRevision: null,
+          workflow: { canRestore: true },
+        });
+      }
+      return respond(200, {
+        ok: true,
+        revisions: [
+          {
+            id: revision.id,
+            revisionNo: revision.revisionNo,
+            publishedAt: revision.publishedAt,
+            title: revision.snapshot.title,
+            scenario: revision.snapshot.scenario,
+            category: revision.snapshot.category,
+            tags: revision.snapshot.tags,
+            stepCount: revision.snapshot.steps.length,
+            isCurrent: true,
+          },
+        ],
+        nextBeforeRevision: null,
+      });
+    }
+    if (
+      url.pathname === "/api/merchant-enterprise/published-workflows" &&
+      request.method() === "GET"
+    ) {
+      stats.publishedWorkflowGets = (stats.publishedWorkflowGets || 0) + 1;
+      const choices = state.workflows
+        .filter((workflow) => workflow.status === "published" && workflow.published)
+        .map((workflow) => ({
+          id: workflow.id,
+          title: workflow.published.fields.title,
+          scenario: workflow.published.fields.scenario,
+          revisionId: workflow.published.revisionId,
+          revisionNo: workflow.published.version,
+          stepCount: workflow.published.fields.steps.length,
+        }));
+      return respond(200, { ok: true, choices: jsonClone(choices) });
+    }
+    if (
+      url.pathname === "/api/merchant-enterprise/task-workflow" &&
+      request.method() === "GET"
+    ) {
+      stats.taskWorkflowGets = (stats.taskWorkflowGets || 0) + 1;
+      const taskId = url.searchParams.get("taskId") || "";
+      return respond(200, {
+        ok: true,
+        binding: state.taskWorkflowBindings[taskId]
+          ? jsonClone(state.taskWorkflowBindings[taskId])
+          : null,
+      });
+    }
+    if (
+      url.pathname === "/api/merchant-enterprise/task-workflow" &&
+      request.method() === "POST"
+    ) {
+      stats.taskWorkflowPosts = (stats.taskWorkflowPosts || 0) + 1;
+      const input = request.postDataJSON();
+      const task = state.snapshot.tasks.find((item) => item.id === input.taskId);
+      const workflow = state.workflows.find((item) => item.id === input.workflowId);
+      if (!task) return respond(404, { ok: false, error: "task_not_found" });
+      if (!workflow?.published || workflow.status !== "published") {
+        return respond(409, { ok: false, error: "workflow_not_published" });
+      }
+      if (state.taskWorkflowBindings[task.id]) {
+        return respond(409, { ok: false, error: "task_workflow_already_bound" });
+      }
+      if (workflow.published.revisionId !== input.expectedRevisionId) {
+        return respond(409, { ok: false, error: "workflow_revision_changed" });
+      }
+      const boundAt = timestamp();
+      const steps = jsonClone(workflow.published.fields.steps);
+      const binding = {
+        siteId,
+        taskId: task.id,
+        workflowId: workflow.id,
+        revisionId: workflow.published.revisionId,
+        revisionNo: workflow.published.version,
+        title: workflow.published.fields.title,
+        scenario: workflow.published.fields.scenario,
+        description: workflow.published.fields.description,
+        category: workflow.published.fields.category,
+        tags: jsonClone(workflow.published.fields.tags),
+        steps,
+        boundAt,
+        generatedChecklistCount: steps.length,
+      };
+      const checklistItems = steps.map((step, index) => ({
+        id: nextChecklistId(state),
+        siteId,
+        taskId: task.id,
+        text: step.title,
+        position: (index + 1) * 1024,
+        completed: false,
+        completedAt: null,
+        archivedAt: null,
+        version: 1,
+        createdAt: boundAt,
+        updatedAt: boundAt,
+      }));
+      const event = {
+        id: nextTaskEventId(state),
+        siteId,
+        taskId: task.id,
+        eventType: "workflow_bound",
+        actorType: actor.type,
+        actorId: actor.type === "employee" ? actor.id : "",
+        payload: {
+          workflowId: workflow.id,
+          revisionId: workflow.published.revisionId,
+          revisionNo: workflow.published.version,
+          generatedChecklistCount: steps.length,
+        },
+        createdAt: boundAt,
+      };
+      state.taskWorkflowBindings[task.id] = binding;
+      state.taskChecklistItems[task.id] = checklistItems;
+      state.taskEvents[task.id] = [event];
+      return respond(200, {
+        ok: true,
+        binding: jsonClone(binding),
+        createdChecklistItems: jsonClone(checklistItems),
+      });
     }
     if (url.pathname === "/api/merchant-enterprise/tasks" && request.method() === "POST") {
       const input = request.postDataJSON();
@@ -539,10 +768,20 @@ async function installEnterpriseApiMock(
       });
     }
     if (url.pathname === "/api/merchant-enterprise/task-events" && request.method() === "GET") {
-      return respond(200, { ok: true, events: [] });
+      stats.taskEventGets = (stats.taskEventGets || 0) + 1;
+      const taskId = url.searchParams.get("taskId") || "";
+      return respond(200, {
+        ok: true,
+        events: jsonClone(state.taskEvents[taskId] || []),
+      });
     }
     if (url.pathname === "/api/merchant-enterprise/task-checklist" && request.method() === "GET") {
-      return respond(200, { ok: true, items: [] });
+      stats.taskChecklistGets = (stats.taskChecklistGets || 0) + 1;
+      const taskId = url.searchParams.get("taskId") || "";
+      return respond(200, {
+        ok: true,
+        items: jsonClone(state.taskChecklistItems[taskId] || []),
+      });
     }
     return respond(404, { ok: false, error: "browser_test_unhandled_request" });
   });
@@ -813,6 +1052,84 @@ async function run() {
     );
 
     await ownerWorkflowPanel.getByRole("button", { name: "关闭", exact: true }).click();
+    const executionStatsPanel = ownerWorkflowPanel.locator(
+      "[data-workflow-execution-stats]",
+    );
+    await executionStatsPanel
+      .getByRole("heading", { name: "执行与培训统计", exact: true })
+      .waitFor();
+    await executionStatsPanel.getByText("0/2", { exact: true }).waitFor();
+
+    const revisionHistory = ownerWorkflowPanel.locator(
+      "[data-workflow-revision-history]",
+    );
+    await revisionHistory
+      .getByRole("button", { name: "查看版本历史", exact: true })
+      .click();
+    const currentRevisionButton = revisionHistory
+      .getByRole("button")
+      .filter({ hasText: "v1" })
+      .first();
+    await currentRevisionButton.waitFor();
+    await currentRevisionButton.click();
+    await revisionHistory
+      .getByRole("heading", { name: "v1 发布内容", exact: true })
+      .waitFor();
+    assert(
+      (statsA.workflowStatsGets || 0) >= 1 &&
+        (statsA.workflowRevisionGets || 0) >= 2,
+      "manager workflow statistics or immutable revision detail did not load through the API mock",
+    );
+
+    await pageA.getByRole("button", { name: "任务看板", exact: true }).click();
+    await pageA.getByLabel("当前看板").selectOption(boardId);
+    const workflowTaskCard = pageA
+      .locator("article")
+      .filter({ hasText: "双会话创建任务" })
+      .first();
+    await workflowTaskCard.getByRole("button", { name: "管理任务", exact: true }).click();
+    const workflowTaskEditor = pageA.getByRole("dialog", { name: "编辑任务" });
+    await workflowTaskEditor.waitFor();
+    const taskWorkflowCard = workflowTaskEditor.locator(
+      "[data-enterprise-task-workflow]",
+    );
+    await taskWorkflowCard
+      .getByRole("heading", { name: "执行标准工作流程", exact: true })
+      .waitFor();
+    const publishedWorkflowSelector = taskWorkflowCard.getByLabel("选择已发布流程");
+    await publishedWorkflowSelector.waitFor();
+    await publishedWorkflowSelector.selectOption(workflowId);
+    pageA.once("dialog", (dialog) => void dialog.accept());
+    await taskWorkflowCard
+      .getByRole("button", { name: "应用流程并生成清单", exact: true })
+      .click();
+    await taskWorkflowCard.getByText("版本已固定", { exact: true }).waitFor();
+    await taskWorkflowCard
+      .getByText(`已固定“${publishedWorkflowTitle}”v1，并生成 1 项任务清单。`, {
+        exact: true,
+      })
+      .waitFor();
+    await workflowTaskEditor
+      .locator('section[aria-labelledby="enterprise-task-checklist-title"]')
+      .getByText(publishedStepTitle, { exact: true })
+      .waitFor();
+    await workflowTaskEditor
+      .locator('section[aria-labelledby="enterprise-task-events-title"]')
+      .getByText("应用了工作流程 v1，生成 1 项清单", { exact: false })
+      .waitFor();
+    assert(
+      (statsA.taskWorkflowPosts || 0) === 1 &&
+        state.taskWorkflowBindings[state.snapshot.tasks[0].id]?.siteId === siteId &&
+        state.taskChecklistItems[state.snapshot.tasks[0].id]?.length === 1 &&
+        state.taskEvents[state.snapshot.tasks[0].id]?.[0]?.eventType === "workflow_bound",
+      "task binding did not atomically expose the tenant-scoped binding, generated checklist, and event",
+    );
+    await workflowTaskEditor.getByRole("button", { name: "关闭", exact: true }).click();
+    await workflowTaskEditor.waitFor({ state: "hidden" });
+    await pageA.getByRole("button", { name: "工作流程", exact: true }).click();
+    await ownerWorkflowPanel
+      .getByRole("heading", { name: publishedWorkflowTitle, exact: true })
+      .waitFor();
     await ownerWorkflowPanel.getByRole("button", { name: "编辑草稿", exact: true }).click();
     const ownerWorkflowTitle = ownerWorkflowPanel.getByLabel("流程名称 *");
     const ownerWorkflowDescription = ownerWorkflowPanel.getByLabel("流程说明");
@@ -1403,6 +1720,9 @@ async function run() {
           "board_settings_dirty_switch_and_collapse_guards",
           "employee_inline_editor_dirty_switch_guard",
           "owner_workflow_draft_step_and_publish",
+          "workflow_manager_execution_stats",
+          "workflow_immutable_revision_history",
+          "task_published_workflow_binding_checklist_and_event",
           "workflow_published_snapshot_isolated_from_new_draft",
           "workflow_manage_and_publish_ui_separation",
           "workflow_archive_refresh_and_restore",

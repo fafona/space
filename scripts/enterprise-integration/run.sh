@@ -43,8 +43,8 @@ mapfile -t enterprise_migrations < <(
     -print | sort
 )
 
-if [[ "${#enterprise_migrations[@]}" -ne 21 ]]; then
-  echo "Expected 21 enterprise migrations (001-021), found ${#enterprise_migrations[@]}" >&2
+if [[ "${#enterprise_migrations[@]}" -ne 24 ]]; then
+  echo "Expected 24 enterprise migrations (001-024), found ${#enterprise_migrations[@]}" >&2
   printf '  %s\n' "${enterprise_migrations[@]}" >&2
   exit 1
 fi
@@ -55,16 +55,19 @@ done
 
 registry_count="$(
   run_psql --tuples-only --no-align --command \
-    "select count(*) from public.faolla_schema_migrations where version = 202607250001 or version between 202607310001 and 202608030021;"
+    "select count(*) from public.faolla_schema_migrations where version = 202607250001 or version between 202607310001 and 202608040024;"
 )"
-if [[ "${registry_count}" -ne 22 ]]; then
-  echo "Expected 22 applied prerequisite/enterprise versions, found ${registry_count}" >&2
+if [[ "${registry_count}" -ne 25 ]]; then
+  echo "Expected 25 applied prerequisite/enterprise versions, found ${registry_count}" >&2
   exit 1
 fi
 
 run_sql_file "${SCRIPT_DIR}/10-serial-acceptance.sql"
 run_sql_file "${SCRIPT_DIR}/40-workflow-acceptance.sql"
 run_sql_file "${SCRIPT_DIR}/43-workflow-archive-pagination.sql"
+run_sql_file "${SCRIPT_DIR}/46-workflow-execution.sql"
+run_sql_file "${SCRIPT_DIR}/47-workflow-revisions.sql"
+run_sql_file "${SCRIPT_DIR}/48-task-workflow-binding.sql"
 
 work_dir="$(mktemp -d)"
 cleanup() {

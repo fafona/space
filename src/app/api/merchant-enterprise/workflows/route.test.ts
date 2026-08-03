@@ -362,6 +362,15 @@ test("workflow POST rejects malformed steps and unknown fields before authorizat
     deps,
   );
   assert.equal(unknownResponse.status, 400);
+  const invalidOperationResponse = await handleMerchantEnterpriseWorkflowsPost(
+    mutationRequest("POST", {
+      siteId: "10000000",
+      ...draft,
+      operationId: "workflow create contains spaces",
+    }),
+    deps,
+  );
+  assert.equal(invalidOperationResponse.status, 400);
   assert.equal(resolved, false);
 });
 

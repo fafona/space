@@ -7,7 +7,7 @@ load `.env` files, Supabase credentials, backups, or production data.
 Coverage includes:
 
 - `supabase-init.sql`, the shared transaction prerequisite, and all enterprise
-  migrations 001-021 in filename order;
+  migrations 001-024 in filename order;
 - owner bootstrap, roles, employee invitation acceptance, task assignment,
   task update, checklist, comments, notifications, and audit listing;
 - forged-owner, cross-merchant, low-privilege ACL, and role-escalation denial;
@@ -18,6 +18,13 @@ Coverage includes:
 - complete archive traversal with strict `(updated_at, id)` keyset cursors,
   server-side query/scenario/tag filters, private archive ACLs, and revision
   `TRUNCATE` rejection;
+- employee workflow acknowledgement, revision-pinned execution, step notes and
+  evidence metadata, completion feedback, manager resolution, and aggregate
+  coverage statistics;
+- published revision history, draft-only restoration, explicit legacy-role
+  workflow permission grants, and single-event audit behavior;
+- immutable task-to-workflow bindings, published-only choices, atomic checklist
+  generation, provenance, idempotency, capacity rollback, and tenant denial;
 - notification reads filtered by each employee's current task/workflow
   permissions, including historical rows after a role change;
 - two independent `psql` sessions racing the same task, invitation, and
