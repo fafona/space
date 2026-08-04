@@ -35,6 +35,7 @@ const ENTITY_FILTERS: ReadonlyArray<{
   { value: "employee", label: "员工账号" },
   { value: "invitation", label: "员工邀请" },
   { value: "workflow", label: "工作流程" },
+  { value: "automation", label: "流程自动化" },
 ];
 
 const EVENT_LABELS: Record<string, string> = {
@@ -64,6 +65,13 @@ const EVENT_LABELS: Record<string, string> = {
   "workflow.published": "发布了工作流程",
   "workflow.archived": "归档了工作流程",
   "workflow.restored": "恢复了工作流程",
+  "automation.created": "创建了自动化规则",
+  "automation.updated": "更新了自动化规则",
+  "automation.paused": "暂停了自动化规则",
+  "automation.resumed": "启用了自动化规则",
+  "automation.archived": "归档了自动化规则",
+  "automation.fired": "触发了自动化规则",
+  "automation.failed": "自动化规则执行失败",
 };
 
 const FIELD_LABELS: Record<string, string> = {
@@ -282,7 +290,7 @@ export default function MerchantEnterpriseAuditLog({
           <div>
             <h2 className="text-lg font-semibold text-slate-950">企业操作记录</h2>
             <p className="mt-1 text-sm leading-6 text-slate-500">
-              记录员工、角色、看板和邀请的关键管理变化。记录不可修改或删除。
+              记录员工、角色、看板、工作流程、流程自动化和邀请的关键管理变化。记录不可修改或删除。
             </p>
           </div>
           <button

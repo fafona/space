@@ -79,6 +79,9 @@ import {
 } from "@/lib/merchantTaskOrdering";
 import MerchantEnterpriseNotificationCenter from "@/components/admin/MerchantEnterpriseNotificationCenter";
 import MerchantEnterpriseAuditLog from "@/components/admin/MerchantEnterpriseAuditLog";
+import MerchantEnterpriseTodoCenter from "@/components/admin/MerchantEnterpriseTodoCenter";
+import MerchantEnterpriseAutomationManager from "@/components/admin/MerchantEnterpriseAutomationManager";
+import { normalizeMerchantEnterpriseTodoPage } from "@/lib/merchantEnterpriseTodos";
 import MerchantTaskWorkflowBindingCard from "@/components/admin/MerchantTaskWorkflowBindingCard";
 import EnterpriseWorkflowsPanel, {
   type EnterpriseWorkflowApiFetch,
@@ -87,8 +90,10 @@ import { WorkflowPermissionGapCard } from "@/app/enterprise/[siteId]/EnterpriseW
 
 export type MerchantEnterpriseView =
   | "overview"
+  | "todos"
   | "tasks"
   | "workflows"
+  | "automations"
   | "employees"
   | "roles"
   | "audit";
@@ -105,8 +110,10 @@ export type MerchantEnterpriseExternalNavigation = {
 
 const MERCHANT_ENTERPRISE_VIEW_ITEMS = [
   { key: "overview", label: "工作台", permission: "enterprise.view" },
+  { key: "todos", label: "待办中心", permission: "enterprise.view" },
   { key: "tasks", label: "任务看板", permission: "tasks.view" },
   { key: "workflows", label: "工作流程", permission: "workflows.view" },
+  { key: "automations", label: "流程自动化", permission: "automations.view" },
   { key: "employees", label: "员工账号", permission: "employees.view" },
   { key: "roles", label: "角色权限", permission: "roles.view" },
   { key: "audit", label: "操作记录", permission: "audit.view" },
@@ -131,6 +138,7 @@ type MerchantEnterpriseManagerProps = {
   taskDraftIntent?: MerchantOrderTaskDraftIntent | null;
   onTaskDraftIntentHandled?: (requestId: string) => void;
   onOpenSourceOrder?: (input: { siteId: string; orderId: string }) => Promise<void> | void;
+  onTodoCountChange?: (count: number) => void;
   registerLeaveGuard?: (guard: (() => boolean) | null) => void;
 };
 
@@ -3398,6 +3406,7 @@ function MerchantEnterpriseManagerContent({
   taskDraftIntent = null,
   onTaskDraftIntentHandled,
   onOpenSourceOrder,
+  onTodoCountChange,
   registerLeaveGuard,
 }: MerchantEnterpriseManagerProps) {
   const resolvedCollaborationRefreshIntervalMs = normalizeCollaborationRefreshInterval(
@@ -3408,6 +3417,8 @@ function MerchantEnterpriseManagerContent({
   const [internalView, setInternalView] = useState<MerchantEnterpriseView>("overview");
   const [actor, setActor] = useState<MerchantEnterpriseActor | null>(null);
   const [snapshot, setSnapshot] = useState<MerchantEnterpriseSnapshot>(EMPTY_SNAPSHOT);
+  const snapshotRef = useRef(snapshot);
+  snapshotRef.current = snapshot;
   const [needsBootstrap, setNeedsBootstrap] = useState(false);
   const [loading, setLoading] = useState(true);
   const [overviewRefreshing, setOverviewRefreshing] = useState(false);
@@ -3495,8 +3506,10 @@ function MerchantEnterpriseManagerContent({
   const [roleAllowedBoardIds, setRoleAllowedBoardIds] = useState<string[]>([]);
   const [dirtyRoleIds, setDirtyRoleIds] = useState<Set<string>>(() => new Set());
   const [workflowHasDraft, setWorkflowHasDraft] = useState(false);
+  const [automationHasDraft, setAutomationHasDraft] = useState(false);
   const [workflowFocusRequest, setWorkflowFocusRequest] = useState<{
     workflowId: string;
+    executionId?: string;
     requestId: number;
   } | null>(null);
   const workflowFocusSequenceRef = useRef(0);
@@ -3797,6 +3810,43 @@ function MerchantEnterpriseManagerContent({
   }, [loadOverview]);
 
   useEffect(() => {
+    if (
+      !actor ||
+      needsBootstrap ||
+      !onTodoCountChange ||
+      lastSyncedAtMs <= 0
+    ) {
+      return;
+    }
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const params = new URLSearchParams({
+          siteId,
+          category: "all",
+          limit: "1",
+        });
+        const response = await apiFetch(
+          `/api/merchant-enterprise/todos?${params.toString()}`,
+          { signal: controller.signal },
+        );
+        const payload = await response.json().catch(() => null);
+        const page = normalizeMerchantEnterpriseTodoPage(payload);
+        if (
+          !controller.signal.aborted &&
+          response.ok &&
+          page?.merchantId === siteId
+        ) {
+          onTodoCountChange(page.counts.openCount);
+        }
+      } catch {
+        // The badge is supplementary; the todo page exposes its own retry state.
+      }
+    })();
+    return () => controller.abort();
+  }, [actor, apiFetch, lastSyncedAtMs, needsBootstrap, onTodoCountChange, siteId]);
+
+  useEffect(() => {
     const intervalId = window.setInterval(
       () => setOverviewNowMs(Date.now()),
       resolvedCollaborationRefreshIntervalMs,
@@ -3848,7 +3898,9 @@ function MerchantEnterpriseManagerContent({
       !roleTransitionRequest &&
       !draggingTaskId &&
       (tab === "overview" ||
+        tab === "todos" ||
         tab === "audit" ||
+        (tab === "automations" && !automationHasDraft) ||
         (tab === "workflows" && !workflowHasDraft) ||
         (tab === "tasks" &&
           !showBoardSettings &&
@@ -3949,8 +4001,14 @@ function MerchantEnterpriseManagerContent({
     [],
   );
   const openWorkflowFromNotification = useCallback(
-    (workflowId: string): Promise<boolean> => {
+    (workflowId: string, executionId?: string): Promise<boolean> => {
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(workflowId)) {
+        return Promise.resolve(false);
+      }
+      if (
+        executionId &&
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(executionId)
+      ) {
         return Promise.resolve(false);
       }
       if (
@@ -3972,7 +4030,7 @@ function MerchantEnterpriseManagerContent({
           settleWorkflowFocusRequest(requestId, false);
         }, MERCHANT_ENTERPRISE_WORKFLOW_FOCUS_TIMEOUT_MS);
         workflowFocusResolverRef.current = { requestId, timeoutId, resolve };
-        setWorkflowFocusRequest({ workflowId, requestId });
+        setWorkflowFocusRequest({ workflowId, ...(executionId ? { executionId } : {}), requestId });
       });
     },
     [requestViewChange, settleWorkflowFocusRequest, tab, workflowHasDraft],
@@ -4325,6 +4383,26 @@ function MerchantEnterpriseManagerContent({
     commitViewChange("tasks");
     setEditingTaskId(task.id);
     return true;
+  }
+
+  function openTaskById(taskId: string) {
+    const task = snapshotRef.current.tasks.find((item) => item.id === taskId);
+    if (task) {
+      openTaskFromOverview(task);
+      return;
+    }
+    setMessage({ kind: "info", text: "正在同步这项任务的最新数据…" });
+    void loadOverview({ preserveData: true }).then((refreshed) => {
+      if (!refreshed) return;
+      window.requestAnimationFrame(() => {
+        const refreshedTask = snapshotRef.current.tasks.find((item) => item.id === taskId);
+        if (refreshedTask) {
+          openTaskFromOverview(refreshedTask);
+          return;
+        }
+        setMessage({ kind: "info", text: "该任务已完成、归档或当前账号已无权访问。" });
+      });
+    });
   }
   const taskDragEnabled =
     taskArchiveView === "active" &&
@@ -6171,6 +6249,22 @@ function MerchantEnterpriseManagerContent({
           </div>
         ) : null}
 
+        {!needsBootstrap && tab === "todos" ? (
+          <div className="mt-5">
+            <MerchantEnterpriseTodoCenter
+              siteId={siteId}
+              actor={actor}
+              apiFetch={apiFetch}
+              onOpenTask={openTaskById}
+              onOpenWorkflow={(workflowId, executionId) => {
+                void openWorkflowFromNotification(workflowId, executionId);
+              }}
+              onCountChange={onTodoCountChange}
+              refreshIntervalMs={resolvedCollaborationRefreshIntervalMs}
+            />
+          </div>
+        ) : null}
+
         {!needsBootstrap && tab === "workflows" ? (
           <div className="mt-5">
             <EnterpriseWorkflowsPanel
@@ -6178,9 +6272,23 @@ function MerchantEnterpriseManagerContent({
               actor={actor}
               apiFetch={apiFetch}
               focusWorkflowId={workflowFocusRequest?.workflowId ?? null}
+              focusExecutionId={workflowFocusRequest?.executionId ?? null}
               focusRequestId={workflowFocusRequest?.requestId ?? 0}
               onFocusHandled={handleWorkflowFocusHandled}
               onDirtyChange={setWorkflowHasDraft}
+            />
+          </div>
+        ) : null}
+
+        {!needsBootstrap && tab === "automations" ? (
+          <div className="mt-5">
+            <MerchantEnterpriseAutomationManager
+              siteId={siteId}
+              actor={actor}
+              snapshot={snapshot}
+              apiFetch={apiFetch}
+              onOpenTask={openTaskById}
+              onDirtyChange={setAutomationHasDraft}
             />
           </div>
         ) : null}

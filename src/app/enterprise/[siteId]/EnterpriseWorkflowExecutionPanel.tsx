@@ -147,6 +147,7 @@ function EmployeeExecutionWorkspace({
   onAcknowledgement,
   onExecutions,
   taskId = null,
+  focusExecutionId = null,
   generateChecklist = false,
   onTaskChecklistGenerated,
 }: {
@@ -161,6 +162,7 @@ function EmployeeExecutionWorkspace({
   onAcknowledgement: (value: MerchantEnterpriseWorkflowAcknowledgement) => void;
   onExecutions: (value: MerchantEnterpriseWorkflowExecution[]) => void;
   taskId?: string | null;
+  focusExecutionId?: string | null;
   generateChecklist?: boolean;
   onTaskChecklistGenerated?: (count: number) => void | Promise<void>;
 }) {
@@ -182,11 +184,25 @@ function EmployeeExecutionWorkspace({
   const taskExecution = taskId
     ? executions.find((execution) => execution.taskId === taskId) ?? null
     : null;
+  const focusedExecution = focusExecutionId
+    ? executions.find((execution) => execution.id === focusExecutionId) ?? null
+    : null;
   const selectedExecution =
     taskExecution ??
+    focusedExecution ??
     executions.find((execution) => execution.id === selectedExecutionId) ??
     executions[0] ??
     null;
+
+  useEffect(() => {
+    if (
+      focusExecutionId &&
+      executions.some((execution) => execution.id === focusExecutionId) &&
+      selectedExecutionId !== focusExecutionId
+    ) {
+      setSelectedExecutionId(focusExecutionId);
+    }
+  }, [executions, focusExecutionId, selectedExecutionId]);
 
   useEffect(() => {
     if (selectedExecution && selectedExecution.id !== selectedExecutionId) {
@@ -760,17 +776,25 @@ function ManagerExecutionStats({
   stats,
   loading,
   onReload,
+  focusExecutionId = null,
 }: {
   siteId: string;
   apiFetch: EnterpriseWorkflowApiFetch;
   stats: MerchantEnterpriseWorkflowExecutionStats | null;
   loading: boolean;
   onReload: () => Promise<void>;
+  focusExecutionId?: string | null;
 }) {
   const [busyId, setBusyId] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [resolutionNotes, setResolutionNotes] = useState<Record<string, string>>({});
+  const focusedFeedbackRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!focusExecutionId || loading || !focusedFeedbackRef.current) return;
+    focusedFeedbackRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [focusExecutionId, loading, stats]);
 
   async function resolveFeedback(feedback: MerchantEnterpriseWorkflowExecutionFeedback) {
     const executionVersion = Number(
@@ -875,7 +899,15 @@ function ManagerExecutionStats({
             <div className="mt-4 space-y-3">
               <h5 className="text-sm font-semibold text-slate-900">反馈处理队列（全部版本）</h5>
               {stats.recentFeedback.map((feedback) => (
-                <article key={feedback.executionId} className="rounded-xl border border-slate-200 bg-white p-3">
+                <article
+                  key={feedback.executionId}
+                  ref={feedback.executionId === focusExecutionId ? focusedFeedbackRef : undefined}
+                  className={`rounded-xl border bg-white p-3 ${
+                    feedback.executionId === focusExecutionId
+                      ? "border-blue-400 ring-2 ring-blue-100"
+                      : "border-slate-200"
+                  }`}
+                >
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>
                       <div className="text-sm font-semibold text-slate-900">{feedback.employeeName} · v{feedback.revisionNo}</div>
@@ -928,6 +960,7 @@ export default function EnterpriseWorkflowExecutionPanel({
   actor,
   apiFetch,
   taskId = null,
+  focusExecutionId = null,
   generateChecklist = false,
   onTaskChecklistGenerated,
 }: {
@@ -936,6 +969,7 @@ export default function EnterpriseWorkflowExecutionPanel({
   actor: EnterpriseWorkflowActor;
   apiFetch: EnterpriseWorkflowApiFetch;
   taskId?: string | null;
+  focusExecutionId?: string | null;
   generateChecklist?: boolean;
   onTaskChecklistGenerated?: (count: number) => void | Promise<void>;
 }) {
@@ -1050,6 +1084,7 @@ export default function EnterpriseWorkflowExecutionPanel({
           onAcknowledgement={setAcknowledgement}
           onExecutions={setExecutions}
           taskId={taskId}
+          focusExecutionId={focusExecutionId}
           generateChecklist={generateChecklist}
           onTaskChecklistGenerated={onTaskChecklistGenerated}
         />
@@ -1061,6 +1096,7 @@ export default function EnterpriseWorkflowExecutionPanel({
           stats={stats}
           loading={loading}
           onReload={load}
+          focusExecutionId={focusExecutionId}
         />
       ) : null}
       {error ? <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div> : null}

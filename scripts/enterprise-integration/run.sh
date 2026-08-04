@@ -36,6 +36,9 @@ run_sql_file() {
 run_sql_file "${SCRIPT_DIR}/00-supabase-stubs.sql"
 run_sql_file "${REPOSITORY_ROOT}/scripts/supabase-init.sql"
 run_sql_file "${REPOSITORY_ROOT}/scripts/supabase-migrations/202607250001_core_transaction_foundation.sql"
+run_sql_file "${REPOSITORY_ROOT}/scripts/supabase-migrations/202607250004_booking_shadow_write_rpc.sql"
+run_sql_file "${REPOSITORY_ROOT}/scripts/supabase-migrations/202607250007_reliable_outbox_runtime.sql"
+run_sql_file "${REPOSITORY_ROOT}/scripts/supabase-migrations/202607250008_scoped_outbox_claim.sql"
 
 mapfile -t enterprise_migrations < <(
   find "${REPOSITORY_ROOT}/scripts/supabase-migrations" -maxdepth 1 -type f \
@@ -43,8 +46,8 @@ mapfile -t enterprise_migrations < <(
     -print | sort
 )
 
-if [[ "${#enterprise_migrations[@]}" -ne 24 ]]; then
-  echo "Expected 24 enterprise migrations (001-024), found ${#enterprise_migrations[@]}" >&2
+if [[ "${#enterprise_migrations[@]}" -ne 26 ]]; then
+  echo "Expected 26 enterprise migrations (001-026), found ${#enterprise_migrations[@]}" >&2
   printf '  %s\n' "${enterprise_migrations[@]}" >&2
   exit 1
 fi
@@ -55,10 +58,10 @@ done
 
 registry_count="$(
   run_psql --tuples-only --no-align --command \
-    "select count(*) from public.faolla_schema_migrations where version = 202607250001 or version between 202607310001 and 202608040024;"
+    "select count(*) from public.faolla_schema_migrations where version in (202607250001, 202607250004, 202607250007, 202607250008) or version between 202607310001 and 202608040026;"
 )"
-if [[ "${registry_count}" -ne 25 ]]; then
-  echo "Expected 25 applied prerequisite/enterprise versions, found ${registry_count}" >&2
+if [[ "${registry_count}" -ne 30 ]]; then
+  echo "Expected 30 applied prerequisite/enterprise versions, found ${registry_count}" >&2
   exit 1
 fi
 
@@ -68,6 +71,8 @@ run_sql_file "${SCRIPT_DIR}/43-workflow-archive-pagination.sql"
 run_sql_file "${SCRIPT_DIR}/46-workflow-execution.sql"
 run_sql_file "${SCRIPT_DIR}/47-workflow-revisions.sql"
 run_sql_file "${SCRIPT_DIR}/48-task-workflow-binding.sql"
+run_sql_file "${SCRIPT_DIR}/49-enterprise-todos.sql"
+run_sql_file "${SCRIPT_DIR}/50-workflow-automations.sql"
 
 work_dir="$(mktemp -d)"
 cleanup() {

@@ -658,8 +658,10 @@ const MERCHANT_ENTERPRISE_CONTEXT_MENU_ITEMS: Array<{
   label: string;
   view: Exclude<MerchantEnterpriseView, "overview">;
 }> = [
+  { label: "待办中心", view: "todos" },
   { label: "任务看板", view: "tasks" },
   { label: "工作流程", view: "workflows" },
+  { label: "流程自动化", view: "automations" },
   { label: "员工账号", view: "employees" },
   { label: "角色权限", view: "roles" },
   { label: "操作记录", view: "audit" },
@@ -4208,6 +4210,7 @@ export default function AdminClient({
   const [merchantEnterpriseAvailableViews, setMerchantEnterpriseAvailableViews] = useState<
     readonly MerchantEnterpriseView[]
   >([]);
+  const [merchantEnterpriseTodoCount, setMerchantEnterpriseTodoCount] = useState(0);
   const merchantDesktopDefaultSectionSiteRef = useRef("");
   const [merchantLogFailureSnapshots, setMerchantLogFailureSnapshots] = useState<
     ReturnType<typeof readPublishFailureSnapshots>
@@ -10417,6 +10420,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     getSiteIdFromStoreScope(storeScope) ||
     ""
   ).trim();
+  useEffect(() => {
+    setMerchantEnterpriseTodoCount(0);
+  }, [supportMobileBookingSiteId]);
   const supportFaollaFrameSourceHref = supportFaollaFrameHref.trim() || "/";
   const supportFaollaFrameTargetHref = useMemo(
     () =>
@@ -16676,6 +16682,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             siteId={supportMobileBookingSiteId}
             siteName={effectiveMerchantDisplayName || merchantDisplayName}
             className="!min-h-0 !py-3"
+            onTodoCountChange={setMerchantEnterpriseTodoCount}
             taskDraftIntent={
               merchantEnterpriseTaskIntent?.siteId === supportMobileBookingSiteId
                 ? merchantEnterpriseTaskIntent
@@ -19595,6 +19602,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               siteId={editingSiteId || merchantSiteIdOverride || ""}
               siteName={effectiveMerchantDisplayName || merchantDisplayName}
               className="min-h-[calc(100vh-14rem)]"
+              onTodoCountChange={setMerchantEnterpriseTodoCount}
               taskDraftIntent={
                 merchantEnterpriseTaskIntent?.siteId ===
                 (editingSiteId || merchantSiteIdOverride || "")
@@ -19920,6 +19928,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                           <MerchantDesktopMenuIcon name="enterprise" />
                           <span>企业管理</span>
                         </span>
+                        {merchantEnterpriseTodoCount > 0 ? (
+                          <span className="ml-2 inline-flex min-w-[1.5rem] items-center justify-center rounded-full bg-rose-500 px-2 py-0.5 text-xs font-semibold leading-none text-white">
+                            {merchantEnterpriseTodoCount > 99 ? "99+" : merchantEnterpriseTodoCount}
+                          </span>
+                        ) : null}
                       </button>
                     ) : null}
                     <button
@@ -20193,7 +20206,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                             onClick={() => void openMerchantEnterprisePanel(item.view)}
                             aria-current={merchantEnterpriseView === item.view ? "page" : undefined}
                           >
-                            {item.label}
+                            <span className="inline-flex w-full items-center justify-between gap-2">
+                              <span>{item.label}</span>
+                              {item.view === "todos" && merchantEnterpriseTodoCount > 0 ? (
+                                <span className="inline-flex min-w-[1.4rem] items-center justify-center rounded-full bg-rose-500 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-white">
+                                  {merchantEnterpriseTodoCount > 99 ? "99+" : merchantEnterpriseTodoCount}
+                                </span>
+                              ) : null}
+                            </span>
                           </button>
                         ))}
                       {merchantEnterpriseAvailableViews.length === 0 ? (

@@ -14,6 +14,8 @@ export const MERCHANT_ENTERPRISE_PERMISSIONS = [
   "workflows.view",
   "workflows.manage",
   "workflows.publish",
+  "automations.view",
+  "automations.manage",
   "audit.view",
 ] as const;
 
@@ -54,6 +56,8 @@ export const MERCHANT_ENTERPRISE_PERMISSION_CATALOG: ReadonlyArray<{
   { key: "workflows.view", label: "查看工作流程", group: "流程", description: "搜索和查看企业已发布的工作流程。" },
   { key: "workflows.manage", label: "编写工作流程", group: "流程", description: "创建和编辑工作流程草稿。" },
   { key: "workflows.publish", label: "发布工作流程", group: "流程", description: "审核并将工作流程发布给员工。" },
+  { key: "automations.view", label: "查看流程自动化", group: "流程", description: "查看自动触发规则及其运行结果。" },
+  { key: "automations.manage", label: "管理流程自动化", group: "流程", description: "创建、修改、暂停和启用自动触发规则。" },
   { key: "audit.view", label: "查看审计记录", group: "审计", description: "查看企业设置和员工账号的不可变操作记录。" },
 ];
 
@@ -75,6 +79,17 @@ const MERCHANT_ENTERPRISE_PERMISSION_DEPENDENCIES: Readonly<
   "workflows.view": ["enterprise.view"],
   "workflows.manage": ["enterprise.view", "workflows.view"],
   "workflows.publish": ["enterprise.view", "workflows.view"],
+  "automations.view": ["enterprise.view", "tasks.view", "workflows.view"],
+  "automations.manage": [
+    "enterprise.view",
+    "tasks.view",
+    "tasks.create",
+    "tasks.assign",
+    "workflows.view",
+    "automations.view",
+    "roles.view",
+    "employees.view",
+  ],
   "audit.view": ["enterprise.view"],
 };
 
@@ -126,6 +141,13 @@ export const MERCHANT_ENTERPRISE_AUDIT_EVENT_TYPES = [
   "workflow.published",
   "workflow.archived",
   "workflow.restored",
+  "automation.created",
+  "automation.updated",
+  "automation.paused",
+  "automation.resumed",
+  "automation.archived",
+  "automation.fired",
+  "automation.failed",
 ] as const;
 export const MERCHANT_ENTERPRISE_AUDIT_ENTITY_TYPES = [
   "workspace",
@@ -135,6 +157,7 @@ export const MERCHANT_ENTERPRISE_AUDIT_ENTITY_TYPES = [
   "employee",
   "invitation",
   "workflow",
+  "automation",
 ] as const;
 
 export type MerchantEnterpriseRoleStatus = (typeof MERCHANT_ENTERPRISE_ROLE_STATUSES)[number];
@@ -435,6 +458,8 @@ const DEFAULT_MERCHANT_ENTERPRISE_ROLE_PERMISSIONS: MerchantEnterprisePermission
   "workflows.view",
   "workflows.manage",
   "workflows.publish",
+  "automations.view",
+  "automations.manage",
 ];
 
 export const DEFAULT_MERCHANT_ENTERPRISE_ROLES: ReadonlyArray<{
@@ -460,6 +485,8 @@ export const DEFAULT_MERCHANT_ENTERPRISE_ROLES: ReadonlyArray<{
       "roles.view",
       "workflows.view",
       "workflows.manage",
+      "automations.view",
+      "automations.manage",
     ],
   },
   {
@@ -1304,6 +1331,25 @@ const MERCHANT_ENTERPRISE_AUDIT_DATA_KEYS: Readonly<
     "published_version",
     "step_count",
   ]),
+  automation: new Set([
+    "name",
+    "source_type",
+    "event_type",
+    "from_status",
+    "to_status",
+    "board_id",
+    "column_id",
+    "workflow_id",
+    "workflow_revision_id",
+    "priority",
+    "due_offset_minutes",
+    "status",
+    "assignee_count",
+    "task_id",
+    "error_code",
+    "event_ref",
+    "reason_code",
+  ]),
 };
 
 function auditEventMatchesEntity(
@@ -1316,7 +1362,8 @@ function auditEventMatchesEntity(
   if (eventType.startsWith("column.")) return entityType === "column";
   if (eventType.startsWith("employee.")) return entityType === "employee";
   if (eventType.startsWith("invitation.")) return entityType === "invitation";
-  return eventType.startsWith("workflow.") && entityType === "workflow";
+  if (eventType.startsWith("workflow.")) return entityType === "workflow";
+  return eventType.startsWith("automation.") && entityType === "automation";
 }
 
 function normalizeAuditTimestampValue(value: unknown) {

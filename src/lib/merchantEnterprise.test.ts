@@ -129,6 +129,42 @@ test("workflow authoring and publishing permissions stay independently assignabl
   assert.equal(employee?.permissions.includes("workflows.manage"), false);
 });
 
+test("automation permissions follow workflow and task dependencies in default roles", () => {
+  assert.ok(MERCHANT_ENTERPRISE_PERMISSIONS.includes("automations.view"));
+  assert.ok(MERCHANT_ENTERPRISE_PERMISSIONS.includes("automations.manage"));
+  assert.deepEqual(
+    getMissingMerchantEnterprisePermissionDependencies(["automations.view"]),
+    ["enterprise.view", "tasks.view", "workflows.view"],
+  );
+  assert.deepEqual(
+    getMissingMerchantEnterprisePermissionDependencies(["automations.manage"]),
+    [
+      "enterprise.view",
+      "tasks.view",
+      "tasks.create",
+      "tasks.assign",
+      "workflows.view",
+      "automations.view",
+      "roles.view",
+      "employees.view",
+    ],
+  );
+  const automationManagerPermissions = toggleMerchantEnterprisePermissionSelection(
+    [],
+    "automations.manage",
+    true,
+  );
+  assert.equal(automationManagerPermissions.includes("roles.view"), true);
+  assert.equal(automationManagerPermissions.includes("employees.view"), true);
+  const administrator = DEFAULT_MERCHANT_ENTERPRISE_ROLES[0];
+  const supervisor = DEFAULT_MERCHANT_ENTERPRISE_ROLES[1];
+  const employee = DEFAULT_MERCHANT_ENTERPRISE_ROLES[2];
+  assert.equal(administrator?.permissions.includes("automations.manage"), true);
+  assert.equal(supervisor?.permissions.includes("automations.manage"), true);
+  assert.equal(employee?.permissions.includes("automations.view"), false);
+  assert.equal(employee?.permissions.includes("automations.manage"), false);
+});
+
 test("workflow normalization preserves ordered bounded content and publication metadata", () => {
   const value = normalizeMerchantEnterpriseWorkflow({
     id: "11111111-1111-4111-8111-111111111111",
@@ -256,6 +292,38 @@ test("enterprise audit normalization accepts only sanitized immutable event rows
       ...event,
       eventType: "role.updated",
       entityType: "employee",
+    }),
+    null,
+  );
+});
+
+test("automation audit normalization keeps opaque refs and rejects internal event keys", () => {
+  const row = {
+    id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab",
+    merchant_id: "10000000",
+    event_type: "automation.fired",
+    entity_type: "automation",
+    entity_id: "77777777-7777-4777-8777-777777777777",
+    actor_type: "system",
+    actor_id: null,
+    actor_label: "系统",
+    target_label: "New order handoff",
+    before_data: {},
+    after_data: {
+      status: "completed",
+      event_ref: "order-11111111-1111-4111-8111-111111111111",
+    },
+    operation_id: "",
+    created_at: "2026-08-04T12:00:00+00:00",
+  };
+  assert.deepEqual(normalizeMerchantEnterpriseAuditEvent(row)?.afterData, {
+    status: "completed",
+    event_ref: "order-11111111-1111-4111-8111-111111111111",
+  });
+  assert.equal(
+    normalizeMerchantEnterpriseAuditEvent({
+      ...row,
+      after_data: { source_event_key: "order:internal" },
     }),
     null,
   );

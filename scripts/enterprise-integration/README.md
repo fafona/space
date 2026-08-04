@@ -6,8 +6,8 @@ load `.env` files, Supabase credentials, backups, or production data.
 
 Coverage includes:
 
-- `supabase-init.sql`, the shared transaction prerequisite, and all enterprise
-  migrations 001-024 in filename order;
+- `supabase-init.sql`, the shared order/booking and reliable-outbox
+  prerequisites, and all enterprise migrations 001-026 in filename order;
 - owner bootstrap, roles, employee invitation acceptance, task assignment,
   task update, checklist, comments, notifications, and audit listing;
 - forged-owner, cross-merchant, low-privilege ACL, and role-escalation denial;
@@ -25,6 +25,11 @@ Coverage includes:
   workflow permission grants, and single-event audit behavior;
 - immutable task-to-workflow bindings, published-only choices, atomic checklist
   generation, provenance, idempotency, capacity rollback, and tenant denial;
+- unified employee and manager todo projection, deterministic keyset pagination,
+  permission-aware counts, and cross-merchant denial;
+- order and booking workflow automation rules, immutable published-revision
+  pinning, event idempotency, per-rule failure isolation, safe task templates,
+  assignee notifications, and inactive-source protection;
 - notification reads filtered by each employee's current task/workflow
   permissions, including historical rows after a role change;
 - two independent `psql` sessions racing the same task, invitation, and
