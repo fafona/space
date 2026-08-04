@@ -60,6 +60,9 @@ type MerchantOutboxWorkerOptions = {
   limit?: number;
   leaseSeconds?: number;
   taskTimeoutMs?: number;
+  claimFunctionName?:
+    | "faolla_claim_merchant_outbox_scoped_v1"
+    | "faolla_claim_merchant_enterprise_automation_outbox_v1";
   handlers: MerchantOutboxTaskHandlers;
 };
 
@@ -219,13 +222,17 @@ export async function processMerchantOutboxBatch(
 
   let claimedRows: unknown;
   try {
-    claimedRows = await callRpc(client, "faolla_claim_merchant_outbox_scoped_v1", {
+    claimedRows = await callRpc(
+      client,
+      options.claimFunctionName ?? "faolla_claim_merchant_outbox_scoped_v1",
+      {
       p_worker_id: workerId,
       p_merchant_ids: merchantIds,
       p_event_types: eventTypes,
       p_limit: limit,
       p_lease_seconds: leaseSeconds,
-    });
+      },
+    );
   } catch (error) {
     return {
       ...EMPTY_SUMMARY,

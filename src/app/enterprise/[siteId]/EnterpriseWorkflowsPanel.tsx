@@ -75,6 +75,7 @@ export type EnterpriseWorkflowsPanelProps = {
   apiFetch: EnterpriseWorkflowApiFetch;
   className?: string;
   focusWorkflowId?: string | null;
+  focusExecutionId?: string | null;
   focusRequestId?: number;
   onFocusHandled?: (requestId: number, opened: boolean) => void;
   onDirtyChange?: (dirty: boolean) => void;
@@ -387,6 +388,7 @@ export default function EnterpriseWorkflowsPanel({
   apiFetch,
   className = "",
   focusWorkflowId = null,
+  focusExecutionId = null,
   focusRequestId = 0,
   onFocusHandled,
   onDirtyChange,
@@ -412,6 +414,7 @@ export default function EnterpriseWorkflowsPanel({
     "current",
   );
   const [focusPinnedId, setFocusPinnedId] = useState<string | null>(null);
+  const [focusPinnedExecutionId, setFocusPinnedExecutionId] = useState<string | null>(null);
   const [focusReady, setFocusReady] = useState<{
     requestId: number;
     workflowId: string;
@@ -798,6 +801,11 @@ export default function EnterpriseWorkflowsPanel({
         setConflict(false);
         setNotice("");
         setFocusPinnedId(focused.id);
+        setFocusPinnedExecutionId(
+          focusExecutionId && UUID_PATTERN.test(focusExecutionId)
+            ? focusExecutionId
+            : null,
+        );
         setSelectedId(focused.id);
         setFocusReady({ requestId: focusRequestId, workflowId: focused.id });
         if (archiveMode) void loadArchivedWorkflows();
@@ -824,12 +832,17 @@ export default function EnterpriseWorkflowsPanel({
     busy,
     cancelArchiveLoad,
     focusRequestId,
+    focusExecutionId,
     focusWorkflowId,
     loadArchivedWorkflows,
     loading,
     request,
     siteId,
   ]);
+
+  useEffect(() => {
+    if (!focusPinnedId) setFocusPinnedExecutionId(null);
+  }, [focusPinnedId]);
 
   useEffect(() => {
     if (!focusReady) return;
@@ -1655,6 +1668,9 @@ export default function EnterpriseWorkflowsPanel({
                     workflow={selectedWorkflow}
                     actor={actor}
                     apiFetch={apiFetch}
+                    focusExecutionId={
+                      selectedWorkflow.id === focusPinnedId ? focusPinnedExecutionId : null
+                    }
                   />
                 ) : null}
 

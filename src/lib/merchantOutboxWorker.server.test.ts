@@ -45,6 +45,31 @@ test("worker stays idle when no handlers are registered", async () => {
   assert.equal(calls, 0);
 });
 
+test("worker can select the dedicated fair automation claim RPC", async () => {
+  const calls: string[] = [];
+  const summary = await processMerchantOutboxBatch(
+    {
+      rpc: async (name) => {
+        calls.push(name);
+        return { data: [], error: null };
+      },
+    },
+    {
+      workerId: "enterprise-automation:test",
+      merchantIds: ["10000001", "10000002"],
+      claimFunctionName:
+        "faolla_claim_merchant_enterprise_automation_outbox_v1",
+      handlers: {
+        "enterprise.workflow_automation.process": async () => undefined,
+      },
+    },
+  );
+  assert.equal(summary.status, "idle");
+  assert.deepEqual(calls, [
+    "faolla_claim_merchant_enterprise_automation_outbox_v1",
+  ]);
+});
+
 test("worker claims only registered event types and completes successful tasks", async () => {
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const summary = await processMerchantOutboxBatch(

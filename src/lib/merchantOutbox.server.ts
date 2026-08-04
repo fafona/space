@@ -7,6 +7,7 @@ export const MERCHANT_OUTBOX_EVENT_TYPES = [
   "site.publish.follow_up",
   "backup.create",
   "webhook.deliver",
+  "enterprise.workflow_automation.process",
 ] as const;
 
 export type MerchantOutboxEventType = (typeof MERCHANT_OUTBOX_EVENT_TYPES)[number];

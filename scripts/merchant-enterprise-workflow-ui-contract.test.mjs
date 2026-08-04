@@ -169,7 +169,9 @@ test("workflow archive history is lazy, server-filtered and append-only paginate
   );
   assert.match(
     workflowSource,
-    /new URLSearchParams\(\{\s*siteId,\s*workflowId:\s*focusWorkflowId\s*\}\)[\s\S]{0,1400}setFocusReady\(\{\s*requestId:\s*focusRequestId,\s*workflowId:\s*focused\.id\s*\}\)/,
+    // Keep this window large enough for response and draft-race validation while
+    // still proving that the exact request happens before focus becomes ready.
+    /new URLSearchParams\(\{\s*siteId,\s*workflowId:\s*focusWorkflowId\s*\}\)[\s\S]{0,1800}setFocusReady\(\{\s*requestId:\s*focusRequestId,\s*workflowId:\s*focused\.id\s*\}\)/,
     "notification targets must use the exact workflow endpoint before becoming ready",
   );
   assert.match(

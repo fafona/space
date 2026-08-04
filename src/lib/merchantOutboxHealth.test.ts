@@ -46,6 +46,17 @@ test("healthy outbox has no blockers or warnings", () => {
   });
 });
 
+test("known workflow automation events do not create an unknown-type blocker", () => {
+  const evaluation = evaluateMerchantOutboxHealth(
+    healthSnapshot({
+      pending_count: 1,
+      unknown_event_type_count: 0,
+    }),
+  );
+  assert.equal(evaluation.status, "healthy");
+  assert.ok(!evaluation.blockers.includes("unknown_event_types"));
+});
+
 test("expired leases, dead letters, unknown types and old backlog degrade health", () => {
   const evaluation = evaluateMerchantOutboxHealth(
     healthSnapshot({

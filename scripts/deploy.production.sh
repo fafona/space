@@ -5,6 +5,9 @@ APP_DIR="${APP_DIR:-/var/www/merchant-space}"
 APP_NAME="${APP_NAME:-merchant-space}"
 APP_PORT="${APP_PORT:-3000}"
 APP_BRANCH="${APP_BRANCH:-main}"
+AUTOMATION_WORKER_NAME="${AUTOMATION_WORKER_NAME:-${APP_NAME}-enterprise-automation-worker}"
+AUTOMATION_WORKER_KILL_TIMEOUT_MS="${AUTOMATION_WORKER_KILL_TIMEOUT_MS:-180000}"
+MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED="${MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED:-false}"
 SUPABASE_INTERNAL_URL="${SUPABASE_INTERNAL_URL:-http://127.0.0.1:8000}"
 RELEASES_DIR="${RELEASES_DIR:-${APP_DIR}.releases}"
 CURRENT_LINK="${CURRENT_LINK:-${APP_DIR}.current}"
@@ -103,7 +106,8 @@ validate_disk_thresholds() {
     NPM_FETCH_RETRY_MAX_TIMEOUT_MS \
     BUILD_TIMEOUT_SECONDS \
     BUILD_KILL_AFTER_SECONDS \
-    STALE_BUILD_MINUTES; do
+    STALE_BUILD_MINUTES \
+    AUTOMATION_WORKER_KILL_TIMEOUT_MS; do
     value="${!name}"
     if ! [[ "$value" =~ ^[0-9]+$ ]]; then
       echo "[deploy] $name must be a non-negative integer: $value"
@@ -151,6 +155,17 @@ validate_disk_thresholds() {
     echo "[deploy] deploy lock, install/build timeouts, and stale-build limits are invalid"
     exit 1
   fi
+  if [ "$AUTOMATION_WORKER_KILL_TIMEOUT_MS" -lt 10000 ]; then
+    echo "[deploy] AUTOMATION_WORKER_KILL_TIMEOUT_MS must be at least 10000"
+    exit 1
+  fi
+  case "$MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED" in
+    true|false) ;;
+    *)
+      echo "[deploy] MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED must be true or false"
+      exit 1
+      ;;
+  esac
 }
 
 acquire_deploy_lock() {
@@ -288,6 +303,7 @@ write_env_value "GOOGLE_BUSINESS_PROFILE_CLIENT_SECRET" "$(decode_base64_value "
 write_env_value "GOOGLE_BUSINESS_PROFILE_TOKEN_KEY" "$(decode_base64_value "${GOOGLE_BUSINESS_PROFILE_TOKEN_KEY_B64:-}")"
 write_env_value "GOOGLE_BUSINESS_PROFILE_REDIRECT_URI" "$(decode_base64_value "${GOOGLE_BUSINESS_PROFILE_REDIRECT_URI_B64:-}")"
 write_env_value "GOOGLE_BUSINESS_PROFILE_SYNC_INTERVAL_MS" "${GOOGLE_BUSINESS_PROFILE_SYNC_INTERVAL_MS:-}"
+write_env_value "MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED" "$MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED"
 write_env_value "SUPER_ADMIN_ACCOUNT" "${SUPER_ADMIN_ACCOUNT:-}"
 write_env_value "SUPER_ADMIN_PASSWORD" "${SUPER_ADMIN_PASSWORD:-}"
 write_env_value "SUPER_ADMIN_VERIFICATION_EMAIL" "${SUPER_ADMIN_VERIFICATION_EMAIL:-}"
@@ -477,15 +493,94 @@ wait_for_port_release() {
   return 1
 }
 
+read_runtime_automation_worker_enabled() {
+  local runtime_dir="$1"
+  local configured_value=""
+  if [ -f "$runtime_dir/.env.local" ]; then
+    configured_value="$(grep '^MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED=' "$runtime_dir/.env.local" \
+      | tail -n 1 \
+      | cut -d= -f2- || true)"
+  fi
+  if [ "$configured_value" = "true" ]; then
+    printf 'true\n'
+  else
+    printf 'false\n'
+  fi
+}
+
 start_release() {
   local runtime_dir="$1"
+  local automation_worker_enabled
   if [ -z "$runtime_dir" ] || [ ! -f "$runtime_dir/package.json" ] || [ ! -d "$runtime_dir/.next" ]; then
+    return 1
+  fi
+  automation_worker_enabled="$(read_runtime_automation_worker_enabled "$runtime_dir")"
+  (
+    cd "$runtime_dir"
+    MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED="$automation_worker_enabled" \
+      PORT="$APP_PORT" pm2 start npm --name "$APP_NAME" -- start -- -p "$APP_PORT"
+  )
+}
+
+pm2_process_has_pid() {
+  local process_name="$1"
+  local process_pid
+  process_pid="$(pm2 pid "$process_name" 2>/dev/null | tail -n 1 | tr -d '[:space:]')"
+  [[ "$process_pid" =~ ^[1-9][0-9]*$ ]]
+}
+
+start_automation_worker_process() {
+  local runtime_dir="$1"
+  local tsx_entry="$runtime_dir/node_modules/tsx/dist/cli.mjs"
+  local worker_entry="$runtime_dir/scripts/run-merchant-enterprise-automation-worker.ts"
+  local automation_worker_enabled
+  if [ -z "$runtime_dir" ] \
+    || [ ! -f "$runtime_dir/package.json" ] \
+    || [ ! -f "$tsx_entry" ] \
+    || [ ! -f "$worker_entry" ]; then
+    return 1
+  fi
+  automation_worker_enabled="$(read_runtime_automation_worker_enabled "$runtime_dir")"
+  if [ "$automation_worker_enabled" != "true" ]; then
     return 1
   fi
   (
     cd "$runtime_dir"
-    PORT="$APP_PORT" pm2 start npm --name "$APP_NAME" -- start -- -p "$APP_PORT"
+    MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED=true pm2 start "$tsx_entry" \
+      --name "$AUTOMATION_WORKER_NAME" \
+      --interpreter node \
+      --cwd "$runtime_dir" \
+      --kill-timeout "$AUTOMATION_WORKER_KILL_TIMEOUT_MS" \
+      --restart-delay 5000 \
+      --wait-ready \
+      --listen-timeout 20000 \
+      -- "$worker_entry"
   )
+}
+
+wait_for_automation_worker_online() {
+  local previous_pid=""
+  local current_pid=""
+  local stable_checks=0
+  for _ in $(seq 1 20); do
+    current_pid="$(pm2 pid "$AUTOMATION_WORKER_NAME" 2>/dev/null | tail -n 1 | tr -d '[:space:]')"
+    if [[ "$current_pid" =~ ^[1-9][0-9]*$ ]]; then
+      if [ "$current_pid" = "$previous_pid" ]; then
+        stable_checks=$((stable_checks + 1))
+      else
+        previous_pid="$current_pid"
+        stable_checks=1
+      fi
+      if [ "$stable_checks" -ge 3 ]; then
+        return 0
+      fi
+    else
+      previous_pid=""
+      stable_checks=0
+    fi
+    sleep 1
+  done
+  return 1
 }
 
 wait_for_release_health() {
@@ -578,14 +673,21 @@ RELEASE_BUILD_DIR="$RELEASES_DIR/.${RELEASE_NAME}.building"
 RELEASE_DIR="$RELEASES_DIR/$RELEASE_NAME"
 PREVIOUS_RUNTIME_DIR="$(resolve_current_runtime_dir)"
 PREVIOUS_LINK_TARGET="$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)"
+PREVIOUS_AUTOMATION_WORKER_RUNNING=0
+if pm2_process_has_pid "$AUTOMATION_WORKER_NAME"; then
+  PREVIOUS_AUTOMATION_WORKER_RUNNING=1
+fi
 SWITCH_COMPLETED=0
+PROCESSES_STOPPED=0
 DEPLOY_HEALTHY=0
 
 rollback_release() {
-  if [ "$SWITCH_COMPLETED" != "1" ] || [ "$DEPLOY_HEALTHY" = "1" ]; then
+  if { [ "$SWITCH_COMPLETED" != "1" ] && [ "$PROCESSES_STOPPED" != "1" ]; } \
+    || [ "$DEPLOY_HEALTHY" = "1" ]; then
     return 0
   fi
   echo "[deploy] new release failed health checks; restoring previous runtime"
+  pm2 delete "$AUTOMATION_WORKER_NAME" >/dev/null 2>&1 || true
   pm2 delete "$APP_NAME" >/dev/null 2>&1 || true
   wait_for_port_release || true
   if [ -n "$PREVIOUS_LINK_TARGET" ] && [ -d "$PREVIOUS_LINK_TARGET/.next" ]; then
@@ -595,6 +697,9 @@ rollback_release() {
   fi
   if [ -n "$PREVIOUS_RUNTIME_DIR" ]; then
     start_release "$PREVIOUS_RUNTIME_DIR" >/dev/null 2>&1 || true
+    if [ "$PREVIOUS_AUTOMATION_WORKER_RUNNING" = "1" ]; then
+      start_automation_worker_process "$PREVIOUS_RUNTIME_DIR" >/dev/null 2>&1 || true
+    fi
     pm2 save >/dev/null 2>&1 || true
   fi
 }
@@ -728,6 +833,10 @@ report_disk_status
 ensure_disk_headroom
 prepare_legacy_static_bridge
 
+PROCESSES_STOPPED=1
+if pm2 describe "$AUTOMATION_WORKER_NAME" >/dev/null 2>&1; then
+  pm2 delete "$AUTOMATION_WORKER_NAME" >/dev/null 2>&1 || true
+fi
 if pm2 describe "$APP_NAME" >/dev/null 2>&1; then
   pm2 delete "$APP_NAME" >/dev/null 2>&1 || true
 fi
@@ -758,6 +867,20 @@ fi
 if ! run_local_release_smoke; then
   echo "[deploy] local release smoke check failed"
   exit 1
+fi
+
+if [ "$MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED" = "true" ]; then
+  echo "[deploy] starting enterprise automation worker"
+  if ! start_automation_worker_process "$RELEASE_DIR"; then
+    echo "[deploy] failed to start enterprise automation worker"
+    exit 1
+  fi
+  if ! wait_for_automation_worker_online; then
+    echo "[deploy] enterprise automation worker did not remain online"
+    exit 1
+  fi
+else
+  echo "[deploy] enterprise automation worker is disabled"
 fi
 
 install_runtime_compatibility_links

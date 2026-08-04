@@ -15,6 +15,14 @@ const doneColumnId = "10000000-0000-4000-8000-000000000006";
 const secondEmployeeId = "10000000-0000-4000-8000-000000000008";
 const secondBoardId = "10000000-0000-4000-8000-000000000009";
 const workflowId = "10000000-0000-4000-8000-000000000030";
+const firstTodoExecutionId = "10000000-0000-4000-8000-000000000041";
+const focusedTodoExecutionId = "10000000-0000-4000-8000-000000000042";
+const feedbackTodoExecutionId = "10000000-0000-4000-8000-000000000043";
+const automationRuleId = "10000000-0000-4000-8000-000000000051";
+const automationRevisionTwoId = "10000000-0000-4000-8000-000000000052";
+const automationCompletedRunId = "10000000-0000-4000-8000-000000000053";
+const automationFailedRunId = "10000000-0000-4000-8000-000000000054";
+const automationAutoPausedRunId = "10000000-0000-4000-8000-000000000055";
 const allPermissions = [
   "enterprise.view",
   "tasks.view",
@@ -32,6 +40,8 @@ const allPermissions = [
   "workflows.view",
   "workflows.manage",
   "workflows.publish",
+  "automations.view",
+  "automations.manage",
 ];
 
 function timestamp() {
@@ -335,6 +345,21 @@ function actorCan(actor, permission) {
   return actor.type === "owner" || actor.permissions.includes(permission);
 }
 
+function todoCounts(items) {
+  const tasks = items.filter((item) => item.kind === "task");
+  return {
+    openCount: items.length,
+    taskCount: tasks.length,
+    overdueCount: tasks.filter((item) => item.urgency === "overdue").length,
+    dueSoonCount: tasks.filter((item) => item.urgency === "due_soon").length,
+    acknowledgementCount: items.filter(
+      (item) => item.kind === "workflow_acknowledgement",
+    ).length,
+    executionCount: items.filter((item) => item.kind === "workflow_execution").length,
+    feedbackCount: items.filter((item) => item.kind === "workflow_feedback").length,
+  };
+}
+
 function createWorkflow(state, input) {
   const now = timestamp();
   const workflow = {
@@ -389,6 +414,24 @@ async function installEnterpriseApiMock(
   const actor = options.actor || state.actor;
   const notifications = options.notifications || [];
   const auditPages = options.auditPages || [[]];
+  const overviewSnapshot = options.snapshot || state.snapshot;
+  const automationState = options.automationState || {
+    rules: [],
+    runs: [],
+    sourceAvailability: { order: "inactive", booking: "inactive" },
+  };
+  const publishedWorkflowChoices = () =>
+    options.publishedWorkflowChoices ||
+    state.workflows
+      .filter((workflow) => workflow.status === "published" && workflow.published)
+      .map((workflow) => ({
+        id: workflow.id,
+        title: workflow.published.fields.title,
+        scenario: workflow.published.fields.scenario,
+        revisionId: workflow.published.revisionId,
+        revisionNo: workflow.published.version,
+        stepCount: workflow.published.fields.steps.length,
+      }));
   await context.route("**/api/merchant-enterprise/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -405,8 +448,51 @@ async function installEnterpriseApiMock(
       return respond(200, {
         ok: true,
         actor: jsonClone(actor),
-        snapshot: jsonClone(state.snapshot),
+        snapshot: jsonClone(overviewSnapshot),
         needsBootstrap: false,
+      });
+    }
+    if (url.pathname === "/api/merchant-enterprise/todos" && request.method() === "GET") {
+      stats.todoGets = (stats.todoGets || 0) + 1;
+      const category = url.searchParams.get("category") || "";
+      const limit = Number(url.searchParams.get("limit") || "0");
+      const cursor = url.searchParams.get("cursor");
+      stats.todoRequests = [
+        ...(stats.todoRequests || []),
+        { category, limit, cursor },
+      ];
+      if (!actorCan(actor, "enterprise.view")) {
+        return respond(403, { ok: false, error: "permission_denied" });
+      }
+      const cursorMatch = cursor?.match(/^browser_todo_(\d+)$/) || null;
+      if (
+        url.searchParams.get("siteId") !== siteId ||
+        !["all", "tasks", "workflows"].includes(category) ||
+        !Number.isSafeInteger(limit) ||
+        limit < 1 ||
+        limit > 50 ||
+        (cursor !== null && !cursorMatch)
+      ) {
+        return respond(400, { ok: false, error: "invalid_enterprise_todo_query" });
+      }
+      const allItems = options.todoItems || [];
+      const categoryItems = allItems.filter((item) =>
+        category === "all"
+          ? true
+          : category === "tasks"
+            ? item.kind === "task"
+            : item.kind !== "task",
+      );
+      const offset = cursorMatch ? Number(cursorMatch[1]) : 0;
+      const items = categoryItems.slice(offset, offset + limit);
+      const nextOffset = offset + items.length;
+      return respond(200, {
+        ok: true,
+        merchantId: siteId,
+        items: jsonClone(items),
+        counts: todoCounts(allItems),
+        nextCursor:
+          nextOffset < categoryItems.length ? `browser_todo_${nextOffset}` : null,
       });
     }
     if (url.pathname === "/api/merchant-enterprise/workflows" && request.method() === "GET") {
@@ -542,6 +628,12 @@ async function installEnterpriseApiMock(
       }
       if (url.searchParams.get("scope") === "stats") {
         stats.workflowStatsGets = (stats.workflowStatsGets || 0) + 1;
+        if (options.workflowExecutionStats) {
+          return respond(200, {
+            ok: true,
+            stats: jsonClone(options.workflowExecutionStats),
+          });
+        }
         return respond(200, {
           ok: true,
           stats: {
@@ -578,8 +670,10 @@ async function installEnterpriseApiMock(
       return respond(200, {
         ok: true,
         currentRevisionNo: workflow.published.version,
-        acknowledgement: null,
-        executions: [],
+        acknowledgement: options.workflowAcknowledgement
+          ? jsonClone(options.workflowAcknowledgement)
+          : null,
+        executions: jsonClone(options.workflowExecutions || []),
       });
     }
     if (
@@ -633,17 +727,169 @@ async function installEnterpriseApiMock(
       request.method() === "GET"
     ) {
       stats.publishedWorkflowGets = (stats.publishedWorkflowGets || 0) + 1;
-      const choices = state.workflows
-        .filter((workflow) => workflow.status === "published" && workflow.published)
-        .map((workflow) => ({
-          id: workflow.id,
-          title: workflow.published.fields.title,
-          scenario: workflow.published.fields.scenario,
-          revisionId: workflow.published.revisionId,
-          revisionNo: workflow.published.version,
-          stepCount: workflow.published.fields.steps.length,
-        }));
+      const choices = publishedWorkflowChoices();
       return respond(200, { ok: true, choices: jsonClone(choices) });
+    }
+    if (
+      url.pathname === "/api/merchant-enterprise/workflow-automations" &&
+      request.method() === "GET"
+    ) {
+      stats.automationGets = (stats.automationGets || 0) + 1;
+      if (
+        url.searchParams.get("siteId") !== siteId ||
+        !actorCan(actor, "automations.view")
+      ) {
+        return respond(403, { ok: false, error: "permission_denied" });
+      }
+      return respond(200, {
+        ok: true,
+        rules: jsonClone(
+          automationState.rules.filter((rule) => rule.status !== "archived"),
+        ),
+        runs: jsonClone(automationState.runs),
+        sourceAvailability: jsonClone(automationState.sourceAvailability),
+      });
+    }
+    if (
+      url.pathname === "/api/merchant-enterprise/workflow-automations" &&
+      ["POST", "PATCH"].includes(request.method())
+    ) {
+      const method = request.method();
+      const input = request.postDataJSON();
+      stats.automationMutations = [
+        ...(stats.automationMutations || []),
+        { method, body: jsonClone(input) },
+      ];
+      if (!actorCan(actor, "automations.manage")) {
+        return respond(403, { ok: false, error: "permission_denied" });
+      }
+      if (method === "PATCH" && input.action === "archive") {
+        const index = automationState.rules.findIndex(
+          (candidate) => candidate.id === input.ruleId,
+        );
+        const current = automationState.rules[index];
+        if (!current) return respond(404, { ok: false, error: "automation_rule_not_found" });
+        if (current.status === "archived") {
+          return respond(409, { ok: false, error: "automation_rule_archived" });
+        }
+        if (Number(input.expectedVersion) !== current.version) {
+          return respond(409, { ok: false, error: "enterprise_version_conflict" });
+        }
+        const now = timestamp();
+        const archivedRule = {
+          ...current,
+          status: "archived",
+          archivedAt: now,
+          version: current.version + 1,
+          updatedAt: now,
+        };
+        automationState.rules[index] = archivedRule;
+        stats.automationPatches = (stats.automationPatches || 0) + 1;
+        return respond(200, {
+          ok: true,
+          rule: jsonClone(archivedRule),
+          sourceAvailability: jsonClone(automationState.sourceAvailability),
+        });
+      }
+      if (
+        input.status === "active" &&
+        automationState.sourceAvailability[input.sourceType] !== "active"
+      ) {
+        return respond(409, {
+          ok: false,
+          error: "source_event_stream_unavailable",
+          sourceAvailability: jsonClone(automationState.sourceAvailability),
+        });
+      }
+      if (
+        /\{(?!eventRef\}|fromStatus\}|toStatus\})[^{}]*\}/.test(
+          `${input.taskTitle || ""}\n${input.taskDescription || ""}`,
+        )
+      ) {
+        return respond(400, { ok: false, error: "invalid_request" });
+      }
+      const workflow = publishedWorkflowChoices().find(
+        (choice) => choice.id === input.workflowId,
+      );
+      if (!workflow) {
+        return respond(409, { ok: false, error: "workflow_not_published" });
+      }
+      const selectedRevision =
+        input.workflowRevisionId === workflow.revisionId
+          ? workflow.revisionNo
+          : automationState.rules.find((rule) => rule.id === input.ruleId)
+              ?.workflowRevisionNo;
+      if (!selectedRevision) {
+        return respond(409, { ok: false, error: "workflow_revision_changed" });
+      }
+      const now = timestamp();
+      let rule;
+      if (method === "POST") {
+        rule = {
+          id: automationRuleId,
+          siteId,
+          name: input.name,
+          sourceType: input.sourceType,
+          eventType: input.eventType,
+          fromStatus: input.fromStatus ?? null,
+          toStatus: input.toStatus ?? null,
+          boardId: input.boardId,
+          columnId: input.columnId,
+          workflowId: input.workflowId,
+          workflowRevisionId: input.workflowRevisionId,
+          workflowRevisionNo: selectedRevision,
+          taskTitle: input.taskTitle,
+          taskDescription: input.taskDescription,
+          priority: input.priority,
+          dueOffsetMinutes: input.dueOffsetMinutes,
+          status: input.status,
+          assigneeIds: input.assigneeIds,
+          version: 1,
+          enabledAt: now,
+          archivedAt: null,
+          createdAt: now,
+          updatedAt: now,
+        };
+        automationState.rules.unshift(rule);
+        stats.automationPosts = (stats.automationPosts || 0) + 1;
+      } else {
+        const index = automationState.rules.findIndex(
+          (candidate) => candidate.id === input.ruleId,
+        );
+        const current = automationState.rules[index];
+        if (!current) return respond(404, { ok: false, error: "automation_rule_not_found" });
+        if (Number(input.expectedVersion) !== current.version) {
+          return respond(409, { ok: false, error: "enterprise_version_conflict" });
+        }
+        rule = {
+          ...current,
+          name: input.name,
+          sourceType: input.sourceType,
+          eventType: input.eventType,
+          fromStatus: input.fromStatus ?? null,
+          toStatus: input.toStatus ?? null,
+          boardId: input.boardId,
+          columnId: input.columnId,
+          workflowId: input.workflowId,
+          workflowRevisionId: input.workflowRevisionId,
+          workflowRevisionNo: selectedRevision,
+          taskTitle: input.taskTitle,
+          taskDescription: input.taskDescription,
+          priority: input.priority,
+          dueOffsetMinutes: input.dueOffsetMinutes,
+          status: input.status,
+          assigneeIds: input.assigneeIds,
+          version: current.version + 1,
+          updatedAt: now,
+        };
+        automationState.rules[index] = rule;
+        stats.automationPatches = (stats.automationPatches || 0) + 1;
+      }
+      return respond(200, {
+        ok: true,
+        rule: jsonClone(rule),
+        sourceAvailability: jsonClone(automationState.sourceAvailability),
+      });
     }
     if (
       url.pathname === "/api/merchant-enterprise/task-workflow" &&
@@ -1361,6 +1607,702 @@ async function run() {
     await pageB.getByText("“双会话协作看板”", { exact: true }).waitFor();
     assert(statsB.auditGets >= 2, "audit view did not load and paginate through the API mock");
 
+    const todoTask = state.snapshot.tasks[0];
+    const todoWorkflow = state.workflows.find((workflow) => workflow.id === workflowId);
+    if (!todoTask || !todoWorkflow?.published) {
+      throw new Error("todo browser fixtures require a task and a published workflow");
+    }
+    const todoAttentionAt = timestamp();
+    const todoDueAt = new Date(Date.now() - 60 * 60 * 1_000).toISOString();
+    const todoEmployeeActor = {
+      type: "employee",
+      id: employeeId,
+      siteId,
+      displayName: "待办验收员工",
+      email: "todo-employee@example.test",
+      permissions: ["enterprise.view", "tasks.view", "workflows.view"],
+      accessScope: "all",
+      allowedBoardIds: [],
+    };
+    const todoTaskItem = {
+      id: `task:${todoTask.id}`,
+      entityId: todoTask.id,
+      siteId,
+      kind: "task",
+      title: todoTask.title,
+      subtitle: "双会话协作看板 · 待处理",
+      urgency: "overdue",
+      reasons: ["assigned_to_me", "overdue"],
+      attentionAt: todoAttentionAt,
+      dueAt: todoDueAt,
+      taskId: todoTask.id,
+      boardId,
+      boardName: "双会话协作看板",
+      priority: "high",
+      version: todoTask.version,
+    };
+    const todoAcknowledgementItem = {
+      id: `workflow_acknowledgement:${workflowId}`,
+      entityId: workflowId,
+      siteId,
+      kind: "workflow_acknowledgement",
+      title: publishedWorkflowTitle,
+      subtitle: "客户按预约时间到店",
+      urgency: "normal",
+      reasons: ["acknowledgement_required"],
+      attentionAt: todoWorkflow.published.publishedAt,
+      dueAt: null,
+      workflowId,
+      revisionNo: todoWorkflow.published.version,
+    };
+    const todoExecutionItem = {
+      id: `workflow_execution:${focusedTodoExecutionId}`,
+      entityId: focusedTodoExecutionId,
+      siteId,
+      kind: "workflow_execution",
+      title: publishedWorkflowTitle,
+      subtitle: "待办定位的执行记录",
+      urgency: "normal",
+      reasons: ["execution_in_progress"],
+      attentionAt: todoAttentionAt,
+      dueAt: null,
+      taskId: null,
+      workflowId,
+      executionId: focusedTodoExecutionId,
+      revisionNo: todoWorkflow.published.version,
+      completedSteps: 0,
+      totalSteps: todoWorkflow.published.fields.steps.length,
+      version: 1,
+    };
+    const buildTodoExecution = (id, subject) => ({
+      id,
+      siteId,
+      workflowId,
+      revisionId: todoWorkflow.published.revisionId,
+      revisionNo: todoWorkflow.published.version,
+      employeeId,
+      taskId: null,
+      subject,
+      status: "in_progress",
+      workflowSnapshot: jsonClone(todoWorkflow.published.fields),
+      steps: todoWorkflow.published.fields.steps.map((step) => ({
+        stepId: step.id,
+        title: step.title,
+        instruction: step.instruction,
+        position: step.position,
+        completedAt: null,
+        note: "",
+        evidence: [],
+      })),
+      completedSteps: 0,
+      totalSteps: todoWorkflow.published.fields.steps.length,
+      feedbackRating: null,
+      feedbackText: "",
+      feedbackStatus: "none",
+      feedbackSubmittedAt: null,
+      feedbackResolutionNote: "",
+      feedbackResolvedAt: null,
+      feedbackResolverType: null,
+      feedbackResolverId: null,
+      generatedChecklistCount: 0,
+      startedAt: todoAttentionAt,
+      completedAt: null,
+      version: 1,
+      createdAt: todoAttentionAt,
+      updatedAt: todoAttentionAt,
+    });
+    const todoEmployeeStats = { overviewRequests: 0 };
+    const todoEmployeeContext = await browser.newContext({
+      viewport: { width: 1440, height: 1000 },
+      serviceWorkers: "block",
+    });
+    await Promise.all([
+      todoEmployeeContext.addInitScript(acceleratePolling),
+      installEnterpriseApiMock(todoEmployeeContext, state, todoEmployeeStats, {
+        actor: todoEmployeeActor,
+        todoItems: [todoTaskItem, todoAcknowledgementItem, todoExecutionItem],
+        workflowExecutions: [
+          buildTodoExecution(firstTodoExecutionId, "普通执行记录"),
+          buildTodoExecution(focusedTodoExecutionId, "待办定位的执行记录"),
+        ],
+      }),
+    ]);
+    const todoEmployeePage = await openHarness(todoEmployeeContext, baseUrl);
+    const todoEmployeeNavigation = todoEmployeePage.locator(
+      'nav[aria-label="企业管理功能"]',
+    );
+    assert(
+      (await todoEmployeeNavigation
+        .getByRole("button", { name: "待办中心", exact: true })
+        .count()) === 1 &&
+        (await todoEmployeeNavigation
+          .getByRole("button", { name: "员工账号", exact: true })
+          .count()) === 0 &&
+        (await todoEmployeeNavigation
+          .getByRole("button", { name: "角色权限", exact: true })
+          .count()) === 0,
+      "enterprise.view did not expose only the employee's permitted todo navigation",
+    );
+    await todoEmployeeNavigation
+      .getByRole("button", { name: "待办中心", exact: true })
+      .click();
+    const todoEmployeeCenter = todoEmployeePage.locator(
+      "[data-enterprise-todo-center]",
+    );
+    await todoEmployeeCenter
+      .getByRole("heading", { name: "统一待办", exact: true })
+      .waitFor();
+    await todoEmployeeCenter
+      .locator('[data-todo-kind="workflow_execution"]')
+      .waitFor();
+    assert(
+      (await todoEmployeeCenter.locator("[data-todo-kind]").count()) === 3 &&
+        (await todoEmployeeCenter.getByText("已逾期 1", { exact: true }).count()) === 1,
+      "employee todo center did not render its permission-filtered counts and actionable kinds",
+    );
+    await todoEmployeeCenter
+      .getByRole("tab")
+      .filter({ hasText: "任务" })
+      .click();
+    await todoEmployeeCenter.locator('[data-todo-kind="task"]').waitFor();
+    await todoEmployeeCenter
+      .locator('[data-todo-kind="workflow_acknowledgement"]')
+      .waitFor({ state: "detached" });
+    assert(
+      (await todoEmployeeCenter.locator('[data-todo-kind="task"]').count()) === 1 &&
+        (await todoEmployeeCenter
+          .locator('[data-todo-kind="workflow_acknowledgement"]')
+          .count()) === 0,
+      "task todo category leaked workflow items",
+    );
+    await todoEmployeeCenter
+      .getByRole("tab")
+      .filter({ hasText: "工作流程" })
+      .click();
+    await todoEmployeeCenter
+      .locator('[data-todo-kind="workflow_acknowledgement"]')
+      .waitFor();
+    await todoEmployeeCenter
+      .locator('[data-todo-kind="task"]')
+      .waitFor({ state: "detached" });
+    assert(
+      (await todoEmployeeCenter.locator('[data-todo-kind="task"]').count()) === 0 &&
+        (await todoEmployeeCenter.locator("[data-todo-kind]").count()) === 2 &&
+        (todoEmployeeStats.todoRequests || []).some(
+          (request) => request.category === "tasks" && request.limit === 20,
+        ) &&
+        (todoEmployeeStats.todoRequests || []).some(
+          (request) => request.category === "workflows" && request.limit === 20,
+        ),
+      "workflow todo category or strict category requests are incorrect",
+    );
+    await todoEmployeeCenter
+      .getByRole("tab")
+      .filter({ hasText: "全部" })
+      .click();
+    await todoEmployeeCenter.locator('[data-todo-kind="task"]').waitFor();
+    await todoEmployeeCenter
+      .getByRole("button", { name: "打开任务", exact: true })
+      .click();
+    const todoTaskEditor = todoEmployeePage.getByRole("dialog", { name: "任务详情" });
+    await todoTaskEditor.waitFor();
+    assert(
+      (await todoEmployeePage.locator('[aria-current="page"]').textContent()) === "任务看板" &&
+        (await todoTaskEditor.getByLabel("任务标题").inputValue()) === todoTask.title,
+      "task todo action did not open the tenant task editor",
+    );
+    await todoTaskEditor.getByRole("button", { name: "关闭", exact: true }).click();
+    await todoTaskEditor.waitFor({ state: "hidden" });
+
+    await todoEmployeeNavigation
+      .getByRole("button", { name: "待办中心", exact: true })
+      .click();
+    await todoEmployeeCenter
+      .getByRole("button", { name: "阅读并确认", exact: true })
+      .click();
+    const todoEmployeeWorkflowPanel = todoEmployeePage.locator(
+      'section[aria-label="工作流程与标准作业程序"]',
+    );
+    await todoEmployeeWorkflowPanel
+      .getByRole("heading", { name: publishedWorkflowTitle, exact: true })
+      .waitFor();
+    await todoEmployeeWorkflowPanel
+      .getByRole("button", {
+        name: `确认已阅读 v${todoWorkflow.published.version}`,
+        exact: true,
+      })
+      .waitFor();
+    assert(
+      (await todoEmployeePage.locator('[aria-current="page"]').textContent()) === "工作流程",
+      "acknowledgement todo action did not navigate to the published workflow",
+    );
+
+    await todoEmployeeNavigation
+      .getByRole("button", { name: "待办中心", exact: true })
+      .click();
+    await todoEmployeeCenter
+      .getByRole("button", { name: "继续执行", exact: true })
+      .click();
+    await todoEmployeeWorkflowPanel
+      .getByRole("heading", { name: "待办定位的执行记录", exact: true })
+      .waitFor();
+    assert(
+      (await todoEmployeeWorkflowPanel.getByLabel("执行记录").inputValue()) ===
+        focusedTodoExecutionId,
+      "execution todo action did not focus the requested execution record",
+    );
+    await todoEmployeeContext.close();
+
+    const feedbackTodoItem = {
+      id: `workflow_feedback:${feedbackTodoExecutionId}`,
+      entityId: feedbackTodoExecutionId,
+      siteId,
+      kind: "workflow_feedback",
+      title: publishedWorkflowTitle,
+      subtitle: "待处理员工反馈",
+      urgency: "normal",
+      reasons: ["feedback_open"],
+      attentionAt: todoAttentionAt,
+      dueAt: null,
+      workflowId,
+      executionId: feedbackTodoExecutionId,
+      revisionNo: todoWorkflow.published.version,
+      employeeName: "待办验收员工",
+      version: 2,
+    };
+    const todoOwnerStats = { overviewRequests: 0 };
+    const todoOwnerContext = await browser.newContext({
+      viewport: { width: 1440, height: 1000 },
+      serviceWorkers: "block",
+    });
+    await Promise.all([
+      todoOwnerContext.addInitScript(acceleratePolling),
+      installEnterpriseApiMock(todoOwnerContext, state, todoOwnerStats, {
+        todoItems: [feedbackTodoItem],
+        workflowExecutionStats: {
+          merchantId: siteId,
+          workflowId,
+          currentRevisionNo: todoWorkflow.published.version,
+          eligibleEmployeeCount: 2,
+          acknowledgedEmployeeCount: 1,
+          executionCount: 1,
+          inProgressCount: 0,
+          completedCount: 1,
+          taskLinkedExecutionCount: 0,
+          generatedChecklistCount: 0,
+          feedbackCount: 1,
+          openFeedbackCount: 1,
+          averageRating: 3,
+          participants: [],
+          recentFeedback: [
+            {
+              executionId: feedbackTodoExecutionId,
+              executionVersion: 2,
+              employeeId,
+              employeeName: "待办验收员工",
+              revisionNo: todoWorkflow.published.version,
+              rating: 3,
+              text: "反馈需要主管处理",
+              status: "open",
+              submittedAt: todoAttentionAt,
+              resolutionNote: "",
+              resolvedAt: null,
+              resolverType: null,
+              resolverId: null,
+            },
+          ],
+        },
+      }),
+    ]);
+    const todoOwnerPage = await openHarness(todoOwnerContext, baseUrl);
+    await todoOwnerPage
+      .getByRole("button", { name: "待办中心", exact: true })
+      .click();
+    const todoOwnerCenter = todoOwnerPage.locator("[data-enterprise-todo-center]");
+    await todoOwnerCenter
+      .getByRole("button", { name: "处理反馈", exact: true })
+      .click();
+    const focusedFeedback = todoOwnerPage
+      .locator("[data-workflow-execution-stats] article")
+      .filter({ hasText: "反馈需要主管处理" });
+    await focusedFeedback.waitFor();
+    assert(
+      (await focusedFeedback.getAttribute("class"))?.includes("ring-2") === true &&
+        (await focusedFeedback
+          .getByRole("button", { name: "标记已处理", exact: true })
+          .count()) === 1 &&
+        (todoOwnerStats.workflowStatsGets || 0) >= 1,
+      "feedback todo action did not focus an actionable manager feedback record",
+    );
+    await todoOwnerContext.close();
+
+    const automationPublishedChoices = [
+      {
+        id: workflowId,
+        title: publishedWorkflowTitle,
+        scenario: todoWorkflow.published.fields.scenario,
+        revisionId: todoWorkflow.published.revisionId,
+        revisionNo: todoWorkflow.published.version,
+        stepCount: todoWorkflow.published.fields.steps.length,
+      },
+    ];
+    const completedEventRef = "order-10000000-0000-4000-8000-000000000061";
+    const failedEventRef = "order-10000000-0000-4000-8000-000000000062";
+    const autoPausedEventRef = "order-10000000-0000-4000-8000-000000000063";
+    const automationRunAt = timestamp();
+    const automationState = {
+      rules: [],
+      runs: [
+        {
+          id: automationCompletedRunId,
+          siteId,
+          ruleId: automationRuleId,
+          ruleVersion: 1,
+          sourceType: "order",
+          eventRef: completedEventRef,
+          eventType: "created",
+          fromStatus: null,
+          toStatus: "pending",
+          status: "completed",
+          taskId: todoTask.id,
+          workflowId,
+          workflowRevisionId: todoWorkflow.published.revisionId,
+          errorCode: "",
+          attemptCount: 1,
+          sourceEventAt: automationRunAt,
+          completedAt: automationRunAt,
+          createdAt: automationRunAt,
+        },
+        {
+          id: automationFailedRunId,
+          siteId,
+          ruleId: automationRuleId,
+          ruleVersion: 1,
+          sourceType: "order",
+          eventRef: failedEventRef,
+          eventType: "created",
+          fromStatus: null,
+          toStatus: null,
+          status: "failed",
+          taskId: null,
+          workflowId,
+          workflowRevisionId: todoWorkflow.published.revisionId,
+          errorCode: "automation_execution_failed",
+          attemptCount: 2,
+          sourceEventAt: automationRunAt,
+          completedAt: automationRunAt,
+          createdAt: automationRunAt,
+        },
+        {
+          id: automationAutoPausedRunId,
+          siteId,
+          ruleId: automationRuleId,
+          ruleVersion: 1,
+          sourceType: "order",
+          eventRef: autoPausedEventRef,
+          eventType: "status_changed",
+          fromStatus: "pending",
+          toStatus: "confirmed",
+          status: "failed",
+          taskId: null,
+          workflowId,
+          workflowRevisionId: todoWorkflow.published.revisionId,
+          errorCode: "automation_assignee_unavailable",
+          attemptCount: 1,
+          sourceEventAt: automationRunAt,
+          completedAt: automationRunAt,
+          createdAt: automationRunAt,
+        },
+      ],
+      sourceAvailability: { order: "inactive", booking: "inactive" },
+    };
+    const automationStats = { overviewRequests: 0 };
+    const automationSnapshot = jsonClone(state.snapshot);
+    const automationIneligibleEmployee = automationSnapshot.employees.find(
+      (employee) => employee.id === secondEmployeeId,
+    );
+    if (automationIneligibleEmployee) {
+      automationIneligibleEmployee.roleId = "10000000-0000-4000-8000-000000000099";
+    }
+    const automationContext = await browser.newContext({
+      viewport: { width: 1440, height: 1000 },
+      serviceWorkers: "block",
+    });
+    await Promise.all([
+      automationContext.addInitScript(acceleratePolling),
+      installEnterpriseApiMock(automationContext, state, automationStats, {
+        automationState,
+        publishedWorkflowChoices: automationPublishedChoices,
+        snapshot: automationSnapshot,
+      }),
+    ]);
+    const automationPage = await openHarness(automationContext, baseUrl);
+    await automationPage
+      .getByRole("button", { name: "流程自动化", exact: true })
+      .click();
+    const automationManager = automationPage.locator(
+      "[data-enterprise-automation-manager]",
+    );
+    await automationManager.getByText(completedEventRef, { exact: false }).waitFor();
+    await automationManager.getByText(failedEventRef, { exact: false }).waitFor();
+    await automationManager.getByText(autoPausedEventRef, { exact: false }).waitFor();
+    const createdRunText = await automationManager
+      .locator("article")
+      .filter({ hasText: completedEventRef })
+      .textContent();
+    const autoPausedRunText = await automationManager
+      .locator("article")
+      .filter({ hasText: autoPausedEventRef })
+      .textContent();
+    assert(
+      (await automationManager.getByText("第 2 次尝试", { exact: true }).count()) === 1 &&
+        (await automationManager
+          .getByText(
+            "系统会自动重试；如持续失败，请检查规则目标、流程版本和事件服务配置。",
+            { exact: true },
+          )
+          .count()) === 1 &&
+        (await automationManager.getByRole("button", { name: /重试/ }).count()) === 0 &&
+        createdRunText?.includes("新建事件") === true &&
+        createdRunText.includes("状态 — → pending") === false &&
+        autoPausedRunText?.includes("负责人权限已失效") === true &&
+        autoPausedRunText.includes("automation_assignee_unavailable") === false &&
+        (await automationManager
+          .getByText("automation_execution_failed", { exact: false })
+          .count()) === 0 &&
+        (await automationManager
+          .getByText("规则已自动暂停，请修复目标、流程或负责人配置后再启用。", {
+            exact: true,
+          })
+          .count()) === 1,
+      "automation runs did not expose opaque references and passive retry state",
+    );
+
+    await automationManager
+      .getByRole("button", { name: "新建规则", exact: true })
+      .click();
+    let automationEditor = automationManager.locator(
+      "[data-enterprise-automation-editor]",
+    );
+    assert(
+      (await automationEditor
+        .getByLabel("初始工作列")
+        .locator(`option[value="${doneColumnId}"]`)
+        .count()) === 0 &&
+        (await automationEditor.getByText("浏览器测试员工二", { exact: false }).count()) ===
+          0,
+      "automation editor offered a completed column or an unauthorized employee",
+    );
+    await automationEditor.getByLabel("规则名称").fill("新订单流程自动化");
+    await automationEditor.getByLabel("任务标题").fill("处理订单 {sourceId}");
+    await automationEditor
+      .getByRole("button", { name: "保存规则", exact: true })
+      .click();
+    await automationManager
+      .getByText(
+        "任务模板只能使用 {eventRef}、{fromStatus}、{toStatus} 三个安全占位符。",
+        { exact: true },
+      )
+      .waitFor();
+    assert(
+      (automationStats.automationPosts || 0) === 0 &&
+        (automationStats.automationMutations || []).length === 0,
+      "unsafe automation template reached the API mock",
+    );
+    await automationEditor
+      .getByLabel("任务标题")
+      .fill("处理订单事件 {eventRef}");
+    const automationStatus = automationEditor.getByLabel("运行状态");
+    assert(
+      (await automationStatus
+        .locator('option[value="active"]')
+        .getAttribute("disabled")) !== null,
+      "inactive event source allowed selecting an active automation rule",
+    );
+    await automationStatus.evaluate((element) => {
+      const select = element;
+      select.value = "active";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await automationEditor
+      .getByRole("button", { name: "保存规则", exact: true })
+      .click();
+    await automationManager
+      .getByText("当前来源的事件接入尚未启用，请先保存为暂停规则。", {
+        exact: true,
+      })
+      .waitFor();
+    assert(
+      (automationStats.automationPosts || 0) === 0 &&
+        (automationStats.automationMutations || []).length === 0,
+      "active automation rule reached the API while its source was inactive",
+    );
+    await automationStatus.selectOption("paused");
+    await automationEditor
+      .getByRole("button", { name: "保存规则", exact: true })
+      .click();
+    await automationManager
+      .getByText("自动化规则已创建。待新业务事件到达后会按规则执行。", {
+        exact: true,
+      })
+      .waitFor();
+    assert(
+      automationStats.automationPosts === 1 &&
+        automationState.rules[0]?.status === "paused" &&
+        automationState.rules[0]?.workflowRevisionId ===
+          todoWorkflow.published.revisionId &&
+        !JSON.stringify((automationStats.automationMutations || [])[0]?.body).includes(
+          "sourceId",
+        ),
+      "paused automation rule creation did not preserve its safe pinned contract",
+    );
+
+    automationPublishedChoices[0] = {
+      ...automationPublishedChoices[0],
+      revisionId: automationRevisionTwoId,
+      revisionNo: todoWorkflow.published.version + 1,
+    };
+    await automationManager
+      .getByRole("button", { name: "刷新", exact: true })
+      .click();
+    await automationManager
+      .getByText("有新流程版本", { exact: true })
+      .waitFor();
+    await automationManager
+      .getByRole("button", { name: "编辑", exact: true })
+      .click();
+    automationEditor = automationManager.locator(
+      "[data-enterprise-automation-editor]",
+    );
+    await automationEditor
+      .getByLabel("规则名称")
+      .fill("新订单流程自动化（已核对）");
+    await automationEditor
+      .getByRole("button", { name: "保存规则", exact: true })
+      .click();
+    await automationManager
+      .getByText("自动化规则已更新。", { exact: true })
+      .waitFor();
+    const pinnedMutation = (automationStats.automationMutations || []).at(-1);
+    assert(
+      pinnedMutation?.method === "PATCH" &&
+        pinnedMutation.body.workflowRevisionId === todoWorkflow.published.revisionId &&
+        automationState.rules[0]?.workflowRevisionNo === todoWorkflow.published.version,
+      "ordinary automation edit silently upgraded the pinned workflow revision",
+    );
+
+    await automationManager
+      .getByRole("button", { name: "编辑", exact: true })
+      .click();
+    automationEditor = automationManager.locator(
+      "[data-enterprise-automation-editor]",
+    );
+    await automationEditor
+      .getByRole("button", {
+        name: `升级到 v${todoWorkflow.published.version + 1}`,
+        exact: true,
+      })
+      .click();
+    await automationEditor
+      .getByRole("button", { name: "保存规则", exact: true })
+      .click();
+    await automationManager
+      .getByText("自动化规则已更新。", { exact: true })
+      .waitFor();
+    const upgradedMutation = (automationStats.automationMutations || []).at(-1);
+    assert(
+      upgradedMutation?.method === "PATCH" &&
+        upgradedMutation.body.workflowRevisionId === automationRevisionTwoId &&
+        automationState.rules[0]?.workflowRevisionNo ===
+          todoWorkflow.published.version + 1,
+      "automation rule was not upgraded only after the explicit revision action",
+    );
+
+    automationState.rules[0].assigneeIds = [secondEmployeeId];
+    await automationManager
+      .getByRole("button", { name: "刷新", exact: true })
+      .click();
+    await automationManager
+      .getByRole("button", { name: "编辑", exact: true })
+      .click();
+    automationEditor = automationManager.locator(
+      "[data-enterprise-automation-editor]",
+    );
+    await automationEditor
+      .getByText("旧规则中存在已失效负责人。保存前请取消其勾选，或先恢复员工、角色及看板权限。", {
+        exact: true,
+      })
+      .waitFor();
+    await automationEditor
+      .locator("label")
+      .filter({ hasText: "浏览器测试员工二" })
+      .getByRole("checkbox")
+      .click();
+    await automationEditor
+      .getByRole("button", { name: "保存规则", exact: true })
+      .click();
+    await automationManager
+      .getByText("自动化规则已更新。", { exact: true })
+      .waitFor();
+    assert(
+      automationState.rules[0]?.assigneeIds.length === 0,
+      "automation editor did not let the owner remove an invalid legacy assignee",
+    );
+
+    automationState.rules[0].status = "active";
+    await automationManager
+      .getByRole("button", { name: "刷新", exact: true })
+      .click();
+    await automationManager
+      .getByText("已启用·等待事件服务", { exact: true })
+      .waitFor();
+    const completedRun = automationManager
+      .locator("article")
+      .filter({ hasText: completedEventRef });
+    await completedRun
+      .getByRole("button", { name: "打开任务", exact: true })
+      .click();
+    const automationTaskEditor = automationPage.getByRole("dialog", {
+      name: "编辑任务",
+    });
+    await automationTaskEditor.waitFor();
+    assert(
+      (await automationTaskEditor.getByLabel("任务标题").inputValue()) ===
+        todoTask.title,
+      "completed automation run did not open its generated task",
+    );
+    await automationTaskEditor
+      .getByRole("button", { name: "关闭", exact: true })
+      .click();
+    await automationPage
+      .getByRole("button", { name: "流程自动化", exact: true })
+      .click();
+    await automationManager
+      .getByText("新订单流程自动化（已核对）", { exact: true })
+      .waitFor();
+    automationPage.once("dialog", (dialog) => void dialog.accept());
+    await automationManager
+      .locator("article")
+      .filter({ hasText: "新订单流程自动化（已核对）" })
+      .getByRole("button", { name: "归档", exact: true })
+      .click();
+    await automationManager
+      .getByText("自动化规则已归档；已有运行记录和审计记录会继续保留。", {
+        exact: true,
+      })
+      .waitFor();
+    assert(
+      automationState.rules[0]?.status === "archived" &&
+        Boolean(automationState.rules[0]?.archivedAt) &&
+        (await automationManager
+          .getByText("新订单流程自动化（已核对）", { exact: true })
+          .count()) === 0 &&
+        (await automationManager.getByText(completedEventRef, { exact: false }).count()) === 1 &&
+        (automationStats.automationMutations || []).at(-1)?.body.action === "archive",
+      "automation archive did not hide the rule while preserving its run history",
+    );
+    await automationContext.close();
+
     const notificationTask = state.snapshot.tasks[0];
     notificationTask.assigneeIds = [employeeId];
     const employeeActor = {
@@ -1731,6 +2673,13 @@ async function run() {
           "workflow_menu_dirty_navigation_guard",
           "workflow_cas_conflict_keeps_local_body",
           "owner_audit_listing_and_pagination",
+          "todo_employee_permission_navigation_and_category_filters",
+          "todo_task_acknowledgement_and_execution_actions",
+          "todo_manager_feedback_focus_action",
+          "automation_paused_create_and_inactive_source_guard",
+          "automation_pinned_revision_edit_and_explicit_upgrade",
+          "automation_opaque_runs_retry_state_and_task_navigation",
+          "automation_archive_hides_rule_and_retains_history",
           "employee_notification_dirty_cancel_and_mark_read",
           "workflow_notification_dirty_cancel_and_target_navigation",
           "workflow_notification_same_view_dirty_guard_and_single_focus",
