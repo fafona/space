@@ -82,6 +82,7 @@ insert into public.merchant_task_boards (
   merchant_id,
   name,
   description,
+  position,
   status
 )
 values
@@ -90,6 +91,7 @@ values
     '10000003',
     'Todo visible board',
     'Mapped to the restricted employee role',
+    1,
     'active'
   ),
   (
@@ -97,6 +99,7 @@ values
     '10000003',
     'Todo hidden board',
     'Must remain invisible to the restricted employee',
+    2,
     'active'
   );
 
