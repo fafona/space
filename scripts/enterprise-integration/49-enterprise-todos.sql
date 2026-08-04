@@ -147,8 +147,8 @@ values (
 );
 
 -- Two visible assigned tasks form the employee's two deterministic keyset
--- pages. The hidden overdue task is owner-only, the unassigned task is a team
--- exception for the owner, and the completed task must never become a todo.
+-- pages. The hidden overdue task and explicit unassigned task are owner-only
+-- team exceptions, and the completed task must never become a todo.
 insert into public.merchant_tasks (
   id,
   merchant_id,
@@ -243,11 +243,6 @@ values
   (
     '10000003',
     '83500000-0000-4000-8000-000000000002'::uuid,
-    '83200000-0000-4000-8000-000000000001'::uuid
-  ),
-  (
-    '10000003',
-    '83500000-0000-4000-8000-000000000003'::uuid,
     '83200000-0000-4000-8000-000000000001'::uuid
   ),
   (
