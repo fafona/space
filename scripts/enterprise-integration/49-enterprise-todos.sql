@@ -686,6 +686,9 @@ select enterprise_integration.assert_true(
   'todo subtitles contain mojibake or lost their deterministic fallback'
 );
 
+-- Storage is intentionally RPC-only for service_role. Use the fixture owner for
+-- this one white-box assertion, then restore the caller used by the API checks.
+reset role;
 select enterprise_integration.assert_true(
   exists (
     select 1
@@ -706,6 +709,7 @@ select enterprise_integration.assert_true(
   ),
   'old workflow acknowledgement fixture does not prove current-revision behavior'
 );
+set role service_role;
 
 select enterprise_integration.assert_true(
   not exists (
