@@ -375,6 +375,7 @@ begin
   v_actor_id_text := nullif(btrim(p_input ->> 'actor_id'), '');
   if v_site_id is null
      or v_site_id !~ '^[0-9]{8}$'
+     or v_actor_type is null
      or v_actor_type not in ('owner', 'employee')
      or v_actor_id_text is null
      or v_actor_id_text !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then

@@ -99,6 +99,17 @@ test("automation permissions retain dependencies and future system-role defaults
   assert.doesNotMatch(employeeDefaults, /automations\.(view|manage)/i);
 });
 
+test("automation authorization rejects a missing actor type before actor lookup", () => {
+  const authorize = readFunction(
+    source(),
+    "faolla_authorize_merchant_enterprise_automation_actor_v1",
+  );
+  assert.match(
+    authorize,
+    /v_actor_type is null[\s\S]+v_actor_type not in \('owner', 'employee'\)/i,
+  );
+});
+
 test("rule writes are tenant-authorized, board-scoped, CAS protected, and pin a revision", () => {
   const sql = source();
   const mutation = readFunction(
