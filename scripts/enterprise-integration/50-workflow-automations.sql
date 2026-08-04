@@ -85,16 +85,16 @@ values
   );
 
 insert into public.merchant_task_boards (
-  id, merchant_id, name, description, status
+  id, merchant_id, name, description, position, status
 )
 values
   (
     '84300000-0000-4000-8000-000000000001'::uuid,
-    '10000004', 'Automation visible board', '', 'active'
+    '10000004', 'Automation visible board', '', 1, 'active'
   ),
   (
     '84300000-0000-4000-8000-000000000002'::uuid,
-    '10000004', 'Automation unavailable board', '', 'active'
+    '10000004', 'Automation unavailable board', '', 2, 'active'
   );
 
 insert into public.merchant_task_columns (
@@ -548,8 +548,9 @@ set role service_role;
 do $$
 declare
   v_first_enabled_at timestamptz;
+  v_rule_response jsonb;
 begin
-  perform public.faolla_update_merchant_enterprise_automation_rule_v1(
+  v_rule_response := public.faolla_update_merchant_enterprise_automation_rule_v1(
     '{
       "merchant_id":"10000004",
       "actor_type":"owner",
@@ -574,11 +575,8 @@ begin
       "operation_id":"integration-automation-boundary-update"
     }'::jsonb
   );
-  select enabled_at into v_first_enabled_at
-    from public.merchant_enterprise_automation_rules
-   where merchant_id = '10000004'
-     and id = '84700000-0000-4000-8000-000000000003'::uuid;
-  perform public.faolla_update_merchant_enterprise_automation_rule_v1(
+  v_first_enabled_at := (v_rule_response #>> '{rule,enabled_at}')::timestamptz;
+  v_rule_response := public.faolla_update_merchant_enterprise_automation_rule_v1(
     '{
       "merchant_id":"10000004",
       "actor_type":"owner",
@@ -603,9 +601,7 @@ begin
       "operation_id":"integration-automation-boundary-noop"
     }'::jsonb
   );
-  if (select enabled_at from public.merchant_enterprise_automation_rules
-       where merchant_id = '10000004'
-         and id = '84700000-0000-4000-8000-000000000003'::uuid)
+  if (v_rule_response #>> '{rule,enabled_at}')::timestamptz
        is distinct from v_first_enabled_at then
     raise exception 'exact no-op automation save changed enabled_at';
   end if;
