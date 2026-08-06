@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PollOption, PollProps, PollQuestion, PollQuestionType } from "@/data/homeBlocks";
 import {
   buildPollExportRows,
@@ -86,6 +86,111 @@ function formatResultError(code: string) {
   if (code === "unauthorized") return "当前登录状态无法读取投票结果，请重新登录后重试。";
   if (code === "poll_store_unavailable") return "投票数据表尚未部署，发布前请先执行数据库迁移。";
   return "投票结果加载失败，请稍后重试。";
+}
+
+function CompositionSafePollInput({
+  ariaLabel,
+  className,
+  maxLength,
+  placeholder,
+  value,
+  onChange,
+}: {
+  ariaLabel?: string;
+  className?: string;
+  maxLength?: number;
+  placeholder?: string;
+  value: string;
+  onChange: (nextValue: string) => void;
+}) {
+  const [draftText, setDraftText] = useState<string | null>(null);
+  const composingRef = useRef(false);
+  const textValue = draftText ?? value;
+
+  const commitText = useCallback((nextText: string) => {
+    onChange(nextText);
+  }, [onChange]);
+
+  return (
+    <input
+      aria-label={ariaLabel}
+      className={className}
+      maxLength={maxLength}
+      placeholder={placeholder}
+      value={textValue}
+      onFocus={() => setDraftText((currentText) => currentText ?? value)}
+      onCompositionStart={() => {
+        composingRef.current = true;
+      }}
+      onCompositionEnd={(event) => {
+        composingRef.current = false;
+        const nextText = event.currentTarget.value;
+        setDraftText(nextText);
+        commitText(nextText);
+      }}
+      onChange={(event) => {
+        const nextText = event.currentTarget.value;
+        setDraftText(nextText);
+        if (!composingRef.current) commitText(nextText);
+      }}
+      onBlur={(event) => {
+        composingRef.current = false;
+        commitText(event.currentTarget.value);
+        setDraftText(null);
+      }}
+    />
+  );
+}
+
+function CompositionSafePollTextarea({
+  className,
+  maxLength,
+  placeholder,
+  value,
+  onChange,
+}: {
+  className?: string;
+  maxLength?: number;
+  placeholder?: string;
+  value: string;
+  onChange: (nextValue: string) => void;
+}) {
+  const [draftText, setDraftText] = useState<string | null>(null);
+  const composingRef = useRef(false);
+  const textValue = draftText ?? value;
+
+  const commitText = useCallback((nextText: string) => {
+    onChange(nextText);
+  }, [onChange]);
+
+  return (
+    <textarea
+      className={className}
+      maxLength={maxLength}
+      placeholder={placeholder}
+      value={textValue}
+      onFocus={() => setDraftText((currentText) => currentText ?? value)}
+      onCompositionStart={() => {
+        composingRef.current = true;
+      }}
+      onCompositionEnd={(event) => {
+        composingRef.current = false;
+        const nextText = event.currentTarget.value;
+        setDraftText(nextText);
+        commitText(nextText);
+      }}
+      onChange={(event) => {
+        const nextText = event.currentTarget.value;
+        setDraftText(nextText);
+        if (!composingRef.current) commitText(nextText);
+      }}
+      onBlur={(event) => {
+        composingRef.current = false;
+        commitText(event.currentTarget.value);
+        setDraftText(null);
+      }}
+    />
+  );
 }
 
 export default function PollBlockEditor({ props, runtimeSiteId, runtimeBlockId, onChange }: PollBlockEditorProps) {
@@ -198,7 +303,7 @@ export default function PollBlockEditor({ props, runtimeSiteId, runtimeBlockId, 
           </label>
           <label className="grid gap-1 text-sm text-slate-700">
             <span>名称输入提示</span>
-            <input className="h-10 rounded-lg border border-slate-300 px-3" value={props.pollNamePlaceholder ?? ""} placeholder="请输入您的名称" onChange={(event) => onChange({ pollNamePlaceholder: event.target.value })} />
+            <CompositionSafePollInput className="h-10 rounded-lg border border-slate-300 px-3" value={props.pollNamePlaceholder ?? ""} placeholder="请输入您的名称" onChange={(nextValue) => onChange({ pollNamePlaceholder: nextValue })} />
           </label>
           <label className="flex min-h-10 items-center gap-2 rounded-lg border border-slate-200 px-3 text-sm text-slate-700">
             <input type="checkbox" checked={config.allowAnonymous} onChange={(event) => onChange({ pollAllowAnonymous: event.target.checked })} />
@@ -212,15 +317,15 @@ export default function PollBlockEditor({ props, runtimeSiteId, runtimeBlockId, 
         <div className="grid gap-3 md:grid-cols-2">
           <label className="grid gap-1 text-sm text-slate-700">
             <span>提交按钮</span>
-            <input className="h-10 rounded-lg border border-slate-300 px-3" value={props.pollSubmitLabel ?? ""} placeholder="提交投票" onChange={(event) => onChange({ pollSubmitLabel: event.target.value })} />
+            <CompositionSafePollInput className="h-10 rounded-lg border border-slate-300 px-3" value={props.pollSubmitLabel ?? ""} placeholder="提交投票" onChange={(nextValue) => onChange({ pollSubmitLabel: nextValue })} />
           </label>
           <label className="grid gap-1 text-sm text-slate-700">
             <span>成功标题</span>
-            <input className="h-10 rounded-lg border border-slate-300 px-3" value={props.pollSuccessTitle ?? ""} placeholder="投票已提交" onChange={(event) => onChange({ pollSuccessTitle: event.target.value })} />
+            <CompositionSafePollInput className="h-10 rounded-lg border border-slate-300 px-3" value={props.pollSuccessTitle ?? ""} placeholder="投票已提交" onChange={(nextValue) => onChange({ pollSuccessTitle: nextValue })} />
           </label>
           <label className="grid gap-1 text-sm text-slate-700 md:col-span-2">
             <span>成功说明</span>
-            <textarea className="min-h-20 resize-y rounded-lg border border-slate-300 px-3 py-2" value={props.pollSuccessText ?? ""} placeholder="感谢您的参与。" onChange={(event) => onChange({ pollSuccessText: event.target.value })} />
+            <CompositionSafePollTextarea className="min-h-20 resize-y rounded-lg border border-slate-300 px-3 py-2" value={props.pollSuccessText ?? ""} placeholder="感谢您的参与。" onChange={(nextValue) => onChange({ pollSuccessText: nextValue })} />
           </label>
         </div>
       </section>
@@ -257,7 +362,7 @@ export default function PollBlockEditor({ props, runtimeSiteId, runtimeBlockId, 
                 <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_140px_auto] md:items-end">
                   <label className="grid min-w-0 gap-1 text-sm text-slate-700">
                     <span>问题内容</span>
-                    <input className="h-10 min-w-0 rounded-lg border border-slate-300 px-3" value={question.prompt} maxLength={400} onChange={(event) => updateQuestion(question.id, { prompt: event.target.value })} />
+                    <CompositionSafePollInput className="h-10 min-w-0 rounded-lg border border-slate-300 px-3" value={question.prompt} maxLength={400} onChange={(nextValue) => updateQuestion(question.id, { prompt: nextValue })} />
                   </label>
                   <label className="grid gap-1 text-sm text-slate-700">
                     <span>题型</span>
@@ -284,12 +389,12 @@ export default function PollBlockEditor({ props, runtimeSiteId, runtimeBlockId, 
                   <div className="grid gap-2 border-t border-slate-100 pt-3">
                     {question.options.map((option, optionIndex) => (
                       <div key={option.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-                        <input
-                          aria-label={`问题 ${questionIndex + 1} 选项 ${optionIndex + 1}`}
+                        <CompositionSafePollInput
+                          ariaLabel={`问题 ${questionIndex + 1} 选项 ${optionIndex + 1}`}
                           className="h-10 min-w-0 rounded-lg border border-slate-300 px-3"
                           value={option.label}
                           maxLength={240}
-                          onChange={(event) => updateQuestion(question.id, { options: question.options.map((item) => item.id === option.id ? { ...item, label: event.target.value } : item) })}
+                          onChange={(nextValue) => updateQuestion(question.id, { options: question.options.map((item) => item.id === option.id ? { ...item, label: nextValue } : item) })}
                         />
                         <button type="button" aria-label="删除选项" title="删除选项" className="h-10 w-10 rounded-lg border border-slate-300 bg-white text-slate-500 disabled:opacity-40" disabled={question.options.length <= 2} onClick={() => updateQuestion(question.id, { options: question.options.filter((item) => item.id !== option.id) })}>×</button>
                       </div>
