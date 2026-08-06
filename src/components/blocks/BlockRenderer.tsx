@@ -26,6 +26,7 @@ const ProductBlock = dynamic(() => import("./ProductBlock"), { loading: () => nu
 const CouponBlock = dynamic(() => import("./CouponBlock"), { ssr: false, loading: () => null });
 const GoogleReviewsBlock = dynamic(() => import("./GoogleReviewsBlock"), { ssr: false, loading: () => null });
 const BookingBlock = dynamic(() => import("./BookingBlock"), { ssr: false, loading: () => null });
+const PollBlock = dynamic(() => import("./PollBlock"), { ssr: false, loading: () => null });
 
 class BlockRuntimeBoundary extends Component<{ blockId: string; children: ReactNode }, { hasError: boolean }> {
   constructor(props: { blockId: string; children: ReactNode }) {
@@ -324,6 +325,16 @@ export default function BlockRenderer({
             interactive={bookingInteractive}
             runtimeBlockId={b.id}
             runtimeViewport={bookingViewport}
+          />
+        );
+        break;
+      case "poll":
+        content = (
+          <PollBlock
+            {...b.props}
+            runtimeSiteId={bookingSiteId}
+            runtimeBlockId={b.id}
+            interactive={bookingInteractive}
           />
         );
         break;

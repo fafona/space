@@ -66,6 +66,7 @@ import {
   type ImageFillMode,
   type MerchantListPublishedSite,
 } from "@/data/homeBlocks";
+import { createDefaultPollQuestions, createPollEntityId } from "@/lib/merchantPolls";
 import {
   MERCHANT_INDUSTRY_OPTIONS,
   PLAN_TEMPLATE_CATEGORY_OPTIONS,
@@ -425,6 +426,7 @@ const BLOCK_TYPE_LABELS: Record<Block["type"], string> = {
   coupon: "优惠券",
   "google-reviews": "Google 评论",
   booking: "预约",
+  poll: "投票",
   contact: "联系方式",
 };
 
@@ -8455,6 +8457,26 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           bookingSuccessText: "我们已收到您的预约，可在此继续修改或取消。",
           bookingNamePlaceholder: "请输入称谓或姓名",
           bookingNotePlaceholder: "可填写备注或需求",
+        },
+      };
+    }
+
+    if (type === "poll") {
+      return {
+        id,
+        type,
+        props: {
+          heading: "在线投票",
+          text: "请选择选项并提交您的意见。",
+          pollId: createPollEntityId("poll"),
+          pollStatus: "open",
+          pollQuestions: createDefaultPollQuestions(),
+          pollAllowAnonymous: true,
+          pollShowResultsAfterSubmit: false,
+          pollSubmitLabel: "提交投票",
+          pollSuccessTitle: "投票已提交",
+          pollSuccessText: "感谢您的参与。",
+          pollNamePlaceholder: "请输入您的名称",
         },
       };
     }
@@ -20699,6 +20721,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         <option value="product" disabled={!canUseProductBlock}>{"产品"}{!canUseProductBlock ? "（未开通）" : ""}</option>
                         <option value="coupon" disabled={!canUseCouponBlock}>{"优惠券"}{!canUseCouponBlock ? "（未开通）" : ""}</option>
                         <option value="google-reviews">{"Google 评论"}</option>
+                        <option value="poll">{"投票"}</option>
                         <option value="booking" disabled={!canUseBookingBlock || isBookingBlockAddLocked}>
                           {"预约"}
                           {!canUseBookingBlock ? "（未开通）" : isBookingBlockAddLocked ? "（已存在）" : ""}

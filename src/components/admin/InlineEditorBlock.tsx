@@ -189,6 +189,10 @@ const loadEditorCouponBlock = () => import("@/components/blocks/CouponBlock");
 
 const loadEditorGoogleReviewsBlock = () => import("@/components/blocks/GoogleReviewsBlock");
 
+const loadEditorPollBlock = () => import("@/components/blocks/PollBlock");
+
+const loadPollBlockEditor = () => import("@/components/admin/PollBlockEditor");
+
 const BookingTimeSlotRulesEditor = dynamic(() => import("@/components/admin/BookingTimeSlotRulesEditor"), {
   ssr: false,
   loading: () => <DeferredAdminPanelLoading label="时间规则加载中..." />,
@@ -257,6 +261,16 @@ const CouponBlock = dynamic(loadEditorCouponBlock, {
 const GoogleReviewsBlock = dynamic(loadEditorGoogleReviewsBlock, {
   ssr: false,
   loading: () => <DeferredEditorPreviewLoading label="Google 评论区块预览加载中..." />,
+});
+
+const PollBlock = dynamic(loadEditorPollBlock, {
+  ssr: false,
+  loading: () => <DeferredEditorPreviewLoading label="投票区块预览加载中..." />,
+});
+
+const PollBlockEditor = dynamic(loadPollBlockEditor, {
+  ssr: false,
+  loading: () => <DeferredAdminPanelLoading label="投票配置加载中..." />,
 });
 
 const IMAGE_FILL_VALUES: ImageFillMode[] = [
@@ -1920,7 +1934,8 @@ type GalleryEditorImage = {
         block.type === "product" ||
         block.type === "coupon" ||
         block.type === "google-reviews" ||
-        block.type === "booking")
+        block.type === "booking" ||
+        block.type === "poll")
     ) {
       return { text: html };
     }
@@ -1939,7 +1954,8 @@ type GalleryEditorImage = {
         block.type === "product" ||
         block.type === "coupon" ||
         block.type === "google-reviews" ||
-        block.type === "booking")
+        block.type === "booking" ||
+        block.type === "poll")
     ) {
       return { heading: html };
     }
@@ -3286,7 +3302,7 @@ type GalleryEditorImage = {
       ? "min(760px, calc(100vw - 2rem))"
       : block.type === "merchant-list" || block.type === "search-bar"
         ? "min(980px, calc(100vw - 2rem))"
-        : block.type === "product" || block.type === "coupon" || block.type === "google-reviews" || block.type === "booking"
+        : block.type === "product" || block.type === "coupon" || block.type === "google-reviews" || block.type === "booking" || block.type === "poll"
           ? "min(760px, calc(100vw - 2rem))"
           : "min(760px, calc(100vw - 2rem))";
   const selectedEditorPreferredWidth =
@@ -3294,7 +3310,7 @@ type GalleryEditorImage = {
       ? "min(840px, calc(100vw - 2rem))"
       : block.type === "merchant-list" || block.type === "search-bar"
         ? "min(980px, calc(100vw - 2rem))"
-        : block.type === "product" || block.type === "coupon" || block.type === "google-reviews" || block.type === "booking"
+        : block.type === "product" || block.type === "coupon" || block.type === "google-reviews" || block.type === "booking" || block.type === "poll"
           ? "min(820px, calc(100vw - 2rem))"
           : undefined;
   const blockWidth = draftResize?.width ?? normalizeBlockWidth(block.props.blockWidth, block.type);
@@ -11692,6 +11708,95 @@ type GalleryEditorImage = {
               </form>
               <div className="mt-2 text-xs text-slate-500">{searchHintLabel}</div>
             </>
+          )}
+          {resizeHandles}
+        </div>
+      </section>
+    );
+  }
+
+  if (block.type === "poll") {
+    const pollPreview = (
+      <PollBlock
+        {...block.props}
+        runtimeSiteId={runtimeSiteId}
+        runtimeBlockId={block.id}
+        interactive={false}
+      />
+    );
+
+    return (
+      <section
+        data-block-id={block.id}
+        data-jump-target={publicBlockId}
+        data-block-public-id={publicBlockId}
+        className={`${shellClass} pointer-events-none`}
+        style={offsetStyle}
+      >
+        <EditorBlockHeader
+          blockId={publicBlockId}
+          draggingBlockId={draggingBlockId}
+          isSelected={isSelected}
+          onDragHandleMouseDown={onDragHandleMouseDown}
+          onNudge={onNudge}
+          onOpenLayerSettings={openLayerSettings}
+          onEditTypography={editTypography}
+          onInsertText={insertTextBox}
+          onInsertImage={insertImage}
+          onEditImageSettings={editImageSettings}
+          onEditBorderStyle={editBorderSettings}
+          isMobileViewport={previewViewport === "mobile"}
+          mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
+          onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
+          blockOpenByButton={blockOpenByButton}
+          onToggleBlockOpenMode={toggleBlockOpenMode}
+          onDelete={onDelete}
+        />
+        <div
+          ref={resizeTargetRef}
+          data-block-visual-boundary
+          className={`${cardClass} relative`}
+          onClick={onSelect}
+          style={blockPreviewShellStyle}
+        >
+          {imageDialog}
+          {imageSettingsDialog}
+          {borderSettingsDialog}
+          {layerSettingsDialog}
+          {typographyDialog}
+          {isSelected ? renderSelectedEditor(
+            <div className="grid gap-4">
+              <div className="grid gap-3 border-b border-slate-200 pb-4">
+                <RichTextEditor
+                  field="heading"
+                  className="w-full rounded-lg border p-2 text-xl font-bold"
+                  value={block.props.heading ?? ""}
+                  onChange={handleRichFieldChange}
+                  onActivate={registerActiveEditor}
+                  onSelectionChange={updateSelectionRange}
+                />
+                <RichTextEditor
+                  field="text"
+                  className="min-h-[84px] w-full rounded-lg border p-2 text-gray-700"
+                  value={block.props.text ?? ""}
+                  onChange={handleRichFieldChange}
+                  onActivate={registerActiveEditor}
+                  onSelectionChange={updateSelectionRange}
+                />
+              </div>
+              <PollBlockEditor
+                props={block.props}
+                runtimeSiteId={runtimeSiteId}
+                runtimeBlockId={block.id}
+                onChange={(patch) => onChange(patch)}
+              />
+              <div className="grid gap-3 border-t border-slate-200 pt-4">
+                <div className="text-sm font-medium text-slate-700">前台预览</div>
+                {pollPreview}
+              </div>
+            </div>,
+          ) : (
+            pollPreview
           )}
           {resizeHandles}
         </div>

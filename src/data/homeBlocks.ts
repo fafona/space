@@ -446,6 +446,32 @@ export type BookingProps = BackgroundEditableProps &
     bookingNamePlaceholder?: string;
     bookingNotePlaceholder?: string;
   };
+export type PollQuestionType = "single" | "multiple" | "text";
+export type PollOption = {
+  id: string;
+  label: string;
+};
+export type PollQuestion = {
+  id: string;
+  prompt: string;
+  type: PollQuestionType;
+  required?: boolean;
+  options?: PollOption[];
+};
+export type PollProps = BackgroundEditableProps &
+  TypographyEditableProps & {
+    heading?: string;
+    text?: string;
+    pollId?: string;
+    pollStatus?: "open" | "closed";
+    pollQuestions?: PollQuestion[];
+    pollAllowAnonymous?: boolean;
+    pollShowResultsAfterSubmit?: boolean;
+    pollSubmitLabel?: string;
+    pollSuccessTitle?: string;
+    pollSuccessText?: string;
+    pollNamePlaceholder?: string;
+  };
 type NavProps = BackgroundEditableProps &
   TypographyEditableProps & {
     heading?: string;
@@ -487,6 +513,7 @@ export type Block =
   | { id: string; type: "coupon"; props: CouponProps }
   | { id: string; type: "google-reviews"; props: GoogleReviewsProps }
   | { id: string; type: "booking"; props: BookingProps }
+  | { id: string; type: "poll"; props: PollProps }
   | { id: string; type: "music"; props: MusicProps };
 
 export const homeBlocks: Block[] = faollaHomeBlocks;
