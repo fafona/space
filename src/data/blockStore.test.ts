@@ -52,7 +52,11 @@ function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function withWindowHarness(run: () => Promise<void> | void, storage: Storage = createMemoryStorage()) {
+function withWindowHarness(
+  run: () => Promise<void> | void,
+  storage: Storage = createMemoryStorage(),
+  idleCallbacks?: Map<number, () => void>,
+) {
   const globalTarget = globalThis as typeof globalThis & {
     localStorage?: Storage;
     window?: Window & typeof globalThis;
@@ -65,6 +69,18 @@ function withWindowHarness(run: () => Promise<void> | void, storage: Storage = c
     localStorage: storage,
     setTimeout,
     clearTimeout,
+    ...(idleCallbacks
+      ? {
+          requestIdleCallback(callback: () => void) {
+            const handle = idleCallbacks.size + 1;
+            idleCallbacks.set(handle, callback);
+            return handle;
+          },
+          cancelIdleCallback(handle: number) {
+            idleCallbacks.delete(handle);
+          },
+        }
+      : {}),
   });
 
   globalTarget.window = mockWindow;
@@ -98,6 +114,52 @@ test("scheduled draft storage writes are deferred until the timer fires", async 
 
     assert.deepEqual(loadBlocksFromStorage([], scope), blocks);
   });
+});
+
+test("scheduling a draft does not synchronously inspect or serialize the page", async () => {
+  await withWindowHarness(() => {
+    const scope = "site-10000007";
+    const blocks = createBlockSet("deferred-normalization", "typing stays responsive");
+    const originalProps = blocks[0].props as unknown as Record<string, unknown>;
+    let commonTextBoxReads = 0;
+    const props = { ...originalProps };
+    Object.defineProperty(props, "commonTextBoxes", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        commonTextBoxReads += 1;
+        return originalProps.commonTextBoxes;
+      },
+    });
+    blocks[0] = { ...blocks[0], props } as Block;
+
+    scheduleBlocksToStorage(blocks, scope, 500);
+
+    assert.equal(commonTextBoxReads, 0);
+    flushScheduledBlocksToStorage(scope);
+    assert.ok(commonTextBoxReads > 0);
+    assert.deepEqual(loadBlocksFromStorage([], scope), blocks);
+  });
+});
+
+test("scheduled drafts wait for browser idle time after the debounce", async () => {
+  const storage = createMemoryStorage();
+  const idleCallbacks = new Map<number, () => void>();
+  await withWindowHarness(async () => {
+    const scope = "site-10000008";
+    const blocks = createBlockSet("idle-normalization", "save while idle");
+
+    scheduleBlocksToStorage(blocks, scope, 10);
+    await delay(20);
+
+    assert.deepEqual(loadBlocksFromStorage([], scope), []);
+    assert.equal(idleCallbacks.size, 1);
+
+    const idleCommit = idleCallbacks.values().next().value;
+    assert.equal(typeof idleCommit, "function");
+    idleCommit?.();
+    assert.deepEqual(loadBlocksFromStorage([], scope), blocks);
+  }, storage, idleCallbacks);
 });
 
 test("flushing scheduled draft storage persists immediately", async () => {

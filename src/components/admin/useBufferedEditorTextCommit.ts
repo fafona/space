@@ -6,6 +6,9 @@ import { registerEditorTextFlush } from "@/lib/editorTextCommitBuffer";
 
 const NO_PENDING_VALUE = Symbol("no-pending-editor-text");
 
+export const DEFAULT_EDITOR_TEXT_COMMIT_DELAY_MS = 500;
+export const DEFAULT_EDITOR_TEXT_COMMIT_MAX_WAIT_MS = 2500;
+
 type BufferedEditorTextCommitOptions = {
   delayMs?: number;
   maxWaitMs?: number;
@@ -15,8 +18,11 @@ export function useBufferedEditorTextCommit<T>(
   onCommit: (value: T) => void,
   options: BufferedEditorTextCommitOptions = {},
 ) {
-  const delayMs = Math.max(0, Math.round(options.delayMs ?? 140));
-  const maxWaitMs = Math.max(delayMs, Math.round(options.maxWaitMs ?? 700));
+  const delayMs = Math.max(0, Math.round(options.delayMs ?? DEFAULT_EDITOR_TEXT_COMMIT_DELAY_MS));
+  const maxWaitMs = Math.max(
+    delayMs,
+    Math.round(options.maxWaitMs ?? DEFAULT_EDITOR_TEXT_COMMIT_MAX_WAIT_MS),
+  );
   const onCommitRef = useRef(onCommit);
   const pendingValueRef = useRef<T | typeof NO_PENDING_VALUE>(NO_PENDING_VALUE);
   const trailingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);

@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { Block } from "@/data/homeBlocks";
-import { findStyleTransferTargetBlock } from "./editorStyleTransfer";
+import { buildStyleTransferProps, findStyleTransferTargetBlock } from "./editorStyleTransfer";
 
-function poll(id: string, heading: string, pollId = ""): Block {
+function poll(id: string, heading: string, pollId = ""): Extract<Block, { type: "poll" }> {
   return {
     id,
     type: "poll",
@@ -63,4 +63,55 @@ test("style transfer reports no match when the target page lacks the block type"
   const target: Block[] = [{ id: "text-a", type: "text", props: { heading: "说明", text: "说明内容" } }];
 
   assert.equal(findStyleTransferTargetBlock(source, [source], target), null);
+});
+
+test("style-only transfer leaves target content unchanged", () => {
+  const source = poll("source", "源投票", "source-poll");
+  source.props.bgColor = "#112233";
+  const target = poll("target", "目标投票", "target-poll");
+  target.props.bgColor = "#ffffff";
+
+  const props = buildStyleTransferProps(source, target, ["bgColor"], false);
+
+  assert.equal(props.heading, "目标投票");
+  assert.equal(props.bgColor, "#112233");
+  assert.equal(props.pollId, "target-poll");
+});
+
+test("content transfer copies editable values while preserving target-owned state", () => {
+  const source = poll("source", "源投票", "source-poll");
+  source.props.text = "源说明";
+  source.props.bgColor = "#112233";
+  source.props.pollQuestions = [
+    {
+      id: "question-source",
+      prompt: "请选择",
+      type: "single",
+      options: [{ id: "option-source", label: "选项一" }],
+    },
+  ];
+  source.props.pageBgColor = "#000000";
+  source.props.blockLocked = true;
+  source.props.mobileFitScreenWidth = true;
+  source.props.pagePlanConfig = { activePlanId: "source-plan" };
+
+  const target = poll("target", "目标投票", "target-poll");
+  target.props.text = "目标说明";
+  target.props.pageBgColor = "#eeeeee";
+  target.props.blockLocked = false;
+  target.props.mobileFitScreenWidth = false;
+  target.props.pagePlanConfig = { activePlanId: "target-plan" };
+
+  const props = buildStyleTransferProps(source, target, ["bgColor"], true);
+
+  assert.equal(props.heading, "源投票");
+  assert.equal(props.text, "源说明");
+  assert.equal(props.bgColor, "#112233");
+  assert.deepEqual(props.pollQuestions, source.props.pollQuestions);
+  assert.notEqual(props.pollQuestions, source.props.pollQuestions);
+  assert.equal(props.pollId, "target-poll");
+  assert.equal(props.pageBgColor, "#eeeeee");
+  assert.equal(props.blockLocked, false);
+  assert.equal(props.mobileFitScreenWidth, false);
+  assert.deepEqual(props.pagePlanConfig, { activePlanId: "target-plan" });
 });

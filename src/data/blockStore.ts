@@ -12,21 +12,27 @@ const PUBLISH_FAILURE_SNAPSHOTS_KEY = "merchant-space:publish-failure-snapshots:
 const MAX_PUBLISH_FAILURE_SNAPSHOTS = 12;
 const MAX_PUBLISHED_HISTORY = 2;
 const MAX_RAW_STORAGE_LENGTH = 12_000_000;
+const DEFAULT_DRAFT_SAVE_DELAY_MS = 900;
+const DRAFT_SAVE_IDLE_TIMEOUT_MS = 1200;
 
 export type BlocksStoreScope = string | undefined;
 const DEFAULT_SCOPE = "default";
 const draftCacheByKey = new Map<string, { raw: string | null | undefined; parsed: Block[] | undefined }>();
 const publishedCacheByKey = new Map<string, { raw: string | null | undefined; parsed: Block[] | undefined }>();
 const savedDraftSnapshotCacheByKey = new Map<string, SavedDraftSnapshot>();
-const scheduledDraftSaveByKey = new Map<
-  string,
-  {
-    raw: string;
-    parsed: Block[];
-    timer: ReturnType<typeof globalThis.setTimeout> | number;
-    eventName: string;
-  }
->();
+type ScheduledDraftSave = {
+  blocks: Block[];
+  timer: ReturnType<typeof globalThis.setTimeout> | number | null;
+  idleCallbackId: number | null;
+  eventName: string;
+};
+const scheduledDraftSaveByKey = new Map<string, ScheduledDraftSave>();
+
+type IdleCapableWindow = Window &
+  typeof globalThis & {
+    requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+    cancelIdleCallback?: (handle: number) => void;
+  };
 
 type PublishFailureSnapshot = {
   id: string;
@@ -118,7 +124,10 @@ function readCachedBlocksRaw(
 function clearScheduledDraftSave(key: string) {
   const pending = scheduledDraftSaveByKey.get(key);
   if (!pending) return;
-  clearTimeout(pending.timer);
+  if (pending.timer !== null) clearTimeout(pending.timer);
+  if (pending.idleCallbackId !== null && typeof window !== "undefined") {
+    (window as IdleCapableWindow).cancelIdleCallback?.(pending.idleCallbackId);
+  }
   scheduledDraftSaveByKey.delete(key);
 }
 
@@ -131,6 +140,39 @@ function commitDraftSaveByKey(key: string, eventName: string, payload: { raw: st
   } catch {
     // Ignore local cache write failures (e.g. quota exceeded).
   }
+}
+
+function commitScheduledDraftSave(key: string, pending: ScheduledDraftSave) {
+  if (typeof window === "undefined" || scheduledDraftSaveByKey.get(key) !== pending) return;
+  scheduledDraftSaveByKey.delete(key);
+  try {
+    const payload = normalizeBlocksForStorage(pending.blocks);
+    const storedRaw = readCachedBlocksRaw(key, draftCacheByKey);
+    if (storedRaw === payload.raw) {
+      draftCacheByKey.set(key, payload);
+      return;
+    }
+    commitDraftSaveByKey(key, pending.eventName, payload);
+  } catch {
+    // Keep editor input responsive even when a malformed draft cannot be serialized.
+  }
+}
+
+function scheduleDraftSaveCommit(key: string, pending: ScheduledDraftSave) {
+  if (typeof window === "undefined" || scheduledDraftSaveByKey.get(key) !== pending) return;
+  pending.timer = null;
+  const idleWindow = window as IdleCapableWindow;
+  if (typeof idleWindow.requestIdleCallback === "function") {
+    pending.idleCallbackId = idleWindow.requestIdleCallback(
+      () => {
+        pending.idleCallbackId = null;
+        commitScheduledDraftSave(key, pending);
+      },
+      { timeout: DRAFT_SAVE_IDLE_TIMEOUT_MS },
+    );
+    return;
+  }
+  commitScheduledDraftSave(key, pending);
 }
 
 function saveBlocksByKey(
@@ -182,32 +224,26 @@ export function saveBlocksToStorage(blocks: Block[], scope?: BlocksStoreScope) {
   return saveBlocksByKey(key, scopedEvent(DRAFT_STORE_EVENT, scope), blocks, draftCacheByKey);
 }
 
-export function scheduleBlocksToStorage(blocks: Block[], scope?: BlocksStoreScope, delayMs = 180) {
+export function scheduleBlocksToStorage(
+  blocks: Block[],
+  scope?: BlocksStoreScope,
+  delayMs = DEFAULT_DRAFT_SAVE_DELAY_MS,
+) {
   if (typeof window === "undefined") return;
   const key = scopedKey(DRAFT_KEY, scope);
   const eventName = scopedEvent(DRAFT_STORE_EVENT, scope);
-  const payload = normalizeBlocksForStorage(blocks);
-  const scheduled = scheduledDraftSaveByKey.get(key);
-  if (scheduled?.raw === payload.raw) {
-    draftCacheByKey.set(key, payload);
-    return;
-  }
-  const storedRaw = readCachedBlocksRaw(key, draftCacheByKey);
-  if (storedRaw === payload.raw) {
-    clearScheduledDraftSave(key);
-    draftCacheByKey.set(key, payload);
-    return;
-  }
   clearScheduledDraftSave(key);
-  const timer = window.setTimeout(() => {
-    scheduledDraftSaveByKey.delete(key);
-    commitDraftSaveByKey(key, eventName, payload);
-  }, Math.max(0, Math.round(delayMs)));
-  scheduledDraftSaveByKey.set(key, {
-    ...payload,
-    timer,
+  const pending: ScheduledDraftSave = {
+    blocks,
+    timer: null,
+    idleCallbackId: null,
     eventName,
-  });
+  };
+  pending.timer = window.setTimeout(
+    () => scheduleDraftSaveCommit(key, pending),
+    Math.max(0, Math.round(delayMs)),
+  );
+  scheduledDraftSaveByKey.set(key, pending);
 }
 
 export function flushScheduledBlocksToStorage(scope?: BlocksStoreScope) {
@@ -215,9 +251,11 @@ export function flushScheduledBlocksToStorage(scope?: BlocksStoreScope) {
   const key = scopedKey(DRAFT_KEY, scope);
   const pending = scheduledDraftSaveByKey.get(key);
   if (!pending) return;
-  clearTimeout(pending.timer);
-  scheduledDraftSaveByKey.delete(key);
-  commitDraftSaveByKey(key, pending.eventName, pending);
+  if (pending.timer !== null) clearTimeout(pending.timer);
+  if (pending.idleCallbackId !== null) {
+    (window as IdleCapableWindow).cancelIdleCallback?.(pending.idleCallbackId);
+  }
+  commitScheduledDraftSave(key, pending);
 }
 
 export function loadPublishedBlocksFromStorage(fallback: Block[], scope?: BlocksStoreScope): Block[] {
