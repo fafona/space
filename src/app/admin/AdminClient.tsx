@@ -185,7 +185,7 @@ import {
   type MerchantBookingRulesSnapshot,
 } from "@/lib/merchantBookingRules";
 import { buildPublicBlockId } from "@/lib/blockPublicId";
-import { findStyleTransferTargetBlock } from "@/lib/editorStyleTransfer";
+import { buildStyleTransferProps, findStyleTransferTargetBlock } from "@/lib/editorStyleTransfer";
 import { countInlineAssets } from "@/lib/inlineAssetStats";
 import { showGlobalToast } from "@/lib/globalToast";
 import { useNotificationSound } from "@/lib/useNotificationSound";
@@ -1170,6 +1170,7 @@ type StyleCopyDialogState = {
   targetViewport: ViewportKey;
   targetPlanId: PlanId;
   targetPageId: string;
+  includeContent: boolean;
 };
 
 type GlobalPageRecord = {
@@ -5490,6 +5491,7 @@ export default function AdminClient({
       targetViewport,
       targetPlanId: targetPlan.id,
       targetPageId: defaultTargetPage.id,
+      includeContent: true,
     });
   }
 
@@ -5525,18 +5527,20 @@ export default function AdminClient({
       return;
     }
 
+    const targetBlock = targetPageBlocks[match.targetIndex];
+    if (!targetBlock) {
+      showTip("目标区块已发生变化，请重新选择");
+      return;
+    }
     pushUndoSnapshot(createSnapshot());
-    const stylePatch: Record<string, unknown> = {};
-    STYLE_SYNC_KEYS.forEach((key) => {
-      const value = (sourceBlock.props as Record<string, unknown>)[key];
-      if (typeof value !== "undefined") stylePatch[key] = value;
-    });
     targetPageBlocks[match.targetIndex] = {
-      ...targetPageBlocks[match.targetIndex],
-      props: {
-        ...targetPageBlocks[match.targetIndex].props,
-        ...stylePatch,
-      } as never,
+      ...targetBlock,
+      props: buildStyleTransferProps(
+        sourceBlock,
+        targetBlock,
+        STYLE_SYNC_KEYS,
+        styleCopyDialog.includeContent,
+      ) as never,
     } as Block;
     const nextPlan = setBlocksForPage(
       { ...targetPlan, activePageId: targetPlan.activePageId || targetState.editingPageId },
@@ -5574,7 +5578,11 @@ export default function AdminClient({
     const targetViewportLabel = styleCopyDialog.targetViewport === "mobile" ? "手机端" : "PC端";
     const targetPageLabel = toPlainText(targetPage.name, targetPage.id);
     setStyleCopyDialog(null);
-    showTip(`已复制样式到${targetViewportLabel} · ${targetPageLabel}`);
+    showTip(
+      styleCopyDialog.includeContent
+        ? `已复制样式和内容到${targetViewportLabel} · ${targetPageLabel}`
+        : `已复制样式到${targetViewportLabel} · ${targetPageLabel}`,
+    );
   }
 
   function rollbackToLastSuccessfulPublished() {
@@ -21574,13 +21582,36 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     </select>
                   </label>
 
+                  <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 h-4 w-4 shrink-0 accent-slate-950"
+                      checked={styleCopyDialog.includeContent}
+                      onChange={(event) =>
+                        setStyleCopyDialog((current) =>
+                          current ? { ...current, includeContent: event.target.checked } : current,
+                        )
+                      }
+                    />
+                    <span className="min-w-0">
+                      <span className="block text-sm font-medium text-slate-800">同时复制区块内容</span>
+                      <span className="mt-1 block text-xs leading-5 text-slate-500">
+                        复制区块内的文字、图片、列表、选项及其他编辑内容。
+                      </span>
+                    </span>
+                  </label>
+
                   {styleCopyTargetBlock && styleCopyTargetMatch ? (
                     <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm">
                       <div className="text-xs font-medium text-emerald-700">将复制到</div>
                       <div className="mt-1 font-medium text-emerald-950">
                         {buildPageCopyBlockLabel(styleCopyTargetBlock, styleCopyTargetMatch.targetIndex)}
                       </div>
-                      <div className="mt-1 text-xs leading-5 text-emerald-700">仅复制样式，目标区块的投票内容与已收集结果不会改变。</div>
+                      <div className="mt-1 text-xs leading-5 text-emerald-700">
+                        {styleCopyDialog.includeContent
+                          ? "复制样式及区块编辑内容；目标投票身份和已收集结果不会被覆盖。"
+                          : "仅复制样式，目标区块的编辑内容和已收集结果不会改变。"}
+                      </div>
                     </div>
                   ) : (
                     <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">

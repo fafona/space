@@ -9,6 +9,59 @@ export type StyleTransferMatch = {
 
 const ENTITY_IDENTITY_KEYS = ["pollId"] as const;
 const LABEL_IDENTITY_KEYS = ["heading", "title", "buttonLabel"] as const;
+const TARGET_OWNED_PROP_KEYS = new Set([
+  "blockLocked",
+  "mobileFitScreenWidth",
+  "pageBgImageUrl",
+  "pageBgFillMode",
+  "pageBgPosition",
+  "pageBgColor",
+  "pageBgOpacity",
+  "pageBgImageOpacity",
+  "pageBgColorOpacity",
+  "pagePlanConfig",
+  "pagePlanConfigMobile",
+  "pollId",
+  "publishedMerchantSnapshot",
+]);
+
+function cloneTransferValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(cloneTransferValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, nestedValue]) => [
+        key,
+        cloneTransferValue(nestedValue),
+      ]),
+    );
+  }
+  return value;
+}
+
+export function buildStyleTransferProps<T extends Block>(
+  sourceBlock: Block,
+  targetBlock: T,
+  styleKeys: readonly string[],
+  includeContent: boolean,
+) {
+  const sourceProps = sourceBlock.props as Record<string, unknown>;
+  const targetProps = targetBlock.props as Record<string, unknown>;
+  const nextProps: Record<string, unknown> = { ...targetProps };
+
+  if (includeContent) {
+    Object.entries(sourceProps).forEach(([key, value]) => {
+      if (TARGET_OWNED_PROP_KEYS.has(key)) return;
+      nextProps[key] = cloneTransferValue(value);
+    });
+  }
+
+  styleKeys.forEach((key) => {
+    const value = sourceProps[key];
+    if (typeof value !== "undefined") nextProps[key] = cloneTransferValue(value);
+  });
+
+  return nextProps as T["props"];
+}
 
 function normalizeIdentityValue(value: unknown) {
   if (typeof value !== "string") return "";

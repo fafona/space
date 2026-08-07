@@ -34,9 +34,6 @@ const pollAudienceLabels: Record<PollAudience, string> = {
   "registered-users": "Faolla 注册用户",
 };
 
-const POLL_EDITOR_COMMIT_DELAY_MS = 480;
-const POLL_EDITOR_COMMIT_MAX_WAIT_MS = 1800;
-
 function createChoiceOptions() {
   return [
     { id: createPollEntityId("option"), label: "选项一" },
@@ -229,8 +226,6 @@ function CompositionSafePollInput({
       maxLength={maxLength}
       placeholder={placeholder}
       value={value}
-      commitDelayMs={POLL_EDITOR_COMMIT_DELAY_MS}
-      commitMaxWaitMs={POLL_EDITOR_COMMIT_MAX_WAIT_MS}
       onChange={(event) => onChange(event.currentTarget.value)}
     />
   );
@@ -255,8 +250,6 @@ function CompositionSafePollTextarea({
       maxLength={maxLength}
       placeholder={placeholder}
       value={value}
-      commitDelayMs={POLL_EDITOR_COMMIT_DELAY_MS}
-      commitMaxWaitMs={POLL_EDITOR_COMMIT_MAX_WAIT_MS}
       onChange={(event) => onChange(event.currentTarget.value)}
     />
   );
