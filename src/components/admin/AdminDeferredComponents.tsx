@@ -22,6 +22,8 @@ export const loadMerchantBusinessCardManager = () =>
   import("@/components/admin/MerchantBusinessCardManager");
 export const loadMerchantCustomerManager = () =>
   import("@/components/admin/MerchantCustomerManager");
+export const loadMerchantPollStatsPanel = () =>
+  import("@/components/admin/MerchantPollStatsPanel");
 export const loadMerchantEnterpriseManager = () =>
   import("@/components/admin/MerchantEnterpriseManager");
 export const loadMerchantCouponManager = () => import("@/components/admin/MerchantCouponManager");
@@ -78,6 +80,11 @@ export const MerchantBusinessCardManager = dynamic(loadMerchantBusinessCardManag
 export const MerchantCustomerManager = dynamic(loadMerchantCustomerManager, {
   ssr: false,
   loading: () => <DeferredAdminPanelLoading label="客户管理加载中..." />,
+});
+
+export const MerchantPollStatsPanel = dynamic(loadMerchantPollStatsPanel, {
+  ssr: false,
+  loading: () => <DeferredAdminPanelLoading label="投票统计加载中..." />,
 });
 
 export const MerchantEnterpriseManager = dynamic(loadMerchantEnterpriseManager, {

@@ -51,6 +51,32 @@ export type PollStoredBallot = {
   createdAt: string;
 };
 
+export type PollRoundBallotMetadata = {
+  pollId: string;
+  blockId: string;
+  anonymous: boolean;
+  pollSnapshot: PollStoredBallot["pollSnapshot"];
+  createdAt: string;
+};
+
+export type PublishedPollRound = {
+  blockId: string;
+  config: NormalizedPollConfig;
+};
+
+export type PollRoundOverview = {
+  pollId: string;
+  blockId: string;
+  heading: string;
+  status: "open" | "closed" | "historical";
+  published: boolean;
+  totalBallots: number;
+  anonymousBallots: number;
+  questionCount: number;
+  firstSubmittedAt: string;
+  lastSubmittedAt: string;
+};
+
 export type PollSummaryOption = PollOption & { count: number };
 
 export type PollSummaryTextResponse = {
@@ -317,6 +343,91 @@ export function normalizeStoredPollBallot(value: unknown): PollStoredBallot | nu
     },
     createdAt: trimText(record.created_at ?? record.createdAt, 64),
   };
+}
+
+export function normalizePollRoundBallotMetadata(value: unknown): PollRoundBallotMetadata | null {
+  const record = readRecord(value);
+  if (!record) return null;
+  const pollId = normalizeEntityId(record.poll_id ?? record.pollId, "");
+  if (!pollId) return null;
+  const snapshotRecord = readRecord(record.poll_snapshot ?? record.pollSnapshot) ?? {};
+  return {
+    pollId,
+    blockId: trimText(record.block_id ?? record.blockId, 160),
+    anonymous: record.anonymous === true,
+    pollSnapshot: {
+      heading: trimText(snapshotRecord.heading, 1000),
+      questions: normalizePollQuestions(snapshotRecord.questions),
+    },
+    createdAt: trimText(record.created_at ?? record.createdAt, 64),
+  };
+}
+
+export function buildPollRoundOverviews(
+  metadata: PollRoundBallotMetadata[],
+  publishedRounds: PublishedPollRound[] = [],
+) {
+  const rounds = new Map<string, PollRoundOverview>();
+  for (const ballot of metadata) {
+    const existing = rounds.get(ballot.pollId);
+    const createdAt = ballot.createdAt;
+    if (!existing) {
+      rounds.set(ballot.pollId, {
+        pollId: ballot.pollId,
+        blockId: ballot.blockId,
+        heading: ballot.pollSnapshot.heading || "未命名投票",
+        status: "historical",
+        published: false,
+        totalBallots: 1,
+        anonymousBallots: ballot.anonymous ? 1 : 0,
+        questionCount: ballot.pollSnapshot.questions.length,
+        firstSubmittedAt: createdAt,
+        lastSubmittedAt: createdAt,
+      });
+      continue;
+    }
+    existing.totalBallots += 1;
+    if (ballot.anonymous) existing.anonymousBallots += 1;
+    if (!existing.firstSubmittedAt || (createdAt && createdAt < existing.firstSubmittedAt)) {
+      existing.firstSubmittedAt = createdAt;
+    }
+    if (!existing.lastSubmittedAt || (createdAt && createdAt > existing.lastSubmittedAt)) {
+      existing.lastSubmittedAt = createdAt;
+      existing.blockId = ballot.blockId || existing.blockId;
+      existing.heading = ballot.pollSnapshot.heading || existing.heading;
+      existing.questionCount = ballot.pollSnapshot.questions.length || existing.questionCount;
+    }
+  }
+
+  for (const publishedRound of publishedRounds) {
+    const pollId = publishedRound.config.pollId;
+    const existing = rounds.get(pollId);
+    if (existing) {
+      existing.blockId = publishedRound.blockId || existing.blockId;
+      existing.heading = publishedRound.config.heading || existing.heading;
+      existing.status = publishedRound.config.status;
+      existing.published = true;
+      existing.questionCount = publishedRound.config.questions.length;
+      continue;
+    }
+    rounds.set(pollId, {
+      pollId,
+      blockId: publishedRound.blockId,
+      heading: publishedRound.config.heading || "未命名投票",
+      status: publishedRound.config.status,
+      published: true,
+      totalBallots: 0,
+      anonymousBallots: 0,
+      questionCount: publishedRound.config.questions.length,
+      firstSubmittedAt: "",
+      lastSubmittedAt: "",
+    });
+  }
+
+  return [...rounds.values()].sort((left, right) => {
+    if (left.published !== right.published) return left.published ? -1 : 1;
+    return right.lastSubmittedAt.localeCompare(left.lastSubmittedAt) || left.heading.localeCompare(right.heading, "zh-CN");
+  });
 }
 
 export function buildPollSummary(
