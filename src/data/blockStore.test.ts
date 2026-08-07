@@ -4,7 +4,9 @@ import { homeBlocks, type Block } from "./homeBlocks";
 import {
   flushScheduledBlocksToStorage,
   loadBlocksFromStorage,
+  readLatestDraftSnapshot,
   saveBlocksToStorage,
+  saveLatestDraftSnapshot,
   scheduleBlocksToStorage,
 } from "./blockStore";
 
@@ -50,24 +52,23 @@ function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function withWindowHarness(run: () => Promise<void> | void) {
+function withWindowHarness(run: () => Promise<void> | void, storage: Storage = createMemoryStorage()) {
   const globalTarget = globalThis as typeof globalThis & {
     localStorage?: Storage;
     window?: Window & typeof globalThis;
   };
   const previousWindow = globalTarget.window;
   const previousLocalStorage = globalTarget.localStorage;
-  const localStorage = createMemoryStorage();
   const mockWindow = new EventTarget() as Window & typeof globalThis;
   Object.assign(mockWindow, {
     ...globalThis,
-    localStorage,
+    localStorage: storage,
     setTimeout,
     clearTimeout,
   });
 
   globalTarget.window = mockWindow;
-  globalTarget.localStorage = localStorage;
+  globalTarget.localStorage = storage;
 
   return Promise.resolve()
     .then(run)
@@ -124,4 +125,53 @@ test("immediate draft saves override older scheduled snapshots", async () => {
 
     assert.deepEqual(loadBlocksFromStorage([], scope), latest);
   });
+});
+
+test("latest saved draft snapshots round-trip independently by scope", async () => {
+  await withWindowHarness(() => {
+    const firstScope = "site-10000003";
+    const secondScope = "site-10000004";
+    const first = createBlockSet("first-snapshot", "first");
+    const second = createBlockSet("second-snapshot", "second");
+
+    assert.equal(saveLatestDraftSnapshot(first, firstScope), true);
+    assert.equal(saveLatestDraftSnapshot(second, secondScope), true);
+    assert.deepEqual(readLatestDraftSnapshot(firstScope)?.blocks, first);
+    assert.deepEqual(readLatestDraftSnapshot(secondScope)?.blocks, second);
+  });
+});
+
+test("remote hydration never overwrites a manual recovery point", async () => {
+  await withWindowHarness(() => {
+    const scope = "site-10000006";
+    const manual = createBlockSet("manual-snapshot", "manual edit");
+    const remote = createBlockSet("remote-snapshot", "remote publish backup");
+
+    assert.equal(saveLatestDraftSnapshot(manual, scope), true);
+    assert.equal(
+      saveLatestDraftSnapshot(remote, scope, {
+        source: "remote",
+        sourceUpdatedAt: "2026-08-07T12:00:00.000Z",
+      }),
+      true,
+    );
+    assert.equal(readLatestDraftSnapshot(scope)?.source, "manual");
+    assert.deepEqual(readLatestDraftSnapshot(scope)?.blocks, manual);
+  });
+});
+
+test("failed browser storage writes are reported while the current-tab recovery point remains readable", async () => {
+  const unavailableStorage = createMemoryStorage();
+  unavailableStorage.setItem = () => {
+    throw new Error("QuotaExceededError");
+  };
+
+  await withWindowHarness(() => {
+    const scope = "site-10000005";
+    const blocks = createBlockSet("memory-snapshot", "recoverable in this tab");
+
+    assert.equal(saveBlocksToStorage(blocks, scope), false);
+    assert.equal(saveLatestDraftSnapshot(blocks, scope), false);
+    assert.deepEqual(readLatestDraftSnapshot(scope)?.blocks, blocks);
+  }, unavailableStorage);
 });

@@ -17,6 +17,7 @@ export type BlocksStoreScope = string | undefined;
 const DEFAULT_SCOPE = "default";
 const draftCacheByKey = new Map<string, { raw: string | null | undefined; parsed: Block[] | undefined }>();
 const publishedCacheByKey = new Map<string, { raw: string | null | undefined; parsed: Block[] | undefined }>();
+const savedDraftSnapshotCacheByKey = new Map<string, SavedDraftSnapshot>();
 const scheduledDraftSaveByKey = new Map<
   string,
   {
@@ -45,6 +46,8 @@ type PublishedHistorySnapshot = {
 type SavedDraftSnapshot = {
   id: string;
   at: string;
+  source: "manual" | "remote";
+  sourceUpdatedAt: string | null;
   blocks: Block[];
 };
 
@@ -136,19 +139,20 @@ function saveBlocksByKey(
   blocks: Block[],
   cache: Map<string, { raw: string | null | undefined; parsed: Block[] | undefined }>,
 ) {
-  if (typeof window === "undefined") return;
+  if (typeof window === "undefined") return false;
   try {
     const payload = normalizeBlocksForStorage(blocks);
     const previousRaw = readCachedBlocksRaw(key, cache);
     if (previousRaw === payload.raw) {
       cache.set(key, payload);
-      return;
+      return true;
     }
     localStorage.setItem(key, payload.raw);
     window.dispatchEvent(new Event(eventName));
     cache.set(key, payload);
+    return true;
   } catch {
-    // Ignore local cache write failures (e.g. quota exceeded).
+    return false;
   }
 }
 
@@ -175,7 +179,7 @@ export function loadBlocksFromStorage(fallback: Block[], scope?: BlocksStoreScop
 export function saveBlocksToStorage(blocks: Block[], scope?: BlocksStoreScope) {
   const key = scopedKey(DRAFT_KEY, scope);
   clearScheduledDraftSave(key);
-  saveBlocksByKey(key, scopedEvent(DRAFT_STORE_EVENT, scope), blocks, draftCacheByKey);
+  return saveBlocksByKey(key, scopedEvent(DRAFT_STORE_EVENT, scope), blocks, draftCacheByKey);
 }
 
 export function scheduleBlocksToStorage(blocks: Block[], scope?: BlocksStoreScope, delayMs = 180) {
@@ -222,7 +226,7 @@ export function loadPublishedBlocksFromStorage(fallback: Block[], scope?: Blocks
 
 export function savePublishedBlocksToStorage(blocks: Block[], scope?: BlocksStoreScope) {
   const key = scopedKey(PUBLISHED_KEY, scope);
-  saveBlocksByKey(key, scopedEvent(PUBLISHED_STORE_EVENT, scope), blocks, publishedCacheByKey);
+  return saveBlocksByKey(key, scopedEvent(PUBLISHED_STORE_EVENT, scope), blocks, publishedCacheByKey);
 }
 
 function estimateUtf8Size(text: string) {
@@ -317,38 +321,65 @@ export function rollbackToPreviousPublishedVersion(scope?: BlocksStoreScope): Bl
   return target.blocks;
 }
 
-export function saveLatestDraftSnapshot(blocks: Block[], scope?: BlocksStoreScope) {
-  if (typeof window === "undefined") return;
+export function saveLatestDraftSnapshot(
+  blocks: Block[],
+  scope?: BlocksStoreScope,
+  options?: { source?: "manual" | "remote"; sourceUpdatedAt?: string | null },
+) {
+  if (typeof window === "undefined") return false;
+  const key = scopedKey(LATEST_SAVED_DRAFT_SNAPSHOT_KEY, scope);
   try {
+    const source = options?.source === "remote" ? "remote" : "manual";
+    const sourceUpdatedAt = typeof options?.sourceUpdatedAt === "string" ? options.sourceUpdatedAt.trim() || null : null;
+    if (source === "remote") {
+      const existing = readLatestDraftSnapshot(scope);
+      if (existing?.source === "manual") return true;
+      const existingSourceMs = Date.parse(existing?.sourceUpdatedAt ?? existing?.at ?? "");
+      const incomingSourceMs = Date.parse(sourceUpdatedAt ?? "");
+      if (existing && Number.isFinite(existingSourceMs) && Number.isFinite(incomingSourceMs) && existingSourceMs >= incomingSourceMs) {
+        return true;
+      }
+    }
     const sanitized = canonicalizeEditorBlocksSystemDefaults(sanitizeBlocksForRuntime(blocks).blocks);
     const snapshot: SavedDraftSnapshot = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       at: new Date().toISOString(),
+      source,
+      sourceUpdatedAt,
       blocks: sanitized,
     };
-    localStorage.setItem(scopedKey(LATEST_SAVED_DRAFT_SNAPSHOT_KEY, scope), JSON.stringify(snapshot));
+    savedDraftSnapshotCacheByKey.set(key, snapshot);
+    localStorage.setItem(key, JSON.stringify(snapshot));
+    return true;
   } catch {
-    // Ignore local cache write failures.
+    return false;
   }
 }
 
 export function readLatestDraftSnapshot(scope?: BlocksStoreScope): SavedDraftSnapshot | null {
   if (typeof window === "undefined") return null;
+  const key = scopedKey(LATEST_SAVED_DRAFT_SNAPSHOT_KEY, scope);
+  const cached = savedDraftSnapshotCacheByKey.get(key) ?? null;
   try {
-    const raw = localStorage.getItem(scopedKey(LATEST_SAVED_DRAFT_SNAPSHOT_KEY, scope));
-    if (!raw) return null;
+    const raw = localStorage.getItem(key);
+    if (!raw) return cached;
     const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== "object") return null;
+    if (!parsed || typeof parsed !== "object") return cached;
     const record = parsed as Record<string, unknown>;
-    if (typeof record.id !== "string" || typeof record.at !== "string") return null;
-    if (!Array.isArray(record.blocks)) return null;
-    return {
+    if (typeof record.id !== "string" || typeof record.at !== "string") return cached;
+    if (!Array.isArray(record.blocks)) return cached;
+    const stored = {
       id: record.id,
       at: record.at,
+      source: record.source === "remote" ? "remote" as const : "manual" as const,
+      sourceUpdatedAt: typeof record.sourceUpdatedAt === "string" ? record.sourceUpdatedAt.trim() || null : null,
       blocks: canonicalizeEditorBlocksSystemDefaults(sanitizeBlocksForRuntime(record.blocks as Block[]).blocks),
     };
+    const latest = cached && Date.parse(cached.at) >= Date.parse(stored.at) ? cached : stored;
+    savedDraftSnapshotCacheByKey.set(key, latest);
+    return latest;
   } catch {
-    return null;
+    return cached;
   }
 }
 
