@@ -330,7 +330,7 @@ export default function PollBlockEditor({ props, runtimeSiteId, runtimeBlockId, 
               value={config.contentBackgroundOpacity}
               onChange={(event) => onChange({ pollContentBackgroundOpacity: Number(event.target.value) })}
             />
-            <span className="text-xs text-slate-500">0% 为完全透明，100% 为不透明；文字和输入控件不受影响。</span>
+            <span className="text-xs text-slate-500">作用于姓名区、题目区和结果区底框；0% 为完全透明，100% 为不透明。</span>
           </label>
         </div>
         <div className="grid gap-3 md:grid-cols-2">

@@ -3344,7 +3344,9 @@ type GalleryEditorImage = {
   const blockPreviewOverflowStyle: CSSProperties = isEditingBlock
     ? { overflow: "visible" }
     : blockHeight
-      ? { overflow: "auto" }
+      ? block.type === "poll"
+        ? { overflowX: "hidden", overflowY: "auto" }
+        : { overflow: "auto" }
       : block.type === "search-bar"
         ? { overflow: "visible" }
         : {};
