@@ -17,6 +17,8 @@ export type NormalizedPollConfig = {
   heading: string;
   text: string;
   status: "open" | "closed";
+  openAt: string;
+  closeAt: string;
   questions: NormalizedPollQuestion[];
   allowAnonymous: boolean;
   showResultsAfterSubmit: boolean;
@@ -47,6 +49,8 @@ export type PollStoredBallot = {
   pollSnapshot: {
     heading: string;
     questions: NormalizedPollQuestion[];
+    openAt?: string;
+    closeAt?: string;
   };
   createdAt: string;
 };
@@ -68,8 +72,10 @@ export type PollRoundOverview = {
   pollId: string;
   blockId: string;
   heading: string;
-  status: "open" | "closed" | "historical";
+  status: "scheduled" | "open" | "closed" | "historical";
   published: boolean;
+  openAt: string;
+  closeAt: string;
   totalBallots: number;
   anonymousBallots: number;
   questionCount: number;
@@ -121,6 +127,13 @@ function normalizeOpacity(value: unknown, fallback: number) {
         ? Number(value)
         : Number.NaN;
   return Number.isFinite(parsed) ? Math.max(0, Math.min(1, parsed)) : fallback;
+}
+
+function normalizeDateTime(value: unknown) {
+  const raw = trimText(value, 64);
+  if (!raw) return "";
+  const timestamp = Date.parse(raw);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : "";
 }
 
 function normalizeEntityId(value: unknown, fallback: string) {
@@ -191,6 +204,8 @@ export function normalizePollConfig(value: PollProps | Record<string, unknown> |
     heading: trimText(record.heading, 1000) || "在线投票",
     text: trimText(record.text, 4000),
     status: record.pollStatus === "closed" ? "closed" : "open",
+    openAt: normalizeDateTime(record.pollOpenAt),
+    closeAt: normalizeDateTime(record.pollCloseAt),
     questions: normalizePollQuestions(record.pollQuestions),
     allowAnonymous: record.pollAllowAnonymous !== false,
     showResultsAfterSubmit: record.pollShowResultsAfterSubmit === true,
@@ -205,6 +220,9 @@ export function normalizePollConfig(value: PollProps | Record<string, unknown> |
 
 export function getPollConfigurationIssue(config: NormalizedPollConfig) {
   if (!config.pollId) return "missing_poll_id";
+  if (config.openAt && config.closeAt && Date.parse(config.openAt) >= Date.parse(config.closeAt)) {
+    return "invalid_schedule";
+  }
   if (config.questions.length === 0) return "missing_questions";
   for (const question of config.questions) {
     if (question.type !== "text" && question.options.length < 2) {
@@ -212,6 +230,17 @@ export function getPollConfigurationIssue(config: NormalizedPollConfig) {
     }
   }
   return "";
+}
+
+export type PollAvailability = "scheduled" | "open" | "closed";
+
+export function getPollAvailability(config: NormalizedPollConfig, now = Date.now()): PollAvailability {
+  if (config.status === "closed") return "closed";
+  const openAt = config.openAt ? Date.parse(config.openAt) : Number.NaN;
+  const closeAt = config.closeAt ? Date.parse(config.closeAt) : Number.NaN;
+  if (Number.isFinite(openAt) && now < openAt) return "scheduled";
+  if (Number.isFinite(closeAt) && now >= closeAt) return "closed";
+  return "open";
 }
 
 function collectNestedBlocks(value: unknown, output: Block[], visited: Set<unknown>) {
@@ -307,6 +336,8 @@ export function buildPollSnapshot(config: NormalizedPollConfig) {
   return {
     heading: config.heading,
     questions: config.questions,
+    openAt: config.openAt,
+    closeAt: config.closeAt,
   };
 }
 
@@ -340,6 +371,8 @@ export function normalizeStoredPollBallot(value: unknown): PollStoredBallot | nu
     pollSnapshot: {
       heading: trimText(snapshotRecord.heading, 1000),
       questions: normalizePollQuestions(snapshotRecord.questions),
+      openAt: normalizeDateTime(snapshotRecord.openAt),
+      closeAt: normalizeDateTime(snapshotRecord.closeAt),
     },
     createdAt: trimText(record.created_at ?? record.createdAt, 64),
   };
@@ -358,6 +391,8 @@ export function normalizePollRoundBallotMetadata(value: unknown): PollRoundBallo
     pollSnapshot: {
       heading: trimText(snapshotRecord.heading, 1000),
       questions: normalizePollQuestions(snapshotRecord.questions),
+      openAt: normalizeDateTime(snapshotRecord.openAt),
+      closeAt: normalizeDateTime(snapshotRecord.closeAt),
     },
     createdAt: trimText(record.created_at ?? record.createdAt, 64),
   };
@@ -378,6 +413,8 @@ export function buildPollRoundOverviews(
         heading: ballot.pollSnapshot.heading || "未命名投票",
         status: "historical",
         published: false,
+        openAt: ballot.pollSnapshot.openAt ?? "",
+        closeAt: ballot.pollSnapshot.closeAt ?? "",
         totalBallots: 1,
         anonymousBallots: ballot.anonymous ? 1 : 0,
         questionCount: ballot.pollSnapshot.questions.length,
@@ -405,8 +442,10 @@ export function buildPollRoundOverviews(
     if (existing) {
       existing.blockId = publishedRound.blockId || existing.blockId;
       existing.heading = publishedRound.config.heading || existing.heading;
-      existing.status = publishedRound.config.status;
+      existing.status = getPollAvailability(publishedRound.config);
       existing.published = true;
+      existing.openAt = publishedRound.config.openAt;
+      existing.closeAt = publishedRound.config.closeAt;
       existing.questionCount = publishedRound.config.questions.length;
       continue;
     }
@@ -414,8 +453,10 @@ export function buildPollRoundOverviews(
       pollId,
       blockId: publishedRound.blockId,
       heading: publishedRound.config.heading || "未命名投票",
-      status: publishedRound.config.status,
+      status: getPollAvailability(publishedRound.config),
       published: true,
+      openAt: publishedRound.config.openAt,
+      closeAt: publishedRound.config.closeAt,
       totalBallots: 0,
       anonymousBallots: 0,
       questionCount: publishedRound.config.questions.length,
@@ -509,6 +550,9 @@ export function buildPollExportRows(ballots: PollStoredBallot[], summary: PollSu
       "身份": ballot.participantType === "member" ? "会员" : "游客",
       "投票人": ballot.anonymous ? "匿名" : ballot.participantName || "未填写",
       "匿名投票": ballot.anonymous ? "是" : "否",
+      "投票名称（提交时）": ballot.pollSnapshot.heading,
+      "开放时间（提交时）": ballot.pollSnapshot.openAt ?? "",
+      "结束时间（提交时）": ballot.pollSnapshot.closeAt ?? "",
     };
     summary.questions.forEach((question, index) => {
       const answer = answerByQuestion.get(question.id);

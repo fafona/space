@@ -6,6 +6,7 @@ import {
   buildPollRoundOverviews,
   buildPollSummary,
   findPublishedPollConfig,
+  getPollAvailability,
   getPollConfigurationIssue,
   normalizePollConfig,
   normalizePollRoundBallotMetadata,
@@ -76,6 +77,27 @@ test("poll config normalizes supported question types and rejects incomplete cho
   assert.equal(getPollConfigurationIssue(invalid), "question_requires_options:q");
 });
 
+test("poll availability follows configured opening and closing times", () => {
+  const scheduled = normalizePollConfig({
+    pollOpenAt: "2026-08-08T08:00:00.000Z",
+    pollCloseAt: "2026-08-08T10:00:00.000Z",
+  });
+  assert.equal(getPollAvailability(scheduled, Date.parse("2026-08-08T07:59:59.000Z")), "scheduled");
+  assert.equal(getPollAvailability(scheduled, Date.parse("2026-08-08T09:00:00.000Z")), "open");
+  assert.equal(getPollAvailability(scheduled, Date.parse("2026-08-08T10:00:00.000Z")), "closed");
+  assert.equal(getPollConfigurationIssue(scheduled), "missing_questions");
+
+  const invalidSchedule = normalizePollConfig({
+    pollOpenAt: "2026-08-08T10:00:00.000Z",
+    pollCloseAt: "2026-08-08T09:00:00.000Z",
+    pollQuestions: questions,
+  });
+  assert.equal(getPollConfigurationIssue(invalidSchedule), "invalid_schedule");
+
+  const manuallyClosed = normalizePollConfig({ pollStatus: "closed" });
+  assert.equal(getPollAvailability(manuallyClosed, Date.parse("2026-08-08T09:00:00.000Z")), "closed");
+});
+
 test("poll answers enforce required questions and validate option ownership", () => {
   const missing = validatePollAnswers(config, []);
   assert.deepEqual(missing, { ok: false, code: "required_answer_missing", questionId: "q-single" });
@@ -139,6 +161,7 @@ test("poll summary counts choices, skips and private text responses without leak
   assert.equal(rows[0]["身份"], "会员");
   assert.equal(rows[1]["投票人"], "匿名");
   assert.equal(rows[0]["Q2 可选择多个"], "丙；丁");
+  assert.equal(rows[0]["投票名称（提交时）"], "满意度调查");
 });
 
 test("published poll lookup traverses nested desktop and mobile page plans", () => {

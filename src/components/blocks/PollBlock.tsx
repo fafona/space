@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { PollProps } from "@/data/homeBlocks";
 import { resolveFrontendAuthPayload } from "@/lib/authSessionRecovery";
 import {
+  getPollAvailability,
   getPollConfigurationIssue,
   normalizePollConfig,
   validatePollAnswers,
@@ -31,6 +32,7 @@ type PollAnswerDraft = {
 
 function getPollErrorMessage(code: string) {
   if (code === "already_voted") return "您已经提交过本次投票。";
+  if (code === "poll_not_started") return "本次投票尚未开放。";
   if (code === "poll_closed") return "本次投票已经结束。";
   if (code === "poll_not_published") return "投票尚未发布，请稍后再试。";
   if (code === "participant_name_required") return "请填写名称。";
@@ -39,6 +41,19 @@ function getPollErrorMessage(code: string) {
   if (code === "poll_store_unavailable") return "投票服务正在配置中，请稍后再试。";
   if (code === "invalid_poll_configuration") return "投票配置不完整，请联系商家。";
   return "提交失败，请检查网络后重试。";
+}
+
+function formatPollDateTime(value: string) {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return "";
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(timestamp));
 }
 
 function PollResults({ summary }: { summary: PollSummary }) {
@@ -96,6 +111,7 @@ export default function PollBlock({
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState("");
   const [summary, setSummary] = useState<PollSummary | null>(null);
+  const [clock, setClock] = useState(() => Date.now());
 
   useEffect(() => {
     if (!interactive) return;
@@ -118,6 +134,20 @@ export default function PollBlock({
   useEffect(() => {
     if (!config.allowAnonymous) setAnonymous(false);
   }, [config.allowAnonymous]);
+
+  useEffect(() => {
+    if (!interactive) return;
+    const now = Date.now();
+    const nextBoundary = [config.openAt, config.closeAt]
+      .map((value) => Date.parse(value))
+      .filter((value) => Number.isFinite(value) && value > now)
+      .sort((left, right) => left - right)[0];
+    const delay = nextBoundary
+      ? Math.min(60_000, Math.max(500, nextBoundary - now + 100))
+      : 60_000;
+    const timer = window.setTimeout(() => setClock(Date.now()), delay);
+    return () => window.clearTimeout(timer);
+  }, [clock, config.closeAt, config.openAt, interactive]);
 
   const updateAnswer = (questionId: string, patch: Partial<PollAnswerDraft>) => {
     setAnswerDrafts((current) => ({
@@ -146,6 +176,11 @@ export default function PollBlock({
     }
     if (configurationIssue) {
       setError(getPollErrorMessage("invalid_poll_configuration"));
+      return;
+    }
+    const availability = getPollAvailability(config);
+    if (availability !== "open") {
+      setError(getPollErrorMessage(availability === "scheduled" ? "poll_not_started" : "poll_closed"));
       return;
     }
     if (!anonymous && !participantName.trim()) {
@@ -204,7 +239,17 @@ export default function PollBlock({
   const borderStyle = getBlockBorderInlineStyle(props.blockBorderStyle, props.blockBorderColor);
   const headingHtml = toRichHtml(config.heading, "在线投票");
   const textHtml = toRichHtml(config.text, "");
-  const live = interactive && config.status === "open" && !configurationIssue;
+  const availability = getPollAvailability(config, clock);
+  const live = interactive && availability === "open" && !configurationIssue;
+  const inactiveMessage = configurationIssue
+    ? "请完善投票配置后发布。"
+    : !interactive
+      ? "编辑预览中，发布后可以提交投票。"
+      : availability === "scheduled"
+        ? `本次投票将于 ${formatPollDateTime(config.openAt)} 开放。`
+        : config.closeAt && Date.parse(config.closeAt) <= clock
+          ? `本次投票已于 ${formatPollDateTime(config.closeAt)} 结束。`
+          : "本次投票已经结束。";
   const contentFrameStyle = {
     backgroundColor: `rgba(255, 255, 255, ${config.contentBackgroundOpacity})`,
   };
@@ -366,7 +411,7 @@ export default function PollBlock({
 
           {!live ? (
             <div className="min-w-0 max-w-full break-words rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 [overflow-wrap:anywhere]">
-              {config.status === "closed" ? "本次投票已经结束。" : "请完善投票问题和选项后发布。"}
+              {inactiveMessage}
             </div>
           ) : null}
           {error ? (

@@ -9,6 +9,12 @@ const migrationPath = path.join(
   "supabase-migrations",
   "202608060027_merchant_poll_ballots.sql",
 );
+const deletionMigrationPath = path.join(
+  process.cwd(),
+  "scripts",
+  "supabase-migrations",
+  "202608070028_merchant_poll_ballot_deletion.sql",
+);
 
 function source() {
   return fs.readFileSync(migrationPath, "utf8");
@@ -41,4 +47,13 @@ test("poll answers and snapshots have structural and size constraints", () => {
   assert.match(sql, /jsonb_typeof\(poll_snapshot\) = 'object'/i);
   assert.match(sql, /pg_column_size\(poll_snapshot\) <= 131072/i);
   assert.match(sql, /merchant_poll_ballots_poll_created_idx[\s\S]+merchant_id, poll_id, created_at desc, id desc/i);
+});
+
+test("poll result deletion is granted only to the server service role in a forward migration", () => {
+  const sql = fs.readFileSync(deletionMigrationPath, "utf8");
+  assert.match(sql, /\bbegin\s*;/i);
+  assert.match(sql, /grant delete on table public\.merchant_poll_ballots to service_role/i);
+  assert.doesNotMatch(sql, /grant\s+delete\s+on[\s\S]+\s+to\s+(?:anon|authenticated|public)\b/i);
+  assert.match(sql, /202608070028, 'merchant_poll_ballot_deletion'/i);
+  assert.match(sql, /\bcommit\s*;\s*$/i);
 });
