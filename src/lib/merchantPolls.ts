@@ -25,6 +25,7 @@ export type NormalizedPollConfig = {
   successText: string;
   nameLabel: string;
   namePlaceholder: string;
+  contentBackgroundOpacity: number;
 };
 
 export type PollAnswer = {
@@ -84,6 +85,16 @@ function readRecord(value: unknown): Record<string, unknown> | null {
 
 function trimText(value: unknown, maxLength: number) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+function normalizeOpacity(value: unknown, fallback: number) {
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim()
+        ? Number(value)
+        : Number.NaN;
+  return Number.isFinite(parsed) ? Math.max(0, Math.min(1, parsed)) : fallback;
 }
 
 function normalizeEntityId(value: unknown, fallback: string) {
@@ -162,6 +173,7 @@ export function normalizePollConfig(value: PollProps | Record<string, unknown> |
     successText: trimText(record.pollSuccessText, 600) || "感谢您的参与。",
     nameLabel: trimText(record.pollNameLabel, 120) || "您的名称",
     namePlaceholder: trimText(record.pollNamePlaceholder, 120) || "请输入您的名称",
+    contentBackgroundOpacity: normalizeOpacity(record.pollContentBackgroundOpacity, 0.72),
   } satisfies NormalizedPollConfig;
 }
 

@@ -205,6 +205,9 @@ export default function PollBlock({
   const headingHtml = toRichHtml(config.heading, "在线投票");
   const textHtml = toRichHtml(config.text, "");
   const live = interactive && config.status === "open" && !configurationIssue;
+  const contentBackgroundStyle = {
+    backgroundColor: `rgba(255, 255, 255, ${config.contentBackgroundOpacity})`,
+  };
 
   return (
     <section
@@ -219,26 +222,27 @@ export default function PollBlock({
         minHeight: props.blockHeight ? `${props.blockHeight}px` : undefined,
       }}
     >
-      <div className="text-2xl font-bold text-slate-900 break-words" dangerouslySetInnerHTML={{ __html: headingHtml }} />
-      {config.text ? (
-        <div className="mt-2 text-sm leading-6 text-slate-600 break-words" dangerouslySetInnerHTML={{ __html: textHtml }} />
-      ) : null}
+      <div className="rounded-lg border border-white/50 p-4 shadow-sm sm:p-5" style={contentBackgroundStyle}>
+        <div className="text-2xl font-bold text-slate-900 break-words" dangerouslySetInnerHTML={{ __html: headingHtml }} />
+        {config.text ? (
+          <div className="mt-2 text-sm leading-6 text-slate-600 break-words" dangerouslySetInnerHTML={{ __html: textHtml }} />
+        ) : null}
 
-      {submitted ? (
-        <div className="mt-5 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
-          <div className="text-lg font-semibold text-emerald-900">{config.successTitle}</div>
-          <div className="mt-1 text-sm text-emerald-800">{config.successText}</div>
-          {summary ? <PollResults summary={summary} /> : null}
-        </div>
-      ) : (
-        <form
-          className="mt-5 grid gap-5"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void submitPoll();
-          }}
-        >
-          <div className="grid gap-3 rounded-lg border border-slate-200 bg-white/90 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+        {submitted ? (
+          <div className="mt-5 rounded-lg border border-emerald-300/80 p-4">
+            <div className="text-lg font-semibold text-emerald-900">{config.successTitle}</div>
+            <div className="mt-1 text-sm text-emerald-800">{config.successText}</div>
+            {summary ? <PollResults summary={summary} /> : null}
+          </div>
+        ) : (
+          <form
+            className="mt-5 grid gap-5"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submitPoll();
+            }}
+          >
+            <div className="grid gap-3 border-b border-slate-300/70 pb-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
             <label className="grid min-w-0 gap-1 text-sm text-slate-700">
               <span>
                 {config.nameLabel}
@@ -279,16 +283,26 @@ export default function PollBlock({
               const draft = answerDrafts[question.id] ?? { optionIds: [], text: "" };
               const questionTypeLabel = question.type === "single" ? "单选" : question.type === "multiple" ? "多选" : "文字输入";
               return (
-                <fieldset key={question.id} className="min-w-0 rounded-lg border border-slate-200 bg-white/90 p-4" disabled={submitting || !live}>
-                  <legend className="max-w-full px-1 text-base font-semibold text-slate-900 break-words">
-                    {questionIndex + 1}. {question.prompt}
-                    <span className="ml-2 inline-flex rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 align-middle text-xs font-normal text-slate-600">
+                <fieldset
+                  key={question.id}
+                  aria-labelledby={`poll-question-${config.pollId}-${question.id}`}
+                  className="min-w-0 rounded-lg border border-slate-300/80 p-4"
+                  disabled={submitting || !live}
+                >
+                  <div
+                    id={`poll-question-${config.pollId}-${question.id}`}
+                    className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-base text-slate-900"
+                  >
+                    <span className="min-w-0 flex-1 basis-64 font-semibold break-words">
+                      {questionIndex + 1}. {question.prompt}
+                    </span>
+                    <span className="inline-flex rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 align-middle text-xs font-normal text-slate-600">
                       {questionTypeLabel}
                     </span>
-                    <span className={`ml-1.5 inline-flex px-1 py-0.5 align-middle text-xs font-normal ${question.required ? "text-rose-600" : "text-slate-400"}`}>
+                    <span className={`inline-flex px-1 py-0.5 align-middle text-xs font-normal ${question.required ? "text-rose-600" : "text-slate-500"}`}>
                       {question.required ? "必选" : "可选"}
                     </span>
-                  </legend>
+                  </div>
                   {question.type === "text" ? (
                     <textarea
                       className="mt-3 min-h-28 w-full resize-y rounded-lg border border-slate-300 bg-white px-3 py-2 text-base outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20"
@@ -303,7 +317,7 @@ export default function PollBlock({
                       {question.options.map((option) => {
                         const checked = draft.optionIds.includes(option.id);
                         return (
-                          <label key={option.id} className="flex min-h-11 items-start gap-3 rounded-lg border border-slate-200 px-3 py-2.5 text-sm text-slate-800 hover:bg-slate-50">
+                          <label key={option.id} className="flex min-h-11 items-start gap-3 rounded-lg border border-slate-200/90 px-3 py-2.5 text-sm text-slate-800 hover:bg-white/50">
                             <input
                               className="mt-0.5 h-4 w-4 shrink-0"
                               type={question.type === "single" ? "radio" : "checkbox"}
@@ -345,8 +359,9 @@ export default function PollBlock({
           >
             {submitting ? "正在提交..." : config.submitLabel}
           </button>
-        </form>
-      )}
+          </form>
+        )}
+      </div>
     </section>
   );
 }

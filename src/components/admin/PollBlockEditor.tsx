@@ -316,6 +316,22 @@ export default function PollBlockEditor({ props, runtimeSiteId, runtimeBlockId, 
             <input type="checkbox" checked={config.showResultsAfterSubmit} onChange={(event) => onChange({ pollShowResultsAfterSubmit: event.target.checked })} />
             提交后显示汇总结果
           </label>
+          <label className="grid gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 md:col-span-2">
+            <span className="flex items-center justify-between gap-3">
+              <span>内容底框透明度</span>
+              <span className="tabular-nums text-slate-500">{Math.round(config.contentBackgroundOpacity * 100)}%</span>
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              className="w-full"
+              value={config.contentBackgroundOpacity}
+              onChange={(event) => onChange({ pollContentBackgroundOpacity: Number(event.target.value) })}
+            />
+            <span className="text-xs text-slate-500">0% 为完全透明，100% 为不透明；文字和输入控件不受影响。</span>
+          </label>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
           <label className="grid gap-1 text-sm text-slate-700">
