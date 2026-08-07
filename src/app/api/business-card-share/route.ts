@@ -76,6 +76,9 @@ type BusinessCardShareRequestBody = {
   introPosterUrl?: unknown;
   introVideoMuted?: unknown;
   contactPageSectionOrder?: unknown;
+  showContactPoll?: unknown;
+  contactPagePollId?: unknown;
+  contactPagePollBlockId?: unknown;
   showContactSaveButton?: unknown;
   showContactWebsiteButton?: unknown;
   targetUrl?: unknown;
@@ -390,6 +393,9 @@ function buildSnapshotCardSharePayload(card: MerchantBusinessCardAsset, preferre
       introPosterUrl: normalizeText(card.contactIntroVideoPosterUrl),
       introVideoMuted: card.contactIntroVideoMuted,
       contactPageSectionOrder: card.contactPageSectionOrder,
+      showContactPoll: card.showContactPoll,
+      contactPagePollId: card.contactPagePollId,
+      contactPagePollBlockId: card.contactPagePollBlockId,
       showContactSaveButton: card.showContactSaveButton,
       showContactWebsiteButton: card.showContactWebsiteButton,
       targetUrl: normalizeText(card.targetUrl),
@@ -619,6 +625,10 @@ export async function POST(request: Request) {
       contactPageSectionOrder: Array.isArray(body?.contactPageSectionOrder)
         ? (body.contactPageSectionOrder as string[])
         : undefined,
+      showContactPoll: body?.showContactPoll as boolean | string | undefined,
+      contactPagePollId: typeof body?.contactPagePollId === "string" ? body.contactPagePollId : undefined,
+      contactPagePollBlockId:
+        typeof body?.contactPagePollBlockId === "string" ? body.contactPagePollBlockId : undefined,
       showContactSaveButton: body?.showContactSaveButton as boolean | string | undefined,
       showContactWebsiteButton: body?.showContactWebsiteButton as boolean | string | undefined,
       targetUrl,
@@ -678,6 +688,15 @@ export async function POST(request: Request) {
     ...(introVideoUrl ? { introVideoUrl, ...(introPosterUrl ? { introPosterUrl } : {}), introVideoMuted } : {}),
     ...(normalizedPayload?.contactPageSectionOrder
       ? { contactPageSectionOrder: normalizedPayload.contactPageSectionOrder }
+      : {}),
+    ...(normalizedPayload?.showContactPoll && normalizedPayload.contactPagePollId
+      ? {
+          showContactPoll: true,
+          contactPagePollId: normalizedPayload.contactPagePollId,
+          ...(normalizedPayload.contactPagePollBlockId
+            ? { contactPagePollBlockId: normalizedPayload.contactPagePollBlockId }
+            : {}),
+        }
       : {}),
     ...(normalizedPayload?.showContactSaveButton === false ? { showContactSaveButton: false } : {}),
     ...(normalizedPayload?.showContactWebsiteButton === false ? { showContactWebsiteButton: false } : {}),

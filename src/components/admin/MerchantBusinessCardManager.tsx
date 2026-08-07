@@ -36,6 +36,7 @@ import {
   type MerchantBusinessCardDraft,
   type MerchantBusinessCardFieldKey,
   type MerchantBusinessCardMode,
+  type MerchantBusinessCardPollOption,
   type MerchantBusinessCardProfileInput,
 } from "@/lib/merchantBusinessCards";
 import { ColorOrGradientPicker, ColorSwatchPalette } from "@/components/admin/ColorOrGradientPicker";
@@ -69,6 +70,7 @@ type MerchantBusinessCardManagerProps = {
   contactPageImageLimitKb?: number;
   exportImageLimitKb?: number;
   introVideoLimitMb?: number;
+  pollOptions?: MerchantBusinessCardPollOption[];
   onCardsChange: (cards: MerchantBusinessCardAsset[]) => void | Promise<void>;
 };
 
@@ -114,6 +116,7 @@ const CONTACT_CARD_SECTION_LABELS: Record<MerchantBusinessCardContactSectionKey,
   image: "联系卡图片",
   contacts: "联系方式",
   coupons: "优惠券",
+  poll: "投票",
 };
 
 const CUSTOM_CONTACT_ICON_PRESET_LABELS: Record<(typeof MERCHANT_BUSINESS_CARD_CUSTOM_CONTACT_ICON_PRESETS)[number], string> = {
@@ -1297,6 +1300,9 @@ const BUSINESS_CARD_FRONT_RENDER_IGNORED_FIELDS = [
   "contactPageImageScale",
   "contactPageImageOpacity",
   "contactPageSectionOrder",
+  "showContactPoll",
+  "contactPagePollId",
+  "contactPagePollBlockId",
   "showContactSaveButton",
   "showContactWebsiteButton",
   "customContactLinks",
@@ -1520,6 +1526,8 @@ function ContactCardSurface({
   contactFieldOrder,
   contactDisplayFields,
   sectionOrder,
+  showContactPoll = false,
+  pollLabel = "",
   showContactSaveButton = true,
   showContactWebsiteButton = true,
   customContactLinks = [],
@@ -1544,6 +1552,8 @@ function ContactCardSurface({
   contactFieldOrder: MerchantBusinessCardDraft["contactFieldOrder"];
   contactDisplayFields: MerchantBusinessCardDraft["contactDisplayFields"];
   sectionOrder?: MerchantBusinessCardDraft["contactPageSectionOrder"];
+  showContactPoll?: boolean;
+  pollLabel?: string;
   showContactSaveButton?: boolean;
   showContactWebsiteButton?: boolean;
   customContactLinks?: MerchantBusinessCardCustomContactLink[];
@@ -1619,6 +1629,16 @@ function ContactCardSurface({
       return (
         <div className="rounded-[28px] border border-dashed border-slate-200 bg-white p-5 text-center text-xs font-medium text-slate-400">
           优惠券展示位置
+        </div>
+      );
+    }
+    if (sectionKey === "poll") {
+      if (!showContactPoll) return null;
+      return (
+        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_16px_42px_rgba(15,23,42,.08)]">
+          <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">已对接投票</div>
+          <div className="mt-2 text-base font-semibold text-slate-900">{pollLabel || "所选投票"}</div>
+          <div className="mt-2 text-xs leading-5 text-slate-500">公开联系卡会显示原投票的完整内容，并共用同一份投票结果。</div>
         </div>
       );
     }
@@ -1856,10 +1876,26 @@ export default function MerchantBusinessCardManager({
   contactPageImageLimitKb = 200,
   exportImageLimitKb = 400,
   introVideoLimitMb = DEFAULT_CONTACT_INTRO_VIDEO_OUTPUT_LIMIT_MB,
+  pollOptions = [],
   onCardsChange,
 }: MerchantBusinessCardManagerProps) {
   const isPageFolderView = folderViewMode === "page";
   const normalizedMerchantId = normalizeText(merchantId);
+  const normalizedPollOptions = useMemo(() => {
+    const seen = new Set<string>();
+    return pollOptions
+      .map((option) => ({
+        pollId: normalizeText(option.pollId).slice(0, 96),
+        blockId: normalizeText(option.blockId).slice(0, 160),
+        label: normalizeText(option.label).slice(0, 120) || "未命名投票",
+        pageName: normalizeText(option.pageName).slice(0, 80),
+      }))
+      .filter((option) => {
+        if (!option.pollId || !option.blockId || seen.has(option.pollId)) return false;
+        seen.add(option.pollId);
+        return true;
+      });
+  }, [pollOptions]);
   const [draft, setDraft] = useState(() => createDefaultMerchantBusinessCardDraft(profile));
   const [draftShareCode, setDraftShareCode] = useState(() => createMerchantBusinessCardShareKeyCode());
   const [editorOpen, setEditorOpen] = useState(false);
@@ -2051,6 +2087,15 @@ export default function MerchantBusinessCardManager({
     () => (editingCardId ? normalizedCards.find((card) => card.id === editingCardId) ?? null : null),
     [editingCardId, normalizedCards],
   );
+  const selectedDraftPollOption = useMemo(
+    () =>
+      normalizedPollOptions.find(
+        (option) =>
+          option.blockId === normalizeText(draft.contactPagePollBlockId) ||
+          option.pollId === normalizeText(draft.contactPagePollId),
+      ) ?? null,
+    [draft.contactPagePollBlockId, draft.contactPagePollId, normalizedPollOptions],
+  );
   const canUseDraftLinkMode = allowLinkMode || editingCard?.mode === "link";
   const activeLinkShareKey = useMemo(() => {
     if (draft.mode !== "link") return "";
@@ -2075,8 +2120,12 @@ export default function MerchantBusinessCardManager({
       introPosterUrl: canUseIntroVideo ? normalizeText(draft.contactIntroVideoPosterUrl) : "",
       introVideoMuted: draft.contactIntroVideoMuted,
       contactPageSectionOrder: draft.contactPageSectionOrder,
+      showContactPoll: draft.showContactPoll,
+      contactPagePollId: draft.contactPagePollId,
+      contactPagePollBlockId: draft.contactPagePollBlockId,
       showContactSaveButton: draft.showContactSaveButton,
       showContactWebsiteButton: draft.showContactWebsiteButton,
+      ownerMerchantId: normalizedMerchantId,
       contact: buildShareContactPayload({
         name: draft.name,
         title: draft.title,
@@ -2097,15 +2146,19 @@ export default function MerchantBusinessCardManager({
     draft.contactIntroVideoMuted,
     draft.contactIntroVideoUrl,
     draft.contactPageSectionOrder,
+    draft.contactPagePollBlockId,
+    draft.contactPagePollId,
     draft.contacts,
     draft.customContactLinks,
     draft.invoice,
     draft.mode,
     draft.name,
     draft.showContactSaveButton,
+    draft.showContactPoll,
     draft.showContactWebsiteButton,
     draft.title,
     websiteUrl,
+    normalizedMerchantId,
   ]);
   const qrTargetUrl = draft.mode === "link" ? draftLinkUrl || websiteUrl : websiteUrl;
 
@@ -2759,6 +2812,9 @@ export default function MerchantBusinessCardManager({
       introPosterUrl: normalizeText(card.contactIntroVideoPosterUrl),
       introVideoMuted: card.contactIntroVideoMuted,
       contactPageSectionOrder: card.contactPageSectionOrder,
+      showContactPoll: card.showContactPoll,
+      contactPagePollId: card.contactPagePollId,
+      contactPagePollBlockId: card.contactPagePollBlockId,
       showContactSaveButton: card.showContactSaveButton,
       showContactWebsiteButton: card.showContactWebsiteButton,
       targetUrl,
@@ -2904,6 +2960,14 @@ export default function MerchantBusinessCardManager({
   const previewContactFieldOrder = previewAsset?.contactFieldOrder || draft.contactFieldOrder;
   const previewContactDisplayFields = previewAsset?.contactDisplayFields || draft.contactDisplayFields;
   const previewContactSectionOrder = previewAsset?.contactPageSectionOrder || draft.contactPageSectionOrder;
+  const previewShowContactPoll = previewAsset?.showContactPoll ?? draft.showContactPoll;
+  const previewContactPollId = normalizeText(previewAsset?.contactPagePollId) || normalizeText(draft.contactPagePollId);
+  const previewContactPollBlockId =
+    normalizeText(previewAsset?.contactPagePollBlockId) || normalizeText(draft.contactPagePollBlockId);
+  const previewPollOption =
+    normalizedPollOptions.find(
+      (option) => option.blockId === previewContactPollBlockId || option.pollId === previewContactPollId,
+    ) ?? null;
   const previewShowContactSaveButton = previewAsset?.showContactSaveButton ?? draft.showContactSaveButton;
   const previewShowContactWebsiteButton = previewAsset?.showContactWebsiteButton ?? draft.showContactWebsiteButton;
   const previewCustomContactLinks = previewAsset?.customContactLinks || draft.customContactLinks;
@@ -3697,6 +3761,71 @@ export default function MerchantBusinessCardManager({
                             </div>
                           </div>
                         </div>
+                        <div className="mt-3 rounded-xl border bg-slate-50 px-3 py-3">
+                          <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
+                            <input
+                              type="checkbox"
+                              checked={draft.showContactPoll}
+                              disabled={normalizedPollOptions.length === 0}
+                              onChange={(event) => {
+                                const checked = event.target.checked;
+                                applyDraft((current) => {
+                                  if (!checked) return { ...current, showContactPoll: false };
+                                  const selected =
+                                    normalizedPollOptions.find(
+                                      (option) =>
+                                        option.blockId === normalizeText(current.contactPagePollBlockId) ||
+                                        option.pollId === normalizeText(current.contactPagePollId),
+                                    ) ?? normalizedPollOptions[0];
+                                  if (!selected) return current;
+                                  return {
+                                    ...current,
+                                    showContactPoll: true,
+                                    contactPagePollId: selected.pollId,
+                                    contactPagePollBlockId: selected.blockId,
+                                  };
+                                });
+                              }}
+                            />
+                            在联系卡展示投票
+                          </label>
+                          {normalizedPollOptions.length > 0 ? (
+                            <label className="mt-3 block text-xs text-slate-600">
+                              选择投票
+                              <select
+                                className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm text-slate-900 disabled:cursor-not-allowed disabled:bg-slate-100"
+                                value={selectedDraftPollOption?.pollId || draft.contactPagePollId || normalizedPollOptions[0]?.pollId || ""}
+                                disabled={!draft.showContactPoll}
+                                onChange={(event) => {
+                                  const selected = normalizedPollOptions.find((option) => option.pollId === event.target.value);
+                                  if (!selected) return;
+                                  applyDraft((current) => ({
+                                    ...current,
+                                    showContactPoll: true,
+                                    contactPagePollId: selected.pollId,
+                                    contactPagePollBlockId: selected.blockId,
+                                  }));
+                                }}
+                              >
+                                {draft.contactPagePollId && !selectedDraftPollOption ? (
+                                  <option value={draft.contactPagePollId}>已选择的投票（当前编辑方案未找到）</option>
+                                ) : null}
+                                {normalizedPollOptions.map((option) => (
+                                  <option key={`${option.blockId}-${option.pollId}`} value={option.pollId}>
+                                    {option.pageName ? `${option.pageName} · ${option.label}` : option.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          ) : (
+                            <div className="mt-2 text-xs leading-5 text-slate-500">
+                              当前方案没有投票区块，请先在网站编辑中添加投票。
+                            </div>
+                          )}
+                          <div className="mt-2 text-xs leading-5 text-slate-500">
+                            联系卡会使用原投票的内容、开放时间、参与规则和统计结果。
+                          </div>
+                        </div>
                       </div>
                     ) : null}
                     <div className="rounded-xl border bg-white px-3 py-3">
@@ -4300,6 +4429,8 @@ export default function MerchantBusinessCardManager({
                           contactFieldOrder={draft.contactFieldOrder}
                           contactDisplayFields={draft.contactDisplayFields}
                           sectionOrder={draft.contactPageSectionOrder}
+                          showContactPoll={draft.showContactPoll}
+                          pollLabel={selectedDraftPollOption?.label || "所选投票"}
                           showContactSaveButton={draft.showContactSaveButton}
                           showContactWebsiteButton={draft.showContactWebsiteButton}
                           customContactLinks={draft.customContactLinks}
@@ -4398,6 +4529,8 @@ export default function MerchantBusinessCardManager({
                         contactFieldOrder={previewContactFieldOrder}
                         contactDisplayFields={previewContactDisplayFields}
                         sectionOrder={previewContactSectionOrder}
+                        showContactPoll={previewShowContactPoll}
+                        pollLabel={previewPollOption?.label || "所选投票"}
                         showContactSaveButton={previewShowContactSaveButton}
                         showContactWebsiteButton={previewShowContactWebsiteButton}
                         customContactLinks={previewCustomContactLinks}
@@ -4980,6 +5113,9 @@ export default function MerchantBusinessCardManager({
     introVideoPosterUrl?: string;
     introVideoMuted?: boolean;
     contactPageSectionOrder?: MerchantBusinessCardDraft["contactPageSectionOrder"];
+    showContactPoll?: boolean;
+    contactPagePollId?: string;
+    contactPagePollBlockId?: string;
     showContactSaveButton?: boolean;
     showContactWebsiteButton?: boolean;
     imageWidth?: number;
@@ -5028,8 +5164,12 @@ export default function MerchantBusinessCardManager({
       introPosterUrl,
       introVideoMuted: input.introVideoMuted,
       contactPageSectionOrder: input.contactPageSectionOrder,
+      showContactPoll: input.showContactPoll,
+      contactPagePollId: input.contactPagePollId,
+      contactPagePollBlockId: input.contactPagePollBlockId,
       showContactSaveButton: input.showContactSaveButton,
       showContactWebsiteButton: input.showContactWebsiteButton,
+      ownerMerchantId: normalizedMerchantId,
       targetUrl,
       name: input.cardName,
       contact: input.contact,
@@ -5088,6 +5228,9 @@ export default function MerchantBusinessCardManager({
             introPosterUrl: introPosterUrl || undefined,
             introVideoMuted: input.introVideoMuted,
             contactPageSectionOrder: input.contactPageSectionOrder,
+            showContactPoll: input.showContactPoll,
+            contactPagePollId: input.contactPagePollId,
+            contactPagePollBlockId: input.contactPagePollBlockId,
             showContactSaveButton: input.showContactSaveButton,
             showContactWebsiteButton: input.showContactWebsiteButton,
             targetUrl,
@@ -5265,6 +5408,9 @@ export default function MerchantBusinessCardManager({
           introVideoPosterUrl: normalizeText(asset.contactIntroVideoPosterUrl),
           introVideoMuted: asset.contactIntroVideoMuted,
           contactPageSectionOrder: asset.contactPageSectionOrder,
+          showContactPoll: asset.showContactPoll,
+          contactPagePollId: asset.contactPagePollId,
+          contactPagePollBlockId: asset.contactPagePollBlockId,
           showContactSaveButton: asset.showContactSaveButton,
           showContactWebsiteButton: asset.showContactWebsiteButton,
           imageWidth: asset.width,
@@ -5393,6 +5539,9 @@ export default function MerchantBusinessCardManager({
             introVideoPosterUrl: normalizeText(nextDraft.contactIntroVideoPosterUrl),
             introVideoMuted: nextDraft.contactIntroVideoMuted,
             contactPageSectionOrder: nextDraft.contactPageSectionOrder,
+            showContactPoll: nextDraft.showContactPoll,
+            contactPagePollId: nextDraft.contactPagePollId,
+            contactPagePollBlockId: nextDraft.contactPagePollBlockId,
             showContactSaveButton: nextDraft.showContactSaveButton,
             showContactWebsiteButton: nextDraft.showContactWebsiteButton,
             imageWidth: nextDraft.width,
@@ -5499,6 +5648,9 @@ export default function MerchantBusinessCardManager({
             introVideoPosterUrl: normalizeText(nextDraft.contactIntroVideoPosterUrl),
             introVideoMuted: nextDraft.contactIntroVideoMuted,
             contactPageSectionOrder: nextDraft.contactPageSectionOrder,
+            showContactPoll: nextDraft.showContactPoll,
+            contactPagePollId: nextDraft.contactPagePollId,
+            contactPagePollBlockId: nextDraft.contactPagePollBlockId,
             showContactSaveButton: nextDraft.showContactSaveButton,
             showContactWebsiteButton: nextDraft.showContactWebsiteButton,
             imageWidth: nextDraft.width,
@@ -5611,6 +5763,9 @@ export default function MerchantBusinessCardManager({
         introVideoPosterUrl: normalizeText(card.contactIntroVideoPosterUrl),
         introVideoMuted: card.contactIntroVideoMuted,
         contactPageSectionOrder: card.contactPageSectionOrder,
+        showContactPoll: card.showContactPoll,
+        contactPagePollId: card.contactPagePollId,
+        contactPagePollBlockId: card.contactPagePollBlockId,
         showContactSaveButton: card.showContactSaveButton,
         showContactWebsiteButton: card.showContactWebsiteButton,
         imageWidth: card.width,

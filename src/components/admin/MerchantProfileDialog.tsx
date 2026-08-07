@@ -9,7 +9,11 @@ import {
   type SiteLocation,
 } from "@/data/platformControlStore";
 import { loadEuropeLocationOptionsApi, type EuropeLocationOptionsApi } from "@/lib/europeLocationOptionsLoader";
-import { normalizeMerchantBusinessCards, type MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
+import {
+  normalizeMerchantBusinessCards,
+  type MerchantBusinessCardAsset,
+  type MerchantBusinessCardPollOption,
+} from "@/lib/merchantBusinessCards";
 import {
   buildGoogleBusinessProfileOpenUrl,
   buildGoogleBusinessProfileReadiness,
@@ -50,6 +54,7 @@ type MerchantProfileDialogProps = {
   initialLocation?: Partial<SiteLocation> | null;
   initialIndustry?: string | null;
   initialBusinessCards?: MerchantBusinessCardAsset[] | null;
+  businessCardPollOptions?: MerchantBusinessCardPollOption[];
   businessCardLimit?: number;
   allowBusinessCardLinkMode?: boolean;
   allowBusinessCardIntroVideo?: boolean;
@@ -253,6 +258,7 @@ export default function MerchantProfileDialog({
   initialLocation,
   initialIndustry,
   initialBusinessCards,
+  businessCardPollOptions = [],
   businessCardLimit = 1,
   allowBusinessCardLinkMode = true,
   allowBusinessCardIntroVideo = true,
@@ -1237,6 +1243,7 @@ export default function MerchantProfileDialog({
             siteBaseDomain={siteBaseDomain}
             profile={liveProfile}
             cards={businessCards}
+            pollOptions={businessCardPollOptions}
             cardLimit={businessCardLimit}
             allowLinkMode={allowBusinessCardLinkMode}
             allowIntroVideo={allowBusinessCardIntroVideo}

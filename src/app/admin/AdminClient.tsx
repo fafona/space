@@ -68,7 +68,12 @@ import {
   type ImageFillMode,
   type MerchantListPublishedSite,
 } from "@/data/homeBlocks";
-import { createDefaultPollQuestions, createPollEntityId } from "@/lib/merchantPolls";
+import {
+  collectPublishedPollBlocks,
+  createDefaultPollQuestions,
+  createPollEntityId,
+  normalizePollConfig,
+} from "@/lib/merchantPolls";
 import {
   MERCHANT_INDUSTRY_OPTIONS,
   PLAN_TEMPLATE_CATEGORY_OPTIONS,
@@ -152,6 +157,7 @@ import {
   mergeMerchantBusinessCardAssets,
   resolveMerchantBusinessCardForChatDisplay,
   type MerchantBusinessCardAsset,
+  type MerchantBusinessCardPollOption,
   type MerchantBusinessCardProfileInput,
 } from "@/lib/merchantBusinessCards";
 import { type PlatformSupportMessage, type PlatformSupportThread } from "@/lib/platformSupportInbox";
@@ -15494,6 +15500,27 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const editingPages = editingPlan?.pages?.length
     ? editingPlan.pages
     : [{ id: "page-1", name: "页面1", blocks: editingPlan?.blocks ?? defaultEditorBlocks }];
+  const merchantBusinessCardPollOptions = useMemo(() => {
+    const options: MerchantBusinessCardPollOption[] = [];
+    const seen = new Set<string>();
+    const pollPages = editingPlan?.pages?.length
+      ? editingPlan.pages
+      : [{ id: "page-1", name: "页面1", blocks: editingPlan?.blocks ?? defaultEditorBlocks }];
+    pollPages.forEach((page) => {
+      collectPublishedPollBlocks(page.blocks).forEach((block) => {
+        const config = normalizePollConfig(block.props, block.id);
+        if (!config.pollId || seen.has(config.pollId)) return;
+        seen.add(config.pollId);
+        options.push({
+          pollId: config.pollId,
+          blockId: block.id,
+          label: toPlainText(config.heading, "未命名投票"),
+          pageName: toPlainText(page.name, page.id),
+        });
+      });
+    });
+    return options;
+  }, [defaultEditorBlocks, editingPlan]);
   const editingPageIndex = Math.max(0, editingPages.findIndex((page) => page.id === editingPageId));
   const merchantCouponPageId =
     findFirstCouponPageIdInPlanConfig(planConfig) ||
@@ -16413,6 +16440,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           effectiveEditingSite?.permissionConfig?.businessCardExportImageLimitKb ??
           editingSite?.permissionConfig?.businessCardExportImageLimitKb ??
           createDefaultMerchantPermissionConfig().businessCardExportImageLimitKb,
+        businessCardPollOptions: merchantBusinessCardPollOptions,
         onClose: () => {
           setMerchantProfileDialogShowBusinessCards(true);
           setMerchantProfileDialogOpen(false);
@@ -16571,6 +16599,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           industry: merchantProfileDialogCommonProps.initialIndustry ?? undefined,
         } satisfies MerchantBusinessCardProfileInput,
         cards: supportSelfBusinessCards,
+        pollOptions: merchantBusinessCardPollOptions,
         cardLimit: merchantProfileDialogCommonProps.businessCardLimit,
         allowLinkMode: merchantProfileDialogCommonProps.allowBusinessCardLinkMode,
         allowIntroVideo: merchantProfileDialogCommonProps.allowBusinessCardIntroVideo,

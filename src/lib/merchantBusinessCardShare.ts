@@ -44,6 +44,9 @@ export type MerchantBusinessCardSharePayload = {
   introPosterUrl?: string;
   introVideoMuted?: boolean;
   contactPageSectionOrder?: MerchantBusinessCardContactSectionKey[];
+  showContactPoll?: boolean;
+  contactPagePollId?: string;
+  contactPagePollBlockId?: string;
   showContactSaveButton?: boolean;
   showContactWebsiteButton?: boolean;
   updatedAt?: string;
@@ -497,6 +500,9 @@ function normalizeSharePayload(
     introPosterUrl?: string | null;
     introVideoMuted?: boolean | string | null;
     contactPageSectionOrder?: MerchantBusinessCardContactSectionKey[] | string[] | null;
+    showContactPoll?: boolean | string | null;
+    contactPagePollId?: string | null;
+    contactPagePollBlockId?: string | null;
     showContactSaveButton?: boolean | string | null;
     showContactWebsiteButton?: boolean | string | null;
     updatedAt?: string | null;
@@ -523,6 +529,10 @@ function normalizeSharePayload(
   const hasCustomContactPageSectionOrder =
     Array.isArray(input.contactPageSectionOrder) &&
     contactPageSectionOrder.join("|") !== defaultContactPageSectionOrder.join("|");
+  const showContactPoll = normalizeOptionalBoolean(input.showContactPoll, false) === true;
+  const contactPagePollId = normalizeText(input.contactPagePollId).slice(0, 96);
+  const contactPagePollBlockId = normalizeText(input.contactPagePollBlockId).slice(0, 160);
+  const hasContactPoll = showContactPoll && Boolean(contactPagePollId);
   const showContactSaveButton = normalizeOptionalBoolean(input.showContactSaveButton, true);
   const showContactWebsiteButton = normalizeOptionalBoolean(input.showContactWebsiteButton, true);
   const detailImageHeight = clampImageDimension(input.detailImageHeight);
@@ -546,6 +556,13 @@ function normalizeSharePayload(
     ...(detailImageUrl && detailImageOpacity !== 1 ? { detailImageOpacity } : {}),
     ...(introVideoUrl ? { introVideoUrl, ...(introPosterUrl ? { introPosterUrl } : {}), introVideoMuted } : {}),
     ...(hasCustomContactPageSectionOrder ? { contactPageSectionOrder } : {}),
+    ...(hasContactPoll
+      ? {
+          showContactPoll: true,
+          contactPagePollId,
+          ...(contactPagePollBlockId ? { contactPagePollBlockId } : {}),
+        }
+      : {}),
     ...(showContactSaveButton === false ? { showContactSaveButton } : {}),
     ...(showContactWebsiteButton === false ? { showContactWebsiteButton } : {}),
     ...(updatedAt ? { updatedAt } : {}),
@@ -574,6 +591,9 @@ export function normalizeMerchantBusinessCardSharePayload(
     introPosterUrl?: string | null;
     introVideoMuted?: boolean | string | null;
     contactPageSectionOrder?: MerchantBusinessCardContactSectionKey[] | string[] | null;
+    showContactPoll?: boolean | string | null;
+    contactPagePollId?: string | null;
+    contactPagePollBlockId?: string | null;
     showContactSaveButton?: boolean | string | null;
     showContactWebsiteButton?: boolean | string | null;
     targetUrl?: string | null;
@@ -765,9 +785,13 @@ export function buildMerchantBusinessCardShareLegacyFingerprint(
         introPosterUrl?: string | null;
         introVideoMuted?: boolean | string | null;
         contactPageSectionOrder?: MerchantBusinessCardContactSectionKey[] | string[] | null;
+        showContactPoll?: boolean | string | null;
+        contactPagePollId?: string | null;
+        contactPagePollBlockId?: string | null;
         showContactSaveButton?: boolean | string | null;
         showContactWebsiteButton?: boolean | string | null;
         targetUrl?: string | null;
+        ownerMerchantId?: string | null;
         imageWidth?: number | null;
         imageHeight?: number | null;
         contact?: MerchantBusinessCardShareContact | null;
@@ -794,6 +818,10 @@ export function buildMerchantBusinessCardShareLegacyFingerprint(
     String(payload.imageWidth ?? 0),
     String(payload.imageHeight ?? 0),
     (payload.contactPageSectionOrder ?? []).join("|"),
+    payload.showContactPoll ? "poll:1" : "",
+    payload.contactPagePollId ?? "",
+    payload.contactPagePollBlockId ?? "",
+    payload.ownerMerchantId ?? "",
     payload.showContactSaveButton === false ? "save:0" : "",
     payload.showContactWebsiteButton === false ? "website:0" : "",
     contact.displayName ?? "",
@@ -861,9 +889,13 @@ export function buildMerchantBusinessCardShareRevocationByLegacyPayloadObjectPat
         introPosterUrl?: string | null;
         introVideoMuted?: boolean | string | null;
         contactPageSectionOrder?: MerchantBusinessCardContactSectionKey[] | string[] | null;
+        showContactPoll?: boolean | string | null;
+        contactPagePollId?: string | null;
+        contactPagePollBlockId?: string | null;
         showContactSaveButton?: boolean | string | null;
         showContactWebsiteButton?: boolean | string | null;
         targetUrl?: string | null;
+        ownerMerchantId?: string | null;
         imageWidth?: number | null;
         imageHeight?: number | null;
         contact?: MerchantBusinessCardShareContact | null;
@@ -922,8 +954,12 @@ export function buildMerchantBusinessCardShareUrl(input: {
   introPosterUrl?: string | null;
   introVideoMuted?: boolean | string | null;
   contactPageSectionOrder?: MerchantBusinessCardContactSectionKey[] | string[] | null;
+  showContactPoll?: boolean | string | null;
+  contactPagePollId?: string | null;
+  contactPagePollBlockId?: string | null;
   showContactSaveButton?: boolean | string | null;
   showContactWebsiteButton?: boolean | string | null;
+  ownerMerchantId?: string | null;
   targetUrl: string;
   contact?: MerchantBusinessCardShareContact | null;
 }) {
@@ -953,9 +989,13 @@ export function buildMerchantBusinessCardShareUrl(input: {
       introPosterUrl: input.introPosterUrl,
       introVideoMuted: input.introVideoMuted,
       contactPageSectionOrder: input.contactPageSectionOrder,
+      showContactPoll: input.showContactPoll,
+      contactPagePollId: input.contactPagePollId,
+      contactPagePollBlockId: input.contactPagePollBlockId,
       showContactSaveButton: input.showContactSaveButton,
       showContactWebsiteButton: input.showContactWebsiteButton,
       targetUrl: input.targetUrl,
+      ownerMerchantId: input.ownerMerchantId,
       contact: input.contact,
     },
     origin,
@@ -997,6 +1037,16 @@ export function buildMerchantBusinessCardShareUrl(input: {
   }
   if (payload.contactPageSectionOrder?.length) {
     shareUrl.searchParams.set("contactSections", payload.contactPageSectionOrder.join(","));
+  }
+  if (payload.showContactPoll && payload.contactPagePollId) {
+    shareUrl.searchParams.set("showPoll", "1");
+    shareUrl.searchParams.set("poll", payload.contactPagePollId);
+    if (payload.contactPagePollBlockId) {
+      shareUrl.searchParams.set("pollBlock", payload.contactPagePollBlockId);
+    }
+    if (payload.ownerMerchantId) {
+      shareUrl.searchParams.set("owner", payload.ownerMerchantId);
+    }
   }
   if (payload.showContactSaveButton === false) {
     shareUrl.searchParams.set("showContactSave", "0");
@@ -1124,10 +1174,14 @@ export function parseMerchantBusinessCardShareParams(
         ?.split(",")
         .map((item) => item.trim())
         .filter(Boolean) as MerchantBusinessCardContactSectionKey[] | undefined,
+      showContactPoll: readSearchParam(searchParams, "showPoll"),
+      contactPagePollId: readSearchParam(searchParams, "poll"),
+      contactPagePollBlockId: readSearchParam(searchParams, "pollBlock"),
       showContactSaveButton: readSearchParam(searchParams, "showContactSave"),
       showContactWebsiteButton: readSearchParam(searchParams, "showContactWebsite"),
       updatedAt: readSearchParam(searchParams, "updatedAt"),
       targetUrl: readSearchParam(searchParams, "target"),
+      ownerMerchantId: readSearchParam(searchParams, "owner"),
       imageWidth: readNumberSearchParam(searchParams, "imageWidth"),
       imageHeight: readNumberSearchParam(searchParams, "imageHeight"),
       contact: {

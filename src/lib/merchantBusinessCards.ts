@@ -60,7 +60,14 @@ export type MerchantBusinessCardCustomText = {
   typography: TypographyEditableProps;
 };
 
-export type MerchantBusinessCardContactSectionKey = "image" | "contacts" | "coupons";
+export type MerchantBusinessCardContactSectionKey = "image" | "contacts" | "coupons" | "poll";
+
+export type MerchantBusinessCardPollOption = {
+  pollId: string;
+  blockId: string;
+  label: string;
+  pageName: string;
+};
 
 export type MerchantBusinessCardCustomContactLink = {
   id: string;
@@ -164,6 +171,9 @@ export type MerchantBusinessCardDraft = {
   contactPageImageScale: number;
   contactPageImageOpacity: number;
   contactPageSectionOrder: MerchantBusinessCardContactSectionKey[];
+  showContactPoll: boolean;
+  contactPagePollId: string;
+  contactPagePollBlockId: string;
   showContactSaveButton: boolean;
   showContactWebsiteButton: boolean;
   customContactLinks: MerchantBusinessCardCustomContactLink[];
@@ -239,7 +249,7 @@ export type MerchantBusinessCardProfileInput = {
 };
 
 export const DEFAULT_MERCHANT_BUSINESS_CARD_WEBSITE_LABEL = "扫码进入网站";
-export const MERCHANT_BUSINESS_CARD_CONTACT_SECTION_KEYS = ["image", "contacts", "coupons"] as const;
+export const MERCHANT_BUSINESS_CARD_CONTACT_SECTION_KEYS = ["image", "contacts", "coupons", "poll"] as const;
 export const MERCHANT_BUSINESS_CARD_CUSTOM_CONTACT_ICON_PRESETS = [
   "link",
   "star",
@@ -613,6 +623,9 @@ export function createDefaultMerchantBusinessCardDraft(
     contactPageImageScale: 1,
     contactPageImageOpacity: 1,
     contactPageSectionOrder: normalizeMerchantBusinessCardContactSectionOrder(undefined),
+    showContactPoll: false,
+    contactPagePollId: "",
+    contactPagePollBlockId: "",
     showContactSaveButton: true,
     showContactWebsiteButton: true,
     customContactLinks: [],
@@ -792,6 +805,16 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
     contactPageSectionOrder: normalizeMerchantBusinessCardContactSectionOrder(
       (source as { contactPageSectionOrder?: unknown }).contactPageSectionOrder,
     ),
+    showContactPoll: normalizeBoolean(
+      (source as { showContactPoll?: unknown }).showContactPoll,
+      fallback.showContactPoll,
+    ),
+    contactPagePollId: normalizeText(
+      (source as { contactPagePollId?: unknown }).contactPagePollId,
+    ).slice(0, 96),
+    contactPagePollBlockId: normalizeText(
+      (source as { contactPagePollBlockId?: unknown }).contactPagePollBlockId,
+    ).slice(0, 160),
     showContactSaveButton: normalizeBoolean(
       (source as { showContactSaveButton?: unknown }).showContactSaveButton,
       fallback.showContactSaveButton,
@@ -1052,6 +1075,8 @@ function countMerchantBusinessCardAssetCompleteness(card: MerchantBusinessCardAs
     card.contactPageImageLinkUrl,
     card.contactIntroVideoUrl,
     card.contactIntroVideoPosterUrl,
+    card.contactPagePollId,
+    card.contactPagePollBlockId,
     card.backgroundImageUrl,
     ...contactValues,
     ...invoiceValues,
@@ -1121,6 +1146,10 @@ export function mergeMerchantBusinessCardAssets(
       ? preferred.contactPageImageOpacity
       : fallback.contactPageImageOpacity,
     contactPageSectionOrder: preferred.contactPageSectionOrder,
+    showContactPoll: preferred.showContactPoll,
+    contactPagePollId: normalizeText(preferred.contactPagePollId) || normalizeText(fallback.contactPagePollId),
+    contactPagePollBlockId:
+      normalizeText(preferred.contactPagePollBlockId) || normalizeText(fallback.contactPagePollBlockId),
     showContactSaveButton: preferred.showContactSaveButton,
     showContactWebsiteButton: preferred.showContactWebsiteButton,
     customContactLinks: preferred.customContactLinks.length ? preferred.customContactLinks : fallback.customContactLinks,
