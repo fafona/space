@@ -7,10 +7,15 @@ import {
   buildPollSummary,
   findPublishedPollConfig,
   getPollAvailability,
+  getPollAudienceAccessError,
   getPollConfigurationIssue,
+  getPollParticipantTypeLabel,
+  hasActivePollMerchantMembership,
   normalizePollConfig,
   normalizePollRoundBallotMetadata,
   normalizePollQuestions,
+  normalizeStoredPollBallot,
+  POLL_MAX_OPTIONS,
   validatePollAnswers,
   type PollStoredBallot,
 } from "@/lib/merchantPolls";
@@ -54,6 +59,7 @@ test("poll config normalizes supported question types and rejects incomplete cho
   assert.equal(getPollConfigurationIssue(config), "");
   assert.equal(config.questions.length, 3);
   assert.equal(config.allowAnonymous, true);
+  assert.equal(config.audience, "everyone");
   assert.equal(config.nameLabel, "您的名称");
   assert.equal(config.contentBackgroundOpacity, 0.72);
 
@@ -75,6 +81,82 @@ test("poll config normalizes supported question types and rejects incomplete cho
     pollQuestions: [{ id: "q", prompt: "不完整", type: "single", options: [{ id: "only", label: "仅一个" }] }],
   });
   assert.equal(getPollConfigurationIssue(invalid), "question_requires_options:q");
+});
+
+test("poll audiences default safely and enforce registered/member access", () => {
+  assert.equal(normalizePollConfig({ pollAudience: "registered-users" }).audience, "registered-users");
+  assert.equal(normalizePollConfig({ pollAudience: "merchant-members" }).audience, "merchant-members");
+  assert.equal(normalizePollConfig({ pollAudience: "unknown" }).audience, "everyone");
+
+  assert.equal(
+    getPollAudienceAccessError("registered-users", { registered: false, merchantMember: false }),
+    "registered_user_required",
+  );
+  assert.equal(
+    getPollAudienceAccessError("registered-users", { registered: true, merchantMember: false }),
+    "",
+  );
+  assert.equal(
+    getPollAudienceAccessError("merchant-members", { registered: true, merchantMember: false }),
+    "merchant_membership_required",
+  );
+  assert.equal(
+    getPollAudienceAccessError("merchant-members", { registered: true, merchantMember: true }),
+    "",
+  );
+  assert.equal(getPollAudienceAccessError("everyone", { registered: false, merchantMember: false }), "");
+});
+
+test("merchant-only poll access matches an active membership in the publishing merchant", () => {
+  const memberships = [
+    { siteId: "10000000", status: "active", accountId: "account-1", userId: "user-1", email: "member@example.com" },
+    { siteId: "20000000", status: "active", accountId: "account-2", userId: "user-2", email: "other@example.com" },
+    { siteId: "10000000", status: "left", accountId: "account-3", userId: "user-3", email: "left@example.com" },
+  ];
+  assert.equal(
+    hasActivePollMerchantMembership("10000000", memberships, { accountId: "account-1", userId: "", email: "" }),
+    true,
+  );
+  assert.equal(
+    hasActivePollMerchantMembership("10000000", memberships, { accountId: "", userId: "", email: "MEMBER@example.com" }),
+    true,
+  );
+  assert.equal(
+    hasActivePollMerchantMembership("10000000", memberships, { accountId: "account-2", userId: "user-2", email: "" }),
+    false,
+  );
+  assert.equal(
+    hasActivePollMerchantMembership("10000000", memberships, { accountId: "account-3", userId: "user-3", email: "" }),
+    false,
+  );
+});
+
+test("poll choice questions retain up to 36 options", () => {
+  const options = Array.from({ length: POLL_MAX_OPTIONS + 5 }, (_, index) => ({
+    id: `option-${index + 1}`,
+    label: `选项 ${index + 1}`,
+  }));
+  const normalized = normalizePollConfig({
+    pollQuestions: [{ id: "q-many", prompt: "请选择", type: "multiple", options }],
+  });
+  assert.equal(POLL_MAX_OPTIONS, 36);
+  assert.equal(normalized.questions[0]?.options.length, 36);
+  assert.equal(normalized.questions[0]?.options.at(-1)?.label, "选项 36");
+});
+
+test("stored ballots preserve registered participant identity", () => {
+  const ballot = normalizeStoredPollBallot({
+    id: "ballot-registered",
+    participant_type: "registered",
+    participant_name: "用户甲",
+    anonymous: false,
+    answers: [],
+    poll_snapshot: { heading: "注册用户投票", questions: [], audience: "registered-users" },
+    created_at: "2026-08-07T10:00:00.000Z",
+  });
+  assert.equal(ballot?.participantType, "registered");
+  assert.equal(ballot?.pollSnapshot.audience, "registered-users");
+  assert.equal(getPollParticipantTypeLabel("registered"), "注册用户");
 });
 
 test("poll availability follows configured opening and closing times", () => {

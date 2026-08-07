@@ -1,8 +1,10 @@
 "use client";
 
 import { useMemo, useRef } from "react";
-import type { PollOption, PollProps, PollQuestion, PollQuestionType } from "@/data/homeBlocks";
+import type { PollAudience, PollOption, PollProps, PollQuestion, PollQuestionType } from "@/data/homeBlocks";
 import {
+  POLL_MAX_OPTIONS,
+  POLL_MAX_QUESTIONS,
   createPollEntityId,
   getPollConfigurationIssue,
   normalizePollConfig,
@@ -26,6 +28,15 @@ const questionTypeLabels: Record<PollQuestionType, string> = {
   text: "文字输入",
 };
 
+const pollAudienceLabels: Record<PollAudience, string> = {
+  everyone: "所有人",
+  "merchant-members": "仅本商户会员",
+  "registered-users": "Faolla 注册用户",
+};
+
+const POLL_EDITOR_COMMIT_DELAY_MS = 480;
+const POLL_EDITOR_COMMIT_MAX_WAIT_MS = 1800;
+
 function createChoiceOptions() {
   return [
     { id: createPollEntityId("option"), label: "选项一" },
@@ -45,7 +56,7 @@ function createQuestion(type: PollQuestionType): EditablePollQuestion {
 
 function readEditableQuestions(value: PollProps["pollQuestions"]): EditablePollQuestion[] {
   if (!Array.isArray(value)) return [];
-  return value.slice(0, 30).map((question, questionIndex) => {
+  return value.slice(0, POLL_MAX_QUESTIONS).map((question, questionIndex) => {
     const type: PollQuestionType = question.type === "multiple" || question.type === "text" ? question.type : "single";
     return {
       id: String(question.id || `question-${questionIndex + 1}`),
@@ -54,7 +65,7 @@ function readEditableQuestions(value: PollProps["pollQuestions"]): EditablePollQ
       required: question.required === true,
       options: type === "text"
         ? []
-        : (Array.isArray(question.options) ? question.options : []).slice(0, 24).map((option, optionIndex) => ({
+        : (Array.isArray(question.options) ? question.options : []).slice(0, POLL_MAX_OPTIONS).map((option, optionIndex) => ({
             id: String(option.id || `question-${questionIndex + 1}-option-${optionIndex + 1}`),
             label: String(option.label ?? ""),
           })),
@@ -218,6 +229,8 @@ function CompositionSafePollInput({
       maxLength={maxLength}
       placeholder={placeholder}
       value={value}
+      commitDelayMs={POLL_EDITOR_COMMIT_DELAY_MS}
+      commitMaxWaitMs={POLL_EDITOR_COMMIT_MAX_WAIT_MS}
       onChange={(event) => onChange(event.currentTarget.value)}
     />
   );
@@ -242,6 +255,8 @@ function CompositionSafePollTextarea({
       maxLength={maxLength}
       placeholder={placeholder}
       value={value}
+      commitDelayMs={POLL_EDITOR_COMMIT_DELAY_MS}
+      commitMaxWaitMs={POLL_EDITOR_COMMIT_MAX_WAIT_MS}
       onChange={(event) => onChange(event.currentTarget.value)}
     />
   );
@@ -284,6 +299,18 @@ export default function PollBlockEditor({ props, runtimeBlockId, onChange }: Pol
             <select className="h-10 rounded-lg border border-slate-300 bg-white px-3" value={config.status} onChange={(event) => onChange({ pollStatus: event.target.value === "closed" ? "closed" : "open" })}>
               <option value="open">开放投票</option>
               <option value="closed">结束投票</option>
+            </select>
+          </label>
+          <label className="grid gap-1 text-sm text-slate-700">
+            <span>投票对象</span>
+            <select
+              className="h-10 rounded-lg border border-slate-300 bg-white px-3"
+              value={config.audience}
+              onChange={(event) => onChange({ pollAudience: event.target.value as PollAudience })}
+            >
+              {(Object.keys(pollAudienceLabels) as PollAudience[]).map((audience) => (
+                <option key={audience} value={audience}>{pollAudienceLabels[audience]}</option>
+              ))}
             </select>
           </label>
           <PollDateTimeField
@@ -357,7 +384,13 @@ export default function PollBlockEditor({ props, runtimeBlockId, onChange }: Pol
           </div>
           <div className="flex flex-wrap gap-2">
             {(["single", "multiple", "text"] as PollQuestionType[]).map((type) => (
-              <button key={type} type="button" className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700 hover:bg-slate-50" onClick={() => updateQuestions([...questions, createQuestion(type)])}>
+              <button
+                key={type}
+                type="button"
+                className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={questions.length >= POLL_MAX_QUESTIONS}
+                onClick={() => updateQuestions([...questions, createQuestion(type)])}
+              >
                 + {questionTypeLabels[type]}
               </button>
             ))}
@@ -406,6 +439,7 @@ export default function PollBlockEditor({ props, runtimeBlockId, onChange }: Pol
 
                 {question.type !== "text" ? (
                   <div className="grid gap-2 border-t border-slate-100 pt-3">
+                    <div className="text-right text-xs tabular-nums text-slate-500">选项 {question.options.length} / {POLL_MAX_OPTIONS}</div>
                     {question.options.map((option, optionIndex) => (
                       <div key={option.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
                         <CompositionSafePollInput
@@ -418,7 +452,12 @@ export default function PollBlockEditor({ props, runtimeBlockId, onChange }: Pol
                         <button type="button" aria-label="删除选项" title="删除选项" className="h-10 w-10 rounded-lg border border-slate-300 bg-white text-slate-500 disabled:opacity-40" disabled={question.options.length <= 2} onClick={() => updateQuestion(question.id, { options: question.options.filter((item) => item.id !== option.id) })}>×</button>
                       </div>
                     ))}
-                    <button type="button" className="h-9 justify-self-start rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700" onClick={() => updateQuestion(question.id, { options: [...question.options, { id: createPollEntityId("option"), label: `选项 ${question.options.length + 1}` }] })}>
+                    <button
+                      type="button"
+                      className="h-9 justify-self-start rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      disabled={question.options.length >= POLL_MAX_OPTIONS}
+                      onClick={() => updateQuestion(question.id, { options: [...question.options, { id: createPollEntityId("option"), label: `选项 ${question.options.length + 1}` }] })}
+                    >
                       + 新增选项
                     </button>
                   </div>

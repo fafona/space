@@ -8589,6 +8589,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           text: "请选择选项并提交您的意见。",
           pollId: createPollEntityId("poll"),
           pollStatus: "open",
+          pollAudience: "everyone",
           pollOpenAt: "",
           pollCloseAt: "",
           pollQuestions: createDefaultPollQuestions(),

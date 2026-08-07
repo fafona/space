@@ -8,7 +8,9 @@ import {
   collectPublishedPollBlocks,
   findPublishedPollConfig,
   getPollAvailability,
+  getPollAudienceAccessError,
   getPollConfigurationIssue,
+  hasActivePollMerchantMembership,
   normalizePollConfig,
   normalizePollRoundBallotMetadata,
   normalizeStoredPollBallot,
@@ -16,6 +18,7 @@ import {
   type PollStoredBallot,
 } from "@/lib/merchantPolls";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
+import { getMerchantMembershipsSnapshot } from "@/lib/merchantMemberships.server";
 import { resolvePersonalAccountSessionFromRequest } from "@/lib/personalAccountSession.server";
 import { readPersonalCustomerProfileFromSession } from "@/lib/personalCustomerProfile";
 import { hashPersonalGuestMergeToken } from "@/lib/personalGuestMerge.server";
@@ -242,7 +245,27 @@ export async function POST(request: Request) {
           user: personalSession.user,
         })
       : null;
-    const isMember = Boolean(personalSession || personalProof);
+    const registeredIdentity = {
+      accountId: personalSession?.accountId || personalProof?.accountId || "",
+      userId: personalSession?.userId || personalProof?.userId || "",
+      email: (personalSession?.email || personalProof?.email || "").trim().toLowerCase(),
+    };
+    const isRegistered = Boolean(registeredIdentity.accountId || registeredIdentity.userId);
+    let isMerchantMember = false;
+    if (config.audience === "merchant-members" && isRegistered) {
+      const membershipSnapshot = await getMerchantMembershipsSnapshot(siteId, { applyScheduledRules: false });
+      isMerchantMember = hasActivePollMerchantMembership(siteId, membershipSnapshot.memberships, registeredIdentity);
+    }
+    const audienceAccessError = getPollAudienceAccessError(config.audience, {
+      registered: isRegistered,
+      merchantMember: isMerchantMember,
+    });
+    if (audienceAccessError) {
+      return noStoreJson(
+        { error: audienceAccessError },
+        { status: audienceAccessError === "registered_user_required" ? 401 : 403 },
+      );
+    }
     const requestedAnonymous = body?.anonymous === true;
     const anonymous = config.allowAnonymous && requestedAnonymous;
     const fallbackMemberName =
@@ -256,9 +279,9 @@ export async function POST(request: Request) {
       return noStoreJson({ error: "participant_name_required" }, { status: 400 });
     }
 
-    const memberIdentity = personalSession?.userId || personalProof?.userId || personalSession?.accountId || personalProof?.accountId || "";
-    const participantKeyHash = isMember
-      ? hashParticipantIdentity(`member:${memberIdentity}`)
+    const accountIdentity = registeredIdentity.userId || registeredIdentity.accountId;
+    const participantKeyHash = isRegistered
+      ? hashParticipantIdentity(`member:${accountIdentity}`)
       : hashPersonalGuestMergeToken(body?.guestToken);
     if (!participantKeyHash) {
       return noStoreJson({ error: "guest_identity_required" }, { status: 400 });
@@ -272,7 +295,7 @@ export async function POST(request: Request) {
         poll_id: config.pollId,
         block_id: publishedPoll.blockId,
         participant_key_hash: participantKeyHash,
-        participant_type: isMember ? "member" : "guest",
+        participant_type: isMerchantMember ? "member" : isRegistered ? "registered" : "guest",
         participant_name: participantName,
         anonymous,
         answers: validatedAnswers.answers,

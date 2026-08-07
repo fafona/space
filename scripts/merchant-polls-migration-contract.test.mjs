@@ -15,6 +15,18 @@ const deletionMigrationPath = path.join(
   "supabase-migrations",
   "202608070028_merchant_poll_ballot_deletion.sql",
 );
+const registeredParticipantsMigrationPath = path.join(
+  process.cwd(),
+  "scripts",
+  "supabase-migrations",
+  "202608070029_merchant_poll_registered_participants.sql",
+);
+const payloadCapacityMigrationPath = path.join(
+  process.cwd(),
+  "scripts",
+  "supabase-migrations",
+  "202608070030_merchant_poll_payload_capacity.sql",
+);
 
 function source() {
   return fs.readFileSync(migrationPath, "utf8");
@@ -55,5 +67,25 @@ test("poll result deletion is granted only to the server service role in a forwa
   assert.match(sql, /grant delete on table public\.merchant_poll_ballots to service_role/i);
   assert.doesNotMatch(sql, /grant\s+delete\s+on[\s\S]+\s+to\s+(?:anon|authenticated|public)\b/i);
   assert.match(sql, /202608070028, 'merchant_poll_ballot_deletion'/i);
+  assert.match(sql, /\bcommit\s*;\s*$/i);
+});
+
+test("registered poll participants are added with a forward-only constraint migration", () => {
+  const sql = fs.readFileSync(registeredParticipantsMigrationPath, "utf8");
+  assert.match(sql, /\bbegin\s*;/i);
+  assert.match(sql, /drop constraint if exists merchant_poll_ballots_participant_type_check/i);
+  assert.match(sql, /participant_type in \('member', 'registered', 'guest'\)/i);
+  assert.match(sql, /202608070029, 'merchant_poll_registered_participants'/i);
+  assert.doesNotMatch(sql, /\bdrop\s+table\b|\btruncate\b|\bdelete\s+from\b/i);
+  assert.match(sql, /\bcommit\s*;\s*$/i);
+});
+
+test("poll payload capacity supports configured question and option limits while remaining bounded", () => {
+  const sql = fs.readFileSync(payloadCapacityMigrationPath, "utf8");
+  assert.match(sql, /\bbegin\s*;/i);
+  assert.match(sql, /merchant_poll_ballots_answers_check[\s\S]+pg_column_size\(answers\) <= 2097152/i);
+  assert.match(sql, /merchant_poll_ballots_poll_snapshot_check[\s\S]+pg_column_size\(poll_snapshot\) <= 2097152/i);
+  assert.match(sql, /202608070030, 'merchant_poll_payload_capacity'/i);
+  assert.doesNotMatch(sql, /\bdrop\s+table\b|\btruncate\b|\bdelete\s+from\b/i);
   assert.match(sql, /\bcommit\s*;\s*$/i);
 });

@@ -4,6 +4,7 @@ import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "rea
 
 import {
   buildPollExportRows,
+  getPollParticipantTypeLabel,
   type PollRoundOverview,
   type PollStoredBallot,
   type PollSummary,
@@ -190,7 +191,7 @@ function PollBallotDetail({ ballot, index, summary }: { ballot: PollStoredBallot
           <div className="flex flex-wrap items-center gap-2">
             <strong className="break-words text-sm text-slate-950">{index + 1}. {voterName}</strong>
             <span className="rounded border border-slate-200 bg-white px-1.5 py-0.5 text-xs text-slate-600">
-              {ballot.participantType === "member" ? "会员" : "游客"}
+              {getPollParticipantTypeLabel(ballot.participantType)}
             </span>
             {ballot.anonymous ? <span className="rounded border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-xs text-violet-700">匿名</span> : null}
           </div>
@@ -202,7 +203,7 @@ function PollBallotDetail({ ballot, index, summary }: { ballot: PollStoredBallot
       <div className="grid gap-4 border-t border-slate-200 px-3 py-4 sm:px-4">
         <dl className="grid gap-x-5 gap-y-2 text-xs sm:grid-cols-2">
           <div className="min-w-0"><dt className="text-slate-400">填写名称</dt><dd className="mt-0.5 break-words text-slate-800">{voterName}</dd></div>
-          <div className="min-w-0"><dt className="text-slate-400">身份</dt><dd className="mt-0.5 text-slate-800">{ballot.participantType === "member" ? "会员" : "游客"}</dd></div>
+          <div className="min-w-0"><dt className="text-slate-400">身份</dt><dd className="mt-0.5 text-slate-800">{getPollParticipantTypeLabel(ballot.participantType)}</dd></div>
           <div className="min-w-0"><dt className="text-slate-400">投票时间</dt><dd className="mt-0.5 text-slate-800">{formatDateTime(ballot.createdAt)}</dd></div>
           <div className="min-w-0"><dt className="text-slate-400">选票编号</dt><dd className="mt-0.5 break-all font-mono text-slate-800">{ballot.id || "-"}</dd></div>
           <div className="min-w-0 sm:col-span-2"><dt className="text-slate-400">提交时投票名称</dt><dd className="mt-0.5 break-words text-slate-800">{ballot.pollSnapshot.heading || "未命名投票"}</dd></div>

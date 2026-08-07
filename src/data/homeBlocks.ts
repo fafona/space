@@ -447,6 +447,8 @@ export type BookingProps = BackgroundEditableProps &
     bookingNotePlaceholder?: string;
   };
 export type PollQuestionType = "single" | "multiple" | "text";
+
+export type PollAudience = "everyone" | "merchant-members" | "registered-users";
 export type PollOption = {
   id: string;
   label: string;
@@ -464,6 +466,7 @@ export type PollProps = BackgroundEditableProps &
     text?: string;
     pollId?: string;
     pollStatus?: "open" | "closed";
+    pollAudience?: PollAudience;
     pollOpenAt?: string;
     pollCloseAt?: string;
     pollQuestions?: PollQuestion[];
