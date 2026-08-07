@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { Block } from "../data/homeBlocks";
+import { createDefaultMerchantPermissionConfig } from "../data/platformControlStore";
 import {
   backfillProductThumbnailsInBlocks,
   buildInlineAssetsRecoveryMessage,
@@ -16,6 +17,14 @@ import {
   uploadSourceUrlViaServerApiWithMetadata,
 } from "./editorAssetProcessing";
 import { applyEditorThemePresetToBlocks } from "./editorThemeProcessing";
+import { getMerchantPublishPermissionViolation } from "./merchantPermissionGuards";
+import {
+  buildPersistedBlocksFromPlanConfig,
+  buildSinglePlanPublishConfig,
+  type PagePlanConfig,
+} from "./pagePlans";
+import { rebuildSinglePlanPublishBlocks } from "./planTemplateRuntime";
+import { shouldOfferCompressionPresetForPublishError } from "./publishErrorGuidance";
 
 test("no-op editor theme preserves the original block array", () => {
   const blocks = [
@@ -336,6 +345,199 @@ test("publish optimization externalizes inline audio through the upload API", { 
   }
 });
 
+test("publish optimization uploads repeated inline images only once", { concurrency: false }, async () => {
+  const originalFetch = globalThis.fetch;
+  let requestCount = 0;
+  globalThis.fetch = (async () => {
+    requestCount += 1;
+    return Response.json({
+      url: `https://cdn.example.com/image-${requestCount}.webp`,
+    });
+  }) as typeof fetch;
+  const inlineImage = "data:image/png;base64,AA==";
+  const blocks = [
+    {
+      id: "common-1",
+      type: "common",
+      props: {
+        heroImage: inlineImage,
+        pageBgImageUrl: inlineImage,
+      },
+    },
+  ] as unknown as Block[];
+
+  try {
+    const result = await optimizeBlocksForPublishIfNeeded(blocks, {
+      merchantHint: "merchant-1",
+      uploadCompressionPreset: "balanced",
+    });
+    const props = result.blocks[0]?.props as { heroImage?: string; pageBgImageUrl?: string };
+
+    assert.equal(requestCount, 1);
+    assert.equal(props.heroImage, "https://cdn.example.com/image-1.webp");
+    assert.equal(props.pageBgImageUrl, props.heroImage);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("single-plan publish remains within its permission limit after asset optimization", { concurrency: false }, async () => {
+  const originalFetch = globalThis.fetch;
+  let requestCount = 0;
+  globalThis.fetch = (async () => {
+    requestCount += 1;
+    return Response.json({
+      url: `https://cdn.example.com/audio-${requestCount}.mp3`,
+    });
+  }) as typeof fetch;
+  const inlineAudio = "data:audio/mpeg;base64,AA==";
+  const planConfig: PagePlanConfig = {
+    activePlanId: "plan-1",
+    plans: ["plan-1", "plan-2", "plan-3"].map((id, index) => {
+      const blocks = [
+        {
+          id: `music-${index + 1}`,
+          type: "music",
+          props: { audioUrl: inlineAudio },
+        } as Block,
+      ];
+      return {
+        id: id as "plan-1" | "plan-2" | "plan-3",
+        name: `方案${index + 1}`,
+        blocks,
+        pages: [{ id: "page-1", name: "首页", blocks }],
+        activePageId: "page-1",
+      };
+    }),
+  };
+  const singlePlanBlocks = buildPersistedBlocksFromPlanConfig(
+    buildSinglePlanPublishConfig(planConfig, "plan-1"),
+  );
+
+  try {
+    const optimized = await optimizeBlocksForPublishIfNeeded(singlePlanBlocks, {
+      merchantHint: "merchant-1",
+      uploadCompressionPreset: "balanced",
+    });
+    const violation = getMerchantPublishPermissionViolation(
+      {
+        ...createDefaultMerchantPermissionConfig(),
+        planLimit: 2,
+        allowMusicBlock: true,
+      },
+      optimized.blocks,
+    );
+
+    assert.equal(requestCount, 1);
+    assert.equal(violation, null);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("permission errors do not show upload or storage recovery guidance", () => {
+  assert.equal(
+    shouldOfferCompressionPresetForPublishError("当前权限仅允许使用前 2 个方案", "plan_limit_exceeded"),
+    false,
+  );
+  assert.equal(shouldOfferCompressionPresetForPublishError("当前权限未开通音乐区块"), false);
+  assert.equal(shouldOfferCompressionPresetForPublishError("上传接口返回存储桶错误"), true);
+});
+
+test("product thumbnail backfill keeps replicated publish plans identical after hitting cached images", { concurrency: false }, async () => {
+  const originalFetch = globalThis.fetch;
+  let requestCount = 0;
+  globalThis.fetch = (async () => {
+    requestCount += 1;
+    return Response.json({
+      thumbnailUrl: `https://cdn.example.com/product-thumb-${requestCount}.webp`,
+    });
+  }) as typeof fetch;
+  const products = Array.from({ length: 3 }, (_, index) => ({
+    id: `item-${index + 1}`,
+    imageUrl: `https://faolla.com/storage/v1/object/public/page-assets/merchant-assets/merchant-1/product-${index + 1}.jpg`,
+  }));
+  const productBlocks = [
+    {
+      id: "product-1",
+      type: "product",
+      props: { products },
+    } as Block,
+  ];
+  const sourceConfig: PagePlanConfig = {
+    activePlanId: "plan-1",
+    plans: ["plan-1", "plan-2", "plan-3"].map((id, index) => ({
+      id: id as "plan-1" | "plan-2" | "plan-3",
+      name: `方案${index + 1}`,
+      blocks: productBlocks,
+      pages: [{ id: "page-1", name: "首页", blocks: productBlocks }],
+      activePageId: "page-1",
+    })),
+  };
+  const singlePlanBlocks = buildPersistedBlocksFromPlanConfig(
+    buildSinglePlanPublishConfig(sourceConfig, "plan-1"),
+  );
+
+  try {
+    const result = await backfillProductThumbnailsInBlocks(singlePlanBlocks, "merchant-1", new Map());
+    const violation = getMerchantPublishPermissionViolation(
+      {
+        ...createDefaultMerchantPermissionConfig(),
+        planLimit: 2,
+        allowProductBlock: true,
+      },
+      result.blocks,
+    );
+
+    assert.equal(requestCount, 3);
+    assert.equal(result.stats.generated, 3);
+    assert.equal(result.stats.limited, 0);
+    assert.equal(violation, null);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("final single-plan rebuild removes post-processing drift before publish", () => {
+  const sourceConfig: PagePlanConfig = {
+    activePlanId: "plan-1",
+    plans: ["plan-1", "plan-2", "plan-3"].map((id, index) => {
+      const blocks = [
+        {
+          id: "text-1",
+          type: "text",
+          props: { heading: "同一方案" },
+        } as Block,
+      ];
+      return {
+        id: id as "plan-1" | "plan-2" | "plan-3",
+        name: `方案${index + 1}`,
+        blocks,
+        pages: [{ id: "page-1", name: "首页", blocks }],
+        activePageId: "page-1",
+      };
+    }),
+  };
+  const driftedBlocks = buildPersistedBlocksFromPlanConfig(sourceConfig);
+  const driftedConfig = (driftedBlocks[0]?.props as { pagePlanConfig?: PagePlanConfig }).pagePlanConfig;
+  const thirdPlan = driftedConfig?.plans[2];
+  const thirdText = thirdPlan?.pages[0]?.blocks[0];
+  if (thirdText) {
+    thirdText.props = { ...thirdText.props, heading: "异步处理产生的差异" } as never;
+  }
+
+  const rebuiltBlocks = rebuildSinglePlanPublishBlocks(driftedBlocks);
+  const violation = getMerchantPublishPermissionViolation(
+    {
+      ...createDefaultMerchantPermissionConfig(),
+      planLimit: 2,
+    },
+    rebuiltBlocks,
+  );
+
+  assert.equal(violation, null);
+});
+
 test("product thumbnail backfill updates legacy products and reuses its cache", { concurrency: false }, async () => {
   const originalFetch = globalThis.fetch;
   let requestCount = 0;
@@ -377,7 +579,7 @@ test("product thumbnail backfill updates legacy products and reuses its cache", 
     assert.equal(first.stats.generated, 1);
     assert.equal(firstProduct?.thumbnailUrl, "https://cdn.example.com/product-thumb.webp");
     assert.equal(second.changed, true);
-    assert.equal(second.stats.generated, 1);
+    assert.equal(second.stats.generated, 0);
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -23,6 +23,7 @@ export type NormalizedPollConfig = {
   submitLabel: string;
   successTitle: string;
   successText: string;
+  nameLabel: string;
   namePlaceholder: string;
 };
 
@@ -159,6 +160,7 @@ export function normalizePollConfig(value: PollProps | Record<string, unknown> |
     submitLabel: trimText(record.pollSubmitLabel, 80) || "提交投票",
     successTitle: trimText(record.pollSuccessTitle, 160) || "投票已提交",
     successText: trimText(record.pollSuccessText, 600) || "感谢您的参与。",
+    nameLabel: trimText(record.pollNameLabel, 120) || "您的名称",
     namePlaceholder: trimText(record.pollNamePlaceholder, 120) || "请输入您的名称",
   } satisfies NormalizedPollConfig;
 }

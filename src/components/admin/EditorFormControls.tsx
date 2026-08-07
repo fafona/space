@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -9,6 +8,7 @@ import {
 } from "react";
 
 import { normalizeBookingOptionList } from "@/lib/merchantBookings";
+import { useBufferedEditorTextCommit } from "@/components/admin/useBufferedEditorTextCommit";
 
 export function FontSizeComboInput({
   value,
@@ -124,12 +124,9 @@ export function BookingOptionsTextarea({
   const composingRef = useRef(false);
   const textValue = draftText ?? normalizedText;
 
-  const commitText = useCallback(
-    (nextText: string) => {
-      onChange(normalizeBookingOptionList(nextText));
-    },
-    [onChange],
-  );
+  const { scheduleCommit, flushCommit } = useBufferedEditorTextCommit((nextText: string) => {
+    onChange(normalizeBookingOptionList(nextText));
+  });
 
   return (
     <textarea
@@ -146,18 +143,19 @@ export function BookingOptionsTextarea({
         composingRef.current = false;
         const nextText = event.currentTarget.value;
         setDraftText(nextText);
-        commitText(nextText);
+        scheduleCommit(nextText);
       }}
       onChange={(event) => {
         const nextText = event.target.value;
         setDraftText(nextText);
         if (!composingRef.current) {
-          commitText(nextText);
+          scheduleCommit(nextText);
         }
       }}
       onBlur={(event) => {
         composingRef.current = false;
-        commitText(event.currentTarget.value);
+        scheduleCommit(event.currentTarget.value);
+        flushCommit();
         setDraftText(null);
       }}
     />
@@ -180,12 +178,7 @@ export function CompositionSafeTextInput({
   const composingRef = useRef(false);
   const textValue = draftText ?? normalizedValue;
 
-  const commitText = useCallback(
-    (nextText: string) => {
-      onChange(nextText);
-    },
-    [onChange],
-  );
+  const { scheduleCommit, flushCommit } = useBufferedEditorTextCommit(onChange);
 
   return (
     <input
@@ -202,18 +195,19 @@ export function CompositionSafeTextInput({
         composingRef.current = false;
         const nextText = event.currentTarget.value;
         setDraftText(nextText);
-        commitText(nextText);
+        scheduleCommit(nextText);
       }}
       onChange={(event) => {
         const nextText = event.target.value;
         setDraftText(nextText);
         if (!composingRef.current) {
-          commitText(nextText);
+          scheduleCommit(nextText);
         }
       }}
       onBlur={(event) => {
         composingRef.current = false;
-        commitText(event.currentTarget.value);
+        scheduleCommit(event.currentTarget.value);
+        flushCommit();
         setDraftText(null);
       }}
     />

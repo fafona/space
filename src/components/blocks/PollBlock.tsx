@@ -33,7 +33,7 @@ function getPollErrorMessage(code: string) {
   if (code === "already_voted") return "您已经提交过本次投票。";
   if (code === "poll_closed") return "本次投票已经结束。";
   if (code === "poll_not_published") return "投票尚未发布，请稍后再试。";
-  if (code === "participant_name_required") return "请填写名称，或选择匿名投票。";
+  if (code === "participant_name_required") return "请填写名称。";
   if (code === "required_answer_missing") return "请完成所有必选题。";
   if (code === "answer_too_long") return "文字回答内容过长，请精简后再提交。";
   if (code === "poll_store_unavailable") return "投票服务正在配置中，请稍后再试。";
@@ -92,7 +92,6 @@ export default function PollBlock({
   const [answerDrafts, setAnswerDrafts] = useState<Record<string, PollAnswerDraft>>({});
   const [participantName, setParticipantName] = useState("");
   const [anonymous, setAnonymous] = useState(false);
-  const [memberAuthenticated, setMemberAuthenticated] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState("");
@@ -108,7 +107,6 @@ export default function PollBlock({
         if (!active) return;
         const profile = readPersonalCustomerProfileFromSession(payload);
         const isMember = payload?.authenticated === true && payload.accountType === "personal";
-        setMemberAuthenticated(isMember);
         if (isMember && profile.name) setParticipantName((current) => current || profile.name);
       })
       .catch(() => null);
@@ -116,6 +114,10 @@ export default function PollBlock({
       active = false;
     };
   }, [interactive]);
+
+  useEffect(() => {
+    if (!config.allowAnonymous) setAnonymous(false);
+  }, [config.allowAnonymous]);
 
   const updateAnswer = (questionId: string, patch: Partial<PollAnswerDraft>) => {
     setAnswerDrafts((current) => ({
@@ -162,7 +164,6 @@ export default function PollBlock({
     try {
       const authPayload = await resolveFrontendAuthPayload(2600).catch(() => null);
       const isMember = authPayload?.authenticated === true && authPayload.accountType === "personal";
-      setMemberAuthenticated(isMember);
       const response = await fetch("/api/polls", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -239,12 +240,17 @@ export default function PollBlock({
         >
           <div className="grid gap-3 rounded-lg border border-slate-200 bg-white/90 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
             <label className="grid min-w-0 gap-1 text-sm text-slate-700">
-              <span>{memberAuthenticated ? "投票昵称" : "您的名称"}</span>
+              <span>
+                {config.nameLabel}
+                {!config.allowAnonymous ? <span className="ml-2 text-xs text-rose-600">必填</span> : null}
+              </span>
               <input
                 className="h-11 min-w-0 rounded-lg border border-slate-300 bg-white px-3 text-base outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 disabled:bg-slate-100"
                 value={participantName}
                 placeholder={config.namePlaceholder}
                 disabled={anonymous || submitting || !live}
+                required={!anonymous}
+                aria-required={!anonymous}
                 maxLength={120}
                 onChange={(event) => {
                   setParticipantName(event.target.value);
@@ -271,11 +277,15 @@ export default function PollBlock({
           <div className="grid gap-4">
             {config.questions.map((question, questionIndex) => {
               const draft = answerDrafts[question.id] ?? { optionIds: [], text: "" };
+              const questionTypeLabel = question.type === "single" ? "单选" : question.type === "multiple" ? "多选" : "文字输入";
               return (
                 <fieldset key={question.id} className="min-w-0 rounded-lg border border-slate-200 bg-white/90 p-4" disabled={submitting || !live}>
                   <legend className="max-w-full px-1 text-base font-semibold text-slate-900 break-words">
                     {questionIndex + 1}. {question.prompt}
-                    <span className={`ml-2 text-xs font-normal ${question.required ? "text-rose-600" : "text-slate-400"}`}>
+                    <span className="ml-2 inline-flex rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 align-middle text-xs font-normal text-slate-600">
+                      {questionTypeLabel}
+                    </span>
+                    <span className={`ml-1.5 inline-flex px-1 py-0.5 align-middle text-xs font-normal ${question.required ? "text-rose-600" : "text-slate-400"}`}>
                       {question.required ? "必选" : "可选"}
                     </span>
                   </legend>

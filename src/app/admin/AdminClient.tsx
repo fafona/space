@@ -120,6 +120,7 @@ import {
   syncMerchantSessionCookies,
 } from "@/lib/authSessionRecovery";
 import { installFrontendAuthBridgeResponder, isTrustedFrontendAuthBridgeOrigin } from "@/lib/frontendAuthBridge";
+import { flushBufferedEditorTextCommits } from "@/lib/editorTextCommitBuffer";
 import {
   clearRecentMerchantLaunchState,
   persistRecentMerchantLaunchState,
@@ -201,9 +202,10 @@ import {
   matchPlanTemplateCategory,
   summarizePlanTemplateBlocks,
 } from "@/lib/planTemplates";
-import { extractPlanTemplateCoverBackground } from "@/lib/planTemplateRuntime";
+import { extractPlanTemplateCoverBackground, rebuildSinglePlanPublishBlocks } from "@/lib/planTemplateRuntime";
 import { PLAN_TEMPLATE_PREVIEW_VARIANT } from "@/lib/planTemplatePreviewConstants";
 import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
+import { shouldOfferCompressionPresetForPublishError } from "@/lib/publishErrorGuidance";
 import {
   filterMerchantOperationLogs,
   MERCHANT_OPERATION_LOG_EVENT,
@@ -1122,7 +1124,7 @@ type PageBackgroundPatch = Pick<
   | "pageBgImageOpacity"
   | "pageBgColorOpacity"
 >;
-type SaveErrorLike = { message: string } | null;
+type SaveErrorLike = { message: string; code?: string } | null;
 type CenterDialog =
   | {
       type: "alert";
@@ -1282,23 +1284,6 @@ async function queryGlobalPageRecord(columns: string): Promise<{ record: GlobalP
     record: (fallback.data ?? null) as GlobalPageRecord,
     error: null,
   };
-}
-
-function shouldOfferCompressionPresetForPublishError(message: string) {
-  const normalized = String(message ?? "").toLowerCase();
-  if (!normalized) return false;
-  if (normalized.includes("service_role_key")) return false;
-  if (normalized.includes("发布通道未配置")) return false;
-  if (normalized.includes("登录会话")) return false;
-  if (normalized.includes("重新登录")) return false;
-  if (normalized.includes("未授权")) return false;
-  if (normalized.includes("有效商户站点")) return false;
-  if (normalized.includes("会话")) return false;
-  if (normalized.includes("auth")) return false;
-  if (normalized.includes("unauthorized")) return false;
-  if (normalized.includes("invalid_merchant_scope")) return false;
-  if (normalized.includes("permission")) return false;
-  return true;
 }
 
 function readBlocksStoreScopeFromLocation(forcedScope?: string) {
@@ -6202,6 +6187,7 @@ export default function AdminClient({
   }
 
   function flushPendingEditorChanges() {
+    flushBufferedEditorTextCommits();
     flushPendingBlockPatches();
     flushPendingBlockNudges();
     flushPendingPlanSync();
@@ -6333,7 +6319,13 @@ export default function AdminClient({
           if (code === "publish_service_unavailable") {
             return { handled: false, error: null };
           }
-          return { handled: true, error: { message: normalizePublishApiErrorMessage(code, message, response.status) } };
+          return {
+            handled: true,
+            error: {
+              code,
+              message: normalizePublishApiErrorMessage(code, message, response.status),
+            },
+          };
         }
         return { handled: true, error: null };
       } catch {
@@ -8476,6 +8468,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           pollSubmitLabel: "提交投票",
           pollSuccessTitle: "投票已提交",
           pollSuccessText: "感谢您的参与。",
+          pollNameLabel: "您的名称",
           pollNamePlaceholder: "请输入您的名称",
         },
       };
@@ -8983,6 +8976,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   function saveDraft() {
+    flushPendingEditorChanges();
     const mergedConfig = mergePlanConfigWithEditingBlocks(
       planConfigRef.current,
       editingPlanIdRef.current,
@@ -9036,6 +9030,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     let editorAssetProcessing: Awaited<ReturnType<typeof loadEditorAssetProcessing>> | null = null;
     try {
     await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    flushPendingEditorChanges();
     const scopedSiteIdForGuard = getSiteIdFromStoreScope(storeScope).trim();
     if (!isPlatformEditor && !scopedSiteIdForGuard) {
       showTip("当前不是商户站点作用域（缺少 site-xxx），已止发布以防写错", {
@@ -9215,6 +9210,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         if (draftThumbnailBackfill.changed) {
           draftBlocks = draftThumbnailBackfill.blocks;
         }
+        combinedBlocks = rebuildSinglePlanPublishBlocks(combinedBlocks);
       }
       if (productThumbnailBackfill.stats.generated > 0) {
         const limitedText = productThumbnailBackfill.stats.limited > 0 ? "，剩余旧图下次发布继续处理" : "";
@@ -9352,7 +9348,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           changedBlocks: totalChanges,
           reason: normalizedReason,
         });
-        if (shouldOfferCompressionPresetForPublishError(normalizedReason)) {
+        if (shouldOfferCompressionPresetForPublishError(normalizedReason, error.code)) {
           await openAlert(
             `真实错误：${normalizedReason}\n\n系统发布前已自动尝试压缩和外链化。请先重试发布；若仍失败，请检查上传接口、存储桶和服务端密钥配置。`,
             "发布失败",

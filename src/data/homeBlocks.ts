@@ -470,6 +470,7 @@ export type PollProps = BackgroundEditableProps &
     pollSubmitLabel?: string;
     pollSuccessTitle?: string;
     pollSuccessText?: string;
+    pollNameLabel?: string;
     pollNamePlaceholder?: string;
   };
 type NavProps = BackgroundEditableProps &

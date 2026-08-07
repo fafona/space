@@ -11,6 +11,7 @@ import {
   type PollSummary,
 } from "@/lib/merchantPolls";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
+import { useBufferedEditorTextCommit } from "@/components/admin/useBufferedEditorTextCommit";
 
 type PollBlockEditorProps = {
   props: PollProps;
@@ -107,9 +108,7 @@ function CompositionSafePollInput({
   const composingRef = useRef(false);
   const textValue = draftText ?? value;
 
-  const commitText = useCallback((nextText: string) => {
-    onChange(nextText);
-  }, [onChange]);
+  const { scheduleCommit, flushCommit } = useBufferedEditorTextCommit(onChange);
 
   return (
     <input
@@ -126,16 +125,17 @@ function CompositionSafePollInput({
         composingRef.current = false;
         const nextText = event.currentTarget.value;
         setDraftText(nextText);
-        commitText(nextText);
+        scheduleCommit(nextText);
       }}
       onChange={(event) => {
         const nextText = event.currentTarget.value;
         setDraftText(nextText);
-        if (!composingRef.current) commitText(nextText);
+        if (!composingRef.current) scheduleCommit(nextText);
       }}
       onBlur={(event) => {
         composingRef.current = false;
-        commitText(event.currentTarget.value);
+        scheduleCommit(event.currentTarget.value);
+        flushCommit();
         setDraftText(null);
       }}
     />
@@ -159,9 +159,7 @@ function CompositionSafePollTextarea({
   const composingRef = useRef(false);
   const textValue = draftText ?? value;
 
-  const commitText = useCallback((nextText: string) => {
-    onChange(nextText);
-  }, [onChange]);
+  const { scheduleCommit, flushCommit } = useBufferedEditorTextCommit(onChange);
 
   return (
     <textarea
@@ -177,16 +175,17 @@ function CompositionSafePollTextarea({
         composingRef.current = false;
         const nextText = event.currentTarget.value;
         setDraftText(nextText);
-        commitText(nextText);
+        scheduleCommit(nextText);
       }}
       onChange={(event) => {
         const nextText = event.currentTarget.value;
         setDraftText(nextText);
-        if (!composingRef.current) commitText(nextText);
+        if (!composingRef.current) scheduleCommit(nextText);
       }}
       onBlur={(event) => {
         composingRef.current = false;
-        commitText(event.currentTarget.value);
+        scheduleCommit(event.currentTarget.value);
+        flushCommit();
         setDraftText(null);
       }}
     />
@@ -300,6 +299,10 @@ export default function PollBlockEditor({ props, runtimeSiteId, runtimeBlockId, 
               <option value="open">开放投票</option>
               <option value="closed">结束投票</option>
             </select>
+          </label>
+          <label className="grid gap-1 text-sm text-slate-700">
+            <span>名称字段标题</span>
+            <CompositionSafePollInput className="h-10 rounded-lg border border-slate-300 px-3" value={props.pollNameLabel ?? ""} placeholder="您的名称" onChange={(nextValue) => onChange({ pollNameLabel: nextValue })} />
           </label>
           <label className="grid gap-1 text-sm text-slate-700">
             <span>名称输入提示</span>
