@@ -1,7 +1,7 @@
-import type { Block, PollOption, PollProps, PollQuestion, PollQuestionType } from "@/data/homeBlocks";
+import type { Block, PollAudience, PollOption, PollProps, PollQuestion, PollQuestionType } from "@/data/homeBlocks";
 
 export const POLL_MAX_QUESTIONS = 30;
-export const POLL_MAX_OPTIONS = 24;
+export const POLL_MAX_OPTIONS = 36;
 export const POLL_MAX_TEXT_ANSWER_LENGTH = 4000;
 
 export type NormalizedPollQuestion = {
@@ -17,6 +17,7 @@ export type NormalizedPollConfig = {
   heading: string;
   text: string;
   status: "open" | "closed";
+  audience: PollAudience;
   openAt: string;
   closeAt: string;
   questions: NormalizedPollQuestion[];
@@ -42,7 +43,7 @@ export type PollAnswerValidationResult =
 
 export type PollStoredBallot = {
   id: string;
-  participantType: "member" | "guest";
+  participantType: "member" | "registered" | "guest";
   participantName: string;
   anonymous: boolean;
   answers: PollAnswer[];
@@ -51,6 +52,7 @@ export type PollStoredBallot = {
     questions: NormalizedPollQuestion[];
     openAt?: string;
     closeAt?: string;
+    audience?: PollAudience;
   };
   createdAt: string;
 };
@@ -204,6 +206,10 @@ export function normalizePollConfig(value: PollProps | Record<string, unknown> |
     heading: trimText(record.heading, 1000) || "在线投票",
     text: trimText(record.text, 4000),
     status: record.pollStatus === "closed" ? "closed" : "open",
+    audience:
+      record.pollAudience === "merchant-members" || record.pollAudience === "registered-users"
+        ? record.pollAudience
+        : "everyone",
     openAt: normalizeDateTime(record.pollOpenAt),
     closeAt: normalizeDateTime(record.pollCloseAt),
     questions: normalizePollQuestions(record.pollQuestions),
@@ -338,14 +344,57 @@ export function buildPollSnapshot(config: NormalizedPollConfig) {
     questions: config.questions,
     openAt: config.openAt,
     closeAt: config.closeAt,
+    audience: config.audience,
   };
+}
+
+export function getPollAudienceAccessError(
+  audience: PollAudience,
+  access: { registered: boolean; merchantMember: boolean },
+) {
+  if (audience === "registered-users" && !access.registered) return "registered_user_required";
+  if (audience === "merchant-members" && !access.merchantMember) return "merchant_membership_required";
+  return "";
+}
+
+export function hasActivePollMerchantMembership(
+  siteId: string,
+  memberships: Array<{
+    siteId: string;
+    status: string;
+    accountId: string;
+    userId: string;
+    email: string;
+  }>,
+  identity: { accountId: string; userId: string; email: string },
+) {
+  const normalizedSiteId = trimText(siteId, 64);
+  const normalizedEmail = trimText(identity.email, 320).toLowerCase();
+  if (!normalizedSiteId || (!identity.accountId && !identity.userId && !normalizedEmail)) return false;
+  return memberships.some((membership) => {
+    if (membership.siteId !== normalizedSiteId || membership.status !== "active") return false;
+    if (identity.accountId && membership.accountId === identity.accountId) return true;
+    if (identity.userId && membership.userId === identity.userId) return true;
+    return Boolean(normalizedEmail && membership.email.toLowerCase() === normalizedEmail);
+  });
+}
+
+export function getPollParticipantTypeLabel(participantType: PollStoredBallot["participantType"]) {
+  if (participantType === "member") return "会员";
+  if (participantType === "registered") return "注册用户";
+  return "游客";
 }
 
 export function normalizeStoredPollBallot(value: unknown): PollStoredBallot | null {
   const record = readRecord(value);
   if (!record) return null;
   const id = trimText(record.id, 128);
-  const participantType = record.participant_type === "member" || record.participantType === "member" ? "member" : "guest";
+  const rawParticipantType = record.participant_type ?? record.participantType;
+  const participantType = rawParticipantType === "member"
+    ? "member"
+    : rawParticipantType === "registered"
+      ? "registered"
+      : "guest";
   const snapshotRecord = readRecord(record.poll_snapshot ?? record.pollSnapshot) ?? {};
   const answersSource = Array.isArray(record.answers) ? record.answers : [];
   const answers: PollAnswer[] = answersSource
@@ -373,6 +422,10 @@ export function normalizeStoredPollBallot(value: unknown): PollStoredBallot | nu
       questions: normalizePollQuestions(snapshotRecord.questions),
       openAt: normalizeDateTime(snapshotRecord.openAt),
       closeAt: normalizeDateTime(snapshotRecord.closeAt),
+      audience:
+        snapshotRecord.audience === "merchant-members" || snapshotRecord.audience === "registered-users"
+          ? snapshotRecord.audience
+          : "everyone",
     },
     createdAt: trimText(record.created_at ?? record.createdAt, 64),
   };
@@ -393,6 +446,10 @@ export function normalizePollRoundBallotMetadata(value: unknown): PollRoundBallo
       questions: normalizePollQuestions(snapshotRecord.questions),
       openAt: normalizeDateTime(snapshotRecord.openAt),
       closeAt: normalizeDateTime(snapshotRecord.closeAt),
+      audience:
+        snapshotRecord.audience === "merchant-members" || snapshotRecord.audience === "registered-users"
+          ? snapshotRecord.audience
+          : "everyone",
     },
     createdAt: trimText(record.created_at ?? record.createdAt, 64),
   };
@@ -547,7 +604,7 @@ export function buildPollExportRows(ballots: PollStoredBallot[], summary: PollSu
     const row: Record<string, string> = {
       "选票编号": ballot.id,
       "提交时间": ballot.createdAt,
-      "身份": ballot.participantType === "member" ? "会员" : "游客",
+      "身份": getPollParticipantTypeLabel(ballot.participantType),
       "投票人": ballot.anonymous ? "匿名" : ballot.participantName || "未填写",
       "匿名投票": ballot.anonymous ? "是" : "否",
       "投票名称（提交时）": ballot.pollSnapshot.heading,

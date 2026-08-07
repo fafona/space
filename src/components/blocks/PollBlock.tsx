@@ -36,6 +36,8 @@ function getPollErrorMessage(code: string) {
   if (code === "poll_closed") return "本次投票已经结束。";
   if (code === "poll_not_published") return "投票尚未发布，请稍后再试。";
   if (code === "participant_name_required") return "请填写名称。";
+  if (code === "registered_user_required") return "本次投票仅限 Faolla 注册用户，请先登录。";
+  if (code === "merchant_membership_required") return "本次投票仅限本商户的有效会员。";
   if (code === "required_answer_missing") return "请完成所有必选题。";
   if (code === "answer_too_long") return "文字回答内容过长，请精简后再提交。";
   if (code === "poll_store_unavailable") return "投票服务正在配置中，请稍后再试。";
@@ -112,6 +114,9 @@ export default function PollBlock({
   const [error, setError] = useState("");
   const [summary, setSummary] = useState<PollSummary | null>(null);
   const [clock, setClock] = useState(() => Date.now());
+  const [viewerIdentityStatus, setViewerIdentityStatus] = useState<"checking" | "guest" | "registered">(
+    interactive ? "checking" : "guest",
+  );
 
   useEffect(() => {
     if (!interactive) return;
@@ -122,10 +127,13 @@ export default function PollBlock({
       .then((payload) => {
         if (!active) return;
         const profile = readPersonalCustomerProfileFromSession(payload);
-        const isMember = payload?.authenticated === true && payload.accountType === "personal";
-        if (isMember && profile.name) setParticipantName((current) => current || profile.name);
+        const isRegistered = payload?.authenticated === true && payload.accountType === "personal";
+        setViewerIdentityStatus(isRegistered ? "registered" : "guest");
+        if (isRegistered && profile.name) setParticipantName((current) => current || profile.name);
       })
-      .catch(() => null);
+      .catch(() => {
+        if (active) setViewerIdentityStatus("guest");
+      });
     return () => {
       active = false;
     };
@@ -178,6 +186,10 @@ export default function PollBlock({
       setError(getPollErrorMessage("invalid_poll_configuration"));
       return;
     }
+    if (config.audience !== "everyone" && viewerIdentityStatus !== "registered") {
+      setError(getPollErrorMessage(config.audience === "registered-users" ? "registered_user_required" : "merchant_membership_required"));
+      return;
+    }
     const availability = getPollAvailability(config);
     if (availability !== "open") {
       setError(getPollErrorMessage(availability === "scheduled" ? "poll_not_started" : "poll_closed"));
@@ -198,7 +210,7 @@ export default function PollBlock({
     setError("");
     try {
       const authPayload = await resolveFrontendAuthPayload(2600).catch(() => null);
-      const isMember = authPayload?.authenticated === true && authPayload.accountType === "personal";
+      const isRegistered = authPayload?.authenticated === true && authPayload.accountType === "personal";
       const response = await fetch("/api/polls", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -211,7 +223,7 @@ export default function PollBlock({
           anonymous,
           answers: validation.answers,
           frontendAuthProof: authPayload?.frontendAuthProof ?? "",
-          guestToken: isMember ? "" : readPersonalGuestMergeToken(),
+          guestToken: isRegistered ? "" : readPersonalGuestMergeToken(),
         }),
       });
       const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string; summary?: PollSummary | null } | null;
@@ -241,6 +253,18 @@ export default function PollBlock({
   const textHtml = toRichHtml(config.text, "");
   const availability = getPollAvailability(config, clock);
   const live = interactive && availability === "open" && !configurationIssue;
+  const audienceRequiresAccount = config.audience !== "everyone";
+  const audienceAccessPending = audienceRequiresAccount && viewerIdentityStatus === "checking";
+  const audienceAccessMissing = audienceRequiresAccount && viewerIdentityStatus === "guest";
+  const audienceMessage = config.audience === "registered-users"
+    ? viewerIdentityStatus === "registered"
+      ? "本次投票仅限 Faolla 注册用户。"
+      : "本次投票仅限 Faolla 注册用户，请先登录后参与。"
+    : config.audience === "merchant-members"
+      ? viewerIdentityStatus === "registered"
+        ? "本次投票仅限本商户有效会员，提交时会验证会员资格。"
+        : "本次投票仅限本商户有效会员，请先登录并加入会员。"
+      : "";
   const inactiveMessage = configurationIssue
     ? "请完善投票配置后发布。"
     : !interactive
@@ -297,6 +321,11 @@ export default function PollBlock({
               void submitPoll();
             }}
           >
+            {audienceMessage ? (
+              <div className="min-w-0 max-w-full break-words rounded-lg border border-sky-200 bg-sky-50/90 px-3 py-2 text-sm text-sky-800 [overflow-wrap:anywhere]">
+                {audienceAccessPending ? "正在确认登录状态..." : audienceMessage}
+              </div>
+            ) : null}
             <div
               className="flex min-w-0 max-w-full flex-wrap items-end gap-3 rounded-lg border border-slate-300/80 p-4"
               style={contentFrameStyle}
@@ -425,7 +454,7 @@ export default function PollBlock({
           <button
             type="submit"
             className="h-11 w-full min-w-0 max-w-full rounded-lg bg-slate-950 px-5 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={!live || submitting}
+            disabled={!live || submitting || audienceAccessPending || audienceAccessMissing}
           >
             {submitting ? "正在提交..." : config.submitLabel}
           </button>

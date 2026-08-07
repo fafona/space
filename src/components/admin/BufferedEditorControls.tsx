@@ -16,6 +16,14 @@ import { useBufferedEditorTextCommit } from "@/components/admin/useBufferedEdito
 
 const BUFFERED_INPUT_TYPES = new Set(["", "text", "search", "url", "email", "tel", "password", "number"]);
 
+type BufferedCommitOptions = {
+  commitDelayMs?: number;
+  commitMaxWaitMs?: number;
+};
+
+type BufferedEditorInputProps = InputHTMLAttributes<HTMLInputElement> & BufferedCommitOptions;
+type BufferedEditorTextareaProps = TextareaHTMLAttributes<HTMLTextAreaElement> & BufferedCommitOptions;
+
 function assignRef<T>(ref: Ref<T> | undefined, value: T | null) {
   if (typeof ref === "function") {
     ref(value);
@@ -47,10 +55,12 @@ export function shouldBufferEditorInput(type: string | undefined, readOnly = fal
   return !readOnly && !disabled && BUFFERED_INPUT_TYPES.has((type ?? "").toLowerCase());
 }
 
-export const BufferedEditorInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
+export const BufferedEditorInput = forwardRef<HTMLInputElement, BufferedEditorInputProps>(
   function BufferedEditorInput(
     {
       disabled,
+      commitDelayMs,
+      commitMaxWaitMs,
       onBlur,
       onChange,
       onCompositionEnd,
@@ -83,6 +93,7 @@ export const BufferedEditorInput = forwardRef<HTMLInputElement, InputHTMLAttribu
       ({ event, nextValue }: { event: ChangeEvent<HTMLInputElement>; nextValue: string }) => {
         onChange?.(createDeferredChangeEvent(event, inputRef.current, nextValue));
       },
+      { delayMs: commitDelayMs, maxWaitMs: commitMaxWaitMs },
     );
 
     useEffect(
@@ -159,10 +170,12 @@ export const BufferedEditorInput = forwardRef<HTMLInputElement, InputHTMLAttribu
   },
 );
 
-export const BufferedEditorTextarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(
+export const BufferedEditorTextarea = forwardRef<HTMLTextAreaElement, BufferedEditorTextareaProps>(
   function BufferedEditorTextarea(
     {
       disabled,
+      commitDelayMs,
+      commitMaxWaitMs,
       onBlur,
       onChange,
       onCompositionEnd,
@@ -194,6 +207,7 @@ export const BufferedEditorTextarea = forwardRef<HTMLTextAreaElement, TextareaHT
       ({ event, nextValue }: { event: ChangeEvent<HTMLTextAreaElement>; nextValue: string }) => {
         onChange?.(createDeferredChangeEvent(event, textareaRef.current, nextValue));
       },
+      { delayMs: commitDelayMs, maxWaitMs: commitMaxWaitMs },
     );
 
     useEffect(

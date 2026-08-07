@@ -28,10 +28,15 @@ test("poll statistics live in the operation center between customers and logs", 
   assert.match(editor, /经营中心的“投票统计”/);
   assert.match(editor, /开放时间（可选）/);
   assert.match(editor, /结束时间（可选）/);
+  assert.match(editor, /投票对象/);
+  assert.match(editor, /POLL_MAX_OPTIONS/);
   assert.match(route, /if \(!pollId\)/);
   assert.match(route, /buildPollRoundOverviews/);
   assert.match(route, /export async function DELETE/);
   assert.match(route, /getPollAvailability/);
+  assert.match(route, /getPollAudienceAccessError/);
+  assert.match(route, /getMerchantMembershipsSnapshot/);
+  assert.match(route, /participant_type: isMerchantMember \? "member" : isRegistered \? "registered" : "guest"/);
 });
 
 test("all inline block text controls use the buffered editor adapters", async () => {
