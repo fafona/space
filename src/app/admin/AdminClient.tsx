@@ -185,6 +185,7 @@ import {
   type MerchantBookingRulesSnapshot,
 } from "@/lib/merchantBookingRules";
 import { buildPublicBlockId } from "@/lib/blockPublicId";
+import { findStyleTransferTargetBlock } from "@/lib/editorStyleTransfer";
 import { countInlineAssets } from "@/lib/inlineAssetStats";
 import { showGlobalToast } from "@/lib/globalToast";
 import { useNotificationSound } from "@/lib/useNotificationSound";
@@ -729,6 +730,7 @@ const STYLE_SYNC_KEYS = [
   "mapZoom",
   "mapType",
   "mapShowMarker",
+  "pollContentBackgroundOpacity",
 ] as const;
 const PAGE_BACKGROUND_PROP_KEYS = [
   "pageBgImageUrl",
@@ -1158,6 +1160,16 @@ type ViewportEditorState = {
   editingPageId: string;
   blocks: Block[];
   selectedId: string;
+};
+
+type StyleCopyDialogState = {
+  sourceViewport: ViewportKey;
+  sourcePlanId: PlanId;
+  sourcePageId: string;
+  sourceBlockId: string;
+  targetViewport: ViewportKey;
+  targetPlanId: PlanId;
+  targetPageId: string;
 };
 
 type GlobalPageRecord = {
@@ -4723,6 +4735,7 @@ export default function AdminClient({
   const [pageCopyDialogOpen, setPageCopyDialogOpen] = useState(false);
   const [pageCopyTargetPageId, setPageCopyTargetPageId] = useState("");
   const [pageCopySelections, setPageCopySelections] = useState<PageCopySelectionState>(() => buildPageCopySelectionDefaults(initialBlocks));
+  const [styleCopyDialog, setStyleCopyDialog] = useState<StyleCopyDialogState | null>(null);
   const [pageSettingsFillMode, setPageSettingsFillMode] = useState<ImageFillMode>("cover");
   const [pageSettingsPosition, setPageSettingsPosition] = useState("center");
   const [pageSettingsColor, setPageSettingsColor] = useState("");
@@ -4997,13 +5010,13 @@ export default function AdminClient({
   }, [isPlatformEditor]);
 
   useEffect(() => {
-    if ((!planTemplateDialogOpen && !pageCopyDialogOpen) || typeof document === "undefined") return () => {};
+    if ((!planTemplateDialogOpen && !pageCopyDialogOpen && !styleCopyDialog) || typeof document === "undefined") return () => {};
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [pageCopyDialogOpen, planTemplateDialogOpen]);
+  }, [pageCopyDialogOpen, planTemplateDialogOpen, styleCopyDialog]);
 
   function recordRecentColor(value: string) {
     const normalized = normalizeRecentColorToken(value);
@@ -5415,6 +5428,7 @@ export default function AdminClient({
   }
 
   function copySelectedBlockStyleToViewport(targetViewport: ViewportKey) {
+    flushPendingEditorChanges();
     const id = selectedIdRef.current;
     if (!id) {
       showTip("请先选中一个区块");
@@ -5422,51 +5436,145 @@ export default function AdminClient({
     }
     const sourceBlock = blocksRef.current.find((item) => item.id === id);
     if (!sourceBlock) return;
+
+    const sourcePlanConfig = mergePlanConfigWithEditingBlocks(
+      planConfigRef.current,
+      editingPlanIdRef.current,
+      editingPageIdRef.current,
+      blocksRef.current,
+      { syncNavPages: false },
+    );
+    const sourceState: ViewportEditorState = {
+      planConfig: clonePlanConfig(sourcePlanConfig),
+      editingPlanId: editingPlanIdRef.current,
+      editingPageId: editingPageIdRef.current,
+      blocks: cloneBlocks(blocksRef.current),
+      selectedId: id,
+    };
+    viewportStatesRef.current[previewViewport] = sourceState;
+
     const targetState = viewportStatesRef.current[targetViewport];
-    const targetIndex = targetState.blocks.findIndex((item) => item.id === id);
-    if (targetIndex < 0) {
-      showTip("目标端未找到同名区块");
+    const targetPlan =
+      targetState.planConfig.plans.find((plan) => plan.id === targetState.editingPlanId) ??
+      targetState.planConfig.plans[0];
+    if (!targetPlan) {
+      showTip("目标端暂无可用方案");
       return;
     }
+    const targetPages = targetPlan.pages?.length
+      ? targetPlan.pages
+      : [{ id: targetPlan.activePageId || "page-1", name: "页面1", blocks: targetPlan.blocks }];
+    const sourcePlan =
+      sourcePlanConfig.plans.find((plan) => plan.id === editingPlanIdRef.current) ??
+      sourcePlanConfig.plans[0];
+    const sourcePage = sourcePlan?.pages.find((page) => page.id === editingPageIdRef.current);
+    const sourcePageName = toPlainText(sourcePage?.name, "");
+    const defaultTargetPage =
+      targetPages.find((page) => page.id === editingPageIdRef.current) ??
+      (sourcePageName
+        ? targetPages.find((page) => toPlainText(page.name, "").toLocaleLowerCase() === sourcePageName.toLocaleLowerCase())
+        : null) ??
+      targetPages.find((page) => page.id === targetState.editingPageId) ??
+      targetPages.find((page) => page.id === targetPlan.activePageId) ??
+      targetPages[0];
+    if (!defaultTargetPage) {
+      showTip("目标端暂无可用页面");
+      return;
+    }
+
+    setStyleCopyDialog({
+      sourceViewport: previewViewport,
+      sourcePlanId: editingPlanIdRef.current,
+      sourcePageId: editingPageIdRef.current,
+      sourceBlockId: id,
+      targetViewport,
+      targetPlanId: targetPlan.id,
+      targetPageId: defaultTargetPage.id,
+    });
+  }
+
+  function applySelectedBlockStyleToViewport() {
+    if (!styleCopyDialog) return;
+    const sourceState = viewportStatesRef.current[styleCopyDialog.sourceViewport];
+    const sourcePlan =
+      sourceState.planConfig.plans.find((plan) => plan.id === styleCopyDialog.sourcePlanId) ??
+      sourceState.planConfig.plans[0];
+    const sourceBlocks = sourcePlan
+      ? cloneBlocks(getBlocksForPage(sourcePlan, styleCopyDialog.sourcePageId))
+      : cloneBlocks(sourceState.blocks);
+    const sourceBlock = sourceBlocks.find((item) => item.id === styleCopyDialog.sourceBlockId);
+    if (!sourceBlock) {
+      showTip("源区块已发生变化，请重新选择");
+      setStyleCopyDialog(null);
+      return;
+    }
+
+    const targetState = viewportStatesRef.current[styleCopyDialog.targetViewport];
+    const targetPlan =
+      targetState.planConfig.plans.find((plan) => plan.id === styleCopyDialog.targetPlanId) ??
+      targetState.planConfig.plans[0];
+    const targetPage = targetPlan?.pages.find((page) => page.id === styleCopyDialog.targetPageId);
+    if (!targetPlan || !targetPage) {
+      showTip("未找到目标页面，请重新选择");
+      return;
+    }
+    const targetPageBlocks = cloneBlocks(getBlocksForPage(targetPlan, targetPage.id));
+    const match = findStyleTransferTargetBlock(sourceBlock, sourceBlocks, targetPageBlocks);
+    if (!match) {
+      showTip(`页面“${toPlainText(targetPage.name, targetPage.id)}”中没有可匹配的${getBlockTypeLabel(sourceBlock.type)}区块`);
+      return;
+    }
+
     pushUndoSnapshot(createSnapshot());
     const stylePatch: Record<string, unknown> = {};
     STYLE_SYNC_KEYS.forEach((key) => {
       const value = (sourceBlock.props as Record<string, unknown>)[key];
       if (typeof value !== "undefined") stylePatch[key] = value;
     });
-    const nextBlocks = cloneBlocks(targetState.blocks);
-    nextBlocks[targetIndex] = {
-      ...nextBlocks[targetIndex],
+    targetPageBlocks[match.targetIndex] = {
+      ...targetPageBlocks[match.targetIndex],
       props: {
-        ...nextBlocks[targetIndex].props,
+        ...targetPageBlocks[match.targetIndex].props,
         ...stylePatch,
       } as never,
     } as Block;
-    const targetPlan = targetState.planConfig.plans.find((plan) => plan.id === targetState.editingPlanId) ?? targetState.planConfig.plans[0];
     const nextPlan = setBlocksForPage(
-      { ...targetPlan, activePageId: targetState.editingPageId },
-      targetState.editingPageId,
-      nextBlocks,
+      { ...targetPlan, activePageId: targetPlan.activePageId || targetState.editingPageId },
+      targetPage.id,
+      targetPageBlocks,
     );
     const nextPlanConfig: PagePlanConfig = {
       ...targetState.planConfig,
-      plans: targetState.planConfig.plans.map((plan) => (plan.id === targetState.editingPlanId ? nextPlan : plan)),
+      plans: targetState.planConfig.plans.map((plan) => (plan.id === targetPlan.id ? nextPlan : plan)),
     };
-    viewportStatesRef.current[targetViewport] = {
+    const targetPageIsOpen =
+      targetState.editingPlanId === targetPlan.id && targetState.editingPageId === targetPage.id;
+    const matchedTargetBlockId = targetPageBlocks[match.targetIndex]?.id ?? targetState.selectedId;
+    const nextOpenBlocks = targetPageIsOpen ? targetPageBlocks : targetState.blocks;
+    const nextSelectedId = targetPageIsOpen ? matchedTargetBlockId : targetState.selectedId;
+    viewportStatesRef.current[styleCopyDialog.targetViewport] = {
       ...targetState,
       planConfig: nextPlanConfig,
-      blocks: nextBlocks,
-      selectedId: id,
+      blocks: cloneBlocks(nextOpenBlocks),
+      selectedId: nextSelectedId,
     };
-    if (previewViewport === targetViewport) {
+    if (previewViewport === styleCopyDialog.targetViewport) {
+      planConfigRef.current = clonePlanConfig(nextPlanConfig);
+      blocksRef.current = cloneBlocks(nextOpenBlocks);
+      selectedIdRef.current = nextSelectedId;
       setPlanConfig(clonePlanConfig(nextPlanConfig));
       setEditingPlanId(targetState.editingPlanId);
       setEditingPageId(targetState.editingPageId);
-      setBlocks(cloneBlocks(nextBlocks));
-      setSelectedId(id);
+      setBlocks(cloneBlocks(nextOpenBlocks));
+      setSelectedId(nextSelectedId);
     }
-    persistDraftForConfigs(previewViewport === targetViewport ? nextPlanConfig : planConfigRef.current);
-    showTip(targetViewport === "mobile" ? "已复制样式到手机端" : "已复制样式到PC端");
+    persistDraftForConfigs(
+      previewViewport === styleCopyDialog.targetViewport ? nextPlanConfig : sourceState.planConfig,
+    );
+    const targetViewportLabel = styleCopyDialog.targetViewport === "mobile" ? "手机端" : "PC端";
+    const targetPageLabel = toPlainText(targetPage.name, targetPage.id);
+    setStyleCopyDialog(null);
+    showTip(`已复制样式到${targetViewportLabel} · ${targetPageLabel}`);
   }
 
   function rollbackToLastSuccessfulPublished() {
@@ -15412,6 +15520,42 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     (pageCopySelections[PAGE_COPY_BACKGROUND_ITEM_ID] ? 1 : 0) +
     (pageCopySelections[PAGE_COPY_THEME_ITEM_ID] ? 1 : 0) +
     pageCopyBlockOptions.filter((item) => pageCopySelections[item.id] === true).length;
+  const styleCopySourceState = styleCopyDialog
+    ? viewportStatesRef.current[styleCopyDialog.sourceViewport]
+    : null;
+  const styleCopySourcePlan = styleCopyDialog && styleCopySourceState
+    ? styleCopySourceState.planConfig.plans.find((plan) => plan.id === styleCopyDialog.sourcePlanId) ??
+      styleCopySourceState.planConfig.plans[0]
+    : null;
+  const styleCopySourcePage = styleCopyDialog && styleCopySourcePlan
+    ? styleCopySourcePlan.pages.find((page) => page.id === styleCopyDialog.sourcePageId) ?? null
+    : null;
+  const styleCopySourceBlocks = styleCopyDialog && styleCopySourcePlan
+    ? getBlocksForPage(styleCopySourcePlan, styleCopyDialog.sourcePageId)
+    : [];
+  const styleCopySourceBlock = styleCopyDialog
+    ? styleCopySourceBlocks.find((block) => block.id === styleCopyDialog.sourceBlockId) ?? null
+    : null;
+  const styleCopyTargetState = styleCopyDialog
+    ? viewportStatesRef.current[styleCopyDialog.targetViewport]
+    : null;
+  const styleCopyTargetPlan = styleCopyDialog && styleCopyTargetState
+    ? styleCopyTargetState.planConfig.plans.find((plan) => plan.id === styleCopyDialog.targetPlanId) ??
+      styleCopyTargetState.planConfig.plans[0]
+    : null;
+  const styleCopyTargetPages = styleCopyTargetPlan?.pages ?? [];
+  const styleCopyTargetPage = styleCopyDialog && styleCopyTargetPlan
+    ? styleCopyTargetPages.find((page) => page.id === styleCopyDialog.targetPageId) ?? null
+    : null;
+  const styleCopyTargetBlocks = styleCopyTargetPage && styleCopyTargetPlan
+    ? getBlocksForPage(styleCopyTargetPlan, styleCopyTargetPage.id)
+    : [];
+  const styleCopyTargetMatch = styleCopySourceBlock
+    ? findStyleTransferTargetBlock(styleCopySourceBlock, styleCopySourceBlocks, styleCopyTargetBlocks)
+    : null;
+  const styleCopyTargetBlock = styleCopyTargetMatch
+    ? styleCopyTargetBlocks[styleCopyTargetMatch.targetIndex] ?? null
+    : null;
   const imageCompressionOptions = getCurrentImageCompressionOptions();
   const otherBookingViewport = previewViewport === "desktop" ? "mobile" : "desktop";
   const otherBookingPlanConfig = viewportStatesRef.current[otherBookingViewport].planConfig;
@@ -21357,6 +21501,116 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           open={merchantOrderManagerOpen}
         />
       ) : null}
+
+      {styleCopyDialog
+        ? renderTopMostOverlay(
+            <div
+              data-editor-overlay
+              className="fixed inset-0 z-[2147482552] flex items-center justify-center bg-black/45 p-4"
+              onMouseDown={(event) => {
+                if (event.target === event.currentTarget) {
+                  setStyleCopyDialog(null);
+                }
+              }}
+              role="dialog"
+              aria-modal="true"
+              aria-label="复制区块样式"
+            >
+              <div className="w-full max-w-lg overflow-hidden rounded-2xl border bg-white shadow-2xl">
+                <div className="flex items-start justify-between gap-4 border-b px-5 py-4">
+                  <div className="min-w-0">
+                    <div className="text-lg font-semibold text-slate-900">复制区块样式</div>
+                    <div className="mt-1 text-sm text-slate-500">
+                      选择要复制到{styleCopyDialog.targetViewport === "mobile" ? "手机端" : "PC端"}的页面。
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="shrink-0 rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                    onClick={() => setStyleCopyDialog(null)}
+                  >
+                    关闭
+                  </button>
+                </div>
+
+                <div className="space-y-4 px-5 py-5">
+                  <div className="grid gap-3 rounded-xl border bg-slate-50 px-4 py-3 text-sm sm:grid-cols-2">
+                    <div className="min-w-0">
+                      <div className="text-xs text-slate-500">源区块</div>
+                      <div className="mt-1 truncate font-medium text-slate-800">
+                        {styleCopySourceBlock
+                          ? buildPageCopyBlockLabel(
+                              styleCopySourceBlock,
+                              Math.max(0, styleCopySourceBlocks.findIndex((block) => block.id === styleCopySourceBlock.id)),
+                            )
+                          : "源区块已发生变化"}
+                      </div>
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-xs text-slate-500">源页面</div>
+                      <div className="mt-1 truncate font-medium text-slate-800">
+                        {toPlainText(styleCopySourcePage?.name, styleCopyDialog.sourcePageId)}
+                      </div>
+                    </div>
+                  </div>
+
+                  <label className="block space-y-2">
+                    <span className="text-sm font-medium text-slate-700">目标页面</span>
+                    <select
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900"
+                      value={styleCopyDialog.targetPageId}
+                      onChange={(event) =>
+                        setStyleCopyDialog((current) =>
+                          current ? { ...current, targetPageId: event.target.value } : current,
+                        )
+                      }
+                    >
+                      {styleCopyTargetPages.map((page) => (
+                        <option key={page.id} value={page.id}>
+                          {toPlainText(page.name, page.id)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  {styleCopyTargetBlock && styleCopyTargetMatch ? (
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm">
+                      <div className="text-xs font-medium text-emerald-700">将复制到</div>
+                      <div className="mt-1 font-medium text-emerald-950">
+                        {buildPageCopyBlockLabel(styleCopyTargetBlock, styleCopyTargetMatch.targetIndex)}
+                      </div>
+                      <div className="mt-1 text-xs leading-5 text-emerald-700">仅复制样式，目标区块的投票内容与已收集结果不会改变。</div>
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
+                      {styleCopyTargetPage && styleCopySourceBlock
+                        ? `页面“${toPlainText(styleCopyTargetPage.name, styleCopyTargetPage.id)}”中没有可匹配的${getBlockTypeLabel(styleCopySourceBlock.type)}区块，请选择包含该区块的页面。`
+                        : "无法读取源区块或目标页面，请关闭后重新选择。"}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex justify-end gap-2 border-t px-5 py-4">
+                  <button
+                    type="button"
+                    className="rounded border bg-white px-4 py-2 text-sm hover:bg-slate-50"
+                    onClick={() => setStyleCopyDialog(null)}
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded bg-black px-4 py-2 text-sm text-white disabled:cursor-not-allowed disabled:opacity-40"
+                    onClick={applySelectedBlockStyleToViewport}
+                    disabled={!styleCopySourceBlock || !styleCopyTargetPage || !styleCopyTargetMatch}
+                  >
+                    确认复制
+                  </button>
+                </div>
+              </div>
+            </div>,
+          )
+        : null}
 
       {pageCopyDialogOpen
         ? renderTopMostOverlay(
