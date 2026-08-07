@@ -6,6 +6,8 @@ import {
   buildMerchantBusinessCardShareDescription,
   buildMerchantBusinessCardShareTitle,
   buildMerchantBusinessCardShareUrl,
+  MERCHANT_BUSINESS_CARD_SHARE_KEY_PARAM,
+  MERCHANT_BUSINESS_CARD_SHARE_PATH,
   isMerchantBusinessCardShareRevoked,
   loadMerchantBusinessCardSharePayloadByKey,
   normalizeMerchantBusinessCardSharePayload,
@@ -2300,6 +2302,9 @@ function buildSharePayloadFromSnapshotMatch(
       introPosterUrl: match.allowIntroVideo ? normalizeText(card.contactIntroVideoPosterUrl) : "",
       introVideoMuted: card.contactIntroVideoMuted,
       contactPageSectionOrder: card.contactPageSectionOrder,
+      showContactPoll: card.showContactPoll,
+      contactPagePollId: card.contactPagePollId,
+      contactPagePollBlockId: card.contactPagePollBlockId,
       showContactSaveButton: card.showContactSaveButton,
       showContactWebsiteButton: card.showContactWebsiteButton,
       targetUrl,
@@ -2892,6 +2897,7 @@ function buildShareCardHtml(input: {
     image: contactImageSectionHtml,
     contacts: contactSummarySectionHtml,
     coupons: contactCouponsSectionHtml,
+    poll: "",
   };
   const orderedContactSectionsHtml = contactPageSectionOrder
     .map((key) => contactSectionHtmlByKey[key])
@@ -4001,6 +4007,15 @@ export async function GET(
     }));
   }
 
+  const cachedPayload = readCachedContactCardPayload(shareKey);
+  if (cachedPayload?.showContactPoll && cachedPayload.contactPagePollId && cachedPayload.ownerMerchantId) {
+    const contactCardUrl = new URL(MERCHANT_BUSINESS_CARD_SHARE_PATH, request.url);
+    contactCardUrl.searchParams.set(MERCHANT_BUSINESS_CARD_SHARE_KEY_PARAM, shareKey);
+    const response = NextResponse.redirect(contactCardUrl, 307);
+    response.headers.set("cache-control", "no-store, max-age=0");
+    return withTiming(response);
+  }
+
   const cachedHtml = introDebug ? "" : readCachedContactCardHtml(shareKey, requestOrigin);
   if (cachedHtml) {
     timing.add("html_cache", 0, "hit");
@@ -4015,7 +4030,6 @@ export async function GET(
 
   const payloadStartedAt = timing.now();
   let payloadSource = "none";
-  const cachedPayload = readCachedContactCardPayload(shareKey);
   const storedPayloadPromise = loadMerchantBusinessCardSharePayloadByKey(shareKey, requestOrigin);
   const storedPayloadTask = withContactCardTimeout(storedPayloadPromise, null, 5_500);
   const snapshotMatchTask = withContactCardTimeout(
@@ -4109,6 +4123,14 @@ export async function GET(
         preferredOrigin: requestOrigin,
       }).catch(() => false);
     });
+  }
+
+  if (payload.showContactPoll && payload.contactPagePollId && payload.ownerMerchantId) {
+    const contactCardUrl = new URL(MERCHANT_BUSINESS_CARD_SHARE_PATH, request.url);
+    contactCardUrl.searchParams.set(MERCHANT_BUSINESS_CARD_SHARE_KEY_PARAM, shareKey);
+    const response = NextResponse.redirect(contactCardUrl, 307);
+    response.headers.set("cache-control", "no-store, max-age=0");
+    return withTiming(response);
   }
 
   const title = buildMerchantBusinessCardShareTitle(payload.name);

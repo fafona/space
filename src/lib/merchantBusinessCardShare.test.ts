@@ -129,6 +129,10 @@ test("share helpers preserve contact card layout controls and custom links", () 
     detailImageScale: 1.35,
     detailImageOpacity: 0.72,
     contactPageSectionOrder: ["contacts", "image", "coupons"],
+    showContactPoll: true,
+    contactPagePollId: "poll-customer-feedback",
+    contactPagePollBlockId: "poll-block-page-2",
+    ownerMerchantId: "10000000",
     showContactSaveButton: false,
     showContactWebsiteButton: false,
     targetUrl: "https://fafona.faolla.com",
@@ -153,7 +157,11 @@ test("share helpers preserve contact card layout controls and custom links", () 
   });
 
   const url = new URL(shareUrl);
-  assert.equal(url.searchParams.get("contactSections"), "contacts,image,coupons");
+  assert.equal(url.searchParams.get("contactSections"), "contacts,image,coupons,poll");
+  assert.equal(url.searchParams.get("showPoll"), "1");
+  assert.equal(url.searchParams.get("poll"), "poll-customer-feedback");
+  assert.equal(url.searchParams.get("pollBlock"), "poll-block-page-2");
+  assert.equal(url.searchParams.get("owner"), "10000000");
   assert.equal(url.searchParams.get("showContactSave"), "0");
   assert.equal(url.searchParams.get("showContactWebsite"), "0");
   assert.equal(url.searchParams.get("detailImageLink"), "https://menu.example.com/");
@@ -165,7 +173,11 @@ test("share helpers preserve contact card layout controls and custom links", () 
   assert.ok(url.searchParams.get("customLinks")?.includes("欢迎评价"));
 
   const parsed = parseMerchantBusinessCardShareParams(url.searchParams, "https://faolla.com");
-  assert.deepEqual(parsed?.contactPageSectionOrder, ["contacts", "image", "coupons"]);
+  assert.deepEqual(parsed?.contactPageSectionOrder, ["contacts", "image", "coupons", "poll"]);
+  assert.equal(parsed?.showContactPoll, true);
+  assert.equal(parsed?.contactPagePollId, "poll-customer-feedback");
+  assert.equal(parsed?.contactPagePollBlockId, "poll-block-page-2");
+  assert.equal(parsed?.ownerMerchantId, "10000000");
   assert.equal(parsed?.showContactSaveButton, false);
   assert.equal(parsed?.showContactWebsiteButton, false);
   assert.equal(parsed?.detailImageLinkUrl, "https://menu.example.com/");

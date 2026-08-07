@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { headers } from "next/headers";
 import QRCode from "qrcode";
 import ServiceMaintenancePage from "@/components/ServiceMaintenancePage";
+import PollBlock from "@/components/blocks/PollBlock";
 import {
   buildMerchantBusinessCardContactDownloadUrl,
   buildMerchantBusinessCardLegacyContactDownloadUrl,
@@ -12,7 +13,9 @@ import {
   resolveMerchantBusinessCardSharePayload,
 } from "@/lib/merchantBusinessCardShare";
 import { normalizeMerchantBusinessCardContactSectionOrder } from "@/lib/merchantBusinessCards";
+import { collectPublishedPollBlocks, findPublishedPollConfig } from "@/lib/merchantPolls";
 import { loadPublishedMerchantServiceStateByTargetUrl } from "@/lib/publishedMerchantService";
+import { fetchPublishedSiteBlocksFromSupabase } from "@/lib/publishedSiteData";
 
 type ShareBusinessCardPageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -186,9 +189,14 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
   const origin = resolveRequestOrigin(requestHeaders);
   const resolvedSearchParams = await searchParams;
   const payload = await resolveMerchantBusinessCardSharePayload(resolvedSearchParams, origin);
-  const serviceState = payload
-    ? await loadPublishedMerchantServiceStateByTargetUrl(payload.targetUrl).catch(() => null)
-    : null;
+  const [serviceState, publishedPollPayload] = payload
+    ? await Promise.all([
+        loadPublishedMerchantServiceStateByTargetUrl(payload.targetUrl).catch(() => null),
+        payload.showContactPoll && payload.contactPagePollId && payload.ownerMerchantId
+          ? fetchPublishedSiteBlocksFromSupabase(payload.ownerMerchantId).catch(() => null)
+          : Promise.resolve(null),
+      ])
+    : [null, null];
   const isMobileRequest = looksLikeMobileRequest(requestHeaders);
 
   if (!payload) {
@@ -262,10 +270,34 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
     </div>
   ) : null;
   const contactSummarySection = renderContactSummary(payload);
+  const selectedPollMatch =
+    payload.showContactPoll && payload.contactPagePollId && publishedPollPayload?.blocks
+      ? findPublishedPollConfig(
+          publishedPollPayload.blocks,
+          payload.contactPagePollId,
+          payload.contactPagePollBlockId,
+        )
+      : null;
+  const selectedPollBlock = selectedPollMatch
+    ? collectPublishedPollBlocks(publishedPollPayload?.blocks ?? []).find(
+        (block) => block.id === selectedPollMatch.blockId,
+      ) ?? null
+    : null;
+  const contactPollSection = selectedPollBlock && payload.ownerMerchantId ? (
+    <div className="min-w-0 max-w-full overflow-x-hidden">
+      <PollBlock
+        {...selectedPollBlock.props}
+        runtimeSiteId={payload.ownerMerchantId}
+        runtimeBlockId={selectedPollBlock.id}
+        interactive
+      />
+    </div>
+  ) : null;
   const contactSectionMap = {
     image: contactImageSection,
     contacts: contactSummarySection,
     coupons: null,
+    poll: contactPollSection,
   };
   const orderedContactSections = contactSections
     .map((sectionKey) => ({ sectionKey, section: contactSectionMap[sectionKey] }))

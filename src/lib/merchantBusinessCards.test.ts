@@ -161,14 +161,20 @@ test("normalizeMerchantBusinessCardDraft preserves intro video muted setting", (
 test("normalizeMerchantBusinessCardDraft preserves contact card section order and buttons", () => {
   const draft = normalizeMerchantBusinessCardDraft({
     contactPageSectionOrder: ["contacts", "coupons", "image", "contacts"],
+    showContactPoll: true,
+    contactPagePollId: "poll-customer-feedback",
+    contactPagePollBlockId: "poll-block-page-2",
     showContactSaveButton: false,
     showContactWebsiteButton: false,
   });
 
-  assert.deepEqual(draft.contactPageSectionOrder, ["contacts", "coupons", "image"]);
+  assert.deepEqual(draft.contactPageSectionOrder, ["contacts", "coupons", "image", "poll"]);
+  assert.equal(draft.showContactPoll, true);
+  assert.equal(draft.contactPagePollId, "poll-customer-feedback");
+  assert.equal(draft.contactPagePollBlockId, "poll-block-page-2");
   assert.equal(draft.showContactSaveButton, false);
   assert.equal(draft.showContactWebsiteButton, false);
-  assert.deepEqual(normalizeMerchantBusinessCardContactSectionOrder(["coupons"]), ["coupons", "image", "contacts"]);
+  assert.deepEqual(normalizeMerchantBusinessCardContactSectionOrder(["coupons"]), ["coupons", "image", "contacts", "poll"]);
 });
 
 test("normalizeMerchantBusinessCardDraft keeps custom contact links", () => {
