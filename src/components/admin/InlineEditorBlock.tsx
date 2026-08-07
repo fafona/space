@@ -147,6 +147,8 @@ import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { useI18n } from "@/components/I18nProvider";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
 import { isGradientToken } from "@/lib/editorColors";
+import { flushBufferedEditorTextCommits } from "@/lib/editorTextCommitBuffer";
+import { useBufferedEditorTextCommit } from "@/components/admin/useBufferedEditorTextCommit";
 
 function MoveArrowIcon({ direction }: { direction: "up" | "down" }) {
   return (
@@ -2125,6 +2127,7 @@ type GalleryEditorImage = {
   }
 
   const persistEditorTypographyChange = useCallback((editor: HTMLDivElement, options?: { includeBlockLevelPatch?: boolean }) => {
+    flushBufferedEditorTextCommits();
     const commonBoxId = editor.dataset.commonBoxId?.trim();
     const fieldName = editor.dataset.field as RichFieldName | undefined;
     const blockLevelTypographyPatch = options?.includeBlockLevelPatch ? buildBlockLevelTypographyPatch(getCurrentTypographyDialogValues()) : null;
@@ -13060,6 +13063,10 @@ function RichTextEditor({
   onSelectionChange: (range: Range | null) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const composingRef = useRef(false);
+  const { scheduleCommit, flushCommit } = useBufferedEditorTextCommit((html: string) => {
+    onChange(field, html, ref.current);
+  });
 
   useEffect(() => {
     if (!ref.current) return;
@@ -13068,10 +13075,15 @@ function RichTextEditor({
     }
   }, [value]);
 
-  function emitChange() {
+  function readCurrentHtml() {
     if (!ref.current) return;
-    const html = ref.current.innerHTML.replaceAll("\u200B", "");
-    onChange(field, html, ref.current);
+    return ref.current.innerHTML.replaceAll("\u200B", "");
+  }
+
+  function emitChange() {
+    if (composingRef.current) return;
+    const html = readCurrentHtml();
+    if (typeof html === "string") scheduleCommit(html);
   }
 
   function updateSelection() {
@@ -13103,6 +13115,19 @@ function RichTextEditor({
       suppressContentEditableWarning
       onFocus={() => onActivate(ref.current)}
       onInput={emitChange}
+      onCompositionStart={() => {
+        composingRef.current = true;
+      }}
+      onCompositionEnd={() => {
+        composingRef.current = false;
+        emitChange();
+      }}
+      onBlur={() => {
+        composingRef.current = false;
+        const html = readCurrentHtml();
+        if (typeof html === "string") scheduleCommit(html);
+        flushCommit();
+      }}
       onKeyUp={updateSelection}
       onMouseUp={updateSelection}
     />

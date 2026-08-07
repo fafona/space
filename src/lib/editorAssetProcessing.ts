@@ -655,6 +655,22 @@ type ExternalizeStats = {
   afterBytes: number;
 };
 
+type InlineAssetTransformCache = Map<string, Promise<string | null>>;
+
+function getOrCreateInlineAssetTransform(
+  cache: InlineAssetTransformCache,
+  source: string,
+  transform: () => Promise<string | null>,
+) {
+  const cached = cache.get(source);
+  if (cached) return cached;
+  const pending = Promise.resolve()
+    .then(transform)
+    .catch(() => null);
+  cache.set(source, pending);
+  return pending;
+}
+
 type ProductThumbnailBackfillContext = {
   merchantHint: string;
   operation: MerchantOperationContext;
@@ -893,9 +909,24 @@ async function backfillProductThumbnailsInProductList(
     }
 
     context.stats.visited += 1;
-    if (!isPotentialPublicStorageProductImageUrl(normalizePublicAssetUrl(imageUrl))) {
+    const normalizedImageUrl = normalizePublicAssetUrl(imageUrl);
+    if (!isPotentialPublicStorageProductImageUrl(normalizedImageUrl)) {
       context.stats.skipped += 1;
       nextProducts.push(product);
+      continue;
+    }
+    if (context.cache.has(normalizedImageUrl)) {
+      const cachedThumbnailUrl = context.cache.get(normalizedImageUrl) ?? null;
+      if (cachedThumbnailUrl) {
+        changed = true;
+        nextProducts.push({
+          ...product,
+          thumbnailUrl: cachedThumbnailUrl,
+        });
+      } else {
+        context.stats.failed += 1;
+        nextProducts.push(product);
+      }
       continue;
     }
     if (context.stats.generated >= context.maxGenerated || Date.now() - context.startedAt > context.maxDurationMs) {
@@ -1006,30 +1037,30 @@ async function recompressInlineImagesUnknown(
   input: unknown,
   options: BrowserImageCompressionOptions,
   stats: RecompressStats,
+  cache: InlineAssetTransformCache,
 ): Promise<unknown> {
   if (typeof input === "string") {
     if (!/^data:image\//i.test(input)) return input;
     stats.visited += 1;
     const beforeBytes = estimateUtf8Size(input);
     stats.beforeBytes += beforeBytes;
-    try {
-      const compressed = await compressImageDataUrl(input, options);
-      const output = compressed.length > 0 ? compressed : input;
-      const afterBytes = estimateUtf8Size(output);
-      stats.afterBytes += afterBytes;
-      if (output !== input) stats.changed += 1;
-      return output;
-    } catch {
+    const compressed = await getOrCreateInlineAssetTransform(cache, input, () => compressImageDataUrl(input, options));
+    if (compressed === null) {
       stats.failed += 1;
       stats.afterBytes += beforeBytes;
       return input;
     }
+    const output = compressed.length > 0 ? compressed : input;
+    const afterBytes = estimateUtf8Size(output);
+    stats.afterBytes += afterBytes;
+    if (output !== input) stats.changed += 1;
+    return output;
   }
 
   if (Array.isArray(input)) {
     const next: unknown[] = [];
     for (const item of input) {
-      next.push(await recompressInlineImagesUnknown(item, options, stats));
+      next.push(await recompressInlineImagesUnknown(item, options, stats, cache));
     }
     return next;
   }
@@ -1038,7 +1069,7 @@ async function recompressInlineImagesUnknown(
     const record = input as Record<string, unknown>;
     const nextRecord: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(record)) {
-      nextRecord[key] = await recompressInlineImagesUnknown(value, options, stats);
+      nextRecord[key] = await recompressInlineImagesUnknown(value, options, stats, cache);
     }
     return nextRecord;
   }
@@ -1057,7 +1088,7 @@ async function recompressInlineImagesInBlocks(
     beforeBytes: 0,
     afterBytes: 0,
   };
-  const next = (await recompressInlineImagesUnknown(blocks, options, stats)) as Block[];
+  const next = (await recompressInlineImagesUnknown(blocks, options, stats, new Map())) as Block[];
   return { blocks: next, stats };
 }
 
@@ -1067,6 +1098,7 @@ async function externalizeInlineImagesUnknown(
   stats: ExternalizeStats,
   minBytes: number,
   operation: MerchantOperationContext | undefined,
+  cache: InlineAssetTransformCache,
 ): Promise<unknown> {
   if (typeof input === "string") {
     if (!/^data:image\//i.test(input)) return input;
@@ -1074,33 +1106,29 @@ async function externalizeInlineImagesUnknown(
     if (bytes < minBytes) return input;
     stats.visited += 1;
     stats.beforeBytes += bytes;
-    try {
-      const url = await uploadImageDataUrlToSupabase(input, merchantHint, "generic-image", operation);
-      if (!url) {
-        stats.failed += 1;
-        stats.afterBytes += bytes;
-        return input;
-      }
-      stats.replaced += 1;
-      stats.afterBytes += estimateUtf8Size(url);
-      return url;
-    } catch {
+    const url = await getOrCreateInlineAssetTransform(cache, input, () =>
+      uploadImageDataUrlToSupabase(input, merchantHint, "generic-image", operation),
+    );
+    if (!url) {
       stats.failed += 1;
       stats.afterBytes += bytes;
       return input;
     }
+    stats.replaced += 1;
+    stats.afterBytes += estimateUtf8Size(url);
+    return url;
   }
   if (Array.isArray(input)) {
     const next: unknown[] = [];
     for (const item of input) {
-      next.push(await externalizeInlineImagesUnknown(item, merchantHint, stats, minBytes, operation));
+      next.push(await externalizeInlineImagesUnknown(item, merchantHint, stats, minBytes, operation, cache));
     }
     return next;
   }
   if (input && typeof input === "object") {
     const nextRecord: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
-      nextRecord[key] = await externalizeInlineImagesUnknown(value, merchantHint, stats, minBytes, operation);
+      nextRecord[key] = await externalizeInlineImagesUnknown(value, merchantHint, stats, minBytes, operation, cache);
     }
     return nextRecord;
   }
@@ -1120,7 +1148,7 @@ async function externalizeInlineImagesInBlocks(
     beforeBytes: 0,
     afterBytes: 0,
   };
-  const next = (await externalizeInlineImagesUnknown(blocks, merchantHint, stats, minBytes, operation)) as Block[];
+  const next = (await externalizeInlineImagesUnknown(blocks, merchantHint, stats, minBytes, operation, new Map())) as Block[];
   return { blocks: next, stats };
 }
 
@@ -1129,33 +1157,30 @@ async function externalizeInlineAudioUnknown(
   merchantHint: string,
   stats: ExternalizeStats,
   operation: MerchantOperationContext | undefined,
+  cache: InlineAssetTransformCache,
 ): Promise<unknown> {
   if (typeof input === "string") {
     if (!/^data:audio\//i.test(input)) return input;
     const bytes = estimateUtf8Size(input);
     stats.visited += 1;
     stats.beforeBytes += bytes;
-    try {
-      const url = await uploadAudioDataUrlToSupabase(input, merchantHint, operation);
-      if (!url) {
-        stats.failed += 1;
-        stats.afterBytes += bytes;
-        return input;
-      }
-      stats.replaced += 1;
-      stats.afterBytes += estimateUtf8Size(url);
-      return url;
-    } catch {
+    const url = await getOrCreateInlineAssetTransform(cache, input, () =>
+      uploadAudioDataUrlToSupabase(input, merchantHint, operation),
+    );
+    if (!url) {
       stats.failed += 1;
       stats.afterBytes += bytes;
       return input;
     }
+    stats.replaced += 1;
+    stats.afterBytes += estimateUtf8Size(url);
+    return url;
   }
 
   if (Array.isArray(input)) {
     const next: unknown[] = [];
     for (const item of input) {
-      next.push(await externalizeInlineAudioUnknown(item, merchantHint, stats, operation));
+      next.push(await externalizeInlineAudioUnknown(item, merchantHint, stats, operation, cache));
     }
     return next;
   }
@@ -1163,7 +1188,7 @@ async function externalizeInlineAudioUnknown(
   if (input && typeof input === "object") {
     const nextRecord: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
-      nextRecord[key] = await externalizeInlineAudioUnknown(value, merchantHint, stats, operation);
+      nextRecord[key] = await externalizeInlineAudioUnknown(value, merchantHint, stats, operation, cache);
     }
     return nextRecord;
   }
@@ -1183,7 +1208,7 @@ async function externalizeInlineAudioInBlocks(
     beforeBytes: 0,
     afterBytes: 0,
   };
-  const next = (await externalizeInlineAudioUnknown(blocks, merchantHint, stats, operation)) as Block[];
+  const next = (await externalizeInlineAudioUnknown(blocks, merchantHint, stats, operation, new Map())) as Block[];
   return { blocks: next, stats };
 }
 

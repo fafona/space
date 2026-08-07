@@ -1,6 +1,7 @@
 import type { Block, ImageFillMode } from "@/data/homeBlocks";
 import {
   buildPersistedBlocksFromPlanConfig,
+  buildSinglePlanPublishConfig,
   cloneBlocks,
   getPagePlanConfigFromBlocks,
   type PagePlan,
@@ -470,6 +471,15 @@ export function buildCombinedPersistedBlocks(desktopConfig: PagePlanConfig, mobi
     } as Block;
   }
   return desktopBlocks;
+}
+
+export function rebuildSinglePlanPublishBlocks(sourceBlocks: Block[]) {
+  const desktopConfig = getPagePlanConfigFromBlocks(sourceBlocks);
+  const mobileConfig = getEmbeddedMobilePlanConfig(sourceBlocks);
+  return buildCombinedPersistedBlocks(
+    buildSinglePlanPublishConfig(desktopConfig, desktopConfig.activePlanId),
+    mobileConfig ? buildSinglePlanPublishConfig(mobileConfig, mobileConfig.activePlanId) : null,
+  );
 }
 
 export function extractPlanTemplateCoverImage(rawBlocks: unknown) {
