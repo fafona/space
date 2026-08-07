@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import type { PollOption, PollProps, PollQuestion, PollQuestionType } from "@/data/homeBlocks";
 import {
   createPollEntityId,
@@ -82,6 +82,112 @@ function fromDateTimeLocalInput(value: string) {
   if (!value) return "";
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : "";
+}
+
+function formatDateTimeDisplay(value: string) {
+  return toDateTimeLocalInput(value).replace("T", " ");
+}
+
+function openNativeDateTimePicker(input: HTMLInputElement | null) {
+  if (!input) return;
+  const pickerInput = input as HTMLInputElement & { showPicker?: () => void };
+  try {
+    pickerInput.focus({ preventScroll: true });
+  } catch {
+    pickerInput.focus();
+  }
+  if (typeof pickerInput.showPicker === "function") {
+    try {
+      pickerInput.showPicker();
+      return;
+    } catch {
+      // Fall through to the click path for embedded browsers.
+    }
+  }
+  try {
+    pickerInput.click();
+  } catch {
+    // Some embedded browsers do not expose a native date-time picker.
+  }
+}
+
+function PollCalendarIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+      <path
+        d="M6 2.75v2.5M14 2.75v2.5M3.75 7.25h12.5M5.5 4.5h9a1.75 1.75 0 0 1 1.75 1.75v8.25A1.75 1.75 0 0 1 14.5 16.25h-9A1.75 1.75 0 0 1 3.75 14.5V6.25A1.75 1.75 0 0 1 5.5 4.5Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function PollDateTimeField({
+  label,
+  value,
+  min,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  min?: string;
+  onChange: (value: string) => void;
+}) {
+  const pickerInputRef = useRef<HTMLInputElement>(null);
+  const pickerValue = toDateTimeLocalInput(value);
+
+  return (
+    <label className="grid gap-1 text-sm text-slate-700">
+      <span>{label}</span>
+      <span className="relative block">
+        <input
+          type="text"
+          readOnly
+          data-no-translate="1"
+          translate="no"
+          className="h-10 w-full cursor-pointer rounded-lg border border-slate-300 bg-white px-3 pr-20 text-sm text-slate-800 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+          value={formatDateTimeDisplay(value)}
+          placeholder="请选择日期和时间"
+          onClick={() => openNativeDateTimePicker(pickerInputRef.current)}
+        />
+        {pickerValue ? (
+          <button
+            type="button"
+            className="absolute inset-y-0 right-10 inline-flex w-8 items-center justify-center rounded-md text-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
+            aria-label={`清除${label}`}
+            title={`清除${label}`}
+            onClick={() => onChange("")}
+          >
+            ×
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="absolute inset-y-0 right-1 inline-flex w-9 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
+          aria-label={`${label}选择器`}
+          title={`${label}选择器`}
+          onClick={() => openNativeDateTimePicker(pickerInputRef.current)}
+        >
+          <PollCalendarIcon />
+        </button>
+        <input
+          ref={pickerInputRef}
+          type="datetime-local"
+          tabIndex={-1}
+          aria-hidden="true"
+          data-no-translate="1"
+          translate="no"
+          className="pointer-events-none absolute right-2 top-1/2 h-8 w-8 -translate-y-1/2 opacity-0"
+          min={min}
+          value={pickerValue}
+          onChange={(event) => onChange(fromDateTimeLocalInput(event.target.value))}
+        />
+      </span>
+    </label>
+  );
 }
 
 function getConfigurationMessage(issue: string) {
@@ -180,25 +286,17 @@ export default function PollBlockEditor({ props, runtimeBlockId, onChange }: Pol
               <option value="closed">结束投票</option>
             </select>
           </label>
-          <label className="grid gap-1 text-sm text-slate-700">
-            <span>开放时间（可选）</span>
-            <input
-              type="datetime-local"
-              className="h-10 rounded-lg border border-slate-300 bg-white px-3"
-              value={toDateTimeLocalInput(config.openAt)}
-              onChange={(event) => onChange({ pollOpenAt: fromDateTimeLocalInput(event.target.value) })}
-            />
-          </label>
-          <label className="grid gap-1 text-sm text-slate-700">
-            <span>结束时间（可选）</span>
-            <input
-              type="datetime-local"
-              className="h-10 rounded-lg border border-slate-300 bg-white px-3"
-              min={toDateTimeLocalInput(config.openAt) || undefined}
-              value={toDateTimeLocalInput(config.closeAt)}
-              onChange={(event) => onChange({ pollCloseAt: fromDateTimeLocalInput(event.target.value) })}
-            />
-          </label>
+          <PollDateTimeField
+            label="开放时间（可选）"
+            value={config.openAt}
+            onChange={(pollOpenAt) => onChange({ pollOpenAt })}
+          />
+          <PollDateTimeField
+            label="结束时间（可选）"
+            value={config.closeAt}
+            min={toDateTimeLocalInput(config.openAt) || undefined}
+            onChange={(pollCloseAt) => onChange({ pollCloseAt })}
+          />
           <div className="flex min-h-10 items-center rounded-lg border border-slate-200 px-3 text-xs leading-5 text-slate-500">
             留空表示立即开放或不设结束时间；页面停留期间也会按时间自动切换状态。
           </div>
