@@ -8,6 +8,7 @@ import {
 } from "react";
 
 import { normalizeBookingOptionList } from "@/lib/merchantBookings";
+import { BufferedEditorInput } from "@/components/admin/BufferedEditorControls";
 import { useBufferedEditorTextCommit } from "@/components/admin/useBufferedEditorTextCommit";
 
 export function FontSizeComboInput({
@@ -173,43 +174,12 @@ export function CompositionSafeTextInput({
   placeholder?: string;
   onChange: (nextValue: string) => void;
 }) {
-  const normalizedValue = typeof value === "string" ? value : "";
-  const [draftText, setDraftText] = useState<string | null>(null);
-  const composingRef = useRef(false);
-  const textValue = draftText ?? normalizedValue;
-
-  const { scheduleCommit, flushCommit } = useBufferedEditorTextCommit(onChange);
-
   return (
-    <input
+    <BufferedEditorInput
       className={className}
-      value={textValue}
+      value={typeof value === "string" ? value : ""}
       placeholder={placeholder}
-      onFocus={() => {
-        setDraftText((currentText) => currentText ?? normalizedValue);
-      }}
-      onCompositionStart={() => {
-        composingRef.current = true;
-      }}
-      onCompositionEnd={(event) => {
-        composingRef.current = false;
-        const nextText = event.currentTarget.value;
-        setDraftText(nextText);
-        scheduleCommit(nextText);
-      }}
-      onChange={(event) => {
-        const nextText = event.target.value;
-        setDraftText(nextText);
-        if (!composingRef.current) {
-          scheduleCommit(nextText);
-        }
-      }}
-      onBlur={(event) => {
-        composingRef.current = false;
-        scheduleCommit(event.currentTarget.value);
-        flushCommit();
-        setDraftText(null);
-      }}
+      onChange={(event) => onChange(event.currentTarget.value)}
     />
   );
 }

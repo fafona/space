@@ -27,6 +27,7 @@ import {
   MerchantBookingMobilePanel,
   MerchantBusinessCardManager,
   MerchantCustomerManager,
+  MerchantPollStatsPanel,
   MerchantEnterpriseManager,
   MerchantCouponManager,
   MerchantMemberManager,
@@ -47,6 +48,7 @@ import {
   loadMerchantBookingManagerDialog,
   loadMerchantBusinessCardManager,
   loadMerchantCustomerManager,
+  loadMerchantPollStatsPanel,
   loadMerchantEnterpriseManager,
   loadMerchantCouponManager,
   loadMerchantMemberManager,
@@ -676,6 +678,7 @@ type MerchantDesktopSection =
   | "profile"
   | "cards"
   | "customers"
+  | "pollStats"
   | "coupons"
   | "couponRedeemWorkbench"
   | "couponClaims"
@@ -12766,6 +12769,17 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setMerchantDesktopSection("customers");
   }
 
+  async function openMerchantPollStatsPanel() {
+    void loadMerchantPollStatsPanel().catch(() => undefined);
+    const resolvedSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
+    if (!resolvedSiteId) {
+      showTip("当前商户还没准备好投票统计，请稍后重试");
+      return;
+    }
+    setMerchantSiteIdOverride(resolvedSiteId);
+    setMerchantDesktopSection("pollStats");
+  }
+
   function openMerchantCouponsPanel(
     section: "coupons" | "couponRedeemWorkbench" | "couponClaims" | "couponRedemptions" | "couponDailyStats" = "coupons",
   ) {
@@ -18604,6 +18618,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     merchantDesktopSection === "business" ||
     merchantDesktopSection === "cards" ||
     merchantDesktopSection === "customers" ||
+    merchantDesktopSection === "pollStats" ||
     merchantDesktopSection === "logs" ||
     merchantDesktopSection === "printer";
   const merchantDesktopCouponCenterActive =
@@ -19563,6 +19578,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               siteName={effectiveMerchantDisplayName || merchantDisplayName}
               className="min-h-[calc(100vh-14rem)]"
             />
+          ) : merchantDesktopSection === "pollStats" ? (
+            <MerchantPollStatsPanel
+              siteId={editingSiteId || merchantSiteIdOverride || ""}
+              siteName={effectiveMerchantDisplayName || merchantDisplayName}
+              className="min-h-[calc(100vh-14rem)]"
+            />
           ) : merchantDesktopCouponCenterActive && merchantCouponManagerCommonProps ? (
             <MerchantCouponManager {...merchantCouponManagerCommonProps} view={merchantCouponManagerView} />
           ) : merchantDesktopSection === "printer" ? (
@@ -20336,6 +20357,19 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         onClick={openMerchantCustomersPanel}
                       >
                         客户管理
+                      </button>
+                      <button
+                        type="button"
+                        className={getMerchantDesktopSubmenuButtonClassName(merchantDesktopSection === "pollStats")}
+                        onPointerEnter={() => {
+                          void loadMerchantPollStatsPanel().catch(() => undefined);
+                        }}
+                        onFocus={() => {
+                          void loadMerchantPollStatsPanel().catch(() => undefined);
+                        }}
+                        onClick={() => void openMerchantPollStatsPanel()}
+                      >
+                        投票统计
                       </button>
                       <button
                         type="button"

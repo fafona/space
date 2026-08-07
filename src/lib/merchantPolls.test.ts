@@ -3,10 +3,12 @@ import test from "node:test";
 import type { Block } from "@/data/homeBlocks";
 import {
   buildPollExportRows,
+  buildPollRoundOverviews,
   buildPollSummary,
   findPublishedPollConfig,
   getPollConfigurationIssue,
   normalizePollConfig,
+  normalizePollRoundBallotMetadata,
   normalizePollQuestions,
   validatePollAnswers,
   type PollStoredBallot,
@@ -162,4 +164,35 @@ test("published poll lookup traverses nested desktop and mobile page plans", () 
   const found = findPublishedPollConfig([root], "nested-poll", "poll-block");
   assert.equal(found?.blockId, "poll-block");
   assert.equal(found?.config.heading, "嵌套投票");
+});
+
+test("poll round overviews retain historical rounds and include published zero-ballot rounds", () => {
+  const historical = normalizePollRoundBallotMetadata({
+    poll_id: "round-old",
+    block_id: "poll-old",
+    anonymous: true,
+    poll_snapshot: { heading: "旧投票", questions },
+    created_at: "2026-08-01T10:00:00.000Z",
+  });
+  assert.ok(historical);
+
+  const rounds = buildPollRoundOverviews(
+    historical ? [historical] : [],
+    [{
+      blockId: "poll-current",
+      config: normalizePollConfig({
+        pollId: "round-current",
+        heading: "当前投票",
+        pollStatus: "open",
+        pollQuestions: questions,
+      }),
+    }],
+  );
+  assert.equal(rounds.length, 2);
+  assert.equal(rounds[0].pollId, "round-current");
+  assert.equal(rounds[0].published, true);
+  assert.equal(rounds[0].totalBallots, 0);
+  assert.equal(rounds[1].pollId, "round-old");
+  assert.equal(rounds[1].status, "historical");
+  assert.equal(rounds[1].anonymousBallots, 1);
 });

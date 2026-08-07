@@ -3,9 +3,13 @@ import { NextResponse } from "next/server";
 import { verifyFrontendAuthProof } from "@/lib/frontendAuthProof.server";
 import {
   buildPollSnapshot,
+  buildPollRoundOverviews,
   buildPollSummary,
+  collectPublishedPollBlocks,
   findPublishedPollConfig,
   getPollConfigurationIssue,
+  normalizePollConfig,
+  normalizePollRoundBallotMetadata,
   normalizeStoredPollBallot,
   validatePollAnswers,
   type PollStoredBallot,
@@ -70,6 +74,26 @@ async function loadPollBallots(siteId: string, pollId: string) {
   return rows.map(normalizeStoredPollBallot).filter((ballot): ballot is PollStoredBallot => Boolean(ballot));
 }
 
+async function loadPollRoundMetadata(siteId: string) {
+  const client = createPollStore();
+  const rows: unknown[] = [];
+  for (let offset = 0; offset < POLL_BALLOT_READ_LIMIT; offset += POLL_BALLOT_PAGE_SIZE) {
+    const result = await client
+      .from("merchant_poll_ballots")
+      .select("poll_id,block_id,anonymous,poll_snapshot,created_at")
+      .eq("merchant_id", siteId)
+      .order("created_at", { ascending: false })
+      .range(offset, offset + POLL_BALLOT_PAGE_SIZE - 1);
+    if (result.error) throw result.error;
+    const page = Array.isArray(result.data) ? result.data : [];
+    rows.push(...page);
+    if (page.length < POLL_BALLOT_PAGE_SIZE) break;
+  }
+  return rows
+    .map(normalizePollRoundBallotMetadata)
+    .filter((row): row is NonNullable<ReturnType<typeof normalizePollRoundBallotMetadata>> => Boolean(row));
+}
+
 function noStoreJson(body: unknown, init?: { status?: number }) {
   const response = NextResponse.json(body, init);
   response.headers.set("cache-control", "no-store");
@@ -81,7 +105,7 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const siteId = trimText(url.searchParams.get("siteId"), 64);
     const pollId = trimText(url.searchParams.get("pollId"), 96);
-    if (!isMerchantNumericId(siteId) || !pollId) {
+    if (!isMerchantNumericId(siteId)) {
       return noStoreJson({ error: "invalid_poll_request" }, { status: 400 });
     }
     const session = await resolveMerchantSessionFromRequest(request, { hintedMerchantId: siteId });
@@ -89,10 +113,26 @@ export async function GET(request: Request) {
       return noStoreJson({ error: "unauthorized" }, { status: 401 });
     }
 
-    const [ballots, published] = await Promise.all([
-      loadPollBallots(siteId, pollId),
-      fetchPublishedSiteBlocksFromSupabase(siteId).catch(() => null),
-    ]);
+    const publishedPromise = fetchPublishedSiteBlocksFromSupabase(siteId).catch(() => null);
+    if (!pollId) {
+      const [metadata, published] = await Promise.all([loadPollRoundMetadata(siteId), publishedPromise]);
+      const publishedRounds = published
+        ? collectPublishedPollBlocks(published.blocks).map((block) => ({
+            blockId: block.id,
+            config: normalizePollConfig(block.props, block.id),
+          }))
+        : [];
+      const rounds = buildPollRoundOverviews(metadata, publishedRounds);
+      return noStoreJson({
+        ok: true,
+        rounds,
+        totalRounds: rounds.length,
+        totalBallots: rounds.reduce((total, round) => total + round.totalBallots, 0),
+        truncated: metadata.length >= POLL_BALLOT_READ_LIMIT,
+      });
+    }
+
+    const [ballots, published] = await Promise.all([loadPollBallots(siteId, pollId), publishedPromise]);
     const publishedPoll = published ? findPublishedPollConfig(published.blocks, pollId) : null;
     const summary = buildPollSummary(ballots, publishedPoll?.config.questions ?? [], { includeTextResponses: true });
     return noStoreJson({

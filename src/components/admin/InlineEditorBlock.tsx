@@ -149,6 +149,7 @@ import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/
 import { isGradientToken } from "@/lib/editorColors";
 import { flushBufferedEditorTextCommits } from "@/lib/editorTextCommitBuffer";
 import { useBufferedEditorTextCommit } from "@/components/admin/useBufferedEditorTextCommit";
+import { BufferedEditorInput, BufferedEditorTextarea } from "@/components/admin/BufferedEditorControls";
 
 function MoveArrowIcon({ direction }: { direction: "up" | "down" }) {
   return (
@@ -3420,7 +3421,7 @@ type GalleryEditorImage = {
         <div className="text-sm font-semibold">{"插入图片"}</div>
         <div className="space-y-1">
           <div className="text-xs text-gray-600">图片 URL</div>
-          <input
+          <BufferedEditorInput
             className="border p-2 rounded w-full text-sm"
             value={imageUrlInput}
             placeholder="https://example.com/bg.jpg"
@@ -3435,7 +3436,7 @@ type GalleryEditorImage = {
             }`}
           >
             {imageUploading ? "正在上传..." : "上传图片"}
-            <input
+            <BufferedEditorInput
               ref={imageInputRef}
               className="hidden"
               type="file"
@@ -3492,7 +3493,7 @@ type GalleryEditorImage = {
         </div>
         <div className="space-y-1">
           <div className="text-xs text-gray-600">{"图片透明度："}{settingsImageOpacity.toFixed(2)}</div>
-          <input
+          <BufferedEditorInput
             className="w-full"
             type="range"
             min={0}
@@ -3504,7 +3505,7 @@ type GalleryEditorImage = {
         </div>
         <div className="space-y-1">
           <div className="text-xs text-gray-600">{"颜色透明度："}{settingsColorOpacity.toFixed(2)}</div>
-          <input
+          <BufferedEditorInput
             className="w-full"
             type="range"
             min={0}
@@ -3605,7 +3606,7 @@ type GalleryEditorImage = {
             </div>
             <div className="space-y-1">
               <div className="text-xs text-gray-600">透明度：{navItemBgOpacityInput.toFixed(2)}</div>
-              <input
+              <BufferedEditorInput
                 className="w-full"
                 type="range"
                 min={0}
@@ -3662,7 +3663,7 @@ type GalleryEditorImage = {
               </div>
               <div className="space-y-1">
                 <div className="text-xs text-gray-600">按钮底色透明度：{mobileNavButtonBgOpacityInput.toFixed(2)}</div>
-                <input
+                <BufferedEditorInput
                   className="w-full"
                   type="range"
                   min={0}
@@ -3701,7 +3702,7 @@ type GalleryEditorImage = {
             </div>
             <div className="space-y-1">
               <div className="text-xs text-gray-600">选中透明度：{navItemActiveBgOpacityInput.toFixed(2)}</div>
-              <input
+              <BufferedEditorInput
                 className="w-full"
                 type="range"
                 min={0}
@@ -3772,7 +3773,7 @@ type GalleryEditorImage = {
             </div>
             <div className="space-y-1">
               <div className="text-xs text-gray-600">透明度：{searchButtonBgOpacityInput.toFixed(2)}</div>
-              <input
+              <BufferedEditorInput
                 className="w-full"
                 type="range"
                 min={0}
@@ -3813,7 +3814,7 @@ type GalleryEditorImage = {
             </div>
             <div className="space-y-1">
               <div className="text-xs text-gray-600">透明度：{searchButtonActiveBgOpacityInput.toFixed(2)}</div>
-              <input
+              <BufferedEditorInput
                 className="w-full"
                 type="range"
                 min={0}
@@ -3875,7 +3876,7 @@ type GalleryEditorImage = {
             </div>
             <div className="space-y-1">
               <div className="text-xs text-gray-600">透明度：{merchantTabButtonBgOpacityInput.toFixed(2)}</div>
-              <input
+              <BufferedEditorInput
                 className="w-full"
                 type="range"
                 min={0}
@@ -3916,7 +3917,7 @@ type GalleryEditorImage = {
             </div>
             <div className="space-y-1">
               <div className="text-xs text-gray-600">透明度：{merchantTabButtonActiveBgOpacityInput.toFixed(2)}</div>
-              <input
+              <BufferedEditorInput
                 className="w-full"
                 type="range"
                 min={0}
@@ -3957,7 +3958,7 @@ type GalleryEditorImage = {
             </div>
             <div className="space-y-1">
               <div className="text-xs text-gray-600">透明度：{merchantPagerButtonBgOpacityInput.toFixed(2)}</div>
-              <input
+              <BufferedEditorInput
                 className="w-full"
                 type="range"
                 min={0}
@@ -3998,7 +3999,7 @@ type GalleryEditorImage = {
             </div>
             <div className="space-y-1">
               <div className="text-xs text-gray-600">透明度：{merchantPagerButtonDisabledBgOpacityInput.toFixed(2)}</div>
-              <input
+              <BufferedEditorInput
                 className="w-full"
                 type="range"
                 min={0}
@@ -4077,7 +4078,7 @@ type GalleryEditorImage = {
             </div>
             <div className="space-y-1">
               <div className="text-xs text-gray-600">透明度：{merchantCardBgOpacityInput.toFixed(2)}</div>
-              <input
+              <BufferedEditorInput
                 className="w-full"
                 type="range"
                 min={0}
@@ -4236,7 +4237,7 @@ type GalleryEditorImage = {
         <div className="flex flex-wrap items-center gap-2">
           <div className="text-xs text-gray-600">文本框</div>
           <label className="inline-flex items-center gap-1 text-xs rounded border px-2 py-1 bg-white">
-            <input
+            <BufferedEditorInput
               type="checkbox"
               checked={merchantCardTypoTextBoxVisibleInput}
               onChange={(e) => setMerchantCardTypoTextBoxVisibleInput(e.target.checked)}
@@ -4465,7 +4466,7 @@ type GalleryEditorImage = {
               <div className="text-sm font-semibold">{"跳转目标"}</div>
               <div className="space-y-1">
                 <div className="text-xs text-gray-600">{"支持区块 ID、锚点、页面 ID、站内路径或完整网址"}</div>
-                <input
+                <BufferedEditorInput
                   className="w-full rounded border px-3 py-2 text-sm"
                   value={buttonJumpTargetInput}
                   onChange={(event) => setButtonJumpTargetInput(event.target.value)}
@@ -5032,7 +5033,7 @@ type GalleryEditorImage = {
               }}
             >
               {galleryUploading ? "上传中" : "更改"}
-              <input
+              <BufferedEditorInput
                 className="hidden"
                 type="file"
                 accept="image/*"
@@ -5060,7 +5061,7 @@ type GalleryEditorImage = {
                 event.stopPropagation();
               }}
             >
-              <input
+              <BufferedEditorInput
                 type="checkbox"
                 checked={item.featured}
                 onChange={(e) => updateGalleryImage(item.id, { featured: e.target.checked })}
@@ -5074,7 +5075,7 @@ type GalleryEditorImage = {
                 event.stopPropagation();
               }}
             >
-              <input
+              <BufferedEditorInput
                 type="checkbox"
                 checked={item.fitToFrame}
                 onChange={(e) =>
@@ -5263,7 +5264,7 @@ type GalleryEditorImage = {
                               }`}
                             >
                               {galleryUploading ? "正在上传..." : "上传图片"}
-                              <input
+                              <BufferedEditorInput
                                 ref={galleryInputRef}
                                 className="hidden"
                                 type="file"
@@ -5443,7 +5444,7 @@ type GalleryEditorImage = {
                                   <div className="space-y-1">
                                     <div className="text-xs text-gray-600">{"行高"}</div>
                                     <div className="flex items-center gap-2">
-                                      <input
+                                      <BufferedEditorInput
                                         type="range"
                                         min={120}
                                         max={600}
@@ -5452,7 +5453,7 @@ type GalleryEditorImage = {
                                         value={customLayoutDraft.rows[selectedCustomRowIndex]?.height ?? 220}
                                         onChange={(event) => setCustomRowHeight(selectedCustomRowIndex, Number(event.target.value))}
                                       />
-                                      <input
+                                      <BufferedEditorInput
                                         type="number"
                                         className="w-20 border rounded px-2 py-1 text-sm"
                                         min={120}
@@ -6063,7 +6064,7 @@ type GalleryEditorImage = {
                   <option value="line">{"折线"}</option>
                   <option value="pie">{"饼图"}</option>
                 </select>
-                <textarea
+                <BufferedEditorTextarea
                   className="border p-2 rounded w-full min-h-[100px] text-gray-700"
                   placeholder={"标签：每行一个"}
                   value={labels.join("\n")}
@@ -6076,7 +6077,7 @@ type GalleryEditorImage = {
                     })
                   }
                 />
-                <textarea
+                <BufferedEditorTextarea
                   className="border p-2 rounded w-full min-h-[100px] text-gray-700"
                   placeholder={"数值：每行一个"}
                   value={values.join("\n")}
@@ -6224,14 +6225,14 @@ type GalleryEditorImage = {
                   >
                     {"上传音频"}
                   </button>
-                  <input
+                  <BufferedEditorInput
                     ref={musicInputRef}
                     className="hidden"
                     type="file"
                     accept="audio/*"
                     onChange={onUploadMusic}
                   />
-                  <input
+                  <BufferedEditorInput
                     className="border p-2 rounded flex-1 min-w-[260px] text-sm"
                     placeholder={"输入音频 URL"}
                     value={audioUrl}
@@ -6499,7 +6500,7 @@ type GalleryEditorImage = {
                 />
               </div>
               <div className="space-y-2 mt-3">
-                <textarea
+                <BufferedEditorTextarea
                   className="border p-2 rounded w-full min-h-[140px] text-gray-700"
                   value={items.join("\n")}
                   onChange={(e) =>
@@ -7093,7 +7094,7 @@ type GalleryEditorImage = {
       productSearchEnabled && productItems.length > 0 ? (
         <div className="mt-4">
           <div className="flex flex-wrap items-center gap-2.5">
-            <input
+            <BufferedEditorInput
               type="search"
               value={productSearchKeyword}
               onChange={(event) => handleProductPreviewSearchChange(event.target.value)}
@@ -7728,7 +7729,7 @@ type GalleryEditorImage = {
                         }`}
                       >
                         {productImageUploading ? "正在上传..." : "上传图片"}
-                        <input
+                        <BufferedEditorInput
                           className="hidden"
                           type="file"
                           accept="image/*"
@@ -7747,7 +7748,7 @@ type GalleryEditorImage = {
                     <div className={`grid gap-3 ${compactProductEditor ? "grid-cols-1" : "md:grid-cols-2"}`}>
                       <label className="text-sm text-gray-600">
                         <div className="mb-1">编号</div>
-                        <input
+                        <BufferedEditorInput
                           className="w-full rounded border px-3 py-2"
                           value={activeProductEditorDraft.code}
                           onChange={(event) => updateProductEditorDraft({ code: event.target.value })}
@@ -7756,7 +7757,7 @@ type GalleryEditorImage = {
                       </label>
                       <label className="text-sm text-gray-600">
                         <div className="mb-1">价格</div>
-                        <input
+                        <BufferedEditorInput
                           className="w-full rounded border px-3 py-2"
                           value={activeProductEditorDraft.price}
                           onChange={(event) => updateProductEditorDraft({ price: event.target.value })}
@@ -7780,7 +7781,7 @@ type GalleryEditorImage = {
                       </label>
                       <label className={`text-sm text-gray-600 ${compactProductEditor ? "" : "md:col-span-2"}`}>
                         <div className="mb-1">名称</div>
-                        <input
+                        <BufferedEditorInput
                           className="w-full rounded border px-3 py-2"
                           value={activeProductEditorDraft.name}
                           onChange={(event) => updateProductEditorDraft({ name: event.target.value })}
@@ -7789,7 +7790,7 @@ type GalleryEditorImage = {
                       </label>
                       <label className={`text-sm text-gray-600 ${compactProductEditor ? "" : "md:col-span-2"}`}>
                         <div className="mb-1">介绍</div>
-                        <textarea
+                        <BufferedEditorTextarea
                           className="min-h-[150px] w-full rounded border px-3 py-2"
                           value={activeProductEditorDraft.description}
                           onChange={(event) => updateProductEditorDraft({ description: event.target.value })}
@@ -7861,7 +7862,7 @@ type GalleryEditorImage = {
           {typographyDialog}
           {isSelected ? renderSelectedEditor(
             <div className={compactProductEditor ? "pb-1" : undefined}>
-              <input
+              <BufferedEditorInput
                 ref={productExcelInputRef}
                 className="hidden"
                 type="file"
@@ -7870,7 +7871,7 @@ type GalleryEditorImage = {
                   void onImportProductSheet(event);
                 }}
               />
-              <input
+              <BufferedEditorInput
                 ref={productImageBatchInputRef}
                 className="hidden"
                 type="file"
@@ -7940,7 +7941,7 @@ type GalleryEditorImage = {
                   <label className="block space-y-1.5 text-sm">
                     <span className="block text-gray-600">图片尺寸</span>
                     <div className="flex items-center gap-2.5">
-                      <input
+                      <BufferedEditorInput
                         type="range"
                         min={PRODUCT_IMAGE_SIZE_MIN}
                         max={productImageMaxSize}
@@ -7949,7 +7950,7 @@ type GalleryEditorImage = {
                         value={productImageSize}
                         onChange={(event) => updateProductImageSize(Number(event.target.value))}
                       />
-                      <input
+                      <BufferedEditorInput
                         type="number"
                         min={PRODUCT_IMAGE_SIZE_MIN}
                         max={productImageMaxSize}
@@ -7963,7 +7964,7 @@ type GalleryEditorImage = {
                   </label>
                   <div className="grid gap-2 text-sm text-gray-700 sm:grid-cols-2">
                     <label className="flex items-center gap-2 rounded border border-slate-200 bg-white px-3 py-1.5">
-                      <input
+                      <BufferedEditorInput
                         type="checkbox"
                         checked={productShowCode}
                         onChange={(event) => onChange({ productShowCode: event.target.checked })}
@@ -7971,7 +7972,7 @@ type GalleryEditorImage = {
                       <span>显示编号</span>
                     </label>
                     <label className="flex items-center gap-2 rounded border border-slate-200 bg-white px-3 py-1.5">
-                      <input
+                      <BufferedEditorInput
                         type="checkbox"
                         checked={productShowDescription}
                         onChange={(event) => onChange({ productShowDescription: event.target.checked })}
@@ -8032,7 +8033,7 @@ type GalleryEditorImage = {
                     <label className="block space-y-2 text-sm">
                       <span className="block text-gray-600">字体大小</span>
                       <div className="flex items-center gap-3">
-                        <input
+                        <BufferedEditorInput
                           type="range"
                           min={10}
                           max={28}
@@ -8041,7 +8042,7 @@ type GalleryEditorImage = {
                           value={productTagFontSize}
                           onChange={(event) => onChange({ productTagFontSize: Number(event.target.value) })}
                         />
-                        <input
+                        <BufferedEditorInput
                           type="number"
                           min={10}
                           max={28}
@@ -8056,7 +8057,7 @@ type GalleryEditorImage = {
                     <label className="block space-y-2 text-sm">
                       <span className="block text-gray-600">标签尺寸</span>
                       <div className="flex items-center gap-3">
-                        <input
+                        <BufferedEditorInput
                           type="range"
                           min={56}
                           max={220}
@@ -8065,7 +8066,7 @@ type GalleryEditorImage = {
                           value={productTagWidth}
                           onChange={(event) => onChange({ productTagWidth: Number(event.target.value) })}
                         />
-                        <input
+                        <BufferedEditorInput
                           type="number"
                           min={56}
                           max={220}
@@ -8080,7 +8081,7 @@ type GalleryEditorImage = {
                     <label className="block space-y-2 text-sm">
                       <span className="block text-gray-600">分类行距</span>
                       <div className="flex items-center gap-3">
-                        <input
+                        <BufferedEditorInput
                           type="range"
                           min={0}
                           max={48}
@@ -8089,7 +8090,7 @@ type GalleryEditorImage = {
                           value={productTagRowGap}
                           onChange={(event) => onChange({ productTagRowGap: Number(event.target.value) })}
                         />
-                        <input
+                        <BufferedEditorInput
                           type="number"
                           min={0}
                           max={48}
@@ -8104,7 +8105,7 @@ type GalleryEditorImage = {
                     </div>
                     <div className="grid gap-3 text-sm text-gray-700 sm:grid-cols-2">
                       <label className="flex items-center gap-2">
-                        <input
+                        <BufferedEditorInput
                           type="checkbox"
                           checked={productTagHideUnselected}
                           onChange={(event) => onChange({ productTagHideUnselected: event.target.checked })}
@@ -8112,7 +8113,7 @@ type GalleryEditorImage = {
                         <span>隐藏未选中</span>
                       </label>
                       <label className="flex items-center gap-2">
-                        <input
+                        <BufferedEditorInput
                           type="checkbox"
                           checked={productGroupByTag}
                           onChange={(event) => onChange({ productGroupByTag: event.target.checked })}
@@ -8133,7 +8134,7 @@ type GalleryEditorImage = {
                         />
                         <label className="block space-y-2 text-sm">
                           <span className="block text-gray-600">透明度：{productTagBgOpacity.toFixed(2)}</span>
-                          <input
+                          <BufferedEditorInput
                             type="range"
                             min={0}
                             max={1}
@@ -8159,7 +8160,7 @@ type GalleryEditorImage = {
                         />
                         <label className="block space-y-2 text-sm">
                           <span className="block text-gray-600">透明度：{productTagActiveBgOpacity.toFixed(2)}</span>
-                          <input
+                          <BufferedEditorInput
                             type="range"
                             min={0}
                             max={1}
@@ -8173,7 +8174,7 @@ type GalleryEditorImage = {
                     </div>
                     <label className="block space-y-2 text-sm">
                       <span className="block text-gray-600">分类列表</span>
-                      <textarea
+                      <BufferedEditorTextarea
                         className="min-h-[110px] w-full rounded border px-3 py-2"
                         value={productTagOptionsText}
                         onChange={(event) => handleProductTagOptionsDraftChange(event.target.value)}
@@ -8202,7 +8203,7 @@ type GalleryEditorImage = {
                         />
                         <label className="block space-y-2 text-sm">
                           <span className="block text-gray-600">透明度：{productCardBgOpacity.toFixed(2)}</span>
-                          <input
+                          <BufferedEditorInput
                             type="range"
                             min={0}
                             max={1}
@@ -8232,7 +8233,7 @@ type GalleryEditorImage = {
                       <label className="space-y-2 rounded-lg border border-slate-200 bg-white p-3 text-sm">
                         <span className="block text-gray-600">产品框高度</span>
                         <div className="flex items-center gap-3">
-                          <input
+                          <BufferedEditorInput
                             type="range"
                             min={PRODUCT_CARD_HEIGHT_MIN}
                             max={PRODUCT_CARD_HEIGHT_MAX}
@@ -8241,7 +8242,7 @@ type GalleryEditorImage = {
                             value={productCardHeight}
                             onChange={(event) => updateProductCardHeight(Number(event.target.value))}
                           />
-                          <input
+                          <BufferedEditorInput
                             type="number"
                             min={PRODUCT_CARD_HEIGHT_MIN}
                             max={PRODUCT_CARD_HEIGHT_MAX}
@@ -8254,7 +8255,7 @@ type GalleryEditorImage = {
                       <label className="space-y-2 rounded-lg border border-slate-200 bg-white p-3 text-sm">
                         <span className="block text-gray-600">产品行距</span>
                         <div className="flex items-center gap-3">
-                          <input
+                          <BufferedEditorInput
                             type="range"
                             min={0}
                             max={48}
@@ -8263,7 +8264,7 @@ type GalleryEditorImage = {
                             value={productItemGap}
                             onChange={(event) => onChange({ productItemGap: Number(event.target.value) })}
                           />
-                          <input
+                          <BufferedEditorInput
                             type="number"
                             min={0}
                             max={48}
@@ -8344,7 +8345,7 @@ type GalleryEditorImage = {
                         <option value="__custom__">自定义</option>
                       </select>
                       {productPricePrefixMode === "__custom__" ? (
-                        <input
+                        <BufferedEditorInput
                           className="w-full rounded border px-3 py-2"
                           value={productPricePrefix}
                           onChange={(event) => onChange({ productPricePrefix: event.target.value })}
@@ -8370,7 +8371,7 @@ type GalleryEditorImage = {
                       </select>
                   </label>
                   <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-gray-700">
-                    <input
+                    <BufferedEditorInput
                       type="checkbox"
                       checked={productSearchEnabled}
                       onChange={(event) => onChange({ productSearchEnabled: event.target.checked })}
@@ -8379,7 +8380,7 @@ type GalleryEditorImage = {
                   </label>
                   <label className="space-y-1 text-sm">
                     <span className="block text-gray-600">搜索提示词</span>
-                    <input
+                    <BufferedEditorInput
                       className="w-full rounded border px-3 py-2"
                       value={productSearchPlaceholder}
                       onChange={(event) => onChange({ productSearchPlaceholder: event.target.value })}
@@ -8411,7 +8412,7 @@ type GalleryEditorImage = {
                   {productContainerMode !== "auto" ? (
                     <label className="space-y-1 text-sm">
                       <span className="block text-gray-600">{productContainerMode === "paged" ? "每页数量" : "可视数量"}</span>
-                      <input
+                      <BufferedEditorInput
                         type="number"
                         min={1}
                         max={24}
@@ -8425,7 +8426,7 @@ type GalleryEditorImage = {
                   ) : null}
                   {productContainerMode === "scroll" ? (
                     <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-gray-700">
-                      <input
+                      <BufferedEditorInput
                         type="checkbox"
                         checked={productHideScrollbar}
                         onChange={(event) => onChange({ productHideScrollbar: event.target.checked })}
@@ -8443,7 +8444,7 @@ type GalleryEditorImage = {
                     <label className="block space-y-2 text-sm">
                       <span className="block text-gray-600">详情图尺寸</span>
                       <div className="flex items-center gap-3">
-                        <input
+                        <BufferedEditorInput
                           type="range"
                           min={180}
                           max={720}
@@ -8452,7 +8453,7 @@ type GalleryEditorImage = {
                           value={productDetailImageSize}
                           onChange={(event) => onChange({ productDetailImageSize: Number(event.target.value) })}
                         />
-                        <input
+                        <BufferedEditorInput
                           type="number"
                           min={180}
                           max={720}
@@ -8466,7 +8467,7 @@ type GalleryEditorImage = {
                     </label>
                     <div className="grid grid-cols-2 gap-2 text-sm text-gray-700">
                       <label className="col-span-2 flex items-center gap-2">
-                        <input
+                        <BufferedEditorInput
                           type="checkbox"
                           checked={productDetailFullImage}
                           onChange={(event) => onChange({ productDetailFullImage: event.target.checked })}
@@ -8474,7 +8475,7 @@ type GalleryEditorImage = {
                         <span>全图展示</span>
                       </label>
                       <label className="flex items-center gap-2">
-                        <input
+                        <BufferedEditorInput
                           type="checkbox"
                           checked={productDetailShowCode}
                           onChange={(event) => onChange({ productDetailShowCode: event.target.checked })}
@@ -8482,7 +8483,7 @@ type GalleryEditorImage = {
                         <span>显示编号</span>
                       </label>
                       <label className="flex items-center gap-2">
-                        <input
+                        <BufferedEditorInput
                           type="checkbox"
                           checked={productDetailShowName}
                           onChange={(event) => onChange({ productDetailShowName: event.target.checked })}
@@ -8490,7 +8491,7 @@ type GalleryEditorImage = {
                         <span>显示名称</span>
                       </label>
                       <label className="flex items-center gap-2">
-                        <input
+                        <BufferedEditorInput
                           type="checkbox"
                           checked={productDetailShowDescription}
                           onChange={(event) => onChange({ productDetailShowDescription: event.target.checked })}
@@ -8498,7 +8499,7 @@ type GalleryEditorImage = {
                         <span>显示介绍</span>
                       </label>
                       <label className="flex items-center gap-2">
-                        <input
+                        <BufferedEditorInput
                           type="checkbox"
                           checked={productDetailShowPrice}
                           onChange={(event) => onChange({ productDetailShowPrice: event.target.checked })}
@@ -8555,7 +8556,7 @@ type GalleryEditorImage = {
                     <label className="space-y-1.5 text-sm md:col-span-2">
                       <span className="block text-gray-600">图片尺寸</span>
                       <div className="flex items-center gap-2.5">
-                        <input
+                        <BufferedEditorInput
                           type="range"
                           min={PRODUCT_IMAGE_SIZE_MIN}
                           max={productImageMaxSize}
@@ -8564,7 +8565,7 @@ type GalleryEditorImage = {
                           value={productImageSize}
                           onChange={(event) => updateProductImageSize(Number(event.target.value))}
                         />
-                        <input
+                        <BufferedEditorInput
                           type="number"
                           min={PRODUCT_IMAGE_SIZE_MIN}
                           max={productImageMaxSize}
@@ -8599,7 +8600,7 @@ type GalleryEditorImage = {
                           <option value="__custom__">自定义</option>
                         </select>
                         {productPricePrefixMode === "__custom__" ? (
-                          <input
+                          <BufferedEditorInput
                             className="w-full rounded border px-3 py-1.5"
                             value={productPricePrefix}
                             onChange={(event) => onChange({ productPricePrefix: event.target.value })}
@@ -8625,7 +8626,7 @@ type GalleryEditorImage = {
                       </select>
                     </label>
                     <label className="flex items-center gap-2 rounded border border-slate-200 bg-white px-3 py-1.5 text-sm text-gray-700">
-                      <input
+                      <BufferedEditorInput
                         type="checkbox"
                         checked={productSearchEnabled}
                         onChange={(event) => onChange({ productSearchEnabled: event.target.checked })}
@@ -8634,7 +8635,7 @@ type GalleryEditorImage = {
                     </label>
                     <label className="space-y-1 text-sm md:col-span-2">
                       <span className="block text-gray-600">搜索提示词</span>
-                      <input
+                      <BufferedEditorInput
                         className="w-full rounded border px-3 py-1.5"
                         value={productSearchPlaceholder}
                         onChange={(event) => onChange({ productSearchPlaceholder: event.target.value })}
@@ -8666,7 +8667,7 @@ type GalleryEditorImage = {
                     {productContainerMode !== "auto" ? (
                       <label className="space-y-1 text-sm">
                         <span className="block text-gray-600">{productContainerMode === "paged" ? "每页数量" : "可视数量"}</span>
-                        <input
+                        <BufferedEditorInput
                           type="number"
                           min={1}
                           max={24}
@@ -8682,7 +8683,7 @@ type GalleryEditorImage = {
                     )}
                     {productContainerMode === "scroll" ? (
                       <label className="flex items-center gap-2 rounded border border-slate-200 bg-white px-3 py-1.5 text-sm text-gray-700">
-                        <input
+                        <BufferedEditorInput
                           type="checkbox"
                           checked={productHideScrollbar}
                           onChange={(event) => onChange({ productHideScrollbar: event.target.checked })}
@@ -8694,7 +8695,7 @@ type GalleryEditorImage = {
                     )}
                     <div className="grid gap-2 text-sm text-gray-700 sm:grid-cols-2 xl:col-span-4">
                       <label className="flex items-center gap-2 rounded border border-slate-200 bg-white px-3 py-1.5">
-                        <input
+                        <BufferedEditorInput
                           type="checkbox"
                           checked={productShowCode}
                           onChange={(event) => onChange({ productShowCode: event.target.checked })}
@@ -8702,7 +8703,7 @@ type GalleryEditorImage = {
                         <span>显示编号</span>
                       </label>
                       <label className="flex items-center gap-2 rounded border border-slate-200 bg-white px-3 py-1.5">
-                        <input
+                        <BufferedEditorInput
                           type="checkbox"
                           checked={productShowDescription}
                           onChange={(event) => onChange({ productShowDescription: event.target.checked })}
@@ -8762,7 +8763,7 @@ type GalleryEditorImage = {
                     <label className="space-y-2 text-sm">
                       <span className="block text-gray-600">字体大小</span>
                       <div className="flex items-center gap-3">
-                        <input
+                        <BufferedEditorInput
                           type="range"
                           min={10}
                           max={28}
@@ -8771,7 +8772,7 @@ type GalleryEditorImage = {
                           value={productTagFontSize}
                           onChange={(event) => onChange({ productTagFontSize: Number(event.target.value) })}
                         />
-                        <input
+                        <BufferedEditorInput
                           type="number"
                           min={10}
                           max={28}
@@ -8786,7 +8787,7 @@ type GalleryEditorImage = {
                     <label className="space-y-2 text-sm">
                       <span className="block text-gray-600">标签尺寸</span>
                       <div className="flex items-center gap-3">
-                        <input
+                        <BufferedEditorInput
                           type="range"
                           min={56}
                           max={220}
@@ -8795,7 +8796,7 @@ type GalleryEditorImage = {
                           value={productTagWidth}
                           onChange={(event) => onChange({ productTagWidth: Number(event.target.value) })}
                         />
-                        <input
+                        <BufferedEditorInput
                           type="number"
                           min={56}
                           max={220}
@@ -8810,7 +8811,7 @@ type GalleryEditorImage = {
                     <label className="space-y-2 text-sm">
                       <span className="block text-gray-600">分类行距</span>
                       <div className="flex items-center gap-3">
-                        <input
+                        <BufferedEditorInput
                           type="range"
                           min={0}
                           max={48}
@@ -8819,7 +8820,7 @@ type GalleryEditorImage = {
                           value={productTagRowGap}
                           onChange={(event) => onChange({ productTagRowGap: Number(event.target.value) })}
                         />
-                        <input
+                        <BufferedEditorInput
                           type="number"
                           min={0}
                           max={48}
@@ -8834,7 +8835,7 @@ type GalleryEditorImage = {
                     </div>
                     <div className="grid gap-2 text-sm text-gray-700 sm:grid-cols-2">
                       <label className="flex items-center gap-2 rounded border border-slate-200 bg-white px-3 py-2">
-                        <input
+                        <BufferedEditorInput
                           type="checkbox"
                           checked={productTagHideUnselected}
                           onChange={(event) => onChange({ productTagHideUnselected: event.target.checked })}
@@ -8842,7 +8843,7 @@ type GalleryEditorImage = {
                         <span>隐藏未选中</span>
                       </label>
                       <label className="flex items-center gap-2 rounded border border-slate-200 bg-white px-3 py-2">
-                        <input
+                        <BufferedEditorInput
                           type="checkbox"
                           checked={productGroupByTag}
                           onChange={(event) => onChange({ productGroupByTag: event.target.checked })}
@@ -8862,7 +8863,7 @@ type GalleryEditorImage = {
                           selectedValue={productTagBgColor}
                         />
                         <div className="pt-2 text-xs text-gray-600">透明度：{productTagBgOpacity.toFixed(2)}</div>
-                        <input
+                        <BufferedEditorInput
                           type="range"
                           min={0}
                           max={1}
@@ -8886,7 +8887,7 @@ type GalleryEditorImage = {
                           selectedValue={productTagActiveBgColor}
                         />
                         <div className="pt-2 text-xs text-gray-600">透明度：{productTagActiveBgOpacity.toFixed(2)}</div>
-                        <input
+                        <BufferedEditorInput
                           type="range"
                           min={0}
                           max={1}
@@ -8899,7 +8900,7 @@ type GalleryEditorImage = {
                     </div>
                     <label className="space-y-2 text-sm">
                       <span className="block text-gray-600">分类列表</span>
-                      <textarea
+                      <BufferedEditorTextarea
                         className="min-h-[110px] w-full rounded border px-3 py-2"
                         value={productTagOptionsText}
                         onChange={(event) => handleProductTagOptionsDraftChange(event.target.value)}
@@ -8927,7 +8928,7 @@ type GalleryEditorImage = {
                         />
                         <label className="block space-y-2 text-sm">
                           <span className="block text-gray-600">透明度：{productCardBgOpacity.toFixed(2)}</span>
-                          <input
+                          <BufferedEditorInput
                             type="range"
                             min={0}
                             max={1}
@@ -8957,7 +8958,7 @@ type GalleryEditorImage = {
                       <label className="space-y-2 rounded-lg border border-slate-200 bg-white p-3 text-sm">
                         <span className="block text-gray-600">产品框高度</span>
                         <div className="flex items-center gap-3">
-                          <input
+                          <BufferedEditorInput
                             type="range"
                             min={PRODUCT_CARD_HEIGHT_MIN}
                             max={PRODUCT_CARD_HEIGHT_MAX}
@@ -8966,7 +8967,7 @@ type GalleryEditorImage = {
                             value={productCardHeight}
                             onChange={(event) => updateProductCardHeight(Number(event.target.value))}
                           />
-                          <input
+                          <BufferedEditorInput
                             type="number"
                             min={PRODUCT_CARD_HEIGHT_MIN}
                             max={PRODUCT_CARD_HEIGHT_MAX}
@@ -8979,7 +8980,7 @@ type GalleryEditorImage = {
                       <label className="space-y-2 rounded-lg border border-slate-200 bg-white p-3 text-sm">
                         <span className="block text-gray-600">产品行距</span>
                         <div className="flex items-center gap-3">
-                          <input
+                          <BufferedEditorInput
                             type="range"
                             min={0}
                             max={48}
@@ -8988,7 +8989,7 @@ type GalleryEditorImage = {
                             value={productItemGap}
                             onChange={(event) => onChange({ productItemGap: Number(event.target.value) })}
                           />
-                          <input
+                          <BufferedEditorInput
                             type="number"
                             min={0}
                             max={48}
@@ -9049,7 +9050,7 @@ type GalleryEditorImage = {
                       <div className="space-y-2">
                       <div className="grid grid-cols-2 gap-2 text-sm text-gray-700">
                         <label className="col-span-2 flex items-center gap-2">
-                          <input
+                          <BufferedEditorInput
                             type="checkbox"
                             checked={productDetailFullImage}
                             onChange={(event) => onChange({ productDetailFullImage: event.target.checked })}
@@ -9057,7 +9058,7 @@ type GalleryEditorImage = {
                           <span>全图展示</span>
                         </label>
                         <label className="flex items-center gap-2">
-                          <input
+                          <BufferedEditorInput
                             type="checkbox"
                             checked={productDetailShowCode}
                             onChange={(event) => onChange({ productDetailShowCode: event.target.checked })}
@@ -9065,7 +9066,7 @@ type GalleryEditorImage = {
                           <span>显示编号</span>
                         </label>
                         <label className="flex items-center gap-2">
-                          <input
+                          <BufferedEditorInput
                             type="checkbox"
                             checked={productDetailShowName}
                             onChange={(event) => onChange({ productDetailShowName: event.target.checked })}
@@ -9073,7 +9074,7 @@ type GalleryEditorImage = {
                           <span>显示名称</span>
                         </label>
                         <label className="flex items-center gap-2">
-                          <input
+                          <BufferedEditorInput
                             type="checkbox"
                             checked={productDetailShowDescription}
                             onChange={(event) => onChange({ productDetailShowDescription: event.target.checked })}
@@ -9081,7 +9082,7 @@ type GalleryEditorImage = {
                           <span>显示介绍</span>
                         </label>
                         <label className="flex items-center gap-2">
-                          <input
+                          <BufferedEditorInput
                             type="checkbox"
                             checked={productDetailShowPrice}
                             onChange={(event) => onChange({ productDetailShowPrice: event.target.checked })}
@@ -9100,7 +9101,7 @@ type GalleryEditorImage = {
                       <label className="space-y-2 text-sm">
                         <span className="block text-gray-600">详情图尺寸</span>
                         <div className="flex items-center gap-3">
-                          <input
+                          <BufferedEditorInput
                             type="range"
                             min={180}
                             max={720}
@@ -9109,7 +9110,7 @@ type GalleryEditorImage = {
                             value={productDetailImageSize}
                             onChange={(event) => onChange({ productDetailImageSize: Number(event.target.value) })}
                           />
-                          <input
+                          <BufferedEditorInput
                             type="number"
                             min={180}
                             max={720}
@@ -9369,7 +9370,7 @@ type GalleryEditorImage = {
                   </select>
                 </label>
                 <label className="flex items-center gap-2 rounded border px-3 py-2 text-sm">
-                  <input
+                  <BufferedEditorInput
                     type="checkbox"
                     checked={block.props.couponShowRemaining !== false}
                     onChange={(event) => onChange({ couponShowRemaining: event.target.checked })}
@@ -9377,7 +9378,7 @@ type GalleryEditorImage = {
                   显示剩余数量
                 </label>
                 <label className="flex items-center gap-2 rounded border px-3 py-2 text-sm">
-                  <input
+                  <BufferedEditorInput
                     type="checkbox"
                     checked={block.props.couponShowExpiresAt !== false}
                     onChange={(event) => onChange({ couponShowExpiresAt: event.target.checked })}
@@ -9387,7 +9388,7 @@ type GalleryEditorImage = {
               </div>
               <label className="space-y-1 text-sm">
                 <span className="block text-gray-600">空状态文案</span>
-                <input
+                <BufferedEditorInput
                   className="w-full rounded border px-3 py-2"
                   value={block.props.couponEmptyText ?? ""}
                   onChange={(event) => onChange({ couponEmptyText: event.target.value })}
@@ -9416,7 +9417,7 @@ type GalleryEditorImage = {
                 </div>
                 <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
                   <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                    <input
+                    <BufferedEditorInput
                       type="checkbox"
                       checked={couponAutoSelectAll}
                       onChange={(event) => {
@@ -9437,7 +9438,7 @@ type GalleryEditorImage = {
                         key={coupon.id}
                         className="flex items-start gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
                       >
-                        <input
+                        <BufferedEditorInput
                           className="mt-1"
                           type="checkbox"
                           checked={couponAutoSelectAll || selectedCouponIdSet.has(coupon.id)}
@@ -9603,7 +9604,7 @@ type GalleryEditorImage = {
               <div className="grid gap-3 md:grid-cols-3">
                 <label className="space-y-1 text-sm">
                   <span className="block text-gray-600">平均评分</span>
-                  <input
+                  <BufferedEditorInput
                     className="w-full rounded border px-3 py-2"
                     type="number"
                     min={0}
@@ -9615,7 +9616,7 @@ type GalleryEditorImage = {
                 </label>
                 <label className="space-y-1 text-sm">
                   <span className="block text-gray-600">评论总数</span>
-                  <input
+                  <BufferedEditorInput
                     className="w-full rounded border px-3 py-2"
                     type="number"
                     min={0}
@@ -9626,7 +9627,7 @@ type GalleryEditorImage = {
                 </label>
                 <label className="space-y-1 text-sm">
                   <span className="block text-gray-600">最多显示</span>
-                  <input
+                  <BufferedEditorInput
                     className="w-full rounded border px-3 py-2"
                     type="number"
                     min={1}
@@ -9640,7 +9641,7 @@ type GalleryEditorImage = {
               <div className="grid gap-3 md:grid-cols-2">
                 <label className="space-y-1 text-sm">
                   <span className="block text-gray-600">Google 评论页链接</span>
-                  <input
+                  <BufferedEditorInput
                     className="w-full rounded border px-3 py-2"
                     value={block.props.googleReviewUrl ?? ""}
                     placeholder="https://www.google.com/maps/place/..."
@@ -9649,7 +9650,7 @@ type GalleryEditorImage = {
                 </label>
                 <label className="space-y-1 text-sm">
                   <span className="block text-gray-600">写评价链接</span>
-                  <input
+                  <BufferedEditorInput
                     className="w-full rounded border px-3 py-2"
                     value={block.props.googleReviewWriteUrl ?? ""}
                     placeholder="https://g.page/r/..."
@@ -9660,7 +9661,7 @@ type GalleryEditorImage = {
               <div className="grid gap-3 md:grid-cols-2">
                 <label className="space-y-1 text-sm">
                   <span className="block text-gray-600">来源名称</span>
-                  <input
+                  <BufferedEditorInput
                     className="w-full rounded border px-3 py-2"
                     value={block.props.googleReviewSourceLabel ?? ""}
                     placeholder="Google"
@@ -9669,7 +9670,7 @@ type GalleryEditorImage = {
                 </label>
                 <label className="space-y-1 text-sm">
                   <span className="block text-gray-600">空状态文案</span>
-                  <input
+                  <BufferedEditorInput
                     className="w-full rounded border px-3 py-2"
                     value={block.props.googleReviewEmptyText ?? ""}
                     onChange={(event) => onChange({ googleReviewEmptyText: event.target.value })}
@@ -9678,7 +9679,7 @@ type GalleryEditorImage = {
               </div>
               <div className="grid gap-3 md:grid-cols-3">
                 <label className="flex items-center gap-2 rounded border px-3 py-2 text-sm">
-                  <input
+                  <BufferedEditorInput
                     type="checkbox"
                     checked={block.props.googleReviewShowAuthorPhoto !== false}
                     onChange={(event) => onChange({ googleReviewShowAuthorPhoto: event.target.checked })}
@@ -9686,7 +9687,7 @@ type GalleryEditorImage = {
                   显示头像
                 </label>
                 <label className="flex items-center gap-2 rounded border px-3 py-2 text-sm">
-                  <input
+                  <BufferedEditorInput
                     type="checkbox"
                     checked={block.props.googleReviewShowDates !== false}
                     onChange={(event) => onChange({ googleReviewShowDates: event.target.checked })}
@@ -9694,7 +9695,7 @@ type GalleryEditorImage = {
                   显示日期
                 </label>
                 <label className="flex items-center gap-2 rounded border px-3 py-2 text-sm">
-                  <input
+                  <BufferedEditorInput
                     type="checkbox"
                     checked={block.props.googleReviewShowReplies !== false}
                     onChange={(event) => onChange({ googleReviewShowReplies: event.target.checked })}
@@ -9761,7 +9762,7 @@ type GalleryEditorImage = {
                           <div className="mt-3 grid gap-3 md:grid-cols-3">
                             <label className="space-y-1 text-sm md:col-span-1">
                               <span className="block text-gray-600">作者名</span>
-                              <input
+                              <BufferedEditorInput
                                 className="w-full rounded border px-3 py-2"
                                 value={item.reviewerName ?? ""}
                                 onChange={(event) => updateReviewItem(itemId, { reviewerName: event.target.value })}
@@ -9769,7 +9770,7 @@ type GalleryEditorImage = {
                             </label>
                             <label className="space-y-1 text-sm">
                               <span className="block text-gray-600">评分</span>
-                              <input
+                              <BufferedEditorInput
                                 className="w-full rounded border px-3 py-2"
                                 type="number"
                                 min={1}
@@ -9781,7 +9782,7 @@ type GalleryEditorImage = {
                             </label>
                             <label className="space-y-1 text-sm">
                               <span className="block text-gray-600">日期</span>
-                              <input
+                              <BufferedEditorInput
                                 className="w-full rounded border px-3 py-2"
                                 type="date"
                                 value={toDateInputValue(item.createTime)}
@@ -9792,7 +9793,7 @@ type GalleryEditorImage = {
                           <div className="mt-3 grid gap-3 md:grid-cols-2">
                             <label className="space-y-1 text-sm">
                               <span className="block text-gray-600">头像 URL</span>
-                              <input
+                              <BufferedEditorInput
                                 className="w-full rounded border px-3 py-2"
                                 value={item.reviewerPhotoUrl ?? ""}
                                 onChange={(event) => updateReviewItem(itemId, { reviewerPhotoUrl: event.target.value })}
@@ -9800,7 +9801,7 @@ type GalleryEditorImage = {
                             </label>
                             <label className="space-y-1 text-sm">
                               <span className="block text-gray-600">作者主页 URL</span>
-                              <input
+                              <BufferedEditorInput
                                 className="w-full rounded border px-3 py-2"
                                 value={item.reviewerProfileUrl ?? ""}
                                 onChange={(event) => updateReviewItem(itemId, { reviewerProfileUrl: event.target.value })}
@@ -9809,7 +9810,7 @@ type GalleryEditorImage = {
                           </div>
                           <label className="mt-3 block space-y-1 text-sm">
                             <span className="block text-gray-600">评论正文</span>
-                            <textarea
+                            <BufferedEditorTextarea
                               className="min-h-[86px] w-full rounded border px-3 py-2"
                               value={item.comment ?? ""}
                               onChange={(event) => updateReviewItem(itemId, { comment: event.target.value })}
@@ -9817,7 +9818,7 @@ type GalleryEditorImage = {
                           </label>
                           <label className="mt-3 block space-y-1 text-sm">
                             <span className="block text-gray-600">商家回复</span>
-                            <textarea
+                            <BufferedEditorTextarea
                               className="min-h-[68px] w-full rounded border px-3 py-2"
                               value={item.replyComment ?? ""}
                               onChange={(event) => updateReviewItem(itemId, { replyComment: event.target.value })}
@@ -10388,7 +10389,7 @@ type GalleryEditorImage = {
               <div className="mt-3 grid gap-3 md:grid-cols-2">
                 <label className="space-y-1 text-sm text-gray-600">
                   <span>显示数量</span>
-                  <input
+                  <BufferedEditorInput
                     type="number"
                     min={1}
                     max={24}
@@ -10403,7 +10404,7 @@ type GalleryEditorImage = {
                 </label>
                 <label className="space-y-1 text-sm text-gray-600">
                   <span>空状态文案</span>
-                  <textarea
+                  <BufferedEditorTextarea
                     className="min-h-[88px] w-full rounded border p-2"
                     value={block.props.emptyText ?? ""}
                     onChange={(e) => onChange({ emptyText: e.target.value })}
@@ -10459,7 +10460,7 @@ type GalleryEditorImage = {
                     const locked = index === 0;
                     return (
                       <div key={tab.id} className="grid gap-2 rounded border bg-white p-2 md:grid-cols-[1fr_140px_88px]">
-                        <input
+                        <BufferedEditorInput
                           className={`rounded border px-2 py-1.5 text-sm ${locked ? "bg-gray-100 text-gray-500" : ""}`}
                           value={tab.label}
                           disabled={locked}
@@ -10514,7 +10515,7 @@ type GalleryEditorImage = {
                 <div className="text-xs text-gray-500 mb-2">拖动可改位置，拉伸右边缘改宽度，拉伸下边缘改高度</div>
                 <div className="mb-2 flex flex-wrap gap-2">
                   <label className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded border bg-white">
-                    <input
+                    <BufferedEditorInput
                       type="checkbox"
                       checked={merchantCardLayoutSnapEnabled}
                       onChange={(e) => setMerchantCardLayoutSnapEnabled(e.target.checked)}
@@ -11415,7 +11416,7 @@ type GalleryEditorImage = {
                 </label>
                 <label className="space-y-1 text-sm text-gray-600">
                   <span>城市占位文案</span>
-                  <input
+                  <BufferedEditorInput
                     className="w-full rounded border p-2"
                     value={block.props.cityPlaceholder ?? ""}
                     onChange={(e) => onChange({ cityPlaceholder: e.target.value })}
@@ -11423,7 +11424,7 @@ type GalleryEditorImage = {
                 </label>
                 <label className="space-y-1 text-sm text-gray-600">
                   <span>搜索框占位文案</span>
-                  <input
+                  <BufferedEditorInput
                     className="w-full rounded border p-2"
                     value={block.props.searchPlaceholder ?? ""}
                     onChange={(e) => onChange({ searchPlaceholder: e.target.value })}
@@ -11431,7 +11432,7 @@ type GalleryEditorImage = {
                 </label>
                 <label className="space-y-1 text-sm text-gray-600">
                   <span>定位按钮文案</span>
-                  <input
+                  <BufferedEditorInput
                     className="w-full rounded border p-2"
                     value={block.props.locateLabel ?? ""}
                     onChange={(e) => onChange({ locateLabel: e.target.value })}
@@ -11439,7 +11440,7 @@ type GalleryEditorImage = {
                 </label>
                 <label className="space-y-1 text-sm text-gray-600">
                   <span>搜索按钮文案</span>
-                  <input
+                  <BufferedEditorInput
                     className="w-full rounded border p-2"
                     value={block.props.actionLabel ?? ""}
                     onChange={(e) => onChange({ actionLabel: e.target.value })}
@@ -11459,7 +11460,7 @@ type GalleryEditorImage = {
                 <div className="text-xs text-gray-500 mb-2">拖动可改位置，拉伸右边缘改宽度，拉伸下边缘改高度</div>
                 <div className="mb-2 flex flex-wrap gap-2">
                   <label className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded border bg-white">
-                    <input
+                    <BufferedEditorInput
                       type="checkbox"
                       checked={searchLayoutSnapEnabled}
                       onChange={(e) => setSearchLayoutSnapEnabled(e.target.checked)}
@@ -11634,7 +11635,7 @@ type GalleryEditorImage = {
                       height: `${countryEntry.height}px`,
                     }}
                   >
-                    <input
+                    <BufferedEditorInput
                       readOnly
                       className="h-full w-full rounded border bg-white px-2 text-sm text-slate-600 outline-none placeholder:text-current"
                       style={searchInputTextStyle}
@@ -11651,7 +11652,7 @@ type GalleryEditorImage = {
                       height: `${provinceEntry.height}px`,
                     }}
                   >
-                    <input
+                    <BufferedEditorInput
                       readOnly
                       className="h-full w-full rounded border bg-white px-2 text-sm text-slate-600 outline-none placeholder:text-current"
                       style={searchInputTextStyle}
@@ -11668,7 +11669,7 @@ type GalleryEditorImage = {
                       height: `${cityEntry.height}px`,
                     }}
                   >
-                    <input
+                    <BufferedEditorInput
                       readOnly
                       className="h-full w-full rounded border bg-white px-2 text-sm text-slate-600 outline-none placeholder:text-current"
                       style={searchInputTextStyle}
@@ -11685,7 +11686,7 @@ type GalleryEditorImage = {
                       height: `${keywordEntry.height}px`,
                     }}
                   >
-                    <input
+                    <BufferedEditorInput
                       readOnly
                       className="h-full w-full rounded border bg-white px-3 text-sm text-slate-500 outline-none placeholder:text-current"
                       style={searchInputTextStyle}
@@ -11958,7 +11959,7 @@ type GalleryEditorImage = {
                 <div className="grid gap-3 md:grid-cols-2">
                   <label className="space-y-1 text-sm text-gray-700">
                     <span className="block text-gray-600">提交按钮文案</span>
-                    <input
+                    <BufferedEditorInput
                       className="w-full rounded border px-3 py-2"
                       value={block.props.bookingSubmitLabel ?? ""}
                       onChange={(event) => onChange({ bookingSubmitLabel: event.target.value })}
@@ -11966,7 +11967,7 @@ type GalleryEditorImage = {
                   </label>
                   <label className="space-y-1 text-sm text-gray-700">
                     <span className="block text-gray-600">修改按钮文案</span>
-                    <input
+                    <BufferedEditorInput
                       className="w-full rounded border px-3 py-2"
                       value={block.props.bookingUpdateLabel ?? ""}
                       onChange={(event) => onChange({ bookingUpdateLabel: event.target.value })}
@@ -11974,7 +11975,7 @@ type GalleryEditorImage = {
                   </label>
                   <label className="space-y-1 text-sm text-gray-700">
                     <span className="block text-gray-600">取消按钮文案</span>
-                    <input
+                    <BufferedEditorInput
                       className="w-full rounded border px-3 py-2"
                       value={block.props.bookingCancelLabel ?? ""}
                       onChange={(event) => onChange({ bookingCancelLabel: event.target.value })}
@@ -11982,7 +11983,7 @@ type GalleryEditorImage = {
                   </label>
                   <label className="space-y-1 text-sm text-gray-700">
                     <span className="block text-gray-600">姓名占位提示</span>
-                    <input
+                    <BufferedEditorInput
                       className="w-full rounded border px-3 py-2"
                       value={block.props.bookingNamePlaceholder ?? ""}
                       onChange={(event) => onChange({ bookingNamePlaceholder: event.target.value })}
@@ -11993,7 +11994,7 @@ type GalleryEditorImage = {
               <div className="grid gap-4 lg:grid-cols-2">
                 <label className="space-y-1 text-sm text-gray-700">
                   <span className="block text-gray-600">提交成功标题</span>
-                  <input
+                  <BufferedEditorInput
                     className="w-full rounded border px-3 py-2"
                     value={block.props.bookingSuccessTitle ?? ""}
                     onChange={(event) => onChange({ bookingSuccessTitle: event.target.value })}
@@ -12001,7 +12002,7 @@ type GalleryEditorImage = {
                 </label>
                 <label className="space-y-1 text-sm text-gray-700">
                   <span className="block text-gray-600">备注占位提示</span>
-                  <input
+                  <BufferedEditorInput
                     className="w-full rounded border px-3 py-2"
                     value={block.props.bookingNotePlaceholder ?? ""}
                     onChange={(event) => onChange({ bookingNotePlaceholder: event.target.value })}
@@ -12009,7 +12010,7 @@ type GalleryEditorImage = {
                 </label>
                 <label className="space-y-1 text-sm text-gray-700 lg:col-span-2">
                   <span className="block text-gray-600">提交成功说明</span>
-                  <textarea
+                  <BufferedEditorTextarea
                     className="min-h-[100px] w-full rounded border px-3 py-2"
                     value={block.props.bookingSuccessText ?? ""}
                     onChange={(event) => onChange({ bookingSuccessText: event.target.value })}
@@ -12567,7 +12568,7 @@ type GalleryEditorImage = {
                   {contactPhoneEditorValues.length > 0 ? (
                     contactPhoneEditorValues.map((phone, idx) => (
                       <div key={`contact-phone-${idx}`} className="flex items-center gap-2">
-                        <input
+                        <BufferedEditorInput
                           className="border p-2 rounded text-sm flex-1"
                           value={phone}
                           placeholder={`电话${idx + 1}`}
@@ -12626,7 +12627,7 @@ type GalleryEditorImage = {
                   {contactAddressEditorValues.length > 0 ? (
                     contactAddressEditorValues.map((line, idx) => (
                       <div key={`contact-address-${idx}`} className="flex items-center gap-2">
-                        <input
+                        <BufferedEditorInput
                           className="border p-2 rounded text-sm flex-1"
                           value={line}
                           placeholder={`地址${idx + 1}`}
@@ -12662,7 +12663,7 @@ type GalleryEditorImage = {
               <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
                 <div className="flex items-center gap-2 border p-2 rounded text-sm">
                   <span className="text-gray-600 whitespace-nowrap">地图缩放</span>
-                  <input
+                  <BufferedEditorInput
                     type="number"
                     min={2}
                     max={20}
@@ -12691,80 +12692,80 @@ type GalleryEditorImage = {
                   </select>
                 </div>
                 <label className="md:col-span-2 inline-flex items-center gap-2 text-sm border p-2 rounded">
-                  <input
+                  <BufferedEditorInput
                     type="checkbox"
                     checked={block.props.mapShowMarker !== false}
                     onChange={(e) => onChange({ mapShowMarker: e.target.checked })}
                   />
                   <span>地图使用地址标记</span>
                 </label>
-                <input
+                <BufferedEditorInput
                   className="border p-2 rounded text-sm"
                   placeholder="邮箱"
                   value={block.props.email ?? ""}
                   onChange={(e) => onChange({ email: e.target.value })}
                 />
-                <input
+                <BufferedEditorInput
                   className="border p-2 rounded text-sm"
                   placeholder="WhatsApp"
                   value={block.props.whatsapp ?? ""}
                   onChange={(e) => onChange({ whatsapp: e.target.value })}
                 />
-                <input
+                <BufferedEditorInput
                   className="border p-2 rounded text-sm"
                   placeholder="WeChat"
                   value={block.props.wechat ?? ""}
                   onChange={(e) => onChange({ wechat: e.target.value })}
                 />
-                <input
+                <BufferedEditorInput
                   className="border p-2 rounded text-sm"
                   placeholder="Twitter"
                   value={block.props.twitter ?? ""}
                   onChange={(e) => onChange({ twitter: e.target.value })}
                 />
-                <input
+                <BufferedEditorInput
                   className="border p-2 rounded text-sm"
                   placeholder="微博"
                   value={block.props.weibo ?? ""}
                   onChange={(e) => onChange({ weibo: e.target.value })}
                 />
-                <input
+                <BufferedEditorInput
                   className="border p-2 rounded text-sm"
                   placeholder="Telegram"
                   value={block.props.telegram ?? ""}
                   onChange={(e) => onChange({ telegram: e.target.value })}
                 />
-                <input
+                <BufferedEditorInput
                   className="border p-2 rounded text-sm"
                   placeholder="LinkedIn"
                   value={block.props.linkedin ?? ""}
                   onChange={(e) => onChange({ linkedin: e.target.value })}
                 />
-                <input
+                <BufferedEditorInput
                   className="border p-2 rounded text-sm"
                   placeholder="Discord"
                   value={block.props.discord ?? ""}
                   onChange={(e) => onChange({ discord: e.target.value })}
                 />
-                <input
+                <BufferedEditorInput
                   className="border p-2 rounded text-sm"
                   placeholder="TikTok"
                   value={block.props.tiktok ?? ""}
                   onChange={(e) => onChange({ tiktok: e.target.value })}
                 />
-                <input
+                <BufferedEditorInput
                   className="border p-2 rounded text-sm"
                   placeholder="小红书"
                   value={block.props.xiaohongshu ?? ""}
                   onChange={(e) => onChange({ xiaohongshu: e.target.value })}
                 />
-                <input
+                <BufferedEditorInput
                   className="border p-2 rounded text-sm"
                   placeholder="Facebook"
                   value={block.props.facebook ?? ""}
                   onChange={(e) => onChange({ facebook: e.target.value })}
                 />
-                <input
+                <BufferedEditorInput
                   className="border p-2 rounded text-sm md:col-span-2"
                   placeholder="Instagram"
                   value={block.props.instagram ?? ""}
@@ -12775,7 +12776,7 @@ type GalleryEditorImage = {
                 <div className="text-xs text-gray-500 mb-2">拖动条目可改位置，拉伸右边缘改宽度，拉伸下边缘改高度</div>
                 <div className="mb-2 flex flex-wrap gap-2">
                   <label className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded border bg-white">
-                    <input
+                    <BufferedEditorInput
                       type="checkbox"
                       checked={contactSnapEnabled}
                       onChange={(e) => setContactSnapEnabled(e.target.checked)}
