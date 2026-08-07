@@ -5387,11 +5387,19 @@ export default function AdminClient({
     };
 
     const target = previewViewport === "desktop" ? viewportStatesRef.current.desktop : viewportStatesRef.current.mobile;
-    setPlanConfig(clonePlanConfig(target.planConfig));
+    const nextPlanConfig = clonePlanConfig(target.planConfig);
+    const nextBlocks = cloneBlocks(target.blocks);
+    const nextSelectedId = target.selectedId || "";
+    planConfigRef.current = nextPlanConfig;
+    editingPlanIdRef.current = target.editingPlanId;
+    editingPageIdRef.current = target.editingPageId;
+    blocksRef.current = nextBlocks;
+    selectedIdRef.current = nextSelectedId;
+    setPlanConfig(nextPlanConfig);
     setEditingPlanId(target.editingPlanId);
     setEditingPageId(target.editingPageId);
-    setBlocks(cloneBlocks(target.blocks));
-    setSelectedId(target.selectedId || "");
+    setBlocks(nextBlocks);
+    setSelectedId(nextSelectedId);
 
     const combinedLoaded = buildCombinedPersistedBlocks(loadedPlanConfig, loadedMobilePlanConfig);
     saveBlocksToStorage(combinedLoaded, storeScope);
@@ -5464,6 +5472,7 @@ export default function AdminClient({
       showTip("暂无可回滚的更早成功发布版本，请先完成至少一次成功发布");
       return;
     }
+    flushPendingEditorChanges();
     pushUndoSnapshot(createSnapshot());
     applyPersistedBlocksToEditor(previousPublished, { resetHistory: false });
     showSavePublishTip("已切回上次成功发布版本");
@@ -5475,6 +5484,7 @@ export default function AdminClient({
       showTip("暂无可恢复的草稿");
       return;
     }
+    flushPendingEditorChanges();
     pushUndoSnapshot(createSnapshot());
     applyPersistedBlocksToEditor(latestDraftSnapshot.blocks, { resetHistory: false });
     showSavePublishTip("已恢复上次保存的草稿");
@@ -6993,10 +7003,16 @@ export default function AdminClient({
             const desktopLoaded = viewportStatesRef.current.desktop.planConfig;
             const mobileLoaded = viewportStatesRef.current.mobile.planConfig;
             const combinedLoaded = buildCombinedPersistedBlocks(desktopLoaded, mobileLoaded);
-            saveLatestDraftSnapshot(combinedLoaded, storeScope);
+            saveLatestDraftSnapshot(combinedLoaded, storeScope, {
+              source: "remote",
+              sourceUpdatedAt: remoteDraft.updatedAt,
+            });
             remoteDraftScopes.forEach((scope) => {
               if (scope !== storeScope) {
-                saveLatestDraftSnapshot(combinedLoaded, scope);
+                saveLatestDraftSnapshot(combinedLoaded, scope, {
+                  source: "remote",
+                  sourceUpdatedAt: remoteDraft.updatedAt,
+                });
               }
             });
             markRemoteDraftApplied(remoteDraft.updatedAt, remoteDraftScopes);
@@ -8987,8 +9003,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     const mobileConfig = previewViewport === "mobile" ? mergedConfig : viewportStatesRef.current.mobile.planConfig;
     const combinedDraft = buildCombinedPersistedBlocks(desktopConfig, mobileConfig);
     setPlanConfig(mergedConfig);
-    saveBlocksToStorage(combinedDraft, storeScope);
-    saveLatestDraftSnapshot(combinedDraft, storeScope);
+    const draftSaved = saveBlocksToStorage(combinedDraft, storeScope);
+    const recoveryPointSaved = saveLatestDraftSnapshot(combinedDraft, storeScope);
+    if (!draftSaved || !recoveryPointSaved) {
+      showSavePublishTip("草稿未完整保存：浏览器存储不可用或空间不足，请释放空间后重试");
+      return;
+    }
     showSavePublishTip("草稿已保存");
   }
 
