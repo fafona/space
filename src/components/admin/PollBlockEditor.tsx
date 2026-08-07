@@ -70,6 +70,26 @@ function moveItem<T>(items: T[], index: number, direction: -1 | 1) {
   return next;
 }
 
+function toDateTimeLocalInput(value: string) {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return "";
+  const date = new Date(timestamp);
+  const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return localDate.toISOString().slice(0, 16);
+}
+
+function fromDateTimeLocalInput(value: string) {
+  if (!value) return "";
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : "";
+}
+
+function getConfigurationMessage(issue: string) {
+  if (issue === "invalid_schedule") return "开放时间必须早于结束时间。";
+  if (issue === "missing_questions") return "请至少设置一个投票问题。";
+  return "每个选择题至少需要两个有内容的选项。";
+}
+
 function CompositionSafePollInput({
   ariaLabel,
   className,
@@ -136,7 +156,7 @@ export default function PollBlockEditor({ props, runtimeBlockId, onChange }: Pol
 
   const startNewRound = () => {
     if (typeof window !== "undefined" && !window.confirm("确定新建一轮投票吗？当前轮次的结果会保留，并可按原投票编号继续查询。")) return;
-    onChange({ pollId: createPollEntityId("poll"), pollStatus: "open" });
+    onChange({ pollId: createPollEntityId("poll"), pollStatus: "open", pollOpenAt: "", pollCloseAt: "" });
   };
 
   return (
@@ -160,6 +180,28 @@ export default function PollBlockEditor({ props, runtimeBlockId, onChange }: Pol
               <option value="closed">结束投票</option>
             </select>
           </label>
+          <label className="grid gap-1 text-sm text-slate-700">
+            <span>开放时间（可选）</span>
+            <input
+              type="datetime-local"
+              className="h-10 rounded-lg border border-slate-300 bg-white px-3"
+              value={toDateTimeLocalInput(config.openAt)}
+              onChange={(event) => onChange({ pollOpenAt: fromDateTimeLocalInput(event.target.value) })}
+            />
+          </label>
+          <label className="grid gap-1 text-sm text-slate-700">
+            <span>结束时间（可选）</span>
+            <input
+              type="datetime-local"
+              className="h-10 rounded-lg border border-slate-300 bg-white px-3"
+              min={toDateTimeLocalInput(config.openAt) || undefined}
+              value={toDateTimeLocalInput(config.closeAt)}
+              onChange={(event) => onChange({ pollCloseAt: fromDateTimeLocalInput(event.target.value) })}
+            />
+          </label>
+          <div className="flex min-h-10 items-center rounded-lg border border-slate-200 px-3 text-xs leading-5 text-slate-500">
+            留空表示立即开放或不设结束时间；页面停留期间也会按时间自动切换状态。
+          </div>
           <label className="grid gap-1 text-sm text-slate-700">
             <span>名称字段标题</span>
             <CompositionSafePollInput className="h-10 rounded-lg border border-slate-300 px-3" value={props.pollNameLabel ?? ""} placeholder="您的名称" onChange={(nextValue) => onChange({ pollNameLabel: nextValue })} />
@@ -287,7 +329,7 @@ export default function PollBlockEditor({ props, runtimeBlockId, onChange }: Pol
             ))}
           </div>
         )}
-        {configurationIssue ? <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">配置尚未完成：每个选择题至少需要两个有内容的选项。</div> : null}
+        {configurationIssue ? <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">配置尚未完成：{getConfigurationMessage(configurationIssue)}</div> : null}
       </section>
 
     </div>

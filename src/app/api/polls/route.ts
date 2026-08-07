@@ -7,6 +7,7 @@ import {
   buildPollSummary,
   collectPublishedPollBlocks,
   findPublishedPollConfig,
+  getPollAvailability,
   getPollConfigurationIssue,
   normalizePollConfig,
   normalizePollRoundBallotMetadata,
@@ -154,6 +155,42 @@ export async function GET(request: Request) {
   }
 }
 
+export async function DELETE(request: Request) {
+  if (!isTrustedSameOriginMutationRequest(request)) {
+    return getTrustedMutationRequestErrorResponse();
+  }
+
+  try {
+    const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+    const siteId = trimText(body?.siteId, 64);
+    const pollId = trimText(body?.pollId, 96);
+    if (!isMerchantNumericId(siteId) || !pollId) {
+      return noStoreJson({ error: "invalid_poll_request" }, { status: 400 });
+    }
+
+    const session = await resolveMerchantSessionFromRequest(request, { hintedMerchantId: siteId });
+    if (!session || session.merchantId !== siteId) {
+      return noStoreJson({ error: "unauthorized" }, { status: 401 });
+    }
+
+    const result = await createPollStore()
+      .from("merchant_poll_ballots")
+      .delete({ count: "exact" })
+      .eq("merchant_id", siteId)
+      .eq("poll_id", pollId);
+    if (result.error) throw result.error;
+    return noStoreJson({ ok: true, pollId, deletedCount: result.count ?? 0 });
+  } catch (error) {
+    return noStoreJson(
+      {
+        error: isPollStoreUnavailable(error) ? "poll_store_unavailable" : "poll_results_delete_failed",
+        message: error instanceof Error ? error.message : getPollStoreErrorCode(error) || "unknown_error",
+      },
+      { status: isPollStoreUnavailable(error) ? 503 : 500 },
+    );
+  }
+}
+
 export async function POST(request: Request) {
   if (!isTrustedSameOriginMutationRequest(request)) {
     return getTrustedMutationRequestErrorResponse();
@@ -178,7 +215,11 @@ export async function POST(request: Request) {
     if (configurationIssue) {
       return noStoreJson({ error: "invalid_poll_configuration", issue: configurationIssue }, { status: 409 });
     }
-    if (config.status !== "open") {
+    const availability = getPollAvailability(config);
+    if (availability === "scheduled") {
+      return noStoreJson({ error: "poll_not_started", openAt: config.openAt }, { status: 409 });
+    }
+    if (availability !== "open") {
       return noStoreJson({ error: "poll_closed" }, { status: 409 });
     }
 
