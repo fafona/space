@@ -43,15 +43,15 @@ function getPollErrorMessage(code: string) {
 
 function PollResults({ summary }: { summary: PollSummary }) {
   return (
-    <div className="mt-5 border-t border-slate-200 pt-4">
-      <div className="flex items-center justify-between gap-3">
+    <div className="mt-5 min-w-0 max-w-full border-t border-slate-200 pt-4">
+      <div className="flex min-w-0 max-w-full flex-wrap items-center justify-between gap-3">
         <div className="text-base font-semibold text-slate-900">投票结果</div>
         <div className="text-sm text-slate-500">共 {summary.totalBallots} 票</div>
       </div>
-      <div className="mt-4 grid gap-5">
+      <div className="mt-4 grid min-w-0 max-w-full gap-5">
         {summary.questions.map((question, questionIndex) => (
-          <div key={question.id} className="min-w-0">
-            <div className="text-sm font-medium text-slate-800">
+          <div key={question.id} className="min-w-0 max-w-full">
+            <div className="text-sm font-medium text-slate-800 [overflow-wrap:anywhere]">
               {questionIndex + 1}. {question.prompt}
             </div>
             {question.type === "text" ? (
@@ -61,9 +61,9 @@ function PollResults({ summary }: { summary: PollSummary }) {
                 {question.options.map((option) => {
                   const percentage = question.responseCount > 0 ? Math.round((option.count / question.responseCount) * 100) : 0;
                   return (
-                    <div key={option.id} className="grid gap-1">
-                      <div className="flex items-center justify-between gap-3 text-sm text-slate-700">
-                        <span className="min-w-0 break-words">{option.label}</span>
+                    <div key={option.id} className="grid min-w-0 max-w-full gap-1">
+                      <div className="flex min-w-0 max-w-full items-center justify-between gap-3 text-sm text-slate-700">
+                        <span className="min-w-0 break-words [overflow-wrap:anywhere]">{option.label}</span>
                         <span className="shrink-0 text-slate-500">{option.count} 票 · {percentage}%</span>
                       </div>
                       <div className="h-2 overflow-hidden rounded bg-slate-100">
@@ -205,80 +205,94 @@ export default function PollBlock({
   const headingHtml = toRichHtml(config.heading, "在线投票");
   const textHtml = toRichHtml(config.text, "");
   const live = interactive && config.status === "open" && !configurationIssue;
-  const contentBackgroundStyle = {
+  const contentFrameStyle = {
     backgroundColor: `rgba(255, 255, 255, ${config.contentBackgroundOpacity})`,
   };
 
   return (
     <section
       className={resolveMobileFitCardClass(
-        resolveMobileFitSectionClass(`mx-auto max-w-6xl rounded-lg p-5 shadow-sm ${borderClass}`, mobileFitScreenWidth),
+        resolveMobileFitSectionClass(
+          `box-border mx-auto min-w-0 max-w-6xl overflow-x-hidden rounded-lg p-5 shadow-sm ${borderClass}`,
+          mobileFitScreenWidth,
+        ),
         mobileFitScreenWidth,
       )}
       style={{
         ...backgroundStyle,
         ...borderStyle,
         width: props.blockWidth ? `${props.blockWidth}px` : undefined,
+        maxWidth: props.blockWidth ? "100%" : undefined,
         minHeight: props.blockHeight ? `${props.blockHeight}px` : undefined,
       }}
     >
-      <div className="rounded-lg border border-white/50 p-4 shadow-sm sm:p-5" style={contentBackgroundStyle}>
-        <div className="text-2xl font-bold text-slate-900 break-words" dangerouslySetInnerHTML={{ __html: headingHtml }} />
+      <div className="min-w-0 max-w-full">
+        <div
+          className="max-w-full break-words text-2xl font-bold text-slate-900 [overflow-wrap:anywhere]"
+          dangerouslySetInnerHTML={{ __html: headingHtml }}
+        />
         {config.text ? (
-          <div className="mt-2 text-sm leading-6 text-slate-600 break-words" dangerouslySetInnerHTML={{ __html: textHtml }} />
+          <div
+            className="mt-2 max-w-full break-words text-sm leading-6 text-slate-600 [overflow-wrap:anywhere]"
+            dangerouslySetInnerHTML={{ __html: textHtml }}
+          />
         ) : null}
 
         {submitted ? (
-          <div className="mt-5 rounded-lg border border-emerald-300/80 p-4">
+          <div className="mt-5 min-w-0 max-w-full rounded-lg border border-emerald-300/80 p-4" style={contentFrameStyle}>
             <div className="text-lg font-semibold text-emerald-900">{config.successTitle}</div>
-            <div className="mt-1 text-sm text-emerald-800">{config.successText}</div>
+            <div className="mt-1 break-words text-sm text-emerald-800 [overflow-wrap:anywhere]">{config.successText}</div>
             {summary ? <PollResults summary={summary} /> : null}
           </div>
         ) : (
           <form
-            className="mt-5 grid gap-5"
+            className="mt-5 grid min-w-0 max-w-full gap-5"
             onSubmit={(event) => {
               event.preventDefault();
               void submitPoll();
             }}
           >
-            <div className="grid gap-3 border-b border-slate-300/70 pb-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-            <label className="grid min-w-0 gap-1 text-sm text-slate-700">
-              <span>
-                {config.nameLabel}
-                {!config.allowAnonymous ? <span className="ml-2 text-xs text-rose-600">必填</span> : null}
-              </span>
-              <input
-                className="h-11 min-w-0 rounded-lg border border-slate-300 bg-white px-3 text-base outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 disabled:bg-slate-100"
-                value={participantName}
-                placeholder={config.namePlaceholder}
-                disabled={anonymous || submitting || !live}
-                required={!anonymous}
-                aria-required={!anonymous}
-                maxLength={120}
-                onChange={(event) => {
-                  setParticipantName(event.target.value);
-                  setError("");
-                }}
-              />
-            </label>
-            {config.allowAnonymous ? (
-              <label className="flex min-h-11 items-center gap-2 rounded-lg border border-slate-200 px-3 text-sm text-slate-700">
+            <div
+              className="flex min-w-0 max-w-full flex-wrap items-end gap-3 rounded-lg border border-slate-300/80 p-4"
+              style={contentFrameStyle}
+            >
+              <label className="grid min-w-[min(100%,16rem)] max-w-full flex-1 gap-1 text-sm text-slate-700">
+                <span className="break-words [overflow-wrap:anywhere]">
+                  {config.nameLabel}
+                  {!config.allowAnonymous ? <span className="ml-2 text-xs text-rose-600">必填</span> : null}
+                </span>
                 <input
-                  type="checkbox"
-                  checked={anonymous}
-                  disabled={submitting || !live}
+                  className="h-11 w-full min-w-0 max-w-full rounded-lg border border-slate-300 bg-white px-3 text-base outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 disabled:bg-slate-100"
+                  value={participantName}
+                  placeholder={config.namePlaceholder}
+                  disabled={anonymous || submitting || !live}
+                  required={!anonymous}
+                  aria-required={!anonymous}
+                  maxLength={120}
                   onChange={(event) => {
-                    setAnonymous(event.target.checked);
+                    setParticipantName(event.target.value);
                     setError("");
                   }}
                 />
-                匿名投票
               </label>
-            ) : null}
-          </div>
+              {config.allowAnonymous ? (
+                <label className="flex min-h-11 min-w-0 max-w-full items-center gap-2 rounded-lg border border-slate-200 px-3 text-sm text-slate-700">
+                  <input
+                    className="shrink-0"
+                    type="checkbox"
+                    checked={anonymous}
+                    disabled={submitting || !live}
+                    onChange={(event) => {
+                      setAnonymous(event.target.checked);
+                      setError("");
+                    }}
+                  />
+                  <span className="min-w-0 break-words [overflow-wrap:anywhere]">匿名投票</span>
+                </label>
+              ) : null}
+            </div>
 
-          <div className="grid gap-4">
+          <div className="grid min-w-0 max-w-full gap-4">
             {config.questions.map((question, questionIndex) => {
               const draft = answerDrafts[question.id] ?? { optionIds: [], text: "" };
               const questionTypeLabel = question.type === "single" ? "单选" : question.type === "multiple" ? "多选" : "文字输入";
@@ -286,14 +300,15 @@ export default function PollBlock({
                 <fieldset
                   key={question.id}
                   aria-labelledby={`poll-question-${config.pollId}-${question.id}`}
-                  className="min-w-0 rounded-lg border border-slate-300/80 p-4"
+                  className="w-full min-w-0 max-w-full rounded-lg border border-slate-300/80 p-4"
                   disabled={submitting || !live}
+                  style={contentFrameStyle}
                 >
                   <div
                     id={`poll-question-${config.pollId}-${question.id}`}
-                    className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-base text-slate-900"
+                    className="flex min-w-0 max-w-full flex-wrap items-center gap-x-2 gap-y-1 text-base text-slate-900"
                   >
-                    <span className="min-w-0 flex-1 basis-64 font-semibold break-words">
+                    <span className="min-w-0 flex-1 basis-64 break-words font-semibold [overflow-wrap:anywhere]">
                       {questionIndex + 1}. {question.prompt}
                     </span>
                     <span className="inline-flex rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 align-middle text-xs font-normal text-slate-600">
@@ -305,7 +320,7 @@ export default function PollBlock({
                   </div>
                   {question.type === "text" ? (
                     <textarea
-                      className="mt-3 min-h-28 w-full resize-y rounded-lg border border-slate-300 bg-white px-3 py-2 text-base outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20"
+                      className="mt-3 min-h-28 w-full min-w-0 max-w-full resize-y rounded-lg border border-slate-300 bg-white px-3 py-2 text-base outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20"
                       value={draft.text}
                       maxLength={4000}
                       aria-required={question.required}
@@ -313,11 +328,14 @@ export default function PollBlock({
                       onChange={(event) => updateAnswer(question.id, { text: event.target.value })}
                     />
                   ) : (
-                    <div className="mt-3 grid gap-2">
+                    <div className="mt-3 grid min-w-0 max-w-full gap-2">
                       {question.options.map((option) => {
                         const checked = draft.optionIds.includes(option.id);
                         return (
-                          <label key={option.id} className="flex min-h-11 items-start gap-3 rounded-lg border border-slate-200/90 px-3 py-2.5 text-sm text-slate-800 hover:bg-white/50">
+                          <label
+                            key={option.id}
+                            className="flex min-h-11 w-full min-w-0 max-w-full items-start gap-3 rounded-lg border border-slate-200/90 px-3 py-2.5 text-sm text-slate-800 hover:bg-white/50"
+                          >
                             <input
                               className="mt-0.5 h-4 w-4 shrink-0"
                               type={question.type === "single" ? "radio" : "checkbox"}
@@ -335,7 +353,7 @@ export default function PollBlock({
                                 });
                               }}
                             />
-                            <span className="min-w-0 break-words">{option.label}</span>
+                            <span className="min-w-0 break-words [overflow-wrap:anywhere]">{option.label}</span>
                           </label>
                         );
                       })}
@@ -347,14 +365,21 @@ export default function PollBlock({
           </div>
 
           {!live ? (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            <div className="min-w-0 max-w-full break-words rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 [overflow-wrap:anywhere]">
               {config.status === "closed" ? "本次投票已经结束。" : "请完善投票问题和选项后发布。"}
             </div>
           ) : null}
-          {error ? <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div> : null}
+          {error ? (
+            <div
+              role="alert"
+              className="min-w-0 max-w-full break-words rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 [overflow-wrap:anywhere]"
+            >
+              {error}
+            </div>
+          ) : null}
           <button
             type="submit"
-            className="h-11 w-full rounded-lg bg-slate-950 px-5 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+            className="h-11 w-full min-w-0 max-w-full rounded-lg bg-slate-950 px-5 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
             disabled={!live || submitting}
           >
             {submitting ? "正在提交..." : config.submitLabel}
