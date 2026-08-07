@@ -472,6 +472,7 @@ export type PollProps = BackgroundEditableProps &
     pollSuccessText?: string;
     pollNameLabel?: string;
     pollNamePlaceholder?: string;
+    pollContentBackgroundOpacity?: number;
   };
 type NavProps = BackgroundEditableProps &
   TypographyEditableProps & {

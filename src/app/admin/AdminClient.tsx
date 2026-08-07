@@ -8486,6 +8486,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           pollSuccessText: "感谢您的参与。",
           pollNameLabel: "您的名称",
           pollNamePlaceholder: "请输入您的名称",
+          pollContentBackgroundOpacity: 0.72,
         },
       };
     }

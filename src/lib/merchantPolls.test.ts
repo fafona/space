@@ -52,6 +52,7 @@ test("poll config normalizes supported question types and rejects incomplete cho
   assert.equal(config.questions.length, 3);
   assert.equal(config.allowAnonymous, true);
   assert.equal(config.nameLabel, "您的名称");
+  assert.equal(config.contentBackgroundOpacity, 0.72);
 
   const customName = normalizePollConfig({
     pollAllowAnonymous: false,
@@ -61,6 +62,10 @@ test("poll config normalizes supported question types and rejects incomplete cho
   assert.equal(customName.allowAnonymous, false);
   assert.equal(customName.nameLabel, "联系人称呼");
   assert.equal(customName.namePlaceholder, "请输入联系人称呼");
+
+  assert.equal(normalizePollConfig({ pollContentBackgroundOpacity: 0.36 }).contentBackgroundOpacity, 0.36);
+  assert.equal(normalizePollConfig({ pollContentBackgroundOpacity: -1 }).contentBackgroundOpacity, 0);
+  assert.equal(normalizePollConfig({ pollContentBackgroundOpacity: 3 }).contentBackgroundOpacity, 1);
 
   const invalid = normalizePollConfig({
     pollId: "poll-invalid",
