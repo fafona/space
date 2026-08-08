@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 
 type BusinessCardMediaExperienceProps = {
   introVideoUrl?: string;
@@ -33,8 +34,14 @@ export default function BusinessCardMediaExperience({
   introMusicUrl,
   backgroundMusicUrl,
 }: BusinessCardMediaExperienceProps) {
-  const normalizedIntroImageUrl = introVideoUrl ? "" : String(introImageUrl ?? "").trim();
-  const hasIntro = Boolean(introVideoUrl || normalizedIntroImageUrl);
+  const normalizedIntroVideoUrl = normalizePublicAssetUrl(String(introVideoUrl ?? "").trim());
+  const normalizedIntroPosterUrl = normalizePublicAssetUrl(String(introPosterUrl ?? "").trim());
+  const normalizedIntroImageUrl = normalizedIntroVideoUrl
+    ? ""
+    : normalizePublicAssetUrl(String(introImageUrl ?? "").trim());
+  const normalizedIntroMusicUrl = normalizePublicAssetUrl(String(introMusicUrl ?? "").trim());
+  const normalizedBackgroundMusicUrl = normalizePublicAssetUrl(String(backgroundMusicUrl ?? "").trim());
+  const hasIntro = Boolean(normalizedIntroVideoUrl || normalizedIntroImageUrl);
   const [introVisible, setIntroVisible] = useState(hasIntro);
   const [needsIntroSound, setNeedsIntroSound] = useState(false);
   const [backgroundPlaying, setBackgroundPlaying] = useState(false);
@@ -129,16 +136,16 @@ export default function BusinessCardMediaExperience({
   }, []);
 
   useEffect(() => {
-    if (!backgroundMusicUrl || introVisible) return;
+    if (!normalizedBackgroundMusicUrl || introVisible) return;
     introCompletedRef.current = true;
     const timer = window.setTimeout(() => {
       void playBackgroundMusic();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [backgroundMusicUrl, introVisible, playBackgroundMusic]);
+  }, [introVisible, normalizedBackgroundMusicUrl, playBackgroundMusic]);
 
   useEffect(() => {
-    if (!backgroundMusicUrl) return;
+    if (!normalizedBackgroundMusicUrl) return;
     const handleVisibilityChange = () => {
       const music = backgroundMusicRef.current;
       if (!music) return;
@@ -158,7 +165,7 @@ export default function BusinessCardMediaExperience({
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("pagehide", handlePageHide);
     };
-  }, [backgroundMusicUrl, playBackgroundMusic]);
+  }, [normalizedBackgroundMusicUrl, playBackgroundMusic]);
 
   const toggleBackgroundMusic = useCallback(() => {
     const music = backgroundMusicRef.current;
@@ -178,11 +185,11 @@ export default function BusinessCardMediaExperience({
       {introVisible ? (
         <div className="fixed inset-0 z-[200] bg-black" data-no-translate="1">
           <div className="relative h-screen w-screen overflow-hidden bg-black [height:100dvh]">
-            {introVideoUrl ? (
+            {normalizedIntroVideoUrl ? (
               <video
                 ref={videoRef}
-                src={introVideoUrl}
-                poster={introPosterUrl || undefined}
+                src={normalizedIntroVideoUrl}
+                poster={normalizedIntroPosterUrl || undefined}
                 autoPlay
                 muted={introVideoMuted}
                 playsInline
@@ -200,8 +207,8 @@ export default function BusinessCardMediaExperience({
                 onError={finishIntro}
               />
             ) : null}
-            {introMusicUrl ? (
-              <audio ref={introMusicRef} src={introMusicUrl} preload="auto" />
+            {normalizedIntroMusicUrl ? (
+              <audio ref={introMusicRef} src={normalizedIntroMusicUrl} preload="auto" />
             ) : null}
             <button
               type="button"
@@ -223,9 +230,9 @@ export default function BusinessCardMediaExperience({
         </div>
       ) : null}
 
-      {backgroundMusicUrl ? (
+      {normalizedBackgroundMusicUrl ? (
         <>
-          <audio ref={backgroundMusicRef} src={backgroundMusicUrl} preload="metadata" loop />
+          <audio ref={backgroundMusicRef} src={normalizedBackgroundMusicUrl} preload="metadata" loop />
           <button
             type="button"
             onClick={toggleBackgroundMusic}

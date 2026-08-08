@@ -196,6 +196,32 @@ test("normalizeMerchantBusinessCardDraft preserves intro image and audio setting
   assert.equal(draft.contactBackgroundMusicUrl, "https://faolla.com/storage/v1/object/public/page-assets/background.mp3");
 });
 
+test("normalizeMerchantBusinessCardDraft rewrites internal storage media urls", () => {
+  const previousBaseDomain = process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN;
+  process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = "https://faolla.com";
+
+  try {
+    const draft = normalizeMerchantBusinessCardDraft({
+      contactIntroImageUrl: "http://127.0.0.1:8000/storage/v1/object/public/page-assets/intro.webp",
+      contactIntroMusicUrl: "http://127.0.0.1:8000/storage/v1/object/public/page-assets/intro.mp3",
+      contactBackgroundMusicUrl: "http://127.0.0.1:8000/storage/v1/object/public/page-assets/background.mp3",
+    });
+
+    assert.equal(draft.contactIntroImageUrl, "https://faolla.com/storage/v1/object/public/page-assets/intro.webp");
+    assert.equal(draft.contactIntroMusicUrl, "https://faolla.com/storage/v1/object/public/page-assets/intro.mp3");
+    assert.equal(
+      draft.contactBackgroundMusicUrl,
+      "https://faolla.com/storage/v1/object/public/page-assets/background.mp3",
+    );
+  } finally {
+    if (typeof previousBaseDomain === "undefined") {
+      delete process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN;
+    } else {
+      process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = previousBaseDomain;
+    }
+  }
+});
+
 test("normalizeMerchantBusinessCardDraft gives intro video precedence over intro image", () => {
   const draft = normalizeMerchantBusinessCardDraft({
     contactIntroVideoUrl: "https://faolla.com/storage/v1/object/public/page-assets/intro.mp4",

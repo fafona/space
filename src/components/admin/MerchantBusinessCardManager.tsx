@@ -1362,7 +1362,7 @@ function buildBusinessCardFrontRenderSignature(value: MerchantBusinessCardDraft 
 }
 
 function extractVideoPosterFrame(src: string) {
-  const normalizedSrc = normalizeText(src);
+  const normalizedSrc = normalizePublicAssetUrl(normalizeText(src));
   if (!normalizedSrc || typeof document === "undefined") return Promise.resolve("");
   const cached = videoPosterFrameCache.get(normalizedSrc);
   if (cached) return Promise.resolve(cached);
@@ -1410,7 +1410,7 @@ function extractVideoPosterFrame(src: string) {
     const seekToFirstFrame = () => {
       try {
         if (Number.isFinite(video.duration) && video.duration > 0) {
-          video.currentTime = Math.min(0.001, video.duration / 2);
+          video.currentTime = Math.min(0.05, video.duration / 2);
           return;
         }
       } catch {}
@@ -1423,6 +1423,7 @@ function extractVideoPosterFrame(src: string) {
     video.playsInline = true;
     video.preload = "auto";
     video.addEventListener("loadedmetadata", seekToFirstFrame, { once: true });
+    video.addEventListener("loadeddata", capture, { once: true });
     video.addEventListener("seeked", capture, { once: true });
     video.addEventListener("error", () => finish(""), { once: true });
     video.src = normalizedSrc;
@@ -1471,8 +1472,8 @@ function AutoPlayingVideoPreview({
   autoPlay?: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const normalizedSrc = normalizeText(src);
-  const normalizedPoster = normalizeText(poster);
+  const normalizedSrc = normalizePublicAssetUrl(normalizeText(src));
+  const normalizedPoster = normalizePublicAssetUrl(normalizeText(poster));
   const [generatedPoster, setGeneratedPoster] = useState<{ src: string; poster: string }>({ src: "", poster: "" });
   const generatedPosterForSrc = generatedPoster.src === normalizedSrc ? normalizeText(generatedPoster.poster) : "";
   const resolvedPoster =
@@ -1491,7 +1492,7 @@ function AutoPlayingVideoPreview({
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !normalizeText(src)) return;
+    if (!video || !normalizedSrc) return;
     if (muted) {
       video.muted = true;
       video.defaultMuted = true;
@@ -1503,32 +1504,36 @@ function AutoPlayingVideoPreview({
     }
     video.setAttribute("playsinline", "");
     video.setAttribute("webkit-playsinline", "");
-    try {
-      video.load();
-    } catch {}
     if (!autoPlay) {
       const showFirstFrame = () => {
         try {
           if (Number.isFinite(video.duration) && video.duration > 0) {
-            video.currentTime = Math.min(0.001, video.duration);
+            video.currentTime = Math.min(0.05, video.duration / 2);
           }
         } catch {}
       };
       video.pause();
       video.addEventListener("loadedmetadata", showFirstFrame, { once: true });
       video.addEventListener("loadeddata", showFirstFrame, { once: true });
+      try {
+        video.load();
+        if (video.readyState >= 1) showFirstFrame();
+      } catch {}
       return () => {
         video.removeEventListener("loadedmetadata", showFirstFrame);
         video.removeEventListener("loadeddata", showFirstFrame);
       };
     }
+    try {
+      video.load();
+    } catch {}
     const timer = window.setTimeout(() => {
       try {
         void video.play?.().catch(() => undefined);
       } catch {}
     }, 60);
     return () => window.clearTimeout(timer);
-  }, [autoPlay, muted, src]);
+  }, [autoPlay, muted, normalizedSrc]);
 
   if (!autoPlay && resolvedPoster) {
     const posterStyle: CSSProperties = {
@@ -1544,17 +1549,51 @@ function AutoPlayingVideoPreview({
 
   return (
     <video
-      key={autoPlay ? src : `${src}-${resolvedPoster ? "poster" : "video"}`}
+      key={autoPlay ? normalizedSrc : `${normalizedSrc}-${resolvedPoster ? "poster" : "video"}`}
       ref={videoRef}
       className={className}
-      src={src}
+      src={normalizedSrc}
       controls={controls}
       autoPlay={autoPlay}
       loop={loop}
       muted={muted}
       poster={resolvedPoster || undefined}
-      preload={autoPlay ? "auto" : "metadata"}
+      preload="auto"
       playsInline
+    />
+  );
+}
+
+function MediaAudioPreview({
+  src,
+  className,
+  loop = false,
+}: {
+  src: string;
+  className: string;
+  loop?: boolean;
+}) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const normalizedSrc = normalizePublicAssetUrl(normalizeText(src));
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || !normalizedSrc) return;
+    try {
+      audio.load();
+    } catch {}
+  }, [normalizedSrc]);
+
+  if (!normalizedSrc) return null;
+  return (
+    <audio
+      key={normalizedSrc}
+      ref={audioRef}
+      className={className}
+      src={normalizedSrc}
+      controls
+      loop={loop}
+      preload="metadata"
     />
   );
 }
@@ -1627,14 +1666,14 @@ function ContactCardSurface({
   const hasImage = Boolean(normalizeText(imageUrl));
   const normalizedImageLinkUrl = normalizeMerchantBusinessCardShareTargetUrl(imageLinkUrl);
   const canDragContactImage = hasImage && Boolean(onContactImagePointerDown);
-  const normalizedIntroVideoUrl = normalizeText(introVideoUrl);
-  const normalizedIntroVideoPosterUrl = normalizeText(introVideoPosterUrl);
+  const normalizedIntroVideoUrl = normalizePublicAssetUrl(normalizeText(introVideoUrl));
+  const normalizedIntroVideoPosterUrl = normalizePublicAssetUrl(normalizeText(introVideoPosterUrl));
   const hasIntroVideo = Boolean(normalizedIntroVideoUrl);
-  const normalizedIntroImageUrl = hasIntroVideo ? "" : normalizeText(introImageUrl);
+  const normalizedIntroImageUrl = hasIntroVideo ? "" : normalizePublicAssetUrl(normalizeText(introImageUrl));
   const hasIntroImage = Boolean(normalizedIntroImageUrl);
   const hasIntroMedia = hasIntroVideo || hasIntroImage;
-  const normalizedIntroMusicUrl = hasIntroMedia ? normalizeText(introMusicUrl) : "";
-  const normalizedBackgroundMusicUrl = normalizeText(backgroundMusicUrl);
+  const normalizedIntroMusicUrl = hasIntroMedia ? normalizePublicAssetUrl(normalizeText(introMusicUrl)) : "";
+  const normalizedBackgroundMusicUrl = normalizePublicAssetUrl(normalizeText(backgroundMusicUrl));
   const domainLabel = normalizeText(targetUrl).replace(/^https?:\/\//i, "");
   const shouldShowActions = showContactSaveButton || showContactWebsiteButton;
 
@@ -1764,7 +1803,7 @@ function ContactCardSurface({
       {normalizedIntroMusicUrl ? (
         <div className="mb-5 rounded-2xl border border-slate-200 bg-slate-50 p-3">
           <div className="mb-2 text-[11px] font-semibold text-slate-500">开场音乐预览</div>
-          <audio className="h-9 w-full" src={normalizedIntroMusicUrl} controls preload="metadata" />
+          <MediaAudioPreview className="h-9 w-full" src={normalizedIntroMusicUrl} />
         </div>
       ) : null}
 
@@ -1801,7 +1840,7 @@ function ContactCardSurface({
       {normalizedBackgroundMusicUrl ? (
         <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-3">
           <div className="mb-2 text-[11px] font-semibold text-slate-500">联系卡背景音乐预览（公开页循环播放）</div>
-          <audio className="h-9 w-full" src={normalizedBackgroundMusicUrl} controls loop preload="metadata" />
+          <MediaAudioPreview className="h-9 w-full" src={normalizedBackgroundMusicUrl} loop />
         </div>
       ) : null}
 
@@ -2742,11 +2781,11 @@ export default function MerchantBusinessCardManager({
           operationSummary: `在经营中心 > 名片夹上传联系卡开场视频：${draft.name || profile.merchantName || "未命名名片"}`,
         },
       });
-      const uploadedUrl = normalizeText(uploadedAsset?.url);
+      const uploadedUrl = normalizePublicAssetUrl(normalizeText(uploadedAsset?.url));
       if (!uploadedUrl) {
         throw new Error("video_upload_failed");
       }
-      let posterUrl = normalizeText(uploadedAsset?.posterUrl);
+      let posterUrl = normalizePublicAssetUrl(normalizeText(uploadedAsset?.posterUrl));
       if (!posterUrl) {
         const localPoster = normalizeText(await localPosterPromise.catch(() => ""));
         if (localPoster) {
@@ -2829,12 +2868,13 @@ export default function MerchantBusinessCardManager({
           operationSummary: `在经营中心 > 名片夹上传联系卡开场图片：${draft.name || profile.merchantName || "未命名名片"}`,
         },
       );
-      if (!uploadedUrl) throw new Error("开场图片上传失败，请重试");
+      const normalizedUploadedUrl = normalizePublicAssetUrl(normalizeText(uploadedUrl));
+      if (!normalizedUploadedUrl) throw new Error("开场图片上传失败，请重试");
       applyDraft((current) => ({
         ...current,
         contactIntroVideoUrl: "",
         contactIntroVideoPosterUrl: "",
-        contactIntroImageUrl: uploadedUrl,
+        contactIntroImageUrl: normalizedUploadedUrl,
       }));
       setContactIntroVideoFileName("");
       setContactIntroVideoFileDetail("");
@@ -2904,7 +2944,7 @@ export default function MerchantBusinessCardManager({
           operationSummary: `在经营中心 > 名片夹上传联系卡开场音乐：${draft.name || profile.merchantName || "未命名名片"}`,
         },
       });
-      const uploadedUrl = normalizeText(uploaded?.url);
+      const uploadedUrl = normalizePublicAssetUrl(normalizeText(uploaded?.url));
       if (!uploadedUrl) throw new Error("开场音乐上传失败，请重试");
       applyDraft((current) => ({ ...current, contactIntroMusicUrl: uploadedUrl }));
       setContactIntroMusicFileName(fileName || "已上传开场音乐");
@@ -2965,7 +3005,7 @@ export default function MerchantBusinessCardManager({
           operationSummary: `在经营中心 > 名片夹上传联系卡背景音乐：${draft.name || profile.merchantName || "未命名名片"}`,
         },
       });
-      const uploadedUrl = normalizeText(uploaded?.url);
+      const uploadedUrl = normalizePublicAssetUrl(normalizeText(uploaded?.url));
       if (!uploadedUrl) throw new Error("背景音乐上传失败，请重试");
       applyDraft((current) => ({ ...current, contactBackgroundMusicUrl: uploadedUrl }));
       setContactBackgroundMusicFileName(fileName || "已上传背景音乐");
@@ -3308,22 +3348,24 @@ export default function MerchantBusinessCardManager({
   const previewContactImageScale = previewAsset?.contactPageImageScale ?? draft.contactPageImageScale;
   const previewContactImageOpacity = previewAsset?.contactPageImageOpacity ?? draft.contactPageImageOpacity;
   const previewIntroVideoUrl = canUseIntroVideo
-    ? normalizeText(previewAsset ? previewAsset.contactIntroVideoUrl : draft.contactIntroVideoUrl)
+    ? normalizePublicAssetUrl(normalizeText(previewAsset ? previewAsset.contactIntroVideoUrl : draft.contactIntroVideoUrl))
     : "";
   const previewIntroVideoPosterUrl = canUseIntroVideo
-    ? normalizeText(previewAsset ? previewAsset.contactIntroVideoPosterUrl : draft.contactIntroVideoPosterUrl)
+    ? normalizePublicAssetUrl(
+        normalizeText(previewAsset ? previewAsset.contactIntroVideoPosterUrl : draft.contactIntroVideoPosterUrl),
+      )
     : "";
   const previewIntroImageUrl = previewIntroVideoUrl
     ? ""
-    : normalizeText(previewAsset ? previewAsset.contactIntroImageUrl : draft.contactIntroImageUrl);
+    : normalizePublicAssetUrl(normalizeText(previewAsset ? previewAsset.contactIntroImageUrl : draft.contactIntroImageUrl));
   const previewIntroImageDurationSeconds = previewAsset
     ? previewAsset.contactIntroImageDurationSeconds
     : draft.contactIntroImageDurationSeconds;
-  const previewIntroMusicUrl = normalizeText(
-    previewAsset ? previewAsset.contactIntroMusicUrl : draft.contactIntroMusicUrl,
+  const previewIntroMusicUrl = normalizePublicAssetUrl(
+    normalizeText(previewAsset ? previewAsset.contactIntroMusicUrl : draft.contactIntroMusicUrl),
   );
-  const previewBackgroundMusicUrl = normalizeText(
-    previewAsset ? previewAsset.contactBackgroundMusicUrl : draft.contactBackgroundMusicUrl,
+  const previewBackgroundMusicUrl = normalizePublicAssetUrl(
+    normalizeText(previewAsset ? previewAsset.contactBackgroundMusicUrl : draft.contactBackgroundMusicUrl),
   );
   const showPreviewGenerateButton = !previewAsset;
   const backgroundImagePickerStatus = resolveFilePickerStatus(
@@ -3872,12 +3914,10 @@ export default function MerchantBusinessCardManager({
                             </button>
                           </div>
                           {normalizeText(draft.contactBackgroundMusicUrl) ? (
-                            <audio
+                            <MediaAudioPreview
                               className="mt-3 h-10 w-full"
                               src={draft.contactBackgroundMusicUrl}
-                              controls
                               loop
-                              preload="metadata"
                             />
                           ) : null}
                         </div>
@@ -3997,7 +4037,7 @@ export default function MerchantBusinessCardManager({
                             // eslint-disable-next-line @next/next/no-img-element
                             <img
                               className="mt-3 block aspect-video w-full rounded-xl border bg-black object-contain"
-                              src={draft.contactIntroImageUrl}
+                              src={normalizePublicAssetUrl(draft.contactIntroImageUrl)}
                               alt="开场图片预览"
                             />
                           ) : null}
@@ -4030,7 +4070,7 @@ export default function MerchantBusinessCardManager({
                             <div className="mt-2 text-[11px] text-amber-700">请先选择开场视频或开场图片。</div>
                           ) : null}
                           {normalizeText(draft.contactIntroMusicUrl) ? (
-                            <audio className="mt-3 h-10 w-full" src={draft.contactIntroMusicUrl} controls preload="metadata" />
+                            <MediaAudioPreview className="mt-3 h-10 w-full" src={draft.contactIntroMusicUrl} />
                           ) : null}
                         </div>
                       </div>
@@ -4924,15 +4964,23 @@ export default function MerchantBusinessCardManager({
                           showContactSaveButton={draft.showContactSaveButton}
                           showContactWebsiteButton={draft.showContactWebsiteButton}
                           customContactLinks={draft.customContactLinks}
-                          introVideoUrl={canUseIntroVideo ? normalizeText(draft.contactIntroVideoUrl) || undefined : undefined}
+                          introVideoUrl={
+                            canUseIntroVideo
+                              ? normalizePublicAssetUrl(normalizeText(draft.contactIntroVideoUrl)) || undefined
+                              : undefined
+                          }
                           introVideoPosterUrl={
-                            canUseIntroVideo ? normalizeText(draft.contactIntroVideoPosterUrl) || undefined : undefined
+                            canUseIntroVideo
+                              ? normalizePublicAssetUrl(normalizeText(draft.contactIntroVideoPosterUrl)) || undefined
+                              : undefined
                           }
                           introVideoMuted={draft.contactIntroVideoMuted}
-                          introImageUrl={normalizeText(draft.contactIntroImageUrl) || undefined}
+                          introImageUrl={normalizePublicAssetUrl(normalizeText(draft.contactIntroImageUrl)) || undefined}
                           introImageDurationSeconds={draft.contactIntroImageDurationSeconds}
-                          introMusicUrl={normalizeText(draft.contactIntroMusicUrl) || undefined}
-                          backgroundMusicUrl={normalizeText(draft.contactBackgroundMusicUrl) || undefined}
+                          introMusicUrl={normalizePublicAssetUrl(normalizeText(draft.contactIntroMusicUrl)) || undefined}
+                          backgroundMusicUrl={
+                            normalizePublicAssetUrl(normalizeText(draft.contactBackgroundMusicUrl)) || undefined
+                          }
                           imageUrl={normalizeText(draft.contactPageImageUrl) || undefined}
                           imageHeight={draft.contactPageImageHeight}
                           imageLinkUrl={normalizeText(draft.contactPageImageLinkUrl) || undefined}

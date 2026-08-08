@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizePublicAssetUrl } from "./publicAssetUrl";
+import { normalizePublicAssetResponseUrl, normalizePublicAssetUrl } from "./publicAssetUrl";
 
 test("keeps non-storage urls unchanged", () => {
   assert.equal(normalizePublicAssetUrl("https://example.com/a.png", "https://faolla.com"), "https://example.com/a.png");
@@ -50,6 +50,31 @@ test("rewrites storage urls to portal base domain when no preferred origin is pr
     );
   } finally {
     process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = previous;
+  }
+});
+
+test("falls back to a browser-safe relative path when no public origin is configured", () => {
+  const previousWindow = globalThis.window;
+  const previousBaseDomain = process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN;
+  delete process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN;
+  Reflect.deleteProperty(globalThis, "window");
+
+  try {
+    assert.equal(
+      normalizePublicAssetResponseUrl("http://127.0.0.1:8000/storage/v1/object/public/page-assets/audio.mp3"),
+      "/storage/v1/object/public/page-assets/audio.mp3",
+    );
+  } finally {
+    if (typeof previousBaseDomain === "undefined") {
+      delete process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN;
+    } else {
+      process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = previousBaseDomain;
+    }
+    if (typeof previousWindow === "undefined") {
+      Reflect.deleteProperty(globalThis, "window");
+    } else {
+      Object.assign(globalThis, { window: previousWindow });
+    }
   }
 });
 

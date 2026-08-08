@@ -14,6 +14,7 @@ import {
   type PlatformIdentitySupabaseClient,
 } from "@/lib/platformAccountIdentity";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
+import { normalizePublicAssetResponseUrl } from "@/lib/publicAssetUrl";
 import {
   loadStoredPlatformMerchantSnapshot,
   type PlatformMerchantSnapshotStoreClient,
@@ -521,16 +522,7 @@ function sanitizeMerchantHint(input: string) {
 function normalizeStoragePublicUrl(value: string) {
   const normalized = String(value ?? "").trim();
   if (!normalized) return "";
-  try {
-    const url = new URL(normalized);
-    if (url.protocol === "http:" && url.pathname.startsWith("/storage/v1/object/public/")) {
-      url.protocol = "https:";
-      return url.toString();
-    }
-  } catch {
-    return normalized;
-  }
-  return normalized;
+  return normalizePublicAssetResponseUrl(normalized);
 }
 
 function normalizeAssetUsage(value: unknown, folder: string, mime: string): AssetUsage {

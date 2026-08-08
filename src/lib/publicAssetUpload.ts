@@ -1,4 +1,5 @@
 import { runWithMerchantOperationContext, type MerchantOperationContext } from "@/lib/merchantOperationContext";
+import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 
 const FOLDER_CANDIDATES = new Set(["merchant-assets", "merchant-audio"]);
 
@@ -58,6 +59,10 @@ function delay(ms: number) {
   return new Promise<void>((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+function normalizeUploadAssetUrl(value: unknown) {
+  return normalizePublicAssetUrl(typeof value === "string" ? value.trim() : "");
 }
 
 async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, timeoutMs: number) {
@@ -131,16 +136,14 @@ async function uploadDataUrlViaServerApi(
           thumbnailObjectPath?: unknown;
           posterObjectPath?: unknown;
         } | null;
-        const url = typeof payload?.url === "string" ? payload.url.trim() : "";
+        const url = normalizeUploadAssetUrl(payload?.url);
+        const thumbnailUrl = normalizeUploadAssetUrl(payload?.thumbnailUrl);
+        const posterUrl = normalizeUploadAssetUrl(payload?.posterUrl);
         return url
             ? {
               url,
-              ...(typeof payload?.thumbnailUrl === "string" && payload.thumbnailUrl.trim()
-                ? { thumbnailUrl: payload.thumbnailUrl.trim() }
-                : {}),
-              ...(typeof payload?.posterUrl === "string" && payload.posterUrl.trim()
-                ? { posterUrl: payload.posterUrl.trim() }
-                : {}),
+              ...(thumbnailUrl ? { thumbnailUrl } : {}),
+              ...(posterUrl ? { posterUrl } : {}),
               ...(typeof payload?.bucket === "string" && payload.bucket.trim() ? { bucket: payload.bucket.trim() } : {}),
               ...(typeof payload?.objectPath === "string" && payload.objectPath.trim()
                 ? { objectPath: payload.objectPath.trim() }
@@ -219,16 +222,14 @@ async function uploadFileViaServerApi(
           thumbnailObjectPath?: unknown;
           posterObjectPath?: unknown;
         } | null;
-        const url = typeof payload?.url === "string" ? payload.url.trim() : "";
+        const url = normalizeUploadAssetUrl(payload?.url);
+        const thumbnailUrl = normalizeUploadAssetUrl(payload?.thumbnailUrl);
+        const posterUrl = normalizeUploadAssetUrl(payload?.posterUrl);
         return url
             ? {
               url,
-              ...(typeof payload?.thumbnailUrl === "string" && payload.thumbnailUrl.trim()
-                ? { thumbnailUrl: payload.thumbnailUrl.trim() }
-                : {}),
-              ...(typeof payload?.posterUrl === "string" && payload.posterUrl.trim()
-                ? { posterUrl: payload.posterUrl.trim() }
-                : {}),
+              ...(thumbnailUrl ? { thumbnailUrl } : {}),
+              ...(posterUrl ? { posterUrl } : {}),
               ...(typeof payload?.bucket === "string" && payload.bucket.trim() ? { bucket: payload.bucket.trim() } : {}),
               ...(typeof payload?.objectPath === "string" && payload.objectPath.trim()
                 ? { objectPath: payload.objectPath.trim() }

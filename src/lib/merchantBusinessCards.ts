@@ -1,4 +1,5 @@
 import type { TypographyEditableProps } from "@/data/homeBlocks";
+import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 
 export const MERCHANT_BUSINESS_CARD_RATIO_OPTIONS = [
   { id: "85:54", label: "名片横版", width: 85, height: 54 },
@@ -739,12 +740,12 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
     ...buildOrderedMerchantBusinessCardContactTextLayout(contactFieldOrder),
   };
   const ratioMode = normalizeText(source.ratioMode) as MerchantBusinessCardRatioOptionId;
-  const contactIntroVideoUrl = normalizeText(
-    (source as { contactIntroVideoUrl?: unknown }).contactIntroVideoUrl,
+  const contactIntroVideoUrl = normalizePublicAssetUrl(
+    normalizeText((source as { contactIntroVideoUrl?: unknown }).contactIntroVideoUrl),
   );
   const contactIntroImageUrl = contactIntroVideoUrl
     ? ""
-    : normalizeText((source as { contactIntroImageUrl?: unknown }).contactIntroImageUrl);
+    : normalizePublicAssetUrl(normalizeText((source as { contactIntroImageUrl?: unknown }).contactIntroImageUrl));
   const textLayoutSource =
     source.textLayout && typeof source.textLayout === "object"
       ? (source.textLayout as Partial<MerchantBusinessCardTextLayout>)
@@ -786,8 +787,8 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
     mode: normalizeText((source as { mode?: unknown }).mode) === "link" ? "link" : "image",
     name: typeof source.name === "string" ? normalizeText(source.name) : fallback.name,
     contactIntroVideoUrl,
-    contactIntroVideoPosterUrl: normalizeText(
-      (source as { contactIntroVideoPosterUrl?: unknown }).contactIntroVideoPosterUrl,
+    contactIntroVideoPosterUrl: normalizePublicAssetUrl(
+      normalizeText((source as { contactIntroVideoPosterUrl?: unknown }).contactIntroVideoPosterUrl),
     ),
     contactIntroVideoMuted: normalizeBoolean(
       (source as { contactIntroVideoMuted?: unknown }).contactIntroVideoMuted,
@@ -802,7 +803,7 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
     ),
     contactIntroMusicUrl:
       contactIntroVideoUrl || contactIntroImageUrl
-        ? normalizeText((source as { contactIntroMusicUrl?: unknown }).contactIntroMusicUrl)
+        ? normalizePublicAssetUrl(normalizeText((source as { contactIntroMusicUrl?: unknown }).contactIntroMusicUrl))
         : "",
     contactPageImageUrl: normalizeText((source as { contactPageImageUrl?: unknown }).contactPageImageUrl),
     contactPageImageHeight: clampInt(
@@ -883,8 +884,8 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
     backgroundImageOpacity: clampOpacity(source.backgroundImageOpacity, fallback.backgroundImageOpacity),
     backgroundColor: normalizeText(source.backgroundColor) || fallback.backgroundColor,
     backgroundColorOpacity: clampOpacity(source.backgroundColorOpacity, fallback.backgroundColorOpacity),
-    contactBackgroundMusicUrl: normalizeText(
-      (source as { contactBackgroundMusicUrl?: unknown }).contactBackgroundMusicUrl,
+    contactBackgroundMusicUrl: normalizePublicAssetUrl(
+      normalizeText((source as { contactBackgroundMusicUrl?: unknown }).contactBackgroundMusicUrl),
     ),
     width: clampInt(source.width, fallback.width, 320, 1600),
     height: clampInt(source.height, fallback.height, 180, 1600),

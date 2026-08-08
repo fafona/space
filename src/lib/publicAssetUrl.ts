@@ -43,20 +43,30 @@ function resolvePreferredAssetOrigin(preferredOrigin?: string) {
   return "";
 }
 
+function readPublicStoragePath(value: string) {
+  const storagePathMatch =
+    value.match(/^https?:\/\/[^?]+?(\/storage\/v1\/object\/public\/.+)$/i) ??
+    value.match(/^(\/storage\/v1\/object\/public\/.+)$/i);
+  return storagePathMatch ? storagePathMatch[1] ?? storagePathMatch[0] : "";
+}
+
 export function normalizePublicAssetUrl(value: string, preferredOrigin?: string) {
   const trimmed = String(value ?? "").trim();
   if (!trimmed) return "";
   if (/^(data|blob):/i.test(trimmed)) return trimmed;
 
-  const storagePathMatch =
-    trimmed.match(/^https?:\/\/[^?]+?(\/storage\/v1\/object\/public\/.+)$/i) ??
-    trimmed.match(/^(\/storage\/v1\/object\/public\/.+)$/i);
-
-  if (!storagePathMatch) return trimmed;
-
-  const storagePath = storagePathMatch[1] ?? storagePathMatch[0];
+  const storagePath = readPublicStoragePath(trimmed);
+  if (!storagePath) return trimmed;
   const runtimeOrigin = resolvePreferredAssetOrigin(preferredOrigin);
 
   if (!runtimeOrigin) return trimmed;
   return `${trimTrailingSlash(runtimeOrigin)}${storagePath}`;
+}
+
+export function normalizePublicAssetResponseUrl(value: string, preferredOrigin?: string) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) return "";
+  const normalized = normalizePublicAssetUrl(trimmed, preferredOrigin);
+  if (normalized !== trimmed) return normalized;
+  return readPublicStoragePath(trimmed) || normalized;
 }
