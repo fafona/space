@@ -1,6 +1,9 @@
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
   MERCHANT_BUSINESS_CARD_CONTACT_ONLY_FIELD_KEYS,
+  MERCHANT_BUSINESS_CARD_INTRO_IMAGE_DEFAULT_DURATION_SECONDS,
+  MERCHANT_BUSINESS_CARD_INTRO_IMAGE_MAX_DURATION_SECONDS,
+  MERCHANT_BUSINESS_CARD_INTRO_IMAGE_MIN_DURATION_SECONDS,
   MERCHANT_BUSINESS_CARD_PHONE_LIMIT,
   normalizeMerchantBusinessCardContactSectionOrder,
   normalizeMerchantBusinessCardContactFieldOrder,
@@ -43,6 +46,10 @@ export type MerchantBusinessCardSharePayload = {
   introVideoUrl?: string;
   introPosterUrl?: string;
   introVideoMuted?: boolean;
+  introImageUrl?: string;
+  introImageDurationSeconds?: number;
+  introMusicUrl?: string;
+  backgroundMusicUrl?: string;
   contactPageSectionOrder?: MerchantBusinessCardContactSectionKey[];
   showContactPoll?: boolean;
   contactPagePollId?: string;
@@ -473,6 +480,12 @@ export function normalizeMerchantBusinessCardShareVideoUrl(value: string | null 
   return normalizeMerchantBusinessCardShareTargetUrl(rewritten);
 }
 
+export function normalizeMerchantBusinessCardShareAudioUrl(value: string | null | undefined, preferredOrigin?: string | null) {
+  const forcedPublicUrl = rewriteStorageUrlToOrigin(normalizeText(value), preferredOrigin ?? "");
+  const rewritten = forcedPublicUrl || normalizePublicAssetUrl(normalizeText(value), preferredOrigin ?? undefined);
+  return normalizeMerchantBusinessCardShareTargetUrl(rewritten);
+}
+
 export function normalizeMerchantBusinessCardShareKey(value: string | null | undefined) {
   const normalized = normalizeText(value).toLowerCase();
   if (!/^[a-z0-9][a-z0-9_-]{5,63}$/i.test(normalized)) return "";
@@ -499,6 +512,10 @@ function normalizeSharePayload(
     introVideoUrl?: string | null;
     introPosterUrl?: string | null;
     introVideoMuted?: boolean | string | null;
+    introImageUrl?: string | null;
+    introImageDurationSeconds?: number | string | null;
+    introMusicUrl?: string | null;
+    backgroundMusicUrl?: string | null;
     contactPageSectionOrder?: MerchantBusinessCardContactSectionKey[] | string[] | null;
     showContactPoll?: boolean | string | null;
     contactPagePollId?: string | null;
@@ -519,11 +536,28 @@ function normalizeSharePayload(
   const detailImageUrl = normalizeMerchantBusinessCardShareImageUrl(input.detailImageUrl, preferredOrigin);
   const detailImageLinkUrl = normalizeMerchantBusinessCardShareTargetUrl(input.detailImageLinkUrl);
   const introVideoUrl = normalizeMerchantBusinessCardShareVideoUrl(input.introVideoUrl, preferredOrigin);
+  const introImageUrl = introVideoUrl
+    ? ""
+    : normalizeMerchantBusinessCardShareImageUrl(input.introImageUrl, preferredOrigin);
   const introPosterUrl =
     introVideoUrl && input.introPosterUrl
       ? normalizeMerchantBusinessCardShareImageUrl(input.introPosterUrl, preferredOrigin)
       : "";
   const introVideoMuted = introVideoUrl ? normalizeOptionalBoolean(input.introVideoMuted, true) : undefined;
+  const rawIntroImageDurationSeconds = Number(input.introImageDurationSeconds);
+  const introImageDurationSeconds = introImageUrl
+    ? Math.max(
+        MERCHANT_BUSINESS_CARD_INTRO_IMAGE_MIN_DURATION_SECONDS,
+        Math.min(
+          MERCHANT_BUSINESS_CARD_INTRO_IMAGE_MAX_DURATION_SECONDS,
+          Number.isFinite(rawIntroImageDurationSeconds)
+            ? Math.round(rawIntroImageDurationSeconds)
+            : MERCHANT_BUSINESS_CARD_INTRO_IMAGE_DEFAULT_DURATION_SECONDS,
+        ),
+      )
+    : undefined;
+  const introMusicUrl = normalizeMerchantBusinessCardShareAudioUrl(input.introMusicUrl, preferredOrigin);
+  const backgroundMusicUrl = normalizeMerchantBusinessCardShareAudioUrl(input.backgroundMusicUrl, preferredOrigin);
   const contactPageSectionOrder = normalizeMerchantBusinessCardContactSectionOrder(input.contactPageSectionOrder);
   const defaultContactPageSectionOrder = normalizeMerchantBusinessCardContactSectionOrder(undefined);
   const hasCustomContactPageSectionOrder =
@@ -555,6 +589,9 @@ function normalizeSharePayload(
     ...(detailImageUrl && detailImageScale !== 1 ? { detailImageScale } : {}),
     ...(detailImageUrl && detailImageOpacity !== 1 ? { detailImageOpacity } : {}),
     ...(introVideoUrl ? { introVideoUrl, ...(introPosterUrl ? { introPosterUrl } : {}), introVideoMuted } : {}),
+    ...(introImageUrl ? { introImageUrl, introImageDurationSeconds } : {}),
+    ...(introMusicUrl && (introVideoUrl || introImageUrl) ? { introMusicUrl } : {}),
+    ...(backgroundMusicUrl ? { backgroundMusicUrl } : {}),
     ...(hasCustomContactPageSectionOrder ? { contactPageSectionOrder } : {}),
     ...(hasContactPoll
       ? {
@@ -590,6 +627,10 @@ export function normalizeMerchantBusinessCardSharePayload(
     introVideoUrl?: string | null;
     introPosterUrl?: string | null;
     introVideoMuted?: boolean | string | null;
+    introImageUrl?: string | null;
+    introImageDurationSeconds?: number | string | null;
+    introMusicUrl?: string | null;
+    backgroundMusicUrl?: string | null;
     contactPageSectionOrder?: MerchantBusinessCardContactSectionKey[] | string[] | null;
     showContactPoll?: boolean | string | null;
     contactPagePollId?: string | null;
@@ -784,6 +825,10 @@ export function buildMerchantBusinessCardShareLegacyFingerprint(
         introVideoUrl?: string | null;
         introPosterUrl?: string | null;
         introVideoMuted?: boolean | string | null;
+        introImageUrl?: string | null;
+        introImageDurationSeconds?: number | string | null;
+        introMusicUrl?: string | null;
+        backgroundMusicUrl?: string | null;
         contactPageSectionOrder?: MerchantBusinessCardContactSectionKey[] | string[] | null;
         showContactPoll?: boolean | string | null;
         contactPagePollId?: string | null;
@@ -863,6 +908,12 @@ export function buildMerchantBusinessCardShareLegacyFingerprint(
     ...(payload.introVideoUrl ? [`introVideo:${payload.introVideoUrl}`] : []),
     ...(payload.introVideoUrl && payload.introPosterUrl ? [`introPoster:${payload.introPosterUrl}`] : []),
     ...(payload.introVideoUrl && payload.introVideoMuted === false ? ["introMuted:false"] : []),
+    ...(payload.introImageUrl ? [`introImage:${payload.introImageUrl}`] : []),
+    ...(payload.introImageUrl
+      ? [`introImageDuration:${payload.introImageDurationSeconds ?? MERCHANT_BUSINESS_CARD_INTRO_IMAGE_DEFAULT_DURATION_SECONDS}`]
+      : []),
+    ...(payload.introMusicUrl ? [`introMusic:${payload.introMusicUrl}`] : []),
+    ...(payload.backgroundMusicUrl ? [`backgroundMusic:${payload.backgroundMusicUrl}`] : []),
   ].join("\u001f");
   return `legacy-${buildStableHexHash(fingerprintSource)}`;
 }
@@ -888,6 +939,10 @@ export function buildMerchantBusinessCardShareRevocationByLegacyPayloadObjectPat
         introVideoUrl?: string | null;
         introPosterUrl?: string | null;
         introVideoMuted?: boolean | string | null;
+        introImageUrl?: string | null;
+        introImageDurationSeconds?: number | string | null;
+        introMusicUrl?: string | null;
+        backgroundMusicUrl?: string | null;
         contactPageSectionOrder?: MerchantBusinessCardContactSectionKey[] | string[] | null;
         showContactPoll?: boolean | string | null;
         contactPagePollId?: string | null;
@@ -953,6 +1008,10 @@ export function buildMerchantBusinessCardShareUrl(input: {
   introVideoUrl?: string | null;
   introPosterUrl?: string | null;
   introVideoMuted?: boolean | string | null;
+  introImageUrl?: string | null;
+  introImageDurationSeconds?: number | string | null;
+  introMusicUrl?: string | null;
+  backgroundMusicUrl?: string | null;
   contactPageSectionOrder?: MerchantBusinessCardContactSectionKey[] | string[] | null;
   showContactPoll?: boolean | string | null;
   contactPagePollId?: string | null;
@@ -988,6 +1047,10 @@ export function buildMerchantBusinessCardShareUrl(input: {
       introVideoUrl: input.introVideoUrl,
       introPosterUrl: input.introPosterUrl,
       introVideoMuted: input.introVideoMuted,
+      introImageUrl: input.introImageUrl,
+      introImageDurationSeconds: input.introImageDurationSeconds,
+      introMusicUrl: input.introMusicUrl,
+      backgroundMusicUrl: input.backgroundMusicUrl,
       contactPageSectionOrder: input.contactPageSectionOrder,
       showContactPoll: input.showContactPoll,
       contactPagePollId: input.contactPagePollId,
@@ -1034,6 +1097,19 @@ export function buildMerchantBusinessCardShareUrl(input: {
     if (payload.introVideoMuted === false) {
       shareUrl.searchParams.set("introMuted", "0");
     }
+  }
+  if (payload.introImageUrl) {
+    shareUrl.searchParams.set("introImage", payload.introImageUrl);
+    shareUrl.searchParams.set(
+      "introImageDuration",
+      String(payload.introImageDurationSeconds ?? MERCHANT_BUSINESS_CARD_INTRO_IMAGE_DEFAULT_DURATION_SECONDS),
+    );
+  }
+  if (payload.introMusicUrl) {
+    shareUrl.searchParams.set("introMusic", payload.introMusicUrl);
+  }
+  if (payload.backgroundMusicUrl) {
+    shareUrl.searchParams.set("backgroundMusic", payload.backgroundMusicUrl);
   }
   if (payload.contactPageSectionOrder?.length) {
     shareUrl.searchParams.set("contactSections", payload.contactPageSectionOrder.join(","));
@@ -1170,6 +1246,10 @@ export function parseMerchantBusinessCardShareParams(
       introVideoUrl: readSearchParam(searchParams, "introVideo"),
       introPosterUrl: readSearchParam(searchParams, "introPoster"),
       introVideoMuted: readSearchParam(searchParams, "introMuted"),
+      introImageUrl: readSearchParam(searchParams, "introImage"),
+      introImageDurationSeconds: readNumberSearchParam(searchParams, "introImageDuration"),
+      introMusicUrl: readSearchParam(searchParams, "introMusic"),
+      backgroundMusicUrl: readSearchParam(searchParams, "backgroundMusic"),
       contactPageSectionOrder: readSearchParam(searchParams, "contactSections")
         ?.split(",")
         .map((item) => item.trim())

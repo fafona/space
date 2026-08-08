@@ -157,12 +157,19 @@ export type MerchantBusinessCardContactDisplayFields = Record<
 export type MerchantBusinessCardMode = "image" | "link";
 export type MerchantBusinessCardCornerMode = "rounded" | "square";
 
+export const MERCHANT_BUSINESS_CARD_INTRO_IMAGE_DEFAULT_DURATION_SECONDS = 5;
+export const MERCHANT_BUSINESS_CARD_INTRO_IMAGE_MIN_DURATION_SECONDS = 1;
+export const MERCHANT_BUSINESS_CARD_INTRO_IMAGE_MAX_DURATION_SECONDS = 15;
+
 export type MerchantBusinessCardDraft = {
   mode: MerchantBusinessCardMode;
   name: string;
   contactIntroVideoUrl: string;
   contactIntroVideoPosterUrl: string;
   contactIntroVideoMuted: boolean;
+  contactIntroImageUrl: string;
+  contactIntroImageDurationSeconds: number;
+  contactIntroMusicUrl: string;
   contactPageImageUrl: string;
   contactPageImageHeight: number;
   contactPageImageLinkUrl: string;
@@ -185,6 +192,7 @@ export type MerchantBusinessCardDraft = {
   backgroundImageOpacity: number;
   backgroundColor: string;
   backgroundColorOpacity: number;
+  contactBackgroundMusicUrl: string;
   width: number;
   height: number;
   cornerMode?: MerchantBusinessCardCornerMode;
@@ -615,6 +623,9 @@ export function createDefaultMerchantBusinessCardDraft(
     contactIntroVideoUrl: "",
     contactIntroVideoPosterUrl: "",
     contactIntroVideoMuted: true,
+    contactIntroImageUrl: "",
+    contactIntroImageDurationSeconds: MERCHANT_BUSINESS_CARD_INTRO_IMAGE_DEFAULT_DURATION_SECONDS,
+    contactIntroMusicUrl: "",
     contactPageImageUrl: "",
     contactPageImageHeight: 346,
     contactPageImageLinkUrl: "",
@@ -637,6 +648,7 @@ export function createDefaultMerchantBusinessCardDraft(
     backgroundImageOpacity: 1,
     backgroundColor: "#f8fafc",
     backgroundColorOpacity: 1,
+    contactBackgroundMusicUrl: "",
     width: 680,
     height: 432,
     cornerMode: "rounded",
@@ -727,6 +739,12 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
     ...buildOrderedMerchantBusinessCardContactTextLayout(contactFieldOrder),
   };
   const ratioMode = normalizeText(source.ratioMode) as MerchantBusinessCardRatioOptionId;
+  const contactIntroVideoUrl = normalizeText(
+    (source as { contactIntroVideoUrl?: unknown }).contactIntroVideoUrl,
+  );
+  const contactIntroImageUrl = contactIntroVideoUrl
+    ? ""
+    : normalizeText((source as { contactIntroImageUrl?: unknown }).contactIntroImageUrl);
   const textLayoutSource =
     source.textLayout && typeof source.textLayout === "object"
       ? (source.textLayout as Partial<MerchantBusinessCardTextLayout>)
@@ -767,7 +785,7 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
   return {
     mode: normalizeText((source as { mode?: unknown }).mode) === "link" ? "link" : "image",
     name: typeof source.name === "string" ? normalizeText(source.name) : fallback.name,
-    contactIntroVideoUrl: normalizeText((source as { contactIntroVideoUrl?: unknown }).contactIntroVideoUrl),
+    contactIntroVideoUrl,
     contactIntroVideoPosterUrl: normalizeText(
       (source as { contactIntroVideoPosterUrl?: unknown }).contactIntroVideoPosterUrl,
     ),
@@ -775,6 +793,17 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
       (source as { contactIntroVideoMuted?: unknown }).contactIntroVideoMuted,
       fallback.contactIntroVideoMuted,
     ),
+    contactIntroImageUrl,
+    contactIntroImageDurationSeconds: clampInt(
+      (source as { contactIntroImageDurationSeconds?: unknown }).contactIntroImageDurationSeconds,
+      fallback.contactIntroImageDurationSeconds,
+      MERCHANT_BUSINESS_CARD_INTRO_IMAGE_MIN_DURATION_SECONDS,
+      MERCHANT_BUSINESS_CARD_INTRO_IMAGE_MAX_DURATION_SECONDS,
+    ),
+    contactIntroMusicUrl:
+      contactIntroVideoUrl || contactIntroImageUrl
+        ? normalizeText((source as { contactIntroMusicUrl?: unknown }).contactIntroMusicUrl)
+        : "",
     contactPageImageUrl: normalizeText((source as { contactPageImageUrl?: unknown }).contactPageImageUrl),
     contactPageImageHeight: clampInt(
       (source as { contactPageImageHeight?: unknown }).contactPageImageHeight,
@@ -854,6 +883,9 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
     backgroundImageOpacity: clampOpacity(source.backgroundImageOpacity, fallback.backgroundImageOpacity),
     backgroundColor: normalizeText(source.backgroundColor) || fallback.backgroundColor,
     backgroundColorOpacity: clampOpacity(source.backgroundColorOpacity, fallback.backgroundColorOpacity),
+    contactBackgroundMusicUrl: normalizeText(
+      (source as { contactBackgroundMusicUrl?: unknown }).contactBackgroundMusicUrl,
+    ),
     width: clampInt(source.width, fallback.width, 320, 1600),
     height: clampInt(source.height, fallback.height, 180, 1600),
     cornerMode: normalizeText((source as { cornerMode?: unknown }).cornerMode) === "square" ? "square" : fallback.cornerMode,
@@ -1084,9 +1116,12 @@ function countMerchantBusinessCardAssetCompleteness(card: MerchantBusinessCardAs
     card.contactPageImageLinkUrl,
     card.contactIntroVideoUrl,
     card.contactIntroVideoPosterUrl,
+    card.contactIntroImageUrl,
+    card.contactIntroMusicUrl,
     card.contactPagePollId,
     card.contactPagePollBlockId,
     card.backgroundImageUrl,
+    card.contactBackgroundMusicUrl,
     ...contactValues,
     ...invoiceValues,
     ...customContactValues,
@@ -1135,6 +1170,11 @@ export function mergeMerchantBusinessCardAssets(
   const fallback = preferPrimary ? secondaryCard : primaryCard;
   const preferredHasBackground = Boolean(normalizeText(preferred.backgroundImageUrl));
   const preferredHasContactImage = Boolean(normalizeText(preferred.contactPageImageUrl));
+  const preferredIntroVideoUrl = normalizeText(preferred.contactIntroVideoUrl);
+  const preferredIntroImageUrl = preferredIntroVideoUrl ? "" : normalizeText(preferred.contactIntroImageUrl);
+  const preferredHasIntroMedia = Boolean(preferredIntroVideoUrl || preferredIntroImageUrl);
+  const fallbackIntroVideoUrl = normalizeText(fallback.contactIntroVideoUrl);
+  const fallbackIntroImageUrl = fallbackIntroVideoUrl ? "" : normalizeText(fallback.contactIntroImageUrl);
   const merged = {
     ...fallback,
     ...preferred,
@@ -1162,10 +1202,21 @@ export function mergeMerchantBusinessCardAssets(
     showContactSaveButton: preferred.showContactSaveButton,
     showContactWebsiteButton: preferred.showContactWebsiteButton,
     customContactLinks: preferred.customContactLinks.length ? preferred.customContactLinks : fallback.customContactLinks,
-    contactIntroVideoUrl: normalizeText(preferred.contactIntroVideoUrl) || normalizeText(fallback.contactIntroVideoUrl),
+    contactIntroVideoUrl: preferredHasIntroMedia ? preferredIntroVideoUrl : fallbackIntroVideoUrl,
     contactIntroVideoPosterUrl:
-      normalizeText(preferred.contactIntroVideoPosterUrl) || normalizeText(fallback.contactIntroVideoPosterUrl),
+      (preferredHasIntroMedia ? preferredIntroVideoUrl : fallbackIntroVideoUrl)
+        ? normalizeText(
+            preferredHasIntroMedia ? preferred.contactIntroVideoPosterUrl : fallback.contactIntroVideoPosterUrl,
+          )
+        : "",
     contactIntroVideoMuted: preferred.contactIntroVideoMuted,
+    contactIntroImageUrl: preferredHasIntroMedia ? preferredIntroImageUrl : fallbackIntroImageUrl,
+    contactIntroImageDurationSeconds: preferredHasIntroMedia
+      ? preferred.contactIntroImageDurationSeconds
+      : fallback.contactIntroImageDurationSeconds,
+    contactIntroMusicUrl: normalizeText(preferred.contactIntroMusicUrl) || normalizeText(fallback.contactIntroMusicUrl),
+    contactBackgroundMusicUrl:
+      normalizeText(preferred.contactBackgroundMusicUrl) || normalizeText(fallback.contactBackgroundMusicUrl),
     contacts: mergeMerchantBusinessCardContactValues(
       preferred.contacts,
       fallback.contacts,

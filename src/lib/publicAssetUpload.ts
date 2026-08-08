@@ -22,6 +22,9 @@ export type PublicAssetUploadUsage =
   | "business-card-contact"
   | "business-card-export"
   | "business-card-intro-video"
+  | "business-card-intro-image"
+  | "business-card-intro-audio"
+  | "business-card-background-audio"
   | "product-image"
   | "audio"
   | "generic-image";

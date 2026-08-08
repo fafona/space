@@ -11,6 +11,7 @@ import {
   isMerchantBusinessCardShareRevoked,
   loadMerchantBusinessCardSharePayloadByKey,
   normalizeMerchantBusinessCardSharePayload,
+  normalizeMerchantBusinessCardShareAudioUrl,
   normalizeMerchantBusinessCardShareImageUrl,
   normalizeMerchantBusinessCardShareKey,
   normalizeMerchantBusinessCardShareTargetUrl,
@@ -20,6 +21,9 @@ import {
   type MerchantBusinessCardSharePayload,
 } from "@/lib/merchantBusinessCardShare";
 import {
+  MERCHANT_BUSINESS_CARD_INTRO_IMAGE_DEFAULT_DURATION_SECONDS,
+  MERCHANT_BUSINESS_CARD_INTRO_IMAGE_MAX_DURATION_SECONDS,
+  MERCHANT_BUSINESS_CARD_INTRO_IMAGE_MIN_DURATION_SECONDS,
   normalizeMerchantBusinessCardContactSectionOrder,
   normalizeMerchantBusinessCardContactFieldOrder,
   type MerchantBusinessCardAsset,
@@ -2301,6 +2305,10 @@ function buildSharePayloadFromSnapshotMatch(
       introVideoUrl: match.allowIntroVideo ? normalizeText(card.contactIntroVideoUrl) : "",
       introPosterUrl: match.allowIntroVideo ? normalizeText(card.contactIntroVideoPosterUrl) : "",
       introVideoMuted: card.contactIntroVideoMuted,
+      introImageUrl: normalizeText(card.contactIntroImageUrl),
+      introImageDurationSeconds: card.contactIntroImageDurationSeconds,
+      introMusicUrl: normalizeText(card.contactIntroMusicUrl),
+      backgroundMusicUrl: normalizeText(card.contactBackgroundMusicUrl),
       contactPageSectionOrder: card.contactPageSectionOrder,
       showContactPoll: card.showContactPoll,
       contactPagePollId: card.contactPagePollId,
@@ -2747,6 +2755,10 @@ function buildShareCardHtml(input: {
   introVideoUrl?: string;
   introPosterUrl?: string;
   introVideoMuted?: boolean;
+  introImageUrl?: string;
+  introImageDurationSeconds?: number;
+  introMusicUrl?: string;
+  backgroundMusicUrl?: string;
   contactPageSectionOrder?: MerchantBusinessCardContactSectionKey[];
   showContactSaveButton?: boolean;
   showContactWebsiteButton?: boolean;
@@ -2793,8 +2805,21 @@ function buildShareCardHtml(input: {
   const contentImageScale = Math.max(0.25, Math.min(3, normalizedContentImageScale));
   const contentImageOpacity = Math.max(0, Math.min(1, normalizedContentImageOpacity));
   const introVideoUrl = input.introVideoUrl ? escapeHtml(resolveIntroPlaybackVideoUrl(input.introVideoUrl)) : "";
+  const introImageUrl = !introVideoUrl && input.introImageUrl ? escapeHtml(input.introImageUrl) : "";
   const introPosterUrl = input.introPosterUrl ? escapeHtml(input.introPosterUrl) : contentImageUrl || previewImageUrl;
   const introVideoMuted = input.introVideoMuted !== false;
+  const introImageDurationSeconds = Math.max(
+    MERCHANT_BUSINESS_CARD_INTRO_IMAGE_MIN_DURATION_SECONDS,
+    Math.min(
+      MERCHANT_BUSINESS_CARD_INTRO_IMAGE_MAX_DURATION_SECONDS,
+      Number.isFinite(input.introImageDurationSeconds)
+        ? Math.round(input.introImageDurationSeconds ?? MERCHANT_BUSINESS_CARD_INTRO_IMAGE_DEFAULT_DURATION_SECONDS)
+        : MERCHANT_BUSINESS_CARD_INTRO_IMAGE_DEFAULT_DURATION_SECONDS,
+    ),
+  );
+  const introMusicUrl = input.introMusicUrl ? escapeHtml(input.introMusicUrl) : "";
+  const backgroundMusicUrl = input.backgroundMusicUrl ? escapeHtml(input.backgroundMusicUrl) : "";
+  const hasIntroMedia = Boolean(introVideoUrl || introImageUrl);
   const contentImageHeight = input.contentImageHeight ?? 0;
   const getUrlOrigin = (value: string) => {
     try {
@@ -2828,6 +2853,9 @@ function buildShareCardHtml(input: {
         contentImageUrl,
         introPosterUrl,
         introVideoUrl,
+        introImageUrl,
+        introMusicUrl,
+        backgroundMusicUrl,
         publishedSiteWarmupUrl,
       ]
         .map((value) => getUrlOrigin(value))
@@ -2842,18 +2870,20 @@ function buildShareCardHtml(input: {
     .join("\n    ");
   const resourcePreloadHtml = [
     introPosterUrl ? `<link rel="preload" as="image" href="${introPosterUrl}" fetchpriority="high" />` : "",
+    introImageUrl ? `<link rel="preload" as="image" href="${introImageUrl}" fetchpriority="high" />` : "",
     introVideoUrl ? `<link rel="preload" as="video" href="${introVideoUrl}" type="video/mp4" crossorigin="anonymous" />` : "",
-    publishedSiteWarmupUrl && !introVideoUrl
+    introMusicUrl ? `<link rel="preload" as="audio" href="${introMusicUrl}" crossorigin="anonymous" />` : "",
+    publishedSiteWarmupUrl && !hasIntroMedia
       ? `<link rel="prefetch" as="fetch" href="${escapedPublishedSiteWarmupUrl}" crossorigin="anonymous" />`
       : "",
-    normalizedOpenTargetUrl && normalizedOpenTargetUrl !== normalizedTargetUrl && !introVideoUrl
+    normalizedOpenTargetUrl && normalizedOpenTargetUrl !== normalizedTargetUrl && !hasIntroMedia
       ? `<link rel="prefetch" href="${openTargetUrl}" as="document" />`
       : "",
   ].filter(Boolean).join("\n    ");
   const publishedSiteWarmupScript = publishedSiteWarmupUrl
     ? `<script>(() => {
       const url = ${serializeInlineScriptValue(publishedSiteWarmupUrl)};
-      const hasIntroVideo = ${introVideoUrl ? "true" : "false"};
+      const hasIntroMedia = ${hasIntroMedia ? "true" : "false"};
       let warmed = false;
       const warm = () => {
         if (warmed) return;
@@ -2871,9 +2901,9 @@ function buildShareCardHtml(input: {
           window.setTimeout(warm, 600);
         }
       };
-      if (hasIntroVideo) {
+      if (hasIntroMedia) {
         window.addEventListener("faolla:intro-complete", scheduleWarm, { once: true });
-        window.setTimeout(scheduleWarm, 12000);
+        window.setTimeout(scheduleWarm, ${Math.max(12000, (introImageDurationSeconds + 2) * 1000)});
       } else {
         scheduleWarm();
       }
@@ -3048,6 +3078,18 @@ function buildShareCardHtml(input: {
         object-fit: contain;
         opacity: 1;
       }
+      .intro-image {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        display: block;
+        width: 100vw;
+        height: 100vh;
+        height: 100dvh;
+        border: 0;
+        background: #000;
+        object-fit: contain;
+      }
       .intro-overlay.has-video-progress .intro-video {
         opacity: 1;
       }
@@ -3121,6 +3163,29 @@ function buildShareCardHtml(input: {
         display: inline-flex;
         align-items: center;
         justify-content: center;
+      }
+      .contact-music-toggle {
+        position: fixed;
+        right: max(14px, calc(env(safe-area-inset-right) + 14px));
+        bottom: max(14px, calc(env(safe-area-inset-bottom) + 14px));
+        z-index: 40;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 44px;
+        height: 44px;
+        border: 1px solid rgba(255,255,255,.72);
+        border-radius: 999px;
+        background: rgba(15,23,42,.9);
+        color: #fff;
+        box-shadow: 0 12px 30px rgba(15,23,42,.24);
+        font: 700 22px/1 "Segoe UI Symbol", "Segoe UI", sans-serif;
+        cursor: pointer;
+      }
+      .contact-music-toggle.is-paused {
+        background: rgba(255,255,255,.94);
+        color: #0f172a;
+        border-color: rgba(15,23,42,.16);
       }
       .intro-debug-panel {
         position: absolute;
@@ -3483,11 +3548,13 @@ function buildShareCardHtml(input: {
   <body>
     ${languageSwitcherHtml}
     ${
-      introVideoUrl
+      hasIntroMedia
         ? `<div class="intro-overlay" data-intro-overlay data-no-translate="1">
             <div class="intro-card${introPosterUrl ? " has-intro-poster" : ""}">
               ${introPosterUrl ? `<img class="intro-poster" src="${introPosterUrl}" alt="" aria-hidden="true" decoding="async" fetchpriority="high" />` : ""}
-              <video class="intro-video"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} src="${introVideoUrl}" autoplay="autoplay"${introVideoMuted ? ` muted="muted"` : ""} playsinline="playsinline" webkit-playsinline="webkit-playsinline" preload="auto" crossorigin="anonymous" data-intro-src="${introVideoUrl}"></video>
+              ${introVideoUrl ? `<video class="intro-video"${introPosterUrl ? ` poster="${introPosterUrl}"` : ""} src="${introVideoUrl}" autoplay="autoplay"${introVideoMuted ? ` muted="muted"` : ""} playsinline="playsinline" webkit-playsinline="webkit-playsinline" preload="auto" crossorigin="anonymous" data-intro-src="${introVideoUrl}"></video>` : ""}
+              ${introImageUrl ? `<img class="intro-image" src="${introImageUrl}" alt="" decoding="async" fetchpriority="high" />` : ""}
+              ${introMusicUrl ? `<audio data-intro-music src="${introMusicUrl}" preload="auto" crossorigin="anonymous"></audio>` : ""}
         <button class="intro-unmute-button" type="button" data-intro-unmute>开启声音</button>
         <button class="intro-skip" type="button" data-intro-skip>跳过</button>
         ${introDebug ? `<pre class="intro-debug-panel" data-intro-debug>intro debug boot</pre>` : ""}
@@ -3507,8 +3574,141 @@ function buildShareCardHtml(input: {
         </div>
       </article>
     </main>
+    ${backgroundMusicUrl ? `<audio data-background-music src="${backgroundMusicUrl}" preload="metadata" loop="loop" crossorigin="anonymous"></audio>
+    <button class="contact-music-toggle is-paused" type="button" data-background-music-toggle title="背景音乐" aria-label="播放背景音乐">&#9835;</button>` : ""}
     <script>${inlineI18nScript}</script>
     ${publishedSiteWarmupScript}
+    ${
+      hasIntroMedia && introMusicUrl
+        ? `<script>(() => {
+      const overlay = document.querySelector("[data-intro-overlay]");
+      const music = overlay?.querySelector("[data-intro-music]");
+      const soundButton = overlay?.querySelector("[data-intro-unmute]");
+      if (!overlay || !music) return;
+      let stopped = false;
+      const showSoundButton = () => {
+        if (!stopped) overlay.classList.add("show-unmute-action");
+      };
+      const hideSoundButton = () => overlay.classList.remove("show-unmute-action");
+      const playMusic = () => {
+        if (stopped) return Promise.resolve(false);
+        try {
+          const result = music.play?.();
+          if (result && typeof result.then === "function") {
+            return result.then(() => {
+              hideSoundButton();
+              return true;
+            }).catch(() => {
+              showSoundButton();
+              return false;
+            });
+          }
+          if (!music.paused) {
+            hideSoundButton();
+            return Promise.resolve(true);
+          }
+        } catch {}
+        showSoundButton();
+        return Promise.resolve(false);
+      };
+      const stopMusic = () => {
+        stopped = true;
+        hideSoundButton();
+        try { music.pause?.(); music.currentTime = 0; } catch {}
+      };
+      window.__faollaStopIntroMusic = stopMusic;
+      soundButton?.addEventListener("click", () => { void playMusic(); });
+      window.addEventListener("faolla:intro-complete", stopMusic, { once: true });
+      document.addEventListener("WeixinJSBridgeReady", () => { void playMusic(); }, { once: true });
+      document.addEventListener("YixinJSBridgeReady", () => { void playMusic(); }, { once: true });
+      void playMusic();
+    })();</script>`
+        : ""
+    }
+    ${
+      introImageUrl
+        ? `<script>(() => {
+      const overlay = document.querySelector("[data-intro-overlay]");
+      const image = overlay?.querySelector(".intro-image");
+      if (!overlay || !image) return;
+      let closed = false;
+      let timer = 0;
+      const closeIntro = () => {
+        if (closed) return;
+        closed = true;
+        if (timer) window.clearTimeout(timer);
+        try { window.__faollaStopIntroMusic?.(); } catch {}
+        overlay.classList.add("is-hidden");
+        try { window.dispatchEvent(new Event("faolla:intro-complete")); } catch {}
+      };
+      overlay.querySelector("[data-intro-skip]")?.addEventListener("click", closeIntro);
+      image.addEventListener("error", closeIntro, { once: true });
+      timer = window.setTimeout(closeIntro, ${introImageDurationSeconds * 1000});
+    })();</script>`
+        : ""
+    }
+    ${
+      backgroundMusicUrl
+        ? `<script>(() => {
+      const music = document.querySelector("[data-background-music]");
+      const button = document.querySelector("[data-background-music-toggle]");
+      if (!music || !button) return;
+      const hasIntro = ${hasIntroMedia ? "true" : "false"};
+      let introComplete = !hasIntro;
+      let userPaused = false;
+      const updateButton = (playing) => {
+        button.classList.toggle("is-paused", !playing);
+        button.setAttribute("aria-label", playing ? "暂停背景音乐" : "播放背景音乐");
+        button.setAttribute("title", playing ? "暂停背景音乐" : "播放背景音乐");
+      };
+      const play = () => {
+        if (!introComplete || userPaused || document.hidden) return Promise.resolve(false);
+        try {
+          const result = music.play?.();
+          if (result && typeof result.then === "function") {
+            return result.then(() => {
+              updateButton(true);
+              return true;
+            }).catch(() => {
+              updateButton(false);
+              return false;
+            });
+          }
+          const playing = !music.paused;
+          updateButton(playing);
+          return Promise.resolve(playing);
+        } catch {
+          updateButton(false);
+          return Promise.resolve(false);
+        }
+      };
+      const pause = () => {
+        try { music.pause?.(); } catch {}
+        updateButton(false);
+      };
+      const begin = () => {
+        introComplete = true;
+        void play();
+      };
+      button.addEventListener("click", () => {
+        if (!music.paused) {
+          userPaused = true;
+          pause();
+          return;
+        }
+        userPaused = false;
+        void play();
+      });
+      window.addEventListener("faolla:intro-complete", begin, { once: true });
+      document.addEventListener("visibilitychange", () => {
+        if (document.hidden) pause();
+        else void play();
+      });
+      window.addEventListener("pagehide", pause);
+      if (!hasIntro) window.setTimeout(begin, 0);
+    })();</script>`
+        : ""
+    }
     ${
       introVideoUrl
         ? `<script>(() => {
@@ -3569,11 +3769,13 @@ function buildShareCardHtml(input: {
         return false;
       };
       const closeIntro = () => {
+        if (closed) return;
         debug("close");
         closed = true;
         overlay.classList.remove("show-unmute-action");
         overlay.classList.add("is-hidden");
         try { video && video.pause(); } catch {}
+        try { window.__faollaStopIntroMusic?.(); } catch {}
         try { window.dispatchEvent(new Event("faolla:intro-complete")); } catch {}
       };
       if (!video) {
@@ -4160,6 +4362,38 @@ export async function GET(
   const introVideoUrl = introVideoSource
     ? normalizeMerchantBusinessCardShareVideoUrl(introVideoSource, publicOrigin) || introVideoSource
     : "";
+  const introImageSource = introVideoUrl
+    ? ""
+    : normalizeText(payload.introImageUrl) || normalizeText(snapshotCard?.contactIntroImageUrl);
+  const introImageUrl = introImageSource
+    ? forcePublicStorageImageUrl(
+        normalizeMerchantBusinessCardShareImageUrl(introImageSource, publicOrigin) || introImageSource,
+        publicOrigin,
+      )
+    : "";
+  const introImageDurationSeconds = Math.max(
+    MERCHANT_BUSINESS_CARD_INTRO_IMAGE_MIN_DURATION_SECONDS,
+    Math.min(
+      MERCHANT_BUSINESS_CARD_INTRO_IMAGE_MAX_DURATION_SECONDS,
+      Math.round(
+        payload.introImageDurationSeconds ??
+          snapshotCard?.contactIntroImageDurationSeconds ??
+          MERCHANT_BUSINESS_CARD_INTRO_IMAGE_DEFAULT_DURATION_SECONDS,
+      ),
+    ),
+  );
+  const introMusicSource =
+    introVideoUrl || introImageUrl
+      ? normalizeText(payload.introMusicUrl) || normalizeText(snapshotCard?.contactIntroMusicUrl)
+      : "";
+  const introMusicUrl = introMusicSource
+    ? normalizeMerchantBusinessCardShareAudioUrl(introMusicSource, publicOrigin) || introMusicSource
+    : "";
+  const backgroundMusicSource =
+    normalizeText(payload.backgroundMusicUrl) || normalizeText(snapshotCard?.contactBackgroundMusicUrl);
+  const backgroundMusicUrl = backgroundMusicSource
+    ? normalizeMerchantBusinessCardShareAudioUrl(backgroundMusicSource, publicOrigin) || backgroundMusicSource
+    : "";
   const introPosterSource =
     snapshotMatch?.allowIntroVideo === false
       ? ""
@@ -4192,6 +4426,13 @@ export async function GET(
     detailImageY: payload.detailImageY ?? snapshotCard?.contactPageImageY,
     detailImageScale: payload.detailImageScale ?? snapshotCard?.contactPageImageScale,
     detailImageOpacity: payload.detailImageOpacity ?? snapshotCard?.contactPageImageOpacity,
+    introVideoUrl,
+    introPosterUrl,
+    introVideoMuted: payload.introVideoMuted ?? snapshotCard?.contactIntroVideoMuted,
+    introImageUrl,
+    introImageDurationSeconds,
+    introMusicUrl,
+    backgroundMusicUrl,
     targetUrl: payload.targetUrl,
     name: payload.name,
     contact: payload.contact,
@@ -4253,6 +4494,10 @@ export async function GET(
       introVideoUrl: introVideoUrl || undefined,
       introPosterUrl: introPosterUrl || undefined,
       introVideoMuted: payload.introVideoMuted ?? snapshotCard?.contactIntroVideoMuted,
+      introImageUrl: introImageUrl || undefined,
+      introImageDurationSeconds,
+      introMusicUrl: introMusicUrl || undefined,
+      backgroundMusicUrl: backgroundMusicUrl || undefined,
       contactPageSectionOrder: payload.contactPageSectionOrder ?? snapshotCard?.contactPageSectionOrder,
       showContactSaveButton: payload.showContactSaveButton ?? snapshotCard?.showContactSaveButton,
       showContactWebsiteButton: payload.showContactWebsiteButton ?? snapshotCard?.showContactWebsiteButton,

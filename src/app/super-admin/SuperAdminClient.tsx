@@ -540,6 +540,10 @@ function buildSupportMerchantCardLink(card: MerchantBusinessCardAsset | null) {
     introVideoUrl: normalizeSupportDetailText(card.contactIntroVideoUrl),
     introPosterUrl: normalizeSupportDetailText(card.contactIntroVideoPosterUrl),
     introVideoMuted: card.contactIntroVideoMuted,
+    introImageUrl: normalizeSupportDetailText(card.contactIntroImageUrl),
+    introImageDurationSeconds: card.contactIntroImageDurationSeconds,
+    introMusicUrl: normalizeSupportDetailText(card.contactIntroMusicUrl),
+    backgroundMusicUrl: normalizeSupportDetailText(card.contactBackgroundMusicUrl),
     targetUrl,
     contact: {
       displayName: normalizeSupportDetailText(card.contacts.contactName) || normalizeSupportDetailText(card.name),

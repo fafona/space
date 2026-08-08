@@ -16,6 +16,9 @@ import { showGlobalToast } from "@/lib/globalToast";
 import {
   MERCHANT_BUSINESS_CARD_RATIO_OPTIONS,
   MERCHANT_BUSINESS_CARD_CUSTOM_CONTACT_ICON_PRESETS,
+  MERCHANT_BUSINESS_CARD_INTRO_IMAGE_DEFAULT_DURATION_SECONDS,
+  MERCHANT_BUSINESS_CARD_INTRO_IMAGE_MAX_DURATION_SECONDS,
+  MERCHANT_BUSINESS_CARD_INTRO_IMAGE_MIN_DURATION_SECONDS,
   MERCHANT_BUSINESS_CARD_PHONE_LIMIT,
   applyMerchantBusinessCardContactFieldOrderToTextLayout,
   createBlankMerchantBusinessCardDraft,
@@ -229,6 +232,13 @@ const CONTACT_INTRO_VIDEO_SOURCE_LIMIT_BYTES = 80 * 1024 * 1024;
 const DEFAULT_CONTACT_INTRO_VIDEO_OUTPUT_LIMIT_MB = 3;
 const CONTACT_INTRO_VIDEO_ACCEPT =
   "video/mp4,video/x-m4v,video/webm,video/ogg,video/quicktime,video/x-matroska,video/x-msvideo,video/3gpp,video/3gpp2,video/mpeg,.mp4,.m4v,.mov,.webm,.ogv,.ogg,.mkv,.avi,.3gp,.3g2,.mpg,.mpeg";
+const CONTACT_INTRO_IMAGE_LIMIT_BYTES = 200 * 1024;
+const CONTACT_INTRO_AUDIO_LIMIT_BYTES = 200 * 1024;
+const CONTACT_BACKGROUND_AUDIO_LIMIT_BYTES = 5 * 1024 * 1024;
+const CONTACT_INTRO_AUDIO_MAX_DURATION_SECONDS = 15;
+const CONTACT_BACKGROUND_AUDIO_MAX_DURATION_SECONDS = 5 * 60;
+const CONTACT_AUDIO_ACCEPT =
+  "audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/ogg,audio/aac,audio/webm,audio/mp4,.mp3,.wav,.ogg,.oga,.aac,.m4a,.webm";
 const ALL_TYPOGRAPHY_KEYS: Array<keyof MerchantBusinessCardDraft["typography"]> = [
   "name",
   "title",
@@ -314,6 +324,41 @@ function isShortBusinessCardShareLink(value: string) {
   }
 }
 
+function readAudioDurationSeconds(file: File) {
+  return new Promise<number>((resolve, reject) => {
+    if (typeof document === "undefined" || typeof URL === "undefined") {
+      reject(new Error("audio_metadata_unavailable"));
+      return;
+    }
+    const objectUrl = URL.createObjectURL(file);
+    const audio = document.createElement("audio");
+    let settled = false;
+    const finish = (duration?: number, error?: Error) => {
+      if (settled) return;
+      settled = true;
+      audio.removeAttribute("src");
+      audio.load();
+      URL.revokeObjectURL(objectUrl);
+      if (error || !Number.isFinite(duration) || Number(duration) <= 0) {
+        reject(error || new Error("audio_duration_unavailable"));
+      } else {
+        resolve(Number(duration));
+      }
+    };
+    const timer = window.setTimeout(() => finish(undefined, new Error("audio_metadata_timeout")), 12_000);
+    audio.preload = "metadata";
+    audio.onloadedmetadata = () => {
+      window.clearTimeout(timer);
+      finish(audio.duration);
+    };
+    audio.onerror = () => {
+      window.clearTimeout(timer);
+      finish(undefined, new Error("unsupported_audio"));
+    };
+    audio.src = objectUrl;
+  });
+}
+
 function resolveSameOriginBusinessCardShareCheckUrl(value: string) {
   const normalized = normalizeText(value);
   if (!normalized) return "";
@@ -378,6 +423,10 @@ function resolveCardShortLink(card: MerchantBusinessCardAsset | null | undefined
     introVideoUrl: normalizeText(card.contactIntroVideoUrl),
     introPosterUrl: normalizeText(card.contactIntroVideoPosterUrl),
     introVideoMuted: card.contactIntroVideoMuted,
+    introImageUrl: normalizeText(card.contactIntroImageUrl),
+    introImageDurationSeconds: card.contactIntroImageDurationSeconds,
+    introMusicUrl: normalizeText(card.contactIntroMusicUrl),
+    backgroundMusicUrl: normalizeText(card.contactBackgroundMusicUrl),
     targetUrl: normalizeText(card.targetUrl),
   });
 }
@@ -1280,6 +1329,10 @@ const BUSINESS_CARD_FRONT_RENDER_IGNORED_FIELDS = [
   "contactIntroVideoUrl",
   "contactIntroVideoPosterUrl",
   "contactIntroVideoMuted",
+  "contactIntroImageUrl",
+  "contactIntroImageDurationSeconds",
+  "contactIntroMusicUrl",
+  "contactBackgroundMusicUrl",
   "contactPageImageUrl",
   "contactPageImageHeight",
   "contactPageImageLinkUrl",
@@ -1522,6 +1575,10 @@ function ContactCardSurface({
   introVideoUrl,
   introVideoPosterUrl,
   introVideoMuted = true,
+  introImageUrl,
+  introImageDurationSeconds = MERCHANT_BUSINESS_CARD_INTRO_IMAGE_DEFAULT_DURATION_SECONDS,
+  introMusicUrl,
+  backgroundMusicUrl,
   imageUrl,
   imageHeight,
   imageLinkUrl,
@@ -1548,6 +1605,10 @@ function ContactCardSurface({
   introVideoUrl?: string;
   introVideoPosterUrl?: string;
   introVideoMuted?: boolean;
+  introImageUrl?: string;
+  introImageDurationSeconds?: number;
+  introMusicUrl?: string;
+  backgroundMusicUrl?: string;
   imageUrl?: string;
   imageHeight: number;
   imageLinkUrl?: string;
@@ -1569,6 +1630,11 @@ function ContactCardSurface({
   const normalizedIntroVideoUrl = normalizeText(introVideoUrl);
   const normalizedIntroVideoPosterUrl = normalizeText(introVideoPosterUrl);
   const hasIntroVideo = Boolean(normalizedIntroVideoUrl);
+  const normalizedIntroImageUrl = hasIntroVideo ? "" : normalizeText(introImageUrl);
+  const hasIntroImage = Boolean(normalizedIntroImageUrl);
+  const hasIntroMedia = hasIntroVideo || hasIntroImage;
+  const normalizedIntroMusicUrl = hasIntroMedia ? normalizeText(introMusicUrl) : "";
+  const normalizedBackgroundMusicUrl = normalizeText(backgroundMusicUrl);
   const domainLabel = normalizeText(targetUrl).replace(/^https?:\/\//i, "");
   const shouldShowActions = showContactSaveButton || showContactWebsiteButton;
 
@@ -1682,11 +1748,30 @@ function ContactCardSurface({
           />
         </div>
       ) : null}
+      {hasIntroImage ? (
+        <div className="mb-5 overflow-hidden rounded-[28px] border border-slate-200 bg-black shadow-[0_16px_42px_rgba(15,23,42,.08)]">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={normalizedIntroImageUrl}
+            alt="开场图片预览"
+            className="block aspect-video w-full bg-black object-contain"
+          />
+          <div className="bg-slate-950 px-3 py-2 text-center text-[11px] text-white/70">
+            展示 {Math.round(introImageDurationSeconds)} 秒，可跳过
+          </div>
+        </div>
+      ) : null}
+      {normalizedIntroMusicUrl ? (
+        <div className="mb-5 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+          <div className="mb-2 text-[11px] font-semibold text-slate-500">开场音乐预览</div>
+          <audio className="h-9 w-full" src={normalizedIntroMusicUrl} controls preload="metadata" />
+        </div>
+      ) : null}
 
       {normalizedSectionOrder.map((sectionKey) => {
         const section = renderContactSection(sectionKey);
         return section ? (
-          <div key={sectionKey} className={hasIntroVideo || sectionKey !== normalizedSectionOrder[0] ? "mt-5" : ""}>
+          <div key={sectionKey} className={hasIntroMedia || sectionKey !== normalizedSectionOrder[0] ? "mt-5" : ""}>
             {section}
           </div>
         ) : null;
@@ -1710,6 +1795,13 @@ function ContactCardSurface({
               进入官网
             </button>
           ) : null}
+        </div>
+      ) : null}
+
+      {normalizedBackgroundMusicUrl ? (
+        <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+          <div className="mb-2 text-[11px] font-semibold text-slate-500">联系卡背景音乐预览（公开页循环播放）</div>
+          <audio className="h-9 w-full" src={normalizedBackgroundMusicUrl} controls loop preload="metadata" />
         </div>
       ) : null}
 
@@ -1913,6 +2005,20 @@ export default function MerchantBusinessCardManager({
   const [contactIntroVideoFileName, setContactIntroVideoFileName] = useState("");
   const [contactIntroVideoFileDetail, setContactIntroVideoFileDetail] = useState("");
   const [isContactIntroVideoProcessing, setIsContactIntroVideoProcessing] = useState(false);
+  const [contactIntroImageFileName, setContactIntroImageFileName] = useState("");
+  const [contactIntroImageFileDetail, setContactIntroImageFileDetail] = useState("");
+  const [isContactIntroImageProcessing, setIsContactIntroImageProcessing] = useState(false);
+  const [contactIntroMusicFileName, setContactIntroMusicFileName] = useState("");
+  const [contactIntroMusicFileDetail, setContactIntroMusicFileDetail] = useState("");
+  const [isContactIntroMusicProcessing, setIsContactIntroMusicProcessing] = useState(false);
+  const [contactBackgroundMusicFileName, setContactBackgroundMusicFileName] = useState("");
+  const [contactBackgroundMusicFileDetail, setContactBackgroundMusicFileDetail] = useState("");
+  const [isContactBackgroundMusicProcessing, setIsContactBackgroundMusicProcessing] = useState(false);
+  const isContactMediaProcessing =
+    isContactIntroVideoProcessing ||
+    isContactIntroImageProcessing ||
+    isContactIntroMusicProcessing ||
+    isContactBackgroundMusicProcessing;
   const hiddenPreviewRef = useRef<HTMLDivElement | null>(null);
   const backgroundImageDragRef = useRef<{
     pointerId: number;
@@ -2107,6 +2213,10 @@ export default function MerchantBusinessCardManager({
       introVideoUrl: canUseIntroVideo ? normalizeText(draft.contactIntroVideoUrl) : "",
       introPosterUrl: canUseIntroVideo ? normalizeText(draft.contactIntroVideoPosterUrl) : "",
       introVideoMuted: draft.contactIntroVideoMuted,
+      introImageUrl: normalizeText(draft.contactIntroImageUrl),
+      introImageDurationSeconds: draft.contactIntroImageDurationSeconds,
+      introMusicUrl: normalizeText(draft.contactIntroMusicUrl),
+      backgroundMusicUrl: normalizeText(draft.contactBackgroundMusicUrl),
       contactPageSectionOrder: draft.contactPageSectionOrder,
       showContactPoll: draft.showContactPoll,
       contactPagePollId: draft.contactPagePollId,
@@ -2133,6 +2243,10 @@ export default function MerchantBusinessCardManager({
     draft.contactIntroVideoPosterUrl,
     draft.contactIntroVideoMuted,
     draft.contactIntroVideoUrl,
+    draft.contactIntroImageUrl,
+    draft.contactIntroImageDurationSeconds,
+    draft.contactIntroMusicUrl,
+    draft.contactBackgroundMusicUrl,
     draft.contactPageSectionOrder,
     draft.contactPagePollBlockId,
     draft.contactPagePollId,
@@ -2250,6 +2364,21 @@ export default function MerchantBusinessCardManager({
     });
   };
 
+  const resetContactMediaPickerState = () => {
+    setContactIntroVideoFileName("");
+    setContactIntroVideoFileDetail("");
+    setIsContactIntroVideoProcessing(false);
+    setContactIntroImageFileName("");
+    setContactIntroImageFileDetail("");
+    setIsContactIntroImageProcessing(false);
+    setContactIntroMusicFileName("");
+    setContactIntroMusicFileDetail("");
+    setIsContactIntroMusicProcessing(false);
+    setContactBackgroundMusicFileName("");
+    setContactBackgroundMusicFileDetail("");
+    setIsContactBackgroundMusicProcessing(false);
+  };
+
   const openBlankEditor = () => {
     if (!canCreate) return;
     if (cardLimitReached) {
@@ -2266,9 +2395,7 @@ export default function MerchantBusinessCardManager({
     setContactPageImageFileName("");
     setContactPageImageFileDetail("");
     setIsContactPageImageProcessing(false);
-    setContactIntroVideoFileName("");
-    setContactIntroVideoFileDetail("");
-    setIsContactIntroVideoProcessing(false);
+    resetContactMediaPickerState();
     setDraftShareCode(createMerchantBusinessCardShareKeyCode());
     setSelectedFieldKeys(["merchantName"]);
     setEditingCardId(null);
@@ -2289,9 +2416,7 @@ export default function MerchantBusinessCardManager({
     setContactPageImageFileName("");
     setContactPageImageFileDetail("");
     setIsContactPageImageProcessing(false);
-    setContactIntroVideoFileName("");
-    setContactIntroVideoFileDetail("");
-    setIsContactIntroVideoProcessing(false);
+    resetContactMediaPickerState();
     setDraftShareCode(createMerchantBusinessCardShareKeyCode());
     setSelectedFieldKeys(["merchantName"]);
     setEditingCardId(card.id);
@@ -2317,9 +2442,7 @@ export default function MerchantBusinessCardManager({
     setContactPageImageFileName("");
     setContactPageImageFileDetail("");
     setIsContactPageImageProcessing(false);
-    setContactIntroVideoFileName("");
-    setContactIntroVideoFileDetail("");
-    setIsContactIntroVideoProcessing(false);
+    resetContactMediaPickerState();
     setDraftShareCode(createMerchantBusinessCardShareKeyCode());
     setSelectedFieldKeys(["merchantName"]);
     setEditingCardId(null);
@@ -2386,8 +2509,8 @@ export default function MerchantBusinessCardManager({
   };
 
   const handleSaveDraft = async () => {
-    if (isContactIntroVideoProcessing) {
-      setTip("开场视频还在上传转换中，请完成后再保存");
+    if (isContactMediaProcessing) {
+      setTip("联系卡媒体还在处理中，请完成后再保存");
       return;
     }
     setIsDraftSaving(true);
@@ -2491,8 +2614,8 @@ export default function MerchantBusinessCardManager({
 
   const handleGenerate = async () => {
     if (!websiteUrl || !qrReadyForCurrentDraft) return;
-    if (isContactIntroVideoProcessing) {
-      setTip("开场视频还在上传转换中，请完成后再保存");
+    if (isContactMediaProcessing) {
+      setTip("联系卡媒体还在处理中，请完成后再保存");
       return;
     }
     setIsGenerating(true);
@@ -2570,6 +2693,11 @@ export default function MerchantBusinessCardManager({
   const handleContactIntroVideoUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    if (isContactMediaProcessing) {
+      setTip("请等待当前联系卡媒体处理完成");
+      event.target.value = "";
+      return;
+    }
     if (!canUseIntroVideo) {
       setTip("当前账号未开启联系卡开场视频权限");
       event.target.value = "";
@@ -2633,7 +2761,10 @@ export default function MerchantBusinessCardManager({
         ...current,
         contactIntroVideoUrl: uploadedUrl,
         contactIntroVideoPosterUrl: posterUrl,
+        contactIntroImageUrl: "",
       }));
+      setContactIntroImageFileName("");
+      setContactIntroImageFileDetail("");
       setContactIntroVideoFileName(fileName || "已上传开场视频");
       setContactIntroVideoFileDetail(`原始 ${formatImageResultSize(file.size)}，已转为快速播放 MP4`);
     } catch (error) {
@@ -2651,7 +2782,209 @@ export default function MerchantBusinessCardManager({
     setContactIntroVideoFileName("");
     setContactIntroVideoFileDetail("");
     setIsContactIntroVideoProcessing(false);
-    applyDraft((current) => ({ ...current, contactIntroVideoUrl: "", contactIntroVideoPosterUrl: "" }));
+    setContactIntroMusicFileName("");
+    setContactIntroMusicFileDetail("");
+    applyDraft((current) => ({
+      ...current,
+      contactIntroVideoUrl: "",
+      contactIntroVideoPosterUrl: "",
+      contactIntroMusicUrl: current.contactIntroImageUrl ? current.contactIntroMusicUrl : "",
+    }));
+  };
+
+  const handleContactIntroImageUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (isContactMediaProcessing) {
+      setTip("请等待当前联系卡媒体处理完成");
+      event.target.value = "";
+      return;
+    }
+    const previousFileName = contactIntroImageFileName;
+    const previousFileDetail = contactIntroImageFileDetail;
+    try {
+      const fileName = normalizeText(file.name);
+      const fileType = normalizeText(file.type).toLowerCase();
+      if (!fileType.startsWith("image/") && !/\.(jpe?g|png|webp|gif|bmp)$/i.test(fileName)) {
+        setTip("请选择图片文件");
+        return;
+      }
+      setContactIntroImageFileName(fileName || "开场图片");
+      setContactIntroImageFileDetail("正在压缩并上传...");
+      setIsContactIntroImageProcessing(true);
+      const optimized = await compressImageFileWithinLimit(file, CONTACT_INTRO_IMAGE_LIMIT_BYTES);
+      if (optimized.bytes > CONTACT_INTRO_IMAGE_LIMIT_BYTES) {
+        throw new Error("自动压缩后仍超过 200 KB，请换一张图片");
+      }
+      const assetHint = sanitizeShareAssetHint(
+        `${normalizeText(profile.domainPrefix) || normalizeText(draft.name) || normalizeText(profile.merchantName)}-intro-image`,
+      );
+      const uploadedUrl = await uploadImageDataUrlToPublicStorage(
+        optimized.dataUrl,
+        assetHint,
+        "business-card-intro-image",
+        {
+          operationModule: "经营中心 > 名片夹",
+          operationAction: "上传联系卡开场图片",
+          operationSummary: `在经营中心 > 名片夹上传联系卡开场图片：${draft.name || profile.merchantName || "未命名名片"}`,
+        },
+      );
+      if (!uploadedUrl) throw new Error("开场图片上传失败，请重试");
+      applyDraft((current) => ({
+        ...current,
+        contactIntroVideoUrl: "",
+        contactIntroVideoPosterUrl: "",
+        contactIntroImageUrl: uploadedUrl,
+      }));
+      setContactIntroVideoFileName("");
+      setContactIntroVideoFileDetail("");
+      setContactIntroImageFileName(fileName || "已上传开场图片");
+      setContactIntroImageFileDetail(
+        `${optimized.compressed ? "压缩后" : "大小"} ${formatImageResultSize(optimized.bytes)}`,
+      );
+    } catch (error) {
+      setContactIntroImageFileName(previousFileName);
+      setContactIntroImageFileDetail(previousFileDetail);
+      setTip(error instanceof Error && normalizeText(error.message) ? error.message : "开场图片上传失败，请重试");
+    } finally {
+      setIsContactIntroImageProcessing(false);
+      event.target.value = "";
+    }
+  };
+
+  const handleClearContactIntroImage = () => {
+    setContactIntroImageFileName("");
+    setContactIntroImageFileDetail("");
+    setIsContactIntroImageProcessing(false);
+    setContactIntroMusicFileName("");
+    setContactIntroMusicFileDetail("");
+    applyDraft((current) => ({
+      ...current,
+      contactIntroImageUrl: "",
+      contactIntroMusicUrl: current.contactIntroVideoUrl ? current.contactIntroMusicUrl : "",
+    }));
+  };
+
+  const handleContactIntroMusicUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (isContactMediaProcessing) {
+      setTip("请等待当前联系卡媒体处理完成");
+      event.target.value = "";
+      return;
+    }
+    const previousFileName = contactIntroMusicFileName;
+    const previousFileDetail = contactIntroMusicFileDetail;
+    try {
+      const fileName = normalizeText(file.name);
+      const fileType = normalizeText(file.type).toLowerCase();
+      if (!fileType.startsWith("audio/") && !/\.(mp3|wav|ogg|oga|aac|m4a|webm)$/i.test(fileName)) {
+        setTip("请选择音频文件");
+        return;
+      }
+      if (file.size > CONTACT_INTRO_AUDIO_LIMIT_BYTES) {
+        setTip("开场音乐不能超过 200 KB");
+        return;
+      }
+      setContactIntroMusicFileName(fileName || "开场音乐");
+      setContactIntroMusicFileDetail("正在检测时长...");
+      setIsContactIntroMusicProcessing(true);
+      const duration = await readAudioDurationSeconds(file);
+      if (duration > CONTACT_INTRO_AUDIO_MAX_DURATION_SECONDS + 0.05) {
+        throw new Error("开场音乐最长 15 秒");
+      }
+      setContactIntroMusicFileDetail("正在上传...");
+      const uploaded = await uploadFileToPublicStorageWithMetadata(file, {
+        merchantHint: sanitizeShareAssetHint(`${profile.domainPrefix || draft.name || profile.merchantName}-intro-music`),
+        folder: "merchant-audio",
+        usage: "business-card-intro-audio",
+        operation: {
+          operationModule: "经营中心 > 名片夹",
+          operationAction: "上传联系卡开场音乐",
+          operationSummary: `在经营中心 > 名片夹上传联系卡开场音乐：${draft.name || profile.merchantName || "未命名名片"}`,
+        },
+      });
+      const uploadedUrl = normalizeText(uploaded?.url);
+      if (!uploadedUrl) throw new Error("开场音乐上传失败，请重试");
+      applyDraft((current) => ({ ...current, contactIntroMusicUrl: uploadedUrl }));
+      setContactIntroMusicFileName(fileName || "已上传开场音乐");
+      setContactIntroMusicFileDetail(`${duration.toFixed(1)} 秒 · ${formatImageResultSize(file.size)}`);
+    } catch (error) {
+      setContactIntroMusicFileName(previousFileName);
+      setContactIntroMusicFileDetail(previousFileDetail);
+      setTip(error instanceof Error && normalizeText(error.message) ? error.message : "开场音乐上传失败，请重试");
+    } finally {
+      setIsContactIntroMusicProcessing(false);
+      event.target.value = "";
+    }
+  };
+
+  const handleClearContactIntroMusic = () => {
+    setContactIntroMusicFileName("");
+    setContactIntroMusicFileDetail("");
+    setIsContactIntroMusicProcessing(false);
+    applyDraft((current) => ({ ...current, contactIntroMusicUrl: "" }));
+  };
+
+  const handleContactBackgroundMusicUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (isContactMediaProcessing) {
+      setTip("请等待当前联系卡媒体处理完成");
+      event.target.value = "";
+      return;
+    }
+    const previousFileName = contactBackgroundMusicFileName;
+    const previousFileDetail = contactBackgroundMusicFileDetail;
+    try {
+      const fileName = normalizeText(file.name);
+      const fileType = normalizeText(file.type).toLowerCase();
+      if (!fileType.startsWith("audio/") && !/\.(mp3|wav|ogg|oga|aac|m4a|webm)$/i.test(fileName)) {
+        setTip("请选择音频文件");
+        return;
+      }
+      if (file.size > CONTACT_BACKGROUND_AUDIO_LIMIT_BYTES) {
+        setTip("联系卡背景音乐不能超过 5 MB");
+        return;
+      }
+      setContactBackgroundMusicFileName(fileName || "背景音乐");
+      setContactBackgroundMusicFileDetail("正在检测时长...");
+      setIsContactBackgroundMusicProcessing(true);
+      const duration = await readAudioDurationSeconds(file);
+      if (duration > CONTACT_BACKGROUND_AUDIO_MAX_DURATION_SECONDS + 0.05) {
+        throw new Error("联系卡背景音乐最长 5 分钟");
+      }
+      setContactBackgroundMusicFileDetail("正在上传...");
+      const uploaded = await uploadFileToPublicStorageWithMetadata(file, {
+        merchantHint: sanitizeShareAssetHint(`${profile.domainPrefix || draft.name || profile.merchantName}-background-music`),
+        folder: "merchant-audio",
+        usage: "business-card-background-audio",
+        operation: {
+          operationModule: "经营中心 > 名片夹",
+          operationAction: "上传联系卡背景音乐",
+          operationSummary: `在经营中心 > 名片夹上传联系卡背景音乐：${draft.name || profile.merchantName || "未命名名片"}`,
+        },
+      });
+      const uploadedUrl = normalizeText(uploaded?.url);
+      if (!uploadedUrl) throw new Error("背景音乐上传失败，请重试");
+      applyDraft((current) => ({ ...current, contactBackgroundMusicUrl: uploadedUrl }));
+      setContactBackgroundMusicFileName(fileName || "已上传背景音乐");
+      setContactBackgroundMusicFileDetail(`${duration.toFixed(1)} 秒 · ${formatImageResultSize(file.size)}`);
+    } catch (error) {
+      setContactBackgroundMusicFileName(previousFileName);
+      setContactBackgroundMusicFileDetail(previousFileDetail);
+      setTip(error instanceof Error && normalizeText(error.message) ? error.message : "背景音乐上传失败，请重试");
+    } finally {
+      setIsContactBackgroundMusicProcessing(false);
+      event.target.value = "";
+    }
+  };
+
+  const handleClearContactBackgroundMusic = () => {
+    setContactBackgroundMusicFileName("");
+    setContactBackgroundMusicFileDetail("");
+    setIsContactBackgroundMusicProcessing(false);
+    applyDraft((current) => ({ ...current, contactBackgroundMusicUrl: "" }));
   };
 
   const updateDraftPhones = (nextPhones: string[]) => {
@@ -2799,6 +3132,10 @@ export default function MerchantBusinessCardManager({
       introVideoUrl: normalizeText(card.contactIntroVideoUrl),
       introPosterUrl: normalizeText(card.contactIntroVideoPosterUrl),
       introVideoMuted: card.contactIntroVideoMuted,
+      introImageUrl: normalizeText(card.contactIntroImageUrl),
+      introImageDurationSeconds: card.contactIntroImageDurationSeconds,
+      introMusicUrl: normalizeText(card.contactIntroMusicUrl),
+      backgroundMusicUrl: normalizeText(card.contactBackgroundMusicUrl),
       contactPageSectionOrder: card.contactPageSectionOrder,
       showContactPoll: card.showContactPoll,
       contactPagePollId: card.contactPagePollId,
@@ -2971,11 +3308,23 @@ export default function MerchantBusinessCardManager({
   const previewContactImageScale = previewAsset?.contactPageImageScale ?? draft.contactPageImageScale;
   const previewContactImageOpacity = previewAsset?.contactPageImageOpacity ?? draft.contactPageImageOpacity;
   const previewIntroVideoUrl = canUseIntroVideo
-    ? normalizeText(previewAsset?.contactIntroVideoUrl) || normalizeText(draft.contactIntroVideoUrl)
+    ? normalizeText(previewAsset ? previewAsset.contactIntroVideoUrl : draft.contactIntroVideoUrl)
     : "";
   const previewIntroVideoPosterUrl = canUseIntroVideo
-    ? normalizeText(previewAsset?.contactIntroVideoPosterUrl) || normalizeText(draft.contactIntroVideoPosterUrl)
+    ? normalizeText(previewAsset ? previewAsset.contactIntroVideoPosterUrl : draft.contactIntroVideoPosterUrl)
     : "";
+  const previewIntroImageUrl = previewIntroVideoUrl
+    ? ""
+    : normalizeText(previewAsset ? previewAsset.contactIntroImageUrl : draft.contactIntroImageUrl);
+  const previewIntroImageDurationSeconds = previewAsset
+    ? previewAsset.contactIntroImageDurationSeconds
+    : draft.contactIntroImageDurationSeconds;
+  const previewIntroMusicUrl = normalizeText(
+    previewAsset ? previewAsset.contactIntroMusicUrl : draft.contactIntroMusicUrl,
+  );
+  const previewBackgroundMusicUrl = normalizeText(
+    previewAsset ? previewAsset.contactBackgroundMusicUrl : draft.contactBackgroundMusicUrl,
+  );
   const showPreviewGenerateButton = !previewAsset;
   const backgroundImagePickerStatus = resolveFilePickerStatus(
     backgroundImageFileName,
@@ -2996,6 +3345,26 @@ export default function MerchantBusinessCardManager({
     "已上传开场视频，可重新选择",
   );
   const contactIntroVideoPickerDetail = isContactIntroVideoProcessing ? "上传中..." : contactIntroVideoFileDetail;
+  const contactIntroImagePickerStatus = resolveFilePickerStatus(
+    contactIntroImageFileName,
+    normalizeText(draft.contactIntroImageUrl),
+    "已上传开场图片，可重新选择",
+  );
+  const contactIntroImagePickerDetail = isContactIntroImageProcessing ? "压缩并上传中..." : contactIntroImageFileDetail;
+  const contactIntroMusicPickerStatus = resolveFilePickerStatus(
+    contactIntroMusicFileName,
+    normalizeText(draft.contactIntroMusicUrl),
+    "已上传开场音乐，可重新选择",
+  );
+  const contactIntroMusicPickerDetail = isContactIntroMusicProcessing ? "上传中..." : contactIntroMusicFileDetail;
+  const contactBackgroundMusicPickerStatus = resolveFilePickerStatus(
+    contactBackgroundMusicFileName,
+    normalizeText(draft.contactBackgroundMusicUrl),
+    "已上传背景音乐，可重新选择",
+  );
+  const contactBackgroundMusicPickerDetail = isContactBackgroundMusicProcessing
+    ? "上传中..."
+    : contactBackgroundMusicFileDetail;
   const folderGridContent =
     normalizedCards.length > 0 ? (
       <div className="space-y-4">
@@ -3256,7 +3625,7 @@ export default function MerchantBusinessCardManager({
                     type="button"
                     className="min-w-[88px] rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
                     onClick={() => void handleSaveDraft()}
-                    disabled={isGenerating || isDraftSaving || isContactIntroVideoProcessing}
+                    disabled={isGenerating || isDraftSaving || isContactMediaProcessing}
                   >
                     {isDraftSaving ? "保存中..." : "保存"}
                   </button>
@@ -3266,7 +3635,7 @@ export default function MerchantBusinessCardManager({
                       type="button"
                       className="min-w-[88px] rounded border bg-white px-4 py-2 text-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                       onClick={() => void handleSaveDraft()}
-                      disabled={isGenerating || isDraftSaving || isContactIntroVideoProcessing}
+                      disabled={isGenerating || isDraftSaving || isContactMediaProcessing}
                     >
                       {isDraftSaving ? "保存中..." : "保存"}
                     </button>
@@ -3274,7 +3643,7 @@ export default function MerchantBusinessCardManager({
                       type="button"
                       className="min-w-[118px] rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
                       onClick={() => void handleGenerate()}
-                      disabled={!websiteUrl || !qrReadyForCurrentDraft || isGenerating || isDraftSaving || isContactIntroVideoProcessing}
+                      disabled={!websiteUrl || !qrReadyForCurrentDraft || isGenerating || isDraftSaving || isContactMediaProcessing}
                     >
                       {isGenerating ? "生成中..." : "生成"}
                     </button>
@@ -3476,62 +3845,195 @@ export default function MerchantBusinessCardManager({
                           <label className="block text-xs text-slate-600">背景色透明度<div className="mt-1 flex items-center gap-3 rounded border bg-white px-3 py-2"><input type="range" min="0" max="1" step="0.01" className="min-w-0 flex-1" value={draft.backgroundColorOpacity} onChange={(event) => applyDraft((current) => ({ ...current, backgroundColorOpacity: clamp(Number(event.target.value), 0, 1) }))} /><span className="w-12 shrink-0 text-right text-xs text-slate-500">{formatOpacityPercent(draft.backgroundColorOpacity)}</span></div></label>
                         </div>
                       </div>
+                      {draft.mode === "link" ? (
+                        <div className="mt-4 border-t border-slate-200 pt-4">
+                          <div className="text-xs font-semibold text-slate-700">联系卡背景音乐</div>
+                          <div className="mt-1 text-[11px] leading-5 text-slate-400">
+                            最长 5 分钟、上限 5 MB；访客停留在联系卡时循环播放，离开页面时暂停。
+                          </div>
+                          <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_120px]">
+                            <ImageFilePicker
+                              label="上传音乐"
+                              statusText={contactBackgroundMusicPickerStatus}
+                              detailText={contactBackgroundMusicPickerDetail}
+                              accept={CONTACT_AUDIO_ACCEPT}
+                              disabled={isContactMediaProcessing}
+                              onChange={(event) => void handleContactBackgroundMusicUpload(event)}
+                            />
+                            <button
+                              type="button"
+                              className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                              onClick={handleClearContactBackgroundMusic}
+                              disabled={
+                                isContactMediaProcessing || !normalizeText(draft.contactBackgroundMusicUrl)
+                              }
+                            >
+                              清除
+                            </button>
+                          </div>
+                          {normalizeText(draft.contactBackgroundMusicUrl) ? (
+                            <audio
+                              className="mt-3 h-10 w-full"
+                              src={draft.contactBackgroundMusicUrl}
+                              controls
+                              loop
+                              preload="metadata"
+                            />
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
                     {draft.mode === "link" ? (
-                      canUseIntroVideo ? (
-                      <div className="rounded-xl border bg-white px-3 py-3">
-                        <div className="flex flex-wrap items-center justify-between gap-3">
-                          <div className="text-xs font-semibold text-slate-700">联系卡开场视频</div>
-                          <label className="flex items-center gap-2 text-xs text-slate-700">
-                            <input
-                              type="checkbox"
-                              checked={draft.contactIntroVideoMuted}
-                              onChange={(event) =>
-                                applyDraft((current) => ({
-                                  ...current,
-                                  contactIntroVideoMuted: event.target.checked,
-                                }))
-                              }
+                      <div className="space-y-4 rounded-xl border bg-white px-3 py-3">
+                        <div>
+                          <div className="text-xs font-semibold text-slate-700">联系卡开场</div>
+                          <div className="mt-1 text-[11px] leading-5 text-slate-400">
+                            开场视频与开场图片只能选择一项；访客可随时跳过。
+                          </div>
+                        </div>
+                        {canUseIntroVideo ? (
+                          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div className="text-xs font-semibold text-slate-700">开场视频</div>
+                              <label className="flex items-center gap-2 text-xs text-slate-700">
+                                <input
+                                  type="checkbox"
+                                  checked={draft.contactIntroVideoMuted}
+                                  onChange={(event) =>
+                                    applyDraft((current) => ({
+                                      ...current,
+                                      contactIntroVideoMuted: event.target.checked,
+                                    }))
+                                  }
+                                />
+                                <span>视频静音</span>
+                              </label>
+                            </div>
+                            <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_120px]">
+                              <ImageFilePicker
+                                label="上传视频"
+                                statusText={contactIntroVideoPickerStatus}
+                                detailText={contactIntroVideoPickerDetail}
+                                accept={CONTACT_INTRO_VIDEO_ACCEPT}
+                                disabled={isContactMediaProcessing}
+                                onChange={(event) => void handleContactIntroVideoUpload(event)}
+                              />
+                              <button
+                                type="button"
+                                className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                                onClick={handleClearContactIntroVideo}
+                                disabled={isContactMediaProcessing || !normalizeText(draft.contactIntroVideoUrl)}
+                              >
+                                清除
+                              </button>
+                            </div>
+                            <div className="mt-1 text-[11px] text-slate-400">
+                              原文件上限 {Math.round(CONTACT_INTRO_VIDEO_SOURCE_LIMIT_BYTES / 1024 / 1024)} MB，自动转为 MP4，成品上限 {normalizedIntroVideoLimitMb} MB。
+                            </div>
+                            {normalizeText(draft.contactIntroVideoUrl) ? (
+                              <AutoPlayingVideoPreview
+                                className="mt-3 block aspect-video w-full rounded-xl border bg-black object-contain"
+                                src={draft.contactIntroVideoUrl}
+                                poster={normalizeText(draft.contactIntroVideoPosterUrl) || undefined}
+                                muted={draft.contactIntroVideoMuted}
+                                autoPlay={false}
+                              />
+                            ) : null}
+                          </div>
+                        ) : (
+                          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-xs leading-5 text-amber-800">
+                            当前账号未开启开场视频权限，但仍可使用开场图片和音乐。
+                          </div>
+                        )}
+
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                          <div className="text-xs font-semibold text-slate-700">开场图片</div>
+                          <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_120px]">
+                            <ImageFilePicker
+                              label="上传图片"
+                              statusText={contactIntroImagePickerStatus}
+                              detailText={contactIntroImagePickerDetail}
+                              accept="image/*"
+                              disabled={isContactMediaProcessing}
+                              onChange={(event) => void handleContactIntroImageUpload(event)}
                             />
-                            <span>静音播放</span>
+                            <button
+                              type="button"
+                              className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                              onClick={handleClearContactIntroImage}
+                              disabled={isContactMediaProcessing || !normalizeText(draft.contactIntroImageUrl)}
+                            >
+                              清除
+                            </button>
+                          </div>
+                          <div className="mt-1 text-[11px] text-slate-400">上限 200 KB，超过时自动压缩。</div>
+                          <label className="mt-3 block text-xs text-slate-600">
+                            展示时长
+                            <div className="mt-1 flex items-center gap-3 rounded border bg-white px-3 py-2">
+                              <input
+                                type="range"
+                                min={MERCHANT_BUSINESS_CARD_INTRO_IMAGE_MIN_DURATION_SECONDS}
+                                max={MERCHANT_BUSINESS_CARD_INTRO_IMAGE_MAX_DURATION_SECONDS}
+                                step={1}
+                                className="min-w-0 flex-1"
+                                value={draft.contactIntroImageDurationSeconds}
+                                onChange={(event) =>
+                                  applyDraft((current) => ({
+                                    ...current,
+                                    contactIntroImageDurationSeconds: clamp(
+                                      Math.round(Number(event.target.value)),
+                                      MERCHANT_BUSINESS_CARD_INTRO_IMAGE_MIN_DURATION_SECONDS,
+                                      MERCHANT_BUSINESS_CARD_INTRO_IMAGE_MAX_DURATION_SECONDS,
+                                    ),
+                                  }))
+                                }
+                              />
+                              <span className="w-12 shrink-0 text-right text-xs text-slate-500">
+                                {draft.contactIntroImageDurationSeconds} 秒
+                              </span>
+                            </div>
                           </label>
+                          {normalizeText(draft.contactIntroImageUrl) ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              className="mt-3 block aspect-video w-full rounded-xl border bg-black object-contain"
+                              src={draft.contactIntroImageUrl}
+                              alt="开场图片预览"
+                            />
+                          ) : null}
                         </div>
-                        <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_120px]">
-                          <ImageFilePicker
-                            label="上传视频"
-                            statusText={contactIntroVideoPickerStatus}
-                            detailText={contactIntroVideoPickerDetail}
-                            accept={CONTACT_INTRO_VIDEO_ACCEPT}
-                            disabled={isContactIntroVideoProcessing}
-                            onChange={(event) => void handleContactIntroVideoUpload(event)}
-                          />
-                          <button
-                            type="button"
-                            className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
-                            onClick={handleClearContactIntroVideo}
-                            disabled={isContactIntroVideoProcessing || !normalizeText(draft.contactIntroVideoUrl)}
-                        >
-                          清除
-                        </button>
+
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                          <div className="text-xs font-semibold text-slate-700">开场音乐</div>
+                          <div className="mt-1 text-[11px] leading-5 text-slate-400">
+                            可与开场视频或图片同时使用，最长 15 秒、上限 200 KB；开场结束或被跳过时立即停止。
+                          </div>
+                          <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_120px]">
+                            <ImageFilePicker
+                              label="上传音乐"
+                              statusText={contactIntroMusicPickerStatus}
+                              detailText={contactIntroMusicPickerDetail}
+                              accept={CONTACT_AUDIO_ACCEPT}
+                              disabled={isContactMediaProcessing || (!normalizeText(draft.contactIntroVideoUrl) && !normalizeText(draft.contactIntroImageUrl))}
+                              onChange={(event) => void handleContactIntroMusicUpload(event)}
+                            />
+                            <button
+                              type="button"
+                              className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                              onClick={handleClearContactIntroMusic}
+                              disabled={isContactMediaProcessing || !normalizeText(draft.contactIntroMusicUrl)}
+                            >
+                              清除
+                            </button>
+                          </div>
+                          {!normalizeText(draft.contactIntroVideoUrl) && !normalizeText(draft.contactIntroImageUrl) ? (
+                            <div className="mt-2 text-[11px] text-amber-700">请先选择开场视频或开场图片。</div>
+                          ) : null}
+                          {normalizeText(draft.contactIntroMusicUrl) ? (
+                            <audio className="mt-3 h-10 w-full" src={draft.contactIntroMusicUrl} controls preload="metadata" />
+                          ) : null}
+                        </div>
                       </div>
-                        <div className="mt-1 text-[11px] text-slate-400">
-                          原文件上限 {Math.round(CONTACT_INTRO_VIDEO_SOURCE_LIMIT_BYTES / 1024 / 1024)} MB，上传后会自动压缩转换为适合网页快速播放的 MP4，成品上限 {normalizedIntroVideoLimitMb} MB。
-                        </div>
-                        {normalizeText(draft.contactIntroVideoUrl) ? (
-                          <AutoPlayingVideoPreview
-                            className="mt-3 block aspect-video w-full rounded-xl border bg-black object-contain"
-                            src={draft.contactIntroVideoUrl}
-                            poster={normalizeText(draft.contactIntroVideoPosterUrl) || undefined}
-                            muted={draft.contactIntroVideoMuted}
-                            autoPlay={false}
-                          />
-                        ) : null}
-                      </div>
-                      ) : (
-                        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-xs leading-5 text-amber-800">
-                          当前账号未开启联系卡开场视频权限，超级后台开启后可上传开场视频。
-                        </div>
-                      )
                     ) : null}
                     {draft.mode === "link" ? (
                       <div className="rounded-xl border bg-white px-3 py-3">
@@ -4427,6 +4929,10 @@ export default function MerchantBusinessCardManager({
                             canUseIntroVideo ? normalizeText(draft.contactIntroVideoPosterUrl) || undefined : undefined
                           }
                           introVideoMuted={draft.contactIntroVideoMuted}
+                          introImageUrl={normalizeText(draft.contactIntroImageUrl) || undefined}
+                          introImageDurationSeconds={draft.contactIntroImageDurationSeconds}
+                          introMusicUrl={normalizeText(draft.contactIntroMusicUrl) || undefined}
+                          backgroundMusicUrl={normalizeText(draft.contactBackgroundMusicUrl) || undefined}
                           imageUrl={normalizeText(draft.contactPageImageUrl) || undefined}
                           imageHeight={draft.contactPageImageHeight}
                           imageLinkUrl={normalizeText(draft.contactPageImageLinkUrl) || undefined}
@@ -4525,6 +5031,10 @@ export default function MerchantBusinessCardManager({
                         introVideoUrl={previewIntroVideoUrl || undefined}
                         introVideoPosterUrl={previewIntroVideoPosterUrl || undefined}
                         introVideoMuted={previewAsset?.contactIntroVideoMuted ?? draft.contactIntroVideoMuted}
+                        introImageUrl={previewIntroImageUrl || undefined}
+                        introImageDurationSeconds={previewIntroImageDurationSeconds}
+                        introMusicUrl={previewIntroMusicUrl || undefined}
+                        backgroundMusicUrl={previewBackgroundMusicUrl || undefined}
                         imageUrl={previewContactImageUrl}
                         imageHeight={previewContactImageHeight}
                         imageLinkUrl={previewContactImageLinkUrl || undefined}
@@ -4591,7 +5101,7 @@ export default function MerchantBusinessCardManager({
                       type="button"
                       className="rounded bg-black px-3 py-2 text-sm text-white disabled:opacity-50"
                       onClick={() => void handleSaveDraft()}
-                      disabled={isGenerating || isDraftSaving || isContactIntroVideoProcessing}
+                      disabled={isGenerating || isDraftSaving || isContactMediaProcessing}
                     >
                       {isDraftSaving ? "保存中..." : "保存"}
                     </button>
@@ -4601,7 +5111,7 @@ export default function MerchantBusinessCardManager({
                         type="button"
                         className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
                         onClick={() => void handleSaveDraft()}
-                        disabled={isGenerating || isDraftSaving || isContactIntroVideoProcessing}
+                        disabled={isGenerating || isDraftSaving || isContactMediaProcessing}
                       >
                         {isDraftSaving ? "保存中..." : "保存"}
                       </button>
@@ -4609,7 +5119,7 @@ export default function MerchantBusinessCardManager({
                         type="button"
                         className="rounded bg-black px-3 py-2 text-sm text-white disabled:opacity-50"
                         onClick={() => void handleGenerate()}
-                        disabled={!websiteUrl || !qrReadyForCurrentDraft || isGenerating || isDraftSaving || isContactIntroVideoProcessing}
+                        disabled={!websiteUrl || !qrReadyForCurrentDraft || isGenerating || isDraftSaving || isContactMediaProcessing}
                       >
                         {isGenerating ? "生成中..." : "生成"}
                       </button>
@@ -5100,6 +5610,10 @@ export default function MerchantBusinessCardManager({
     introVideoUrl?: string;
     introVideoPosterUrl?: string;
     introVideoMuted?: boolean;
+    introImageUrl?: string;
+    introImageDurationSeconds?: number;
+    introMusicUrl?: string;
+    backgroundMusicUrl?: string;
     contactPageSectionOrder?: MerchantBusinessCardDraft["contactPageSectionOrder"];
     showContactPoll?: boolean;
     contactPagePollId?: string;
@@ -5138,6 +5652,9 @@ export default function MerchantBusinessCardManager({
     });
     const introVideoUrl = canUseIntroVideo ? normalizeText(input.introVideoUrl) : "";
     const introPosterUrl = introVideoUrl && canUseIntroVideo ? normalizeText(input.introVideoPosterUrl) : "";
+    const introImageUrl = introVideoUrl ? "" : normalizeText(input.introImageUrl);
+    const introMusicUrl = introVideoUrl || introImageUrl ? normalizeText(input.introMusicUrl) : "";
+    const backgroundMusicUrl = normalizeText(input.backgroundMusicUrl);
     const fallbackShareUrl = buildMerchantBusinessCardShareUrl({
       origin: resolveMerchantBusinessCardShareOrigin(undefined, targetUrl),
       imageUrl: shareImageUrl,
@@ -5151,6 +5668,10 @@ export default function MerchantBusinessCardManager({
       introVideoUrl,
       introPosterUrl,
       introVideoMuted: input.introVideoMuted,
+      introImageUrl,
+      introImageDurationSeconds: input.introImageDurationSeconds,
+      introMusicUrl,
+      backgroundMusicUrl,
       contactPageSectionOrder: input.contactPageSectionOrder,
       showContactPoll: input.showContactPoll,
       contactPagePollId: input.contactPagePollId,
@@ -5215,6 +5736,10 @@ export default function MerchantBusinessCardManager({
             introVideoUrl: introVideoUrl || undefined,
             introPosterUrl: introPosterUrl || undefined,
             introVideoMuted: input.introVideoMuted,
+            introImageUrl: introImageUrl || undefined,
+            introImageDurationSeconds: input.introImageDurationSeconds,
+            introMusicUrl: introMusicUrl || undefined,
+            backgroundMusicUrl: backgroundMusicUrl || undefined,
             contactPageSectionOrder: input.contactPageSectionOrder,
             showContactPoll: input.showContactPoll,
             contactPagePollId: input.contactPagePollId,
@@ -5395,6 +5920,10 @@ export default function MerchantBusinessCardManager({
           introVideoUrl: normalizeText(asset.contactIntroVideoUrl),
           introVideoPosterUrl: normalizeText(asset.contactIntroVideoPosterUrl),
           introVideoMuted: asset.contactIntroVideoMuted,
+          introImageUrl: normalizeText(asset.contactIntroImageUrl),
+          introImageDurationSeconds: asset.contactIntroImageDurationSeconds,
+          introMusicUrl: normalizeText(asset.contactIntroMusicUrl),
+          backgroundMusicUrl: normalizeText(asset.contactBackgroundMusicUrl),
           contactPageSectionOrder: asset.contactPageSectionOrder,
           showContactPoll: asset.showContactPoll,
           contactPagePollId: asset.contactPagePollId,
@@ -5526,6 +6055,10 @@ export default function MerchantBusinessCardManager({
             introVideoUrl: normalizeText(nextDraft.contactIntroVideoUrl),
             introVideoPosterUrl: normalizeText(nextDraft.contactIntroVideoPosterUrl),
             introVideoMuted: nextDraft.contactIntroVideoMuted,
+            introImageUrl: normalizeText(nextDraft.contactIntroImageUrl),
+            introImageDurationSeconds: nextDraft.contactIntroImageDurationSeconds,
+            introMusicUrl: normalizeText(nextDraft.contactIntroMusicUrl),
+            backgroundMusicUrl: normalizeText(nextDraft.contactBackgroundMusicUrl),
             contactPageSectionOrder: nextDraft.contactPageSectionOrder,
             showContactPoll: nextDraft.showContactPoll,
             contactPagePollId: nextDraft.contactPagePollId,
@@ -5635,6 +6168,10 @@ export default function MerchantBusinessCardManager({
             introVideoUrl: normalizeText(nextDraft.contactIntroVideoUrl),
             introVideoPosterUrl: normalizeText(nextDraft.contactIntroVideoPosterUrl),
             introVideoMuted: nextDraft.contactIntroVideoMuted,
+            introImageUrl: normalizeText(nextDraft.contactIntroImageUrl),
+            introImageDurationSeconds: nextDraft.contactIntroImageDurationSeconds,
+            introMusicUrl: normalizeText(nextDraft.contactIntroMusicUrl),
+            backgroundMusicUrl: normalizeText(nextDraft.contactBackgroundMusicUrl),
             contactPageSectionOrder: nextDraft.contactPageSectionOrder,
             showContactPoll: nextDraft.showContactPoll,
             contactPagePollId: nextDraft.contactPagePollId,
@@ -5750,6 +6287,10 @@ export default function MerchantBusinessCardManager({
         introVideoUrl: normalizeText(card.contactIntroVideoUrl),
         introVideoPosterUrl: normalizeText(card.contactIntroVideoPosterUrl),
         introVideoMuted: card.contactIntroVideoMuted,
+        introImageUrl: normalizeText(card.contactIntroImageUrl),
+        introImageDurationSeconds: card.contactIntroImageDurationSeconds,
+        introMusicUrl: normalizeText(card.contactIntroMusicUrl),
+        backgroundMusicUrl: normalizeText(card.contactBackgroundMusicUrl),
         contactPageSectionOrder: card.contactPageSectionOrder,
         showContactPoll: card.showContactPoll,
         contactPagePollId: card.contactPagePollId,

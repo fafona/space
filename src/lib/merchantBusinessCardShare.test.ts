@@ -117,6 +117,59 @@ test("share helpers preserve non-muted intro video setting", () => {
   assert.equal(parsed?.introVideoMuted, false);
 });
 
+test("share helpers preserve intro image duration and contact-card audio", () => {
+  const shareUrl = buildMerchantBusinessCardShareUrl({
+    origin: "https://faolla.com",
+    name: "fafona",
+    imageUrl: "https://faolla.com/storage/v1/object/public/page-assets/card.png",
+    introImageUrl: "https://faolla.com/storage/v1/object/public/page-assets/intro.webp",
+    introImageDurationSeconds: 12,
+    introMusicUrl: "https://faolla.com/storage/v1/object/public/page-assets/intro.mp3",
+    backgroundMusicUrl: "https://faolla.com/storage/v1/object/public/page-assets/background.mp3",
+    targetUrl: "https://fafona.faolla.com",
+  });
+
+  const url = new URL(shareUrl);
+  assert.equal(url.searchParams.get("introImageDuration"), "12");
+  assert.equal(url.searchParams.get("introMusic"), "https://faolla.com/storage/v1/object/public/page-assets/intro.mp3");
+  assert.equal(
+    url.searchParams.get("backgroundMusic"),
+    "https://faolla.com/storage/v1/object/public/page-assets/background.mp3",
+  );
+
+  const parsed = parseMerchantBusinessCardShareParams(url.searchParams, "https://faolla.com");
+  assert.equal(parsed?.introImageUrl, "https://faolla.com/storage/v1/object/public/page-assets/intro.webp");
+  assert.equal(parsed?.introImageDurationSeconds, 12);
+  assert.equal(parsed?.introMusicUrl, "https://faolla.com/storage/v1/object/public/page-assets/intro.mp3");
+  assert.equal(
+    parsed?.backgroundMusicUrl,
+    "https://faolla.com/storage/v1/object/public/page-assets/background.mp3",
+  );
+});
+
+test("share normalization gives intro video precedence and drops orphan intro music", () => {
+  const withVideo = parseMerchantBusinessCardShareParams(
+    new URLSearchParams({
+      introVideo: "https://faolla.com/storage/v1/object/public/page-assets/intro.mp4",
+      introImage: "https://faolla.com/storage/v1/object/public/page-assets/intro.webp",
+      introMusic: "https://faolla.com/storage/v1/object/public/page-assets/intro.mp3",
+      target: "https://fafona.faolla.com",
+    }),
+    "https://faolla.com",
+  );
+  const withoutIntro = parseMerchantBusinessCardShareParams(
+    new URLSearchParams({
+      introMusic: "https://faolla.com/storage/v1/object/public/page-assets/intro.mp3",
+      target: "https://fafona.faolla.com",
+    }),
+    "https://faolla.com",
+  );
+
+  assert.equal(withVideo?.introImageUrl, undefined);
+  assert.equal(withVideo?.introMusicUrl, "https://faolla.com/storage/v1/object/public/page-assets/intro.mp3");
+  assert.equal(withoutIntro?.introMusicUrl, undefined);
+});
+
 test("share helpers preserve contact card layout controls and custom links", () => {
   const shareUrl = buildMerchantBusinessCardShareUrl({
     origin: "https://faolla.com",

@@ -25,6 +25,10 @@ test("blank business card draft contains no merchant or contact content", () => 
   assert.equal(draft.backgroundImageUrl, "");
   assert.equal(draft.contactPageImageUrl, "");
   assert.equal(draft.contactIntroVideoUrl, "");
+  assert.equal(draft.contactIntroImageUrl, "");
+  assert.equal(draft.contactIntroImageDurationSeconds, 5);
+  assert.equal(draft.contactIntroMusicUrl, "");
+  assert.equal(draft.contactBackgroundMusicUrl, "");
   assert.deepEqual(draft.customTexts, []);
   assert.deepEqual(draft.contacts.phones, []);
   assert.equal(draft.contacts.contactName, "");
@@ -176,6 +180,42 @@ test("normalizeMerchantBusinessCardDraft preserves intro video muted setting", (
 
   assert.equal(draft.contactIntroVideoUrl, "https://faolla.com/storage/v1/object/public/page-assets/intro.mp4");
   assert.equal(draft.contactIntroVideoMuted, false);
+});
+
+test("normalizeMerchantBusinessCardDraft preserves intro image and audio settings", () => {
+  const draft = normalizeMerchantBusinessCardDraft({
+    contactIntroImageUrl: "https://faolla.com/storage/v1/object/public/page-assets/intro.webp",
+    contactIntroImageDurationSeconds: 30,
+    contactIntroMusicUrl: "https://faolla.com/storage/v1/object/public/page-assets/intro.mp3",
+    contactBackgroundMusicUrl: "https://faolla.com/storage/v1/object/public/page-assets/background.mp3",
+  });
+
+  assert.equal(draft.contactIntroImageUrl, "https://faolla.com/storage/v1/object/public/page-assets/intro.webp");
+  assert.equal(draft.contactIntroImageDurationSeconds, 15);
+  assert.equal(draft.contactIntroMusicUrl, "https://faolla.com/storage/v1/object/public/page-assets/intro.mp3");
+  assert.equal(draft.contactBackgroundMusicUrl, "https://faolla.com/storage/v1/object/public/page-assets/background.mp3");
+});
+
+test("normalizeMerchantBusinessCardDraft gives intro video precedence over intro image", () => {
+  const draft = normalizeMerchantBusinessCardDraft({
+    contactIntroVideoUrl: "https://faolla.com/storage/v1/object/public/page-assets/intro.mp4",
+    contactIntroImageUrl: "https://faolla.com/storage/v1/object/public/page-assets/intro.webp",
+    contactIntroImageDurationSeconds: 0,
+  });
+
+  assert.equal(draft.contactIntroVideoUrl, "https://faolla.com/storage/v1/object/public/page-assets/intro.mp4");
+  assert.equal(draft.contactIntroImageUrl, "");
+  assert.equal(draft.contactIntroImageDurationSeconds, 1);
+});
+
+test("normalizeMerchantBusinessCardDraft drops intro music without intro media", () => {
+  const draft = normalizeMerchantBusinessCardDraft({
+    contactIntroMusicUrl: "https://faolla.com/storage/v1/object/public/page-assets/intro.mp3",
+    contactBackgroundMusicUrl: "https://faolla.com/storage/v1/object/public/page-assets/background.mp3",
+  });
+
+  assert.equal(draft.contactIntroMusicUrl, "");
+  assert.equal(draft.contactBackgroundMusicUrl, "https://faolla.com/storage/v1/object/public/page-assets/background.mp3");
 });
 
 test("normalizeMerchantBusinessCardDraft preserves contact card section order and buttons", () => {

@@ -44,6 +44,9 @@ type AssetUsage =
   | "business-card-contact"
   | "business-card-export"
   | "business-card-intro-video"
+  | "business-card-intro-image"
+  | "business-card-intro-audio"
+  | "business-card-background-audio"
   | "product-image"
   | "support-image"
   | "support-file"
@@ -233,8 +236,8 @@ function isFfmpegBinaryUnavailable(error: unknown) {
   return code === "ENOENT" || code === "EACCES" || message.includes("ENOENT") || message.includes("EACCES");
 }
 
-async function runFfmpeg(args: string[], timeoutMs = 180_000) {
-  const binaryCandidates = Array.from(
+function getFfmpegBinaryCandidates() {
+  return Array.from(
     new Set(
       [
         process.env.FFMPEG_PATH,
@@ -246,6 +249,10 @@ async function runFfmpeg(args: string[], timeoutMs = 180_000) {
         .filter((candidate): candidate is string => Boolean(candidate)),
     ),
   );
+}
+
+async function runFfmpeg(args: string[], timeoutMs = 180_000) {
+  const binaryCandidates = getFfmpegBinaryCandidates();
   let lastError: unknown = null;
   for (const binaryPath of binaryCandidates) {
     try {
@@ -257,6 +264,71 @@ async function runFfmpeg(args: string[], timeoutMs = 180_000) {
     }
   }
   throw lastError instanceof Error ? lastError : new Error("ffmpeg_unavailable");
+}
+
+function probeMediaDurationWithBinary(binaryPath: string, inputPath: string, timeoutMs: number) {
+  return new Promise<number>((resolve, reject) => {
+    const child = spawn(binaryPath, ["-hide_banner", "-i", inputPath], {
+      windowsHide: true,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    let settled = false;
+    const finishReject = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      reject(error);
+    };
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+      finishReject(new Error("ffmpeg_timeout"));
+    }, timeoutMs);
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+      if (stderr.length > 12000) stderr = stderr.slice(-12000);
+    });
+    child.on("error", finishReject);
+    child.on("close", () => {
+      if (settled) return;
+      const matched = stderr.match(/Duration:\s*(\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)/i);
+      if (!matched) {
+        finishReject(new Error("media_duration_unavailable"));
+        return;
+      }
+      const hours = Number(matched[1]);
+      const minutes = Number(matched[2]);
+      const seconds = Number(matched[3]);
+      const duration = hours * 3600 + minutes * 60 + seconds;
+      if (!Number.isFinite(duration) || duration <= 0) {
+        finishReject(new Error("media_duration_unavailable"));
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      resolve(duration);
+    });
+  });
+}
+
+async function probeMediaDurationSeconds(blob: Blob, extension: string) {
+  const workspace = await mkdtemp(path.join(tmpdir(), "faolla-audio-probe-"));
+  const inputPath = path.join(workspace, `source.${extension.replace(/[^a-z0-9]+/gi, "") || "audio"}`);
+  try {
+    await writeFile(inputPath, Buffer.from(await blob.arrayBuffer()));
+    let lastError: unknown = null;
+    for (const binaryPath of getFfmpegBinaryCandidates()) {
+      try {
+        return await probeMediaDurationWithBinary(binaryPath, inputPath, 15_000);
+      } catch (error) {
+        lastError = error;
+        if (!isFfmpegBinaryUnavailable(error)) break;
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error("ffmpeg_unavailable");
+  } finally {
+    await rm(workspace, { recursive: true, force: true }).catch(() => undefined);
+  }
 }
 
 async function transcodeBusinessCardIntroVideo(input: {
@@ -471,6 +543,9 @@ function normalizeAssetUsage(value: unknown, folder: string, mime: string): Asse
     normalized === "business-card-contact" ||
     normalized === "business-card-export" ||
     normalized === "business-card-intro-video" ||
+    normalized === "business-card-intro-image" ||
+    normalized === "business-card-intro-audio" ||
+    normalized === "business-card-background-audio" ||
     normalized === "product-image" ||
     normalized === "support-image" ||
     normalized === "support-file" ||
@@ -504,6 +579,11 @@ function getAssetUploadLimitBytes(input: {
         1,
         Math.round(permissionConfig.businessCardIntroVideoLimitMb || createDefaultMerchantPermissionConfig().businessCardIntroVideoLimitMb),
       ) * 1024 * 1024;
+    case "business-card-intro-image":
+    case "business-card-intro-audio":
+      return 200 * 1024;
+    case "business-card-background-audio":
+      return 5 * 1024 * 1024;
     case "support-image":
       return 512 * 1024;
     case "product-image":
@@ -764,6 +844,29 @@ export async function POST(request: Request) {
       { status: 403 },
     );
   }
+  if (usage === "business-card-intro-image" && !meta.mime.startsWith("image/")) {
+    return NextResponse.json(
+      {
+        ok: false,
+        code: "unsupported_intro_image",
+        message: "联系卡开场图片必须是受支持的图片文件。",
+      },
+      { status: 400 },
+    );
+  }
+  if (
+    (usage === "business-card-intro-audio" || usage === "business-card-background-audio") &&
+    !meta.mime.startsWith("audio/")
+  ) {
+    return NextResponse.json(
+      {
+        ok: false,
+        code: "unsupported_business_card_audio",
+        message: "联系卡音乐必须是受支持的音频文件。",
+      },
+      { status: 400 },
+    );
+  }
   const limitBytes = getAssetUploadLimitBytes({
     usage,
     permissionConfig: actor.permissionConfig,
@@ -778,6 +881,36 @@ export async function POST(request: Request) {
       },
       { status: 413 },
     );
+  }
+
+  if (usage === "business-card-intro-audio" || usage === "business-card-background-audio") {
+    const maxDurationSeconds = usage === "business-card-intro-audio" ? 15 : 5 * 60;
+    try {
+      const durationSeconds = await probeMediaDurationSeconds(originalBlob, meta.extension);
+      if (durationSeconds > maxDurationSeconds + 0.05) {
+        return NextResponse.json(
+          {
+            ok: false,
+            code: "business_card_audio_duration_exceeded",
+            message:
+              usage === "business-card-intro-audio"
+                ? "开场音乐最长为 15 秒，请缩短后重新上传。"
+                : "背景音乐最长为 5 分钟，请缩短后重新上传。",
+          },
+          { status: 413 },
+        );
+      }
+    } catch (error) {
+      console.error("[asset-upload] business card audio duration probe failed", error);
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "business_card_audio_duration_unavailable",
+          message: "无法读取音频时长，请更换 MP3、M4A、AAC、WAV 或 OGG 文件后重试。",
+        },
+        { status: 422 },
+      );
+    }
   }
 
   let uploadBlob = originalBlob;

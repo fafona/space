@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 import QRCode from "qrcode";
 import ServiceMaintenancePage from "@/components/ServiceMaintenancePage";
 import PollBlock from "@/components/blocks/PollBlock";
+import BusinessCardMediaExperience from "@/components/business-card/BusinessCardMediaExperience";
 import {
   buildMerchantBusinessCardContactDownloadUrl,
   buildMerchantBusinessCardLegacyContactDownloadUrl,
@@ -136,6 +137,13 @@ export async function generateMetadata({ searchParams }: ShareBusinessCardPagePr
     shareKey,
     imageUrl: payload.imageUrl,
     detailImageUrl: payload.detailImageUrl,
+    introVideoUrl: payload.introVideoUrl,
+    introPosterUrl: payload.introPosterUrl,
+    introVideoMuted: payload.introVideoMuted,
+    introImageUrl: payload.introImageUrl,
+    introImageDurationSeconds: payload.introImageDurationSeconds,
+    introMusicUrl: payload.introMusicUrl,
+    backgroundMusicUrl: payload.backgroundMusicUrl,
     targetUrl: payload.targetUrl,
     name: payload.name,
     contact: payload.contact,
@@ -227,6 +235,13 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
     shareKey,
     imageUrl: payload.imageUrl,
     detailImageUrl: payload.detailImageUrl,
+    introVideoUrl: payload.introVideoUrl,
+    introPosterUrl: payload.introPosterUrl,
+    introVideoMuted: payload.introVideoMuted,
+    introImageUrl: payload.introImageUrl,
+    introImageDurationSeconds: payload.introImageDurationSeconds,
+    introMusicUrl: payload.introMusicUrl,
+    backgroundMusicUrl: payload.backgroundMusicUrl,
     targetUrl: payload.targetUrl,
     name: payload.name,
     contact: payload.contact,
@@ -305,6 +320,15 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(255,255,255,.96),_rgba(247,239,227,1)_58%,_rgba(229,218,200,1))] px-5 pb-6 pt-0 text-slate-900 sm:px-6 sm:pb-10 sm:pt-4">
+      <BusinessCardMediaExperience
+        introVideoUrl={payload.introVideoUrl}
+        introPosterUrl={payload.introPosterUrl}
+        introVideoMuted={payload.introVideoMuted}
+        introImageUrl={payload.introImageUrl}
+        introImageDurationSeconds={payload.introImageDurationSeconds}
+        introMusicUrl={payload.introMusicUrl}
+        backgroundMusicUrl={payload.backgroundMusicUrl}
+      />
       <section className="mx-auto w-full max-w-xl rounded-[32px] border border-white/70 bg-white/90 p-5 shadow-[0_28px_90px_rgba(15,23,42,.12)] backdrop-blur sm:p-6">
         <div className="mb-4">
           <div className="text-xs font-medium uppercase tracking-[0.24em] text-slate-400">FAOLLA CARD</div>

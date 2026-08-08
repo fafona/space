@@ -11,6 +11,7 @@ import {
   buildMerchantBusinessCardShareUrl,
   normalizeMerchantBusinessCardSharePayload,
   normalizeMerchantBusinessCardShareContact,
+  normalizeMerchantBusinessCardShareAudioUrl,
   normalizeMerchantBusinessCardShareImageUrl,
   normalizeMerchantBusinessCardShareKey,
   normalizeMerchantBusinessCardShareTargetUrl,
@@ -75,6 +76,10 @@ type BusinessCardShareRequestBody = {
   introVideoUrl?: unknown;
   introPosterUrl?: unknown;
   introVideoMuted?: unknown;
+  introImageUrl?: unknown;
+  introImageDurationSeconds?: unknown;
+  introMusicUrl?: unknown;
+  backgroundMusicUrl?: unknown;
   contactPageSectionOrder?: unknown;
   showContactPoll?: unknown;
   contactPagePollId?: unknown;
@@ -392,6 +397,10 @@ function buildSnapshotCardSharePayload(card: MerchantBusinessCardAsset, preferre
       introVideoUrl: normalizeText(card.contactIntroVideoUrl),
       introPosterUrl: normalizeText(card.contactIntroVideoPosterUrl),
       introVideoMuted: card.contactIntroVideoMuted,
+      introImageUrl: normalizeText(card.contactIntroImageUrl),
+      introImageDurationSeconds: card.contactIntroImageDurationSeconds,
+      introMusicUrl: normalizeText(card.contactIntroMusicUrl),
+      backgroundMusicUrl: normalizeText(card.contactBackgroundMusicUrl),
       contactPageSectionOrder: card.contactPageSectionOrder,
       showContactPoll: card.showContactPoll,
       contactPagePollId: card.contactPagePollId,
@@ -600,6 +609,20 @@ export async function POST(request: Request) {
       ? normalizeMerchantBusinessCardShareImageUrl(normalizeText(body.introPosterUrl), shareOrigin || request.url)
       : "";
   const introVideoMuted = introVideoUrl ? normalizeOptionalBoolean(body?.introVideoMuted, true) : undefined;
+  const introImageUrl = introVideoUrl
+    ? ""
+    : normalizeMerchantBusinessCardShareImageUrl(
+        normalizeText(body?.introImageUrl),
+        shareOrigin || request.url,
+      );
+  const introMusicUrl = normalizeMerchantBusinessCardShareAudioUrl(
+    normalizeText(body?.introMusicUrl),
+    shareOrigin || request.url,
+  );
+  const backgroundMusicUrl = normalizeMerchantBusinessCardShareAudioUrl(
+    normalizeText(body?.backgroundMusicUrl),
+    shareOrigin || request.url,
+  );
   const detailImageHeight = normalizeImageDimension(body?.detailImageHeight);
   const imageWidth = normalizeImageDimension(body?.imageWidth);
   const imageHeight = normalizeImageDimension(body?.imageHeight);
@@ -622,6 +645,13 @@ export async function POST(request: Request) {
       introVideoUrl,
       introPosterUrl,
       introVideoMuted,
+      introImageUrl,
+      introImageDurationSeconds:
+        typeof body?.introImageDurationSeconds === "number" || typeof body?.introImageDurationSeconds === "string"
+          ? body.introImageDurationSeconds
+          : undefined,
+      introMusicUrl,
+      backgroundMusicUrl,
       contactPageSectionOrder: Array.isArray(body?.contactPageSectionOrder)
         ? (body.contactPageSectionOrder as string[])
         : undefined,
@@ -686,6 +716,16 @@ export async function POST(request: Request) {
       ? { detailImageOpacity: normalizedPayload.detailImageOpacity }
       : {}),
     ...(introVideoUrl ? { introVideoUrl, ...(introPosterUrl ? { introPosterUrl } : {}), introVideoMuted } : {}),
+    ...(normalizedPayload?.introImageUrl
+      ? {
+          introImageUrl: normalizedPayload.introImageUrl,
+          introImageDurationSeconds: normalizedPayload.introImageDurationSeconds,
+        }
+      : {}),
+    ...(normalizedPayload?.introMusicUrl ? { introMusicUrl: normalizedPayload.introMusicUrl } : {}),
+    ...(normalizedPayload?.backgroundMusicUrl
+      ? { backgroundMusicUrl: normalizedPayload.backgroundMusicUrl }
+      : {}),
     ...(normalizedPayload?.contactPageSectionOrder
       ? { contactPageSectionOrder: normalizedPayload.contactPageSectionOrder }
       : {}),
