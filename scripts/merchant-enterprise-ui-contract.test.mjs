@@ -943,9 +943,16 @@ test("merchant admin moves enterprise subviews into the contextual sidebar menu"
     /<nav\s+id=["']merchant-enterprise-context-menu["']\s+aria-label=["']企业管理子菜单["']/,
   );
 
-  const orderButtonIndex = adminClientSource.indexOf("<span>订单管理</span>");
-  const enterpriseButtonIndex = adminClientSource.indexOf("<span>企业管理</span>");
-  const supportButtonIndex = adminClientSource.indexOf("<span>会话</span>", enterpriseButtonIndex);
+  const orderButtonIndex = adminClientSource.indexOf(
+    'getMerchantAdminCompactNavigationLabel("订单管理", locale)',
+  );
+  const enterpriseButtonIndex = adminClientSource.indexOf(
+    'getMerchantAdminCompactNavigationLabel("企业管理", locale)',
+  );
+  const supportButtonIndex = adminClientSource.indexOf(
+    'getMerchantAdminCompactNavigationLabel("会话", locale)',
+    enterpriseButtonIndex,
+  );
   assert.ok(orderButtonIndex >= 0 && orderButtonIndex < enterpriseButtonIndex);
   assert.ok(enterpriseButtonIndex < supportButtonIndex);
 });
