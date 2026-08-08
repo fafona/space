@@ -288,6 +288,7 @@ import {
   type AccountSwitchEntry,
 } from "@/lib/accountSwitching";
 import { useI18n } from "@/components/I18nProvider";
+import { getMerchantAdminCompactNavigationLabel } from "@/lib/merchantAdminNavigationTranslations";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import NoMercyFlagIcon from "@/components/NoMercyFlagIcon";
 import ShuangkouToolIcon from "@/components/ShuangkouToolIcon";
@@ -1578,16 +1579,16 @@ function formatBytes(bytes: number) {
 function getMerchantDesktopMenuButtonClassName(active: boolean, tone: "default" | "alert" = "default") {
   if (active) {
     return tone === "alert"
-      ? "relative flex h-10 items-center justify-between gap-2 rounded-lg border-0 bg-[#1f2f55] px-3 text-sm font-semibold text-white shadow-[inset_3px_0_0_#93c5fd,0_1px_0_rgba(255,255,255,0.04)]"
-      : "relative flex h-10 items-center justify-between gap-2 rounded-lg border-0 bg-[#1f2f55] px-3 text-sm font-semibold text-white shadow-[inset_3px_0_0_#93c5fd,0_1px_0_rgba(255,255,255,0.04)]";
+      ? "relative flex min-h-10 items-center justify-between gap-2 rounded-lg border-0 bg-[#1f2f55] px-3 py-2 text-left text-sm font-semibold leading-tight text-white shadow-[inset_3px_0_0_#93c5fd,0_1px_0_rgba(255,255,255,0.04)]"
+      : "relative flex min-h-10 items-center justify-between gap-2 rounded-lg border-0 bg-[#1f2f55] px-3 py-2 text-left text-sm font-semibold leading-tight text-white shadow-[inset_3px_0_0_#93c5fd,0_1px_0_rgba(255,255,255,0.04)]";
   }
   return tone === "alert"
-    ? "relative flex h-10 items-center justify-between gap-2 rounded-lg border-0 bg-transparent px-3 text-sm font-semibold text-[#dbeafe] transition hover:bg-[#17233f] hover:text-white"
-    : "relative flex h-10 items-center justify-between gap-2 rounded-lg border-0 bg-transparent px-3 text-sm font-semibold text-[#dbeafe] transition hover:bg-[#17233f] hover:text-white";
+    ? "relative flex min-h-10 items-center justify-between gap-2 rounded-lg border-0 bg-transparent px-3 py-2 text-left text-sm font-semibold leading-tight text-[#dbeafe] transition hover:bg-[#17233f] hover:text-white"
+    : "relative flex min-h-10 items-center justify-between gap-2 rounded-lg border-0 bg-transparent px-3 py-2 text-left text-sm font-semibold leading-tight text-[#dbeafe] transition hover:bg-[#17233f] hover:text-white";
 }
 
 function getMerchantDesktopSubmenuButtonClassName(active: boolean, tone: "default" | "cyan" | "rose" | "emerald" | "amber" = "default") {
-  if (active) return "flex h-10 w-full items-center justify-between gap-2 rounded-lg border-0 bg-[#1f2f55] px-3 text-left text-sm font-semibold text-white shadow-[inset_3px_0_0_#93c5fd,0_1px_0_rgba(255,255,255,0.04)] transition";
+  if (active) return "flex min-h-10 w-full items-center justify-between gap-2 rounded-lg border-0 bg-[#1f2f55] px-3 py-2 text-left text-sm font-semibold leading-tight text-white shadow-[inset_3px_0_0_#93c5fd,0_1px_0_rgba(255,255,255,0.04)] transition";
   const toneClassName =
     tone === "cyan"
       ? "hover:bg-[#17233f] hover:text-cyan-50"
@@ -1598,7 +1599,7 @@ function getMerchantDesktopSubmenuButtonClassName(active: boolean, tone: "defaul
           : tone === "amber"
             ? "hover:bg-[#17233f] hover:text-amber-50"
             : "hover:bg-[#17233f] hover:text-white";
-  return `flex h-10 w-full items-center justify-between gap-2 rounded-lg border-0 bg-transparent px-3 text-left text-sm font-semibold text-[#dbeafe] transition ${toneClassName}`;
+  return `flex min-h-10 w-full items-center justify-between gap-2 rounded-lg border-0 bg-transparent px-3 py-2 text-left text-sm font-semibold leading-tight text-[#dbeafe] transition ${toneClassName}`;
 }
 
 function MerchantDesktopMenuIcon({ name }: { name: "points" | "booking" | "orders" | "enterprise" | "support" | "members" | "coupons" | "business" }) {
@@ -20096,9 +20097,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                           void openMerchantPointRedemptionPanel();
                         }}
                       >
-                        <span className="inline-flex min-w-0 items-center gap-2">
+                        <span className="inline-flex min-w-0 flex-1 items-center gap-2 text-left">
                           <MerchantDesktopMenuIcon name="points" />
-                          <span>积分兑换</span>
+                          <span className="min-w-0 text-left" data-no-translate="1">
+                            {getMerchantAdminCompactNavigationLabel("积分兑换", locale)}
+                          </span>
                         </span>
                       </button>
                     ) : null}
@@ -20116,9 +20119,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                           void openMerchantBookingPanel();
                         }}
                       >
-                        <span className="inline-flex min-w-0 items-center gap-2">
+                        <span className="inline-flex min-w-0 flex-1 items-center gap-2 text-left">
                           <MerchantDesktopMenuIcon name="booking" />
-                          <span>预约管理</span>
+                          <span className="min-w-0 text-left" data-no-translate="1">
+                            {getMerchantAdminCompactNavigationLabel("预约管理", locale)}
+                          </span>
                         </span>
                         {merchantBookingAttentionSummary.count > 0 ? (
                           <span className="ml-2 inline-flex min-w-[1.5rem] items-center justify-center rounded-full bg-emerald-500 px-2 py-0.5 text-xs font-semibold leading-none text-white">
@@ -20141,9 +20146,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                           void openMerchantOrderPanel();
                         }}
                       >
-                        <span className="inline-flex min-w-0 items-center gap-2">
+                        <span className="inline-flex min-w-0 flex-1 items-center gap-2 text-left">
                           <MerchantDesktopMenuIcon name="orders" />
-                          <span>订单管理</span>
+                          <span className="min-w-0 text-left" data-no-translate="1">
+                            {getMerchantAdminCompactNavigationLabel("订单管理", locale)}
+                          </span>
                         </span>
                         {merchantOrderAttentionSummary.count > 0 ? (
                           <span className="ml-2 inline-flex min-w-[1.5rem] items-center justify-center rounded-full bg-emerald-500 px-2 py-0.5 text-xs font-semibold leading-none text-white">
@@ -20168,9 +20175,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         aria-controls="merchant-enterprise-context-menu"
                         aria-expanded={merchantDesktopSection === "enterprise"}
                       >
-                        <span className="inline-flex min-w-0 items-center gap-2">
+                        <span className="inline-flex min-w-0 flex-1 items-center gap-2 text-left">
                           <MerchantDesktopMenuIcon name="enterprise" />
-                          <span>企业管理</span>
+                          <span className="min-w-0 text-left" data-no-translate="1">
+                            {getMerchantAdminCompactNavigationLabel("企业管理", locale)}
+                          </span>
                         </span>
                         {merchantEnterpriseTodoCount > 0 ? (
                           <span className="ml-2 inline-flex min-w-[1.5rem] items-center justify-center rounded-full bg-rose-500 px-2 py-0.5 text-xs font-semibold leading-none text-white">
@@ -20194,9 +20203,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       onClick={openMerchantSupportPanel}
                       aria-label={supportHasUnreadMessages ? "会话，有新消息" : "会话"}
                     >
-                      <span className="relative inline-flex min-w-0 items-center gap-2">
+                      <span className="relative inline-flex min-w-0 flex-1 items-center gap-2 text-left">
                         <MerchantDesktopMenuIcon name="support" />
-                        <span>会话</span>
+                        <span className="min-w-0 text-left" data-no-translate="1">
+                          {getMerchantAdminCompactNavigationLabel("会话", locale)}
+                        </span>
                         {supportHasUnreadMessages ? (
                           <span
                             aria-hidden="true"
@@ -20219,9 +20230,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                           void openMerchantMembersPanel();
                         }}
                       >
-                        <span className="inline-flex min-w-0 items-center gap-2">
+                        <span className="inline-flex min-w-0 flex-1 items-center gap-2 text-left">
                           <MerchantDesktopMenuIcon name="members" />
-                          <span>会员管理</span>
+                          <span className="min-w-0 text-left" data-no-translate="1">
+                            {getMerchantAdminCompactNavigationLabel("会员管理", locale)}
+                          </span>
                         </span>
                       </button>
                     ) : null}
@@ -20238,9 +20251,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         onClick={() => openMerchantCouponsPanel()}
                         aria-current={merchantDesktopCouponCenterActive ? "page" : undefined}
                       >
-                        <span className="inline-flex min-w-0 items-center gap-2">
+                        <span className="inline-flex min-w-0 flex-1 items-center gap-2 text-left">
                           <MerchantDesktopMenuIcon name="coupons" />
-                          <span>优惠券</span>
+                          <span className="min-w-0 text-left" data-no-translate="1">
+                            {getMerchantAdminCompactNavigationLabel("优惠券", locale)}
+                          </span>
                         </span>
                         {merchantVisibleCouponCount > 0 ? (
                           <span className="ml-2 inline-flex min-w-[1.5rem] items-center justify-center rounded-full bg-blue-50 px-2 py-0.5 text-xs font-semibold leading-none text-blue-700">
@@ -20256,9 +20271,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         onClick={openMerchantBusinessCenterPanel}
                         aria-current={merchantDesktopOperationCenterActive ? "page" : undefined}
                       >
-                        <span className="inline-flex min-w-0 items-center gap-2">
+                        <span className="inline-flex min-w-0 flex-1 items-center gap-2 text-left">
                           <MerchantDesktopMenuIcon name="business" />
-                          <span>经营中心</span>
+                          <span className="min-w-0 text-left" data-no-translate="1">
+                            {getMerchantAdminCompactNavigationLabel("经营中心", locale)}
+                          </span>
                         </span>
                       </button>
                     </div>
@@ -20386,28 +20403,28 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         className={getMerchantDesktopSubmenuButtonClassName(merchantDesktopSection === "redemptionRecords")}
                         onClick={() => void openMerchantRedemptionRecordsPanel()}
                       >
-                        兑换记录
+                        <span data-no-translate="1">{getMerchantAdminCompactNavigationLabel("兑换记录", locale)}</span>
                       </button>
                       <button
                         type="button"
                         className={getMerchantDesktopSubmenuButtonClassName(merchantDesktopSection === "rechargeRecords")}
                         onClick={() => void openMerchantRechargeRecordsPanel()}
                       >
-                        充值记录
+                        <span data-no-translate="1">{getMerchantAdminCompactNavigationLabel("充值记录", locale)}</span>
                       </button>
                       <button
                         type="button"
                         className={getMerchantDesktopSubmenuButtonClassName(merchantDesktopSection === "redemptionCategories")}
                         onClick={() => void openMerchantPointRedemptionSettingsPanel("redemptionCategories")}
                       >
-                        项目分类
+                        <span data-no-translate="1">{getMerchantAdminCompactNavigationLabel("项目分类", locale)}</span>
                       </button>
                       <button
                         type="button"
                         className={getMerchantDesktopSubmenuButtonClassName(merchantDesktopSection === "redemptionItems")}
                         onClick={() => void openMerchantPointRedemptionSettingsPanel("redemptionItems")}
                       >
-                        项目管理
+                        <span data-no-translate="1">{getMerchantAdminCompactNavigationLabel("项目管理", locale)}</span>
                       </button>
                     </div>
                   ) : merchantDesktopSection === "booking" ? (

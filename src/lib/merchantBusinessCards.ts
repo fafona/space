@@ -706,6 +706,15 @@ export function createDefaultMerchantBusinessCardDraft(
   };
 }
 
+export function createBlankMerchantBusinessCardDraft(): MerchantBusinessCardDraft {
+  return {
+    ...createDefaultMerchantBusinessCardDraft({}),
+    name: "",
+    showWebsiteUrl: false,
+    showQr: false,
+  };
+}
+
 export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusinessCardDraft {
   const fallback = createDefaultMerchantBusinessCardDraft({});
   const source = value && typeof value === "object" ? (value as Partial<MerchantBusinessCardDraft>) : {};

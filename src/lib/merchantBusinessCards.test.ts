@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  createBlankMerchantBusinessCardDraft,
   createDefaultMerchantBusinessCardDraft,
   disableMerchantBusinessCardChatDisplay,
   getMerchantBusinessCardRequiredFields,
@@ -12,6 +13,25 @@ import {
   selectMerchantBusinessCardForChat,
   stripMerchantBusinessCardShareMetadata,
 } from "./merchantBusinessCards";
+
+test("blank business card draft contains no merchant or contact content", () => {
+  const draft = createBlankMerchantBusinessCardDraft();
+
+  assert.equal(draft.name, "");
+  assert.equal(draft.title, "");
+  assert.equal(draft.websiteLabel, "");
+  assert.equal(draft.showWebsiteUrl, false);
+  assert.equal(draft.showQr, false);
+  assert.equal(draft.backgroundImageUrl, "");
+  assert.equal(draft.contactPageImageUrl, "");
+  assert.equal(draft.contactIntroVideoUrl, "");
+  assert.deepEqual(draft.customTexts, []);
+  assert.deepEqual(draft.contacts.phones, []);
+  assert.equal(draft.contacts.contactName, "");
+  assert.equal(draft.contacts.phone, "");
+  assert.equal(draft.contacts.email, "");
+  assert.equal(draft.contacts.address, "");
+});
 
 test("business card generation only requires merchant domain prefix", () => {
   const missing = getMerchantBusinessCardRequiredFields({

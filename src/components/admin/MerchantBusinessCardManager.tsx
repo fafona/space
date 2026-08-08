@@ -18,6 +18,7 @@ import {
   MERCHANT_BUSINESS_CARD_CUSTOM_CONTACT_ICON_PRESETS,
   MERCHANT_BUSINESS_CARD_PHONE_LIMIT,
   applyMerchantBusinessCardContactFieldOrderToTextLayout,
+  createBlankMerchantBusinessCardDraft,
   createDefaultMerchantBusinessCardDraft,
   getMerchantBusinessCardRequiredFields,
   normalizeMerchantBusinessCardChatDisplaySelection,
@@ -404,19 +405,6 @@ function buildBusinessCardDraftStorageKey(input: {
     normalizeText(input.domainPrefix) ||
     "default";
   return `${BUSINESS_CARD_DRAFT_STORAGE_PREFIX}:${encodeURIComponent(identity).slice(0, 240)}`;
-}
-
-function readSavedBusinessCardDraft(storageKey: string) {
-  if (typeof window === "undefined" || !storageKey) return null;
-  try {
-    const raw = window.localStorage.getItem(storageKey);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { draft?: unknown } | unknown;
-    const source = parsed && typeof parsed === "object" && "draft" in parsed ? (parsed as { draft?: unknown }).draft : parsed;
-    return normalizeMerchantBusinessCardDraft(source);
-  } catch {
-    return null;
-  }
 }
 
 function writeSavedBusinessCardDraft(storageKey: string, draft: MerchantBusinessCardDraft) {
@@ -2262,13 +2250,13 @@ export default function MerchantBusinessCardManager({
     });
   };
 
-  const openEditor = () => {
+  const openBlankEditor = () => {
     if (!canCreate) return;
     if (cardLimitReached) {
       setTip(`名片夹已达到上限（${normalizedCardLimit} 张），请先删除旧名片或到超级后台调整数量限制`);
       return;
     }
-    const nextDraft = readSavedBusinessCardDraft(draftStorageKey) ?? createDefaultMerchantBusinessCardDraft(profile);
+    const nextDraft = createBlankMerchantBusinessCardDraft();
     draftRevisionRef.current += 1;
     setDraft(nextDraft);
     setContactPhoneEditorValues(resolveDraftPhoneValues(nextDraft.contacts));
@@ -2343,7 +2331,7 @@ export default function MerchantBusinessCardManager({
 
   const openCreateEditorFromFolder = () => {
     setFolderOpen(false);
-    openEditor();
+    openBlankEditor();
   };
 
   const handleBackgroundUpload = async (event: ChangeEvent<HTMLInputElement>) => {
