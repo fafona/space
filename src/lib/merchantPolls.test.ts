@@ -5,10 +5,12 @@ import {
   buildPollExportRows,
   buildPollRoundOverviews,
   buildPollSummary,
+  collectPublishedPollRounds,
   findPublishedPollConfig,
   getPollAvailability,
   getPollAudienceAccessError,
   getPollConfigurationIssue,
+  getPollIdentityIds,
   getPollParticipantTypeLabel,
   hasActivePollMerchantMembership,
   normalizePollConfig,
@@ -205,6 +207,7 @@ test("poll summary counts choices, skips and private text responses without leak
   const ballots: PollStoredBallot[] = [
     {
       id: "ballot-1",
+      ballotNo: "XP1000000026080600001",
       participantType: "member",
       participantName: "会员甲",
       anonymous: false,
@@ -214,21 +217,45 @@ test("poll summary counts choices, skips and private text responses without leak
         { questionId: "q-text", optionIds: [], text: "文字回答" },
       ],
       pollSnapshot: { heading: config.heading, questions },
+      source: "pc_web",
+      invalidatedAt: "",
+      invalidatedBy: "",
       createdAt: "2026-08-06T10:00:00.000Z",
     },
     {
       id: "ballot-2",
+      ballotNo: "XP1000000026080600002",
       participantType: "guest",
       participantName: "",
       anonymous: true,
       answers: [{ questionId: "q-single", optionIds: ["b"], text: "" }],
       pollSnapshot: { heading: config.heading, questions },
+      source: "contact_card",
+      invalidatedAt: "",
+      invalidatedBy: "",
       createdAt: "2026-08-06T10:01:00.000Z",
+    },
+    {
+      id: "ballot-3",
+      ballotNo: "XP1000000026080600003",
+      participantType: "registered",
+      participantName: "已作废用户",
+      anonymous: false,
+      answers: [
+        { questionId: "q-single", optionIds: ["a"], text: "" },
+        { questionId: "q-text", optionIds: [], text: "不应进入统计" },
+      ],
+      pollSnapshot: { heading: config.heading, questions },
+      source: "mobile_web",
+      invalidatedAt: "2026-08-06T11:00:00.000Z",
+      invalidatedBy: "admin@example.com",
+      createdAt: "2026-08-06T10:02:00.000Z",
     },
   ];
 
   const publicSummary = buildPollSummary(ballots, questions);
   assert.equal(publicSummary.totalBallots, 2);
+  assert.equal(publicSummary.invalidatedBallots, 1);
   assert.equal(publicSummary.anonymousBallots, 1);
   assert.equal(publicSummary.questions[0].responseCount, 2);
   assert.deepEqual(publicSummary.questions[0].options.map((option) => option.count), [1, 1]);
@@ -243,7 +270,13 @@ test("poll summary counts choices, skips and private text responses without leak
   assert.equal(rows[0]["身份"], "会员");
   assert.equal(rows[1]["投票人"], "匿名");
   assert.equal(rows[0]["Q2 可选择多个"], "丙；丁");
-  assert.equal(rows[0]["投票名称（提交时）"], "满意度调查");
+  assert.equal(rows[0]["选票编号"], "XP1000000026080600001");
+  assert.equal(rows[0]["来源"], "PC网页");
+  assert.equal(rows[1]["来源"], "联系卡");
+  assert.equal(rows[2]["来源"], "手机网页");
+  assert.equal(rows[2]["选票状态"], "已作废");
+  assert.equal(rows[2]["操作人"], "admin@example.com");
+  assert.equal(Object.hasOwn(rows[0], "投票名称（提交时）"), false);
 });
 
 test("published poll lookup traverses nested desktop and mobile page plans", () => {
@@ -269,6 +302,159 @@ test("published poll lookup traverses nested desktop and mobile page plans", () 
   const found = findPublishedPollConfig([root], "nested-poll", "poll-block");
   assert.equal(found?.blockId, "poll-block");
   assert.equal(found?.config.heading, "嵌套投票");
+});
+
+test("identical legacy desktop and mobile poll copies share one published round", () => {
+  const mobileQuestions = questions.map((question, questionIndex) => ({
+    ...question,
+    id: `mobile-question-${questionIndex + 1}`,
+    options: question.options.map((option, optionIndex) => ({
+      ...option,
+      id: `mobile-option-${questionIndex + 1}-${optionIndex + 1}`,
+    })),
+  }));
+  const desktop: Block = {
+    id: "poll-desktop",
+    type: "poll",
+    props: {
+      pollId: "poll-desktop-random",
+      heading: "跨端投票",
+      text: "同一轮投票",
+      pollQuestions: questions,
+    },
+  };
+  const mobile: Block = {
+    id: "poll-mobile",
+    type: "poll",
+    props: {
+      pollId: "poll-mobile-random",
+      heading: "跨端投票",
+      text: "同一轮投票",
+      pollQuestions: mobileQuestions,
+    },
+  };
+
+  const rounds = collectPublishedPollRounds([desktop, mobile]);
+  assert.equal(rounds.length, 1);
+  assert.deepEqual(
+    new Set(getPollIdentityIds(rounds[0].config)),
+    new Set(["poll-desktop-random", "poll-mobile-random"]),
+  );
+  assert.equal(findPublishedPollConfig([desktop, mobile], "poll-mobile-random")?.config.pollId, "poll-desktop-random");
+});
+
+test("legacy desktop and mobile ballots aggregate equivalent questions with different internal ids", () => {
+  const mobileQuestions = normalizePollQuestions(questions.map((question, questionIndex) => ({
+    ...question,
+    id: `mobile-question-${questionIndex + 1}`,
+    options: question.options.map((option, optionIndex) => ({
+      ...option,
+      id: `mobile-option-${questionIndex + 1}-${optionIndex + 1}`,
+    })),
+  })));
+  const ballots: PollStoredBallot[] = [
+    {
+      id: "desktop-ballot",
+      ballotNo: "XP1000000026080900001",
+      participantType: "guest",
+      participantName: "Desktop",
+      anonymous: false,
+      answers: [{ questionId: questions[0].id, optionIds: [questions[0].options[0].id], text: "" }],
+      pollSnapshot: { heading: "Shared poll", questions },
+      source: "pc_web",
+      invalidatedAt: "",
+      invalidatedBy: "",
+      createdAt: "2026-08-09T10:00:00.000Z",
+    },
+    {
+      id: "mobile-ballot",
+      ballotNo: "XP1000000026080900002",
+      participantType: "guest",
+      participantName: "Mobile",
+      anonymous: false,
+      answers: [{ questionId: mobileQuestions[0].id, optionIds: [mobileQuestions[0].options[0].id], text: "" }],
+      pollSnapshot: { heading: "Shared poll", questions: mobileQuestions },
+      source: "mobile_web",
+      invalidatedAt: "",
+      invalidatedBy: "",
+      createdAt: "2026-08-09T10:01:00.000Z",
+    },
+  ];
+
+  const summary = buildPollSummary(ballots, questions, { includeTextResponses: true });
+  assert.equal(summary.questions.length, questions.length);
+  assert.equal(summary.questions[0].responseCount, 2);
+  assert.equal(summary.questions[0].options[0].count, 2);
+  const rows = buildPollExportRows(ballots, summary);
+  assert.equal(rows[1][`Q1 ${questions[0].prompt}`], questions[0].options[0].label);
+});
+
+test("explicit TP identity remains canonical across copied poll blocks", () => {
+  const pollId = "TP1000000026080901";
+  const desktop: Block = {
+    id: "poll-desktop",
+    type: "poll",
+    props: { pollId, pollLegacyIds: ["legacy-desktop"], heading: "统一投票", pollQuestions: questions },
+  };
+  const mobile: Block = {
+    id: "poll-mobile",
+    type: "poll",
+    props: { pollId, pollLegacyIds: ["legacy-mobile"], heading: "统一投票", pollQuestions: questions },
+  };
+
+  const rounds = collectPublishedPollRounds([desktop, mobile]);
+  assert.equal(rounds.length, 1);
+  assert.equal(rounds[0].config.pollId, pollId);
+  assert.deepEqual(
+    new Set(getPollIdentityIds(rounds[0].config)),
+    new Set([pollId, "legacy-desktop", "legacy-mobile"]),
+  );
+});
+
+test("preferred copied block validates its local questions under the shared poll identity", () => {
+  const pollId = "TP1000000026080901";
+  const desktop: Block = {
+    id: "poll-desktop",
+    type: "poll",
+    props: {
+      pollId,
+      heading: "Desktop poll",
+      pollQuestions: [{
+        id: "desktop-question",
+        type: "single",
+        prompt: "Desktop question",
+        required: true,
+        options: [
+          { id: "desktop-option-a", label: "Desktop option A" },
+          { id: "desktop-option-b", label: "Desktop option B" },
+        ],
+      }],
+    },
+  };
+  const mobile: Block = {
+    id: "poll-mobile",
+    type: "poll",
+    props: {
+      pollId,
+      heading: "Mobile poll",
+      pollQuestions: [{
+        id: "mobile-question",
+        type: "single",
+        prompt: "Mobile question",
+        required: true,
+        options: [
+          { id: "mobile-option-a", label: "Mobile option A" },
+          { id: "mobile-option-b", label: "Mobile option B" },
+        ],
+      }],
+    },
+  };
+
+  const found = findPublishedPollConfig([desktop, mobile], pollId, mobile.id);
+  assert.equal(found?.blockId, mobile.id);
+  assert.equal(found?.config.pollId, pollId);
+  assert.equal(found?.config.heading, "Mobile poll");
+  assert.equal(found?.config.questions[0]?.id, "mobile-question");
 });
 
 test("poll round overviews retain historical rounds and include published zero-ballot rounds", () => {

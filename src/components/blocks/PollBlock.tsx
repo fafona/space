@@ -9,6 +9,7 @@ import {
   normalizePollConfig,
   validatePollAnswers,
   type PollAnswer,
+  type PollSubmissionSource,
   type PollSummary,
 } from "@/lib/merchantPolls";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
@@ -22,6 +23,7 @@ import { toRichHtml } from "./richText";
 type PollBlockRuntimeProps = PollProps & {
   runtimeSiteId?: string;
   runtimeBlockId?: string;
+  runtimeSource?: PollSubmissionSource;
   interactive?: boolean;
 };
 
@@ -101,6 +103,7 @@ function PollResults({ summary }: { summary: PollSummary }) {
 export default function PollBlock({
   runtimeSiteId = "",
   runtimeBlockId = "",
+  runtimeSource = "pc_web",
   interactive = true,
   ...props
 }: PollBlockRuntimeProps) {
@@ -224,6 +227,7 @@ export default function PollBlock({
           answers: validation.answers,
           frontendAuthProof: authPayload?.frontendAuthProof ?? "",
           guestToken: isRegistered ? "" : readPersonalGuestMergeToken(),
+          source: runtimeSource,
         }),
       });
       const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string; summary?: PollSummary | null } | null;

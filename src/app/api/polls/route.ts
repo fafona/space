@@ -5,16 +5,18 @@ import {
   buildPollSnapshot,
   buildPollRoundOverviews,
   buildPollSummary,
-  collectPublishedPollBlocks,
+  collectPublishedPollRounds,
   findPublishedPollConfig,
   getPollAvailability,
   getPollAudienceAccessError,
   getPollConfigurationIssue,
+  getPollIdentityIds,
   hasActivePollMerchantMembership,
-  normalizePollConfig,
   normalizePollRoundBallotMetadata,
   normalizeStoredPollBallot,
   validatePollAnswers,
+  type PublishedPollRound,
+  type PollSubmissionSource,
   type PollStoredBallot,
 } from "@/lib/merchantPolls";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
@@ -32,6 +34,7 @@ export const revalidate = 0;
 
 const POLL_BALLOT_PAGE_SIZE = 1000;
 const POLL_BALLOT_READ_LIMIT = 50_000;
+const POLL_BALLOT_SELECT = "id,ballot_no,participant_type,participant_name,anonymous,answers,poll_snapshot,source,invalidated_at,invalidated_by,created_at";
 
 function trimText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
@@ -58,15 +61,75 @@ function isPollStoreUnavailable(error: unknown) {
   return /poll_store_unavailable|42P01|PGRST205|merchant_poll_ballots/i.test(code);
 }
 
-async function loadPollBallots(siteId: string, pollId: string) {
+function normalizePollSource(value: unknown): PollSubmissionSource | "" {
+  if (value === "pc_web" || value === "mobile_web" || value === "contact_card") return value;
+  return "";
+}
+
+async function resolveCanonicalPollId(siteId: string, aliases: string[]) {
+  const normalizedAliases = [...new Set(aliases.map((value) => trimText(value, 96)).filter(Boolean))];
+  if (normalizedAliases.length === 0) throw new Error("missing_poll_alias");
+  const result = await createPollStore().rpc("resolve_merchant_poll_id", {
+    p_merchant_id: siteId,
+    p_aliases: normalizedAliases,
+  });
+  if (result.error) throw result.error;
+  const pollId = trimText(result.data, 96);
+  if (!/^TP\d{16}$/.test(pollId)) throw new Error("invalid_canonical_poll_id");
+  return pollId;
+}
+
+async function resolvePublishedRounds(siteId: string, blocks: Parameters<typeof collectPublishedPollRounds>[0]) {
+  const rounds = collectPublishedPollRounds(blocks);
+  return Promise.all(rounds.map(async (round) => {
+    const aliases = getPollIdentityIds(round.config);
+    const pollId = await resolveCanonicalPollId(siteId, aliases);
+    return {
+      ...round,
+      config: {
+        ...round.config,
+        pollId,
+        legacyPollIds: [...new Set([...aliases, ...round.config.legacyPollIds].filter((value) => value !== pollId))],
+      },
+    } satisfies PublishedPollRound;
+  }));
+}
+
+async function loadPollIdentity(siteId: string, requestedPollId: string, aliases: string[] = []) {
+  let canonicalPollId = "";
+  const requested = trimText(requestedPollId, 96);
+  const candidates = [...new Set([requested, ...aliases].map((value) => trimText(value, 96)).filter(Boolean))];
+  if (candidates.length > 1 || !/^TP\d{16}$/.test(requested)) {
+    canonicalPollId = await resolveCanonicalPollId(siteId, candidates);
+  } else {
+    canonicalPollId = requested;
+  }
+  const aliasResult = await createPollStore()
+    .from("merchant_poll_aliases")
+    .select("alias_poll_id")
+    .eq("merchant_id", siteId)
+    .eq("poll_id", canonicalPollId);
+  if (aliasResult.error) throw aliasResult.error;
+  const storedAliases = Array.isArray(aliasResult.data)
+    ? aliasResult.data.map((row) => trimText((row as { alias_poll_id?: unknown }).alias_poll_id, 96)).filter(Boolean)
+    : [];
+  return {
+    pollId: canonicalPollId,
+    aliases: [...new Set([canonicalPollId, ...candidates, ...storedAliases])],
+  };
+}
+
+async function loadPollBallots(siteId: string, pollIds: string[]) {
   const client = createPollStore();
   const rows: unknown[] = [];
+  const normalizedPollIds = [...new Set(pollIds.map((value) => trimText(value, 96)).filter(Boolean))];
+  if (normalizedPollIds.length === 0) return [];
   for (let offset = 0; offset < POLL_BALLOT_READ_LIMIT; offset += POLL_BALLOT_PAGE_SIZE) {
     const result = await client
       .from("merchant_poll_ballots")
-      .select("id,participant_type,participant_name,anonymous,answers,poll_snapshot,created_at")
+      .select(POLL_BALLOT_SELECT)
       .eq("merchant_id", siteId)
-      .eq("poll_id", pollId)
+      .in("poll_id", normalizedPollIds)
       .order("created_at", { ascending: true })
       .order("id", { ascending: true })
       .range(offset, offset + POLL_BALLOT_PAGE_SIZE - 1);
@@ -84,7 +147,7 @@ async function loadPollRoundMetadata(siteId: string) {
   for (let offset = 0; offset < POLL_BALLOT_READ_LIMIT; offset += POLL_BALLOT_PAGE_SIZE) {
     const result = await client
       .from("merchant_poll_ballots")
-      .select("poll_id,block_id,anonymous,poll_snapshot,created_at")
+      .select("poll_id,block_id,anonymous,poll_snapshot,invalidated_at,created_at")
       .eq("merchant_id", siteId)
       .order("created_at", { ascending: false })
       .range(offset, offset + POLL_BALLOT_PAGE_SIZE - 1);
@@ -120,28 +183,42 @@ export async function GET(request: Request) {
     const publishedPromise = fetchPublishedSiteBlocksFromSupabase(siteId).catch(() => null);
     if (!pollId) {
       const [metadata, published] = await Promise.all([loadPollRoundMetadata(siteId), publishedPromise]);
-      const publishedRounds = published
-        ? collectPublishedPollBlocks(published.blocks).map((block) => ({
-            blockId: block.id,
-            config: normalizePollConfig(block.props, block.id),
-          }))
-        : [];
-      const rounds = buildPollRoundOverviews(metadata, publishedRounds);
+      const publishedRounds = published ? await resolvePublishedRounds(siteId, published.blocks) : [];
+      const canonicalByAlias = new Map<string, string>();
+      for (const round of publishedRounds) {
+        for (const alias of getPollIdentityIds(round.config)) canonicalByAlias.set(alias, round.config.pollId);
+      }
+      const unmappedPollIds = [...new Set(metadata.map((row) => row.pollId).filter((value) => !canonicalByAlias.has(value)))];
+      await Promise.all(unmappedPollIds.map(async (legacyPollId) => {
+        canonicalByAlias.set(legacyPollId, await resolveCanonicalPollId(siteId, [legacyPollId]));
+      }));
+      const normalizedMetadata = metadata.map((row) => ({
+        ...row,
+        pollId: canonicalByAlias.get(row.pollId) ?? row.pollId,
+      }));
+      const rounds = buildPollRoundOverviews(normalizedMetadata, publishedRounds);
       return noStoreJson({
         ok: true,
         rounds,
         totalRounds: rounds.length,
         totalBallots: rounds.reduce((total, round) => total + round.totalBallots, 0),
-        truncated: metadata.length >= POLL_BALLOT_READ_LIMIT,
+        truncated: normalizedMetadata.length >= POLL_BALLOT_READ_LIMIT,
       });
     }
 
-    const [ballots, published] = await Promise.all([loadPollBallots(siteId, pollId), publishedPromise]);
-    const publishedPoll = published ? findPublishedPollConfig(published.blocks, pollId) : null;
+    const published = await publishedPromise;
+    const publishedRounds = published ? await resolvePublishedRounds(siteId, published.blocks) : [];
+    const publishedPoll = publishedRounds.find((round) => getPollIdentityIds(round.config).includes(pollId)) ?? null;
+    const identity = await loadPollIdentity(
+      siteId,
+      publishedPoll?.config.pollId ?? pollId,
+      publishedPoll ? getPollIdentityIds(publishedPoll.config) : [],
+    );
+    const ballots = await loadPollBallots(siteId, identity.aliases);
     const summary = buildPollSummary(ballots, publishedPoll?.config.questions ?? [], { includeTextResponses: true });
     return noStoreJson({
       ok: true,
-      pollId,
+      pollId: identity.pollId,
       published: Boolean(publishedPoll),
       summary,
       ballots,
@@ -176,17 +253,65 @@ export async function DELETE(request: Request) {
       return noStoreJson({ error: "unauthorized" }, { status: 401 });
     }
 
+    const identity = await loadPollIdentity(siteId, pollId);
     const result = await createPollStore()
       .from("merchant_poll_ballots")
       .delete({ count: "exact" })
       .eq("merchant_id", siteId)
-      .eq("poll_id", pollId);
+      .in("poll_id", identity.aliases);
     if (result.error) throw result.error;
-    return noStoreJson({ ok: true, pollId, deletedCount: result.count ?? 0 });
+    return noStoreJson({ ok: true, pollId: identity.pollId, deletedCount: result.count ?? 0 });
   } catch (error) {
     return noStoreJson(
       {
         error: isPollStoreUnavailable(error) ? "poll_store_unavailable" : "poll_results_delete_failed",
+        message: error instanceof Error ? error.message : getPollStoreErrorCode(error) || "unknown_error",
+      },
+      { status: isPollStoreUnavailable(error) ? 503 : 500 },
+    );
+  }
+}
+
+export async function PATCH(request: Request) {
+  if (!isTrustedSameOriginMutationRequest(request)) {
+    return getTrustedMutationRequestErrorResponse();
+  }
+
+  try {
+    const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+    const siteId = trimText(body?.siteId, 64);
+    const pollId = trimText(body?.pollId, 96);
+    const ballotId = trimText(body?.ballotId, 128);
+    const invalidated = body?.invalidated === true;
+    if (!isMerchantNumericId(siteId) || !pollId || !ballotId) {
+      return noStoreJson({ error: "invalid_poll_request" }, { status: 400 });
+    }
+
+    const session = await resolveMerchantSessionFromRequest(request, { hintedMerchantId: siteId });
+    if (!session || session.merchantId !== siteId) {
+      return noStoreJson({ error: "unauthorized" }, { status: 401 });
+    }
+
+    const identity = await loadPollIdentity(siteId, pollId);
+    const result = await createPollStore()
+      .from("merchant_poll_ballots")
+      .update({
+        invalidated_at: invalidated ? new Date().toISOString() : null,
+        invalidated_by: invalidated ? session.merchantEmail || session.merchantId : null,
+      })
+      .eq("merchant_id", siteId)
+      .eq("id", ballotId)
+      .in("poll_id", identity.aliases)
+      .select(POLL_BALLOT_SELECT)
+      .maybeSingle();
+    if (result.error) throw result.error;
+    const ballot = normalizeStoredPollBallot(result.data);
+    if (!ballot) return noStoreJson({ error: "poll_ballot_not_found" }, { status: 404 });
+    return noStoreJson({ ok: true, pollId: identity.pollId, ballot });
+  } catch (error) {
+    return noStoreJson(
+      {
+        error: isPollStoreUnavailable(error) ? "poll_store_unavailable" : "poll_ballot_update_failed",
         message: error instanceof Error ? error.message : getPollStoreErrorCode(error) || "unknown_error",
       },
       { status: isPollStoreUnavailable(error) ? 503 : 500 },
@@ -202,6 +327,20 @@ export async function POST(request: Request) {
   try {
     const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
     const siteId = trimText(body?.siteId, 64);
+    if (body?.action === "allocate_poll_id") {
+      if (!isMerchantNumericId(siteId)) {
+        return noStoreJson({ error: "invalid_poll_request" }, { status: 400 });
+      }
+      const session = await resolveMerchantSessionFromRequest(request, { hintedMerchantId: siteId });
+      if (!session || session.merchantId !== siteId) {
+        return noStoreJson({ error: "unauthorized" }, { status: 401 });
+      }
+      const allocation = await createPollStore().rpc("allocate_merchant_poll_id", { p_merchant_id: siteId });
+      if (allocation.error) throw allocation.error;
+      const allocatedPollId = trimText(allocation.data, 96);
+      if (!/^TP\d{16}$/.test(allocatedPollId)) throw new Error("invalid_allocated_poll_id");
+      return noStoreJson({ ok: true, pollId: allocatedPollId }, { status: 201 });
+    }
     const pollId = trimText(body?.pollId, 96);
     const blockId = trimText(body?.blockId, 160);
     if (!isMerchantNumericId(siteId) || !pollId) {
@@ -213,7 +352,12 @@ export async function POST(request: Request) {
     if (!publishedPoll) {
       return noStoreJson({ error: "poll_not_published" }, { status: 404 });
     }
-    const config = publishedPoll.config;
+    const identity = await loadPollIdentity(siteId, publishedPoll.config.pollId, getPollIdentityIds(publishedPoll.config));
+    const config = {
+      ...publishedPoll.config,
+      pollId: identity.pollId,
+      legacyPollIds: identity.aliases.filter((value) => value !== identity.pollId),
+    };
     const configurationIssue = getPollConfigurationIssue(config);
     if (configurationIssue) {
       return noStoreJson({ error: "invalid_poll_configuration", issue: configurationIssue }, { status: 409 });
@@ -288,6 +432,18 @@ export async function POST(request: Request) {
     }
 
     const client = createPollStore();
+    const existingBallot = await client
+      .from("merchant_poll_ballots")
+      .select("id")
+      .eq("merchant_id", siteId)
+      .eq("participant_key_hash", participantKeyHash)
+      .in("poll_id", identity.aliases)
+      .limit(1);
+    if (existingBallot.error) throw existingBallot.error;
+    if (Array.isArray(existingBallot.data) && existingBallot.data.length > 0) {
+      return noStoreJson({ error: "already_voted" }, { status: 409 });
+    }
+    const source = normalizePollSource(body?.source);
     const insertResult = await client
       .from("merchant_poll_ballots")
       .insert({
@@ -300,8 +456,9 @@ export async function POST(request: Request) {
         anonymous,
         answers: validatedAnswers.answers,
         poll_snapshot: buildPollSnapshot(config),
+        source: source || null,
       })
-      .select("id,participant_type,participant_name,anonymous,answers,poll_snapshot,created_at")
+      .select(POLL_BALLOT_SELECT)
       .single();
     if (insertResult.error) {
       if (getPollStoreErrorCode(insertResult.error) === "23505") {
@@ -313,7 +470,7 @@ export async function POST(request: Request) {
     const ballot = normalizeStoredPollBallot(insertResult.data);
     let summary = null;
     if (config.showResultsAfterSubmit) {
-      const ballots = await loadPollBallots(siteId, config.pollId);
+      const ballots = await loadPollBallots(siteId, identity.aliases);
       summary = buildPollSummary(ballots, config.questions);
     }
     return noStoreJson({ ok: true, ballot, summary }, { status: 201 });

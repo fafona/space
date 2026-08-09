@@ -74,6 +74,7 @@ import {
   createPollEntityId,
   normalizePollConfig,
 } from "@/lib/merchantPolls";
+import { allocateMerchantPollId } from "@/lib/merchantPollClient";
 import {
   MERCHANT_INDUSTRY_OPTIONS,
   PLAN_TEMPLATE_CATEGORY_OPTIONS,
@@ -4168,6 +4169,7 @@ export default function AdminClient({
   const editorAvailablePagesRef = useRef<Array<{ id: string; name: string }>>([]);
   const editorAvailablePagesKeyRef = useRef("");
   const [newBlockType, setNewBlockType] = useState<Block["type"]>("common");
+  const [addingBlock, setAddingBlock] = useState(false);
   const [previewViewport, setPreviewViewport] = useState<"desktop" | "mobile">("desktop");
   const [tip, setTip] = useState<string>("");
   const [merchantPlatformState, setMerchantPlatformState] = useState(() =>
@@ -8278,7 +8280,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     };
   }, [draggingBlockId]);
 
-  function makeDefaultBlock(type: Block["type"]): Block {
+  function makeDefaultBlock(type: Block["type"], allocatedPollId = ""): Block {
     const id = `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     if (type === "common") {
       return {
@@ -8606,7 +8608,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         props: {
           heading: "在线投票",
           text: "请选择选项并提交您的意见。",
-          pollId: createPollEntityId("poll"),
+          pollId: allocatedPollId || createPollEntityId("poll"),
           pollStatus: "open",
           pollAudience: "everyone",
           pollOpenAt: "",
@@ -8653,7 +8655,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     };
   }
 
-  function addBlock() {
+  async function addBlock() {
+    if (addingBlock) return;
     if (!isPlatformEditor && newBlockType === "button" && !canUseButtonBlock) {
       showTip("当前权限未开通按钮区块");
       return;
@@ -8708,11 +8711,24 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         return;
       }
     }
-    const nextBlock = makeDefaultBlock(newBlockType);
-    const next = [...blocks, nextBlock];
-    applyBlocks(next, { selectedId: nextBlock.id });
-    setTip("已新增区块");
-    setTimeout(() => setTip(""), 1200);
+    setAddingBlock(true);
+    try {
+      let allocatedPollId = "";
+      if (newBlockType === "poll" && !isPlatformEditor) {
+        const pollSiteId = editingSiteId || merchantIdsRef.current.find((item) => isMerchantNumericId(item)) || "";
+        if (!isMerchantNumericId(pollSiteId)) throw new Error("当前商户编号无效，暂时无法新建投票。");
+        allocatedPollId = await allocateMerchantPollId(pollSiteId);
+      }
+      const nextBlock = makeDefaultBlock(newBlockType, allocatedPollId);
+      const next = [...blocksRef.current, nextBlock];
+      applyBlocks(next, { selectedId: nextBlock.id });
+      setTip("已新增区块");
+      setTimeout(() => setTip(""), 1200);
+    } catch (error) {
+      showGlobalToast(error instanceof Error ? error.message : "新增区块失败，请稍后重试。", { tone: "error" });
+    } finally {
+      setAddingBlock(false);
+    }
   }
 
   function switchEditingPlan(planId: PlanId) {
@@ -21001,10 +21017,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                                   isCurrentBlockTypeLocked ? "bg-gray-100 text-gray-400 cursor-not-allowed" : "bg-white hover:bg-gray-50"
                                 }`
                           }
-                          onClick={addBlock}
+                          onClick={() => void addBlock()}
                           title="新增区块"
                           aria-label="新增区块"
-                          disabled={isCurrentBlockTypeLocked}
+                          disabled={isCurrentBlockTypeLocked || addingBlock}
                         >
                           <svg viewBox="0 0 24 24" className="h-5 w-5 mx-auto" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
                             <path d="M12 5v14" />

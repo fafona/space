@@ -5,12 +5,15 @@ import test from "node:test";
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
 test("poll statistics live in the operation center between customers and logs", async () => {
-  const [adminClient, deferred, panel, editor, route] = await Promise.all([
+  const [adminClient, deferred, panel, editor, route, pollBlock, renderer, cardShare] = await Promise.all([
     read("src/app/admin/AdminClient.tsx"),
     read("src/components/admin/AdminDeferredComponents.tsx"),
     read("src/components/admin/MerchantPollStatsPanel.tsx"),
     read("src/components/admin/PollBlockEditor.tsx"),
     read("src/app/api/polls/route.ts"),
+    read("src/components/blocks/PollBlock.tsx"),
+    read("src/components/blocks/BlockRenderer.tsx"),
+    read("src/app/share/business-card/page.tsx"),
   ]);
 
   const customerMenu = adminClient.indexOf("客户管理", adminClient.indexOf("merchantDesktopOperationCenterActive"));
@@ -24,6 +27,10 @@ test("poll statistics live in the operation center between customers and logs", 
   assert.match(panel, /逐票明细/);
   assert.match(panel, /确认删除投票记录/);
   assert.match(panel, /method: "DELETE"/);
+  assert.match(panel, /method: "PATCH"/);
+  assert.match(panel, /作废/);
+  assert.match(panel, /恢复/);
+  assert.match(panel, /getPollSubmissionSourceLabel/);
   assert.doesNotMatch(editor, /buildPollExportRows/);
   assert.match(editor, /经营中心的“投票统计”/);
   assert.match(editor, /开放时间（可选）/);
@@ -33,10 +40,18 @@ test("poll statistics live in the operation center between customers and logs", 
   assert.match(route, /if \(!pollId\)/);
   assert.match(route, /buildPollRoundOverviews/);
   assert.match(route, /export async function DELETE/);
+  assert.match(route, /export async function PATCH/);
+  assert.match(route, /invalidated_at/);
+  assert.match(route, /allocate_poll_id/);
+  assert.match(route, /resolve_merchant_poll_id/);
   assert.match(route, /getPollAvailability/);
   assert.match(route, /getPollAudienceAccessError/);
   assert.match(route, /getMerchantMembershipsSnapshot/);
   assert.match(route, /participant_type: isMerchantMember \? "member" : isRegistered \? "registered" : "guest"/);
+  assert.match(route, /source: source \|\| null/);
+  assert.match(pollBlock, /source: runtimeSource/);
+  assert.match(renderer, /runtimeSource=/);
+  assert.match(cardShare, /runtimeSource="contact_card"/);
 });
 
 test("all inline block text controls use the buffered editor adapters", async () => {

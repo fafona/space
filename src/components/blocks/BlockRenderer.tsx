@@ -334,6 +334,7 @@ export default function BlockRenderer({
             {...b.props}
             runtimeSiteId={bookingSiteId}
             runtimeBlockId={b.id}
+            runtimeSource={bookingViewport === "mobile" || forceMobileViewport ? "mobile_web" : "pc_web"}
             interactive={bookingInteractive}
           />
         );

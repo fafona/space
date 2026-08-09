@@ -4,6 +4,8 @@ export const POLL_MAX_QUESTIONS = 30;
 export const POLL_MAX_OPTIONS = 36;
 export const POLL_MAX_TEXT_ANSWER_LENGTH = 4000;
 
+export type PollSubmissionSource = "pc_web" | "mobile_web" | "contact_card";
+
 export type NormalizedPollQuestion = {
   id: string;
   prompt: string;
@@ -14,6 +16,7 @@ export type NormalizedPollQuestion = {
 
 export type NormalizedPollConfig = {
   pollId: string;
+  legacyPollIds: string[];
   heading: string;
   text: string;
   status: "open" | "closed";
@@ -43,6 +46,7 @@ export type PollAnswerValidationResult =
 
 export type PollStoredBallot = {
   id: string;
+  ballotNo: string;
   participantType: "member" | "registered" | "guest";
   participantName: string;
   anonymous: boolean;
@@ -54,6 +58,9 @@ export type PollStoredBallot = {
     closeAt?: string;
     audience?: PollAudience;
   };
+  source: PollSubmissionSource | "";
+  invalidatedAt: string;
+  invalidatedBy: string;
   createdAt: string;
 };
 
@@ -61,6 +68,7 @@ export type PollRoundBallotMetadata = {
   pollId: string;
   blockId: string;
   anonymous: boolean;
+  invalidated: boolean;
   pollSnapshot: PollStoredBallot["pollSnapshot"];
   createdAt: string;
 };
@@ -79,6 +87,7 @@ export type PollRoundOverview = {
   openAt: string;
   closeAt: string;
   totalBallots: number;
+  invalidatedBallots: number;
   anonymousBallots: number;
   questionCount: number;
   firstSubmittedAt: string;
@@ -109,6 +118,7 @@ export type PollSummaryQuestion = {
 
 export type PollSummary = {
   totalBallots: number;
+  invalidatedBallots: number;
   anonymousBallots: number;
   questions: PollSummaryQuestion[];
 };
@@ -201,8 +211,13 @@ export function normalizePollQuestions(value: unknown): NormalizedPollQuestion[]
 
 export function normalizePollConfig(value: PollProps | Record<string, unknown> | null | undefined, fallbackPollId = "poll") {
   const record = readRecord(value) ?? {};
+  const pollId = normalizeEntityId(record.pollId, normalizeEntityId(fallbackPollId, "poll"));
+  const legacyPollIds = Array.isArray(record.pollLegacyIds)
+    ? [...new Set(record.pollLegacyIds.map((item) => normalizeEntityId(item, "")).filter((item) => item && item !== pollId))]
+    : [];
   return {
-    pollId: normalizeEntityId(record.pollId, normalizeEntityId(fallbackPollId, "poll")),
+    pollId,
+    legacyPollIds,
     heading: trimText(record.heading, 1000) || "在线投票",
     text: trimText(record.text, 4000),
     status: record.pollStatus === "closed" ? "closed" : "open",
@@ -282,14 +297,147 @@ export function collectPublishedPollBlocks(blocks: Block[]) {
   return output.filter((block): block is Extract<Block, { type: "poll" }> => block.type === "poll");
 }
 
+export function getPollIdentityIds(config: Pick<NormalizedPollConfig, "pollId" | "legacyPollIds">) {
+  return [...new Set([config.pollId, ...config.legacyPollIds].map((item) => normalizeEntityId(item, "")).filter(Boolean))];
+}
+
+function getPollDefinitionFingerprint(config: NormalizedPollConfig) {
+  return JSON.stringify({
+    heading: config.heading,
+    text: config.text,
+    status: config.status,
+    audience: config.audience,
+    openAt: config.openAt,
+    closeAt: config.closeAt,
+    questions: config.questions.map((question) => ({
+      prompt: question.prompt,
+      type: question.type,
+      required: question.required,
+      options: question.options.map((option) => option.label),
+    })),
+    allowAnonymous: config.allowAnonymous,
+    showResultsAfterSubmit: config.showResultsAfterSubmit,
+    submitLabel: config.submitLabel,
+    successTitle: config.successTitle,
+    successText: config.successText,
+    nameLabel: config.nameLabel,
+    namePlaceholder: config.namePlaceholder,
+  });
+}
+
+type PollQuestionLike = Pick<NormalizedPollQuestion, "id" | "prompt" | "type"> & {
+  options: Array<{ id: string; label: string }>;
+};
+
+function getOccurrenceKey<T>(items: T[], index: number, getBaseKey: (item: T) => string) {
+  const baseKey = getBaseKey(items[index]);
+  let occurrence = 0;
+  for (let itemIndex = 0; itemIndex <= index; itemIndex += 1) {
+    if (getBaseKey(items[itemIndex]) === baseKey) occurrence += 1;
+  }
+  return `${baseKey}\u0000${occurrence}`;
+}
+
+function getPollQuestionSemanticKey(question: PollQuestionLike, index: number, questions: PollQuestionLike[]) {
+  return getOccurrenceKey(questions, index, (item) => `${item.type}\u0000${item.prompt}`);
+}
+
+function getPollOptionSemanticKey(
+  option: { id: string; label: string },
+  index: number,
+  options: Array<{ id: string; label: string }>,
+) {
+  return getOccurrenceKey(options, index, (item) => item.label);
+}
+
+function mergePublishedPollRounds(rounds: PublishedPollRound[]) {
+  const preferred = rounds.find((round) => /^TP\d{16}$/.test(round.config.pollId)) ?? rounds[0];
+  if (!preferred) return null;
+  const identityIds = [...new Set(rounds.flatMap((round) => getPollIdentityIds(round.config)))];
+  return {
+    blockId: preferred.blockId,
+    config: {
+      ...preferred.config,
+      legacyPollIds: identityIds.filter((pollId) => pollId !== preferred.config.pollId),
+    },
+  } satisfies PublishedPollRound;
+}
+
+export function collectPublishedPollRounds(blocks: Block[]) {
+  const uniqueByPollId = new Map<string, PublishedPollRound>();
+  for (const block of collectPublishedPollBlocks(blocks)) {
+    const config = normalizePollConfig(block.props, block.id);
+    const existing = uniqueByPollId.get(config.pollId);
+    if (!existing) {
+      uniqueByPollId.set(config.pollId, { blockId: block.id, config });
+      continue;
+    }
+    existing.config.legacyPollIds = [
+      ...new Set([...existing.config.legacyPollIds, ...config.legacyPollIds].filter((pollId) => pollId !== config.pollId)),
+    ];
+  }
+
+  const groups = [...uniqueByPollId.values()].map((round) => [round]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    outer: for (let leftIndex = 0; leftIndex < groups.length; leftIndex += 1) {
+      const leftIds = new Set(groups[leftIndex].flatMap((round) => getPollIdentityIds(round.config)));
+      for (let rightIndex = leftIndex + 1; rightIndex < groups.length; rightIndex += 1) {
+        if (!groups[rightIndex].some((round) => getPollIdentityIds(round.config).some((pollId) => leftIds.has(pollId)))) continue;
+        groups[leftIndex] = [...groups[leftIndex], ...groups[rightIndex]];
+        groups.splice(rightIndex, 1);
+        changed = true;
+        break outer;
+      }
+    }
+  }
+
+  // Older PC/mobile copies retained separate random IDs. Merge only an exact pair
+  // of identical legacy definitions; TP rounds and explicit aliases stay authoritative.
+  const legacyBuckets = new Map<string, number[]>();
+  groups.forEach((group, index) => {
+    const merged = mergePublishedPollRounds(group);
+    if (!merged || /^TP\d{16}$/.test(merged.config.pollId) || merged.config.legacyPollIds.length > 0) return;
+    const fingerprint = getPollDefinitionFingerprint(merged.config);
+    legacyBuckets.set(fingerprint, [...(legacyBuckets.get(fingerprint) ?? []), index]);
+  });
+  for (const indices of legacyBuckets.values()) {
+    if (indices.length !== 2) continue;
+    const [firstIndex, secondIndex] = indices;
+    if (firstIndex === undefined || secondIndex === undefined || !groups[firstIndex] || !groups[secondIndex]) continue;
+    groups[firstIndex] = [...groups[firstIndex], ...groups[secondIndex]];
+    groups[secondIndex] = [];
+  }
+
+  return groups
+    .filter((group) => group.length > 0)
+    .map(mergePublishedPollRounds)
+    .filter((round): round is PublishedPollRound => Boolean(round));
+}
+
 export function findPublishedPollConfig(blocks: Block[], pollId: string, preferredBlockId = "") {
   const normalizedPollId = normalizeEntityId(pollId, "");
   if (!normalizedPollId) return null;
-  const candidates = collectPublishedPollBlocks(blocks)
-    .map((block) => ({ block, config: normalizePollConfig(block.props, block.id) }))
-    .filter((entry) => entry.config.pollId === normalizedPollId);
-  const matched = candidates.find((entry) => preferredBlockId && entry.block.id === preferredBlockId) ?? candidates[0];
-  return matched ? { blockId: matched.block.id, config: matched.config } : null;
+  const matched = collectPublishedPollRounds(blocks)
+    .find((entry) => getPollIdentityIds(entry.config).includes(normalizedPollId));
+  if (!matched || !preferredBlockId) return matched ?? null;
+
+  const preferredBlock = collectPublishedPollBlocks(blocks).find((block) => block.id === preferredBlockId);
+  if (!preferredBlock) return matched;
+  const preferredConfig = normalizePollConfig(preferredBlock.props, preferredBlock.id);
+  const matchedIdentityIds = new Set(getPollIdentityIds(matched.config));
+  if (!getPollIdentityIds(preferredConfig).some((identityId) => matchedIdentityIds.has(identityId))) return matched;
+
+  const identityIds = [...new Set([...matchedIdentityIds, ...getPollIdentityIds(preferredConfig)])];
+  return {
+    blockId: preferredBlock.id,
+    config: {
+      ...preferredConfig,
+      pollId: matched.config.pollId,
+      legacyPollIds: identityIds.filter((identityId) => identityId !== matched.config.pollId),
+    },
+  } satisfies PublishedPollRound;
 }
 
 export function validatePollAnswers(config: NormalizedPollConfig, value: unknown): PollAnswerValidationResult {
@@ -385,6 +533,13 @@ export function getPollParticipantTypeLabel(participantType: PollStoredBallot["p
   return "游客";
 }
 
+export function getPollSubmissionSourceLabel(source: PollStoredBallot["source"]) {
+  if (source === "pc_web") return "PC网页";
+  if (source === "mobile_web") return "手机网页";
+  if (source === "contact_card") return "联系卡";
+  return "历史记录（未记录来源）";
+}
+
 export function normalizeStoredPollBallot(value: unknown): PollStoredBallot | null {
   const record = readRecord(value);
   if (!record) return null;
@@ -413,6 +568,7 @@ export function normalizeStoredPollBallot(value: unknown): PollStoredBallot | nu
     .filter((answer): answer is PollAnswer => Boolean(answer));
   return {
     id,
+    ballotNo: trimText(record.ballot_no ?? record.ballotNo, 64),
     participantType,
     participantName: trimText(record.participant_name ?? record.participantName, 120),
     anonymous: record.anonymous === true,
@@ -427,6 +583,12 @@ export function normalizeStoredPollBallot(value: unknown): PollStoredBallot | nu
           ? snapshotRecord.audience
           : "everyone",
     },
+    source:
+      record.source === "pc_web" || record.source === "mobile_web" || record.source === "contact_card"
+        ? record.source
+        : "",
+    invalidatedAt: trimText(record.invalidated_at ?? record.invalidatedAt, 64),
+    invalidatedBy: trimText(record.invalidated_by ?? record.invalidatedBy, 320),
     createdAt: trimText(record.created_at ?? record.createdAt, 64),
   };
 }
@@ -441,6 +603,7 @@ export function normalizePollRoundBallotMetadata(value: unknown): PollRoundBallo
     pollId,
     blockId: trimText(record.block_id ?? record.blockId, 160),
     anonymous: record.anonymous === true,
+    invalidated: Boolean(trimText(record.invalidated_at ?? record.invalidatedAt, 64)),
     pollSnapshot: {
       heading: trimText(snapshotRecord.heading, 1000),
       questions: normalizePollQuestions(snapshotRecord.questions),
@@ -460,36 +623,48 @@ export function buildPollRoundOverviews(
   publishedRounds: PublishedPollRound[] = [],
 ) {
   const rounds = new Map<string, PollRoundOverview>();
+  const canonicalPollIds = new Map<string, string>();
+  for (const publishedRound of publishedRounds) {
+    for (const identityId of getPollIdentityIds(publishedRound.config)) {
+      canonicalPollIds.set(identityId, publishedRound.config.pollId);
+    }
+  }
   for (const ballot of metadata) {
-    const existing = rounds.get(ballot.pollId);
+    const canonicalPollId = canonicalPollIds.get(ballot.pollId) ?? ballot.pollId;
+    const existing = rounds.get(canonicalPollId);
     const createdAt = ballot.createdAt;
     if (!existing) {
-      rounds.set(ballot.pollId, {
-        pollId: ballot.pollId,
+      rounds.set(canonicalPollId, {
+        pollId: canonicalPollId,
         blockId: ballot.blockId,
         heading: ballot.pollSnapshot.heading || "未命名投票",
         status: "historical",
         published: false,
         openAt: ballot.pollSnapshot.openAt ?? "",
         closeAt: ballot.pollSnapshot.closeAt ?? "",
-        totalBallots: 1,
-        anonymousBallots: ballot.anonymous ? 1 : 0,
+        totalBallots: ballot.invalidated ? 0 : 1,
+        invalidatedBallots: ballot.invalidated ? 1 : 0,
+        anonymousBallots: !ballot.invalidated && ballot.anonymous ? 1 : 0,
         questionCount: ballot.pollSnapshot.questions.length,
         firstSubmittedAt: createdAt,
         lastSubmittedAt: createdAt,
       });
       continue;
     }
-    existing.totalBallots += 1;
-    if (ballot.anonymous) existing.anonymousBallots += 1;
-    if (!existing.firstSubmittedAt || (createdAt && createdAt < existing.firstSubmittedAt)) {
-      existing.firstSubmittedAt = createdAt;
-    }
-    if (!existing.lastSubmittedAt || (createdAt && createdAt > existing.lastSubmittedAt)) {
-      existing.lastSubmittedAt = createdAt;
-      existing.blockId = ballot.blockId || existing.blockId;
-      existing.heading = ballot.pollSnapshot.heading || existing.heading;
-      existing.questionCount = ballot.pollSnapshot.questions.length || existing.questionCount;
+    if (ballot.invalidated) {
+      existing.invalidatedBallots += 1;
+    } else {
+      existing.totalBallots += 1;
+      if (ballot.anonymous) existing.anonymousBallots += 1;
+      if (!existing.firstSubmittedAt || (createdAt && createdAt < existing.firstSubmittedAt)) {
+        existing.firstSubmittedAt = createdAt;
+      }
+      if (!existing.lastSubmittedAt || (createdAt && createdAt > existing.lastSubmittedAt)) {
+        existing.lastSubmittedAt = createdAt;
+        existing.blockId = ballot.blockId || existing.blockId;
+        existing.heading = ballot.pollSnapshot.heading || existing.heading;
+        existing.questionCount = ballot.pollSnapshot.questions.length || existing.questionCount;
+      }
     }
   }
 
@@ -515,6 +690,7 @@ export function buildPollRoundOverviews(
       openAt: publishedRound.config.openAt,
       closeAt: publishedRound.config.closeAt,
       totalBallots: 0,
+      invalidatedBallots: 0,
       anonymousBallots: 0,
       questionCount: publishedRound.config.questions.length,
       firstSubmittedAt: "",
@@ -533,38 +709,84 @@ export function buildPollSummary(
   currentQuestions: NormalizedPollQuestion[] = [],
   options: { includeTextResponses?: boolean } = {},
 ): PollSummary {
-  const catalog = new Map<string, NormalizedPollQuestion & { active: boolean }>();
-  for (const question of currentQuestions) catalog.set(question.id, { ...question, active: true });
+  const activeBallots = ballots.filter((ballot) => !ballot.invalidatedAt);
+  type CatalogEntry = {
+    question: NormalizedPollQuestion & { active: boolean };
+    semanticKey: string;
+  };
+  type BallotQuestionMapping = {
+    summaryQuestionId: string;
+    optionIdMap: Map<string, string>;
+  };
+
+  const catalog: CatalogEntry[] = [];
+  const catalogById = new Map<string, CatalogEntry>();
+  const catalogBySemanticKey = new Map<string, CatalogEntry>();
+  const mappingsByBallot = new Map<PollStoredBallot, Map<string, BallotQuestionMapping>>();
+  const addCatalogQuestion = (question: NormalizedPollQuestion, active: boolean, semanticKey: string) => {
+    const entry: CatalogEntry = {
+      question: { ...question, options: question.options.map((option) => ({ ...option })), active },
+      semanticKey,
+    };
+    catalog.push(entry);
+    catalogById.set(question.id, entry);
+    if (!catalogBySemanticKey.has(semanticKey)) catalogBySemanticKey.set(semanticKey, entry);
+    return entry;
+  };
+
+  currentQuestions.forEach((question, index) => {
+    addCatalogQuestion(question, true, getPollQuestionSemanticKey(question, index, currentQuestions));
+  });
   for (const ballot of ballots) {
-    for (const question of ballot.pollSnapshot.questions) {
-      const existing = catalog.get(question.id);
-      if (!existing) {
-        catalog.set(question.id, { ...question, active: false });
-        continue;
-      }
-      const optionIds = new Set(existing.options.map((option) => option.id));
-      for (const option of question.options) {
-        if (!optionIds.has(option.id)) existing.options.push(option);
-      }
-    }
+    const ballotMapping = new Map<string, BallotQuestionMapping>();
+    const snapshotQuestions = ballot.pollSnapshot.questions;
+    snapshotQuestions.forEach((question, questionIndex) => {
+      const semanticKey = getPollQuestionSemanticKey(question, questionIndex, snapshotQuestions);
+      const entry = catalogById.get(question.id)
+        ?? catalogBySemanticKey.get(semanticKey)
+        ?? addCatalogQuestion(question, false, semanticKey);
+      const optionIdMap = new Map<string, string>();
+      const targetOptionById = new Map(entry.question.options.map((option) => [option.id, option]));
+      const targetOptionBySemanticKey = new Map(
+        entry.question.options.map((option, optionIndex) => [
+          getPollOptionSemanticKey(option, optionIndex, entry.question.options),
+          option,
+        ]),
+      );
+      question.options.forEach((option, optionIndex) => {
+        const optionSemanticKey = getPollOptionSemanticKey(option, optionIndex, question.options);
+        let targetOption = targetOptionById.get(option.id) ?? targetOptionBySemanticKey.get(optionSemanticKey);
+        if (!targetOption) {
+          targetOption = { ...option };
+          entry.question.options.push(targetOption);
+          targetOptionById.set(targetOption.id, targetOption);
+          targetOptionBySemanticKey.set(optionSemanticKey, targetOption);
+        }
+        optionIdMap.set(option.id, targetOption.id);
+      });
+      ballotMapping.set(question.id, { summaryQuestionId: entry.question.id, optionIdMap });
+    });
+    mappingsByBallot.set(ballot, ballotMapping);
   }
 
-  const questions: PollSummaryQuestion[] = [...catalog.values()].map((question) => ({
+  const questions: PollSummaryQuestion[] = catalog.map(({ question }) => ({
     id: question.id,
     prompt: question.prompt,
     type: question.type,
     required: question.required,
     active: question.active,
     responseCount: 0,
-    skippedCount: ballots.length,
+    skippedCount: activeBallots.length,
     options: question.options.map((option) => ({ ...option, count: 0 })),
     ...(question.type === "text" && options.includeTextResponses ? { textResponses: [] } : {}),
   }));
   const summaryById = new Map(questions.map((question) => [question.id, question]));
 
-  for (const ballot of ballots) {
+  for (const ballot of activeBallots) {
+    const ballotMapping = mappingsByBallot.get(ballot);
     for (const answer of ballot.answers) {
-      const question = summaryById.get(answer.questionId);
+      const mapping = ballotMapping?.get(answer.questionId);
+      const question = summaryById.get(mapping?.summaryQuestionId ?? answer.questionId);
       if (!question) continue;
       if (question.type === "text") {
         if (!answer.text) continue;
@@ -584,15 +806,16 @@ export function buildPollSummary(
       question.skippedCount -= 1;
       const counts = new Map(question.options.map((option) => [option.id, option]));
       for (const optionId of answer.optionIds) {
-        const option = counts.get(optionId);
+        const option = counts.get(mapping?.optionIdMap.get(optionId) ?? optionId);
         if (option) option.count += 1;
       }
     }
   }
 
   return {
-    totalBallots: ballots.length,
-    anonymousBallots: ballots.filter((ballot) => ballot.anonymous).length,
+    totalBallots: activeBallots.length,
+    invalidatedBallots: ballots.length - activeBallots.length,
+    anonymousBallots: activeBallots.filter((ballot) => ballot.anonymous).length,
     questions,
   };
 }
@@ -602,18 +825,25 @@ export function buildPollExportRows(ballots: PollStoredBallot[], summary: PollSu
     const answerByQuestion = new Map(ballot.answers.map((answer) => [answer.questionId, answer]));
     const snapshotQuestionById = new Map(ballot.pollSnapshot.questions.map((question) => [question.id, question]));
     const row: Record<string, string> = {
-      "选票编号": ballot.id,
+      "选票编号": ballot.ballotNo || ballot.id,
       "提交时间": ballot.createdAt,
       "身份": getPollParticipantTypeLabel(ballot.participantType),
       "投票人": ballot.anonymous ? "匿名" : ballot.participantName || "未填写",
       "匿名投票": ballot.anonymous ? "是" : "否",
-      "投票名称（提交时）": ballot.pollSnapshot.heading,
+      "来源": getPollSubmissionSourceLabel(ballot.source),
+      "选票状态": ballot.invalidatedAt ? "已作废" : "有效",
+      "作废时间": ballot.invalidatedAt,
+      "操作人": ballot.invalidatedBy,
       "开放时间（提交时）": ballot.pollSnapshot.openAt ?? "",
       "结束时间（提交时）": ballot.pollSnapshot.closeAt ?? "",
     };
     summary.questions.forEach((question, index) => {
-      const answer = answerByQuestion.get(question.id);
-      const snapshotQuestion = snapshotQuestionById.get(question.id);
+      const semanticKey = getPollQuestionSemanticKey(question, index, summary.questions);
+      const snapshotQuestion = snapshotQuestionById.get(question.id)
+        ?? ballot.pollSnapshot.questions.find((candidate, candidateIndex, questions) => (
+          getPollQuestionSemanticKey(candidate, candidateIndex, questions) === semanticKey
+        ));
+      const answer = answerByQuestion.get(snapshotQuestion?.id ?? question.id);
       const optionLabels = new Map((snapshotQuestion?.options ?? question.options).map((option) => [option.id, option.label]));
       row[`Q${index + 1} ${question.prompt}`] =
         question.type === "text"

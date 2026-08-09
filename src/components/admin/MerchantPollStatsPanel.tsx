@@ -5,6 +5,7 @@ import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "rea
 import {
   buildPollExportRows,
   getPollParticipantTypeLabel,
+  getPollSubmissionSourceLabel,
   type PollRoundOverview,
   type PollStoredBallot,
   type PollSummary,
@@ -46,6 +47,14 @@ type PollDeletePayload = {
   deletedCount?: number;
 };
 
+type PollBallotMutationPayload = {
+  ok?: boolean;
+  error?: string;
+  message?: string;
+  pollId?: string;
+  ballot?: PollStoredBallot;
+};
+
 type PollStatusFilter = "all" | PollRoundOverview["status"];
 
 const QUESTION_TYPE_LABELS = {
@@ -78,12 +87,14 @@ function formatDateTime(value: string | null | undefined) {
   }).format(new Date(timestamp));
 }
 
-function formatPollError(payload: PollRoundsPayload | PollRoundDetailPayload | PollDeletePayload | null) {
+function formatPollError(payload: PollRoundsPayload | PollRoundDetailPayload | PollDeletePayload | PollBallotMutationPayload | null) {
   const code = trimText(payload?.error, 100);
   const message = trimText(payload?.message, 300);
   if (code === "unauthorized") return "当前登录状态无法读取投票统计，请重新登录后重试。";
   if (code === "poll_store_unavailable") return "投票数据表暂时不可用，请检查数据库迁移和服务配置。";
   if (code === "poll_results_delete_failed") return "投票记录删除失败，请稍后重试。";
+  if (code === "poll_ballot_not_found") return "没有找到这张选票，请刷新后重试。";
+  if (code === "poll_ballot_update_failed") return "选票状态更新失败，请稍后重试。";
   return message || "投票统计加载失败，请稍后重试。";
 }
 
@@ -173,7 +184,20 @@ function PollQuestionResult({ question, index }: { question: PollSummaryQuestion
   );
 }
 
-function PollBallotDetail({ ballot, index, summary }: { ballot: PollStoredBallot; index: number; summary: PollSummary }) {
+function PollBallotDetail({
+  ballot,
+  index,
+  summary,
+  processing,
+  onToggleInvalidated,
+}: {
+  ballot: PollStoredBallot;
+  index: number;
+  summary: PollSummary;
+  processing: boolean;
+  onToggleInvalidated: (ballot: PollStoredBallot) => void;
+}) {
+  const [expanded, setExpanded] = useState(index === 0);
   const answerByQuestion = new Map(ballot.answers.map((answer) => [answer.questionId, answer]));
   const summaryByQuestion = new Map(summary.questions.map((question) => [question.id, question]));
   const questions = [...ballot.pollSnapshot.questions];
@@ -183,10 +207,11 @@ function PollBallotDetail({ ballot, index, summary }: { ballot: PollStoredBallot
     if (fallback) questions.push(fallback);
   }
   const voterName = ballot.anonymous ? "匿名" : ballot.participantName || "未填写名称";
+  const invalidated = Boolean(ballot.invalidatedAt);
 
   return (
-    <details className="group overflow-hidden rounded-lg border border-slate-200 bg-white" open={index === 0}>
-      <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 bg-slate-50 px-3 py-3 marker:hidden sm:px-4">
+    <article className={`overflow-hidden rounded-lg border bg-white ${invalidated ? "border-rose-200 opacity-80" : "border-slate-200"}`}>
+      <div className={`flex flex-wrap items-center justify-between gap-3 px-3 py-3 sm:px-4 ${invalidated ? "bg-rose-50" : "bg-slate-50"}`}>
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <strong className="break-words text-sm text-slate-950">{index + 1}. {voterName}</strong>
@@ -194,19 +219,34 @@ function PollBallotDetail({ ballot, index, summary }: { ballot: PollStoredBallot
               {getPollParticipantTypeLabel(ballot.participantType)}
             </span>
             {ballot.anonymous ? <span className="rounded border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-xs text-violet-700">匿名</span> : null}
+            {invalidated ? <span className="rounded border border-rose-200 bg-white px-1.5 py-0.5 text-xs font-semibold text-rose-700">已作废</span> : null}
           </div>
           <div className="mt-1 text-xs text-slate-500">投票时间：{formatDateTime(ballot.createdAt)}</div>
         </div>
-        <span className="shrink-0 text-xs font-semibold text-blue-700 group-open:hidden">展开明细</span>
-        <span className="hidden shrink-0 text-xs font-semibold text-blue-700 group-open:inline">收起明细</span>
-      </summary>
-      <div className="grid gap-4 border-t border-slate-200 px-3 py-4 sm:px-4">
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            className={`h-8 rounded border px-3 text-xs font-semibold disabled:cursor-wait disabled:opacity-50 ${invalidated ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100" : "border-rose-200 bg-white text-rose-700 hover:bg-rose-50"}`}
+            disabled={processing}
+            onClick={() => onToggleInvalidated(ballot)}
+          >
+            {processing ? "处理中..." : invalidated ? "恢复" : "作废"}
+          </button>
+          <button type="button" className="h-8 rounded border border-slate-200 bg-white px-3 text-xs font-semibold text-blue-700 hover:bg-slate-50" onClick={() => setExpanded((current) => !current)}>
+            {expanded ? "收起明细" : "展开明细"}
+          </button>
+        </div>
+      </div>
+      {expanded ? <div className="grid gap-4 border-t border-slate-200 px-3 py-4 sm:px-4">
         <dl className="grid gap-x-5 gap-y-2 text-xs sm:grid-cols-2">
           <div className="min-w-0"><dt className="text-slate-400">填写名称</dt><dd className="mt-0.5 break-words text-slate-800">{voterName}</dd></div>
           <div className="min-w-0"><dt className="text-slate-400">身份</dt><dd className="mt-0.5 text-slate-800">{getPollParticipantTypeLabel(ballot.participantType)}</dd></div>
           <div className="min-w-0"><dt className="text-slate-400">投票时间</dt><dd className="mt-0.5 text-slate-800">{formatDateTime(ballot.createdAt)}</dd></div>
-          <div className="min-w-0"><dt className="text-slate-400">选票编号</dt><dd className="mt-0.5 break-all font-mono text-slate-800">{ballot.id || "-"}</dd></div>
-          <div className="min-w-0 sm:col-span-2"><dt className="text-slate-400">提交时投票名称</dt><dd className="mt-0.5 break-words text-slate-800">{ballot.pollSnapshot.heading || "未命名投票"}</dd></div>
+          <div className="min-w-0"><dt className="text-slate-400">选票编号</dt><dd className="mt-0.5 break-all font-mono text-slate-800">{ballot.ballotNo || ballot.id || "-"}</dd></div>
+          <div className="min-w-0"><dt className="text-slate-400">来源</dt><dd className="mt-0.5 text-slate-800">{getPollSubmissionSourceLabel(ballot.source)}</dd></div>
+          <div className="min-w-0"><dt className="text-slate-400">选票状态</dt><dd className={`mt-0.5 font-semibold ${invalidated ? "text-rose-700" : "text-emerald-700"}`}>{invalidated ? "已作废" : "有效"}</dd></div>
+          {invalidated ? <div className="min-w-0"><dt className="text-slate-400">作废时间</dt><dd className="mt-0.5 text-slate-800">{formatDateTime(ballot.invalidatedAt)}</dd></div> : null}
+          {invalidated ? <div className="min-w-0"><dt className="text-slate-400">操作人</dt><dd className="mt-0.5 break-all text-slate-800">{ballot.invalidatedBy || "-"}</dd></div> : null}
         </dl>
         <div className="grid gap-2">
           {questions.length ? questions.map((question, questionIndex) => {
@@ -229,8 +269,8 @@ function PollBallotDetail({ ballot, index, summary }: { ballot: PollStoredBallot
             );
           }) : <div className="rounded-lg bg-slate-50 px-3 py-4 text-center text-sm text-slate-500">本张选票没有可显示的题目快照。</div>}
         </div>
-      </div>
-    </details>
+      </div> : null}
+    </article>
   );
 }
 
@@ -248,6 +288,7 @@ export default function MerchantPollStatsPanel({ siteId, siteName, className = "
   const [exportingPollId, setExportingPollId] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<PollRoundOverview | null>(null);
   const [deletingPollId, setDeletingPollId] = useState("");
+  const [mutatingBallotId, setMutatingBallotId] = useState("");
   const deferredQuery = useDeferredValue(query.trim().toLocaleLowerCase("zh-CN"));
 
   const loadRounds = useCallback(async () => {
@@ -309,6 +350,44 @@ export default function MerchantPollStatsPanel({ siteId, siteName, className = "
     }
   };
 
+  const toggleBallotInvalidated = async (ballot: PollStoredBallot) => {
+    if (!selectedRound || !ballot.id || mutatingBallotId) return;
+    const invalidated = Boolean(ballot.invalidatedAt);
+    if (!invalidated && typeof window !== "undefined" && !window.confirm("确定作废这张选票吗？作废后不计入统计，之后仍可恢复。")) return;
+    setMutatingBallotId(ballot.id);
+    try {
+      const response = await fetch("/api/polls", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({
+          siteId,
+          pollId: selectedRound.pollId,
+          ballotId: ballot.id,
+          invalidated: !invalidated,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as PollBallotMutationPayload | null;
+      if (!response.ok || !payload?.ok) throw new Error(formatPollError(payload));
+      const detail = await requestRoundDetail(selectedRound.pollId);
+      const summary = detail.summary;
+      setSelectedRound((current) => current && current.pollId === selectedRound.pollId && summary
+        ? {
+            ...current,
+            totalBallots: summary.totalBallots,
+            invalidatedBallots: summary.invalidatedBallots,
+            anonymousBallots: summary.anonymousBallots,
+          }
+        : current);
+      showGlobalToast(invalidated ? "选票已恢复并重新计入统计" : "选票已作废，不再计入统计", { tone: "success" });
+      await loadRounds();
+    } catch (mutationError) {
+      showGlobalToast(mutationError instanceof Error ? mutationError.message : "选票状态更新失败，请稍后重试。", { tone: "error" });
+    } finally {
+      setMutatingBallotId("");
+    }
+  };
+
   const exportRound = async (round: PollRoundOverview) => {
     if (exportingPollId) return;
     setExportingPollId(round.pollId);
@@ -321,7 +400,8 @@ export default function MerchantPollStatsPanel({ siteId, siteName, className = "
         "投票名称": round.heading,
         "投票编号": round.pollId,
         "状态": STATUS_LABELS[round.status],
-        "总票数": payload.summary.totalBallots,
+        "有效票数": payload.summary.totalBallots,
+        "作废票数": payload.summary.invalidatedBallots,
         "匿名票数": payload.summary.anonymousBallots,
         "开放时间": round.openAt,
         "结束时间": round.closeAt,
@@ -390,6 +470,7 @@ export default function MerchantPollStatsPanel({ siteId, siteName, className = "
     rounds: rounds.length,
     published: rounds.filter((round) => round.published).length,
     ballots: rounds.reduce((total, round) => total + round.totalBallots, 0),
+    invalidated: rounds.reduce((total, round) => total + round.invalidatedBallots, 0),
     anonymous: rounds.reduce((total, round) => total + round.anonymousBallots, 0),
   }), [rounds]);
 
@@ -415,11 +496,12 @@ export default function MerchantPollStatsPanel({ siteId, siteName, className = "
         </button>
       </header>
 
-      <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
         {[
           ["投票轮次", totals.rounds],
           ["当前发布", totals.published],
           ["累计票数", totals.ballots],
+          ["作废票数", totals.invalidated],
           ["匿名票数", totals.anonymous],
         ].map(([label, value]) => (
           <div key={label} className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
@@ -492,7 +574,10 @@ export default function MerchantPollStatsPanel({ siteId, siteName, className = "
                       {STATUS_LABELS[round.status]}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-right font-semibold tabular-nums text-slate-900">{round.totalBallots}</td>
+                  <td className="px-4 py-3 text-right font-semibold tabular-nums text-slate-900">
+                    <div>{round.totalBallots}</div>
+                    {round.invalidatedBallots ? <div className="mt-0.5 text-xs font-normal text-rose-600">作废 {round.invalidatedBallots}</div> : null}
+                  </td>
                   <td className="px-4 py-3 text-right tabular-nums text-slate-600">{round.anonymousBallots}</td>
                   <td className="px-4 py-3 text-slate-600">{formatDateTime(round.lastSubmittedAt)}</td>
                   <td className="px-4 py-3">
@@ -503,7 +588,7 @@ export default function MerchantPollStatsPanel({ siteId, siteName, className = "
                       <button type="button" className="h-8 rounded border border-blue-200 bg-blue-50 px-3 text-xs font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-50" disabled={Boolean(exportingPollId)} onClick={() => void exportRound(round)}>
                         {exportingPollId === round.pollId ? "导出中" : "导出"}
                       </button>
-                      <button type="button" className="h-8 rounded border border-rose-200 bg-white px-3 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50" disabled={round.totalBallots === 0 || Boolean(deletingPollId)} onClick={() => setDeleteTarget(round)}>
+                      <button type="button" className="h-8 rounded border border-rose-200 bg-white px-3 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50" disabled={round.totalBallots + round.invalidatedBallots === 0 || Boolean(deletingPollId)} onClick={() => setDeleteTarget(round)}>
                         删除
                       </button>
                     </div>
@@ -526,8 +611,9 @@ export default function MerchantPollStatsPanel({ siteId, siteName, className = "
                   {STATUS_LABELS[round.status]}
                 </span>
               </div>
-              <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-slate-500">
+              <div className="mt-3 grid grid-cols-4 gap-2 text-xs text-slate-500">
                 <div><span className="block text-slate-400">票数</span><strong className="text-sm text-slate-900">{round.totalBallots}</strong></div>
+                <div><span className="block text-slate-400">作废</span><strong className="text-sm text-rose-700">{round.invalidatedBallots}</strong></div>
                 <div><span className="block text-slate-400">匿名</span><strong className="text-sm text-slate-900">{round.anonymousBallots}</strong></div>
                 <div><span className="block text-slate-400">问题</span><strong className="text-sm text-slate-900">{round.questionCount}</strong></div>
               </div>
@@ -535,7 +621,7 @@ export default function MerchantPollStatsPanel({ siteId, siteName, className = "
               <div className="mt-3 grid grid-cols-3 gap-2">
                 <button type="button" className="h-9 rounded border border-slate-200 bg-white text-sm font-semibold text-slate-700" onClick={() => void openRoundDetail(round)}>查看</button>
                 <button type="button" className="h-9 rounded border border-blue-200 bg-blue-50 text-sm font-semibold text-blue-700 disabled:opacity-50" disabled={Boolean(exportingPollId)} onClick={() => void exportRound(round)}>{exportingPollId === round.pollId ? "导出中..." : "导出 Excel"}</button>
-                <button type="button" className="h-9 rounded border border-rose-200 bg-white text-sm font-semibold text-rose-700 disabled:opacity-50" disabled={round.totalBallots === 0 || Boolean(deletingPollId)} onClick={() => setDeleteTarget(round)}>删除</button>
+                <button type="button" className="h-9 rounded border border-rose-200 bg-white text-sm font-semibold text-rose-700 disabled:opacity-50" disabled={round.totalBallots + round.invalidatedBallots === 0 || Boolean(deletingPollId)} onClick={() => setDeleteTarget(round)}>删除</button>
               </div>
             </article>
           ))}
@@ -576,9 +662,10 @@ export default function MerchantPollStatsPanel({ siteId, siteName, className = "
               {detailError ? <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-3 text-sm text-rose-700">{detailError}</div> : null}
               {selectedDetail?.summary ? (
                 <div className="grid gap-5">
-                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
                     {[
-                      ["总票数", selectedDetail.summary.totalBallots],
+                      ["有效票数", selectedDetail.summary.totalBallots],
+                      ["作废票数", selectedDetail.summary.invalidatedBallots],
                       ["匿名票数", selectedDetail.summary.anonymousBallots],
                       ["问题数", selectedDetail.summary.questions.length],
                       ["非匿名", selectedDetail.summary.totalBallots - selectedDetail.summary.anonymousBallots],
@@ -599,13 +686,20 @@ export default function MerchantPollStatsPanel({ siteId, siteName, className = "
                     <div className="flex flex-wrap items-end justify-between gap-2">
                       <div>
                         <h3 className="text-base font-bold text-slate-950">逐票明细</h3>
-                        <p className="mt-1 text-xs text-slate-500">包含填写名称或匿名、身份、投票时间、每道题的选择及文字内容。</p>
+                        <p className="mt-1 text-xs text-slate-500">包含填写名称或匿名、身份、来源、投票时间、状态、每道题的选择及文字内容；作废票保留在这里但不计入上方统计。</p>
                       </div>
                       <span className="text-sm tabular-nums text-slate-500">共 {selectedDetail.ballots?.length ?? 0} 张</span>
                     </div>
                     <div className="mt-3 grid gap-3">
                       {selectedDetail.ballots?.length ? selectedDetail.ballots.map((ballot, index) => (
-                        <PollBallotDetail key={ballot.id || `${ballot.createdAt}-${index}`} ballot={ballot} index={index} summary={selectedDetail.summary!} />
+                        <PollBallotDetail
+                          key={ballot.id || `${ballot.createdAt}-${index}`}
+                          ballot={ballot}
+                          index={index}
+                          summary={selectedDetail.summary!}
+                          processing={mutatingBallotId === ballot.id}
+                          onToggleInvalidated={(target) => void toggleBallotInvalidated(target)}
+                        />
                       )) : <div className="rounded-lg bg-slate-50 px-3 py-8 text-center text-sm text-slate-500">本轮暂无投票明细。</div>}
                     </div>
                   </section>
@@ -614,7 +708,7 @@ export default function MerchantPollStatsPanel({ siteId, siteName, className = "
             </div>
 
             <footer className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-slate-200 px-4 py-3 sm:px-5">
-              <button type="button" className="h-10 rounded border border-rose-200 bg-white px-4 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50" disabled={selectedRound.totalBallots === 0 || Boolean(deletingPollId)} onClick={() => setDeleteTarget(selectedRound)}>删除记录</button>
+              <button type="button" className="h-10 rounded border border-rose-200 bg-white px-4 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50" disabled={selectedRound.totalBallots + selectedRound.invalidatedBallots === 0 || Boolean(deletingPollId)} onClick={() => setDeleteTarget(selectedRound)}>删除记录</button>
               <div className="flex gap-2">
                 <button type="button" className="h-10 rounded border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50" onClick={() => setSelectedRound(null)}>关闭</button>
                 <button type="button" className="h-10 rounded bg-slate-950 px-4 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50" disabled={Boolean(exportingPollId) || !selectedDetail?.summary} onClick={() => void exportRound(selectedRound)}>{exportingPollId === selectedRound.pollId ? "导出中..." : "导出 Excel"}</button>
@@ -632,7 +726,7 @@ export default function MerchantPollStatsPanel({ siteId, siteName, className = "
               <p className="mt-1 break-words text-sm text-slate-500">{deleteTarget.heading}</p>
             </header>
             <div className="grid gap-3 px-5 py-5 text-sm text-slate-700">
-              <p>将永久删除本轮的 <strong className="text-rose-700">{deleteTarget.totalBallots} 条</strong>投票记录、选择内容和填写内容，删除后无法恢复。</p>
+              <p>将永久删除本轮的 <strong className="text-rose-700">{deleteTarget.totalBallots + deleteTarget.invalidatedBallots} 条</strong>投票记录（含 {deleteTarget.invalidatedBallots} 条作废票）、选择内容和填写内容，删除后无法恢复。</p>
               {deleteTarget.published ? (
                 <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800">该投票仍发布在网页中。删除结果不会删除投票区块，访客仍可继续投票并产生新的统计。</p>
               ) : null}

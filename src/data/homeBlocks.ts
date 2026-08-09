@@ -465,6 +465,7 @@ export type PollProps = BackgroundEditableProps &
     heading?: string;
     text?: string;
     pollId?: string;
+    pollLegacyIds?: string[];
     pollStatus?: "open" | "closed";
     pollAudience?: PollAudience;
     pollOpenAt?: string;

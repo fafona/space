@@ -298,6 +298,7 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
         {...selectedPollBlock.props}
         runtimeSiteId={payload.ownerMerchantId}
         runtimeBlockId={selectedPollBlock.id}
+        runtimeSource="contact_card"
         interactive
       />
     </div>

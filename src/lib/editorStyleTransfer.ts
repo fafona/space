@@ -21,7 +21,6 @@ const TARGET_OWNED_PROP_KEYS = new Set([
   "pageBgColorOpacity",
   "pagePlanConfig",
   "pagePlanConfigMobile",
-  "pollId",
   "publishedMerchantSnapshot",
 ]);
 

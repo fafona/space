@@ -27,6 +27,12 @@ const payloadCapacityMigrationPath = path.join(
   "supabase-migrations",
   "202608070030_merchant_poll_payload_capacity.sql",
 );
+const identityMigrationPath = path.join(
+  process.cwd(),
+  "scripts",
+  "supabase-migrations",
+  "202608090031_merchant_poll_identity_and_invalidation.sql",
+);
 
 function source() {
   return fs.readFileSync(migrationPath, "utf8");
@@ -88,4 +94,33 @@ test("poll payload capacity supports configured question and option limits while
   assert.match(sql, /202608070030, 'merchant_poll_payload_capacity'/i);
   assert.doesNotMatch(sql, /\bdrop\s+table\b|\btruncate\b|\bdelete\s+from\b/i);
   assert.match(sql, /\bcommit\s*;\s*$/i);
+});
+
+test("poll identity migration allocates tenant-scoped TP and XP public numbers", () => {
+  const sql = fs.readFileSync(identityMigrationPath, "utf8");
+  assert.match(sql, /\bbegin\s*;/i);
+  assert.match(sql, /create table if not exists public\.merchant_poll_identifiers/i);
+  assert.match(sql, /poll_id text primary key check \(poll_id ~ '\^TP\[0-9\]\{16\}\$'\)/i);
+  assert.match(sql, /create or replace function public\.allocate_merchant_poll_id/i);
+  assert.match(sql, /'TP' \|\| p_merchant_id \|\| to_char\(v_day, 'YYMMDD'\) \|\| lpad\(v_sequence::text, 2, '0'\)/i);
+  assert.match(sql, /create or replace function public\.resolve_merchant_poll_id/i);
+  assert.match(sql, /create table if not exists public\.merchant_poll_aliases/i);
+  assert.match(sql, /'XP' \|\| new\.merchant_id \|\| to_char\(v_day, 'YYMMDD'\) \|\| lpad\(v_sequence::text, 5, '0'\)/i);
+  assert.match(sql, /merchant_poll_ballots_ballot_no_format_check[\s\S]+\^XP\[0-9\]\{19\}\$/i);
+  assert.match(sql, /alter column ballot_no set not null/i);
+  assert.match(sql, /at time zone 'Europe\/Madrid'/i);
+  assert.match(sql, /202608090031, 'merchant_poll_identity_and_invalidation'/i);
+  assert.doesNotMatch(sql, /\bdrop\s+table\b|\btruncate\b|\bdelete\s+from\b/i);
+  assert.match(sql, /\bcommit\s*;\s*$/i);
+});
+
+test("poll identity migration tracks source and permits only reversible status updates", () => {
+  const sql = fs.readFileSync(identityMigrationPath, "utf8");
+  assert.match(sql, /add column if not exists ballot_no text/i);
+  assert.match(sql, /add column if not exists source text/i);
+  assert.match(sql, /add column if not exists invalidated_at timestamptz/i);
+  assert.match(sql, /add column if not exists invalidated_by text/i);
+  assert.match(sql, /source in \('pc_web', 'mobile_web', 'contact_card'\)/i);
+  assert.match(sql, /grant update \(invalidated_at, invalidated_by\) on table public\.merchant_poll_ballots to service_role/i);
+  assert.doesNotMatch(sql, /grant\s+update[\s\S]+\s+to\s+(?:anon|authenticated|public)\b/i);
 });
