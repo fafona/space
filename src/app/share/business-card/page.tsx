@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
-import QRCode from "qrcode";
 import ServiceMaintenancePage from "@/components/ServiceMaintenancePage";
 import PollBlock from "@/components/blocks/PollBlock";
 import BusinessCardMediaExperience from "@/components/business-card/BusinessCardMediaExperience";
@@ -10,12 +9,16 @@ import {
   buildMerchantBusinessCardShareDescription,
   buildMerchantBusinessCardShareTitle,
   buildMerchantBusinessCardShareUrl,
+  normalizeMerchantBusinessCardShareKey,
   readMerchantBusinessCardShareKey,
   resolveMerchantBusinessCardSharePayload,
 } from "@/lib/merchantBusinessCardShare";
 import { normalizeMerchantBusinessCardContactSectionOrder } from "@/lib/merchantBusinessCards";
 import { collectPublishedPollBlocks, findPublishedPollConfig } from "@/lib/merchantPolls";
-import { loadPublishedMerchantServiceStateByTargetUrl } from "@/lib/publishedMerchantService";
+import {
+  loadCurrentMerchantSnapshotSiteBySiteId,
+  loadPublishedMerchantServiceStateByTargetUrl,
+} from "@/lib/publishedMerchantService";
 import { fetchPublishedSiteBlocksFromSupabase } from "@/lib/publishedSiteData";
 
 type ShareBusinessCardPageProps = {
@@ -196,15 +199,24 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
   const requestHeaders = await headers();
   const origin = resolveRequestOrigin(requestHeaders);
   const resolvedSearchParams = await searchParams;
+  const shareKey = readMerchantBusinessCardShareKey(resolvedSearchParams);
   const payload = await resolveMerchantBusinessCardSharePayload(resolvedSearchParams, origin);
-  const [serviceState, publishedPollPayload] = payload
+  const shouldLoadSnapshotCard = Boolean(
+    payload?.ownerMerchantId &&
+      shareKey &&
+      (payload.showContactSaveButton === undefined || payload.showContactWebsiteButton === undefined),
+  );
+  const [serviceState, publishedPollPayload, snapshotSite] = payload
     ? await Promise.all([
         loadPublishedMerchantServiceStateByTargetUrl(payload.targetUrl).catch(() => null),
         payload.showContactPoll && payload.contactPagePollId && payload.ownerMerchantId
           ? fetchPublishedSiteBlocksFromSupabase(payload.ownerMerchantId).catch(() => null)
           : Promise.resolve(null),
+        shouldLoadSnapshotCard
+          ? loadCurrentMerchantSnapshotSiteBySiteId(payload.ownerMerchantId).catch(() => null)
+          : Promise.resolve(null),
       ])
-    : [null, null];
+    : [null, null, null];
   const isMobileRequest = looksLikeMobileRequest(requestHeaders);
 
   if (!payload) {
@@ -229,23 +241,13 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
   }
 
   const title = buildMerchantBusinessCardShareTitle(payload.name);
-  const shareKey = readMerchantBusinessCardShareKey(resolvedSearchParams);
-  const shareUrl = buildMerchantBusinessCardShareUrl({
-    origin,
-    shareKey,
-    imageUrl: payload.imageUrl,
-    detailImageUrl: payload.detailImageUrl,
-    introVideoUrl: payload.introVideoUrl,
-    introPosterUrl: payload.introPosterUrl,
-    introVideoMuted: payload.introVideoMuted,
-    introImageUrl: payload.introImageUrl,
-    introImageDurationSeconds: payload.introImageDurationSeconds,
-    introMusicUrl: payload.introMusicUrl,
-    backgroundMusicUrl: payload.backgroundMusicUrl,
-    targetUrl: payload.targetUrl,
-    name: payload.name,
-    contact: payload.contact,
-  });
+  const snapshotCard = snapshotSite?.businessCards?.find(
+    (card) => normalizeMerchantBusinessCardShareKey(card.shareKey) === shareKey,
+  );
+  const showContactSaveButton =
+    payload.showContactSaveButton ?? snapshotCard?.showContactSaveButton ?? true;
+  const showContactWebsiteButton =
+    payload.showContactWebsiteButton ?? snapshotCard?.showContactWebsiteButton ?? true;
   const contactUrl =
     (shareKey
       ? buildMerchantBusinessCardContactDownloadUrl({
@@ -262,14 +264,6 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
       targetUrl: payload.targetUrl,
       contact: payload.contact,
     });
-  const desktopQrCodeUrl =
-    !isMobileRequest && shareUrl
-      ? await QRCode.toDataURL(shareUrl, {
-          width: 280,
-          margin: 1,
-          errorCorrectionLevel: "M",
-        }).catch(() => "")
-      : "";
   const contactSections = normalizeMerchantBusinessCardContactSectionOrder(payload.contactPageSectionOrder);
   const contactImageSection = payload.detailImageUrl ? (
     <div
@@ -343,67 +337,32 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
           </div>
         ))}
 
-        {isMobileRequest ? (
-          <>
-            <div className="mt-5 flex flex-col gap-3 sm:flex-row">
-              {payload.showContactSaveButton !== false && contactUrl ? (
-                <a
-                  href={contactUrl}
-                  className="flex-1 rounded-full bg-slate-900 px-5 py-3 text-center text-base font-semibold text-white transition hover:bg-slate-700"
-                >
-                  一键保存到通讯录
-                </a>
-              ) : null}
+        {(showContactSaveButton && contactUrl) || showContactWebsiteButton ? (
+          <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+            {showContactSaveButton && contactUrl ? (
               <a
-                href={payload.targetUrl}
-                className={`rounded-full border border-slate-300 bg-white px-5 py-3 text-center text-base font-medium text-slate-900 transition hover:bg-slate-50 ${
-                  payload.showContactWebsiteButton === false ? "hidden" : ""
-                }`}
+                href={contactUrl}
+                className="flex-1 rounded-full bg-slate-900 px-5 py-3 text-center text-base font-semibold text-white transition hover:bg-slate-700"
               >
-                进入官网
+                一键保存到通讯录
               </a>
-            </div>
-            <div className="mt-3 text-xs leading-6 text-slate-500">
-              如果微信提示无法直接打开，请选择“用其他应用打开”，再优先使用通讯录或联系人应用处理。
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="mt-5 rounded-[28px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-700">
-              电脑端通常会交给 Outlook 或其他程序处理，不够直接。最简单的方式是用手机扫码打开，再点击保存到通讯录。
-            </div>
-
-            {desktopQrCodeUrl ? (
-              <div className="mt-5 rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_16px_42px_rgba(15,23,42,.08)]">
-                <div className="text-base font-semibold text-slate-900">手机扫码保存联系人</div>
-                <div className="mt-2 text-sm leading-6 text-slate-600">扫码后会在手机里打开这张联系卡，再由对方手动点击“保存到通讯录”。</div>
-                <div className="mt-4 flex justify-center">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={desktopQrCodeUrl} alt="联系卡二维码" className="h-56 w-56 rounded-2xl border border-slate-200 bg-white p-3" />
-                </div>
-              </div>
             ) : null}
-
-            <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+            {showContactWebsiteButton ? (
               <a
                 href={payload.targetUrl}
-                className={`rounded-full bg-slate-900 px-5 py-3 text-center text-base font-semibold text-white transition hover:bg-slate-700 ${
-                  payload.showContactWebsiteButton === false ? "hidden" : ""
-                }`}
+                className="rounded-full border border-slate-300 bg-white px-5 py-3 text-center text-base font-medium text-slate-900 transition hover:bg-slate-50"
               >
                 进入官网
               </a>
-              {shareUrl ? (
-                <a
-                  href={shareUrl}
-                  className="rounded-full border border-slate-300 bg-white px-5 py-3 text-center text-base font-medium text-slate-900 transition hover:bg-slate-50"
-                >
-                  复制到手机后打开
-                </a>
-              ) : null}
-            </div>
-          </>
-        )}
+            ) : null}
+          </div>
+        ) : null}
+
+        {isMobileRequest && showContactSaveButton && contactUrl ? (
+          <div className="mt-3 text-xs leading-6 text-slate-500">
+            如果微信提示无法直接打开，请选择“用其他应用打开”，再优先使用通讯录或联系人应用处理。
+          </div>
+        ) : null}
       </section>
     </main>
   );

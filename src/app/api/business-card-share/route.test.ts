@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   findShareOwnerMerchantIdInSnapshotPayload,
   isStorageObjectMissingError,
+  resolveBusinessCardShareContactActionManifestFields,
   resolveBusinessCardSharePollManifestFields,
 } from "@/app/api/business-card-share/route";
 import { createDefaultMerchantPermissionConfig } from "@/data/platformControlStore";
@@ -38,6 +39,60 @@ test("share updates can explicitly disable a previously selected poll", () => {
       },
     ),
     { showContactPoll: false },
+  );
+});
+
+test("share updates preserve disabled contact actions when an older client omits them", () => {
+  assert.deepEqual(
+    resolveBusinessCardShareContactActionManifestFields(
+      {},
+      {
+        showContactSaveButton: false,
+        showContactWebsiteButton: false,
+      },
+    ),
+    {
+      showContactSaveButton: false,
+      showContactWebsiteButton: false,
+    },
+  );
+});
+
+test("share updates can explicitly re-enable contact actions", () => {
+  assert.deepEqual(
+    resolveBusinessCardShareContactActionManifestFields(
+      {
+        showContactSaveButton: true,
+        showContactWebsiteButton: "true",
+      },
+      {
+        showContactSaveButton: false,
+        showContactWebsiteButton: false,
+      },
+    ),
+    {
+      showContactSaveButton: true,
+      showContactWebsiteButton: true,
+    },
+  );
+});
+
+test("empty contact action settings do not overwrite stored values", () => {
+  assert.deepEqual(
+    resolveBusinessCardShareContactActionManifestFields(
+      {
+        showContactSaveButton: "",
+        showContactWebsiteButton: "   ",
+      },
+      {
+        showContactSaveButton: false,
+        showContactWebsiteButton: true,
+      },
+    ),
+    {
+      showContactSaveButton: false,
+      showContactWebsiteButton: true,
+    },
   );
 });
 

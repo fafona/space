@@ -4302,12 +4302,14 @@ export async function GET(
       }
     }
   }
-  const needsLegacyPollRecovery = Boolean(
+  const needsLegacyPresentationRecovery = Boolean(
     (storedPayload ?? cachedPayload) &&
-      (storedPayload ?? cachedPayload)?.showContactPoll === undefined,
+      ((storedPayload ?? cachedPayload)?.showContactPoll === undefined ||
+        (storedPayload ?? cachedPayload)?.showContactSaveButton === undefined ||
+        (storedPayload ?? cachedPayload)?.showContactWebsiteButton === undefined),
   );
   if (!snapshotMatch) {
-    snapshotMatch = needsLegacyPollRecovery
+    snapshotMatch = needsLegacyPresentationRecovery
       ? await withContactCardTimeout(snapshotMatchTask, null, CONTACT_CARD_POLL_RECOVERY_WAIT_MS)
       : storedPayload
         ? usedCachedPayload
@@ -4319,7 +4321,7 @@ export async function GET(
     snapshotMatch = await withContactCardTimeout(
       resolveContactCardSnapshotMatch(shareKey, storedPayload.ownerMerchantId).catch(() => null),
       null,
-      needsLegacyPollRecovery
+      needsLegacyPresentationRecovery
         ? CONTACT_CARD_POLL_RECOVERY_WAIT_MS
         : CONTACT_CARD_OWNER_SNAPSHOT_FAST_WAIT_MS,
     );
@@ -4331,6 +4333,14 @@ export async function GET(
       preferredPayload.showContactPoll === undefined &&
       snapshotPayload?.showContactPoll &&
       snapshotPayload.contactPagePollId,
+  );
+  const restoredContactActionsFromSnapshot = Boolean(
+    preferredPayload &&
+      snapshotPayload &&
+      ((preferredPayload.showContactSaveButton === undefined &&
+        snapshotPayload.showContactSaveButton !== undefined) ||
+        (preferredPayload.showContactWebsiteButton === undefined &&
+          snapshotPayload.showContactWebsiteButton !== undefined)),
   );
   const payload = mergeMerchantBusinessCardSharePollFallback(
     preferredPayload,
@@ -4363,7 +4373,7 @@ export async function GET(
       }).catch(() => false);
     });
   }
-  if (restoredPollFromSnapshot && snapshotMatch) {
+  if ((restoredPollFromSnapshot || restoredContactActionsFromSnapshot) && snapshotMatch) {
     void repairShareManifestFromSnapshot({
       shareKey,
       snapshotMatch,

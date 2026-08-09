@@ -573,6 +573,14 @@ function normalizeSharePayload(
   const hasContactPoll = showContactPoll && Boolean(contactPagePollId);
   const showContactSaveButton = normalizeOptionalBoolean(input.showContactSaveButton, true);
   const showContactWebsiteButton = normalizeOptionalBoolean(input.showContactWebsiteButton, true);
+  const hasContactSaveButtonSetting =
+    input.showContactSaveButton !== undefined &&
+    input.showContactSaveButton !== null &&
+    (typeof input.showContactSaveButton !== "string" || normalizeText(input.showContactSaveButton) !== "");
+  const hasContactWebsiteButtonSetting =
+    input.showContactWebsiteButton !== undefined &&
+    input.showContactWebsiteButton !== null &&
+    (typeof input.showContactWebsiteButton !== "string" || normalizeText(input.showContactWebsiteButton) !== "");
   const detailImageHeight = clampImageDimension(input.detailImageHeight);
   const detailImageX = clampSignedImageOffset(input.detailImageX);
   const detailImageY = clampSignedImageOffset(input.detailImageY);
@@ -606,8 +614,8 @@ function normalizeSharePayload(
       : hasContactPollSetting
         ? { showContactPoll: false }
         : {}),
-    ...(showContactSaveButton === false ? { showContactSaveButton } : {}),
-    ...(showContactWebsiteButton === false ? { showContactWebsiteButton } : {}),
+    ...(hasContactSaveButtonSetting ? { showContactSaveButton } : {}),
+    ...(hasContactWebsiteButtonSetting ? { showContactWebsiteButton } : {}),
     ...(updatedAt ? { updatedAt } : {}),
     targetUrl,
     ...(normalizeOwnerMerchantId(input.ownerMerchantId) ? { ownerMerchantId: normalizeOwnerMerchantId(input.ownerMerchantId) } : {}),
@@ -662,27 +670,51 @@ export function mergeMerchantBusinessCardSharePollFallback(
   const preferredPayload = preferred ? normalizeSharePayload(preferred, preferredOrigin) : null;
   const fallbackPayload = fallback ? normalizeSharePayload(fallback, preferredOrigin) : null;
   if (!preferredPayload) return fallbackPayload;
-  if (preferredPayload.showContactPoll !== undefined || fallbackPayload?.showContactPoll === undefined) {
-    return preferredPayload;
+  let mergedPayload = preferredPayload;
+  if (preferredPayload.showContactPoll === undefined && fallbackPayload?.showContactPoll !== undefined) {
+    if (!fallbackPayload.showContactPoll || !fallbackPayload.contactPagePollId) {
+      mergedPayload = {
+        ...mergedPayload,
+        showContactPoll: false,
+      };
+    } else {
+      mergedPayload = {
+        ...mergedPayload,
+        showContactPoll: true,
+        contactPagePollId: fallbackPayload.contactPagePollId,
+        ...(fallbackPayload.contactPagePollBlockId
+          ? { contactPagePollBlockId: fallbackPayload.contactPagePollBlockId }
+          : {}),
+        ...(preferredPayload.contactPageSectionOrder
+          ? {}
+          : fallbackPayload.contactPageSectionOrder
+            ? { contactPageSectionOrder: fallbackPayload.contactPageSectionOrder }
+            : {}),
+      };
+    }
   }
-  if (!fallbackPayload.showContactPoll || !fallbackPayload.contactPagePollId) {
-    return {
-      ...preferredPayload,
-      showContactPoll: false,
-    } satisfies MerchantBusinessCardSharePayload;
+
+  if (
+    mergedPayload.showContactSaveButton === undefined &&
+    fallbackPayload?.showContactSaveButton !== undefined
+  ) {
+    mergedPayload = {
+      ...mergedPayload,
+      showContactSaveButton: fallbackPayload.showContactSaveButton,
+    };
   }
+  if (
+    mergedPayload.showContactWebsiteButton === undefined &&
+    fallbackPayload?.showContactWebsiteButton !== undefined
+  ) {
+    mergedPayload = {
+      ...mergedPayload,
+      showContactWebsiteButton: fallbackPayload.showContactWebsiteButton,
+    };
+  }
+
   return {
-    ...preferredPayload,
-    showContactPoll: true,
-    contactPagePollId: fallbackPayload.contactPagePollId,
-    ...(fallbackPayload.contactPagePollBlockId
-      ? { contactPagePollBlockId: fallbackPayload.contactPagePollBlockId }
-      : {}),
-    ...(preferredPayload.contactPageSectionOrder
-      ? {}
-      : fallbackPayload.contactPageSectionOrder
-        ? { contactPageSectionOrder: fallbackPayload.contactPageSectionOrder }
-        : {}),
+    ...mergedPayload,
   } satisfies MerchantBusinessCardSharePayload;
 }
 

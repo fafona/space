@@ -198,6 +198,37 @@ export function resolveBusinessCardSharePollManifestFields(
   } as const;
 }
 
+export function resolveBusinessCardShareContactActionManifestFields(
+  body:
+    | Pick<BusinessCardShareRequestBody, "showContactSaveButton" | "showContactWebsiteButton">
+    | null
+    | undefined,
+  existing:
+    | Pick<MerchantBusinessCardSharePayload, "showContactSaveButton" | "showContactWebsiteButton">
+    | null
+    | undefined,
+) {
+  const resolveSetting = (value: unknown, existingValue: boolean | undefined) => {
+    const hasExplicitSetting =
+      value !== undefined &&
+      value !== null &&
+      (typeof value !== "string" || normalizeText(value) !== "");
+    return hasExplicitSetting ? normalizeOptionalBoolean(value, true) : existingValue;
+  };
+  const showContactSaveButton = resolveSetting(
+    body?.showContactSaveButton,
+    existing?.showContactSaveButton,
+  );
+  const showContactWebsiteButton = resolveSetting(
+    body?.showContactWebsiteButton,
+    existing?.showContactWebsiteButton,
+  );
+  return {
+    ...(showContactSaveButton !== undefined ? { showContactSaveButton } : {}),
+    ...(showContactWebsiteButton !== undefined ? { showContactWebsiteButton } : {}),
+  };
+}
+
 function normalizeMerchantId(value: unknown) {
   const normalized = normalizeText(value);
   return /^\d{8}$/.test(normalized) ? normalized : "";
@@ -774,8 +805,7 @@ export async function POST(request: Request) {
       ? { contactPageSectionOrder: normalizedPayload.contactPageSectionOrder }
       : {}),
     ...resolveBusinessCardSharePollManifestFields(body, existingManifest),
-    ...(normalizedPayload?.showContactSaveButton === false ? { showContactSaveButton: false } : {}),
-    ...(normalizedPayload?.showContactWebsiteButton === false ? { showContactWebsiteButton: false } : {}),
+    ...resolveBusinessCardShareContactActionManifestFields(body, existingManifest),
     updatedAt: new Date().toISOString(),
     targetUrl,
     ...(imageWidth ? { imageWidth } : {}),

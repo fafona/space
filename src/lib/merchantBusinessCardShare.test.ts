@@ -73,6 +73,53 @@ test("share payload poll fallback restores legacy manifests without overriding a
   );
 });
 
+test("share payload normalization preserves explicit contact action settings", () => {
+  const disabled = normalizeMerchantBusinessCardSharePayload({
+    name: "Card",
+    targetUrl: "https://merchant.faolla.com",
+    showContactSaveButton: false,
+    showContactWebsiteButton: false,
+  });
+  const enabled = normalizeMerchantBusinessCardSharePayload({
+    name: "Card",
+    targetUrl: "https://merchant.faolla.com",
+    showContactSaveButton: true,
+    showContactWebsiteButton: true,
+  });
+
+  assert.equal(disabled?.showContactSaveButton, false);
+  assert.equal(disabled?.showContactWebsiteButton, false);
+  assert.equal(enabled?.showContactSaveButton, true);
+  assert.equal(enabled?.showContactWebsiteButton, true);
+});
+
+test("share payload fallback restores contact action settings from the card snapshot", () => {
+  const legacyPayload = normalizeMerchantBusinessCardSharePayload({
+    name: "Card",
+    targetUrl: "https://merchant.faolla.com",
+  });
+  const snapshotPayload = normalizeMerchantBusinessCardSharePayload({
+    name: "Card",
+    targetUrl: "https://merchant.faolla.com",
+    showContactSaveButton: false,
+    showContactWebsiteButton: false,
+  });
+  const restored = mergeMerchantBusinessCardSharePollFallback(legacyPayload, snapshotPayload);
+
+  assert.equal(restored?.showContactSaveButton, false);
+  assert.equal(restored?.showContactWebsiteButton, false);
+
+  const explicitPayload = normalizeMerchantBusinessCardSharePayload({
+    name: "Card",
+    targetUrl: "https://merchant.faolla.com",
+    showContactSaveButton: true,
+    showContactWebsiteButton: true,
+  });
+  const explicitResult = mergeMerchantBusinessCardSharePollFallback(explicitPayload, snapshotPayload);
+  assert.equal(explicitResult?.showContactSaveButton, true);
+  assert.equal(explicitResult?.showContactWebsiteButton, true);
+});
+
 test("createMerchantBusinessCardShareKey uses contact name slug with a short code", () => {
   assert.equal(
     createMerchantBusinessCardShareKey({
