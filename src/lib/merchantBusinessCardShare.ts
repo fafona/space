@@ -564,6 +564,10 @@ function normalizeSharePayload(
     Array.isArray(input.contactPageSectionOrder) &&
     contactPageSectionOrder.join("|") !== defaultContactPageSectionOrder.join("|");
   const showContactPoll = normalizeOptionalBoolean(input.showContactPoll, false) === true;
+  const hasContactPollSetting =
+    input.showContactPoll !== undefined &&
+    input.showContactPoll !== null &&
+    (typeof input.showContactPoll !== "string" || normalizeText(input.showContactPoll) !== "");
   const contactPagePollId = normalizeText(input.contactPagePollId).slice(0, 96);
   const contactPagePollBlockId = normalizeText(input.contactPagePollBlockId).slice(0, 160);
   const hasContactPoll = showContactPoll && Boolean(contactPagePollId);
@@ -599,7 +603,9 @@ function normalizeSharePayload(
           contactPagePollId,
           ...(contactPagePollBlockId ? { contactPagePollBlockId } : {}),
         }
-      : {}),
+      : hasContactPollSetting
+        ? { showContactPoll: false }
+        : {}),
     ...(showContactSaveButton === false ? { showContactSaveButton } : {}),
     ...(showContactWebsiteButton === false ? { showContactWebsiteButton } : {}),
     ...(updatedAt ? { updatedAt } : {}),
@@ -646,6 +652,38 @@ export function normalizeMerchantBusinessCardSharePayload(
   preferredOrigin?: string | null,
 ) {
   return normalizeSharePayload(input, preferredOrigin);
+}
+
+export function mergeMerchantBusinessCardSharePollFallback(
+  preferred: MerchantBusinessCardSharePayload | null | undefined,
+  fallback: MerchantBusinessCardSharePayload | null | undefined,
+  preferredOrigin?: string | null,
+) {
+  const preferredPayload = preferred ? normalizeSharePayload(preferred, preferredOrigin) : null;
+  const fallbackPayload = fallback ? normalizeSharePayload(fallback, preferredOrigin) : null;
+  if (!preferredPayload) return fallbackPayload;
+  if (preferredPayload.showContactPoll !== undefined || fallbackPayload?.showContactPoll === undefined) {
+    return preferredPayload;
+  }
+  if (!fallbackPayload.showContactPoll || !fallbackPayload.contactPagePollId) {
+    return {
+      ...preferredPayload,
+      showContactPoll: false,
+    } satisfies MerchantBusinessCardSharePayload;
+  }
+  return {
+    ...preferredPayload,
+    showContactPoll: true,
+    contactPagePollId: fallbackPayload.contactPagePollId,
+    ...(fallbackPayload.contactPagePollBlockId
+      ? { contactPagePollBlockId: fallbackPayload.contactPagePollBlockId }
+      : {}),
+    ...(preferredPayload.contactPageSectionOrder
+      ? {}
+      : fallbackPayload.contactPageSectionOrder
+        ? { contactPageSectionOrder: fallbackPayload.contactPageSectionOrder }
+        : {}),
+  } satisfies MerchantBusinessCardSharePayload;
 }
 
 export function normalizeMerchantBusinessCardShareContact(

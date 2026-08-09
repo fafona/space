@@ -1,6 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolveTrustedPublicOrigin } from "./requestOrigin";
+import { resolveForwardedRequestOrigin, resolveTrustedPublicOrigin } from "./requestOrigin";
+
+test("resolveForwardedRequestOrigin restores the public origin behind an internal proxy url", () => {
+  const request = new Request("http://localhost:3000/card/example", {
+    headers: {
+      host: "localhost:3000",
+      "x-forwarded-host": "faolla.com",
+      "x-forwarded-proto": "https",
+    },
+  });
+
+  assert.equal(resolveForwardedRequestOrigin(request), "https://faolla.com");
+});
 
 test("resolveTrustedPublicOrigin keeps the configured origin when it matches the live base domain", () => {
   const previousBaseDomain = process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN;
@@ -35,6 +47,25 @@ test("resolveTrustedPublicOrigin falls back to the live request origin when the 
     assert.equal(
       resolveTrustedPublicOrigin("https://www.faolla.com/api/super-admin/auth/request"),
       "https://www.faolla.com",
+    );
+  } finally {
+    process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = previousBaseDomain;
+  }
+});
+
+test("forwarded public origins override a stale configured base domain", () => {
+  const previousBaseDomain = process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN;
+  process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = "https://www.fafona.com";
+  try {
+    const request = new Request("http://localhost:3000/card/example", {
+      headers: {
+        "x-forwarded-host": "faolla.com",
+        "x-forwarded-proto": "https",
+      },
+    });
+    assert.equal(
+      resolveTrustedPublicOrigin(resolveForwardedRequestOrigin(request)),
+      "https://faolla.com",
     );
   } finally {
     process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = previousBaseDomain;

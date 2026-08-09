@@ -17,14 +17,61 @@ import {
   buildMerchantBusinessCardShareUrl,
   createMerchantBusinessCardShareKey,
   loadMerchantBusinessCardSharePayloadByKey,
+  mergeMerchantBusinessCardSharePollFallback,
   normalizeMerchantBusinessCardShareContact,
   normalizeMerchantBusinessCardShareImageUrl,
   normalizeMerchantBusinessCardShareKey,
+  normalizeMerchantBusinessCardSharePayload,
   normalizeMerchantBusinessCardShareTargetUrl,
   parseMerchantBusinessCardShareParams,
   readMerchantBusinessCardShareKey,
   resolveMerchantBusinessCardShareOrigin,
 } from "./merchantBusinessCardShare";
+
+test("share payload normalization preserves an explicit disabled poll marker", () => {
+  const payload = normalizeMerchantBusinessCardSharePayload({
+    name: "Card",
+    targetUrl: "https://merchant.faolla.com",
+    showContactPoll: false,
+  });
+
+  assert.equal(payload?.showContactPoll, false);
+  assert.equal(payload?.contactPagePollId, undefined);
+});
+
+test("share payload poll fallback restores legacy manifests without overriding an explicit disable", () => {
+  const legacyPayload = normalizeMerchantBusinessCardSharePayload({
+    name: "Card",
+    targetUrl: "https://merchant.faolla.com",
+  });
+  const snapshotPayload = normalizeMerchantBusinessCardSharePayload({
+    name: "Card",
+    targetUrl: "https://merchant.faolla.com",
+    ownerMerchantId: "10000000",
+    showContactPoll: true,
+    contactPagePollId: "poll-feedback",
+    contactPagePollBlockId: "poll-block-page-2",
+  });
+  const restored = mergeMerchantBusinessCardSharePollFallback(
+    legacyPayload,
+    snapshotPayload,
+    "https://faolla.com",
+  );
+
+  assert.equal(restored?.showContactPoll, true);
+  assert.equal(restored?.contactPagePollId, "poll-feedback");
+  assert.equal(restored?.contactPagePollBlockId, "poll-block-page-2");
+
+  const explicitlyDisabled = normalizeMerchantBusinessCardSharePayload({
+    name: "Card",
+    targetUrl: "https://merchant.faolla.com",
+    showContactPoll: false,
+  });
+  assert.equal(
+    mergeMerchantBusinessCardSharePollFallback(explicitlyDisabled, snapshotPayload)?.showContactPoll,
+    false,
+  );
+});
 
 test("createMerchantBusinessCardShareKey uses contact name slug with a short code", () => {
   assert.equal(

@@ -154,6 +154,50 @@ function normalizeOptionalBoolean(value: unknown, fallback: boolean) {
   return fallback;
 }
 
+export function resolveBusinessCardSharePollManifestFields(
+  body:
+    | Pick<BusinessCardShareRequestBody, "showContactPoll" | "contactPagePollId" | "contactPagePollBlockId">
+    | null
+    | undefined,
+  existing:
+    | Pick<MerchantBusinessCardSharePayload, "showContactPoll" | "contactPagePollId" | "contactPagePollBlockId">
+    | null
+    | undefined,
+) {
+  const hasExplicitPollSetting = body?.showContactPoll !== undefined && body.showContactPoll !== null;
+  if (!hasExplicitPollSetting) {
+    if (existing?.showContactPoll === false) return { showContactPoll: false } as const;
+    if (existing?.showContactPoll && existing.contactPagePollId) {
+      return {
+        showContactPoll: true,
+        contactPagePollId: normalizeText(existing.contactPagePollId).slice(0, 96),
+        ...(normalizeText(existing.contactPagePollBlockId)
+          ? { contactPagePollBlockId: normalizeText(existing.contactPagePollBlockId).slice(0, 160) }
+          : {}),
+      } as const;
+    }
+    return {};
+  }
+
+  if (!normalizeOptionalBoolean(body?.showContactPoll, false)) {
+    return { showContactPoll: false } as const;
+  }
+  const contactPagePollId = (
+    normalizeText(body?.contactPagePollId) ||
+    (existing?.showContactPoll ? normalizeText(existing.contactPagePollId) : "")
+  ).slice(0, 96);
+  if (!contactPagePollId) return { showContactPoll: false } as const;
+  const contactPagePollBlockId = (
+    normalizeText(body?.contactPagePollBlockId) ||
+    (existing?.showContactPoll ? normalizeText(existing.contactPagePollBlockId) : "")
+  ).slice(0, 160);
+  return {
+    showContactPoll: true,
+    contactPagePollId,
+    ...(contactPagePollBlockId ? { contactPagePollBlockId } : {}),
+  } as const;
+}
+
 function normalizeMerchantId(value: unknown) {
   const normalized = normalizeText(value);
   return /^\d{8}$/.test(normalized) ? normalized : "";
@@ -729,15 +773,7 @@ export async function POST(request: Request) {
     ...(normalizedPayload?.contactPageSectionOrder
       ? { contactPageSectionOrder: normalizedPayload.contactPageSectionOrder }
       : {}),
-    ...(normalizedPayload?.showContactPoll && normalizedPayload.contactPagePollId
-      ? {
-          showContactPoll: true,
-          contactPagePollId: normalizedPayload.contactPagePollId,
-          ...(normalizedPayload.contactPagePollBlockId
-            ? { contactPagePollBlockId: normalizedPayload.contactPagePollBlockId }
-            : {}),
-        }
-      : {}),
+    ...resolveBusinessCardSharePollManifestFields(body, existingManifest),
     ...(normalizedPayload?.showContactSaveButton === false ? { showContactSaveButton: false } : {}),
     ...(normalizedPayload?.showContactWebsiteButton === false ? { showContactWebsiteButton: false } : {}),
     updatedAt: new Date().toISOString(),

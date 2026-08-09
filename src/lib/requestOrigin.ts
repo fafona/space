@@ -61,6 +61,23 @@ export function resolveRequestOrigin(request: Request | URL | string) {
   }
 }
 
+export function resolveForwardedRequestOrigin(request: Request) {
+  const requestOrigin = resolveRequestOrigin(request);
+  const forwardedHost = trimText(request.headers.get("x-forwarded-host")).split(",")[0]?.trim() ?? "";
+  const host = forwardedHost || trimText(request.headers.get("host")).split(",")[0]?.trim() || "";
+  if (!host) return requestOrigin;
+
+  const forwardedProtocol = trimText(request.headers.get("x-forwarded-proto")).split(",")[0]?.trim() ?? "";
+  let requestProtocol = "";
+  try {
+    requestProtocol = new URL(request.url).protocol.replace(/:$/, "");
+  } catch {
+    requestProtocol = "";
+  }
+  const protocol = forwardedProtocol || (isLocalLikeHostname(host.split(":")[0]) ? requestProtocol || "http" : "https");
+  return normalizeOrigin(`${protocol}://${host}`, protocol) || requestOrigin;
+}
+
 export function resolveTrustedPublicOrigin(request: Request | URL | string) {
   const configuredOrigin = resolveConfiguredPublicOrigin();
   const requestOrigin = resolveRequestOrigin(request);

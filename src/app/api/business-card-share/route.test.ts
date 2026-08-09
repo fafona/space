@@ -3,10 +3,43 @@ import assert from "node:assert/strict";
 import {
   findShareOwnerMerchantIdInSnapshotPayload,
   isStorageObjectMissingError,
+  resolveBusinessCardSharePollManifestFields,
 } from "@/app/api/business-card-share/route";
 import { createDefaultMerchantPermissionConfig } from "@/data/platformControlStore";
 import { normalizeMerchantBusinessCardSharePayload } from "@/lib/merchantBusinessCardShare";
 import { createDefaultMerchantBusinessCardDraft } from "@/lib/merchantBusinessCards";
+
+test("share updates preserve poll fields when an older client omits them", () => {
+  assert.deepEqual(
+    resolveBusinessCardSharePollManifestFields(
+      {},
+      {
+        showContactPoll: true,
+        contactPagePollId: "poll-feedback",
+        contactPagePollBlockId: "poll-block-page-2",
+      },
+    ),
+    {
+      showContactPoll: true,
+      contactPagePollId: "poll-feedback",
+      contactPagePollBlockId: "poll-block-page-2",
+    },
+  );
+});
+
+test("share updates can explicitly disable a previously selected poll", () => {
+  assert.deepEqual(
+    resolveBusinessCardSharePollManifestFields(
+      { showContactPoll: false },
+      {
+        showContactPoll: true,
+        contactPagePollId: "poll-feedback",
+        contactPagePollBlockId: "poll-block-page-2",
+      },
+    ),
+    { showContactPoll: false },
+  );
+});
 
 test("share delete treats common not-found storage errors as idempotent misses", () => {
   assert.equal(isStorageObjectMissingError("The resource was not found"), true);

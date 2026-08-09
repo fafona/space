@@ -10,6 +10,7 @@ import {
   MERCHANT_BUSINESS_CARD_SHARE_PATH,
   isMerchantBusinessCardShareRevoked,
   loadMerchantBusinessCardSharePayloadByKey,
+  mergeMerchantBusinessCardSharePollFallback,
   normalizeMerchantBusinessCardSharePayload,
   normalizeMerchantBusinessCardShareAudioUrl,
   normalizeMerchantBusinessCardShareImageUrl,
@@ -20,6 +21,7 @@ import {
   type MerchantBusinessCardShareContact,
   type MerchantBusinessCardSharePayload,
 } from "@/lib/merchantBusinessCardShare";
+import { resolveForwardedRequestOrigin, resolveTrustedPublicOrigin } from "@/lib/requestOrigin";
 import {
   MERCHANT_BUSINESS_CARD_INTRO_IMAGE_DEFAULT_DURATION_SECONDS,
   MERCHANT_BUSINESS_CARD_INTRO_IMAGE_MAX_DURATION_SECONDS,
@@ -121,6 +123,8 @@ const CONTACT_CARD_HTML_CACHE_TTL_MS = 12_000;
 const CONTACT_CARD_SUCCESS_CACHE_CONTROL = "no-store, max-age=0";
 const CONTACT_CARD_SNAPSHOT_FAST_WAIT_MS = 150;
 const CONTACT_CARD_OWNER_SNAPSHOT_FAST_WAIT_MS = 250;
+const CONTACT_CARD_PAYLOAD_REVALIDATE_WAIT_MS = 1_100;
+const CONTACT_CARD_POLL_RECOVERY_WAIT_MS = 1_600;
 const GOOGLE_REVIEW_DISPLAY_TEXT = "欢迎评价";
 const GOOGLE_REVIEW_DISPLAY_TRANSLATIONS: Record<string, string> = {
   "zh-CN": GOOGLE_REVIEW_DISPLAY_TEXT,
@@ -2168,14 +2172,14 @@ function clearCachedContactCardPayload(shareKey: string) {
   }
 }
 
-function buildContactCardHtmlCacheKey(shareKey: string, requestOrigin: string) {
+function buildContactCardHtmlCacheKey(shareKey: string, requestOrigin: string, payloadVersion?: string | null) {
   const normalizedShareKey = normalizeMerchantBusinessCardShareKey(shareKey);
   if (!normalizedShareKey) return "";
-  return `${normalizedShareKey}|${normalizeText(requestOrigin)}`;
+  return `${normalizedShareKey}|${normalizeText(requestOrigin)}|${normalizeText(payloadVersion)}`;
 }
 
-function readCachedContactCardHtml(shareKey: string, requestOrigin: string) {
-  const cacheKey = buildContactCardHtmlCacheKey(shareKey, requestOrigin);
+function readCachedContactCardHtml(shareKey: string, requestOrigin: string, payloadVersion?: string | null) {
+  const cacheKey = buildContactCardHtmlCacheKey(shareKey, requestOrigin, payloadVersion);
   if (!cacheKey) return "";
   const cached = contactCardHtmlCache.get(cacheKey);
   if (!cached) return "";
@@ -2186,8 +2190,13 @@ function readCachedContactCardHtml(shareKey: string, requestOrigin: string) {
   return cached.html;
 }
 
-function writeCachedContactCardHtml(shareKey: string, requestOrigin: string, html: string) {
-  const cacheKey = buildContactCardHtmlCacheKey(shareKey, requestOrigin);
+function writeCachedContactCardHtml(
+  shareKey: string,
+  requestOrigin: string,
+  payloadVersion: string | null | undefined,
+  html: string,
+) {
+  const cacheKey = buildContactCardHtmlCacheKey(shareKey, requestOrigin, payloadVersion);
   if (!cacheKey || !html) return;
   contactCardHtmlCache.set(cacheKey, {
     expiresAt: Date.now() + CONTACT_CARD_HTML_CACHE_TTL_MS,
@@ -4165,6 +4174,17 @@ function buildServiceMaintenanceCardHtml(input: {
   });
 }
 
+function buildContactPollRedirectUrl(
+  shareKey: string,
+  requestOrigin: string,
+  targetUrl?: string | null,
+) {
+  const publicOrigin = resolveMerchantBusinessCardShareOrigin(requestOrigin, targetUrl) || requestOrigin;
+  const contactCardUrl = new URL(MERCHANT_BUSINESS_CARD_SHARE_PATH, `${publicOrigin}/`);
+  contactCardUrl.searchParams.set(MERCHANT_BUSINESS_CARD_SHARE_KEY_PARAM, shareKey);
+  return contactCardUrl;
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ card: string }> },
@@ -4178,7 +4198,8 @@ export async function GET(
   const shareKey = normalizeMerchantBusinessCardShareKey(card);
   const requestUrl = new URL(request.url);
   const introDebug = requestUrl.searchParams.get("introDebug") === "1";
-  const requestOrigin = requestUrl.origin;
+  const requestOrigin =
+    resolveTrustedPublicOrigin(resolveForwardedRequestOrigin(request)) || requestUrl.origin;
   if (!shareKey) {
     return withTiming(new NextResponse("Invalid business card link", {
       status: 404,
@@ -4211,23 +4232,10 @@ export async function GET(
 
   const cachedPayload = readCachedContactCardPayload(shareKey);
   if (cachedPayload?.showContactPoll && cachedPayload.contactPagePollId && cachedPayload.ownerMerchantId) {
-    const contactCardUrl = new URL(MERCHANT_BUSINESS_CARD_SHARE_PATH, request.url);
-    contactCardUrl.searchParams.set(MERCHANT_BUSINESS_CARD_SHARE_KEY_PARAM, shareKey);
+    const contactCardUrl = buildContactPollRedirectUrl(shareKey, requestOrigin, cachedPayload.targetUrl);
     const response = NextResponse.redirect(contactCardUrl, 307);
     response.headers.set("cache-control", "no-store, max-age=0");
     return withTiming(response);
-  }
-
-  const cachedHtml = introDebug ? "" : readCachedContactCardHtml(shareKey, requestOrigin);
-  if (cachedHtml) {
-    timing.add("html_cache", 0, "hit");
-    return withTiming(new NextResponse(cachedHtml, {
-      status: 200,
-      headers: {
-        "content-type": "text/html; charset=utf-8",
-        "cache-control": CONTACT_CARD_SUCCESS_CACHE_CONTROL,
-      },
-    }));
   }
 
   const payloadStartedAt = timing.now();
@@ -4244,12 +4252,22 @@ export async function GET(
   let snapshotMatch: ContactCardSnapshotMatch | null = null;
   let usedCachedPayload = false;
   if (cachedPayload) {
-    storedPayload = cachedPayload;
-    usedCachedPayload = true;
-    payloadSource = "cache";
-    void storedPayloadPromise.then((freshPayload) => {
-      if (freshPayload) writeCachedContactCardPayload(shareKey, freshPayload, requestOrigin);
-    });
+    const freshPayload = await withContactCardTimeout(
+      storedPayloadPromise,
+      null,
+      CONTACT_CARD_PAYLOAD_REVALIDATE_WAIT_MS,
+    );
+    if (freshPayload) {
+      storedPayload = freshPayload;
+      payloadSource = "manifest_revalidate";
+    } else {
+      storedPayload = cachedPayload;
+      usedCachedPayload = true;
+      payloadSource = "cache";
+      void storedPayloadPromise.then((latePayload) => {
+        if (latePayload) writeCachedContactCardPayload(shareKey, latePayload, requestOrigin);
+      });
+    }
   } else {
     const firstPayloadSource = await withContactCardTimeout(
       firstResolvedContactCardValue<
@@ -4284,22 +4302,41 @@ export async function GET(
       }
     }
   }
+  const needsLegacyPollRecovery = Boolean(
+    (storedPayload ?? cachedPayload) &&
+      (storedPayload ?? cachedPayload)?.showContactPoll === undefined,
+  );
   if (!snapshotMatch) {
-    snapshotMatch = storedPayload
-      ? usedCachedPayload
-        ? null
-        : await withContactCardTimeout(snapshotMatchTask, null, CONTACT_CARD_SNAPSHOT_FAST_WAIT_MS)
-      : await snapshotMatchTask;
+    snapshotMatch = needsLegacyPollRecovery
+      ? await withContactCardTimeout(snapshotMatchTask, null, CONTACT_CARD_POLL_RECOVERY_WAIT_MS)
+      : storedPayload
+        ? usedCachedPayload
+          ? null
+          : await withContactCardTimeout(snapshotMatchTask, null, CONTACT_CARD_SNAPSHOT_FAST_WAIT_MS)
+        : await snapshotMatchTask;
   }
   if (!snapshotMatch && storedPayload?.ownerMerchantId) {
     snapshotMatch = await withContactCardTimeout(
       resolveContactCardSnapshotMatch(shareKey, storedPayload.ownerMerchantId).catch(() => null),
       null,
-      CONTACT_CARD_OWNER_SNAPSHOT_FAST_WAIT_MS,
+      needsLegacyPollRecovery
+        ? CONTACT_CARD_POLL_RECOVERY_WAIT_MS
+        : CONTACT_CARD_OWNER_SNAPSHOT_FAST_WAIT_MS,
     );
   }
   const snapshotPayload = buildSharePayloadFromSnapshotMatch(snapshotMatch, requestOrigin);
-  const payload = storedPayload ?? snapshotPayload ?? cachedPayload;
+  const preferredPayload = storedPayload ?? cachedPayload;
+  const restoredPollFromSnapshot = Boolean(
+    preferredPayload &&
+      preferredPayload.showContactPoll === undefined &&
+      snapshotPayload?.showContactPoll &&
+      snapshotPayload.contactPagePollId,
+  );
+  const payload = mergeMerchantBusinessCardSharePollFallback(
+    preferredPayload,
+    snapshotPayload,
+    requestOrigin,
+  );
   if (payloadSource === "none" && payload) {
     payloadSource = storedPayload ? "manifest" : snapshotPayload ? "snapshot" : "cache";
   }
@@ -4326,18 +4363,39 @@ export async function GET(
       }).catch(() => false);
     });
   }
+  if (restoredPollFromSnapshot && snapshotMatch) {
+    void repairShareManifestFromSnapshot({
+      shareKey,
+      snapshotMatch,
+      payload,
+      preferredOrigin: requestOrigin,
+    }).catch(() => false);
+  }
 
   if (payload.showContactPoll && payload.contactPagePollId && payload.ownerMerchantId) {
-    const contactCardUrl = new URL(MERCHANT_BUSINESS_CARD_SHARE_PATH, request.url);
-    contactCardUrl.searchParams.set(MERCHANT_BUSINESS_CARD_SHARE_KEY_PARAM, shareKey);
+    const contactCardUrl = buildContactPollRedirectUrl(shareKey, requestOrigin, payload.targetUrl);
     const response = NextResponse.redirect(contactCardUrl, 307);
     response.headers.set("cache-control", "no-store, max-age=0");
     return withTiming(response);
   }
 
+  const cachedHtml = introDebug
+    ? ""
+    : readCachedContactCardHtml(shareKey, requestOrigin, payload.updatedAt);
+  if (cachedHtml) {
+    timing.add("html_cache", 0, "hit");
+    return withTiming(new NextResponse(cachedHtml, {
+      status: 200,
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": CONTACT_CARD_SUCCESS_CACHE_CONTROL,
+      },
+    }));
+  }
+
   const title = buildMerchantBusinessCardShareTitle(payload.name);
   const description = buildMerchantBusinessCardShareDescription(payload.name, payload.targetUrl);
-  const publicOrigin = resolveMerchantBusinessCardShareOrigin(request.url, payload.targetUrl) || requestOrigin;
+  const publicOrigin = resolveMerchantBusinessCardShareOrigin(requestOrigin, payload.targetUrl) || requestOrigin;
   const snapshotCard = snapshotMatch?.card ?? null;
   const fastOpenTargetUrl =
     buildFastMerchantSiteUrl({
@@ -4515,7 +4573,7 @@ export async function GET(
       introDebug,
     }),
   );
-  if (!introDebug) writeCachedContactCardHtml(shareKey, requestOrigin, html);
+  if (!introDebug) writeCachedContactCardHtml(shareKey, requestOrigin, payload.updatedAt, html);
 
   return withTiming(new NextResponse(
     html,
