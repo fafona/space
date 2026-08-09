@@ -25,6 +25,18 @@ test("poll statistics live in the operation center between customers and logs", 
   assert.match(panel, /导出 Excel/);
   assert.match(panel, /buildPollExportRows/);
   assert.match(panel, /逐票明细/);
+  const desktopTable = panel.slice(panel.indexOf("<table"), panel.indexOf("</table>"));
+  const desktopViewButton = desktopTable.indexOf("查看");
+  const desktopBallotButton = desktopTable.indexOf("逐票明细", desktopViewButton);
+  assert.ok(desktopViewButton >= 0 && desktopBallotButton > desktopViewButton, "逐票明细按钮应紧跟在查看按钮后面");
+  assert.match(panel, /搜索姓名、身份、来源、选票编号、题目或作答内容/);
+  assert.match(panel, />全部展开</);
+  assert.match(panel, />全部收起</);
+  assert.match(panel, /w-\[min\(96vw,1440px\)\]/);
+  assert.doesNotMatch(panel, /<dt className="text-slate-400">投票时间<\/dt>/);
+  assert.match(panel, /Excel 仅导出逐票明细，每张选票占一行/);
+  assert.equal([...panel.matchAll(/book_append_sheet/g)].length, 1, "Excel 应只包含逐票明细工作表");
+  assert.match(panel, /"逐票明细"/);
   assert.match(panel, /确认删除投票记录/);
   assert.match(panel, /method: "DELETE"/);
   assert.match(panel, /method: "PATCH"/);

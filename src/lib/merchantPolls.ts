@@ -854,6 +854,41 @@ export function buildPollExportRows(ballots: PollStoredBallot[], summary: PollSu
   });
 }
 
+function normalizePollSearchText(value: unknown) {
+  return String(value ?? "").normalize("NFKC").toLocaleLowerCase("zh-CN");
+}
+
+export function pollBallotMatchesSearch(ballot: PollStoredBallot, summary: PollSummary, query: string) {
+  const normalizedQuery = normalizePollSearchText(query).trim();
+  if (!normalizedQuery) return true;
+
+  const exportRow = buildPollExportRows([ballot], summary)[0] ?? {};
+  const searchableValues = [
+    ballot.id,
+    ballot.ballotNo,
+    ballot.participantName,
+    getPollParticipantTypeLabel(ballot.participantType),
+    ballot.anonymous ? "匿名" : "非匿名",
+    getPollSubmissionSourceLabel(ballot.source),
+    ballot.invalidatedAt ? "已作废" : "有效",
+    ballot.createdAt,
+    ballot.invalidatedAt,
+    ballot.invalidatedBy,
+    ballot.pollSnapshot.heading,
+    ballot.pollSnapshot.openAt,
+    ballot.pollSnapshot.closeAt,
+    ...ballot.pollSnapshot.questions.flatMap((question) => [
+      question.id,
+      question.prompt,
+      ...question.options.flatMap((option) => [option.id, option.label]),
+    ]),
+    ...ballot.answers.flatMap((answer) => [answer.questionId, answer.text, ...answer.optionIds]),
+    ...Object.entries(exportRow).flatMap(([key, value]) => [key, value]),
+  ];
+
+  return normalizePollSearchText(searchableValues.join("\n")).includes(normalizedQuery);
+}
+
 export function createDefaultPollQuestions(): PollQuestion[] {
   const questionId = createPollEntityId("question");
   return [

@@ -6,6 +6,7 @@ import {
   buildPollExportRows,
   getPollParticipantTypeLabel,
   getPollSubmissionSourceLabel,
+  pollBallotMatchesSearch,
   type PollRoundOverview,
   type PollStoredBallot,
   type PollSummary,
@@ -87,6 +88,10 @@ function formatDateTime(value: string | null | undefined) {
   }).format(new Date(timestamp));
 }
 
+function getBallotRenderKey(ballot: PollStoredBallot, index: number) {
+  return ballot.id || ballot.ballotNo || `${ballot.createdAt}-${ballot.participantName}-${index}`;
+}
+
 function formatPollError(payload: PollRoundsPayload | PollRoundDetailPayload | PollDeletePayload | PollBallotMutationPayload | null) {
   const code = trimText(payload?.error, 100);
   const message = trimText(payload?.message, 300);
@@ -103,31 +108,6 @@ function getStatusClassName(status: PollRoundOverview["status"]) {
   if (status === "scheduled") return "border-sky-200 bg-sky-50 text-sky-700";
   if (status === "closed") return "border-amber-200 bg-amber-50 text-amber-700";
   return "border-slate-200 bg-slate-50 text-slate-600";
-}
-
-function buildSummaryRows(summary: PollSummary) {
-  return summary.questions.flatMap((question, questionIndex) => {
-    if (question.type === "text") {
-      return [{
-        "题号": questionIndex + 1,
-        "问题": question.prompt,
-        "类型": QUESTION_TYPE_LABELS[question.type],
-        "选项": "",
-        "票数/回答数": question.responseCount,
-        "跳过数": question.skippedCount,
-        "当前题目": question.active ? "是" : "否",
-      }];
-    }
-    return question.options.map((option) => ({
-      "题号": questionIndex + 1,
-      "问题": question.prompt,
-      "类型": QUESTION_TYPE_LABELS[question.type],
-      "选项": option.label,
-      "票数/回答数": option.count,
-      "跳过数": question.skippedCount,
-      "当前题目": question.active ? "是" : "否",
-    }));
-  });
 }
 
 function PollQuestionResult({ question, index }: { question: PollSummaryQuestion; index: number }) {
@@ -188,16 +168,19 @@ function PollBallotDetail({
   ballot,
   index,
   summary,
+  expanded,
   processing,
+  onToggleExpanded,
   onToggleInvalidated,
 }: {
   ballot: PollStoredBallot;
   index: number;
   summary: PollSummary;
+  expanded: boolean;
   processing: boolean;
+  onToggleExpanded: () => void;
   onToggleInvalidated: (ballot: PollStoredBallot) => void;
 }) {
-  const [expanded, setExpanded] = useState(index === 0);
   const answerByQuestion = new Map(ballot.answers.map((answer) => [answer.questionId, answer]));
   const summaryByQuestion = new Map(summary.questions.map((question) => [question.id, question]));
   const questions = [...ballot.pollSnapshot.questions];
@@ -211,7 +194,7 @@ function PollBallotDetail({
 
   return (
     <article className={`overflow-hidden rounded-lg border bg-white ${invalidated ? "border-rose-200 opacity-80" : "border-slate-200"}`}>
-      <div className={`flex flex-wrap items-center justify-between gap-3 px-3 py-3 sm:px-4 ${invalidated ? "bg-rose-50" : "bg-slate-50"}`}>
+      <div className={`flex flex-wrap items-center justify-between gap-2 px-3 py-2 ${invalidated ? "bg-rose-50" : "bg-slate-50"}`}>
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <strong className="break-words text-sm text-slate-950">{index + 1}. {voterName}</strong>
@@ -232,23 +215,22 @@ function PollBallotDetail({
           >
             {processing ? "处理中..." : invalidated ? "恢复" : "作废"}
           </button>
-          <button type="button" className="h-8 rounded border border-slate-200 bg-white px-3 text-xs font-semibold text-blue-700 hover:bg-slate-50" onClick={() => setExpanded((current) => !current)}>
+          <button type="button" className="h-8 rounded border border-slate-200 bg-white px-3 text-xs font-semibold text-blue-700 hover:bg-slate-50" onClick={onToggleExpanded}>
             {expanded ? "收起明细" : "展开明细"}
           </button>
         </div>
       </div>
-      {expanded ? <div className="grid gap-4 border-t border-slate-200 px-3 py-4 sm:px-4">
-        <dl className="grid gap-x-5 gap-y-2 text-xs sm:grid-cols-2">
+      {expanded ? <div className="grid gap-3 border-t border-slate-200 px-3 py-3">
+        <dl className="grid gap-x-5 gap-y-2 text-xs sm:grid-cols-2 xl:grid-cols-5">
           <div className="min-w-0"><dt className="text-slate-400">填写名称</dt><dd className="mt-0.5 break-words text-slate-800">{voterName}</dd></div>
           <div className="min-w-0"><dt className="text-slate-400">身份</dt><dd className="mt-0.5 text-slate-800">{getPollParticipantTypeLabel(ballot.participantType)}</dd></div>
-          <div className="min-w-0"><dt className="text-slate-400">投票时间</dt><dd className="mt-0.5 text-slate-800">{formatDateTime(ballot.createdAt)}</dd></div>
           <div className="min-w-0"><dt className="text-slate-400">选票编号</dt><dd className="mt-0.5 break-all font-mono text-slate-800">{ballot.ballotNo || ballot.id || "-"}</dd></div>
           <div className="min-w-0"><dt className="text-slate-400">来源</dt><dd className="mt-0.5 text-slate-800">{getPollSubmissionSourceLabel(ballot.source)}</dd></div>
           <div className="min-w-0"><dt className="text-slate-400">选票状态</dt><dd className={`mt-0.5 font-semibold ${invalidated ? "text-rose-700" : "text-emerald-700"}`}>{invalidated ? "已作废" : "有效"}</dd></div>
           {invalidated ? <div className="min-w-0"><dt className="text-slate-400">作废时间</dt><dd className="mt-0.5 text-slate-800">{formatDateTime(ballot.invalidatedAt)}</dd></div> : null}
           {invalidated ? <div className="min-w-0"><dt className="text-slate-400">操作人</dt><dd className="mt-0.5 break-all text-slate-800">{ballot.invalidatedBy || "-"}</dd></div> : null}
         </dl>
-        <div className="grid gap-2">
+        <div className="grid gap-2 xl:grid-cols-2">
           {questions.length ? questions.map((question, questionIndex) => {
             const answer = answerByQuestion.get(question.id);
             const optionLabels = new Map(question.options.map((option) => [option.id, option.label]));
@@ -258,7 +240,7 @@ function PollBallotDetail({
                 ? answer.optionIds.map((optionId) => optionLabels.get(optionId) || optionId).join("；")
                 : "未选择";
             return (
-              <div key={question.id} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5">
+              <div key={question.id} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
                 <div className="flex flex-wrap items-start gap-2 text-xs text-slate-500">
                   <span>{questionIndex + 1}. {QUESTION_TYPE_LABELS[question.type]}</span>
                   <span>{question.required ? "必选" : "可选"}</span>
@@ -282,6 +264,9 @@ export default function MerchantPollStatsPanel({ siteId, siteName, className = "
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<PollStatusFilter>("all");
   const [selectedRound, setSelectedRound] = useState<PollRoundOverview | null>(null);
+  const [selectedBallotRound, setSelectedBallotRound] = useState<PollRoundOverview | null>(null);
+  const [ballotQuery, setBallotQuery] = useState("");
+  const [expandedBallotIds, setExpandedBallotIds] = useState<Set<string>>(() => new Set());
   const [details, setDetails] = useState<Record<string, PollRoundDetailPayload>>({});
   const [detailLoadingPollId, setDetailLoadingPollId] = useState("");
   const [detailError, setDetailError] = useState("");
@@ -290,6 +275,7 @@ export default function MerchantPollStatsPanel({ siteId, siteName, className = "
   const [deletingPollId, setDeletingPollId] = useState("");
   const [mutatingBallotId, setMutatingBallotId] = useState("");
   const deferredQuery = useDeferredValue(query.trim().toLocaleLowerCase("zh-CN"));
+  const deferredBallotQuery = useDeferredValue(ballotQuery);
 
   const loadRounds = useCallback(async () => {
     if (!siteId) {
@@ -322,6 +308,9 @@ export default function MerchantPollStatsPanel({ siteId, siteName, className = "
   useEffect(() => {
     setDetails({});
     setSelectedRound(null);
+    setSelectedBallotRound(null);
+    setBallotQuery("");
+    setExpandedBallotIds(new Set());
     setDetailError("");
   }, [siteId]);
 
@@ -350,8 +339,28 @@ export default function MerchantPollStatsPanel({ siteId, siteName, className = "
     }
   };
 
-  const toggleBallotInvalidated = async (ballot: PollStoredBallot) => {
-    if (!selectedRound || !ballot.id || mutatingBallotId) return;
+  const openBallotDetail = async (round: PollRoundOverview) => {
+    setSelectedBallotRound(round);
+    setBallotQuery("");
+    setDetailError("");
+    const cached = details[round.pollId];
+    if (cached?.ballots) {
+      setExpandedBallotIds(new Set());
+      return;
+    }
+    setDetailLoadingPollId(round.pollId);
+    try {
+      await requestRoundDetail(round.pollId);
+      setExpandedBallotIds(new Set());
+    } catch (loadError) {
+      setDetailError(loadError instanceof Error ? loadError.message : "投票明细加载失败，请稍后重试。");
+    } finally {
+      setDetailLoadingPollId("");
+    }
+  };
+
+  const toggleBallotInvalidated = async (round: PollRoundOverview, ballot: PollStoredBallot) => {
+    if (!ballot.id || mutatingBallotId) return;
     const invalidated = Boolean(ballot.invalidatedAt);
     if (!invalidated && typeof window !== "undefined" && !window.confirm("确定作废这张选票吗？作废后不计入统计，之后仍可恢复。")) return;
     setMutatingBallotId(ballot.id);
@@ -362,23 +371,25 @@ export default function MerchantPollStatsPanel({ siteId, siteName, className = "
         cache: "no-store",
         body: JSON.stringify({
           siteId,
-          pollId: selectedRound.pollId,
+          pollId: round.pollId,
           ballotId: ballot.id,
           invalidated: !invalidated,
         }),
       });
       const payload = (await response.json().catch(() => null)) as PollBallotMutationPayload | null;
       if (!response.ok || !payload?.ok) throw new Error(formatPollError(payload));
-      const detail = await requestRoundDetail(selectedRound.pollId);
+      const detail = await requestRoundDetail(round.pollId);
       const summary = detail.summary;
-      setSelectedRound((current) => current && current.pollId === selectedRound.pollId && summary
+      const updateRoundSummary = (current: PollRoundOverview | null) => current && current.pollId === round.pollId && summary
         ? {
             ...current,
             totalBallots: summary.totalBallots,
             invalidatedBallots: summary.invalidatedBallots,
             anonymousBallots: summary.anonymousBallots,
           }
-        : current);
+        : current;
+      setSelectedRound(updateRoundSummary);
+      setSelectedBallotRound(updateRoundSummary);
       showGlobalToast(invalidated ? "选票已恢复并重新计入统计" : "选票已作废，不再计入统计", { tone: "success" });
       await loadRounds();
     } catch (mutationError) {
@@ -396,34 +407,15 @@ export default function MerchantPollStatsPanel({ siteId, siteName, className = "
       if (!payload.summary || !Array.isArray(payload.ballots)) throw new Error("投票结果数据不完整，暂时无法导出。");
       const XLSX = await import("xlsx");
       const workbook = XLSX.utils.book_new();
-      const overviewSheet = XLSX.utils.json_to_sheet([{
-        "投票名称": round.heading,
-        "投票编号": round.pollId,
-        "状态": STATUS_LABELS[round.status],
-        "有效票数": payload.summary.totalBallots,
-        "作废票数": payload.summary.invalidatedBallots,
-        "匿名票数": payload.summary.anonymousBallots,
-        "开放时间": round.openAt,
-        "结束时间": round.closeAt,
-        "首次提交": round.firstSubmittedAt,
-        "最后提交": round.lastSubmittedAt,
-      }]);
-      const summaryRows = buildSummaryRows(payload.summary);
       const ballotRows = buildPollExportRows(payload.ballots, payload.summary);
-      XLSX.utils.book_append_sheet(workbook, overviewSheet, "轮次信息");
-      XLSX.utils.book_append_sheet(
-        workbook,
-        summaryRows.length ? XLSX.utils.json_to_sheet(summaryRows) : XLSX.utils.aoa_to_sheet([["暂无统计结果"]]),
-        "结果统计",
-      );
       XLSX.utils.book_append_sheet(
         workbook,
         ballotRows.length ? XLSX.utils.json_to_sheet(ballotRows) : XLSX.utils.aoa_to_sheet([["暂无投票明细"]]),
-        "投票明细",
+        "逐票明细",
       );
-      const safeName = round.heading.replace(/[\\/:*?"<>|]/g, "-").slice(0, 48) || "投票结果";
-      XLSX.writeFile(workbook, `${safeName}-${round.pollId}.xlsx`);
-      showGlobalToast("投票结果已导出", { tone: "success" });
+      const safeName = round.heading.replace(/[\\/:*?"<>|]/g, "-").slice(0, 48) || "投票";
+      XLSX.writeFile(workbook, `${safeName}-逐票明细-${round.pollId}.xlsx`);
+      showGlobalToast("逐票明细已导出", { tone: "success" });
     } catch (exportError) {
       showGlobalToast(exportError instanceof Error ? exportError.message : "投票结果导出失败", { tone: "error" });
     } finally {
@@ -450,6 +442,7 @@ export default function MerchantPollStatsPanel({ siteId, siteName, className = "
         return next;
       });
       if (selectedRound?.pollId === pollId) setSelectedRound(null);
+      if (selectedBallotRound?.pollId === pollId) setSelectedBallotRound(null);
       setDeleteTarget(null);
       showGlobalToast(`已删除 ${payload.deletedCount ?? 0} 条投票记录`, { tone: "success" });
       await loadRounds();
@@ -475,6 +468,13 @@ export default function MerchantPollStatsPanel({ siteId, siteName, className = "
   }), [rounds]);
 
   const selectedDetail = selectedRound ? details[selectedRound.pollId] : null;
+  const selectedBallotDetail = selectedBallotRound ? details[selectedBallotRound.pollId] : null;
+  const filteredBallotItems = useMemo(() => {
+    if (!selectedBallotDetail?.summary || !selectedBallotDetail.ballots) return [];
+    return selectedBallotDetail.ballots
+      .map((ballot, index) => ({ ballot, index, key: getBallotRenderKey(ballot, index) }))
+      .filter(({ ballot }) => pollBallotMatchesSearch(ballot, selectedBallotDetail.summary!, deferredBallotQuery));
+  }, [deferredBallotQuery, selectedBallotDetail]);
 
   return (
     <section className={`py-6 ${className}`.trim()}>
@@ -585,6 +585,9 @@ export default function MerchantPollStatsPanel({ siteId, siteName, className = "
                       <button type="button" className="h-8 rounded border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50" onClick={() => void openRoundDetail(round)}>
                         查看
                       </button>
+                      <button type="button" className="h-8 rounded border border-violet-200 bg-violet-50 px-3 text-xs font-semibold text-violet-700 hover:bg-violet-100" onClick={() => void openBallotDetail(round)}>
+                        逐票明细
+                      </button>
                       <button type="button" className="h-8 rounded border border-blue-200 bg-blue-50 px-3 text-xs font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-50" disabled={Boolean(exportingPollId)} onClick={() => void exportRound(round)}>
                         {exportingPollId === round.pollId ? "导出中" : "导出"}
                       </button>
@@ -618,9 +621,10 @@ export default function MerchantPollStatsPanel({ siteId, siteName, className = "
                 <div><span className="block text-slate-400">问题</span><strong className="text-sm text-slate-900">{round.questionCount}</strong></div>
               </div>
               <div className="mt-3 text-xs text-slate-500">最后提交：{formatDateTime(round.lastSubmittedAt)}</div>
-              <div className="mt-3 grid grid-cols-3 gap-2">
+              <div className="mt-3 grid grid-cols-2 gap-2">
                 <button type="button" className="h-9 rounded border border-slate-200 bg-white text-sm font-semibold text-slate-700" onClick={() => void openRoundDetail(round)}>查看</button>
-                <button type="button" className="h-9 rounded border border-blue-200 bg-blue-50 text-sm font-semibold text-blue-700 disabled:opacity-50" disabled={Boolean(exportingPollId)} onClick={() => void exportRound(round)}>{exportingPollId === round.pollId ? "导出中..." : "导出 Excel"}</button>
+                <button type="button" className="h-9 rounded border border-violet-200 bg-violet-50 text-sm font-semibold text-violet-700" onClick={() => void openBallotDetail(round)}>逐票明细</button>
+                <button type="button" className="h-9 rounded border border-blue-200 bg-blue-50 text-sm font-semibold text-blue-700 disabled:opacity-50" disabled={Boolean(exportingPollId)} onClick={() => void exportRound(round)}>{exportingPollId === round.pollId ? "导出中..." : "导出明细"}</button>
                 <button type="button" className="h-9 rounded border border-rose-200 bg-white text-sm font-semibold text-rose-700 disabled:opacity-50" disabled={round.totalBallots + round.invalidatedBallots === 0 || Boolean(deletingPollId)} onClick={() => setDeleteTarget(round)}>删除</button>
               </div>
             </article>
@@ -682,36 +686,115 @@ export default function MerchantPollStatsPanel({ siteId, siteName, className = "
                       <PollQuestionResult key={question.id} question={question} index={index} />
                     )) : <div className="py-10 text-center text-sm text-slate-500">本轮暂无题目或投票数据。</div>}
                   </div>
-                  <section className="border-t border-slate-200 pt-5">
-                    <div className="flex flex-wrap items-end justify-between gap-2">
-                      <div>
-                        <h3 className="text-base font-bold text-slate-950">逐票明细</h3>
-                        <p className="mt-1 text-xs text-slate-500">包含填写名称或匿名、身份、来源、投票时间、状态、每道题的选择及文字内容；作废票保留在这里但不计入上方统计。</p>
-                      </div>
-                      <span className="text-sm tabular-nums text-slate-500">共 {selectedDetail.ballots?.length ?? 0} 张</span>
-                    </div>
-                    <div className="mt-3 grid gap-3">
-                      {selectedDetail.ballots?.length ? selectedDetail.ballots.map((ballot, index) => (
-                        <PollBallotDetail
-                          key={ballot.id || `${ballot.createdAt}-${index}`}
-                          ballot={ballot}
-                          index={index}
-                          summary={selectedDetail.summary!}
-                          processing={mutatingBallotId === ballot.id}
-                          onToggleInvalidated={(target) => void toggleBallotInvalidated(target)}
-                        />
-                      )) : <div className="rounded-lg bg-slate-50 px-3 py-8 text-center text-sm text-slate-500">本轮暂无投票明细。</div>}
-                    </div>
-                  </section>
                 </div>
               ) : null}
             </div>
 
             <footer className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-slate-200 px-4 py-3 sm:px-5">
               <button type="button" className="h-10 rounded border border-rose-200 bg-white px-4 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50" disabled={selectedRound.totalBallots + selectedRound.invalidatedBallots === 0 || Boolean(deletingPollId)} onClick={() => setDeleteTarget(selectedRound)}>删除记录</button>
+              <button type="button" className="h-10 rounded border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50" onClick={() => setSelectedRound(null)}>关闭</button>
+            </footer>
+          </div>
+        </div>
+      ) : null}
+
+      {selectedBallotRound ? (
+        <div className="fixed inset-0 z-[21500] flex items-center justify-center bg-slate-950/55 p-2 sm:p-4" role="dialog" aria-modal="true" aria-label={`${selectedBallotRound.heading} 逐票明细`}>
+          <div className="flex max-h-[96dvh] w-[min(96vw,1440px)] flex-col overflow-hidden rounded-lg bg-white shadow-2xl">
+            <header className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-200 px-4 py-3 sm:px-5">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="break-words text-xl font-bold text-slate-950">{selectedBallotRound.heading} · 逐票明细</h2>
+                  <span className={`rounded border px-2 py-1 text-xs font-semibold ${getStatusClassName(selectedBallotRound.status)}`}>
+                    {STATUS_LABELS[selectedBallotRound.status]}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-slate-500">每张选票的填写人、身份、来源、时间、状态与完整作答内容。</p>
+              </div>
+              <button
+                type="button"
+                aria-label="关闭逐票明细"
+                title="关闭"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 text-xl text-slate-600 hover:bg-slate-50"
+                onClick={() => {
+                  setSelectedBallotRound(null);
+                  setBallotQuery("");
+                  setExpandedBallotIds(new Set());
+                }}
+              >×</button>
+            </header>
+
+            <div className="grid shrink-0 gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3 lg:grid-cols-[minmax(280px,1fr)_auto] lg:items-end sm:px-5">
+              <label className="grid gap-1 text-xs font-medium text-slate-500">
+                搜索逐票明细
+                <input
+                  type="search"
+                  className="h-10 rounded border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  value={ballotQuery}
+                  onChange={(event) => setBallotQuery(event.target.value)}
+                  placeholder="搜索姓名、身份、来源、选票编号、题目或作答内容"
+                />
+              </label>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="mr-1 text-xs tabular-nums text-slate-500">
+                  {ballotQuery.trim() ? `找到 ${filteredBallotItems.length} / ` : "共 "}{selectedBallotDetail?.ballots?.length ?? 0} 张
+                </span>
+                <button
+                  type="button"
+                  className="h-9 rounded border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                  disabled={filteredBallotItems.length === 0}
+                  onClick={() => setExpandedBallotIds(new Set(filteredBallotItems.map((item) => item.key)))}
+                >全部展开</button>
+                <button
+                  type="button"
+                  className="h-9 rounded border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                  disabled={expandedBallotIds.size === 0}
+                  onClick={() => setExpandedBallotIds(new Set())}
+                >全部收起</button>
+              </div>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 sm:px-5">
+              {detailLoadingPollId === selectedBallotRound.pollId ? <div className="py-16 text-center text-sm text-slate-500">正在加载逐票明细...</div> : null}
+              {detailError ? <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-3 text-sm text-rose-700">{detailError}</div> : null}
+              {selectedBallotDetail?.truncated ? <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">本轮数据已达到单次读取上限，当前页面和导出只包含已读取的逐票明细。</div> : null}
+              {selectedBallotDetail?.summary ? (
+                <div className="grid gap-2">
+                  {filteredBallotItems.map(({ ballot, index, key }) => (
+                    <PollBallotDetail
+                      key={key}
+                      ballot={ballot}
+                      index={index}
+                      summary={selectedBallotDetail.summary!}
+                      expanded={expandedBallotIds.has(key)}
+                      processing={mutatingBallotId === ballot.id}
+                      onToggleExpanded={() => setExpandedBallotIds((current) => {
+                        const next = new Set(current);
+                        if (next.has(key)) next.delete(key);
+                        else next.add(key);
+                        return next;
+                      })}
+                      onToggleInvalidated={(target) => void toggleBallotInvalidated(selectedBallotRound, target)}
+                    />
+                  ))}
+                  {filteredBallotItems.length === 0 ? (
+                    <div className="rounded-lg bg-slate-50 px-3 py-12 text-center text-sm text-slate-500">
+                      {selectedBallotDetail.ballots?.length ? "没有找到包含该内容的选票。" : "本轮暂无投票明细。"}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+
+            <footer className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-slate-200 px-4 py-3 sm:px-5">
+              <span className="text-xs text-slate-500">Excel 仅导出逐票明细，每张选票占一行。</span>
               <div className="flex gap-2">
-                <button type="button" className="h-10 rounded border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50" onClick={() => setSelectedRound(null)}>关闭</button>
-                <button type="button" className="h-10 rounded bg-slate-950 px-4 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50" disabled={Boolean(exportingPollId) || !selectedDetail?.summary} onClick={() => void exportRound(selectedRound)}>{exportingPollId === selectedRound.pollId ? "导出中..." : "导出 Excel"}</button>
+                <button type="button" className="h-10 rounded border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50" onClick={() => {
+                  setSelectedBallotRound(null);
+                  setBallotQuery("");
+                  setExpandedBallotIds(new Set());
+                }}>关闭</button>
+                <button type="button" className="h-10 rounded bg-slate-950 px-4 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50" disabled={Boolean(exportingPollId) || !selectedBallotDetail?.summary} onClick={() => void exportRound(selectedBallotRound)}>{exportingPollId === selectedBallotRound.pollId ? "导出中..." : "导出逐票明细"}</button>
               </div>
             </footer>
           </div>

@@ -17,6 +17,7 @@ import {
   normalizePollRoundBallotMetadata,
   normalizePollQuestions,
   normalizeStoredPollBallot,
+  pollBallotMatchesSearch,
   POLL_MAX_OPTIONS,
   validatePollAnswers,
   type PollStoredBallot,
@@ -277,6 +278,13 @@ test("poll summary counts choices, skips and private text responses without leak
   assert.equal(rows[2]["选票状态"], "已作废");
   assert.equal(rows[2]["操作人"], "admin@example.com");
   assert.equal(Object.hasOwn(rows[0], "投票名称（提交时）"), false);
+
+  assert.equal(pollBallotMatchesSearch(ballots[0], adminSummary, "会员甲"), true);
+  assert.equal(pollBallotMatchesSearch(ballots[0], adminSummary, "PC网页"), true);
+  assert.equal(pollBallotMatchesSearch(ballots[0], adminSummary, "XP1000000026080600001"), true);
+  assert.equal(pollBallotMatchesSearch(ballots[0], adminSummary, "可选择多个"), true);
+  assert.equal(pollBallotMatchesSearch(ballots[0], adminSummary, "丙；丁"), true);
+  assert.equal(pollBallotMatchesSearch(ballots[0], adminSummary, "不存在的内容"), false);
 });
 
 test("published poll lookup traverses nested desktop and mobile page plans", () => {
