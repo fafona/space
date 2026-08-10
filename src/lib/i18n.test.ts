@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  detectDeviceLocale,
+  readLocalePreferenceSourceCookieFromString,
   readPreferredLocaleFromAcceptLanguage,
   readRequestedLocaleFromSearch,
   readStoredLocaleCookieFromString,
@@ -17,6 +19,18 @@ test("normalizes invalid or missing locale cookies", () => {
   assert.equal(readStoredLocaleCookieFromString("merchant-space-locale-v1=en"), "en-GB");
   assert.equal(readStoredLocaleCookieFromString("foo=bar"), null);
   assert.equal(readStoredLocaleCookieFromString(""), null);
+});
+
+test("reads locale preference source from cookie string", () => {
+  assert.equal(readLocalePreferenceSourceCookieFromString("merchant-space-locale-source-v1=manual"), "manual");
+  assert.equal(readLocalePreferenceSourceCookieFromString("merchant-space-locale-source-v1=auto"), "auto");
+  assert.equal(readLocalePreferenceSourceCookieFromString("merchant-space-locale-source-v1=legacy"), null);
+});
+
+test("detects the first supported device language without falling back too early", () => {
+  assert.equal(detectDeviceLocale(["ar-SA", "en-US"]), "en-GB");
+  assert.equal(detectDeviceLocale(["zh-Hant-HK", "en-US"]), "zh-TW");
+  assert.equal(detectDeviceLocale(["xx-YY", "zz"]), null);
 });
 
 test("resolves shared locale cookie domain for faolla hosts", () => {

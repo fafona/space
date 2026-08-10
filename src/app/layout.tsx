@@ -12,7 +12,18 @@ import PwaBootstrapLoader from "@/components/PwaBootstrapLoader";
 import UnhandledRejectionGuard from "@/components/UnhandledRejectionGuard";
 import "./globals.css";
 import { resolveFaollaWebBuildId } from "@/lib/faollaWebBuild";
-import { DEFAULT_LOCALE, I18N_COOKIE_KEY, readPreferredLocaleFromAcceptLanguage, resolveSupportedLocale } from "@/lib/i18n";
+import {
+  DEFAULT_LOCALE,
+  I18N_COOKIE_KEY,
+  I18N_GEO_LOCALE_CACHE_KEY,
+  I18N_PREFERENCE_SOURCE_COOKIE_KEY,
+  I18N_PREFERENCE_SOURCE_STORAGE_KEY,
+  I18N_STORAGE_KEY,
+  I18N_URL_PARAM,
+  LANGUAGE_OPTIONS,
+  readPreferredLocaleFromAcceptLanguage,
+  resolveSupportedLocale,
+} from "@/lib/i18n";
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -55,24 +66,59 @@ const I18N_PENDING_SCRIPT = `
 (() => {
   if (typeof window === "undefined") return;
   try {
-    const key = "merchant-space:locale:v1";
-    const cookieKey = "merchant-space-locale-v1";
-    const geoKey = "merchant-space:locale:geo:v1";
-    const urlLocaleKey = "uiLocale";
-    const requestedRaw = (new URLSearchParams(window.location.search).get(urlLocaleKey) || "").trim();
-    if (requestedRaw) {
-      window.localStorage.setItem(key, requestedRaw);
+    const key = ${JSON.stringify(I18N_STORAGE_KEY)};
+    const cookieKey = ${JSON.stringify(I18N_COOKIE_KEY)};
+    const sourceKey = ${JSON.stringify(I18N_PREFERENCE_SOURCE_STORAGE_KEY)};
+    const sourceCookieKey = ${JSON.stringify(I18N_PREFERENCE_SOURCE_COOKIE_KEY)};
+    const geoKey = ${JSON.stringify(I18N_GEO_LOCALE_CACHE_KEY)};
+    const urlLocaleKey = ${JSON.stringify(I18N_URL_PARAM)};
+    const supportedLocales = ${JSON.stringify(LANGUAGE_OPTIONS.map((item) => item.code))};
+    const resolveCandidate = (input) => {
+      const normalized = String(input || "").trim().replace(/_/g, "-");
+      if (!normalized) return "";
+      const lowered = normalized.toLowerCase();
+      const exact = supportedLocales.find((item) => item.toLowerCase() === lowered);
+      if (exact) return exact;
+      const language = lowered.split("-")[0] || "";
+      if (language === "zh") {
+        const traditional = /(?:^|-)(?:hant|tw|hk|mo)(?:-|$)/.test(lowered);
+        return traditional ? "zh-TW" : "zh-CN";
+      }
+      return supportedLocales.find((item) => item.toLowerCase().startsWith(language + "-")) || "";
+    };
+    const readCookie = (name) => {
+      const entry = document.cookie
+        .split(";")
+        .map((item) => item.trim())
+        .find((item) => item.startsWith(name + "="));
+      if (!entry) return "";
+      const value = entry.slice(name.length + 1);
+      try { return decodeURIComponent(value); } catch { return value; }
+    };
+    const requested = resolveCandidate(new URLSearchParams(window.location.search).get(urlLocaleKey));
+    const stored = resolveCandidate(window.localStorage.getItem(key));
+    const cookieValue = resolveCandidate(readCookie(cookieKey));
+    const storedSource = String(window.localStorage.getItem(sourceKey) || "").trim().toLowerCase();
+    const cookieSource = String(readCookie(sourceCookieKey) || "").trim().toLowerCase();
+    const manualLocale =
+      (storedSource === "manual" && stored ? stored : "") ||
+      (cookieSource === "manual" && cookieValue ? cookieValue : "");
+    const navigatorLanguages =
+      Array.isArray(window.navigator.languages) && window.navigator.languages.length > 0
+        ? window.navigator.languages
+        : [window.navigator.language];
+    let deviceLocale = "";
+    for (const item of navigatorLanguages) {
+      deviceLocale = resolveCandidate(item);
+      if (deviceLocale) break;
     }
-    const cookieValue = document.cookie
-      .split(";")
-      .map((item) => item.trim())
-      .find((item) => item.startsWith(cookieKey + "="))
-      ?.slice(cookieKey.length + 1) || "";
     const raw = (
-      requestedRaw ||
-      window.localStorage.getItem(key) ||
+      requested ||
+      manualLocale ||
+      deviceLocale ||
+      stored ||
       cookieValue ||
-      window.localStorage.getItem(geoKey) ||
+      resolveCandidate(window.localStorage.getItem(geoKey)) ||
       ""
     ).trim().toLowerCase();
     const current = (
@@ -1439,8 +1485,12 @@ export default async function RootLayout({
   const cookieStore = await cookies();
   const headerStore = await headers();
   const cookieLocale = cookieStore.get(I18N_COOKIE_KEY)?.value ?? "";
+  const cookieLocaleSource = cookieStore.get(I18N_PREFERENCE_SOURCE_COOKIE_KEY)?.value ?? "";
   const acceptLanguageLocale = readPreferredLocaleFromAcceptLanguage(headerStore.get("accept-language"));
-  const initialLocale = resolveSupportedLocale(cookieLocale || acceptLanguageLocale || DEFAULT_LOCALE);
+  const manualCookieLocale = cookieLocaleSource.trim().toLowerCase() === "manual" ? cookieLocale : "";
+  const initialLocale = resolveSupportedLocale(
+    manualCookieLocale || acceptLanguageLocale || cookieLocale || DEFAULT_LOCALE,
+  );
   const faollaWebBuildId = resolveFaollaWebBuildId();
   const faollaInlineCacheRefreshScript = buildFaollaInlineCacheRefreshScript(faollaWebBuildId);
   const faollaClientErrorRecoveryScript = buildFaollaClientErrorRecoveryScript(faollaWebBuildId);

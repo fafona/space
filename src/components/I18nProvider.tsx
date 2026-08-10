@@ -4,11 +4,13 @@ import { createContext, useContext, useEffect, useLayoutEffect, useRef, useSyncE
 import { ensureDomTranslations, hasTranslatableText, isDomTranslationCached } from "@/lib/domTranslations";
 import {
   DEFAULT_LOCALE,
+  detectDeviceLocale,
   detectGeoLocale,
   detectPreferredLocale,
   getLocaleBundle,
-  hasStoredLocalePreference,
+  hasManualLocalePreference,
   I18N_STORAGE_KEY,
+  readRequestedLocaleFromSearch,
   resolveSupportedLocale,
   type TranslationKey,
   writeStoredLocale,
@@ -129,14 +131,9 @@ export function I18nProvider({
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    try {
-      const storedRaw = window.localStorage.getItem(I18N_STORAGE_KEY);
-      if (!storedRaw || resolveSupportedLocale(storedRaw) !== locale || storedRaw.trim() !== locale) {
-        writeStoredLocale(locale);
-      }
-    } catch {
-      writeStoredLocale(locale);
-    }
+    if (readRequestedLocaleFromSearch(window.location.search)) return;
+    if (hasManualLocalePreference()) return;
+    writeStoredLocale(locale, { source: "auto" });
   }, [locale]);
 
   useLayoutEffect(() => {
@@ -153,16 +150,16 @@ export function I18nProvider({
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (hasStoredLocalePreference()) return;
+    if (hasManualLocalePreference() || detectDeviceLocale()) return;
 
     let cancelled = false;
     void (async () => {
       const detected = await detectGeoLocale();
       if (!detected || cancelled) return;
-      if (hasStoredLocalePreference()) return;
+      if (hasManualLocalePreference() || detectDeviceLocale()) return;
       const resolved = resolveSupportedLocale(detected);
       if (resolved === locale) return;
-      writeStoredLocale(resolved);
+      writeStoredLocale(resolved, { source: "auto" });
       window.dispatchEvent(new Event(LOCALE_CHANGE_EVENT));
     })();
 
@@ -182,7 +179,7 @@ export function I18nProvider({
         if (typeof document !== "undefined" && resolved.toLowerCase() === "zh-cn") {
           document.documentElement.removeAttribute("data-i18n-pending");
         }
-        writeStoredLocale(resolved);
+        writeStoredLocale(resolved, { source: "manual" });
         if (typeof window !== "undefined") {
           window.dispatchEvent(new Event(LOCALE_CHANGE_EVENT));
         }

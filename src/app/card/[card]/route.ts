@@ -33,7 +33,14 @@ import {
   type MerchantBusinessCardCustomContactLink,
   type MerchantBusinessCardContactDisplayKey,
 } from "@/lib/merchantBusinessCards";
-import { DEFAULT_LOCALE, I18N_STORAGE_KEY, LANGUAGE_OPTIONS } from "@/lib/i18n";
+import {
+  DEFAULT_LOCALE,
+  I18N_COOKIE_KEY,
+  I18N_PREFERENCE_SOURCE_COOKIE_KEY,
+  I18N_PREFERENCE_SOURCE_STORAGE_KEY,
+  I18N_STORAGE_KEY,
+  LANGUAGE_OPTIONS,
+} from "@/lib/i18n";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import { createServerTiming } from "@/lib/serverTiming";
 import {
@@ -747,6 +754,9 @@ function buildInlineI18nScript() {
     if (typeof window === "undefined" || typeof document === "undefined") return;
     const STORAGE_KEY = ${serializeInlineScriptValue(I18N_STORAGE_KEY)};
     const CONTACT_CARD_STORAGE_KEY = STORAGE_KEY + ":contact-card";
+    const COOKIE_KEY = ${serializeInlineScriptValue(I18N_COOKIE_KEY)};
+    const SOURCE_STORAGE_KEY = ${serializeInlineScriptValue(I18N_PREFERENCE_SOURCE_STORAGE_KEY)};
+    const SOURCE_COOKIE_KEY = ${serializeInlineScriptValue(I18N_PREFERENCE_SOURCE_COOKIE_KEY)};
     const CACHE_PREFIX = "merchant-space:dom-i18n-cache:v3:";
     const DEFAULT_LOCALE = ${serializeInlineScriptValue(DEFAULT_LOCALE)};
     const LANGUAGE_OPTIONS = ${serializeInlineScriptValue(languageOptions)};
@@ -836,13 +846,23 @@ function buildInlineI18nScript() {
     const inFlightByLocale = new Map();
     let persistTimer = null;
 
-    function resolveLocale(input) {
-      const normalized = String(input || "").trim();
-      if (!normalized) return DEFAULT_LOCALE;
-      if (LANGUAGE_OPTIONS.some((item) => item.code === normalized)) return normalized;
-      const language = normalized.toLowerCase().split("-")[0] || "";
+    function resolveLocaleCandidate(input) {
+      const normalized = String(input || "").trim().replace(/_/g, "-");
+      if (!normalized) return "";
+      const lowered = normalized.toLowerCase();
+      const exact = LANGUAGE_OPTIONS.find((item) => item.code.toLowerCase() === lowered);
+      if (exact) return exact.code;
+      const language = lowered.split("-")[0] || "";
+      if (language === "zh") {
+        const traditional = /(?:^|-)(?:hant|tw|hk|mo)(?:-|$)/.test(lowered);
+        return traditional ? "zh-TW" : "zh-CN";
+      }
       const matched = LANGUAGE_OPTIONS.find((item) => item.code.toLowerCase().startsWith(language + "-"));
-      return matched ? matched.code : DEFAULT_LOCALE;
+      return matched ? matched.code : "";
+    }
+
+    function resolveLocale(input) {
+      return resolveLocaleCandidate(input) || DEFAULT_LOCALE;
     }
 
     function getLanguageFlagUrl(countryCode) {
@@ -871,28 +891,40 @@ function buildInlineI18nScript() {
       try {
         const params = new URLSearchParams(String(search || "").replace(/^\\?/, ""));
         const requested = params.get("uiLocale") || params.get("locale") || params.get("lang") || "";
-        return requested ? resolveLocale(requested) : "";
+        return resolveLocaleCandidate(requested);
+      } catch {
+        return "";
+      }
+    }
+
+    function readCookieValue(key) {
+      try {
+        const entry = String(document.cookie || "")
+          .split(";")
+          .map((item) => item.trim())
+          .find((item) => item.startsWith(key + "="));
+        if (!entry) return "";
+        const value = entry.slice(key.length + 1);
+        try { return decodeURIComponent(value); } catch { return value; }
       } catch {
         return "";
       }
     }
 
     function readStoredLocaleCookie() {
+      return resolveLocaleCandidate(readCookieValue(COOKIE_KEY));
+    }
+
+    function readStoredValueFromKey(key) {
       try {
-        const match = String(document.cookie || "").match(/(?:^|;\\s*)merchant-space-locale-v1=([^;]+)/);
-        return match?.[1] ? resolveLocale(decodeURIComponent(match[1])) : "";
+        return window.localStorage.getItem(key) || "";
       } catch {
         return "";
       }
     }
 
     function readStoredLocaleFromKey(key) {
-      try {
-        const stored = window.localStorage.getItem(key);
-        return stored ? resolveLocale(stored) : "";
-      } catch {
-        return "";
-      }
+      return resolveLocaleCandidate(readStoredValueFromKey(key));
     }
 
     function detectSystemLocale() {
@@ -901,7 +933,7 @@ function buildInlineI18nScript() {
           ? window.navigator.languages
           : [window.navigator.language];
       for (const item of navigatorLanguages) {
-        const resolved = resolveLocale(item);
+        const resolved = resolveLocaleCandidate(item);
         if (resolved) return resolved;
       }
       return "";
@@ -910,15 +942,38 @@ function buildInlineI18nScript() {
     function detectInitialLocale() {
       const requested = readRequestedLocaleFromSearch(window.location.search);
       if (requested) return requested;
+      const stored = readStoredLocaleFromKey(STORAGE_KEY);
+      const cookieLocale = readStoredLocaleCookie();
+      const storedSource = String(readStoredValueFromKey(SOURCE_STORAGE_KEY) || "").trim().toLowerCase();
+      const cookieSource = String(readCookieValue(SOURCE_COOKIE_KEY) || "").trim().toLowerCase();
+      if (storedSource === "manual" && stored) return stored;
+      if (cookieSource === "manual" && cookieLocale) return cookieLocale;
       const contactCardStored = readStoredLocaleFromKey(CONTACT_CARD_STORAGE_KEY);
       if (contactCardStored) return contactCardStored;
       const systemLocale = detectSystemLocale();
       if (systemLocale) return systemLocale;
-      const stored = readStoredLocaleFromKey(STORAGE_KEY);
       if (stored) return stored;
-      const cookieLocale = readStoredLocaleCookie();
       if (cookieLocale) return cookieLocale;
       return DEFAULT_LOCALE;
+    }
+
+    function persistLocalePreference(locale) {
+      const normalized = resolveLocale(locale);
+      try {
+        window.localStorage.setItem(CONTACT_CARD_STORAGE_KEY, normalized);
+        window.localStorage.setItem(STORAGE_KEY, normalized);
+        window.localStorage.setItem(SOURCE_STORAGE_KEY, "manual");
+      } catch {}
+      try {
+        const attributes = ["Path=/", "Max-Age=31536000", "SameSite=Lax"];
+        if (window.location.protocol === "https:") attributes.push("Secure");
+        const hostname = String(window.location.hostname || "").trim().toLowerCase();
+        if (hostname === "faolla.com" || hostname.endsWith(".faolla.com")) {
+          attributes.push("Domain=faolla.com");
+        }
+        document.cookie = COOKIE_KEY + "=" + encodeURIComponent(normalized) + "; " + attributes.join("; ");
+        document.cookie = SOURCE_COOKIE_KEY + "=manual; " + attributes.join("; ");
+      } catch {}
     }
 
     function toApiTarget(locale) {
@@ -1250,10 +1305,7 @@ function buildInlineI18nScript() {
       updateLanguageUi(normalized);
       updateIntroControls(normalized);
       if (options.persist === true) {
-        try {
-          window.localStorage.setItem(CONTACT_CARD_STORAGE_KEY, normalized);
-          window.localStorage.setItem(STORAGE_KEY, normalized);
-        } catch {}
+        persistLocalePreference(normalized);
       }
       const sourceRecoveryLocale = normalized === "zh-CN" && previousLocale.toLowerCase() !== "zh-cn" ? previousLocale : null;
       const missing = new Set();
