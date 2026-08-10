@@ -29,7 +29,7 @@ test("poll statistics live in the operation center between customers and logs", 
   const desktopViewButton = desktopTable.indexOf("查看");
   const desktopBallotButton = desktopTable.indexOf("逐票明细", desktopViewButton);
   assert.ok(desktopViewButton >= 0 && desktopBallotButton > desktopViewButton, "逐票明细按钮应紧跟在查看按钮后面");
-  assert.match(panel, /搜索姓名、身份、来源、选票编号、题目或作答内容/);
+  assert.match(panel, /搜索姓名、身份、来源、选票编号、已选答案或填写内容/);
   assert.match(panel, />全部展开</);
   assert.match(panel, />全部收起</);
   assert.match(panel, /w-\[min\(96vw,1440px\)\]/);

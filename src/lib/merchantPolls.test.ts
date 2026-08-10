@@ -282,8 +282,11 @@ test("poll summary counts choices, skips and private text responses without leak
   assert.equal(pollBallotMatchesSearch(ballots[0], adminSummary, "会员甲"), true);
   assert.equal(pollBallotMatchesSearch(ballots[0], adminSummary, "PC网页"), true);
   assert.equal(pollBallotMatchesSearch(ballots[0], adminSummary, "XP1000000026080600001"), true);
-  assert.equal(pollBallotMatchesSearch(ballots[0], adminSummary, "可选择多个"), true);
   assert.equal(pollBallotMatchesSearch(ballots[0], adminSummary, "丙；丁"), true);
+  assert.equal(pollBallotMatchesSearch(ballots[0], adminSummary, "可选择多个"), false);
+  assert.equal(pollBallotMatchesSearch(ballots[0], adminSummary, "乙"), false);
+  assert.equal(pollBallotMatchesSearch(ballots[1], adminSummary, "乙"), true);
+  assert.equal(pollBallotMatchesSearch(ballots[0], adminSummary, "满意度调查"), false);
   assert.equal(pollBallotMatchesSearch(ballots[0], adminSummary, "不存在的内容"), false);
 });
 

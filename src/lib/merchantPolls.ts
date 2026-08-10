@@ -865,25 +865,7 @@ export function pollBallotMatchesSearch(ballot: PollStoredBallot, summary: PollS
   const exportRow = buildPollExportRows([ballot], summary)[0] ?? {};
   const searchableValues = [
     ballot.id,
-    ballot.ballotNo,
-    ballot.participantName,
-    getPollParticipantTypeLabel(ballot.participantType),
-    ballot.anonymous ? "匿名" : "非匿名",
-    getPollSubmissionSourceLabel(ballot.source),
-    ballot.invalidatedAt ? "已作废" : "有效",
-    ballot.createdAt,
-    ballot.invalidatedAt,
-    ballot.invalidatedBy,
-    ballot.pollSnapshot.heading,
-    ballot.pollSnapshot.openAt,
-    ballot.pollSnapshot.closeAt,
-    ...ballot.pollSnapshot.questions.flatMap((question) => [
-      question.id,
-      question.prompt,
-      ...question.options.flatMap((option) => [option.id, option.label]),
-    ]),
-    ...ballot.answers.flatMap((answer) => [answer.questionId, answer.text, ...answer.optionIds]),
-    ...Object.entries(exportRow).flatMap(([key, value]) => [key, value]),
+    ...Object.values(exportRow),
   ];
 
   return normalizePollSearchText(searchableValues.join("\n")).includes(normalizedQuery);

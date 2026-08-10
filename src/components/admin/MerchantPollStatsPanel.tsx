@@ -732,7 +732,7 @@ export default function MerchantPollStatsPanel({ siteId, siteName, className = "
                   className="h-10 rounded border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                   value={ballotQuery}
                   onChange={(event) => setBallotQuery(event.target.value)}
-                  placeholder="搜索姓名、身份、来源、选票编号、题目或作答内容"
+                  placeholder="搜索姓名、身份、来源、选票编号、已选答案或填写内容"
                 />
               </label>
               <div className="flex flex-wrap items-center gap-2">
