@@ -1142,10 +1142,12 @@ async function run() {
     const ownerContextA = await browser.newContext({
       viewport: { width: 1440, height: 1000 },
       serviceWorkers: "block",
+      locale: "zh-CN",
     });
     const ownerContextB = await browser.newContext({
       viewport: { width: 1440, height: 1000 },
       serviceWorkers: "block",
+      locale: "zh-CN",
     });
     const acceleratePolling = () => {
       const nativeSetInterval = window.setInterval.bind(window);
@@ -1437,14 +1439,17 @@ async function run() {
     const workflowViewContext = await browser.newContext({
       viewport: { width: 1440, height: 1000 },
       serviceWorkers: "block",
+      locale: "zh-CN",
     });
     const workflowManageContext = await browser.newContext({
       viewport: { width: 1440, height: 1000 },
       serviceWorkers: "block",
+      locale: "zh-CN",
     });
     const workflowPublishContext = await browser.newContext({
       viewport: { width: 1440, height: 1000 },
       serviceWorkers: "block",
+      locale: "zh-CN",
     });
     const workflowPublishStats = { overviewRequests: 0 };
     await Promise.all([
@@ -1715,6 +1720,7 @@ async function run() {
     const todoEmployeeContext = await browser.newContext({
       viewport: { width: 1440, height: 1000 },
       serviceWorkers: "block",
+      locale: "zh-CN",
     });
     await Promise.all([
       todoEmployeeContext.addInitScript(acceleratePolling),
@@ -1874,6 +1880,7 @@ async function run() {
     const todoOwnerContext = await browser.newContext({
       viewport: { width: 1440, height: 1000 },
       serviceWorkers: "block",
+      locale: "zh-CN",
     });
     await Promise.all([
       todoOwnerContext.addInitScript(acceleratePolling),
@@ -2027,6 +2034,7 @@ async function run() {
     const automationContext = await browser.newContext({
       viewport: { width: 1440, height: 1000 },
       serviceWorkers: "block",
+      locale: "zh-CN",
     });
     await Promise.all([
       automationContext.addInitScript(acceleratePolling),
@@ -2342,6 +2350,7 @@ async function run() {
     const employeeContext = await browser.newContext({
       viewport: { width: 1440, height: 1000 },
       serviceWorkers: "block",
+      locale: "zh-CN",
     });
     await Promise.all([
       employeeContext.addInitScript(acceleratePolling),
@@ -2431,6 +2440,7 @@ async function run() {
     const workflowNotificationContext = await browser.newContext({
       viewport: { width: 1440, height: 1000 },
       serviceWorkers: "block",
+      locale: "zh-CN",
     });
     await Promise.all([
       workflowNotificationContext.addInitScript(acceleratePolling),
@@ -2509,6 +2519,7 @@ async function run() {
     const workflowDraftNotificationContext = await browser.newContext({
       viewport: { width: 1440, height: 1000 },
       serviceWorkers: "block",
+      locale: "zh-CN",
     });
     await Promise.all([
       workflowDraftNotificationContext.addInitScript(acceleratePolling),
@@ -2591,6 +2602,7 @@ async function run() {
     const mobileContext = await browser.newContext({
       viewport: { width: 390, height: 844 },
       serviceWorkers: "block",
+      locale: "zh-CN",
     });
     await Promise.all([
       mobileContext.addInitScript(acceleratePolling),
