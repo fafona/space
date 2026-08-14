@@ -170,7 +170,18 @@ type MeSessionPayload = {
   } | null;
 };
 
-type DesktopSection = "conversations" | "bookings" | "orders" | "memberships" | "favorites" | "cards" | "coupons" | "faolla" | "profile";
+type DesktopSection =
+  | "conversations"
+  | "consumption"
+  | "bookings"
+  | "orders"
+  | "memberships"
+  | "favorites"
+  | "cards"
+  | "coupons"
+  | "faolla"
+  | "self"
+  | "profile";
 type MobileTab = "conversations" | "consumption" | "faolla" | "self";
 type ConsumptionSection = "all" | "bookings" | "orders";
 type PersonalConsumptionFilter = "all" | "pending" | "confirmed" | "cancelled";
@@ -2787,6 +2798,12 @@ export default function MePage() {
     }
   }, [isGuestSession, mobileSelfSection, mobileTab]);
 
+  useEffect(() => {
+    if (!isGuestSession) return;
+    if (["conversations", "consumption", "faolla", "self"].includes(desktopSection)) return;
+    setDesktopSection("self");
+  }, [desktopSection, isGuestSession]);
+
   const accountId =
     payload && typeof payload.accountId === "string" && /^\d{8}$/.test(payload.accountId.trim())
       ? payload.accountId.trim()
@@ -4041,17 +4058,25 @@ export default function MePage() {
   }, []);
 
   const desktopMenuItems: MenuItem[] = useMemo(
-    () => [
-      { key: "conversations", label: "会话", description: "查看和商户、Faolla 的对话。" },
-      { key: "bookings", label: "预约", description: "查看你提交给商户的预约记录。" },
-      { key: "orders", label: "订单", description: "查看你在商户网站提交的订单。" },
-      { key: "memberships", label: "会员卡", description: "查看已加入商户的会员卡，并可退出会员。" },
-      { key: "favorites", label: "收藏", description: "保存常用商户、页面和产品。" },
-      { key: "cards", label: "名片夹", description: "管理个人名片、短链和聊天发送用名片。" },
-      { key: "coupons", label: "优惠券", description: "查看已领取优惠券和核销码。" },
-      { key: "faolla", label: "Faolla", description: "Faolla" },
-    ],
-    [],
+    () =>
+      isGuestSession
+        ? [
+            { key: "conversations", label: "会话", description: "继续当前游客聊天。" },
+            { key: "consumption", label: "消费", description: "查看临时订单和预约。" },
+            { key: "faolla", label: "Faolla", description: "返回当前商户页面。" },
+            { key: "self", label: "我的", description: "登录或加入并合并临时数据。" },
+          ]
+        : [
+            { key: "conversations", label: "会话", description: "查看和商户、Faolla 的对话。" },
+            { key: "bookings", label: "预约", description: "查看你提交给商户的预约记录。" },
+            { key: "orders", label: "订单", description: "查看你在商户网站提交的订单。" },
+            { key: "memberships", label: "会员卡", description: "查看已加入商户的会员卡，并可退出会员。" },
+            { key: "favorites", label: "收藏", description: "保存常用商户、页面和产品。" },
+            { key: "cards", label: "名片夹", description: "管理个人名片、短链和聊天发送用名片。" },
+            { key: "coupons", label: "优惠券", description: "查看已领取优惠券和核销码。" },
+            { key: "faolla", label: "Faolla", description: "Faolla" },
+          ],
+    [isGuestSession],
   );
   const officialVisibleSupportMessages = useMemo<PersonalVisibleSupportMessage[]>(
     () =>
@@ -7699,12 +7724,148 @@ export default function MePage() {
     );
   }
 
+  function renderDesktopGuestSelfGate() {
+    const guestStats = [
+      { label: "会话", value: peerContacts.length + (supportThread?.messages?.length ? 1 : 0) },
+      { label: "订单", value: personalOrders.length },
+      { label: "预约", value: personalBookings.length },
+    ];
+    const guestActions: Array<{
+      key: Extract<DesktopSection, "conversations" | "consumption" | "faolla">;
+      label: string;
+      summary: string;
+      icon: "chat" | "order" | "shield";
+    }> = [
+      { key: "conversations", label: "会话", summary: "继续当前游客聊天", icon: "chat" },
+      { key: "consumption", label: "消费", summary: "查看临时订单和预约", icon: "order" },
+      { key: "faolla", label: "Faolla", summary: "返回当前商户页面", icon: "shield" },
+    ];
+
+    return (
+      <div className="mx-auto max-w-5xl space-y-5">
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-100 px-6 py-6">
+            <div className="flex items-start gap-4">
+              <span className="inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-white shadow-[0_14px_32px_rgba(15,23,42,0.18)]">
+                <Icon name="user" className="h-6 w-6" />
+              </span>
+              <div className="min-w-0">
+                <h1 className="text-2xl font-semibold text-slate-950">游客身份</h1>
+                <p className="mt-2 text-sm leading-6 text-slate-500">
+                  当前数据暂存在本设备，登录或加入后可同步到个人账号。
+                </p>
+              </div>
+            </div>
+          </div>
+          <div className="grid gap-4 px-6 py-6 lg:grid-cols-[minmax(0,1fr)_minmax(360px,0.8fr)]">
+            <div>
+              <div className="grid grid-cols-3 gap-3">
+                {guestStats.map((item) => (
+                  <div key={item.label} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4 text-center">
+                    <div className="text-2xl font-semibold text-slate-950">{item.value}</div>
+                    <div className="mt-1 text-xs text-slate-500">{item.label}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-4 rounded-xl bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-500">
+                登录后会自动尝试合并当前游客会话、订单、预约和收藏。
+              </div>
+            </div>
+            <div className="grid content-start grid-cols-2 gap-3">
+              <a
+                href={buildPersonalSelfAuthHref("signup")}
+                className="flex h-12 items-center justify-center rounded-xl bg-slate-950 px-4 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(15,23,42,0.16)] transition hover:bg-slate-800"
+              >
+                加入
+              </a>
+              <a
+                href={buildPersonalSelfAuthHref("signin")}
+                className="flex h-12 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 transition hover:bg-slate-50"
+              >
+                登录
+              </a>
+            </div>
+          </div>
+        </section>
+
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="divide-y divide-slate-100">
+            {guestActions.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                className="flex w-full items-center gap-4 px-6 py-4 text-left transition hover:bg-slate-50"
+                onClick={() => setDesktopSection(item.key)}
+              >
+                <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-700">
+                  <Icon name={item.icon} />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-semibold text-slate-900">{item.label}</span>
+                  <span className="mt-1 block truncate text-xs leading-5 text-slate-500">{item.summary}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+      </div>
+    );
+  }
+
+  function renderDesktopConsumptionContent() {
+    const consumptionOptions: Array<{ key: ConsumptionSection; label: string }> = [
+      { key: "all", label: "全部" },
+      { key: "bookings", label: "预约" },
+      { key: "orders", label: "订单" },
+    ];
+    const content =
+      consumptionSection === "bookings"
+        ? renderPersonalBookingCards(true)
+        : consumptionSection === "orders"
+          ? renderPersonalOrderCards(true)
+          : renderPersonalConsumptionAllCards();
+
+    return (
+      <div className="space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+          <div>
+            <h1 className="text-xl font-semibold text-slate-950">消费</h1>
+            <p className="mt-1 text-sm text-slate-500">查看当前游客身份下的订单和预约。</p>
+          </div>
+          <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1">
+            {consumptionOptions.map((option) => (
+              <button
+                key={option.key}
+                type="button"
+                className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
+                  consumptionSection === option.key
+                    ? "bg-slate-950 text-white shadow-sm"
+                    : "text-slate-500 hover:bg-white hover:text-slate-900"
+                }`}
+                onClick={() => setConsumptionSection(option.key)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {content}
+      </div>
+    );
+  }
+
   function renderSectionContent(section: DesktopSection) {
     if (section === "conversations") {
       return renderDesktopSupportSurface();
     }
+    if (section === "consumption") {
+      return renderDesktopConsumptionContent();
+    }
     if (section === "faolla") {
       return null;
+    }
+    if (section === "self") {
+      return isGuestSession ? renderDesktopGuestSelfGate() : null;
     }
     if (section === "profile") {
       return (
@@ -8647,32 +8808,43 @@ export default function MePage() {
             <div className="rounded border border-slate-300 bg-slate-50 px-3 py-2">
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0 flex-1">
-                  <div className="max-w-[160px] truncate text-sm font-semibold text-slate-900" title={profileName}>
-                    {profileName}
+                  <div className="max-w-[160px] truncate text-sm font-semibold text-slate-900" title={isGuestSession ? "游客身份" : profileName}>
+                    {isGuestSession ? "游客身份" : profileName}
                   </div>
+                  {isGuestSession ? <div className="mt-0.5 text-xs text-slate-500">临时保存在本设备</div> : null}
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
+                {isGuestSession ? (
                   <button
                     type="button"
-                    className="rounded border bg-white px-3 py-2 text-sm text-slate-900 transition-colors hover:bg-gray-50"
-                    onClick={() => setDesktopSection("profile")}
+                    className="shrink-0 rounded border bg-white px-3 py-2 text-sm font-semibold text-slate-900 transition hover:bg-slate-100"
+                    onClick={() => setDesktopSection("self")}
                   >
-                    个人信息
+                    我的
                   </button>
-                  <button
-                    type="button"
-                    className="inline-flex h-10 w-10 items-center justify-center rounded border bg-white text-rose-600 transition hover:bg-rose-50 disabled:opacity-50"
-                    onClick={() => void requestLogout()}
-                    disabled={loggingOut}
-                    title={loggingOut ? "退出中..." : "退出登录"}
-                    aria-label={loggingOut ? "退出中..." : "退出登录"}
-                  >
-                    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
-                      <path d="M14 7h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                      <path d="M10 8 6 12l4 4M7 12h9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </button>
-                </div>
+                ) : (
+                  <div className="flex shrink-0 items-center gap-2">
+                    <button
+                      type="button"
+                      className="rounded border bg-white px-3 py-2 text-sm text-slate-900 transition-colors hover:bg-gray-50"
+                      onClick={() => setDesktopSection("profile")}
+                    >
+                      个人信息
+                    </button>
+                    <button
+                      type="button"
+                      className="inline-flex h-10 w-10 items-center justify-center rounded border bg-white text-rose-600 transition hover:bg-rose-50 disabled:opacity-50"
+                      onClick={() => void requestLogout()}
+                      disabled={loggingOut}
+                      title={loggingOut ? "退出中..." : "退出登录"}
+                      aria-label={loggingOut ? "退出中..." : "退出登录"}
+                    >
+                      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+                        <path d="M14 7h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                        <path d="M10 8 6 12l4 4M7 12h9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -8690,8 +8862,12 @@ export default function MePage() {
             </div>
 
             <div className="mt-auto rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-              <div className="text-sm font-semibold text-slate-900">个人中心</div>
-              <p className="mt-2 text-sm leading-6 text-slate-500">个人用户后台包含会话、预约、订单、收藏、名片夹和 Faolla 菜单。</p>
+              <div className="text-sm font-semibold text-slate-900">{isGuestSession ? "游客模式" : "个人中心"}</div>
+              <p className="mt-2 text-sm leading-6 text-slate-500">
+                {isGuestSession
+                  ? "会话、订单和预约会临时保存在本设备，登录后可合并。"
+                  : "个人用户后台包含会话、预约、订单、收藏、名片夹和 Faolla 菜单。"}
+              </p>
             </div>
           </div>
         </aside>

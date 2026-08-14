@@ -19,6 +19,15 @@ type BuildFaollaShellHrefOptions = {
   preferRuntimeOrigin?: boolean;
 };
 
+type PublicGuestShellRouteContext = {
+  hydrated: boolean;
+  appShell: boolean;
+  siteId: string;
+  topLevel: boolean;
+  entry?: string | null;
+  stayPublic?: string | null;
+};
+
 function getRuntimeOrigin(fallbackOrigin?: string | null) {
   const fallback = String(fallbackOrigin ?? "").trim();
   if (/^https?:\/\//i.test(fallback)) return fallback;
@@ -78,6 +87,20 @@ function canonicalizeStoredFaollaEntryUrl(value: string) {
 function applyFaollaInlineBuildMarker(url: URL) {
   if (!FAOLLA_INLINE_BUILD_ID) return;
   url.searchParams.set(FAOLLA_INLINE_BUILD_PARAM, FAOLLA_INLINE_BUILD_ID.slice(0, 12));
+}
+
+export function shouldRoutePublicSiteToGuestShell({
+  hydrated,
+  appShell,
+  siteId,
+  topLevel,
+  entry,
+  stayPublic,
+}: PublicGuestShellRouteContext) {
+  const normalizedSiteId = String(siteId ?? "").trim();
+  if (!hydrated || appShell || !normalizedSiteId || normalizedSiteId === "site-main" || !topLevel) return false;
+  if (String(entry ?? "").trim().toLowerCase() === "card") return false;
+  return String(stayPublic ?? "").trim() !== "1";
 }
 
 export function isFaollaBackendShellUrl(value: unknown, fallbackOrigin?: string | null) {

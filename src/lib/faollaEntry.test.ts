@@ -12,6 +12,7 @@ import {
   preserveFaollaAppShellHref,
   readStoredFaollaEntryUrl,
   resolveFaollaEntryUrlFromBrowser,
+  shouldRoutePublicSiteToGuestShell,
   writeStoredFaollaEntryUrl,
 } from "./faollaEntry";
 
@@ -164,4 +165,20 @@ test("preserves Faolla shell params for frontend merchant navigation", () => {
     preserveFaollaAppShellHref("https://faolla.com/me", "zh-CN", "https://faolla.com"),
     "https://faolla.com/me",
   );
+});
+
+test("routes top-level public merchant sites to one guest shell on every viewport", () => {
+  const base = {
+    hydrated: true,
+    appShell: false,
+    siteId: "10000000",
+    topLevel: true,
+  };
+
+  assert.equal(shouldRoutePublicSiteToGuestShell(base), true);
+  assert.equal(shouldRoutePublicSiteToGuestShell({ ...base, appShell: true }), false);
+  assert.equal(shouldRoutePublicSiteToGuestShell({ ...base, siteId: "site-main" }), false);
+  assert.equal(shouldRoutePublicSiteToGuestShell({ ...base, topLevel: false }), false);
+  assert.equal(shouldRoutePublicSiteToGuestShell({ ...base, entry: "card" }), false);
+  assert.equal(shouldRoutePublicSiteToGuestShell({ ...base, stayPublic: "1" }), false);
 });

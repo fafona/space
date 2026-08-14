@@ -18,7 +18,7 @@ import { type Block } from "@/data/homeBlocks";
 import { loadPlatformState, subscribePlatformState } from "@/data/platformControlStore";
 import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
 import { MOBILE_BREAKPOINT } from "@/lib/deviceViewport";
-import { buildBackendFaollaHref } from "@/lib/faollaEntry";
+import { buildBackendFaollaHref, shouldRoutePublicSiteToGuestShell } from "@/lib/faollaEntry";
 import { cloneBlocks, getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
 import { PUBLISH_SYNC_STORAGE_KEY, subscribePublishSync } from "@/lib/publishSync";
 import { buildPlatformHomeHref, buildSiteStoreScope } from "@/lib/siteRouting";
@@ -641,12 +641,22 @@ export function SitePageClient({
     };
   }, [hydrated, siteId]);
 
-  useEffect(() => {
-    if (!hydrated || !isMobileViewport || faollaAppShell || !siteId || siteId === "site-main") return;
-    if (typeof window === "undefined" || !isTopLevelWindow()) return;
+  const publicGuestShellRouteCandidate = (() => {
+    if (typeof window === "undefined") return false;
     const params = new URLSearchParams(window.location.search || "");
-    if ((params.get("entry") ?? "").trim().toLowerCase() === "card") return;
-    if ((params.get("stayPublic") ?? "").trim() === "1") return;
+    return shouldRoutePublicSiteToGuestShell({
+      hydrated,
+      appShell: faollaAppShell,
+      siteId,
+      topLevel: isTopLevelWindow(),
+      entry: params.get("entry"),
+      stayPublic: params.get("stayPublic"),
+    });
+  })();
+  const [publicGuestShellCheckedSiteId, setPublicGuestShellCheckedSiteId] = useState("");
+
+  useEffect(() => {
+    if (!publicGuestShellRouteCandidate) return;
 
     let cancelled = false;
     const redirectToGuestShell = () => {
@@ -660,7 +670,10 @@ export function SitePageClient({
       .then(({ resolveFrontendAuthPayload }) => resolveFrontendAuthPayload(PUBLIC_GUEST_SHELL_AUTH_TIMEOUT_MS))
       .then((payload) => {
         if (cancelled) return;
-        if (payload?.authenticated === true && payload.accountType === "merchant") return;
+        if (payload?.authenticated === true && payload.accountType === "merchant") {
+          setPublicGuestShellCheckedSiteId(siteId);
+          return;
+        }
         redirectToGuestShell();
       })
       .catch(() => {
@@ -670,11 +683,13 @@ export function SitePageClient({
     return () => {
       cancelled = true;
     };
-  }, [faollaAppShell, hydrated, isMobileViewport, siteId]);
+  }, [publicGuestShellRouteCandidate, siteId]);
 
   const waitingForPublishedSync = Boolean(siteId) && !dbBlocks && !hasScopedLocalBlocks && !remoteResolved;
   const shouldHoldForHydration = (!hydrated || isInitialLoading) && !hasInitialPublishedBlocks;
-  if (shouldHoldForHydration || waitingForPublishedSync) {
+  const waitingForPublicGuestShell =
+    publicGuestShellRouteCandidate && publicGuestShellCheckedSiteId !== siteId;
+  if (shouldHoldForHydration || waitingForPublishedSync || waitingForPublicGuestShell) {
     return <LoadingProgressScreen message="正在加载站点..." />;
   }
 
