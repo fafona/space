@@ -41,6 +41,10 @@ import { MOBILE_SWIPE_BACK_EVENT } from "@/lib/mobileSwipeBack";
 
 export type OrderWorkbenchView = "overview" | "orders" | "analysis" | "catalog" | "export";
 
+export function getOrderWorkbenchContentScrollClassName(mode: "inline" | "overlay") {
+  return `min-h-0 flex-1 overflow-y-auto${mode === "overlay" ? " overscroll-contain" : ""}`;
+}
+
 export type OrderWorkbenchPanelProps = {
   siteId: string;
   mode?: "inline" | "overlay";
@@ -2738,7 +2742,7 @@ export default function OrderWorkbenchPanel({
         </div>
       ) : null}
 
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-5 sm:px-6 sm:py-6">
+      <div className={`${getOrderWorkbenchContentScrollClassName(mode)} px-4 py-5 sm:px-6 sm:py-6`}>
         {activeView === "catalog" ? (
           <MerchantCatalogManagerPanel
             key={renderedSiteId}
