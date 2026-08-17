@@ -7,10 +7,12 @@ import {
   useMemo,
   useRef,
   useState,
+  type FormEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import { Capacitor } from "@capacitor/core";
 import MerchantCatalogManagerPanel from "@/components/admin/MerchantCatalogManagerPanel";
 import type { MerchantCatalogTarget } from "@/lib/merchantCatalog";
 import {
@@ -23,7 +25,7 @@ import type {
   MerchantOrderWorkbenchTodo,
 } from "@/lib/merchantOrderWorkbench";
 
-export type OrderWorkbenchView = "overview" | "analysis" | "catalog";
+export type OrderWorkbenchView = "overview" | "analysis" | "catalog" | "export";
 
 export type OrderWorkbenchPanelProps = {
   siteId: string;
@@ -66,6 +68,101 @@ type MetricCard = {
   tone: "amber" | "rose" | "sky" | "violet" | "emerald" | "slate";
   status?: MerchantOrderStatus;
 };
+
+type OrderExportApiPayload = {
+  error?: string;
+  message?: string;
+};
+
+type PendingOrderExportShare = {
+  siteId: string;
+  requestSequence: number;
+  file: File;
+};
+
+const ORDER_EXPORT_STATUSES: Array<{ value: MerchantOrderStatus; label: string }> = [
+  { value: "pending", label: "待确认" },
+  { value: "confirmed", label: "处理中" },
+  { value: "completed", label: "已完成" },
+  { value: "cancelled", label: "已取消" },
+];
+
+const ORDER_EXPORT_MAX_RANGE_MS = 366 * 24 * 60 * 60 * 1_000;
+const CAPACITOR_ANDROID_CSV_UNAVAILABLE_MESSAGE = "当前App版本暂不能保存CSV，请在浏览器后台导出";
+
+function isCapacitorAndroidRuntime() {
+  if (typeof window === "undefined" || typeof document === "undefined") return false;
+  try {
+    if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android") return true;
+  } catch {
+    // Fall through to the bridge markers used by the remote admin shell.
+  }
+  const capacitor = (window as Window & {
+    Capacitor?: {
+      isNativePlatform?: () => boolean;
+      getPlatform?: () => string;
+    };
+  }).Capacitor;
+  const native =
+    capacitor?.isNativePlatform?.() === true || document.documentElement.dataset.capacitor === "true";
+  const platform =
+    capacitor?.getPlatform?.().trim().toLowerCase() ||
+    String(document.documentElement.dataset.capacitorPlatform ?? "").trim().toLowerCase();
+  return native && platform === "android";
+}
+
+function formatLocalDateInput(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function getDefaultOrderExportRange() {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const start = new Date(today);
+  start.setDate(start.getDate() - 29);
+  return { startDate: formatLocalDateInput(start), endDate: formatLocalDateInput(today) };
+}
+
+function parseLocalDateInput(value: string) {
+  const matched = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!matched) return null;
+  const year = Number(matched[1]);
+  const month = Number(matched[2]);
+  const day = Number(matched[3]);
+  const date = new Date(year, month - 1, day);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null;
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function getOrderExportFilename(response: Response) {
+  const disposition = response.headers.get("content-disposition") ?? "";
+  const encoded = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1];
+  if (encoded) {
+    try {
+      const decoded = decodeURIComponent(encoded).replace(/[\\/:*?"<>|]+/g, "-").trim();
+      if (decoded) return decoded;
+    } catch {
+      // Fall back to the ASCII filename below.
+    }
+  }
+  const ascii = /filename="?([^";]+)"?/i.exec(disposition)?.[1]?.replace(/[\\/:*?"<>|]+/g, "-").trim();
+  return ascii || `orders-${new Date().toISOString().slice(0, 10)}.csv`;
+}
+
+function getOrderExportError(payload: OrderExportApiPayload | null, status: number) {
+  if (payload?.message?.trim()) return payload.message.trim();
+  if (status === 413) return "符合条件的订单过多或文件过大，请缩短日期范围后重试。";
+  if (status === 401) return "登录状态已失效，请刷新后台后重试。";
+  if (status === 403) return "当前账号没有导出该商户订单的权限。";
+  if (status === 503) return "订单数据暂时不可用，请稍后重试。";
+  if (
+    payload?.error === "invalid_order_export_range" ||
+    payload?.error === "order_export_range_too_large"
+  ) return "日期范围无效，单次最多导出 366 天。";
+  if (payload?.error === "invalid_order_export_statuses") return "请至少选择一种订单状态。";
+  return "订单导出失败，请稍后重试。";
+}
 
 function CloseIcon() {
   return (
@@ -537,6 +634,462 @@ function OrderWorkbenchAnalysis({
   );
 }
 
+function OrderExportPanel({ siteId, darkMode }: { siteId: string; darkMode: boolean }) {
+  const [range, setRange] = useState(getDefaultOrderExportRange);
+  const [statuses, setStatuses] = useState<MerchantOrderStatus[]>(() =>
+    ORDER_EXPORT_STATUSES.map((item) => item.value),
+  );
+  const [includeCustomerData, setIncludeCustomerData] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [capacitorAndroid, setCapacitorAndroid] = useState(false);
+  const [pendingShare, setPendingShare] = useState<PendingOrderExportShare | null>(null);
+  const [sharing, setSharing] = useState(false);
+  const requestSequenceRef = useRef(0);
+  const controllerRef = useRef<AbortController | null>(null);
+  const activeSiteIdRef = useRef(siteId.trim());
+  activeSiteIdRef.current = siteId.trim();
+  const sectionTitleId = useId();
+
+  useEffect(() => {
+    setCapacitorAndroid(isCapacitorAndroidRuntime());
+  }, []);
+
+  useEffect(() => {
+    requestSequenceRef.current += 1;
+    controllerRef.current?.abort();
+    controllerRef.current = null;
+    setExporting(false);
+    setError("");
+    setNotice("");
+    setIncludeCustomerData(false);
+    setPendingShare(null);
+    setSharing(false);
+  }, [siteId]);
+
+  useEffect(
+    () => () => {
+      requestSequenceRef.current += 1;
+      controllerRef.current?.abort();
+    },
+    [],
+  );
+
+  const invalidatePendingShareForFilterChange = () => {
+    if (!pendingShare) return;
+    setPendingShare(null);
+    setError("");
+    setNotice("导出条件已变化，原 CSV 已失效；请按当前条件重新生成后再分享。");
+  };
+
+  const toggleStatus = (status: MerchantOrderStatus) => {
+    invalidatePendingShareForFilterChange();
+    setStatuses((current) =>
+      current.includes(status) ? current.filter((item) => item !== status) : [...current, status],
+    );
+  };
+
+  const submitExport = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (exporting || sharing) return;
+    const normalizedSiteId = activeSiteIdRef.current;
+    const start = parseLocalDateInput(range.startDate);
+    const end = parseLocalDateInput(range.endDate);
+    if (!normalizedSiteId || !start || !end || start.getTime() > end.getTime()) {
+      setError("请选择有效的开始和结束日期，结束日期不能早于开始日期。");
+      setNotice("");
+      return;
+    }
+    const endExclusive = new Date(end);
+    endExclusive.setDate(endExclusive.getDate() + 1);
+    const exportRangeDurationMs = endExclusive.getTime() - start.getTime();
+    if (exportRangeDurationMs > ORDER_EXPORT_MAX_RANGE_MS) {
+      setError(
+        "按当前设备时区换算后，所选范围超过后端 366×24 小时上限（夏令时可能让 366 个自然日多出 1 小时）。请将结束日期至少提前一天。",
+      );
+      setNotice("");
+      return;
+    }
+    if (statuses.length === 0) {
+      setError("请至少选择一种订单状态。");
+      setNotice("");
+      return;
+    }
+    if (
+      includeCustomerData &&
+      !window.confirm(
+        "导出文件将包含客户姓名、电话、联系邮箱和客户备注。请仅在业务确有需要时保存，并按隐私要求妥善保管。确定继续吗？",
+      )
+    ) {
+      return;
+    }
+    const requestSequence = requestSequenceRef.current + 1;
+    requestSequenceRef.current = requestSequence;
+    controllerRef.current?.abort();
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    setExporting(true);
+    setError("");
+    setNotice("");
+    setPendingShare(null);
+    try {
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+      const response = await fetch("/api/orders/export", {
+        method: "POST",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          siteId: normalizedSiteId,
+          createdFrom: start.toISOString(),
+          createdToExclusive: endExclusive.toISOString(),
+          statuses,
+          includeCustomerData,
+          timezone,
+        }),
+      });
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as OrderExportApiPayload | null;
+        throw new Error(getOrderExportError(payload, response.status));
+      }
+      const blob = await response.blob();
+      if (
+        requestSequenceRef.current !== requestSequence ||
+        activeSiteIdRef.current !== normalizedSiteId
+      ) return;
+      const fileName = getOrderExportFilename(response);
+      if (isCapacitorAndroidRuntime()) {
+        let csvFile: File;
+        try {
+          csvFile = new File([blob], fileName, {
+            type: blob.type || "text/csv;charset=utf-8",
+            lastModified: Date.now(),
+          });
+        } catch {
+          setError(CAPACITOR_ANDROID_CSV_UNAVAILABLE_MESSAGE);
+          return;
+        }
+        const shareData: ShareData = { files: [csvFile] };
+        const canShareFiles =
+          typeof navigator.share === "function" &&
+          typeof navigator.canShare === "function" &&
+          (() => {
+            try {
+              return navigator.canShare(shareData);
+            } catch {
+              return false;
+            }
+          })();
+        if (!canShareFiles) {
+          setError(CAPACITOR_ANDROID_CSV_UNAVAILABLE_MESSAGE);
+          return;
+        }
+        setPendingShare({
+          siteId: normalizedSiteId,
+          requestSequence,
+          file: csvFile,
+        });
+        setNotice("订单汇总 CSV 已生成。请点击“打开系统分享并保存”，再选择文件、云盘或其他应用。");
+        return;
+      }
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
+      setNotice("订单汇总文件已生成并交给当前设备下载；如未自动保存，请检查浏览器下载记录。");
+    } catch (requestError) {
+      if (requestError instanceof DOMException && requestError.name === "AbortError") return;
+      if (
+        requestSequenceRef.current !== requestSequence ||
+        activeSiteIdRef.current !== normalizedSiteId
+      ) return;
+      setError(requestError instanceof Error ? requestError.message : "订单导出失败，请稍后重试。");
+    } finally {
+      if (
+        requestSequenceRef.current === requestSequence &&
+        activeSiteIdRef.current === normalizedSiteId
+      ) {
+        controllerRef.current = null;
+        setExporting(false);
+      }
+    }
+  };
+
+  const sharePendingExport = async () => {
+    const pending = pendingShare;
+    if (!pending || sharing || exporting) return;
+    if (
+      pending.siteId !== activeSiteIdRef.current ||
+      pending.requestSequence !== requestSequenceRef.current
+    ) {
+      setPendingShare(null);
+      setError("当前商户已变化，请重新生成 CSV 后再分享。");
+      setNotice("");
+      return;
+    }
+    const shareData: ShareData = { files: [pending.file] };
+    let canShareFiles = false;
+    try {
+      canShareFiles =
+        typeof navigator.share === "function" &&
+        typeof navigator.canShare === "function" &&
+        navigator.canShare(shareData);
+    } catch {
+      canShareFiles = false;
+    }
+    if (!canShareFiles) {
+      setPendingShare(null);
+      setError(CAPACITOR_ANDROID_CSV_UNAVAILABLE_MESSAGE);
+      setNotice("");
+      return;
+    }
+
+    setSharing(true);
+    setError("");
+    try {
+      // This call intentionally happens directly in the click handler before
+      // the first await, preserving the Web Share transient user activation.
+      await navigator.share({
+        ...shareData,
+        title: "订单汇总 CSV",
+      });
+      if (
+        pending.siteId !== activeSiteIdRef.current ||
+        pending.requestSequence !== requestSequenceRef.current
+      ) return;
+      setPendingShare(null);
+      setNotice("订单汇总 CSV 已交给系统分享面板保存。");
+    } catch (shareError) {
+      if (
+        pending.siteId !== activeSiteIdRef.current ||
+        pending.requestSequence !== requestSequenceRef.current
+      ) return;
+      if (shareError instanceof DOMException && shareError.name === "AbortError") {
+        setNotice("已取消 CSV 分享；文件仍保留在当前页面，可再次打开系统分享。");
+        return;
+      }
+      setPendingShare(null);
+      setError(CAPACITOR_ANDROID_CSV_UNAVAILABLE_MESSAGE);
+      setNotice("");
+    } finally {
+      if (
+        pending.siteId === activeSiteIdRef.current &&
+        pending.requestSequence === requestSequenceRef.current
+      ) {
+        setSharing(false);
+      }
+    }
+  };
+
+  const surfaceClassName = darkMode
+    ? "border-slate-700/80 bg-slate-900/80"
+    : "border-slate-200 bg-white";
+  const mutedTextClassName = darkMode ? "text-slate-400" : "text-slate-500";
+  const inputClassName = darkMode
+    ? "border-slate-700 bg-slate-950 text-slate-100 focus:border-sky-400"
+    : "border-slate-200 bg-white text-slate-900 focus:border-sky-500";
+  const exportBusy = exporting || sharing;
+
+  return (
+    <div className="mx-auto max-w-4xl space-y-5" aria-busy={exportBusy}>
+      <section aria-labelledby={sectionTitleId} className={`rounded-2xl border p-4 sm:p-6 ${surfaceClassName}`}>
+        <div>
+          <h3 id={sectionTitleId} className="text-base font-bold sm:text-lg">
+            导出订单汇总 CSV
+          </h3>
+          <p className={`mt-2 text-sm leading-6 ${mutedTextClassName}`}>
+            由服务端完整订单记录生成，不受订单列表每页加载数量影响。单次最多 366 天、10,000 笔订单和 25 MB。
+          </p>
+        </div>
+
+        <form className="mt-6 space-y-6" onSubmit={(event) => void submitExport(event)}>
+          <fieldset disabled={exportBusy} className="space-y-3">
+            <legend className="text-sm font-bold">下单日期范围</legend>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="space-y-1.5 text-sm font-medium">
+                <span>开始日期</span>
+                <input
+                  type="date"
+                  value={range.startDate}
+                  onChange={(event) => {
+                    invalidatePendingShareForFilterChange();
+                    setRange((current) => ({ ...current, startDate: event.target.value }));
+                  }}
+                  className={`h-11 w-full rounded-xl border px-3 outline-none transition ${inputClassName}`}
+                />
+              </label>
+              <label className="space-y-1.5 text-sm font-medium">
+                <span>结束日期（含当天）</span>
+                <input
+                  type="date"
+                  value={range.endDate}
+                  onChange={(event) => {
+                    invalidatePendingShareForFilterChange();
+                    setRange((current) => ({ ...current, endDate: event.target.value }));
+                  }}
+                  className={`h-11 w-full rounded-xl border px-3 outline-none transition ${inputClassName}`}
+                />
+              </label>
+            </div>
+            <p className={`text-xs leading-5 ${mutedTextClassName}`}>
+              日期边界按当前设备时区换算，文件中的时间字段统一保留 UTC，避免夏令时歧义。
+            </p>
+          </fieldset>
+
+          <fieldset disabled={exportBusy}>
+            <legend className="text-sm font-bold">订单状态</legend>
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {ORDER_EXPORT_STATUSES.map((item) => {
+                const checked = statuses.includes(item.value);
+                return (
+                  <label
+                    key={item.value}
+                    className={`flex min-h-11 cursor-pointer items-center gap-2 rounded-xl border px-3 text-sm font-medium transition ${
+                      checked
+                        ? darkMode
+                          ? "border-sky-400/50 bg-sky-400/10 text-sky-100"
+                          : "border-sky-300 bg-sky-50 text-sky-800"
+                        : darkMode
+                          ? "border-slate-700 bg-slate-950 text-slate-300"
+                          : "border-slate-200 bg-slate-50 text-slate-700"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleStatus(item.value)}
+                      className="h-4 w-4 accent-sky-600"
+                    />
+                    {item.label}
+                  </label>
+                );
+              })}
+            </div>
+          </fieldset>
+
+          <fieldset disabled={exportBusy}>
+            <legend className="text-sm font-bold">客户资料</legend>
+            <label
+              className={`mt-3 flex cursor-pointer items-start gap-3 rounded-2xl border p-4 ${
+                includeCustomerData
+                  ? darkMode
+                    ? "border-amber-400/40 bg-amber-400/10"
+                    : "border-amber-200 bg-amber-50"
+                  : darkMode
+                    ? "border-slate-700 bg-slate-950"
+                    : "border-slate-200 bg-slate-50"
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={includeCustomerData}
+                onChange={(event) => {
+                  invalidatePendingShareForFilterChange();
+                  setIncludeCustomerData(event.target.checked);
+                }}
+                className="mt-0.5 h-4 w-4 accent-amber-600"
+              />
+              <span>
+                <span className="block text-sm font-bold">包含客户姓名、电话、联系邮箱和客户备注</span>
+                <span className={`mt-1 block text-xs leading-5 ${mutedTextClassName}`}>
+                  默认不导出客户资料。账号编号、登录邮箱、访客标识和客户端幂等编号始终不会导出。
+                </span>
+              </span>
+            </label>
+          </fieldset>
+
+          {error ? (
+            <div
+              role="alert"
+              className={`rounded-xl border px-4 py-3 text-sm ${
+                darkMode
+                  ? "border-rose-400/30 bg-rose-400/10 text-rose-100"
+                  : "border-rose-200 bg-rose-50 text-rose-700"
+              }`}
+            >
+              {error}
+            </div>
+          ) : null}
+          <div aria-live="polite">
+            {notice ? (
+              <div
+                className={`rounded-xl border px-4 py-3 text-sm ${
+                  darkMode
+                    ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-100"
+                    : "border-emerald-200 bg-emerald-50 text-emerald-700"
+                }`}
+              >
+                {notice}
+              </div>
+            ) : null}
+          </div>
+
+          {pendingShare ? (
+            <div
+              className={`flex flex-col gap-3 rounded-xl border px-4 py-3 sm:flex-row sm:items-center sm:justify-between ${
+                darkMode
+                  ? "border-sky-400/30 bg-sky-400/10 text-sky-100"
+                  : "border-sky-200 bg-sky-50 text-sky-800"
+              }`}
+            >
+              <div className="min-w-0">
+                <p className="text-sm font-bold">CSV 已生成，等待系统分享</p>
+                <p className="mt-1 truncate text-xs opacity-80" title={pendingShare.file.name}>
+                  {pendingShare.file.name}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void sharePendingExport()}
+                disabled={exportBusy}
+                className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-sky-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {sharing ? <RefreshIcon spinning /> : null}
+                {sharing ? "正在打开系统分享" : "打开系统分享并保存"}
+              </button>
+            </div>
+          ) : null}
+
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className={`text-xs leading-5 ${mutedTextClassName}`}>
+              导出的是账面订单额，不代表实付、收入、退款、税费或支付状态；不同价格前缀不可直接合计。
+            </p>
+            <button
+              type="submit"
+              disabled={exportBusy}
+              className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-sky-600 px-5 text-sm font-bold text-white shadow-sm transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {exportBusy ? <RefreshIcon spinning /> : null}
+              {exporting
+                ? "正在生成"
+                : sharing
+                  ? "正在分享"
+                  : capacitorAndroid
+                    ? pendingShare
+                      ? "重新生成 CSV"
+                      : "生成 CSV"
+                    : "生成并下载 CSV"}
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <section className={`rounded-2xl border px-4 py-4 text-xs leading-6 sm:px-5 ${surfaceClassName} ${mutedTextClassName}`}>
+        <p className="font-semibold">文件内容边界</p>
+        <p className="mt-1">
+          每笔订单占一行，包含订单状态、时间、价格前缀、账面金额、商品数量和商品摘要。当前订单模型没有可靠的支付、退款、库存、配送、发票和内部备注字段，因此不会伪造这些列。
+        </p>
+      </section>
+    </div>
+  );
+}
+
 export default function OrderWorkbenchPanel({
   siteId,
   mode = "inline",
@@ -659,7 +1212,7 @@ export default function OrderWorkbenchPanel({
       setActionError("");
       setNotice("");
     }
-    if (activeView === "catalog") {
+    if (activeView === "catalog" || activeView === "export") {
       setLoading(false);
       setRefreshing(false);
       return;
@@ -869,7 +1422,7 @@ export default function OrderWorkbenchPanel({
       role={isOverlay ? "dialog" : undefined}
       aria-modal={isOverlay ? true : undefined}
       aria-labelledby={titleId}
-      aria-busy={activeView !== "catalog" && (loading || refreshing)}
+      aria-busy={(activeView === "overview" || activeView === "analysis") && (loading || refreshing)}
       className={`flex min-h-0 w-full flex-col overflow-hidden border ${shellClassName} ${
         isOverlay
           ? "h-[100dvh] rounded-none shadow-2xl sm:max-h-[calc(100dvh-3rem)] sm:max-w-7xl sm:rounded-3xl"
@@ -886,7 +1439,7 @@ export default function OrderWorkbenchPanel({
             <h2 id={titleId} className="text-lg font-bold sm:text-xl">
               订单工作台
             </h2>
-            {activeView !== "catalog" && refreshing ? (
+            {(activeView === "overview" || activeView === "analysis") && refreshing ? (
               <span className={`inline-flex items-center gap-1 text-xs ${mutedTextClassName}`}>
                 <RefreshIcon spinning /> 正在同步
               </span>
@@ -897,11 +1450,13 @@ export default function OrderWorkbenchPanel({
               ? "优先处理超时和客户备注订单，快捷操作后同步完整订单列表。"
               : activeView === "analysis"
                 ? "查看基于服务端完整订单记录生成的经营趋势和结构。"
-                : "把商品经营数据逐步从网站编辑迁移到工作台管理。"}
+                : activeView === "catalog"
+                  ? "把商品经营数据逐步从网站编辑迁移到工作台管理。"
+                  : "按日期和状态生成完整订单汇总，客户资料默认不导出。"}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          {activeView !== "catalog" ? (
+          {activeView === "overview" || activeView === "analysis" ? (
             <button
               type="button"
               onClick={() => void loadDashboard()}
@@ -936,6 +1491,7 @@ export default function OrderWorkbenchPanel({
           ["overview", "概览"],
           ["analysis", "经营分析"],
           ["catalog", "商品目录"],
+          ["export", "数据导出"],
         ] as const).map(([view, label]) => {
           const active = activeView === view;
           return (
@@ -968,6 +1524,8 @@ export default function OrderWorkbenchPanel({
             catalogTarget={catalogTarget}
             onChanged={onChanged}
           />
+        ) : activeView === "export" ? (
+          <OrderExportPanel siteId={siteId} darkMode={darkMode} />
         ) : (
           <>
         {loading && !dashboard ? <LoadingSkeleton darkMode={darkMode} /> : null}

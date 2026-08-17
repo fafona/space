@@ -7,6 +7,7 @@ import {
   mergeImportedProductRows,
   parseProductWorkbook,
 } from "./productImport";
+import { planMerchantCatalogProductImport } from "./merchantCatalog";
 
 test("parseProductWorkbook reads chinese headers", () => {
   const workbook = XLSX.utils.book_new();
@@ -20,9 +21,52 @@ test("parseProductWorkbook reads chinese headers", () => {
   const parsed = parseProductWorkbook(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength));
 
   assert.equal(parsed.rowCount, 2);
+  assert.equal(parsed.truncated, false);
   assert.equal(parsed.items[0]?.code, "SKU-001");
   assert.equal(parsed.items[0]?.tag, "推荐");
   assert.equal(parsed.items[1]?.price, "128");
+});
+
+test("parseProductWorkbook caps oversized worksheets at one planner sentinel row", () => {
+  const workbook = XLSX.utils.book_new();
+  const rows = [
+    ["code", "name", "price"],
+    ...Array.from({ length: 1_005 }, (_, index) => [
+      `SKU-${index}`,
+      `Product ${index}`,
+      "1.00",
+    ]),
+  ];
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), "Products");
+  const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+
+  const parsed = parseProductWorkbook(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength));
+
+  assert.equal(parsed.items.length, 1_001);
+  assert.equal(parsed.rowCount, 1_001);
+  assert.equal(parsed.truncated, true);
+  assert.deepEqual(
+    planMerchantCatalogProductImport(
+      { revision: 1, updatedAt: "", pricePrefix: "", products: [], categories: [], collections: [] },
+      parsed.items,
+    ),
+    { ok: false, error: "merchant_catalog_limit_exceeded" },
+  );
+});
+
+test("parseProductWorkbook reports truncation when blank rows hide the planner sentinel", () => {
+  const workbook = XLSX.utils.book_new();
+  const rows: Array<Array<string>> = [["code", "name", "price"]];
+  for (let index = 0; index < 1_005; index += 1) {
+    rows.push(index % 100 === 0 ? [] : [`SKU-${index}`, `Product ${index}`, "1.00"]);
+  }
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), "Products");
+  const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+
+  const parsed = parseProductWorkbook(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength));
+
+  assert.ok(parsed.items.length <= 1_000);
+  assert.equal(parsed.truncated, true);
 });
 
 test("mergeImportedProductRows updates by code and preserves image", () => {

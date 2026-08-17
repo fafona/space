@@ -5,9 +5,16 @@ import {
   applyMerchantCatalogMutation,
   bootstrapMerchantCatalogFromPublishedBlocks,
   getMerchantCatalogValidationError,
+  MERCHANT_CATALOG_MAX_CATEGORIES,
+  MERCHANT_CATALOG_MAX_PRODUCT_IMAGE_IMPORT_ITEMS,
+  MERCHANT_CATALOG_MAX_SERIALIZED_BYTES,
   normalizeMerchantCatalog,
   parseMerchantCatalog,
   parseStrictMerchantCatalog,
+  planMerchantCatalogProductImageImport,
+  planMerchantCatalogProductImageMatches,
+  planMerchantCatalogProductImport,
+  prepareMerchantCatalogProductImageImport,
   serializeMerchantCatalog,
   type MerchantCatalogProduct,
 } from "@/lib/merchantCatalog";
@@ -453,4 +460,524 @@ test("collection mutations cannot orphan sellable products while another binding
     }).ok,
     true,
   );
+});
+
+test("bulk product import creates hidden unplaced products and derives their category", () => {
+  const source = linkedCatalog();
+  const plan = planMerchantCatalogProductImport(source, [
+    {
+      code: "NEW-001",
+      name: "New product",
+      description: "Imported description",
+      price: "19.90",
+      tag: "Imported",
+      imageUrl: "https://example.com/must-not-be-used.jpg",
+      availability: "available",
+    },
+  ]);
+
+  assert.equal(plan.ok, true);
+  if (!plan.ok) return;
+  const product = plan.catalog.products.find((item) => item.code === "NEW-001");
+  assert.ok(product);
+  assert.equal(product.availability, "hidden");
+  assert.equal(product.imageUrl, "");
+  assert.equal(product.thumbnailUrl, "");
+  assert.ok(plan.catalog.collections.every((collection) => !collection.productIds.includes(product.id)));
+  assert.deepEqual(
+    plan.catalog.categories.find((category) => category.name === "Imported"),
+    { id: "category-49-6d-70-6f-72-74-65-64", name: "Imported", productIds: [product.id] },
+  );
+  assert.deepEqual(plan.rows, [
+    {
+      rowIndex: 0,
+      code: "NEW-001",
+      normalizedCode: "NEW001",
+      action: "create",
+      productId: product.id,
+    },
+  ]);
+  assert.deepEqual(plan.summary, { total: 1, created: 1, updated: 0, unchanged: 0 });
+  assert.deepEqual(source, linkedCatalog());
+});
+
+test("bulk product import suffixes a derived category id collision without overwriting either category", () => {
+  const source = linkedCatalog();
+  source.categories.push({
+    id: "category-4e-65-77",
+    name: "Reserved category id",
+    productIds: [],
+  });
+
+  const plan = planMerchantCatalogProductImport(source, [
+    { code: "NEW-001", name: "New product", price: "1.00", tag: "New" },
+  ]);
+
+  assert.equal(plan.ok, true);
+  if (!plan.ok) return;
+  assert.deepEqual(
+    plan.catalog.categories.filter((category) => category.id.startsWith("category-4e-65-77")),
+    [
+      { id: "category-4e-65-77", name: "Reserved category id", productIds: [] },
+      {
+        id: "category-4e-65-77-2",
+        name: "New",
+        productIds: [plan.rows[0]?.productId],
+      },
+    ],
+  );
+});
+
+test("bulk product import updates only non-empty editable fields and preserves operating state", () => {
+  const source = linkedCatalog();
+  source.products[0] = {
+    ...source.products[0]!,
+    imageUrl: "https://example.com/original.jpg",
+    thumbnailUrl: "https://example.com/original-thumb.jpg",
+    availability: "sold_out",
+  };
+  const plan = planMerchantCatalogProductImport(source, [
+    {
+      code: "a",
+      name: "Updated name",
+      description: "",
+      price: "",
+      tag: "",
+      imageUrl: "https://example.com/replacement.jpg",
+      availability: "available",
+    },
+  ]);
+
+  assert.equal(plan.ok, true);
+  if (!plan.ok) return;
+  assert.deepEqual(plan.catalog.products[0], {
+    ...source.products[0],
+    code: "a",
+    name: "Updated name",
+  });
+  assert.equal(plan.rows[0]?.action, "update");
+  assert.deepEqual(plan.catalog.collections, source.collections);
+  assert.deepEqual(plan.catalog.categories, source.categories);
+});
+
+test("bulk product import rejects duplicate normalized codes in the file or operating catalog", () => {
+  const source = linkedCatalog();
+  assert.deepEqual(
+    planMerchantCatalogProductImport(source, [
+      { code: "NEW-001", name: "One", price: "1" },
+      { code: "new 001", name: "Two", price: "2" },
+    ]),
+    { ok: false, error: "merchant_catalog_import_duplicate_code", rowIndex: 1 },
+  );
+
+  source.products.push({
+    ...source.products[0]!,
+    id: "product-duplicate-code",
+    code: "a",
+    availability: "hidden",
+  });
+  assert.deepEqual(
+    planMerchantCatalogProductImport(source, [{ code: "NEW-001", name: "One", price: "1" }]),
+    { ok: false, error: "merchant_catalog_existing_duplicate_code" },
+  );
+});
+
+test("bulk product import requires a usable code on every row", () => {
+  assert.deepEqual(
+    planMerchantCatalogProductImport(linkedCatalog(), []),
+    { ok: false, error: "invalid_merchant_catalog_import_items" },
+  );
+  assert.deepEqual(
+    planMerchantCatalogProductImport(linkedCatalog(), [{ code: "", name: "Missing", price: "1" }]),
+    { ok: false, error: "invalid_merchant_catalog_import_code", rowIndex: 0 },
+  );
+  assert.deepEqual(
+    planMerchantCatalogProductImport(linkedCatalog(), [{ code: "---", name: "Missing", price: "1" }]),
+    { ok: false, error: "invalid_merchant_catalog_import_code", rowIndex: 0 },
+  );
+});
+
+test("bulk product import rejects oversized row sets and known-field payloads before planning", () => {
+  const tooMany = Array.from({ length: 1_001 }, (_, index) => ({
+    code: `IMPORT-${index}`,
+    name: `Product ${index}`,
+    price: "1.00",
+  }));
+  assert.deepEqual(
+    planMerchantCatalogProductImport(linkedCatalog(), tooMany),
+    { ok: false, error: "merchant_catalog_limit_exceeded" },
+  );
+  assert.deepEqual(
+    planMerchantCatalogProductImport(linkedCatalog(), [
+      {
+        code: "IMPORT-LARGE",
+        name: "Product",
+        description: "x".repeat(512_001),
+        price: "1.00",
+      },
+    ]),
+    { ok: false, error: "merchant_catalog_limit_exceeded", rowIndex: 0 },
+  );
+});
+
+test("bulk product import requires a name and strict price for new products", () => {
+  assert.deepEqual(
+    planMerchantCatalogProductImport(linkedCatalog(), [{ code: "NEW-001", name: "", price: "1" }]),
+    { ok: false, error: "invalid_merchant_catalog_import_product_name", rowIndex: 0 },
+  );
+  for (const price of ["", "-1", "1.234", "01.00", "1000000000"]) {
+    assert.deepEqual(
+      planMerchantCatalogProductImport(linkedCatalog(), [{ code: "NEW-001", name: "New", price }]),
+      { ok: false, error: "invalid_merchant_catalog_import_product_price", rowIndex: 0 },
+    );
+  }
+  assert.equal(
+    planMerchantCatalogProductImport(linkedCatalog(), [
+      { code: "NEW-001", name: "Free", price: "0" },
+    ]).ok,
+    true,
+  );
+});
+
+test("bulk product import enforces serialized capacity atomically", () => {
+  const source = normalizeMerchantCatalog({
+    revision: 7,
+    updatedAt: "2026-08-17T10:00:00.000Z",
+    pricePrefix: "€",
+    products: [],
+    categories: [],
+    collections: [],
+  });
+  let index = 0;
+  while (index < 999) {
+    const candidate = {
+      ...source,
+      products: [
+        ...source.products,
+        {
+          id: `capacity-${index}`,
+          code: `CAP-${index}`,
+          name: `Capacity ${index}`,
+          description: "x".repeat(3_000),
+          price: "1.00",
+          imageUrl: "",
+          thumbnailUrl: "",
+          tag: "",
+          availability: "hidden" as const,
+        },
+      ],
+    };
+    if (getMerchantCatalogValidationError(candidate)) break;
+    source.products = candidate.products;
+    index += 1;
+  }
+  assert.equal(getMerchantCatalogValidationError(source), null);
+  assert.ok(source.products.length > 0 && source.products.length < 999);
+  const snapshot = structuredClone(source);
+
+  const result = applyMerchantCatalogMutation(source, {
+    action: "bulk_import_products",
+    items: [
+      {
+        code: "CAPACITY-OVERFLOW",
+        name: "Overflow",
+        description: "y".repeat(4_000),
+        price: "1.00",
+      },
+    ],
+  });
+
+  assert.deepEqual(result, { ok: false, error: "merchant_catalog_limit_exceeded" });
+  assert.deepEqual(source, snapshot);
+});
+
+test("bulk product import rejects a new category past the category limit atomically", () => {
+  const source = linkedCatalog();
+  source.categories.push(
+    ...Array.from(
+      { length: MERCHANT_CATALOG_MAX_CATEGORIES - source.categories.length },
+      (_, index) => ({ id: `filled-${index}`, name: `Filled ${index}`, productIds: [] }),
+    ),
+  );
+  assert.equal(getMerchantCatalogValidationError(source), null);
+  const snapshot = structuredClone(source);
+
+  const result = applyMerchantCatalogMutation(source, {
+    action: "bulk_import_products",
+    items: [{ code: "CATEGORY-OVERFLOW", name: "Overflow", price: "1.00", tag: "Overflow" }],
+  });
+
+  assert.deepEqual(result, { ok: false, error: "merchant_catalog_limit_exceeded" });
+  assert.deepEqual(source, snapshot);
+});
+
+test("bulk product import plans are stable and mutation uses the same catalog", () => {
+  const source = linkedCatalog();
+  const items = [
+    { code: "A", name: "Product A", description: "", price: "", tag: "" },
+    { code: "NEW-001", name: "New", description: "Description", price: "2.50", tag: "New" },
+  ];
+  const first = planMerchantCatalogProductImport(source, items);
+  const second = planMerchantCatalogProductImport(source, structuredClone(items));
+
+  assert.deepEqual(first, second);
+  assert.equal(first.ok, true);
+  if (!first.ok) return;
+  assert.deepEqual(first.rows.map((row) => row.action), ["unchanged", "create"]);
+  assert.deepEqual(first.summary, { total: 2, created: 1, updated: 0, unchanged: 1 });
+  assert.deepEqual(
+    applyMerchantCatalogMutation(source, { action: "bulk_import_products", items }),
+    { ok: true, catalog: first.catalog },
+  );
+  assert.equal(new Set(first.catalog.products.map((product) => product.id)).size, first.catalog.products.length);
+});
+
+const IMAGE_MERCHANT_ID = "12345678";
+
+function productImageAssetUrl(
+  fileName = "1723867200000-abc123.jpg",
+  merchantId = IMAGE_MERCHANT_ID,
+  bucket = "page-assets",
+) {
+  return `/storage/v1/object/public/${bucket}/merchant-assets/${merchantId}/2026/08/${fileName}`;
+}
+
+test("product image filename preview returns stable matched and unmatched rows without uploading", () => {
+  const plan = planMerchantCatalogProductImageMatches(linkedCatalog(), ["A.jpg", "missing.png"]);
+
+  assert.deepEqual(plan, {
+    ok: true,
+    rows: [
+      {
+        rowIndex: 0,
+        fileName: "A.jpg",
+        code: "A",
+        normalizedCode: "A",
+        status: "matched",
+        productId: "product-a",
+      },
+      {
+        rowIndex: 1,
+        fileName: "missing.png",
+        code: "missing",
+        normalizedCode: "MISSING",
+        status: "unmatched",
+      },
+    ],
+    summary: { total: 2, matched: 1, unmatched: 1, duplicates: 0 },
+  });
+});
+
+test("product image filename preview rejects duplicates with structured rows", () => {
+  const plan = planMerchantCatalogProductImageMatches(linkedCatalog(), ["A.jpg", "a.png"]);
+
+  assert.equal(plan.ok, false);
+  if (plan.ok) return;
+  assert.equal(plan.error, "merchant_catalog_image_import_duplicate_code");
+  assert.equal(plan.rowIndex, 1);
+  assert.deepEqual(plan.rows?.map((row) => row.status), ["duplicate", "duplicate"]);
+  assert.deepEqual(plan.summary, { total: 2, matched: 0, unmatched: 0, duplicates: 2 });
+
+  const ambiguous = linkedCatalog();
+  ambiguous.products.push({
+    ...ambiguous.products[0]!,
+    id: "product-a-duplicate",
+    code: "a",
+    availability: "hidden",
+  });
+  const existingDuplicate = planMerchantCatalogProductImageMatches(ambiguous, ["A.jpg"]);
+  assert.equal(existingDuplicate.ok, false);
+  if (!existingDuplicate.ok) {
+    assert.equal(existingDuplicate.error, "merchant_catalog_existing_duplicate_code");
+    assert.deepEqual(existingDuplicate.rows?.map((row) => row.status), ["duplicate"]);
+  }
+});
+
+test("product image import only accepts tenant-owned canonical upload assets", () => {
+  const validImage = productImageAssetUrl();
+  const validThumbnail = productImageAssetUrl("1723867200000-abc123-thumb.webp");
+  const prepared = prepareMerchantCatalogProductImageImport(
+    [{ fileName: "A.jpg", imageUrl: `https://faolla.com${validImage}`, thumbnailUrl: validThumbnail }],
+    IMAGE_MERCHANT_ID,
+  );
+  assert.equal(prepared.ok, true);
+  if (prepared.ok) {
+    assert.equal(prepared.items[0]?.imageUrl, validImage);
+    assert.equal(prepared.items[0]?.thumbnailUrl, validThumbnail);
+    assert.equal(prepared.items[0]?.rowIndex, 0);
+  }
+
+  for (const imageUrl of [
+    "https://evil.example/storage/v1/object/public/page-assets/merchant-assets/12345678/2026/08/1723867200000-abc123.jpg",
+    productImageAssetUrl("1723867200000-abc123.jpg", "87654321"),
+    "data:image/png;base64,AA==",
+    "blob:https://faolla.com/id",
+    `${validImage}?download=1`,
+    productImageAssetUrl("1723867200000-abc123.svg"),
+    productImageAssetUrl("1723867200000-abc123.gif"),
+    productImageAssetUrl("1723867200000-abc123.bmp"),
+  ]) {
+    assert.deepEqual(
+      prepareMerchantCatalogProductImageImport(
+        [{ fileName: "A.jpg", imageUrl }],
+        IMAGE_MERCHANT_ID,
+      ),
+      { ok: false, error: "invalid_merchant_catalog_product_image_asset", rowIndex: 0 },
+    );
+  }
+});
+
+test("product image import requires its thumbnail to share the uploaded image base", () => {
+  assert.deepEqual(
+    prepareMerchantCatalogProductImageImport(
+      [
+        {
+          fileName: "A.jpg",
+          imageUrl: productImageAssetUrl(),
+          thumbnailUrl: productImageAssetUrl("1723867200001-def456-thumb.webp"),
+        },
+      ],
+      IMAGE_MERCHANT_ID,
+    ),
+    { ok: false, error: "invalid_merchant_catalog_product_thumbnail_asset", rowIndex: 0 },
+  );
+  assert.deepEqual(
+    prepareMerchantCatalogProductImageImport(
+      [
+        {
+          fileName: "A.jpg",
+          imageUrl: productImageAssetUrl(),
+          thumbnailUrl: productImageAssetUrl("1723867200000-abc123-thumb.webp", IMAGE_MERCHANT_ID, "assets"),
+        },
+      ],
+      IMAGE_MERCHANT_ID,
+    ),
+    { ok: false, error: "invalid_merchant_catalog_product_thumbnail_asset", rowIndex: 0 },
+  );
+});
+
+test("product image import updates matched products atomically and preserves operating links", () => {
+  const source = linkedCatalog();
+  source.products[0]!.availability = "sold_out";
+  const snapshot = structuredClone(source);
+  const imageUrl = productImageAssetUrl();
+  const thumbnailUrl = productImageAssetUrl("1723867200000-abc123-thumb.webp");
+  const plan = planMerchantCatalogProductImageImport(
+    source,
+    [
+      { fileName: "A.jpg", imageUrl, thumbnailUrl },
+      { fileName: "not-found.jpg", imageUrl: productImageAssetUrl("1723867200002-ghi789.jpg") },
+    ],
+    IMAGE_MERCHANT_ID,
+  );
+
+  assert.equal(plan.ok, true);
+  if (!plan.ok) return;
+  assert.deepEqual(plan.summary, {
+    total: 2,
+    matched: 1,
+    unmatched: 1,
+    duplicates: 0,
+    updated: 1,
+    unchanged: 0,
+  });
+  assert.deepEqual(plan.rows.map((row) => row.action), ["update", "unmatched"]);
+  assert.equal(plan.catalog.products[0]?.imageUrl, imageUrl);
+  assert.equal(plan.catalog.products[0]?.thumbnailUrl, thumbnailUrl);
+  assert.equal(plan.catalog.products[0]?.availability, "sold_out");
+  assert.deepEqual(plan.catalog.categories, source.categories);
+  assert.deepEqual(plan.catalog.collections, source.collections);
+  assert.deepEqual(source, snapshot);
+});
+
+test("product image mutation rejects unchanged and unmatched-only batches without creating a revision", () => {
+  const source = linkedCatalog();
+  source.products[0]!.imageUrl = productImageAssetUrl();
+  source.products[0]!.thumbnailUrl = productImageAssetUrl("1723867200000-abc123-thumb.webp");
+  assert.deepEqual(
+    applyMerchantCatalogMutation(source, {
+      action: "bulk_set_product_images",
+      merchantId: IMAGE_MERCHANT_ID,
+      items: [
+        {
+          fileName: "A.jpg",
+          imageUrl: source.products[0]!.imageUrl,
+          thumbnailUrl: source.products[0]!.thumbnailUrl,
+        },
+      ],
+    }),
+    { ok: false, error: "merchant_catalog_image_import_no_changes" },
+  );
+  assert.deepEqual(
+    applyMerchantCatalogMutation(linkedCatalog(), {
+      action: "bulk_set_product_images",
+      merchantId: IMAGE_MERCHANT_ID,
+      items: [{ fileName: "missing.jpg", imageUrl: productImageAssetUrl() }],
+    }),
+    { ok: false, error: "merchant_catalog_image_import_no_changes" },
+  );
+});
+
+test("product image import enforces the 100-file batch limit", () => {
+  const fileNames = Array.from(
+    { length: MERCHANT_CATALOG_MAX_PRODUCT_IMAGE_IMPORT_ITEMS + 1 },
+    (_, index) => `SKU-${index}.jpg`,
+  );
+  assert.deepEqual(
+    planMerchantCatalogProductImageMatches(linkedCatalog(), fileNames),
+    { ok: false, error: "merchant_catalog_image_import_limit_exceeded" },
+  );
+});
+
+test("product image import enforces final catalog capacity atomically", () => {
+  const source = linkedCatalog();
+  for (let index = 0; index < 999; index += 1) {
+    const candidate = {
+      ...source,
+      products: [
+        ...source.products,
+        {
+          id: `image-capacity-${index}`,
+          code: `IMAGE-CAP-${index}`,
+          name: `Image capacity ${index}`,
+          description: "x".repeat(4_000),
+          price: "1.00",
+          imageUrl: "",
+          thumbnailUrl: "",
+          tag: "",
+          availability: "hidden" as const,
+        },
+      ],
+    };
+    if (getMerchantCatalogValidationError(candidate)) break;
+    source.products = candidate.products;
+  }
+  const filler = source.products.at(-1)!;
+  const byteLength = () => new TextEncoder().encode(JSON.stringify(source)).byteLength;
+  let remaining = MERCHANT_CATALOG_MAX_SERIALIZED_BYTES - byteLength() - 8;
+  const fill = (field: "imageUrl" | "thumbnailUrl" | "tag", limit: number) => {
+    const count = Math.max(0, Math.min(limit, remaining));
+    filler[field] = "z".repeat(count);
+    remaining -= count;
+  };
+  fill("imageUrl", 2_048);
+  fill("thumbnailUrl", 2_048);
+  fill("tag", 120);
+  if (remaining > 0) {
+    const suffix = "z".repeat(Math.min(240 - filler.name.length, remaining));
+    filler.name += suffix;
+  }
+  assert.equal(getMerchantCatalogValidationError(source), null);
+  assert.ok(MERCHANT_CATALOG_MAX_SERIALIZED_BYTES - byteLength() < productImageAssetUrl().length);
+  const snapshot = structuredClone(source);
+
+  const result = planMerchantCatalogProductImageImport(
+    source,
+    [{ fileName: "A.jpg", imageUrl: productImageAssetUrl() }],
+    IMAGE_MERCHANT_ID,
+  );
+
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.error, "merchant_catalog_limit_exceeded");
+  assert.deepEqual(source, snapshot);
 });

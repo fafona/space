@@ -1,9 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type FormEvent,
+} from "react";
 import {
   createMerchantCatalogCollectionId,
   parseMerchantCatalogUnitPrice,
+  planMerchantCatalogProductImageMatches,
+  planMerchantCatalogProductImport,
   resolveMerchantCatalogCollection,
   type MerchantCatalog,
   type MerchantCatalogAvailability,
@@ -12,8 +23,10 @@ import {
   type MerchantCatalogCollection,
   type MerchantCatalogConflict,
   type MerchantCatalogProduct,
+  type MerchantCatalogProductImageMatchPlan,
   type MerchantCatalogTarget,
 } from "@/lib/merchantCatalog";
+import type { ProductItemInput } from "@/lib/productBlock";
 
 export type MerchantCatalogManagerPanelProps = {
   siteId: string;
@@ -47,7 +60,66 @@ type CatalogMutation =
   | { action: "delete_category"; categoryId: string }
   | { action: "upsert_collection"; collection: MerchantCatalogCollection }
   | { action: "delete_collection"; collectionId: string }
-  | { action: "set_price_prefix"; pricePrefix: string };
+  | { action: "set_price_prefix"; pricePrefix: string }
+  | { action: "bulk_import_products"; items: ProductItemInput[] }
+  | {
+      action: "bulk_set_product_images";
+      items: Array<{ fileName: string; imageUrl: string; thumbnailUrl?: string }>;
+    };
+
+type MerchantCatalogProductImportPlan = Extract<
+  ReturnType<typeof planMerchantCatalogProductImport>,
+  { ok: true }
+>;
+
+type MerchantCatalogProductImportDraft = {
+  siteId: string;
+  fileName: string;
+  rowCount: number;
+  items: ProductItemInput[];
+  baseRevision: number;
+  plan: MerchantCatalogProductImportPlan;
+};
+
+const MERCHANT_CATALOG_IMPORT_MAX_FILE_BYTES = 10 * 1024 * 1024;
+const MERCHANT_CATALOG_IMAGE_IMPORT_MAX_FILES = 100;
+const MERCHANT_CATALOG_IMAGE_IMPORT_MAX_FILE_BYTES = 10 * 1024 * 1024;
+const MERCHANT_CATALOG_IMAGE_IMPORT_MAX_TOTAL_BYTES = 100 * 1024 * 1024;
+const MERCHANT_CATALOG_IMAGE_IMPORT_CONCURRENCY = 2;
+const MERCHANT_CATALOG_IMAGE_IMPORT_ALLOWED_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
+
+type MerchantCatalogProductImageUploadEntry = {
+  fileName: string;
+  imageUrl: string;
+  thumbnailUrl?: string;
+};
+
+type MerchantCatalogProductImageUploadFailure = {
+  fileName: string;
+  message: string;
+};
+
+type MerchantCatalogProductImageUploadProgress = {
+  processed: number;
+  total: number;
+  uploaded: number;
+  failed: number;
+};
+
+type MerchantCatalogProductImageImportDraft = {
+  siteId: string;
+  siteVersion: number;
+  selectionId: number;
+  baseRevision: number;
+  files: File[];
+  plan: Extract<MerchantCatalogProductImageMatchPlan, { ok: true }>;
+  uploadedEntries: MerchantCatalogProductImageUploadEntry[];
+  uploadFailures: MerchantCatalogProductImageUploadFailure[];
+};
 
 const AVAILABILITY_OPTIONS: Array<{
   value: MerchantCatalogAvailability;
@@ -58,6 +130,37 @@ const AVAILABILITY_OPTIONS: Array<{
   { value: "sold_out", label: "售罄", description: "展示但暂不可选购" },
   { value: "hidden", label: "隐藏", description: "不在经营目录展示" },
 ];
+
+function getProductImageFileSelectionError(files: File[]) {
+  if (files.length === 0) return "请选择至少一张商品图片。";
+  if (files.length > MERCHANT_CATALOG_IMAGE_IMPORT_MAX_FILES) {
+    return `每次最多选择 ${MERCHANT_CATALOG_IMAGE_IMPORT_MAX_FILES} 张图片，请拆分后重试。`;
+  }
+  let totalBytes = 0;
+  for (const file of files) {
+    const mime = String(file.type ?? "").trim().toLowerCase();
+    if (!/\.(?:jpe?g|png|webp)$/i.test(file.name) || !MERCHANT_CATALOG_IMAGE_IMPORT_ALLOWED_MIME_TYPES.has(mime)) {
+      return `“${file.name || "未命名文件"}”不是受支持的 JPEG、PNG 或 WebP 图片；SVG 等其他格式不会上传。`;
+    }
+    if (file.size <= 0) return `“${file.name}”是空文件，请重新导出图片后再试。`;
+    if (file.size > MERCHANT_CATALOG_IMAGE_IMPORT_MAX_FILE_BYTES) {
+      return `“${file.name}”超过 10 MB 单文件上限，请压缩后重试。`;
+    }
+    totalBytes += file.size;
+    if (totalBytes > MERCHANT_CATALOG_IMAGE_IMPORT_MAX_TOTAL_BYTES) {
+      return "所选图片总大小超过 100 MB，请拆分成多批导入。";
+    }
+  }
+  return "";
+}
+
+function getProductImageUploadFailureMessage(error: unknown) {
+  const message = error instanceof Error ? error.message.trim() : "";
+  if (!message) return "图片处理或上传失败，请重试。";
+  if (/10\s*mb|文件过大|size[_ ]limit/i.test(message)) return "图片超过处理或上传上限，请压缩后重试。";
+  if (/登录|unauthorized|401/i.test(message)) return "登录状态可能已失效，请刷新后台后重试。";
+  return message;
+}
 
 function RefreshIcon({ spinning = false }: { spinning?: boolean }) {
   return (
@@ -115,6 +218,14 @@ function WarningIcon() {
     <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-5 w-5">
       <path d="M10 3 18 17H2L10 3Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
       <path d="M10 7.5v4M10 14.5v.1" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function UploadIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+      <path d="M10 13V3m0 0L6.5 6.5M10 3l3.5 3.5M4 11.5V16h12v-4.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -196,6 +307,12 @@ function getCatalogError(payload: CatalogApiPayload | null, fallback: string) {
   if (code === "merchant_catalog_product_not_placed") return "可售或售罄商品至少要投放到一个网站商品区块；如需暂存，请先设为隐藏。";
   if (code === "merchant_catalog_product_id_immutable") return "商品稳定编号不能修改；如需更换编号，请新建商品。";
   if (code === "merchant_catalog_limit_exceeded") return "商品目录已达到容量上限，请精简商品、分类、图片地址或说明后重试。";
+  if (code === "invalid_merchant_catalog_product_image_asset") return "上传后的商品图片不属于当前商户资源，目录未写入。";
+  if (code === "invalid_merchant_catalog_product_thumbnail_asset") return "上传后的商品缩略图与原图不匹配，目录未写入。";
+  if (code === "merchant_catalog_image_import_duplicate_code") return "所选图片中存在重复商品编码，请每个商品只保留一张图片。";
+  if (code === "merchant_catalog_existing_duplicate_code") return "当前经营目录中存在重复商品编码，请先修复后再导入图片。";
+  if (code === "merchant_catalog_image_import_no_changes") return "这些图片与当前目录一致，无需重复写入。";
+  if (code === "merchant_catalog_image_import_limit_exceeded") return "每次最多导入 100 张商品图片，请拆分后重试。";
   if (code === "invalid_merchant_catalog_product_price") return "商品价格必须是非负数字，最多保留两位小数；免费商品请明确填写 0。";
   if (code === "merchant_catalog_bootstrap_conflict" || code === "catalog_bootstrap_conflict") return "已发布商品存在冲突，解决冲突后才能初始化目录。";
   if (code === "merchant_catalog_bootstrap_empty") return "没有找到已发布商品。请先发布至少一个商品区块，再建立经营目录。";
@@ -213,6 +330,54 @@ function getCatalogError(payload: CatalogApiPayload | null, fallback: string) {
   if (code === "invalid_catalog_action") return "目录操作无效，请刷新后重试。";
   if (code.startsWith("invalid_")) return "目录数据不符合要求，请检查填写内容后重试。";
   return message || code || fallback;
+}
+
+function getProductImportPlanError(result: { error: string; rowIndex?: number }) {
+  const entryPrefix = typeof result.rowIndex === "number" ? `第 ${result.rowIndex + 1} 条导入记录：` : "";
+  switch (result.error) {
+    case "invalid_merchant_catalog_import_items":
+      return "表格中没有可导入的商品，请检查首个工作表和表头。";
+    case "invalid_merchant_catalog_import_row":
+      return `${entryPrefix}记录格式无效，请检查这一条商品数据后重试。`;
+    case "invalid_merchant_catalog_import_code":
+      return `${entryPrefix}商品编码不能为空；批量导入使用商品编码识别新建或更新。`;
+    case "merchant_catalog_import_duplicate_code":
+      return `${entryPrefix}商品编码与本次文件中的其他导入记录重复，请保留一条后重新选择文件。`;
+    case "merchant_catalog_existing_duplicate_code":
+      return "当前经营目录中已有重复商品编码，无法安全判断应更新哪一个商品；请先在工作台修复重复编码。";
+    case "invalid_merchant_catalog_import_product_name":
+      return `${entryPrefix}新商品必须填写商品名称。`;
+    case "invalid_merchant_catalog_import_product_price":
+      return `${entryPrefix}价格必须是非负数字，最多保留两位小数；新商品和免费商品都要明确填写价格（免费填 0）。`;
+    case "merchant_catalog_limit_exceeded":
+      return `${entryPrefix}导入后商品目录将超过容量上限，请减少行数或精简商品内容后重试。`;
+    default:
+      return `${entryPrefix}表格内容不符合商品目录规则，请检查商品编码、名称、价格和分类后重试。`;
+  }
+}
+
+function getProductImageMatchPlanError(result: { error: string; rowIndex?: number }) {
+  const filePrefix = typeof result.rowIndex === "number" ? `第 ${result.rowIndex + 1} 个文件：` : "";
+  switch (result.error) {
+    case "invalid_merchant_catalog_image_import_items":
+      return "请选择至少一张商品图片。";
+    case "invalid_merchant_catalog_image_file_name":
+      return `${filePrefix}文件名无法安全识别商品编码，请按“商品编码.jpg”格式重命名。`;
+    case "merchant_catalog_image_import_limit_exceeded":
+      return `每次最多导入 ${MERCHANT_CATALOG_IMAGE_IMPORT_MAX_FILES} 张图片，请拆分后重试。`;
+    case "merchant_catalog_image_import_duplicate_code":
+      return `${filePrefix}所选文件中存在相同商品编码；每个商品每批只能选择一张图片，请删除重复文件后重选。`;
+    case "merchant_catalog_existing_duplicate_code":
+      return `${filePrefix}当前经营目录中存在重复商品编码，无法安全判断图片应写入哪个商品；请先修复重复编码。`;
+    default:
+      return `${filePrefix}无法按文件名安全匹配商品，请检查文件名和商品编码后重试。`;
+  }
+}
+
+function getProductImportActionLabel(action: MerchantCatalogProductImportPlan["rows"][number]["action"]) {
+  if (action === "create") return "新建";
+  if (action === "update") return "更新";
+  return "不变";
 }
 
 function isRevisionConflict(payload: CatalogApiPayload | null) {
@@ -324,6 +489,8 @@ export default function MerchantCatalogManagerPanel({
   onChanged,
 }: MerchantCatalogManagerPanelProps) {
   const categoryListId = useId();
+  const productImportPreviewTitleId = useId();
+  const productImageImportPreviewTitleId = useId();
   const [catalog, setCatalog] = useState<MerchantCatalog | null>(null);
   const [bootstrap, setBootstrap] = useState<MerchantCatalogBootstrapResult | null>(null);
   const [bootstrapFingerprint, setBootstrapFingerprint] = useState("");
@@ -334,6 +501,8 @@ export default function MerchantCatalogManagerPanel({
   const [revisionConflict, setRevisionConflict] = useState("");
   const [notice, setNotice] = useState("");
   const [actingKey, setActingKey] = useState("");
+  const actingKeyRef = useRef("");
+  actingKeyRef.current = actingKey;
   const [pricePrefixDraft, setPricePrefixDraft] = useState("");
   const [productDraft, setProductDraft] = useState<MerchantCatalogProduct | null>(null);
   const [productDraftIsNew, setProductDraftIsNew] = useState(false);
@@ -346,9 +515,29 @@ export default function MerchantCatalogManagerPanel({
   const [collectionDraftIsNew, setCollectionDraftIsNew] = useState(false);
   const [collectionDraftRevision, setCollectionDraftRevision] = useState<number | null>(null);
   const [productSearch, setProductSearch] = useState("");
+  const [productImportDraft, setProductImportDraft] = useState<MerchantCatalogProductImportDraft | null>(null);
+  const [productImportReading, setProductImportReading] = useState(false);
+  const [productImportError, setProductImportError] = useState("");
+  const [productImageImportDraft, setProductImageImportDraft] = useState<MerchantCatalogProductImageImportDraft | null>(null);
+  const [productImageImportUploading, setProductImageImportUploading] = useState(false);
+  const [productImageImportProgress, setProductImageImportProgress] = useState<MerchantCatalogProductImageUploadProgress | null>(null);
+  const [productImageImportError, setProductImageImportError] = useState("");
   const mountedRef = useRef(true);
+  const activeSiteIdRef = useRef(siteId.trim());
+  const activeSiteVersionRef = useRef(0);
+  const renderedSiteId = siteId.trim();
+  if (activeSiteIdRef.current !== renderedSiteId) {
+    activeSiteIdRef.current = renderedSiteId;
+    activeSiteVersionRef.current += 1;
+  }
   const catalogRef = useRef<MerchantCatalog | null>(null);
+  const catalogSiteIdRef = useRef("");
   const bootstrapRef = useRef<MerchantCatalogBootstrapResult | null>(null);
+  const productImportInputRef = useRef<HTMLInputElement | null>(null);
+  const productImportReadSequenceRef = useRef(0);
+  const productImageImportInputRef = useRef<HTMLInputElement | null>(null);
+  const productImageImportSequenceRef = useRef(0);
+  const productImageImportInFlightRef = useRef(false);
   const requestSequenceRef = useRef(0);
   const initializedTargetDraftKeyRef = useRef("");
   const normalizedCatalogTarget = useMemo<MerchantCatalogTarget | null>(() => {
@@ -372,13 +561,33 @@ export default function MerchantCatalogManagerPanel({
     };
   }, []);
 
+  const clearProductImportDraft = useCallback(() => {
+    productImportReadSequenceRef.current += 1;
+    setProductImportDraft(null);
+    setProductImportError("");
+    setProductImportReading(false);
+    if (productImportInputRef.current) productImportInputRef.current.value = "";
+  }, []);
+
+  const clearProductImageImportDraft = useCallback(() => {
+    productImageImportSequenceRef.current += 1;
+    setProductImageImportDraft(null);
+    setProductImageImportUploading(false);
+    setProductImageImportProgress(null);
+    setProductImageImportError("");
+    if (productImageImportInputRef.current) productImageImportInputRef.current.value = "";
+  }, []);
+
   const loadCatalog = useCallback(async (signal?: AbortSignal) => {
     const normalizedSiteId = siteId.trim();
+    if (activeSiteIdRef.current !== normalizedSiteId) return;
+    const siteVersion = activeSiteVersionRef.current;
     const sequence = requestSequenceRef.current + 1;
     requestSequenceRef.current = sequence;
     const hasCatalogState = catalogRef.current !== null || bootstrapRef.current !== null;
     if (!normalizedSiteId) {
       catalogRef.current = null;
+      catalogSiteIdRef.current = "";
       bootstrapRef.current = null;
       setCatalog(null);
       setBootstrap(null);
@@ -403,18 +612,34 @@ export default function MerchantCatalogManagerPanel({
       if (!response.ok || !payload?.ok) {
         throw new Error(getCatalogError(payload, "商品目录加载失败，请稍后重试。"));
       }
-      if (!mountedRef.current || requestSequenceRef.current !== sequence) return;
+      if (
+        !mountedRef.current ||
+        requestSequenceRef.current !== sequence ||
+        activeSiteIdRef.current !== normalizedSiteId ||
+        activeSiteVersionRef.current !== siteVersion
+      ) return;
       catalogRef.current = payload.catalog ?? null;
+      catalogSiteIdRef.current = normalizedSiteId;
       bootstrapRef.current = payload.bootstrap ?? null;
       setCatalog(payload.catalog ?? null);
       setBootstrap(payload.bootstrap ?? null);
       setBootstrapFingerprint(String(payload.bootstrapFingerprint ?? ""));
     } catch (requestError) {
       if (requestError instanceof DOMException && requestError.name === "AbortError") return;
-      if (!mountedRef.current || requestSequenceRef.current !== sequence) return;
+      if (
+        !mountedRef.current ||
+        requestSequenceRef.current !== sequence ||
+        activeSiteIdRef.current !== normalizedSiteId ||
+        activeSiteVersionRef.current !== siteVersion
+      ) return;
       setError(requestError instanceof Error ? requestError.message : "商品目录加载失败，请稍后重试。");
     } finally {
-      if (mountedRef.current && requestSequenceRef.current === sequence) {
+      if (
+        mountedRef.current &&
+        requestSequenceRef.current === sequence &&
+        activeSiteIdRef.current === normalizedSiteId &&
+        activeSiteVersionRef.current === siteVersion
+      ) {
         setLoading(false);
         setRefreshing(false);
       }
@@ -423,6 +648,7 @@ export default function MerchantCatalogManagerPanel({
 
   useEffect(() => {
     catalogRef.current = null;
+    catalogSiteIdRef.current = "";
     bootstrapRef.current = null;
     setCatalog(null);
     setBootstrap(null);
@@ -434,9 +660,14 @@ export default function MerchantCatalogManagerPanel({
     setCategoryDraftRevision(null);
     setCollectionDraft(null);
     setCollectionDraftRevision(null);
+    clearProductImportDraft();
+    clearProductImageImportDraft();
+    setProductImportReading(false);
     setActionError("");
     setRevisionConflict("");
     setNotice("");
+    setActingKey("");
+    actingKeyRef.current = "";
     initializedTargetDraftKeyRef.current = "";
     const controller = new AbortController();
     void loadCatalog(controller.signal);
@@ -444,7 +675,7 @@ export default function MerchantCatalogManagerPanel({
       controller.abort();
       requestSequenceRef.current += 1;
     };
-  }, [loadCatalog]);
+  }, [clearProductImageImportDraft, clearProductImportDraft, loadCatalog]);
 
   useEffect(() => {
     setPricePrefixDraft(catalog?.pricePrefix ?? "");
@@ -493,8 +724,16 @@ export default function MerchantCatalogManagerPanel({
 
   const runMutation = useCallback(
     async (key: string, mutation: CatalogMutation, successMessage: string, baseRevision?: number) => {
-      if (actingKey) return false;
+      if (actingKeyRef.current) return false;
+      const mutationSiteId = siteId.trim();
+      const mutationSiteVersion = activeSiteVersionRef.current;
+      if (!mutationSiteId || activeSiteIdRef.current !== mutationSiteId) return false;
+      const mutationContextIsActive = () =>
+        mountedRef.current &&
+        activeSiteIdRef.current === mutationSiteId &&
+        activeSiteVersionRef.current === mutationSiteVersion;
       const expectedRevision = baseRevision ?? catalogRef.current?.revision ?? 0;
+      actingKeyRef.current = key;
       setActingKey(key);
       setActionError("");
       setRevisionConflict("");
@@ -504,12 +743,13 @@ export default function MerchantCatalogManagerPanel({
           method: "PATCH",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            siteId: siteId.trim(),
+            siteId: mutationSiteId,
             expectedRevision,
             ...mutation,
           }),
         });
         const payload = (await response.json().catch(() => null)) as CatalogApiPayload | null;
+        if (!mutationContextIsActive()) return false;
         if (payload?.error === "merchant_catalog_already_initialized") {
           setRevisionConflict("商品目录已在其他页面建立。已重新加载最新目录，请核对后继续操作。");
           await loadCatalog();
@@ -532,6 +772,7 @@ export default function MerchantCatalogManagerPanel({
           setCategoryDraftRevision(null);
           setCollectionDraft(null);
           setCollectionDraftRevision(null);
+          clearProductImportDraft();
           await loadCatalog();
           return false;
         }
@@ -545,18 +786,436 @@ export default function MerchantCatalogManagerPanel({
         );
         await Promise.allSettled([
           loadCatalog(),
-          Promise.resolve().then(() => onChanged?.()),
+          Promise.resolve().then(() => mutationContextIsActive() ? onChanged?.() : undefined),
         ]);
-        return true;
+        return mutationContextIsActive();
       } catch (requestError) {
+        if (!mutationContextIsActive()) return false;
         setActionError(requestError instanceof Error ? requestError.message : "商品目录保存失败，请稍后重试。");
         return false;
       } finally {
-        if (mountedRef.current) setActingKey("");
+        if (mutationContextIsActive()) {
+          actingKeyRef.current = "";
+          setActingKey("");
+        }
       }
     },
-    [actingKey, loadCatalog, onChanged, siteId],
+    [clearProductImportDraft, loadCatalog, onChanged, siteId],
   );
+
+  const readProductImportFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (!file) return;
+    const importReadSequence = productImportReadSequenceRef.current + 1;
+    productImportReadSequenceRef.current = importReadSequence;
+    const currentCatalog = catalogRef.current;
+    if (!currentCatalog) {
+      setProductImportError("商品目录尚未加载完成，请刷新目录后再选择文件。");
+      setProductImportReading(false);
+      input.value = "";
+      return;
+    }
+    if (!/\.(xlsx|xls)$/i.test(file.name)) {
+      setProductImportDraft(null);
+      setProductImportError("请选择 .xlsx 或 .xls 格式的 Excel 文件。");
+      setProductImportReading(false);
+      input.value = "";
+      return;
+    }
+    if (file.size > MERCHANT_CATALOG_IMPORT_MAX_FILE_BYTES) {
+      setProductImportDraft(null);
+      setProductImportError("Excel 文件不能超过 10 MB，请删除无关工作表、图片或格式后重试。");
+      setProductImportReading(false);
+      input.value = "";
+      return;
+    }
+
+    const importSiteId = activeSiteIdRef.current;
+    const importRequestSequence = requestSequenceRef.current;
+    const baseRevision = currentCatalog.revision;
+    setProductImportReading(true);
+    setProductImportDraft(null);
+    setProductImportError("");
+    try {
+      const { parseProductWorkbook } = await import("@/lib/productImport");
+      const parsed = parseProductWorkbook(await file.arrayBuffer());
+      if (!mountedRef.current) return;
+      if (
+        productImportReadSequenceRef.current !== importReadSequence ||
+        activeSiteIdRef.current !== importSiteId ||
+        requestSequenceRef.current !== importRequestSequence ||
+        catalogRef.current !== currentCatalog ||
+        catalogRef.current?.revision !== baseRevision
+      ) {
+        if (
+          productImportReadSequenceRef.current === importReadSequence &&
+          activeSiteIdRef.current === importSiteId
+        ) {
+          setProductImportError("读取文件期间商品目录已刷新。请基于最新目录重新选择文件并核对预览。");
+        }
+        return;
+      }
+      if (parsed.truncated) {
+        setProductImportError("首个工作表超过安全读取范围。每次最多导入 1000 条商品记录；请拆分文件，或删除工作表末尾多余的空白行后重试。");
+        return;
+      }
+      if (parsed.rowCount === 0 || parsed.items.length === 0) {
+        setProductImportError("首个工作表中没有可导入的商品记录，请确认第一行是表头，后续记录已填写商品数据。");
+        return;
+      }
+      const plan = planMerchantCatalogProductImport(currentCatalog, parsed.items);
+      if (!plan.ok) {
+        setProductImportError(getProductImportPlanError(plan));
+        return;
+      }
+      setProductImportDraft({
+        siteId: importSiteId,
+        fileName: file.name,
+        rowCount: parsed.rowCount,
+        items: parsed.items,
+        baseRevision,
+        plan,
+      });
+    } catch (readError) {
+      if (
+        !mountedRef.current ||
+        productImportReadSequenceRef.current !== importReadSequence ||
+        activeSiteIdRef.current !== importSiteId ||
+        requestSequenceRef.current !== importRequestSequence ||
+        catalogRef.current !== currentCatalog
+      ) return;
+      const reason = readError instanceof Error ? readError.message.toLocaleLowerCase() : "";
+      setProductImportError(
+        reason.includes("password") || reason.includes("encrypt")
+          ? "无法读取受密码保护的 Excel 文件，请解除密码后重新选择。"
+          : "无法解析这个 Excel 文件，请确认文件未损坏，并使用 .xlsx 或 .xls 格式重试。",
+      );
+    } finally {
+      if (mountedRef.current && productImportReadSequenceRef.current === importReadSequence) {
+        setProductImportReading(false);
+        input.value = "";
+      }
+    }
+  };
+
+  const confirmProductImport = async () => {
+    const draft = productImportDraft;
+    if (!draft || draft.plan.summary.created + draft.plan.summary.updated === 0) return;
+    const siteChanged = activeSiteIdRef.current !== draft.siteId;
+    if (siteChanged || catalogRef.current?.revision !== draft.baseRevision) {
+      clearProductImportDraft();
+      setRevisionConflict("商户或目录在导入预览打开后发生了变化。已重新加载最新数据，请重新选择 Excel 文件并核对预览。");
+      if (!siteChanged) await loadCatalog();
+      return;
+    }
+    const saved = await runMutation(
+      "bulk-import-products",
+      { action: "bulk_import_products", items: draft.items },
+      `Excel 导入完成：新建 ${draft.plan.summary.created} 个，更新 ${draft.plan.summary.updated} 个，${draft.plan.summary.unchanged} 个无需变更。`,
+      draft.baseRevision,
+    );
+    if (saved) clearProductImportDraft();
+  };
+
+  const readProductImageImportFiles = (event: ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget;
+    const files = Array.from(input.files ?? []);
+    input.value = "";
+    const selectionId = productImageImportSequenceRef.current + 1;
+    productImageImportSequenceRef.current = selectionId;
+    setProductImageImportError("");
+    setProductImageImportProgress(null);
+
+    const selectionError = getProductImageFileSelectionError(files);
+    if (selectionError) {
+      setProductImageImportDraft(null);
+      setProductImageImportError(selectionError);
+      return;
+    }
+
+    const importSiteId = activeSiteIdRef.current;
+    const currentCatalog = catalogRef.current;
+    if (!currentCatalog || !importSiteId || catalogSiteIdRef.current !== importSiteId) {
+      setProductImageImportDraft(null);
+      setProductImageImportError("商品目录尚未加载完成，请刷新目录后再选择图片。");
+      return;
+    }
+
+    const plan = planMerchantCatalogProductImageMatches(
+      currentCatalog,
+      files.map((file) => file.name),
+    );
+    if (!plan.ok) {
+      setProductImageImportDraft(null);
+      setProductImageImportError(getProductImageMatchPlanError(plan));
+      return;
+    }
+
+    clearProductImportDraft();
+    setActionError("");
+    setRevisionConflict("");
+    setNotice("");
+    setProductImageImportDraft({
+      siteId: importSiteId,
+      siteVersion: activeSiteVersionRef.current,
+      selectionId,
+      baseRevision: currentCatalog.revision,
+      files,
+      plan,
+      uploadedEntries: [],
+      uploadFailures: [],
+    });
+  };
+
+  const requestClearProductImageImportDraft = () => {
+    if (productImageImportUploading) return;
+    const uploadedCount = productImageImportDraft?.uploadedEntries.length ?? 0;
+    if (
+      uploadedCount > 0 &&
+      !window.confirm(
+        `当前有 ${uploadedCount} 张图片已经上传但尚未写入商品目录。关闭预览后，这些图片可能成为未引用资源。仍要关闭吗？`,
+      )
+    ) return;
+    clearProductImageImportDraft();
+  };
+
+  const openProductImageImportPicker = () => {
+    if (productImageImportUploading || actingKey) return;
+    const uploadedCount = productImageImportDraft?.uploadedEntries.length ?? 0;
+    if (
+      uploadedCount > 0 &&
+      !window.confirm(
+        `重新选择会放弃当前批次；已有 ${uploadedCount} 张图片上传但尚未写入目录，可能成为未引用资源。仍要重新选择吗？`,
+      )
+    ) return;
+    if (uploadedCount > 0) clearProductImageImportDraft();
+    productImageImportInputRef.current?.click();
+  };
+
+  const rebaseProductImageImportDraft = () => {
+    const draft = productImageImportDraft;
+    const currentCatalog = catalogRef.current;
+    const currentSiteId = activeSiteIdRef.current;
+    if (
+      !draft ||
+      !currentCatalog ||
+      !currentSiteId ||
+      currentSiteId !== draft.siteId ||
+      catalogSiteIdRef.current !== draft.siteId ||
+      productImageImportUploading ||
+      actingKey
+    ) return;
+    const plan = planMerchantCatalogProductImageMatches(
+      currentCatalog,
+      draft.files.map((file) => file.name),
+    );
+    if (!plan.ok) {
+      setProductImageImportError(getProductImageMatchPlanError(plan));
+      return;
+    }
+    const selectionId = productImageImportSequenceRef.current + 1;
+    productImageImportSequenceRef.current = selectionId;
+    setRevisionConflict("");
+    setProductImageImportError("");
+    setProductImageImportProgress(null);
+    setProductImageImportDraft({
+      ...draft,
+      siteVersion: activeSiteVersionRef.current,
+      selectionId,
+      baseRevision: currentCatalog.revision,
+      plan,
+      uploadFailures: [],
+    });
+  };
+
+  const confirmProductImageImport = async () => {
+    const draft = productImageImportDraft;
+    if (
+      !draft ||
+      draft.plan.summary.matched === 0 ||
+      productImageImportUploading ||
+      productImageImportInFlightRef.current ||
+      Boolean(actingKey)
+    ) return;
+
+    const contextIsActive = () =>
+      mountedRef.current &&
+      productImageImportSequenceRef.current === draft.selectionId &&
+      activeSiteIdRef.current === draft.siteId &&
+      activeSiteVersionRef.current === draft.siteVersion &&
+      catalogSiteIdRef.current === draft.siteId;
+    const currentCatalog = catalogRef.current;
+    if (!contextIsActive() || !currentCatalog || currentCatalog.revision !== draft.baseRevision) {
+      setProductImageImportError(
+        `目录已不再是预览时的修订版 ${draft.baseRevision}。请先加载最新版并重新匹配；系统不会把旧预览静默写入新版目录。`,
+      );
+      if (activeSiteIdRef.current === draft.siteId) await loadCatalog();
+      return;
+    }
+
+    const fileByName = new Map(draft.files.map((file) => [file.name.trim(), file]));
+    const matchedRows = draft.plan.rows.filter(
+      (row): row is typeof row & { productId: string } => row.status === "matched" && typeof row.productId === "string",
+    );
+    const uploadedByFileName = new Map(
+      draft.uploadedEntries.map((entry) => [entry.fileName, entry] as const),
+    );
+    const failuresByFileName = new Map(
+      draft.uploadFailures.map((failure) => [failure.fileName, failure] as const),
+    );
+    const pendingRows = matchedRows.filter((row) => !uploadedByFileName.has(row.fileName));
+    const orderedUploadedEntries = () =>
+      draft.plan.rows.flatMap((row) => {
+        const entry = uploadedByFileName.get(row.fileName);
+        return entry ? [entry] : [];
+      });
+    const orderedFailures = () =>
+      matchedRows.flatMap((row) => {
+        const failure = failuresByFileName.get(row.fileName);
+        return failure ? [failure] : [];
+      });
+    let processed = matchedRows.length - pendingRows.length;
+    let nextPendingIndex = 0;
+
+    productImageImportInFlightRef.current = true;
+    setProductImageImportUploading(true);
+    setProductImageImportError("");
+    setRevisionConflict("");
+    setActionError("");
+    setNotice("");
+    setProductImageImportProgress({
+      processed,
+      total: matchedRows.length,
+      uploaded: matchedRows.filter((row) => uploadedByFileName.has(row.fileName)).length,
+      failed: 0,
+    });
+
+    try {
+      const {
+        fileToOptimizedImageDataUrl,
+        uploadImageDataUrlToSupabaseWithMetadata,
+      } = await import("@/lib/editorAssetProcessing");
+      if (!contextIsActive()) return;
+
+      const syncDraftProgress = () => {
+        if (!contextIsActive()) return;
+        const uploaded = matchedRows.filter((row) => uploadedByFileName.has(row.fileName)).length;
+        const failures = orderedFailures();
+        setProductImageImportDraft((current) =>
+          current?.selectionId === draft.selectionId
+            ? {
+                ...current,
+                uploadedEntries: orderedUploadedEntries(),
+                uploadFailures: failures,
+              }
+            : current,
+        );
+        setProductImageImportProgress({
+          processed,
+          total: matchedRows.length,
+          uploaded,
+          failed: failures.length,
+        });
+      };
+
+      const uploadWorker = async () => {
+        while (contextIsActive()) {
+          const pendingIndex = nextPendingIndex;
+          nextPendingIndex += 1;
+          const row = pendingRows[pendingIndex];
+          if (!row) return;
+          const file = fileByName.get(row.fileName);
+          failuresByFileName.delete(row.fileName);
+          try {
+            if (!file) throw new Error("所选图片已不可用，请重新选择文件。");
+            const dataUrl = await fileToOptimizedImageDataUrl(file, { maxSide: 1600, quality: 0.82 });
+            if (!contextIsActive()) return;
+            const uploaded = await uploadImageDataUrlToSupabaseWithMetadata(
+              dataUrl,
+              draft.siteId,
+              "product-image",
+              {
+                operationModule: "订单工作台 > 商品目录",
+                operationAction: "批量上传商品图片",
+                operationSummary: `在订单工作台按商品编码上传图片 ${row.fileName}`,
+              },
+            );
+            if (!uploaded?.url) throw new Error("图片上传失败，请稍后重试。");
+            uploadedByFileName.set(row.fileName, {
+              fileName: row.fileName,
+              imageUrl: uploaded.url,
+              ...(uploaded.thumbnailUrl ? { thumbnailUrl: uploaded.thumbnailUrl } : {}),
+            });
+          } catch (uploadError) {
+            failuresByFileName.set(row.fileName, {
+              fileName: row.fileName,
+              message: getProductImageUploadFailureMessage(uploadError),
+            });
+          } finally {
+            processed += 1;
+            syncDraftProgress();
+          }
+        }
+      };
+
+      await Promise.all(
+        Array.from(
+          { length: Math.min(MERCHANT_CATALOG_IMAGE_IMPORT_CONCURRENCY, pendingRows.length) },
+          () => uploadWorker(),
+        ),
+      );
+      if (!contextIsActive()) return;
+
+      const uploadFailures = orderedFailures();
+      if (uploadFailures.length > 0) {
+        setProductImageImportError(
+          `${uploadFailures.length} 张图片处理或上传失败，商品目录尚未修改。已成功上传的图片会在本页重试时复用；若关闭或离开当前批次，它们可能成为未引用资源。`,
+        );
+        return;
+      }
+
+      const mutationItems = matchedRows.flatMap((row) => {
+        const entry = uploadedByFileName.get(row.fileName);
+        return entry ? [entry] : [];
+      });
+      if (mutationItems.length !== matchedRows.length) {
+        setProductImageImportError("部分匹配图片尚未上传完成，商品目录未修改；请重试当前批次。");
+        return;
+      }
+      if (!contextIsActive()) return;
+      if (catalogRef.current?.revision !== draft.baseRevision || actingKeyRef.current) {
+        setProductImageImportError(
+          "图片上传期间目录发生了其他操作，系统没有写入旧预览。已上传图片会保留在当前批次；请加载最新版并重新匹配。",
+        );
+        if (!actingKeyRef.current) await loadCatalog();
+        return;
+      }
+
+      const saved = await runMutation(
+        "bulk-set-product-images",
+        { action: "bulk_set_product_images", items: mutationItems },
+        `商品图片导入完成：已按编码更新 ${mutationItems.length} 个商品，${draft.plan.summary.unmatched} 个未匹配文件未上传。`,
+        draft.baseRevision,
+      );
+      if (saved) {
+        clearProductImageImportDraft();
+      } else if (contextIsActive()) {
+        setProductImageImportError(
+          `目录尚未写入。已有 ${mutationItems.length} 张图片上传成功；请保留当前预览，加载最新版后重新匹配并重试。若关闭或离开，它们可能成为未引用资源。`,
+        );
+      }
+    } catch (uploadError) {
+      if (contextIsActive()) {
+        setProductImageImportError(
+          `${getProductImageUploadFailureMessage(uploadError)} 商品目录尚未修改；已上传成功的图片会在本页重试时复用。`,
+        );
+      }
+    } finally {
+      productImageImportInFlightRef.current = false;
+      if (contextIsActive()) setProductImageImportUploading(false);
+    }
+  };
 
   const filteredProducts = useMemo(() => {
     if (!catalog) return [];
@@ -568,6 +1227,32 @@ export default function MerchantCatalogManagerPanel({
       ),
     );
   }, [catalog, productSearch]);
+
+  const productImageImportMatchedRows = productImageImportDraft?.plan.rows.filter(
+    (row) => row.status === "matched" && typeof row.productId === "string",
+  ) ?? [];
+  const productImageImportUploadedFileNames = new Set(
+    productImageImportDraft?.uploadedEntries.map((entry) => entry.fileName) ?? [],
+  );
+  const productImageImportFailureByFileName = new Map(
+    productImageImportDraft?.uploadFailures.map((failure) => [failure.fileName, failure] as const) ?? [],
+  );
+  const productImageImportMatchedUploadedCount = productImageImportMatchedRows.filter((row) =>
+    productImageImportUploadedFileNames.has(row.fileName)
+  ).length;
+  const productImageImportUnreferencedUploadCount = Math.max(
+    0,
+    (productImageImportDraft?.uploadedEntries.length ?? 0) - productImageImportMatchedUploadedCount,
+  );
+  const productImageImportIsStale = Boolean(
+    productImageImportDraft &&
+    (
+      productImageImportDraft.siteId !== siteId.trim() ||
+      productImageImportDraft.siteVersion !== activeSiteVersionRef.current ||
+      !catalog ||
+      productImageImportDraft.baseRevision !== catalog.revision
+    ),
+  );
 
   const beginNewProduct = () => {
     setProductDraft(createProductDraft());
@@ -1201,18 +1886,399 @@ export default function MerchantCatalogManagerPanel({
               <div>
                 <h4 id="catalog-products-title" className="text-sm font-bold sm:text-base">商品</h4>
                 <p className={`mt-1 text-xs leading-5 ${mutedTextClassName}`}>
-                  管理名称、编码、价格和可售状态。库存数量尚未启用，“售罄”目前是人工经营状态。
+                  管理名称、编码、图片、价格和可售状态。批量图片按文件名中的商品编码匹配，未匹配文件不会上传。
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={beginNewProduct}
-                disabled={Boolean(actingKey)}
-                className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-sky-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-sky-700 disabled:opacity-50"
-              >
-                <PlusIcon /> 新增商品
-              </button>
+              <div className="grid shrink-0 grid-cols-1 gap-2 sm:flex">
+                <input
+                  ref={productImportInputRef}
+                  type="file"
+                  accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                  className="sr-only"
+                  onChange={(event) => void readProductImportFile(event)}
+                  disabled={Boolean(actingKey) || productImportReading || productImageImportUploading}
+                  aria-label="选择商品 Excel 文件"
+                />
+                <input
+                  ref={productImageImportInputRef}
+                  type="file"
+                  accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
+                  multiple
+                  className="sr-only"
+                  onChange={readProductImageImportFiles}
+                  disabled={Boolean(actingKey) || productImportReading || productImageImportUploading}
+                  aria-label="选择按商品编码命名的商品图片"
+                />
+                <button
+                  type="button"
+                  onClick={() => productImportInputRef.current?.click()}
+                  disabled={Boolean(actingKey) || productImportReading || productImageImportUploading}
+                  className={`inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-50 ${secondaryButtonClassName}`}
+                >
+                  {productImportReading ? <RefreshIcon spinning /> : <UploadIcon />}
+                  {productImportReading ? "读取中" : productImportDraft ? "重新选 Excel" : "Excel 导入"}
+                </button>
+                <button
+                  type="button"
+                  onClick={openProductImageImportPicker}
+                  disabled={Boolean(actingKey) || productImportReading || productImageImportUploading}
+                  className={`inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-50 ${secondaryButtonClassName}`}
+                >
+                  {productImageImportUploading ? <RefreshIcon spinning /> : <UploadIcon />}
+                  {productImageImportUploading
+                    ? "上传图片中"
+                    : productImageImportDraft
+                      ? "重新选图片"
+                      : "图片批量导入"}
+                </button>
+                <button
+                  type="button"
+                  onClick={beginNewProduct}
+                  disabled={Boolean(actingKey) || productImportReading || productImageImportUploading}
+                  className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-sky-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-sky-700 disabled:opacity-50"
+                >
+                  <PlusIcon /> 新增商品
+                </button>
+              </div>
             </div>
+
+            <div aria-live="polite">
+              {productImportReading ? (
+                <div className={`mt-4 flex items-center gap-2 rounded-xl border px-4 py-3 text-sm ${darkMode ? "border-sky-400/25 bg-sky-400/10 text-sky-100" : "border-sky-200 bg-sky-50 text-sky-800"}`}>
+                  <RefreshIcon spinning /> 正在读取 Excel 并按当前目录生成导入预览……
+                </div>
+              ) : null}
+              {productImportError ? (
+                <div role="alert" className={`mt-4 rounded-xl border px-4 py-3 text-sm leading-6 ${darkMode ? "border-rose-400/30 bg-rose-400/10 text-rose-100" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
+                  <p className="font-bold">Excel 导入预览生成失败</p>
+                  <p className="mt-1 text-xs leading-5 opacity-90">{productImportError}</p>
+                  <button type="button" onClick={() => productImportInputRef.current?.click()} className="mt-2 rounded-lg border border-current/30 px-3 py-1.5 text-xs font-bold hover:bg-current/10">
+                    重新选择文件
+                  </button>
+                </div>
+              ) : null}
+              {productImageImportUploading && productImageImportProgress ? (
+                <div
+                  role="status"
+                  className={`mt-4 rounded-xl border px-4 py-3 text-sm ${darkMode ? "border-sky-400/25 bg-sky-400/10 text-sky-100" : "border-sky-200 bg-sky-50 text-sky-800"}`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="inline-flex items-center gap-2 font-bold">
+                      <RefreshIcon spinning /> 正在处理并上传匹配图片
+                    </span>
+                    <span className="shrink-0 text-xs tabular-nums">
+                      {productImageImportProgress.processed}/{productImageImportProgress.total}
+                    </span>
+                  </div>
+                  <progress
+                    className="mt-2 h-2 w-full overflow-hidden rounded-full"
+                    value={productImageImportProgress.processed}
+                    max={Math.max(1, productImageImportProgress.total)}
+                    aria-label="商品图片上传进度"
+                  />
+                  <p className="mt-1 text-xs leading-5 opacity-90">
+                    已上传 {productImageImportProgress.uploaded} 张
+                    {productImageImportProgress.failed > 0 ? `，失败 ${productImageImportProgress.failed} 张` : ""}。未匹配文件不会上传。
+                  </p>
+                </div>
+              ) : null}
+              {productImageImportError ? (
+                <div role="alert" className={`mt-4 rounded-xl border px-4 py-3 text-sm leading-6 ${darkMode ? "border-rose-400/30 bg-rose-400/10 text-rose-100" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
+                  <p className="font-bold">商品图片导入尚未完成</p>
+                  <p className="mt-1 text-xs leading-5 opacity-90">{productImageImportError}</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {productImageImportDraft && productImageImportIsStale ? (
+                      <button
+                        type="button"
+                        onClick={rebaseProductImageImportDraft}
+                        disabled={Boolean(actingKey) || productImageImportUploading || !catalog}
+                        className="rounded-lg border border-current/30 px-3 py-1.5 text-xs font-bold hover:bg-current/10 disabled:opacity-50"
+                      >
+                        基于最新版重新匹配
+                      </button>
+                    ) : productImageImportDraft && productImageImportDraft.plan.summary.matched > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => void confirmProductImageImport()}
+                        disabled={Boolean(actingKey) || productImageImportUploading}
+                        className="rounded-lg border border-current/30 px-3 py-1.5 text-xs font-bold hover:bg-current/10 disabled:opacity-50"
+                      >
+                        重试当前批次
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={openProductImageImportPicker}
+                      disabled={Boolean(actingKey) || productImageImportUploading}
+                      className="rounded-lg border border-current/30 px-3 py-1.5 text-xs font-bold hover:bg-current/10 disabled:opacity-50"
+                    >
+                      重新选择图片
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
+            {productImportDraft ? (
+              <section
+                className={`mt-5 rounded-2xl border p-4 sm:p-5 ${darkMode ? "border-violet-400/30 bg-violet-400/5" : "border-violet-200 bg-violet-50/50"}`}
+                aria-labelledby={productImportPreviewTitleId}
+              >
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <h5 id={productImportPreviewTitleId} className="text-sm font-bold">核对 Excel 导入预览</h5>
+                    <p className={`mt-1 break-all text-xs leading-5 ${mutedTextClassName}`} title={productImportDraft.fileName}>
+                      {productImportDraft.fileName} · 共读取 {productImportDraft.rowCount} 条商品记录 · 基于目录修订版 {productImportDraft.baseRevision}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 gap-2">
+                    <button type="button" onClick={clearProductImportDraft} disabled={Boolean(actingKey)} className={`rounded-xl border px-3 py-2 text-xs font-semibold disabled:opacity-50 ${secondaryButtonClassName}`}>
+                      取消
+                    </button>
+                    <button type="button" onClick={() => productImportInputRef.current?.click()} disabled={Boolean(actingKey)} className={`rounded-xl border px-3 py-2 text-xs font-semibold disabled:opacity-50 ${secondaryButtonClassName}`}>
+                      重新选择
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {[
+                    ["有效记录", productImportDraft.plan.summary.total],
+                    ["新建", productImportDraft.plan.summary.created],
+                    ["更新", productImportDraft.plan.summary.updated],
+                    ["不变", productImportDraft.plan.summary.unchanged],
+                  ].map(([label, value]) => (
+                    <div key={String(label)} className={`rounded-xl border px-3 py-2.5 ${darkMode ? "border-slate-700 bg-slate-950/60" : "border-white bg-white"}`}>
+                      <p className={`text-[11px] ${mutedTextClassName}`}>{label}</p>
+                      <p className="mt-0.5 text-lg font-black">{value}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <div className={`mt-4 rounded-xl border px-3 py-3 text-xs leading-5 ${darkMode ? "border-slate-700 bg-slate-950/50 text-slate-300" : "border-violet-100 bg-white text-slate-600"}`}>
+                  <p className="font-bold text-inherit">导入规则</p>
+                  <ul className="mt-1 list-disc space-y-1 pl-5">
+                    <li>按商品编码匹配现有商品；编码为必填项，其他空单元格不会清空已有字段。</li>
+                    <li>更新商品时保留现有图片、可售状态和页面投放；Excel 只更新已填写的名称、介绍、价格和分类。</li>
+                    <li>新商品会以“隐藏且未投放”状态进入目录，核对图片和投放范围后再手动上架。</li>
+                    <li>确认时必须仍是修订版 {productImportDraft.baseRevision}；若目录已变化，系统会冲突重载，不会把草稿静默套用到新版目录。</li>
+                  </ul>
+                </div>
+
+                <div className="mt-4 overflow-x-auto rounded-xl border border-current/10">
+                  <table className="min-w-full text-left text-xs">
+                    <thead className={darkMode ? "bg-slate-950/70 text-slate-400" : "bg-white text-slate-500"}>
+                      <tr>
+                        <th className="whitespace-nowrap px-3 py-2 font-semibold">导入序号</th>
+                        <th className="min-w-40 px-3 py-2 font-semibold">商品编码</th>
+                        <th className="whitespace-nowrap px-3 py-2 font-semibold">操作</th>
+                        <th className="min-w-52 px-3 py-2 font-semibold">目录商品 ID</th>
+                      </tr>
+                    </thead>
+                    <tbody className={darkMode ? "divide-y divide-slate-800 bg-slate-950/30" : "divide-y divide-slate-100 bg-white/70"}>
+                      {productImportDraft.plan.rows.slice(0, 12).map((row) => (
+                        <tr key={`${row.rowIndex}:${row.normalizedCode}`}>
+                          <td className="whitespace-nowrap px-3 py-2.5">第 {row.rowIndex + 1} 条</td>
+                          <td className="px-3 py-2.5 font-semibold">{row.code}</td>
+                          <td className="whitespace-nowrap px-3 py-2.5">
+                            <span className={`rounded-full px-2 py-1 font-bold ${
+                              row.action === "create"
+                                ? darkMode ? "bg-emerald-400/10 text-emerald-200" : "bg-emerald-50 text-emerald-700"
+                                : row.action === "update"
+                                  ? darkMode ? "bg-sky-400/10 text-sky-200" : "bg-sky-50 text-sky-700"
+                                  : darkMode ? "bg-slate-800 text-slate-300" : "bg-slate-100 text-slate-600"
+                            }`}>{getProductImportActionLabel(row.action)}</span>
+                          </td>
+                          <td className={`px-3 py-2.5 font-mono text-[11px] ${mutedTextClassName}`}>{row.productId}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {productImportDraft.plan.rows.length > 12 ? (
+                  <p className={`mt-2 text-xs ${mutedTextClassName}`}>这里只预览前 12 行；另有 {productImportDraft.plan.rows.length - 12} 行会按同一规则处理。</p>
+                ) : null}
+
+                <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <p className={`text-xs leading-5 ${mutedTextClassName}`}>
+                    {productImportDraft.plan.summary.created + productImportDraft.plan.summary.updated === 0
+                      ? "文件内容与当前目录一致，无需提交。"
+                      : "确认后将立即写入经营目录；新商品不会自动公开展示。"}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void confirmProductImport()}
+                    disabled={Boolean(actingKey) || productImportDraft.plan.summary.created + productImportDraft.plan.summary.updated === 0}
+                    className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {actingKey === "bulk-import-products" ? <RefreshIcon spinning /> : <CheckIcon />}
+                    {actingKey === "bulk-import-products" ? "正在导入" : "确认批量导入"}
+                  </button>
+                </div>
+              </section>
+            ) : null}
+
+            {productImageImportDraft ? (
+              <section
+                className={`mt-5 rounded-2xl border p-4 sm:p-5 ${darkMode ? "border-cyan-400/30 bg-cyan-400/5" : "border-cyan-200 bg-cyan-50/50"}`}
+                aria-labelledby={productImageImportPreviewTitleId}
+                aria-busy={productImageImportUploading}
+              >
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <h5 id={productImageImportPreviewTitleId} className="text-sm font-bold">核对商品图片匹配预览</h5>
+                    <p className={`mt-1 text-xs leading-5 ${mutedTextClassName}`}>
+                      共选择 {productImageImportDraft.plan.summary.total} 张 · 基于目录修订版 {productImageImportDraft.baseRevision}
+                    </p>
+                  </div>
+                  <div className="grid shrink-0 grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={requestClearProductImageImportDraft}
+                      disabled={Boolean(actingKey) || productImageImportUploading}
+                      className={`rounded-xl border px-3 py-2 text-xs font-semibold disabled:opacity-50 ${secondaryButtonClassName}`}
+                    >
+                      关闭
+                    </button>
+                    <button
+                      type="button"
+                      onClick={openProductImageImportPicker}
+                      disabled={Boolean(actingKey) || productImageImportUploading}
+                      className={`rounded-xl border px-3 py-2 text-xs font-semibold disabled:opacity-50 ${secondaryButtonClassName}`}
+                    >
+                      重新选择
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {[
+                    ["所选图片", productImageImportDraft.plan.summary.total],
+                    ["匹配商品", productImageImportDraft.plan.summary.matched],
+                    ["未匹配", productImageImportDraft.plan.summary.unmatched],
+                    ["已上传缓存", productImageImportMatchedUploadedCount],
+                  ].map(([label, value]) => (
+                    <div key={String(label)} className={`rounded-xl border px-3 py-2.5 ${darkMode ? "border-slate-700 bg-slate-950/60" : "border-white bg-white"}`}>
+                      <p className={`text-[11px] ${mutedTextClassName}`}>{label}</p>
+                      <p className="mt-0.5 text-lg font-black">{value}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <div className={`mt-4 rounded-xl border px-3 py-3 text-xs leading-5 ${darkMode ? "border-slate-700 bg-slate-950/50 text-slate-300" : "border-cyan-100 bg-white text-slate-600"}`}>
+                  <p className="font-bold text-inherit">安全导入规则</p>
+                  <ul className="mt-1 list-disc space-y-1 pl-5">
+                    <li>文件名去掉扩展名后按商品编码匹配，例如 SKU-001.jpg → SKU-001；未匹配文件不会上传。</li>
+                    <li>只接受 JPEG、PNG、WebP；每张不超过 10 MB，每批最多 100 张且总大小不超过 100 MB。</li>
+                    <li>点击确认后才开始压缩和上传；全部匹配图片上传成功后，才会一次性写入目录。</li>
+                    <li>只替换商品原图和缩略图，名称、价格、分类、可售状态及页面投放保持不变。</li>
+                    <li>写入必须仍基于修订版 {productImageImportDraft.baseRevision}；目录变化后需要重新匹配并再次确认。</li>
+                  </ul>
+                </div>
+
+                {productImageImportIsStale ? (
+                  <div className={`mt-4 rounded-xl border px-3 py-3 text-xs leading-5 ${darkMode ? "border-amber-400/30 bg-amber-400/10 text-amber-100" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+                    <p className="font-bold">该预览已经过期，系统不会继续写入。</p>
+                    <p className="mt-1">请基于当前目录修订版 {catalog?.revision ?? "—"} 重新匹配；已上传成功且仍匹配的图片会复用。</p>
+                    <button
+                      type="button"
+                      onClick={rebaseProductImageImportDraft}
+                      disabled={Boolean(actingKey) || productImageImportUploading || !catalog}
+                      className="mt-2 rounded-lg border border-current/30 px-3 py-1.5 font-bold hover:bg-current/10 disabled:opacity-50"
+                    >
+                      基于最新版重新匹配
+                    </button>
+                  </div>
+                ) : null}
+
+                {productImageImportUnreferencedUploadCount > 0 ? (
+                  <div className={`mt-4 rounded-xl border px-3 py-3 text-xs leading-5 ${darkMode ? "border-amber-400/30 bg-amber-400/10 text-amber-100" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+                    有 {productImageImportUnreferencedUploadCount} 张已上传图片在最新版目录中不再匹配，本次确认不会引用；若关闭批次，它们可能成为未引用资源。
+                  </div>
+                ) : null}
+
+                <div className="mt-4 grid gap-2 md:grid-cols-2">
+                  {productImageImportDraft.plan.rows.slice(0, 20).map((row) => {
+                    const product = row.productId
+                      ? catalog?.products.find((item) => item.id === row.productId)
+                      : null;
+                    const uploaded = productImageImportUploadedFileNames.has(row.fileName);
+                    const failure = productImageImportFailureByFileName.get(row.fileName);
+                    const statusLabel = row.status === "matched" ? "已匹配" : row.status === "duplicate" ? "编码重复" : "未匹配";
+                    const statusClassName = row.status === "matched"
+                      ? darkMode ? "bg-emerald-400/10 text-emerald-200" : "bg-emerald-50 text-emerald-700"
+                      : row.status === "duplicate"
+                        ? darkMode ? "bg-rose-400/10 text-rose-200" : "bg-rose-50 text-rose-700"
+                        : darkMode ? "bg-slate-800 text-slate-300" : "bg-slate-100 text-slate-600";
+                    return (
+                      <article
+                        key={`${row.rowIndex}:${row.fileName}`}
+                        className={`min-w-0 rounded-xl border p-3 ${darkMode ? "border-slate-700 bg-slate-950/40" : "border-cyan-100 bg-white"}`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="break-all text-xs font-bold" title={row.fileName}>{row.fileName}</p>
+                            <p className={`mt-1 break-all font-mono text-[11px] ${mutedTextClassName}`}>编码 {row.code}</p>
+                          </div>
+                          <span className={`shrink-0 rounded-full px-2 py-1 text-[11px] font-bold ${statusClassName}`}>{statusLabel}</span>
+                        </div>
+                        <p className={`mt-2 break-words text-xs leading-5 ${mutedTextClassName}`}>
+                          {row.status === "matched"
+                            ? `${product?.name || "目录商品"} · ${row.productId}`
+                            : row.status === "unmatched"
+                              ? "目录中没有相同编码的商品，不会上传"
+                              : "同一编码对应多张文件或多个商品，整批已阻止"}
+                        </p>
+                        {uploaded ? (
+                          <p className={`mt-2 text-[11px] font-bold ${darkMode ? "text-sky-200" : "text-sky-700"}`}>已上传，写入失败时可直接复用</p>
+                        ) : failure ? (
+                          <p className={`mt-2 text-[11px] font-bold ${darkMode ? "text-rose-200" : "text-rose-700"}`}>上传失败：{failure.message}</p>
+                        ) : null}
+                      </article>
+                    );
+                  })}
+                </div>
+                {productImageImportDraft.plan.rows.length > 20 ? (
+                  <p className={`mt-2 text-xs ${mutedTextClassName}`}>
+                    这里只预览前 20 个文件；另有 {productImageImportDraft.plan.rows.length - 20} 个文件按同一规则处理。
+                  </p>
+                ) : null}
+
+                <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <p className={`text-xs leading-5 ${mutedTextClassName}`}>
+                    {productImageImportDraft.plan.summary.matched === 0
+                      ? "没有匹配商品，不会上传任何文件；请检查文件名或先补充商品编码。"
+                      : productImageImportDraft.uploadFailures.length > 0
+                        ? "重试只处理失败图片，已经上传成功的图片不会重复上传。"
+                        : productImageImportMatchedUploadedCount === productImageImportDraft.plan.summary.matched
+                          ? "匹配图片均已上传；确认会重试写入原子目录变更。"
+                          : `确认后上传 ${productImageImportDraft.plan.summary.matched} 张匹配图片；${productImageImportDraft.plan.summary.unmatched} 张未匹配图片保持在本机。`}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void confirmProductImageImport()}
+                    disabled={
+                      Boolean(actingKey) ||
+                      productImageImportUploading ||
+                      productImageImportIsStale ||
+                      productImageImportDraft.plan.summary.matched === 0
+                    }
+                    className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-cyan-600 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {productImageImportUploading || actingKey === "bulk-set-product-images" ? <RefreshIcon spinning /> : <CheckIcon />}
+                    {productImageImportUploading
+                      ? `正在上传 ${productImageImportProgress?.processed ?? 0}/${productImageImportProgress?.total ?? productImageImportDraft.plan.summary.matched}`
+                      : actingKey === "bulk-set-product-images"
+                        ? "正在写入目录"
+                        : productImageImportDraft.uploadFailures.length > 0
+                          ? "重试并写入目录"
+                          : productImageImportMatchedUploadedCount === productImageImportDraft.plan.summary.matched
+                            ? "重试写入目录"
+                            : "确认上传并写入"}
+                  </button>
+                </div>
+              </section>
+            ) : null}
 
             {productDraft ? (
               <form onSubmit={(event) => void submitProduct(event)} className={`mt-5 rounded-2xl border p-4 ${darkMode ? "border-sky-400/25 bg-sky-400/5" : "border-sky-200 bg-sky-50/50"}`}>

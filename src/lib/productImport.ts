@@ -9,7 +9,10 @@ import {
 export type ParsedProductImport = {
   items: ProductItemInput[];
   rowCount: number;
+  truncated: boolean;
 };
+
+const PRODUCT_IMPORT_SHEET_ROW_LIMIT = 1_002;
 
 const PRODUCT_HEADER_ALIASES: Record<"code" | "name" | "description" | "price" | "tag", string[]> = {
   code: ["编号", "产品编号", "商品编号", "货号", "编码", "SKU", "sku", "code", "id"],
@@ -45,20 +48,36 @@ function cellText(value: unknown) {
 }
 
 export function parseProductWorkbook(buffer: ArrayBuffer): ParsedProductImport {
-  const workbook = XLSX.read(buffer, { type: "array" });
+  const workbook = XLSX.read(buffer, {
+    type: "array",
+    // Header + 1,000 accepted records + one sentinel record. The sentinel
+    // lets the catalog planner reject oversized imports without materializing
+    // an unbounded worksheet in the browser.
+    sheetRows: PRODUCT_IMPORT_SHEET_ROW_LIMIT,
+  });
   const firstSheetName = workbook.SheetNames[0];
   if (!firstSheetName) {
-    return { items: [], rowCount: 0 };
+    return { items: [], rowCount: 0, truncated: false };
   }
 
   const sheet = workbook.Sheets[firstSheetName];
+  const restrictedRange = typeof sheet["!ref"] === "string" ? sheet["!ref"] : "";
+  const fullRange = typeof sheet["!fullref"] === "string" ? sheet["!fullref"] : "";
+  let truncated = false;
+  if (restrictedRange && fullRange) {
+    try {
+      truncated = XLSX.utils.decode_range(fullRange).e.r > XLSX.utils.decode_range(restrictedRange).e.r;
+    } catch {
+      truncated = false;
+    }
+  }
   const rows = XLSX.utils.sheet_to_json<(string | number | null)[]>(sheet, {
     header: 1,
     raw: false,
     defval: "",
   });
   if (rows.length === 0) {
-    return { items: [], rowCount: 0 };
+    return { items: [], rowCount: 0, truncated };
   }
 
   const headerRow = rows[0].map((value) => cellText(value));
@@ -86,6 +105,7 @@ export function parseProductWorkbook(buffer: ArrayBuffer): ParsedProductImport {
   return {
     items,
     rowCount: items.length,
+    truncated,
   };
 }
 

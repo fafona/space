@@ -13,6 +13,7 @@ import {
   resolvePlatformAccountIdentityForUser,
   type PlatformIdentitySupabaseClient,
 } from "@/lib/platformAccountIdentity";
+import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { normalizePublicAssetResponseUrl } from "@/lib/publicAssetUrl";
 import {
@@ -550,6 +551,37 @@ function normalizeAssetUsage(value: unknown, folder: string, mime: string): Asse
   return "generic-image";
 }
 
+export type ProductImageUploadProcessingError = {
+  status: 422;
+  code: "unsupported_product_image" | "product_image_decode_failed";
+  message: string;
+};
+
+/** Product images must be decodable before any object is written to storage. */
+export function resolveProductImageUploadProcessingError(input: {
+  usage: unknown;
+  mime: unknown;
+  thumbnailReady: boolean;
+}): ProductImageUploadProcessingError | null {
+  if (input.usage !== "product-image") return null;
+  const mime = String(input.mime ?? "").trim().toLowerCase();
+  if (mime !== "image/jpeg" && mime !== "image/png" && mime !== "image/webp") {
+    return {
+      status: 422,
+      code: "unsupported_product_image",
+      message: "Product images must be JPEG, PNG, or WebP files.",
+    };
+  }
+  if (!input.thumbnailReady) {
+    return {
+      status: 422,
+      code: "product_image_decode_failed",
+      message: "Product image decoding failed. Please choose another JPEG, PNG, or WebP file.",
+    };
+  }
+  return null;
+}
+
 function getAssetUploadLimitBytes(input: {
   usage: AssetUsage;
   permissionConfig: ReturnType<typeof createDefaultMerchantPermissionConfig>;
@@ -590,10 +622,19 @@ function getAssetUploadLimitBytes(input: {
   }
 }
 
-async function resolveActorContext(
+export type AssetUploadActorContextDependencies = {
+  resolveMerchantSession: typeof resolveMerchantSessionFromRequest;
+};
+
+const DEFAULT_ACTOR_CONTEXT_DEPENDENCIES: AssetUploadActorContextDependencies = {
+  resolveMerchantSession: resolveMerchantSessionFromRequest,
+};
+
+export async function resolveAssetUploadActorContext(
   request: Request,
   supabase: PlatformMerchantSnapshotStoreClient,
   merchantHint: string,
+  dependencies: AssetUploadActorContextDependencies = DEFAULT_ACTOR_CONTEXT_DEPENDENCIES,
 ): Promise<ActorContext> {
   if (isSuperAdminRequestAuthorized(request)) {
     return {
@@ -603,7 +644,14 @@ async function resolveActorContext(
     };
   }
 
-  const resolvedSession = await resolveMerchantSessionFromRequest(request);
+  const hintedMerchantId = isMerchantNumericId(merchantHint) ? merchantHint : "";
+  const resolvedSession = await dependencies.resolveMerchantSession(
+    request,
+    hintedMerchantId ? { hintedMerchantId } : undefined,
+  );
+  if (resolvedSession?.merchantId && hintedMerchantId && resolvedSession.merchantId !== hintedMerchantId) {
+    return { ok: false };
+  }
   if (!resolvedSession?.merchantId) {
     const authSupabase = createServerSupabaseAuthClient();
     const adminSupabase = createServerSupabaseServiceClient() as unknown as PlatformIdentitySupabaseClient | null;
@@ -770,7 +818,11 @@ export async function POST(request: Request) {
     },
   });
 
-  const actor = await resolveActorContext(request, supabase as unknown as PlatformMerchantSnapshotStoreClient, merchantHint);
+  const actor = await resolveAssetUploadActorContext(
+    request,
+    supabase as unknown as PlatformMerchantSnapshotStoreClient,
+    merchantHint,
+  );
   if (!actor.ok) {
     return NextResponse.json(
       {
@@ -965,7 +1017,10 @@ export async function POST(request: Request) {
   }
 
   let imageThumbnailBlob: Blob | null = null;
-  if (usage === "product-image" && uploadMime.startsWith("image/") && uploadMime !== "image/svg+xml") {
+  if (
+    usage === "product-image" &&
+    (uploadMime === "image/jpeg" || uploadMime === "image/png" || uploadMime === "image/webp")
+  ) {
     try {
       imageThumbnailBlob = await createImageThumbnail({
         blob: uploadBlob,
@@ -974,6 +1029,21 @@ export async function POST(request: Request) {
     } catch (error) {
       console.warn("[asset-upload] image thumbnail generation failed", error instanceof Error ? error.message : error);
     }
+  }
+  const productImageProcessingError = resolveProductImageUploadProcessingError({
+    usage,
+    mime: uploadMime,
+    thumbnailReady: Boolean(imageThumbnailBlob),
+  });
+  if (productImageProcessingError) {
+    return NextResponse.json(
+      {
+        ok: false,
+        code: productImageProcessingError.code,
+        message: productImageProcessingError.message,
+      },
+      { status: productImageProcessingError.status },
+    );
   }
 
   const now = new Date();

@@ -5,6 +5,8 @@ const MERCHANT_ORDER_SLUG_PREFIX = "__merchant_orders__:";
 const MERCHANT_ORDER_HISTORY_SLUG_PREFIX = "__merchant_orders_history_v2__:";
 const MERCHANT_ORDER_HISTORY_BACKUP_SLUG_PREFIX = "__merchant_orders_history_backup_v2__:";
 const MERCHANT_ORDER_CHUNK_SIZE = 100;
+const MERCHANT_ORDER_FULL_READ_PAGE_SIZE = 1000;
+const MERCHANT_ORDER_FULL_READ_MAX_ROWS = 10_000;
 
 export type MerchantOrdersStoreClient = {
   // Supabase query builders are heavily generic; this store only relies on runtime chaining.
@@ -235,33 +237,78 @@ async function listStoredMerchantOrdersRows(supabase: MerchantOrdersStoreClient,
   if (!normalizedSiteId) return [] as StoredMerchantOrdersRow[];
   const slugPrefix = `${buildOrdersSlug(normalizedSiteId)}%`;
 
-  const initialQuery = await supabase
-    .from("pages")
-    .select("id,slug,blocks,updated_at")
-    .eq("merchant_id", normalizedSiteId)
-    .like("slug", slugPrefix);
+  const readAllPages = async (includeMerchantId: boolean, includeUpdatedAt: boolean) => {
+    const rows: StoredMerchantOrdersRow[] = [];
+    const seenRowKeys = new Set<string>();
+    let offset = 0;
 
-  let data = (initialQuery.data ?? []) as StoredMerchantOrdersRow[];
-  let error = initialQuery.error;
+    while (offset <= MERCHANT_ORDER_FULL_READ_MAX_ROWS) {
+      const remainingCapacity = MERCHANT_ORDER_FULL_READ_MAX_ROWS - offset;
+      const requestedSize = Math.max(
+        1,
+        Math.min(MERCHANT_ORDER_FULL_READ_PAGE_SIZE, remainingCapacity || 1),
+      );
+      let query = supabase
+        .from("pages")
+        .select(includeUpdatedAt ? "id,slug,blocks,updated_at" : "id,slug,blocks");
+      if (includeMerchantId) query = query.eq("merchant_id", normalizedSiteId);
+      query = query.like("slug", slugPrefix);
+      if (typeof query.order !== "function" || typeof query.range !== "function") {
+        throw new Error("merchant_orders_read_failed:pagination_unsupported");
+      }
+      query = query
+        .order("slug", { ascending: true })
+        .order("id", { ascending: true })
+        .range(offset, offset + requestedSize - 1);
 
-  if (error) {
-    const message = toErrorMessage(error);
-    if (isMissingMerchantIdColumn(message)) {
-      const bySlug = await supabase.from("pages").select("id,slug,blocks,updated_at").like("slug", slugPrefix);
-      data = (bySlug.data ?? []) as StoredMerchantOrdersRow[];
-      error = bySlug.error;
-    } else if (isMissingSlugColumn(message)) {
-      return [];
-    } else {
+      const result = await query;
+      if (result.error) throw result.error;
+      if (!Array.isArray(result.data)) {
+        throw new Error("merchant_orders_read_failed:invalid_response");
+      }
+      const page = result.data as StoredMerchantOrdersRow[];
+      if (page.length > requestedSize) {
+        throw new Error("merchant_orders_read_failed:pagination_unsupported");
+      }
+      if (page.length === 0) return rows;
+      if (rows.length + page.length > MERCHANT_ORDER_FULL_READ_MAX_ROWS) {
+        throw new Error("merchant_orders_read_failed:row_limit_exceeded");
+      }
+
+      for (const row of page) {
+        const rowKey = `${normalizeText(row.slug)}\u0000${String(row.id ?? "").trim()}`;
+        if (seenRowKeys.has(rowKey)) {
+          throw new Error("merchant_orders_read_failed:pagination_unstable");
+        }
+        seenRowKeys.add(rowKey);
+      }
+      rows.push(...page);
+      offset += page.length;
+    }
+
+    throw new Error("merchant_orders_read_failed:row_limit_exceeded");
+  };
+
+  let includeMerchantId = true;
+  let includeUpdatedAt = true;
+  while (true) {
+    try {
+      return await readAllPages(includeMerchantId, includeUpdatedAt);
+    } catch (error) {
+      const message = toErrorMessage(error);
+      if (isMissingSlugColumn(message)) return [];
+      if (includeMerchantId && isMissingMerchantIdColumn(message)) {
+        includeMerchantId = false;
+        continue;
+      }
+      if (includeUpdatedAt && isMissingUpdatedAtColumn(message)) {
+        includeUpdatedAt = false;
+        continue;
+      }
+      if (message.startsWith("merchant_orders_read_failed:")) throw error;
       throwOrdersStoreQueryError(error);
     }
   }
-
-  if (error) {
-    if (isMissingSlugColumn(toErrorMessage(error))) return [];
-    throwOrdersStoreQueryError(error);
-  }
-  return Array.isArray(data) ? data : [];
 }
 
 async function listStoredMerchantOrdersRowMetadata(supabase: MerchantOrdersStoreClient, siteId: string) {

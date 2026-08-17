@@ -418,6 +418,8 @@ const MIN_BLOCK_HEIGHT = 120;
 
 const MAX_ORIGINAL_IMAGE_DATA_URL_LENGTH = 6_000_000;
 
+const PRODUCT_EXCEL_IMPORT_MAX_FILE_BYTES = 10 * 1024 * 1024;
+
 type EditorImageUploadPurpose = "common" | "gallery" | "page-background";
 
 type PersistedEditorAssetResult = {
@@ -1124,6 +1126,8 @@ type GalleryEditorImage = {
   const [productPreviewSearchByBlockId, setProductPreviewSearchByBlockId] = useState<Record<string, string>>({});
   const [productTagOptionsDraftByBlockId, setProductTagOptionsDraftByBlockId] = useState<Record<string, string>>({});
   const [productOperatingCatalogState, setProductOperatingCatalogState] = useState<"loading" | "active" | "legacy" | "blocked">("loading");
+  const productOperatingCatalogStateRef = useRef(productOperatingCatalogState);
+  productOperatingCatalogStateRef.current = productOperatingCatalogState;
   const [productOperatingCatalog, setProductOperatingCatalog] = useState<{
     pricePrefix: string;
     products: ProductEditorItem[];
@@ -2638,14 +2642,30 @@ type GalleryEditorImage = {
   }
 
   async function onImportProductSheet(event: ChangeEvent<HTMLInputElement>) {
-    if (block.type !== "product") return;
     const inputEl = event.currentTarget;
-    const file = event.target.files?.[0];
+    if (block.type !== "product" || productOperatingCatalogStateRef.current !== "legacy") {
+      inputEl.value = "";
+      return;
+    }
+    const file = inputEl.files?.[0];
     if (!file) return;
+    if (file.size > PRODUCT_EXCEL_IMPORT_MAX_FILE_BYTES) {
+      onAlert("Excel 文件不能超过 10 MB，请删除无关工作表、图片或格式后重试。");
+      inputEl.value = "";
+      return;
+    }
     try {
       const buffer = await file.arrayBuffer();
       const { mergeImportedProductRows, parseProductWorkbook } = await import("@/lib/productImport");
       const parsed = parseProductWorkbook(buffer);
+      if (productOperatingCatalogStateRef.current !== "legacy") {
+        onAlert("商品经营数据已切换到工作台目录，本次网站草稿导入已取消。请前往订单工作台导入。");
+        return;
+      }
+      if (parsed.truncated || parsed.items.length > 1_000) {
+        onAlert("Excel 首个工作表超过 1000 条读取上限，或有效范围中包含过多空白/格式行。请清理工作表后重试。");
+        return;
+      }
       if (parsed.items.length === 0) {
         onAlert("表格中没有可导入的产品数据。");
         return;
@@ -6616,6 +6636,21 @@ type GalleryEditorImage = {
 
   if (block.type === "product") {
     const productItems = getProductItems();
+    const productOperatingFieldsEditable = productOperatingCatalogState === "legacy";
+    const openProductOperatingCatalog = () => {
+      if (!onOpenOrderCatalog) return;
+      onOpenOrderCatalog({
+        blockId: block.id,
+        viewport: previewViewport,
+        productIds: [
+          ...new Set(
+            normalizeProductItems(block.props.products)
+              .filter((product) => isMeaningfulProductItem(product))
+              .map((product) => product.id),
+          ),
+        ],
+      });
+    };
     const productLayoutPreset = normalizeProductLayoutPreset(block.props.productLayoutPreset);
     const productContainerMode = normalizeProductContainerMode(block.props.productContainerMode);
     const productItemsPerPage = normalizeProductItemsPerPage(block.props.productItemsPerPage, productLayoutPreset);
@@ -6764,8 +6799,12 @@ type GalleryEditorImage = {
     const savedProductTagOptions =
       productOperatingCatalogState === "active" && productOperatingCatalog
         ? normalizeProductTagOptions(productOperatingCatalog.categoryNames)
-        : normalizeProductTagOptions(block.props.productTagOptions);
-    const productTagOptionsText = productTagOptionsDraftByBlockId[block.id] ?? savedProductTagOptions.join("\n");
+        : productOperatingCatalogState === "legacy"
+          ? normalizeProductTagOptions(block.props.productTagOptions)
+          : [];
+    const productTagOptionsText = productOperatingFieldsEditable
+      ? productTagOptionsDraftByBlockId[block.id] ?? savedProductTagOptions.join("\n")
+      : savedProductTagOptions.join("\n");
     const productTagOptions = Array.from(
       new Set([
         ...normalizeProductTagOptions(productTagOptionsText.split(/\r?\n/)),
@@ -6846,6 +6885,7 @@ type GalleryEditorImage = {
           : "justify-start text-left";
     const productDetailPriceAlignClass = productPriceAlignClass;
     const applyProductTagOptions = (rawValue: string) => {
+      if (!productOperatingFieldsEditable) return;
       const nextOptions = Array.from(new Set(rawValue.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)));
       const allowed = new Set(nextOptions);
       const nextItems = getProductItems().map((item) => (item.tag && !allowed.has(item.tag) ? { ...item, tag: "" } : item));
@@ -6890,6 +6930,7 @@ type GalleryEditorImage = {
       closeProductItemEditor();
     };
     const handleProductTagOptionsDraftChange = (rawValue: string) => {
+      if (!productOperatingFieldsEditable) return;
       setProductTagOptionsDraftByBlockId((current) => ({
         ...current,
         [block.id]: rawValue,
@@ -7456,19 +7497,7 @@ type GalleryEditorImage = {
               <button
                 type="button"
                 className="mt-3 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 shadow-sm hover:bg-slate-50"
-                onClick={() =>
-                  onOpenOrderCatalog({
-                    blockId: block.id,
-                    viewport: previewViewport,
-                    productIds: [
-                      ...new Set(
-                        normalizeProductItems(block.props.products)
-                          .filter((product) => isMeaningfulProductItem(product))
-                          .map((product) => product.id),
-                      ),
-                    ],
-                  })
-                }
+                onClick={openProductOperatingCatalog}
               >
                 打开订单工作台商品目录
               </button>
@@ -8323,14 +8352,17 @@ type GalleryEditorImage = {
                     <label className="block space-y-2 text-sm">
                       <span className="block text-gray-600">分类列表</span>
                       <BufferedEditorTextarea
-                        className="min-h-[110px] w-full rounded border px-3 py-2"
+                        className={`min-h-[110px] w-full rounded border px-3 py-2 ${productOperatingFieldsEditable ? "" : "border-slate-200 bg-slate-100 text-slate-600"}`}
                         value={productTagOptionsText}
+                        readOnly={!productOperatingFieldsEditable}
+                        aria-label={productOperatingFieldsEditable ? "商品分类列表" : "工作台商品分类列表（只读）"}
                         onChange={(event) => handleProductTagOptionsDraftChange(event.target.value)}
                         onBlur={(event) => applyProductTagOptions(event.target.value)}
-                        placeholder={"每行一个分类，例如：\n推荐\n新品\n热卖"}
+                        placeholder={productOperatingFieldsEditable ? "每行一个分类，例如：\n推荐\n新品\n热卖" : productOperatingCatalogState === "loading" ? "正在核对工作台目录" : productOperatingCatalogState === "blocked" ? "目录绑定待修复" : "工作台目录暂未设置分类"}
                       />
-                      <div className="text-xs text-gray-500">产品编辑卡里会从这里下拉选择分类。</div>
+                      <div className="text-xs leading-5 text-gray-500">{productOperatingFieldsEditable ? "产品编辑卡里会从这里下拉选择分类。" : "经营分类由订单工作台目录管理，此处只读；分类标签的布局和样式仍可在本节调整。"}</div>
                     </label>
+                    {!productOperatingFieldsEditable && onOpenOrderCatalog ? <button type="button" onClick={openProductOperatingCatalog} className="rounded border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">去工作台修改经营分类</button> : null}
                       </div>
                     ) : null}
                   </div>
@@ -8473,36 +8505,47 @@ type GalleryEditorImage = {
                   <label className="space-y-1 text-sm">
                     <span className="block text-gray-600">价格前缀</span>
                     <div className="grid grid-cols-[minmax(0,1fr)_96px] gap-3">
-                      <select
-                        className="w-full rounded border px-3 py-2 bg-white"
-                        value={productPricePrefixMode}
-                        onChange={(event) => {
-                          const next = event.target.value;
-                          if (next === "__custom__") {
-                            onChange({ productPricePrefix: "" });
-                            return;
-                          }
-                          onChange({ productPricePrefix: next });
-                        }}
-                      >
-                        {PRODUCT_PRICE_PREFIX_OPTIONS.map((item) => (
-                          <option key={item.value} value={item.value}>
-                            {item.label}
-                          </option>
-                        ))}
-                        <option value="__custom__">自定义</option>
-                      </select>
-                      {productPricePrefixMode === "__custom__" ? (
-                        <BufferedEditorInput
-                          className="w-full rounded border px-3 py-2"
-                          value={productPricePrefix}
-                          onChange={(event) => onChange({ productPricePrefix: event.target.value })}
-                          placeholder="自定义"
-                        />
+                      {productOperatingFieldsEditable ? (
+                        <>
+                          <select
+                            className="w-full rounded border px-3 py-2 bg-white"
+                            value={productPricePrefixMode}
+                            onChange={(event) => {
+                              const next = event.target.value;
+                              if (next === "__custom__") {
+                                onChange({ productPricePrefix: "" });
+                                return;
+                              }
+                              onChange({ productPricePrefix: next });
+                            }}
+                          >
+                            {PRODUCT_PRICE_PREFIX_OPTIONS.map((item) => (
+                              <option key={item.value} value={item.value}>{item.label}</option>
+                            ))}
+                            <option value="__custom__">自定义</option>
+                          </select>
+                          {productPricePrefixMode === "__custom__" ? (
+                            <BufferedEditorInput
+                              className="w-full rounded border px-3 py-2"
+                              value={productPricePrefix}
+                              onChange={(event) => onChange({ productPricePrefix: event.target.value })}
+                              placeholder="自定义"
+                            />
+                          ) : <div />}
+                        </>
                       ) : (
-                        <div />
+                        <>
+                          <BufferedEditorInput
+                            readOnly
+                            aria-label="工作台商品目录价格前缀（只读）"
+                            className="w-full rounded border border-slate-200 bg-slate-100 px-3 py-2 text-slate-600"
+                            value={productOperatingCatalogState === "active" ? productPricePrefix || "未设置" : productOperatingCatalogState === "loading" ? "正在核对目录" : "绑定待修复"}
+                          />
+                          {onOpenOrderCatalog ? <button type="button" onClick={openProductOperatingCatalog} className="rounded border border-slate-300 bg-white px-2 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">去工作台</button> : <div />}
+                        </>
                       )}
                     </div>
+                    {!productOperatingFieldsEditable ? <span className="block text-xs leading-5 text-slate-500">经营价格由订单工作台目录管理，此处只读。</span> : null}
                   </label>
                   <label className="space-y-1 text-sm">
                     <span className="block text-gray-600">价格位置</span>
@@ -8728,36 +8771,47 @@ type GalleryEditorImage = {
                     <label className="space-y-1 text-sm md:col-span-2">
                       <span className="block text-gray-600">价格前缀</span>
                       <div className="grid grid-cols-[minmax(0,1fr)_96px] gap-2.5">
-                        <select
-                          className="w-full rounded border bg-white px-3 py-1.5"
-                          value={productPricePrefixMode}
-                          onChange={(event) => {
-                            const next = event.target.value;
-                            if (next === "__custom__") {
-                              onChange({ productPricePrefix: "" });
-                              return;
-                            }
-                            onChange({ productPricePrefix: next });
-                          }}
-                        >
-                          {PRODUCT_PRICE_PREFIX_OPTIONS.map((item) => (
-                            <option key={item.value} value={item.value}>
-                              {item.label}
-                            </option>
-                          ))}
-                          <option value="__custom__">自定义</option>
-                        </select>
-                        {productPricePrefixMode === "__custom__" ? (
-                          <BufferedEditorInput
-                            className="w-full rounded border px-3 py-1.5"
-                            value={productPricePrefix}
-                            onChange={(event) => onChange({ productPricePrefix: event.target.value })}
-                            placeholder="自定义"
-                          />
+                        {productOperatingFieldsEditable ? (
+                          <>
+                            <select
+                              className="w-full rounded border bg-white px-3 py-1.5"
+                              value={productPricePrefixMode}
+                              onChange={(event) => {
+                                const next = event.target.value;
+                                if (next === "__custom__") {
+                                  onChange({ productPricePrefix: "" });
+                                  return;
+                                }
+                                onChange({ productPricePrefix: next });
+                              }}
+                            >
+                              {PRODUCT_PRICE_PREFIX_OPTIONS.map((item) => (
+                                <option key={item.value} value={item.value}>{item.label}</option>
+                              ))}
+                              <option value="__custom__">自定义</option>
+                            </select>
+                            {productPricePrefixMode === "__custom__" ? (
+                              <BufferedEditorInput
+                                className="w-full rounded border px-3 py-1.5"
+                                value={productPricePrefix}
+                                onChange={(event) => onChange({ productPricePrefix: event.target.value })}
+                                placeholder="自定义"
+                              />
+                            ) : <div />}
+                          </>
                         ) : (
-                          <div />
+                          <>
+                            <BufferedEditorInput
+                              readOnly
+                              aria-label="工作台商品目录价格前缀（只读）"
+                              className="w-full rounded border border-slate-200 bg-slate-100 px-3 py-1.5 text-slate-600"
+                              value={productOperatingCatalogState === "active" ? productPricePrefix || "未设置" : productOperatingCatalogState === "loading" ? "正在核对目录" : "绑定待修复"}
+                            />
+                            {onOpenOrderCatalog ? <button type="button" onClick={openProductOperatingCatalog} className="rounded border border-slate-300 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">去工作台</button> : <div />}
+                          </>
                         )}
                       </div>
+                      {!productOperatingFieldsEditable ? <span className="block text-xs leading-5 text-slate-500">经营价格由订单工作台目录管理，此处只读。</span> : null}
                     </label>
                     <label className="space-y-1 text-sm">
                       <span className="block text-gray-600">价格位置</span>
@@ -9049,14 +9103,17 @@ type GalleryEditorImage = {
                     <label className="space-y-2 text-sm">
                       <span className="block text-gray-600">分类列表</span>
                       <BufferedEditorTextarea
-                        className="min-h-[110px] w-full rounded border px-3 py-2"
+                        className={`min-h-[110px] w-full rounded border px-3 py-2 ${productOperatingFieldsEditable ? "" : "border-slate-200 bg-slate-100 text-slate-600"}`}
                         value={productTagOptionsText}
+                        readOnly={!productOperatingFieldsEditable}
+                        aria-label={productOperatingFieldsEditable ? "商品分类列表" : "工作台商品分类列表（只读）"}
                         onChange={(event) => handleProductTagOptionsDraftChange(event.target.value)}
                         onBlur={(event) => applyProductTagOptions(event.target.value)}
-                        placeholder={"每行一个分类，例如：\n推荐\n新品\n热卖"}
+                        placeholder={productOperatingFieldsEditable ? "每行一个分类，例如：\n推荐\n新品\n热卖" : productOperatingCatalogState === "loading" ? "正在核对工作台目录" : productOperatingCatalogState === "blocked" ? "目录绑定待修复" : "工作台目录暂未设置分类"}
                       />
-                      <div className="text-xs text-gray-500">产品编辑卡里会从这里下拉选择分类。</div>
+                      <div className="text-xs leading-5 text-gray-500">{productOperatingFieldsEditable ? "产品编辑卡里会从这里下拉选择分类。" : "经营分类由订单工作台目录管理，此处只读；分类标签的布局和样式仍可在本节调整。"}</div>
                     </label>
+                    {!productOperatingFieldsEditable && onOpenOrderCatalog ? <button type="button" onClick={openProductOperatingCatalog} className="rounded border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">去工作台修改经营分类</button> : null}
                     </div>,
                   )}
                   {renderProductSettingsSection(

@@ -1,5 +1,10 @@
 import type { Block } from "@/data/homeBlocks";
-import { isMeaningfulProductItem, normalizeProductItems } from "@/lib/productBlock";
+import { MERCHANT_ID_REGEX } from "@/lib/merchantIdRules";
+import {
+  isMeaningfulProductItem,
+  normalizeProductCode,
+  normalizeProductItems,
+} from "@/lib/productBlock";
 
 export type MerchantCatalogAvailability = "available" | "sold_out" | "hidden";
 export type MerchantCatalogViewport = "desktop" | "mobile" | "shared";
@@ -89,6 +94,8 @@ export type MerchantCatalogBootstrapResult = {
 
 export type MerchantCatalogMutation =
   | { action: "upsert_product"; product: unknown; productId?: unknown; collectionIds?: unknown }
+  | { action: "bulk_import_products"; items: unknown }
+  | { action: "bulk_set_product_images"; items: unknown; merchantId: unknown }
   | { action: "delete_product"; productId: unknown }
   | { action: "set_availability"; productId: unknown; availability: unknown }
   | { action: "upsert_category"; category: unknown }
@@ -101,11 +108,124 @@ export type MerchantCatalogMutationResult =
   | { ok: true; catalog: MerchantCatalog }
   | { ok: false; error: string };
 
+export type MerchantCatalogProductImportAction = "create" | "update" | "unchanged";
+
+export type MerchantCatalogProductImportRow = {
+  rowIndex: number;
+  code: string;
+  normalizedCode: string;
+  action: MerchantCatalogProductImportAction;
+  productId: string;
+};
+
+export type MerchantCatalogProductImportSummary = {
+  total: number;
+  created: number;
+  updated: number;
+  unchanged: number;
+};
+
+export type MerchantCatalogProductImportPlan =
+  | {
+      ok: true;
+      catalog: MerchantCatalog;
+      rows: MerchantCatalogProductImportRow[];
+      summary: MerchantCatalogProductImportSummary;
+    }
+  | { ok: false; error: string; rowIndex?: number };
+
+export type MerchantCatalogProductImageMatchStatus = "matched" | "unmatched" | "duplicate";
+
+export type MerchantCatalogProductImageMatchRow = {
+  rowIndex: number;
+  fileName: string;
+  code: string;
+  normalizedCode: string;
+  status: MerchantCatalogProductImageMatchStatus;
+  productId?: string;
+};
+
+export type MerchantCatalogProductImageMatchSummary = {
+  total: number;
+  matched: number;
+  unmatched: number;
+  duplicates: number;
+};
+
+export type MerchantCatalogProductImageMatchPlan =
+  | {
+      ok: true;
+      rows: MerchantCatalogProductImageMatchRow[];
+      summary: MerchantCatalogProductImageMatchSummary;
+    }
+  | {
+      ok: false;
+      error: string;
+      rowIndex?: number;
+      rows?: MerchantCatalogProductImageMatchRow[];
+      summary?: MerchantCatalogProductImageMatchSummary;
+    };
+
+export type MerchantCatalogProductImageImportAction =
+  | "update"
+  | "unchanged"
+  | "unmatched"
+  | "duplicate";
+
+export type MerchantCatalogProductImageImportRow = Omit<MerchantCatalogProductImageMatchRow, "status"> & {
+  action: MerchantCatalogProductImageImportAction;
+  imageUrl: string;
+  thumbnailUrl: string;
+};
+
+export type MerchantCatalogProductImageImportSummary = MerchantCatalogProductImageMatchSummary & {
+  updated: number;
+  unchanged: number;
+};
+
+export type MerchantCatalogProductImageImportPlan =
+  | {
+      ok: true;
+      catalog: MerchantCatalog;
+      rows: MerchantCatalogProductImageImportRow[];
+      summary: MerchantCatalogProductImageImportSummary;
+    }
+  | {
+      ok: false;
+      error: string;
+      rowIndex?: number;
+      rows?: MerchantCatalogProductImageImportRow[] | MerchantCatalogProductImageMatchRow[];
+      summary?: MerchantCatalogProductImageImportSummary | MerchantCatalogProductImageMatchSummary;
+    };
+
+export type MerchantCatalogProductImageAssetReference = {
+  url: string;
+  bucket: "page-assets" | "assets" | "uploads" | "public";
+  objectPath: string;
+};
+
+export type MerchantCatalogPreparedProductImageImportItem = {
+  rowIndex: number;
+  fileName: string;
+  code: string;
+  normalizedCode: string;
+  imageUrl: string;
+  thumbnailUrl: string;
+  imageAsset: MerchantCatalogProductImageAssetReference;
+  thumbnailAsset?: MerchantCatalogProductImageAssetReference;
+};
+
+export type MerchantCatalogPreparedProductImageImport =
+  | { ok: true; items: MerchantCatalogPreparedProductImageImportItem[] }
+  | { ok: false; error: string; rowIndex?: number };
+
 export const MERCHANT_CATALOG_MAX_PRODUCTS = 1_000;
 export const MERCHANT_CATALOG_MAX_CATEGORIES = 200;
 export const MERCHANT_CATALOG_MAX_COLLECTIONS = 200;
 export const MERCHANT_CATALOG_MAX_SERIALIZED_BYTES = 512_000;
 export const MERCHANT_CATALOG_MAX_UNIT_PRICE = 999_999_999.99;
+export const MERCHANT_CATALOG_MAX_PRODUCT_IMAGE_IMPORT_ITEMS = 100;
+export const MERCHANT_CATALOG_MAX_PRODUCT_IMAGE_BYTES = 8 * 1024 * 1024;
 
 type PublishedProductBlock = Extract<Block, { type: "product" }>;
 
@@ -550,8 +670,561 @@ function syncCategoriesForProduct(
     };
     return next;
   }
-  next.push({ id: categoryId(product.tag), name: product.tag, productIds: [product.id] });
+  const baseId = categoryId(product.tag);
+  let id = baseId;
+  let suffix = 2;
+  while (next.some((category) => category.id === id)) {
+    id = `${baseId}-${suffix}`;
+    suffix += 1;
+  }
+  next.push({ id, name: product.tag, productIds: [product.id] });
   return next;
+}
+
+function importProductIdHash(value: string) {
+  let first = 0x811c9dc5;
+  let second = 0x9e3779b9;
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    first = Math.imul(first ^ codeUnit, 0x01000193);
+    second = Math.imul(second ^ codeUnit, 0x85ebca6b);
+  }
+  return `${(first >>> 0).toString(36)}${(second >>> 0).toString(36)}`;
+}
+
+function createImportedProductId(normalizedCode: string, usedIds: Set<string>) {
+  const baseId = `import-product-${importProductIdHash(normalizedCode)}`;
+  let id = baseId;
+  let suffix = 2;
+  while (usedIds.has(id)) {
+    id = `${baseId}-${suffix}`;
+    suffix += 1;
+  }
+  return id;
+}
+
+function merchantCatalogProductsEqual(
+  left: MerchantCatalogProduct,
+  right: MerchantCatalogProduct,
+) {
+  return (
+    left.id === right.id &&
+    left.code === right.code &&
+    left.name === right.name &&
+    left.description === right.description &&
+    left.price === right.price &&
+    left.imageUrl === right.imageUrl &&
+    left.thumbnailUrl === right.thumbnailUrl &&
+    left.tag === right.tag &&
+    left.availability === right.availability
+  );
+}
+
+/**
+ * Builds an all-or-nothing product import without mutating or versioning the
+ * catalog. Both browser previews and server mutations use this exact planner.
+ */
+export function planMerchantCatalogProductImport(
+  value: unknown,
+  items: unknown,
+): MerchantCatalogProductImportPlan {
+  const catalog = normalizeMerchantCatalog(value);
+  if (!Array.isArray(items)) {
+    return { ok: false, error: "invalid_merchant_catalog_import_items" };
+  }
+  if (items.length === 0) {
+    return { ok: false, error: "invalid_merchant_catalog_import_items" };
+  }
+  if (items.length > MERCHANT_CATALOG_MAX_PRODUCTS) {
+    return { ok: false, error: "merchant_catalog_limit_exceeded" };
+  }
+
+  const existingByCode = new Map<string, MerchantCatalogProduct>();
+  for (const product of catalog.products) {
+    const normalizedCode = normalizeProductCode(product.code);
+    if (!normalizedCode) continue;
+    if (existingByCode.has(normalizedCode)) {
+      return { ok: false, error: "merchant_catalog_existing_duplicate_code" };
+    }
+    existingByCode.set(normalizedCode, product);
+  }
+
+  const importedCodes = new Set<string>();
+  const importTextEncoder = new TextEncoder();
+  let importedFieldBytes = 2;
+  const importedRows: Array<{
+    rowIndex: number;
+    code: string;
+    normalizedCode: string;
+    raw: Record<string, unknown>;
+  }> = [];
+  for (let rowIndex = 0; rowIndex < items.length; rowIndex += 1) {
+    const item = items[rowIndex];
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      return { ok: false, error: "invalid_merchant_catalog_import_row", rowIndex };
+    }
+    const raw = item as Record<string, unknown>;
+    for (const field of ["code", "name", "description", "price", "tag"] as const) {
+      const fieldValue = typeof raw[field] === "string" ? raw[field] : "";
+      if (fieldValue.length > MERCHANT_CATALOG_MAX_SERIALIZED_BYTES) {
+        return { ok: false, error: "merchant_catalog_limit_exceeded", rowIndex };
+      }
+      importedFieldBytes += importTextEncoder.encode(fieldValue).byteLength + field.length + 6;
+      if (importedFieldBytes > MERCHANT_CATALOG_MAX_SERIALIZED_BYTES) {
+        return { ok: false, error: "merchant_catalog_limit_exceeded", rowIndex };
+      }
+    }
+    const code = trimText(raw.code);
+    const normalizedCode = normalizeProductCode(code);
+    if (!code || !normalizedCode) {
+      return { ok: false, error: "invalid_merchant_catalog_import_code", rowIndex };
+    }
+    if (importedCodes.has(normalizedCode)) {
+      return { ok: false, error: "merchant_catalog_import_duplicate_code", rowIndex };
+    }
+    importedCodes.add(normalizedCode);
+    importedRows.push({ rowIndex, code, normalizedCode, raw });
+  }
+
+  const products = catalog.products.map((product) => ({ ...product }));
+  let categories = catalog.categories.map((category) => ({
+    ...category,
+    productIds: [...category.productIds],
+  }));
+  const usedProductIds = new Set(products.map((product) => product.id));
+  const rows: MerchantCatalogProductImportRow[] = [];
+  const summary: MerchantCatalogProductImportSummary = {
+    total: importedRows.length,
+    created: 0,
+    updated: 0,
+    unchanged: 0,
+  };
+
+  for (const imported of importedRows) {
+    const name = trimText(imported.raw.name);
+    const description = trimText(imported.raw.description);
+    const price = trimText(imported.raw.price);
+    const tag = trimText(imported.raw.tag);
+    const existing = existingByCode.get(imported.normalizedCode);
+
+    if (price && parseMerchantCatalogUnitPrice(price) === null) {
+      return {
+        ok: false,
+        error: "invalid_merchant_catalog_import_product_price",
+        rowIndex: imported.rowIndex,
+      };
+    }
+
+    if (existing) {
+      const product: MerchantCatalogProduct = {
+        ...existing,
+        code: imported.code,
+        name: name || existing.name,
+        description: description || existing.description,
+        price: price || existing.price,
+        tag: tag || existing.tag,
+      };
+      const productIndex = products.findIndex((candidate) => candidate.id === existing.id);
+      const action: MerchantCatalogProductImportAction = merchantCatalogProductsEqual(existing, product)
+        ? "unchanged"
+        : "update";
+      if (action === "update") {
+        products[productIndex] = product;
+        if (product.tag !== existing.tag) categories = syncCategoriesForProduct(categories, product);
+        summary.updated += 1;
+      } else {
+        summary.unchanged += 1;
+      }
+      rows.push({
+        rowIndex: imported.rowIndex,
+        code: imported.code,
+        normalizedCode: imported.normalizedCode,
+        action,
+        productId: product.id,
+      });
+      continue;
+    }
+
+    if (!name) {
+      return {
+        ok: false,
+        error: "invalid_merchant_catalog_import_product_name",
+        rowIndex: imported.rowIndex,
+      };
+    }
+    if (!price || parseMerchantCatalogUnitPrice(price) === null) {
+      return {
+        ok: false,
+        error: "invalid_merchant_catalog_import_product_price",
+        rowIndex: imported.rowIndex,
+      };
+    }
+
+    const product: MerchantCatalogProduct = {
+      id: createImportedProductId(imported.normalizedCode, usedProductIds),
+      code: imported.code,
+      name,
+      description,
+      price,
+      imageUrl: "",
+      thumbnailUrl: "",
+      tag,
+      availability: "hidden",
+    };
+    usedProductIds.add(product.id);
+    products.push(product);
+    if (tag) categories = syncCategoriesForProduct(categories, product);
+    summary.created += 1;
+    rows.push({
+      rowIndex: imported.rowIndex,
+      code: imported.code,
+      normalizedCode: imported.normalizedCode,
+      action: "create",
+      productId: product.id,
+    });
+  }
+
+  const nextCatalog: MerchantCatalog = {
+    ...catalog,
+    products,
+    categories,
+    collections: catalog.collections.map((collection) => ({
+      ...collection,
+      productIds: [...collection.productIds],
+    })),
+  };
+  const validationError = getMerchantCatalogValidationError(nextCatalog);
+  if (validationError) return { ok: false, error: validationError };
+  return { ok: true, catalog: nextCatalog, rows, summary };
+}
+
+function productImageFileCode(fileName: string) {
+  return fileName.replace(/\.[^.]+$/, "");
+}
+
+function readProductImageFileNames(value: unknown):
+  | {
+      ok: true;
+      rows: Array<{ rowIndex: number; fileName: string; code: string; normalizedCode: string }>;
+    }
+  | { ok: false; error: string; rowIndex?: number } {
+  if (!Array.isArray(value) || value.length === 0) {
+    return { ok: false, error: "invalid_merchant_catalog_image_import_items" };
+  }
+  if (value.length > MERCHANT_CATALOG_MAX_PRODUCT_IMAGE_IMPORT_ITEMS) {
+    return { ok: false, error: "merchant_catalog_image_import_limit_exceeded" };
+  }
+
+  const encoder = new TextEncoder();
+  let inputBytes = 2;
+  const rows: Array<{ rowIndex: number; fileName: string; code: string; normalizedCode: string }> = [];
+  for (let rowIndex = 0; rowIndex < value.length; rowIndex += 1) {
+    const rawFileName = value[rowIndex];
+    if (typeof rawFileName !== "string") {
+      return { ok: false, error: "invalid_merchant_catalog_image_file_name", rowIndex };
+    }
+    const fileName = rawFileName.trim();
+    inputBytes += encoder.encode(fileName).byteLength + 4;
+    if (
+      !fileName ||
+      fileName.length > 255 ||
+      inputBytes > MERCHANT_CATALOG_MAX_SERIALIZED_BYTES ||
+      /[\\/\u0000-\u001f]/.test(fileName)
+    ) {
+      return { ok: false, error: "invalid_merchant_catalog_image_file_name", rowIndex };
+    }
+    const code = productImageFileCode(fileName).trim();
+    const normalizedCode = normalizeProductCode(code);
+    if (!code || !normalizedCode) {
+      return { ok: false, error: "invalid_merchant_catalog_image_file_name", rowIndex };
+    }
+    rows.push({ rowIndex, fileName, code, normalizedCode });
+  }
+  return { ok: true, rows };
+}
+
+/**
+ * Matches filenames before any upload occurs. This is the single filename to
+ * product matching boundary shared by preview and the persisted mutation.
+ */
+export function planMerchantCatalogProductImageMatches(
+  value: unknown,
+  fileNames: unknown,
+): MerchantCatalogProductImageMatchPlan {
+  const catalog = normalizeMerchantCatalog(value);
+  const parsed = readProductImageFileNames(fileNames);
+  if (!parsed.ok) return parsed;
+
+  const productsByCode = new Map<string, MerchantCatalogProduct[]>();
+  for (const product of catalog.products) {
+    const normalizedCode = normalizeProductCode(product.code);
+    if (!normalizedCode) continue;
+    const products = productsByCode.get(normalizedCode) ?? [];
+    products.push(product);
+    productsByCode.set(normalizedCode, products);
+  }
+  const importedCodeCounts = new Map<string, number>();
+  let importedDuplicateRowIndex: number | undefined;
+  const seenCodes = new Set<string>();
+  for (const row of parsed.rows) {
+    importedCodeCounts.set(row.normalizedCode, (importedCodeCounts.get(row.normalizedCode) ?? 0) + 1);
+    if (seenCodes.has(row.normalizedCode) && importedDuplicateRowIndex === undefined) {
+      importedDuplicateRowIndex = row.rowIndex;
+    }
+    seenCodes.add(row.normalizedCode);
+  }
+
+  let existingDuplicateRowIndex: number | undefined;
+  const rows = parsed.rows.map<MerchantCatalogProductImageMatchRow>((row) => {
+    const candidates = productsByCode.get(row.normalizedCode) ?? [];
+    const duplicate = (importedCodeCounts.get(row.normalizedCode) ?? 0) > 1 || candidates.length > 1;
+    if (candidates.length > 1 && existingDuplicateRowIndex === undefined) {
+      existingDuplicateRowIndex = row.rowIndex;
+    }
+    if (duplicate) return { ...row, status: "duplicate" };
+    const product = candidates[0];
+    return product
+      ? { ...row, status: "matched", productId: product.id }
+      : { ...row, status: "unmatched" };
+  });
+  const summary: MerchantCatalogProductImageMatchSummary = {
+    total: rows.length,
+    matched: rows.filter((row) => row.status === "matched").length,
+    unmatched: rows.filter((row) => row.status === "unmatched").length,
+    duplicates: rows.filter((row) => row.status === "duplicate").length,
+  };
+  if (importedDuplicateRowIndex !== undefined) {
+    return {
+      ok: false,
+      error: "merchant_catalog_image_import_duplicate_code",
+      rowIndex: importedDuplicateRowIndex,
+      rows,
+      summary,
+    };
+  }
+  if (existingDuplicateRowIndex !== undefined) {
+    return {
+      ok: false,
+      error: "merchant_catalog_existing_duplicate_code",
+      rowIndex: existingDuplicateRowIndex,
+      rows,
+      summary,
+    };
+  }
+  return { ok: true, rows, summary };
+}
+
+const MERCHANT_CATALOG_ASSET_BUCKETS = new Set(["page-assets", "assets", "uploads", "public"]);
+
+function isAllowedMerchantCatalogAssetHost(hostname: string, protocol: string) {
+  const normalizedHost = hostname.toLowerCase();
+  const local = normalizedHost === "localhost" || normalizedHost === "127.0.0.1";
+  if (protocol !== "https:" && !(protocol === "http:" && local)) return false;
+  return (
+    local ||
+    normalizedHost === "faolla.com" ||
+    normalizedHost.endsWith(".faolla.com") ||
+    normalizedHost.endsWith(".supabase.co")
+  );
+}
+
+function parseMerchantCatalogProductImageAssetUrl(
+  value: unknown,
+  merchantId: string,
+  role: "image" | "thumbnail",
+): MerchantCatalogProductImageAssetReference | null {
+  if (typeof value !== "string") return null;
+  const raw = value.trim();
+  if (!raw || raw.length > 2_048 || /^(?:data|blob):/i.test(raw)) return null;
+
+  let pathname = "";
+  if (raw.startsWith("/")) {
+    if (raw.startsWith("//") || raw.includes("?") || raw.includes("#")) return null;
+    pathname = raw;
+  } else {
+    let parsed: URL;
+    try {
+      parsed = new URL(raw);
+    } catch {
+      return null;
+    }
+    if (
+      !isAllowedMerchantCatalogAssetHost(parsed.hostname, parsed.protocol) ||
+      parsed.username ||
+      parsed.password ||
+      parsed.search ||
+      parsed.hash
+    ) {
+      return null;
+    }
+    pathname = parsed.pathname;
+  }
+  if (pathname.includes("%") || pathname.includes("\\") || pathname.includes("//")) return null;
+  const parts = pathname.split("/").filter(Boolean);
+  if (
+    parts.length !== 10 ||
+    parts[0] !== "storage" ||
+    parts[1] !== "v1" ||
+    parts[2] !== "object" ||
+    parts[3] !== "public" ||
+    !MERCHANT_CATALOG_ASSET_BUCKETS.has(parts[4] ?? "") ||
+    parts[5] !== "merchant-assets" ||
+    parts[6] !== merchantId ||
+    !/^20\d{2}$/.test(parts[7] ?? "") ||
+    !/^(?:0[1-9]|1[0-2])$/.test(parts[8] ?? "")
+  ) {
+    return null;
+  }
+  const fileName = parts[9] ?? "";
+  const regularImage = /^\d{10,16}-[a-z0-9]{6}\.(?:jpe?g|png|webp)$/.test(fileName);
+  const thumbnail = /^\d{10,16}-[a-z0-9]{6}-thumb\.webp$/.test(fileName);
+  if ((role === "image" && !regularImage) || (role === "thumbnail" && !thumbnail)) return null;
+  const bucket = parts[4] as MerchantCatalogProductImageAssetReference["bucket"];
+  const objectPath = parts.slice(5).join("/");
+  return {
+    url: `/storage/v1/object/public/${bucket}/${objectPath}`,
+    bucket,
+    objectPath,
+  };
+}
+
+export function prepareMerchantCatalogProductImageImport(
+  items: unknown,
+  merchantIdValue: unknown,
+): MerchantCatalogPreparedProductImageImport {
+  const merchantId = trimText(merchantIdValue);
+  if (!MERCHANT_ID_REGEX.test(merchantId)) {
+    return { ok: false, error: "invalid_merchant_catalog_image_merchant_id" };
+  }
+  if (!Array.isArray(items) || items.length === 0) {
+    return { ok: false, error: "invalid_merchant_catalog_image_import_items" };
+  }
+  if (items.length > MERCHANT_CATALOG_MAX_PRODUCT_IMAGE_IMPORT_ITEMS) {
+    return { ok: false, error: "merchant_catalog_image_import_limit_exceeded" };
+  }
+
+  const encoder = new TextEncoder();
+  let inputBytes = 2;
+  const prepared: MerchantCatalogPreparedProductImageImportItem[] = [];
+  for (let rowIndex = 0; rowIndex < items.length; rowIndex += 1) {
+    const raw = items[rowIndex];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      return { ok: false, error: "invalid_merchant_catalog_image_import_row", rowIndex };
+    }
+    const record = raw as Record<string, unknown>;
+    if (
+      typeof record.fileName !== "string" ||
+      typeof record.imageUrl !== "string" ||
+      (record.thumbnailUrl !== undefined && typeof record.thumbnailUrl !== "string")
+    ) {
+      return { ok: false, error: "invalid_merchant_catalog_image_import_row", rowIndex };
+    }
+    const fileName = record.fileName.trim();
+    const imageUrl = record.imageUrl.trim();
+    const thumbnailUrl = trimText(record.thumbnailUrl);
+    inputBytes += encoder.encode(fileName).byteLength + encoder.encode(imageUrl).byteLength + encoder.encode(thumbnailUrl).byteLength + 36;
+    if (inputBytes > MERCHANT_CATALOG_MAX_SERIALIZED_BYTES) {
+      return { ok: false, error: "merchant_catalog_limit_exceeded", rowIndex };
+    }
+    const parsedFileName = readProductImageFileNames([fileName]);
+    if (!parsedFileName.ok) {
+      return { ok: false, error: parsedFileName.error, rowIndex };
+    }
+    const imageAsset = parseMerchantCatalogProductImageAssetUrl(imageUrl, merchantId, "image");
+    if (!imageAsset) {
+      return { ok: false, error: "invalid_merchant_catalog_product_image_asset", rowIndex };
+    }
+    const thumbnailAsset = thumbnailUrl
+      ? parseMerchantCatalogProductImageAssetUrl(thumbnailUrl, merchantId, "thumbnail")
+      : null;
+    if (thumbnailUrl && !thumbnailAsset) {
+      return { ok: false, error: "invalid_merchant_catalog_product_thumbnail_asset", rowIndex };
+    }
+    if (thumbnailAsset) {
+      const imageBasePath = imageAsset.objectPath.replace(/\.[^.]+$/, "");
+      if (
+        thumbnailAsset.bucket !== imageAsset.bucket ||
+        thumbnailAsset.objectPath !== `${imageBasePath}-thumb.webp`
+      ) {
+        return { ok: false, error: "invalid_merchant_catalog_product_thumbnail_asset", rowIndex };
+      }
+    }
+    const fileRow = parsedFileName.rows[0]!;
+    prepared.push({
+      ...fileRow,
+      rowIndex,
+      imageUrl: imageAsset.url,
+      thumbnailUrl: thumbnailAsset?.url ?? "",
+      imageAsset,
+      ...(thumbnailAsset ? { thumbnailAsset } : {}),
+    });
+  }
+  return { ok: true, items: prepared };
+}
+
+/** Plans an atomic image import after the upload endpoint has returned assets. */
+export function planMerchantCatalogProductImageImport(
+  value: unknown,
+  items: unknown,
+  merchantId: unknown,
+): MerchantCatalogProductImageImportPlan {
+  const catalog = normalizeMerchantCatalog(value);
+  const prepared = prepareMerchantCatalogProductImageImport(items, merchantId);
+  if (!prepared.ok) return prepared;
+  const matches = planMerchantCatalogProductImageMatches(
+    catalog,
+    prepared.items.map((item) => item.fileName),
+  );
+  if (!matches.ok) return matches;
+
+  const products = catalog.products.map((product) => ({ ...product }));
+  let updated = 0;
+  let unchanged = 0;
+  const rows = matches.rows.map<MerchantCatalogProductImageImportRow>((match) => {
+    const { status: matchStatus, ...matchFields } = match;
+    const imported = prepared.items[match.rowIndex]!;
+    if (matchStatus === "unmatched" || !match.productId) {
+      return {
+        ...matchFields,
+        action: "unmatched",
+        imageUrl: imported.imageUrl,
+        thumbnailUrl: imported.thumbnailUrl,
+      };
+    }
+    const productIndex = products.findIndex((product) => product.id === match.productId);
+    const product = products[productIndex]!;
+    const changed = product.imageUrl !== imported.imageUrl || product.thumbnailUrl !== imported.thumbnailUrl;
+    if (changed) {
+      products[productIndex] = {
+        ...product,
+        imageUrl: imported.imageUrl,
+        thumbnailUrl: imported.thumbnailUrl,
+      };
+      updated += 1;
+    } else {
+      unchanged += 1;
+    }
+    return {
+      ...matchFields,
+      action: changed ? "update" : "unchanged",
+      imageUrl: imported.imageUrl,
+      thumbnailUrl: imported.thumbnailUrl,
+    };
+  });
+  const summary: MerchantCatalogProductImageImportSummary = {
+    ...matches.summary,
+    updated,
+    unchanged,
+  };
+  const nextCatalog: MerchantCatalog = {
+    ...catalog,
+    products,
+    categories: catalog.categories.map((category) => ({ ...category, productIds: [...category.productIds] })),
+    collections: catalog.collections.map((collection) => ({ ...collection, productIds: [...collection.productIds] })),
+  };
+  const validationError = getMerchantCatalogValidationError(nextCatalog);
+  if (validationError) return { ok: false, error: validationError, rows, summary };
+  return { ok: true, catalog: nextCatalog, rows, summary };
 }
 
 /** Applies one catalog-management action without mutating or versioning the input. */
@@ -560,6 +1233,22 @@ export function applyMerchantCatalogMutation(
   mutation: MerchantCatalogMutation,
 ): MerchantCatalogMutationResult {
   const catalog = normalizeMerchantCatalog(value);
+
+  if (mutation.action === "bulk_import_products") {
+    const plan = planMerchantCatalogProductImport(catalog, mutation.items);
+    return plan.ok
+      ? { ok: true, catalog: plan.catalog }
+      : { ok: false, error: plan.error };
+  }
+
+  if (mutation.action === "bulk_set_product_images") {
+    const plan = planMerchantCatalogProductImageImport(catalog, mutation.items, mutation.merchantId);
+    if (!plan.ok) return { ok: false, error: plan.error };
+    if (plan.summary.updated === 0) {
+      return { ok: false, error: "merchant_catalog_image_import_no_changes" };
+    }
+    return { ok: true, catalog: plan.catalog };
+  }
 
   if (mutation.action === "upsert_product") {
     if (!mutation.product || typeof mutation.product !== "object" || Array.isArray(mutation.product)) {
