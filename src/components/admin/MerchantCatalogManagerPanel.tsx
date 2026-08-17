@@ -21,6 +21,10 @@ import {
   resolveMerchantCatalogCollection,
   type MerchantCatalog,
   type MerchantCatalogAvailability,
+  type MerchantCatalogBootstrapResolutionPlan,
+  type MerchantCatalogBootstrapResolutionResult,
+  type MerchantCatalogBootstrapResolutionSelection,
+  type MerchantCatalogBootstrapResolutionTarget,
   type MerchantCatalogBootstrapResult,
   type MerchantCatalogBrowsingRules,
   type MerchantCatalogCategory,
@@ -48,6 +52,8 @@ type CatalogApiPayload = {
   catalog?: MerchantCatalog | null;
   bootstrap?: MerchantCatalogBootstrapResult;
   bootstrapFingerprint?: string;
+  preview?: MerchantCatalogBootstrapResolutionResult;
+  resolutionFingerprint?: string;
   error?: string;
   message?: string;
   currentRevision?: number;
@@ -55,7 +61,12 @@ type CatalogApiPayload = {
 };
 
 type CatalogMutation =
-  | { action: "bootstrap"; sourceFingerprint: string }
+  | {
+      action: "bootstrap";
+      sourceFingerprint: string;
+      resolutionPlan?: MerchantCatalogBootstrapResolutionPlan;
+      resolutionFingerprint?: string;
+    }
   | {
       action: "upsert_product";
       product: MerchantCatalogProduct;
@@ -427,6 +438,11 @@ function getCatalogError(payload: CatalogApiPayload | null, fallback: string) {
   if (code === "merchant_catalog_bootstrap_unavailable") return "暂时无法读取已发布网站商品，请确认网站已发布后重试。";
   if (code === "merchant_catalog_already_initialized") return "商品目录已在其他页面建立，正在重新加载最新目录。";
   if (code === "merchant_catalog_bootstrap_source_changed") return "已发布网站商品在确认期间发生变化，已刷新预览；请重新核对后再建立目录。";
+  if (code === "merchant_catalog_bootstrap_resolution_invalid") return "冲突解决内容无效，请重新选择来源值或检查手填内容。";
+  if (code === "merchant_catalog_bootstrap_resolution_incomplete") return "仍有商品冲突尚未处理，请完成全部选择后再生成预览。";
+  if (code === "merchant_catalog_bootstrap_unresolved_conflict") return "仍有无法在工作台安全处理的发布数据冲突，请刷新后核对。";
+  if (code === "merchant_catalog_bootstrap_validation_failed") return "解决后的商品目录未通过安全校验，请检查必填名称、价格和商品投放范围。";
+  if (code === "merchant_catalog_bootstrap_resolution_changed") return "冲突解决预览已经变化，请重新生成预览后再确认。";
   if (
     code === "catalog_storage_unavailable" ||
     code === "merchant_catalog_load_failed" ||
@@ -528,6 +544,252 @@ function formatConflictValue(value: string | string[]) {
   return value || "（空值）";
 }
 
+type MerchantCatalogBootstrapResolutionDraft = Record<
+  string,
+  MerchantCatalogBootstrapResolutionSelection
+>;
+
+function targetNeedsNonEmptyName(target: MerchantCatalogBootstrapResolutionTarget) {
+  return target.field === "name" || target.field === "name_required" || target.reasons.includes("name_required");
+}
+
+function targetNeedsValidPrice(target: MerchantCatalogBootstrapResolutionTarget) {
+  return target.field === "price" || target.field === "price_invalid" || target.reasons.includes("price_invalid");
+}
+
+function targetNeedsValidSearchPlaceholder(target: MerchantCatalogBootstrapResolutionTarget) {
+  return target.field === "search_placeholder_too_long" || target.reasons.includes("search_placeholder_too_long");
+}
+
+function hasIndependentSearchPlaceholderResolutionTarget(
+  target: MerchantCatalogBootstrapResolutionTarget,
+  targets: MerchantCatalogBootstrapResolutionTarget[],
+) {
+  if (target.scope !== "collection" || target.field !== "browsing_rules" || !target.collectionId) {
+    return false;
+  }
+  return targets.some((candidate) =>
+    candidate.scope === "collection" &&
+    candidate.collectionId === target.collectionId &&
+    candidate.field === "search_placeholder_too_long"
+  );
+}
+
+function parseBootstrapBrowsingRules(
+  value: unknown,
+  allowOversizedSearchPlaceholder = false,
+): MerchantCatalogBrowsingRules | null {
+  if (typeof value !== "string") return null;
+  try {
+    const parsed = JSON.parse(value) as Partial<MerchantCatalogBrowsingRules> | null;
+    if (
+      !parsed ||
+      typeof parsed.searchEnabled !== "boolean" ||
+      typeof parsed.searchPlaceholder !== "string" ||
+      typeof parsed.hideUnselectedCategory !== "boolean" ||
+      typeof parsed.groupByCategory !== "boolean" ||
+      (
+        !allowOversizedSearchPlaceholder &&
+        parsed.searchPlaceholder.trim().length > MERCHANT_CATALOG_MAX_SEARCH_PLACEHOLDER_LENGTH
+      )
+    ) {
+      return null;
+    }
+    return {
+      searchEnabled: parsed.searchEnabled,
+      searchPlaceholder: parsed.searchPlaceholder.trim(),
+      hideUnselectedCategory: parsed.hideUnselectedCategory,
+      groupByCategory: parsed.groupByCategory,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function isBootstrapResolutionValueLocallyValid(
+  target: MerchantCatalogBootstrapResolutionTarget,
+  value: string | string[],
+  targets: MerchantCatalogBootstrapResolutionTarget[] = [],
+) {
+  if (target.field === "product_ids" || target.field === "category_options") {
+    return Array.isArray(value);
+  }
+  if (Array.isArray(value)) return false;
+  if (targetNeedsNonEmptyName(target)) return Boolean(value.trim());
+  if (targetNeedsValidPrice(target)) return parseMerchantCatalogUnitPrice(value) !== null;
+  if (target.field === "availability") {
+    return value === "available" || value === "sold_out" || value === "hidden";
+  }
+  if (target.field === "browsing_rules") {
+    return Boolean(parseBootstrapBrowsingRules(
+      value,
+      hasIndependentSearchPlaceholderResolutionTarget(target, targets),
+    ));
+  }
+  if (targetNeedsValidSearchPlaceholder(target)) {
+    return value.trim().length <= MERCHANT_CATALOG_MAX_SEARCH_PLACEHOLDER_LENGTH;
+  }
+  return true;
+}
+
+export function isMerchantCatalogBootstrapResolutionSelectionComplete(
+  target: MerchantCatalogBootstrapResolutionTarget,
+  selection: MerchantCatalogBootstrapResolutionSelection | undefined,
+  targets: MerchantCatalogBootstrapResolutionTarget[] = [],
+) {
+  if (!selection || selection.targetKey !== target.targetKey) return false;
+  if ("choiceId" in selection) {
+    const choice = target.choices.find((item) => item.choiceId === selection.choiceId);
+    return Boolean(choice && isBootstrapResolutionValueLocallyValid(target, choice.value, targets));
+  }
+  return target.allowCustom && isBootstrapResolutionValueLocallyValid(target, selection.customValue, targets);
+}
+
+export function getMerchantCatalogBootstrapResolutionProgress(
+  targets: MerchantCatalogBootstrapResolutionTarget[],
+  draft: MerchantCatalogBootstrapResolutionDraft,
+  excludedProductIds: string[],
+) {
+  const excluded = new Set(excludedProductIds);
+  const processed = targets.filter((target) =>
+    Boolean(target.productId && excluded.has(target.productId)) ||
+    isMerchantCatalogBootstrapResolutionSelectionComplete(target, draft[target.targetKey], targets)
+  ).length;
+  return { processed, total: targets.length };
+}
+
+export function getMerchantCatalogBootstrapRelatedProductsWithoutProductTargets(
+  targets: MerchantCatalogBootstrapResolutionTarget[],
+) {
+  const productTargetIds = new Set(
+    targets.map((target) => target.productId?.trim() ?? "").filter(Boolean),
+  );
+  const relatedProducts = new Map<string, { productId: string; entityLabel: string }>();
+  targets.forEach((target) => {
+    target.relatedProducts?.forEach((relatedProduct) => {
+      const productId = relatedProduct.productId.trim();
+      if (!productId || productTargetIds.has(productId)) return;
+      const entityLabel = relatedProduct.entityLabel.trim() || productId;
+      const existing = relatedProducts.get(productId);
+      if (!existing || (existing.entityLabel === productId && entityLabel !== productId)) {
+        relatedProducts.set(productId, { productId, entityLabel });
+      }
+    });
+  });
+  return [...relatedProducts.values()];
+}
+
+export function buildMerchantCatalogBootstrapResolutionPlan(
+  targets: MerchantCatalogBootstrapResolutionTarget[],
+  draft: MerchantCatalogBootstrapResolutionDraft,
+  excludedProductIds: string[],
+): MerchantCatalogBootstrapResolutionPlan {
+  const excluded = [...new Set(excludedProductIds.map((productId) => productId.trim()).filter(Boolean))].sort();
+  const excludedSet = new Set(excluded);
+  const selections = targets.flatMap((target) => {
+    if (target.productId && excludedSet.has(target.productId)) return [];
+    const selection = draft[target.targetKey];
+    return selection ? [selection] : [];
+  });
+  return { version: 1, selections, excludedProductIds: excluded };
+}
+
+export function isMerchantCatalogBootstrapPreviewCurrent(
+  preview: MerchantCatalogBootstrapResolutionResult | null,
+  resolutionFingerprint: string,
+  previewPlanSignature: string,
+  currentPlanSignature: string,
+) {
+  return Boolean(
+    preview?.ok &&
+    preview.catalog &&
+    resolutionFingerprint &&
+    previewPlanSignature &&
+    previewPlanSignature === currentPlanSignature,
+  );
+}
+
+export function hasMerchantCatalogBootstrapResolutionWork(
+  draft: MerchantCatalogBootstrapResolutionDraft,
+  excludedProductIds: string[],
+  preview: MerchantCatalogBootstrapResolutionResult | null,
+) {
+  return Object.keys(draft).length > 0 || excludedProductIds.length > 0 || preview !== null;
+}
+
+function isBootstrapConflictCoveredByTarget(
+  conflict: MerchantCatalogConflict,
+  target: MerchantCatalogBootstrapResolutionTarget,
+) {
+  if (!target.reasons.includes(conflict.field)) return false;
+  if (conflict.productId) return target.scope === "product" && target.productId === conflict.productId;
+  if (conflict.collectionId) return target.scope === "collection" && target.collectionId === conflict.collectionId;
+  return target.scope === "catalog";
+}
+
+function isSupportedBootstrapResolutionTargetForUi(target: MerchantCatalogBootstrapResolutionTarget) {
+  if (target.scope === "catalog") {
+    return target.field === "price_prefix" || target.field === "category_options";
+  }
+  if (target.scope === "product") {
+    return [
+      "code",
+      "name",
+      "description",
+      "price",
+      "image_url",
+      "thumbnail_url",
+      "tag",
+      "availability",
+    ].includes(target.field);
+  }
+  return target.field === "product_ids" ||
+    target.field === "browsing_rules" ||
+    target.field === "search_placeholder_too_long";
+}
+
+export function getUnresolvableBootstrapConflicts(
+  conflicts: MerchantCatalogConflict[],
+  targets: MerchantCatalogBootstrapResolutionTarget[],
+) {
+  const uncovered = conflicts.filter(
+    (conflict) => !targets.some((target) => isBootstrapConflictCoveredByTarget(conflict, target)),
+  );
+  const blockedTargets = targets.filter((target) => {
+    if (!isSupportedBootstrapResolutionTargetForUi(target)) return true;
+    const hasLocallyValidChoice = target.choices.some((choice) =>
+      isBootstrapResolutionValueLocallyValid(target, choice.value, targets)
+    );
+    return !hasLocallyValidChoice && !target.allowCustom;
+  });
+  return { uncovered, blockedTargets };
+}
+
+function getBootstrapTargetCustomMaxLength(target: MerchantCatalogBootstrapResolutionTarget) {
+  if (targetNeedsNonEmptyName(target)) return 160;
+  if (targetNeedsValidPrice(target)) return 18;
+  if (target.field === "code") return 80;
+  if (target.field === "tag") return 100;
+  if (target.field === "description") return 2_000;
+  if (target.field === "image_url" || target.field === "thumbnail_url") return 2_048;
+  if (target.field === "price_prefix") return 16;
+  if (targetNeedsValidSearchPlaceholder(target)) return MERCHANT_CATALOG_MAX_SEARCH_PLACEHOLDER_LENGTH;
+  return 4_000;
+}
+
+function getEmptyBootstrapCustomValue() {
+  return "";
+}
+
+function getBootstrapTargetSummary(target: MerchantCatalogBootstrapResolutionTarget) {
+  const reasons = target.reasons.map(conflictFieldLabel).filter((value, index, list) => list.indexOf(value) === index);
+  return reasons.length > 0 ? reasons.join("、") : conflictFieldLabel(target.field);
+}
+
+function getBootstrapSourceLabel(source: MerchantCatalogBootstrapResolutionTarget["choices"][number]["sources"][number]) {
+  return `${source.viewport === "desktop" ? "电脑端" : source.viewport === "mobile" ? "手机端" : "双端共享"} · 区块 ${source.blockId} · 来源 ${source.occurrence + 1}`;
+}
+
 function BootstrapConflicts({
   conflicts,
   darkMode,
@@ -578,6 +840,144 @@ function BootstrapConflicts({
   );
 }
 
+function BootstrapResolutionTargetEditor({
+  target,
+  resolutionTargets,
+  selection,
+  darkMode,
+  disabled,
+  onChange,
+}: {
+  target: MerchantCatalogBootstrapResolutionTarget;
+  resolutionTargets: MerchantCatalogBootstrapResolutionTarget[];
+  selection: MerchantCatalogBootstrapResolutionSelection | undefined;
+  darkMode: boolean;
+  disabled: boolean;
+  onChange: (selection: MerchantCatalogBootstrapResolutionSelection) => void;
+}) {
+  const selectedChoiceId = selection && "choiceId" in selection ? selection.choiceId : "";
+  const customSelected = Boolean(selection && "customValue" in selection);
+  const customValue = selection && "customValue" in selection
+    ? selection.customValue
+    : getEmptyBootstrapCustomValue();
+  const targetName = `bootstrap-resolution:${target.targetKey}`;
+  const optionSurfaceClassName = darkMode
+    ? "border-slate-700 bg-slate-950/55 text-slate-200"
+    : "border-slate-200 bg-white text-slate-700";
+  const selectedSurfaceClassName = darkMode
+    ? "border-sky-400/60 bg-sky-400/10"
+    : "border-sky-300 bg-sky-50";
+  const inputClassName = darkMode
+    ? "border-slate-600 bg-slate-950 text-slate-100 placeholder:text-slate-600 focus:border-sky-400 focus:ring-sky-400/20"
+    : "border-slate-300 bg-white text-slate-900 placeholder:text-slate-400 focus:border-sky-500 focus:ring-sky-500/15";
+
+  return (
+    <fieldset className={`rounded-xl border p-3 ${darkMode ? "border-slate-700 bg-slate-900/50" : "border-slate-200 bg-slate-50/70"}`}>
+      <legend className="px-1 text-xs font-bold">{getBootstrapTargetSummary(target)}</legend>
+      <p className={`mb-2 text-[11px] leading-5 ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+        明确选择一个已发布来源，或手动填写最终经营值；系统不会默认采用电脑端或手机端。
+      </p>
+      <div className="space-y-2">
+        {target.choices.map((choice) => {
+          const choiceIsValid = isBootstrapResolutionValueLocallyValid(
+            target,
+            choice.value,
+            resolutionTargets,
+          );
+          const selected = selectedChoiceId === choice.choiceId;
+          return (
+            <label
+              key={choice.choiceId}
+              className={`flex items-start gap-2 rounded-xl border px-3 py-2.5 text-xs transition ${selected ? selectedSurfaceClassName : optionSurfaceClassName} ${choiceIsValid && !disabled ? "cursor-pointer" : "cursor-not-allowed opacity-65"}`}
+            >
+              <input
+                type="radio"
+                name={targetName}
+                checked={selected}
+                disabled={disabled || !choiceIsValid}
+                onChange={() => onChange({ targetKey: target.targetKey, choiceId: choice.choiceId })}
+                className="mt-0.5 h-4 w-4 shrink-0 border-slate-300 text-sky-600 focus:ring-sky-500"
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block max-h-28 overflow-y-auto whitespace-pre-wrap break-words font-semibold leading-5">
+                  {formatConflictValue(choice.value)}
+                </span>
+                <span className="mt-1 block text-[11px] font-normal leading-5 opacity-70">
+                  {choice.sources.length > 0
+                    ? choice.sources.map(getBootstrapSourceLabel).join("；")
+                    : "来源数据无法识别"}
+                </span>
+                {!choiceIsValid ? (
+                  <span className="mt-1 block font-semibold text-rose-600">该来源值本身无效，请使用手动填写。</span>
+                ) : null}
+              </span>
+            </label>
+          );
+        })}
+        {target.allowCustom ? (
+          <div className={`rounded-xl border px-3 py-2.5 text-xs ${customSelected ? selectedSurfaceClassName : optionSurfaceClassName}`}>
+            <label className={`flex items-center gap-2 font-semibold ${disabled ? "cursor-not-allowed opacity-65" : "cursor-pointer"}`}>
+              <input
+                type="radio"
+                name={targetName}
+                checked={customSelected}
+                disabled={disabled}
+                onChange={() => onChange({ targetKey: target.targetKey, customValue: getEmptyBootstrapCustomValue() })}
+                className="h-4 w-4 border-slate-300 text-sky-600 focus:ring-sky-500"
+              />
+              手动填写最终值
+            </label>
+            {customSelected ? (
+              <div className="mt-2">
+                {target.field === "description" || target.field === "browsing_rules" ? (
+                  <textarea
+                    value={customValue}
+                    onChange={(event) => onChange({ targetKey: target.targetKey, customValue: event.target.value })}
+                    disabled={disabled}
+                    maxLength={getBootstrapTargetCustomMaxLength(target)}
+                    rows={target.field === "browsing_rules" ? 5 : 4}
+                    placeholder={target.field === "browsing_rules"
+                      ? '{"searchEnabled":true,"searchPlaceholder":"","hideUnselectedCategory":true,"groupByCategory":false}'
+                      : "填写最终商品描述"}
+                    className={`w-full resize-y rounded-lg border px-3 py-2 text-xs outline-none ring-2 ring-transparent disabled:opacity-60 ${inputClassName}`}
+                  />
+                ) : (
+                  <input
+                    value={customValue}
+                    onChange={(event) => onChange({ targetKey: target.targetKey, customValue: event.target.value })}
+                    disabled={disabled}
+                    maxLength={getBootstrapTargetCustomMaxLength(target)}
+                    inputMode={targetNeedsValidPrice(target) ? "decimal" : undefined}
+                    placeholder={targetNeedsNonEmptyName(target)
+                      ? "请输入商品名称"
+                      : targetNeedsValidPrice(target)
+                        ? "例如 19.90；免费请填 0"
+                        : targetNeedsValidSearchPlaceholder(target)
+                          ? "请输入不超过 160 个字符的搜索提示词"
+                          : "输入最终值；如需明确留空，可保持为空"}
+                    className={`w-full rounded-lg border px-3 py-2 text-xs outline-none ring-2 ring-transparent disabled:opacity-60 ${inputClassName}`}
+                  />
+                )}
+                {!isBootstrapResolutionValueLocallyValid(target, customValue, resolutionTargets) ? (
+                  <p className="mt-1.5 font-semibold text-rose-600">
+                    {targetNeedsNonEmptyName(target)
+                      ? "商品名称不能为空。"
+                      : targetNeedsValidPrice(target)
+                        ? "价格必须是非负数字，最多两位小数；免费请填 0。"
+                        : targetNeedsValidSearchPlaceholder(target)
+                          ? `搜索提示词不能超过 ${MERCHANT_CATALOG_MAX_SEARCH_PLACEHOLDER_LENGTH} 个字符。`
+                          : "填写内容尚未通过校验。"}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </fieldset>
+  );
+}
+
 function LoadingSkeleton({ darkMode }: { darkMode: boolean }) {
   const blockClassName = darkMode ? "bg-slate-800" : "bg-slate-200";
   return (
@@ -605,6 +1005,18 @@ export default function MerchantCatalogManagerPanel({
   const [catalog, setCatalog] = useState<MerchantCatalog | null>(null);
   const [bootstrap, setBootstrap] = useState<MerchantCatalogBootstrapResult | null>(null);
   const [bootstrapFingerprint, setBootstrapFingerprint] = useState("");
+  const bootstrapFingerprintRef = useRef("");
+  bootstrapFingerprintRef.current = bootstrapFingerprint;
+  const [bootstrapResolutionDraft, setBootstrapResolutionDraft] = useState<MerchantCatalogBootstrapResolutionDraft>({});
+  const [bootstrapExcludedProductIds, setBootstrapExcludedProductIds] = useState<string[]>([]);
+  const [bootstrapPreview, setBootstrapPreview] = useState<MerchantCatalogBootstrapResolutionResult | null>(null);
+  const [bootstrapResolutionFingerprint, setBootstrapResolutionFingerprint] = useState("");
+  const [bootstrapPreviewPlanSignature, setBootstrapPreviewPlanSignature] = useState("");
+  const [bootstrapPreviewing, setBootstrapPreviewing] = useState(false);
+  const bootstrapPreviewingRef = useRef(false);
+  bootstrapPreviewingRef.current = bootstrapPreviewing;
+  const bootstrapResolutionRequestSequenceRef = useRef(0);
+  const bootstrapPlanIdentityRef = useRef("");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -680,8 +1092,71 @@ export default function MerchantCatalogManagerPanel({
     };
   }, [catalogTarget]);
 
+  const clearBootstrapPreview = useCallback(() => {
+    bootstrapResolutionRequestSequenceRef.current += 1;
+    bootstrapPreviewingRef.current = false;
+    setBootstrapPreviewing(false);
+    setBootstrapPreview(null);
+    setBootstrapResolutionFingerprint("");
+    setBootstrapPreviewPlanSignature("");
+  }, []);
+
+  const clearBootstrapResolutionState = useCallback(() => {
+    clearBootstrapPreview();
+    setBootstrapResolutionDraft({});
+    setBootstrapExcludedProductIds([]);
+  }, [clearBootstrapPreview]);
+
+  const bootstrapResolutionTargets = useMemo(
+    () => bootstrap?.resolutionTargets ?? [],
+    [bootstrap?.resolutionTargets],
+  );
+  const bootstrapPlanIdentity = useMemo(
+    () => bootstrapFingerprint
+      ? JSON.stringify({
+          bootstrapFingerprint,
+          targets: bootstrapResolutionTargets.map((target) => ({
+            targetKey: target.targetKey,
+            choices: target.choices.map((choice) => choice.choiceId),
+          })),
+        })
+      : "",
+    [bootstrapFingerprint, bootstrapResolutionTargets],
+  );
+
+  useEffect(() => {
+    const previousIdentity = bootstrapPlanIdentityRef.current;
+    bootstrapPlanIdentityRef.current = bootstrapPlanIdentity;
+    if (previousIdentity && previousIdentity !== bootstrapPlanIdentity) {
+      clearBootstrapResolutionState();
+    }
+  }, [bootstrapPlanIdentity, clearBootstrapResolutionState]);
+
+  const setBootstrapResolutionSelection = useCallback(
+    (selection: MerchantCatalogBootstrapResolutionSelection) => {
+      clearBootstrapPreview();
+      setBootstrapResolutionDraft((current) => ({
+        ...current,
+        [selection.targetKey]: selection,
+      }));
+    },
+    [clearBootstrapPreview],
+  );
+
+  const toggleBootstrapProductExclusion = useCallback(
+    (productId: string) => {
+      clearBootstrapPreview();
+      setBootstrapExcludedProductIds((current) =>
+        current.includes(productId)
+          ? current.filter((item) => item !== productId)
+          : [...current, productId],
+      );
+    },
+    [clearBootstrapPreview],
+  );
+
   const leaveState = useMemo<MerchantCatalogLeaveState>(() => {
-    if (Boolean(actingKey) || productImportReading || productImageImportUploading || productImageUploading) return "busy";
+    if (Boolean(actingKey) || bootstrapPreviewing || productImportReading || productImageImportUploading || productImageUploading) return "busy";
     if (productImageUpload || (productImageImportDraft?.uploadedEntries.length ?? 0) > 0) {
       return "uploaded_uncommitted";
     }
@@ -691,6 +1166,9 @@ export default function MerchantCatalogManagerPanel({
       collectionDraft ||
       productImportDraft ||
       productImageImportDraft ||
+      Object.keys(bootstrapResolutionDraft).length > 0 ||
+      bootstrapExcludedProductIds.length > 0 ||
+      bootstrapPreview !== null ||
       (catalog !== null && pricePrefixDraft !== catalog.pricePrefix)
     ) {
       return "draft";
@@ -698,6 +1176,10 @@ export default function MerchantCatalogManagerPanel({
     return "clean";
   }, [
     actingKey,
+    bootstrapExcludedProductIds,
+    bootstrapPreview,
+    bootstrapPreviewing,
+    bootstrapResolutionDraft,
     catalog,
     categoryDraft,
     collectionDraft,
@@ -752,6 +1234,7 @@ export default function MerchantCatalogManagerPanel({
   const loadCatalog = useCallback(async (signal?: AbortSignal) => {
     const normalizedSiteId = siteId.trim();
     if (activeSiteIdRef.current !== normalizedSiteId) return;
+    clearBootstrapResolutionState();
     const siteVersion = activeSiteVersionRef.current;
     const sequence = requestSequenceRef.current + 1;
     requestSequenceRef.current = sequence;
@@ -815,12 +1298,13 @@ export default function MerchantCatalogManagerPanel({
         setRefreshing(false);
       }
     }
-  }, [siteId]);
+  }, [clearBootstrapResolutionState, siteId]);
 
   useEffect(() => {
     catalogRef.current = null;
     catalogSiteIdRef.current = "";
     bootstrapRef.current = null;
+    clearBootstrapResolutionState();
     setCatalog(null);
     setBootstrap(null);
     setBootstrapFingerprint("");
@@ -848,7 +1332,7 @@ export default function MerchantCatalogManagerPanel({
       controller.abort();
       requestSequenceRef.current += 1;
     };
-  }, [clearProductImageImportDraft, clearProductImportDraft, clearSingleProductImageUpload, loadCatalog]);
+  }, [clearBootstrapResolutionState, clearProductImageImportDraft, clearProductImportDraft, clearSingleProductImageUpload, loadCatalog]);
 
   useEffect(() => {
     setPricePrefixDraft(catalog?.pricePrefix ?? "");
@@ -937,8 +1421,14 @@ export default function MerchantCatalogManagerPanel({
           return false;
         }
         if (payload?.error === "merchant_catalog_bootstrap_source_changed") {
-          setRevisionConflict("已发布网站商品在确认期间发生变化。已重新加载最新预览，请核对商品、价格和区块后再次确认。");
+          clearBootstrapResolutionState();
+          setRevisionConflict("已发布网站商品在确认期间发生变化。旧选择和安全预览已清空，请重新核对最新商品、价格和区块。");
           await loadCatalog();
+          return false;
+        }
+        if (payload?.error === "merchant_catalog_bootstrap_resolution_changed") {
+          clearBootstrapPreview();
+          setRevisionConflict("安全预览已失效，目录尚未写入。请重新生成并核对最新预览后再确认。");
           return false;
         }
         if (isRevisionConflict(payload)) {
@@ -992,7 +1482,7 @@ export default function MerchantCatalogManagerPanel({
         }
       }
     },
-    [clearProductImportDraft, loadCatalog, onChanged, siteId],
+    [clearBootstrapPreview, clearBootstrapResolutionState, clearProductImportDraft, loadCatalog, onChanged, siteId],
   );
 
   const readProductImportFile = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -1456,6 +1946,77 @@ export default function MerchantCatalogManagerPanel({
     copyMerchantCatalogBrowsingRules(matchingTargetBrowsingRules) ?? {
       ...DEFAULT_MERCHANT_CATALOG_BROWSING_RULES,
     };
+  const bootstrapProductResolutionGroups = useMemo(() => {
+    const groups = new Map<string, MerchantCatalogBootstrapResolutionTarget[]>();
+    bootstrapResolutionTargets.forEach((target) => {
+      if (target.scope !== "product" || !target.productId) return;
+      const current = groups.get(target.productId) ?? [];
+      current.push(target);
+      groups.set(target.productId, current);
+    });
+    return [...groups.entries()].map(([productId, targets]) => ({ productId, targets }));
+  }, [bootstrapResolutionTargets]);
+  const bootstrapCollectionRelatedProducts = useMemo(
+    () => getMerchantCatalogBootstrapRelatedProductsWithoutProductTargets(bootstrapResolutionTargets),
+    [bootstrapResolutionTargets],
+  );
+  const bootstrapCatalogResolutionTargets = useMemo(
+    () => bootstrapResolutionTargets.filter((target) => target.scope === "catalog"),
+    [bootstrapResolutionTargets],
+  );
+  const bootstrapCollectionResolutionTargets = useMemo(
+    () => bootstrapResolutionTargets.filter((target) => target.scope === "collection"),
+    [bootstrapResolutionTargets],
+  );
+  const bootstrapCollectionResolutionGroups = useMemo(() => {
+    const groups = new Map<string, MerchantCatalogBootstrapResolutionTarget[]>();
+    bootstrapCollectionResolutionTargets.forEach((target) => {
+      const collectionId = target.collectionId ?? target.targetKey;
+      const current = groups.get(collectionId) ?? [];
+      current.push(target);
+      groups.set(collectionId, current);
+    });
+    return [...groups.entries()].map(([collectionId, targets]) => ({ collectionId, targets }));
+  }, [bootstrapCollectionResolutionTargets]);
+  const bootstrapResolutionProgress = getMerchantCatalogBootstrapResolutionProgress(
+    bootstrapResolutionTargets,
+    bootstrapResolutionDraft,
+    bootstrapExcludedProductIds,
+  );
+  const bootstrapUnresolvable = getUnresolvableBootstrapConflicts(
+    bootstrap?.conflicts ?? [],
+    bootstrapResolutionTargets,
+  );
+  const bootstrapHasUnresolvableConflict =
+    bootstrapUnresolvable.uncovered.length > 0 || bootstrapUnresolvable.blockedTargets.length > 0;
+  const currentBootstrapResolutionPlan = buildMerchantCatalogBootstrapResolutionPlan(
+    bootstrapResolutionTargets,
+    bootstrapResolutionDraft,
+    bootstrapExcludedProductIds,
+  );
+  const currentBootstrapResolutionPlanSignature = JSON.stringify(currentBootstrapResolutionPlan);
+  const bootstrapPreviewIsCurrent = isMerchantCatalogBootstrapPreviewCurrent(
+    bootstrapPreview,
+    bootstrapResolutionFingerprint,
+    bootstrapPreviewPlanSignature,
+    currentBootstrapResolutionPlanSignature,
+  );
+  const hasBootstrapResolutionWork = hasMerchantCatalogBootstrapResolutionWork(
+    bootstrapResolutionDraft,
+    bootstrapExcludedProductIds,
+    bootstrapPreview,
+  );
+
+  const requestCatalogRefresh = () => {
+    if (bootstrapPreviewingRef.current || actingKeyRef.current) return;
+    if (
+      hasBootstrapResolutionWork &&
+      !window.confirm("刷新目录会重新读取已发布商品，并清空当前冲突选择、排除项和安全预览。确定刷新吗？")
+    ) {
+      return;
+    }
+    void loadCatalog();
+  };
 
   const confirmDiscardSingleProductImageUpload = () => {
     if (!productImageUploadRef.current) return true;
@@ -1796,6 +2357,118 @@ export default function MerchantCatalogManagerPanel({
     }
   };
 
+  const generateBootstrapResolutionPreview = async () => {
+    if (
+      actingKeyRef.current ||
+      bootstrapPreviewingRef.current ||
+      !bootstrap ||
+      bootstrap.resolutionTargets.length === 0 ||
+      bootstrapResolutionProgress.processed !== bootstrapResolutionProgress.total ||
+      bootstrapHasUnresolvableConflict
+    ) return;
+    const previewSiteId = siteId.trim();
+    const previewSiteVersion = activeSiteVersionRef.current;
+    const sourceFingerprint = bootstrapFingerprintRef.current;
+    if (!previewSiteId || !sourceFingerprint || activeSiteIdRef.current !== previewSiteId) return;
+    const resolutionPlan = buildMerchantCatalogBootstrapResolutionPlan(
+      bootstrap.resolutionTargets,
+      bootstrapResolutionDraft,
+      bootstrapExcludedProductIds,
+    );
+    const planSignature = JSON.stringify(resolutionPlan);
+    const sequence = bootstrapResolutionRequestSequenceRef.current + 1;
+    bootstrapResolutionRequestSequenceRef.current = sequence;
+    bootstrapPreviewingRef.current = true;
+    setBootstrapPreviewing(true);
+    setActionError("");
+    setRevisionConflict("");
+    setNotice("");
+    setBootstrapPreview(null);
+    setBootstrapResolutionFingerprint("");
+    setBootstrapPreviewPlanSignature("");
+    const previewContextIsActive = () =>
+      mountedRef.current &&
+      bootstrapResolutionRequestSequenceRef.current === sequence &&
+      activeSiteIdRef.current === previewSiteId &&
+      activeSiteVersionRef.current === previewSiteVersion &&
+      bootstrapFingerprintRef.current === sourceFingerprint;
+    try {
+      const response = await fetch("/api/orders/catalog", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          siteId: previewSiteId,
+          action: "preview_bootstrap",
+          expectedRevision: 0,
+          sourceFingerprint,
+          resolutionPlan,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as CatalogApiPayload | null;
+      if (!previewContextIsActive()) return;
+      if (payload?.error === "merchant_catalog_bootstrap_source_changed") {
+        clearBootstrapResolutionState();
+        setRevisionConflict("已发布网站商品在解决冲突期间发生变化。旧选择和预览已清空，请重新核对最新来源。");
+        await loadCatalog();
+        return;
+      }
+      if (
+        !response.ok ||
+        !payload?.ok ||
+        !payload.preview?.ok ||
+        !payload.preview.catalog ||
+        !payload.resolutionFingerprint
+      ) {
+        throw new Error(getCatalogError(payload, "无法生成安全初始化预览，请检查冲突处理后重试。"));
+      }
+      setBootstrapPreview(payload.preview);
+      setBootstrapResolutionFingerprint(payload.resolutionFingerprint);
+      setBootstrapPreviewPlanSignature(planSignature);
+      setNotice("安全初始化预览已生成。请核对最终商品、分类、集合和价格前缀，再确认建立目录。");
+    } catch (requestError) {
+      if (!previewContextIsActive()) return;
+      setActionError(requestError instanceof Error ? requestError.message : "无法生成安全初始化预览，请稍后重试。");
+    } finally {
+      if (previewContextIsActive()) {
+        bootstrapPreviewingRef.current = false;
+        setBootstrapPreviewing(false);
+      }
+    }
+  };
+
+  const confirmResolvedBootstrap = async () => {
+    if (
+      !bootstrapPreviewIsCurrent ||
+      !bootstrapPreview?.catalog ||
+      !bootstrapResolutionFingerprint ||
+      actingKeyRef.current ||
+      bootstrapPreviewingRef.current
+    ) return;
+    const resolutionPlan = buildMerchantCatalogBootstrapResolutionPlan(
+      bootstrapResolutionTargets,
+      bootstrapResolutionDraft,
+      bootstrapExcludedProductIds,
+    );
+    const excludedWarning = bootstrapExcludedProductIds.length > 0
+      ? `\n\n你已明确排除 ${bootstrapExcludedProductIds.length} 个冲突商品；它们会从所有初始化集合中移除，不会进入工作台目录。`
+      : "";
+    const confirmed = window.confirm(
+      `将按当前安全预览建立经营目录：${bootstrapPreview.catalog.products.length} 个商品、${bootstrapPreview.catalog.categories.length} 个分类、${bootstrapPreview.catalog.collections.length} 个页面集合。建立后，相关商品区块会立即使用工作台目录公开展示并由服务端报价。${excludedWarning}\n\n确定继续吗？`,
+    );
+    if (!confirmed) return;
+    await runMutation(
+      "bootstrap",
+      {
+        action: "bootstrap",
+        sourceFingerprint: bootstrapFingerprint,
+        resolutionPlan,
+        resolutionFingerprint: bootstrapResolutionFingerprint,
+      },
+      "商品目录已建立。已绑定商品区块已切换到工作台目录，请核验商品、价格和可售状态。",
+      0,
+    );
+  };
+
   const confirmBootstrap = async () => {
     if (!bootstrap?.ok || !bootstrap.catalog) return;
     const confirmed = window.confirm(
@@ -1881,8 +2554,8 @@ export default function MerchantCatalogManagerPanel({
         </div>
         <button
           type="button"
-          onClick={() => void loadCatalog()}
-          disabled={loading || refreshing || Boolean(actingKey)}
+          onClick={requestCatalogRefresh}
+          disabled={loading || refreshing || bootstrapPreviewing || Boolean(actingKey)}
           className={`inline-flex h-10 items-center gap-2 rounded-xl border px-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${secondaryButtonClassName}`}
         >
           <RefreshIcon spinning={refreshing} />
@@ -1959,11 +2632,302 @@ export default function MerchantCatalogManagerPanel({
           </div>
 
           {bootstrap?.conflicts && bootstrap.conflicts.length > 0 ? (
-            <div className="mt-5">
-              <div className={`mb-3 rounded-xl border px-3 py-2 text-sm ${darkMode ? "border-rose-400/25 bg-rose-400/10 text-rose-100" : "border-rose-200 bg-rose-50 text-rose-800"}`}>
-                桌面端、移动端或多个商品块之间存在结构化冲突。系统不会替你选择任意一侧；请先统一对应的已发布数据，再刷新预览。
+            <div className="mt-5 space-y-5">
+              <div className={`rounded-xl border px-3 py-3 text-sm ${darkMode ? "border-amber-400/25 bg-amber-400/10 text-amber-100" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
+                <p className="font-bold">已发布商品存在冲突，需要在工作台明确处理</p>
+                <p className="mt-1 text-xs leading-5 opacity-90">
+                  相同商品在电脑端、手机端或多个区块中的经营字段不一致。请选择每个字段的最终值，或明确排除不再导入的商品；系统不会默认采用任意终端。
+                </p>
               </div>
-              <BootstrapConflicts conflicts={bootstrap.conflicts} darkMode={darkMode} />
+
+              <div className={`sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 shadow-sm ${darkMode ? "border-slate-700 bg-slate-900/95" : "border-slate-200 bg-white/95"}`}>
+                <div>
+                  <p className="text-sm font-bold">冲突处理进度</p>
+                  <p className={`mt-0.5 text-xs ${mutedTextClassName}`}>
+                    已处理 {bootstrapResolutionProgress.processed} / {bootstrapResolutionProgress.total}
+                    {bootstrapExcludedProductIds.length > 0 ? ` · 已排除 ${bootstrapExcludedProductIds.length} 个商品` : ""}
+                  </p>
+                </div>
+                <div className={`h-2 w-40 max-w-full overflow-hidden rounded-full ${darkMode ? "bg-slate-700" : "bg-slate-200"}`} aria-hidden="true">
+                  <div
+                    className="h-full rounded-full bg-sky-500 transition-[width]"
+                    style={{
+                      width: `${bootstrapResolutionProgress.total > 0
+                        ? Math.round((bootstrapResolutionProgress.processed / bootstrapResolutionProgress.total) * 100)
+                        : 0}%`,
+                    }}
+                  />
+                </div>
+              </div>
+
+              {bootstrapHasUnresolvableConflict ? (
+                <div className={`rounded-xl border p-3 ${darkMode ? "border-rose-400/30 bg-rose-400/10 text-rose-100" : "border-rose-200 bg-rose-50 text-rose-800"}`} role="alert">
+                  <p className="text-sm font-bold">存在无法在工作台安全解决的数据</p>
+                  <p className="mt-1 text-xs leading-5">
+                    初始化已暂停，不能生成预览。请刷新确认；如果仍然出现，请联系支持核查已发布数据结构。
+                  </p>
+                  {bootstrapUnresolvable.uncovered.length > 0 ? (
+                    <div className="mt-3">
+                      <BootstrapConflicts conflicts={bootstrapUnresolvable.uncovered} darkMode={darkMode} />
+                    </div>
+                  ) : null}
+                  {bootstrapUnresolvable.blockedTargets.length > 0 ? (
+                    <ul className="mt-3 list-disc space-y-1 pl-5 text-xs">
+                      {bootstrapUnresolvable.blockedTargets.map((target) => (
+                        <li key={target.targetKey}>{getBootstrapTargetSummary(target)}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {bootstrapCatalogResolutionTargets.length > 0 ? (
+                <section aria-labelledby="bootstrap-catalog-conflicts-title">
+                  <div className="mb-3">
+                    <h5 id="bootstrap-catalog-conflicts-title" className="text-sm font-bold">目录统一设置</h5>
+                    <p className={`mt-1 text-xs ${mutedTextClassName}`}>价格前缀和分类等目录级数据会应用到全部工作台商品。</p>
+                  </div>
+                  <div className="space-y-3">
+                    {bootstrapCatalogResolutionTargets.map((target) => (
+                      <BootstrapResolutionTargetEditor
+                        key={target.targetKey}
+                        target={target}
+                        resolutionTargets={bootstrapResolutionTargets}
+                        selection={bootstrapResolutionDraft[target.targetKey]}
+                        darkMode={darkMode}
+                        disabled={Boolean(actingKey) || bootstrapPreviewing}
+                        onChange={setBootstrapResolutionSelection}
+                      />
+                    ))}
+                  </div>
+                </section>
+              ) : null}
+
+              {bootstrapProductResolutionGroups.length > 0 ? (
+                <section aria-labelledby="bootstrap-product-conflicts-title">
+                  <div className="mb-3">
+                    <h5 id="bootstrap-product-conflicts-title" className="text-sm font-bold">冲突商品</h5>
+                    <p className={`mt-1 text-xs leading-5 ${mutedTextClassName}`}>
+                      商品字段是全目录统一经营数据。排除商品会把它从本次目录及所有初始化集合中移除，但不会修改网站中的旧草稿。
+                    </p>
+                  </div>
+                  <div className="space-y-4">
+                    {bootstrapProductResolutionGroups.map(({ productId, targets }) => {
+                      const excluded = bootstrapExcludedProductIds.includes(productId);
+                      const entityLabel = targets.find((target) => target.entityLabel?.trim())?.entityLabel?.trim() || productId;
+                      return (
+                        <article key={productId} className={`rounded-2xl border p-4 ${excluded ? darkMode ? "border-rose-400/30 bg-rose-400/5" : "border-rose-200 bg-rose-50/50" : darkMode ? "border-slate-700 bg-slate-900/40" : "border-slate-200 bg-white"}`}>
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-bold" title={entityLabel}>{entityLabel}</p>
+                              <code className={`mt-1 block break-all text-[11px] ${mutedTextClassName}`}>{productId}</code>
+                            </div>
+                            <label className={`flex shrink-0 items-start gap-2 rounded-xl border px-3 py-2 text-xs font-semibold ${excluded ? darkMode ? "border-rose-400/40 bg-rose-400/10 text-rose-100" : "border-rose-300 bg-rose-100 text-rose-800" : darkMode ? "border-slate-700 text-slate-300" : "border-slate-200 text-slate-700"} ${Boolean(actingKey) || bootstrapPreviewing ? "cursor-not-allowed opacity-65" : "cursor-pointer"}`}>
+                              <input
+                                type="checkbox"
+                                checked={excluded}
+                                disabled={Boolean(actingKey) || bootstrapPreviewing}
+                                onChange={() => toggleBootstrapProductExclusion(productId)}
+                                className="mt-0.5 h-4 w-4 rounded border-slate-300 text-rose-600 focus:ring-rose-500"
+                              />
+                              本次不导入
+                            </label>
+                          </div>
+                          {excluded ? (
+                            <div className={`mt-3 rounded-xl border px-3 py-2 text-xs font-semibold leading-5 ${darkMode ? "border-rose-400/25 bg-rose-400/10 text-rose-100" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
+                              已明确排除：该商品不会进入经营目录，并会从所有初始化页面集合中移除。
+                            </div>
+                          ) : (
+                            <div className="mt-3 space-y-3">
+                              {targets.map((target) => (
+                                <BootstrapResolutionTargetEditor
+                                  key={target.targetKey}
+                                  target={target}
+                                  resolutionTargets={bootstrapResolutionTargets}
+                                  selection={bootstrapResolutionDraft[target.targetKey]}
+                                  darkMode={darkMode}
+                                  disabled={Boolean(actingKey) || bootstrapPreviewing}
+                                  onChange={setBootstrapResolutionSelection}
+                                />
+                              ))}
+                            </div>
+                          )}
+                        </article>
+                      );
+                    })}
+                  </div>
+                </section>
+              ) : null}
+
+              {bootstrapCollectionRelatedProducts.length > 0 ? (
+                <section aria-labelledby="bootstrap-related-products-title">
+                  <div className="mb-3">
+                    <h5 id="bootstrap-related-products-title" className="text-sm font-bold">集合候选商品</h5>
+                    <p className={`mt-1 text-xs leading-5 ${mutedTextClassName}`}>
+                      这些商品自身没有字段冲突，但出现在不同的集合候选范围中。若不希望它们进入本次经营目录，可在这里明确排除。
+                    </p>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {bootstrapCollectionRelatedProducts.map(({ productId, entityLabel }) => {
+                      const excluded = bootstrapExcludedProductIds.includes(productId);
+                      return (
+                        <article
+                          key={productId}
+                          className={`rounded-xl border p-3 ${excluded
+                            ? darkMode
+                              ? "border-rose-400/30 bg-rose-400/5"
+                              : "border-rose-200 bg-rose-50/50"
+                            : darkMode
+                              ? "border-slate-700 bg-slate-900/40"
+                              : "border-slate-200 bg-white"}`}
+                        >
+                          <p className="truncate text-sm font-bold" title={entityLabel}>{entityLabel}</p>
+                          <code className={`mt-1 block truncate text-[11px] ${mutedTextClassName}`} title={productId}>{productId}</code>
+                          <label className={`mt-3 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs font-semibold ${excluded
+                            ? darkMode
+                              ? "border-rose-400/40 bg-rose-400/10 text-rose-100"
+                              : "border-rose-300 bg-rose-100 text-rose-800"
+                            : darkMode
+                              ? "border-slate-700 text-slate-300"
+                              : "border-slate-200 text-slate-700"} ${Boolean(actingKey) || bootstrapPreviewing ? "cursor-not-allowed opacity-65" : "cursor-pointer"}`}>
+                            <input
+                              type="checkbox"
+                              checked={excluded}
+                              disabled={Boolean(actingKey) || bootstrapPreviewing}
+                              onChange={() => toggleBootstrapProductExclusion(productId)}
+                              className="mt-0.5 h-4 w-4 rounded border-slate-300 text-rose-600 focus:ring-rose-500"
+                            />
+                            本次不导入
+                          </label>
+                          {excluded ? (
+                            <p className="mt-2 text-[11px] font-semibold leading-5 text-rose-600">
+                              将从所有初始化集合中移除。
+                            </p>
+                          ) : null}
+                        </article>
+                      );
+                    })}
+                  </div>
+                </section>
+              ) : null}
+
+              {bootstrapCollectionResolutionGroups.length > 0 ? (
+                <section aria-labelledby="bootstrap-collection-conflicts-title">
+                  <div className="mb-3">
+                    <h5 id="bootstrap-collection-conflicts-title" className="text-sm font-bold">页面集合与终端范围</h5>
+                    <p className={`mt-1 text-xs leading-5 ${mutedTextClassName}`}>
+                      每个集合继续保留发布来源确定的区块和电脑端/手机端范围；这里只选择商品顺序或浏览规则，不会静默合并终端。
+                    </p>
+                  </div>
+                  <div className="space-y-4">
+                    {bootstrapCollectionResolutionGroups.map(({ collectionId, targets }) => (
+                      <article key={collectionId} className={`rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-900/40" : "border-slate-200 bg-white"}`}>
+                        <p className="text-sm font-bold">页面集合</p>
+                        <code className={`mt-1 block break-all text-[11px] ${mutedTextClassName}`}>{collectionId}</code>
+                        <div className="mt-3 space-y-3">
+                          {targets.map((target) => (
+                            <BootstrapResolutionTargetEditor
+                              key={target.targetKey}
+                              target={target}
+                              resolutionTargets={bootstrapResolutionTargets}
+                              selection={bootstrapResolutionDraft[target.targetKey]}
+                              darkMode={darkMode}
+                              disabled={Boolean(actingKey) || bootstrapPreviewing}
+                              onChange={setBootstrapResolutionSelection}
+                            />
+                          ))}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
+
+              <div className={`flex flex-col gap-3 rounded-2xl border p-4 sm:flex-row sm:items-center sm:justify-between ${darkMode ? "border-sky-400/25 bg-sky-400/5" : "border-sky-200 bg-sky-50/50"}`}>
+                <div>
+                  <p className="text-sm font-bold">先生成安全预览，再确认建立</p>
+                  <p className={`mt-1 text-xs leading-5 ${mutedTextClassName}`}>
+                    预览不会写入目录；服务端会重新读取已发布商品并验证全部选择。
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void generateBootstrapResolutionPreview()}
+                  disabled={
+                    Boolean(actingKey) ||
+                    bootstrapPreviewing ||
+                    bootstrapHasUnresolvableConflict ||
+                    bootstrapResolutionProgress.total === 0 ||
+                    bootstrapResolutionProgress.processed !== bootstrapResolutionProgress.total
+                  }
+                  className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-sky-600 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {bootstrapPreviewing ? <RefreshIcon spinning /> : <CheckIcon />}
+                  {bootstrapPreviewing
+                    ? "正在生成安全预览"
+                    : bootstrapResolutionProgress.processed !== bootstrapResolutionProgress.total
+                      ? `还需处理 ${bootstrapResolutionProgress.total - bootstrapResolutionProgress.processed} 项`
+                      : "生成安全预览"}
+                </button>
+              </div>
+
+              {bootstrapPreviewIsCurrent && bootstrapPreview?.catalog ? (
+                <section className={`rounded-2xl border p-4 sm:p-5 ${darkMode ? "border-emerald-400/30 bg-emerald-400/5" : "border-emerald-200 bg-emerald-50/50"}`} aria-labelledby="bootstrap-resolution-preview-title">
+                  <div>
+                    <h5 id="bootstrap-resolution-preview-title" className="text-sm font-bold">最终初始化预览</h5>
+                    <p className={`mt-1 text-xs leading-5 ${mutedTextClassName}`}>以下结果已通过服务端解析，但尚未写入经营目录。</p>
+                  </div>
+                  <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    {[
+                      ["商品", bootstrapPreview.catalog.products.length],
+                      ["分类", bootstrapPreview.catalog.categories.length],
+                      ["页面集合", bootstrapPreview.catalog.collections.length],
+                      ["价格前缀", bootstrapPreview.catalog.pricePrefix || "未设置"],
+                    ].map(([label, value]) => (
+                      <div key={String(label)} className={`rounded-xl border px-3 py-3 ${darkMode ? "border-slate-700 bg-slate-950/60" : "border-emerald-100 bg-white"}`}>
+                        <p className={`text-xs ${mutedTextClassName}`}>{label}</p>
+                        <p className="mt-1 truncate text-lg font-black" title={String(value)}>{value}</p>
+                      </div>
+                    ))}
+                  </div>
+                  {bootstrapExcludedProductIds.length > 0 ? (
+                    <p className={`mt-4 rounded-xl border px-3 py-2 text-xs font-semibold leading-5 ${darkMode ? "border-rose-400/25 bg-rose-400/10 text-rose-100" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
+                      本预览已排除 {bootstrapExcludedProductIds.length} 个冲突商品；它们已从所有集合中移除。
+                    </p>
+                  ) : null}
+                  {bootstrapPreview.catalog.products.length > 0 ? (
+                    <div className="mt-4">
+                      <p className={`mb-2 text-xs font-semibold ${mutedTextClassName}`}>即将进入工作台的商品（最多显示 12 个）</p>
+                      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                        {bootstrapPreview.catalog.products.slice(0, 12).map((product) => (
+                          <div key={product.id} className={`rounded-xl border px-3 py-2 ${darkMode ? "border-slate-700 bg-slate-950/50" : "border-emerald-100 bg-white"}`}>
+                            <p className="truncate text-sm font-semibold">{product.name}</p>
+                            <p className={`mt-0.5 truncate text-xs ${mutedTextClassName}`}>{product.code || product.id} · {bootstrapPreview.catalog?.pricePrefix}{product.price}</p>
+                          </div>
+                        ))}
+                      </div>
+                      {bootstrapPreview.catalog.products.length > 12 ? (
+                        <p className={`mt-2 text-xs ${mutedTextClassName}`}>另有 {bootstrapPreview.catalog.products.length - 12} 个商品会一并建立。</p>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <p className={`mt-4 rounded-xl border border-dashed px-4 py-5 text-center text-sm ${darkMode ? "border-slate-700" : "border-emerald-200"} ${mutedTextClassName}`}>
+                      最终预览不包含商品；建立后可直接在工作台新增商品并配置页面投放。
+                    </p>
+                  )}
+                  <div className="mt-5 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => void confirmResolvedBootstrap()}
+                      disabled={Boolean(actingKey) || bootstrapPreviewing || !bootstrapPreviewIsCurrent}
+                      className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {actingKey === "bootstrap" ? <RefreshIcon spinning /> : <PlusIcon />}
+                      {actingKey === "bootstrap" ? "正在建立目录" : "确认并建立商品目录"}
+                    </button>
+                  </div>
+                </section>
+              ) : null}
             </div>
           ) : null}
 

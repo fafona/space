@@ -19,8 +19,11 @@ import {
   planMerchantCatalogProductImageMatches,
   planMerchantCatalogProductImport,
   prepareMerchantCatalogProductImageImport,
+  resolveMerchantCatalogBootstrapFromPublishedBlocks,
   resolveMerchantCatalogCollection,
   serializeMerchantCatalog,
+  type MerchantCatalogBootstrapResolutionPlan,
+  type MerchantCatalogBootstrapResolutionTarget,
   type MerchantCatalogProduct,
 } from "@/lib/merchantCatalog";
 import { normalizeProductItems } from "@/lib/productBlock";
@@ -114,6 +117,23 @@ function publishedDesktopAndMobile(desktop: Block, mobile: Block) {
       },
     } as unknown as Block,
   ];
+}
+
+function bootstrapPlan(
+  selections: MerchantCatalogBootstrapResolutionPlan["selections"] = [],
+  excludedProductIds: string[] = [],
+): MerchantCatalogBootstrapResolutionPlan {
+  return { version: 1, selections, excludedProductIds };
+}
+
+function chooseBootstrapValue(
+  target: MerchantCatalogBootstrapResolutionTarget,
+  value: string | string[],
+): MerchantCatalogBootstrapResolutionPlan["selections"][number] {
+  const serialized = JSON.stringify(value);
+  const choice = target.choices.find((candidate) => JSON.stringify(candidate.value) === serialized);
+  assert.ok(choice, `missing bootstrap choice ${serialized} for ${target.targetKey}`);
+  return { targetKey: target.targetKey, choiceId: choice.choiceId };
 }
 
 test("bootstrap merges identical desktop/mobile products and keeps viewport collections", () => {
@@ -302,6 +322,228 @@ test("bootstrap reports price_prefix conflicts as a catalog-level ambiguity", ()
   assert.equal(result.catalog, null);
   assert.equal(result.conflicts[0]?.code, "catalog_field_conflict");
   assert.equal(result.conflicts[0]?.field, "price_prefix");
+});
+
+test("bootstrap resolution targets are stable and preserve common fields while choosing a description", () => {
+  const input = {
+    blocks: publishedDesktopAndMobile(
+      productBlock({ description: "Desktop description" }),
+      productBlock({ description: "Mobile description" }),
+    ),
+    revision: 4,
+    updatedAt: "2026-08-17T12:00:00.000Z",
+  };
+  const first = bootstrapMerchantCatalogFromPublishedBlocks(input);
+  const second = bootstrapMerchantCatalogFromPublishedBlocks(input);
+  assert.deepEqual(first.resolutionTargets, second.resolutionTargets);
+  const descriptionTarget = first.resolutionTargets.find(
+    (target) => target.scope === "product" && target.field === "description",
+  );
+  assert.ok(descriptionTarget);
+  assert.equal(descriptionTarget.entityLabel, "Coffee");
+
+  const resolved = resolveMerchantCatalogBootstrapFromPublishedBlocks(
+    input,
+    bootstrapPlan([chooseBootstrapValue(descriptionTarget, "Mobile description")]),
+  );
+  assert.equal(resolved.ok, true);
+  assert.equal(resolved.error, undefined);
+  assert.deepEqual(resolved.catalog?.products[0], {
+    id: "stable-product-id",
+    code: "SKU-001",
+    name: "Coffee",
+    description: "Mobile description",
+    price: "12.50",
+    imageUrl: "https://example.com/coffee.jpg",
+    thumbnailUrl: "https://example.com/coffee-thumb.jpg",
+    tag: "Drinks",
+    availability: "available",
+  });
+});
+
+test("bootstrap merges missing and divergent names into one custom-capable target", () => {
+  const input = {
+    blocks: publishedDesktopAndMobile(
+      productBlock({ name: "" }),
+      productBlock({ name: "Mobile coffee" }),
+    ),
+  };
+  const preview = bootstrapMerchantCatalogFromPublishedBlocks(input);
+  const nameTargets = preview.resolutionTargets.filter(
+    (target) => target.scope === "product" && target.field === "name",
+  );
+  assert.equal(nameTargets.length, 1);
+  assert.equal(nameTargets[0]?.entityLabel, "SKU-001");
+  assert.deepEqual(nameTargets[0]?.reasons, ["name_required", "name"]);
+  assert.equal(nameTargets[0]?.allowCustom, true);
+  assert.deepEqual(nameTargets[0]?.choices.map((choice) => choice.value), ["Mobile coffee"]);
+
+  const target = nameTargets[0]!;
+  const resolved = resolveMerchantCatalogBootstrapFromPublishedBlocks(
+    input,
+    bootstrapPlan([{ targetKey: target.targetKey, customValue: "  Workbench coffee  " }]),
+  );
+  assert.equal(resolved.ok, true);
+  assert.equal(resolved.catalog?.products[0]?.name, "Workbench coffee");
+});
+
+test("bootstrap merges invalid and divergent prices into one target and accepts an explicit free price", () => {
+  const input = {
+    blocks: publishedDesktopAndMobile(
+      productBlock({ price: "" }),
+      productBlock({ price: "13.00" }),
+    ),
+  };
+  const preview = bootstrapMerchantCatalogFromPublishedBlocks(input);
+  const priceTargets = preview.resolutionTargets.filter(
+    (target) => target.scope === "product" && target.field === "price",
+  );
+  assert.equal(priceTargets.length, 1);
+  assert.deepEqual(priceTargets[0]?.reasons, ["price_invalid", "price"]);
+  assert.equal(priceTargets[0]?.allowCustom, true);
+  assert.deepEqual(priceTargets[0]?.choices.map((choice) => choice.value), ["13.00"]);
+
+  const resolved = resolveMerchantCatalogBootstrapFromPublishedBlocks(
+    input,
+    bootstrapPlan([{ targetKey: priceTargets[0]!.targetKey, customValue: "0" }]),
+  );
+  assert.equal(resolved.ok, true);
+  assert.equal(resolved.catalog?.products[0]?.price, "0");
+});
+
+test("bootstrap can explicitly exclude a conflicted product and cleans collection/category references", () => {
+  const desktop = productBlock({ name: "" }, "€", { productTagOptions: ["Drinks"] });
+  const mobile = productBlock({ name: "Mobile coffee" }, "€", { productTagOptions: ["Drinks"] });
+  const input = { blocks: publishedDesktopAndMobile(desktop, mobile) };
+  const resolved = resolveMerchantCatalogBootstrapFromPublishedBlocks(
+    input,
+    bootstrapPlan([], ["stable-product-id"]),
+  );
+  assert.equal(resolved.ok, true);
+  assert.deepEqual(resolved.catalog?.products, []);
+  assert.deepEqual(
+    resolved.catalog?.collections.map((collection) => collection.productIds),
+    [[], []],
+  );
+  assert.deepEqual(resolved.catalog?.categories, [
+    { id: "category-44-72-69-6e-6b-73", name: "Drinks", productIds: [] },
+  ]);
+});
+
+test("bootstrap resolution strictly rejects unknown, duplicate, omitted, and forbidden custom selections", () => {
+  const input = {
+    blocks: publishedDesktopAndMobile(
+      productBlock({ description: "Desktop" }),
+      productBlock({ description: "Mobile" }),
+    ),
+  };
+  const preview = bootstrapMerchantCatalogFromPublishedBlocks(input);
+  const target = preview.resolutionTargets[0]!;
+  const valid = chooseBootstrapValue(target, "Desktop");
+
+  const unknown = resolveMerchantCatalogBootstrapFromPublishedBlocks(
+    input,
+    bootstrapPlan([{ targetKey: "unknown", choiceId: "unknown" }]),
+  );
+  assert.equal(unknown.error, "merchant_catalog_bootstrap_resolution_invalid");
+
+  const duplicate = resolveMerchantCatalogBootstrapFromPublishedBlocks(
+    input,
+    bootstrapPlan([valid, valid]),
+  );
+  assert.equal(duplicate.error, "merchant_catalog_bootstrap_resolution_invalid");
+  assert.equal(duplicate.errorTargetKey, target.targetKey);
+
+  const omitted = resolveMerchantCatalogBootstrapFromPublishedBlocks(input, bootstrapPlan());
+  assert.equal(omitted.error, "merchant_catalog_bootstrap_resolution_incomplete");
+  assert.equal(omitted.errorTargetKey, target.targetKey);
+
+  const custom = resolveMerchantCatalogBootstrapFromPublishedBlocks(
+    input,
+    bootstrapPlan([{ targetKey: target.targetKey, customValue: "Arbitrary" }]),
+  );
+  assert.equal(custom.error, "merchant_catalog_bootstrap_resolution_invalid");
+});
+
+test("bootstrap resolution rejects malformed plans and cannot resolve invalid input conflicts", () => {
+  const input = { blocks: "not-an-array" };
+  const malformed = resolveMerchantCatalogBootstrapFromPublishedBlocks(
+    input,
+    undefined as unknown as MerchantCatalogBootstrapResolutionPlan,
+  );
+  assert.equal(malformed.error, "merchant_catalog_bootstrap_resolution_invalid");
+  const unresolved = resolveMerchantCatalogBootstrapFromPublishedBlocks(input, bootstrapPlan());
+  assert.equal(unresolved.error, "merchant_catalog_bootstrap_unresolved_conflict");
+});
+
+test("bootstrap resolution validates collection choices and supports exclusion cleanup", () => {
+  const productA = {
+    id: "product-a",
+    code: "A",
+    name: "Product A",
+    description: "",
+    price: "1.00",
+    imageUrl: "",
+    thumbnailUrl: "",
+    tag: "",
+  };
+  const productB = { ...productA, id: "product-b", code: "B", name: "Product B" };
+  const first = productBlock({}, "€", { products: [productA] });
+  const second = productBlock({}, "€", { products: [productB] });
+  const input = { desktopBlocks: [first, second] };
+  const preview = bootstrapMerchantCatalogFromPublishedBlocks(input);
+  assert.equal(preview.resolutionTargets.some((target) => target.scope === "product"), false);
+  const collectionTarget = preview.resolutionTargets.find((target) => target.field === "product_ids");
+  assert.ok(collectionTarget);
+  assert.deepEqual(collectionTarget.relatedProducts, [
+    { productId: "product-a", entityLabel: "Product A" },
+    { productId: "product-b", entityLabel: "Product B" },
+  ]);
+  const chooseA = chooseBootstrapValue(collectionTarget, ["product-a"]);
+
+  const invalidCatalog = resolveMerchantCatalogBootstrapFromPublishedBlocks(
+    input,
+    bootstrapPlan([chooseA]),
+  );
+  assert.equal(invalidCatalog.error, "merchant_catalog_bootstrap_validation_failed");
+  assert.equal(invalidCatalog.validationError, "merchant_catalog_product_not_placed");
+
+  const cleaned = resolveMerchantCatalogBootstrapFromPublishedBlocks(
+    input,
+    bootstrapPlan([chooseA], ["product-b"]),
+  );
+  assert.equal(cleaned.ok, true);
+  assert.deepEqual(cleaned.catalog?.products.map((product) => product.id), ["product-a"]);
+  assert.deepEqual(cleaned.catalog?.collections[0]?.productIds, ["product-a"]);
+});
+
+test("bootstrap resolution accepts a bounded custom search placeholder", () => {
+  const block = productBlock({}, "€", {
+    productSearchPlaceholder: "x".repeat(MERCHANT_CATALOG_MAX_SEARCH_PLACEHOLDER_LENGTH + 1),
+  });
+  const input = { desktopBlocks: [block] };
+  const preview = bootstrapMerchantCatalogFromPublishedBlocks(input);
+  const target = preview.resolutionTargets.find((candidate) => candidate.field === "search_placeholder_too_long");
+  assert.ok(target);
+  assert.equal(target.allowCustom, true);
+  assert.deepEqual(target.choices, []);
+  const resolved = resolveMerchantCatalogBootstrapFromPublishedBlocks(
+    input,
+    bootstrapPlan([{ targetKey: target.targetKey, customValue: "Search products" }]),
+  );
+  assert.equal(resolved.ok, true);
+  assert.equal(resolved.catalog?.collections[0]?.browsingRules?.searchPlaceholder, "Search products");
+});
+
+test("legacy conflict-free bootstrap remains unchanged apart from additive empty targets", () => {
+  const input = { desktopBlocks: [productBlock()] };
+  const legacy = bootstrapMerchantCatalogFromPublishedBlocks(input);
+  assert.equal(legacy.ok, true);
+  assert.deepEqual(legacy.conflicts, []);
+  assert.deepEqual(legacy.resolutionTargets, []);
+  const resolved = resolveMerchantCatalogBootstrapFromPublishedBlocks(input, bootstrapPlan());
+  assert.equal(resolved.ok, true);
+  assert.deepEqual(resolved.catalog, legacy.catalog);
 });
 
 test("normalize and JSON round-trip are pure and reject invalid records/references", () => {

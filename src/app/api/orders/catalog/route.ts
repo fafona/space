@@ -6,6 +6,8 @@ import {
   MERCHANT_CATALOG_MAX_PRODUCT_IMAGE_BYTES,
   planMerchantCatalogProductImageImport,
   prepareMerchantCatalogProductImageImport,
+  resolveMerchantCatalogBootstrapFromPublishedBlocks,
+  type MerchantCatalogBootstrapResolutionPlan,
   type MerchantCatalogMutation,
   type MerchantCatalogPreparedProductImageImportItem,
   type MerchantCatalogProductImageImportPlan,
@@ -25,7 +27,7 @@ import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type CatalogAction = MerchantCatalogMutation["action"] | "bootstrap";
+type CatalogAction = MerchantCatalogMutation["action"] | "bootstrap" | "preview_bootstrap";
 
 export type MerchantCatalogMutationRouteDependencies = {
   resolveSession: typeof resolveMerchantSessionFromRequest;
@@ -211,6 +213,7 @@ export async function verifyMerchantCatalogProductImageAssets(
 
 function normalizeAction(value: unknown): CatalogAction | null {
   return value === "bootstrap" ||
+    value === "preview_bootstrap" ||
     value === "upsert_product" ||
     value === "bulk_import_products" ||
     value === "bulk_set_product_images" ||
@@ -229,18 +232,91 @@ function readExpectedRevision(value: unknown) {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
-function bootstrapFingerprint(bootstrap: ReturnType<typeof bootstrapMerchantCatalogFromPublishedBlocks>) {
-  const catalog = bootstrap.catalog
+function hashJson(value: unknown) {
+  return createHash("sha256")
+    .update(JSON.stringify(value))
+    .digest("hex");
+}
+
+/**
+ * Hash the complete fresh published block tree, not just bootstrap conflicts.
+ * A conflict preview intentionally omits common fields, so hashing only that
+ * summary would let an otherwise valid product value change between preview
+ * and commit without invalidating the confirmation token.
+ */
+function publishedBlocksFingerprint(blocks: unknown) {
+  return hashJson({ version: 2, blocks });
+}
+
+function catalogFingerprintPayload(
+  catalog: ReturnType<typeof resolveMerchantCatalogBootstrapFromPublishedBlocks>["catalog"],
+) {
+  return catalog
     ? {
-        pricePrefix: bootstrap.catalog.pricePrefix,
-        categories: bootstrap.catalog.categories,
-        products: bootstrap.catalog.products,
-        collections: bootstrap.catalog.collections,
+        pricePrefix: catalog.pricePrefix,
+        categories: catalog.categories,
+        products: catalog.products,
+        collections: catalog.collections,
       }
     : null;
-  return createHash("sha256")
-    .update(JSON.stringify({ catalog, conflicts: bootstrap.conflicts, sourceBlockCount: bootstrap.sourceBlockCount }))
-    .digest("hex");
+}
+
+function resolutionPlanFingerprintPayload(plan: MerchantCatalogBootstrapResolutionPlan) {
+  const selections = plan.selections
+    .map((selection) => {
+      const targetKey = trimText(selection.targetKey);
+      return "choiceId" in selection
+        ? { targetKey, choiceId: trimText(selection.choiceId) }
+        : { targetKey, customValue: selection.customValue };
+    })
+    .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right), "en"));
+  return {
+    version: plan.version,
+    selections,
+    excludedProductIds: [...plan.excludedProductIds].map(trimText).sort((left, right) => left.localeCompare(right, "en")),
+  };
+}
+
+function resolutionFingerprint(
+  plan: MerchantCatalogBootstrapResolutionPlan,
+  resolved: ReturnType<typeof resolveMerchantCatalogBootstrapFromPublishedBlocks>,
+) {
+  return hashJson({
+    version: 1,
+    plan: resolutionPlanFingerprintPayload(plan),
+    catalog: catalogFingerprintPayload(resolved.catalog),
+  });
+}
+
+function resolutionErrorStatus(error: string) {
+  if (
+    error === "merchant_catalog_bootstrap_resolution_invalid" ||
+    error === "merchant_catalog_bootstrap_validation_failed"
+  ) {
+    return 400;
+  }
+  if (
+    error === "merchant_catalog_bootstrap_resolution_incomplete" ||
+    error === "merchant_catalog_bootstrap_unresolved_conflict"
+  ) {
+    return 409;
+  }
+  return 503;
+}
+
+function resolutionErrorResponse(
+  resolved: ReturnType<typeof resolveMerchantCatalogBootstrapFromPublishedBlocks>,
+) {
+  const error = resolved.error ?? "merchant_catalog_bootstrap_unresolved_conflict";
+  return noStoreJson(
+    {
+      error,
+      preview: resolved,
+      ...(resolved.errorTargetKey ? { errorTargetKey: resolved.errorTargetKey } : {}),
+      ...(resolved.validationError ? { validationError: resolved.validationError } : {}),
+    },
+    { status: resolutionErrorStatus(error) },
+  );
 }
 
 async function authorizeCatalogRequest(
@@ -269,7 +345,7 @@ const DEFAULT_MUTATION_DEPENDENCIES: MerchantCatalogMutationRouteDependencies = 
 };
 
 function mutationFromBody(
-  action: Exclude<CatalogAction, "bootstrap">,
+  action: Exclude<CatalogAction, "bootstrap" | "preview_bootstrap">,
   body: Record<string, unknown>,
   authorizedSiteId: string,
 ): MerchantCatalogMutation {
@@ -313,7 +389,8 @@ function mutationErrorStatus(error: string) {
     error === "merchant_catalog_image_import_duplicate_code" ||
     error === "merchant_catalog_existing_duplicate_code" ||
     error === "merchant_catalog_image_import_no_changes" ||
-    error === "merchant_catalog_bootstrap_source_changed"
+    error === "merchant_catalog_bootstrap_source_changed" ||
+    error === "merchant_catalog_bootstrap_resolution_changed"
   ) {
     return 409;
   }
@@ -364,8 +441,9 @@ export async function handleMerchantCatalogGet(
     const catalog = await dependencies.loadCatalog(supabase, siteId);
     if (catalog) return noStoreJson({ ok: true, catalog, bootstrap: null });
     const published = await dependencies.fetchPublishedBlocks(siteId, { fresh: true });
+    const publishedBlocks = published?.blocks ?? [];
     const bootstrap = bootstrapMerchantCatalogFromPublishedBlocks({
-      blocks: published?.blocks ?? [],
+      blocks: publishedBlocks,
       revision: 1,
       updatedAt: new Date().toISOString(),
     });
@@ -373,7 +451,7 @@ export async function handleMerchantCatalogGet(
       ok: true,
       catalog: null,
       bootstrap,
-      bootstrapFingerprint: bootstrapFingerprint(bootstrap),
+      bootstrapFingerprint: publishedBlocksFingerprint(publishedBlocks),
     });
   } catch {
     return catalogServiceUnavailableResponse();
@@ -411,17 +489,21 @@ export async function handleMerchantCatalogMutation(
     const serviceClient = dependencies.createServiceClient();
     if (!serviceClient) return noStoreJson({ error: "catalog_storage_unavailable" }, { status: 503 });
     const supabase = serviceClient;
-    if (action === "bootstrap") {
+    if (action === "bootstrap" || action === "preview_bootstrap") {
+      if (action === "preview_bootstrap" && expectedRevision !== 0) {
+        return noStoreJson({ error: "invalid_merchant_catalog_expected_revision" }, { status: 400 });
+      }
       const published = await dependencies.fetchPublishedBlocks(siteId, { fresh: true });
       if (!published?.blocks) {
         return noStoreJson({ error: "merchant_catalog_bootstrap_unavailable" }, { status: 409 });
       }
-      const bootstrap = bootstrapMerchantCatalogFromPublishedBlocks({
+      const input = {
         blocks: published.blocks,
         revision: 1,
         updatedAt: new Date().toISOString(),
-      });
-      const currentBootstrapFingerprint = bootstrapFingerprint(bootstrap);
+      };
+      const bootstrap = bootstrapMerchantCatalogFromPublishedBlocks(input);
+      const currentBootstrapFingerprint = publishedBlocksFingerprint(published.blocks);
       if (trimText(body?.sourceFingerprint) !== currentBootstrapFingerprint) {
         return noStoreJson(
           {
@@ -432,14 +514,55 @@ export async function handleMerchantCatalogMutation(
           { status: 409 },
         );
       }
-      if (!bootstrap.ok || !bootstrap.catalog) {
+
+      if (action === "preview_bootstrap") {
+        const resolutionPlan = body?.resolutionPlan as MerchantCatalogBootstrapResolutionPlan;
+        const resolved = resolveMerchantCatalogBootstrapFromPublishedBlocks(input, resolutionPlan);
+        if (resolved.error || !resolved.ok || !resolved.catalog) {
+          return resolutionErrorResponse(resolved);
+        }
+        if (resolved.sourceBlockCount === 0) {
+          return noStoreJson({ error: "merchant_catalog_bootstrap_empty", preview: resolved }, { status: 409 });
+        }
+        return noStoreJson({
+          ok: true,
+          preview: resolved,
+          resolutionFingerprint: resolutionFingerprint(resolutionPlan, resolved),
+        });
+      }
+
+      const hasResolutionPlan = Object.prototype.hasOwnProperty.call(body ?? {}, "resolutionPlan");
+      const resolutionPlan = body?.resolutionPlan as MerchantCatalogBootstrapResolutionPlan;
+      let resolvedBootstrap = bootstrap;
+      if (hasResolutionPlan) {
+        const resolved = resolveMerchantCatalogBootstrapFromPublishedBlocks(input, resolutionPlan);
+        if (resolved.error || !resolved.ok || !resolved.catalog) {
+          return resolutionErrorResponse(resolved);
+        }
+        if (resolved.sourceBlockCount === 0) {
+          return noStoreJson({ error: "merchant_catalog_bootstrap_empty", bootstrap: resolved }, { status: 409 });
+        }
+        const currentResolutionFingerprint = resolutionFingerprint(resolutionPlan, resolved);
+        if (trimText(body?.resolutionFingerprint) !== currentResolutionFingerprint) {
+          return noStoreJson(
+            {
+              error: "merchant_catalog_bootstrap_resolution_changed",
+              preview: resolved,
+              resolutionFingerprint: currentResolutionFingerprint,
+            },
+            { status: 409 },
+          );
+        }
+        resolvedBootstrap = resolved;
+      }
+      if (!resolvedBootstrap.ok || !resolvedBootstrap.catalog) {
         return noStoreJson(
           { error: "merchant_catalog_bootstrap_conflict", conflicts: bootstrap.conflicts, bootstrap },
           { status: 409 },
         );
       }
-      if (bootstrap.sourceBlockCount === 0) {
-        return noStoreJson({ error: "merchant_catalog_bootstrap_empty", bootstrap }, { status: 409 });
+      if (resolvedBootstrap.sourceBlockCount === 0) {
+        return noStoreJson({ error: "merchant_catalog_bootstrap_empty", bootstrap: resolvedBootstrap }, { status: 409 });
       }
       const result = await dependencies.mutateCatalog(supabase, {
         siteId,
@@ -448,7 +571,7 @@ export async function handleMerchantCatalogMutation(
         mutate: (current) =>
           current
             ? { ok: false, error: "merchant_catalog_already_initialized" }
-            : { ok: true, catalog: bootstrap.catalog! },
+            : { ok: true, catalog: resolvedBootstrap.catalog! },
       });
       if (result.error) return mutationErrorResponse(result.error, result.catalog);
       return noStoreJson({ ok: true, catalog: result.catalog, warning: result.warning ?? null });

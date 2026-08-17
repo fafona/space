@@ -129,6 +129,43 @@ export type MerchantCatalogConflict = {
   values: MerchantCatalogConflictValue[];
 };
 
+export type MerchantCatalogBootstrapResolutionTargetKey = string;
+
+export type MerchantCatalogBootstrapResolutionChoice = {
+  choiceId: string;
+  value: string | string[];
+  sources: MerchantCatalogBootstrapSource[];
+};
+
+export type MerchantCatalogBootstrapResolutionTarget = {
+  targetKey: MerchantCatalogBootstrapResolutionTargetKey;
+  scope: "catalog" | "product" | "collection";
+  field: string;
+  productId?: string;
+  collectionId?: string;
+  entityLabel?: string;
+  relatedProducts?: Array<{ productId: string; entityLabel: string }>;
+  reasons: string[];
+  choices: MerchantCatalogBootstrapResolutionChoice[];
+  allowCustom: boolean;
+};
+
+export type MerchantCatalogBootstrapResolutionSelection =
+  | { targetKey: MerchantCatalogBootstrapResolutionTargetKey; choiceId: string }
+  | { targetKey: MerchantCatalogBootstrapResolutionTargetKey; customValue: string };
+
+export type MerchantCatalogBootstrapResolutionPlan = {
+  version: 1;
+  selections: MerchantCatalogBootstrapResolutionSelection[];
+  excludedProductIds: string[];
+};
+
+export type MerchantCatalogBootstrapResolutionError =
+  | "merchant_catalog_bootstrap_resolution_invalid"
+  | "merchant_catalog_bootstrap_resolution_incomplete"
+  | "merchant_catalog_bootstrap_unresolved_conflict"
+  | "merchant_catalog_bootstrap_validation_failed";
+
 export type MerchantCatalogBootstrapInput = {
   /** A persisted published block tree containing desktop/mobile plan data. */
   blocks?: unknown;
@@ -146,6 +183,13 @@ export type MerchantCatalogBootstrapResult = {
   catalog: MerchantCatalog | null;
   conflicts: MerchantCatalogConflict[];
   sourceBlockCount: number;
+  resolutionTargets: MerchantCatalogBootstrapResolutionTarget[];
+};
+
+export type MerchantCatalogBootstrapResolutionResult = MerchantCatalogBootstrapResult & {
+  error?: MerchantCatalogBootstrapResolutionError;
+  errorTargetKey?: MerchantCatalogBootstrapResolutionTargetKey;
+  validationError?: string;
 };
 
 export type MerchantCatalogMutation =
@@ -374,6 +418,14 @@ function normalizePublishedProducts(value: unknown): MerchantCatalogProduct[] {
     }));
 }
 
+function bootstrapProductEntityLabel(productId: string, occurrences: ProductOccurrence[]) {
+  const names = occurrences.map(({ product }) => product.name.trim());
+  if (names.length > 0 && names.every(Boolean) && new Set(names).size === 1) return names[0]!;
+  const codes = occurrences.map(({ product }) => product.code.trim());
+  if (codes.length > 0 && codes.every(Boolean) && new Set(codes).size === 1) return codes[0]!;
+  return productId;
+}
+
 function stableIdPart(value: string) {
   return Array.from(value)
     .map((character) => character.codePointAt(0)?.toString(16) ?? "0")
@@ -437,6 +489,152 @@ function conflictValues<T extends string | string[]>(
     }
   });
   return [...grouped.values()];
+}
+
+function bootstrapResolutionHash(value: string) {
+  let first = 0x811c9dc5;
+  let second = 0x9e3779b9;
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    first = Math.imul(first ^ codeUnit, 0x01000193);
+    second = Math.imul(second ^ codeUnit, 0x85ebca6b);
+  }
+  return `${(first >>> 0).toString(36)}${(second >>> 0).toString(36)}`;
+}
+
+function resolutionValueKey(value: string | string[]) {
+  return Array.isArray(value) ? JSON.stringify(value) : JSON.stringify(String(value));
+}
+
+function resolutionTargetIdentity(conflict: MerchantCatalogConflict): {
+  scope: MerchantCatalogBootstrapResolutionTarget["scope"];
+  field: string;
+  entityId: string;
+} | null {
+  if (conflict.code === "invalid_input") return null;
+  if (conflict.code === "catalog_field_conflict") {
+    return { scope: "catalog", field: conflict.field, entityId: "" };
+  }
+  if (conflict.code === "product_field_conflict" && conflict.productId) {
+    const field = conflict.field === "name_required"
+      ? "name"
+      : conflict.field === "price_invalid"
+        ? "price"
+        : conflict.field;
+    return { scope: "product", field, entityId: conflict.productId };
+  }
+  if (conflict.code === "collection_conflict" && conflict.collectionId) {
+    return { scope: "collection", field: conflict.field, entityId: conflict.collectionId };
+  }
+  return null;
+}
+
+function createResolutionTargetKey(
+  scope: MerchantCatalogBootstrapResolutionTarget["scope"],
+  entityId: string,
+  field: string,
+): MerchantCatalogBootstrapResolutionTargetKey {
+  return JSON.stringify([scope, entityId, field]);
+}
+
+function isValidResolutionCandidate(
+  field: string,
+  reasons: string[],
+  value: string | string[],
+) {
+  if (field === "name" && reasons.includes("name_required")) {
+    return typeof value === "string" && Boolean(value.trim());
+  }
+  if (field === "price" && reasons.includes("price_invalid")) {
+    return typeof value === "string" && parseMerchantCatalogUnitPrice(value) !== null;
+  }
+  if (field === "search_placeholder_too_long") {
+    return typeof value === "string" && value.trim().length <= MERCHANT_CATALOG_MAX_SEARCH_PLACEHOLDER_LENGTH;
+  }
+  return true;
+}
+
+function buildBootstrapResolutionTargets(
+  conflicts: MerchantCatalogConflict[],
+  productLabels: ReadonlyMap<string, string> = new Map(),
+) {
+  const targets = new Map<MerchantCatalogBootstrapResolutionTargetKey, MerchantCatalogBootstrapResolutionTarget>();
+  conflicts.forEach((conflict) => {
+    const identity = resolutionTargetIdentity(conflict);
+    if (!identity) return;
+    const targetKey = createResolutionTargetKey(identity.scope, identity.entityId, identity.field);
+    const existing = targets.get(targetKey);
+    const target: MerchantCatalogBootstrapResolutionTarget = existing ?? {
+      targetKey,
+      scope: identity.scope,
+      field: identity.field,
+      ...(identity.scope === "product" ? { productId: identity.entityId } : {}),
+      ...(identity.scope === "collection" ? { collectionId: identity.entityId } : {}),
+      ...(identity.scope === "product"
+        ? { entityLabel: productLabels.get(identity.entityId) ?? identity.entityId }
+        : {}),
+      reasons: [],
+      choices: [],
+      allowCustom: false,
+    };
+    if (!target.reasons.includes(conflict.field)) target.reasons.push(conflict.field);
+    target.allowCustom = target.reasons.some((reason) =>
+      reason === "name_required" ||
+      reason === "price_invalid" ||
+      reason === "search_placeholder_too_long"
+    );
+    const choicesByValue = new Map(target.choices.map((choice) => [resolutionValueKey(choice.value), choice]));
+    conflict.values.forEach((entry) => {
+      const valueKey = resolutionValueKey(entry.value);
+      const prior = choicesByValue.get(valueKey);
+      if (prior) {
+        const knownSources = new Set(prior.sources.map((source) => JSON.stringify(source)));
+        entry.sources.forEach((source) => {
+          const sourceKey = JSON.stringify(source);
+          if (!knownSources.has(sourceKey)) {
+            knownSources.add(sourceKey);
+            prior.sources.push(source);
+          }
+        });
+        return;
+      }
+      const choice: MerchantCatalogBootstrapResolutionChoice = {
+        choiceId: `choice-${bootstrapResolutionHash(`${targetKey}\u0000${valueKey}`)}`,
+        value: Array.isArray(entry.value) ? [...entry.value] : entry.value,
+        sources: entry.sources.map((source) => ({ ...source })),
+      };
+      target.choices.push(choice);
+      choicesByValue.set(valueKey, choice);
+    });
+    targets.set(targetKey, target);
+  });
+
+  return [...targets.values()].map((target) => {
+    const choices = target.choices.filter((choice) =>
+      isValidResolutionCandidate(target.field, target.reasons, choice.value)
+    );
+    if (target.scope !== "collection" || target.field !== "product_ids") {
+      return { ...target, choices };
+    }
+    const relatedProductIds: string[] = [];
+    const seenProductIds = new Set<string>();
+    choices.forEach((choice) => {
+      if (!Array.isArray(choice.value)) return;
+      choice.value.forEach((productId) => {
+        if (!productId || seenProductIds.has(productId)) return;
+        seenProductIds.add(productId);
+        relatedProductIds.push(productId);
+      });
+    });
+    return {
+      ...target,
+      choices,
+      relatedProducts: relatedProductIds.map((productId) => ({
+        productId,
+        entityLabel: productLabels.get(productId) ?? productId,
+      })),
+    };
+  });
 }
 
 function emptyCatalog(): MerchantCatalog {
@@ -1797,7 +1995,19 @@ export function bootstrapMerchantCatalogFromPublishedBlocks(
   });
 
   if (conflicts.length > 0) {
-    return { ok: false, catalog: null, conflicts, sourceBlockCount: candidates.length };
+    const productLabels = new Map(
+      [...productsById.entries()].map(([productId, occurrences]) => [
+        productId,
+        bootstrapProductEntityLabel(productId, occurrences),
+      ]),
+    );
+    return {
+      ok: false,
+      catalog: null,
+      conflicts,
+      sourceBlockCount: candidates.length,
+      resolutionTargets: buildBootstrapResolutionTargets(conflicts, productLabels),
+    };
   }
 
   const categoriesByName = new Map<string, MerchantCatalogCategory>();
@@ -1826,5 +2036,308 @@ export function bootstrapMerchantCatalogFromPublishedBlocks(
     products,
     collections,
   });
-  return { ok: true, catalog, conflicts: [], sourceBlockCount: candidates.length };
+  return { ok: true, catalog, conflicts: [], sourceBlockCount: candidates.length, resolutionTargets: [] };
+}
+
+function isSupportedBootstrapResolutionTarget(target: MerchantCatalogBootstrapResolutionTarget) {
+  if (target.scope === "catalog") {
+    return target.field === "price_prefix" || target.field === "category_options";
+  }
+  if (target.scope === "product") {
+    return PRODUCT_FIELDS.some(([, field]) => field === target.field);
+  }
+  return target.field === "product_ids" ||
+    target.field === "browsing_rules" ||
+    target.field === "search_placeholder_too_long";
+}
+
+function normalizeCustomBootstrapResolution(
+  target: MerchantCatalogBootstrapResolutionTarget,
+  value: string,
+): { ok: true; value: string } | { ok: false } {
+  if (!target.allowCustom) return { ok: false };
+  const normalized = value.trim();
+  if (target.scope === "product" && target.field === "name" && target.reasons.includes("name_required")) {
+    return normalized && normalized.length <= 240 ? { ok: true, value: normalized } : { ok: false };
+  }
+  if (target.scope === "product" && target.field === "price" && target.reasons.includes("price_invalid")) {
+    return normalized.length <= 80 && parseMerchantCatalogUnitPrice(normalized) !== null
+      ? { ok: true, value: normalized }
+      : { ok: false };
+  }
+  if (
+    target.scope === "collection" &&
+    target.field === "search_placeholder_too_long" &&
+    target.reasons.includes("search_placeholder_too_long")
+  ) {
+    return normalized.length <= MERCHANT_CATALOG_MAX_SEARCH_PLACEHOLDER_LENGTH
+      ? { ok: true, value: normalized }
+      : { ok: false };
+  }
+  return { ok: false };
+}
+
+/**
+ * Resolves an initial catalog exclusively from explicit, fingerprint-bound UI
+ * decisions. This function never mutates published blocks and never chooses a
+ * conflicting side implicitly.
+ */
+export function resolveMerchantCatalogBootstrapFromPublishedBlocks(
+  input: MerchantCatalogBootstrapInput,
+  plan: MerchantCatalogBootstrapResolutionPlan,
+): MerchantCatalogBootstrapResolutionResult {
+  const bootstrap = bootstrapMerchantCatalogFromPublishedBlocks(input);
+  const invalid = (errorTargetKey?: string): MerchantCatalogBootstrapResolutionResult => ({
+    ...bootstrap,
+    ok: false,
+    catalog: null,
+    error: "merchant_catalog_bootstrap_resolution_invalid",
+    ...(errorTargetKey ? { errorTargetKey } : {}),
+  });
+
+  if (!plan || typeof plan !== "object" || Array.isArray(plan)) return invalid();
+  const rawPlan = plan as unknown as Record<string, unknown>;
+  if (
+    rawPlan.version !== 1 ||
+    !Array.isArray(rawPlan.selections) ||
+    !Array.isArray(rawPlan.excludedProductIds)
+  ) {
+    return invalid();
+  }
+
+  const candidates: ProductBlockCandidate[] = [];
+  const sourceInputs: Array<{ value: unknown; viewport: MerchantCatalogViewport }> = [
+    { value: input?.blocks, viewport: "shared" },
+    { value: input?.desktopBlocks, viewport: "desktop" },
+    { value: input?.mobileBlocks, viewport: "mobile" },
+  ];
+  sourceInputs.forEach(({ value, viewport }) => {
+    if (Array.isArray(value)) collectProductBlocks(value, viewport, candidates, new WeakSet<object>());
+  });
+
+  const productsById = new Map<string, ProductOccurrence[]>();
+  const collectionsById = new Map<string, CollectionOccurrence[]>();
+  candidates.forEach(({ block, source }) => {
+    const productIds: string[] = [];
+    const seenInCollection = new Set<string>();
+    normalizePublishedProducts(block.props.products).forEach((product) => {
+      if (!seenInCollection.has(product.id)) {
+        seenInCollection.add(product.id);
+        productIds.push(product.id);
+      }
+      const occurrences = productsById.get(product.id) ?? [];
+      occurrences.push({ product, source });
+      productsById.set(product.id, occurrences);
+    });
+    const collection: MerchantCatalogCollection = {
+      id: createMerchantCatalogCollectionId(block.id, source.viewport),
+      blockId: block.id,
+      viewport: source.viewport,
+      productIds,
+      browsingRules: publishedBrowsingRules(block),
+    };
+    const occurrences = collectionsById.get(collection.id) ?? [];
+    occurrences.push({ collection, source });
+    collectionsById.set(collection.id, occurrences);
+  });
+
+  const excludedProductIds = new Set<string>();
+  for (const value of rawPlan.excludedProductIds) {
+    if (typeof value !== "string" || !value || value !== value.trim() || excludedProductIds.has(value)) {
+      return invalid();
+    }
+    if (!productsById.has(value)) return invalid();
+    excludedProductIds.add(value);
+  }
+
+  const targetsByKey = new Map(bootstrap.resolutionTargets.map((target) => [target.targetKey, target]));
+  if (bootstrap.conflicts.some((conflict) => !resolutionTargetIdentity(conflict))) {
+    return {
+      ...bootstrap,
+      ok: false,
+      catalog: null,
+      error: "merchant_catalog_bootstrap_unresolved_conflict",
+    };
+  }
+  if ([...targetsByKey.values()].some((target) => !isSupportedBootstrapResolutionTarget(target))) {
+    return {
+      ...bootstrap,
+      ok: false,
+      catalog: null,
+      error: "merchant_catalog_bootstrap_unresolved_conflict",
+    };
+  }
+
+  const resolvedValues = new Map<MerchantCatalogBootstrapResolutionTargetKey, string | string[]>();
+  for (const rawSelection of rawPlan.selections) {
+    if (!rawSelection || typeof rawSelection !== "object" || Array.isArray(rawSelection)) return invalid();
+    const record = rawSelection as Record<string, unknown>;
+    const targetKey = typeof record.targetKey === "string" ? record.targetKey : "";
+    if (!targetKey || resolvedValues.has(targetKey)) return invalid(targetKey || undefined);
+    const target = targetsByKey.get(targetKey);
+    if (!target) return invalid(targetKey);
+    if (target.productId && excludedProductIds.has(target.productId)) return invalid(targetKey);
+    const hasChoiceId = Object.prototype.hasOwnProperty.call(record, "choiceId");
+    const hasCustomValue = Object.prototype.hasOwnProperty.call(record, "customValue");
+    if (hasChoiceId === hasCustomValue) return invalid(targetKey);
+    if (hasChoiceId) {
+      if (typeof record.choiceId !== "string" || !record.choiceId) return invalid(targetKey);
+      const choice = target.choices.find((candidate) => candidate.choiceId === record.choiceId);
+      if (!choice) return invalid(targetKey);
+      resolvedValues.set(targetKey, Array.isArray(choice.value) ? [...choice.value] : choice.value);
+      continue;
+    }
+    if (typeof record.customValue !== "string") return invalid(targetKey);
+    const custom = normalizeCustomBootstrapResolution(target, record.customValue);
+    if (!custom.ok) return invalid(targetKey);
+    resolvedValues.set(targetKey, custom.value);
+  }
+
+  for (const target of bootstrap.resolutionTargets) {
+    if (target.productId && excludedProductIds.has(target.productId)) continue;
+    if (!resolvedValues.has(target.targetKey)) {
+      return {
+        ...bootstrap,
+        ok: false,
+        catalog: null,
+        error: "merchant_catalog_bootstrap_resolution_incomplete",
+        errorTargetKey: target.targetKey,
+      };
+    }
+  }
+
+  const targetValue = (
+    scope: MerchantCatalogBootstrapResolutionTarget["scope"],
+    entityId: string,
+    field: string,
+  ) => resolvedValues.get(createResolutionTargetKey(scope, entityId, field));
+
+  const products: MerchantCatalogProduct[] = [];
+  productsById.forEach((occurrences, productId) => {
+    if (excludedProductIds.has(productId)) return;
+    const product = { ...occurrences[0]!.product };
+    PRODUCT_FIELDS.forEach(([property, field]) => {
+      const value = targetValue("product", productId, field);
+      if (typeof value === "string") product[property] = value as never;
+    });
+    products.push(product);
+  });
+
+  const collections: MerchantCatalogCollection[] = [];
+  let unresolvedTargetKey = "";
+  collectionsById.forEach((occurrences, collectionId) => {
+    if (unresolvedTargetKey) return;
+    const first = occurrences[0]!.collection;
+    const productIdsValue = targetValue("collection", collectionId, "product_ids");
+    if (productIdsValue !== undefined && !Array.isArray(productIdsValue)) {
+      unresolvedTargetKey = createResolutionTargetKey("collection", collectionId, "product_ids");
+      return;
+    }
+    let browsingRules = first.browsingRules ? { ...first.browsingRules } : undefined;
+    const browsingRulesValue = targetValue("collection", collectionId, "browsing_rules");
+    if (browsingRulesValue !== undefined) {
+      if (typeof browsingRulesValue !== "string") {
+        unresolvedTargetKey = createResolutionTargetKey("collection", collectionId, "browsing_rules");
+        return;
+      }
+      try {
+        browsingRules = normalizeMerchantCatalogBrowsingRules(JSON.parse(browsingRulesValue));
+      } catch {
+        browsingRules = undefined;
+      }
+      if (!browsingRules) {
+        unresolvedTargetKey = createResolutionTargetKey("collection", collectionId, "browsing_rules");
+        return;
+      }
+    }
+    const searchPlaceholderValue = targetValue("collection", collectionId, "search_placeholder_too_long");
+    if (searchPlaceholderValue !== undefined) {
+      if (typeof searchPlaceholderValue !== "string" || !browsingRules) {
+        unresolvedTargetKey = createResolutionTargetKey("collection", collectionId, "search_placeholder_too_long");
+        return;
+      }
+      browsingRules = { ...browsingRules, searchPlaceholder: searchPlaceholderValue };
+    }
+    collections.push({
+      ...first,
+      productIds: [...(Array.isArray(productIdsValue) ? productIdsValue : first.productIds)]
+        .filter((productId) => !excludedProductIds.has(productId)),
+      ...(browsingRules ? { browsingRules } : {}),
+    });
+  });
+  if (unresolvedTargetKey) {
+    return {
+      ...bootstrap,
+      ok: false,
+      catalog: null,
+      error: "merchant_catalog_bootstrap_unresolved_conflict",
+      errorTargetKey: unresolvedTargetKey,
+    };
+  }
+
+  const prefixValues = conflictValues(
+    candidates.map(({ block, source }) => ({ value: trimText(block.props.productPricePrefix), source })),
+  );
+  const categoryOptionValues = conflictValues(
+    candidates.map(({ block, source }) => ({ value: uniqueStrings(block.props.productTagOptions), source })),
+  );
+  const resolvedPrefix = targetValue("catalog", "", "price_prefix");
+  const resolvedCategoryOptions = targetValue("catalog", "", "category_options");
+  if (
+    (resolvedPrefix !== undefined && typeof resolvedPrefix !== "string") ||
+    (resolvedCategoryOptions !== undefined && !Array.isArray(resolvedCategoryOptions))
+  ) {
+    return {
+      ...bootstrap,
+      ok: false,
+      catalog: null,
+      error: "merchant_catalog_bootstrap_unresolved_conflict",
+    };
+  }
+
+  const categoriesByName = new Map<string, MerchantCatalogCategory>();
+  const categoryOptions = Array.isArray(resolvedCategoryOptions)
+    ? resolvedCategoryOptions
+    : categoryOptionValues[0]?.value;
+  if (Array.isArray(categoryOptions)) {
+    categoryOptions.forEach((name) => {
+      categoriesByName.set(name, { id: categoryId(name), name, productIds: [] });
+    });
+  }
+  products.forEach((product) => {
+    if (!product.tag) return;
+    const category = categoriesByName.get(product.tag) ?? {
+      id: categoryId(product.tag),
+      name: product.tag,
+      productIds: [],
+    };
+    if (!category.productIds.includes(product.id)) category.productIds.push(product.id);
+    categoriesByName.set(product.tag, category);
+  });
+
+  const catalog = normalizeMerchantCatalog({
+    revision: input?.revision,
+    updatedAt: input?.updatedAt,
+    pricePrefix: typeof resolvedPrefix === "string" ? resolvedPrefix : prefixValues[0]?.value ?? "",
+    categories: [...categoriesByName.values()],
+    products,
+    collections,
+  });
+  const validationError = getMerchantCatalogValidationError(catalog);
+  if (validationError) {
+    return {
+      ...bootstrap,
+      ok: false,
+      catalog: null,
+      error: "merchant_catalog_bootstrap_validation_failed",
+      validationError,
+    };
+  }
+  return {
+    ok: true,
+    catalog,
+    conflicts: [],
+    sourceBlockCount: bootstrap.sourceBlockCount,
+    resolutionTargets: bootstrap.resolutionTargets,
+  };
 }

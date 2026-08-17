@@ -246,6 +246,423 @@ test("catalog GET and PATCH preserve explicit 401 and 403 authorization semantic
   }
 });
 
+function publishedCatalogBlocks(commonCode = "SKU-COMMON", mobileName = "Mobile name") {
+  const productBlock = (name: string) => ({
+    id: "product-block-a",
+    type: "product",
+    props: {
+      productPricePrefix: "EUR ",
+      productTagOptions: [],
+      products: [
+        {
+          id: "product-a",
+          code: commonCode,
+          name,
+          description: "Shared description",
+          price: "10.00",
+          imageUrl: "",
+          thumbnailUrl: "",
+          tag: "",
+        },
+      ],
+    },
+  });
+  return [
+    {
+      id: "__plan_meta__",
+      type: "common",
+      props: {
+        pagePlanConfig: { blocks: [productBlock("Desktop name")] },
+        pagePlanConfigMobile: { blocks: [productBlock(mobileName)] },
+      },
+    },
+  ];
+}
+
+function bootstrapMutationRequest(
+  action: "bootstrap" | "preview_bootstrap",
+  fields: Record<string, unknown>,
+) {
+  return new Request("https://merchant.faolla.test/api/orders/catalog", {
+    method: "PATCH",
+    headers: {
+      "content-type": "application/json",
+      host: "merchant.faolla.test",
+      origin: "https://merchant.faolla.test",
+    },
+    body: JSON.stringify({
+      siteId: SITE_ID,
+      action,
+      expectedRevision: 0,
+      ...fields,
+    }),
+  });
+}
+
+function bootstrapDependencies() {
+  const state: {
+    blocks: ReturnType<typeof publishedCatalogBlocks>;
+    current: MerchantCatalog | null;
+  } = {
+    blocks: publishedCatalogBlocks(),
+    current: null,
+  };
+  const calls = { mutations: 0, fetches: 0 };
+  const overrides: Partial<MerchantCatalogMutationRouteDependencies> = {
+    async resolveSession(_request, options) {
+      assert.equal(options?.hintedMerchantId, SITE_ID);
+      return { merchantId: SITE_ID, merchantEmail: "", merchantName: "" };
+    },
+    async loadSnapshotSite(siteId) {
+      assert.equal(siteId, SITE_ID);
+      return {
+        id: SITE_ID,
+        permissionConfig: {
+          allowProductBlock: true,
+          allowOrderManagement: true,
+        },
+      } as NonNullable<Awaited<ReturnType<MerchantCatalogMutationRouteDependencies["loadSnapshotSite"]>>>;
+    },
+    createServiceClient() {
+      return { from: () => null };
+    },
+    async loadCatalog() {
+      return state.current;
+    },
+    async fetchPublishedBlocks(siteId, options) {
+      assert.equal(siteId, SITE_ID);
+      assert.equal(options?.fresh, true);
+      calls.fetches += 1;
+      return {
+        siteId: SITE_ID,
+        slug: "merchant",
+        blocks: state.blocks,
+        orderManagementEnabled: true,
+      } as never;
+    },
+    async mutateCatalog(_supabase, input) {
+      calls.mutations += 1;
+      const decision = await input.mutate(state.current);
+      if (!decision.ok) return { error: decision.error, catalog: state.current };
+      state.current = decision.catalog;
+      return { error: null, catalog: decision.catalog };
+    },
+  };
+  return { state, calls, overrides };
+}
+
+async function loadBootstrapPreviewState(harness: ReturnType<typeof bootstrapDependencies>) {
+  const response = await handleMerchantCatalogGet(getRequest(), harness.overrides);
+  const payload = (await response.json()) as {
+    bootstrapFingerprint?: string;
+    bootstrap?: {
+      ok?: boolean;
+      resolutionTargets?: Array<{
+        targetKey: string;
+        choices: Array<{ choiceId: string }>;
+      }>;
+    };
+  };
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.equal(payload.bootstrap?.ok, false);
+  assert.ok(payload.bootstrapFingerprint);
+  assert.equal(payload.bootstrap?.resolutionTargets?.length, 1);
+  const target = payload.bootstrap?.resolutionTargets?.[0];
+  const choice = target?.choices[0];
+  assert.ok(target?.targetKey);
+  assert.ok(choice?.choiceId);
+  return {
+    sourceFingerprint: payload.bootstrapFingerprint,
+    resolutionPlan: {
+      version: 1 as const,
+      selections: [{ targetKey: target.targetKey, choiceId: choice.choiceId }],
+      excludedProductIds: [],
+    },
+  };
+}
+
+async function previewResolvedBootstrap(
+  harness: ReturnType<typeof bootstrapDependencies>,
+  sourceFingerprint: string,
+  resolutionPlan: unknown,
+) {
+  const response = await handleMerchantCatalogMutation(
+    bootstrapMutationRequest("preview_bootstrap", { sourceFingerprint, resolutionPlan }),
+    harness.overrides,
+  );
+  const payload = (await response.json()) as {
+    ok?: boolean;
+    preview?: { ok?: boolean; catalog?: MerchantCatalog | null };
+    resolutionFingerprint?: string;
+    error?: string;
+  };
+  return { response, payload };
+}
+
+test("bootstrap source fingerprint covers common fields omitted from a conflict summary", async () => {
+  const harness = bootstrapDependencies();
+  const initial = await loadBootstrapPreviewState(harness);
+  harness.state.blocks = publishedCatalogBlocks("SKU-CHANGED-IN-BOTH-SCOPES");
+
+  const response = await handleMerchantCatalogMutation(
+    bootstrapMutationRequest("bootstrap", { sourceFingerprint: initial.sourceFingerprint }),
+    harness.overrides,
+  );
+  const payload = (await response.json()) as {
+    error?: string;
+    bootstrapFingerprint?: string;
+    bootstrap?: { conflicts?: unknown[] };
+  };
+
+  assert.equal(response.status, 409);
+  assert.equal(payload.error, "merchant_catalog_bootstrap_source_changed");
+  assert.notEqual(payload.bootstrapFingerprint, initial.sourceFingerprint);
+  assert.ok((payload.bootstrap?.conflicts?.length ?? 0) > 0);
+  assert.equal(harness.calls.mutations, 0);
+});
+
+test("preview_bootstrap resolves a plan without performing a catalog write", async () => {
+  const harness = bootstrapDependencies();
+  const initial = await loadBootstrapPreviewState(harness);
+  const { response, payload } = await previewResolvedBootstrap(
+    harness,
+    initial.sourceFingerprint,
+    initial.resolutionPlan,
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.equal(payload.ok, true);
+  assert.equal(payload.preview?.ok, true);
+  assert.ok(payload.preview?.catalog);
+  assert.ok(payload.resolutionFingerprint);
+  assert.equal(harness.calls.mutations, 0);
+});
+
+test("preview_bootstrap requires revision zero before reading or writing", async () => {
+  const harness = bootstrapDependencies();
+  const initial = await loadBootstrapPreviewState(harness);
+  const fetchesBeforePreview = harness.calls.fetches;
+  const response = await handleMerchantCatalogMutation(
+    bootstrapMutationRequest("preview_bootstrap", {
+      expectedRevision: 1,
+      sourceFingerprint: initial.sourceFingerprint,
+      resolutionPlan: initial.resolutionPlan,
+    }),
+    harness.overrides,
+  );
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: "invalid_merchant_catalog_expected_revision" });
+  assert.equal(harness.calls.fetches, fetchesBeforePreview);
+  assert.equal(harness.calls.mutations, 0);
+});
+
+test("preview_bootstrap rejects missing and unknown resolution plans without writing", async (t) => {
+  await t.test("missing plan", async () => {
+    const harness = bootstrapDependencies();
+    const initial = await loadBootstrapPreviewState(harness);
+    const response = await handleMerchantCatalogMutation(
+      bootstrapMutationRequest("preview_bootstrap", { sourceFingerprint: initial.sourceFingerprint }),
+      harness.overrides,
+    );
+    const payload = (await response.json()) as { error?: string };
+
+    assert.equal(response.status, 400);
+    assert.equal(payload.error, "merchant_catalog_bootstrap_resolution_invalid");
+    assert.equal(harness.calls.mutations, 0);
+  });
+
+  await t.test("unknown target and choice", async () => {
+    const harness = bootstrapDependencies();
+    const initial = await loadBootstrapPreviewState(harness);
+    const { response, payload } = await previewResolvedBootstrap(
+      harness,
+      initial.sourceFingerprint,
+      {
+        version: 1,
+        selections: [{ targetKey: "unknown-target", choiceId: "unknown-choice" }],
+        excludedProductIds: [],
+      },
+    );
+
+    assert.equal(response.status, 400);
+    assert.equal(payload.error, "merchant_catalog_bootstrap_resolution_invalid");
+    assert.equal(harness.calls.mutations, 0);
+  });
+
+  await t.test("incomplete plan", async () => {
+    const harness = bootstrapDependencies();
+    const initial = await loadBootstrapPreviewState(harness);
+    const { response, payload } = await previewResolvedBootstrap(
+      harness,
+      initial.sourceFingerprint,
+      { version: 1, selections: [], excludedProductIds: [] },
+    );
+
+    assert.equal(response.status, 409);
+    assert.equal(payload.error, "merchant_catalog_bootstrap_resolution_incomplete");
+    assert.equal(harness.calls.mutations, 0);
+  });
+
+  await t.test("unresolvable published input", async () => {
+    const harness = bootstrapDependencies();
+    harness.state.blocks = "invalid-published-block-tree" as never;
+    const getResponse = await handleMerchantCatalogGet(getRequest(), harness.overrides);
+    const getPayload = (await getResponse.json()) as { bootstrapFingerprint?: string };
+    assert.equal(getResponse.status, 200);
+    assert.ok(getPayload.bootstrapFingerprint);
+
+    const { response, payload } = await previewResolvedBootstrap(
+      harness,
+      getPayload.bootstrapFingerprint,
+      { version: 1, selections: [], excludedProductIds: [] },
+    );
+
+    assert.equal(response.status, 409);
+    assert.equal(payload.error, "merchant_catalog_bootstrap_unresolved_conflict");
+    assert.equal(harness.calls.mutations, 0);
+  });
+
+  await t.test("conflicted legacy bootstrap without a plan remains blocked", async () => {
+    const harness = bootstrapDependencies();
+    const initial = await loadBootstrapPreviewState(harness);
+    const response = await handleMerchantCatalogMutation(
+      bootstrapMutationRequest("bootstrap", { sourceFingerprint: initial.sourceFingerprint }),
+      harness.overrides,
+    );
+    const payload = (await response.json()) as { error?: string };
+
+    assert.equal(response.status, 409);
+    assert.equal(payload.error, "merchant_catalog_bootstrap_conflict");
+    assert.equal(harness.calls.mutations, 0);
+  });
+});
+
+test("bootstrap rejects a tampered resolution fingerprint before writing", async () => {
+  const harness = bootstrapDependencies();
+  const initial = await loadBootstrapPreviewState(harness);
+  const preview = await previewResolvedBootstrap(harness, initial.sourceFingerprint, initial.resolutionPlan);
+  assert.equal(preview.response.status, 200);
+  assert.ok(preview.payload.resolutionFingerprint);
+
+  const response = await handleMerchantCatalogMutation(
+    bootstrapMutationRequest("bootstrap", {
+      sourceFingerprint: initial.sourceFingerprint,
+      resolutionPlan: initial.resolutionPlan,
+      resolutionFingerprint: `${preview.payload.resolutionFingerprint}-tampered`,
+    }),
+    harness.overrides,
+  );
+  const payload = (await response.json()) as {
+    error?: string;
+    preview?: { ok?: boolean };
+    resolutionFingerprint?: string;
+  };
+
+  assert.equal(response.status, 409);
+  assert.equal(payload.error, "merchant_catalog_bootstrap_resolution_changed");
+  assert.equal(payload.preview?.ok, true);
+  assert.equal(payload.resolutionFingerprint, preview.payload.resolutionFingerprint);
+  assert.equal(harness.calls.mutations, 0);
+});
+
+test("bootstrap prioritizes a fresh source change over the old resolution preview", async () => {
+  const harness = bootstrapDependencies();
+  const initial = await loadBootstrapPreviewState(harness);
+  const preview = await previewResolvedBootstrap(harness, initial.sourceFingerprint, initial.resolutionPlan);
+  assert.equal(preview.response.status, 200);
+  harness.state.blocks = publishedCatalogBlocks("SKU-CHANGED-AFTER-PREVIEW");
+
+  const response = await handleMerchantCatalogMutation(
+    bootstrapMutationRequest("bootstrap", {
+      sourceFingerprint: initial.sourceFingerprint,
+      resolutionPlan: initial.resolutionPlan,
+      resolutionFingerprint: preview.payload.resolutionFingerprint,
+    }),
+    harness.overrides,
+  );
+  const payload = (await response.json()) as { error?: string; bootstrapFingerprint?: string; preview?: unknown };
+
+  assert.equal(response.status, 409);
+  assert.equal(payload.error, "merchant_catalog_bootstrap_source_changed");
+  assert.notEqual(payload.bootstrapFingerprint, initial.sourceFingerprint);
+  assert.equal(payload.preview, undefined);
+  assert.equal(harness.calls.mutations, 0);
+});
+
+test("resolved bootstrap reports another page initialization through the existing CAS", async () => {
+  const harness = bootstrapDependencies();
+  const initial = await loadBootstrapPreviewState(harness);
+  const preview = await previewResolvedBootstrap(harness, initial.sourceFingerprint, initial.resolutionPlan);
+  assert.equal(preview.response.status, 200);
+  harness.state.current = catalog();
+
+  const response = await handleMerchantCatalogMutation(
+    bootstrapMutationRequest("bootstrap", {
+      sourceFingerprint: initial.sourceFingerprint,
+      resolutionPlan: initial.resolutionPlan,
+      resolutionFingerprint: preview.payload.resolutionFingerprint,
+    }),
+    harness.overrides,
+  );
+  const payload = (await response.json()) as { error?: string; currentRevision?: number };
+
+  assert.equal(response.status, 409);
+  assert.equal(payload.error, "merchant_catalog_already_initialized");
+  assert.equal(payload.currentRevision, 3);
+  assert.equal(harness.calls.mutations, 1);
+});
+
+test("resolved bootstrap commits exactly once after a matching preview", async () => {
+  const harness = bootstrapDependencies();
+  const initial = await loadBootstrapPreviewState(harness);
+  const preview = await previewResolvedBootstrap(harness, initial.sourceFingerprint, initial.resolutionPlan);
+  assert.equal(preview.response.status, 200);
+  assert.equal(harness.calls.mutations, 0);
+
+  const response = await handleMerchantCatalogMutation(
+    bootstrapMutationRequest("bootstrap", {
+      sourceFingerprint: initial.sourceFingerprint,
+      resolutionPlan: initial.resolutionPlan,
+      resolutionFingerprint: preview.payload.resolutionFingerprint,
+    }),
+    harness.overrides,
+  );
+  const payload = (await response.json()) as { ok?: boolean; catalog?: MerchantCatalog };
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.catalog?.products.length, 1);
+  assert.equal(payload.catalog?.products[0]?.name, "Desktop name");
+  assert.equal(harness.calls.mutations, 1);
+});
+
+test("legacy bootstrap without a resolution plan remains compatible when the source has no conflicts", async () => {
+  const harness = bootstrapDependencies();
+  harness.state.blocks = publishedCatalogBlocks("SKU-COMMON", "Desktop name");
+  const getResponse = await handleMerchantCatalogGet(getRequest(), harness.overrides);
+  const getPayload = (await getResponse.json()) as {
+    bootstrapFingerprint?: string;
+    bootstrap?: { ok?: boolean };
+  };
+  assert.equal(getResponse.status, 200);
+  assert.equal(getPayload.bootstrap?.ok, true);
+  assert.ok(getPayload.bootstrapFingerprint);
+
+  const response = await handleMerchantCatalogMutation(
+    bootstrapMutationRequest("bootstrap", { sourceFingerprint: getPayload.bootstrapFingerprint }),
+    harness.overrides,
+  );
+  const payload = (await response.json()) as { ok?: boolean; catalog?: MerchantCatalog };
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.catalog?.products[0]?.name, "Desktop name");
+  assert.equal(harness.calls.mutations, 1);
+});
+
 function imageCatalog(imageUrl = "", thumbnailUrl = "") {
   const value = catalog();
   value.products.push({
