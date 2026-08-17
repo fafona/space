@@ -1005,7 +1005,7 @@ test("desktop and mobile order managers expose enterprise tasks only in details 
       `${variant.label} detail action area`,
     );
     assert.match(detailSource, /\{onOpenEnterpriseTask\s*\?\s*\(/);
-    assert.match(detailSource, /onOpenEnterpriseTask\(detailOrder\)/);
+    assert.match(detailSource, /openDetailEnterpriseTask\(detailOrder\)/);
     assert.match(detailSource, /创建\/查看企业任务/);
 
     const outsideDetailSource = variant.targetSource.replace(detailSource, "");
@@ -1519,16 +1519,47 @@ test("desktop and mobile order managers consume exact source-order intents once 
     );
     assert.match(
       detailOrderSource,
-      /externalDetailOrder\?\.id\s*===\s*detailOrderId\s*\?\s*externalDetailOrder\s*:\s*records\.find\(/,
+      /externalDetailOrder\?\.id\s*===\s*detailOrderId\s*&&\s*externalDetailOrder\.siteId\s*===\s*siteId\s*\?\s*externalDetailOrder\s*:\s*currentSiteRecords\.find\(/,
       `${variant.label} must open an exact source order even when it is absent from the first 500 records`,
     );
     assert.match(
       variant.targetSource,
-      /setExternalDetailOrder\(\(current\)\s*=>\s*current\s*\?\s*nextRecords\.find\(\(record\)\s*=>\s*record\.id\s*===\s*current\.id\)\s*\?\?\s*current\s*:\s*current\s*,?\s*\)/,
+      /setExternalDetailOrder\(\(current\)\s*=>\s*current\?\.siteId\s*===\s*request\.siteId\s*\?\s*nextRecords\.find\(\(record\)\s*=>\s*record\.id\s*===\s*current\.id\)\s*\?\?\s*current\s*:\s*null\s*,?\s*\)/,
       `${variant.label} must refresh an exact detail with a later list response when available`,
     );
     assert.match(variant.targetSource, /MERCHANT_ORDER_FETCH_LIMIT\s*=\s*500/);
   }
+});
+
+test("desktop and mobile order details guard drafts, focus, navigation, and native back", () => {
+  for (const [label, targetSource] of [
+    ["desktop order manager", desktopOrderManagerSource],
+    ["mobile order manager", mobileOrderManagerSource],
+  ]) {
+    assert.match(targetSource, /const\s+detailDraftBaseOrderRef\s*=\s*useRef<MerchantOrderRecord\s*\|\s*null>/, `${label} must retain the draft base order`);
+    assert.match(targetSource, /const\s+rebaseDetailQuantityDrafts\s*=\s*useCallback/, `${label} must explicitly rebase quantity drafts`);
+    assert.match(targetSource, /baseOrder\.updatedAt\s*!==\s*detailOrder\.updatedAt[\s\S]*setDetailDraftConflict/, `${label} must freeze dirty drafts when the exact order version changes`);
+    assert.match(targetSource, /detailHasQuantityDraftChangesRef\.current[\s\S]*window\.confirm\(/, `${label} must confirm before discarding a dirty detail draft`);
+    assert.match(targetSource, /window\.addEventListener\("beforeunload",\s*handleBeforeUnload\)/, `${label} must protect dirty or busy detail work from browser unload`);
+    assert.match(targetSource, /role="dialog"[\s\S]*aria-modal="true"[\s\S]*aria-labelledby=\{detailDialogTitleId\}[\s\S]*tabIndex=\{-1\}/, `${label} detail must expose modal dialog semantics`);
+    assert.match(targetSource, /event\.key\s*!==\s*"Tab"[\s\S]*querySelectorAll<HTMLElement>/, `${label} detail must trap keyboard focus`);
+    assert.match(targetSource, /restoreTarget\?\.isConnected[\s\S]*restoreTarget\.focus\(\)/, `${label} detail must restore prior focus`);
+    assert.match(targetSource, /window\.addEventListener\(MOBILE_SWIPE_BACK_EVENT,\s*handleMobileSwipeBack,\s*true\)/, `${label} detail must capture native swipe-back`);
+    assert.match(targetSource, /event\.preventDefault\(\)[\s\S]*event\.stopImmediatePropagation\(\)[\s\S]*closeDetailDialog\(\)/, `${label} native back must use the guarded close path`);
+    assert.match(targetSource, /data-mobile-swipe-back-control="true"/, `${label} detail close control must suppress competing swipe starts`);
+    assert.match(targetSource, /const\s+openDetailEnterpriseTask\s*=\s*useCallback\([\s\S]*requestExactOrder\(order\.id\)[\s\S]*onOpenEnterpriseTask\(latestOrder\)/, `${label} enterprise-task navigation must use an exact current order`);
+    assert.match(targetSource, /managerBusyRef\.current\s*=\s*Boolean\(nextBusyKey\)[\s\S]*setBusyKeyState\(nextBusyKey\)/, `${label} must synchronously publish mutation busy state`);
+    assert.match(targetSource, /detailLeaveGuardRef\.current\s*\?\?\s*workbenchLeaveGuardRef\.current\s*\?\?\s*confirmManagerBusyLeave/, `${label} must preserve detail and workbench guard priority over the base busy guard`);
+    assert.match(targetSource, /managerBusyRef\.current[\s\S]*window\.addEventListener\("beforeunload",\s*handleBeforeUnload\)/, `${label} must protect list and detail mutations from browser unload`);
+    assert.match(targetSource, /workbenchOpen\s*\|\|\s*\(!detailOrder\s*&&\s*!busyKey\)[\s\S]*MOBILE_SWIPE_BACK_EVENT/, `${label} must consume native back during base list mutations`);
+    assert.match(targetSource, /const\s+openListConversation\s*=\s*useCallback\([\s\S]*requestExactOrder\(orderId\)[\s\S]*isSiteRequestCurrent\(operation\)[\s\S]*await\s+markOrderTouched\(order\.id,\s*order\)[\s\S]*onOpenConversation\(\{[\s\S]*accountId:\s*order\.customerAccountId/, `${label} list conversation navigation must use an exact current order`);
+    assert.match(targetSource, /onClick=\{\(\)\s*=>\s*void\s+openListConversation\(record\.id\)\}/, `${label} list conversation buttons must use the guarded exact callback`);
+  }
+
+  assert.match(desktopOrderManagerSource, /ref=\{managerDialogRef\}[\s\S]*role="dialog"[\s\S]*aria-modal="true"[\s\S]*aria-labelledby=\{managerDialogTitleId\}[\s\S]*tabIndex=\{-1\}/, "desktop manager overlay must expose modal dialog semantics");
+  assert.match(desktopOrderManagerSource, /managerCloseButtonRef\.current[\s\S]*managerDialogRef\.current\?\.focus\(\)[\s\S]*restoreTarget\?\.isConnected/, "desktop manager overlay must focus and restore its launcher");
+  assert.match(desktopOrderManagerSource, /const\s+handleManagerKeyDown[\s\S]*detailOrder\s*\|\|\s*workbenchOpen[\s\S]*event\.key\s*===\s*"Escape"[\s\S]*requestDialogClose\(\)[\s\S]*querySelectorAll<HTMLElement>/, "desktop manager overlay must defer to nested surfaces and trap keyboard focus");
+  assert.match(desktopOrderManagerSource, /const\s+handleManagerMobileSwipeBack[\s\S]*detailOrder\s*\|\|\s*workbenchOpen[\s\S]*event\.stopImmediatePropagation\(\)[\s\S]*requestDialogClose\(\)/, "desktop manager overlay must consume native back through its guarded close path");
 });
 
 test("pending employee invitations have a safe responsive management flow", () => {
@@ -2305,7 +2336,11 @@ test("enterprise drafts are guarded across task closing, submenu changes and wor
   assert.match(source, /registerLeaveGuard\(\(\)\s*=>\s*confirmViewChange\(null\)\)/);
   assert.match(
     adminClientSource,
-    /supportMobileHomeTabRef\.current\s*===\s*["']enterprise["'][\s\S]{0,220}supportMobileEnterpriseLeaveGuardRef\.current\(\)/,
+    /currentTab\s*===\s*["']enterprise["'][\s\S]{0,180}supportMobileEnterpriseLeaveGuardRef\.current/,
+  );
+  assert.match(
+    adminClientSource,
+    /tab\s*!==\s*currentTab\s*&&\s*leaveGuard\s*&&\s*!leaveGuard\(\)/,
   );
   assert.match(
     adminClientSource,

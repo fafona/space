@@ -177,6 +177,7 @@ export function getMerchantOrderErrorMessage(value: unknown) {
   if (code === "order_catalog_unavailable") return "产品目录暂时不可用，请稍后重试。";
   if (code === "merchant_catalog_storage_unavailable") return "产品目录暂时不可用，请稍后重试。";
   if (code === "order_request_conflict") return "订单提交编号冲突，请修改购物车后重试。";
+  if (code === "order_update_conflict") return "订单已被其他操作更新，请刷新后重试。";
   if (code === "order_not_found") return "没有找到该订单，可能已被其他操作更新，请刷新后重试。";
   if (code === "order_customer_action_locked") return "商家已开始处理该订单，当前不能由客户取消。";
   if (code === "order_item_invalid" || code === "order_items_not_editable") return "订单商品数据无效，请刷新后重试。";
@@ -314,6 +315,15 @@ export function createMerchantOrderId() {
   const stamp = new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14);
   const random = Math.random().toString(36).slice(2, 6).toUpperCase();
   return `O${stamp}${random}`;
+}
+
+export function assertMerchantOrderExpectedUpdatedAt(
+  record: Pick<MerchantOrderRecord, "updatedAt">,
+  expectedUpdatedAt: unknown,
+) {
+  if (trimText(record.updatedAt) !== trimText(expectedUpdatedAt)) {
+    throw new Error("order_update_conflict");
+  }
 }
 
 export function isMerchantOrderPendingMerchantTouch(

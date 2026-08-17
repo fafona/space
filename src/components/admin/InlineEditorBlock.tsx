@@ -52,7 +52,14 @@ import {
   type GalleryRowAlign,
 } from "@/lib/galleryLayout";
 import type { EuropeLocationOptionsApi } from "@/lib/europeLocationOptionsLoader";
-import type { MerchantCatalogTarget } from "@/lib/merchantCatalog";
+import {
+  createMerchantCatalogRuntimeContextKey,
+  isMerchantCatalogRuntimeContextCurrent,
+  MERCHANT_CATALOG_CHANGED_EVENT,
+  parseMerchantCatalogChangedEventDetail,
+  type MerchantCatalogBrowsingRules,
+  type MerchantCatalogTarget,
+} from "@/lib/merchantCatalog";
 import {
   buildMerchantCardPlacement,
   clampMerchantCardLayoutValue,
@@ -440,6 +447,25 @@ type ViewportKey = "desktop" | "mobile";
 type ProductSettingsSectionKey = "basic" | "behavior" | "typography" | "tags" | "card" | "detail" | "products";
 
 type ProductTypographyRole = "code" | "name" | "description" | "price";
+
+function readProductOperatingBrowsingRules(
+  value: unknown,
+): Partial<MerchantCatalogBrowsingRules> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const rules: Partial<MerchantCatalogBrowsingRules> = {};
+  if (typeof record.searchEnabled === "boolean") rules.searchEnabled = record.searchEnabled;
+  if (typeof record.searchPlaceholder === "string") {
+    rules.searchPlaceholder = record.searchPlaceholder;
+  }
+  if (typeof record.hideUnselectedCategory === "boolean") {
+    rules.hideUnselectedCategory = record.hideUnselectedCategory;
+  }
+  if (typeof record.groupByCategory === "boolean") {
+    rules.groupByCategory = record.groupByCategory;
+  }
+  return rules;
+}
 
 function getPreviewColSpan(itemClass: string) {
   const match = itemClass.match(/col-span-(\d+)/);
@@ -1125,14 +1151,33 @@ type GalleryEditorImage = {
   const [productPreviewTagByBlockId, setProductPreviewTagByBlockId] = useState<Record<string, string | null>>({});
   const [productPreviewSearchByBlockId, setProductPreviewSearchByBlockId] = useState<Record<string, string>>({});
   const [productTagOptionsDraftByBlockId, setProductTagOptionsDraftByBlockId] = useState<Record<string, string>>({});
-  const [productOperatingCatalogState, setProductOperatingCatalogState] = useState<"loading" | "active" | "legacy" | "blocked">("loading");
-  const productOperatingCatalogStateRef = useRef(productOperatingCatalogState);
-  productOperatingCatalogStateRef.current = productOperatingCatalogState;
-  const [productOperatingCatalog, setProductOperatingCatalog] = useState<{
+  const productOperatingCatalogContextKey = block.type === "product"
+    ? createMerchantCatalogRuntimeContextKey(runtimeSiteId, block.id, previewViewport)
+    : "";
+  const [resolvedProductOperatingCatalogState, setProductOperatingCatalogState] = useState<"loading" | "active" | "legacy" | "blocked">("loading");
+  const [resolvedProductOperatingCatalogContextKey, setResolvedProductOperatingCatalogContextKey] = useState("");
+  const [resolvedProductOperatingCatalog, setProductOperatingCatalog] = useState<{
     pricePrefix: string;
     products: ProductEditorItem[];
     categoryNames: string[];
+    browsingRules: Partial<MerchantCatalogBrowsingRules> | null;
   } | null>(null);
+  const productOperatingCatalogContextMatches = isMerchantCatalogRuntimeContextCurrent(
+    resolvedProductOperatingCatalogContextKey,
+    productOperatingCatalogContextKey,
+  );
+  const productOperatingCatalogState = productOperatingCatalogContextMatches
+    ? resolvedProductOperatingCatalogState
+    : "loading";
+  const productOperatingCatalog = productOperatingCatalogContextMatches
+    ? resolvedProductOperatingCatalog
+    : null;
+  const productOperatingCatalogStateRef = useRef(productOperatingCatalogState);
+  productOperatingCatalogStateRef.current = productOperatingCatalogState;
+  const [productOperatingCatalogRefreshSequence, setProductOperatingCatalogRefreshSequence] = useState(0);
+  const productOperatingCatalogRequestSequenceRef = useRef(0);
+  const productOperatingCatalogContextKeyRef = useRef(productOperatingCatalogContextKey);
+  productOperatingCatalogContextKeyRef.current = productOperatingCatalogContextKey;
   const [productDetailPreview, setProductDetailPreview] = useState<{ blockId: string; itemId: string } | null>(null);
   const [productEditorDialogState, setProductEditorDialogState] = useState<
     | { blockId: string; itemId: string; mode: "create" | "edit" }
@@ -1176,17 +1221,39 @@ type GalleryEditorImage = {
 
   useEffect(() => {
     const siteId = runtimeSiteId.trim();
+    if (block.type !== "product" || !siteId) return;
+    const refreshCatalog = (event: Event) => {
+      const detail = parseMerchantCatalogChangedEventDetail(
+        (event as CustomEvent<unknown>).detail,
+      );
+      if (detail?.siteId !== siteId) return;
+      setProductOperatingCatalogRefreshSequence((current) => current + 1);
+    };
+    window.addEventListener(MERCHANT_CATALOG_CHANGED_EVENT, refreshCatalog);
+    return () => window.removeEventListener(MERCHANT_CATALOG_CHANGED_EVENT, refreshCatalog);
+  }, [block.type, runtimeSiteId]);
+
+  useEffect(() => {
+    const siteId = runtimeSiteId.trim();
+    const requestSequence = productOperatingCatalogRequestSequenceRef.current + 1;
+    productOperatingCatalogRequestSequenceRef.current = requestSequence;
+    setResolvedProductOperatingCatalogContextKey(productOperatingCatalogContextKey);
     if (block.type !== "product" || !siteId) {
       setProductOperatingCatalogState("legacy");
       setProductOperatingCatalog(null);
       return;
     }
     const controller = new AbortController();
+    const requestContextKey = productOperatingCatalogContextKey;
+    const requestIsActive = () =>
+      !controller.signal.aborted &&
+      productOperatingCatalogRequestSequenceRef.current === requestSequence &&
+      productOperatingCatalogContextKeyRef.current === requestContextKey;
     setProductOperatingCatalogState("loading");
     setProductOperatingCatalog(null);
     const query = new URLSearchParams({
       siteId,
-      blockId: block.id,
+      blockId: block.id.trim(),
       viewport: previewViewport,
     });
     void fetch(`/api/orders/catalog/public?${query.toString()}`, {
@@ -1199,9 +1266,10 @@ type GalleryEditorImage = {
             pricePrefix?: unknown;
             products?: unknown;
             categories?: unknown;
+            browsingRules?: unknown;
           } | null;
         } | null;
-        if (controller.signal.aborted) return;
+        if (!requestIsActive()) return;
         if (!response.ok) {
           setProductOperatingCatalogState("blocked");
           setProductOperatingCatalog(null);
@@ -1223,6 +1291,7 @@ type GalleryEditorImage = {
               Array.isArray(payload.catalog.products) ? payload.catalog.products : undefined,
             ),
             categoryNames: [...new Set(categoryNames)],
+            browsingRules: readProductOperatingBrowsingRules(payload.catalog.browsingRules),
           });
           setProductOperatingCatalogState("active");
         } else {
@@ -1231,13 +1300,13 @@ type GalleryEditorImage = {
         }
       })
       .catch(() => {
-        if (!controller.signal.aborted) {
+        if (requestIsActive()) {
           setProductOperatingCatalog(null);
           setProductOperatingCatalogState("blocked");
         }
       });
     return () => controller.abort();
-  }, [block.id, block.type, previewViewport, runtimeSiteId]);
+  }, [block.id, block.type, previewViewport, productOperatingCatalogContextKey, productOperatingCatalogRefreshSequence, runtimeSiteId]);
 
   function normalizeGalleryImages(
     source: Array<
@@ -6637,6 +6706,36 @@ type GalleryEditorImage = {
   if (block.type === "product") {
     const productItems = getProductItems();
     const productOperatingFieldsEditable = productOperatingCatalogState === "legacy";
+    const productOperatingBrowsingRules =
+      productOperatingCatalogState === "active" && productOperatingCatalog
+        ? productOperatingCatalog.browsingRules
+        : null;
+    const hasProductOperatingBrowsingRules =
+      productOperatingCatalogState === "active" && productOperatingBrowsingRules !== null;
+    const productBrowsingRulesEditable =
+      productOperatingCatalogState === "legacy" ||
+      (productOperatingCatalogState === "active" && !hasProductOperatingBrowsingRules);
+    const publishedProductSearchPlaceholder =
+      (block.props.productSearchPlaceholder ?? "").trim();
+    const productSearchEnabled =
+      productOperatingBrowsingRules?.searchEnabled ??
+      (block.props.productSearchEnabled !== false);
+    const productBrowsingRulesSearchPlaceholder =
+      (productOperatingBrowsingRules?.searchPlaceholder ?? publishedProductSearchPlaceholder).trim();
+    const productSearchPlaceholder =
+      productBrowsingRulesSearchPlaceholder || "搜索产品名称/编号/介绍";
+    const productTagHideUnselected =
+      productOperatingBrowsingRules?.hideUnselectedCategory ??
+      (block.props.productTagHideUnselected !== false);
+    const productGroupByTag =
+      productOperatingBrowsingRules?.groupByCategory ??
+      (block.props.productGroupByTag === true);
+    const currentProductBrowsingRules: MerchantCatalogBrowsingRules = {
+      searchEnabled: productSearchEnabled,
+      searchPlaceholder: productBrowsingRulesSearchPlaceholder,
+      hideUnselectedCategory: productTagHideUnselected,
+      groupByCategory: productGroupByTag,
+    };
     const openProductOperatingCatalog = () => {
       if (!onOpenOrderCatalog) return;
       onOpenOrderCatalog({
@@ -6649,6 +6748,7 @@ type GalleryEditorImage = {
               .map((product) => product.id),
           ),
         ],
+        browsingRules: currentProductBrowsingRules,
       });
     };
     const productLayoutPreset = normalizeProductLayoutPreset(block.props.productLayoutPreset);
@@ -6683,8 +6783,6 @@ type GalleryEditorImage = {
         ? Math.max(56, Math.min(220, Math.round(block.props.productTagWidth)))
         : 92;
     const productTagRowGap = normalizeProductSpacing(block.props.productTagRowGap, 8, 0, 48);
-    const productTagHideUnselected = block.props.productTagHideUnselected !== false;
-    const productGroupByTag = block.props.productGroupByTag === true;
     const productTagBgColor = (block.props.productTagBgColor ?? "#0f172a").trim() || "#0f172a";
     const productTagBgOpacity =
       typeof block.props.productTagBgOpacity === "number" && Number.isFinite(block.props.productTagBgOpacity)
@@ -6793,8 +6891,6 @@ type GalleryEditorImage = {
     const compactProductEditor = typeof blockWidth === "number" && blockWidth <= 420;
     const hasProductHeading = hasVisibleRichText(block.props.heading);
     const hasProductText = hasVisibleRichText(block.props.text);
-    const productSearchEnabled = block.props.productSearchEnabled !== false;
-    const productSearchPlaceholder = (block.props.productSearchPlaceholder ?? "").trim() || "搜索产品名称/编号/介绍";
     const productSearchKeyword = productPreviewSearchByBlockId[block.id] ?? "";
     const savedProductTagOptions =
       productOperatingCatalogState === "active" && productOperatingCatalog
@@ -7457,6 +7553,36 @@ type GalleryEditorImage = {
         <div className={options.wrapperClassName ?? "rounded-lg border border-slate-200 bg-slate-50 p-4"}>
           {renderProductSettingsHeader(section, title)}
           {!collapsed ? <div className={options.bodyClassName ?? "mt-3"}>{content}</div> : null}
+        </div>
+      );
+    };
+
+    const renderProductBrowsingRulesOwnershipNotice = () => {
+      if (productOperatingCatalogState === "legacy") return null;
+      const message =
+        productOperatingCatalogState === "active"
+          ? hasProductOperatingBrowsingRules
+            ? "浏览规则由订单工作台管理，此处按经营目录设置真实预览。"
+            : "浏览规则尚由网站设置，可迁入工作台。"
+          : productOperatingCatalogState === "loading"
+            ? "正在核对工作台浏览规则，完成前暂不可编辑。"
+            : "浏览规则绑定待修复，为避免覆盖经营设置暂不可编辑。";
+      return (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">
+          <span>{message}</span>
+          {onOpenOrderCatalog && productOperatingCatalogState !== "loading" ? (
+            <button
+              type="button"
+              onClick={openProductOperatingCatalog}
+              className="shrink-0 rounded border border-sky-300 bg-white px-2.5 py-1.5 font-semibold text-sky-800 hover:bg-sky-100"
+            >
+              {productOperatingCatalogState === "active" && !hasProductOperatingBrowsingRules
+                ? "迁入工作台"
+                : productOperatingCatalogState === "blocked"
+                  ? "去工作台修复"
+                  : "去工作台管理"}
+            </button>
+          ) : null}
         </div>
       );
     };
@@ -8280,11 +8406,13 @@ type GalleryEditorImage = {
                       </div>
                     </label>
                     </div>
+                    {renderProductBrowsingRulesOwnershipNotice()}
                     <div className="grid gap-3 text-sm text-gray-700 sm:grid-cols-2">
                       <label className="flex items-center gap-2">
                         <BufferedEditorInput
                           type="checkbox"
                           checked={productTagHideUnselected}
+                          disabled={!productBrowsingRulesEditable}
                           onChange={(event) => onChange({ productTagHideUnselected: event.target.checked })}
                         />
                         <span>隐藏未选中</span>
@@ -8293,6 +8421,7 @@ type GalleryEditorImage = {
                         <BufferedEditorInput
                           type="checkbox"
                           checked={productGroupByTag}
+                          disabled={!productBrowsingRulesEditable}
                           onChange={(event) => onChange({ productGroupByTag: event.target.checked })}
                         />
                         <span>按分类排列</span>
@@ -8561,10 +8690,12 @@ type GalleryEditorImage = {
                         ))}
                       </select>
                   </label>
+                  <div className="md:col-span-2">{renderProductBrowsingRulesOwnershipNotice()}</div>
                   <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-gray-700">
                     <BufferedEditorInput
                       type="checkbox"
                       checked={productSearchEnabled}
+                      disabled={!productBrowsingRulesEditable}
                       onChange={(event) => onChange({ productSearchEnabled: event.target.checked })}
                     />
                     <span>启用搜索</span>
@@ -8572,8 +8703,9 @@ type GalleryEditorImage = {
                   <label className="space-y-1 text-sm">
                     <span className="block text-gray-600">搜索提示词</span>
                     <BufferedEditorInput
-                      className="w-full rounded border px-3 py-2"
+                      className={`w-full rounded border px-3 py-2 ${productBrowsingRulesEditable ? "" : "border-slate-200 bg-slate-100 text-slate-600"}`}
                       value={productSearchPlaceholder}
+                      readOnly={!productBrowsingRulesEditable}
                       onChange={(event) => onChange({ productSearchPlaceholder: event.target.value })}
                       placeholder="搜索产品名称/编号/介绍"
                     />
@@ -8827,10 +8959,12 @@ type GalleryEditorImage = {
                           ))}
                       </select>
                     </label>
+                    <div className="md:col-span-2">{renderProductBrowsingRulesOwnershipNotice()}</div>
                     <label className="flex items-center gap-2 rounded border border-slate-200 bg-white px-3 py-1.5 text-sm text-gray-700">
                       <BufferedEditorInput
                         type="checkbox"
                         checked={productSearchEnabled}
+                        disabled={!productBrowsingRulesEditable}
                         onChange={(event) => onChange({ productSearchEnabled: event.target.checked })}
                       />
                       <span>启用搜索</span>
@@ -8838,8 +8972,9 @@ type GalleryEditorImage = {
                     <label className="space-y-1 text-sm md:col-span-2">
                       <span className="block text-gray-600">搜索提示词</span>
                       <BufferedEditorInput
-                        className="w-full rounded border px-3 py-1.5"
+                        className={`w-full rounded border px-3 py-1.5 ${productBrowsingRulesEditable ? "" : "border-slate-200 bg-slate-100 text-slate-600"}`}
                         value={productSearchPlaceholder}
+                        readOnly={!productBrowsingRulesEditable}
                         onChange={(event) => onChange({ productSearchPlaceholder: event.target.value })}
                         placeholder="搜索产品名称/编号/介绍"
                       />
@@ -9035,11 +9170,13 @@ type GalleryEditorImage = {
                       </div>
                     </label>
                     </div>
+                    {renderProductBrowsingRulesOwnershipNotice()}
                     <div className="grid gap-2 text-sm text-gray-700 sm:grid-cols-2">
                       <label className="flex items-center gap-2 rounded border border-slate-200 bg-white px-3 py-2">
                         <BufferedEditorInput
                           type="checkbox"
                           checked={productTagHideUnselected}
+                          disabled={!productBrowsingRulesEditable}
                           onChange={(event) => onChange({ productTagHideUnselected: event.target.checked })}
                         />
                         <span>隐藏未选中</span>
@@ -9048,6 +9185,7 @@ type GalleryEditorImage = {
                         <BufferedEditorInput
                           type="checkbox"
                           checked={productGroupByTag}
+                          disabled={!productBrowsingRulesEditable}
                           onChange={(event) => onChange({ productGroupByTag: event.target.checked })}
                         />
                         <span>按分类排列</span>

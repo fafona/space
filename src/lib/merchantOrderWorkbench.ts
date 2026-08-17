@@ -96,6 +96,8 @@ export type MerchantOrderWorkbenchTodo = {
   kind: MerchantOrderWorkbenchTodoKind;
   status: MerchantOrderStatus;
   createdAt: string;
+  /** Order revision used to reject a stale quick action after an exact re-read. */
+  updatedAt: string;
   /** Minutes spent in the state relevant to this todo, rounded down. */
   ageMinutes: number;
   customerName: string;
@@ -245,6 +247,7 @@ function buildTodo(
     kind,
     status: order.status,
     createdAt: order.createdAt,
+    updatedAt: order.updatedAt,
     ageMinutes,
     customerName: trimText(order.customer?.name),
     totalAmount: roundMoney(order.totalAmount),

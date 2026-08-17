@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { showGlobalToast } from "@/lib/globalToast";
 import OrderWorkbenchPanel from "@/components/admin/OrderWorkbenchPanel";
 import {
@@ -12,11 +12,17 @@ import {
   type MerchantOrderStatus,
 } from "@/lib/merchantOrders";
 import {
+  getMerchantOrderPrintAttemptText,
+  prepareMerchantOrderPrintWindow,
+  startMerchantOrderPrint,
+} from "@/lib/merchantOrderPrint";
+import {
   buildMerchantAdminDataCacheKey,
   readMerchantAdminDataCache,
   writeMerchantAdminDataCache,
 } from "@/lib/merchantAdminDataCache";
 import type { MerchantOrderSourceDetailIntent } from "@/lib/merchantOrderEnterprise";
+import { MOBILE_SWIPE_BACK_EVENT } from "@/lib/mobileSwipeBack";
 
 type MerchantOrderMobilePanelProps = {
   siteId: string;
@@ -28,16 +34,32 @@ type MerchantOrderMobilePanelProps = {
   sourceOrderIntent?: MerchantOrderSourceDetailIntent | null;
   onSourceOrderIntentHandled?: (requestId: string) => void;
   onSectionChange?: (section: "booking" | "orders") => void;
+  registerLeaveGuard?: (guard: (() => boolean) | null) => void;
 };
 
 type MerchantOrderFilter = "all" | MerchantOrderStatus;
 type MerchantOrderSortMode = "created_desc" | "created_asc";
 type MerchantOrderHistoryVisibility = "none" | "today" | "3d" | "7d";
 
+type MerchantOrderSiteRequestContext = {
+  siteId: string;
+  generation: number;
+};
+
+type MerchantOrderSiteRequest = MerchantOrderSiteRequestContext & {
+  controller: AbortController;
+};
+
 const MERCHANT_ORDER_SORT_OPTIONS: MerchantOrderSortMode[] = ["created_desc", "created_asc"];
 const MERCHANT_ORDER_HISTORY_OPTIONS: MerchantOrderHistoryVisibility[] = ["none", "today", "3d", "7d"];
 const MERCHANT_ORDER_FETCH_LIMIT = 500;
 const MERCHANT_ORDER_MOBILE_RENDER_LIMIT = 100;
+
+function createAbortedOrderRequestError() {
+  const error = new Error("order_request_aborted");
+  error.name = "AbortError";
+  return error;
+}
 
 function MailIcon() {
   return (
@@ -174,12 +196,6 @@ function sortMerchantOrders(records: MerchantOrderRecord[], sortMode: MerchantOr
   });
 }
 
-function buildPrintHtml(order: MerchantOrderRecord) {
-  return `<!doctype html><html><head><meta charset="utf-8"><title>${order.id}</title></head><body style="font-family:Segoe UI,Microsoft YaHei,sans-serif;padding:24px;"><h1>${order.id}</h1><div>${formatDateTime(order.createdAt)}</div><ul>${order.items
-    .map((item) => `<li>${item.name || "未命名产品"} × ${item.quantity} - ${formatMerchantOrderAmount(item.subtotal, order.pricePrefix)}</li>`)
-    .join("")}</ul><div>合计：${formatMerchantOrderAmount(order.totalAmount, order.pricePrefix)}</div></body></html>`;
-}
-
 function readCachedOrderRecords(siteId: string) {
   const cached = readMerchantAdminDataCache<MerchantOrderRecord[]>(
     buildMerchantAdminDataCacheKey("orders", siteId),
@@ -201,6 +217,7 @@ export default function MerchantOrderMobilePanel({
   sourceOrderIntent = null,
   onSourceOrderIntentHandled,
   onSectionChange,
+  registerLeaveGuard,
 }: MerchantOrderMobilePanelProps) {
   const overflowMenuRef = useRef<HTMLDivElement>(null);
   const [records, setRecords] = useState<MerchantOrderRecord[]>(() => readCachedOrderRecords(siteId));
@@ -213,14 +230,90 @@ export default function MerchantOrderMobilePanel({
   const [filter, setFilter] = useState<MerchantOrderFilter>("all");
   const [sortMode, setSortMode] = useState<MerchantOrderSortMode>("created_desc");
   const [historyVisibility, setHistoryVisibility] = useState<MerchantOrderHistoryVisibility>("none");
-  const [busyKey, setBusyKey] = useState("");
+  const managerBusyRef = useRef(false);
+  const [busyKey, setBusyKeyState] = useState("");
+  const setBusyKey = useCallback((nextBusyKey: string) => {
+    managerBusyRef.current = Boolean(nextBusyKey);
+    setBusyKeyState(nextBusyKey);
+  }, []);
   const [overflowMenuOpen, setOverflowMenuOpen] = useState(false);
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const [detailOrderId, setDetailOrderId] = useState("");
   const [externalDetailOrder, setExternalDetailOrder] = useState<MerchantOrderRecord | null>(null);
   const [detailQuantityDrafts, setDetailQuantityDrafts] = useState<Record<string, string>>({});
+  const [detailDraftConflict, setDetailDraftConflict] = useState("");
+  const detailDraftBaseOrderRef = useRef<MerchantOrderRecord | null>(null);
   const [mobileCustomerInfoOpen, setMobileCustomerInfoOpen] = useState(false);
   const handledSourceOrderIntentRef = useRef("");
+  const workbenchLeaveGuardRef = useRef<(() => boolean) | null>(null);
+  const detailLeaveGuardRef = useRef<(() => boolean) | null>(null);
+  const detailDialogRef = useRef<HTMLDivElement | null>(null);
+  const detailCloseButtonRef = useRef<HTMLButtonElement | null>(null);
+  const detailPreviouslyFocusedElementRef = useRef<HTMLElement | null>(null);
+  const detailDialogTitleId = useId();
+  const siteRequestIdentityRef = useRef<MerchantOrderSiteRequestContext>({ siteId, generation: 0 });
+  if (siteRequestIdentityRef.current.siteId !== siteId) {
+    siteRequestIdentityRef.current = {
+      siteId,
+      generation: siteRequestIdentityRef.current.generation + 1,
+    };
+  }
+  const activeRequestControllersRef = useRef(new Set<AbortController>());
+  const listRequestSequenceRef = useRef(0);
+  const nextOrderOffsetRef = useRef(0);
+  const detailRequestSequenceRef = useRef(0);
+  const captureSiteRequestContext = useCallback(
+    (): MerchantOrderSiteRequestContext => ({ ...siteRequestIdentityRef.current }),
+    [],
+  );
+  const isSiteRequestCurrent = useCallback((request: MerchantOrderSiteRequestContext) => {
+    const current = siteRequestIdentityRef.current;
+    return current.siteId === request.siteId && current.generation === request.generation;
+  }, []);
+  const beginSiteRequest = useCallback((requestSiteId: string): MerchantOrderSiteRequest | null => {
+    const current = siteRequestIdentityRef.current;
+    if (!requestSiteId || current.siteId !== requestSiteId) return null;
+    const controller = new AbortController();
+    activeRequestControllersRef.current.add(controller);
+    return { siteId: requestSiteId, generation: current.generation, controller };
+  }, []);
+  const finishSiteRequest = useCallback((request: MerchantOrderSiteRequest | null) => {
+    if (request) activeRequestControllersRef.current.delete(request.controller);
+  }, []);
+  const confirmManagerBusyLeave = useCallback(() => {
+    if (!managerBusyRef.current) return true;
+    setError("订单操作正在进行，请等待完成后再离开订单管理。");
+    return false;
+  }, []);
+  const getActiveLeaveGuard = useCallback(
+    () => detailLeaveGuardRef.current ?? workbenchLeaveGuardRef.current ?? confirmManagerBusyLeave,
+    [confirmManagerBusyLeave],
+  );
+  const publishActiveLeaveGuard = useCallback(() => {
+    registerLeaveGuard?.(getActiveLeaveGuard());
+  }, [getActiveLeaveGuard, registerLeaveGuard]);
+  const handleRegisterWorkbenchLeaveGuard = useCallback(
+    (guard: (() => boolean) | null) => {
+      workbenchLeaveGuardRef.current = guard;
+      publishActiveLeaveGuard();
+    },
+    [publishActiveLeaveGuard],
+  );
+  const handleRegisterDetailLeaveGuard = useCallback(
+    (guard: (() => boolean) | null) => {
+      detailLeaveGuardRef.current = guard;
+      publishActiveLeaveGuard();
+    },
+    [publishActiveLeaveGuard],
+  );
+  useEffect(() => {
+    publishActiveLeaveGuard();
+    return () => registerLeaveGuard?.(null);
+  }, [publishActiveLeaveGuard, registerLeaveGuard]);
+  const currentSiteRecords = useMemo(
+    () => records.filter((record) => record.siteId === siteId),
+    [records, siteId],
+  );
 
   const cardClassName = darkMode
     ? "rounded-[26px] border border-white/10 bg-[rgba(15,23,42,0.84)] p-4 shadow-[0_20px_44px_rgba(2,6,23,0.28)]"
@@ -255,9 +348,23 @@ export default function MerchantOrderMobilePanel({
     ? "flex w-full max-w-lg max-h-[calc(100dvh-7rem)] flex-col overflow-hidden rounded-[28px] border border-white/10 bg-[rgba(15,23,42,0.98)] shadow-[0_32px_80px_rgba(2,6,23,0.52)]"
     : "flex w-full max-w-lg max-h-[calc(100dvh-7rem)] flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_28px_72px_rgba(15,23,42,0.2)]";
 
+  useEffect(() => {
+    const activeRequestControllers = activeRequestControllersRef.current;
+    return () => {
+      activeRequestControllers.forEach((controller) => controller.abort());
+      activeRequestControllers.clear();
+      listRequestSequenceRef.current += 1;
+      detailRequestSequenceRef.current += 1;
+    };
+  }, [siteId]);
+
   const loadOrders = useCallback(async () => {
     if (!siteId) return;
-    const cachedRecords = readCachedOrderRecords(siteId);
+    const request = beginSiteRequest(siteId);
+    if (!request) return;
+    const requestSequence = listRequestSequenceRef.current + 1;
+    listRequestSequenceRef.current = requestSequence;
+    const cachedRecords = readCachedOrderRecords(siteId).filter((record) => record.siteId === siteId);
     if (cachedRecords.length > 0) {
       setRecords(cachedRecords);
       setLoading(false);
@@ -272,74 +379,137 @@ export default function MerchantOrderMobilePanel({
         {
           cache: "no-store",
           credentials: "same-origin",
+          signal: request.controller.signal,
         },
       );
       const payload = (await response.json().catch(() => null)) as
-        | { orders?: MerchantOrderRecord[]; hasMore?: boolean; message?: string; error?: string }
+        | { orders?: MerchantOrderRecord[]; hasMore?: boolean; offset?: number; message?: string; error?: string }
         | null;
       if (!response.ok) {
         throw new Error(payload?.message || payload?.error || "order_list_failed");
       }
       const nextRecords = Array.isArray(payload?.orders) ? payload.orders : [];
+      if (nextRecords.some((record) => record.siteId !== request.siteId)) {
+        throw new Error("订单列表返回了其他商户数据，请刷新后重试。");
+      }
+      if (
+        request.controller.signal.aborted ||
+        !isSiteRequestCurrent(request) ||
+        listRequestSequenceRef.current !== requestSequence
+      ) return;
+      const responseOffset =
+        typeof payload?.offset === "number" && Number.isFinite(payload.offset)
+          ? Math.max(0, Math.trunc(payload.offset))
+          : 0;
+      nextOrderOffsetRef.current = responseOffset + nextRecords.length;
       setHasMoreRemoteRecords(Boolean(payload?.hasMore));
-      writeCachedOrderRecords(siteId, nextRecords);
+      writeCachedOrderRecords(request.siteId, nextRecords);
       setRecords(nextRecords);
       setExternalDetailOrder((current) =>
-        current
+        current?.siteId === request.siteId
           ? nextRecords.find((record) => record.id === current.id) ?? current
-          : current,
+          : null,
       );
     } catch (nextError) {
+      if (
+        request.controller.signal.aborted ||
+        !isSiteRequestCurrent(request) ||
+        listRequestSequenceRef.current !== requestSequence
+      ) return;
       setHasMoreRemoteRecords(false);
       setError(cachedRecords.length > 0 ? "" : nextError instanceof Error && nextError.message ? nextError.message : "订单读取失败");
     } finally {
-      setLoading(false);
+      finishSiteRequest(request);
+      if (isSiteRequestCurrent(request) && listRequestSequenceRef.current === requestSequence) {
+        setLoading(false);
+      }
     }
-  }, [siteId]);
+  }, [beginSiteRequest, finishSiteRequest, isSiteRequestCurrent, siteId]);
 
   const loadMoreOrders = useCallback(async () => {
     if (!siteId || loading || loadingMoreRecords || !hasMoreRemoteRecords) return;
+    const request = beginSiteRequest(siteId);
+    if (!request) return;
+    const requestSequence = listRequestSequenceRef.current + 1;
+    listRequestSequenceRef.current = requestSequence;
+    const requestOffset = nextOrderOffsetRef.current;
     setLoadingMoreRecords(true);
     setError("");
     try {
       const response = await fetch(
-        `/api/orders?siteId=${encodeURIComponent(siteId)}&offset=${records.length}&limit=${MERCHANT_ORDER_FETCH_LIMIT}`,
+        `/api/orders?siteId=${encodeURIComponent(siteId)}&offset=${requestOffset}&limit=${MERCHANT_ORDER_FETCH_LIMIT}`,
         {
           cache: "no-store",
           credentials: "same-origin",
+          signal: request.controller.signal,
         },
       );
       const payload = (await response.json().catch(() => null)) as
-        | { orders?: MerchantOrderRecord[]; hasMore?: boolean; message?: string; error?: string }
+        | { orders?: MerchantOrderRecord[]; hasMore?: boolean; offset?: number; message?: string; error?: string }
         | null;
       if (!response.ok) {
         throw new Error(payload?.message || payload?.error || "order_list_failed");
       }
       const nextRecords = Array.isArray(payload?.orders) ? payload.orders : [];
+      if (nextRecords.some((record) => record.siteId !== request.siteId)) {
+        throw new Error("订单列表返回了其他商户数据，请刷新后重试。");
+      }
+      if (
+        request.controller.signal.aborted ||
+        !isSiteRequestCurrent(request) ||
+        listRequestSequenceRef.current !== requestSequence
+      ) return;
+      const responseOffset =
+        typeof payload?.offset === "number" && Number.isFinite(payload.offset)
+          ? Math.max(0, Math.trunc(payload.offset))
+          : requestOffset;
+      nextOrderOffsetRef.current = responseOffset + nextRecords.length;
       setHasMoreRemoteRecords(Boolean(payload?.hasMore));
       setExternalDetailOrder((current) =>
-        current
+        current?.siteId === request.siteId
           ? nextRecords.find((record) => record.id === current.id) ?? current
-          : current,
+          : null,
       );
       setRecords((current) => {
-        const existingIds = new Set(current.map((record) => record.id));
-        const mergedRecords = [...current, ...nextRecords.filter((record) => !existingIds.has(record.id))];
-        writeCachedOrderRecords(siteId, mergedRecords);
+        if (!isSiteRequestCurrent(request) || listRequestSequenceRef.current !== requestSequence) return current;
+        const currentSiteRecords = current.filter((record) => record.siteId === request.siteId);
+        const existingIds = new Set(currentSiteRecords.map((record) => record.id));
+        const mergedRecords = [...currentSiteRecords, ...nextRecords.filter((record) => !existingIds.has(record.id))];
+        writeCachedOrderRecords(request.siteId, mergedRecords);
         return mergedRecords;
       });
     } catch (nextError) {
+      if (
+        request.controller.signal.aborted ||
+        !isSiteRequestCurrent(request) ||
+        listRequestSequenceRef.current !== requestSequence
+      ) return;
       setError(nextError instanceof Error && nextError.message ? nextError.message : "order_list_failed");
     } finally {
-      setLoadingMoreRecords(false);
+      finishSiteRequest(request);
+      if (isSiteRequestCurrent(request) && listRequestSequenceRef.current === requestSequence) {
+        setLoadingMoreRecords(false);
+      }
     }
-  }, [hasMoreRemoteRecords, loading, loadingMoreRecords, records.length, siteId]);
+  }, [
+    beginSiteRequest,
+    finishSiteRequest,
+    hasMoreRemoteRecords,
+    isSiteRequestCurrent,
+    loading,
+    loadingMoreRecords,
+    siteId,
+  ]);
 
   useEffect(() => {
     handledSourceOrderIntentRef.current = "";
     setExternalDetailOrder(null);
     setDetailOrderId("");
-  }, [siteId]);
+    setBusyKey("");
+    setLoadingMoreRecords(false);
+    setHasMoreRemoteRecords(false);
+    nextOrderOffsetRef.current = 0;
+  }, [setBusyKey, siteId]);
 
   useEffect(() => {
     if (!sourceOrderIntent || sourceOrderIntent.siteId !== siteId) return;
@@ -367,8 +537,8 @@ export default function MerchantOrderMobilePanel({
   }, [loadOrders, siteId]);
 
   useEffect(() => {
-    onOrdersChange?.(records);
-  }, [onOrdersChange, records]);
+    onOrdersChange?.(currentSiteRecords);
+  }, [currentSiteRecords, onOrdersChange]);
 
   useEffect(() => {
     if (!error) return;
@@ -394,8 +564,8 @@ export default function MerchantOrderMobilePanel({
   }, [overflowMenuOpen]);
 
   const historyFilteredRecords = useMemo(
-    () => filterMerchantOrdersByHistory(records, historyVisibility),
-    [historyVisibility, records],
+    () => filterMerchantOrdersByHistory(currentSiteRecords, historyVisibility),
+    [currentSiteRecords, historyVisibility],
   );
 
   const filteredRecords = useMemo(() => {
@@ -444,73 +614,126 @@ export default function MerchantOrderMobilePanel({
   const detailOrder = useMemo(
     () =>
       detailOrderId
-        ? externalDetailOrder?.id === detailOrderId
+        ? externalDetailOrder?.id === detailOrderId && externalDetailOrder.siteId === siteId
           ? externalDetailOrder
-          : records.find((record) => record.id === detailOrderId) ?? null
+          : currentSiteRecords.find((record) => record.id === detailOrderId) ?? null
         : null,
-    [detailOrderId, externalDetailOrder, records],
+    [currentSiteRecords, detailOrderId, externalDetailOrder, siteId],
   );
 
   useEffect(() => {
-    if (!detailOrder) {
-      setDetailQuantityDrafts({});
-      setMobileCustomerInfoOpen(false);
-      return;
-    }
-    setDetailQuantityDrafts(
-      Object.fromEntries(detailOrder.items.map((item, index) => [getDetailItemDraftKey(detailOrder.id, index), String(item.quantity)])),
-    );
     setMobileCustomerInfoOpen(false);
-  }, [detailOrder]);
+  }, [detailOrder?.id]);
 
   const requestOrderAction = useCallback(
-    async (orderId: string, action: MerchantOrderAction) => {
-      const response = await fetch("/api/orders", {
-        method: "PATCH",
-        keepalive: action === "touch",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          siteId,
-          orderId,
-          action,
-        }),
-      });
-      const payload = (await response.json().catch(() => null)) as
-        | { order?: MerchantOrderRecord; message?: string; error?: string }
-        | null;
-      if (!response.ok || !payload?.order) {
-        throw new Error(payload?.message || payload?.error || "订单保存失败，请稍后重试。");
+    async (order: MerchantOrderRecord, action: MerchantOrderAction) => {
+      const request = beginSiteRequest(siteId);
+      if (!request || order.siteId !== request.siteId) throw createAbortedOrderRequestError();
+      try {
+        const response = await fetch("/api/orders", {
+          method: "PATCH",
+          keepalive: action === "touch",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            siteId: request.siteId,
+            orderId: order.id,
+            action,
+            ...(action === "print" ? { expectedUpdatedAt: order.updatedAt } : {}),
+          }),
+          signal: request.controller.signal,
+        });
+        const payload = (await response.json().catch(() => null)) as
+          | { order?: MerchantOrderRecord; message?: string; error?: string }
+          | null;
+        if (request.controller.signal.aborted || !isSiteRequestCurrent(request)) {
+          throw createAbortedOrderRequestError();
+        }
+        if (!response.ok || !payload?.order) {
+          throw new Error(payload?.message || payload?.error || "订单保存失败，请稍后重试。");
+        }
+        if (payload.order.siteId !== request.siteId || payload.order.id !== order.id) {
+          throw new Error("订单保存返回了其他商户数据，请刷新后重试。");
+        }
+        return payload.order;
+      } finally {
+        finishSiteRequest(request);
       }
-      return payload.order;
     },
-    [siteId],
+    [beginSiteRequest, finishSiteRequest, isSiteRequestCurrent, siteId],
   );
 
   const requestOrderStatusUpdate = useCallback(
     async (
-      orderId: string,
+      order: MerchantOrderRecord,
       status: MerchantOrderStatus,
       items?: MerchantOrderLineItemInput[],
     ) => {
-      const response = await fetch("/api/orders", {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          siteId,
-          orderId,
-          status,
-          ...(items ? { items } : {}),
-        }),
-      });
-      const payload = (await response.json().catch(() => null)) as
-        | { order?: MerchantOrderRecord; message?: string; error?: string }
-        | null;
-      if (!response.ok || !payload?.order) {
-        throw new Error(payload?.message || payload?.error || "订单保存失败，请稍后重试。");
+      const request = beginSiteRequest(siteId);
+      if (!request || order.siteId !== request.siteId) throw createAbortedOrderRequestError();
+      try {
+        const response = await fetch("/api/orders", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            siteId: request.siteId,
+            orderId: order.id,
+            status,
+            expectedUpdatedAt: order.updatedAt,
+            ...(items ? { items } : {}),
+          }),
+          signal: request.controller.signal,
+        });
+        const payload = (await response.json().catch(() => null)) as
+          | { order?: MerchantOrderRecord; message?: string; error?: string }
+          | null;
+        if (request.controller.signal.aborted || !isSiteRequestCurrent(request)) {
+          throw createAbortedOrderRequestError();
+        }
+        if (!response.ok || !payload?.order) {
+          throw new Error(payload?.message || payload?.error || "订单保存失败，请稍后重试。");
+        }
+        if (payload.order.siteId !== request.siteId || payload.order.id !== order.id) {
+          throw new Error("订单保存返回了其他商户数据，请刷新后重试。");
+        }
+        return payload.order;
+      } finally {
+        finishSiteRequest(request);
       }
-      return payload.order;
     },
-    [siteId],
+    [beginSiteRequest, finishSiteRequest, isSiteRequestCurrent, siteId],
+  );
+
+  const requestExactOrder = useCallback(
+    async (orderId: string) => {
+      const request = beginSiteRequest(siteId);
+      if (!request) throw createAbortedOrderRequestError();
+      try {
+        const response = await fetch(
+          `/api/orders?siteId=${encodeURIComponent(request.siteId)}&orderId=${encodeURIComponent(orderId)}`,
+          {
+            cache: "no-store",
+            credentials: "same-origin",
+            signal: request.controller.signal,
+          },
+        );
+        const payload = (await response.json().catch(() => null)) as
+          | { order?: MerchantOrderRecord; message?: string; error?: string }
+          | null;
+        if (request.controller.signal.aborted || !isSiteRequestCurrent(request)) {
+          throw createAbortedOrderRequestError();
+        }
+        if (!response.ok || !payload?.order) {
+          throw new Error(payload?.message || payload?.error || "没有找到该订单，请刷新后重试。");
+        }
+        if (payload.order.siteId !== request.siteId || payload.order.id !== orderId) {
+          throw new Error("订单详情返回了其他商户数据，请刷新后重试。");
+        }
+        return payload.order;
+      } finally {
+        finishSiteRequest(request);
+      }
+    },
+    [beginSiteRequest, finishSiteRequest, isSiteRequestCurrent, siteId],
   );
 
   const buildDetailDraftItemsInput = useCallback(
@@ -550,6 +773,59 @@ export default function MerchantOrderMobilePanel({
     [buildDetailDraftItemsInput],
   );
 
+  const rebaseDetailQuantityDrafts = useCallback((order: MerchantOrderRecord | null) => {
+    detailDraftBaseOrderRef.current = order;
+    setDetailQuantityDrafts((current) => {
+      if (!order) return Object.keys(current).length === 0 ? current : {};
+      return Object.fromEntries(
+        order.items.map((item, index) => [getDetailItemDraftKey(order.id, index), String(item.quantity)]),
+      );
+    });
+    setDetailDraftConflict((current) => (current ? "" : current));
+  }, []);
+
+  useEffect(() => {
+    if (!detailOrder) {
+      rebaseDetailQuantityDrafts(null);
+      return;
+    }
+    const baseOrder = detailDraftBaseOrderRef.current;
+    if (
+      !baseOrder ||
+      baseOrder.siteId !== detailOrder.siteId ||
+      baseOrder.id !== detailOrder.id
+    ) {
+      rebaseDetailQuantityDrafts(detailOrder);
+      return;
+    }
+    const hasLocalChanges = hasDetailQuantityDraftChanges(baseOrder);
+    if (!hasLocalChanges) {
+      if (baseOrder.updatedAt !== detailOrder.updatedAt) rebaseDetailQuantityDrafts(detailOrder);
+      return;
+    }
+    if (baseOrder.updatedAt !== detailOrder.updatedAt) {
+      setDetailDraftConflict((current) =>
+        current || "订单已在其他操作中更新。本地数量草稿已冻结；请放弃草稿并加载最新内容后重新修改。",
+      );
+    }
+  }, [detailOrder, hasDetailQuantityDraftChanges, rebaseDetailQuantityDrafts]);
+
+  const detailDraftComparisonOrder =
+    detailOrder &&
+    detailDraftBaseOrderRef.current?.siteId === detailOrder.siteId &&
+    detailDraftBaseOrderRef.current.id === detailOrder.id
+      ? detailDraftBaseOrderRef.current
+      : detailOrder;
+  const detailHasQuantityDraftChanges = detailDraftComparisonOrder
+    ? hasDetailQuantityDraftChanges(detailDraftComparisonOrder)
+    : false;
+  const detailHasQuantityDraftChangesRef = useRef(false);
+  const detailBusyRef = useRef(false);
+  const detailDraftConflictRef = useRef("");
+  detailHasQuantityDraftChangesRef.current = detailHasQuantityDraftChanges;
+  detailBusyRef.current = Boolean(busyKey);
+  detailDraftConflictRef.current = detailDraftConflict;
+
   const detailPreviewEntries = useMemo(() => {
     if (!detailOrder) return [];
     return detailOrder.items
@@ -580,22 +856,75 @@ export default function MerchantOrderMobilePanel({
 
   const markOrderTouched = useCallback(
     async (orderId: string, fallbackOrder?: MerchantOrderRecord) => {
+      const operation = captureSiteRequestContext();
+      if (operation.siteId !== siteId) return;
       const currentOrder =
-        records.find((item) => item.id === orderId) ??
-        (fallbackOrder?.id === orderId ? fallbackOrder : null);
+        (fallbackOrder?.id === orderId && fallbackOrder.siteId === operation.siteId ? fallbackOrder : null) ??
+        currentSiteRecords.find((item) => item.id === orderId);
       if (!currentOrder || !isMerchantOrderPendingMerchantTouch(currentOrder)) return;
       const touchedAt = new Date().toISOString();
       setRecords((current) =>
-        current.map((item) => (item.id === orderId ? { ...item, merchantTouchedAt: touchedAt } : item)),
+        isSiteRequestCurrent(operation)
+          ? current.map((item) => (item.id === orderId ? { ...item, merchantTouchedAt: touchedAt } : item))
+          : current,
       );
       try {
-        const nextOrder = await requestOrderAction(orderId, "touch");
-        setRecords((current) => current.map((item) => (item.id === orderId ? nextOrder : item)));
+        const nextOrder = await requestOrderAction(currentOrder, "touch");
+        if (!isSiteRequestCurrent(operation)) return;
+        setRecords((current) =>
+          isSiteRequestCurrent(operation)
+            ? current.map((item) => (item.id === orderId ? nextOrder : item))
+            : current,
+        );
       } catch {
-        setRecords((current) => current.map((item) => (item.id === orderId ? currentOrder : item)));
+        if (!isSiteRequestCurrent(operation)) return;
+        setRecords((current) =>
+          isSiteRequestCurrent(operation)
+            ? current.map((item) => (item.id === orderId ? currentOrder : item))
+            : current,
+        );
       }
     },
-    [records, requestOrderAction],
+    [captureSiteRequestContext, currentSiteRecords, isSiteRequestCurrent, requestOrderAction, siteId],
+  );
+
+  const openListConversation = useCallback(
+    async (orderId: string) => {
+      if (!onOpenConversation || managerBusyRef.current) return;
+      const operation = captureSiteRequestContext();
+      if (operation.siteId !== siteId) return;
+      setBusyKey(`contact:${orderId}`);
+      setError("");
+      try {
+        const order = await requestExactOrder(orderId);
+        if (!isSiteRequestCurrent(operation)) return;
+        if (!order.customerAccountId && !order.customerLoginEmail) {
+          throw new Error("该订单客户未绑定账号或登录邮箱，暂时无法打开会话。");
+        }
+        await markOrderTouched(order.id, order);
+        if (!isSiteRequestCurrent(operation)) return;
+        setBusyKey("");
+        onOpenConversation({
+          accountId: order.customerAccountId,
+          email: order.customerLoginEmail,
+          name: order.customer.name,
+        });
+      } catch (nextError) {
+        if (!isSiteRequestCurrent(operation)) return;
+        setError(nextError instanceof Error && nextError.message ? nextError.message : "订单读取失败");
+      } finally {
+        if (isSiteRequestCurrent(operation)) setBusyKey("");
+      }
+    },
+    [
+      captureSiteRequestContext,
+      isSiteRequestCurrent,
+      markOrderTouched,
+      onOpenConversation,
+      requestExactOrder,
+      setBusyKey,
+      siteId,
+    ],
   );
 
   const patchOrderStatus = useCallback(
@@ -605,6 +934,26 @@ export default function MerchantOrderMobilePanel({
       busyLabel: string,
       options: { persistDetailDraft?: boolean } = {},
     ) => {
+      const operation = captureSiteRequestContext();
+      if (operation.siteId !== siteId || order.siteId !== operation.siteId) return;
+      const targetsOpenDetail = detailOrderId === order.id;
+      if (targetsOpenDetail && detailDraftConflictRef.current) {
+        setError(detailDraftConflictRef.current);
+        return;
+      }
+      const canPersistOpenDetailDraft =
+        options.persistDetailDraft &&
+        order.status !== "completed" &&
+        order.status !== "cancelled" &&
+        (status === "confirmed" || status === "completed");
+      if (
+        targetsOpenDetail &&
+        detailHasQuantityDraftChangesRef.current &&
+        !canPersistOpenDetailDraft
+      ) {
+        setError("商品数量有尚未保存的修改。请先用“确认”或“完成”保存数量，或关闭详情并确认放弃后再更改状态。");
+        return;
+      }
       setBusyKey(`${busyLabel}:${order.id}`);
       setError("");
       try {
@@ -616,136 +965,207 @@ export default function MerchantOrderMobilePanel({
           hasDetailQuantityDraftChanges(order)
             ? buildDetailDraftItemsInput(order)
             : undefined;
-        const nextOrder = await requestOrderStatusUpdate(order.id, status, draftItems);
-        setRecords((current) => current.map((item) => (item.id === order.id ? nextOrder : item)));
+        const nextOrder = await requestOrderStatusUpdate(order, status, draftItems);
+        if (!isSiteRequestCurrent(operation)) return;
+        if (targetsOpenDetail && draftItems) rebaseDetailQuantityDrafts(nextOrder);
+        setRecords((current) =>
+          isSiteRequestCurrent(operation)
+            ? current.map((item) => (item.id === order.id ? nextOrder : item))
+            : current,
+        );
         setExternalDetailOrder((current) =>
-          current?.id === order.id ? nextOrder : current,
+          isSiteRequestCurrent(operation) && current?.id === order.id ? nextOrder : current,
         );
       } catch (nextError) {
+        if (!isSiteRequestCurrent(operation)) return;
         const message =
           nextError instanceof Error && nextError.message ? nextError.message : "订单保存失败，请稍后重试。";
         setError(`保存失败，修改未生效：${message}`);
       } finally {
-        setBusyKey("");
+        if (isSiteRequestCurrent(operation)) setBusyKey("");
       }
     },
-    [buildDetailDraftItemsInput, hasDetailQuantityDraftChanges, requestOrderStatusUpdate],
+    [
+      buildDetailDraftItemsInput,
+      captureSiteRequestContext,
+      hasDetailQuantityDraftChanges,
+      isSiteRequestCurrent,
+      requestOrderStatusUpdate,
+      detailOrderId,
+      rebaseDetailQuantityDrafts,
+      setBusyKey,
+      siteId,
+    ],
   );
 
   const printOrder = useCallback(
     async (order: MerchantOrderRecord) => {
+      const operation = captureSiteRequestContext();
+      if (operation.siteId !== siteId || order.siteId !== operation.siteId) return;
+      const preparedPrintWindow = prepareMerchantOrderPrintWindow();
+      if (!preparedPrintWindow) {
+        setError("浏览器阻止了打印窗口，请允许弹窗后重试。打印尝试未记录。");
+        return;
+      }
       setBusyKey(`print:${order.id}`);
       setError("");
+      let printStarted = false;
       try {
-        if (typeof window !== "undefined") {
-          const popup = window.open("", "_blank", "noopener,noreferrer,width=920,height=760");
-          if (popup) {
-            popup.document.open();
-            popup.document.write(buildPrintHtml(order));
-            popup.document.close();
-            popup.focus();
-            popup.print();
-          }
+        const latestOrder = await requestExactOrder(order.id);
+        if (!isSiteRequestCurrent(operation)) {
+          preparedPrintWindow.close();
+          return;
         }
-        const nextOrder = await requestOrderAction(order.id, "print");
-        setRecords((current) => current.map((item) => (item.id === order.id ? nextOrder : item)));
+        if (latestOrder.updatedAt !== order.updatedAt) {
+          setRecords((current) =>
+            current.map((item) => (item.id === latestOrder.id ? latestOrder : item)),
+          );
+          setExternalDetailOrder((current) =>
+            current?.id === latestOrder.id ? latestOrder : current,
+          );
+          preparedPrintWindow.close();
+          throw new Error("订单内容已更新，已刷新当前详情，请核对后重新打印。");
+        }
+        if (!startMerchantOrderPrint(latestOrder, { formatDateTime }, preparedPrintWindow)) {
+          throw new Error("浏览器阻止了打印窗口，请允许弹窗后重试。");
+        }
+        printStarted = true;
+        const nextOrder = await requestOrderAction(latestOrder, "print");
+        if (!isSiteRequestCurrent(operation)) return;
+        setRecords((current) =>
+          isSiteRequestCurrent(operation)
+            ? current.map((item) => (item.id === order.id ? nextOrder : item))
+            : current,
+        );
         setExternalDetailOrder((current) =>
-          current?.id === order.id ? nextOrder : current,
+          isSiteRequestCurrent(operation) && current?.id === order.id ? nextOrder : current,
         );
       } catch (nextError) {
-        setError(nextError instanceof Error && nextError.message ? nextError.message : "订单操作失败");
+        if (!printStarted && !preparedPrintWindow.closed) preparedPrintWindow.close();
+        if (!isSiteRequestCurrent(operation)) return;
+        const message = nextError instanceof Error && nextError.message ? nextError.message : "订单操作失败";
+        setError(printStarted ? `打印已发起，但打印尝试记录失败：${message}` : message);
       } finally {
-        setBusyKey("");
+        if (isSiteRequestCurrent(operation)) setBusyKey("");
       }
     },
-    [requestOrderAction],
+    [
+      captureSiteRequestContext,
+      isSiteRequestCurrent,
+      requestExactOrder,
+      requestOrderAction,
+      setBusyKey,
+      siteId,
+    ],
   );
 
   const openDetailDialog = useCallback(
     (order: MerchantOrderRecord) => {
+      if (order.siteId !== siteId) return;
+      detailRequestSequenceRef.current += 1;
       setExternalDetailOrder(null);
       setDetailOrderId(order.id);
     },
-    [],
+    [siteId],
   );
 
   const resolveWorkbenchActionOrder = useCallback(
-    async (orderId: string) => {
-      const cachedOrder = records.find((record) => record.id === orderId);
-      if (cachedOrder) return cachedOrder;
-      const response = await fetch(
-        `/api/orders?siteId=${encodeURIComponent(siteId)}&orderId=${encodeURIComponent(orderId)}`,
-        { cache: "no-store", credentials: "same-origin" },
-      );
-      const payload = (await response.json().catch(() => null)) as
-        | { order?: MerchantOrderRecord; message?: string; error?: string }
-        | null;
-      if (!response.ok || !payload?.order) {
-        throw new Error(payload?.message || payload?.error || "没有找到该订单，请刷新后重试。");
-      }
-      return payload.order;
-    },
-    [records, siteId],
+    async (orderId: string) => requestExactOrder(orderId),
+    [requestExactOrder],
   );
 
   const contactWorkbenchOrder = useCallback(
     async (orderId: string) => {
       if (!onOpenConversation) return;
+      const operation = captureSiteRequestContext();
+      if (operation.siteId !== siteId) return;
       const order = await resolveWorkbenchActionOrder(orderId);
+      if (!isSiteRequestCurrent(operation)) return;
       if (!order.customerAccountId && !order.customerLoginEmail) {
         throw new Error("该订单客户未绑定账号或登录邮箱，暂时无法打开会话。");
       }
+      await markOrderTouched(order.id, order);
+      if (!isSiteRequestCurrent(operation)) return;
+      handleRegisterWorkbenchLeaveGuard(null);
       setWorkbenchOpen(false);
-      void markOrderTouched(order.id, order);
       onOpenConversation({
         accountId: order.customerAccountId,
         email: order.customerLoginEmail,
         name: order.customer.name,
       });
     },
-    [markOrderTouched, onOpenConversation, resolveWorkbenchActionOrder],
+    [
+      captureSiteRequestContext,
+      handleRegisterWorkbenchLeaveGuard,
+      isSiteRequestCurrent,
+      markOrderTouched,
+      onOpenConversation,
+      resolveWorkbenchActionOrder,
+      siteId,
+    ],
   );
 
   const openWorkbenchEnterpriseTask = useCallback(
     async (orderId: string) => {
       if (!onOpenEnterpriseTask) return;
+      const operation = captureSiteRequestContext();
+      if (operation.siteId !== siteId) return;
       const order = await resolveWorkbenchActionOrder(orderId);
+      if (!isSiteRequestCurrent(operation)) return;
+      handleRegisterWorkbenchLeaveGuard(null);
       setWorkbenchOpen(false);
       onOpenEnterpriseTask(order);
     },
-    [onOpenEnterpriseTask, resolveWorkbenchActionOrder],
+    [
+      captureSiteRequestContext,
+      handleRegisterWorkbenchLeaveGuard,
+      isSiteRequestCurrent,
+      onOpenEnterpriseTask,
+      resolveWorkbenchActionOrder,
+      siteId,
+    ],
   );
 
   const openWorkbenchOrder = useCallback(
     async (orderId: string) => {
-      setWorkbenchOpen(false);
-      const cachedOrder = records.find((record) => record.id === orderId);
-      if (cachedOrder) {
-        openDetailDialog(cachedOrder);
-        return;
-      }
+      const operation = captureSiteRequestContext();
+      if (operation.siteId !== siteId) return;
+      const requestSequence = detailRequestSequenceRef.current + 1;
+      detailRequestSequenceRef.current = requestSequence;
       setBusyKey(`detail:${orderId}`);
       setError("");
       try {
-        const response = await fetch(
-          `/api/orders?siteId=${encodeURIComponent(siteId)}&orderId=${encodeURIComponent(orderId)}`,
-          { cache: "no-store", credentials: "same-origin" },
-        );
-        const payload = (await response.json().catch(() => null)) as
-          | { order?: MerchantOrderRecord; message?: string; error?: string }
-          | null;
-        if (!response.ok || !payload?.order) {
-          throw new Error(payload?.message || payload?.error || "没有找到该订单，请刷新后重试。");
-        }
-        setExternalDetailOrder(payload.order);
-        setDetailOrderId(payload.order.id);
+        const nextOrder = await requestExactOrder(orderId);
+        if (
+          !isSiteRequestCurrent(operation) ||
+          detailRequestSequenceRef.current !== requestSequence
+        ) return;
+        handleRegisterWorkbenchLeaveGuard(null);
+        setWorkbenchOpen(false);
+        setExternalDetailOrder(nextOrder);
+        setDetailOrderId(nextOrder.id);
       } catch (nextError) {
+        if (
+          !isSiteRequestCurrent(operation) ||
+          detailRequestSequenceRef.current !== requestSequence
+        ) return;
         setError(nextError instanceof Error && nextError.message ? nextError.message : "订单读取失败");
+        throw nextError;
       } finally {
-        setBusyKey("");
+        if (
+          isSiteRequestCurrent(operation) &&
+          detailRequestSequenceRef.current === requestSequence
+        ) setBusyKey("");
       }
     },
-    [openDetailDialog, records, siteId],
+    [
+      captureSiteRequestContext,
+      handleRegisterWorkbenchLeaveGuard,
+      isSiteRequestCurrent,
+      requestExactOrder,
+      setBusyKey,
+      siteId,
+    ],
   );
 
   const openWorkbenchStatus = useCallback((status: MerchantOrderStatus) => {
@@ -755,10 +1175,173 @@ export default function MerchantOrderMobilePanel({
     setWorkbenchOpen(false);
   }, []);
 
-  const closeDetailDialog = useCallback(() => {
+  const confirmDetailLeave = useCallback(() => {
+    if (detailBusyRef.current) {
+      setError("订单操作正在进行，请等待完成后再关闭详情。");
+      return false;
+    }
+    if (
+      detailHasQuantityDraftChangesRef.current &&
+      typeof window !== "undefined" &&
+      !window.confirm("商品数量有尚未保存的修改。关闭详情将放弃这些修改，仍要关闭吗？")
+    ) return false;
+    return true;
+  }, []);
+
+  const finalizeDetailClose = useCallback(() => {
+    handleRegisterDetailLeaveGuard(null);
+    rebaseDetailQuantityDrafts(null);
+    detailRequestSequenceRef.current += 1;
     setDetailOrderId("");
     setExternalDetailOrder(null);
-  }, []);
+  }, [handleRegisterDetailLeaveGuard, rebaseDetailQuantityDrafts]);
+
+  const closeDetailDialog = useCallback(() => {
+    if (!confirmDetailLeave()) return false;
+    finalizeDetailClose();
+    return true;
+  }, [confirmDetailLeave, finalizeDetailClose]);
+
+  const discardDetailQuantityDrafts = useCallback(() => {
+    if (!detailOrder || detailBusyRef.current) return false;
+    if (
+      detailHasQuantityDraftChangesRef.current &&
+      typeof window !== "undefined" &&
+      !window.confirm("确定放弃当前商品数量修改并加载最新订单内容吗？")
+    ) return false;
+    rebaseDetailQuantityDrafts(detailOrder);
+    return true;
+  }, [detailOrder, rebaseDetailQuantityDrafts]);
+
+  useEffect(() => {
+    if (!detailOrder || workbenchOpen) return;
+    handleRegisterDetailLeaveGuard(confirmDetailLeave);
+    return () => handleRegisterDetailLeaveGuard(null);
+  }, [confirmDetailLeave, detailOrder, handleRegisterDetailLeaveGuard, workbenchOpen]);
+
+  useEffect(() => {
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      const hasProtectedDetailDraft = Boolean(
+        detailOrder && !workbenchOpen && detailHasQuantityDraftChangesRef.current,
+      );
+      if (!managerBusyRef.current && !hasProtectedDetailDraft) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [detailOrder, workbenchOpen]);
+
+  useEffect(() => {
+    if (!detailOrderId || workbenchOpen) return;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    detailPreviouslyFocusedElementRef.current = previousFocus;
+    const animationFrame = window.requestAnimationFrame(() => {
+      const closeButton = detailCloseButtonRef.current;
+      if (closeButton && !closeButton.disabled) closeButton.focus();
+      else detailDialogRef.current?.focus();
+    });
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      const restoreTarget = detailPreviouslyFocusedElementRef.current;
+      detailPreviouslyFocusedElementRef.current = null;
+      if (restoreTarget?.isConnected) restoreTarget.focus();
+    };
+  }, [detailOrderId, workbenchOpen]);
+
+  useEffect(() => {
+    if (!detailOrder || workbenchOpen) return;
+    const handleDetailKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        closeDetailDialog();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const dialog = detailDialogRef.current;
+      if (!dialog) return;
+      const focusable = Array.from(
+        dialog.querySelectorAll<HTMLElement>(
+          'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((element) => element.getAttribute("aria-hidden") !== "true");
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const activeElement = document.activeElement;
+      if (event.shiftKey && (activeElement === first || !dialog.contains(activeElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", handleDetailKeyDown, true);
+    return () => window.removeEventListener("keydown", handleDetailKeyDown, true);
+  }, [closeDetailDialog, detailOrder, workbenchOpen]);
+
+  useEffect(() => {
+    if (workbenchOpen || (!detailOrder && !busyKey)) return;
+    const handleMobileSwipeBack = (event: Event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      if (detailOrder) closeDetailDialog();
+      else confirmManagerBusyLeave();
+    };
+    window.addEventListener(MOBILE_SWIPE_BACK_EVENT, handleMobileSwipeBack, true);
+    return () => window.removeEventListener(MOBILE_SWIPE_BACK_EVENT, handleMobileSwipeBack, true);
+  }, [busyKey, closeDetailDialog, confirmManagerBusyLeave, detailOrder, workbenchOpen]);
+
+  const openDetailEnterpriseTask = useCallback(
+    async (order: MerchantOrderRecord) => {
+      if (!onOpenEnterpriseTask) return;
+      const operation = captureSiteRequestContext();
+      if (operation.siteId !== siteId || order.siteId !== operation.siteId) return;
+      if (!confirmDetailLeave()) return;
+      const requestSequence = detailRequestSequenceRef.current + 1;
+      detailRequestSequenceRef.current = requestSequence;
+      setBusyKey(`detail-task:${order.id}`);
+      setError("");
+      try {
+        const latestOrder = await requestExactOrder(order.id);
+        if (
+          !isSiteRequestCurrent(operation) ||
+          detailRequestSequenceRef.current !== requestSequence
+        ) return;
+        setBusyKey("");
+        finalizeDetailClose();
+        onOpenEnterpriseTask(latestOrder);
+      } catch (nextError) {
+        if (
+          !isSiteRequestCurrent(operation) ||
+          detailRequestSequenceRef.current !== requestSequence
+        ) return;
+        setError(nextError instanceof Error && nextError.message ? nextError.message : "订单读取失败");
+      } finally {
+        if (
+          isSiteRequestCurrent(operation) &&
+          detailRequestSequenceRef.current === requestSequence
+        ) setBusyKey("");
+      }
+    },
+    [
+      captureSiteRequestContext,
+      confirmDetailLeave,
+      finalizeDetailClose,
+      isSiteRequestCurrent,
+      onOpenEnterpriseTask,
+      requestExactOrder,
+      setBusyKey,
+      siteId,
+    ],
+  );
 
   const handleDetailQuantityDraftChange = useCallback((orderId: string, itemIndex: number, value: string) => {
     const nextValue = value.replace(/[^\d]/g, "");
@@ -905,7 +1488,15 @@ export default function MerchantOrderMobilePanel({
         if (event.target === event.currentTarget) closeDetailDialog();
       }}
     >
-      <div className={`mx-auto ${detailPanelClassName}`}>
+      <div
+        ref={detailDialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={detailDialogTitleId}
+        tabIndex={-1}
+        className={`mx-auto ${detailPanelClassName}`}
+      >
+        <h2 id={detailDialogTitleId} className="sr-only">{`订单详情 ${detailOrder.id}`}</h2>
         <div className={`flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4 ${darkMode ? "border-white/10" : "border-slate-200"}`}>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
@@ -993,13 +1584,39 @@ export default function MerchantOrderMobilePanel({
             ) : null}
           </div>
           <button
+            ref={detailCloseButtonRef}
             type="button"
-            className={`rounded-full px-3 py-2 text-sm font-medium ${darkMode ? "border border-white/10 bg-white/5 text-white" : "border border-slate-200 bg-white text-slate-700"}`}
+            className={`rounded-full px-3 py-2 text-sm font-medium disabled:opacity-50 ${darkMode ? "border border-white/10 bg-white/5 text-white" : "border border-slate-200 bg-white text-slate-700"}`}
             onClick={closeDetailDialog}
+            disabled={Boolean(busyKey)}
+            data-mobile-swipe-back-control="true"
           >
             关闭
           </button>
         </div>
+
+        {detailHasQuantityDraftChanges || detailDraftConflict ? (
+          <div
+            className={`flex flex-wrap items-center justify-between gap-3 border-b px-5 py-3 text-sm ${
+              darkMode
+                ? "border-amber-300/20 bg-amber-300/10 text-amber-100"
+                : "border-amber-200 bg-amber-50 text-amber-900"
+            }`}
+            role="status"
+          >
+            <span>{detailDraftConflict || "商品数量有尚未保存的修改。确认或完成订单时会一并保存。"}</span>
+            <button
+              type="button"
+              className={`rounded-full px-3 py-1.5 text-xs font-semibold disabled:opacity-50 ${
+                darkMode ? "border border-amber-300/30 bg-white/10" : "border border-amber-300 bg-white"
+              }`}
+              onClick={discardDetailQuantityDrafts}
+              disabled={Boolean(busyKey)}
+            >
+              放弃修改并加载最新
+            </button>
+          </div>
+        ) : null}
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pb-[calc(var(--faolla-mobile-safe-bottom)+1.25rem)] pt-4">
           <div className="space-y-3">
@@ -1180,10 +1797,8 @@ export default function MerchantOrderMobilePanel({
                       ? "border border-cyan-400/30 bg-cyan-400/10 text-cyan-100"
                       : "border border-cyan-200 bg-cyan-50 text-cyan-800"
                   }`}
-                  onClick={() => {
-                    closeDetailDialog();
-                    onOpenEnterpriseTask(detailOrder);
-                  }}
+                  onClick={() => void openDetailEnterpriseTask(detailOrder)}
+                  disabled={Boolean(busyKey)}
                 >
                   创建/查看企业任务
                 </button>
@@ -1196,7 +1811,9 @@ export default function MerchantOrderMobilePanel({
                 onClick={() => void printOrder(detailOrder)}
                 disabled={detailOrderBusy}
               >
-                {isDetailOrderActionBusy("print") ? "处理中" : "打印"}
+                {isDetailOrderActionBusy("print")
+                  ? "正在发起"
+                  : getMerchantOrderPrintAttemptText(detailOrder.printCount)}
               </button>
               {detailOrder.status !== "cancelled" ? (
                 <button
@@ -1228,6 +1845,7 @@ export default function MerchantOrderMobilePanel({
       onOpenEnterpriseTask={onOpenEnterpriseTask ? openWorkbenchEnterpriseTask : undefined}
       onStatusFilter={openWorkbenchStatus}
       onChanged={loadOrders}
+      registerLeaveGuard={handleRegisterWorkbenchLeaveGuard}
     />
   ) : null;
 
@@ -1430,14 +2048,8 @@ export default function MerchantOrderMobilePanel({
                         <button
                           type="button"
                           className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-slate-900 text-white shadow-sm transition hover:bg-slate-800"
-                          onClick={() => {
-                            void markOrderTouched(record.id);
-                            void onOpenConversation?.({
-                              accountId: record.customerAccountId,
-                              email: record.customerLoginEmail,
-                              name: record.customer.name,
-                            });
-                          }}
+                          onClick={() => void openListConversation(record.id)}
+                          disabled={Boolean(busyKey)}
                           title="打开与客户的会话"
                           aria-label="打开与客户的会话"
                         >

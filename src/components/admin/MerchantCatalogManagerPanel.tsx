@@ -12,6 +12,9 @@ import {
 } from "react";
 import {
   createMerchantCatalogCollectionId,
+  MERCHANT_CATALOG_CHANGED_EVENT,
+  MERCHANT_CATALOG_MAX_SEARCH_PLACEHOLDER_LENGTH,
+  parseMerchantCatalogChangedEventDetail,
   parseMerchantCatalogUnitPrice,
   planMerchantCatalogProductImageMatches,
   planMerchantCatalogProductImport,
@@ -19,6 +22,7 @@ import {
   type MerchantCatalog,
   type MerchantCatalogAvailability,
   type MerchantCatalogBootstrapResult,
+  type MerchantCatalogBrowsingRules,
   type MerchantCatalogCategory,
   type MerchantCatalogCollection,
   type MerchantCatalogConflict,
@@ -27,12 +31,16 @@ import {
   type MerchantCatalogTarget,
 } from "@/lib/merchantCatalog";
 import type { ProductItemInput } from "@/lib/productBlock";
+import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
+
+export type MerchantCatalogLeaveState = "clean" | "draft" | "busy" | "uploaded_uncommitted";
 
 export type MerchantCatalogManagerPanelProps = {
   siteId: string;
   darkMode?: boolean;
   catalogTarget?: MerchantCatalogTarget | null;
   onChanged?: () => void | Promise<void>;
+  onLeaveStateChange?: (state: MerchantCatalogLeaveState) => void;
 };
 
 type CatalogApiPayload = {
@@ -92,6 +100,25 @@ const MERCHANT_CATALOG_IMAGE_IMPORT_ALLOWED_MIME_TYPES = new Set([
   "image/webp",
 ]);
 
+const DEFAULT_MERCHANT_CATALOG_BROWSING_RULES: MerchantCatalogBrowsingRules = {
+  searchEnabled: true,
+  searchPlaceholder: "",
+  hideUnselectedCategory: true,
+  groupByCategory: false,
+};
+
+function copyMerchantCatalogBrowsingRules(
+  value: MerchantCatalogBrowsingRules | null | undefined,
+): MerchantCatalogBrowsingRules | undefined {
+  if (!value) return undefined;
+  return {
+    searchEnabled: value.searchEnabled,
+    searchPlaceholder: value.searchPlaceholder,
+    hideUnselectedCategory: value.hideUnselectedCategory,
+    groupByCategory: value.groupByCategory,
+  };
+}
+
 type MerchantCatalogProductImageUploadEntry = {
   fileName: string;
   imageUrl: string;
@@ -119,6 +146,16 @@ type MerchantCatalogProductImageImportDraft = {
   plan: Extract<MerchantCatalogProductImageMatchPlan, { ok: true }>;
   uploadedEntries: MerchantCatalogProductImageUploadEntry[];
   uploadFailures: MerchantCatalogProductImageUploadFailure[];
+};
+
+type MerchantCatalogSingleProductImageUpload = {
+  siteId: string;
+  siteVersion: number;
+  baseRevision: number;
+  productId: string;
+  draftGeneration: number;
+  imageUrl: string;
+  thumbnailUrl: string;
 };
 
 const AVAILABILITY_OPTIONS: Array<{
@@ -275,8 +312,78 @@ function getViewportLabel(viewport: MerchantCatalogCollection["viewport"]) {
   return "电脑端与手机端共享";
 }
 
+function getBrowsingRulesSummary(rules: MerchantCatalogBrowsingRules | undefined) {
+  if (!rules) return "浏览规则仍沿用网站设置";
+  return [
+    rules.searchEnabled ? "搜索开启" : "搜索关闭",
+    rules.hideUnselectedCategory ? "分类单选展示" : "分类可同时展示",
+    rules.groupByCategory ? "按分类排列" : "保持投放顺序",
+  ].join(" · ");
+}
+
 function getAvailabilityLabel(value: MerchantCatalogAvailability) {
   return AVAILABILITY_OPTIONS.find((option) => option.value === value)?.label ?? "可售";
+}
+
+function getSafeMerchantCatalogProductImageUrl(imageUrl: string, thumbnailUrl: string) {
+  for (const candidate of [thumbnailUrl, imageUrl]) {
+    const normalized = normalizePublicAssetUrl(candidate.trim());
+    if (!normalized || normalized.startsWith("//")) continue;
+    if (normalized.startsWith("/")) return normalized;
+    try {
+      const parsed = new URL(normalized);
+      if (parsed.protocol === "https:" || parsed.protocol === "http:") return normalized;
+    } catch {
+      // Try the full-size image when a malformed thumbnail URL is present.
+    }
+  }
+  return "";
+}
+
+function MerchantCatalogProductThumbnail({
+  imageUrl,
+  thumbnailUrl,
+  name,
+  darkMode,
+  className = "h-16 w-16",
+}: {
+  imageUrl: string;
+  thumbnailUrl: string;
+  name: string;
+  darkMode: boolean;
+  className?: string;
+}) {
+  const safeImageUrl = getSafeMerchantCatalogProductImageUrl(imageUrl, thumbnailUrl);
+  const [failedImageUrl, setFailedImageUrl] = useState("");
+  const failed = Boolean(safeImageUrl) && failedImageUrl === safeImageUrl;
+
+  if (!safeImageUrl || failed) {
+    return (
+      <div
+        role="img"
+        aria-label={`${name || "商品"}暂无图片`}
+        className={`${className} flex shrink-0 items-center justify-center rounded-xl border border-dashed text-[11px] ${
+          darkMode ? "border-slate-700 bg-slate-900 text-slate-500" : "border-slate-200 bg-white text-slate-400"
+        }`}
+      >
+        无图
+      </div>
+    );
+  }
+
+  return (
+    // The workbench must render arbitrary validated catalog hosts without a Next.js remote-domain allowlist.
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={safeImageUrl}
+      alt={`${name || "商品"}缩略图`}
+      loading="lazy"
+      decoding="async"
+      referrerPolicy="no-referrer"
+      onError={() => setFailedImageUrl(safeImageUrl)}
+      className={`${className} shrink-0 rounded-xl border object-cover ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}
+    />
+  );
 }
 
 function getAvailabilityClass(value: MerchantCatalogAvailability, darkMode: boolean) {
@@ -313,6 +420,7 @@ function getCatalogError(payload: CatalogApiPayload | null, fallback: string) {
   if (code === "merchant_catalog_existing_duplicate_code") return "当前经营目录中存在重复商品编码，请先修复后再导入图片。";
   if (code === "merchant_catalog_image_import_no_changes") return "这些图片与当前目录一致，无需重复写入。";
   if (code === "merchant_catalog_image_import_limit_exceeded") return "每次最多导入 100 张商品图片，请拆分后重试。";
+  if (code === "invalid_merchant_catalog_browsing_rules") return "商品浏览规则无效，请检查搜索提示词和分类设置后重试。";
   if (code === "invalid_merchant_catalog_product_price") return "商品价格必须是非负数字，最多保留两位小数；免费商品请明确填写 0。";
   if (code === "merchant_catalog_bootstrap_conflict" || code === "catalog_bootstrap_conflict") return "已发布商品存在冲突，解决冲突后才能初始化目录。";
   if (code === "merchant_catalog_bootstrap_empty") return "没有找到已发布商品。请先发布至少一个商品区块，再建立经营目录。";
@@ -395,6 +503,8 @@ function conflictFieldLabel(field: string) {
   const labels: Record<string, string> = {
     price_prefix: "价格前缀",
     category_options: "分类选项",
+    browsing_rules: "商品浏览规则",
+    search_placeholder_too_long: "搜索框提示词",
     product_ids: "商品顺序/集合",
     code: "商品编码",
     name: "商品名称",
@@ -487,6 +597,7 @@ export default function MerchantCatalogManagerPanel({
   darkMode = false,
   catalogTarget = null,
   onChanged,
+  onLeaveStateChange,
 }: MerchantCatalogManagerPanelProps) {
   const categoryListId = useId();
   const productImportPreviewTitleId = useId();
@@ -508,6 +619,9 @@ export default function MerchantCatalogManagerPanel({
   const [productDraftIsNew, setProductDraftIsNew] = useState(false);
   const [productDraftRevision, setProductDraftRevision] = useState<number | null>(null);
   const [productDraftCollectionIds, setProductDraftCollectionIds] = useState<string[]>([]);
+  const [productImageUploading, setProductImageUploading] = useState(false);
+  const [productImageUpload, setProductImageUpload] = useState<MerchantCatalogSingleProductImageUpload | null>(null);
+  const [productImageUploadError, setProductImageUploadError] = useState("");
   const [categoryDraft, setCategoryDraft] = useState<MerchantCatalogCategory | null>(null);
   const [categoryDraftIsNew, setCategoryDraftIsNew] = useState(false);
   const [categoryDraftRevision, setCategoryDraftRevision] = useState<number | null>(null);
@@ -533,6 +647,17 @@ export default function MerchantCatalogManagerPanel({
   const catalogRef = useRef<MerchantCatalog | null>(null);
   const catalogSiteIdRef = useRef("");
   const bootstrapRef = useRef<MerchantCatalogBootstrapResult | null>(null);
+  const productDraftRef = useRef<MerchantCatalogProduct | null>(productDraft);
+  productDraftRef.current = productDraft;
+  const productDraftRevisionRef = useRef<number | null>(productDraftRevision);
+  productDraftRevisionRef.current = productDraftRevision;
+  const productDraftGenerationRef = useRef(0);
+  const productImageInputRef = useRef<HTMLInputElement | null>(null);
+  const productImageUploadSequenceRef = useRef(0);
+  const productImageUploadingRef = useRef(productImageUploading);
+  productImageUploadingRef.current = productImageUploading;
+  const productImageUploadRef = useRef<MerchantCatalogSingleProductImageUpload | null>(productImageUpload);
+  productImageUploadRef.current = productImageUpload;
   const productImportInputRef = useRef<HTMLInputElement | null>(null);
   const productImportReadSequenceRef = useRef(0);
   const productImageImportInputRef = useRef<HTMLInputElement | null>(null);
@@ -551,8 +676,44 @@ export default function MerchantCatalogManagerPanel({
       productIds: Array.isArray(catalogTarget.productIds)
         ? [...new Set(catalogTarget.productIds.map((productId) => productId.trim()).filter(Boolean))]
         : undefined,
+      browsingRules: copyMerchantCatalogBrowsingRules(catalogTarget.browsingRules),
     };
   }, [catalogTarget]);
+
+  const leaveState = useMemo<MerchantCatalogLeaveState>(() => {
+    if (Boolean(actingKey) || productImportReading || productImageImportUploading || productImageUploading) return "busy";
+    if (productImageUpload || (productImageImportDraft?.uploadedEntries.length ?? 0) > 0) {
+      return "uploaded_uncommitted";
+    }
+    if (
+      productDraft ||
+      categoryDraft ||
+      collectionDraft ||
+      productImportDraft ||
+      productImageImportDraft ||
+      (catalog !== null && pricePrefixDraft !== catalog.pricePrefix)
+    ) {
+      return "draft";
+    }
+    return "clean";
+  }, [
+    actingKey,
+    catalog,
+    categoryDraft,
+    collectionDraft,
+    pricePrefixDraft,
+    productDraft,
+    productImageUpload,
+    productImageUploading,
+    productImageImportDraft,
+    productImageImportUploading,
+    productImportDraft,
+    productImportReading,
+  ]);
+
+  useEffect(() => {
+    onLeaveStateChange?.(leaveState);
+  }, [leaveState, onLeaveStateChange]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -576,6 +737,16 @@ export default function MerchantCatalogManagerPanel({
     setProductImageImportProgress(null);
     setProductImageImportError("");
     if (productImageImportInputRef.current) productImageImportInputRef.current.value = "";
+  }, []);
+
+  const clearSingleProductImageUpload = useCallback(() => {
+    productImageUploadSequenceRef.current += 1;
+    productImageUploadingRef.current = false;
+    productImageUploadRef.current = null;
+    setProductImageUploading(false);
+    setProductImageUpload(null);
+    setProductImageUploadError("");
+    if (productImageInputRef.current) productImageInputRef.current.value = "";
   }, []);
 
   const loadCatalog = useCallback(async (signal?: AbortSignal) => {
@@ -654,8 +825,10 @@ export default function MerchantCatalogManagerPanel({
     setBootstrap(null);
     setBootstrapFingerprint("");
     setProductDraft(null);
+    productDraftGenerationRef.current += 1;
     setProductDraftRevision(null);
     setProductDraftCollectionIds([]);
+    clearSingleProductImageUpload();
     setCategoryDraft(null);
     setCategoryDraftRevision(null);
     setCollectionDraft(null);
@@ -675,7 +848,7 @@ export default function MerchantCatalogManagerPanel({
       controller.abort();
       requestSequenceRef.current += 1;
     };
-  }, [clearProductImageImportDraft, clearProductImportDraft, loadCatalog]);
+  }, [clearProductImageImportDraft, clearProductImportDraft, clearSingleProductImageUpload, loadCatalog]);
 
   useEffect(() => {
     setPricePrefixDraft(catalog?.pricePrefix ?? "");
@@ -724,7 +897,15 @@ export default function MerchantCatalogManagerPanel({
 
   const runMutation = useCallback(
     async (key: string, mutation: CatalogMutation, successMessage: string, baseRevision?: number) => {
-      if (actingKeyRef.current) return false;
+      if (actingKeyRef.current || productImageUploadingRef.current) return false;
+      const uncommittedProductImage = productImageUploadRef.current;
+      if (
+        uncommittedProductImage &&
+        key !== `product:${uncommittedProductImage.productId}`
+      ) {
+        setActionError("请先保存当前商品，把已上传图片写入目录；否则该图片可能成为未引用资源。");
+        return false;
+      }
       const mutationSiteId = siteId.trim();
       const mutationSiteVersion = activeSiteVersionRef.current;
       if (!mutationSiteId || activeSiteIdRef.current !== mutationSiteId) return false;
@@ -763,8 +944,10 @@ export default function MerchantCatalogManagerPanel({
         if (isRevisionConflict(payload)) {
           const currentRevision = payload?.currentRevision;
           setRevisionConflict(
-            `目录已被其他页面更新${typeof currentRevision === "number" ? `（当前修订版 ${currentRevision}）` : ""}。已重新加载最新数据，请核对后再保存。`,
+            `目录已被其他页面更新${typeof currentRevision === "number" ? `（当前修订版 ${currentRevision}）` : ""}。已重新加载最新数据，请核对后再保存。${productImageUploadRef.current ? " 已上传的单商品图片尚未写入目录，离开前请留意未引用资源风险。" : ""}`,
           );
+          productDraftGenerationRef.current += 1;
+          productImageUploadSequenceRef.current += 1;
           setProductDraft(null);
           setProductDraftRevision(null);
           setProductDraftCollectionIds([]);
@@ -778,6 +961,15 @@ export default function MerchantCatalogManagerPanel({
         }
         if (!response.ok || !payload?.ok) {
           throw new Error(getCatalogError(payload, "商品目录保存失败，请稍后重试。"));
+        }
+        const changedDetail = parseMerchantCatalogChangedEventDetail({
+          siteId: mutationSiteId,
+          revision: payload.catalog?.revision,
+        });
+        if (changedDetail && mutationContextIsActive() && typeof window !== "undefined") {
+          window.dispatchEvent(
+            new CustomEvent(MERCHANT_CATALOG_CHANGED_EVENT, { detail: changedDetail }),
+          );
         }
         setNotice(
           payload.warning
@@ -1253,8 +1445,40 @@ export default function MerchantCatalogManagerPanel({
       productImageImportDraft.baseRevision !== catalog.revision
     ),
   );
+  const matchingTargetBrowsingRules =
+    collectionDraft &&
+    collectionDraft.viewport !== "shared" &&
+    normalizedCatalogTarget?.blockId === collectionDraft.blockId &&
+    normalizedCatalogTarget.viewport === collectionDraft.viewport
+      ? normalizedCatalogTarget.browsingRules
+      : undefined;
+  const collectionDraftBrowsingRulesMigrationSeed =
+    copyMerchantCatalogBrowsingRules(matchingTargetBrowsingRules) ?? {
+      ...DEFAULT_MERCHANT_CATALOG_BROWSING_RULES,
+    };
+
+  const confirmDiscardSingleProductImageUpload = () => {
+    if (!productImageUploadRef.current) return true;
+    return window.confirm(
+      "当前商品图片已经上传但尚未保存到目录。继续会放弃这次引用，已上传文件可能成为未引用资源。仍要继续吗？",
+    );
+  };
+
+  const discardProductDraft = () => {
+    if (productImageUploadingRef.current || actingKeyRef.current) return;
+    if (!confirmDiscardSingleProductImageUpload()) return;
+    productDraftGenerationRef.current += 1;
+    clearSingleProductImageUpload();
+    setProductDraft(null);
+    setProductDraftRevision(null);
+    setProductDraftCollectionIds([]);
+  };
 
   const beginNewProduct = () => {
+    if (productImageUploadingRef.current || actingKeyRef.current) return;
+    if (!confirmDiscardSingleProductImageUpload()) return;
+    productDraftGenerationRef.current += 1;
+    clearSingleProductImageUpload();
     setProductDraft(createProductDraft());
     setProductDraftIsNew(true);
     setProductDraftRevision(catalog?.revision ?? null);
@@ -1281,9 +1505,11 @@ export default function MerchantCatalogManagerPanel({
   const beginTargetSpecificCollection = () => {
     if (!catalog || !normalizedCatalogTarget) return;
     const knownProductIds = new Set(catalog.products.map((product) => product.id));
-    const productIds = normalizedCatalogTarget.productIds
-      ? normalizedCatalogTarget.productIds.filter((productId) => knownProductIds.has(productId))
-      : resolvedTargetCollection?.productIds ?? [];
+    const productIds = resolvedTargetCollection
+      ? [...resolvedTargetCollection.productIds]
+      : normalizedCatalogTarget.productIds
+        ? normalizedCatalogTarget.productIds.filter((productId) => knownProductIds.has(productId))
+        : [];
     setCollectionDraft({
       id: createMerchantCatalogCollectionId(
         normalizedCatalogTarget.blockId,
@@ -1292,12 +1518,17 @@ export default function MerchantCatalogManagerPanel({
       blockId: normalizedCatalogTarget.blockId,
       viewport: normalizedCatalogTarget.viewport,
       productIds,
+      browsingRules: copyMerchantCatalogBrowsingRules(normalizedCatalogTarget.browsingRules),
     });
     setCollectionDraftIsNew(true);
     setCollectionDraftRevision(catalog.revision);
   };
 
   const beginEditProduct = (product: MerchantCatalogProduct) => {
+    if (productImageUploadingRef.current || actingKeyRef.current) return;
+    if (!confirmDiscardSingleProductImageUpload()) return;
+    productDraftGenerationRef.current += 1;
+    clearSingleProductImageUpload();
     setProductDraft({ ...product });
     setProductDraftIsNew(false);
     setProductDraftRevision(catalog?.revision ?? null);
@@ -1308,9 +1539,149 @@ export default function MerchantCatalogManagerPanel({
     );
   };
 
+  const openSingleProductImagePicker = () => {
+    if (!productDraftRef.current || productImageUploadingRef.current || actingKeyRef.current) return;
+    if (!confirmDiscardSingleProductImageUpload()) return;
+    if (productImageUploadRef.current) clearSingleProductImageUpload();
+    productImageInputRef.current?.click();
+  };
+
+  const uploadSingleProductImage = async (event: ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    input.value = "";
+    if (!file) return;
+
+    const selectionError = getProductImageFileSelectionError([file]);
+    if (selectionError) {
+      setProductImageUploadError(selectionError);
+      return;
+    }
+
+    const draft = productDraftRef.current;
+    const currentCatalog = catalogRef.current;
+    const baseRevision = productDraftRevisionRef.current;
+    const uploadSiteId = activeSiteIdRef.current;
+    if (
+      !draft ||
+      !currentCatalog ||
+      baseRevision === null ||
+      currentCatalog.revision !== baseRevision ||
+      catalogSiteIdRef.current !== uploadSiteId
+    ) {
+      setProductImageUploadError("商品草稿已不是当前目录修订版，请加载最新版并重新打开商品后再上传。");
+      return;
+    }
+
+    const uploadSiteVersion = activeSiteVersionRef.current;
+    const catalogRequestSequence = requestSequenceRef.current;
+    const draftGeneration = productDraftGenerationRef.current;
+    const productId = draft.id;
+    const uploadSequence = productImageUploadSequenceRef.current + 1;
+    productImageUploadSequenceRef.current = uploadSequence;
+    const uploadIdentityIsActive = () =>
+      mountedRef.current &&
+      productImageUploadSequenceRef.current === uploadSequence &&
+      activeSiteIdRef.current === uploadSiteId &&
+      activeSiteVersionRef.current === uploadSiteVersion &&
+      productDraftGenerationRef.current === draftGeneration &&
+      productDraftRef.current?.id === productId;
+    const uploadContextIsActive = () =>
+      uploadIdentityIsActive() &&
+      requestSequenceRef.current === catalogRequestSequence &&
+      catalogSiteIdRef.current === uploadSiteId &&
+      catalogRef.current?.revision === baseRevision &&
+      productDraftRevisionRef.current === baseRevision;
+
+    productImageUploadingRef.current = true;
+    setProductImageUploading(true);
+    setProductImageUploadError("");
+    setActionError("");
+    setRevisionConflict("");
+    setNotice("");
+
+    try {
+      const {
+        fileToOptimizedImageDataUrl,
+        uploadImageDataUrlToSupabaseWithMetadata,
+      } = await import("@/lib/editorAssetProcessing");
+      if (!uploadContextIsActive()) return;
+      const dataUrl = await fileToOptimizedImageDataUrl(file, { maxSide: 1600, quality: 0.82 });
+      if (!uploadContextIsActive()) return;
+      const uploaded = await uploadImageDataUrlToSupabaseWithMetadata(
+        dataUrl,
+        uploadSiteId,
+        "product-image",
+        {
+          operationModule: "订单工作台 > 商品目录",
+          operationAction: "上传单商品图片",
+          operationSummary: `在订单工作台上传商品图片 ${file.name}`,
+        },
+      );
+      if (!uploaded?.url) throw new Error("图片上传失败，请稍后重试。");
+      if (!uploadIdentityIsActive()) return;
+
+      const uploadRecord: MerchantCatalogSingleProductImageUpload = {
+        siteId: uploadSiteId,
+        siteVersion: uploadSiteVersion,
+        baseRevision,
+        productId,
+        draftGeneration,
+        imageUrl: uploaded.url,
+        thumbnailUrl: uploaded.thumbnailUrl ?? "",
+      };
+      productImageUploadRef.current = uploadRecord;
+      setProductImageUpload(uploadRecord);
+
+      if (!uploadContextIsActive()) {
+        setProductImageUploadError(
+          "图片已上传，但目录或请求上下文已变化，因此没有写入当前草稿。该文件尚未被目录引用；请取消草稿并确认风险后，基于最新版重试。",
+        );
+        return;
+      }
+
+      const nextDraft = {
+        ...productDraftRef.current!,
+        imageUrl: uploadRecord.imageUrl,
+        thumbnailUrl: uploadRecord.thumbnailUrl,
+      };
+      productDraftRef.current = nextDraft;
+      setProductDraft(nextDraft);
+      setNotice("商品图片已上传并写入草稿；请保存商品后才会应用到目录和网站预览。");
+    } catch (uploadError) {
+      if (uploadIdentityIsActive()) {
+        setProductImageUploadError(getProductImageUploadFailureMessage(uploadError));
+      }
+    } finally {
+      if (uploadIdentityIsActive()) {
+        productImageUploadingRef.current = false;
+        setProductImageUploading(false);
+      }
+    }
+  };
+
   const submitProduct = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!productDraft) return;
+    const pendingImageUpload = productImageUploadRef.current;
+    if (
+      pendingImageUpload &&
+      (
+        pendingImageUpload.siteId !== activeSiteIdRef.current ||
+        pendingImageUpload.siteVersion !== activeSiteVersionRef.current ||
+        pendingImageUpload.baseRevision !== productDraftRevisionRef.current ||
+        pendingImageUpload.baseRevision !== catalogRef.current?.revision ||
+        pendingImageUpload.productId !== productDraft.id ||
+        pendingImageUpload.draftGeneration !== productDraftGenerationRef.current ||
+        pendingImageUpload.imageUrl !== productDraft.imageUrl.trim() ||
+        pendingImageUpload.thumbnailUrl !== productDraft.thumbnailUrl.trim()
+      )
+    ) {
+      setProductImageUploadError(
+        "已上传图片不再属于当前商品草稿或目录修订版，系统不会写入。请取消草稿并确认未引用资源风险后，基于最新版重试。",
+      );
+      return;
+    }
     const normalizedProduct: MerchantCatalogProduct = {
       ...productDraft,
       id: productDraft.id.trim(),
@@ -1350,6 +1721,8 @@ export default function MerchantCatalogManagerPanel({
       productDraftRevision ?? undefined,
     );
     if (saved) {
+      productDraftGenerationRef.current += 1;
+      clearSingleProductImageUpload();
       setProductDraft(null);
       setProductDraftRevision(null);
       setProductDraftCollectionIds([]);
@@ -1389,6 +1762,12 @@ export default function MerchantCatalogManagerPanel({
       id: collectionDraft.id.trim(),
       blockId: collectionDraft.blockId.trim(),
       productIds: [...new Set(collectionDraft.productIds.map((productId) => productId.trim()).filter(Boolean))],
+      browsingRules: collectionDraft.browsingRules
+        ? {
+            ...collectionDraft.browsingRules,
+            searchPlaceholder: collectionDraft.browsingRules.searchPlaceholder.trim(),
+          }
+        : undefined,
     };
     if (!normalizedCollection.id || !normalizedCollection.blockId) {
       setActionError("网站区块信息不完整，请返回网站编辑器重新打开商品目录。");
@@ -1785,6 +2164,143 @@ export default function MerchantCatalogManagerPanel({
                     />
                   </label>
                 </div>
+                <div
+                  className={`mt-4 rounded-xl border p-3 sm:p-4 ${
+                    darkMode ? "border-slate-700 bg-slate-950/50" : "border-slate-200 bg-white"
+                  }`}
+                >
+                  <div>
+                    <p className="text-xs font-bold">商品浏览规则</p>
+                    <p className={`mt-1 text-xs leading-5 ${mutedTextClassName}`}>
+                      {collectionDraft.viewport === "shared"
+                        ? "这是电脑端与手机端的默认绑定；没有单端绑定的终端会使用这些规则，单端绑定始终优先覆盖。布局和样式仍由网站编辑器管理。"
+                        : `控制该区块${getViewportLabel(collectionDraft.viewport)}的搜索和分类行为。布局和样式仍由网站编辑器管理。`}
+                    </p>
+                  </div>
+                  {collectionDraft.browsingRules ? (
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-current/10 px-3 py-2.5 text-xs">
+                        <input
+                          type="checkbox"
+                          checked={collectionDraft.browsingRules.searchEnabled}
+                          onChange={(event) =>
+                            setCollectionDraft({
+                              ...collectionDraft,
+                              browsingRules: {
+                                ...collectionDraft.browsingRules!,
+                                searchEnabled: event.target.checked,
+                              },
+                            })
+                          }
+                          className="mt-0.5 h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
+                        />
+                        <span>
+                          <span className="block font-semibold">启用商品搜索</span>
+                          <span className={`mt-0.5 block font-normal leading-5 ${mutedTextClassName}`}>
+                            让客户可按名称、编号和介绍查找商品。
+                          </span>
+                        </span>
+                      </label>
+                      <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-current/10 px-3 py-2.5 text-xs">
+                        <input
+                          type="checkbox"
+                          checked={collectionDraft.browsingRules.hideUnselectedCategory}
+                          onChange={(event) =>
+                            setCollectionDraft({
+                              ...collectionDraft,
+                              browsingRules: {
+                                ...collectionDraft.browsingRules!,
+                                hideUnselectedCategory: event.target.checked,
+                              },
+                            })
+                          }
+                          className="mt-0.5 h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
+                        />
+                        <span>
+                          <span className="block font-semibold">分类选中后隐藏其他分类</span>
+                          <span className={`mt-0.5 block font-normal leading-5 ${mutedTextClassName}`}>
+                            选中某个分类后只显示该分类商品。
+                          </span>
+                        </span>
+                      </label>
+                      <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-current/10 px-3 py-2.5 text-xs">
+                        <input
+                          type="checkbox"
+                          checked={collectionDraft.browsingRules.groupByCategory}
+                          onChange={(event) =>
+                            setCollectionDraft({
+                              ...collectionDraft,
+                              browsingRules: {
+                                ...collectionDraft.browsingRules!,
+                                groupByCategory: event.target.checked,
+                              },
+                            })
+                          }
+                          className="mt-0.5 h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
+                        />
+                        <span>
+                          <span className="block font-semibold">按分类排列商品</span>
+                          <span className={`mt-0.5 block font-normal leading-5 ${mutedTextClassName}`}>
+                            按目录分类分组排列，未分类商品排在最后。
+                          </span>
+                        </span>
+                      </label>
+                      <label className="text-xs font-semibold sm:col-span-2">
+                        搜索框提示词
+                        <input
+                          value={collectionDraft.browsingRules.searchPlaceholder}
+                          onChange={(event) =>
+                            setCollectionDraft({
+                              ...collectionDraft,
+                              browsingRules: {
+                                ...collectionDraft.browsingRules!,
+                                searchPlaceholder: event.target.value,
+                              },
+                            })
+                          }
+                          disabled={!collectionDraft.browsingRules.searchEnabled}
+                          maxLength={MERCHANT_CATALOG_MAX_SEARCH_PLACEHOLDER_LENGTH}
+                          placeholder="留空时使用网站默认提示词"
+                          className={`mt-1.5 w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-2 ring-transparent disabled:cursor-not-allowed disabled:opacity-55 ${inputClassName}`}
+                        />
+                      </label>
+                    </div>
+                  ) : (
+                    <div
+                      className={`mt-3 rounded-xl border px-3 py-3 text-xs leading-5 ${
+                        darkMode
+                          ? "border-amber-400/30 bg-amber-400/10 text-amber-100"
+                          : "border-amber-200 bg-amber-50 text-amber-800"
+                      }`}
+                    >
+                      <p className="font-bold">浏览规则仍沿用网站设置</p>
+                      <p className="mt-1">
+                        {collectionDraft.viewport === "shared"
+                          ? "当前电脑端与手机端继续分别沿用各自已发布的网站设置。保存商品投放范围不会把某一个终端的规则静默复制给另一个终端。"
+                          : "保存商品投放范围不会静默接管搜索和分类行为。需要以后直接在工作台维护时，请显式迁入。"}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setCollectionDraft({
+                            ...collectionDraft,
+                            browsingRules: { ...collectionDraftBrowsingRulesMigrationSeed },
+                          })
+                        }
+                        className="mt-2 rounded-lg border border-current/30 px-3 py-2 font-bold transition hover:bg-current/10"
+                      >
+                        将浏览规则迁入工作台
+                      </button>
+                      <p className="mt-2 opacity-85">
+                        {collectionDraft.viewport === "shared"
+                          ? "迁入后这组规则会作为双端默认；已有单端绑定的终端仍以单端配置为准。初始值为：启用搜索、提示词留空、选中分类后隐藏其他分类、不按分类分组排列。"
+                          : matchingTargetBrowsingRules
+                            ? `将以当前${getViewportLabel(collectionDraft.viewport)}网站设置作为初始值，保存前仍可调整。`
+                            : "迁入初始值：启用搜索、提示词留空、选中分类后隐藏其他分类、不按分类分组排列。保存前仍可调整。"}
+                      </p>
+                    </div>
+                  )}
+                </div>
                 <fieldset className="mt-4">
                   <legend className="text-xs font-semibold">该区块展示的商品</legend>
                   {catalog.products.length > 0 ? (
@@ -1844,6 +2360,9 @@ export default function MerchantCatalogManagerPanel({
                       <div className="min-w-0">
                         <p className="truncate text-sm font-bold" title={collection.blockId}>{collection.blockId}</p>
                         <p className={`mt-1 text-[11px] ${mutedTextClassName}`}>{getViewportLabel(collection.viewport)}</p>
+                        <p className={`mt-1 text-[11px] leading-5 ${mutedTextClassName}`}>
+                          {getBrowsingRulesSummary(collection.browsingRules)}
+                        </p>
                       </div>
                       <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${darkMode ? "bg-slate-800 text-slate-300" : "bg-white text-slate-600"}`}>
                         {collection.productIds.length} 个商品
@@ -1853,7 +2372,11 @@ export default function MerchantCatalogManagerPanel({
                       <button
                         type="button"
                         onClick={() => {
-                          setCollectionDraft({ ...collection, productIds: [...collection.productIds] });
+                          setCollectionDraft({
+                            ...collection,
+                            productIds: [...collection.productIds],
+                            browsingRules: copyMerchantCatalogBrowsingRules(collection.browsingRules),
+                          });
                           setCollectionDraftIsNew(false);
                           setCollectionDraftRevision(catalog.revision);
                         }}
@@ -1896,7 +2419,7 @@ export default function MerchantCatalogManagerPanel({
                   accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
                   className="sr-only"
                   onChange={(event) => void readProductImportFile(event)}
-                  disabled={Boolean(actingKey) || productImportReading || productImageImportUploading}
+                  disabled={Boolean(actingKey) || productImportReading || productImageImportUploading || productImageUploading || Boolean(productImageUpload)}
                   aria-label="选择商品 Excel 文件"
                 />
                 <input
@@ -1906,13 +2429,13 @@ export default function MerchantCatalogManagerPanel({
                   multiple
                   className="sr-only"
                   onChange={readProductImageImportFiles}
-                  disabled={Boolean(actingKey) || productImportReading || productImageImportUploading}
+                  disabled={Boolean(actingKey) || productImportReading || productImageImportUploading || productImageUploading || Boolean(productImageUpload)}
                   aria-label="选择按商品编码命名的商品图片"
                 />
                 <button
                   type="button"
                   onClick={() => productImportInputRef.current?.click()}
-                  disabled={Boolean(actingKey) || productImportReading || productImageImportUploading}
+                  disabled={Boolean(actingKey) || productImportReading || productImageImportUploading || productImageUploading || Boolean(productImageUpload)}
                   className={`inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-50 ${secondaryButtonClassName}`}
                 >
                   {productImportReading ? <RefreshIcon spinning /> : <UploadIcon />}
@@ -1921,7 +2444,7 @@ export default function MerchantCatalogManagerPanel({
                 <button
                   type="button"
                   onClick={openProductImageImportPicker}
-                  disabled={Boolean(actingKey) || productImportReading || productImageImportUploading}
+                  disabled={Boolean(actingKey) || productImportReading || productImageImportUploading || productImageUploading || Boolean(productImageUpload)}
                   className={`inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-50 ${secondaryButtonClassName}`}
                 >
                   {productImageImportUploading ? <RefreshIcon spinning /> : <UploadIcon />}
@@ -1934,7 +2457,7 @@ export default function MerchantCatalogManagerPanel({
                 <button
                   type="button"
                   onClick={beginNewProduct}
-                  disabled={Boolean(actingKey) || productImportReading || productImageImportUploading}
+                  disabled={Boolean(actingKey) || productImportReading || productImageImportUploading || productImageUploading}
                   className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-sky-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-sky-700 disabled:opacity-50"
                 >
                   <PlusIcon /> 新增商品
@@ -2289,10 +2812,8 @@ export default function MerchantCatalogManagerPanel({
                   </div>
                   <button
                     type="button"
-                    onClick={() => {
-                      setProductDraft(null);
-                      setProductDraftCollectionIds([]);
-                    }}
+                    onClick={discardProductDraft}
+                    disabled={productImageUploading || Boolean(actingKey)}
                     className={`rounded-xl border px-3 py-2 text-xs font-semibold ${secondaryButtonClassName}`}
                   >
                     取消
@@ -2367,17 +2888,60 @@ export default function MerchantCatalogManagerPanel({
                     商品描述
                     <textarea value={productDraft.description} onChange={(event) => setProductDraft({ ...productDraft, description: event.target.value })} maxLength={2000} rows={3} className={`mt-1.5 w-full resize-y rounded-xl border px-3 py-2.5 text-sm outline-none ring-2 ring-transparent ${inputClassName}`} />
                   </label>
+                  <div className={`sm:col-span-2 rounded-2xl border p-3 ${darkMode ? "border-slate-700 bg-slate-950/50" : "border-slate-200 bg-white"}`}>
+                    <input
+                      ref={productImageInputRef}
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+                      className="sr-only"
+                      onChange={(event) => void uploadSingleProductImage(event)}
+                    />
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                      <MerchantCatalogProductThumbnail
+                        imageUrl={productDraft.imageUrl}
+                        thumbnailUrl={productDraft.thumbnailUrl}
+                        name={productDraft.name}
+                        darkMode={darkMode}
+                        className="h-24 w-24"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-bold">商品图片</p>
+                        <p className={`mt-1 text-xs leading-5 ${mutedTextClassName}`}>
+                          单选 JPEG、PNG 或 WebP，源文件不超过 10 MiB。上传时会自动优化，并生成可用的缩略图。
+                        </p>
+                        <button
+                          type="button"
+                          onClick={openSingleProductImagePicker}
+                          disabled={productImageUploading || Boolean(actingKey)}
+                          className={`mt-2 inline-flex min-h-9 items-center gap-2 rounded-xl border px-3 py-1.5 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${secondaryButtonClassName}`}
+                        >
+                          {productImageUploading ? <RefreshIcon spinning /> : <PlusIcon />}
+                          {productImageUploading ? "正在处理并上传" : productImageUpload ? "重新上传图片" : "选择并上传图片"}
+                        </button>
+                      </div>
+                    </div>
+                    {productImageUpload ? (
+                      <p className={`mt-3 rounded-xl border px-3 py-2 text-xs leading-5 ${darkMode ? "border-amber-300/30 bg-amber-300/10 text-amber-100" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+                        图片已上传但尚未写入目录。请保存商品；取消或换商品前会再次确认未引用资源风险。
+                      </p>
+                    ) : null}
+                    {productImageUploadError ? (
+                      <p role="alert" className={`mt-3 rounded-xl border px-3 py-2 text-xs leading-5 ${darkMode ? "border-rose-400/30 bg-rose-400/10 text-rose-100" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
+                        {productImageUploadError}
+                      </p>
+                    ) : null}
+                  </div>
                   <label className="text-xs font-semibold">
                     商品图片 URL
-                    <input value={productDraft.imageUrl} onChange={(event) => setProductDraft({ ...productDraft, imageUrl: event.target.value })} maxLength={2000} type="url" className={`mt-1.5 w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-2 ring-transparent ${inputClassName}`} />
+                    <input value={productDraft.imageUrl} onChange={(event) => setProductDraft({ ...productDraft, imageUrl: event.target.value })} readOnly={Boolean(productImageUpload)} maxLength={2000} type="url" className={`mt-1.5 w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-2 ring-transparent ${inputClassName} ${productImageUpload ? "opacity-70" : ""}`} />
                   </label>
                   <label className="text-xs font-semibold">
                     缩略图 URL
-                    <input value={productDraft.thumbnailUrl} onChange={(event) => setProductDraft({ ...productDraft, thumbnailUrl: event.target.value })} maxLength={2000} type="url" className={`mt-1.5 w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-2 ring-transparent ${inputClassName}`} />
+                    <input value={productDraft.thumbnailUrl} onChange={(event) => setProductDraft({ ...productDraft, thumbnailUrl: event.target.value })} readOnly={Boolean(productImageUpload)} maxLength={2000} type="url" className={`mt-1.5 w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-2 ring-transparent ${inputClassName} ${productImageUpload ? "opacity-70" : ""}`} />
                   </label>
                 </div>
                 <div className="mt-4 flex justify-end">
-                  <button type="submit" disabled={Boolean(actingKey)} className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-sky-600 px-5 py-2 text-sm font-bold text-white transition hover:bg-sky-700 disabled:opacity-50">
+                  <button type="submit" disabled={Boolean(actingKey) || productImageUploading} className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-sky-600 px-5 py-2 text-sm font-bold text-white transition hover:bg-sky-700 disabled:opacity-50">
                     {actingKey.startsWith("product:") ? <RefreshIcon spinning /> : <CheckIcon />}
                     {actingKey.startsWith("product:") ? "保存中" : "保存商品"}
                   </button>
@@ -2400,7 +2964,13 @@ export default function MerchantCatalogManagerPanel({
                   return (
                     <article key={product.id} className={`rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-950/50" : "border-slate-100 bg-slate-50/70"}`}>
                       <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
+                        <MerchantCatalogProductThumbnail
+                          imageUrl={product.imageUrl}
+                          thumbnailUrl={product.thumbnailUrl}
+                          name={product.name}
+                          darkMode={darkMode}
+                        />
+                        <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
                             <h5 className="truncate text-sm font-bold">{product.name || "未命名商品"}</h5>
                             <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${getAvailabilityClass(product.availability, darkMode)}`}>{getAvailabilityLabel(product.availability)}</span>
@@ -2416,15 +2986,15 @@ export default function MerchantCatalogManagerPanel({
                         <select
                           value={product.availability}
                           onChange={(event) => void runMutation(`availability:${product.id}`, { action: "set_availability", productId: product.id, availability: event.target.value as MerchantCatalogAvailability }, `“${product.name || product.id}”已设为${getAvailabilityLabel(event.target.value as MerchantCatalogAvailability)}。`)}
-                          disabled={Boolean(actingKey)}
+                          disabled={Boolean(actingKey) || productImageUploading}
                           className={`rounded-xl border px-3 py-2 text-xs font-semibold outline-none ${inputClassName}`}
                           aria-label={`${product.name || product.id}的可售状态`}
                         >
                           {AVAILABILITY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                         </select>
                         <div className="flex gap-2">
-                          <button type="button" onClick={() => beginEditProduct(product)} disabled={Boolean(actingKey)} className={`inline-flex min-h-9 items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition disabled:opacity-50 ${secondaryButtonClassName}`}><EditIcon /> 编辑</button>
-                          <button type="button" onClick={() => void confirmDeleteProduct(product)} disabled={Boolean(actingKey)} className={`inline-flex min-h-9 items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition disabled:opacity-50 ${darkMode ? "border-rose-400/30 text-rose-200 hover:bg-rose-400/10" : "border-rose-200 bg-white text-rose-700 hover:bg-rose-50"}`}>
+                          <button type="button" onClick={() => beginEditProduct(product)} disabled={Boolean(actingKey) || productImageUploading} className={`inline-flex min-h-9 items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition disabled:opacity-50 ${secondaryButtonClassName}`}><EditIcon /> 编辑</button>
+                          <button type="button" onClick={() => void confirmDeleteProduct(product)} disabled={Boolean(actingKey) || productImageUploading} className={`inline-flex min-h-9 items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition disabled:opacity-50 ${darkMode ? "border-rose-400/30 text-rose-200 hover:bg-rose-400/10" : "border-rose-200 bg-white text-rose-700 hover:bg-rose-50"}`}>
                             {isProductActing ? <RefreshIcon spinning /> : <TrashIcon />} 删除
                           </button>
                         </div>

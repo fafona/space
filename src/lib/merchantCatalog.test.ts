@@ -4,17 +4,22 @@ import type { Block } from "@/data/homeBlocks";
 import {
   applyMerchantCatalogMutation,
   bootstrapMerchantCatalogFromPublishedBlocks,
+  createMerchantCatalogRuntimeContextKey,
   getMerchantCatalogValidationError,
+  isMerchantCatalogRuntimeContextCurrent,
   MERCHANT_CATALOG_MAX_CATEGORIES,
   MERCHANT_CATALOG_MAX_PRODUCT_IMAGE_IMPORT_ITEMS,
+  MERCHANT_CATALOG_MAX_SEARCH_PLACEHOLDER_LENGTH,
   MERCHANT_CATALOG_MAX_SERIALIZED_BYTES,
   normalizeMerchantCatalog,
+  parseMerchantCatalogChangedEventDetail,
   parseMerchantCatalog,
   parseStrictMerchantCatalog,
   planMerchantCatalogProductImageImport,
   planMerchantCatalogProductImageMatches,
   planMerchantCatalogProductImport,
   prepareMerchantCatalogProductImageImport,
+  resolveMerchantCatalogCollection,
   serializeMerchantCatalog,
   type MerchantCatalogProduct,
 } from "@/lib/merchantCatalog";
@@ -22,13 +27,66 @@ import { normalizeProductItems } from "@/lib/productBlock";
 
 type ProductBlock = Extract<Block, { type: "product" }>;
 
-function productBlock(overrides: Partial<MerchantCatalogProduct> = {}, pricePrefix = "€"): ProductBlock {
+test("catalog runtime context keys normalize and isolate site, block, and viewport", () => {
+  const desktopKey = createMerchantCatalogRuntimeContextKey(
+    "12345678",
+    "product-block",
+    "desktop",
+  );
+  const mobileKey = createMerchantCatalogRuntimeContextKey(
+    "12345678",
+    "product-block",
+    "mobile",
+  );
+  assert.equal(
+    createMerchantCatalogRuntimeContextKey(" 12345678 ", " product-block ", "desktop"),
+    '["12345678","product-block","desktop"]',
+  );
+  assert.notEqual(
+    desktopKey,
+    mobileKey,
+  );
+  assert.notEqual(
+    createMerchantCatalogRuntimeContextKey("12345678", "product-block", "desktop"),
+    createMerchantCatalogRuntimeContextKey("87654321", "product-block", "desktop"),
+  );
+  assert.equal(
+    createMerchantCatalogRuntimeContextKey("", "product-block", "desktop"),
+    '["","product-block","desktop"]',
+  );
+  assert.equal(createMerchantCatalogRuntimeContextKey("12345678", "", "desktop"), "");
+  assert.equal(createMerchantCatalogRuntimeContextKey("12345678", "product-block", "shared"), "");
+  assert.equal(isMerchantCatalogRuntimeContextCurrent(desktopKey, desktopKey), true);
+  assert.equal(isMerchantCatalogRuntimeContextCurrent(desktopKey, mobileKey), false);
+  assert.equal(isMerchantCatalogRuntimeContextCurrent(desktopKey, ""), false);
+});
+
+test("catalog change event detail contains only a valid merchant and revision", () => {
+  assert.deepEqual(
+    parseMerchantCatalogChangedEventDetail({
+      siteId: " 12345678 ",
+      revision: 7,
+      products: [{ name: "must not cross the event boundary" }],
+    }),
+    { siteId: "12345678", revision: 7 },
+  );
+  assert.equal(parseMerchantCatalogChangedEventDetail({ siteId: "other", revision: 7 }), null);
+  assert.equal(parseMerchantCatalogChangedEventDetail({ siteId: "12345678", revision: -1 }), null);
+  assert.equal(parseMerchantCatalogChangedEventDetail({ siteId: "12345678", revision: 1.5 }), null);
+});
+
+function productBlock(
+  overrides: Partial<MerchantCatalogProduct> = {},
+  pricePrefix = "€",
+  propsOverrides: Partial<ProductBlock["props"]> = {},
+): ProductBlock {
   return {
     id: "product-block",
     type: "product",
     props: {
       productPricePrefix: pricePrefix,
-      products: [
+      ...propsOverrides,
+      products: propsOverrides.products ?? [
         {
           id: "stable-product-id",
           code: "SKU-001",
@@ -77,11 +135,101 @@ test("bootstrap merges identical desktop/mobile products and keeps viewport coll
     ["desktop", "mobile"],
   );
   assert.deepEqual(result.catalog?.collections[0]?.productIds, ["stable-product-id"]);
+  assert.deepEqual(result.catalog?.collections[0]?.browsingRules, {
+    searchEnabled: true,
+    searchPlaceholder: "",
+    hideUnselectedCategory: true,
+    groupByCategory: false,
+  });
   assert.deepEqual(result.catalog?.categories[0], {
     id: "category-44-72-69-6e-6b-73",
     name: "Drinks",
     productIds: ["stable-product-id"],
   });
+});
+
+test("bootstrap keeps browsing rules isolated by desktop, mobile, and shared collection scope", () => {
+  const desktop = productBlock({}, "€", {
+    productSearchEnabled: false,
+    productSearchPlaceholder: "  Search desktop  ",
+    productTagHideUnselected: false,
+    productGroupByTag: true,
+  });
+  const mobile = productBlock({}, "€", {
+    productSearchEnabled: true,
+    productSearchPlaceholder: "Search mobile",
+    productTagHideUnselected: true,
+    productGroupByTag: false,
+  });
+  const scoped = bootstrapMerchantCatalogFromPublishedBlocks({
+    blocks: publishedDesktopAndMobile(desktop, mobile),
+  });
+
+  assert.equal(scoped.ok, true);
+  assert.deepEqual(
+    scoped.catalog?.collections.map((collection) => [collection.viewport, collection.browsingRules]),
+    [
+      [
+        "desktop",
+        {
+          searchEnabled: false,
+          searchPlaceholder: "Search desktop",
+          hideUnselectedCategory: false,
+          groupByCategory: true,
+        },
+      ],
+      [
+        "mobile",
+        {
+          searchEnabled: true,
+          searchPlaceholder: "Search mobile",
+          hideUnselectedCategory: true,
+          groupByCategory: false,
+        },
+      ],
+    ],
+  );
+
+  const shared = bootstrapMerchantCatalogFromPublishedBlocks({
+    blocks: [productBlock({}, "€", {
+      productSearchEnabled: false,
+      productSearchPlaceholder: "Shared search",
+      productTagHideUnselected: true,
+      productGroupByTag: true,
+    })],
+  });
+  assert.equal(shared.ok, true);
+  assert.equal(shared.catalog?.collections[0]?.viewport, "shared");
+  assert.deepEqual(
+    shared.catalog ? resolveMerchantCatalogCollection(shared.catalog, "product-block", "mobile")?.browsingRules : null,
+    {
+      searchEnabled: false,
+      searchPlaceholder: "Shared search",
+      hideUnselectedCategory: true,
+      groupByCategory: true,
+    },
+  );
+});
+
+test("bootstrap rejects ambiguous shared browsing rules and oversized search placeholders", () => {
+  const ambiguous = bootstrapMerchantCatalogFromPublishedBlocks({
+    blocks: [
+      productBlock({}, "€", { productSearchEnabled: true }),
+      productBlock({}, "€", { productSearchEnabled: false }),
+    ],
+  });
+  assert.equal(ambiguous.ok, false);
+  assert.equal(ambiguous.catalog, null);
+  assert.ok(ambiguous.conflicts.some((conflict) => conflict.field === "browsing_rules"));
+
+  const oversized = bootstrapMerchantCatalogFromPublishedBlocks({
+    blocks: [productBlock({}, "€", {
+      productSearchPlaceholder: "x".repeat(MERCHANT_CATALOG_MAX_SEARCH_PLACEHOLDER_LENGTH + 1),
+    })],
+  });
+  assert.equal(oversized.ok, false);
+  assert.equal(oversized.catalog, null);
+  assert.ok(oversized.conflicts.some((conflict) => conflict.field === "search_placeholder_too_long"));
 });
 
 test("bootstrap preserves an existing product id exactly", () => {
@@ -239,6 +387,166 @@ function linkedCatalog() {
     ],
   });
 }
+
+test("browsing rules normalize as a complete optional object and legacy collections stay undefined", () => {
+  const legacy = linkedCatalog();
+  assert.equal(legacy.collections[0]?.browsingRules, undefined);
+
+  const withRules = normalizeMerchantCatalog({
+    ...legacy,
+    collections: legacy.collections.map((collection, index) =>
+      index === 0
+        ? {
+            ...collection,
+            browsingRules: {
+              searchEnabled: false,
+              searchPlaceholder: "  Find a product  ",
+              hideUnselectedCategory: true,
+              groupByCategory: false,
+            },
+          }
+        : collection,
+    ),
+  });
+  assert.deepEqual(withRules.collections[0]?.browsingRules, {
+    searchEnabled: false,
+    searchPlaceholder: "Find a product",
+    hideUnselectedCategory: true,
+    groupByCategory: false,
+  });
+  assert.deepEqual(parseMerchantCatalog(serializeMerchantCatalog(withRules)), withRules);
+
+  const incomplete = normalizeMerchantCatalog({
+    ...legacy,
+    collections: legacy.collections.map((collection, index) =>
+      index === 0 ? { ...collection, browsingRules: { searchEnabled: false } } : collection,
+    ),
+  });
+  assert.equal(incomplete.collections[0]?.browsingRules, undefined);
+});
+
+test("strict catalogs accept missing or complete browsing rules and reject malformed or oversized rules", () => {
+  const legacy = linkedCatalog();
+  assert.ok(parseStrictMerchantCatalog(legacy));
+
+  const complete = {
+    ...legacy,
+    collections: legacy.collections.map((collection, index) =>
+      index === 0
+        ? {
+            ...collection,
+            browsingRules: {
+              searchEnabled: true,
+              searchPlaceholder: "  Search  ",
+              hideUnselectedCategory: false,
+              groupByCategory: true,
+            },
+          }
+        : collection,
+    ),
+  };
+  assert.deepEqual(parseStrictMerchantCatalog(complete)?.collections[0]?.browsingRules, {
+    searchEnabled: true,
+    searchPlaceholder: "Search",
+    hideUnselectedCategory: false,
+    groupByCategory: true,
+  });
+
+  assert.equal(
+    parseStrictMerchantCatalog({
+      ...complete,
+      collections: complete.collections.map((collection, index) =>
+        index === 0
+          ? { ...collection, browsingRules: { searchEnabled: true, searchPlaceholder: "Search" } }
+          : collection,
+      ),
+    }),
+    null,
+  );
+  assert.equal(
+    parseStrictMerchantCatalog({
+      ...complete,
+      collections: complete.collections.map((collection, index) =>
+        index === 0
+          ? {
+              ...collection,
+              browsingRules: {
+                ...collection.browsingRules,
+                searchPlaceholder: "x".repeat(MERCHANT_CATALOG_MAX_SEARCH_PLACEHOLDER_LENGTH + 1),
+              },
+            }
+          : collection,
+      ),
+    }),
+    null,
+  );
+});
+
+test("upsert_collection trims complete browsing rules and rejects partial rules", () => {
+  const catalog = linkedCatalog();
+  const updated = applyMerchantCatalogMutation(catalog, {
+    action: "upsert_collection",
+    collection: {
+      ...catalog.collections[0],
+      browsingRules: {
+        searchEnabled: false,
+        searchPlaceholder: "  Browse  ",
+        hideUnselectedCategory: false,
+        groupByCategory: true,
+      },
+    },
+  });
+  assert.equal(updated.ok, true);
+  if (!updated.ok) return;
+  assert.deepEqual(updated.catalog.collections[0]?.browsingRules, {
+    searchEnabled: false,
+    searchPlaceholder: "Browse",
+    hideUnselectedCategory: false,
+    groupByCategory: true,
+  });
+
+  const staleClientUpdate = applyMerchantCatalogMutation(updated.catalog, {
+    action: "upsert_collection",
+    collection: {
+      id: updated.catalog.collections[0]!.id,
+      blockId: updated.catalog.collections[0]!.blockId,
+      viewport: updated.catalog.collections[0]!.viewport,
+      productIds: updated.catalog.collections[0]!.productIds,
+    },
+  });
+  assert.equal(staleClientUpdate.ok, true);
+  if (!staleClientUpdate.ok) return;
+  assert.deepEqual(
+    staleClientUpdate.catalog.collections[0]?.browsingRules,
+    updated.catalog.collections[0]?.browsingRules,
+  );
+
+  assert.deepEqual(
+    applyMerchantCatalogMutation(catalog, {
+      action: "upsert_collection",
+      collection: {
+        ...catalog.collections[0],
+        browsingRules: { searchEnabled: false },
+      },
+    }),
+    { ok: false, error: "invalid_merchant_catalog_browsing_rules" },
+  );
+  assert.deepEqual(
+    applyMerchantCatalogMutation(catalog, {
+      action: "upsert_collection",
+      collection: {
+        ...catalog.collections[0],
+        browsingRules: {
+          searchEnabled: true,
+          searchPlaceholder: "x".repeat(MERCHANT_CATALOG_MAX_SEARCH_PLACEHOLDER_LENGTH + 1),
+          hideUnselectedCategory: true,
+          groupByCategory: false,
+        },
+      },
+    }),
+    { ok: false, error: "invalid_merchant_catalog_browsing_rules" },
+  );
+});
 
 test("upsert_product uses explicit collection placement and creates its single category", () => {
   const result = applyMerchantCatalogMutation(linkedCatalog(), {

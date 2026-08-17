@@ -162,6 +162,10 @@ test("workbench builds operational counts, all required todo kinds, and separate
     ],
   );
   assert.equal(dashboard.todos[2]?.note, "Please call first.");
+  assert.equal(
+    dashboard.todos.find((todo) => todo.orderId === "pending-overdue")?.updatedAt,
+    "2026-08-17T11:50:00.000Z",
+  );
   assert.deepEqual(
     dashboard.todos
       .filter((todo) => todo.kind === "pending_confirmation" || todo.kind === "processing")

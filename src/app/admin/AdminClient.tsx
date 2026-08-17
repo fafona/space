@@ -3316,6 +3316,10 @@ function shouldUseMerchantDesktopSidebarViewport() {
   return desktopWidth && !coarseMobileViewport;
 }
 
+function waitForOrderWorkbenchLeaveCommit() {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+}
+
 function readMobileVisualViewportMetrics(layoutViewportHeight?: number) {
   if (typeof window === "undefined") {
     return { top: 0, bottom: 0, height: 0 };
@@ -4203,7 +4207,9 @@ export default function AdminClient({
     ((view: MerchantEnterpriseView | null) => boolean) | null
   >(null);
   const merchantEnterpriseLeaveGuardRef = useRef<(() => boolean) | null>(null);
+  const merchantOrderLeaveGuardRef = useRef<(() => boolean) | null>(null);
   const supportMobileEnterpriseLeaveGuardRef = useRef<(() => boolean) | null>(null);
+  const supportMobileOrderLeaveGuardRef = useRef<(() => boolean) | null>(null);
   const setMerchantDesktopSection = useCallback(
     (section: MerchantDesktopSection) => {
       if (
@@ -4211,6 +4217,14 @@ export default function AdminClient({
         section !== "enterprise" &&
         merchantEnterpriseLeaveGuardRef.current &&
         !merchantEnterpriseLeaveGuardRef.current()
+      ) {
+        return false;
+      }
+      if (
+        merchantDesktopSectionRef.current === "orders" &&
+        section !== "orders" &&
+        merchantOrderLeaveGuardRef.current &&
+        !merchantOrderLeaveGuardRef.current()
       ) {
         return false;
       }
@@ -4255,11 +4269,29 @@ export default function AdminClient({
   const [merchantSiteIdOverride, setMerchantSiteIdOverride] = useState("");
   const [merchantBookingManagerOpen, setMerchantBookingManagerOpen] = useState(false);
   const [merchantOrderManagerOpen, setMerchantOrderManagerOpen] = useState(false);
+  const merchantOrderManagerOpenRef = useRef(false);
+  merchantOrderManagerOpenRef.current = merchantOrderManagerOpen;
   const [merchantCouponRecords, setMerchantCouponRecords] = useState<MerchantCouponRecord[]>([]);
   const [merchantBookingWorkbenchOpen, setMerchantBookingWorkbenchOpen] = useState(false);
   const [merchantOrderWorkbenchOpen, setMerchantOrderWorkbenchOpen] = useState(false);
   const [merchantOrderWorkbenchInitialView, setMerchantOrderWorkbenchInitialView] = useState<"overview" | "catalog">("overview");
   const [merchantOrderCatalogTarget, setMerchantOrderCatalogTarget] = useState<MerchantCatalogTarget | null>(null);
+  const requestMerchantOrderWorkbenchClose = useCallback(() => {
+    const guard = merchantOrderLeaveGuardRef.current;
+    if (guard && !guard()) return false;
+    setMerchantOrderWorkbenchOpen(false);
+    return true;
+  }, []);
+  const handleMerchantOrderWorkbenchOpenChange = useCallback(
+    (open: boolean) => {
+      if (open) {
+        setMerchantOrderWorkbenchOpen(true);
+        return;
+      }
+      requestMerchantOrderWorkbenchClose();
+    },
+    [requestMerchantOrderWorkbenchClose],
+  );
   const [merchantBookingAttentionSummary, setMerchantBookingAttentionSummary] = useState<MerchantBusinessAttentionSummary>({
     count: 0,
     latest: null,
@@ -4308,8 +4340,21 @@ export default function AdminClient({
   const [supportSearchError, setSupportSearchError] = useState("");
   const [supportSelectedContactKey, setSupportSelectedContactKey] = useState(SUPPORT_OFFICIAL_CONTACT_KEY);
   const [supportMobileView, setSupportMobileView] = useState<"list" | "thread">("list");
-  const [supportMobileHomeTab, setSupportMobileHomeTab] = useState<SupportMobileHomeTab>("conversations");
+  const [supportMobileHomeTab, setSupportMobileHomeTabState] = useState<SupportMobileHomeTab>("conversations");
   const supportMobileHomeTabRef = useRef<SupportMobileHomeTab>("conversations");
+  const setSupportMobileHomeTab = useCallback((tab: SupportMobileHomeTab) => {
+    const currentTab = supportMobileHomeTabRef.current;
+    const leaveGuard =
+      currentTab === "enterprise"
+        ? supportMobileEnterpriseLeaveGuardRef.current
+        : currentTab === "business"
+          ? supportMobileOrderLeaveGuardRef.current
+          : null;
+    if (tab !== currentTab && leaveGuard && !leaveGuard()) return false;
+    supportMobileHomeTabRef.current = tab;
+    setSupportMobileHomeTabState(tab);
+    return true;
+  }, []);
   useEffect(() => {
     checkingAuthRef.current = checkingAuth;
   }, [checkingAuth]);
@@ -4349,8 +4394,23 @@ export default function AdminClient({
     setSupportFaollaFrameHref(nextHref);
     setMerchantDesktopSection("faolla");
     setSupportMobileHomeTab("faolla");
-  }, [explicitFaollaSectionEntry, setMerchantDesktopSection]);
-  const [supportMobileBusinessSection, setSupportMobileBusinessSection] = useState<"booking" | "orders">("booking");
+  }, [explicitFaollaSectionEntry, setMerchantDesktopSection, setSupportMobileHomeTab]);
+  const [supportMobileBusinessSection, setSupportMobileBusinessSectionState] = useState<"booking" | "orders">("booking");
+  const supportMobileBusinessSectionRef = useRef<"booking" | "orders">("booking");
+  supportMobileBusinessSectionRef.current = supportMobileBusinessSection;
+  const setSupportMobileBusinessSection = useCallback((section: "booking" | "orders") => {
+    if (
+      supportMobileBusinessSectionRef.current === "orders" &&
+      section !== "orders" &&
+      supportMobileOrderLeaveGuardRef.current &&
+      !supportMobileOrderLeaveGuardRef.current()
+    ) {
+      return false;
+    }
+    supportMobileBusinessSectionRef.current = section;
+    setSupportMobileBusinessSectionState(section);
+    return true;
+  }, []);
   const [supportSelfSectionView, setSupportSelfSectionView] = useState<SupportSelfSectionView>("home");
   const faollaAndroidAppUpdate = useFaollaAndroidAppUpdate({ enabled: !explicitFaollaSectionEntry });
   const supportSelfSectionResetReadyRef = useRef(false);
@@ -4394,7 +4454,7 @@ export default function AdminClient({
     return () => {
       if (clearReturnTargetTimer !== null) window.clearTimeout(clearReturnTargetTimer);
     };
-  }, [setMerchantDesktopSection]);
+  }, [setMerchantDesktopSection, setSupportMobileBusinessSection, setSupportMobileHomeTab]);
   const [supportPeerLocalMessages, setSupportPeerLocalMessages] = useState<LocalPeerSupportMessage[]>([]);
   const [supportBusinessCardDialogOpen, setSupportBusinessCardDialogOpen] = useState(false);
   const [supportMerchantInfoSheetOpen, setSupportMerchantInfoSheetOpen] = useState(false);
@@ -4736,6 +4796,30 @@ export default function AdminClient({
   const topBarRef = useRef<HTMLDivElement>(null);
   const [topBarHeight, setTopBarHeight] = useState(0);
   const [isDesktopEditorSidebar, setIsDesktopEditorSidebar] = useState(false);
+  const isDesktopEditorSidebarRef = useRef(false);
+  isDesktopEditorSidebarRef.current = isDesktopEditorSidebar;
+  const requestActiveOrderWorkbenchLeave = useCallback(() => {
+    const desktopOrDialogLeaveGuard = merchantOrderLeaveGuardRef.current;
+    if (desktopOrDialogLeaveGuard) {
+      if (!desktopOrDialogLeaveGuard()) return false;
+      if (merchantOrderManagerOpenRef.current) {
+        setMerchantOrderManagerOpen(false);
+      } else {
+        setMerchantOrderWorkbenchOpen(false);
+      }
+      return true;
+    }
+    if (
+      supportMobileHomeTabRef.current !== "business" ||
+      supportMobileBusinessSectionRef.current !== "orders"
+    ) {
+      return true;
+    }
+    const leaveGuard = supportMobileOrderLeaveGuardRef.current;
+    if (!leaveGuard) return true;
+    if (!leaveGuard()) return false;
+    return setSupportMobileBusinessSection("booking");
+  }, [setSupportMobileBusinessSection]);
   const isMobileMerchantSupportOnlyMode = !isPlatformEditor && !forceDesktopEditorSidebar && !isDesktopEditorSidebar;
   const [uploadCompressionPreset] = useState<UploadCompressionPreset>("high");
   const [themePreset, setThemePreset] = useState<ThemePresetKey>("none");
@@ -7548,6 +7632,7 @@ export default function AdminClient({
     platformSeedBlocks,
     readFreshMerchantSessionIdentity,
     setMerchantDesktopSection,
+    setSupportMobileHomeTab,
     storeScope,
   ]);
 
@@ -7789,7 +7874,22 @@ export default function AdminClient({
     if (typeof window === "undefined") return;
     const media = window.matchMedia("(min-width: 1024px)");
     const coarseMobileMedia = window.matchMedia("(pointer: coarse) and (max-width: 1024px)");
-    const updateLayoutMode = () => setIsDesktopEditorSidebar(shouldUseMerchantDesktopSidebarViewport());
+    const updateLayoutMode = () => {
+      const nextIsDesktopEditorSidebar = shouldUseMerchantDesktopSidebarViewport();
+      const currentIsDesktopEditorSidebar = isDesktopEditorSidebarRef.current;
+      if (currentIsDesktopEditorSidebar === nextIsDesktopEditorSidebar) return;
+      const leaveGuard = currentIsDesktopEditorSidebar
+        ? merchantDesktopSectionRef.current === "orders"
+          ? merchantOrderLeaveGuardRef.current
+          : null
+        : supportMobileHomeTabRef.current === "business" &&
+            supportMobileBusinessSectionRef.current === "orders"
+          ? supportMobileOrderLeaveGuardRef.current
+          : null;
+      if (leaveGuard && !leaveGuard()) return;
+      isDesktopEditorSidebarRef.current = nextIsDesktopEditorSidebar;
+      setIsDesktopEditorSidebar(nextIsDesktopEditorSidebar);
+    };
     updateLayoutMode();
     media.addEventListener("change", updateLayoutMode);
     coarseMobileMedia.addEventListener("change", updateLayoutMode);
@@ -9613,15 +9713,17 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   async function logout() {
     if (loggingOut) return;
-    if (!isSupabaseEnabled) {
-      clearStoredBrowserSupabaseSessionTokens();
-      clearMerchantSignInBridge();
-      clearRecentMerchantLaunchState();
-      window.location.href = "/login?loggedOut=1";
-      return;
-    }
+    if (!requestActiveOrderWorkbenchLeave()) return;
     setLoggingOut(true);
     try {
+      await waitForOrderWorkbenchLeaveCommit();
+      if (!isSupabaseEnabled) {
+        clearStoredBrowserSupabaseSessionTokens();
+        clearMerchantSignInBridge();
+        clearRecentMerchantLaunchState();
+        window.location.href = "/login?loggedOut=1";
+        return;
+      }
       await fetch("/api/auth/merchant-logout", {
         method: "POST",
         credentials: "same-origin",
@@ -9666,9 +9768,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   async function handleAccountSwitch(entry: AccountSwitchEntry) {
     if (accountSwitchBusyKey || entry.key === merchantAccountSwitchCurrentKey) return;
+    if (!requestActiveOrderWorkbenchLeave()) return;
     setAccountSwitchBusyKey(entry.key);
     setAccountSwitchError("");
     try {
+      await waitForOrderWorkbenchLeaveCommit();
       await recordCurrentAccountSwitchSession({
         displayName: supportSelfDisplayName,
         avatarUrl: supportSelfAvatarImageUrl,
@@ -9685,8 +9789,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   async function addAccountFromSwitcher() {
     if (accountSwitchBusyKey) return;
+    if (!requestActiveOrderWorkbenchLeave()) return;
     setAccountSwitchBusyKey("__add__");
     setAccountSwitchError("");
+    await waitForOrderWorkbenchLeaveCommit();
     await recordCurrentAccountSwitchSession({
       displayName: supportSelfDisplayName,
       avatarUrl: supportSelfAvatarImageUrl,
@@ -10709,20 +10815,22 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     };
   }, [resetSupportFaollaBackendFrame]);
   const openSupportMobileHomeTab = useCallback((tab: SupportMobileHomeTab) => {
-    if (
-      supportMobileHomeTabRef.current === "enterprise" &&
-      tab !== "enterprise" &&
-      supportMobileEnterpriseLeaveGuardRef.current &&
-      !supportMobileEnterpriseLeaveGuardRef.current()
-    ) {
-      return false;
-    }
+    if (!setSupportMobileHomeTab(tab)) return false;
     if (tab === "enterprise") {
       void loadMerchantEnterpriseManager().catch(() => undefined);
       setSupportMobileView("list");
     }
-    supportMobileHomeTabRef.current = tab;
-    setSupportMobileHomeTab(tab);
+    return true;
+  }, [setSupportMobileHomeTab]);
+  const requestCloseSupportDialog = useCallback(() => {
+    const leaveGuard =
+      supportMobileHomeTabRef.current === "enterprise"
+        ? supportMobileEnterpriseLeaveGuardRef.current
+        : supportMobileHomeTabRef.current === "business"
+          ? supportMobileOrderLeaveGuardRef.current
+          : null;
+    if (leaveGuard && !leaveGuard()) return false;
+    setSupportDialogOpen(false);
     return true;
   }, []);
   const openSupportShuangkouScoreTool = useCallback(() => {
@@ -13053,10 +13161,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       showTip("当前商户还没准备好订单资料，请稍后重试");
       return;
     }
+    if (!requestMerchantOrderWorkbenchClose()) return;
     setMerchantSiteIdOverride(resolvedSiteId);
     setMerchantOrderWorkbenchInitialView("overview");
     setMerchantOrderCatalogTarget(null);
-    setMerchantOrderWorkbenchOpen(false);
     setMerchantDesktopSection("orders");
   }
 
@@ -13071,6 +13179,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       showTip("当前商户还没准备好商品目录，请稍后重试");
       return;
     }
+    const currentOrderLeaveGuard = merchantOrderLeaveGuardRef.current;
+    if (currentOrderLeaveGuard && !currentOrderLeaveGuard()) return;
     setMerchantSiteIdOverride(resolvedSiteId);
     setMerchantOrderWorkbenchInitialView("catalog");
     setMerchantOrderCatalogTarget(target ?? null);
@@ -13408,6 +13518,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     supportPeerLoading,
     supportPendingDeepLink,
     supportUnreadHydrationState.peer,
+    setSupportMobileHomeTab,
   ]);
 
   useEffect(() => {
@@ -15924,6 +16035,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     if (!order || order.siteId !== input.siteId || order.id !== input.orderId) {
       throw new Error(getMerchantOrderSourceErrorMessage("invalid_source_order_request"));
     }
+    if (!requestActiveOrderWorkbenchLeave()) {
+      throw new Error("商品目录正在处理或仍有未保存内容，已保留当前目录，来源订单未打开。");
+    }
+    await waitForOrderWorkbenchLeaveCommit();
     setMerchantSiteIdOverride(order.siteId);
     setMerchantOrderSourceIntent({
       siteId: order.siteId,
@@ -16731,7 +16846,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             <button
               type="button"
               className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50"
-              onClick={() => setSupportDialogOpen(false)}
+              onClick={requestCloseSupportDialog}
               disabled={supportSending}
             >
               关闭
@@ -16894,6 +17009,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 }
                 onSourceOrderIntentHandled={handleMerchantOrderSourceIntentHandled}
                 onSectionChange={setSupportMobileBusinessSection}
+                registerLeaveGuard={(guard) => {
+                  supportMobileOrderLeaveGuardRef.current = guard;
+                }}
               />
             ) : (
               <MerchantBookingMobilePanel
@@ -18097,7 +18215,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             <button
               type="button"
               className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50"
-              onClick={() => setSupportDialogOpen(false)}
+              onClick={requestCloseSupportDialog}
               disabled={supportSending}
             >
               关闭
@@ -18904,6 +19022,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               ? merchantOrderSourceIntent
               : null,
           onSourceOrderIntentHandled: handleMerchantOrderSourceIntentHandled,
+          registerLeaveGuard: (guard: (() => boolean) | null) => {
+            merchantOrderLeaveGuardRef.current = guard;
+          },
           ...(canUseEnterpriseManagement
             ? {
                 onOpenEnterpriseTask: (order: MerchantOrderRecord) =>
@@ -19888,7 +20009,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               workbenchInitialView={merchantOrderWorkbenchInitialView}
               workbenchCatalogTarget={merchantOrderCatalogTarget}
               hideWorkbenchButton
-              onWorkbenchOpenChange={setMerchantOrderWorkbenchOpen}
+              onWorkbenchOpenChange={handleMerchantOrderWorkbenchOpenChange}
               className="min-h-[calc(100vh-14rem)]"
             />
           ) : merchantDesktopSection === "enterprise" && canUseEnterpriseManagement ? (
@@ -21523,7 +21644,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 className="fixed inset-0 z-[2147483300] bg-black/45"
                 onClick={() => {
                   if (supportSending) return;
-                  setSupportDialogOpen(false);
+                  requestCloseSupportDialog();
                 }}
                 aria-label="关闭在线客服弹窗"
                 />

@@ -9,10 +9,18 @@ import {
 export type MerchantCatalogAvailability = "available" | "sold_out" | "hidden";
 export type MerchantCatalogViewport = "desktop" | "mobile" | "shared";
 
+export type MerchantCatalogBrowsingRules = {
+  searchEnabled: boolean;
+  searchPlaceholder: string;
+  hideUnselectedCategory: boolean;
+  groupByCategory: boolean;
+};
+
 export type MerchantCatalogTarget = {
   blockId: string;
   viewport: Exclude<MerchantCatalogViewport, "shared">;
   productIds?: string[];
+  browsingRules?: MerchantCatalogBrowsingRules;
 };
 
 export type MerchantCatalogProduct = {
@@ -43,6 +51,7 @@ export type MerchantCatalogCollection = {
   blockId: string;
   viewport: MerchantCatalogViewport;
   productIds: string[];
+  browsingRules?: MerchantCatalogBrowsingRules;
 };
 
 export type MerchantCatalog = {
@@ -53,6 +62,53 @@ export type MerchantCatalog = {
   products: MerchantCatalogProduct[];
   collections: MerchantCatalogCollection[];
 };
+
+export const MERCHANT_CATALOG_CHANGED_EVENT = "faolla:merchant-catalog-changed";
+
+export type MerchantCatalogChangedEventDetail = {
+  siteId: string;
+  revision: number;
+};
+
+export function createMerchantCatalogRuntimeContextKey(
+  siteId: string,
+  blockId: string,
+  viewport: unknown,
+) {
+  const normalizedSiteId = String(siteId ?? "").trim();
+  const normalizedBlockId = String(blockId ?? "").trim();
+  if (
+    !normalizedBlockId ||
+    (viewport !== "desktop" && viewport !== "mobile")
+  ) {
+    return "";
+  }
+  return JSON.stringify([normalizedSiteId, normalizedBlockId, viewport]);
+}
+
+export function isMerchantCatalogRuntimeContextCurrent(
+  resolvedContextKey: string,
+  currentContextKey: string,
+) {
+  return Boolean(currentContextKey) && resolvedContextKey === currentContextKey;
+}
+
+/**
+ * Keep the browser refresh signal deliberately small: it identifies only the
+ * merchant and catalog revision, and never carries products or customer data.
+ */
+export function parseMerchantCatalogChangedEventDetail(
+  value: unknown,
+): MerchantCatalogChangedEventDetail | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const siteId = typeof record.siteId === "string" ? record.siteId.trim() : "";
+  const revision = Number(record.revision);
+  if (!MERCHANT_ID_REGEX.test(siteId) || !Number.isSafeInteger(revision) || revision < 0) {
+    return null;
+  }
+  return { siteId, revision };
+}
 
 export type MerchantCatalogBootstrapSource = {
   blockId: string;
@@ -226,6 +282,7 @@ export const MERCHANT_CATALOG_MAX_SERIALIZED_BYTES = 512_000;
 export const MERCHANT_CATALOG_MAX_UNIT_PRICE = 999_999_999.99;
 export const MERCHANT_CATALOG_MAX_PRODUCT_IMAGE_IMPORT_ITEMS = 100;
 export const MERCHANT_CATALOG_MAX_PRODUCT_IMAGE_BYTES = 8 * 1024 * 1024;
+export const MERCHANT_CATALOG_MAX_SEARCH_PLACEHOLDER_LENGTH = 160;
 
 type PublishedProductBlock = Extract<Block, { type: "product" }>;
 
@@ -265,6 +322,34 @@ function normalizeRevision(value: unknown) {
 
 function normalizeAvailability(value: unknown): MerchantCatalogAvailability {
   return value === "sold_out" || value === "hidden" ? value : "available";
+}
+
+function normalizeMerchantCatalogBrowsingRules(value: unknown): MerchantCatalogBrowsingRules | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.searchEnabled !== "boolean" ||
+    typeof record.searchPlaceholder !== "string" ||
+    typeof record.hideUnselectedCategory !== "boolean" ||
+    typeof record.groupByCategory !== "boolean"
+  ) {
+    return undefined;
+  }
+  return {
+    searchEnabled: record.searchEnabled,
+    searchPlaceholder: record.searchPlaceholder.trim(),
+    hideUnselectedCategory: record.hideUnselectedCategory,
+    groupByCategory: record.groupByCategory,
+  };
+}
+
+function publishedBrowsingRules(block: PublishedProductBlock): MerchantCatalogBrowsingRules {
+  return {
+    searchEnabled: block.props.productSearchEnabled !== false,
+    searchPlaceholder: trimText(block.props.productSearchPlaceholder),
+    hideUnselectedCategory: block.props.productTagHideUnselected !== false,
+    groupByCategory: block.props.productGroupByTag === true,
+  };
 }
 
 function uniqueStrings(value: unknown) {
@@ -422,11 +507,13 @@ export function normalizeMerchantCatalog(value: unknown): MerchantCatalog {
       if (!id || !blockId || collectionIds.has(id)) return;
       collectionIds.add(id);
       const viewport = collectionRecord.viewport;
+      const browsingRules = normalizeMerchantCatalogBrowsingRules(collectionRecord.browsingRules);
       collections.push({
         id,
         blockId,
         viewport: viewport === "desktop" || viewport === "mobile" ? viewport : "shared",
         productIds: uniqueStrings(collectionRecord.productIds).filter((productId) => productIds.has(productId)),
+        ...(browsingRules ? { browsingRules } : {}),
       });
     });
   }
@@ -499,6 +586,10 @@ export function parseStrictMerchantCatalog(value: unknown): MerchantCatalog | nu
     !rawCollections.every((item) => {
       if (!item || typeof item !== "object" || Array.isArray(item)) return false;
       const collection = item as Record<string, unknown>;
+      const hasBrowsingRules = Object.prototype.hasOwnProperty.call(collection, "browsingRules");
+      const browsingRules = hasBrowsingRules
+        ? normalizeMerchantCatalogBrowsingRules(collection.browsingRules)
+        : undefined;
       return (
         typeof collection.id === "string" &&
         typeof collection.blockId === "string" &&
@@ -506,7 +597,12 @@ export function parseStrictMerchantCatalog(value: unknown): MerchantCatalog | nu
           collection.viewport === "mobile" ||
           collection.viewport === "shared") &&
         Array.isArray(collection.productIds) &&
-        collection.productIds.every((productId) => typeof productId === "string")
+        collection.productIds.every((productId) => typeof productId === "string") &&
+        (!hasBrowsingRules ||
+          Boolean(
+            browsingRules &&
+              browsingRules.searchPlaceholder.length <= MERCHANT_CATALOG_MAX_SEARCH_PLACEHOLDER_LENGTH,
+          ))
       );
     })
   ) {
@@ -609,7 +705,11 @@ export function getMerchantCatalogValidationError(value: unknown): string | null
     (category) => category.id.length > 160 || category.name.length > 120,
   );
   const collectionTooLarge = catalog.collections.some(
-    (collection) => collection.id.length > 200 || collection.blockId.length > 200,
+    (collection) =>
+      collection.id.length > 200 ||
+      collection.blockId.length > 200 ||
+      (collection.browsingRules?.searchPlaceholder.length ?? 0) >
+        MERCHANT_CATALOG_MAX_SEARCH_PLACEHOLDER_LENGTH,
   );
   if (productTooLarge || categoryTooLarge || collectionTooLarge) {
     return "merchant_catalog_limit_exceeded";
@@ -640,7 +740,13 @@ export function resolveMerchantCatalogCollection(
   const chosen = requestedViewport
     ? exact[0] ?? shared[0]
     : shared[0] ?? (candidates.length === 1 ? candidates[0] : undefined);
-  return chosen ? { ...chosen, productIds: [...chosen.productIds] } : null;
+  return chosen
+    ? {
+        ...chosen,
+        productIds: [...chosen.productIds],
+        ...(chosen.browsingRules ? { browsingRules: { ...chosen.browsingRules } } : {}),
+      }
+    : null;
 }
 
 function referencedProductIds(value: unknown) {
@@ -1457,7 +1563,18 @@ export function applyMerchantCatalogMutation(
     const id = trimText(raw.id);
     const blockId = trimText(raw.blockId);
     const productIds = referencedProductIds(raw);
+    const hasBrowsingRules = Object.prototype.hasOwnProperty.call(raw, "browsingRules");
+    const browsingRules = hasBrowsingRules
+      ? normalizeMerchantCatalogBrowsingRules(raw.browsingRules)
+      : undefined;
     if (!id || !blockId) return { ok: false, error: "invalid_merchant_catalog_collection" };
+    if (
+      hasBrowsingRules &&
+      (!browsingRules ||
+        browsingRules.searchPlaceholder.length > MERCHANT_CATALOG_MAX_SEARCH_PLACEHOLDER_LENGTH)
+    ) {
+      return { ok: false, error: "invalid_merchant_catalog_browsing_rules" };
+    }
     if (raw.viewport !== "desktop" && raw.viewport !== "mobile" && raw.viewport !== "shared") {
       return { ok: false, error: "invalid_merchant_catalog_viewport" };
     }
@@ -1474,7 +1591,17 @@ export function applyMerchantCatalogMutation(
     if (hasUnknownProductReference(catalog, productIds)) {
       return { ok: false, error: "merchant_catalog_product_reference_not_found" };
     }
-    const collection = { id, blockId, viewport: raw.viewport, productIds } satisfies MerchantCatalogCollection;
+    const existingCollection = catalog.collections.find((item) => item.id === id);
+    const effectiveBrowsingRules = hasBrowsingRules
+      ? browsingRules
+      : existingCollection?.browsingRules;
+    const collection = {
+      id,
+      blockId,
+      viewport: raw.viewport,
+      productIds,
+      ...(effectiveBrowsingRules ? { browsingRules: { ...effectiveBrowsingRules } } : {}),
+    } satisfies MerchantCatalogCollection;
     const collectionIndex = catalog.collections.findIndex((item) => item.id === id);
     const collections = catalog.collections.map((item) => ({ ...item, productIds: [...item.productIds] }));
     if (collectionIndex >= 0) collections[collectionIndex] = collection;
@@ -1568,12 +1695,25 @@ export function bootstrapMerchantCatalogFromPublishedBlocks(
       productsById.set(product.id, occurrences);
     });
 
+    const browsingRules = publishedBrowsingRules(block);
     const collection: MerchantCatalogCollection = {
       id: createMerchantCatalogCollectionId(block.id, source.viewport),
       blockId: block.id,
       viewport: source.viewport,
       productIds,
+      browsingRules,
     };
+    if (
+      browsingRules.searchPlaceholder.length >
+      MERCHANT_CATALOG_MAX_SEARCH_PLACEHOLDER_LENGTH
+    ) {
+      conflicts.push({
+        code: "collection_conflict",
+        field: "search_placeholder_too_long",
+        collectionId: collection.id,
+        values: [{ value: browsingRules.searchPlaceholder, sources: [source] }],
+      });
+    }
     const collectionOccurrences = collectionsById.get(collection.id) ?? [];
     collectionOccurrences.push({ collection, source });
     collectionsById.set(collection.id, collectionOccurrences);
@@ -1633,7 +1773,27 @@ export function bootstrapMerchantCatalogFromPublishedBlocks(
       });
       return;
     }
-    collections.push({ ...occurrences[0]!.collection, productIds: [...occurrences[0]!.collection.productIds] });
+    const browsingRuleValues = conflictValues(
+      occurrences.map(({ collection, source }) => ({
+        value: JSON.stringify(collection.browsingRules),
+        source,
+      })),
+    );
+    if (browsingRuleValues.length > 1) {
+      conflicts.push({
+        code: "collection_conflict",
+        field: "browsing_rules",
+        collectionId: id,
+        values: browsingRuleValues,
+      });
+      return;
+    }
+    const collection = occurrences[0]!.collection;
+    collections.push({
+      ...collection,
+      productIds: [...collection.productIds],
+      ...(collection.browsingRules ? { browsingRules: { ...collection.browsingRules } } : {}),
+    });
   });
 
   if (conflicts.length > 0) {

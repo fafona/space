@@ -56,6 +56,7 @@ import {
   type MerchantOrderCustomerInput,
   type MerchantOrderRecord,
 } from "@/lib/merchantOrders";
+import type { MerchantCatalogBrowsingRules } from "@/lib/merchantCatalog";
 import type { PersonalCustomerProfile } from "@/lib/personalCustomerProfile";
 import { MOBILE_SWIPE_BACK_EVENT } from "@/lib/mobileSwipeBack";
 
@@ -153,6 +154,7 @@ type RuntimeOperatingCatalog = {
   revision: number;
   updatedAt: string;
   pricePrefix: string;
+  browsingRules: Partial<MerchantCatalogBrowsingRules> | null;
   categories: Array<{ id: string; name: string }>;
   products: Array<ProductItem & { availability: RuntimeCatalogAvailability }>;
 };
@@ -705,6 +707,25 @@ function renderProductCard(
   );
 }
 
+function readRuntimeCatalogBrowsingRules(
+  value: unknown,
+): Partial<MerchantCatalogBrowsingRules> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const rules: Partial<MerchantCatalogBrowsingRules> = {};
+  if (typeof record.searchEnabled === "boolean") rules.searchEnabled = record.searchEnabled;
+  if (typeof record.searchPlaceholder === "string") {
+    rules.searchPlaceholder = record.searchPlaceholder;
+  }
+  if (typeof record.hideUnselectedCategory === "boolean") {
+    rules.hideUnselectedCategory = record.hideUnselectedCategory;
+  }
+  if (typeof record.groupByCategory === "boolean") {
+    rules.groupByCategory = record.groupByCategory;
+  }
+  return rules;
+}
+
 function readRuntimeOperatingCatalog(value: unknown): RuntimeOperatingCatalog | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
@@ -729,10 +750,12 @@ function readRuntimeOperatingCatalog(value: unknown): RuntimeOperatingCatalog | 
         return id && name ? [{ id, name }] : [];
       })
     : [];
+  const browsingRules = readRuntimeCatalogBrowsingRules(record.browsingRules);
   return {
     revision: typeof record.revision === "number" && Number.isFinite(record.revision) ? record.revision : 0,
     updatedAt: typeof record.updatedAt === "string" ? record.updatedAt.trim() : "",
     pricePrefix: typeof record.pricePrefix === "string" ? record.pricePrefix.trim() : "",
+    browsingRules,
     categories,
     products,
   };
@@ -839,7 +862,9 @@ export default function ProductBlock(props: ProductBlockProps) {
     [operatingCatalog?.categories, products, props.productTagOptions],
   );
   const productTagKey = productTags.join("\u0001");
-  const groupedByTag = props.productGroupByTag === true;
+  const operatingBrowsingRules = operatingCatalog?.browsingRules ?? null;
+  const groupedByTag =
+    operatingBrowsingRules?.groupByCategory ?? (props.productGroupByTag === true);
   const arrangedProducts = useMemo(
     () => arrangeProductItemsByTag(products, productTags, groupedByTag),
     [groupedByTag, productTags, products],
@@ -853,9 +878,10 @@ export default function ProductBlock(props: ProductBlockProps) {
   const productCardHeight = normalizeProductCardHeight(props.productCardHeight, rawImageSize + PRODUCT_LIST_CARD_VERTICAL_PADDING);
   const imageSize = normalizeProductImageSize(rawImageSize, layoutPreset === "list" ? productListImageMaxSize(productCardHeight) : undefined);
   const pricePrefix = (operatingCatalog?.pricePrefix ?? props.productPricePrefix ?? "").trim();
-  const productSearchEnabled = props.productSearchEnabled !== false;
+  const productSearchEnabled =
+    operatingBrowsingRules?.searchEnabled ?? (props.productSearchEnabled !== false);
   const productSearchPlaceholder = resolveLocalizedSystemDefaultText(
-    props.productSearchPlaceholder,
+    operatingBrowsingRules?.searchPlaceholder ?? props.productSearchPlaceholder,
     "搜索产品名称/编号/介绍",
     locale,
   );
@@ -874,7 +900,9 @@ export default function ProductBlock(props: ProductBlockProps) {
       ? Math.max(56, Math.min(220, Math.round(props.productTagWidth)))
       : 92;
   const tagRowGap = normalizeProductSpacing(props.productTagRowGap, 8, 0, 48);
-  const tagHideUnselected = props.productTagHideUnselected !== false;
+  const tagHideUnselected =
+    operatingBrowsingRules?.hideUnselectedCategory ??
+    (props.productTagHideUnselected !== false);
   const tagBgColor = (props.productTagBgColor ?? "#0f172a").trim() || "#0f172a";
   const tagBgOpacity =
     typeof props.productTagBgOpacity === "number" && Number.isFinite(props.productTagBgOpacity)

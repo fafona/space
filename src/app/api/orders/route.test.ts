@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  handleMerchantOrderPatch,
   handleMerchantOrderPost,
   handleMerchantOrdersGet,
+  type MerchantOrderPatchRouteDependencies,
   type MerchantOrderPostRouteDependencies,
 } from "@/app/api/orders/route";
 import type { Block } from "@/data/homeBlocks";
@@ -13,6 +15,15 @@ const SITE_ID = "10000000";
 const BLOCK_ID = "product-block";
 const PRODUCT_ID = "product-a";
 const CATALOG_CHANGED_MESSAGE = "商品目录已更新，请刷新商品列表并确认最新价格后重新提交。";
+
+function assertPrivateOrderGetHeaders(response: Response) {
+  assert.equal(response.headers.get("cache-control"), "private, no-store");
+  assert.equal(response.headers.get("pragma"), "no-cache");
+  assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+  assert.equal(response.headers.get("cross-origin-resource-policy"), "same-origin");
+  assert.equal(response.headers.get("referrer-policy"), "no-referrer");
+  assert.match(response.headers.get("content-type") ?? "", /^application\/json\b/i);
+}
 
 type SnapshotSite = NonNullable<
   Awaited<ReturnType<MerchantOrderPostRouteDependencies["loadSnapshotSite"]>>
@@ -127,6 +138,34 @@ function orderRequest(input: { operating?: boolean } = {}) {
       items: [{ productId: PRODUCT_ID, quantity: 2 }],
     }),
   });
+}
+
+function orderPatchRequest(body: Record<string, unknown>) {
+  return new Request("https://merchant.faolla.test/api/orders", {
+    method: "PATCH",
+    headers: {
+      "content-type": "application/json",
+      host: "merchant.faolla.test",
+      origin: "https://merchant.faolla.test",
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+function orderPatchDependencies(
+  updateOrder: MerchantOrderPatchRouteDependencies["updateOrder"],
+): Partial<MerchantOrderPatchRouteDependencies> {
+  return {
+    async resolveAdminSession(_request, siteId) {
+      assert.equal(siteId, SITE_ID);
+      return { merchantId: SITE_ID };
+    },
+    async isManagementEnabled(siteId) {
+      assert.equal(siteId, SITE_ID);
+      return true;
+    },
+    updateOrder,
+  };
 }
 
 function scenarioDependencies(scenario: Scenario) {
@@ -369,6 +408,168 @@ test("GET rejects an admin order read when order management is disabled", async 
   );
 
   assert.equal(response.status, 403);
+  assertPrivateOrderGetHeaders(response);
   assert.deepEqual(await response.json(), { error: "order_management_disabled" });
   assert.equal(listCalls, 0);
+});
+
+test("GET marks successful admin order data as private and non-cacheable", async () => {
+  let listCalls = 0;
+  const response = await handleMerchantOrdersGet(
+    new Request(`https://merchant.faolla.test/api/orders?siteId=${SITE_ID}`),
+    {
+      async resolveAdminSession(_request, siteId) {
+        assert.equal(siteId, SITE_ID);
+        return { merchantId: SITE_ID };
+      },
+      async isManagementEnabled(siteId) {
+        assert.equal(siteId, SITE_ID);
+        return true;
+      },
+      async listOrders(siteId) {
+        assert.equal(siteId, SITE_ID);
+        listCalls += 1;
+        return [];
+      },
+    },
+  );
+
+  assert.equal(response.status, 200);
+  assertPrivateOrderGetHeaders(response);
+  assert.deepEqual(await response.json(), { ok: true, orders: [] });
+  assert.equal(listCalls, 1);
+});
+
+test("GET applies private headers to unauthenticated personal reads", async () => {
+  let personalListCalls = 0;
+  const response = await handleMerchantOrdersGet(
+    new Request("https://merchant.faolla.test/api/orders?scope=personal"),
+    {
+      async resolvePersonalSession() {
+        return null;
+      },
+      async listPersonalOrders() {
+        personalListCalls += 1;
+        return [];
+      },
+    },
+  );
+
+  assert.equal(response.status, 401);
+  assertPrivateOrderGetHeaders(response);
+  assert.deepEqual(await response.json(), { error: "unauthorized" });
+  assert.equal(personalListCalls, 0);
+});
+
+test("GET applies private headers to unexpected read failures", async () => {
+  const response = await handleMerchantOrdersGet(
+    new Request(`https://merchant.faolla.test/api/orders?siteId=${SITE_ID}`),
+    {
+      async resolveAdminSession() {
+        throw new Error("orders_store_unavailable");
+      },
+    },
+  );
+
+  assert.equal(response.status, 503);
+  assertPrivateOrderGetHeaders(response);
+  assert.deepEqual(await response.json(), {
+    error: "order_list_failed",
+    message: "订单服务暂时不可用，请稍后重试。",
+  });
+});
+
+test("PATCH forwards expectedUpdatedAt for both status and print mutations", async () => {
+  const expectedUpdatedAt = "2026-08-17T12:00:00.000Z";
+  const order = createMerchantOrder(
+    {
+      siteId: SITE_ID,
+      items: [{ productId: PRODUCT_ID, name: "Product", quantity: 1, unitPrice: 10 }],
+    },
+    {
+      id: "O10000000202608170001",
+      createdAt: expectedUpdatedAt,
+      updatedAt: expectedUpdatedAt,
+    },
+  );
+  type UpdateInput = Parameters<MerchantOrderPatchRouteDependencies["updateOrder"]>[0];
+  const received: UpdateInput[] = [];
+  const dependencies = orderPatchDependencies(async (input) => {
+    received.push(input);
+    return order;
+  });
+
+  const statusResponse = await handleMerchantOrderPatch(
+    orderPatchRequest({
+      siteId: SITE_ID,
+      orderId: order.id,
+      status: "confirmed",
+      expectedUpdatedAt,
+    }),
+    dependencies,
+  );
+  const printResponse = await handleMerchantOrderPatch(
+    orderPatchRequest({
+      siteId: SITE_ID,
+      orderId: order.id,
+      action: "print",
+      expectedUpdatedAt,
+    }),
+    dependencies,
+  );
+
+  assert.equal(statusResponse.status, 200);
+  assert.equal(printResponse.status, 200);
+  assert.equal(received.length, 2);
+  assert.equal(received[0]?.status, "confirmed");
+  assert.equal(received[0]?.expectedUpdatedAt, expectedUpdatedAt);
+  assert.equal(received[1]?.action, "print");
+  assert.equal(received[1]?.expectedUpdatedAt, expectedUpdatedAt);
+});
+
+test("PATCH exposes a stable 409 response for stale order versions", async () => {
+  const response = await handleMerchantOrderPatch(
+    orderPatchRequest({
+      siteId: SITE_ID,
+      orderId: "O10000000202608170001",
+      status: "confirmed",
+      expectedUpdatedAt: "2026-08-17T11:59:59.000Z",
+    }),
+    orderPatchDependencies(async () => {
+      throw new Error("order_update_conflict");
+    }),
+  );
+
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), {
+    error: "order_update_conflict",
+    message: "订单已被其他操作更新，请刷新后重试。",
+  });
+});
+
+test("PATCH rejects expectedUpdatedAt on batch mutations", async () => {
+  const order = createMerchantOrder({
+    siteId: SITE_ID,
+    items: [{ productId: PRODUCT_ID, name: "Product", quantity: 1, unitPrice: 10 }],
+  });
+  let batchCalls = 0;
+  const response = await handleMerchantOrderPatch(
+    orderPatchRequest({
+      siteId: SITE_ID,
+      orderIds: [order.id],
+      status: "confirmed",
+      expectedUpdatedAt: order.updatedAt,
+    }),
+    {
+      ...orderPatchDependencies(async () => order),
+      async updateOrdersBatch() {
+        batchCalls += 1;
+        return [];
+      },
+    },
+  );
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: "invalid_order_action" });
+  assert.equal(batchCalls, 0);
 });

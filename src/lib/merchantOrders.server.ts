@@ -3,6 +3,7 @@ import {
   applyMerchantOrderAction,
   applyMerchantOrderStatus,
   applyMerchantOrderUpdate,
+  assertMerchantOrderExpectedUpdatedAt,
   buildMerchantOrderId,
   createMerchantOrder,
   normalizeMerchantOrderRecords,
@@ -312,6 +313,7 @@ export async function updateMerchantOrderBySite(input: {
   action?: MerchantOrderAction;
   status?: MerchantOrderStatus;
   items?: MerchantOrderLineItemInput[];
+  expectedUpdatedAt?: unknown;
 }) {
   const supabase = requireOrdersStoreClient();
   const siteId = trimText(input.siteId);
@@ -323,6 +325,9 @@ export async function updateMerchantOrderBySite(input: {
       throw new Error("order_not_found");
     }
     const current = orders[orderIndex];
+    if (Object.prototype.hasOwnProperty.call(input, "expectedUpdatedAt")) {
+      assertMerchantOrderExpectedUpdatedAt(current, input.expectedUpdatedAt);
+    }
     if (Array.isArray(input.items) && (current.status === "completed" || current.status === "cancelled")) {
       throw new Error("order_items_locked");
     }

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   applyMerchantOrderUpdate,
   applyMerchantOrderAction,
+  assertMerchantOrderExpectedUpdatedAt,
   buildMerchantOrderId,
   createMerchantOrder,
   formatMerchantOrderAmount,
@@ -13,6 +14,18 @@ import {
   parseMerchantOrderPriceValue,
   updateMerchantOrderItems,
 } from "@/lib/merchantOrders";
+
+test("assertMerchantOrderExpectedUpdatedAt accepts the current version and rejects stale versions", () => {
+  const record = { updatedAt: "2026-08-17T12:00:00.000Z" };
+
+  assert.doesNotThrow(() =>
+    assertMerchantOrderExpectedUpdatedAt(record, "2026-08-17T12:00:00.000Z"),
+  );
+  assert.throws(
+    () => assertMerchantOrderExpectedUpdatedAt(record, "2026-08-17T11:59:59.000Z"),
+    (error: unknown) => error instanceof Error && error.message === "order_update_conflict",
+  );
+});
 
 test("parseMerchantOrderPriceValue parses formatted values", () => {
   assert.equal(parseMerchantOrderPriceValue("39.90"), 39.9);

@@ -9,6 +9,18 @@ import { fetchPublishedSiteBlocksFromSupabase } from "@/lib/publishedSiteData";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+export type MerchantCatalogPublicRouteDependencies = {
+  loadSnapshotSite: typeof loadCurrentMerchantSnapshotSiteBySiteId;
+  loadCatalog: typeof loadMerchantCatalog;
+  fetchPublishedBlocks: typeof fetchPublishedSiteBlocksFromSupabase;
+};
+
+const DEFAULT_DEPENDENCIES: MerchantCatalogPublicRouteDependencies = {
+  loadSnapshotSite: loadCurrentMerchantSnapshotSiteBySiteId,
+  loadCatalog: loadMerchantCatalog,
+  fetchPublishedBlocks: fetchPublishedSiteBlocksFromSupabase,
+};
+
 function json(body: unknown, status = 200) {
   return NextResponse.json(body, {
     status,
@@ -16,7 +28,11 @@ function json(body: unknown, status = 200) {
   });
 }
 
-export async function GET(request: Request) {
+export async function handleMerchantCatalogPublicGet(
+  request: Request,
+  dependencyOverrides: Partial<MerchantCatalogPublicRouteDependencies> = {},
+) {
+  const dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencyOverrides };
   try {
     const { searchParams } = new URL(request.url);
     const siteId = searchParams.get("siteId")?.trim() ?? "";
@@ -28,13 +44,13 @@ export async function GET(request: Request) {
       return json({ error: "invalid_catalog_viewport" }, 400);
     }
 
-    const snapshot = await loadCurrentMerchantSnapshotSiteBySiteId(siteId);
+    const snapshot = await dependencies.loadSnapshotSite(siteId);
     if (!snapshot?.permissionConfig?.allowProductBlock) {
       return json({ error: "product_catalog_disabled" }, 403);
     }
     const [catalog, publishedSite] = await Promise.all([
-      loadMerchantCatalog(siteId),
-      fetchPublishedSiteBlocksFromSupabase(siteId),
+      dependencies.loadCatalog(siteId),
+      dependencies.fetchPublishedBlocks(siteId),
     ]);
     if (!catalog) return json({ ok: true, catalog: null });
     const collection = resolveMerchantCatalogCollection(catalog, blockId, viewport);
@@ -68,6 +84,7 @@ export async function GET(request: Request) {
         revision: catalog.revision,
         updatedAt: catalog.updatedAt,
         pricePrefix: catalog.pricePrefix,
+        ...(collection.browsingRules ? { browsingRules: { ...collection.browsingRules } } : {}),
         collection: {
           id: collection.id,
           blockId: collection.blockId,
@@ -80,4 +97,8 @@ export async function GET(request: Request) {
   } catch {
     return json({ error: "order_catalog_unavailable" }, 503);
   }
+}
+
+export async function GET(request: Request) {
+  return handleMerchantCatalogPublicGet(request);
 }
