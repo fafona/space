@@ -3,6 +3,8 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import OrderStatusFilterDropdown from "@/components/admin/OrderStatusFilterDropdown";
+import OrderWorkbenchPanel, { type OrderWorkbenchView } from "@/components/admin/OrderWorkbenchPanel";
+import type { MerchantCatalogTarget } from "@/lib/merchantCatalog";
 import { showGlobalToast } from "@/lib/globalToast";
 import { fetchWithAdminPerformance } from "@/lib/performanceTelemetry";
 import {
@@ -36,6 +38,8 @@ type MerchantOrderManagerDialogProps = {
   siteId: string;
   siteName: string;
   workbenchOpen?: boolean;
+  workbenchInitialView?: OrderWorkbenchView;
+  workbenchCatalogTarget?: MerchantCatalogTarget | null;
   hideWorkbenchButton?: boolean;
   onWorkbenchOpenChange?: (open: boolean) => void;
   onOrdersChange?: (records: MerchantOrderRecord[]) => void;
@@ -255,6 +259,8 @@ export default function MerchantOrderManagerDialog({
   className = "",
   siteId,
   workbenchOpen: controlledWorkbenchOpen,
+  workbenchInitialView = "overview",
+  workbenchCatalogTarget = null,
   hideWorkbenchButton = false,
   onWorkbenchOpenChange,
   onOrdersChange,
@@ -694,8 +700,10 @@ export default function MerchantOrderManagerDialog({
   );
 
   const markOrderTouched = useCallback(
-    async (orderId: string) => {
-      const currentOrder = records.find((item) => item.id === orderId);
+    async (orderId: string, fallbackOrder?: MerchantOrderRecord) => {
+      const currentOrder =
+        records.find((item) => item.id === orderId) ??
+        (fallbackOrder?.id === orderId ? fallbackOrder : null);
       if (!currentOrder || !isMerchantOrderPendingMerchantTouch(currentOrder)) return;
       const touchedAt = new Date().toISOString();
       setRecords((current) =>
@@ -830,9 +838,100 @@ export default function MerchantOrderManagerDialog({
     (record: MerchantOrderRecord) => {
       setExternalDetailOrder(null);
       setDetailOrderId(record.id);
-      void markOrderTouched(record.id);
     },
-    [markOrderTouched],
+    [],
+  );
+
+  const resolveWorkbenchActionOrder = useCallback(
+    async (orderId: string) => {
+      const cachedOrder = records.find((record) => record.id === orderId);
+      if (cachedOrder) return cachedOrder;
+      const response = await fetchWithAdminPerformance(
+        `/api/orders?siteId=${encodeURIComponent(siteId)}&orderId=${encodeURIComponent(orderId)}`,
+        { cache: "no-store", credentials: "same-origin" },
+      );
+      const payload = (await response.json().catch(() => null)) as
+        | { order?: MerchantOrderRecord; message?: string; error?: string }
+        | null;
+      if (!response.ok || !payload?.order) {
+        throw new Error(payload?.message || payload?.error || "没有找到该订单，请刷新后重试。");
+      }
+      return payload.order;
+    },
+    [records, siteId],
+  );
+
+  const contactWorkbenchOrder = useCallback(
+    async (orderId: string) => {
+      if (!onOpenConversation) return;
+      const order = await resolveWorkbenchActionOrder(orderId);
+      if (!order.customerAccountId && !order.customerLoginEmail) {
+        throw new Error("该订单客户未绑定账号或登录邮箱，暂时无法打开会话。");
+      }
+      setWorkbenchOpen(false);
+      void markOrderTouched(order.id, order);
+      onOpenConversation({
+        accountId: order.customerAccountId,
+        email: order.customerLoginEmail,
+        name: order.customer.name,
+      });
+    },
+    [markOrderTouched, onOpenConversation, resolveWorkbenchActionOrder, setWorkbenchOpen],
+  );
+
+  const openWorkbenchEnterpriseTask = useCallback(
+    async (orderId: string) => {
+      if (!onOpenEnterpriseTask) return;
+      const order = await resolveWorkbenchActionOrder(orderId);
+      setWorkbenchOpen(false);
+      onOpenEnterpriseTask(order);
+    },
+    [onOpenEnterpriseTask, resolveWorkbenchActionOrder, setWorkbenchOpen],
+  );
+
+  const openWorkbenchOrder = useCallback(
+    async (orderId: string) => {
+      setWorkbenchOpen(false);
+      const cachedOrder = records.find((record) => record.id === orderId);
+      if (cachedOrder) {
+        openDetailDialog(cachedOrder);
+        return;
+      }
+      setBusyKey(`detail:${orderId}`);
+      setError("");
+      try {
+        const response = await fetchWithAdminPerformance(
+          `/api/orders?siteId=${encodeURIComponent(siteId)}&orderId=${encodeURIComponent(orderId)}`,
+          { cache: "no-store", credentials: "same-origin" },
+        );
+        const payload = (await response.json().catch(() => null)) as
+          | { order?: MerchantOrderRecord; message?: string; error?: string }
+          | null;
+        if (!response.ok || !payload?.order) {
+          throw new Error(payload?.message || payload?.error || "没有找到该订单，请刷新后重试。");
+        }
+        setExternalDetailOrder(payload.order);
+        setDetailOrderId(payload.order.id);
+      } catch (nextError) {
+        setError(nextError instanceof Error && nextError.message ? nextError.message : "订单读取失败");
+      } finally {
+        setBusyKey("");
+      }
+    },
+    [openDetailDialog, records, setWorkbenchOpen, siteId],
+  );
+
+  const openWorkbenchStatus = useCallback(
+    (status: MerchantOrderStatus) => {
+      setSearch("");
+      setHistoryVisibility("none");
+      setFilter(status);
+      if (!selectedStatuses.includes(status)) {
+        setSelectedStatuses((current) => [...current, status]);
+      }
+      setWorkbenchOpen(false);
+    },
+    [selectedStatuses, setHistoryVisibility, setSelectedStatuses, setWorkbenchOpen],
   );
 
   const handleDetailQuantityDraftChange = useCallback((orderId: string, itemIndex: number, value: string) => {
@@ -1028,46 +1127,20 @@ export default function MerchantOrderManagerDialog({
   );
 
   const isSidebarWorkbenchMode = isInline && hideWorkbenchButton;
-  const workbenchDialog = workbenchOpen
-    ? isSidebarWorkbenchMode
-      ? (
-        <div className="min-h-[calc(100vh-14rem)] bg-slate-50 text-slate-900">
-          <div className="border-b border-slate-200 bg-white px-5 py-4">
-            <div className="text-xl font-semibold tracking-tight text-slate-950">订单工作台</div>
-          </div>
-          <div className="px-6 py-5">
-            <div className="mx-auto w-full max-w-7xl rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="text-base font-semibold text-slate-900">订单工作台</div>
-              <div className="mt-2 text-sm leading-6 text-slate-500">这里先保留入口，工作台内功能下一步继续做。</div>
-            </div>
-          </div>
-        </div>
-      )
-      : overlay(
-        <div
-          className="fixed inset-0 z-[2147482940] flex items-center justify-center bg-black/45 px-4"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              setWorkbenchOpen(false);
-            }
-          }}
-        >
-          <div className="w-full max-w-sm rounded-[28px] border border-slate-200 bg-white p-5 shadow-2xl">
-            <div className="text-base font-semibold text-slate-900">订单工作台</div>
-            <div className="mt-2 text-sm leading-6 text-slate-500">这里先保留入口，工作台内功能下一步继续做。</div>
-            <div className="mt-4 flex justify-end">
-              <button
-                type="button"
-                className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
-                onClick={() => setWorkbenchOpen(false)}
-              >
-                关闭
-              </button>
-            </div>
-          </div>
-        </div>,
-      )
-    : null;
+  const workbenchDialog = workbenchOpen ? (
+    <OrderWorkbenchPanel
+      siteId={siteId}
+      mode={isSidebarWorkbenchMode ? "inline" : "overlay"}
+      initialView={workbenchInitialView}
+      catalogTarget={workbenchCatalogTarget}
+      onClose={() => setWorkbenchOpen(false)}
+      onOpenOrder={openWorkbenchOrder}
+      onContactOrder={onOpenConversation ? contactWorkbenchOrder : undefined}
+      onOpenEnterpriseTask={onOpenEnterpriseTask ? openWorkbenchEnterpriseTask : undefined}
+      onStatusFilter={openWorkbenchStatus}
+      onChanged={loadOrders}
+    />
+  ) : null;
 
   if (isSidebarWorkbenchMode && workbenchOpen) return workbenchDialog;
 

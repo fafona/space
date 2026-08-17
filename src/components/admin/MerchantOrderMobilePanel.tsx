@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { showGlobalToast } from "@/lib/globalToast";
+import OrderWorkbenchPanel from "@/components/admin/OrderWorkbenchPanel";
 import {
   formatMerchantOrderAmount,
   isMerchantOrderPendingMerchantTouch,
@@ -578,8 +579,10 @@ export default function MerchantOrderMobilePanel({
   );
 
   const markOrderTouched = useCallback(
-    async (orderId: string) => {
-      const currentOrder = records.find((item) => item.id === orderId);
+    async (orderId: string, fallbackOrder?: MerchantOrderRecord) => {
+      const currentOrder =
+        records.find((item) => item.id === orderId) ??
+        (fallbackOrder?.id === orderId ? fallbackOrder : null);
       if (!currentOrder || !isMerchantOrderPendingMerchantTouch(currentOrder)) return;
       const touchedAt = new Date().toISOString();
       setRecords((current) =>
@@ -662,10 +665,95 @@ export default function MerchantOrderMobilePanel({
     (order: MerchantOrderRecord) => {
       setExternalDetailOrder(null);
       setDetailOrderId(order.id);
-      void markOrderTouched(order.id);
     },
-    [markOrderTouched],
+    [],
   );
+
+  const resolveWorkbenchActionOrder = useCallback(
+    async (orderId: string) => {
+      const cachedOrder = records.find((record) => record.id === orderId);
+      if (cachedOrder) return cachedOrder;
+      const response = await fetch(
+        `/api/orders?siteId=${encodeURIComponent(siteId)}&orderId=${encodeURIComponent(orderId)}`,
+        { cache: "no-store", credentials: "same-origin" },
+      );
+      const payload = (await response.json().catch(() => null)) as
+        | { order?: MerchantOrderRecord; message?: string; error?: string }
+        | null;
+      if (!response.ok || !payload?.order) {
+        throw new Error(payload?.message || payload?.error || "没有找到该订单，请刷新后重试。");
+      }
+      return payload.order;
+    },
+    [records, siteId],
+  );
+
+  const contactWorkbenchOrder = useCallback(
+    async (orderId: string) => {
+      if (!onOpenConversation) return;
+      const order = await resolveWorkbenchActionOrder(orderId);
+      if (!order.customerAccountId && !order.customerLoginEmail) {
+        throw new Error("该订单客户未绑定账号或登录邮箱，暂时无法打开会话。");
+      }
+      setWorkbenchOpen(false);
+      void markOrderTouched(order.id, order);
+      onOpenConversation({
+        accountId: order.customerAccountId,
+        email: order.customerLoginEmail,
+        name: order.customer.name,
+      });
+    },
+    [markOrderTouched, onOpenConversation, resolveWorkbenchActionOrder],
+  );
+
+  const openWorkbenchEnterpriseTask = useCallback(
+    async (orderId: string) => {
+      if (!onOpenEnterpriseTask) return;
+      const order = await resolveWorkbenchActionOrder(orderId);
+      setWorkbenchOpen(false);
+      onOpenEnterpriseTask(order);
+    },
+    [onOpenEnterpriseTask, resolveWorkbenchActionOrder],
+  );
+
+  const openWorkbenchOrder = useCallback(
+    async (orderId: string) => {
+      setWorkbenchOpen(false);
+      const cachedOrder = records.find((record) => record.id === orderId);
+      if (cachedOrder) {
+        openDetailDialog(cachedOrder);
+        return;
+      }
+      setBusyKey(`detail:${orderId}`);
+      setError("");
+      try {
+        const response = await fetch(
+          `/api/orders?siteId=${encodeURIComponent(siteId)}&orderId=${encodeURIComponent(orderId)}`,
+          { cache: "no-store", credentials: "same-origin" },
+        );
+        const payload = (await response.json().catch(() => null)) as
+          | { order?: MerchantOrderRecord; message?: string; error?: string }
+          | null;
+        if (!response.ok || !payload?.order) {
+          throw new Error(payload?.message || payload?.error || "没有找到该订单，请刷新后重试。");
+        }
+        setExternalDetailOrder(payload.order);
+        setDetailOrderId(payload.order.id);
+      } catch (nextError) {
+        setError(nextError instanceof Error && nextError.message ? nextError.message : "订单读取失败");
+      } finally {
+        setBusyKey("");
+      }
+    },
+    [openDetailDialog, records, siteId],
+  );
+
+  const openWorkbenchStatus = useCallback((status: MerchantOrderStatus) => {
+    setSearch("");
+    setHistoryVisibility("none");
+    setFilter(status);
+    setWorkbenchOpen(false);
+  }, []);
 
   const closeDetailDialog = useCallback(() => {
     setDetailOrderId("");
@@ -1130,26 +1218,17 @@ export default function MerchantOrderMobilePanel({
   ) : null;
 
   const workbenchDialog = workbenchOpen ? (
-    <div
-      className="fixed inset-0 z-[2147482940] flex items-center justify-center bg-black/45 px-4"
-      onMouseDown={(event: ReactMouseEvent<HTMLDivElement>) => {
-        if (event.target === event.currentTarget) setWorkbenchOpen(false);
-      }}
-    >
-      <div className="w-full max-w-sm rounded-[28px] border border-slate-200 bg-white p-5 shadow-2xl">
-        <div className="text-base font-semibold text-slate-900">订单工作台</div>
-        <div className="mt-2 text-sm leading-6 text-slate-500">这里先保留入口，工作台内功能下一步继续做。</div>
-        <div className="mt-4 flex justify-end">
-          <button
-            type="button"
-            className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
-            onClick={() => setWorkbenchOpen(false)}
-          >
-            关闭
-          </button>
-        </div>
-      </div>
-    </div>
+    <OrderWorkbenchPanel
+      siteId={siteId}
+      mode="overlay"
+      darkMode={darkMode}
+      onClose={() => setWorkbenchOpen(false)}
+      onOpenOrder={openWorkbenchOrder}
+      onContactOrder={onOpenConversation ? contactWorkbenchOrder : undefined}
+      onOpenEnterpriseTask={onOpenEnterpriseTask ? openWorkbenchEnterpriseTask : undefined}
+      onStatusFilter={openWorkbenchStatus}
+      onChanged={loadOrders}
+    />
   ) : null;
 
   return (

@@ -52,6 +52,7 @@ import {
   type GalleryRowAlign,
 } from "@/lib/galleryLayout";
 import type { EuropeLocationOptionsApi } from "@/lib/europeLocationOptionsLoader";
+import type { MerchantCatalogTarget } from "@/lib/merchantCatalog";
 import {
   buildMerchantCardPlacement,
   clampMerchantCardLayoutValue,
@@ -90,6 +91,7 @@ import {
   createProductItemId,
   defaultProductItemsPerPage,
   filterProductItemsByKeyword,
+  isMeaningfulProductItem,
   normalizeProductCartQuantityMode,
   normalizeProductCartButtonPosition,
   normalizeProductCardHeight,
@@ -834,6 +836,7 @@ function InlineEditorBlock({
   runtimeSiteName = "",
   merchantCouponRecords = [],
   onOpenMerchantCoupons,
+  onOpenOrderCatalog,
   europeLocationOptionsApi,
   onGoogleBusinessProfileRequest,
 }: {
@@ -873,6 +876,7 @@ function InlineEditorBlock({
   runtimeSiteName?: string;
   merchantCouponRecords?: MerchantCouponRecord[];
   onOpenMerchantCoupons?: () => void;
+  onOpenOrderCatalog?: (target: MerchantCatalogTarget) => void;
   europeLocationOptionsApi?: EuropeLocationOptionsApi | null;
   onGoogleBusinessProfileRequest?: (path: string, init: RequestInit) => Promise<Response>;
 }) {
@@ -1119,6 +1123,12 @@ type GalleryEditorImage = {
   const [productPreviewTagByBlockId, setProductPreviewTagByBlockId] = useState<Record<string, string | null>>({});
   const [productPreviewSearchByBlockId, setProductPreviewSearchByBlockId] = useState<Record<string, string>>({});
   const [productTagOptionsDraftByBlockId, setProductTagOptionsDraftByBlockId] = useState<Record<string, string>>({});
+  const [productOperatingCatalogState, setProductOperatingCatalogState] = useState<"loading" | "active" | "legacy" | "blocked">("loading");
+  const [productOperatingCatalog, setProductOperatingCatalog] = useState<{
+    pricePrefix: string;
+    products: ProductEditorItem[];
+    categoryNames: string[];
+  } | null>(null);
   const [productDetailPreview, setProductDetailPreview] = useState<{ blockId: string; itemId: string } | null>(null);
   const [productEditorDialogState, setProductEditorDialogState] = useState<
     | { blockId: string; itemId: string; mode: "create" | "edit" }
@@ -1159,6 +1169,71 @@ type GalleryEditorImage = {
   useEffect(() => {
     setPreviewNavPageId(currentPageId);
   }, [currentPageId, block.id]);
+
+  useEffect(() => {
+    const siteId = runtimeSiteId.trim();
+    if (block.type !== "product" || !siteId) {
+      setProductOperatingCatalogState("legacy");
+      setProductOperatingCatalog(null);
+      return;
+    }
+    const controller = new AbortController();
+    setProductOperatingCatalogState("loading");
+    setProductOperatingCatalog(null);
+    const query = new URLSearchParams({
+      siteId,
+      blockId: block.id,
+      viewport: previewViewport,
+    });
+    void fetch(`/api/orders/catalog/public?${query.toString()}`, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const payload = (await response.json().catch(() => null)) as {
+          catalog?: {
+            pricePrefix?: unknown;
+            products?: unknown;
+            categories?: unknown;
+          } | null;
+        } | null;
+        if (controller.signal.aborted) return;
+        if (!response.ok) {
+          setProductOperatingCatalogState("blocked");
+          setProductOperatingCatalog(null);
+          return;
+        }
+        if (payload?.catalog) {
+          const categoryNames = Array.isArray(payload.catalog.categories)
+            ? payload.catalog.categories
+                .map((category) =>
+                  category && typeof category === "object" && !Array.isArray(category)
+                    ? String((category as { name?: unknown }).name ?? "").trim()
+                    : "",
+                )
+                .filter(Boolean)
+            : [];
+          setProductOperatingCatalog({
+            pricePrefix: String(payload.catalog.pricePrefix ?? "").trim(),
+            products: normalizeProductItems(
+              Array.isArray(payload.catalog.products) ? payload.catalog.products : undefined,
+            ),
+            categoryNames: [...new Set(categoryNames)],
+          });
+          setProductOperatingCatalogState("active");
+        } else {
+          setProductOperatingCatalog(null);
+          setProductOperatingCatalogState("legacy");
+        }
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setProductOperatingCatalog(null);
+          setProductOperatingCatalogState("blocked");
+        }
+      });
+    return () => controller.abort();
+  }, [block.id, block.type, previewViewport, runtimeSiteId]);
 
   function normalizeGalleryImages(
     source: Array<
@@ -1218,6 +1293,10 @@ type GalleryEditorImage = {
 
   function getProductItems(): ProductEditorItem[] {
     if (block.type !== "product") return [];
+    if (productOperatingCatalogState === "active" && productOperatingCatalog) {
+      return normalizeProductItems(productOperatingCatalog.products);
+    }
+    if (productOperatingCatalogState === "blocked" || productOperatingCatalogState === "loading") return [];
     return normalizeProductItems(block.props.products);
   }
 
@@ -6548,7 +6627,12 @@ type GalleryEditorImage = {
     const productCardHeight = normalizeProductCardHeight(block.props.productCardHeight, rawProductImageSize + PRODUCT_LIST_CARD_VERTICAL_PADDING);
     const productImageMaxSize = productLayoutPreset === "list" ? productListImageMaxSize(productCardHeight) : PRODUCT_IMAGE_SIZE_MAX;
     const productImageSize = normalizeProductImageSize(rawProductImageSize, productImageMaxSize);
-    const productPricePrefix = (block.props.productPricePrefix ?? "").trim();
+    const productPricePrefix =
+      productOperatingCatalogState === "active" && productOperatingCatalog
+        ? productOperatingCatalog.pricePrefix
+        : productOperatingCatalogState === "legacy"
+          ? (block.props.productPricePrefix ?? "").trim()
+          : "";
     const productShowCode = block.props.productShowCode !== false;
     const productShowDescription = block.props.productShowDescription !== false;
     const productPriceAlign = normalizeProductPriceAlign(block.props.productPriceAlign);
@@ -6677,7 +6761,10 @@ type GalleryEditorImage = {
     const productSearchEnabled = block.props.productSearchEnabled !== false;
     const productSearchPlaceholder = (block.props.productSearchPlaceholder ?? "").trim() || "搜索产品名称/编号/介绍";
     const productSearchKeyword = productPreviewSearchByBlockId[block.id] ?? "";
-    const savedProductTagOptions = normalizeProductTagOptions(block.props.productTagOptions);
+    const savedProductTagOptions =
+      productOperatingCatalogState === "active" && productOperatingCatalog
+        ? normalizeProductTagOptions(productOperatingCatalog.categoryNames)
+        : normalizeProductTagOptions(block.props.productTagOptions);
     const productTagOptionsText = productTagOptionsDraftByBlockId[block.id] ?? savedProductTagOptions.join("\n");
     const productTagOptions = Array.from(
       new Set([
@@ -7338,6 +7425,65 @@ type GalleryEditorImage = {
         "products",
         "产品",
         <div className="space-y-3">
+          <div className={`rounded-xl border px-4 py-3 ${
+            productOperatingCatalogState === "active"
+              ? "border-emerald-200 bg-emerald-50"
+              : productOperatingCatalogState === "blocked"
+                ? "border-amber-200 bg-amber-50"
+                : productOperatingCatalogState === "loading"
+                  ? "border-slate-200 bg-slate-50"
+                  : "border-sky-200 bg-sky-50"
+          }`}>
+            <div className="text-sm font-semibold text-slate-900">
+              {productOperatingCatalogState === "active"
+                ? "商品经营数据已移至订单工作台"
+                : productOperatingCatalogState === "blocked"
+                  ? "商品目录绑定需要修复"
+                  : productOperatingCatalogState === "loading"
+                    ? "正在核对工作台商品目录"
+                    : "在订单工作台管理商品经营数据"}
+            </div>
+            <div className="mt-1 text-xs leading-5 text-slate-600">
+              {productOperatingCatalogState === "active"
+                ? "该区块的名称、编号、价格、分类和可售状态以工作台目录为准；这里继续管理布局、样式和展示文案。"
+                : productOperatingCatalogState === "blocked"
+                  ? "当前区块无法安全解析工作台目录。为避免旧商品或旧价格重新上线，经营字段已锁定；请打开工作台修复区块绑定。"
+                  : productOperatingCatalogState === "loading"
+                    ? "核对完成前暂不开放旧商品编辑，以免覆盖已经迁移的经营数据。"
+                    : "建立经营目录后，商品和价格可直接在工作台更新，无需修改并重新发布网站。建立前仍可使用下方兼容编辑。"}
+            </div>
+            {onOpenOrderCatalog ? (
+              <button
+                type="button"
+                className="mt-3 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 shadow-sm hover:bg-slate-50"
+                onClick={() =>
+                  onOpenOrderCatalog({
+                    blockId: block.id,
+                    viewport: previewViewport,
+                    productIds: [
+                      ...new Set(
+                        normalizeProductItems(block.props.products)
+                          .filter((product) => isMeaningfulProductItem(product))
+                          .map((product) => product.id),
+                      ),
+                    ],
+                  })
+                }
+              >
+                打开订单工作台商品目录
+              </button>
+            ) : null}
+          </div>
+          {productOperatingCatalogState !== "legacy" ? (
+            <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-500">
+              {productOperatingCatalogState === "blocked"
+                ? "旧商品草稿不会用于修复当前绑定，也不会重新控制线上报价。请使用上方入口完成绑定。"
+                : productOperatingCatalogState === "loading"
+                  ? "正在读取经营目录，旧商品草稿暂时锁定。"
+                  : "兼容商品草稿已不再控制该区块的线上商品与报价。如需修改商品，请使用上方入口。"}
+            </div>
+          ) : (
+            <>
           <div className={compact ? "grid grid-cols-2 gap-3" : "grid grid-cols-3 gap-3"}>
             <button
               type="button"
@@ -7372,6 +7518,8 @@ type GalleryEditorImage = {
               ? "暂无产品，点击“新增产品”后会直接打开编辑弹窗。"
               : "点击上方产品预览中的任意产品，可直接弹窗编辑该产品；新增产品也会直接打开编辑弹窗。"}
           </div>
+            </>
+          )}
         </div>,
         { bodyClassName: "mt-3" },
       );

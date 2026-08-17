@@ -257,9 +257,13 @@ async function fetchPublishedSiteBlocksFromSupabaseUncached(siteId: string): Pro
   };
 }
 
-export async function fetchPublishedSiteBlocksFromSupabase(siteId: string): Promise<PublishedSiteBlocksPayload | null> {
+export async function fetchPublishedSiteBlocksFromSupabase(
+  siteId: string,
+  options?: { fresh?: boolean },
+): Promise<PublishedSiteBlocksPayload | null> {
   const normalizedSiteId = String(siteId ?? "").trim();
   if (!isMerchantNumericId(normalizedSiteId)) return null;
+  if (options?.fresh) return fetchPublishedSiteBlocksFromSupabaseUncached(normalizedSiteId);
 
   const cached = publishedSiteBlocksCache.get(normalizedSiteId);
   if (cached && cached.expiresAt > Date.now()) {

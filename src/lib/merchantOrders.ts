@@ -147,6 +147,9 @@ export function getMerchantOrderStatusLabel(status: MerchantOrderStatus) {
 
 export function getMerchantOrderErrorMessage(value: unknown) {
   const code = value instanceof Error ? value.message : trimText(value);
+  if (code === "order_management_disabled") {
+    return "当前商户未启用订单管理功能，暂时无法查看或提交订单。";
+  }
   if (code === "membership_recharge_cancel_balance_insufficient" || code === "order_points_reversal_balance_insufficient") {
     return "该订单赠送的积分已被使用，暂时不能回退完成状态；请先处理会员积分后再操作。";
   }
@@ -157,9 +160,22 @@ export function getMerchantOrderErrorMessage(value: unknown) {
   if (code === "order_product_catalog_conflict") {
     return "手机端与电脑端的产品价格不一致，请先在网站编辑器中统一价格后再下单。";
   }
+  if (code === "order_product_catalog_changed") {
+    return "商品目录已更新，请刷新商品列表并确认最新价格后重新提交。";
+  }
+  if (code === "order_product_catalog_scope_unavailable") {
+    return "当前页面的商品目录配置已变更，请刷新页面后重新选择商品。";
+  }
+  if (code === "order_product_unavailable") {
+    return "商品已售罄或暂停销售，请刷新商品列表后重新选择。";
+  }
+  if (code === "order_product_price_invalid") {
+    return "商品价格配置无效，暂时无法下单，请联系商家。";
+  }
   if (code === "order_quantity_invalid") return `单项产品数量必须为 1-${MERCHANT_ORDER_MAX_ITEM_QUANTITY}。`;
   if (code === "order_too_many_items") return `每笔订单最多包含 ${MERCHANT_ORDER_MAX_LINE_ITEMS} 种产品。`;
   if (code === "order_catalog_unavailable") return "产品目录暂时不可用，请稍后重试。";
+  if (code === "merchant_catalog_storage_unavailable") return "产品目录暂时不可用，请稍后重试。";
   if (code === "order_request_conflict") return "订单提交编号冲突，请修改购物车后重试。";
   if (code === "order_not_found") return "没有找到该订单，可能已被其他操作更新，请刷新后重试。";
   if (code === "order_customer_action_locked") return "商家已开始处理该订单，当前不能由客户取消。";

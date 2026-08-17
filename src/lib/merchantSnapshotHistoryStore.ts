@@ -62,6 +62,10 @@ function isMissingUpdatedAtColumn(message: string) {
   );
 }
 
+function isUniqueConstraintError(message: string) {
+  return /duplicate key|unique constraint|already exists/i.test(message);
+}
+
 function normalizeHistoryEntry(value: unknown): MerchantSnapshotHistoryEntry | null {
   if (!value || typeof value !== "object") return null;
   const input = value as Partial<MerchantSnapshotHistoryEntry>;
@@ -157,30 +161,57 @@ async function persistSnapshotHistoryPayload(
   payload: MerchantSnapshotHistoryPayload,
   merchantId: string | null = siteId,
   existingLookup?: SnapshotHistoryRowLookup,
-): Promise<{ error: string | null }> {
+  requireCompareAndSwap = false,
+): Promise<{ error: string | null; conflict?: boolean }> {
   const existing = existingLookup ?? (await querySnapshotHistoryRow(supabase, siteId, slug, "id", merchantId));
   if (existing.error) return { error: existing.error };
 
   const updatedAt = payload.updatedAt || new Date().toISOString();
   const bodyWithUpdatedAt = { blocks: payload, updated_at: updatedAt };
   const bodyWithoutUpdatedAt = { blocks: payload };
-  const write = async (body: Record<string, unknown>) => {
+  const existingUpdatedAt = normalizeText(existing.row?.updated_at);
+  const write = async (body: Record<string, unknown>, useUpdatedAtGuard: boolean) => {
     if (existing.row?.id !== undefined && existing.row.id !== null) {
-      const updated = await supabase.from("pages").update(body).eq("id", existing.row.id);
-      return updated.error ? { error: toErrorMessage(updated.error) } : { error: null };
+      let updateQuery = supabase.from("pages").update(body).eq("id", existing.row.id);
+      if (useUpdatedAtGuard && existingUpdatedAt) {
+        updateQuery = updateQuery.eq("updated_at", existingUpdatedAt);
+      }
+      const selectable = updateQuery as { select?: (columns: string) => Promise<{ data?: unknown; error?: unknown }> };
+      const updated =
+        typeof selectable.select === "function"
+          ? await selectable.select("id")
+          : await updateQuery;
+      if (updated.error) return { error: toErrorMessage(updated.error), conflict: false };
+      if (
+        useUpdatedAtGuard &&
+        existingUpdatedAt &&
+        Array.isArray(updated.data) &&
+        updated.data.length === 0
+      ) {
+        return { error: "history_revision_conflict", conflict: true };
+      }
+      return { error: null, conflict: false };
     }
     const inserted = await supabase.from("pages").insert({
       ...body,
       slug,
       ...(existing.supportsMerchantId ? { merchant_id: merchantId } : {}),
     });
-    return inserted.error ? { error: toErrorMessage(inserted.error) } : { error: null };
+    if (inserted.error) {
+      const error = toErrorMessage(inserted.error);
+      return { error, conflict: isUniqueConstraintError(error) };
+    }
+    return { error: null, conflict: false };
   };
 
-  const first = await write(bodyWithUpdatedAt);
+  const first = await write(bodyWithUpdatedAt, true);
   if (!first.error) return first;
+  if (first.conflict) return first;
   if (!isMissingUpdatedAtColumn(first.error)) return first;
-  return write(bodyWithoutUpdatedAt);
+  if (requireCompareAndSwap && existing.row?.id !== undefined && existing.row.id !== null) {
+    return { error: "history_cas_unavailable", conflict: false };
+  }
+  return write(bodyWithoutUpdatedAt, false);
 }
 
 export async function saveMerchantSnapshotHistory(
@@ -195,6 +226,8 @@ export async function saveMerchantSnapshotHistory(
     at?: string | null;
     maxEntries?: number;
     merchantId?: string | null;
+    /** Refuse unsafe updates when the backing schema cannot CAS updated_at. */
+    requireCompareAndSwap?: boolean;
   },
 ): Promise<{ error: string | null }> {
   const siteId = normalizeText(input.siteId);
@@ -203,42 +236,91 @@ export async function saveMerchantSnapshotHistory(
   if (!siteId || !slug || !backupSlug) return { error: "invalid_history_input" };
 
   const at = normalizeText(input.at) || new Date().toISOString();
-  const id = `${siteId}:${at}:${normalizeText(input.source) || "save"}:${Math.random().toString(36).slice(2, 8)}`;
+  const source = normalizeText(input.source) || "save";
+  const entry: MerchantSnapshotHistoryEntry = {
+    id: `${siteId}:${at}:${source}:${Math.random().toString(36).slice(2, 8)}`,
+    siteId,
+    at,
+    source,
+    before: input.before ?? null,
+    after: input.after ?? null,
+  };
   const merchantId =
     Object.prototype.hasOwnProperty.call(input, "merchantId") && input.merchantId === null
       ? null
       : normalizeText(input.merchantId) || siteId;
   const [current, backupCurrent] = await Promise.all([
     querySnapshotHistoryRow(supabase, siteId, slug, "id,blocks,updated_at", merchantId),
-    querySnapshotHistoryRow(supabase, siteId, backupSlug, "id", merchantId),
+    querySnapshotHistoryRow(supabase, siteId, backupSlug, "id,blocks,updated_at", merchantId),
   ]);
   if (current.error) return { error: current.error };
-  const currentPayload = normalizeHistoryPayload(current.row?.blocks, siteId);
   const maxEntries = Math.max(1, Math.min(1000, input.maxEntries ?? 240));
-  const nextPayload = normalizeHistoryPayload(
-    {
+  const buildPayload = (
+    lookup: SnapshotHistoryRowLookup,
+    additions: MerchantSnapshotHistoryEntry[],
+  ) => {
+    const currentPayload = normalizeHistoryPayload(lookup.row?.blocks, siteId);
+    const currentStamp = Date.parse(currentPayload.updatedAt ?? "");
+    const incomingStamp = Math.max(...additions.map((item) => Date.parse(item.at)).filter(Number.isFinite));
+    const nextStamp = Math.max(
+      Date.now(),
+      Number.isFinite(incomingStamp) ? incomingStamp : 0,
+      Number.isFinite(currentStamp) ? currentStamp + 1 : 0,
+    );
+    const updatedAt = new Date(nextStamp).toISOString();
+    const normalized = normalizeHistoryPayload(
+      {
+        siteId,
+        updatedAt,
+        entries: [...additions, ...currentPayload.entries],
+      },
       siteId,
-      updatedAt: at,
-      entries: [
-        {
-          id,
-          siteId,
-          at,
-          source: normalizeText(input.source) || "save",
-          before: input.before ?? null,
-          after: input.after ?? null,
-        },
-        ...currentPayload.entries,
-      ].slice(0, maxEntries),
-    },
-    siteId,
-  );
+    );
+    return { ...normalized, entries: normalized.entries.slice(0, maxEntries) };
+  };
 
-  const primary = await persistSnapshotHistoryPayload(supabase, siteId, slug, nextPayload, merchantId, current);
-  if (primary.error) return primary;
-  const backup = backupCurrent.error
-    ? { error: backupCurrent.error }
-    : await persistSnapshotHistoryPayload(supabase, siteId, backupSlug, nextPayload, merchantId, backupCurrent);
+  let primaryLookup = current;
+  let nextPayload: MerchantSnapshotHistoryPayload | null = null;
+  let primary: { error: string | null; conflict?: boolean } = { error: "history_revision_conflict" };
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    nextPayload = buildPayload(primaryLookup, [entry]);
+    primary = await persistSnapshotHistoryPayload(
+      supabase,
+      siteId,
+      slug,
+      nextPayload,
+      merchantId,
+      primaryLookup,
+      input.requireCompareAndSwap === true,
+    );
+    if (!primary.conflict) break;
+    primaryLookup = await querySnapshotHistoryRow(supabase, siteId, slug, "id,blocks,updated_at", merchantId);
+    if (primaryLookup.error) return { error: primaryLookup.error };
+  }
+  if (primary.error) return { error: primary.error };
+
+  let backup: { error: string | null; conflict?: boolean } = backupCurrent.error
+    ? { error: backupCurrent.error, conflict: false }
+    : { error: "history_revision_conflict", conflict: true };
+  let backupLookup = backupCurrent;
+  for (let attempt = 0; !backupCurrent.error && attempt < 3; attempt += 1) {
+    const backupPayload = buildPayload(backupLookup, nextPayload?.entries ?? [entry]);
+    backup = await persistSnapshotHistoryPayload(
+      supabase,
+      siteId,
+      backupSlug,
+      backupPayload,
+      merchantId,
+      backupLookup,
+      input.requireCompareAndSwap === true,
+    );
+    if (!backup.conflict) break;
+    backupLookup = await querySnapshotHistoryRow(supabase, siteId, backupSlug, "id,blocks,updated_at", merchantId);
+    if (backupLookup.error) {
+      backup = { error: backupLookup.error, conflict: false };
+      break;
+    }
+  }
   if (backup.error && typeof console !== "undefined") {
     console.error("[merchant-snapshot-history] backup save failed", backup.error);
   }

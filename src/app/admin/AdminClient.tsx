@@ -253,6 +253,7 @@ import {
   isMerchantOrderNewForMerchant,
   type MerchantOrderRecord,
 } from "@/lib/merchantOrders";
+import type { MerchantCatalogTarget } from "@/lib/merchantCatalog";
 import {
   buildMerchantOrderTaskDraft,
   getMerchantOrderSourceErrorMessage,
@@ -4257,6 +4258,8 @@ export default function AdminClient({
   const [merchantCouponRecords, setMerchantCouponRecords] = useState<MerchantCouponRecord[]>([]);
   const [merchantBookingWorkbenchOpen, setMerchantBookingWorkbenchOpen] = useState(false);
   const [merchantOrderWorkbenchOpen, setMerchantOrderWorkbenchOpen] = useState(false);
+  const [merchantOrderWorkbenchInitialView, setMerchantOrderWorkbenchInitialView] = useState<"overview" | "catalog">("overview");
+  const [merchantOrderCatalogTarget, setMerchantOrderCatalogTarget] = useState<MerchantCatalogTarget | null>(null);
   const [merchantBookingAttentionSummary, setMerchantBookingAttentionSummary] = useState<MerchantBusinessAttentionSummary>({
     count: 0,
     latest: null,
@@ -13051,7 +13054,27 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       return;
     }
     setMerchantSiteIdOverride(resolvedSiteId);
+    setMerchantOrderWorkbenchInitialView("overview");
+    setMerchantOrderCatalogTarget(null);
     setMerchantOrderWorkbenchOpen(false);
+    setMerchantDesktopSection("orders");
+  }
+
+  async function openMerchantOrderCatalogPanel(target?: MerchantCatalogTarget) {
+    if (!canUseOrderManagement) {
+      showTip("当前商户未开通订单管理，暂时不能使用商品经营目录");
+      return;
+    }
+    void loadMerchantOrderManagerDialog().catch(() => undefined);
+    const resolvedSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
+    if (!resolvedSiteId) {
+      showTip("当前商户还没准备好商品目录，请稍后重试");
+      return;
+    }
+    setMerchantSiteIdOverride(resolvedSiteId);
+    setMerchantOrderWorkbenchInitialView("catalog");
+    setMerchantOrderCatalogTarget(target ?? null);
+    setMerchantOrderWorkbenchOpen(true);
     setMerchantDesktopSection("orders");
   }
 
@@ -19862,6 +19885,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               mode="inline"
               showCloseButton={false}
               workbenchOpen={merchantOrderWorkbenchOpen}
+              workbenchInitialView={merchantOrderWorkbenchInitialView}
+              workbenchCatalogTarget={merchantOrderCatalogTarget}
               hideWorkbenchButton
               onWorkbenchOpenChange={setMerchantOrderWorkbenchOpen}
               className="min-h-[calc(100vh-14rem)]"
@@ -20467,7 +20492,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       <button
                         type="button"
                         className={getMerchantDesktopSubmenuButtonClassName(merchantOrderWorkbenchOpen, "amber")}
-                        onClick={() => setMerchantOrderWorkbenchOpen(true)}
+                        onClick={() => {
+                          setMerchantOrderWorkbenchInitialView("overview");
+                          setMerchantOrderCatalogTarget(null);
+                          setMerchantOrderWorkbenchOpen(true);
+                        }}
                         aria-pressed={merchantOrderWorkbenchOpen}
                       >
                         订单工作台
@@ -21249,6 +21278,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                               runtimeSiteName={merchantDisplayName}
                               merchantCouponRecords={merchantCouponRecords}
                               onOpenMerchantCoupons={openMerchantCouponsPanel}
+                              onOpenOrderCatalog={(target) => void openMerchantOrderCatalogPanel(target)}
                               europeLocationOptionsApi={europeLocationOptionsApi}
                               onGoogleBusinessProfileRequest={requestMerchantChatWithSessionRecovery}
                             />
@@ -21318,6 +21348,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       runtimeSiteName={merchantDisplayName}
                       merchantCouponRecords={merchantCouponRecords}
                       onOpenMerchantCoupons={openMerchantCouponsPanel}
+                      onOpenOrderCatalog={(target) => void openMerchantOrderCatalogPanel(target)}
                       europeLocationOptionsApi={europeLocationOptionsApi}
                       onGoogleBusinessProfileRequest={requestMerchantChatWithSessionRecovery}
                     />

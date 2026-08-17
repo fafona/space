@@ -35,6 +35,16 @@ const mobileOrderManagerSource = readFileSync(
   ),
   "utf8",
 );
+const orderWorkbenchSource = readFileSync(
+  path.join(
+    process.cwd(),
+    "src",
+    "components",
+    "admin",
+    "OrderWorkbenchPanel.tsx",
+  ),
+  "utf8",
+);
 const enterprisePortalSource = readFileSync(
   path.join(
     process.cwd(),
@@ -957,7 +967,7 @@ test("merchant admin moves enterprise subviews into the contextual sidebar menu"
   assert.ok(enterpriseButtonIndex < supportButtonIndex);
 });
 
-test("desktop and mobile order managers expose the enterprise-task action only in order details", () => {
+test("desktop and mobile order managers expose enterprise tasks only in details and workbench todos", () => {
   const variants = [
     {
       label: "desktop order manager",
@@ -1001,8 +1011,18 @@ test("desktop and mobile order managers expose the enterprise-task action only i
     const outsideDetailSource = variant.targetSource.replace(detailSource, "");
     assert.doesNotMatch(
       outsideDetailSource,
-      /onOpenEnterpriseTask\s*\(\s*(?:record|order)\s*\)/,
-      `${variant.label} must not add enterprise-task actions to order lists or batch actions`,
+      /创建\/查看企业任务/,
+      `${variant.label} must not add direct enterprise-task buttons to order lists or batch actions`,
+    );
+    assert.match(
+      outsideDetailSource,
+      /resolveWorkbenchActionOrder\(orderId\)[\s\S]{0,300}onOpenEnterpriseTask\(order\)/,
+      `${variant.label} must resolve the exact workbench order before opening its task`,
+    );
+    assert.match(
+      outsideDetailSource,
+      /onOpenEnterpriseTask=\{onOpenEnterpriseTask\s*\?\s*openWorkbenchEnterpriseTask\s*:\s*undefined\}/,
+      `${variant.label} must pass only the guarded workbench callback`,
     );
     assert.equal(
       [...variant.targetSource.matchAll(/创建\/查看企业任务/g)].length,
@@ -1010,6 +1030,10 @@ test("desktop and mobile order managers expose the enterprise-task action only i
       `${variant.label} must render one detail-only enterprise-task entry`,
     );
   }
+
+  assert.match(orderWorkbenchSource, /onOpenEnterpriseTask\?\s*:\s*\(orderId:\s*string\)/);
+  assert.match(orderWorkbenchSource, /runOrderIntent\(group\.orderId,\s*"task",\s*onOpenEnterpriseTask\)/);
+  assert.match(orderWorkbenchSource, /创建\/查看企业任务/);
 });
 
 test("merchant admin gates order-task entry points and forwards one request-scoped intent", () => {

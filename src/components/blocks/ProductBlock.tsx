@@ -111,6 +111,7 @@ type ProductBlockProps = BackgroundEditableProps &
     runtimeSiteName?: string;
     runtimeBlockId?: string;
     runtimeCatalogViewport?: "desktop" | "mobile";
+    runtimeUseOperatingCatalog?: boolean;
     runtimeOrderManagementEnabled?: boolean;
     runtimeInteractiveOverlayWithinBlock?: boolean;
     runtimeDisableCartPortal?: boolean;
@@ -144,6 +145,22 @@ type ProductCartFlyItem = {
   fromY: number;
   deltaX: number;
   deltaY: number;
+};
+
+type RuntimeCatalogAvailability = "available" | "sold_out";
+
+type RuntimeOperatingCatalog = {
+  revision: number;
+  updatedAt: string;
+  pricePrefix: string;
+  categories: Array<{ id: string; name: string }>;
+  products: Array<ProductItem & { availability: RuntimeCatalogAvailability }>;
+};
+
+type RuntimeCatalogState = {
+  key: string;
+  status: "idle" | "loading" | "ready" | "error";
+  catalog: RuntimeOperatingCatalog | null;
 };
 
 const PRODUCT_CART_STORAGE_PREFIX = "merchant-space:product-cart:v1:";
@@ -511,6 +528,7 @@ function renderProductCard(
     priceTextStyle: CSSProperties;
     onOpen: (id: string) => void;
     cartEnabled?: boolean;
+    availability?: RuntimeCatalogAvailability;
     cartQuantityMode?: ProductCartQuantityMode;
     cartButtonPosition?: ProductCartButtonPosition;
     quantity?: number;
@@ -521,6 +539,7 @@ function renderProductCard(
     spotlight?: boolean;
   },
 ) {
+  const unavailable = options.availability === "sold_out";
   const priceText = productPriceText(item.price, options.pricePrefix);
   const previewImageUrl = getProductPreviewImageUrl(item);
   const textWrapStyle = { overflowWrap: "anywhere" as const, wordBreak: "break-word" as const };
@@ -582,7 +601,12 @@ function renderProductCard(
       } ${options.spotlight ? "lg:min-h-[420px]" : ""}`}
       style={{ ...cardBackgroundStyle, ...cardBorderInlineStyle, ...listCardStyle }}
     >
-      {options.cartEnabled ? (
+      {unavailable ? (
+        <div className="absolute right-3 top-3 z-30 rounded-full bg-slate-900/85 px-3 py-1 text-xs font-semibold text-white shadow-sm">
+          售罄
+        </div>
+      ) : null}
+      {options.cartEnabled && !unavailable ? (
         options.cartQuantityMode === "plus-only" ? (
           <button
             type="button"
@@ -681,6 +705,39 @@ function renderProductCard(
   );
 }
 
+function readRuntimeOperatingCatalog(value: unknown): RuntimeOperatingCatalog | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (!Array.isArray(record.products)) return null;
+  const availabilityById = new Map<string, RuntimeCatalogAvailability>();
+  record.products.forEach((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return;
+    const product = item as Record<string, unknown>;
+    const id = typeof product.id === "string" ? product.id.trim() : "";
+    if (!id) return;
+    availabilityById.set(id, product.availability === "sold_out" ? "sold_out" : "available");
+  });
+  const products = normalizeProductItems(record.products as ProductItemInput[])
+    .filter((item) => isMeaningfulProductItem(item))
+    .map((item) => ({ ...item, availability: availabilityById.get(item.id) ?? "available" }));
+  const categories = Array.isArray(record.categories)
+    ? record.categories.flatMap((item) => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+        const category = item as Record<string, unknown>;
+        const id = typeof category.id === "string" ? category.id.trim() : "";
+        const name = typeof category.name === "string" ? category.name.trim() : "";
+        return id && name ? [{ id, name }] : [];
+      })
+    : [];
+  return {
+    revision: typeof record.revision === "number" && Number.isFinite(record.revision) ? record.revision : 0,
+    updatedAt: typeof record.updatedAt === "string" ? record.updatedAt.trim() : "",
+    pricePrefix: typeof record.pricePrefix === "string" ? record.pricePrefix.trim() : "",
+    categories,
+    products,
+  };
+}
+
 export default function ProductBlock(props: ProductBlockProps) {
   const openedView = props.runtimeOpenedView === true;
   const openedToolbarTargetId = typeof props.runtimeOpenedToolbarTargetId === "string" ? props.runtimeOpenedToolbarTargetId : "";
@@ -694,23 +751,92 @@ export default function ProductBlock(props: ProductBlockProps) {
   const onOpenedCartStateChange = props.runtimeOnOpenedCartStateChange;
   const mobileFitScreenWidth = props.mobileFitScreenWidth === true;
   const { locale } = useI18n();
+  const runtimeSiteId = String(props.runtimeSiteId ?? "").trim();
+  const runtimeBlockId = String(props.runtimeBlockId ?? "").trim();
+  const runtimeCatalogViewport = props.runtimeCatalogViewport === "mobile" ? "mobile" : "desktop";
+  const runtimeUseOperatingCatalog = props.runtimeUseOperatingCatalog === true;
+  const runtimeCatalogKey = runtimeUseOperatingCatalog && runtimeSiteId && runtimeBlockId
+    ? `${runtimeSiteId}\u0001${runtimeBlockId}\u0001${runtimeCatalogViewport}`
+    : "";
+  const [runtimeCatalogState, setRuntimeCatalogState] = useState<RuntimeCatalogState>({
+    key: "",
+    status: "idle",
+    catalog: null,
+  });
+
+  useEffect(() => {
+    if (!runtimeCatalogKey) {
+      setRuntimeCatalogState((current) =>
+        current.status === "idle" && !current.key && current.catalog === null
+          ? current
+          : { key: "", status: "idle", catalog: null },
+      );
+      return;
+    }
+    const controller = new AbortController();
+    setRuntimeCatalogState({ key: runtimeCatalogKey, status: "loading", catalog: null });
+    const query = new URLSearchParams({
+      siteId: runtimeSiteId,
+      blockId: runtimeBlockId,
+      viewport: runtimeCatalogViewport,
+    });
+    void fetch(`/api/orders/catalog/public?${query.toString()}`, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const payload = (await response.json().catch(() => null)) as { catalog?: unknown } | null;
+        if (!response.ok) throw new Error("catalog_fetch_failed");
+        setRuntimeCatalogState({
+          key: runtimeCatalogKey,
+          status: "ready",
+          catalog: readRuntimeOperatingCatalog(payload?.catalog),
+        });
+      })
+      .catch((error) => {
+        if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) return;
+        setRuntimeCatalogState({ key: runtimeCatalogKey, status: "error", catalog: null });
+      });
+    return () => controller.abort();
+  }, [runtimeBlockId, runtimeCatalogKey, runtimeCatalogViewport, runtimeSiteId]);
+
+  const operatingCatalog =
+    runtimeCatalogState.key === runtimeCatalogKey && runtimeCatalogState.status === "ready"
+      ? runtimeCatalogState.catalog
+      : null;
+  const runtimeCatalogLoading = Boolean(
+    runtimeCatalogKey &&
+      (runtimeCatalogState.key !== runtimeCatalogKey || runtimeCatalogState.status === "loading"),
+  );
+  const runtimeCatalogError = Boolean(
+    runtimeCatalogKey && runtimeCatalogState.key === runtimeCatalogKey && runtimeCatalogState.status === "error",
+  );
   const products = useMemo(
     () =>
-      normalizeProductItems(props.products)
+      normalizeProductItems(operatingCatalog?.products ?? props.products)
         .map((item) => ({
           ...item,
           imageUrl: normalizeProductImageSource(normalizePublicAssetUrl(item.imageUrl)),
           thumbnailUrl: normalizeProductImageSource(normalizePublicAssetUrl(item.thumbnailUrl)),
         }))
         .filter((item) => isMeaningfulProductItem(item)),
-    [props.products],
+    [operatingCatalog?.products, props.products],
+  );
+  const productAvailabilityById = useMemo(
+    () => new Map(
+      (operatingCatalog?.products ?? []).map((item) => [item.id, item.availability] as const),
+    ),
+    [operatingCatalog?.products],
   );
   const productTags = useMemo(
     () =>
       Array.from(
-        new Set([...normalizeProductTagOptions(props.productTagOptions), ...products.map((item) => item.tag).filter(Boolean)]),
+        new Set([
+          ...normalizeProductTagOptions(operatingCatalog?.categories.map((category) => category.name) ?? props.productTagOptions),
+          ...products.map((item) => item.tag).filter(Boolean),
+        ]),
       ),
-    [products, props.productTagOptions],
+    [operatingCatalog?.categories, products, props.productTagOptions],
   );
   const productTagKey = productTags.join("\u0001");
   const groupedByTag = props.productGroupByTag === true;
@@ -726,7 +852,7 @@ export default function ProductBlock(props: ProductBlockProps) {
   const rawImageSize = typeof props.productImageSize === "number" && Number.isFinite(props.productImageSize) ? Math.round(props.productImageSize) : 220;
   const productCardHeight = normalizeProductCardHeight(props.productCardHeight, rawImageSize + PRODUCT_LIST_CARD_VERTICAL_PADDING);
   const imageSize = normalizeProductImageSize(rawImageSize, layoutPreset === "list" ? productListImageMaxSize(productCardHeight) : undefined);
-  const pricePrefix = (props.productPricePrefix ?? "").trim();
+  const pricePrefix = (operatingCatalog?.pricePrefix ?? props.productPricePrefix ?? "").trim();
   const productSearchEnabled = props.productSearchEnabled !== false;
   const productSearchPlaceholder = resolveLocalizedSystemDefaultText(
     props.productSearchPlaceholder,
@@ -851,15 +977,14 @@ export default function ProductBlock(props: ProductBlockProps) {
   const productScrollSpyFrameRef = useRef<number | null>(null);
   const stableRuntimeSiteIdRef = useRef("");
   const openedCartCloseSignalRef = useRef(openedCartCloseSignal);
-  const runtimeSiteId = String(props.runtimeSiteId ?? "").trim();
-  const runtimeBlockId = String(props.runtimeBlockId ?? "").trim();
-  const runtimeCatalogViewport = props.runtimeCatalogViewport === "mobile" ? "mobile" : "desktop";
   if (runtimeSiteId) stableRuntimeSiteIdRef.current = runtimeSiteId;
   const effectiveRuntimeSiteId = runtimeSiteId || stableRuntimeSiteIdRef.current;
   const [cartRuntimeEnabled, setCartRuntimeEnabled] = useState(() =>
     Boolean(props.runtimeOrderManagementEnabled && runtimeBlockId),
   );
-  const cartEnabled = Boolean(cartRuntimeEnabled && runtimeBlockId);
+  const runtimeCatalogReadyForOrdering = !runtimeCatalogKey ||
+    (runtimeCatalogState.key === runtimeCatalogKey && runtimeCatalogState.status === "ready");
+  const cartEnabled = Boolean(cartRuntimeEnabled && runtimeBlockId && runtimeCatalogReadyForOrdering);
   const cartRuntimeReady = Boolean(cartEnabled && effectiveRuntimeSiteId && runtimeBlockId);
   const cartStorageKey = cartRuntimeReady ? getProductCartStorageKey(effectiveRuntimeSiteId, runtimeBlockId) : "";
   const cartStorageIdentity = cartStorageKey ? `${cartStorageKey}\u0001${pricePrefix}` : "";
@@ -1345,6 +1470,10 @@ export default function ProductBlock(props: ProductBlockProps) {
     if (!cartEnabled) return;
     setCartError("");
     setCartNotice("");
+    if (productAvailabilityById.get(item.id) === "sold_out") {
+      setCartError("该商品已售罄，请选择其他商品。");
+      return;
+    }
     if (!cartItems.some((entry) => entry.productId === item.id) && cartItems.length >= MERCHANT_ORDER_MAX_LINE_ITEMS) {
       setCartError(`购物车最多保留 ${MERCHANT_ORDER_MAX_LINE_ITEMS} 种产品。`);
       return;
@@ -1484,6 +1613,7 @@ export default function ProductBlock(props: ProductBlockProps) {
           siteName: props.runtimeSiteName,
           blockId: runtimeBlockId,
           catalogViewport: runtimeCatalogViewport,
+          catalogRevision: operatingCatalog?.revision,
           clientRequestId,
           pricePrefix,
           frontendAuthProof,
@@ -1533,7 +1663,7 @@ export default function ProductBlock(props: ProductBlockProps) {
       let changed = false;
       const next = current.flatMap((entry) => {
         const product = productMap.get(entry.productId);
-        if (!product) {
+        if (!product || productAvailabilityById.get(entry.productId) === "sold_out") {
           changed = true;
           return [];
         }
@@ -1561,7 +1691,7 @@ export default function ProductBlock(props: ProductBlockProps) {
       if (!changed) return current;
       return normalizeCartItems(next, pricePrefix);
     });
-  }, [cartEnabled, pricePrefix, products]);
+  }, [cartEnabled, pricePrefix, productAvailabilityById, products]);
 
   const renderCard = (
     item: ReturnType<typeof normalizeProductItems>[number],
@@ -1584,7 +1714,8 @@ export default function ProductBlock(props: ProductBlockProps) {
       descriptionTextStyle: productDescriptionTextStyle,
       priceTextStyle: productPriceTextStyle,
       onOpen: setActiveProductId,
-      cartEnabled,
+      cartEnabled: cartEnabled && productAvailabilityById.get(item.id) !== "sold_out",
+      availability: productAvailabilityById.get(item.id) ?? "available",
       cartQuantityMode,
       cartButtonPosition,
       quantity: cartQuantities[item.id] ?? 0,
@@ -1779,6 +1910,13 @@ export default function ProductBlock(props: ProductBlockProps) {
       : `${openedView ? "mt-1 gap-2" : "mt-5 gap-4"} grid grid-cols-[minmax(0,1fr)_auto] items-start`;
 
   const renderProductContent = () => {
+    if (runtimeCatalogLoading || runtimeCatalogError) {
+      return (
+        <div className={`${openedView ? "mt-1" : "mt-4"} rounded-xl border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-500`}>
+          {runtimeCatalogError ? "商品目录同步失败，请刷新页面后重试。" : "正在同步最新商品目录…"}
+        </div>
+      );
+    }
     if (filteredProducts.length === 0) {
       return (
         <>
@@ -2335,6 +2473,11 @@ export default function ProductBlock(props: ProductBlockProps) {
             >
               ×
             </button>
+            {productAvailabilityById.get(activeProduct.id) === "sold_out" ? (
+              <div className="absolute left-4 top-4 z-20 rounded-full bg-slate-900/85 px-3 py-1 text-xs font-semibold text-white shadow-sm">
+                已售罄
+              </div>
+            ) : null}
             {detailFullImage ? (
               <div className="relative overflow-hidden rounded-[1.25rem] bg-slate-100" style={productDetailFullImageFrameStyle}>
                 {activeProduct.imageUrl ? (
