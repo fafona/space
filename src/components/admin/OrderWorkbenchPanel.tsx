@@ -54,6 +54,49 @@ export function shouldRenderOrderWorkbenchDetailPortal(portalReady: boolean, ord
   return portalReady && Boolean(orderId.trim());
 }
 
+export const ORDER_EXPORT_DATE_VALUE_ATTRIBUTES = {
+  "data-no-translate": "1",
+  translate: "no",
+} as const;
+
+export const ORDER_EXPORT_VISIBLE_DATE_INPUT_ATTRIBUTES = {
+  type: "text",
+  readOnly: true,
+  inputMode: "numeric",
+  autoComplete: "off",
+  placeholder: "YYYY-MM-DD",
+  ...ORDER_EXPORT_DATE_VALUE_ATTRIBUTES,
+} as const;
+
+export const ORDER_EXPORT_NATIVE_DATE_INPUT_ATTRIBUTES = {
+  type: "date",
+  tabIndex: -1,
+  "aria-hidden": true,
+  ...ORDER_EXPORT_DATE_VALUE_ATTRIBUTES,
+} as const;
+
+export function getOrderExportNativeDateInputClassName() {
+  return "pointer-events-none absolute right-2 top-1/2 h-8 w-8 -translate-y-1/2 opacity-0";
+}
+
+export function openOrderExportDatePicker(input: HTMLInputElement | null) {
+  if (!input) return;
+  const pickerInput = input as HTMLInputElement & { showPicker?: () => void };
+  if (typeof pickerInput.showPicker === "function") {
+    try {
+      pickerInput.showPicker();
+      return;
+    } catch {
+      // Fall through for embedded browsers that expose but reject showPicker.
+    }
+  }
+  try {
+    pickerInput.click();
+  } catch {
+    // Some embedded browsers do not expose a native date picker.
+  }
+}
+
 export type OrderWorkbenchPanelProps = {
   siteId: string;
   mode?: "inline" | "overlay";
@@ -823,6 +866,65 @@ function OrderWorkbenchAnalysis({
   );
 }
 
+function OrderExportDateField({
+  label,
+  value,
+  inputClassName,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  inputClassName: string;
+  onChange: (value: string) => void;
+}) {
+  const displayInputId = useId();
+  const pickerInputRef = useRef<HTMLInputElement>(null);
+  const openPicker = () => openOrderExportDatePicker(pickerInputRef.current);
+
+  return (
+    <div className="space-y-1.5 text-sm font-medium">
+      <label htmlFor={displayInputId}>{label}</label>
+      <span className="relative block">
+        <input
+          id={displayInputId}
+          {...ORDER_EXPORT_VISIBLE_DATE_INPUT_ATTRIBUTES}
+          className={`h-11 w-full cursor-pointer rounded-xl border px-3 pr-11 font-mono tabular-nums outline-none transition ${inputClassName}`}
+          value={value}
+          onClick={openPicker}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" && event.key !== " ") return;
+            event.preventDefault();
+            openPicker();
+          }}
+        />
+        <button
+          type="button"
+          aria-label={`打开${label}选择器`}
+          className="absolute inset-y-0 right-1 inline-flex w-9 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-500/10 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-300 disabled:cursor-not-allowed disabled:opacity-45"
+          onClick={openPicker}
+        >
+          <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+            <path
+              d="M6 2.75v2.5M14 2.75v2.5M3.75 7.25h12.5M5.5 4.5h9a1.75 1.75 0 0 1 1.75 1.75v8.25A1.75 1.75 0 0 1 14.5 16.25h-9A1.75 1.75 0 0 1 3.75 14.5V6.25A1.75 1.75 0 0 1 5.5 4.5Z"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+        <input
+          ref={pickerInputRef}
+          {...ORDER_EXPORT_NATIVE_DATE_INPUT_ATTRIBUTES}
+          className={getOrderExportNativeDateInputClassName()}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      </span>
+    </div>
+  );
+}
+
 function OrderExportPanel({ siteId, darkMode }: { siteId: string; darkMode: boolean }) {
   const [range, setRange] = useState(getDefaultOrderExportRange);
   const [statuses, setStatuses] = useState<MerchantOrderStatus[]>(() =>
@@ -1096,30 +1198,24 @@ function OrderExportPanel({ siteId, darkMode }: { siteId: string; darkMode: bool
           <fieldset disabled={exportBusy} className="space-y-3">
             <legend className="text-sm font-bold">下单日期范围</legend>
             <div className="grid gap-3 sm:grid-cols-2">
-              <label className="space-y-1.5 text-sm font-medium">
-                <span>开始日期</span>
-                <input
-                  type="date"
-                  value={range.startDate}
-                  onChange={(event) => {
-                    invalidatePendingShareForFilterChange();
-                    setRange((current) => ({ ...current, startDate: event.target.value }));
-                  }}
-                  className={`h-11 w-full rounded-xl border px-3 outline-none transition ${inputClassName}`}
-                />
-              </label>
-              <label className="space-y-1.5 text-sm font-medium">
-                <span>结束日期（含当天）</span>
-                <input
-                  type="date"
-                  value={range.endDate}
-                  onChange={(event) => {
-                    invalidatePendingShareForFilterChange();
-                    setRange((current) => ({ ...current, endDate: event.target.value }));
-                  }}
-                  className={`h-11 w-full rounded-xl border px-3 outline-none transition ${inputClassName}`}
-                />
-              </label>
+              <OrderExportDateField
+                label="开始日期"
+                value={range.startDate}
+                inputClassName={inputClassName}
+                onChange={(value) => {
+                  invalidatePendingShareForFilterChange();
+                  setRange((current) => ({ ...current, startDate: value }));
+                }}
+              />
+              <OrderExportDateField
+                label="结束日期（含当天）"
+                value={range.endDate}
+                inputClassName={inputClassName}
+                onChange={(value) => {
+                  invalidatePendingShareForFilterChange();
+                  setRange((current) => ({ ...current, endDate: value }));
+                }}
+              />
             </div>
             <p className={`text-xs leading-5 ${mutedTextClassName}`}>
               日期边界按当前设备时区换算，文件中的时间字段统一保留 UTC，避免夏令时歧义。
