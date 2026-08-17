@@ -418,7 +418,10 @@ async function listStoredMerchantOrderRows(
     if (includeMerchantId) query = query.eq("merchant_id", normalizedSiteId);
     const result = await query
       .like("slug", slugPrefix)
-      .contains("blocks", [{ id: normalizedOrderId }]);
+      // PostgREST expects a JSON document for jsonb containment. Passing an
+      // array directly makes postgrest-js serialize objects as
+      // `{[object Object]}`, which PostgreSQL rejects as invalid JSON.
+      .contains("blocks", JSON.stringify([{ id: normalizedOrderId }]));
     const data = (result.data ?? []) as StoredMerchantOrdersRow[];
     if (!result.error) return Array.isArray(data) ? data : [];
 

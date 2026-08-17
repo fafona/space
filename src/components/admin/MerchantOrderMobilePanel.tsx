@@ -1140,6 +1140,7 @@ export default function MerchantOrderMobilePanel({
           !isSiteRequestCurrent(operation) ||
           detailRequestSequenceRef.current !== requestSequence
         ) return;
+        setBusyKey("");
         handleRegisterWorkbenchLeaveGuard(null);
         setWorkbenchOpen(false);
         setExternalDetailOrder(nextOrder);

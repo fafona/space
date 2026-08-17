@@ -1552,6 +1552,21 @@ test("desktop and mobile order details guard drafts, focus, navigation, and nati
     assert.match(targetSource, /detailLeaveGuardRef\.current\s*\?\?\s*workbenchLeaveGuardRef\.current\s*\?\?\s*confirmManagerBusyLeave/, `${label} must preserve detail and workbench guard priority over the base busy guard`);
     assert.match(targetSource, /managerBusyRef\.current[\s\S]*window\.addEventListener\("beforeunload",\s*handleBeforeUnload\)/, `${label} must protect list and detail mutations from browser unload`);
     assert.match(targetSource, /workbenchOpen\s*\|\|\s*\(!detailOrder\s*&&\s*!busyKey\)[\s\S]*MOBILE_SWIPE_BACK_EVENT/, `${label} must consume native back during base list mutations`);
+    const openWorkbenchOrderSource = sliceSourceBetween(
+      targetSource,
+      /const\s+openWorkbenchOrder\s*=\s*useCallback\(/,
+      /const\s+openWorkbenchStatus\s*=\s*useCallback\(/,
+      `${label} workbench order transition`,
+    );
+    const releaseBusyIndex = openWorkbenchOrderSource.indexOf('setBusyKey("");');
+    const unregisterWorkbenchGuardIndex = openWorkbenchOrderSource.indexOf("handleRegisterWorkbenchLeaveGuard(null);");
+    const closeWorkbenchIndex = openWorkbenchOrderSource.indexOf("setWorkbenchOpen(false);");
+    assert.ok(
+      releaseBusyIndex >= 0 &&
+        releaseBusyIndex < unregisterWorkbenchGuardIndex &&
+        unregisterWorkbenchGuardIndex < closeWorkbenchIndex,
+      `${label} must synchronously release manager busy before closing the workbench`,
+    );
     assert.match(targetSource, /const\s+openListConversation\s*=\s*useCallback\([\s\S]*requestExactOrder\(orderId\)[\s\S]*isSiteRequestCurrent\(operation\)[\s\S]*await\s+markOrderTouched\(order\.id,\s*order\)[\s\S]*onOpenConversation\(\{[\s\S]*accountId:\s*order\.customerAccountId/, `${label} list conversation navigation must use an exact current order`);
     assert.match(targetSource, /onClick=\{\(\)\s*=>\s*void\s+openListConversation\(record\.id\)\}/, `${label} list conversation buttons must use the guarded exact callback`);
   }

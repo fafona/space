@@ -33,6 +33,7 @@ import {
   prepareMerchantOrderPrintWindow,
   startMerchantOrderPrint,
 } from "@/lib/merchantOrderPrint";
+import { showGlobalToast } from "@/lib/globalToast";
 import type {
   MerchantOrderWorkbenchDashboard,
   MerchantOrderWorkbenchTodo,
@@ -43,6 +44,14 @@ export type OrderWorkbenchView = "overview" | "orders" | "analysis" | "catalog" 
 
 export function getOrderWorkbenchContentScrollClassName(mode: "inline" | "overlay") {
   return `min-h-0 flex-1 overflow-y-auto${mode === "overlay" ? " overscroll-contain" : ""}`;
+}
+
+export function getOrderWorkbenchDetailLayerClassName() {
+  return "fixed inset-0 z-[2147483000] flex justify-end bg-slate-950/45 backdrop-blur-[1px]";
+}
+
+export function shouldRenderOrderWorkbenchDetailPortal(portalReady: boolean, orderId: string) {
+  return portalReady && Boolean(orderId.trim());
 }
 
 export type OrderWorkbenchPanelProps = {
@@ -1530,7 +1539,7 @@ function OrderDetailDrawer({
 
   return (
     <div
-      className="absolute inset-0 z-40 flex justify-end bg-slate-950/45 backdrop-blur-[1px]"
+      className={getOrderWorkbenchDetailLayerClassName()}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget && !actionBusy) onClose();
       }}
@@ -1745,6 +1754,7 @@ export default function OrderWorkbenchPanel({
   const [error, setError] = useState("");
   const [actionError, setActionError] = useState("");
   const [notice, setNotice] = useState("");
+  const lastActionFeedbackToastRef = useRef("");
   const [actingOrderId, setActingOrderId] = useState("");
   const [intentAction, setIntentAction] = useState<OrderIntentState | null>(null);
   const intentActionRef = useRef<OrderIntentState | null>(null);
@@ -1879,6 +1889,19 @@ export default function OrderWorkbenchPanel({
   }, []);
 
   useEffect(() => {
+    const message = actionError || notice;
+    if (!message) {
+      lastActionFeedbackToastRef.current = "";
+      return;
+    }
+    const tone = actionError ? "error" : "success";
+    const toastKey = `${tone}:${message}`;
+    if (lastActionFeedbackToastRef.current === toastKey) return;
+    lastActionFeedbackToastRef.current = toastKey;
+    showGlobalToast(message, { tone });
+  }, [actionError, notice]);
+
+  useEffect(() => {
     if (initialViewPropRef.current === initialView) return;
     if (activeView === initialView) {
       initialViewPropRef.current = initialView;
@@ -1906,7 +1929,7 @@ export default function OrderWorkbenchPanel({
   useEffect(() => {
     if (!isOverlay && !detailOrderId) return;
     const previousOverflow = document.body.style.overflow;
-    if (isOverlay) document.body.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || (!detailOrderId && !onClose)) return;
       event.preventDefault();
@@ -1914,7 +1937,7 @@ export default function OrderWorkbenchPanel({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => {
-      if (isOverlay) document.body.style.overflow = previousOverflow;
+      document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [detailOrderId, isOverlay, onClose, requestClose]);
@@ -3101,41 +3124,44 @@ export default function OrderWorkbenchPanel({
           </>
         )}
       </div>
-      {detailOrderIdForCurrentSite ? (
-        <OrderDetailDrawer
-          orderId={detailOrderIdForCurrentSite}
-          order={detailOrderForCurrentSite}
-          loading={detailLoading}
-          error={detailError}
-          actionError={actionError}
-          notice={notice}
-          mutation={orderMutation}
-          intentAction={intentAction}
-          darkMode={darkMode}
-          onClose={() => {
-            closeOrderDetail();
-          }}
-          onRetry={() => void loadOrderDetail(detailOrderIdForCurrentSite)}
-          onAction={(order, action) => {
-            void runOrderAction(
-              { id: order.id, status: order.status, updatedAt: order.updatedAt },
-              action,
-            );
-          }}
-          onPrint={(order) => void printOrder(order)}
-          onContact={
-            onContactOrder
-              ? (orderId) => void runOrderIntent(orderId, "contact", onContactOrder)
-              : undefined
-          }
-          onOpenTask={
-            onOpenEnterpriseTask
-              ? (orderId) => void runOrderIntent(orderId, "task", onOpenEnterpriseTask)
-              : undefined
-          }
-          onOpenFullOrder={(orderId) => void openFullOrder(orderId)}
-        />
-      ) : null}
+      {shouldRenderOrderWorkbenchDetailPortal(portalReady, detailOrderIdForCurrentSite)
+        ? createPortal(
+          <OrderDetailDrawer
+            orderId={detailOrderIdForCurrentSite}
+            order={detailOrderForCurrentSite}
+            loading={detailLoading}
+            error={detailError}
+            actionError={actionError}
+            notice={notice}
+            mutation={orderMutation}
+            intentAction={intentAction}
+            darkMode={darkMode}
+            onClose={() => {
+              closeOrderDetail();
+            }}
+            onRetry={() => void loadOrderDetail(detailOrderIdForCurrentSite)}
+            onAction={(order, action) => {
+              void runOrderAction(
+                { id: order.id, status: order.status, updatedAt: order.updatedAt },
+                action,
+              );
+            }}
+            onPrint={(order) => void printOrder(order)}
+            onContact={
+              onContactOrder
+                ? (orderId) => void runOrderIntent(orderId, "contact", onContactOrder)
+                : undefined
+            }
+            onOpenTask={
+              onOpenEnterpriseTask
+                ? (orderId) => void runOrderIntent(orderId, "task", onOpenEnterpriseTask)
+                : undefined
+            }
+            onOpenFullOrder={(orderId) => void openFullOrder(orderId)}
+          />,
+          document.body,
+        )
+        : null}
     </section>
   );
 

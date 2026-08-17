@@ -330,7 +330,7 @@ test("full legacy order reads prove the hard row limit with one sentinel range",
   assert.deepEqual(calls.at(-1)?.ranges, [[10_000, 10_000]]);
 });
 
-test("exact legacy order reads use tenant-scoped JSON containment and return one order", async () => {
+test("exact legacy order reads use serialized tenant-scoped JSON containment and return one order", async () => {
   const orderId = "O10000000202608010001";
   const target = createMerchantOrder(
     {
@@ -376,7 +376,7 @@ test("exact legacy order reads use tenant-scoped JSON containment and return one
     [
       ["eq", "merchant_id", "10000000"],
       ["like", "slug", "__merchant_orders__:10000000%"],
-      ["contains", "blocks", [{ id: orderId }]],
+      ["contains", "blocks", JSON.stringify([{ id: orderId }])],
     ],
   ]);
 });
