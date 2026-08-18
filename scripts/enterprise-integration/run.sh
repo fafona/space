@@ -53,6 +53,12 @@ if [[ "${#enterprise_migrations[@]}" -ne 27 ]]; then
 fi
 
 for migration in "${enterprise_migrations[@]}"; do
+  if [[ "$(basename -- "${migration}")" == \
+    "202608180032_merchant_enterprise_audit_query_security.sql" ]]; then
+    echo '[enterprise-integration] seeding a conflicting audit index for retry coverage'
+    run_psql --command \
+      "create index merchant_enterprise_audit_events_actor_created_idx on public.merchant_enterprise_audit_events(merchant_id);"
+  fi
   run_sql_file "${migration}"
 done
 

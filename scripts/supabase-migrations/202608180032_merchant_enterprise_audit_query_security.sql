@@ -4,6 +4,35 @@
 
 begin;
 
+-- Keep the repository-wide transactional migration envelope while checking
+-- every object required by the non-transactional concurrent index phase.
+do $$
+begin
+  if to_regclass('public.merchant_enterprise_audit_events') is null
+     or to_regclass('public.merchant_task_events') is null
+     or to_regclass('public.faolla_schema_migrations') is null then
+    raise exception 'merchant_enterprise_audit_query_prerequisite_missing';
+  end if;
+end;
+$$;
+
+commit;
+
+-- Build the potentially long-running audit index before changing any RPC or
+-- trigger behavior. The session-level migration advisory lock remains held by
+-- the production runner across this transaction boundary. A cancelled build
+-- can leave a same-named invalid index, so every unregistered retry first
+-- removes that index and recreates it from the canonical definition.
+drop index concurrently if exists
+  public.merchant_enterprise_audit_events_actor_created_idx;
+create index concurrently
+  merchant_enterprise_audit_events_actor_created_idx
+  on public.merchant_enterprise_audit_events(
+    merchant_id, actor_type, actor_id, created_at desc, id desc
+  );
+
+begin;
+
 create or replace function public.faolla_reject_merchant_task_event_mutation_v1()
 returns trigger
 language plpgsql
@@ -296,53 +325,88 @@ revoke all on function public.faolla_list_merchant_enterprise_audit_events_v1(js
 grant execute on function public.faolla_list_merchant_enterprise_audit_events_v1(jsonb)
   to service_role;
 
-commit;
-
--- Build the potentially long-running audit index without blocking ordinary
--- audit writes. The session-level migration advisory lock remains held by the
--- production runner across this transaction boundary. A cancelled concurrent
--- build can leave a same-named invalid index, so every unregistered retry first
--- removes that index and then recreates it from the canonical definition.
-drop index concurrently if exists
-  public.merchant_enterprise_audit_events_actor_created_idx;
-create index concurrently
-  merchant_enterprise_audit_events_actor_created_idx
-  on public.merchant_enterprise_audit_events(
-    merchant_id, actor_type, actor_id, created_at desc, id desc
-  );
-
-begin;
-
 -- Do not register the migration until the exact index is ready and valid.
 do $$
 declare
-  v_index_definition text;
-  v_index_ready boolean := false;
+  v_index_valid boolean := false;
 begin
   select
-    pg_get_indexdef(index_relation.oid),
-    index_metadata.indisready and index_metadata.indisvalid
-    into v_index_definition, v_index_ready
+    index_metadata.indisready
+    and index_metadata.indisvalid
+    and index_metadata.indislive
+    and not index_metadata.indisunique
+    and not index_metadata.indisprimary
+    and not index_metadata.indisexclusion
+    and index_metadata.indpred is null
+    and index_metadata.indexprs is null
+    and index_metadata.indnatts = 5
+    and index_metadata.indnkeyatts = 5
+    and index_relation.relkind = 'i'
+    and table_namespace.nspname = 'public'
+    and table_relation.relname = 'merchant_enterprise_audit_events'
+    and access_method.amname = 'btree'
+    and index_metadata.indkey[0] = merchant_id_attribute.attnum
+    and index_metadata.indkey[1] = actor_type_attribute.attnum
+    and index_metadata.indkey[2] = actor_id_attribute.attnum
+    and index_metadata.indkey[3] = created_at_attribute.attnum
+    and index_metadata.indkey[4] = id_attribute.attnum
+    and not coalesce(
+      pg_index_column_has_property(index_relation.oid, 1, 'desc'),
+      false
+    )
+    and not coalesce(
+      pg_index_column_has_property(index_relation.oid, 2, 'desc'),
+      false
+    )
+    and not coalesce(
+      pg_index_column_has_property(index_relation.oid, 3, 'desc'),
+      false
+    )
+    and coalesce(
+      pg_index_column_has_property(index_relation.oid, 4, 'desc'),
+      false
+    )
+    and coalesce(
+      pg_index_column_has_property(index_relation.oid, 5, 'desc'),
+      false
+    )
+    into v_index_valid
     from pg_catalog.pg_class as index_relation
     join pg_catalog.pg_namespace as index_namespace
       on index_namespace.oid = index_relation.relnamespace
     join pg_catalog.pg_index as index_metadata
       on index_metadata.indexrelid = index_relation.oid
+    join pg_catalog.pg_class as table_relation
+      on table_relation.oid = index_metadata.indrelid
+    join pg_catalog.pg_namespace as table_namespace
+      on table_namespace.oid = table_relation.relnamespace
+    join pg_catalog.pg_am as access_method
+      on access_method.oid = index_relation.relam
+    join pg_catalog.pg_attribute as merchant_id_attribute
+      on merchant_id_attribute.attrelid = table_relation.oid
+     and merchant_id_attribute.attname = 'merchant_id'
+     and not merchant_id_attribute.attisdropped
+    join pg_catalog.pg_attribute as actor_type_attribute
+      on actor_type_attribute.attrelid = table_relation.oid
+     and actor_type_attribute.attname = 'actor_type'
+     and not actor_type_attribute.attisdropped
+    join pg_catalog.pg_attribute as actor_id_attribute
+      on actor_id_attribute.attrelid = table_relation.oid
+     and actor_id_attribute.attname = 'actor_id'
+     and not actor_id_attribute.attisdropped
+    join pg_catalog.pg_attribute as created_at_attribute
+      on created_at_attribute.attrelid = table_relation.oid
+     and created_at_attribute.attname = 'created_at'
+     and not created_at_attribute.attisdropped
+    join pg_catalog.pg_attribute as id_attribute
+      on id_attribute.attrelid = table_relation.oid
+     and id_attribute.attname = 'id'
+     and not id_attribute.attisdropped
    where index_namespace.nspname = 'public'
      and index_relation.relname =
        'merchant_enterprise_audit_events_actor_created_idx';
 
-  if not coalesce(v_index_ready, false)
-     or lower(regexp_replace(
-       coalesce(v_index_definition, ''),
-       '[[:space:]]+',
-       ' ',
-       'g'
-     )) <> lower(
-       'CREATE INDEX merchant_enterprise_audit_events_actor_created_idx ' ||
-       'ON public.merchant_enterprise_audit_events USING btree ' ||
-       '(merchant_id, actor_type, actor_id, created_at DESC, id DESC)'
-     ) then
+  if not coalesce(v_index_valid, false) then
     raise exception 'merchant_enterprise_audit_actor_index_invalid';
   end if;
 end;

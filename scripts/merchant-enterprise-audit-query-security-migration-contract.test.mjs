@@ -129,7 +129,7 @@ test("migration is additive, indexed, registered and API-schema compatible", () 
   assert.match(source, /(?:^|\n)begin\s*;/i);
   assert.match(
     source,
-    /commit\s*;[\s\S]+drop index concurrently if exists\s+public\.merchant_enterprise_audit_events_actor_created_idx\s*;[\s\S]+create index concurrently\s+merchant_enterprise_audit_events_actor_created_idx[\s\S]+merchant_id, actor_type, actor_id, created_at desc, id desc[\s\S]+begin\s*;/i,
+    /merchant_enterprise_audit_query_prerequisite_missing[\s\S]+commit\s*;[\s\S]+drop index concurrently if exists\s+public\.merchant_enterprise_audit_events_actor_created_idx\s*;[\s\S]+create index concurrently\s+merchant_enterprise_audit_events_actor_created_idx[\s\S]+merchant_id, actor_type, actor_id, created_at desc, id desc[\s\S]+begin\s*;[\s\S]+create or replace function public\.faolla_reject_merchant_task_event_mutation_v1/i,
   );
   assert.doesNotMatch(
     source,
@@ -137,8 +137,9 @@ test("migration is additive, indexed, registered and API-schema compatible", () 
   );
   assert.match(
     source,
-    /pg_get_indexdef[\s\S]+index_metadata\.indisready and index_metadata\.indisvalid[\s\S]+merchant_enterprise_audit_actor_index_invalid/i,
+    /index_metadata\.indisready[\s\S]+index_metadata\.indisvalid[\s\S]+index_metadata\.indislive[\s\S]+index_metadata\.indkey\[0\][\s\S]+pg_index_column_has_property[\s\S]+merchant_enterprise_audit_actor_index_invalid/i,
   );
+  assert.doesNotMatch(source, /pg_get_indexdef/i);
   assert.match(
     source,
     /values \(202608180032, 'merchant_enterprise_audit_query_security'\)/i,
