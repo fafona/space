@@ -107,6 +107,23 @@ test("todo normalizer accepts each strict discriminated item and strips foreign 
   assert.equal("secret" in (task ?? {}), false);
 });
 
+test("non-empty task and workflow pages survive normalization and a JSON round trip", () => {
+  const normalized = normalizeMerchantEnterpriseTodoPage({
+    merchantId: SITE_ID,
+    items: [taskTodo, acknowledgementTodo, executionTodo, feedbackTodo],
+    counts,
+    nextCursor: null,
+  });
+  assert.ok(normalized);
+  assert.deepEqual(
+    normalized.items.map((item) => item.entityId),
+    [TASK_ID, WORKFLOW_ID, EXECUTION_ID, EXECUTION_ID],
+  );
+
+  const serialized = JSON.parse(JSON.stringify(normalized)) as unknown;
+  assert.deepEqual(normalizeMerchantEnterpriseTodoPage(serialized), normalized);
+});
+
 test("todo normalizer rejects crossed ids, invalid progress, duplicate reasons and bad tenant data", () => {
   assert.equal(
     normalizeMerchantEnterpriseTodo({ ...taskTodo, id: `task:${BOARD_ID}` }),

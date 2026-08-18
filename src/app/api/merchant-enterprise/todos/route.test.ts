@@ -8,14 +8,16 @@ import {
 } from "@/app/api/merchant-enterprise/todos/route";
 import type { MerchantEnterpriseActor } from "@/lib/merchantEnterprise";
 import { MerchantEnterpriseAccessError } from "@/lib/merchantEnterpriseAuth.server";
-import type {
-  MerchantEnterpriseTodoCursor,
-  MerchantEnterpriseTodoStorePage,
+import {
+  normalizeMerchantEnterpriseTodoPage,
+  type MerchantEnterpriseTodoCursor,
+  type MerchantEnterpriseTodoStorePage,
 } from "@/lib/merchantEnterpriseTodos";
 
 const SITE_ID = "10000000";
 const TASK_ID = "11111111-1111-4111-8111-111111111111";
 const BOARD_ID = "22222222-2222-4222-8222-222222222222";
+const WORKFLOW_ID = "33333333-3333-4333-8333-333333333333";
 const NOW = "2026-08-04T10:00:00.000Z";
 
 const actor: Extract<MerchantEnterpriseActor, { type: "employee" }> = {
@@ -43,6 +45,7 @@ const page: MerchantEnterpriseTodoStorePage = {
   items: [
     {
       id: `task:${TASK_ID}`,
+      entityId: TASK_ID,
       siteId: SITE_ID,
       kind: "task",
       title: "Confirm stock",
@@ -143,6 +146,59 @@ test("todo GET authorizes enterprise access, checks entitlement and returns an o
       },
     },
   ]);
+});
+
+test("todo GET non-empty task and workflow items round-trip through the client page normalizer", async () => {
+  const mixedPage: MerchantEnterpriseTodoStorePage = {
+    merchantId: SITE_ID,
+    items: [
+      page.items[0],
+      {
+        id: `workflow_acknowledgement:${WORKFLOW_ID}`,
+        entityId: WORKFLOW_ID,
+        siteId: SITE_ID,
+        kind: "workflow_acknowledgement",
+        title: "Read the latest opening procedure",
+        subtitle: "Store operations",
+        urgency: "normal",
+        reasons: ["acknowledgement_required"],
+        attentionAt: NOW,
+        dueAt: null,
+        workflowId: WORKFLOW_ID,
+        revisionNo: 2,
+      },
+    ],
+    counts: {
+      openCount: 2,
+      taskCount: 1,
+      overdueCount: 1,
+      dueSoonCount: 0,
+      acknowledgementCount: 1,
+      executionCount: 0,
+      feedbackCount: 0,
+    },
+    nextCursor: null,
+  };
+  const response = await handleMerchantEnterpriseTodosGet(
+    new Request(
+      `https://www.faolla.com/api/merchant-enterprise/todos?siteId=${SITE_ID}&category=all&limit=20`,
+    ),
+    dependencies({
+      async loadTodos() {
+        return mixedPage;
+      },
+    }),
+  );
+
+  assert.equal(response.status, 200);
+  const normalized = normalizeMerchantEnterpriseTodoPage(await response.json());
+  assert.ok(normalized);
+  assert.equal(normalized.merchantId, SITE_ID);
+  assert.deepEqual(
+    normalized.items.map((item) => item.kind),
+    ["task", "workflow_acknowledgement"],
+  );
+  assert.equal(normalized.counts.openCount, 2);
 });
 
 test("todo GET forwards a validated cursor and defaults category and limit", async () => {

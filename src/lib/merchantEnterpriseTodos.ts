@@ -42,6 +42,7 @@ export type MerchantEnterpriseTodoReason =
 
 type MerchantEnterpriseTodoBase = {
   id: string;
+  entityId: string;
   siteId: string;
   kind: MerchantEnterpriseTodoKind;
   title: string;
@@ -225,6 +226,7 @@ export function normalizeMerchantEnterpriseTodo(
   }
   const base = {
     id,
+    entityId,
     siteId: siteId!,
     kind,
     title,
