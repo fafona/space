@@ -77,6 +77,7 @@ import {
   planMerchantTaskReorder,
   sortMerchantTaskOrderItems,
 } from "@/lib/merchantTaskOrdering";
+import { buildMerchantEnterpriseOperationsOverview } from "@/lib/merchantEnterpriseOperationsOverview";
 import MerchantEnterpriseNotificationCenter from "@/components/admin/MerchantEnterpriseNotificationCenter";
 import MerchantEnterpriseAuditLog from "@/components/admin/MerchantEnterpriseAuditLog";
 import MerchantEnterpriseTodoCenter from "@/components/admin/MerchantEnterpriseTodoCenter";
@@ -4331,6 +4332,25 @@ function MerchantEnterpriseManagerContent({
       ),
     [actor, overviewNowMs, snapshot.boards, snapshot.tasks],
   );
+  const overviewOperationsSummary = useMemo(
+    () =>
+      buildMerchantEnterpriseOperationsOverview(
+        {
+          boards: snapshot.boards,
+          tasks: snapshot.tasks,
+          assigneeId:
+            actor?.type === "employee"
+              ? getMerchantEnterpriseDefaultTaskAssigneeFilter(actor)
+              : undefined,
+        },
+        overviewNowMs,
+      ),
+    [actor, overviewNowMs, snapshot.boards, snapshot.tasks],
+  );
+  const overviewPriorityTasks = useMemo(
+    () => overviewTaskSummary.recentTasks.filter((task) => !task.completedAt),
+    [overviewTaskSummary.recentTasks],
+  );
   const filteredTasks = filterMerchantTasks(boardTasks, {
     archive: taskArchiveView,
     query: taskQuery,
@@ -5651,33 +5671,43 @@ function MerchantEnterpriseManagerContent({
 
         {!needsBootstrap && tab === "overview" ? (
           <div className="mt-5 space-y-5">
+            <section className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-900">
+              <strong>企业／看板当前运营概览（非绩效考核）</strong>
+              <span className="ml-1">
+                这里只反映当前任务库存与截止风险，不用于评价员工产出。任务按唯一任务计数，多人负责不会让企业总数重复。
+              </span>
+            </section>
             <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {[
                 {
-                  label: actor.type === "employee" ? "我的未完成" : "未完成任务",
+                  label: actor.type === "employee" ? "当前分派给我的未完成" : "当前未完成",
                   value: can(actor, "tasks.view")
-                    ? overviewTaskSummary.incompleteTaskCount
+                    ? overviewOperationsSummary.openTaskCount
                     : "—",
                   tone: "text-blue-700",
                 },
                 {
-                  label: actor.type === "employee" ? "我的已完成" : "已完成任务",
+                  label: actor.type === "employee" ? "当前分派给我的逾期" : "当前逾期",
                   value: can(actor, "tasks.view")
-                    ? overviewTaskSummary.completedTaskCount
-                    : "—",
-                  tone: "text-emerald-700",
-                },
-                {
-                  label: "团队成员",
-                  value: can(actor, "employees.view") ? activeEmployees.length : "—",
-                  tone: "text-violet-700",
-                },
-                {
-                  label: actor.type === "employee" ? "我的已逾期" : "已逾期",
-                  value: can(actor, "tasks.view")
-                    ? overviewTaskSummary.overdueTaskCount
+                    ? overviewOperationsSummary.overdueTaskCount
                     : "—",
                   tone: "text-rose-700",
+                },
+                {
+                  label: "未来 7 天内到期",
+                  value: can(actor, "tasks.view")
+                    ? overviewOperationsSummary.dueSoonTaskCount
+                    : "—",
+                  tone: "text-amber-700",
+                },
+                {
+                  label: actor.type === "employee" ? "当前涉及看板" : "当前未分派",
+                  value: can(actor, "tasks.view")
+                    ? actor.type === "employee"
+                      ? overviewOperationsSummary.involvedBoardCount
+                      : overviewOperationsSummary.unassignedTaskCount
+                    : "—",
+                  tone: "text-violet-700",
                 },
               ].map((item) => (
                 <div key={item.label} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -5690,12 +5720,12 @@ function MerchantEnterpriseManagerContent({
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h2 className="text-lg font-semibold text-slate-950">
-                    {actor.type === "employee" ? "我的最近任务" : "最近任务"}
+                    {actor.type === "employee" ? "我的当前优先任务" : "当前优先任务"}
                   </h2>
                   <p className="mt-1 text-sm text-slate-500">
                     {actor.type === "employee"
-                      ? "汇总所有启用看板中分派给我的工作，优先显示即将到期和最近更新的任务。"
-                      : "汇总全部启用看板，优先显示即将到期和最近更新的工作。"}
+                      ? "汇总启用看板中当前分派给我的未完成工作，优先显示已逾期、即将到期和最近更新的任务。"
+                      : "汇总全部启用看板中的当前未完成工作，优先显示已逾期、即将到期和最近更新的任务。"}
                   </p>
                 </div>
                 {can(actor, "tasks.view") ? (
@@ -5711,7 +5741,7 @@ function MerchantEnterpriseManagerContent({
                   </div>
                 ) : null}
                 {can(actor, "tasks.view")
-                  ? overviewTaskSummary.recentTasks.slice(0, 6).map((task) => {
+                  ? overviewPriorityTasks.slice(0, 6).map((task) => {
                       const boardName = snapshot.boards.find((board) => board.id === task.boardId)?.name;
                       const columnName = snapshot.columns.find((column) => column.id === task.columnId)?.name;
                       return (
@@ -5739,15 +5769,63 @@ function MerchantEnterpriseManagerContent({
                       );
                     })
                   : null}
-                {can(actor, "tasks.view") && overviewTaskSummary.tasks.length === 0 ? (
+                {can(actor, "tasks.view") && overviewPriorityTasks.length === 0 ? (
                   <div className="py-8 text-center text-sm text-slate-500">
                     {actor.type === "employee"
-                      ? "目前没有分派给你的任务。可切换到全部任务查看团队工作。"
-                      : "还没有任务，可以从任务看板创建第一项工作。"}
+                      ? "目前没有分派给你的未完成任务。"
+                      : "还没有未完成任务，可以从任务看板创建第一项工作。"}
                   </div>
                 ) : null}
               </div>
             </section>
+            {can(actor, "tasks.view") ? (
+              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-950">按看板查看当前任务</h2>
+                  <p className="mt-1 text-sm leading-6 text-slate-500">
+                    {actor.type === "employee"
+                      ? "只统计当前分派给你的未完成任务；看板之间不做员工横向比较。"
+                      : "按启用看板汇总当前未完成、逾期及未来 7 天内到期任务。"}
+                  </p>
+                </div>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {overviewOperationsSummary.boardSummaries.slice(0, 12).map((board) => (
+                    <div
+                      key={board.boardId}
+                      className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3"
+                    >
+                      <div className="truncate text-sm font-semibold text-slate-900">
+                        {board.boardName}
+                      </div>
+                      <dl className="mt-3 grid grid-cols-3 gap-2 text-center">
+                        <div>
+                          <dt className="text-[11px] text-slate-500">未完成</dt>
+                          <dd className="mt-1 text-lg font-bold text-blue-700">{board.openTaskCount}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-[11px] text-slate-500">逾期</dt>
+                          <dd className="mt-1 text-lg font-bold text-rose-700">{board.overdueTaskCount}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-[11px] text-slate-500">7 日内</dt>
+                          <dd className="mt-1 text-lg font-bold text-amber-700">{board.dueSoonTaskCount}</dd>
+                        </div>
+                      </dl>
+                    </div>
+                  ))}
+                </div>
+                {overviewOperationsSummary.boardSummaries.length === 0 ? (
+                  <p className="mt-4 rounded-2xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+                    当前没有可查看的启用看板。
+                  </p>
+                ) : null}
+                {overviewOperationsSummary.boardSummaries.length > 12 ? (
+                  <p className="mt-3 text-xs leading-5 text-slate-500">
+                    当前仅展示风险和未完成任务较多的前 12 个看板；请进入任务看板查看其余看板。
+                  </p>
+                ) : null}
+              </section>
+            ) : null}
           </div>
         ) : null}
 
@@ -6758,7 +6836,9 @@ function MerchantEnterpriseManagerContent({
 
         {!needsBootstrap && tab === "audit" ? (
           <MerchantEnterpriseAuditLog
+            key={siteId}
             siteId={siteId}
+            employees={snapshot.employees}
             roles={snapshot.roles}
             boards={snapshot.boards}
             apiFetch={apiFetch}

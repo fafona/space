@@ -1366,10 +1366,42 @@ function auditEventMatchesEntity(
   return eventType.startsWith("automation.") && entityType === "automation";
 }
 
+const MERCHANT_ENTERPRISE_AUDIT_TIMESTAMP_PATTERN =
+  /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?(?:Z|\+00:00)$/;
+
+export function normalizeMerchantEnterpriseAuditTimestamp(value: unknown) {
+  if (typeof value !== "string" || value.length > 80) return null;
+  const matched = value.match(MERCHANT_ENTERPRISE_AUDIT_TIMESTAMP_PATTERN);
+  if (!matched) return null;
+  const base = matched[1] ?? "";
+  const fraction = matched[2] ?? "";
+  const millisecondFraction = fraction.padEnd(3, "0").slice(0, 3);
+  const millisecondValue = `${base}.${millisecondFraction}Z`;
+  const parsed = Date.parse(millisecondValue);
+  if (
+    !Number.isFinite(parsed) ||
+    new Date(parsed).toISOString() !== millisecondValue
+  ) {
+    return null;
+  }
+  return fraction.length > 3
+    ? `${base}.${fraction.padEnd(6, "0")}Z`
+    : millisecondValue;
+}
+
+export function merchantEnterpriseAuditTimestampSortKey(value: unknown) {
+  const normalized = normalizeMerchantEnterpriseAuditTimestamp(value);
+  if (!normalized) return null;
+  const matched = normalized.match(
+    /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.(\d{3}|\d{6})Z$/,
+  );
+  if (!matched) return null;
+  return `${matched[1]}.${(matched[2] ?? "").padEnd(6, "0")}Z`;
+}
+
 function normalizeAuditTimestampValue(value: unknown) {
   if (value === null) return null;
-  if (typeof value !== "string" || value.length > 80) return undefined;
-  return normalizeNullableTimestamp(value) ?? undefined;
+  return normalizeMerchantEnterpriseAuditTimestamp(value) ?? undefined;
 }
 
 function normalizeMerchantEnterpriseAuditData(

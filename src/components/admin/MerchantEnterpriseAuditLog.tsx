@@ -5,9 +5,14 @@ import {
   MERCHANT_ENTERPRISE_PERMISSION_CATALOG,
   type MerchantEnterpriseAuditEntityType,
   type MerchantEnterpriseAuditEvent,
+  type MerchantEnterpriseEmployee,
   type MerchantEnterpriseRole,
   type MerchantTaskBoard,
 } from "@/lib/merchantEnterprise";
+import {
+  appendMerchantEnterpriseAuditActorFilter,
+  buildMerchantEnterpriseAuditUtcRange,
+} from "@/lib/merchantEnterpriseAuditFilters";
 
 type AuditPayload = {
   ok?: boolean;
@@ -18,6 +23,7 @@ type AuditPayload = {
 
 type MerchantEnterpriseAuditLogProps = {
   siteId: string;
+  employees: readonly MerchantEnterpriseEmployee[];
   roles: readonly MerchantEnterpriseRole[];
   boards: readonly MerchantTaskBoard[];
   apiFetch: (path: string, init?: RequestInit) => Promise<Response>;
@@ -137,7 +143,9 @@ function formatAuditTime(value: string) {
     minute: "2-digit",
     second: "2-digit",
     hour12: false,
-  }).format(date);
+    hourCycle: "h23",
+    timeZone: "UTC",
+  }).format(date) + " UTC";
 }
 
 function formatTimestamp(value: string) {
@@ -156,6 +164,7 @@ function readAuditError(payload: unknown, fallback: string) {
   if (code === "permission_denied") return "当前角色没有查看企业操作记录的权限。";
   if (code === "enterprise_schema_unavailable") return "企业操作记录正在升级，请稍后再试。";
   if (code === "invalid_enterprise_audit_cursor") return "记录列表已变化，请重新加载。";
+  if (code === "invalid_enterprise_audit_query") return "操作记录筛选条件无效，请检查后重试。";
   return fallback;
 }
 
@@ -172,6 +181,7 @@ function changedFields(event: MerchantEnterpriseAuditEvent) {
 
 export default function MerchantEnterpriseAuditLog({
   siteId,
+  employees,
   roles,
   boards,
   apiFetch,
@@ -179,7 +189,15 @@ export default function MerchantEnterpriseAuditLog({
   const [events, setEvents] = useState<MerchantEnterpriseAuditEvent[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [entityType, setEntityType] = useState<MerchantEnterpriseAuditEntityType | "all">("all");
+  const [actorFilter, setActorFilter] = useState("all");
   const [query, setQuery] = useState("");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [appliedUtcRange, setAppliedUtcRange] = useState<{
+    createdFrom?: string;
+    createdToExclusive?: string;
+  }>({});
+  const [dateRangeError, setDateRangeError] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
@@ -197,11 +215,22 @@ export default function MerchantEnterpriseAuditLog({
     async (options: { append?: boolean; cursor?: string | null } = {}) => {
       const requestSequence = ++requestSequenceRef.current;
       if (options.append) setLoadingMore(true);
-      else setLoading(true);
+      else {
+        setLoading(true);
+        setEvents([]);
+        setNextCursor(null);
+      }
       setError("");
       try {
         const params = new URLSearchParams({ siteId, limit: "50" });
         if (entityType !== "all") params.set("entityType", entityType);
+        appendMerchantEnterpriseAuditActorFilter(params, actorFilter);
+        if (appliedUtcRange.createdFrom) {
+          params.set("createdFrom", appliedUtcRange.createdFrom);
+        }
+        if (appliedUtcRange.createdToExclusive) {
+          params.set("createdToExclusive", appliedUtcRange.createdToExclusive);
+        }
         if (options.append && options.cursor) params.set("cursor", options.cursor);
         const response = await apiFetch(
           `/api/merchant-enterprise/audit-events?${params.toString()}`,
@@ -233,7 +262,7 @@ export default function MerchantEnterpriseAuditLog({
         }
       }
     },
-    [apiFetch, entityType, siteId],
+    [actorFilter, apiFetch, appliedUtcRange, entityType, siteId],
   );
 
   useEffect(() => {
@@ -257,6 +286,28 @@ export default function MerchantEnterpriseAuditLog({
         .includes(normalizedQuery),
     );
   }, [events, query]);
+
+  function applyDateRange() {
+    const range = buildMerchantEnterpriseAuditUtcRange({ startDate, endDate });
+    if (!range.ok) {
+      setDateRangeError(range.error);
+      return;
+    }
+    setDateRangeError("");
+    setAppliedUtcRange({
+      ...(range.createdFrom ? { createdFrom: range.createdFrom } : {}),
+      ...(range.createdToExclusive
+        ? { createdToExclusive: range.createdToExclusive }
+        : {}),
+    });
+  }
+
+  function clearDateRange() {
+    setStartDate("");
+    setEndDate("");
+    setDateRangeError("");
+    setAppliedUtcRange({});
+  }
 
   function formatValue(field: string, value: unknown) {
     if (value === null || value === undefined || value === "") return "无";
@@ -290,7 +341,7 @@ export default function MerchantEnterpriseAuditLog({
           <div>
             <h2 className="text-lg font-semibold text-slate-950">企业操作记录</h2>
             <p className="mt-1 text-sm leading-6 text-slate-500">
-              记录员工、角色、看板、工作流程、流程自动化和邀请的关键管理变化。记录不可修改或删除。
+              记录员工、角色、看板、工作流程、流程自动化和邀请的关键管理变化。可在服务端按操作者和 UTC 日期筛选；不包含页面浏览或聊天内容。记录不可修改或删除。
             </p>
           </div>
           <button
@@ -302,9 +353,9 @@ export default function MerchantEnterpriseAuditLog({
             {loading ? "刷新中…" : "刷新记录"}
           </button>
         </div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_12rem]">
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_12rem_15rem]">
           <label className="text-xs font-medium text-slate-600">
-            搜索操作人或对象
+            搜索已加载的操作人或对象
             <input
               type="search"
               className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
@@ -329,7 +380,91 @@ export default function MerchantEnterpriseAuditLog({
               ))}
             </select>
           </label>
+          <label className="text-xs font-medium text-slate-600">
+            操作者
+            <select
+              className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+              value={actorFilter}
+              onChange={(event) => setActorFilter(event.target.value)}
+            >
+              <option value="all">全部操作者</option>
+              <option value="owner">企业负责人</option>
+              <option value="system">系统</option>
+              {employees.map((employee) => (
+                <option key={employee.id} value={`employee:${employee.id}`}>
+                  {employee.displayName}
+                  {employee.status === "disabled" ? "（已停用）" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
+        <form
+          className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            applyDateRange();
+          }}
+        >
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] lg:items-end">
+            <label className="text-xs font-medium text-slate-600">
+              开始日期（UTC）
+              <input
+                type="text"
+                inputMode="numeric"
+                maxLength={10}
+                autoComplete="off"
+                data-no-translate="1"
+                translate="no"
+                className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 font-mono text-sm tabular-nums"
+                placeholder="YYYY-MM-DD"
+                value={startDate}
+                onChange={(event) => setStartDate(event.target.value)}
+              />
+            </label>
+            <label className="text-xs font-medium text-slate-600">
+              结束日期（UTC，包含当天）
+              <input
+                type="text"
+                inputMode="numeric"
+                maxLength={10}
+                autoComplete="off"
+                data-no-translate="1"
+                translate="no"
+                className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 font-mono text-sm tabular-nums"
+                placeholder="YYYY-MM-DD"
+                value={endDate}
+                onChange={(event) => setEndDate(event.target.value)}
+              />
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="submit"
+                className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-45"
+                disabled={loading}
+              >
+                应用日期
+              </button>
+              <button
+                type="button"
+                className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-45"
+                disabled={loading || (!startDate && !endDate && !appliedUtcRange.createdFrom && !appliedUtcRange.createdToExclusive)}
+                onClick={clearDateRange}
+              >
+                清除日期
+              </button>
+            </div>
+          </div>
+          {dateRangeError ? (
+            <p className="mt-2 text-xs font-medium text-rose-700" role="alert">
+              {dateRangeError}
+            </p>
+          ) : (
+            <p className="mt-2 text-xs leading-5 text-slate-500">
+              日期按 UTC 零点换算为左闭右开区间，列表时间也统一显示为 UTC，避免分页边界重复或遗漏。
+            </p>
+          )}
+        </form>
       </div>
 
       {error ? (

@@ -13,5 +13,5 @@ export default async function EnterprisePortalPage({
   params: Promise<{ siteId: string }>;
 }) {
   const { siteId } = await params;
-  return <EnterprisePortalClient siteId={siteId} />;
+  return <EnterprisePortalClient key={siteId} siteId={siteId} />;
 }
