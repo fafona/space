@@ -74,7 +74,7 @@
     "test:editor-drafts": "node --test scripts/editor-draft-restore-contract.test.mjs && tsx --test src/data/blockStore.test.ts",
     "test:editor-assets": "tsx --test src/lib/editorAssetProcessing.test.ts",
     "test:coupons": "tsx --test src/lib/merchantCouponClaimWindows.test.ts src/lib/merchantCoupons.test.ts src/lib/merchantCouponsStore.test.ts",
-    "test:logs": "tsx --test src/lib/merchantOperationLogs.test.ts src/lib/merchantOperationLogsStore.test.ts src/app/api/merchant-operation-logs/route.test.ts",
+    "test:logs": "tsx --test src/lib/merchantOperationLogs.test.ts src/lib/merchantOperationLogsStore.test.ts src/app/api/merchant-operation-logs/route.test.ts src/app/admin/AdminClient.contract.test.ts && node --test scripts/merchant-business-card-change-meta-contract.test.mjs",
     "test:customers": "tsx --test src/lib/merchantCustomers.test.ts src/lib/merchantCustomerImport.test.ts src/lib/merchantCustomerDirectoryStore.test.ts src/app/api/merchant-customers/route.test.ts",
     "test:polls": "tsx --test src/lib/merchantPolls.test.ts && node --test scripts/merchant-polls-migration-contract.test.mjs scripts/merchant-poll-stats-ui-contract.test.mjs",
     "test:print": "tsx --test src/lib/localPrintBridge.test.ts src/lib/merchantReceiptPrint.test.ts src/lib/merchantOrderPrint.test.ts scripts/faolla-print-helper.test.ts",

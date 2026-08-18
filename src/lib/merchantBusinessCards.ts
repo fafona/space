@@ -10,6 +10,14 @@ export const MERCHANT_BUSINESS_CARD_RATIO_OPTIONS = [
 
 export const MERCHANT_BUSINESS_CARD_PHONE_LIMIT = 2;
 
+export type BusinessCardChangeType = "create" | "update" | "delete" | "select_chat" | "system_sync" | "normalize";
+
+export type BusinessCardChangeMeta = {
+  type: BusinessCardChangeType;
+  cardId?: string;
+  cardName?: string;
+};
+
 export type MerchantBusinessCardRatioOptionId =
   | (typeof MERCHANT_BUSINESS_CARD_RATIO_OPTIONS)[number]["id"]
   | "custom";

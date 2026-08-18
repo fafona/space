@@ -31,6 +31,7 @@ import {
   resolveMerchantBusinessCardForChatDisplay,
   selectMerchantBusinessCardForChat,
   stripMerchantBusinessCardShareMetadata,
+  type BusinessCardChangeMeta,
   type MerchantBusinessCardAsset,
   type MerchantBusinessCardContactDisplayKey,
   type MerchantBusinessCardContactOnlyFieldKey,
@@ -60,6 +61,8 @@ import {
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import { buildMerchantDomain } from "@/lib/siteRouting";
 
+export type { BusinessCardChangeMeta, BusinessCardChangeType } from "@/lib/merchantBusinessCards";
+
 type MerchantBusinessCardManagerProps = {
   merchantId?: string | null;
   siteBaseDomain: string;
@@ -75,7 +78,7 @@ type MerchantBusinessCardManagerProps = {
   exportImageLimitKb?: number;
   introVideoLimitMb?: number;
   pollOptions?: MerchantBusinessCardPollOption[];
-  onCardsChange: (cards: MerchantBusinessCardAsset[]) => void | Promise<void>;
+  onCardsChange: (cards: MerchantBusinessCardAsset[], meta?: BusinessCardChangeMeta) => void | Promise<void>;
 };
 
 type MerchantBusinessCardEditableContactFieldKey = MerchantBusinessCardContactDisplayKey;
@@ -2370,6 +2373,7 @@ export default function MerchantBusinessCardManager({
             chatDisplayDisabled: false,
           })),
         ),
+        { type: "normalize" },
       ),
     ).catch(() => undefined);
   }, [normalizedCards, onCardsChange]);
@@ -3280,7 +3284,13 @@ export default function MerchantBusinessCardManager({
       await deleteCardShare(card);
 
       const nextCards = normalizedCards.filter((item) => item.id !== card.id);
-      await Promise.resolve(onCardsChange(normalizeMerchantBusinessCardChatDisplaySelection(nextCards)));
+      await Promise.resolve(
+        onCardsChange(normalizeMerchantBusinessCardChatDisplaySelection(nextCards), {
+          type: "delete",
+          cardId: card.id,
+          cardName: card.name,
+        }),
+      );
       if (previewAsset?.id === card.id) {
         setPreviewAsset(null);
         setPreviewOpen(false);
@@ -3309,7 +3319,13 @@ export default function MerchantBusinessCardManager({
 
   const markCardAsChatDisplay = async (cardId: string) => {
     try {
-      await Promise.resolve(onCardsChange(selectMerchantBusinessCardForChat(normalizedCards, cardId)));
+      await Promise.resolve(
+        onCardsChange(selectMerchantBusinessCardForChat(normalizedCards, cardId), {
+          type: "select_chat",
+          cardId,
+          cardName: normalizedCards.find((card) => card.id === cardId)?.name,
+        }),
+      );
       setTip("这张名片会在聊天模块中展示");
     } catch {
       setTip("聊天名片设置保存失败，请重试");
@@ -5442,10 +5458,10 @@ export default function MerchantBusinessCardManager({
     void mergeSavedBusinessCardAssetPatch({ cardId, patch }).catch(() => undefined);
   }
 
-  function persistBusinessCardList(cardsToSave: MerchantBusinessCardAsset[]) {
+  function persistBusinessCardList(cardsToSave: MerchantBusinessCardAsset[], meta: BusinessCardChangeMeta) {
     const normalizedNextCards = normalizeMerchantBusinessCardChatDisplaySelection(cardsToSave);
     normalizedCardsRef.current = normalizedNextCards;
-    return Promise.resolve(onCardsChange(normalizedNextCards));
+    return Promise.resolve(onCardsChange(normalizedNextCards, meta));
   }
 
   function beginBusinessCardBackgroundSync(cardId: string) {
@@ -5504,7 +5520,11 @@ export default function MerchantBusinessCardManager({
       updatedCard = { ...card, ...safePatch };
       return updatedCard;
     });
-    await persistBusinessCardList(nextCards);
+    await persistBusinessCardList(nextCards, {
+      type: "system_sync",
+      cardId: input.cardId,
+      cardName: currentCard.name,
+    });
     if (updatedCard) {
       setPreviewAsset((current) => (current?.id === input.cardId ? updatedCard : current));
     }
@@ -6159,7 +6179,11 @@ export default function MerchantBusinessCardManager({
     const nextCards = existingCard
       ? currentCards.map((card) => (card.id === existingCard.id ? asset : card))
       : [asset, ...currentCards];
-    await persistBusinessCardList(nextCards);
+    await persistBusinessCardList(nextCards, {
+      type: existingCard ? "update" : "create",
+      cardId: asset.id,
+      cardName: asset.name,
+    });
     setEditingCardId(asset.id);
     return asset;
   }
@@ -6275,7 +6299,11 @@ export default function MerchantBusinessCardManager({
         ? assetWithPossibleShareMetadata
         : stripMerchantBusinessCardShareMetadata(assetWithPossibleShareMetadata);
     const nextCards = currentCards.map((card) => (card.id === existingCard.id ? asset : card));
-    await persistBusinessCardList(nextCards);
+    await persistBusinessCardList(nextCards, {
+      type: "update",
+      cardId: asset.id,
+      cardName: asset.name,
+    });
     setPreviewAsset((current) => (current?.id === asset.id ? asset : current));
     if (options?.deferShareSync) {
       void syncSavedBusinessCardAssetInBackground({

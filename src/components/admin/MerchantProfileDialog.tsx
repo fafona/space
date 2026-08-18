@@ -11,6 +11,7 @@ import {
 import { loadEuropeLocationOptionsApi, type EuropeLocationOptionsApi } from "@/lib/europeLocationOptionsLoader";
 import {
   normalizeMerchantBusinessCards,
+  type BusinessCardChangeMeta,
   type MerchantBusinessCardAsset,
   type MerchantBusinessCardPollOption,
 } from "@/lib/merchantBusinessCards";
@@ -63,7 +64,7 @@ type MerchantProfileDialogProps = {
   businessCardContactImageLimitKb?: number;
   businessCardExportImageLimitKb?: number;
   onClose: () => void;
-  onCardsChange?: (cards: MerchantBusinessCardAsset[]) => void;
+  onCardsChange?: (cards: MerchantBusinessCardAsset[], meta?: BusinessCardChangeMeta) => void;
   onSave: (input: {
     merchantName: string;
     domainPrefix: string;
@@ -1251,9 +1252,9 @@ export default function MerchantProfileDialog({
             contactPageImageLimitKb={businessCardContactImageLimitKb}
             exportImageLimitKb={businessCardExportImageLimitKb}
             introVideoLimitMb={businessCardIntroVideoLimitMb}
-            onCardsChange={(cards) => {
+            onCardsChange={(cards, meta) => {
               setBusinessCards(cards);
-              onCardsChange?.(cards);
+              onCardsChange?.(cards, meta);
             }}
           />
         ) : null}

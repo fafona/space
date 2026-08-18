@@ -157,6 +157,7 @@ import {
   normalizeMerchantBusinessCardChatDisplaySelection,
   mergeMerchantBusinessCardAssets,
   resolveMerchantBusinessCardForChatDisplay,
+  type BusinessCardChangeMeta,
   type MerchantBusinessCardAsset,
   type MerchantBusinessCardPollOption,
   type MerchantBusinessCardProfileInput,
@@ -16249,6 +16250,101 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         })),
     [planTemplateFilter, planTemplateKeyword, planTemplates],
   );
+  const handleMerchantBusinessCardsChange = useCallback(
+    (cards: MerchantBusinessCardAsset[], meta?: BusinessCardChangeMeta) => {
+      const siteId = editingSiteId.trim();
+      if (!siteId) return;
+
+      const platformState = loadPlatformState();
+      const currentSite = platformState.sites.find((item) => item.id === siteId) ?? null;
+      if (!currentSite) return;
+
+      const previousCards = normalizeMerchantBusinessCards(currentSite.businessCards ?? []);
+      const normalizedCards = normalizeMerchantBusinessCards(cards);
+      if (JSON.stringify(previousCards) === JSON.stringify(normalizedCards)) return;
+
+      const nextUpdatedAt = new Date().toISOString();
+      const nextSite = {
+        ...currentSite,
+        businessCards: normalizedCards,
+        updatedAt: nextUpdatedAt,
+      };
+      savePlatformState({
+        ...platformState,
+        sites: platformState.sites.map((item) => (item.id === siteId ? nextSite : item)),
+      });
+      supportPeerProfileLocalMutationAtRef.current[siteId] = Date.now();
+      const nextProfile = buildSupportPublishedProfileFromSite(nextSite);
+      setSupportPeerProfilesByMerchantId((current) => ({
+        ...current,
+        [siteId]: nextProfile,
+      }));
+      setSupportPeerBusinessCardByMerchantId((current) => ({
+        ...current,
+        [siteId]: nextProfile.chatBusinessCard ?? null,
+      }));
+      scheduleMerchantChatBusinessCardSync(siteId, normalizedCards);
+
+      if (meta?.type === "system_sync" || meta?.type === "normalize") return;
+
+      const changeType =
+        meta?.type ??
+        (normalizedCards.length > previousCards.length
+          ? "create"
+          : normalizedCards.length < previousCards.length
+            ? "delete"
+            : "update");
+      const previousById = new Map(previousCards.map((card) => [card.id, card]));
+      const nextById = new Map(normalizedCards.map((card) => [card.id, card]));
+      const cardId =
+        normalizeOperationField(meta?.cardId, 80) ||
+        (changeType === "create"
+          ? normalizedCards.find((card) => !previousById.has(card.id))?.id
+          : changeType === "delete"
+            ? previousCards.find((card) => !nextById.has(card.id))?.id
+            : normalizedCards.find((card) => {
+                const previous = previousById.get(card.id);
+                return !previous || JSON.stringify(previous) !== JSON.stringify(card);
+              })?.id) ||
+        "";
+      const targetCard =
+        (changeType === "delete" ? previousById.get(cardId) : nextById.get(cardId)) ??
+        nextById.get(cardId) ??
+        previousById.get(cardId) ??
+        null;
+      const cardName = normalizeOperationField(meta?.cardName, 80) || normalizeOperationField(targetCard?.name, 80);
+      const cardLabel = cardName ? `“${cardName}”` : cardId ? `名片 ${cardId}` : "名片";
+      const countSummary = `${previousCards.length} 张 -> ${normalizedCards.length} 张`;
+      const operation =
+        changeType === "create"
+          ? {
+              action: "新增名片",
+              summary: `在经营中心 > 名片夹新增${cardLabel}（${countSummary}）`,
+            }
+          : changeType === "delete"
+            ? {
+                action: "删除名片",
+                summary: `在经营中心 > 名片夹删除${cardLabel}（${countSummary}）`,
+              }
+            : changeType === "select_chat"
+              ? {
+                  action: "设置聊天展示名片",
+                  summary: `在经营中心 > 名片夹将${cardLabel}设为聊天展示名片`,
+                }
+              : {
+                  action: "更新名片",
+                  summary: `在经营中心 > 名片夹更新${cardLabel}`,
+                };
+      recordMerchantOperationLog({
+        siteId,
+        module: "经营中心 > 名片夹",
+        action: operation.action,
+        summary: operation.summary,
+        status: "success",
+      });
+    },
+    [editingSiteId, scheduleMerchantChatBusinessCardSync],
+  );
 
   if (checkingAuth) {
     if (!isPlatformEditor) {
@@ -16611,49 +16707,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             setMerchantDesktopSection("editor");
           }
         },
-        onCardsChange: (cards: MerchantBusinessCardAsset[]) => {
-          if (!editingSiteId) return;
-          const previousCount = normalizeMerchantBusinessCards(editingSite?.businessCards ?? []).length;
-          const platformState = loadPlatformState();
-          const normalizedCards = normalizeMerchantBusinessCardChatDisplaySelection(cards);
-          const nextUpdatedAt = new Date().toISOString();
-          const currentSite = platformState.sites.find((item) => item.id === editingSiteId) ?? null;
-          const nextSite = currentSite
-            ? {
-                ...currentSite,
-                businessCards: normalizedCards,
-                updatedAt: nextUpdatedAt,
-              }
-            : null;
-          savePlatformState({
-            ...platformState,
-            sites: platformState.sites.map((item) =>
-              item.id === editingSiteId
-                ? nextSite ?? item
-                : item,
-            ),
-          });
-          supportPeerProfileLocalMutationAtRef.current[editingSiteId] = Date.now();
-          if (nextSite) {
-            const nextProfile = buildSupportPublishedProfileFromSite(nextSite);
-            setSupportPeerProfilesByMerchantId((current) => ({
-              ...current,
-              [editingSiteId]: nextProfile,
-            }));
-            setSupportPeerBusinessCardByMerchantId((current) => ({
-              ...current,
-              [editingSiteId]: nextProfile.chatBusinessCard ?? null,
-            }));
-          }
-          scheduleMerchantChatBusinessCardSync(editingSiteId, normalizedCards);
-          recordMerchantOperationLog({
-            siteId: editingSiteId,
-            module: "经营中心 > 名片夹",
-            action: "更新名片夹",
-            summary: `在经营中心 > 名片夹更新名片数量：${previousCount} 张 -> ${normalizedCards.length} 张`,
-            status: "success",
-          });
-        },
+        onCardsChange: handleMerchantBusinessCardsChange,
         onSave: async ({
           merchantName,
           domainPrefix,
