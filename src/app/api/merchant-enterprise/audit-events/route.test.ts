@@ -88,11 +88,48 @@ test("audit cursor is opaque, canonical and round-trips its keyset", () => {
   assert.throws(
     () =>
       parseMerchantEnterpriseAuditCursor(
+        Buffer.from(JSON.stringify([cursor.beforeCreatedAt, cursor.beforeId]))
+          .toString("base64url"),
+      ),
+    /invalid_enterprise_audit_cursor/,
+    "pre-microsecond cursors must force a safe page reload after deployment",
+  );
+  assert.throws(
+    () =>
+      parseMerchantEnterpriseAuditCursor(
         Buffer.from(
-          JSON.stringify(["2026-08-02T12:00:00+00:00", cursor.beforeId]),
+          JSON.stringify([3, cursor.beforeCreatedAt, cursor.beforeId]),
         ).toString("base64url"),
       ),
     /invalid_enterprise_audit_cursor/,
+  );
+  assert.throws(
+    () =>
+      parseMerchantEnterpriseAuditCursor(
+        Buffer.from(
+          JSON.stringify([2, cursor.beforeCreatedAt, cursor.beforeId, "extra"]),
+        ).toString("base64url"),
+      ),
+    /invalid_enterprise_audit_cursor/,
+  );
+  assert.throws(
+    () =>
+      parseMerchantEnterpriseAuditCursor(
+        Buffer.from(
+          JSON.stringify([2, "2026-08-02T12:00:00+00:00", cursor.beforeId]),
+        ).toString("base64url"),
+      ),
+    /invalid_enterprise_audit_cursor/,
+  );
+  const preciseCursor = {
+    beforeCreatedAt: "2026-08-02T12:00:00.789456Z",
+    beforeId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  };
+  assert.deepEqual(
+    parseMerchantEnterpriseAuditCursor(
+      encodeMerchantEnterpriseAuditCursor(preciseCursor),
+    ),
+    preciseCursor,
   );
 });
 
@@ -104,7 +141,7 @@ test("audit GET authorizes audit.view, checks entitlement and forwards bounded f
   };
   const response = await handleMerchantEnterpriseAuditEventsGet(
     new Request(
-      "https://www.faolla.com/api/merchant-enterprise/audit-events?siteId=10000000&limit=25&entityType=employee&eventType=employee.renamed",
+      "https://www.faolla.com/api/merchant-enterprise/audit-events?siteId=10000000&limit=25&entityType=employee&eventType=employee.renamed&actorType=employee&actorId=77777777-7777-4777-8777-777777777777&createdFrom=2026-08-02T10:00:00Z&createdToExclusive=2026-08-03T00:00:00.000Z",
     ),
     dependencies({
       async resolveActor(_request, input) {
@@ -140,15 +177,20 @@ test("audit GET authorizes audit.view, checks entitlement and forwards bounded f
       cursor: null,
       entityType: "employee",
       eventType: "employee.renamed",
+      filterActorType: "employee",
+      filterActorId: "77777777-7777-4777-8777-777777777777",
+      createdFrom: "2026-08-02T10:00:00.000Z",
+      createdToExclusive: "2026-08-03T00:00:00.000Z",
     },
   });
 });
 
-test("audit GET uses the resolved employee identity and never accepts actor query fields", async () => {
+test("audit GET keeps the resolved caller identity separate from actor filters", async () => {
   let loadedActor: MerchantEnterpriseActor | null = null;
+  let loadedFilterActorType: "owner" | "employee" | "system" | undefined;
   const allowed = await handleMerchantEnterpriseAuditEventsGet(
     new Request(
-      "https://www.faolla.com/api/merchant-enterprise/audit-events?siteId=10000000",
+      "https://www.faolla.com/api/merchant-enterprise/audit-events?siteId=10000000&actorType=owner",
     ),
     dependencies({
       async resolveActor() {
@@ -156,17 +198,19 @@ test("audit GET uses the resolved employee identity and never accepts actor quer
       },
       async loadAuditEvents(input) {
         loadedActor = input.actor;
+        loadedFilterActorType = input.filterActorType;
         return { events: [], nextCursor: null };
       },
     }),
   );
   assert.equal(allowed.status, 200);
   assert.equal(loadedActor, employeeActor);
+  assert.equal(loadedFilterActorType, "owner");
 
   let resolved = false;
   const forged = await handleMerchantEnterpriseAuditEventsGet(
     new Request(
-      "https://www.faolla.com/api/merchant-enterprise/audit-events?siteId=10000000&actorId=88888888-8888-4888-8888-888888888888",
+      "https://www.faolla.com/api/merchant-enterprise/audit-events?siteId=10000000&callerActorId=88888888-8888-4888-8888-888888888888",
     ),
     dependencies({
       async resolveActor() {
@@ -177,6 +221,26 @@ test("audit GET uses the resolved employee identity and never accepts actor quer
   );
   assert.equal(forged.status, 400);
   assert.equal(resolved, false);
+});
+
+test("audit GET accepts matching automation entity and event filters", async () => {
+  let loaded = false;
+  const response = await handleMerchantEnterpriseAuditEventsGet(
+    new Request(
+      "https://www.faolla.com/api/merchant-enterprise/audit-events?siteId=10000000&entityType=automation&eventType=automation.created",
+    ),
+    dependencies({
+      async loadAuditEvents(input) {
+        loaded = true;
+        assert.equal(input.entityType, "automation");
+        assert.equal(input.eventType, "automation.created");
+        return { events: [], nextCursor: null };
+      },
+    }),
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(loaded, true);
 });
 
 test("audit GET rejects duplicate, oversized and inconsistent filters before auth", async () => {
@@ -193,6 +257,14 @@ test("audit GET rejects duplicate, oversized and inconsistent filters before aut
     "siteId=10000000&entityType=unknown",
     "siteId=10000000&eventType=unknown",
     "siteId=10000000&entityType=employee&eventType=role.updated",
+    "siteId=10000000&actorType=unknown",
+    "siteId=10000000&actorId=not-a-uuid",
+    "siteId=10000000&actorType=owner&actorId=88888888-8888-4888-8888-888888888888",
+    "siteId=10000000&createdFrom=2026-08-01T00:00:00%2B00:00",
+    "siteId=10000000&createdFrom=2026-02-30T00:00:00Z",
+    "siteId=10000000&createdFrom=2026-08-02T00:00:00Z&createdToExclusive=2026-08-02T00:00:00.000Z",
+    "siteId=10000000&createdFrom=2026-08-03T00:00:00Z&createdToExclusive=2026-08-02T00:00:00Z",
+    "siteId=10000000&actorType=employee&actorType=employee",
     "siteId=%2010000000",
   ]) {
     const response = await handleMerchantEnterpriseAuditEventsGet(

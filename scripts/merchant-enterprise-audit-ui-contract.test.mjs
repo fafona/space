@@ -46,11 +46,46 @@ test("audit UI exposes immutable history, bounded pagination and safe whiteliste
   assert.match(auditSource, /new\s+URLSearchParams\(\{\s*siteId,\s*limit:\s*["']50["']\s*\}\)/);
   assert.match(auditSource, /entityType\s*!==\s*["']all["'][\s\S]{0,100}params\.set\(["']entityType["']/);
   assert.match(auditSource, /append:\s*true,\s*cursor:\s*nextCursor/);
+  assert.match(
+    auditSource,
+    /else\s*\{\s*setLoading\(true\);\s*setEvents\(\[\]\);\s*setNextCursor\(null\);\s*\}/,
+    "a replacement filter request must clear stale records before it can fail",
+  );
   assert.match(auditSource, /event\.actorLabel/);
   assert.match(auditSource, /event\.targetLabel/);
   assert.match(auditSource, /event\.beforeData\[field\]/);
   assert.match(auditSource, /event\.afterData\[field\]/);
   assert.doesNotMatch(auditSource, /token|token_hash|auth_user_id|email/i);
+});
+
+test("audit UI filters actors and UTC date ranges on the server", () => {
+  assert.match(
+    managerSource,
+    /<MerchantEnterpriseAuditLog[\s\S]{0,240}employees=\{snapshot\.employees\}/,
+  );
+  assert.match(
+    auditSource,
+    /appendMerchantEnterpriseAuditActorFilter\(params,\s*actorFilter\)/,
+  );
+  assert.match(
+    auditSource,
+    /params\.set\(["']createdFrom["'],\s*appliedUtcRange\.createdFrom\)/,
+  );
+  assert.match(
+    auditSource,
+    /params\.set\(["']createdToExclusive["'],\s*appliedUtcRange\.createdToExclusive\)/,
+  );
+  assert.match(auditSource, /搜索已加载的操作人或对象/);
+  assert.match(auditSource, /开始日期（UTC）/);
+  assert.match(auditSource, /结束日期（UTC，包含当天）/);
+  assert.match(auditSource, /timeZone:\s*["']UTC["']/);
+  assert.match(auditSource, /列表时间也统一显示为 UTC/);
+  assert.match(auditSource, /type=["']text["'][\s\S]{0,180}data-no-translate=["']1["']/);
+  assert.doesNotMatch(
+    auditSource,
+    /type=["']date["']/,
+    "browser-localized native date text must not be exposed in the audit filters",
+  );
 });
 
 test("every database audit event has a user-facing description", () => {

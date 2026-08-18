@@ -10,8 +10,10 @@ import {
   MAX_MERCHANT_ENTERPRISE_WORKFLOW_TITLE_LENGTH,
   MERCHANT_ENTERPRISE_AUDIT_ENTITY_TYPES,
   MERCHANT_ENTERPRISE_AUDIT_EVENT_TYPES,
+  merchantEnterpriseAuditTimestampSortKey,
   normalizeMerchantEnterpriseBoardIds,
   normalizeMerchantEnterpriseAuditEvent,
+  normalizeMerchantEnterpriseAuditTimestamp,
   normalizeMerchantEnterpriseEmployee,
   normalizeMerchantEnterpriseNotification,
   normalizeMerchantEnterprisePermissions,
@@ -294,6 +296,8 @@ const MERCHANT_ENTERPRISE_TASK_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MERCHANT_ENTERPRISE_ACTOR_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const MERCHANT_ENTERPRISE_AUDIT_UTC_BOUNDARY_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
 const MERCHANT_LINKED_ORDER_SOURCE_ID_PATTERN =
   /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 
@@ -900,18 +904,67 @@ function normalizeAuditCursor(
 ) {
   if (!value) return null;
   const beforeId = normalizeText(value.beforeId, 80);
-  const beforeCreatedAtText = normalizeText(value.beforeCreatedAt, 80);
+  const beforeCreatedAt = normalizeMerchantEnterpriseAuditTimestamp(
+    value.beforeCreatedAt,
+  );
   if (
     !MERCHANT_ENTERPRISE_TASK_ID_PATTERN.test(beforeId) ||
-    !beforeCreatedAtText ||
-    !Number.isFinite(Date.parse(beforeCreatedAtText))
+    !beforeCreatedAt
   ) {
     throw new Error("invalid_enterprise_audit_cursor");
   }
   return {
     beforeId,
-    beforeCreatedAt: new Date(beforeCreatedAtText).toISOString(),
+    beforeCreatedAt,
   };
+}
+
+function normalizeAuditActorFilters(input: {
+  filterActorType?: unknown;
+  filterActorId?: unknown;
+}) {
+  const filterActorType = input.filterActorType;
+  const hasActorId = input.filterActorId !== undefined;
+  const filterActorId = hasActorId
+    ? normalizeText(input.filterActorId, 80).toLowerCase()
+    : "";
+  if (
+    (filterActorType !== undefined &&
+      filterActorType !== "owner" &&
+      filterActorType !== "employee" &&
+      filterActorType !== "system") ||
+    (hasActorId &&
+      (typeof input.filterActorId !== "string" ||
+        input.filterActorId !== input.filterActorId.trim() ||
+        !MERCHANT_ENTERPRISE_ACTOR_ID_PATTERN.test(filterActorId))) ||
+    (hasActorId &&
+      (filterActorType === "owner" || filterActorType === "system"))
+  ) {
+    throw new Error("invalid_enterprise_audit_query");
+  }
+  return {
+    ...(filterActorType ? { filterActorType } : {}),
+    ...(filterActorId ? { filterActorId } : {}),
+  };
+}
+
+function normalizeAuditUtcBoundary(value: unknown) {
+  if (value === undefined) return null;
+  if (
+    typeof value !== "string" ||
+    !MERCHANT_ENTERPRISE_AUDIT_UTC_BOUNDARY_PATTERN.test(value)
+  ) {
+    throw new Error("invalid_enterprise_audit_query");
+  }
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) {
+    throw new Error("invalid_enterprise_audit_query");
+  }
+  const normalized = new Date(parsed).toISOString();
+  if (value !== normalized && value !== normalized.replace(".000Z", "Z")) {
+    throw new Error("invalid_enterprise_audit_query");
+  }
+  return normalized;
 }
 
 function normalizeAuditResponseCursor(value: unknown) {
@@ -943,6 +996,10 @@ export async function loadMerchantEnterpriseAuditEvents(
     cursor?: MerchantEnterpriseAuditCursor | null;
     entityType?: MerchantEnterpriseAuditEntityType;
     eventType?: MerchantEnterpriseAuditEventType;
+    filterActorType?: "owner" | "employee" | "system";
+    filterActorId?: string;
+    createdFrom?: string;
+    createdToExclusive?: string;
   },
 ): Promise<MerchantEnterpriseAuditPage> {
   const siteId = normalizeText(input.siteId, 80);
@@ -950,6 +1007,11 @@ export async function loadMerchantEnterpriseAuditEvents(
   const requestedLimit = input.limit ?? 50;
   const entityType = input.entityType;
   const eventType = input.eventType;
+  const actorFilters = normalizeAuditActorFilters(input);
+  const createdFrom = normalizeAuditUtcBoundary(input.createdFrom);
+  const createdToExclusive = normalizeAuditUtcBoundary(
+    input.createdToExclusive,
+  );
   if (
     !/^\d{8}$/.test(siteId) ||
     !Number.isSafeInteger(requestedLimit) ||
@@ -958,7 +1020,10 @@ export async function loadMerchantEnterpriseAuditEvents(
     (entityType !== undefined &&
       !MERCHANT_ENTERPRISE_AUDIT_ENTITY_TYPES.includes(entityType)) ||
     (eventType !== undefined &&
-      !MERCHANT_ENTERPRISE_AUDIT_EVENT_TYPES.includes(eventType))
+      !MERCHANT_ENTERPRISE_AUDIT_EVENT_TYPES.includes(eventType)) ||
+    (createdFrom !== null &&
+      createdToExclusive !== null &&
+      Date.parse(createdFrom) >= Date.parse(createdToExclusive))
   ) {
     throw new Error("invalid_enterprise_audit_query");
   }
@@ -973,6 +1038,16 @@ export async function loadMerchantEnterpriseAuditEvents(
         limit: requestedLimit,
         ...(entityType ? { entity_type: entityType } : {}),
         ...(eventType ? { event_type: eventType } : {}),
+        ...(actorFilters.filterActorType
+          ? { filter_actor_type: actorFilters.filterActorType }
+          : {}),
+        ...(actorFilters.filterActorId
+          ? { filter_actor_id: actorFilters.filterActorId }
+          : {}),
+        ...(createdFrom ? { created_from: createdFrom } : {}),
+        ...(createdToExclusive
+          ? { created_to_exclusive: createdToExclusive }
+          : {}),
         ...(cursor
           ? {
               before_created_at: cursor.beforeCreatedAt,
@@ -999,8 +1074,29 @@ export async function loadMerchantEnterpriseAuditEvents(
     throw new Error("enterprise_audit_read_failed:invalid_response");
   }
   const events = normalized as MerchantEnterpriseAuditEvent[];
+  const createdFromSortKey = createdFrom
+    ? merchantEnterpriseAuditTimestampSortKey(createdFrom)
+    : null;
+  const createdToExclusiveSortKey = createdToExclusive
+    ? merchantEnterpriseAuditTimestampSortKey(createdToExclusive)
+    : null;
   if (
     events.some((event) => event.siteId !== siteId) ||
+    events.some(
+      (event) =>
+        (entityType !== undefined && event.entityType !== entityType) ||
+        (eventType !== undefined && event.eventType !== eventType) ||
+        (actorFilters.filterActorType !== undefined &&
+          event.actorType !== actorFilters.filterActorType) ||
+        (actorFilters.filterActorId !== undefined &&
+          event.actorId !== actorFilters.filterActorId) ||
+        (createdFromSortKey !== null &&
+          (merchantEnterpriseAuditTimestampSortKey(event.createdAt) ?? "") <
+            createdFromSortKey) ||
+        (createdToExclusiveSortKey !== null &&
+          (merchantEnterpriseAuditTimestampSortKey(event.createdAt) ?? "") >=
+            createdToExclusiveSortKey),
+    ) ||
     new Set(events.map((event) => event.id)).size !== events.length
   ) {
     throw new Error("enterprise_audit_read_failed:invalid_response");
@@ -1008,9 +1104,17 @@ export async function loadMerchantEnterpriseAuditEvents(
   for (let index = 1; index < events.length; index += 1) {
     const previous = events[index - 1];
     const current = events[index];
+    const previousCreatedAt = merchantEnterpriseAuditTimestampSortKey(
+      previous.createdAt,
+    );
+    const currentCreatedAt = merchantEnterpriseAuditTimestampSortKey(
+      current.createdAt,
+    );
     if (
-      previous.createdAt < current.createdAt ||
-      (previous.createdAt === current.createdAt && previous.id < current.id)
+      !previousCreatedAt ||
+      !currentCreatedAt ||
+      previousCreatedAt < currentCreatedAt ||
+      (previousCreatedAt === currentCreatedAt && previous.id < current.id)
     ) {
       throw new Error("enterprise_audit_read_failed:invalid_response");
     }
@@ -1020,12 +1124,19 @@ export async function loadMerchantEnterpriseAuditEvents(
     response.nextCursor ?? response.next_cursor,
   );
   const lastEvent = events.at(-1) ?? null;
+  const lastEventCreatedAt = lastEvent
+    ? merchantEnterpriseAuditTimestampSortKey(lastEvent.createdAt)
+    : null;
+  const nextCursorCreatedAt = nextCursor
+    ? merchantEnterpriseAuditTimestampSortKey(nextCursor.beforeCreatedAt)
+    : null;
   if (
-    nextCursor &&
-    (events.length !== requestedLimit ||
-      !lastEvent ||
-      nextCursor.beforeCreatedAt !== lastEvent.createdAt ||
-      nextCursor.beforeId !== lastEvent.id)
+    (events.length === requestedLimit) !== (nextCursor !== null) ||
+    (nextCursor &&
+      (!lastEvent ||
+        !lastEventCreatedAt ||
+        nextCursorCreatedAt !== lastEventCreatedAt ||
+        nextCursor.beforeId !== lastEvent.id))
   ) {
     throw new Error("enterprise_audit_read_failed:invalid_response");
   }

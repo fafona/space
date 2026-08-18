@@ -173,7 +173,7 @@ test("enterprise overview aggregates every active board while task filtering sta
   assert.match(
     overviewSummarySource,
     /assigneeId:\s*actor\?\.type\s*===\s*["']employee["'][\s\S]{0,160}getMerchantEnterpriseDefaultTaskAssigneeFilter\(actor\)[\s\S]{0,80}:\s*undefined/,
-    "employee overview totals must be scoped to the signed-in employee while owners retain the team view",
+    "employee overview totals must be scoped to the signed-in employee while owners retain the enterprise view",
   );
   assert.match(
     source,
@@ -187,11 +187,12 @@ test("enterprise overview aggregates every active board while task filtering sta
     "enterprise overview",
   );
   for (const field of [
-    "overviewTaskSummary.incompleteTaskCount",
-    "overviewTaskSummary.completedTaskCount",
-    "overviewTaskSummary.overdueTaskCount",
-    "overviewTaskSummary.recentTasks",
-    "overviewTaskSummary.tasks.length",
+    "overviewOperationsSummary.openTaskCount",
+    "overviewOperationsSummary.overdueTaskCount",
+    "overviewOperationsSummary.dueSoonTaskCount",
+    "overviewOperationsSummary.unassignedTaskCount",
+    "overviewOperationsSummary.boardSummaries",
+    "overviewPriorityTasks",
   ]) {
     assert.ok(overviewSource.includes(field), `overview must use ${field}`);
   }
@@ -200,7 +201,7 @@ test("enterprise overview aggregates every active board while task filtering sta
     /\bvisibleTasks\b/,
     "overview totals must not depend on the currently selected board",
   );
-  assert.match(overviewSource, /汇总全部启用看板/);
+  assert.match(overviewSource, /汇总全部启用看板中的当前未完成工作/);
   assert.match(overviewSource, /const\s+boardName\s*=\s*snapshot\.boards\.find/);
 });
 
@@ -246,16 +247,32 @@ test("employees default to their own tasks and can explicitly switch to the team
   );
 });
 
-test("employee overview is personalized and opens a task on its source board", () => {
+test("employee overview is a current operations snapshot and opens a task on its source board", () => {
   const overviewSource = sliceBetween(
     /!needsBootstrap\s*&&\s*tab\s*===\s*["']overview["']/,
     /!needsBootstrap\s*&&\s*tab\s*===\s*["']tasks["']/,
     "personalized enterprise overview",
   );
-  for (const label of ["我的未完成", "我的已完成", "我的已逾期", "我的最近任务"]) {
+  for (const label of [
+    "企业／看板当前运营概览（非绩效考核）",
+    "当前分派给我的未完成",
+    "当前分派给我的逾期",
+    "未来 7 天内到期",
+    "我的当前优先任务",
+  ]) {
     assert.ok(overviewSource.includes(label), `employee overview must expose ${label}`);
   }
-  assert.match(overviewSource, /overviewTaskSummary\.recentTasks\.slice\(0,\s*6\)\.map\(\(task\)\s*=>/);
+  for (const misleadingLabel of ["我的已完成", "团队成员", "团队工作"]) {
+    assert.ok(
+      !overviewSource.includes(misleadingLabel),
+      `current operations overview must not expose the misleading label ${misleadingLabel}`,
+    );
+  }
+  assert.match(overviewSource, /overviewPriorityTasks\.slice\(0,\s*6\)\.map\(\(task\)\s*=>/);
+  assert.match(
+    overviewSource,
+    /overviewOperationsSummary\.boardSummaries\.slice\(0,\s*12\)\.map\(\(board\)\s*=>/,
+  );
   assert.match(overviewSource, /const\s+boardName\s*=\s*snapshot\.boards\.find/);
   const recentTaskButton = overviewSource.match(
     /<button\s+key=\{task\.id\}[\s\S]{0,900}?onClick=\{\(\)\s*=>\s*openTaskFromOverview\(task\)\}[\s\S]{0,120}?>/,

@@ -164,17 +164,21 @@ test("portal coalesces simultaneous auth callbacks and consumes credentials only
   const source = read(portalPath);
   assert.match(
     source,
-    /if \(!token \|\| acceptedAccessTokenRef\.current === token\) return;/,
+    /const acceptanceKey = invitationAcceptanceKey\(token, siteId, invitationVersion\);/,
   );
   assert.match(
     source,
-    /if \(acceptanceInFlightRef\.current\) return acceptanceInFlightRef\.current;/,
+    /if \(!token \|\| acceptedAcceptanceKeysRef\.current\.has\(acceptanceKey\)\) return;/,
+  );
+  assert.match(
+    source,
+    /const inFlight = acceptanceInFlightRef\.current\.get\(acceptanceKey\);[\s\S]{0,80}if \(inFlight\) return inFlight;/,
   );
   const acceptCall = source.indexOf(
     "acceptEnterpriseMembership(siteId, token, invitation)",
   );
   const markAccepted = source.indexOf(
-    "acceptedAccessTokenRef.current = token",
+    "acceptedAcceptanceKeysRef.current.add(acceptanceKey)",
     acceptCall,
   );
   const consumeCredential = source.indexOf(
@@ -182,13 +186,17 @@ test("portal coalesces simultaneous auth callbacks and consumes credentials only
     acceptCall,
   );
   const clearInFlight = source.indexOf(
-    "acceptanceInFlightRef.current = null",
+    "acceptanceInFlightRef.current.delete(acceptanceKey)",
     acceptCall,
   );
   assert.ok(acceptCall >= 0);
   assert.ok(acceptCall < markAccepted);
   assert.ok(markAccepted < consumeCredential);
   assert.ok(consumeCredential < clearInFlight);
+  assert.match(
+    source,
+    /acceptanceInFlightRef\.current\.set\(acceptanceKey, acceptance\);/,
+  );
   assert.match(
     source,
     /supabase\.auth\.onAuthStateChange\([\s\S]*ensureMembershipAccepted\(token\)/,

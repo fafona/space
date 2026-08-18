@@ -2630,6 +2630,7 @@ function auditEventRow(
 test("audit loader uses one bounded actor-authorized RPC with exact filters and cursor", async () => {
   const calls: Array<{ name: string; input: Record<string, unknown> }> = [];
   const secondCreatedAt = "2026-08-02T11:00:00.000Z";
+  const filteredActorId = "77777777-7777-4777-8777-777777777777";
   const client = {
     from() {
       throw new Error("audit reads must stay behind the authorized RPC");
@@ -2642,10 +2643,12 @@ test("audit loader uses one bounded actor-authorized RPC with exact filters and 
             auditEventRow(
               "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
               "2026-08-02T12:00:00.000Z",
+              { actor_type: "employee", actor_id: filteredActorId },
             ),
             auditEventRow(
               "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
               secondCreatedAt,
+              { actor_type: "employee", actor_id: filteredActorId },
             ),
           ],
           next_cursor: {
@@ -2665,6 +2668,10 @@ test("audit loader uses one bounded actor-authorized RPC with exact filters and 
     limit: 2,
     entityType: "employee",
     eventType: "employee.renamed",
+    filterActorType: "employee",
+    filterActorId: filteredActorId,
+    createdFrom: "2026-08-02T11:00:00Z",
+    createdToExclusive: "2026-08-02T13:00:00.000Z",
     cursor: {
       beforeCreatedAt: "2026-08-02T13:00:00.000Z",
       beforeId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
@@ -2681,16 +2688,91 @@ test("audit loader uses one bounded actor-authorized RPC with exact filters and 
         limit: 2,
         entity_type: "employee",
         event_type: "employee.renamed",
+        filter_actor_type: "employee",
+        filter_actor_id: filteredActorId,
+        created_from: "2026-08-02T11:00:00.000Z",
+        created_to_exclusive: "2026-08-02T13:00:00.000Z",
         before_created_at: "2026-08-02T13:00:00.000Z",
         before_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
       },
     },
   ]);
   assert.equal(page.events.length, 2);
-  assert.equal(page.events[0]?.actorId, null);
+  assert.equal(page.events[0]?.actorId, filteredActorId);
   assert.deepEqual(page.nextCursor, {
     beforeCreatedAt: secondCreatedAt,
     beforeId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  });
+});
+
+test("audit loader preserves the legacy RPC payload when new filters are omitted", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const client = {
+    from() {
+      throw new Error("audit reads must stay behind the authorized RPC");
+    },
+    async rpc(_name: string, args: Record<string, unknown>) {
+      calls.push(args.p_input as Record<string, unknown>);
+      return { data: { events: [], next_cursor: null }, error: null };
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+
+  await loadMerchantEnterpriseAuditEvents(client, {
+    siteId: "10000000",
+    actorType: "owner",
+    actorId: WORKSPACE_OWNER_ACTOR.actorId,
+  });
+
+  assert.deepEqual(calls, [
+    {
+      merchant_id: "10000000",
+      actor_type: "owner",
+      actor_id: WORKSPACE_OWNER_ACTOR.actorId,
+      limit: 50,
+    },
+  ]);
+});
+
+test("audit loader preserves PostgreSQL microseconds for ordering and keyset cursors", async () => {
+  const firstCreatedAt = "2026-08-02T12:00:00.789456Z";
+  const secondCreatedAt = "2026-08-02T12:00:00.789455Z";
+  const firstId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const secondId = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+  const client = {
+    from() {
+      throw new Error("audit reads must stay behind the authorized RPC");
+    },
+    async rpc() {
+      return {
+        data: {
+          events: [
+            auditEventRow(firstId, firstCreatedAt),
+            auditEventRow(secondId, secondCreatedAt),
+          ],
+          next_cursor: {
+            before_created_at: secondCreatedAt,
+            before_id: secondId,
+          },
+        },
+        error: null,
+      };
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+
+  const page = await loadMerchantEnterpriseAuditEvents(client, {
+    siteId: "10000000",
+    actorType: "owner",
+    actorId: WORKSPACE_OWNER_ACTOR.actorId,
+    limit: 2,
+  });
+
+  assert.deepEqual(
+    page.events.map((event) => event.createdAt),
+    [firstCreatedAt, secondCreatedAt],
+  );
+  assert.deepEqual(page.nextCursor, {
+    beforeCreatedAt: secondCreatedAt,
+    beforeId: secondId,
   });
 });
 
@@ -2731,6 +2813,35 @@ test("audit loader rejects forged input before RPC and maps database permission 
       cursor: { beforeCreatedAt: "invalid", beforeId: "invalid" },
     }),
     { message: "invalid_enterprise_audit_cursor" },
+  );
+  await assert.rejects(
+    loadMerchantEnterpriseAuditEvents(client, {
+      siteId: "10000000",
+      actorType: "employee",
+      actorId: WORKSPACE_EMPLOYEE_ACTOR.actorId,
+      filterActorType: "owner",
+      filterActorId: WORKSPACE_EMPLOYEE_ACTOR.actorId,
+    }),
+    { message: "invalid_enterprise_audit_query" },
+  );
+  await assert.rejects(
+    loadMerchantEnterpriseAuditEvents(client, {
+      siteId: "10000000",
+      actorType: "employee",
+      actorId: WORKSPACE_EMPLOYEE_ACTOR.actorId,
+      createdFrom: "2026-08-02T00:00:00+00:00",
+    }),
+    { message: "invalid_enterprise_audit_query" },
+  );
+  await assert.rejects(
+    loadMerchantEnterpriseAuditEvents(client, {
+      siteId: "10000000",
+      actorType: "employee",
+      actorId: WORKSPACE_EMPLOYEE_ACTOR.actorId,
+      createdFrom: "2026-08-03T00:00:00Z",
+      createdToExclusive: "2026-08-02T00:00:00Z",
+    }),
+    { message: "invalid_enterprise_audit_query" },
   );
   assert.equal(calls, 0);
 
@@ -2799,6 +2910,38 @@ test("audit loader fails closed on secret fields, cross-merchant rows and forged
     },
   };
   await assert.rejects(invoke(), /enterprise_audit_read_failed:invalid_response/);
+
+  response = {
+    events: [
+      auditEventRow(
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "2026-08-02T12:00:00.000Z",
+      ),
+    ],
+    next_cursor: null,
+  };
+  await assert.rejects(invoke(), /enterprise_audit_read_failed:invalid_response/);
+
+  response = {
+    events: [
+      auditEventRow(
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "2026-08-02T12:00:00.000Z",
+      ),
+    ],
+    next_cursor: null,
+  };
+  await assert.rejects(
+    loadMerchantEnterpriseAuditEvents(client, {
+      siteId: "10000000",
+      actorType: "owner",
+      actorId: WORKSPACE_OWNER_ACTOR.actorId,
+      filterActorType: "employee",
+      filterActorId: WORKSPACE_EMPLOYEE_ACTOR.actorId,
+      createdFrom: "2026-08-02T12:00:00.001Z",
+    }),
+    /enterprise_audit_read_failed:invalid_response/,
+  );
 });
 
 test("workflow listing requests only active rows while delegating safe projection to the authorized RPC", async () => {

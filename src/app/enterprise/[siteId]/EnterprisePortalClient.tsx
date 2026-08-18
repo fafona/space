@@ -2,12 +2,27 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import MerchantEnterpriseManager from "@/components/admin/MerchantEnterpriseManager";
+import { MerchantEnterpriseAuthGeneration } from "@/lib/merchantEnterpriseAuthGeneration";
 import { merchantEnterpriseSupabase as supabase } from "@/lib/merchantEnterpriseSupabase";
 
 type InvitationCredential = {
   invitationVersion: number;
   invitationToken: string;
 };
+
+type PortalAuthContext = {
+  siteId: string;
+  token: string;
+  generation: number;
+};
+
+function invitationAcceptanceKey(
+  accessToken: string,
+  siteId: string,
+  invitationVersion: number,
+) {
+  return JSON.stringify([accessToken, siteId, invitationVersion]);
+}
 
 async function acceptEnterpriseMembership(
   siteId: string,
@@ -65,7 +80,7 @@ async function acceptEnterpriseMembership(
 }
 
 export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
-  const [accessToken, setAccessToken] = useState("");
+  const [authContext, setAuthContext] = useState<PortalAuthContext | null>(null);
   const [checking, setChecking] = useState(true);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -73,25 +88,34 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const invitationCredentialRef = useRef<InvitationCredential | null>(null);
-  const acceptedAccessTokenRef = useRef("");
-  const acceptanceInFlightRef = useRef<Promise<void> | null>(null);
+  const invitationVersionRef = useRef(0);
+  const acceptedAcceptanceKeysRef = useRef(new Set<string>());
+  const acceptanceInFlightRef = useRef(new Map<string, Promise<void>>());
+  const authGenerationRef = useRef(new MerchantEnterpriseAuthGeneration());
+  const accessToken = authContext?.siteId === siteId ? authContext.token : "";
+  const portalContextMismatch = Boolean(authContext && authContext.siteId !== siteId);
 
   const ensureMembershipAccepted = useCallback(
     async (token: string) => {
-      if (!token || acceptedAccessTokenRef.current === token) return;
-      if (acceptanceInFlightRef.current) return acceptanceInFlightRef.current;
       const invitation = invitationCredentialRef.current;
+      const invitationVersion = invitation?.invitationVersion ?? invitationVersionRef.current;
+      const acceptanceKey = invitationAcceptanceKey(token, siteId, invitationVersion);
+      if (!token || acceptedAcceptanceKeysRef.current.has(acceptanceKey)) return;
+      const inFlight = acceptanceInFlightRef.current.get(acceptanceKey);
+      if (inFlight) return inFlight;
       const acceptance = acceptEnterpriseMembership(siteId, token, invitation)
         .then(() => {
-          acceptedAccessTokenRef.current = token;
-          invitationCredentialRef.current = null;
+          acceptedAcceptanceKeysRef.current.add(acceptanceKey);
+          if (invitationCredentialRef.current === invitation) {
+            invitationCredentialRef.current = null;
+          }
         })
         .finally(() => {
-          if (acceptanceInFlightRef.current === acceptance) {
-            acceptanceInFlightRef.current = null;
+          if (acceptanceInFlightRef.current.get(acceptanceKey) === acceptance) {
+            acceptanceInFlightRef.current.delete(acceptanceKey);
           }
         });
-      acceptanceInFlightRef.current = acceptance;
+      acceptanceInFlightRef.current.set(acceptanceKey, acceptance);
       return acceptance;
     },
     [siteId],
@@ -99,7 +123,12 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
 
   useEffect(() => {
     let cancelled = false;
-    async function resolveSession() {
+    const authGeneration = authGenerationRef.current;
+    const initializationGeneration = authGeneration.begin();
+    authGeneration.bindSessionToken(initializationGeneration, "");
+
+    async function resolveSession(generation: number) {
+      let token = "";
       try {
         if (typeof window !== "undefined") {
           const url = new URL(window.location.href);
@@ -116,6 +145,7 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
               invitationVersion,
               invitationToken,
             };
+            invitationVersionRef.current = invitationVersion;
           }
           if (code || invitationVersionText || invitationToken) {
             url.searchParams.delete("code");
@@ -146,38 +176,50 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
         }
         const result = await supabase.auth.getSession();
         if (result.error) throw result.error;
-        const token = result.data.session?.access_token ?? "";
+        token = result.data.session?.access_token ?? "";
+        if (cancelled || !authGeneration.bindSessionToken(generation, token)) return;
         if (token) await ensureMembershipAccepted(token);
-        if (!cancelled) setAccessToken(token);
+        if (!authGeneration.isCurrent(generation, token, cancelled)) return;
+        setAuthContext(token ? { siteId, token, generation } : null);
       } catch (error) {
-        if (!cancelled) {
+        if (authGeneration.isCurrent(generation, token, cancelled)) {
+          setAuthContext(null);
           setMessage(error instanceof Error ? error.message : "邀请链接无效或已过期。");
         }
       } finally {
-        if (!cancelled) setChecking(false);
+        if (authGeneration.isGenerationCurrent(generation, cancelled)) setChecking(false);
       }
     }
-    void resolveSession();
+    void resolveSession(initializationGeneration);
     const listener = supabase.auth.onAuthStateChange((_event, session) => {
+      const generation = authGeneration.begin();
       const token = session?.access_token ?? "";
+      if (!authGeneration.bindSessionToken(generation, token) || cancelled) return;
+      setAuthContext(null);
       if (!token) {
-        if (!cancelled) setAccessToken("");
+        acceptedAcceptanceKeysRef.current.clear();
+        setChecking(false);
         return;
       }
-      void Promise.resolve()
-        .then(() => ensureMembershipAccepted(token))
+      setChecking(true);
+      void ensureMembershipAccepted(token)
         .then(() => {
-          if (!cancelled) setAccessToken(token);
+          if (!authGeneration.isCurrent(generation, token, cancelled)) return;
+          setAuthContext({ siteId, token, generation });
         })
         .catch((error) => {
-          if (!cancelled) {
-            setAccessToken("");
-            setMessage(error instanceof Error ? error.message : "员工邀请确认失败。");
-          }
+          if (!authGeneration.isCurrent(generation, token, cancelled)) return;
+          setAuthContext(null);
+          setMessage(error instanceof Error ? error.message : "员工邀请确认失败。");
+        })
+        .finally(() => {
+          if (authGeneration.isCurrent(generation, token, cancelled)) setChecking(false);
         });
     });
     return () => {
       cancelled = true;
+      const invalidationGeneration = authGeneration.begin();
+      authGeneration.bindSessionToken(invalidationGeneration, "");
       listener.data.subscription.unsubscribe();
     };
   }, [ensureMembershipAccepted, siteId]);
@@ -193,8 +235,6 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
       if (result.error) throw result.error;
       const token = result.data.session?.access_token ?? "";
       if (!token) throw new Error("登录未返回有效会话。");
-      await ensureMembershipAccepted(token);
-      setAccessToken(token);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "登录失败，请检查邮箱和密码。");
     } finally {
@@ -246,7 +286,18 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
     }
   }
 
-  if (checking) {
+  async function signOut() {
+    const authGeneration = authGenerationRef.current;
+    const generation = authGeneration.begin();
+    authGeneration.bindSessionToken(generation, "");
+    acceptedAcceptanceKeysRef.current.clear();
+    setAuthContext(null);
+    setChecking(false);
+    const result = await supabase.auth.signOut();
+    if (result.error) setMessage("退出失败，请稍后重试。");
+  }
+
+  if (checking || portalContextMismatch) {
     return (
       <main className="grid min-h-screen place-items-center bg-slate-950 px-4 text-white">
         <div className="text-sm text-slate-300">正在验证企业账号...</div>
@@ -270,7 +321,11 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
           <h1 className="mt-3 text-2xl font-bold text-slate-950">员工登录</h1>
           <p className="mt-2 text-sm leading-6 text-slate-500">使用企业负责人邀请的员工邮箱登录。</p>
           <div className="mt-6 space-y-3">
+            <label htmlFor="enterprise-portal-email" className="sr-only">
+              员工邮箱
+            </label>
             <input
+              id="enterprise-portal-email"
               type="email"
               autoComplete="email"
               className="w-full rounded-xl border border-slate-300 px-3 py-3 text-sm"
@@ -278,7 +333,11 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
               value={email}
               onChange={(event) => setEmail(event.target.value)}
             />
+            <label htmlFor="enterprise-portal-password" className="sr-only">
+              密码
+            </label>
             <input
+              id="enterprise-portal-password"
               type="password"
               autoComplete="current-password"
               className="w-full rounded-xl border border-slate-300 px-3 py-3 text-sm"
@@ -289,7 +348,7 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
                 if (event.key === "Enter") void signIn();
               }}
             />
-            {message ? <div className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">{message}</div> : null}
+            {message ? <div role="alert" className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">{message}</div> : null}
             <button
               type="button"
               className="w-full rounded-xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white disabled:opacity-45"
@@ -315,7 +374,11 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
   return (
     <main className="min-h-screen bg-[#f3f6fb]">
       <div className="flex flex-wrap items-center justify-end gap-2 border-b border-slate-200 bg-white px-4 py-2">
+        <label htmlFor="enterprise-portal-new-password" className="sr-only">
+          设置或修改登录密码
+        </label>
         <input
+          id="enterprise-portal-new-password"
           type="password"
           autoComplete="new-password"
           className="w-48 rounded-lg border border-slate-300 px-3 py-2 text-xs"
@@ -334,13 +397,25 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
         <button
           type="button"
           className="rounded-lg bg-slate-950 px-3 py-2 text-xs font-semibold text-white"
-          onClick={() => void supabase.auth.signOut()}
+          onClick={() => void signOut()}
         >
           退出
         </button>
-        {message ? <span className="text-xs text-slate-600">{message}</span> : null}
+        <button
+          type="button"
+          className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700"
+          onClick={() => window.location.assign("/enterprise")}
+        >
+          切换企业
+        </button>
+        {message ? <span role="alert" className="text-xs text-slate-600">{message}</span> : null}
       </div>
-      <MerchantEnterpriseManager siteId={siteId} accessToken={accessToken} standalone />
+      <MerchantEnterpriseManager
+        key={`${siteId}:${authContext?.generation ?? 0}`}
+        siteId={siteId}
+        accessToken={accessToken}
+        standalone
+      />
     </main>
   );
 }

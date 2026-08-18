@@ -273,6 +273,15 @@ test("enterprise audit normalization accepts only sanitized immutable event rows
   assert.equal(
     normalizeMerchantEnterpriseAuditEvent({
       ...event,
+      actor_id: null,
+      createdAt: "2026-08-02T12:00:00.789456+00:00",
+    })?.createdAt,
+    "2026-08-02T12:00:00.789456Z",
+  );
+
+  assert.equal(
+    normalizeMerchantEnterpriseAuditEvent({
+      ...event,
       eventType: "employee.renamed",
       entityType: "employee",
       actorType: "owner",
