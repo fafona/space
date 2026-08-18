@@ -129,7 +129,11 @@ test("migration is additive, indexed, registered and API-schema compatible", () 
   assert.match(source, /(?:^|\n)begin\s*;/i);
   assert.match(
     source,
-    /commit\s*;[\s\S]+create index concurrently if not exists\s+merchant_enterprise_audit_events_actor_created_idx[\s\S]+merchant_id, actor_type, actor_id, created_at desc, id desc[\s\S]+begin\s*;/i,
+    /commit\s*;[\s\S]+drop index concurrently if exists\s+public\.merchant_enterprise_audit_events_actor_created_idx\s*;[\s\S]+create index concurrently\s+merchant_enterprise_audit_events_actor_created_idx[\s\S]+merchant_id, actor_type, actor_id, created_at desc, id desc[\s\S]+begin\s*;/i,
+  );
+  assert.doesNotMatch(
+    source,
+    /create index concurrently if not exists\s+merchant_enterprise_audit_events_actor_created_idx/i,
   );
   assert.match(
     source,

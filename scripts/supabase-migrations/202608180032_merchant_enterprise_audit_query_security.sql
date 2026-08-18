@@ -300,8 +300,12 @@ commit;
 
 -- Build the potentially long-running audit index without blocking ordinary
 -- audit writes. The session-level migration advisory lock remains held by the
--- production runner across this transaction boundary.
-create index concurrently if not exists
+-- production runner across this transaction boundary. A cancelled concurrent
+-- build can leave a same-named invalid index, so every unregistered retry first
+-- removes that index and then recreates it from the canonical definition.
+drop index concurrently if exists
+  public.merchant_enterprise_audit_events_actor_created_idx;
+create index concurrently
   merchant_enterprise_audit_events_actor_created_idx
   on public.merchant_enterprise_audit_events(
     merchant_id, actor_type, actor_id, created_at desc, id desc
@@ -309,9 +313,7 @@ create index concurrently if not exists
 
 begin;
 
--- IF NOT EXISTS can encounter a same-named index left by an interrupted
--- concurrent build. Do not register the migration until the exact index is
--- ready and valid.
+-- Do not register the migration until the exact index is ready and valid.
 do $$
 declare
   v_index_definition text;
