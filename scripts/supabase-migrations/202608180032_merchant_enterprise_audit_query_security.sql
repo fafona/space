@@ -4,11 +4,6 @@
 
 begin;
 
-create index if not exists merchant_enterprise_audit_events_actor_created_idx
-  on public.merchant_enterprise_audit_events(
-    merchant_id, actor_type, actor_id, created_at desc, id desc
-  );
-
 create or replace function public.faolla_reject_merchant_task_event_mutation_v1()
 returns trigger
 language plpgsql
@@ -300,6 +295,56 @@ revoke all on function public.faolla_list_merchant_enterprise_audit_events_v1(js
   from public, anon, authenticated, service_role;
 grant execute on function public.faolla_list_merchant_enterprise_audit_events_v1(jsonb)
   to service_role;
+
+commit;
+
+-- Build the potentially long-running audit index without blocking ordinary
+-- audit writes. The session-level migration advisory lock remains held by the
+-- production runner across this transaction boundary.
+create index concurrently if not exists
+  merchant_enterprise_audit_events_actor_created_idx
+  on public.merchant_enterprise_audit_events(
+    merchant_id, actor_type, actor_id, created_at desc, id desc
+  );
+
+begin;
+
+-- IF NOT EXISTS can encounter a same-named index left by an interrupted
+-- concurrent build. Do not register the migration until the exact index is
+-- ready and valid.
+do $$
+declare
+  v_index_definition text;
+  v_index_ready boolean := false;
+begin
+  select
+    pg_get_indexdef(index_relation.oid),
+    index_metadata.indisready and index_metadata.indisvalid
+    into v_index_definition, v_index_ready
+    from pg_catalog.pg_class as index_relation
+    join pg_catalog.pg_namespace as index_namespace
+      on index_namespace.oid = index_relation.relnamespace
+    join pg_catalog.pg_index as index_metadata
+      on index_metadata.indexrelid = index_relation.oid
+   where index_namespace.nspname = 'public'
+     and index_relation.relname =
+       'merchant_enterprise_audit_events_actor_created_idx';
+
+  if not coalesce(v_index_ready, false)
+     or lower(regexp_replace(
+       coalesce(v_index_definition, ''),
+       '[[:space:]]+',
+       ' ',
+       'g'
+     )) <> lower(
+       'CREATE INDEX merchant_enterprise_audit_events_actor_created_idx ' ||
+       'ON public.merchant_enterprise_audit_events USING btree ' ||
+       '(merchant_id, actor_type, actor_id, created_at DESC, id DESC)'
+     ) then
+    raise exception 'merchant_enterprise_audit_actor_index_invalid';
+  end if;
+end;
+$$;
 
 insert into public.faolla_schema_migrations (version, name)
 values (202608180032, 'merchant_enterprise_audit_query_security')
