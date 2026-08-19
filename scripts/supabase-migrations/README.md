@@ -97,8 +97,25 @@ reports the aggregate hard blocker as
 `security.systemSitePrincipalOverlapCount` without returning a UUID. An
 unoverlapped system-site principal remains outside the ordinary Auth lifecycle.
 
-Migration `202608190037` is the irreversible behavior cutover stage. Apply it
-only after 036 is deployed, production canonical bindings are backfilled, the
+Migration `202608190037` is the independently deployable system-site principal
+isolation stage. It derives the set of UUIDs that occur both in `site-main`
+aliases and in a non-system merchant, canonical personal account, or staff
+identity, then clears only matching `site-main` aliases. It does not contain or
+depend on a production UUID, does not alter contact/content fields, and
+preserves an independent system principal. Under the shared ordinary-account
+advisory lock and identity-table lock order, it verifies that only
+`security.systemSitePrincipalOverlapCount` changes and that the result is zero.
+It also installs exact restrictive authenticated INSERT and UPDATE policies
+for `site-main`. They close both the missing-sentinel recreation window and the
+legacy-RLS reattachment window while retaining ordinary merchant writes and
+privileged `service_role` BYPASSRLS operations. Email fallback reads remain
+until the later behavior cutover. Migration 038 must include both isolation
+policies in its exact preflight allowlist and explicitly remove or preserve
+them in its post-cutover policy catalog.
+
+The separately published migration `202608190038` is the irreversible behavior
+cutover stage. Apply it only after 036 and 037 are deployed, production
+canonical bindings are backfilled, the
 application has stopped every metadata/email authorization and allocator path,
 and `faolla_get_ordinary_account_authoritative_cutover_readiness_v1()` reports
 `readyForCutover=true`. The broader migration-035 readiness response may remain
@@ -125,13 +142,15 @@ RLS.
 Production publication is deliberately split because the production migrator
 applies through the newest migration in the deployed revision:
 
-1. PR-A contains migration 036, its bootstrap acceptance/contract, and the
-   runner with 037 absent. Deploy, back up, and apply 036.
-2. Perform the controlled canonical backfill, then deploy the application
+1. PR-A contains migration 036 and its bootstrap acceptance/contract. Deploy,
+   back up, and apply 036.
+2. PR-B adds migration 037 and its isolation acceptance/contract. Deploy, back
+   up, apply 037, and require the system-site overlap count to be zero.
+3. Perform the controlled canonical backfill, then deploy the application
    positive-resolver cutover. Require authoritative readiness to be true.
-3. PR-C adds migration 037 and its cutover acceptance/contract. Deploy, back
-   up, and apply 037 manually. Never publish 036 and 037 together before 036
-   has been applied and the intervening backfill/application gates pass.
+4. PR-C adds migration 038 and its cutover acceptance/contract. Deploy, back
+   up, and apply 038 manually. Never publish the behavior cutover before the
+   intervening isolation, backfill, and application gates pass.
 
 After applying a migration, verify it with:
 
