@@ -243,7 +243,36 @@ test("store boundary rejects a malformed RPC envelope", async () => {
 
 test("store boundary maps schema, authorization, target and invalid-query failures", async () => {
   const cases = [
-    [{ code: "PGRST202", message: "could not find the function" }, "enterprise_schema_unavailable"],
+    [
+      {
+        code: "PGRST202",
+        message:
+          "Could not find the function public.faolla_get_merchant_enterprise_current_operations_v1 in the schema cache",
+      },
+      "enterprise_schema_unavailable",
+    ],
+    [
+      {
+        code: "42883",
+        message:
+          "function public.faolla_get_merchant_enterprise_current_operations_v1(jsonb) does not exist",
+      },
+      "enterprise_schema_unavailable",
+    ],
+    [
+      {
+        code: "PGRST202",
+        message: "Could not find an unrelated function in the schema cache",
+      },
+      "enterprise_current_operations_read_failed",
+    ],
+    [
+      {
+        code: "42P01",
+        message: "relation merchant_tasks does not exist",
+      },
+      "enterprise_current_operations_read_failed",
+    ],
     [{ code: "P0001", message: "permission_denied" }, "permission_denied"],
     [{ code: "P0001", message: "employee_not_found" }, "employee_not_found"],
     [{ code: "P0001", message: "invalid_current_operations_query" }, "invalid_current_operations_query"],

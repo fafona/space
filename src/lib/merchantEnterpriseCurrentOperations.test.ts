@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildMerchantEnterpriseCurrentOperationsAuthorizationFingerprint,
+  buildMerchantEnterpriseCurrentOperationsFallback,
   buildMerchantEnterpriseCurrentOperationsRequestKey,
   normalizeMerchantEnterpriseCurrentOperations,
 } from "./merchantEnterpriseCurrentOperations";
@@ -125,6 +126,76 @@ test("authorization fingerprints invalidate cached scopes without depending on a
   assert.notEqual(requestKey(restrictedA), requestKey(restrictedB));
   assert.notEqual(requestKey(allScope), requestKey(tasksRevoked));
   assert.notEqual(requestKey(allScope), requestKey(employeesRevoked));
+});
+
+test("rollout fallback uses only the authorized snapshot and preserves current inventory semantics", () => {
+  const employeeId = "40000000-0000-4000-8000-000000000001";
+  const boardId = "10000000-0000-4000-8000-000000000001";
+  const columnId = "30000000-0000-4000-8000-000000000001";
+  const nowMs = Date.parse("2026-08-19T10:00:00.000Z");
+  const input = {
+    boards: [
+      { id: boardId, name: "交付", position: 0, status: "active" as const },
+    ],
+    columns: [{ id: columnId, boardId, name: "进行中" }],
+    tasks: [
+      {
+        id: "20000000-0000-4000-8000-000000000001",
+        boardId,
+        columnId,
+        title: "已逾期的协作任务",
+        priority: "urgent" as const,
+        dueAt: "2026-08-19T09:59:59.000Z",
+        updatedAt: "2026-08-19T09:30:00.000Z",
+        archivedAt: null,
+        completedAt: null,
+        assigneeIds: [employeeId, "40000000-0000-4000-8000-000000000002"],
+      },
+      {
+        id: "20000000-0000-4000-8000-000000000002",
+        boardId,
+        columnId,
+        title: "七日边界外任务",
+        priority: "normal" as const,
+        dueAt: "2026-08-26T10:00:00.000Z",
+        updatedAt: "2026-08-19T08:30:00.000Z",
+        archivedAt: null,
+        completedAt: null,
+        assigneeIds: [],
+      },
+    ],
+  };
+
+  const owner = buildMerchantEnterpriseCurrentOperationsFallback(
+    {
+      actor: { type: "owner", id: "10000000", accessScope: "all" },
+      ...input,
+    },
+    nowMs,
+  );
+  assert.ok(normalizeMerchantEnterpriseCurrentOperations(owner));
+  assert.deepEqual(owner.summary, {
+    openTaskCount: 2,
+    overdueTaskCount: 1,
+    dueSoonTaskCount: 0,
+    unassignedTaskCount: 1,
+    involvedBoardCount: 1,
+    sharedAssignmentTaskCount: null,
+  });
+
+  const employee = buildMerchantEnterpriseCurrentOperationsFallback(
+    {
+      actor: { type: "employee", id: employeeId, accessScope: "restricted" },
+      ...input,
+    },
+    nowMs,
+  );
+  assert.ok(normalizeMerchantEnterpriseCurrentOperations(employee));
+  assert.equal(employee.scope, "employee");
+  assert.equal(employee.scopeRestricted, true);
+  assert.equal(employee.summary.openTaskCount, 1);
+  assert.equal(employee.summary.sharedAssignmentTaskCount, 1);
+  assert.equal(employee.priorityTasks[0]?.title, "已逾期的协作任务");
 });
 
 test("normalizes the frozen current-operations response contract", () => {

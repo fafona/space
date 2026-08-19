@@ -7,7 +7,10 @@ import {
 } from "@/app/api/merchant-enterprise/current-operations/route-handler";
 import type { MerchantEnterpriseActor } from "@/lib/merchantEnterprise";
 import { MerchantEnterpriseAccessError } from "@/lib/merchantEnterpriseAuth.server";
-import type { MerchantEnterpriseCurrentOperations } from "@/lib/merchantEnterpriseCurrentOperations";
+import {
+  buildMerchantEnterpriseCurrentOperationsAuthorizationFingerprint,
+  type MerchantEnterpriseCurrentOperations,
+} from "@/lib/merchantEnterpriseCurrentOperations";
 
 const SITE_ID = "10000000";
 const OWNER_ID = "10000000-0000-4000-8000-000000000001";
@@ -333,9 +336,16 @@ test("current operations GET maps target, schema and unexpected store failures",
       }),
     );
     assert.equal(response.status, status);
-    assert.deepEqual(await response.json(), {
+    const expected: Record<string, unknown> = {
       ok: false,
       error: publicCode,
-    });
+    };
+    if (code === "enterprise_schema_unavailable") {
+      expected.authorizationFingerprint =
+        buildMerchantEnterpriseCurrentOperationsAuthorizationFingerprint(
+          owner,
+        );
+    }
+    assert.deepEqual(await response.json(), expected);
   }
 });

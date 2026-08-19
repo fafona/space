@@ -8,7 +8,10 @@ import {
   resolveMerchantEnterpriseActor,
   toMerchantEnterpriseAccessResponse,
 } from "@/lib/merchantEnterpriseAuth.server";
-import type { MerchantEnterpriseCurrentOperations } from "@/lib/merchantEnterpriseCurrentOperations";
+import {
+  buildMerchantEnterpriseCurrentOperationsAuthorizationFingerprint,
+  type MerchantEnterpriseCurrentOperations,
+} from "@/lib/merchantEnterpriseCurrentOperations";
 import {
   loadMerchantEnterpriseCurrentOperations,
   type MerchantEnterpriseCurrentOperationsStoreClient,
@@ -50,8 +53,24 @@ function response(body: Record<string, unknown>, status = 200) {
   return NextResponse.json(body, { status, headers: RESPONSE_HEADERS });
 }
 
-function errorResponse(error: unknown) {
+function errorResponse(
+  error: unknown,
+  actor: MerchantEnterpriseActor | null = null,
+) {
   const code = error instanceof Error ? error.message : "";
+  if (code === "enterprise_schema_unavailable" && actor) {
+    return response(
+      {
+        ok: false,
+        error: code,
+        authorizationFingerprint:
+          buildMerchantEnterpriseCurrentOperationsAuthorizationFingerprint(
+            actor,
+          ),
+      },
+      503,
+    );
+  }
   if (code === "permission_denied") {
     return response({ ok: false, error: code }, 403);
   }
@@ -90,12 +109,14 @@ export async function handleMerchantEnterpriseCurrentOperationsGet(
   overrides: Partial<MerchantEnterpriseCurrentOperationsRouteDependencies> = {},
 ) {
   const dependencies = { ...DEFAULT_DEPENDENCIES, ...overrides };
+  let resolvedActor: MerchantEnterpriseActor | null = null;
   try {
     const query = parseMerchantEnterpriseCurrentOperationsQuery(request);
     const actor = await dependencies.resolveActor(request, {
       siteId: query.siteId,
       requiredPermission: "tasks.view",
     });
+    resolvedActor = actor;
     if (
       query.employeeId &&
       actor.type === "employee" &&
@@ -111,6 +132,6 @@ export async function handleMerchantEnterpriseCurrentOperationsGet(
     });
     return response(currentOperations);
   } catch (error) {
-    return errorResponse(error);
+    return errorResponse(error, resolvedActor);
   }
 }

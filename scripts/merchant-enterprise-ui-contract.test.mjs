@@ -180,6 +180,26 @@ test("enterprise overview uses the server-authoritative current-operations respo
   assert.doesNotMatch(source, /buildMerchantEnterpriseTaskOverview/);
   assert.match(
     source,
+    /visibleOverviewCurrentOperations\.errorCode\s*!==\s*["']enterprise_schema_unavailable["'][\s\S]{0,220}visibleOverviewCurrentOperations\.authorizationFingerprint\s*!==\s*actorAuthorizationFingerprint[\s\S]{0,180}return\s+null[\s\S]{0,220}buildMerchantEnterpriseCurrentOperationsFallback/,
+    "the rollout fallback must be limited to the known app-before-migration schema gap",
+  );
+  assert.match(
+    source,
+    /buildMerchantEnterpriseCurrentOperationsFallback\(\s*\{[\s\S]{0,260}actor[\s\S]{0,260}boards:\s*snapshot\.boards[\s\S]{0,180}columns:\s*snapshot\.columns[\s\S]{0,180}tasks:\s*snapshot\.tasks/,
+    "the schema-gap fallback may only consume the already-authorized workspace snapshot",
+  );
+  assert.match(
+    source,
+    /const\s+overviewOperationsData\s*=\s*visibleOverviewCurrentOperations\.data\s*\?\?\s*overviewOperationsFallback/,
+    "a valid server response must always take precedence over the temporary fallback",
+  );
+  assert.match(
+    source,
+    /buildMerchantEnterpriseCurrentOperationsFallback\([\s\S]{0,500}lastSyncedAtMs\s*,/,
+    "the fallback as-of time must remain frozen at the last successful authorized snapshot",
+  );
+  assert.match(
+    source,
     /const\s+boardTasks\s*=\s*snapshot\.tasks\.filter\(\(task\)\s*=>\s*task\.boardId\s*===\s*activeBoard\?\.id\)/,
     "the task board must remain scoped to the selected board",
   );
@@ -207,6 +227,11 @@ test("enterprise overview uses the server-authoritative current-operations respo
   assert.match(overviewSource, /服务端在查询时点看到的当前任务库存/);
   assert.match(overviewSource, /统计时点：\{formatDateTime\(overviewOperationsData\.asOf\)\}/);
   assert.match(overviewSource, /overviewOperationsData\.boardsTruncated/);
+  assert.match(
+    overviewSource,
+    /visibleOverviewCurrentOperations\.status\s*===\s*["']error["'][\s\S]{0,500}overviewUsingRolloutFallback/,
+    "the UI must disclose the migration-window fallback instead of presenting it as authoritative data",
+  );
 });
 
 test("employees default to their own tasks and can explicitly switch to the team view", () => {

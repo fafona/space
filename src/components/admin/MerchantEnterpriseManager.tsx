@@ -78,6 +78,7 @@ import {
 } from "@/lib/merchantTaskOrdering";
 import {
   buildMerchantEnterpriseCurrentOperationsAuthorizationFingerprint,
+  buildMerchantEnterpriseCurrentOperationsFallback,
   buildMerchantEnterpriseCurrentOperationsRequestKey,
   normalizeMerchantEnterpriseCurrentOperations,
   type MerchantEnterpriseCurrentOperations,
@@ -181,6 +182,8 @@ type CurrentOperationsViewState = {
   status: "idle" | "loading" | "ready" | "error";
   data: MerchantEnterpriseCurrentOperations | null;
   error: string;
+  errorCode: string;
+  authorizationFingerprint: string;
 };
 
 const EMPTY_CURRENT_OPERATIONS_STATE: CurrentOperationsViewState = {
@@ -188,7 +191,20 @@ const EMPTY_CURRENT_OPERATIONS_STATE: CurrentOperationsViewState = {
   status: "idle",
   data: null,
   error: "",
+  errorCode: "",
+  authorizationFingerprint: "",
 };
+
+class CurrentOperationsRequestError extends Error {
+  constructor(
+    message: string,
+    readonly code: string,
+    readonly authorizationFingerprint: string,
+  ) {
+    super(message);
+    this.name = "CurrentOperationsRequestError";
+  }
+}
 
 type TaskChecklistItemChange =
   | { text: string }
@@ -503,11 +519,29 @@ function employeeInvitationPresentation(employee: MerchantEnterpriseEmployee, no
   };
 }
 
-function readApiError(payload: unknown, fallback: string) {
-  const code =
+function readApiErrorCode(payload: unknown) {
+  return (
     payload && typeof payload === "object" && typeof (payload as { error?: unknown }).error === "string"
       ? (payload as { error: string }).error
-      : "";
+      : ""
+  );
+}
+
+function readCurrentOperationsAuthorizationFingerprint(payload: unknown) {
+  const value =
+    payload && typeof payload === "object"
+      ? (payload as { authorizationFingerprint?: unknown })
+          .authorizationFingerprint
+      : null;
+  return typeof value === "string" &&
+    value === value.trim() &&
+    value.length <= 65536
+    ? value
+    : "";
+}
+
+function readApiError(payload: unknown, fallback: string) {
+  const code = readApiErrorCode(payload);
   if (code === "enterprise_schema_unavailable") return "企业管理数据库尚未初始化，请先部署对应数据库迁移。";
   if (code === "enterprise_management_disabled") return "当前商户尚未开通企业管理。";
   if (code === "permission_denied") return "当前账号没有执行此操作的权限。";
@@ -3891,8 +3925,10 @@ function MerchantEnterpriseManagerContent({
       const rawPayload = await response.json().catch(() => null);
       const payload = normalizeMerchantEnterpriseCurrentOperations(rawPayload);
       if (!response.ok || !payload) {
-        throw new Error(
+        throw new CurrentOperationsRequestError(
           readApiError(rawPayload, "当前运营数据读取失败，请稍后重试。"),
+          readApiErrorCode(rawPayload),
+          readCurrentOperationsAuthorizationFingerprint(rawPayload),
         );
       }
       if (
@@ -3929,6 +3965,8 @@ function MerchantEnterpriseManagerContent({
         status: "loading",
         data: current.requestKey === requestKey ? current.data : null,
         error: "",
+        errorCode: "",
+        authorizationFingerprint: "",
       }));
       try {
         const payload = await fetchCurrentOperations(
@@ -3949,6 +3987,8 @@ function MerchantEnterpriseManagerContent({
           status: "ready",
           data: payload,
           error: "",
+          errorCode: "",
+          authorizationFingerprint: "",
         });
         return true;
       } catch (error) {
@@ -3969,6 +4009,12 @@ function MerchantEnterpriseManagerContent({
             error instanceof Error
               ? error.message
               : "当前运营数据读取失败，请稍后重试。",
+          errorCode:
+            error instanceof CurrentOperationsRequestError ? error.code : "",
+          authorizationFingerprint:
+            error instanceof CurrentOperationsRequestError
+              ? error.authorizationFingerprint
+              : "",
         }));
         return false;
       } finally {
@@ -4000,6 +4046,8 @@ function MerchantEnterpriseManagerContent({
         status: "loading",
         data: current.requestKey === requestKey ? current.data : null,
         error: "",
+        errorCode: "",
+        authorizationFingerprint: "",
       }));
       try {
         const payload = await fetchCurrentOperations(
@@ -4021,6 +4069,8 @@ function MerchantEnterpriseManagerContent({
           status: "ready",
           data: payload,
           error: "",
+          errorCode: "",
+          authorizationFingerprint: "",
         });
         return true;
       } catch (error) {
@@ -4042,6 +4092,12 @@ function MerchantEnterpriseManagerContent({
             error instanceof Error
               ? error.message
               : "员工当前工作读取失败，请稍后重试。",
+          errorCode:
+            error instanceof CurrentOperationsRequestError ? error.code : "",
+          authorizationFingerprint:
+            error instanceof CurrentOperationsRequestError
+              ? error.authorizationFingerprint
+              : "",
         }));
         return false;
       } finally {
@@ -4874,8 +4930,45 @@ function MerchantEnterpriseManagerContent({
           status: "loading" as const,
           data: null,
           error: "",
+          errorCode: "",
+          authorizationFingerprint: "",
         };
-  const overviewOperationsData = visibleOverviewCurrentOperations.data;
+  const overviewOperationsFallback = useMemo(() => {
+    if (
+      !actor ||
+      lastSyncedAtMs <= 0 ||
+      visibleOverviewCurrentOperations.status !== "error" ||
+      visibleOverviewCurrentOperations.errorCode !==
+        "enterprise_schema_unavailable" ||
+      visibleOverviewCurrentOperations.authorizationFingerprint !==
+        actorAuthorizationFingerprint
+    ) {
+      return null;
+    }
+    return buildMerchantEnterpriseCurrentOperationsFallback(
+      {
+        actor,
+        boards: snapshot.boards,
+        columns: snapshot.columns,
+        tasks: snapshot.tasks,
+      },
+      lastSyncedAtMs,
+    );
+  }, [
+    actor,
+    actorAuthorizationFingerprint,
+    lastSyncedAtMs,
+    snapshot.boards,
+    snapshot.columns,
+    snapshot.tasks,
+    visibleOverviewCurrentOperations.errorCode,
+    visibleOverviewCurrentOperations.authorizationFingerprint,
+    visibleOverviewCurrentOperations.status,
+  ]);
+  const overviewUsingRolloutFallback =
+    !visibleOverviewCurrentOperations.data && Boolean(overviewOperationsFallback);
+  const overviewOperationsData =
+    visibleOverviewCurrentOperations.data ?? overviewOperationsFallback;
   const filteredTasks = filterMerchantTasks(boardTasks, {
     archive: taskArchiveView,
     query: taskQuery,
@@ -5018,6 +5111,8 @@ function MerchantEnterpriseManagerContent({
           status: "loading" as const,
           data: null,
           error: "",
+          errorCode: "",
+          authorizationFingerprint: "",
         };
   const offboardingEmployee = offboardingEmployeeId
     ? snapshot.employees.find(
@@ -6290,7 +6385,11 @@ function MerchantEnterpriseManagerContent({
               </span>
               {overviewOperationsData ? (
                 <span className="ml-1 text-blue-700">
-                  统计时点：{formatDateTime(overviewOperationsData.asOf)}。
+                  统计时点：{formatDateTime(overviewOperationsData.asOf)}
+                  {overviewUsingRolloutFallback
+                    ? "（迁移窗口内的已授权工作区快照）"
+                    : ""}
+                  。
                 </span>
               ) : null}
             </section>
@@ -6310,11 +6409,30 @@ function MerchantEnterpriseManagerContent({
             ) : null}
             {can(actor, "tasks.view") &&
             visibleOverviewCurrentOperations.status === "error" ? (
-              <section className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3" role={overviewOperationsData ? "status" : "alert"}>
-                <p className="text-sm leading-6 text-rose-700">{visibleOverviewCurrentOperations.error}</p>
+              <section
+                className={`rounded-2xl border px-4 py-3 ${
+                  overviewUsingRolloutFallback
+                    ? "border-amber-200 bg-amber-50"
+                    : "border-rose-200 bg-rose-50"
+                }`}
+                role={overviewOperationsData ? "status" : "alert"}
+              >
+                <p
+                  className={`text-sm leading-6 ${
+                    overviewUsingRolloutFallback
+                      ? "text-amber-800"
+                      : "text-rose-700"
+                  }`}
+                >
+                  {overviewUsingRolloutFallback
+                    ? "当前版本正在等待数据库迁移，暂时显示已由企业概览接口授权并过滤的工作区快照；迁移完成后会自动切回服务端权威统计。"
+                    : visibleOverviewCurrentOperations.error}
+                </p>
                 <button
                   type="button"
-                  className="mt-3 min-h-11 rounded-xl bg-rose-700 px-4 py-2 text-sm font-semibold text-white"
+                  className={`mt-3 min-h-11 rounded-xl px-4 py-2 text-sm font-semibold text-white ${
+                    overviewUsingRolloutFallback ? "bg-amber-700" : "bg-rose-700"
+                  }`}
                   onClick={() => void loadOverviewCurrentOperations(actor)}
                 >
                   重新读取运营数据

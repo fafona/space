@@ -1,7 +1,4 @@
-import {
-  isMerchantEnterpriseSchemaMissingError,
-  type MerchantEnterpriseActor,
-} from "@/lib/merchantEnterprise";
+import type { MerchantEnterpriseActor } from "@/lib/merchantEnterprise";
 import {
   normalizeMerchantEnterpriseCurrentOperations,
   type MerchantEnterpriseCurrentOperations,
@@ -9,6 +6,8 @@ import {
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const CURRENT_OPERATIONS_RPC =
+  "faolla_get_merchant_enterprise_current_operations_v1";
 
 export type MerchantEnterpriseCurrentOperationsStoreClient = {
   // Supabase RPC responses are untrusted until normalized below.
@@ -29,19 +28,15 @@ function text(value: unknown, maxLength = 4096) {
 function isMissingCurrentOperationsRpc(error: unknown) {
   const source = record(error);
   const code = text(source?.code, 40);
-  const message = text(source?.message, 1000);
+  const message = text(source?.message, 1000).toLowerCase();
   return (
-    code === "42883" ||
-    code === "PGRST202" ||
-    /could not find (?:the )?function|schema cache|does not exist/i.test(message)
+    (code === "42883" || code === "PGRST202") &&
+    message.includes(CURRENT_OPERATIONS_RPC)
   );
 }
 
 function throwCurrentOperationsReadError(error: unknown): never {
-  if (
-    isMerchantEnterpriseSchemaMissingError(error) ||
-    isMissingCurrentOperationsRpc(error)
-  ) {
+  if (isMissingCurrentOperationsRpc(error)) {
     throw new Error("enterprise_schema_unavailable");
   }
   const source = record(error);
@@ -119,7 +114,7 @@ export async function loadMerchantEnterpriseCurrentOperations(
       : requestedEmployeeId ?? actor.actorId;
 
   const result = await client.rpc(
-    "faolla_get_merchant_enterprise_current_operations_v1",
+    CURRENT_OPERATIONS_RPC,
     {
       p_input: {
         merchant_id: siteId,

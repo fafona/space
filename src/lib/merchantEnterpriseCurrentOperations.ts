@@ -1,5 +1,8 @@
 import type {
   MerchantEnterpriseActor,
+  MerchantTask,
+  MerchantTaskBoard,
+  MerchantTaskColumn,
   MerchantTaskPriority,
 } from "@/lib/merchantEnterprise";
 
@@ -77,6 +80,167 @@ export type MerchantEnterpriseCurrentOperations = {
   boards: MerchantEnterpriseCurrentOperationsBoard[];
   priorityTasks: MerchantEnterpriseCurrentOperationsPriorityTask[];
 };
+
+const CURRENT_OPERATIONS_FALLBACK_DUE_SOON_MS = 7 * 24 * 60 * 60 * 1000;
+const CURRENT_OPERATIONS_PRIORITY_ORDER: Record<MerchantTaskPriority, number> = {
+  urgent: 0,
+  high: 1,
+  normal: 2,
+  low: 3,
+};
+
+function timestamp(value: string | null) {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * Temporary rollout fallback for the short app-before-migration window.
+ * The supplied snapshot has already been authorized and board-filtered by
+ * the overview API. This fallback must never be used for arbitrary read
+ * failures or as the long-term reporting source.
+ */
+export function buildMerchantEnterpriseCurrentOperationsFallback(
+  input: {
+    actor: Pick<MerchantEnterpriseActor, "type" | "id" | "accessScope">;
+    boards: readonly Pick<MerchantTaskBoard, "id" | "name" | "position" | "status">[];
+    columns: readonly Pick<MerchantTaskColumn, "id" | "boardId" | "name">[];
+    tasks: readonly Pick<
+      MerchantTask,
+      | "id"
+      | "boardId"
+      | "columnId"
+      | "title"
+      | "priority"
+      | "dueAt"
+      | "updatedAt"
+      | "archivedAt"
+      | "completedAt"
+      | "assigneeIds"
+    >[];
+  },
+  nowMs = Date.now(),
+): MerchantEnterpriseCurrentOperations {
+  const asOfMs = Number.isFinite(nowMs) ? nowMs : Date.now();
+  const dueSoonBoundaryMs = asOfMs + CURRENT_OPERATIONS_FALLBACK_DUE_SOON_MS;
+  const employeeId = input.actor.type === "employee" ? input.actor.id : null;
+  const activeBoards = input.boards
+    .filter((board) => board.status === "active")
+    .sort((left, right) => {
+      if (left.position !== right.position) return left.position - right.position;
+      const nameDifference = left.name.localeCompare(right.name);
+      return nameDifference !== 0 ? nameDifference : left.id.localeCompare(right.id);
+    });
+  const activeBoardIds = new Set(activeBoards.map((board) => board.id));
+  const matchingTasks = input.tasks.filter(
+    (task) =>
+      !task.archivedAt &&
+      !task.completedAt &&
+      activeBoardIds.has(task.boardId) &&
+      (!employeeId || task.assigneeIds.includes(employeeId)),
+  );
+  const boardRows = activeBoards
+    .map((board) => {
+      const tasks = matchingTasks.filter((task) => task.boardId === board.id);
+      let overdueTaskCount = 0;
+      let dueSoonTaskCount = 0;
+      for (const task of tasks) {
+        const dueAtMs = timestamp(task.dueAt);
+        if (dueAtMs === null) continue;
+        if (dueAtMs < asOfMs) overdueTaskCount += 1;
+        else if (dueAtMs < dueSoonBoundaryMs) dueSoonTaskCount += 1;
+      }
+      return {
+        boardId: board.id,
+        boardName: board.name,
+        openTaskCount: tasks.length,
+        overdueTaskCount,
+        dueSoonTaskCount,
+      };
+    })
+    .sort((left, right) => {
+      if (left.overdueTaskCount !== right.overdueTaskCount) {
+        return right.overdueTaskCount - left.overdueTaskCount;
+      }
+      if (left.openTaskCount !== right.openTaskCount) {
+        return right.openTaskCount - left.openTaskCount;
+      }
+      const nameDifference = left.boardName.localeCompare(right.boardName);
+      return nameDifference !== 0
+        ? nameDifference
+        : left.boardId.localeCompare(right.boardId);
+    });
+  const boardNameById = new Map(activeBoards.map((board) => [board.id, board.name]));
+  const columnById = new Map(input.columns.map((column) => [column.id, column]));
+  const priorityTasks = [...matchingTasks]
+    .sort((left, right) => {
+      const leftDueAt = timestamp(left.dueAt);
+      const rightDueAt = timestamp(right.dueAt);
+      if (leftDueAt === null && rightDueAt !== null) return 1;
+      if (leftDueAt !== null && rightDueAt === null) return -1;
+      if (leftDueAt !== null && rightDueAt !== null && leftDueAt !== rightDueAt) {
+        return leftDueAt - rightDueAt;
+      }
+      const priorityDifference =
+        CURRENT_OPERATIONS_PRIORITY_ORDER[left.priority] -
+        CURRENT_OPERATIONS_PRIORITY_ORDER[right.priority];
+      if (priorityDifference !== 0) return priorityDifference;
+      const updatedDifference = Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
+      return updatedDifference !== 0 ? updatedDifference : left.id.localeCompare(right.id);
+    })
+    .slice(0, MAX_MERCHANT_ENTERPRISE_CURRENT_OPERATION_PRIORITY_TASKS)
+    .map((task) => {
+      const column = columnById.get(task.columnId);
+      return {
+        id: task.id,
+        boardId: task.boardId,
+        boardName: boardNameById.get(task.boardId) ?? "未知看板",
+        columnId: task.columnId,
+        columnName: column?.boardId === task.boardId ? column.name : "未知工作列",
+        title: task.title,
+        priority: task.priority,
+        dueAt: task.dueAt,
+        updatedAt: task.updatedAt,
+        assigneeCount: task.assigneeIds.length,
+      };
+    });
+
+  return {
+    ok: true,
+    asOf: new Date(asOfMs).toISOString(),
+    scope: employeeId ? "employee" : "enterprise",
+    employeeId,
+    scopeRestricted: input.actor.accessScope === "restricted",
+    boardSummaryTotalCount: boardRows.length,
+    boardsTruncated:
+      boardRows.length > MAX_MERCHANT_ENTERPRISE_CURRENT_OPERATION_BOARDS,
+    summary: {
+      openTaskCount: matchingTasks.length,
+      overdueTaskCount: boardRows.reduce(
+        (total, board) => total + board.overdueTaskCount,
+        0,
+      ),
+      dueSoonTaskCount: boardRows.reduce(
+        (total, board) => total + board.dueSoonTaskCount,
+        0,
+      ),
+      unassignedTaskCount: employeeId
+        ? null
+        : matchingTasks.filter((task) => task.assigneeIds.length === 0).length,
+      involvedBoardCount: boardRows.filter((board) => board.openTaskCount > 0)
+        .length,
+      sharedAssignmentTaskCount: employeeId
+        ? matchingTasks.filter((task) => task.assigneeIds.length > 1).length
+        : null,
+    },
+    boards: boardRows.slice(
+      0,
+      MAX_MERCHANT_ENTERPRISE_CURRENT_OPERATION_BOARDS,
+    ),
+    priorityTasks,
+  };
+}
 
 const TASK_PRIORITIES = new Set<MerchantTaskPriority>([
   "low",
