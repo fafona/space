@@ -71,11 +71,19 @@ test("session initialization and auth events share a latest-wins generation", ()
       /onAuthStateChange\(\(_event, session\) => \{([\s\S]*?)\n    \}\);/,
     )?.[1];
     assert.ok(callback, "auth callback is missing");
-    assert.match(
-      callback.trimStart(),
-      /^const generation = authGeneration\.begin\(\);/,
-      "every auth event, including sign-out, must invalidate older async work first",
-    );
+    if (source === portal) {
+      assert.match(
+        callback,
+        /if \(authCallbackInProgressRef\.current\) return;\s*const generation = authGeneration\.begin\(\);/,
+        "a stale INITIAL_SESSION must be ignored while the callback resolver owns the generation",
+      );
+    } else {
+      assert.match(
+        callback.trimStart(),
+        /^const generation = authGeneration\.begin\(\);/,
+        "every ordinary auth event, including sign-out, must invalidate older async work first",
+      );
+    }
     assert.match(callback, /authGeneration\.bindSessionToken\(generation, token\)/);
   }
 

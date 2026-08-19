@@ -8,6 +8,7 @@ export const MERCHANT_OUTBOX_EVENT_TYPES = [
   "backup.create",
   "webhook.deliver",
   "enterprise.workflow_automation.process",
+  "enterprise.employee_invitation.deliver",
 ] as const;
 
 export type MerchantOutboxEventType = (typeof MERCHANT_OUTBOX_EVENT_TYPES)[number];
@@ -48,6 +49,7 @@ export type MerchantOutboxClaimedEvent = {
   payload: Record<string, unknown>;
   attempts: number;
   totalAttempts: number;
+  replayCount: number;
   maxAttempts: number;
   correlationId: string;
   leaseExpiresAt: string;
@@ -305,8 +307,12 @@ export function normalizeMerchantOutboxClaimedEvent(row: unknown): MerchantOutbo
   const leaseExpiresAt = normalizeAvailableAt(record.lease_expires_at);
   const createdAt = normalizeAvailableAt(record.created_at);
   const status = trimText(record.status);
+  const replayCount = Number(record.replay_count);
   if (status !== "processing") {
     throw new MerchantOutboxValidationError("claimed_outbox_not_processing");
+  }
+  if (!Number.isSafeInteger(replayCount) || replayCount < 0) {
+    throw new MerchantOutboxValidationError("invalid_claimed_outbox_replay_count");
   }
   return {
     id,
@@ -318,6 +324,7 @@ export function normalizeMerchantOutboxClaimedEvent(row: unknown): MerchantOutbo
     payload: normalizePayload(record.payload ?? {}),
     attempts: normalizeInteger(record.attempts, 0, 0, 50),
     totalAttempts: normalizeInteger(record.total_attempts, 0, 0, Number.MAX_SAFE_INTEGER),
+    replayCount,
     maxAttempts: normalizeInteger(record.max_attempts, 8, 1, 50),
     correlationId: trimText(record.correlation_id),
     leaseExpiresAt,

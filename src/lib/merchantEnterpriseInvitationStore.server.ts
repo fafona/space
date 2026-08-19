@@ -5,11 +5,31 @@ import {
   type MerchantEnterpriseEmployee,
 } from "@/lib/merchantEnterprise";
 import type { MerchantEnterpriseStoreClient } from "@/lib/merchantEnterpriseStore.server";
+import { normalizeMutationOperationId } from "@/lib/mutationOperationId";
 
 export const MERCHANT_ENTERPRISE_INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 const MERCHANT_ENTERPRISE_INVITATION_ACTOR_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const MERCHANT_ENTERPRISE_INVITATION_HMAC_KEY_ID_PATTERN =
+  /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/;
+
+export const MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE_ENV =
+  "MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE";
+export const MERCHANT_ENTERPRISE_INVITATION_HMAC_ACTIVE_KEY_ID_ENV =
+  "MERCHANT_ENTERPRISE_INVITATION_HMAC_ACTIVE_KEY_ID";
+
+export type MerchantEnterpriseInvitationDeliveryMode = "legacy" | "outbox";
+
+export type MerchantEnterpriseQueuedInvitation = {
+  employee: MerchantEnterpriseEmployee;
+  invitationVersion: number;
+  eventId: string;
+  deliveryStatus: "queued" | "already_queued";
+  replayed: boolean;
+  retryAfterSeconds?: number;
+};
 
 type MerchantEnterpriseInvitationMutationActor = {
   actorType: "owner" | "employee";
@@ -42,6 +62,31 @@ function normalizeInvitationMutationActor(
   return { actorType: input.actorType, actorId };
 }
 
+export function resolveMerchantEnterpriseInvitationDeliveryMode(
+  environment: Record<string, string | undefined> = process.env,
+): MerchantEnterpriseInvitationDeliveryMode {
+  const mode = normalizeText(
+    environment[MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE_ENV],
+    20,
+  ).toLowerCase();
+  if (!mode || mode === "legacy") return "legacy";
+  if (mode === "outbox") return "outbox";
+  throw new Error("enterprise_invitation_delivery_mode_invalid");
+}
+
+export function resolveMerchantEnterpriseInvitationActiveHmacKeyId(
+  environment: Record<string, string | undefined> = process.env,
+) {
+  const keyId = normalizeText(
+    environment[MERCHANT_ENTERPRISE_INVITATION_HMAC_ACTIVE_KEY_ID_ENV],
+    32,
+  );
+  if (!MERCHANT_ENTERPRISE_INVITATION_HMAC_KEY_ID_PATTERN.test(keyId)) {
+    throw new Error("enterprise_invitation_hmac_active_key_invalid");
+  }
+  return keyId;
+}
+
 function throwInvitationStoreError(operation: string, error: unknown): never {
   if (isMerchantEnterpriseSchemaMissingError(error)) {
     throw new Error("enterprise_schema_unavailable");
@@ -53,11 +98,20 @@ function throwInvitationStoreError(operation: string, error: unknown): never {
     "employee_invitation_revoked",
     "employee_invitation_expired",
     "employee_invitation_superseded",
+    "employee_invitation_renew_required",
+    "employee_invitation_renew_not_required",
     "employee_invitation_credentials_required",
     "employee_invitation_in_use",
+    "employee_invitation_cooldown",
+    "invitation_delivery_cooldown",
+    "employee_invitation_delivery_unavailable",
+    "enterprise_idempotency_conflict",
     "employee_auth_user_conflict",
+    "employee_email_in_use",
     "employee_not_found",
     "invalid_employee_invitation",
+    "invalid_employee_invitation_delivery",
+    "invalid_employee_role",
     "invalid_enterprise_actor",
     "permission_escalation_denied",
     "permission_denied",
@@ -120,12 +174,169 @@ function normalizeInvitationMutation(
   };
 }
 
+function normalizeQueuedInvitation(
+  value: unknown,
+  operation: string,
+): MerchantEnterpriseQueuedInvitation {
+  const record =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const employee = normalizeMerchantEnterpriseEmployee(record.employee);
+  const invitationVersion = Number(record.invitation_version);
+  const eventId = normalizeText(record.event_id, 80).toLowerCase();
+  const deliveryStatus = normalizeText(record.delivery_status, 40);
+  const retryAfterSeconds = Number(record.retry_after_seconds);
+  if (
+    !employee ||
+    !Number.isSafeInteger(invitationVersion) ||
+    invitationVersion <= 0 ||
+    !MERCHANT_ENTERPRISE_INVITATION_ACTOR_ID_PATTERN.test(eventId) ||
+    (deliveryStatus !== "queued" && deliveryStatus !== "already_queued") ||
+    (record.retry_after_seconds !== undefined &&
+      (!Number.isSafeInteger(retryAfterSeconds) ||
+        retryAfterSeconds < 1 ||
+        retryAfterSeconds > 86_400))
+  ) {
+    throw new Error(`${operation}:invalid_response`);
+  }
+  return {
+    employee,
+    invitationVersion,
+    eventId,
+    deliveryStatus,
+    replayed: record.replayed === true,
+    ...(record.retry_after_seconds !== undefined ? { retryAfterSeconds } : {}),
+  };
+}
+
+function normalizeReliableInvitationInput(input: {
+  operationId: unknown;
+  hmacKeyId: unknown;
+}) {
+  const rawOperationId = normalizeText(input.operationId, 120);
+  const operationId = normalizeMutationOperationId(rawOperationId);
+  const hmacKeyId = normalizeText(input.hmacKeyId, 32);
+  if (
+    !rawOperationId ||
+    operationId !== rawOperationId ||
+    !MERCHANT_ENTERPRISE_INVITATION_HMAC_KEY_ID_PATTERN.test(hmacKeyId)
+  ) {
+    throw new Error("invalid_employee_invitation_delivery");
+  }
+  return { operationId, hmacKeyId };
+}
+
 export function createMerchantEnterpriseInvitationSecret() {
   const token = randomBytes(32).toString("base64url");
   return {
     token,
     tokenHash: createHash("sha256").update(token, "utf8").digest("hex"),
   };
+}
+
+export async function createMerchantEnterpriseEmployeeInvitationV2(
+  client: MerchantEnterpriseStoreClient,
+  input: {
+    siteId: string;
+    email: string;
+    displayName: string;
+    roleId: string;
+    operationId: string;
+    hmacKeyId: string;
+  } & MerchantEnterpriseInvitationMutationActor,
+) {
+  const actor = normalizeInvitationMutationActor(input);
+  const reliable = normalizeReliableInvitationInput(input);
+  const siteId = normalizeText(input.siteId, 8);
+  const email = normalizeText(input.email, 254).toLowerCase();
+  const displayName = normalizeText(input.displayName, 120);
+  const roleId = normalizeText(input.roleId, 80).toLowerCase();
+  if (
+    !/^\d{8}$/.test(siteId) ||
+    !email ||
+    !displayName ||
+    !MERCHANT_ENTERPRISE_INVITATION_ACTOR_ID_PATTERN.test(roleId)
+  ) {
+    throw new Error("invalid_employee_invitation_delivery");
+  }
+  const result = await client.rpc(
+    "faolla_create_merchant_enterprise_employee_invitation_v2",
+    {
+      p_input: {
+        merchant_id: siteId,
+        email,
+        display_name: displayName,
+        role_id: roleId,
+        operation_id: reliable.operationId,
+        hmac_key_id: reliable.hmacKeyId,
+        actor_type: actor.actorType,
+        actor_id: actor.actorId,
+      },
+    },
+  );
+  if (result.error) {
+    throwInvitationStoreError(
+      "enterprise_employee_invitation_create_failed",
+      result.error,
+    );
+  }
+  return normalizeQueuedInvitation(
+    result.data,
+    "enterprise_employee_invitation_create_failed",
+  );
+}
+
+export async function scheduleMerchantEnterpriseEmployeeInvitationDeliveryV2(
+  client: MerchantEnterpriseStoreClient,
+  input: {
+    siteId: string;
+    employeeId: string;
+    version: number;
+    action: "resend" | "renew";
+    operationId: string;
+    hmacKeyId: string;
+  } & MerchantEnterpriseInvitationMutationActor,
+) {
+  const actor = normalizeInvitationMutationActor(input);
+  const reliable = normalizeReliableInvitationInput(input);
+  const siteId = normalizeText(input.siteId, 8);
+  const employeeId = normalizeText(input.employeeId, 80).toLowerCase();
+  const version = Number(input.version);
+  if (
+    !/^\d{8}$/.test(siteId) ||
+    !MERCHANT_ENTERPRISE_INVITATION_ACTOR_ID_PATTERN.test(employeeId) ||
+    !Number.isSafeInteger(version) ||
+    version <= 0 ||
+    (input.action !== "resend" && input.action !== "renew")
+  ) {
+    throw new Error("invalid_employee_invitation_delivery");
+  }
+  const result = await client.rpc(
+    "faolla_schedule_merchant_employee_invitation_delivery_v2",
+    {
+      p_input: {
+        merchant_id: siteId,
+        employee_id: employeeId,
+        expected_version: version,
+        action: input.action,
+        operation_id: reliable.operationId,
+        hmac_key_id: reliable.hmacKeyId,
+        actor_type: actor.actorType,
+        actor_id: actor.actorId,
+      },
+    },
+  );
+  if (result.error) {
+    throwInvitationStoreError(
+      "enterprise_employee_invitation_schedule_failed",
+      result.error,
+    );
+  }
+  return normalizeQueuedInvitation(
+    result.data,
+    "enterprise_employee_invitation_schedule_failed",
+  );
 }
 
 export async function reserveMerchantEnterpriseEmployeeInvitation(

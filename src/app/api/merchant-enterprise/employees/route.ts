@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import {
   isMerchantEnterpriseVersion,
@@ -18,18 +19,23 @@ import {
 } from "@/lib/merchantEnterpriseStore.server";
 import {
   bindMerchantEnterpriseEmployeeInvitationAuthUser,
+  createMerchantEnterpriseEmployeeInvitationV2,
   createMerchantEnterpriseInvitationSecret,
   finalizeMerchantEnterpriseEmployeeInvitation,
   MERCHANT_ENTERPRISE_INVITATION_TTL_MS,
   removeMerchantEnterpriseEmployeeInvitation,
   reserveMerchantEnterpriseEmployeeInvitation,
+  resolveMerchantEnterpriseInvitationActiveHmacKeyId,
+  resolveMerchantEnterpriseInvitationDeliveryMode,
   revokeMerchantEnterpriseEmployeeInvitation,
+  scheduleMerchantEnterpriseEmployeeInvitationDeliveryV2,
 } from "@/lib/merchantEnterpriseInvitationStore.server";
 import {
   isValidAuthEmail,
   normalizeAuthEmail,
 } from "@/lib/authCredentialValidation";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
+import { normalizeMutationOperationId } from "@/lib/mutationOperationId";
 import {
   hasImmutableMerchantStaffPrincipal,
   MERCHANT_STAFF_PRINCIPAL_TYPE,
@@ -59,6 +65,7 @@ type EmployeeBody = {
   status?: unknown;
   offboardingMode?: unknown;
   replacementEmployeeId?: unknown;
+  operationId?: unknown;
 };
 
 type ServiceClient = NonNullable<ReturnType<typeof createServerSupabaseServiceClient>>;
@@ -71,6 +78,7 @@ type InvitationAwareEmployee = MerchantEnterpriseEmployee & {
 };
 type InvitationResult =
   | { status: "sent" }
+  | { status: "queued" }
   | {
       status: "failed";
       error:
@@ -85,6 +93,12 @@ const EMPLOYEE_INVITATION_RESEND_COOLDOWN_MS = 60_000;
 
 function text(value: unknown, max = 4096) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
+}
+
+function reliableInvitationOperationId(value: unknown) {
+  const raw = text(value, 120);
+  const normalized = normalizeMutationOperationId(raw);
+  return raw && normalized === raw ? normalized : "";
 }
 
 export function getMerchantEnterpriseEmployeeMutationActor(
@@ -239,7 +253,12 @@ export function getMerchantEnterpriseEmployeeMutationErrorResponse(
     code === "employee_role_transition_replacement_invalid" ||
     code === "enterprise_version_conflict" ||
     code === "employee_board_access_in_use" ||
-    code === "employee_email_in_use"
+    code === "employee_email_in_use" ||
+    code === "employee_invitation_not_pending" ||
+    code === "employee_invitation_renew_required" ||
+    code === "employee_invitation_renew_not_required" ||
+    code === "enterprise_idempotency_conflict" ||
+    code === "invitation_delivery_cooldown"
   ) {
     return { status: 409, body: { ok: false, error: code } } as const;
   }
@@ -423,6 +442,10 @@ function invitationRedirect(
     `/enterprise/${encodeURIComponent(siteId)}`,
     redirectOrigin,
   );
+  // The legacy Supabase email flow returns an auth session in the URL hash,
+  // so its invitation credential must remain in the query until the portal
+  // copies and immediately scrubs it. Durable outbox emails use a fragment
+  // before starting the Auth exchange and never call this helper.
   redirect.searchParams.set("iv", String(invitationVersion));
   redirect.searchParams.set("it", invitationToken);
   return redirect.toString();
@@ -443,18 +466,40 @@ async function findAuthUserByEmail(service: ServiceClient, email: string) {
 
 async function markAuthUserAsStaff(service: ServiceClient, user: {
   id: string;
+  email?: string | null;
   app_metadata?: Record<string, unknown> | null;
-}) {
-  if (hasImmutableMerchantStaffPrincipal(user)) return true;
+}, expectedEmail: string) {
+  const normalizedEmail = normalizeAuthEmail(expectedEmail);
+  if (
+    !isValidAuthEmail(normalizedEmail) ||
+    normalizeAuthEmail(user.email) !== normalizedEmail
+  ) {
+    return false;
+  }
+  const expectedEmailHash = createHash("sha256")
+    .update(normalizedEmail, "utf8")
+    .digest("hex");
   const currentAppMetadata =
     user.app_metadata && typeof user.app_metadata === "object"
       ? user.app_metadata
       : {};
+  const currentEmailHash =
+    typeof currentAppMetadata.merchant_staff_email_hash === "string"
+      ? currentAppMetadata.merchant_staff_email_hash.trim().toLowerCase()
+      : "";
+  if (currentEmailHash && currentEmailHash !== expectedEmailHash) return false;
+  if (
+    hasImmutableMerchantStaffPrincipal(user) &&
+    currentEmailHash === expectedEmailHash
+  ) {
+    return true;
+  }
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const result = await service.auth.admin.updateUserById(user.id, {
       app_metadata: {
         ...currentAppMetadata,
         principal_type: MERCHANT_STAFF_PRINCIPAL_TYPE,
+        merchant_staff_email_hash: expectedEmailHash,
       },
     });
     if (!result.error) return true;
@@ -520,7 +565,11 @@ async function ensureEmployeeInvitation(
   if (employee.authUserId) {
     const existing = await service.auth.admin.getUserById(employee.authUserId);
     const user = existing.data.user;
-    if (existing.error || !user || !(await markAuthUserAsStaff(service, user))) {
+    if (
+      existing.error ||
+      !user ||
+      !(await markAuthUserAsStaff(service, user, employee.email))
+    ) {
       return {
         employee,
         invitation: { status: "failed", error: "staff_identity_marker_failed" },
@@ -566,7 +615,7 @@ async function ensureEmployeeInvitation(
     invitationAlreadySent = false;
   }
 
-  if (!(await markAuthUserAsStaff(service, authUser))) {
+  if (!(await markAuthUserAsStaff(service, authUser, employee.email))) {
     if (invitationAlreadySent) {
       const cleanup = await service.auth.admin.deleteUser(authUser.id);
       if (cleanup.error) {
@@ -755,6 +804,29 @@ export async function POST(request: Request) {
     const service = serviceClient();
     const store = service as unknown as MerchantEnterpriseStoreClient;
     const mutationActor = getMerchantEnterpriseEmployeeMutationActor(actor);
+    if (resolveMerchantEnterpriseInvitationDeliveryMode() === "outbox") {
+      const operationId = reliableInvitationOperationId(body?.operationId);
+      if (!operationId) {
+        return NextResponse.json(
+          { ok: false, error: "invalid_operation_id" },
+          { status: 400 },
+        );
+      }
+      const queued = await createMerchantEnterpriseEmployeeInvitationV2(store, {
+        siteId,
+        email,
+        displayName,
+        roleId,
+        operationId,
+        hmacKeyId: resolveMerchantEnterpriseInvitationActiveHmacKeyId(),
+        ...mutationActor,
+      });
+      return NextResponse.json({
+        ok: true,
+        employee: toPublicMerchantEnterpriseEmployee(queued.employee),
+        invitation: { status: "queued" },
+      });
+    }
     const snapshot = await loadMerchantEnterpriseSnapshot(
       store,
       siteId,
@@ -910,16 +982,47 @@ export async function PATCH(request: Request) {
     if (!currentEmployee) {
       return NextResponse.json({ ok: false, error: "employee_not_found" }, { status: 404 });
     }
-    if (currentEmployee.version !== body.version) {
-      return NextResponse.json(
-        { ok: false, error: "enterprise_version_conflict" },
-        { status: 409 },
-      );
-    }
     if (actor.type === "employee" && actor.id === currentEmployee.id) {
       return NextResponse.json(
         { ok: false, error: "permission_escalation_denied" },
         { status: 403 },
+      );
+    }
+
+    // Durable invitation retries must reach the database idempotency record
+    // before local state/version/cooldown checks. The RPC reauthorizes the
+    // current actor and only bypasses those checks for the exact same request.
+    if (
+      (action === "resend_invite" || action === "renew_invite") &&
+      resolveMerchantEnterpriseInvitationDeliveryMode() === "outbox"
+    ) {
+      const operationId = reliableInvitationOperationId(body?.operationId);
+      if (!operationId) {
+        return NextResponse.json(
+          { ok: false, error: "invalid_operation_id" },
+          { status: 400 },
+        );
+      }
+      const queued =
+        await scheduleMerchantEnterpriseEmployeeInvitationDeliveryV2(store, {
+          siteId,
+          employeeId: currentEmployee.id,
+          version: body.version,
+          action: action === "renew_invite" ? "renew" : "resend",
+          operationId,
+          hmacKeyId: resolveMerchantEnterpriseInvitationActiveHmacKeyId(),
+          ...mutationActor,
+        });
+      return createEmployeeInvitationResendResponse({
+        employee: queued.employee,
+        invitation: { status: "queued" },
+      });
+    }
+
+    if (currentEmployee.version !== body.version) {
+      return NextResponse.json(
+        { ok: false, error: "enterprise_version_conflict" },
+        { status: 409 },
       );
     }
     const currentRole = snapshot.roles.find((item) => item.id === currentEmployee.roleId);

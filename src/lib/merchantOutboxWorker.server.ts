@@ -11,6 +11,7 @@ import type { MerchantOutboxRpcClient } from "@/lib/merchantOutboxEnqueue.server
 export type MerchantOutboxTaskContext = {
   signal: AbortSignal;
   renewLease: () => Promise<boolean>;
+  workerId?: string;
 };
 
 export type MerchantOutboxTaskHandler = (
@@ -20,6 +21,31 @@ export type MerchantOutboxTaskHandler = (
 
 export type MerchantOutboxTaskHandlers = Partial<
   Record<MerchantOutboxEventType, MerchantOutboxTaskHandler>
+>;
+
+export type MerchantOutboxTaskFailure = {
+  code: string;
+  retryable: boolean;
+  retryAfterSeconds?: number;
+};
+
+export type MerchantOutboxEventSettlement = {
+  complete: (input: {
+    client: MerchantOutboxRpcClient;
+    event: MerchantOutboxClaimedEvent;
+    workerId: string;
+    result: Record<string, unknown>;
+  }) => Promise<boolean>;
+  fail: (input: {
+    client: MerchantOutboxRpcClient;
+    event: MerchantOutboxClaimedEvent;
+    workerId: string;
+    error: MerchantOutboxTaskFailure;
+  }) => Promise<"retry_scheduled" | "dead_lettered" | "lease_lost">;
+};
+
+export type MerchantOutboxEventSettlements = Partial<
+  Record<MerchantOutboxEventType, MerchantOutboxEventSettlement>
 >;
 
 export type MerchantOutboxWorkerSummary = {
@@ -64,6 +90,7 @@ type MerchantOutboxWorkerOptions = {
     | "faolla_claim_merchant_outbox_scoped_v1"
     | "faolla_claim_merchant_enterprise_automation_outbox_v1";
   handlers: MerchantOutboxTaskHandlers;
+  settlements?: MerchantOutboxEventSettlements;
 };
 
 const EMPTY_SUMMARY: MerchantOutboxWorkerSummary = {
@@ -158,7 +185,7 @@ async function callRpc(
   return result.data;
 }
 
-function resolveTaskError(error: unknown) {
+function resolveTaskError(error: unknown): MerchantOutboxTaskFailure {
   if (error instanceof MerchantOutboxTaskError) {
     return {
       code: error.code,
@@ -199,6 +226,24 @@ async function failClaimedEvent(
   return data && typeof data === "object"
     ? trimText((data as { status?: unknown }).status)
     : "";
+}
+
+async function completeClaimedEvent(
+  client: MerchantOutboxRpcClient,
+  event: MerchantOutboxClaimedEvent,
+  workerId: string,
+  result: Record<string, unknown>,
+) {
+  const completion = await callRpc(
+    client,
+    "faolla_complete_merchant_outbox_v1",
+    {
+      p_event_id: event.id,
+      p_worker_id: workerId,
+      p_result: result,
+    },
+  );
+  return completion === true;
 }
 
 export async function processMerchantOutboxBatch(
@@ -323,7 +368,7 @@ export async function processMerchantOutboxBatch(
     try {
       const timeoutToken = Symbol("outbox_task_timeout");
       const result = await Promise.race([
-        handler(event, { signal: controller.signal, renewLease }),
+        handler(event, { signal: controller.signal, renewLease, workerId }),
         new Promise<typeof timeoutToken>((resolve) => {
           timeoutHandle = setTimeout(() => {
             controller.abort();
@@ -338,28 +383,39 @@ export async function processMerchantOutboxBatch(
         summary.leaseLost += 1;
         continue;
       }
-      const completion = await callRpc(
-        client,
-        "faolla_complete_merchant_outbox_v1",
-        {
-          p_event_id: event.id,
-          p_worker_id: workerId,
-          p_result: normalizeMerchantOutboxResult(result ?? {}),
-        },
-      );
-      if (completion === true) summary.completed += 1;
+      const normalizedResult = normalizeMerchantOutboxResult(result ?? {});
+      const settlement = options.settlements?.[event.eventType as MerchantOutboxEventType];
+      const completed = settlement
+        ? await settlement.complete({
+            client,
+            event,
+            workerId,
+            result: normalizedResult,
+          })
+        : await completeClaimedEvent(
+            client,
+            event,
+            workerId,
+            normalizedResult,
+          );
+      if (completed) summary.completed += 1;
       else summary.leaseLost += 1;
     } catch (error) {
       if (leaseLost) {
         summary.leaseLost += 1;
         continue;
       }
-      const outcome = await failClaimedEvent(
-        client,
-        event,
-        workerId,
-        resolveTaskError(error),
-      ).catch(() => "lease_lost");
+      const resolvedError = resolveTaskError(error);
+      const settlement = options.settlements?.[event.eventType as MerchantOutboxEventType];
+      const outcome = await (settlement
+        ? settlement.fail({
+            client,
+            event,
+            workerId,
+            error: resolvedError,
+          })
+        : failClaimedEvent(client, event, workerId, resolvedError)
+      ).catch(() => "lease_lost" as const);
       if (outcome === "retry_scheduled") summary.retried += 1;
       else if (outcome === "dead_lettered") summary.deadLettered += 1;
       else summary.leaseLost += 1;

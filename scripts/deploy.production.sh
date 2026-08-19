@@ -8,6 +8,10 @@ APP_BRANCH="${APP_BRANCH:-main}"
 AUTOMATION_WORKER_NAME="${AUTOMATION_WORKER_NAME:-${APP_NAME}-enterprise-automation-worker}"
 AUTOMATION_WORKER_KILL_TIMEOUT_MS="${AUTOMATION_WORKER_KILL_TIMEOUT_MS:-180000}"
 MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED="${MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED:-false}"
+MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE="${MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE:-legacy}"
+MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED="${MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED:-false}"
+MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS="${MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS:-3600}"
+MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS="${MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS:-3900}"
 SUPABASE_INTERNAL_URL="${SUPABASE_INTERNAL_URL:-http://127.0.0.1:8000}"
 RELEASES_DIR="${RELEASES_DIR:-${APP_DIR}.releases}"
 CURRENT_LINK="${CURRENT_LINK:-${APP_DIR}.current}"
@@ -166,6 +170,38 @@ validate_disk_thresholds() {
       exit 1
       ;;
   esac
+  case "$MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE" in
+    legacy|outbox) ;;
+    *)
+      echo "[deploy] MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE must be legacy or outbox"
+      exit 1
+      ;;
+  esac
+  case "$MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED" in
+    true|false) ;;
+    *)
+      echo "[deploy] MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED must be true or false"
+      exit 1
+      ;;
+  esac
+  if [ "$MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE" = "outbox" ] \
+    && [ "$MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED" != "true" ]; then
+    echo "[deploy] outbox invitation delivery requires the invitation worker"
+    exit 1
+  fi
+  if ! [[ "$MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS" =~ ^[0-9]{2,5}$ ]] \
+    || [ "$MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS" -lt 60 ] \
+    || [ "$MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS" -gt 86100 ]; then
+    echo "[deploy] MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS is invalid"
+    exit 1
+  fi
+  if ! [[ "$MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS" =~ ^[0-9]{2,5}$ ]] \
+    || [ "$MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS" -lt 60 ] \
+    || [ "$MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS" -gt 86400 ] \
+    || [ "$MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS" -lt $((MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS + 300)) ]; then
+    echo "[deploy] invitation issuance lease must cover the Auth link TTL plus 300 seconds"
+    exit 1
+  fi
 }
 
 acquire_deploy_lock() {
@@ -304,6 +340,16 @@ write_env_value "GOOGLE_BUSINESS_PROFILE_TOKEN_KEY" "$(decode_base64_value "${GO
 write_env_value "GOOGLE_BUSINESS_PROFILE_REDIRECT_URI" "$(decode_base64_value "${GOOGLE_BUSINESS_PROFILE_REDIRECT_URI_B64:-}")"
 write_env_value "GOOGLE_BUSINESS_PROFILE_SYNC_INTERVAL_MS" "${GOOGLE_BUSINESS_PROFILE_SYNC_INTERVAL_MS:-}"
 write_env_value "MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED" "$MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED"
+write_env_value "MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE" "$MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE"
+write_env_value "MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED" "$MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED"
+write_env_value "MERCHANT_ENTERPRISE_INVITATION_HMAC_KEYRING_JSON" "$(decode_base64_value "${MERCHANT_ENTERPRISE_INVITATION_HMAC_KEYRING_JSON_B64:-}")"
+write_env_value "MERCHANT_ENTERPRISE_INVITATION_HMAC_ACTIVE_KEY_ID" "$(decode_base64_value "${MERCHANT_ENTERPRISE_INVITATION_HMAC_ACTIVE_KEY_ID_B64:-}")"
+write_env_value "MERCHANT_ENTERPRISE_INVITATION_PUBLIC_ORIGIN" "$(decode_base64_value "${MERCHANT_ENTERPRISE_INVITATION_PUBLIC_ORIGIN_B64:-}")"
+write_env_value "MERCHANT_ENTERPRISE_INVITATION_EMAIL_FROM" "$(decode_base64_value "${MERCHANT_ENTERPRISE_INVITATION_EMAIL_FROM_B64:-}")"
+write_env_value "MERCHANT_ENTERPRISE_INVITATION_EMAIL_REPLY_TO" "$(decode_base64_value "${MERCHANT_ENTERPRISE_INVITATION_EMAIL_REPLY_TO_B64:-}")"
+write_env_value "MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS" "$MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS"
+write_env_value "MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS" "$MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS"
+write_env_value "RESEND_API_KEY" "$(decode_base64_value "${RESEND_API_KEY_B64:-}")"
 write_env_value "SUPER_ADMIN_ACCOUNT" "${SUPER_ADMIN_ACCOUNT:-}"
 write_env_value "SUPER_ADMIN_PASSWORD" "${SUPER_ADMIN_PASSWORD:-}"
 write_env_value "SUPER_ADMIN_VERIFICATION_EMAIL" "${SUPER_ADMIN_VERIFICATION_EMAIL:-}"
@@ -508,6 +554,21 @@ read_runtime_automation_worker_enabled() {
   fi
 }
 
+read_runtime_invitation_worker_enabled() {
+  local runtime_dir="$1"
+  local configured_value=""
+  if [ -f "$runtime_dir/.env.local" ]; then
+    configured_value="$(grep '^MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED=' "$runtime_dir/.env.local" \
+      | tail -n 1 \
+      | cut -d= -f2- || true)"
+  fi
+  if [ "$configured_value" = "true" ]; then
+    printf 'true\n'
+  else
+    printf 'false\n'
+  fi
+}
+
 start_release() {
   local runtime_dir="$1"
   local automation_worker_enabled
@@ -534,6 +595,7 @@ start_automation_worker_process() {
   local tsx_entry="$runtime_dir/node_modules/tsx/dist/cli.mjs"
   local worker_entry="$runtime_dir/scripts/run-merchant-enterprise-automation-worker.ts"
   local automation_worker_enabled
+  local invitation_worker_enabled
   if [ -z "$runtime_dir" ] \
     || [ ! -f "$runtime_dir/package.json" ] \
     || [ ! -f "$tsx_entry" ] \
@@ -541,12 +603,16 @@ start_automation_worker_process() {
     return 1
   fi
   automation_worker_enabled="$(read_runtime_automation_worker_enabled "$runtime_dir")"
-  if [ "$automation_worker_enabled" != "true" ]; then
+  invitation_worker_enabled="$(read_runtime_invitation_worker_enabled "$runtime_dir")"
+  if [ "$automation_worker_enabled" != "true" ] \
+    && [ "$invitation_worker_enabled" != "true" ]; then
     return 1
   fi
   (
     cd "$runtime_dir"
-    MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED=true pm2 start "$tsx_entry" \
+    MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED="$automation_worker_enabled" \
+      MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED="$invitation_worker_enabled" \
+      pm2 start "$tsx_entry" \
       --name "$AUTOMATION_WORKER_NAME" \
       --interpreter node \
       --cwd "$runtime_dir" \
@@ -869,18 +935,19 @@ if ! run_local_release_smoke; then
   exit 1
 fi
 
-if [ "$MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED" = "true" ]; then
-  echo "[deploy] starting enterprise automation worker"
+if [ "$MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED" = "true" ] \
+  || [ "$MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED" = "true" ]; then
+  echo "[deploy] starting enterprise worker supervisor"
   if ! start_automation_worker_process "$RELEASE_DIR"; then
-    echo "[deploy] failed to start enterprise automation worker"
+    echo "[deploy] failed to start enterprise worker supervisor"
     exit 1
   fi
   if ! wait_for_automation_worker_online; then
-    echo "[deploy] enterprise automation worker did not remain online"
+    echo "[deploy] enterprise worker supervisor did not remain online"
     exit 1
   fi
 else
-  echo "[deploy] enterprise automation worker is disabled"
+  echo "[deploy] enterprise worker supervisor is disabled"
 fi
 
 install_runtime_compatibility_links

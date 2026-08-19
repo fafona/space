@@ -21,6 +21,7 @@ function claimed(
     payload: { sourceType: "order", eventId },
     attempts: 1,
     totalAttempts: 1,
+    replayCount: 0,
     maxAttempts: 12,
     correlationId: eventId,
     leaseExpiresAt: "2026-08-04T10:01:00.000Z",

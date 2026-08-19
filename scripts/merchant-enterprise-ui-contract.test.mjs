@@ -1603,6 +1603,51 @@ test("pending employee invitations have a safe responsive management flow", () =
   assert.match(inviteEmployeeSource, /normalizeAuthEmail\(employeeEmail\)/);
   assert.match(inviteEmployeeSource, /isValidAuthEmail\(normalizedEmail\)/);
   assert.match(inviteEmployeeSource, /email:\s*normalizedEmail/);
+  assert.match(
+    source,
+    /const\s+employeeInviteMutationRef\s*=\s*useRef<\{[\s\S]{0,160}fingerprint:\s*string;[\s\S]{0,160}operationId:\s*string;[\s\S]{0,80}\}\s*\|\s*null>\(null\)/,
+  );
+  assert.match(inviteEmployeeSource, /const fingerprint = JSON\.stringify\(inviteInput\)/);
+  assert.match(
+    inviteEmployeeSource,
+    /employeeInviteMutationRef\.current\?\.fingerprint\s*!==\s*fingerprint[\s\S]{0,260}createClientMutationOperationId\("enterprise-employee-invite"\)/,
+  );
+  assert.match(
+    inviteEmployeeSource,
+    /\.\.\.inviteInput,[\s\S]{0,120}operationId:\s*employeeInviteMutationRef\.current\.operationId/,
+  );
+  assert.match(
+    inviteEmployeeSource,
+    /if \(payload\) \{[\s\S]{0,120}employeeInviteMutationRef\.current = null/,
+  );
+  assert.match(
+    inviteEmployeeSource,
+    /invitationQueued[\s\S]{0,900}邀请邮件已加入发送队列，系统会自动发送并在失败时重试/,
+  );
+
+  const sendInvitationSource = sliceBetween(
+    /async\s+function\s+sendEmployeeInvitation\b/,
+    /async\s+function\s+revokeEmployeeInvitation\b/,
+    "sendEmployeeInvitation",
+  );
+  assert.match(
+    source,
+    /const\s+employeeInvitationDeliveryMutationRef\s*=\s*useRef<\{[\s\S]{0,160}fingerprint:\s*string;[\s\S]{0,160}operationId:\s*string;[\s\S]{0,80}\}\s*\|\s*null>\(null\)/,
+  );
+  assert.match(sendInvitationSource, /const fingerprint = JSON\.stringify\(invitationInput\)/);
+  assert.match(
+    sendInvitationSource,
+    /employeeInvitationDeliveryMutationRef\.current\?\.fingerprint\s*!==\s*fingerprint[\s\S]{0,500}createClientMutationOperationId\(/,
+  );
+  assert.match(
+    sendInvitationSource,
+    /\.\.\.invitationInput,[\s\S]{0,120}operationId:\s*employeeInvitationDeliveryMutationRef\.current\.operationId/,
+  );
+  assert.match(
+    sendInvitationSource,
+    /if \(!payload\) return;[\s\S]{0,100}employeeInvitationDeliveryMutationRef\.current = null/,
+  );
+  assert.match(source, /label:\s*"等待发送"[\s\S]{0,100}系统会自动发送，失败时自动重试/);
 
   const saveInvitationSource = sliceBetween(
     /async\s+function\s+savePendingEmployeeInvitation\b/,
@@ -1640,6 +1685,10 @@ test("pending employee invitations have a safe responsive management flow", () =
   assert.match(source, /aria-controls=\{`employee-invitation-manager-\$\{employee\.id\}`\}/);
   assert.match(source, /邀请邮箱（不可直接修改）[\s\S]{0,400}readOnly/);
   assert.match(source, /邮箱有误时请移除后重新邀请/);
+  assert.match(
+    source,
+    /employee_invitation_renew_required[\s\S]{0,180}旧发送方式或已失效，请先撤销，再生成一封新邀请/,
+  );
   assert.match(source, /min-h-11[\s\S]{0,500}管理邀请/);
 });
 

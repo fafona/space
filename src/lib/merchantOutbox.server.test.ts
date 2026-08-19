@@ -40,6 +40,42 @@ test("outbox mutation clamps operational limits", () => {
   assert.equal(mutation.priority, 0);
 });
 
+test("employee invitation outbox events carry references but never credentials", () => {
+  const mutation = buildMerchantOutboxEventMutation({
+    merchantId: "10000000",
+    eventType: "enterprise.employee_invitation.deliver",
+    aggregateType: "merchant_enterprise_employee",
+    aggregateId: "923e4567-e89b-42d3-a456-426614174000",
+    operationId: "invite:7",
+    payload: {
+      schema_version: 1,
+      invitation_version: 7,
+      hmac_key_id: "k1",
+    },
+  });
+  assert.equal(
+    mutation.event_type,
+    "enterprise.employee_invitation.deliver",
+  );
+  assert.deepEqual(mutation.payload, {
+    schema_version: 1,
+    invitation_version: 7,
+    hmac_key_id: "k1",
+  });
+  assert.throws(
+    () =>
+      buildMerchantOutboxEventMutation({
+        merchantId: "10000000",
+        eventType: "enterprise.employee_invitation.deliver",
+        aggregateType: "merchant_enterprise_employee",
+        aggregateId: "923e4567-e89b-42d3-a456-426614174000",
+        operationId: "invite:7",
+        payload: { invitationToken: "must-not-enter-the-outbox" },
+      }),
+    /outbox_payload_contains_secret/,
+  );
+});
+
 test("outbox mutation rejects secrets anywhere in the payload", () => {
   assert.throws(
     () =>
@@ -126,6 +162,7 @@ test("claimed outbox rows normalize the database contract", () => {
     status: "processing",
     attempts: 2,
     total_attempts: 4,
+    replay_count: 3,
     max_attempts: 8,
     correlation_id: "request-1",
     lease_expires_at: "2026-07-25T10:01:00.000Z",
@@ -133,6 +170,7 @@ test("claimed outbox rows normalize the database contract", () => {
   });
   assert.equal(event.eventType, "backup.create");
   assert.equal(event.totalAttempts, 4);
+  assert.equal(event.replayCount, 3);
   assert.deepEqual(event.payload, { snapshotId: "snapshot-1" });
 });
 
@@ -148,9 +186,27 @@ test("claimed outbox rows must be processing and carry a valid lease", () => {
         aggregate_id: "10000000",
         payload: {},
         status: "pending",
+        replay_count: 0,
         lease_expires_at: "2026-07-25T10:01:00.000Z",
         created_at: "2026-07-25T10:00:00.000Z",
       }),
     /claimed_outbox_not_processing/,
+  );
+  assert.throws(
+    () =>
+      normalizeMerchantOutboxClaimedEvent({
+        id: "123e4567-e89b-42d3-a456-426614174000",
+        merchant_id: "10000000",
+        event_key: "backup.create:abc",
+        event_type: "backup.create",
+        aggregate_type: "merchant",
+        aggregate_id: "10000000",
+        payload: {},
+        status: "processing",
+        replay_count: -1,
+        lease_expires_at: "2026-07-25T10:01:00.000Z",
+        created_at: "2026-07-25T10:00:00.000Z",
+      }),
+    /invalid_claimed_outbox_replay_count/,
   );
 });

@@ -68,6 +68,7 @@ function claimedEvent(
     },
     attempts: 1,
     totalAttempts: 1,
+    replayCount: 0,
     maxAttempts: 6,
     correlationId: "",
     leaseExpiresAt: "2026-07-25T10:01:00.000Z",
