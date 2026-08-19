@@ -7,6 +7,7 @@ import {
   persistBrowserSupabaseSessionSnapshot,
   readMerchantSessionMerchantIds,
   readMerchantSessionPayload,
+  syncMerchantSessionCookies,
 } from "@/lib/authSessionRecovery";
 import { legacySupabaseAuthStorageKey, resolvedSupabaseAuthStorageKey } from "@/lib/supabase";
 
@@ -127,6 +128,48 @@ test("merchant session payload ids keep server primary id first and dedupe extra
     }),
     ["10000002", "10000003", "10000004"],
   );
+});
+
+test("personal account switch explicitly transports a null merchant selection", async () => {
+  const harness = installWindowStorage();
+  const previousFetch = globalThis.fetch;
+  let requestBody: Record<string, unknown> | null = null;
+  Object.assign(globalThis, {
+    fetch: async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = JSON.parse(String(init?.body ?? "{}")) as Record<
+        string,
+        unknown
+      >;
+      return new Response(JSON.stringify({ authenticated: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+  try {
+    const payload = await syncMerchantSessionCookies(
+      {
+        access_token: "personal-switch-access",
+        refresh_token: "personal-switch-refresh",
+        expires_in: 3600,
+      },
+      3200,
+      { preferredMerchantId: null },
+    );
+    assert.equal(payload?.authenticated, true);
+    const capturedRequestBody = requestBody as Record<string, unknown> | null;
+    assert.ok(
+      capturedRequestBody &&
+        Object.prototype.hasOwnProperty.call(
+          capturedRequestBody,
+          "preferredMerchantId",
+        ),
+    );
+    assert.equal(capturedRequestBody?.preferredMerchantId, null);
+  } finally {
+    Object.assign(globalThis, { fetch: previousFetch });
+    harness.restore();
+  }
 });
 
 test("merchant session payload reuses a recent authenticated response", async () => {

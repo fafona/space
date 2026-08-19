@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   loadOrdinaryAccountAuthorization,
+  loadOrdinaryAccountAuthoritativeCutoverReadiness,
   loadOrdinaryAccountAuthorizationReadiness,
   normalizeOrdinaryAccountAuthorization,
+  normalizeOrdinaryAccountAuthoritativeCutoverReadiness,
   normalizeOrdinaryAccountAuthorizationReadiness,
   type OrdinaryAccountAuthorizationStoreClient,
 } from "@/lib/ordinaryAccountAuthorization.server";
@@ -73,6 +75,36 @@ function readinessPayload() {
   };
 }
 
+function authoritativeCutoverReadinessPayload() {
+  return {
+    schemaVersion: 1,
+    asOf: "2026-08-19T12:34:56.789Z",
+    readyForCutover: true,
+    merchant: {
+      recordCount: 11,
+      authoritativeBindingCount: 11,
+      invalidBindingCount: 0,
+    },
+    personal: {
+      canonicalBindingCount: 7,
+      canonicalOrphanCount: 0,
+      invalidCanonicalCount: 0,
+      duplicateAuthUserCount: 0,
+      duplicatePersonalAccountIdCount: 0,
+    },
+    security: {
+      crossAccountTypeOverlapCount: 0,
+      accountIdentifierCollisionCount: 0,
+      staffRegistryOverlapCount: 0,
+      systemSitePrincipalOverlapCount: 0,
+    },
+    invariants: {
+      schemaReady: true,
+      aclReady: true,
+    },
+  };
+}
+
 test("resolver loader uses only the Auth UUID and preserves all sorted merchant bindings", async () => {
   const calls: Array<{
     functionName: string;
@@ -112,21 +144,21 @@ test("resolver loader uses only the Auth UUID and preserves all sorted merchant 
   ]);
 });
 
-test("normalizer accepts a safe non-eight-digit personal ID and an unbound result", () => {
+test("normalizer accepts only the reserved personal numeric range and an unbound result", () => {
   assert.deepEqual(
     normalizeOrdinaryAccountAuthorization({
       schemaVersion: 1,
       status: "disabled",
       accountType: "personal",
       merchantIds: [],
-      personalAccountId: "disabled-personal",
+      personalAccountId: "50010106",
     }),
     {
       schemaVersion: 1,
       status: "disabled",
       accountType: "personal",
       merchantIds: [],
-      personalAccountId: "disabled-personal",
+      personalAccountId: "50010106",
     },
   );
   assert.deepEqual(
@@ -135,14 +167,14 @@ test("normalizer accepts a safe non-eight-digit personal ID and an unbound resul
       status: "resolved",
       accountType: "personal",
       merchantIds: [],
-      personalAccountId: "personal alpha-01",
+      personalAccountId: "50010105",
     }),
     {
       schemaVersion: 1,
       status: "resolved",
       accountType: "personal",
       merchantIds: [],
-      personalAccountId: "personal alpha-01",
+      personalAccountId: "50010105",
     },
   );
   assert.deepEqual(
@@ -205,6 +237,18 @@ test("authorization payload is exact and internally consistent", () => {
       accountType: "personal",
       merchantIds: [],
       personalAccountId: "unsafe\u0085id",
+    },
+    {
+      ...merchantPayload(),
+      accountType: "personal",
+      merchantIds: [],
+      personalAccountId: "50010104",
+    },
+    {
+      ...merchantPayload(),
+      accountType: "personal",
+      merchantIds: [],
+      personalAccountId: "60000000",
     },
   ];
 
@@ -311,6 +355,81 @@ test("readiness normalizer rejects PII fields, malformed counts, and non-UTC tim
   );
 });
 
+test("authoritative cutover readiness uses only binding, security, schema and ACL blockers", async () => {
+  const calls: Array<{
+    functionName: string;
+    args: Record<string, unknown> | undefined;
+  }> = [];
+  const payload = authoritativeCutoverReadinessPayload();
+  const result = await loadOrdinaryAccountAuthoritativeCutoverReadiness(
+    client((functionName, args) => {
+      calls.push({ functionName, args });
+      return { data: payload, error: null };
+    }),
+  );
+
+  assert.deepEqual(result, payload);
+  assert.deepEqual(calls, [
+    {
+      functionName:
+        "faolla_get_ordinary_account_authoritative_cutover_readiness_v1",
+      args: {},
+    },
+  ]);
+  assert.doesNotMatch(JSON.stringify(result), /email|metadata|raw_/i);
+});
+
+test("authoritative cutover readiness fails closed on blockers, extra fields and inconsistent flags", () => {
+  const blocked = {
+    ...authoritativeCutoverReadinessPayload(),
+    readyForCutover: false,
+    merchant: {
+      ...authoritativeCutoverReadinessPayload().merchant,
+      invalidBindingCount: 1,
+    },
+  };
+  assert.deepEqual(
+    normalizeOrdinaryAccountAuthoritativeCutoverReadiness(blocked),
+    blocked,
+  );
+  const systemSiteBlocked = {
+    ...authoritativeCutoverReadinessPayload(),
+    readyForCutover: false,
+    security: {
+      ...authoritativeCutoverReadinessPayload().security,
+      systemSitePrincipalOverlapCount: 1,
+    },
+  };
+  assert.deepEqual(
+    normalizeOrdinaryAccountAuthoritativeCutoverReadiness(systemSiteBlocked),
+    systemSiteBlocked,
+  );
+
+  for (const invalid of [
+    {
+      ...authoritativeCutoverReadinessPayload(),
+      emailOnlyCount: 1,
+    },
+    {
+      ...authoritativeCutoverReadinessPayload(),
+      readyForCutover: true,
+      invariants: { schemaReady: false, aclReady: true },
+    },
+    {
+      ...authoritativeCutoverReadinessPayload(),
+      merchant: {
+        ...authoritativeCutoverReadinessPayload().merchant,
+        invalidBindingCount: -1,
+      },
+    },
+  ]) {
+    assert.throws(
+      () => normalizeOrdinaryAccountAuthoritativeCutoverReadiness(invalid),
+      /ordinary_account_authorization_invalid_response/,
+    );
+  }
+});
+
 test("invalid Auth UUID is rejected before any RPC call", async () => {
   let callCount = 0;
   await assert.rejects(
@@ -338,6 +457,20 @@ test("database authorization and exact missing-schema failures map to bounded co
         },
       })),
       AUTH_USER_ID,
+    ),
+    /ordinary_account_authorization_schema_unavailable/,
+  );
+
+  await assert.rejects(
+    loadOrdinaryAccountAuthoritativeCutoverReadiness(
+      client(() => ({
+        data: null,
+        error: {
+          code: "PGRST202",
+          message:
+            "Could not find faolla_get_ordinary_account_authoritative_cutover_readiness_v1 in the schema cache",
+        },
+      })),
     ),
     /ordinary_account_authorization_schema_unavailable/,
   );

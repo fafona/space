@@ -1644,7 +1644,9 @@ export default function ProductBlock(props: ProductBlockProps) {
           catalogRevision: operatingCatalog?.revision,
           clientRequestId,
           pricePrefix,
-          frontendAuthProof,
+          ...(isPersonalAuthenticated || frontendAuthProof
+            ? { frontendAuthProof }
+            : {}),
           customerGuestToken: isPersonalAuthenticated ? "" : readPersonalGuestMergeToken(),
           customer: cartCustomer,
           items: checkedCartItems.map((item) => ({

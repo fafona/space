@@ -528,7 +528,9 @@ export default function BookingBlock({
                 siteName: runtimeSiteName,
                 bookingBlockId: runtimeBlockId,
                 bookingViewport: runtimeViewport,
-                frontendAuthProof,
+                ...(isPersonalAuthenticated || frontendAuthProof
+                  ? { frontendAuthProof }
+                  : {}),
                 customerGuestToken: isPersonalAuthenticated ? "" : readPersonalGuestMergeToken(),
                 ...payload,
               },

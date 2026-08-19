@@ -411,7 +411,9 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
           siteId: normalizedSiteId,
           siteName,
           profile: submitProfile,
-          frontendAuthProof: latestFrontendAuthProof,
+          ...(authenticated || latestAuthPayload?.authenticated === true || latestFrontendAuthProof
+            ? { frontendAuthProof: latestFrontendAuthProof }
+            : {}),
         }),
       });
       if (response.status === 401) {

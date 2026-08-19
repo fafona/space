@@ -1,445 +1,284 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  merchantAuthorizationRecordMatchesUser,
-  resolveMerchantSessionFromRequest,
-} from "./serverMerchantSession";
-import {
-  MERCHANT_AUTH_COOKIE,
-  MERCHANT_AUTH_MERCHANT_ID_COOKIE,
-  MERCHANT_AUTH_REFRESH_COOKIE,
-} from "./merchantAuthSession";
+import { resolveMerchantSessionFromRequest } from "./serverMerchantSession";
 
-process.env.FAOLLA_CANONICAL_PORTAL_ORIGIN = "https://faolla.com";
+const USER_ID = "10000000-0000-4000-8000-000000000001";
 
-test("merchantAuthorizationRecordMatchesUser accepts linked ids and normalized emails only", () => {
-  const user = {
-    id: "user-linked",
-    email: "Owner@Example.com",
-  };
+async function withSupabaseFetch(
+  fetchImpl: typeof fetch,
+  task: () => Promise<void>,
+) {
+  const originalFetch = globalThis.fetch;
+  const previousUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const previousAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const previousServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  process.env.NEXT_PUBLIC_SUPABASE_URL = "https://unit-test.supabase.co";
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key";
+  globalThis.fetch = fetchImpl;
+  try {
+    await task();
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env.NEXT_PUBLIC_SUPABASE_URL = previousUrl;
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = previousAnonKey;
+    process.env.SUPABASE_SERVICE_ROLE_KEY = previousServiceRoleKey;
+  }
+}
 
-  assert.equal(
-    merchantAuthorizationRecordMatchesUser(
-      {
-        id: "12345678",
-        owner_user_id: "user-linked",
-      },
-      user,
-    ),
-    true,
-  );
-  assert.equal(
-    merchantAuthorizationRecordMatchesUser(
-      {
-        id: "12345678",
-        contact_email: " owner@example.COM ",
-      },
-      user,
-    ),
-    true,
-  );
-  assert.equal(
-    merchantAuthorizationRecordMatchesUser(
-      {
-        id: "12345678",
-        owner_user_id: "another-user",
-        contact_email: "another@example.com",
-      },
-      user,
-    ),
-    false,
-  );
-});
+function json(value: unknown, status = 200) {
+  return new Response(JSON.stringify(value), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
 
-test("resolveMerchantSessionFromRequest does not trust unauthenticated merchant hints", async () => {
+function requestAuthorization(init?: RequestInit) {
+  return new Headers(init?.headers ?? {}).get("authorization") ?? "";
+}
+
+test("merchant session does not trust unauthenticated merchant hints", async () => {
   const session = await resolveMerchantSessionFromRequest(
-    new Request("https://faolla.com/api/support-messages?siteId=87654321&merchantEmail=owner@example.com", {
-      headers: {
-        "x-merchant-site-id": "87654321",
-        "x-merchant-email": "owner@example.com",
-        "x-merchant-name": "Merchant Name",
+    new Request(
+      "https://faolla.com/api/support-messages?siteId=87654321&merchantEmail=forged@example.com",
+      {
+        headers: {
+          "x-merchant-site-id": "87654321",
+          "x-merchant-email": "forged@example.com",
+        },
       },
-    }),
+    ),
   );
-
   assert.equal(session, null);
 });
 
-test("resolveMerchantSessionFromRequest does not rotate refresh cookies inside business routes", async () => {
-  const originalFetch = globalThis.fetch;
-  const previousUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const previousAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  const previousServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+test("merchant session never rotates refresh cookies inside business routes", async () => {
   let refreshEndpointCalled = false;
-
-  process.env.NEXT_PUBLIC_SUPABASE_URL = "https://unit-test.supabase.co";
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
-  process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key";
-
-  globalThis.fetch = (async (input: RequestInfo | URL) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    const requestUrl = new URL(url);
-    if (requestUrl.pathname === "/auth/v1/token") {
-      refreshEndpointCalled = true;
-      return new Response(JSON.stringify({ access_token: "new-access", refresh_token: "new-refresh" }), { status: 200 });
-    }
-    if (requestUrl.pathname === "/auth/v1/user") {
-      return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
-    }
-    return new Response("not found", { status: 404 });
-  }) as typeof fetch;
-
-  try {
-    const session = await resolveMerchantSessionFromRequest(
-      new Request("https://faolla.com/api/merchant-peer-messages?siteId=12345678", {
-        headers: {
-          cookie: `${MERCHANT_AUTH_COOKIE}=stale-access; ${MERCHANT_AUTH_REFRESH_COOKIE}=refresh-token`,
-        },
-      }),
-      { hintedMerchantId: "12345678" },
-    );
-
-    assert.equal(session, null);
-    assert.equal(refreshEndpointCalled, false);
-  } finally {
-    globalThis.fetch = originalFetch;
-    process.env.NEXT_PUBLIC_SUPABASE_URL = previousUrl;
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = previousAnonKey;
-    process.env.SUPABASE_SERVICE_ROLE_KEY = previousServiceRoleKey;
-  }
-});
-
-test("resolveMerchantSessionFromRequest accepts an authorized hinted merchant id after authenticating the user", async () => {
-  const originalFetch = globalThis.fetch;
-  const previousUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const previousAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  const previousServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  process.env.NEXT_PUBLIC_SUPABASE_URL = "https://unit-test.supabase.co";
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
-  process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key";
-
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    const requestUrl = new URL(url);
-
-    if (requestUrl.pathname === "/auth/v1/user") {
-      const authorizationHeader =
-        init?.headers instanceof Headers
-          ? init.headers.get("authorization")
-          : Array.isArray(init?.headers)
-            ? new Headers(init?.headers).get("authorization")
-            : new Headers(init?.headers ?? {}).get("authorization");
-      if (authorizationHeader === "Bearer access-token-query") {
-        return new Response(
-          JSON.stringify({
-            id: "user-1",
-            email: "owner@example.com",
-            user_metadata: {},
-            app_metadata: {},
-          }),
+  await withSupabaseFetch(
+    (async (input: RequestInfo | URL) => {
+      const url = new URL(
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url,
+      );
+      if (url.pathname === "/auth/v1/token") refreshEndpointCalled = true;
+      if (url.pathname === "/auth/v1/user") return json({ error: "unauthorized" }, 401);
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch,
+    async () => {
+      const session = await resolveMerchantSessionFromRequest(
+        new Request(
+          "https://faolla.com/api/bookings?siteId=12345678",
           {
-            status: 200,
             headers: {
-              "content-type": "application/json",
+              cookie:
+                "merchant-space-merchant-auth=stale-access; merchant-space-merchant-refresh=refresh-token",
             },
           },
-        );
-      }
-      return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
-    }
-
-    if (requestUrl.pathname === "/rest/v1/merchant_enterprise_employees") {
-      return new Response(JSON.stringify([]), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    }
-
-    if (requestUrl.pathname === "/rest/v1/merchants") {
-      return new Response(JSON.stringify([{ id: "12345678" }, { id: "87654321" }]), {
-        status: 200,
-        headers: {
-          "content-type": "application/json",
-        },
-      });
-    }
-
-    return new Response("not found", { status: 404 });
-  }) as typeof fetch;
-
-  try {
-    const session = await resolveMerchantSessionFromRequest(
-      new Request("https://faolla.com/api/support-messages?siteId=87654321", {
-        headers: {
-          cookie: `${MERCHANT_AUTH_COOKIE}=access-token-query`,
-        },
-      }),
-    );
-
-    assert.deepEqual(session, {
-      merchantId: "87654321",
-      merchantEmail: "owner@example.com",
-      merchantName: "",
-    });
-  } finally {
-    globalThis.fetch = originalFetch;
-    process.env.NEXT_PUBLIC_SUPABASE_URL = previousUrl;
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = previousAnonKey;
-    process.env.SUPABASE_SERVICE_ROLE_KEY = previousServiceRoleKey;
-  }
+        ),
+      );
+      assert.equal(session, null);
+      assert.equal(refreshEndpointCalled, false);
+    },
+  );
 });
 
-test("resolveMerchantSessionFromRequest rejects unauthorized hinted merchant ids and falls back to linked merchants", async () => {
-  const originalFetch = globalThis.fetch;
-  const previousUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const previousAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  const previousServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  process.env.NEXT_PUBLIC_SUPABASE_URL = "https://unit-test.supabase.co";
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
-  process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key";
-
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    const requestUrl = new URL(url);
-
-    if (requestUrl.pathname === "/auth/v1/user") {
-      const authorizationHeader =
-        init?.headers instanceof Headers
-          ? init.headers.get("authorization")
-          : Array.isArray(init?.headers)
-            ? new Headers(init?.headers).get("authorization")
-            : new Headers(init?.headers ?? {}).get("authorization");
-      if (authorizationHeader === "Bearer access-token-fallback") {
-        return new Response(
-          JSON.stringify({
-            id: "user-2",
-            email: "owner@example.com",
-            user_metadata: {},
-            app_metadata: {},
-          }),
+test("merchant session selects an authoritative one-to-many binding and ignores forged metadata or email", async () => {
+  await withSupabaseFetch(
+    (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url,
+      );
+      if (url.pathname === "/auth/v1/user") {
+        if (requestAuthorization(init) !== "Bearer access-token") {
+          return json({ error: "unauthorized" }, 401);
+        }
+        return json({
+          id: USER_ID,
+          email: "owner@example.com",
+          user_metadata: {
+            account_type: "personal",
+            merchant_id: "99999999",
+          },
+          app_metadata: { merchant_id: "99999999" },
+        });
+      }
+      if (
+        url.pathname ===
+        "/rest/v1/rpc/faolla_resolve_ordinary_account_authorization_v1"
+      ) {
+        return json({
+          schemaVersion: 1,
+          status: "resolved",
+          accountType: "merchant",
+          merchantIds: ["12345678", "87654321"],
+          personalAccountId: null,
+        });
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch,
+    async () => {
+      const selected = await resolveMerchantSessionFromRequest(
+        new Request(
+          "https://faolla.com/api/support-messages?siteId=87654321&merchantEmail=forged@example.com",
           {
-            status: 200,
             headers: {
-              "content-type": "application/json",
+              cookie: "merchant-space-merchant-auth=access-token",
             },
           },
-        );
-      }
-      return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
-    }
-
-    if (requestUrl.pathname === "/rest/v1/merchant_enterprise_employees") {
-      return new Response(JSON.stringify([]), {
-        status: 200,
-        headers: { "content-type": "application/json" },
+        ),
+      );
+      assert.deepEqual(selected, {
+        merchantId: "87654321",
+        merchantEmail: "owner@example.com",
+        merchantName: "",
       });
-    }
 
-    if (requestUrl.pathname === "/rest/v1/merchants") {
-      return new Response(JSON.stringify([{ id: "12345678" }, { id: "87654321" }]), {
-        status: 200,
-        headers: {
-          "content-type": "application/json",
-        },
-      });
-    }
-
-    return new Response("not found", { status: 404 });
-  }) as typeof fetch;
-
-  try {
-    const session = await resolveMerchantSessionFromRequest(
-      new Request("https://faolla.com/api/support-messages?siteId=99999999", {
-        headers: {
-          cookie: `${MERCHANT_AUTH_COOKIE}=access-token-fallback`,
-        },
-      }),
-    );
-
-    assert.deepEqual(session, {
-      merchantId: "12345678",
-      merchantEmail: "owner@example.com",
-      merchantName: "",
-    });
-  } finally {
-    globalThis.fetch = originalFetch;
-    process.env.NEXT_PUBLIC_SUPABASE_URL = previousUrl;
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = previousAnonKey;
-    process.env.SUPABASE_SERVICE_ROLE_KEY = previousServiceRoleKey;
-  }
-});
-
-test("resolveMerchantSessionFromRequest falls back to older duplicate cookies when the newest one is stale", async () => {
-  const originalFetch = globalThis.fetch;
-  const previousUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const previousAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  const previousServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  process.env.NEXT_PUBLIC_SUPABASE_URL = "https://unit-test.supabase.co";
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
-  process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key";
-
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    const requestUrl = new URL(url);
-
-    if (requestUrl.pathname === "/auth/v1/user") {
-      const authorizationHeader =
-        init?.headers instanceof Headers
-          ? init.headers.get("authorization")
-          : Array.isArray(init?.headers)
-            ? new Headers(init?.headers).get("authorization")
-            : new Headers(init?.headers ?? {}).get("authorization");
-      if (authorizationHeader === "Bearer access-token-valid") {
-        return new Response(
-          JSON.stringify({
-            id: "user-3",
-            email: "owner@example.com",
-            user_metadata: {},
-            app_metadata: {},
-          }),
+      const forged = await resolveMerchantSessionFromRequest(
+        new Request(
+          "https://faolla.com/api/support-messages?siteId=99999999",
           {
-            status: 200,
             headers: {
-              "content-type": "application/json",
+              cookie: "merchant-space-merchant-auth=access-token",
             },
           },
+        ),
+      );
+      assert.equal(forged, null);
+    },
+  );
+});
+
+test("merchant session rejects personal, disabled, unbound and employee-only resolver results", async () => {
+  const deniedResults = [
+    {
+      data: {
+        schemaVersion: 1,
+        status: "resolved",
+        accountType: "personal",
+        merchantIds: [],
+        personalAccountId: "50010105",
+      },
+      status: 200,
+    },
+    {
+      data: {
+        schemaVersion: 1,
+        status: "disabled",
+        accountType: "personal",
+        merchantIds: [],
+        personalAccountId: "50010106",
+      },
+      status: 200,
+    },
+    {
+      data: {
+        schemaVersion: 1,
+        status: "unbound",
+        accountType: null,
+        merchantIds: [],
+        personalAccountId: null,
+      },
+      status: 200,
+    },
+    {
+      data: { message: "ordinary_account_staff_identity_forbidden" },
+      status: 400,
+    },
+  ];
+
+  for (const denied of deniedResults) {
+    await withSupabaseFetch(
+      (async (input: RequestInfo | URL) => {
+        const url = new URL(
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url,
         );
-      }
-      return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
-    }
-
-    if (requestUrl.pathname === "/rest/v1/merchant_enterprise_employees") {
-      return new Response(JSON.stringify([]), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    }
-
-    if (requestUrl.pathname === "/rest/v1/merchants") {
-      return new Response(JSON.stringify([{ id: "12345678" }]), {
-        status: 200,
-        headers: {
-          "content-type": "application/json",
-        },
-      });
-    }
-
-    return new Response("not found", { status: 404 });
-  }) as typeof fetch;
-
-  try {
-    const session = await resolveMerchantSessionFromRequest(
-      new Request("https://faolla.com/api/bookings?siteId=12345678", {
-        headers: {
-          cookie: `${MERCHANT_AUTH_COOKIE}=access-token-valid; ${MERCHANT_AUTH_COOKIE}=access-token-stale`,
-        },
-      }),
-      { hintedMerchantId: "12345678" },
+        if (url.pathname === "/auth/v1/user") {
+          return json({ id: USER_ID, email: "owner@example.com" });
+        }
+        if (
+          url.pathname ===
+          "/rest/v1/rpc/faolla_resolve_ordinary_account_authorization_v1"
+        ) {
+          return json(denied.data, denied.status);
+        }
+        return new Response("not found", { status: 404 });
+      }) as typeof fetch,
+      async () => {
+        const session = await resolveMerchantSessionFromRequest(
+          new Request("https://faolla.com/api/orders?siteId=12345678", {
+            headers: {
+              cookie: `merchant-space-merchant-auth=denied-${deniedResults.indexOf(denied)}`,
+            },
+          }),
+        );
+        assert.equal(session, null);
+      },
     );
-
-    assert.deepEqual(session, {
-      merchantId: "12345678",
-      merchantEmail: "owner@example.com",
-      merchantName: "",
-    });
-  } finally {
-    globalThis.fetch = originalFetch;
-    process.env.NEXT_PUBLIC_SUPABASE_URL = previousUrl;
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = previousAnonKey;
-    process.env.SUPABASE_SERVICE_ROLE_KEY = previousServiceRoleKey;
   }
 });
 
-test("resolveMerchantSessionFromRequest shares concurrent hinted lookups and avoids exhaustive scans", async () => {
-  const originalFetch = globalThis.fetch;
-  const previousUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const previousAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  const previousServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+test("merchant session shares concurrent authoritative resolver work", async () => {
   let authRequestCount = 0;
-  let merchantRequestCount = 0;
-
-  process.env.NEXT_PUBLIC_SUPABASE_URL = "https://unit-test.supabase.co";
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
-  process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key";
-
-  globalThis.fetch = (async (input: RequestInfo | URL) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    const requestUrl = new URL(url);
-
-    if (requestUrl.pathname === "/auth/v1/user") {
-      authRequestCount += 1;
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      return new Response(
-        JSON.stringify({
-          id: "user-fast-path",
-          email: "owner-fast@example.com",
-          user_metadata: {},
-          app_metadata: {},
-        }),
-        {
-          status: 200,
-          headers: {
-            "content-type": "application/json",
-          },
-        },
+  let resolverRequestCount = 0;
+  await withSupabaseFetch(
+    (async (input: RequestInfo | URL) => {
+      const url = new URL(
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url,
       );
-    }
-
-    if (requestUrl.pathname === "/rest/v1/merchant_enterprise_employees") {
-      return new Response(JSON.stringify([]), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    }
-
-    if (requestUrl.pathname === "/rest/v1/merchants") {
-      merchantRequestCount += 1;
-      assert.equal(requestUrl.searchParams.get("id"), "eq.24681357");
-      return new Response(
-        JSON.stringify({
-          id: "24681357",
-          user_id: "user-fast-path",
-          email: "owner-fast@example.com",
-        }),
-        {
-          status: 200,
+      if (url.pathname === "/auth/v1/user") {
+        authRequestCount += 1;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return json({ id: USER_ID, email: "owner@example.com" });
+      }
+      if (
+        url.pathname ===
+        "/rest/v1/rpc/faolla_resolve_ordinary_account_authorization_v1"
+      ) {
+        resolverRequestCount += 1;
+        return json({
+          schemaVersion: 1,
+          status: "resolved",
+          accountType: "merchant",
+          merchantIds: ["24681357"],
+          personalAccountId: null,
+        });
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch,
+    async () => {
+      const makeRequest = () =>
+        new Request("https://faolla.com/api/assets/upload?siteId=24681357", {
           headers: {
-            "content-type": "application/json",
+            cookie: "merchant-space-merchant-auth=shared-access-token",
           },
-        },
-      );
-    }
-
-    return new Response("not found", { status: 404 });
-  }) as typeof fetch;
-
-  try {
-    const makeRequest = () =>
-      new Request("https://faolla.com/api/assets/upload", {
-        headers: {
-          cookie: `${MERCHANT_AUTH_COOKIE}=access-token-fast-path; ${MERCHANT_AUTH_MERCHANT_ID_COOKIE}=24681357`,
-        },
+        });
+      const [first, second] = await Promise.all([
+        resolveMerchantSessionFromRequest(makeRequest()),
+        resolveMerchantSessionFromRequest(makeRequest()),
+      ]);
+      assert.deepEqual(first, {
+        merchantId: "24681357",
+        merchantEmail: "owner@example.com",
+        merchantName: "",
       });
-    const [first, second] = await Promise.all([
-      resolveMerchantSessionFromRequest(makeRequest()),
-      resolveMerchantSessionFromRequest(makeRequest()),
-    ]);
-
-    assert.deepEqual(first, {
-      merchantId: "24681357",
-      merchantEmail: "owner-fast@example.com",
-      merchantName: "",
-    });
-    assert.deepEqual(second, first);
-    assert.equal(authRequestCount, 1);
-    assert.equal(merchantRequestCount, 1);
-  } finally {
-    globalThis.fetch = originalFetch;
-    process.env.NEXT_PUBLIC_SUPABASE_URL = previousUrl;
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = previousAnonKey;
-    process.env.SUPABASE_SERVICE_ROLE_KEY = previousServiceRoleKey;
-  }
+      assert.deepEqual(second, first);
+      assert.equal(authRequestCount, 1);
+      assert.equal(resolverRequestCount, 1);
+    },
+  );
 });

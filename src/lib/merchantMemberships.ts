@@ -1,5 +1,6 @@
 import type { MerchantCouponDiscountType } from "@/lib/merchantCoupons";
 import { appendMutationOperationMarker } from "@/lib/mutationOperationId";
+import { normalizeCanonicalPersonalAccountId } from "@/lib/personalAccountId";
 
 export type MerchantMembershipStatus = "active" | "left";
 
@@ -734,13 +735,19 @@ export function normalizeMerchantMembershipRecord(value: unknown): MerchantMembe
   const record = readRecord(value);
   if (!record) return null;
   const siteId = trimText(record.siteId, 64);
-  const accountId = trimText(record.accountId, 128);
+  const accountId = normalizeCanonicalPersonalAccountId(record.accountId);
   const userId = trimText(record.userId, 128);
   const joinedAt = normalizeIsoDateValue(record.joinedAt);
   if (!siteId || (!accountId && !userId) || !joinedAt) return null;
   const serial = normalizePositiveInteger(record.serial) || 1;
   const memberNo = trimText(record.memberNo, 64) || buildMerchantMemberNo(siteId, serial);
-  const id = trimText(record.id, 160) || `${siteId}:${accountId || userId}`;
+  const storedId =
+    typeof record.id === "string" && record.id === record.id.trim()
+      ? record.id
+      : "";
+  const id =
+    storedId ||
+    (userId ? `${siteId}:user:${userId}` : `${siteId}:account:${accountId}`);
   const status = normalizeMerchantMembershipStatus(record.status);
   return {
     id,

@@ -2,8 +2,6 @@ import { after, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import type { Block } from "@/data/homeBlocks";
 import { createDefaultMerchantPermissionConfig } from "@/data/platformControlStore";
-import { readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
-import { assertLegacyMerchantIdentityAllowed } from "@/lib/merchantStaffPrincipal.server";
 import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
 import { saveMerchantBookingRulesSnapshotForSites } from "@/lib/merchantBookingRulesStore";
 import { saveStoredMerchantDraft, type MerchantDraftStoreClient } from "@/lib/merchantDraftStore";
@@ -18,6 +16,7 @@ import {
 } from "@/lib/platformMerchantSnapshotStore";
 import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
+import { resolveMerchantPrincipalFromRequest } from "@/lib/serverMerchantSession";
 
 type SaveErrorLike = { message: string } | null;
 
@@ -72,10 +71,6 @@ type GlobalPageRecord = {
   id?: string | number | null;
   blocks?: unknown;
 } | null;
-
-type MerchantRow = {
-  id?: string | null;
-};
 
 type PublishCachedResult = {
   at: number;
@@ -196,73 +191,9 @@ function normalizeMerchantIds(merchantIds: unknown, isPlatformEditor: boolean) {
   return [...new Set(ids)];
 }
 
-function normalizeEmail(value: string | null | undefined) {
-  return String(value ?? "").trim().toLowerCase();
-}
-
-function readMetadataMerchantIds(user: {
-  user_metadata?: Record<string, unknown> | null;
-  app_metadata?: Record<string, unknown> | null;
-} | null) {
-  const merchantIds: string[] = [];
-  const metadata = {
-    ...(user?.user_metadata ?? {}),
-    ...(user?.app_metadata ?? {}),
-  } as Record<string, unknown>;
-  const push = (value: unknown) => {
-    if (typeof value !== "string") return;
-    const trimmed = value.trim();
-    if (!trimmed || merchantIds.includes(trimmed)) return;
-    merchantIds.push(trimmed);
-  };
-  push(metadata.merchant_id);
-  push(metadata.merchantId);
-  push(metadata.merchantID);
-  push(metadata.site_id);
-  push(metadata.siteId);
-  push(metadata.shop_id);
-  push(metadata.shopId);
-  return merchantIds;
-}
-
-async function getAuthorizedMerchantIds(
-  supabase: LooseSupabaseClient,
-  userId: string,
-  email: string,
-) {
-  const lookups: LooseQueryBuilder[] = [];
-
-  if (userId) {
-    ["user_id", "auth_user_id", "owner_user_id", "owner_id", "auth_id", "created_by", "created_by_user_id"].forEach(
-      (column) => {
-        lookups.push(supabase.from("merchants").select("id").eq(column, userId).limit(20));
-      },
-    );
-  }
-
-  if (email) {
-    ["email", "owner_email", "contact_email", "user_email"].forEach((column) => {
-      lookups.push(supabase.from("merchants").select("id").eq(column, email).limit(20));
-    });
-  }
-
-  const settled = await Promise.allSettled(lookups);
-  const merchantIds: string[] = [];
-  settled.forEach((result) => {
-    if (result.status !== "fulfilled") return;
-    if (result.value.error) return;
-    ((result.value.data ?? []) as MerchantRow[]).forEach((row) => {
-      const merchantId = String(row.id ?? "").trim();
-      if (!merchantId || merchantIds.includes(merchantId)) return;
-      merchantIds.push(merchantId);
-    });
-  });
-  return merchantIds;
-}
-
 async function isAuthorizedForMerchantIds(
   request: Request,
-  supabase: LooseSupabaseClient,
+  _supabase: LooseSupabaseClient,
   merchantIds: string[],
 ) {
   if (await isSuperAdminRequestAuthorized(request)) {
@@ -274,45 +205,14 @@ async function isAuthorizedForMerchantIds(
     return false;
   }
 
-  const authorizedMerchantIds = new Set<string>();
-  const accessTokens = readMerchantRequestAccessTokens(request);
-  for (const accessToken of accessTokens) {
-    const authResult = await supabase.auth.getUser(accessToken);
-    if (authResult.error || !authResult.data.user) continue;
-    const legacyIdentityAllowed = await assertLegacyMerchantIdentityAllowed(
-      supabase,
-      authResult.data.user,
-    ).then(
-      () => true,
-      () => false,
-    );
-    if (!legacyIdentityAllowed) continue;
-
-    readMetadataMerchantIds(authResult.data.user).forEach((merchantId) => {
-      authorizedMerchantIds.add(merchantId);
-    });
-    if (targetMerchantIds.every((merchantId) => authorizedMerchantIds.has(merchantId))) {
-      return true;
-    }
-
-    const linkedMerchantIds = await getAuthorizedMerchantIds(
-      supabase,
-      String(authResult.data.user.id ?? "").trim(),
-      normalizeEmail(authResult.data.user.email),
-    );
-    linkedMerchantIds.forEach((merchantId) => {
-      authorizedMerchantIds.add(merchantId);
-    });
-    if (targetMerchantIds.every((merchantId) => authorizedMerchantIds.has(merchantId))) {
-      return true;
-    }
-  }
-
-  if (authorizedMerchantIds.size === 0) {
-    return false;
-  }
-
-  return targetMerchantIds.every((merchantId) => authorizedMerchantIds.has(merchantId));
+  const principal = await resolveMerchantPrincipalFromRequest(request, {
+    hintedMerchantId: targetMerchantIds[0],
+  });
+  if (!principal) return false;
+  const authorizedMerchantIds = new Set(principal.merchantIds);
+  return targetMerchantIds.every((merchantId) =>
+    authorizedMerchantIds.has(merchantId),
+  );
 }
 
 function isTransientSaveError(message: string) {

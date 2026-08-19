@@ -1,234 +1,153 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { resolvePlatformAccountIdentityForUser } from "@/lib/platformAccountIdentity";
-import { MerchantStaffPrincipalError } from "@/lib/merchantStaffPrincipal.server";
 
-test("platform identity refuses immutable merchant staff principals before legacy allocation", async () => {
+const AUTH_USER_ID = "10000000-0000-4000-8000-000000000001";
+
+function clientWith(data: unknown, error: unknown = null) {
+  return {
+    async rpc() {
+      return { data, error };
+    },
+    auth: {
+      admin: {
+        async listUsers() {
+          return { data: { users: [] }, error: null };
+        },
+        async updateUserById() {
+          return { data: { user: null }, error: null };
+        },
+      },
+    },
+  };
+}
+
+test("platform identity only returns merchant ids positively bound by the authoritative resolver", async () => {
+  const identity = await resolvePlatformAccountIdentityForUser(
+    clientWith({
+      schemaVersion: 1,
+      status: "resolved",
+      accountType: "merchant",
+      merchantIds: ["12345678", "87654321"],
+      personalAccountId: null,
+    }),
+    {
+      id: AUTH_USER_ID,
+      email: "forged-link@example.com",
+      user_metadata: {
+        account_type: "personal",
+        merchant_id: "99999999",
+      },
+      app_metadata: {
+        merchant_id: "99999999",
+      },
+    },
+    {
+      preferredAccountType: "personal",
+      preferredAccountId: "99999999",
+      preferredMerchantId: "87654321",
+      preferredMerchantIds: ["99999999"],
+      preferredEmail: "forged-link@example.com",
+    },
+  );
+
+  assert.deepEqual(identity, {
+    accountType: "merchant",
+    accountId: "87654321",
+    merchantId: "87654321",
+    merchantIds: ["12345678", "87654321"],
+  });
+
   await assert.rejects(
     () =>
-      resolvePlatformAccountIdentityForUser(null, {
-        id: "staff-user",
-        email: "staff@example.com",
-        user_metadata: {
-          merchant_id: "12345678",
+      resolvePlatformAccountIdentityForUser(
+        clientWith({
+          schemaVersion: 1,
+          status: "resolved",
+          accountType: "merchant",
+          merchantIds: ["12345678", "87654321"],
+          personalAccountId: null,
+        }),
+        { id: AUTH_USER_ID },
+        {
+          preferredMerchantId: "99999999",
+          strictPreferredMerchantId: true,
         },
-        app_metadata: {
-          principal_type: "merchant_staff",
-        },
-      }),
-    (error: unknown) =>
-      error instanceof MerchantStaffPrincipalError &&
-      error.code === "merchant_staff_identity_forbidden",
+      ),
+    /ordinary_account_merchant_selection_forbidden/,
   );
 });
 
-test("personal platform identity allocates from the personal range and persists metadata", async () => {
-  const updates: Array<{ userId: string; user_metadata?: Record<string, unknown>; app_metadata?: Record<string, unknown> }> =
-    [];
-
-  const client = {
-    auth: {
-      admin: {
-        async listUsers() {
-          return {
-            data: {
-              users: [
-                {
-                  id: "user-a",
-                  user_metadata: {
-                    account_type: "personal",
-                    account_id: "50010105",
-                  },
-                },
-              ],
-            },
-            error: null,
-          };
-        },
-        async updateUserById(userId: string, attributes: { user_metadata?: Record<string, unknown>; app_metadata?: Record<string, unknown> }) {
-          updates.push({ userId, ...attributes });
-          return {
-            data: {
-              user: {
-                id: userId,
-                user_metadata: attributes.user_metadata ?? null,
-                app_metadata: attributes.app_metadata ?? null,
-              },
-            },
-            error: null,
-          };
-        },
+test("platform identity only returns the canonical active personal account", async () => {
+  const identity = await resolvePlatformAccountIdentityForUser(
+    clientWith({
+      schemaVersion: 1,
+      status: "resolved",
+      accountType: "personal",
+      merchantIds: [],
+      personalAccountId: "50010105",
+    }),
+    {
+      id: AUTH_USER_ID,
+      user_metadata: {
+        account_type: "merchant",
+        merchant_id: "99999999",
       },
     },
-    from() {
-      return {
-        select() {
-          return {
-            eq() {
-              return {
-                limit() {
-                  return Promise.resolve({
-                    data: [],
-                    error: null,
-                  });
-                },
-              };
-            },
-          };
-        },
-        insert() {
-          return Promise.resolve({ error: null });
-        },
-      };
+    {
+      preferredAccountType: "merchant",
+      preferredAccountId: "forged-personal",
     },
-  };
+  );
 
-  const identity = await resolvePlatformAccountIdentityForUser(client, {
-    id: "user-b",
-    email: "personal@example.com",
-    user_metadata: {
-      account_type: "personal",
-    },
-  }, {
-    preferredAccountType: "personal",
+  assert.deepEqual(identity, {
+    accountType: "personal",
+    accountId: "50010105",
+    merchantId: null,
+    merchantIds: [],
   });
-
-  assert.equal(identity.accountType, "personal");
-  assert.equal(identity.accountId, "50010106");
-  assert.equal(updates[0]?.userId, "user-b");
-  assert.equal(updates[0]?.user_metadata?.personal_id, "50010106");
 });
 
-test("personal platform identity preserves explicit non-range account ids", async () => {
-  const updates: Array<{ userId: string; user_metadata?: Record<string, unknown>; app_metadata?: Record<string, unknown> }> =
-    [];
-
-  const client = {
-    auth: {
-      admin: {
-        async listUsers() {
-          return {
-            data: { users: [] },
-            error: null,
-          };
+test("platform identity refuses disabled, unbound and employee-only principals", async () => {
+  await assert.rejects(
+    () =>
+      resolvePlatformAccountIdentityForUser(
+        clientWith({
+          schemaVersion: 1,
+          status: "disabled",
+          accountType: "personal",
+          merchantIds: [],
+          personalAccountId: "50010106",
+        }),
+        { id: AUTH_USER_ID },
+      ),
+    /ordinary_account_personal_disabled/,
+  );
+  await assert.rejects(
+    () =>
+      resolvePlatformAccountIdentityForUser(
+        clientWith({
+          schemaVersion: 1,
+          status: "unbound",
+          accountType: null,
+          merchantIds: [],
+          personalAccountId: null,
+        }),
+        { id: AUTH_USER_ID },
+      ),
+    /ordinary_account_principal_unbound/,
+  );
+  await assert.rejects(
+    () =>
+      resolvePlatformAccountIdentityForUser(
+        clientWith(null, {
+          message: "ordinary_account_staff_identity_forbidden",
+        }),
+        {
+          id: AUTH_USER_ID,
+          user_metadata: { merchant_id: "12345678" },
         },
-        async updateUserById(userId: string, attributes: { user_metadata?: Record<string, unknown>; app_metadata?: Record<string, unknown> }) {
-          updates.push({ userId, ...attributes });
-          return {
-            data: {
-              user: {
-                id: userId,
-                user_metadata: attributes.user_metadata ?? null,
-                app_metadata: attributes.app_metadata ?? null,
-              },
-            },
-            error: null,
-          };
-        },
-      },
-    },
-    from() {
-      return {
-        select() {
-          return {
-            eq() {
-              return {
-                limit() {
-                  return Promise.resolve({
-                    data: [],
-                    error: null,
-                  });
-                },
-              };
-            },
-          };
-        },
-        insert() {
-          return Promise.resolve({ error: null });
-        },
-      };
-    },
-  };
-
-  const identity = await resolvePlatformAccountIdentityForUser(client, {
-    id: "user-c",
-    email: "personal-outside-range@example.com",
-    user_metadata: {
-      account_type: "personal",
-      account_id: "10000001",
-      personal_id: "10000001",
-    },
-  });
-
-  assert.equal(identity.accountType, "personal");
-  assert.equal(identity.accountId, "10000001");
-  assert.equal(updates[0]?.userId, "user-c");
-  assert.equal(updates[0]?.user_metadata?.personal_id, "10000001");
-});
-
-test("personal platform identity preserves explicit non-numeric account ids", async () => {
-  const updates: Array<{ userId: string; user_metadata?: Record<string, unknown>; app_metadata?: Record<string, unknown> }> =
-    [];
-
-  const client = {
-    auth: {
-      admin: {
-        async listUsers() {
-          return {
-            data: { users: [] },
-            error: null,
-          };
-        },
-        async updateUserById(userId: string, attributes: { user_metadata?: Record<string, unknown>; app_metadata?: Record<string, unknown> }) {
-          updates.push({ userId, ...attributes });
-          return {
-            data: {
-              user: {
-                id: userId,
-                user_metadata: attributes.user_metadata ?? null,
-                app_metadata: attributes.app_metadata ?? null,
-              },
-            },
-            error: null,
-          };
-        },
-      },
-    },
-    from() {
-      return {
-        select() {
-          return {
-            eq() {
-              return {
-                limit() {
-                  return Promise.resolve({
-                    data: [],
-                    error: null,
-                  });
-                },
-              };
-            },
-          };
-        },
-        insert() {
-          return Promise.resolve({ error: null });
-        },
-      };
-    },
-  };
-
-  const identity = await resolvePlatformAccountIdentityForUser(client, {
-    id: "user-d",
-    email: "personal-nonnumeric@example.com",
-    user_metadata: {
-      account_type: "personal",
-      account_id: "personal-min",
-      personal_id: "personal-min",
-    },
-  });
-
-  assert.equal(identity.accountType, "personal");
-  assert.equal(identity.accountId, "personal-min");
-  assert.equal(updates[0]?.userId, "user-d");
-  assert.equal(updates[0]?.user_metadata?.personal_id, "personal-min");
+      ),
+    /merchant_staff_identity_forbidden/,
+  );
 });

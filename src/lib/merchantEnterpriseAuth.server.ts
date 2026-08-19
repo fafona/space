@@ -9,6 +9,10 @@ import {
   type MerchantEnterprisePermission,
 } from "@/lib/merchantEnterprise";
 import { readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
+import {
+  loadOrdinaryAccountAuthorization,
+  type OrdinaryAccountAuthorizationStoreClient,
+} from "@/lib/ordinaryAccountAuthorization.server";
 import { loadAuthoritativeCurrentMerchantSnapshotSites } from "@/lib/publishedMerchantService";
 import {
   createServerSupabaseAuthClient,
@@ -40,18 +44,45 @@ export function readMerchantEnterpriseRequestAccessTokens(request: Request) {
   return readMerchantRequestAccessTokens(request);
 }
 
-function strictOwnerFilter(authUserId: string) {
-  const escaped = authUserId.replace(/[^a-fA-F0-9-]/g, "");
-  if (!escaped) return "";
-  return [
-    `user_id.eq.${escaped}`,
-    `auth_user_id.eq.${escaped}`,
-    `owner_user_id.eq.${escaped}`,
-    `owner_id.eq.${escaped}`,
-    `auth_id.eq.${escaped}`,
-    `created_by.eq.${escaped}`,
-    `created_by_user_id.eq.${escaped}`,
-  ].join(",");
+export async function hasAuthoritativeMerchantEnterpriseOwnership(
+  service: OrdinaryAccountAuthorizationStoreClient,
+  authUserId: string,
+  siteId: string,
+) {
+  let authorization: Awaited<
+    ReturnType<typeof loadOrdinaryAccountAuthorization>
+  >;
+  try {
+    authorization = await loadOrdinaryAccountAuthorization(service, authUserId);
+  } catch (error) {
+    const code = error instanceof Error ? error.message : "";
+    // Staff identities are never ordinary owners. They may continue through
+    // the explicit employee membership and role checks below.
+    if (code === "ordinary_account_staff_identity_forbidden") return false;
+    if (code === "ordinary_account_auth_user_not_found") {
+      throw new MerchantEnterpriseAccessError("unauthorized", 401);
+    }
+    if (
+      code === "ordinary_account_merchant_binding_conflict" ||
+      code === "ordinary_account_personal_binding_conflict" ||
+      code === "ordinary_account_principal_type_conflict" ||
+      code === "ordinary_account_system_site_forbidden" ||
+      code === "invalid_ordinary_personal_id"
+    ) {
+      throw new MerchantEnterpriseAccessError("merchant_access_denied", 403);
+    }
+    throw new MerchantEnterpriseAccessError("enterprise_auth_unavailable", 503);
+  }
+
+  if (
+    authorization.status === "resolved" &&
+    authorization.accountType === "merchant"
+  ) {
+    return authorization.merchantIds.includes(siteId);
+  }
+  // Only an authoritative staff result can enter the employee path. Personal,
+  // disabled, and unbound ordinary principals fail closed here.
+  throw new MerchantEnterpriseAccessError("merchant_access_denied", 403);
 }
 
 export async function resolveValidatedMerchantEnterpriseAuthUser(request: Request) {
@@ -107,35 +138,25 @@ export async function resolveMerchantEnterpriseActor(
   const email = normalizeText(user.email, 320).toLowerCase();
   if (!authUserId) throw new MerchantEnterpriseAccessError("unauthorized", 401);
 
-  await requireMerchantEnterpriseEntitlement(siteId);
+  const entitledSite = await requireMerchantEnterpriseEntitlement(siteId);
 
   const service = createServerSupabaseServiceClient();
   if (!service) throw new MerchantEnterpriseAccessError("enterprise_store_unavailable", 503);
 
-  const ownerFilter = strictOwnerFilter(authUserId);
-  if (ownerFilter) {
-    const ownerResult = await service
-      .from("merchants")
-      .select("id,name,email")
-      .eq("id", siteId)
-      .or(ownerFilter)
-      .limit(1)
-      .maybeSingle();
-    if (ownerResult.error) {
-      throw new MerchantEnterpriseAccessError("merchant_access_check_failed", 503);
-    }
-    if (ownerResult.data) {
-      return {
-        type: "owner",
-        id: authUserId,
-        siteId,
-        displayName: normalizeText(ownerResult.data.name, 120) || email || "商户负责人",
-        email,
-        permissions: [],
-        accessScope: "all",
-        allowedBoardIds: [],
-      };
-    }
+  if (
+    await hasAuthoritativeMerchantEnterpriseOwnership(service, authUserId, siteId)
+  ) {
+    return {
+      type: "owner",
+      id: authUserId,
+      siteId,
+      displayName:
+        normalizeText(entitledSite.merchantName, 120) || email || "商户负责人",
+      email,
+      permissions: [],
+      accessScope: "all",
+      allowedBoardIds: [],
+    };
   }
 
   const employeeResult = await service

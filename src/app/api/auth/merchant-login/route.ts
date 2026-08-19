@@ -8,34 +8,24 @@ import {
 } from "@/lib/authCredentialValidation";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import {
-  listMerchantIdsForUser,
   type MerchantAuthUserSummary,
-  normalizeMerchantEmail,
 } from "@/lib/merchantAuthIdentity";
+import { loadOrdinaryAccountAuthorization } from "@/lib/ordinaryAccountAuthorization.server";
 import {
   clearMerchantAuthCookies,
   setMerchantAuthCookies,
 } from "@/lib/merchantAuthSession";
-import {
-  assertLegacyMerchantIdentityAllowed,
-  isMerchantStaffPrincipalError,
-} from "@/lib/merchantStaffPrincipal.server";
+import { isOrdinaryAccountPrincipalError } from "@/lib/ordinaryAccountPrincipal.server";
 import {
   resolvePlatformAccountIdentityForUser,
   type PlatformIdentitySupabaseClient,
 } from "@/lib/platformAccountIdentity";
-import {
-  readPlatformAccountIdFromMetadata,
-  readPlatformAccountTypeHintFromMetadata,
-  readPlatformUsernameFromMetadata,
-  type PlatformAccountType,
-} from "@/lib/platformAccounts";
+import { type PlatformAccountType } from "@/lib/platformAccounts";
+import { normalizeCanonicalPersonalAccountId } from "@/lib/personalAccountId";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
-
-type AuthMetadata = Record<string, unknown> | null | undefined;
 
 type ResolvedAccountIdentity = {
   email: string;
@@ -57,6 +47,14 @@ type PasswordGrantPayload = {
 } | null;
 
 type AdminListUsersClient = PlatformIdentitySupabaseClient & {
+  auth: PlatformIdentitySupabaseClient["auth"] & {
+    admin: PlatformIdentitySupabaseClient["auth"]["admin"] & {
+      getUserById: (userId: string) => Promise<{
+        data: { user: MerchantAuthUserSummary | null } | null;
+        error: Error | null;
+      }>;
+    };
+  };
   from: (table: string) => {
     select: (columns: string) => {
       eq: (column: string, value: string) => {
@@ -71,19 +69,8 @@ type AdminListUsersClient = PlatformIdentitySupabaseClient & {
         };
       };
     };
-    insert: (values: Record<string, unknown>) => Promise<{ error: Error | null }>;
   };
 };
-
-const AUTH_USERS_CACHE_TTL_MS = 60_000;
-const ACCOUNT_IDENTITY_CACHE_TTL_MS = 60_000;
-let authUsersCache:
-  | {
-      expiresAt: number;
-      users: MerchantAuthUserSummary[];
-    }
-  | null = null;
-const accountIdentityCache = new Map<string, { expiresAt: number; identity: ResolvedAccountIdentity }>();
 
 function readEnv(name: string) {
   return (process.env[name] ?? "").trim();
@@ -103,21 +90,6 @@ function buildAutoSwitchedEntryMessage(actualAccountType: PlatformAccountType) {
   return actualAccountType === "personal"
     ? "您是个人用户，已帮您切换入口进行登录。"
     : "您是商户，已帮您切换入口进行登录。";
-}
-
-function readExistingAccountType(user: MerchantAuthUserSummary | null, fallbackAccountType: PlatformAccountType | "") {
-  const metadataAccountType = readPlatformAccountTypeHintFromMetadata(user, "");
-  if (metadataAccountType) return metadataAccountType;
-  const accountId = readPlatformAccountIdFromMetadata(user);
-  return fallbackAccountType || (accountId ? "merchant" : "");
-}
-
-function isEightDigitAccountId(value: string | null | undefined) {
-  return /^\d{8}$/.test(String(value ?? "").trim());
-}
-
-function buildManualUserEmail(accountType: PlatformAccountType, accountId: string) {
-  return `${accountType === "personal" ? "personal" : "merchant"}-${accountId}@manual.merchant-space.invalid`;
 }
 
 function isTransientBackendLookupError(error: unknown) {
@@ -162,69 +134,6 @@ async function runBackendLookupWithRetry<T extends { error?: unknown }>(task: ()
   return result;
 }
 
-function buildManualIdentityFallback(
-  account: string,
-  preferredAccountType: PlatformAccountType | null = null,
-): ResolvedAccountIdentity {
-  const accountId = normalizeAccountValue(account);
-  if (!isEightDigitAccountId(accountId)) {
-    return { email: "", accountType: "", accountId: "", merchantId: "" };
-  }
-  const accountType: PlatformAccountType = preferredAccountType ?? "merchant";
-  return {
-    email: buildManualUserEmail(accountType, accountId),
-    accountType,
-    accountId,
-    merchantId: accountType === "merchant" ? accountId : "",
-  };
-}
-
-function readMetadataString(metadata: AuthMetadata, ...keys: string[]) {
-  if (!metadata || typeof metadata !== "object") return "";
-  for (const key of keys) {
-    const value = metadata[key];
-    if (typeof value !== "string") continue;
-    const normalized = value.trim();
-    if (normalized) return normalized;
-  }
-  return "";
-}
-
-function readAccountKeys(user: MerchantAuthUserSummary) {
-  const username = readPlatformUsernameFromMetadata(user);
-  const loginId =
-    readMetadataString(
-      user.user_metadata,
-      "login_id",
-      "loginId",
-      "account_id",
-      "accountId",
-      "personal_id",
-      "personalId",
-      "merchant_id",
-      "merchantId",
-      "merchantID",
-    ) ||
-    readMetadataString(
-      user.app_metadata,
-      "login_id",
-      "loginId",
-      "account_id",
-      "accountId",
-      "personal_id",
-      "personalId",
-      "merchant_id",
-      "merchantId",
-      "merchantID",
-    );
-  const accountId = readPlatformAccountIdFromMetadata(user);
-  const merchantId =
-    readMetadataString(user.user_metadata, "merchant_id", "merchantId", "merchantID", "login_id", "loginId") ||
-    readMetadataString(user.app_metadata, "merchant_id", "merchantId", "merchantID", "login_id", "loginId");
-
-  return [username, loginId, accountId, merchantId].map(normalizeAccountValue).filter(Boolean);
-}
-
 function createServerSupabaseClient(): AdminListUsersClient | null {
   const supabaseUrl = readEnv("NEXT_PUBLIC_SUPABASE_URL");
   const serviceRoleKey = readEnv("SUPABASE_SERVICE_ROLE_KEY") || readEnv("NEXT_SUPABASE_SERVICE_ROLE_KEY");
@@ -242,63 +151,116 @@ function createServerSupabaseClient(): AdminListUsersClient | null {
   }) as unknown as AdminListUsersClient;
 }
 
-async function listAuthUsers(supabase: AdminListUsersClient) {
-  if (authUsersCache && authUsersCache.expiresAt > Date.now()) {
-    return authUsersCache.users;
-  }
-  const users: MerchantAuthUserSummary[] = [];
-  let page = 1;
-  while (true) {
-    const { data, error } = await runBackendLookupWithRetry(() => supabase.auth.admin.listUsers({ page, perPage: 200 }));
-    if (error) throw error;
-    const chunk = (data?.users ?? []).map((user) => ({
-      email: user.email,
-      user_metadata: user.user_metadata ?? null,
-      app_metadata: user.app_metadata ?? null,
-    }));
-    users.push(...chunk);
-    if (chunk.length < 200) break;
-    page += 1;
-  }
-  authUsersCache = {
-    expiresAt: Date.now() + AUTH_USERS_CACHE_TTL_MS,
-    users,
-  };
-  return users;
-}
+const AUTH_UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const MERCHANT_AUTH_UUID_COLUMNS = [
+  "user_id",
+  "auth_user_id",
+  "owner_user_id",
+  "owner_id",
+  "auth_id",
+  "created_by",
+  "created_by_user_id",
+] as const;
 
-function buildAccountIdentityCacheKey(account: string, preferredAccountType: PlatformAccountType | null) {
-  const accountKey = normalizeAccountValue(account);
-  if (!accountKey) return "";
-  return `${preferredAccountType ?? "default"}:${accountKey}`;
-}
-
-function readCachedAccountIdentity(
-  account: string,
-  preferredAccountType: PlatformAccountType | null,
-): ResolvedAccountIdentity | null {
-  const cacheKey = buildAccountIdentityCacheKey(account, preferredAccountType);
-  if (!cacheKey) return null;
-  const cached = accountIdentityCache.get(cacheKey) ?? null;
-  if (!cached) return null;
-  if (cached.expiresAt <= Date.now()) {
-    accountIdentityCache.delete(cacheKey);
-    return null;
-  }
-  return cached.identity;
-}
-
-function writeCachedAccountIdentity(
-  account: string,
-  identity: ResolvedAccountIdentity,
-  preferredAccountType: PlatformAccountType | null,
+function readConsistentMerchantAuthUserId(
+  row: Record<string, string | null | undefined> | null,
 ) {
-  const cacheKey = buildAccountIdentityCacheKey(account, preferredAccountType);
-  if (!cacheKey || !identity.email) return;
-  accountIdentityCache.set(cacheKey, {
-    expiresAt: Date.now() + ACCOUNT_IDENTITY_CACHE_TTL_MS,
-    identity,
-  });
+  if (!row) return "";
+  const values = new Set(
+    MERCHANT_AUTH_UUID_COLUMNS.map((column) =>
+      String(row[column] ?? "").trim().toLowerCase(),
+    ).filter(Boolean),
+  );
+  if (values.size !== 1) return "";
+  const [authUserId] = values;
+  return AUTH_UUID_PATTERN.test(authUserId) ? authUserId : "";
+}
+
+async function loadResolvedLoginCandidate(
+  supabase: AdminListUsersClient,
+  authUserId: string,
+  accountType: PlatformAccountType,
+  accountId: string,
+): Promise<ResolvedAccountIdentity | null> {
+  if (!AUTH_UUID_PATTERN.test(authUserId)) {
+    throw new Error("ordinary_account_binding_conflict");
+  }
+  const [authUserResult, authorization] = await Promise.all([
+    supabase.auth.admin.getUserById(authUserId),
+    loadOrdinaryAccountAuthorization(supabase, authUserId),
+  ]);
+  if (authUserResult.error) throw authUserResult.error;
+  const user = authUserResult.data?.user ?? null;
+  const exactBinding =
+    authorization.status === "resolved" &&
+    authorization.accountType === accountType &&
+    (authorization.accountType === "merchant"
+      ? authorization.merchantIds.includes(accountId)
+      : authorization.personalAccountId === accountId);
+  if (!user || String(user.id ?? "").trim() !== authUserId || !exactBinding) {
+    throw new Error("ordinary_account_binding_conflict");
+  }
+  const email = String(user.email ?? "").trim().toLowerCase();
+  if (!email) return null;
+  return {
+    email,
+    accountType,
+    accountId,
+    merchantId: accountType === "merchant" ? accountId : "",
+  };
+}
+
+async function resolveMerchantLoginCandidate(
+  supabase: AdminListUsersClient,
+  column: "id" | "name",
+  value: string,
+) {
+  const { data, error } = await runBackendLookupWithRetry(() =>
+    supabase
+      .from("merchants")
+      .select(`id,${MERCHANT_AUTH_UUID_COLUMNS.join(",")}`)
+      .eq(column, value)
+      .limit(column === "id" ? 1 : 2),
+  );
+  if (error) throw error;
+  const rows = Array.isArray(data) ? data : [];
+  if (rows.length !== 1) return null;
+  const accountId = String(rows[0]?.id ?? "").trim();
+  if (!isMerchantNumericId(accountId)) return null;
+  const authUserId = readConsistentMerchantAuthUserId(rows[0]);
+  if (!authUserId) throw new Error("ordinary_account_binding_conflict");
+  return loadResolvedLoginCandidate(
+    supabase,
+    authUserId,
+    "merchant",
+    accountId,
+  );
+}
+
+async function resolvePersonalLoginCandidate(
+  supabase: AdminListUsersClient,
+  accountId: string,
+) {
+  const normalizedAccountId = normalizeCanonicalPersonalAccountId(accountId);
+  if (!normalizedAccountId) return null;
+  const { data, error } = await runBackendLookupWithRetry(() =>
+    supabase
+      .from("faolla_personal_accounts")
+      .select("auth_user_id,personal_account_id,status")
+      .eq("personal_account_id", normalizedAccountId)
+      .limit(1),
+  );
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] ?? null : null;
+  if (!row || row.status !== "active") return null;
+  const authUserId = String(row.auth_user_id ?? "").trim().toLowerCase();
+  return loadResolvedLoginCandidate(
+    supabase,
+    authUserId,
+    "personal",
+    normalizedAccountId,
+  );
 }
 
 async function resolveAccountIdentity(
@@ -306,110 +268,38 @@ async function resolveAccountIdentity(
   account: string,
   preferredAccountType: PlatformAccountType | null = null,
 ): Promise<ResolvedAccountIdentity> {
-  const cached = readCachedAccountIdentity(account, preferredAccountType);
-  if (cached) return cached;
   const normalizedAccount = normalizeAccountValue(account);
-  if (!normalizedAccount) {
-    return { email: "", accountType: "", accountId: "", merchantId: "" };
-  }
+  const empty = { email: "", accountType: "", accountId: "", merchantId: "" } as const;
+  if (!normalizedAccount || normalizedAccount === "site-main") return empty;
   if (normalizedAccount.includes("@")) {
-    const identity: ResolvedAccountIdentity = {
-      email: normalizedAccount,
-      accountType: "",
-      accountId: "",
-      merchantId: "",
-    };
-    writeCachedAccountIdentity(account, identity, preferredAccountType);
-    return identity;
+    return { ...empty, email: normalizedAccount };
   }
 
-  if (isMerchantNumericId(normalizedAccount)) {
-    const { data: merchantRows, error } = await runBackendLookupWithRetry(() =>
-      supabase
-        .from("merchants")
-        .select("id,name,email,owner_email,contact_email,user_email")
-        .eq("id", normalizedAccount)
-        .limit(1),
-    );
-    if (error) {
-      const fallbackIdentity = buildManualIdentityFallback(normalizedAccount, preferredAccountType);
-      if (fallbackIdentity.email && isTransientBackendLookupError(error)) {
-        writeCachedAccountIdentity(account, fallbackIdentity, preferredAccountType);
-        return fallbackIdentity;
-      }
-      throw error;
+  if (/^\d{8}$/.test(normalizedAccount)) {
+    const [merchant, personal] = await Promise.all([
+      preferredAccountType === "personal"
+        ? Promise.resolve(null)
+        : resolveMerchantLoginCandidate(supabase, "id", normalizedAccount),
+      preferredAccountType === "merchant"
+        ? Promise.resolve(null)
+        : resolvePersonalLoginCandidate(supabase, normalizedAccount),
+    ]);
+    if (merchant && personal) {
+      throw new Error("ordinary_account_identifier_collision");
     }
-    const merchant = Array.isArray(merchantRows) ? merchantRows[0] ?? null : null;
-    const email = normalizeMerchantEmail(
-      merchant?.user_email,
-      merchant?.email,
-      merchant?.owner_email,
-      merchant?.contact_email,
-    );
-    if (email) {
-      const identity: ResolvedAccountIdentity = {
-        email,
-        accountType: "merchant" as const,
-        accountId: normalizedAccount,
-        merchantId: normalizedAccount,
-      };
-      writeCachedAccountIdentity(account, identity, preferredAccountType);
-      return identity;
-    }
+    return merchant ?? personal ?? empty;
   }
 
-  for (const merchantName of [account.trim(), normalizedAccount]) {
-    if (!merchantName) continue;
-    const { data: merchantRowsByName, error } = await runBackendLookupWithRetry(() =>
-      supabase
-        .from("merchants")
-        .select("id,name,email,owner_email,contact_email,user_email")
-        .eq("name", merchantName)
-        .limit(1),
+  if (preferredAccountType !== "personal") {
+    return (
+      (await resolveMerchantLoginCandidate(
+        supabase,
+        "name",
+        account.trim(),
+      )) ?? empty
     );
-    if (error) throw error;
-    const merchantByName = Array.isArray(merchantRowsByName) ? merchantRowsByName[0] ?? null : null;
-    const email = normalizeMerchantEmail(
-      merchantByName?.user_email,
-      merchantByName?.email,
-      merchantByName?.owner_email,
-      merchantByName?.contact_email,
-    );
-    if (email) {
-      const identity: ResolvedAccountIdentity = {
-        email,
-        accountType: "merchant" as const,
-        accountId: isMerchantNumericId(String(merchantByName?.id ?? "").trim()) ? String(merchantByName?.id ?? "").trim() : "",
-        merchantId: isMerchantNumericId(String(merchantByName?.id ?? "").trim()) ? String(merchantByName?.id ?? "").trim() : "",
-      };
-      writeCachedAccountIdentity(account, identity, preferredAccountType);
-      return identity;
-    }
   }
-
-  let authUsers: MerchantAuthUserSummary[] = [];
-  try {
-    authUsers = await listAuthUsers(supabase);
-  } catch (error) {
-    const fallbackIdentity = buildManualIdentityFallback(normalizedAccount, preferredAccountType);
-    if (fallbackIdentity.email && isTransientBackendLookupError(error)) {
-      writeCachedAccountIdentity(account, fallbackIdentity, preferredAccountType);
-      return fallbackIdentity;
-    }
-    throw error;
-  }
-  const matchedUser = authUsers.find((user) => readAccountKeys(user).includes(normalizedAccount));
-  const accountId = readPlatformAccountIdFromMetadata(matchedUser);
-  const metadataAccountType = readPlatformAccountTypeHintFromMetadata(matchedUser, "");
-  const accountType = metadataAccountType || (accountId ? "merchant" : "");
-  const identity: ResolvedAccountIdentity = {
-    email: normalizeMerchantEmail(matchedUser?.email),
-    accountType,
-    accountId,
-    merchantId: accountType === "merchant" ? accountId : "",
-  };
-  writeCachedAccountIdentity(account, identity, preferredAccountType);
-  return identity;
+  return empty;
 }
 
 export async function POST(request: Request) {
@@ -506,28 +396,10 @@ export async function POST(request: Request) {
       upstreamPayload?.user && typeof upstreamPayload.user === "object"
         ? (upstreamPayload.user as MerchantAuthUserSummary)
         : null;
-    try {
-      await assertLegacyMerchantIdentityAllowed(supabase, authUser);
-    } catch (error) {
-      if (isMerchantStaffPrincipalError(error)) {
-        const response = noStoreJson(
-          { error: error.code },
-          { status: error.status },
-        );
-        if (error.status === 403) clearMerchantAuthCookies(response, request);
-        return response;
-      }
-      throw error;
-    }
-    const matchedMerchantIds = await listMerchantIdsForUser(supabase, authUser).catch(() => [] as string[]);
-    const existingAccountType =
-      readExistingAccountType(authUser, resolvedAccount.accountType) || (matchedMerchantIds.length > 0 ? "merchant" : "");
-    const effectiveAccountType = existingAccountType || requestedAccountType || resolvedAccount.accountType || null;
     const platformIdentity = await resolvePlatformAccountIdentityForUser(supabase, authUser, {
-      preferredAccountType: effectiveAccountType,
+      preferredAccountType: requestedAccountType || resolvedAccount.accountType || null,
       preferredAccountId: resolvedAccount.accountId || null,
       preferredMerchantId: resolvedAccount.merchantId,
-      preferredMerchantIds: matchedMerchantIds,
       preferredEmail: email,
     });
     const entrySwitched = Boolean(requestedAccountType && platformIdentity.accountType !== requestedAccountType);
@@ -553,7 +425,15 @@ export async function POST(request: Request) {
       accountType: platformIdentity.accountType,
     }, request);
     return response;
-  } catch {
+  } catch (error) {
+    if (isOrdinaryAccountPrincipalError(error)) {
+      const response = noStoreJson(
+        { error: error.code },
+        { status: error.status },
+      );
+      if (error.status === 403) clearMerchantAuthCookies(response, request);
+      return response;
+    }
     return noStoreJson({ error: "merchant_login_failed" }, { status: 503 });
   }
 }

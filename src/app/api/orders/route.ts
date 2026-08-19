@@ -15,10 +15,13 @@ import {
   updateMerchantOrdersBatchBySite,
   updateMerchantOrderBySite,
 } from "@/lib/merchantOrders.server";
-import { resolvePersonalAccountSessionFromRequest } from "@/lib/personalAccountSession.server";
+import {
+  isFrontendPersonalSessionProofError,
+  resolvePersonalAccountSessionFromRequest,
+  resolvePersonalAccountSessionFromRequestOrFrontendAuthProof,
+} from "@/lib/personalAccountSession.server";
 import { readPersonalCustomerProfileFromSession } from "@/lib/personalCustomerProfile";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
-import { verifyFrontendAuthProof } from "@/lib/frontendAuthProof.server";
 import { buildPersonalMerchantContactMap } from "@/lib/personalMerchantContacts.server";
 import { hashPersonalGuestMergeToken } from "@/lib/personalGuestMerge.server";
 import type { MerchantPushSubscriptionStoreClient } from "@/lib/merchantPushSubscriptionStore";
@@ -389,9 +392,12 @@ export async function handleMerchantOrderPost(
     }
     const initiallyUsedOperatingCatalog = Boolean(operatingCatalog && operatingCollection);
     const initialQuoteFingerprint = getOrderQuoteFingerprint(quote);
-    const personalSession = await dependencies.resolvePersonalSession(request).catch(() => null);
-    const frontendProof = personalSession ? null : verifyFrontendAuthProof(body.frontendAuthProof);
-    const personalProof = frontendProof?.accountType === "personal" ? frontendProof : null;
+    const personalSession =
+      await resolvePersonalAccountSessionFromRequestOrFrontendAuthProof(
+        request,
+        body.frontendAuthProof,
+        dependencies.resolvePersonalSession,
+      );
     const personalProfile = personalSession
       ? readPersonalCustomerProfileFromSession({
           authenticated: true,
@@ -400,7 +406,7 @@ export async function handleMerchantOrderPost(
           user: personalSession.user,
         })
       : null;
-    const fallbackCustomerEmail = personalProfile?.email || personalProof?.email || "";
+    const fallbackCustomerEmail = personalProfile?.email || personalSession?.email || "";
     const fallbackCustomerName =
       personalProfile?.name ||
       (fallbackCustomerEmail.includes("@") ? fallbackCustomerEmail.split("@")[0] ?? "" : "");
@@ -492,10 +498,10 @@ export async function handleMerchantOrderPost(
       clientRequestId: String(body.clientRequestId ?? "").trim(),
       pricePrefix: quote.pricePrefix,
       customer,
-      customerAccountId: personalSession?.accountId ?? personalProof?.accountId ?? "",
-      customerUserId: personalSession?.userId ?? personalProof?.userId ?? "",
-      customerLoginEmail: personalSession?.email ?? personalProof?.email ?? "",
-      customerGuestHash: personalSession || personalProof ? "" : hashPersonalGuestMergeToken(body.customerGuestToken),
+      customerAccountId: personalSession?.accountId ?? "",
+      customerUserId: personalSession?.userId ?? "",
+      customerLoginEmail: personalSession?.email ?? "",
+      customerGuestHash: personalSession ? "" : hashPersonalGuestMergeToken(body.customerGuestToken),
       items: quote.items,
     });
 
@@ -503,6 +509,9 @@ export async function handleMerchantOrderPost(
 
     return NextResponse.json({ ok: true, order });
   } catch (error) {
+    if (isFrontendPersonalSessionProofError(error)) {
+      return NextResponse.json({ error: error.code }, { status: error.status });
+    }
     return NextResponse.json(
       {
         error: "order_create_failed",

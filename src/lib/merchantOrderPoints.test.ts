@@ -15,7 +15,7 @@ function buildFixture() {
     siteName: "Merchant",
     memberNo: "10000000000001",
     serial: 1,
-    accountId: "account-1",
+    accountId: "50010105",
     status: "active",
     joinedAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-07-18T00:00:00.000Z",
@@ -30,7 +30,7 @@ function buildFixture() {
   settings.growthRules.spendAmountGrowth = 1;
   const order = createMerchantOrder({
     siteId: "10000000",
-    customerAccountId: "account-1",
+    customerAccountId: "50010105",
     items: [{ productId: "product-a", name: "Product", quantity: 1, unitPrice: 100 }],
   });
   order.status = "completed";

@@ -9,6 +9,7 @@ import {
   type MerchantPeerMessage,
   type MerchantPeerThread,
 } from "@/lib/merchantPeerInbox";
+import { sanitizePeerDisplayName } from "@/lib/merchantPeerPrivacy";
 import {
   loadStoredMerchantPeerInbox,
   type MerchantPeerInboxStoreClient,
@@ -187,8 +188,12 @@ function getPeerContactId(thread: MerchantPeerThread, merchantId: string) {
 }
 
 function getPeerContactName(thread: MerchantPeerThread, merchantId: string) {
-  if (thread.merchantAId === merchantId) return thread.merchantBName || thread.merchantBId;
-  if (thread.merchantBId === merchantId) return thread.merchantAName || thread.merchantAId;
+  if (thread.merchantAId === merchantId) {
+    return sanitizePeerDisplayName(thread.merchantBName, thread.merchantBId);
+  }
+  if (thread.merchantBId === merchantId) {
+    return sanitizePeerDisplayName(thread.merchantAName, thread.merchantAId);
+  }
   return "";
 }
 

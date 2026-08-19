@@ -25,7 +25,7 @@ function buildMembership(input?: { pointBalance?: number; balanceAmount?: number
     siteName: "Test merchant",
     memberNo: "10000000000001",
     serial: 1,
-    accountId: "account-1",
+    accountId: "50010105",
     joinedAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-07-15T00:00:00.000Z",
     status: "active",

@@ -29,14 +29,15 @@ import {
 } from "@/lib/merchantMemberships.server";
 import type { MerchantOrderRecord } from "@/lib/merchantOrders";
 import { listMerchantOrders } from "@/lib/merchantOrders.server";
+import { normalizeCanonicalPersonalAccountId } from "@/lib/personalAccountId";
 import {
-  resolvePersonalAccountSessionFromFrontendAuthProofPayload,
+  isFrontendPersonalSessionProofError,
   resolvePersonalAccountSessionFromRequest,
+  resolvePersonalAccountSessionFromRequestOrFrontendAuthProof,
 } from "@/lib/personalAccountSession.server";
 import { loadCurrentMerchantSnapshotSiteBySiteId } from "@/lib/publishedMerchantService";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
-import { verifyFrontendAuthProof } from "@/lib/frontendAuthProof.server";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -52,7 +53,7 @@ function normalizeEmail(value: unknown) {
 
 function buildMemberIdentityKeys(input: { accountId?: unknown; userId?: unknown; email?: unknown }) {
   const keys: string[] = [];
-  const accountId = trimText(input.accountId, 128);
+  const accountId = normalizeCanonicalPersonalAccountId(input.accountId);
   const userId = trimText(input.userId, 128);
   const email = normalizeEmail(input.email);
   if (accountId) keys.push(`account:${accountId}`);
@@ -429,10 +430,11 @@ export async function POST(request: Request) {
       profile?: unknown;
       frontendAuthProof?: unknown;
     } | null;
-    const directSession = await resolvePersonalAccountSessionFromRequest(request);
     const session =
-      directSession ??
-      (await resolvePersonalAccountSessionFromFrontendAuthProofPayload(verifyFrontendAuthProof(body?.frontendAuthProof)));
+      await resolvePersonalAccountSessionFromRequestOrFrontendAuthProof(
+        request,
+        body?.frontendAuthProof,
+      );
     if (!session) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
@@ -447,6 +449,9 @@ export async function POST(request: Request) {
       membership: toPersonalMembershipCard(membership),
     });
   } catch (error) {
+    if (isFrontendPersonalSessionProofError(error)) {
+      return NextResponse.json({ error: error.code }, { status: error.status });
+    }
     const message = error instanceof Error ? error.message : "unknown_error";
     return NextResponse.json(
       {

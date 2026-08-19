@@ -247,6 +247,22 @@ export function clearMerchantAuthCookie(response: NextResponse, request?: Reques
   clearMerchantAuthCookies(response, request);
 }
 
+export function clearMerchantAuthMerchantIdCookie(
+  response: NextResponse,
+  request?: Request,
+) {
+  const cookieDomain = resolveMerchantCookieDomain(request);
+  const secure = resolveMerchantCookieSecureFlag(request);
+  response.cookies.set(MERCHANT_AUTH_MERCHANT_ID_COOKIE, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure,
+    path: "/",
+    maxAge: 0,
+    ...(cookieDomain ? { domain: cookieDomain } : {}),
+  });
+}
+
 export function clearMerchantAuthCookies(response: NextResponse, request?: Request) {
   response.cookies.set(MERCHANT_AUTH_COOKIE, "", {
     httpOnly: true,

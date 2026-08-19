@@ -89,31 +89,28 @@ export function normalizePersonalAccountServiceConfig(value: unknown): PersonalA
 }
 
 export function readPersonalAccountServiceConfigFromMetadata(user: MerchantAuthUserSummary | null | undefined) {
-  const userMetadata = user?.user_metadata ?? null;
   const appMetadata = user?.app_metadata ?? null;
-  const record =
-    readMetadataRecord(userMetadata, "personal_service_config", "personalServiceConfig") ??
-    readMetadataRecord(appMetadata, "personal_service_config", "personalServiceConfig");
+  // Service entitlements are authorization data. Only immutable app metadata
+  // written by the admin service may influence them; user metadata remains
+  // profile/display data and can never unpause or expand an account.
+  const record = readMetadataRecord(
+    appMetadata,
+    "personal_service_config",
+    "personalServiceConfig",
+  );
   const fallback = createDefaultPersonalAccountServiceConfig();
   return normalizePersonalAccountServiceConfig({
     ...(record ?? {}),
     servicePaused:
       readMetadataBoolean(record, "servicePaused", "service_paused") ??
-      readMetadataBoolean(userMetadata, "personal_service_paused", "personalServicePaused") ??
       readMetadataBoolean(appMetadata, "personal_service_paused", "personalServicePaused") ??
       fallback.servicePaused,
     businessCardLimit:
       readMetadataNumber(record, "businessCardLimit", "business_card_limit") ??
-      readMetadataNumber(userMetadata, "personal_business_card_limit", "personalBusinessCardLimit") ??
       readMetadataNumber(appMetadata, "personal_business_card_limit", "personalBusinessCardLimit") ??
       fallback.businessCardLimit,
     allowBusinessCardLinkMode:
       readMetadataBoolean(record, "allowBusinessCardLinkMode", "allow_business_card_link_mode") ??
-      readMetadataBoolean(
-        userMetadata,
-        "personal_allow_business_card_link_mode",
-        "personalAllowBusinessCardLinkMode",
-      ) ??
       readMetadataBoolean(
         appMetadata,
         "personal_allow_business_card_link_mode",
@@ -123,11 +120,6 @@ export function readPersonalAccountServiceConfigFromMetadata(user: MerchantAuthU
     businessCardBackgroundImageLimitKb:
       readMetadataNumber(record, "businessCardBackgroundImageLimitKb", "business_card_background_image_limit_kb") ??
       readMetadataNumber(
-        userMetadata,
-        "personal_business_card_background_image_limit_kb",
-        "personalBusinessCardBackgroundImageLimitKb",
-      ) ??
-      readMetadataNumber(
         appMetadata,
         "personal_business_card_background_image_limit_kb",
         "personalBusinessCardBackgroundImageLimitKb",
@@ -135,11 +127,6 @@ export function readPersonalAccountServiceConfigFromMetadata(user: MerchantAuthU
       fallback.businessCardBackgroundImageLimitKb,
     businessCardContactImageLimitKb:
       readMetadataNumber(record, "businessCardContactImageLimitKb", "business_card_contact_image_limit_kb") ??
-      readMetadataNumber(
-        userMetadata,
-        "personal_business_card_contact_image_limit_kb",
-        "personalBusinessCardContactImageLimitKb",
-      ) ??
       readMetadataNumber(
         appMetadata,
         "personal_business_card_contact_image_limit_kb",

@@ -1748,7 +1748,9 @@ export async function joinMerchantMembership(input: {
           : (() => {
               const serial = current.reduce((max, item) => Math.max(max, item.serial), 0) + 1;
               return {
-                id: `${siteId}:${input.session.accountId || input.session.userId}`,
+                // Auth UUID is the stable bounded record key; the canonical
+                // personal account ID remains an opaque, lossless data field.
+                id: `${siteId}:user:${input.session.userId}`,
                 siteId,
                 memberNo: buildMerchantMemberNo(siteId, serial),
                 serial,
