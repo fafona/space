@@ -202,6 +202,31 @@ for migration in "${enterprise_migrations[@]}"; do
       echo 'Authoritative readiness did not accept restored exact schema objects' >&2
       exit 1
     fi
+    echo '[enterprise-integration] rejecting null-bearing personal rows and exact column-catalog drift'
+    personal_invalid_before="$(
+      run_psql --tuples-only --no-align --command \
+        "select (public.faolla_get_ordinary_account_authoritative_cutover_readiness_v1() #>> '{personal,invalidCanonicalCount}')::integer;"
+    )"
+    run_psql --command \
+      "alter table public.faolla_personal_accounts alter column auth_user_id drop not null, alter column personal_account_id drop not null, alter column status drop not null, alter column status drop default, alter column version drop not null, alter column version drop default, alter column created_at drop not null, alter column created_at drop default, alter column updated_at drop not null, alter column updated_at drop default; insert into public.faolla_personal_accounts(auth_user_id, personal_account_id, status, version, created_at, updated_at) values (null, null, null, null, null, null);"
+    null_column_drift_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not (readiness ->> 'readyForCutover')::boolean and not (readiness #>> '{invariants,schemaReady}')::boolean and (readiness #>> '{personal,invalidCanonicalCount}')::integer = ${personal_invalid_before} + 1 from (select public.faolla_get_ordinary_account_authoritative_cutover_readiness_v1() as readiness) as result;"
+    )"
+    if [[ "${null_column_drift_state}" != 't' ]]; then
+      echo 'Authoritative readiness accepted null data or personal-account column drift' >&2
+      exit 1
+    fi
+    run_psql --command \
+      "alter table public.faolla_personal_accounts disable trigger faolla_personal_accounts_binding_guard; delete from public.faolla_personal_accounts where auth_user_id is null and personal_account_id is null and status is null and version is null and created_at is null and updated_at is null; alter table public.faolla_personal_accounts alter column auth_user_id set not null, alter column personal_account_id set not null, alter column status set not null, alter column status set default 'active', alter column version set not null, alter column version set default 1, alter column created_at set not null, alter column created_at set default now(), alter column updated_at set not null, alter column updated_at set default now(); alter table public.faolla_personal_accounts enable always trigger faolla_personal_accounts_binding_guard;"
+    restored_column_catalog_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select (readiness #>> '{invariants,schemaReady}')::boolean and (readiness #>> '{personal,invalidCanonicalCount}')::integer = ${personal_invalid_before} from (select public.faolla_get_ordinary_account_authoritative_cutover_readiness_v1() as readiness) as result;"
+    )"
+    if [[ "${restored_column_catalog_state}" != 't' ]]; then
+      echo 'Authoritative readiness did not accept the restored exact personal-account column catalog' >&2
+      exit 1
+    fi
     echo '[enterprise-integration] retrying unregistered 036 with quote_all_identifiers=on'
     run_psql --command \
       "grant execute on function public.faolla_resolve_ordinary_account_authorization_v1(uuid) to redteam_custom_api; grant execute on function public.faolla_get_ordinary_account_authorization_readiness_v1() to redteam_custom_api with grant option; grant execute on function public.faolla_create_ordinary_account_authorization_v1(uuid,text,text) to redteam_custom_api; grant execute on function public.faolla_bootstrap_ordinary_account_authorization_v1(uuid,text) to redteam_custom_api; grant execute on function public.faolla_get_ordinary_account_authoritative_cutover_readiness_v1() to redteam_custom_api; grant execute on function public.faolla_guard_personal_account_binding_v1() to redteam_custom_api; grant execute on function public.faolla_guard_staff_identity_ordinary_exclusion_v1() to redteam_custom_api; grant execute on function public.faolla_guard_auth_user_ordinary_account_delete_v1() to redteam_custom_api; grant select on table public.faolla_personal_accounts to redteam_custom_api with grant option; grant update(personal_account_id) on table public.faolla_personal_accounts to redteam_custom_api with grant option; set role redteam_custom_api; grant execute on function public.faolla_get_ordinary_account_authorization_readiness_v1() to redteam_custom_child; grant select on table public.faolla_personal_accounts to redteam_custom_child; grant update(personal_account_id) on table public.faolla_personal_accounts to redteam_custom_child; reset role; delete from public.faolla_schema_migrations where version = 202608190036;"

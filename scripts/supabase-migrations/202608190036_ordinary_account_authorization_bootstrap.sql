@@ -1094,7 +1094,13 @@ begin
       personal_account.personal_account_id,
       auth_user.id is not null as auth_user_exists,
       (
-        personal_account.status not in ('active', 'disabled')
+        personal_account.auth_user_id is null
+        or personal_account.personal_account_id is null
+        or personal_account.status is null
+        or personal_account.version is null
+        or personal_account.created_at is null
+        or personal_account.updated_at is null
+        or personal_account.status not in ('active', 'disabled')
         or personal_account.version < 1
         or personal_account.updated_at < personal_account.created_at
         or personal_account.personal_account_id = ''
@@ -1246,6 +1252,79 @@ begin
     personal_table.relkind = 'r'
     and personal_table.relpersistence = 'p'
     and coalesce(personal_table.relrowsecurity, false)
+    and (
+      select count(*) = 6
+        from pg_catalog.pg_attribute as personal_attribute
+       where personal_attribute.attrelid = personal_table.oid
+         and personal_attribute.attnum > 0
+    )
+    and not exists (
+      select 1
+        from (values
+          (
+            'auth_user_id', 1, 'uuid'::regtype, -1, true,
+            null::text
+          ),
+          (
+            'personal_account_id', 2, 'text'::regtype, -1, true,
+            null::text
+          ),
+          (
+            'status', 3, 'text'::regtype, -1, true,
+            '''active''::text'
+          ),
+          (
+            'version', 4, 'bigint'::regtype, -1, true,
+            '1'
+          ),
+          (
+            'created_at', 5, 'timestamp with time zone'::regtype, -1, true,
+            'now()'
+          ),
+          (
+            'updated_at', 6, 'timestamp with time zone'::regtype, -1, true,
+            'now()'
+          )
+        ) as expected_column(
+          column_name,
+          column_position,
+          type_oid,
+          type_modifier,
+          is_not_null,
+          default_expression
+        )
+       where not exists (
+         select 1
+           from pg_catalog.pg_attribute as personal_attribute
+           left join pg_catalog.pg_attrdef as personal_default
+             on personal_default.adrelid = personal_attribute.attrelid
+            and personal_default.adnum = personal_attribute.attnum
+          where personal_attribute.attrelid = personal_table.oid
+            and personal_attribute.attnum = expected_column.column_position
+            and personal_attribute.attname = expected_column.column_name
+            and personal_attribute.atttypid = expected_column.type_oid
+            and personal_attribute.atttypmod = expected_column.type_modifier
+            and personal_attribute.attnotnull = expected_column.is_not_null
+            and personal_attribute.attidentity = ''
+            and personal_attribute.attgenerated = ''
+            and not personal_attribute.attisdropped
+            and (
+              (
+                expected_column.default_expression is null
+                and personal_default.oid is null
+              )
+              or (
+                expected_column.default_expression is not null
+                and personal_default.oid is not null
+                and lower(pg_catalog.pg_get_expr(
+                  personal_default.adbin,
+                  personal_default.adrelid,
+                  true
+                )) = expected_column.default_expression
+              )
+            )
+       )
+    )
     and not exists (
       select 1
         from (values

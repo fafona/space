@@ -183,6 +183,19 @@ test("036 is a service-only create/bootstrap layer with no generic binding", () 
   );
   assert.match(readiness, /schemaReady[\s\S]+aclReady/i);
   assert.match(readiness, /merchant\.id <> v_system_site_id/i);
+  for (const column of [
+    "auth_user_id",
+    "personal_account_id",
+    "status",
+    "version",
+    "created_at",
+    "updated_at",
+  ]) {
+    assert.match(
+      readiness,
+      new RegExp(`personal_account\\.${column}\\s+is null`, "i"),
+    );
+  }
   assert.match(
     readiness,
     /personal_account\.personal_account_id::bigint[\s\S]+not between 50010105 and 59999999/i,
@@ -258,6 +271,32 @@ test("036 is a service-only create/bootstrap layer with no generic binding", () 
   );
   assert.match(readiness, /pg_catalog\.pg_index[\s\S]+indkey::smallint\[\]/i);
   assert.match(readiness, /relkind = 'r'[\s\S]+relpersistence = 'p'/i);
+  assert.match(readiness, /count\(\*\) = 6[\s\S]+pg_catalog\.pg_attribute/i);
+  for (const [column, position, type, defaultExpression] of [
+    ["auth_user_id", 1, "uuid", "null::text"],
+    ["personal_account_id", 2, "text", "null::text"],
+    ["status", 3, "text", "'''active''::text'"],
+    ["version", 4, "bigint", "'1'"],
+    ["created_at", 5, "timestamp with time zone", "'now\\(\\)'"],
+    ["updated_at", 6, "timestamp with time zone", "'now\\(\\)'"],
+  ]) {
+    assert.match(
+      readiness,
+      new RegExp(
+        `'${column}'\\s*,\\s*${position}\\s*,\\s*'${type}'::regtype[\\s\\S]+?${defaultExpression}`,
+        "i",
+      ),
+    );
+  }
+  assert.match(readiness, /pg_catalog\.pg_attrdef/i);
+  assert.match(readiness, /attnum = expected_column\.column_position/i);
+  assert.match(readiness, /attname = expected_column\.column_name/i);
+  assert.match(readiness, /atttypid = expected_column\.type_oid/i);
+  assert.match(readiness, /atttypmod = expected_column\.type_modifier/i);
+  assert.match(readiness, /attnotnull = expected_column\.is_not_null/i);
+  assert.match(readiness, /attidentity = ''/i);
+  assert.match(readiness, /attgenerated = ''/i);
+  assert.match(readiness, /not personal_attribute\.attisdropped/i);
   assert.match(readiness, /indpred is null[\s\S]+indexprs is null/i);
   assert.match(readiness, /pg_catalog\.pg_opclass[\s\S]+opcdefault/i);
   assert.match(readiness, /indcollation::oid\[\]/i);
@@ -545,6 +584,15 @@ test("runner and real PostgreSQL acceptance cover independently staged migration
   assert.match(runner, /quote_all_identifiers guard search_path/i);
   assert.match(runner, /semantically different quoted search_path/i);
   assert.match(runner, /same-named fake identity schema objects/i);
+  assert.match(runner, /null-bearing personal rows and exact column-catalog drift/i);
+  assert.match(
+    runner,
+    /alter column auth_user_id drop not null[\s\S]+alter column status drop default[\s\S]+values \(null, null, null, null, null, null\)/i,
+  );
+  assert.match(
+    runner,
+    /invalidCanonicalCount[\s\S]+personal_invalid_before[\s\S]+restored exact personal-account column catalog/i,
+  );
   assert.match(
     runner,
     /establishing the serial enterprise fixtures before the identity hardening stage[\s\S]+10-serial-acceptance\.sql[\s\S]+validating the 035 shadow contract before 036 narrows positive authorization[\s\S]+54-ordinary-account-authorization\.sql/i,
