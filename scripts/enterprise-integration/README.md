@@ -6,10 +6,11 @@ load `.env` files, Supabase credentials, backups, or production data.
 
 Coverage includes:
 
-- `supabase-init.sql`, the shared order/booking and reliable-outbox
-  prerequisites, and enterprise migrations 001-026 plus audit-security
-  migrations 032-034 and the shadow ordinary-account authorization foundation
-  migration 035 in filename order;
+- `supabase-init.sql`, the shared order/booking/coupon and reliable-outbox
+  prerequisites, and enterprise migrations 001-026 plus audit-security and
+  staged ordinary-account migrations 032-036 in filename order; when the
+  separately published 037 file is present, the runner first completes all
+  Stage-2A acceptance/backfill fixtures and only then applies/tests 037;
 - owner bootstrap, roles, employee invitation acceptance, task assignment,
   task update, checklist, comments, notifications, and audit listing;
 - forged-owner, cross-merchant, low-privilege ACL, and role-escalation denial;
@@ -45,12 +46,37 @@ Coverage includes:
   duplicate/divergence and global account-identifier gates, disabled cross-type
   and staff-registry overlap denial, and service-only shadow RPC grants without
   changing current login or RLS paths;
+- service-only, replay-safe merchant/personal bootstrap and create-only explicit
+  IDs, the frozen personal range `50010105`-`59999999`, blocked/reserved/cross-
+  table allocation, disabled-personal immutability, exact `site-main` system-
+  sentinel exclusion without hiding other invalid merchant IDs,
+  strict existing-target conflict denial, complete merchant UUID alias writes,
+  staff/cross-type rejection in both write directions, bound-Auth DELETE
+  rejection, staff-only Auth DELETE allowance, exact SECURITY DEFINER owner /
+  canonical search-path / custom-role function ACL normalization, exact
+  owner-only canonical-table and column ACLs, and catalog-structural readiness
+  checks for unique indexes, constraints, and `ENABLE ALWAYS` triggers;
+- authoritative-readiness-gated removal of email-based owner authorization,
+  mutable metadata/email DoS resistance, conflicting-registry and extra-policy
+  rollback, exact pre/post protected-table ACLs (including custom delegated and
+  known-role extra privileges), exact anonymous home policies, authenticated
+  merchant INSERT/UPDATE denial, true-owner merchant/page/transaction reads,
+  email-forgery and employee-only denial, and preservation of anonymous public
+  merchant-home reads across the RLS cutover, including authenticated ordinary
+  owner denial for the `site-main` system sentinel and for a system-site
+  principal malformed onto any ordinary merchant;
 - two independent `psql` sessions racing the same task, invitation, and
   workflow versions, with exactly one commit and one
   `enterprise_version_conflict` for each race;
 - two concurrent restores competing for the 200th active workflow slot, with
   one commit, one `workflow_limit_reached`, replay-safe success, and no losing
-  idempotency or audit residue.
+  idempotency or audit residue;
+- paired PostgreSQL sessions racing ordinary creation against staff insertion,
+  new ordinary creation against Auth deletion, and idempotent bootstrap against
+  bound-Auth deletion, plus simultaneous ordinary/staff attempts for the
+  system-site principal, with statement/lock timeouts proving no deadlock and
+  postconditions proving no cross-type, system overlap, or orphaned canonical
+  identity.
 
 Run it only against an empty disposable database:
 
