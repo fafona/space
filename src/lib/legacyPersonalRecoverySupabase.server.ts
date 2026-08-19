@@ -51,34 +51,10 @@ type SupabaseServiceClient = {
     functionName: string,
     args?: Record<string, unknown>,
   ) => PromiseLike<{ data: unknown; error: unknown }>;
-  from: (table: string) => {
-    select: (columns: string) => {
-      or: (filter: string) => {
-        limit: (
-          count: number,
-        ) => PromiseLike<{ data: unknown; error: unknown }>;
-      };
-      eq: (column: string, value: string) => {
-        limit: (
-          count: number,
-        ) => PromiseLike<{ data: unknown; error: unknown }>;
-      };
-    };
-  };
 };
 
 const AUTH_LIST_PAGE_SIZE = 200;
 const AUTH_LIST_MAX_PAGES = 100;
-const DIRECTORY_QUERY_LIMIT = 20;
-const MERCHANT_ALIAS_COLUMNS = [
-  "user_id",
-  "auth_user_id",
-  "owner_user_id",
-  "owner_id",
-  "auth_id",
-  "created_by",
-  "created_by_user_id",
-] as const;
 
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -103,17 +79,6 @@ function normalizeAuthUser(value: unknown): LegacyPersonalRecoveryAuthUser {
     appMetadata: record(source?.app_metadata),
     userMetadata: record(source?.user_metadata),
   };
-}
-
-function normalizeRows(value: unknown) {
-  if (!Array.isArray(value) || value.length >= DIRECTORY_QUERY_LIMIT) {
-    upstreamError();
-  }
-  return value.map((item) => {
-    const source = record(item);
-    if (!source) upstreamError();
-    return source;
-  });
 }
 
 async function getAuthUser(
@@ -233,79 +198,10 @@ async function inspectDirectory(
   authUserId: string,
   personalAccountId: string,
 ) {
-  const merchantAliasFilter = MERCHANT_ALIAS_COLUMNS.map(
-    (column) => `${column}.eq.${authUserId}`,
-  ).join(",");
-  const [merchantBindingsResult, staffBindingsResult, employeeBindingsResult, collisionResult, personalResult] =
-    await Promise.all([
-      service
-        .from("merchants")
-        .select(`id,${MERCHANT_ALIAS_COLUMNS.join(",")}`)
-        .or(merchantAliasFilter)
-        .limit(DIRECTORY_QUERY_LIMIT),
-      service
-        .from("merchant_enterprise_staff_identities")
-        .select("auth_user_id")
-        .eq("auth_user_id", authUserId)
-        .limit(DIRECTORY_QUERY_LIMIT),
-      service
-        .from("merchant_enterprise_employees")
-        .select("id")
-        .eq("auth_user_id", authUserId)
-        .limit(DIRECTORY_QUERY_LIMIT),
-      service
-        .from("merchants")
-        .select("id")
-        .eq("id", personalAccountId)
-        .limit(DIRECTORY_QUERY_LIMIT),
-      service
-        .from("faolla_personal_accounts")
-        .select("auth_user_id,personal_account_id,status")
-        .or(
-          `auth_user_id.eq.${authUserId},personal_account_id.eq.${personalAccountId}`,
-        )
-        .limit(DIRECTORY_QUERY_LIMIT),
-    ]);
-  for (const result of [
-    merchantBindingsResult,
-    staffBindingsResult,
-    employeeBindingsResult,
-    collisionResult,
-    personalResult,
-  ]) {
-    if (result.error) upstreamError();
-  }
-
-  const merchantRows = normalizeRows(merchantBindingsResult.data);
-  const staffRows = normalizeRows(staffBindingsResult.data);
-  const employeeRows = normalizeRows(employeeBindingsResult.data);
-  const collisionRows = normalizeRows(collisionResult.data);
-  const personalRows = normalizeRows(personalResult.data);
-  const personalAuthRows = personalRows.filter(
-    (row) => String(row.auth_user_id ?? "").trim().toLowerCase() === authUserId,
-  );
-  const personalIdRows = personalRows.filter(
-    (row) => String(row.personal_account_id ?? "").trim() === personalAccountId,
-  );
-  const exactRows = personalRows.filter(
-    (row) =>
-      String(row.auth_user_id ?? "").trim().toLowerCase() === authUserId &&
-      String(row.personal_account_id ?? "").trim() === personalAccountId &&
-      row.status === "active",
-  );
-
-  return {
-    merchantBindingCount: merchantRows.length,
-    systemSiteBindingCount: merchantRows.filter(
-      (row) => String(row.id ?? "").trim() === "site-main",
-    ).length,
-    staffBindingCount: staffRows.length,
-    employeeBindingCount: employeeRows.length,
-    accountIdentifierCollisionCount: collisionRows.length,
-    personalAuthBindingCount: personalAuthRows.length,
-    personalIdBindingCount: personalIdRows.length,
-    exactCanonicalBindingCount: exactRows.length,
-  };
+  return rpc(service, LEGACY_PERSONAL_RECOVERY_RPC_NAMES.observer, {
+    p_auth_user_id: authUserId,
+    p_personal_account_id: personalAccountId,
+  });
 }
 
 export function createLegacyPersonalRecoveryOtpDependencies(input: {

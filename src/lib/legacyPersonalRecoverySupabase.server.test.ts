@@ -206,36 +206,66 @@ test("Auth pagination derives page ten from total despite the auth-js two-digit 
   );
 });
 
-test("directory inspection fails closed when the employee registry query fails", async () => {
+test("directory inspection uses only the service-only observer even when protected tables return 42501", async () => {
+  const calls: Array<{ functionName: string; args: Record<string, unknown> }> = [];
+  let protectedReadAttempted = false;
+  const observation = {
+    schemaVersion: 1,
+    merchantBindingCount: 0,
+    systemSiteBindingCount: 0,
+    staffBindingCount: 0,
+    employeeBindingCount: 0,
+    accountIdentifierCollisionCount: 0,
+    personalAuthBindingCount: 0,
+    personalIdBindingCount: 0,
+    personalOtherAuthBindingCount: 0,
+    exactCanonicalBindingCount: 0,
+  };
   const service = {
     auth: { admin: {} },
-    from(table: string) {
-      return {
-        select() {
-          const result = {
-            data: [],
-            error:
-              table === "merchant_enterprise_employees"
-                ? new Error("employee registry unavailable")
-                : null,
-          };
-          return {
-            or() {
-              return { async limit() { return result; } };
-            },
-            eq() {
-              return { async limit() { return result; } };
-            },
-          };
-        },
-      };
+    from() {
+      protectedReadAttempted = true;
+      return { error: { code: "42501" } };
+    },
+    async rpc(functionName: string, args: Record<string, unknown>) {
+      calls.push({ functionName, args });
+      return { data: observation, error: null };
     },
   } as unknown as LegacyPersonalRecoverySupabaseServiceClient;
   const dependencies = createLegacyPersonalRecoveryApprovalDependencies(service);
-  await assert.rejects(
-    dependencies.inspectDirectory(AUTH_USER_ID, "50010105"),
-    /legacy_personal_recovery_upstream_unavailable/,
+  assert.deepEqual(
+    await dependencies.inspectDirectory(AUTH_USER_ID, "50010105"),
+    observation,
   );
+  assert.deepEqual(calls, [{
+    functionName: LEGACY_PERSONAL_RECOVERY_RPC_NAMES.observer,
+    args: {
+      p_auth_user_id: AUTH_USER_ID,
+      p_personal_account_id: "50010105",
+    },
+  }]);
+  assert.equal(protectedReadAttempted, false);
+});
+
+test("directory observer transport, PostgREST, and missing-RPC failures are fail-closed", async (t) => {
+  for (const [name, rpc] of [
+    ["transport", async () => { throw new Error("transport"); }],
+    ["42501", async () => ({ data: null, error: { code: "42501" } })],
+    ["missing", async () => ({ data: null, error: { code: "PGRST202" } })],
+  ] as const) {
+    await t.test(name, async () => {
+      const service = {
+        auth: { admin: {} },
+        rpc,
+      } as unknown as LegacyPersonalRecoverySupabaseServiceClient;
+      await assert.rejects(
+        createLegacyPersonalRecoveryApprovalDependencies(
+          service,
+        ).inspectDirectory(AUTH_USER_ID, "50010105"),
+        /legacy_personal_recovery_upstream_unavailable/,
+      );
+    });
+  }
 });
 
 test("create adapter calls only the 036 create-only RPC with server-provided arguments", async () => {
