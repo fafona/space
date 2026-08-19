@@ -61,6 +61,7 @@ test("browser journeys use the lockfile-matched official Playwright image", () =
   assert.match(browser, /actions\/checkout@v5/);
   assert.match(browser, /actions\/setup-node@v5/);
   assert.match(browser, /run:\s*npm ci/);
+  assert.match(browser, /run:\s*npm run build/);
   assert.match(browser, /run:\s*npm run test:enterprise-browser/);
   assert.doesNotMatch(browser, /continue-on-error|playwright install|apt-get/);
   assert.doesNotMatch(workflow, /playwright install --with-deps|apt-get/);
