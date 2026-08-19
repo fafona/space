@@ -99,6 +99,27 @@ const candidateEmailSha256 = createHash("sha256")
 const candidatePersonalAccountId = "50010105";
 const candidateAuthUserId = "11111111-1111-4111-8111-111111111111";
 const unrelatedAuthUserId = "22222222-2222-4222-8222-222222222222";
+const operatorKeyPair = generateKeyPairSync("rsa", { modulusLength: 3072 });
+const operatorPublicKeyPem = operatorKeyPair.publicKey
+  .export({ type: "spki", format: "pem" })
+  .toString();
+const operatorPrivateKeyPem = operatorKeyPair.privateKey
+  .export({ type: "pkcs8", format: "pem" })
+  .toString();
+const operatorPublicKeyPemBase64 = Buffer.from(operatorPublicKeyPem).toString(
+  "base64",
+);
+const unrelatedKeyPair = generateKeyPairSync("rsa", { modulusLength: 3072 });
+const unrelatedPrivateKeyPem = unrelatedKeyPair.privateKey
+  .export({ type: "pkcs8", format: "pem" })
+  .toString();
+const weakKeyPair = generateKeyPairSync("rsa", { modulusLength: 2048 });
+const weakPublicKeyPemBase64 = Buffer.from(
+  weakKeyPair.publicKey.export({ type: "spki", format: "pem" }).toString(),
+).toString("base64");
+const malformedPublicKeyPemBase64 = Buffer.from(
+  "not a public key\n".repeat(20),
+).toString("base64");
 
 function authUser({
   id = candidateAuthUserId,
@@ -232,23 +253,29 @@ function assertOpsError(error, code) {
   return error instanceof LegacyPersonalRecoveryOpsError && error.code === code;
 }
 
-test("workflow is manual, main-only, read-only, serialized, pinned, and ciphertext-only", () => {
+test("workflow is manual, main-only, read-only, repository-key-pinned, and ciphertext-only", () => {
   assert.match(workflow, /^on:\n  workflow_dispatch:/m);
   assert.doesNotMatch(workflow, /^\s+(?:push|pull_request|schedule|workflow_run):/m);
   const inputs = workflow.slice(
     workflow.indexOf("    inputs:"),
     workflow.indexOf("\npermissions:"),
   );
-  assert.match(inputs, /expected_sha:/);
-  assert.match(inputs, /confirmation:/);
-  assert.match(inputs, /operator_public_key_pem:/);
-  assert.doesNotMatch(inputs, /email|personal_account_id|candidate/i);
+  assert.deepEqual(
+    [...inputs.matchAll(/^      ([a-z0-9_]+):$/gm)].map((match) => match[1]),
+    ["expected_sha", "confirmation"],
+  );
+  assert.doesNotMatch(inputs, /email|personal_account_id|candidate|operator|public|key/i);
+  assert.match(
+    workflow,
+    /RECOVERY_OPS_OPERATOR_PUBLIC_KEY_PEM_BASE64: \$\{\{ secrets\.ORDINARY_LEGACY_PERSONAL_RECOVERY_OPERATOR_PUBLIC_KEY_PEM_BASE64 \}\}/,
+  );
+  assert.doesNotMatch(workflow, /inputs\.[^}\n]*(?:operator|public|key)/i);
   assert.match(workflow, /permissions:\n  contents: read/);
   assert.match(workflow, /group: production-deploy/);
   assert.match(workflow, /cancel-in-progress: false/);
   assert.match(workflow, /if: github\.ref == 'refs\/heads\/main'/);
   assert.match(workflow, /timeout-minutes: 10/);
-  assert.match(workflow, /environment: production/);
+  assert.doesNotMatch(workflow, /^\s+environment:/m);
   assert.match(workflow, /persist-credentials: false/);
   assert.match(workflow, /secrets\.SSH_KNOWN_HOSTS/);
   assert.match(workflow, /secrets\.ORDINARY_LEGACY_PERSONAL_RECOVERY_CANDIDATE_EMAIL_SHA256/);
@@ -278,6 +305,25 @@ test("transport and remote wrappers never place candidate secrets in argv or exp
   assert.doesNotMatch(sshBlock, /\$candidate_personal_account_id[^_]/);
   assert.match(transport, /unset RECOVERY_OPS_CANDIDATE_EMAIL_SHA256/);
   assert.match(transport, /unset RECOVERY_OPS_CANDIDATE_PERSONAL_ACCOUNT_ID/);
+  assert.match(transport, /unset RECOVERY_OPS_OPERATOR_PUBLIC_KEY_PEM_BASE64/);
+  const publicKeyValidator = transport.indexOf("if ! node -e '");
+  const firstBase64Process = transport.indexOf('candidate_email_sha256_base64="$(');
+  const sshProcess = transport.indexOf("} | ssh");
+  assert.ok(publicKeyValidator > 0);
+  assert.ok(publicKeyValidator < firstBase64Process);
+  assert.ok(publicKeyValidator < sshProcess);
+  assert.match(
+    transport.slice(publicKeyValidator, firstBase64Process),
+    /asymmetricKeyDetails\?\.modulusLength[\s\S]+modulusLength < 3072/,
+  );
+  assert.match(
+    transport.slice(publicKeyValidator, firstBase64Process),
+    /' <<<"\$operator_public_key_pem_base64" >\/dev\/null 2>&1/,
+  );
+  assert.doesNotMatch(
+    transport.slice(publicKeyValidator, transport.indexOf("\n", publicKeyValidator)),
+    /operator_public_key_pem_base64/,
+  );
   assert.match(transport, /> "\$encrypted_artifact"/);
   assert.match(sshBlock, /2>\/dev\/null/);
   assert.doesNotMatch(transport, /tee\b|GITHUB_OUTPUT|GITHUB_STEP_SUMMARY/);
@@ -314,6 +360,13 @@ test("runbook keeps discovery, secret installation, enablement, and cleanup sepa
   assert.match(runbook, /fresh OTP/i);
   assert.match(runbook, /super-admin/i);
   assert.match(runbook, /immediately delete both temporary candidate secrets/i);
+  assert.match(
+    runbook,
+    /ORDINARY_LEGACY_PERSONAL_RECOVERY_OPERATOR_PUBLIC_KEY_PEM_BASE64/,
+  );
+  assert.match(runbook, /openssl base64 -A[\s\S]+gh secret set/i);
+  assert.match(runbook, /does not use a GitHub Environment as a security boundary/i);
+  assert.match(runbook, /separately reviewed change/i);
   assert.match(runbook, /Mandatory cleanup/);
   assert.match(runbook, /Remove this one-time workflow/);
   assert.match(installer, /\["secret", "set", name, "--repo", repository\]/);
@@ -346,24 +399,24 @@ test("production env parsing accepts only a protected endpoint and exact service
   );
 });
 
-test("generator input is fixed-line stdin and rejects private or malformed keys", () => {
-  const { publicKey, privateKey } = generateKeyPairSync("rsa", {
-    modulusLength: 2048,
-  });
-  const publicPem = publicKey.export({ type: "spki", format: "pem" }).toString();
-  const input = `${RECOVERY_CONFIG_INPUT_MAGIC}\n${candidateEmailSha256}\n${candidatePersonalAccountId}\n${Buffer.from(publicPem).toString("base64")}\n`;
+test("generator input is fixed-line stdin and requires a public RSA-3072 key", () => {
+  const input = `${RECOVERY_CONFIG_INPUT_MAGIC}\n${candidateEmailSha256}\n${candidatePersonalAccountId}\n${operatorPublicKeyPemBase64}\n`;
   assert.deepEqual(parseGeneratorInput(input), {
     emailSha256: candidateEmailSha256,
     personalAccountId: candidatePersonalAccountId,
-    publicKeyPem: publicPem,
+    publicKeyPem: operatorPublicKeyPem,
   });
-  const privatePem = privateKey
-    .export({ type: "pkcs8", format: "pem" })
-    .toString();
   assert.throws(
     () =>
       parseGeneratorInput(
-        `${RECOVERY_CONFIG_INPUT_MAGIC}\n${candidateEmailSha256}\n${candidatePersonalAccountId}\n${Buffer.from(privatePem).toString("base64")}\n`,
+        `${RECOVERY_CONFIG_INPUT_MAGIC}\n${candidateEmailSha256}\n${candidatePersonalAccountId}\n${Buffer.from(operatorPrivateKeyPem).toString("base64")}\n`,
+      ),
+    (error) => assertOpsError(error, "public_key_invalid"),
+  );
+  assert.throws(
+    () =>
+      parseGeneratorInput(
+        `${RECOVERY_CONFIG_INPUT_MAGIC}\n${candidateEmailSha256}\n${candidatePersonalAccountId}\n${weakPublicKeyPemBase64}\n`,
       ),
     (error) => assertOpsError(error, "public_key_invalid"),
   );
@@ -374,7 +427,7 @@ test("generator input is fixed-line stdin and rejects private or malformed keys"
   assert.throws(
     () =>
       parseGeneratorInput(
-        `${RECOVERY_CONFIG_INPUT_MAGIC}\n${candidateEmailSha256}\n50000000\n${Buffer.from(publicPem).toString("base64")}\n`,
+        `${RECOVERY_CONFIG_INPUT_MAGIC}\n${candidateEmailSha256}\n50000000\n${operatorPublicKeyPemBase64}\n`,
       ),
     (error) => assertOpsError(error, "input_invalid"),
   );
@@ -657,10 +710,6 @@ test("discovery performs two stable full observations before returning a UUID", 
 });
 
 test("production generator performs two exact Auth/readiness/resolver/observer passes", async () => {
-  const { publicKey, privateKey } = generateKeyPairSync("rsa", {
-    modulusLength: 2048,
-  });
-  const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
   const calls = [];
   let readinessCall = 0;
   const fetchImpl = async (urlValue, options) => {
@@ -719,7 +768,7 @@ test("production generator performs two exact Auth/readiness/resolver/observer p
     }
     return new Response("{}", { status: 404 });
   };
-  const inputRaw = `${RECOVERY_CONFIG_INPUT_MAGIC}\n${candidateEmailSha256}\n${candidatePersonalAccountId}\n${Buffer.from(publicKeyPem).toString("base64")}\n`;
+  const inputRaw = `${RECOVERY_CONFIG_INPUT_MAGIC}\n${candidateEmailSha256}\n${candidatePersonalAccountId}\n${operatorPublicKeyPemBase64}\n`;
   const envelope = await runGenerator({
     inputRaw,
     envRaw:
@@ -738,10 +787,7 @@ test("production generator performs two exact Auth/readiness/resolver/observer p
     "/rest/v1/rpc/faolla_observe_ordinary_account_recovery_v1": 2,
   });
   assert.ok(calls.every((call) => call.authorization === "Bearer service-role-test-value"));
-  const decrypted = decryptRecoveryConfig(
-    envelope,
-    privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
-  );
+  const decrypted = decryptRecoveryConfig(envelope, operatorPrivateKeyPem);
   assert.equal(JSON.parse(decrypted.caseJson).authUserId, candidateAuthUserId);
 });
 
@@ -820,22 +866,20 @@ test("discovery rejects resolver and every per-target observer conflict", async 
 });
 
 test("envelope contains only hybrid ciphertext and decrypts to exact five-field case plus independent HMAC", () => {
-  const { publicKey, privateKey } = generateKeyPairSync("rsa", {
-    modulusLength: 2048,
-  });
   const envelope = createEncryptedRecoveryConfig({
     authUserId: candidateAuthUserId,
     personalAccountId: candidatePersonalAccountId,
     emailSha256: candidateEmailSha256,
-    publicKeyPem: publicKey.export({ type: "spki", format: "pem" }).toString(),
+    publicKeyPem: operatorPublicKeyPem,
     now: Date.parse("2026-08-19T12:00:00.000Z"),
   });
   assert.equal(envelope.includes(candidateAuthUserId), false);
   assert.equal(envelope.includes(candidateEmailSha256), false);
   assert.equal(envelope.includes(candidatePersonalAccountId), false);
-  const decrypted = decryptRecoveryConfig(
-    envelope,
-    privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+  const decrypted = decryptRecoveryConfig(envelope, operatorPrivateKeyPem);
+  assert.throws(
+    () => decryptRecoveryConfig(envelope, unrelatedPrivateKeyPem),
+    (error) => assertOpsError(error, "encrypted_envelope_invalid"),
   );
   const recoveryCase = JSON.parse(decrypted.caseJson);
   assert.deepEqual(Object.keys(recoveryCase), [
@@ -869,6 +913,7 @@ async function runTransportScenario({
   sshStatus = 0,
   candidateEmailHash = candidateEmailSha256,
   candidatePersonalId = candidatePersonalAccountId,
+  operatorKeyBase64 = operatorPublicKeyPemBase64,
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), "faolla-recovery-ops-transport-"));
   const fakeBin = join(root, "bin");
@@ -883,13 +928,11 @@ async function runTransportScenario({
     import("node:fs/promises").then(({ mkdir }) => mkdir(fakeBin)),
     import("node:fs/promises").then(({ mkdir }) => mkdir(runnerTemp)),
   ]);
-  const { publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
-  const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
   const envelope = createEncryptedRecoveryConfig({
     authUserId: candidateAuthUserId,
     personalAccountId: candidatePersonalAccountId,
     emailSha256: candidateEmailSha256,
-    publicKeyPem,
+    publicKeyPem: operatorPublicKeyPem,
   });
   await Promise.all([
     writeFile(envelopeFile, `${envelope}\n`, { mode: 0o600 }),
@@ -923,7 +966,7 @@ async function runTransportScenario({
     RECOVERY_OPS_EXPECTED_SHA: sha,
     RECOVERY_OPS_CONFIRMATION:
       "GENERATE_LEGACY_PERSONAL_RECOVERY_ENCRYPTED_CONFIG",
-    RECOVERY_OPS_OPERATOR_PUBLIC_KEY_PEM: publicKeyPem,
+    RECOVERY_OPS_OPERATOR_PUBLIC_KEY_PEM_BASE64: operatorKeyBase64,
     RECOVERY_OPS_CANDIDATE_EMAIL_SHA256: candidateEmailHash,
     RECOVERY_OPS_CANDIDATE_PERSONAL_ACCOUNT_ID: candidatePersonalId,
     RECOVERY_OPS_SSH_HOST: "example.test",
@@ -979,6 +1022,8 @@ test("transport behavior confines candidate material to the SSH stdin frame", as
       candidatePersonalAccountId,
       Buffer.from(candidateEmailSha256).toString("base64"),
       Buffer.from(candidatePersonalAccountId).toString("base64"),
+      operatorPublicKeyPem,
+      operatorPublicKeyPemBase64,
     ]) {
       assert.equal(argv.includes(sensitive), false);
       assert.equal(childEnv.includes(sensitive), false);
@@ -991,6 +1036,10 @@ test("transport behavior confines candidate material to the SSH stdin frame", as
     );
     assert.equal(
       scenario.framedInput.includes(Buffer.from(candidatePersonalAccountId)),
+      true,
+    );
+    assert.equal(
+      scenario.framedInput.includes(Buffer.from(operatorPublicKeyPemBase64)),
       true,
     );
     assert.match(argv, /StrictHostKeyChecking=yes/);
@@ -1009,6 +1058,18 @@ test("transport behavior confines candidate material to the SSH stdin frame", as
     ]);
     assert.equal(scenario.result.stderr, "");
     assert.equal((await stat(scenario.artifactPath)).isFile(), true);
+    const decryptedArtifact = decryptRecoveryConfig(
+      artifact,
+      operatorPrivateKeyPem,
+    );
+    assert.equal(
+      JSON.parse(decryptedArtifact.caseJson).authUserId,
+      candidateAuthUserId,
+    );
+    assert.throws(
+      () => decryptRecoveryConfig(artifact, unrelatedPrivateKeyPem),
+      (error) => assertOpsError(error, "encrypted_envelope_invalid"),
+    );
 
     await t.test("failed SSH leaves no artifact and no candidate output", async () => {
       const failed = await runTransportScenario({ sshStatus: 37 });
@@ -1047,20 +1108,40 @@ test("transport behavior confines candidate material to the SSH stdin frame", as
         await rm(failed.root, { recursive: true, force: true });
       }
     });
+
+    for (const [name, operatorKeyBase64, expectedCode] of [
+      ["missing fixed key", "", "required_configuration_missing"],
+      ["malformed fixed key", malformedPublicKeyPemBase64, "public_key_invalid"],
+      ["weak RSA key", weakPublicKeyPemBase64, "public_key_invalid"],
+    ]) {
+      await t.test(`${name} fails before SSH without disclosing the value`, async () => {
+        const failed = await runTransportScenario({ operatorKeyBase64 });
+        try {
+          assert.notEqual(failed.result.status, 0);
+          const failedOutput = `${failed.result.stdout}\n${failed.result.stderr}`;
+          if (operatorKeyBase64) {
+            assert.equal(failedOutput.includes(operatorKeyBase64), false);
+          }
+          assert.match(failedOutput, new RegExp(`result=${expectedCode}`));
+          assert.equal(failed.argv.length, 0);
+          assert.equal(failed.framedInput.length, 0);
+          await assert.rejects(stat(failed.artifactPath), { code: "ENOENT" });
+        } finally {
+          await rm(failed.root, { recursive: true, force: true });
+        }
+      });
+    }
   } finally {
     await rm(scenario.root, { recursive: true, force: true });
   }
 });
 
 test("local installer sends only decrypted values over gh stdin and never enables recovery", () => {
-  const { publicKey, privateKey } = generateKeyPairSync("rsa", {
-    modulusLength: 2048,
-  });
   const envelope = createEncryptedRecoveryConfig({
     authUserId: candidateAuthUserId,
     personalAccountId: candidatePersonalAccountId,
     emailSha256: candidateEmailSha256,
-    publicKeyPem: publicKey.export({ type: "spki", format: "pem" }).toString(),
+    publicKeyPem: operatorPublicKeyPem,
   });
   const calls = [];
   const spawnImpl = (command, args, options) => {
@@ -1069,7 +1150,7 @@ test("local installer sends only decrypted values over gh stdin and never enable
   };
   installRecoverySecrets({
     encryptedEnvelope: envelope,
-    privateKeyPem: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+    privateKeyPem: operatorPrivateKeyPem,
     repository: "owner/repo",
     spawnImpl,
     runtimeEnvironment: {

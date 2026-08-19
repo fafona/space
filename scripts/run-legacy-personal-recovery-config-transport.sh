@@ -17,7 +17,7 @@ required_environment=(
   GITHUB_RUN_ID
   RECOVERY_OPS_EXPECTED_SHA
   RECOVERY_OPS_CONFIRMATION
-  RECOVERY_OPS_OPERATOR_PUBLIC_KEY_PEM
+  RECOVERY_OPS_OPERATOR_PUBLIC_KEY_PEM_BASE64
   RECOVERY_OPS_CANDIDATE_EMAIL_SHA256
   RECOVERY_OPS_CANDIDATE_PERSONAL_ACCOUNT_ID
   RECOVERY_OPS_SSH_HOST
@@ -37,7 +37,7 @@ unset environment_name required_environment
 
 candidate_email_sha256="$RECOVERY_OPS_CANDIDATE_EMAIL_SHA256"
 candidate_personal_account_id="$RECOVERY_OPS_CANDIDATE_PERSONAL_ACCOUNT_ID"
-operator_public_key_pem="$RECOVERY_OPS_OPERATOR_PUBLIC_KEY_PEM"
+operator_public_key_pem_base64="$RECOVERY_OPS_OPERATOR_PUBLIC_KEY_PEM_BASE64"
 expected_sha="$RECOVERY_OPS_EXPECTED_SHA"
 confirmation="$RECOVERY_OPS_CONFIRMATION"
 ssh_host="$RECOVERY_OPS_SSH_HOST"
@@ -53,7 +53,7 @@ github_run_id="$GITHUB_RUN_ID"
 
 unset RECOVERY_OPS_CANDIDATE_EMAIL_SHA256
 unset RECOVERY_OPS_CANDIDATE_PERSONAL_ACCOUNT_ID
-unset RECOVERY_OPS_OPERATOR_PUBLIC_KEY_PEM
+unset RECOVERY_OPS_OPERATOR_PUBLIC_KEY_PEM_BASE64
 unset RECOVERY_OPS_EXPECTED_SHA RECOVERY_OPS_CONFIRMATION
 unset RECOVERY_OPS_SSH_HOST RECOVERY_OPS_SSH_PORT RECOVERY_OPS_SSH_USER
 unset RECOVERY_OPS_APP_DIR RECOVERY_OPS_KNOWN_HOSTS_FILE
@@ -77,11 +77,9 @@ if [ "$candidate_personal_account_number" -lt 50010105 ] \
   fail candidate_input_invalid
 fi
 unset candidate_personal_account_number
-if [ "${#operator_public_key_pem}" -lt 256 ] \
-  || [ "${#operator_public_key_pem}" -gt 16384 ] \
-  || [[ "$operator_public_key_pem" != "-----BEGIN PUBLIC KEY-----"* && \
-        "$operator_public_key_pem" != "-----BEGIN RSA PUBLIC KEY-----"* ]] \
-  || [[ "$operator_public_key_pem" == *"PRIVATE KEY"* ]]; then
+if [ "${#operator_public_key_pem_base64}" -lt 256 ] \
+  || [ "${#operator_public_key_pem_base64}" -gt 24576 ] \
+  || ! [[ "$operator_public_key_pem_base64" =~ ^[A-Za-z0-9+/]+={0,2}$ ]]; then
   fail public_key_invalid
 fi
 if ! [[ "$ssh_port" =~ ^[0-9]{1,5}$ ]] \
@@ -101,9 +99,45 @@ fi
 if [ ! -d "$runner_temp" ] || [ -L "$runner_temp" ]; then
   fail runner_temp_invalid
 fi
+command -v node >/dev/null 2>&1 || fail node_unavailable
+if ! node -e '
+const { createPublicKey } = require("node:crypto");
+const { readFileSync } = require("node:fs");
+try {
+  let encoded = readFileSync(0, "utf8");
+  if (!encoded.endsWith("\n")) process.exit(1);
+  encoded = encoded.slice(0, -1);
+  if (
+    encoded.length < 256 ||
+    encoded.length > 24576 ||
+    !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)
+  ) process.exit(1);
+  const bytes = Buffer.from(encoded, "base64");
+  if (bytes.length < 256 || bytes.length > 16384 || bytes.toString("base64") !== encoded) {
+    bytes.fill(0);
+    process.exit(1);
+  }
+  const pem = bytes.toString("utf8");
+  bytes.fill(0);
+  if (
+    !/^-----BEGIN (?:RSA )?PUBLIC KEY-----\n[\s\S]+\n-----END (?:RSA )?PUBLIC KEY-----\n?$/.test(pem) ||
+    /PRIVATE KEY/.test(pem)
+  ) process.exit(1);
+  const key = createPublicKey(pem);
+  if (
+    key.type !== "public" ||
+    key.asymmetricKeyType !== "rsa" ||
+    !Number.isSafeInteger(key.asymmetricKeyDetails?.modulusLength) ||
+    key.asymmetricKeyDetails.modulusLength < 3072
+  ) process.exit(1);
+} catch {
+  process.exit(1);
+}
+' <<<"$operator_public_key_pem_base64" >/dev/null 2>&1; then
+  fail public_key_invalid
+fi
 command -v ssh >/dev/null 2>&1 || fail ssh_unavailable
 command -v base64 >/dev/null 2>&1 || fail base64_unavailable
-command -v node >/dev/null 2>&1 || fail node_unavailable
 
 encrypted_artifact="$runner_temp/legacy-personal-recovery-config.enc.json"
 artifact_complete=0
@@ -117,9 +151,6 @@ if [ -e "$encrypted_artifact" ] || [ -L "$encrypted_artifact" ]; then
   fail artifact_path_not_empty
 fi
 
-operator_public_key_base64="$(
-  printf '%s' "$operator_public_key_pem" | base64 -w0
-)"
 candidate_email_sha256_base64="$(
   printf '%s' "$candidate_email_sha256" | base64 -w0
 )"
@@ -138,7 +169,7 @@ set +e
   printf '%s\n' "$expected_sha"
   printf '%s\n' "$candidate_email_sha256"
   printf '%s\n' "$candidate_personal_account_id"
-  printf '%s\n' "$operator_public_key_base64"
+  printf '%s\n' "$operator_public_key_pem_base64"
 } | ssh \
   -T \
   -o BatchMode=yes \
@@ -170,14 +201,14 @@ fi
 
 encrypted_artifact_contents="$(<"$encrypted_artifact")"
 case "$encrypted_artifact_contents" in
-  *"$candidate_email_sha256"*|*"$candidate_personal_account_id"*|*"$candidate_email_sha256_base64"*|*"$candidate_personal_account_id_base64"*)
+  *"$candidate_email_sha256"*|*"$candidate_personal_account_id"*|*"$candidate_email_sha256_base64"*|*"$candidate_personal_account_id_base64"*|*"$operator_public_key_pem_base64"*)
     fail plaintext_artifact_forbidden
     ;;
 esac
 
 unset candidate_email_sha256 candidate_personal_account_id
 unset candidate_email_sha256_base64 candidate_personal_account_id_base64
-unset operator_public_key_pem operator_public_key_base64
+unset operator_public_key_pem_base64
 unset encrypted_artifact_contents
 
 if ! node --input-type=module - "$encrypted_artifact" <<'NODE'
