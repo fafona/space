@@ -9,7 +9,9 @@ on:
 
 jobs:
   quality:
+    name: Quality
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
@@ -27,6 +29,9 @@ jobs:
       - name: Install Dependencies
         run: npm ci
 
+      - name: CI Workflow Contract
+        run: node --test scripts/ci-workflow-contract.test.mjs
+
       - name: Encoding Check (Strict)
         run: npm run check:encoding:strict
 
@@ -40,8 +45,30 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Install Browser Test Runtime
-        run: npx playwright install --with-deps chromium
+  browser:
+    name: Enterprise Browser Journeys
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: mcr.microsoft.com/playwright:v1.59.1-noble
+      options: --user 1001
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: dummy-anon-key
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Dependencies
+        run: npm ci
 
       - name: Enterprise Browser Journeys
         run: npm run test:enterprise-browser
