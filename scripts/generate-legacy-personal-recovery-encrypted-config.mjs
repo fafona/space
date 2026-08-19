@@ -295,6 +295,7 @@ export function parseGeneratorInput(raw) {
   ) {
     fail("public_key_invalid");
   }
+  normalizePublicKey(publicKeyPem);
   return { emailSha256, personalAccountId, publicKeyPem };
 }
 
@@ -770,7 +771,7 @@ function normalizePublicKey(publicKeyPem) {
     key.type !== "public" ||
     key.asymmetricKeyType !== "rsa" ||
     !Number.isSafeInteger(key.asymmetricKeyDetails?.modulusLength) ||
-    key.asymmetricKeyDetails.modulusLength < 2048
+    key.asymmetricKeyDetails.modulusLength < 3072
   ) {
     fail("public_key_invalid");
   }
@@ -921,7 +922,7 @@ export function decryptRecoveryConfig(rawEnvelope, privateKeyPem) {
       privateKey.type !== "private" ||
       privateKey.asymmetricKeyType !== "rsa" ||
       !Number.isSafeInteger(privateKey.asymmetricKeyDetails?.modulusLength) ||
-      privateKey.asymmetricKeyDetails.modulusLength < 2048
+      privateKey.asymmetricKeyDetails.modulusLength < 3072
     ) {
       fail("private_key_invalid");
     }

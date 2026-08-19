@@ -13,10 +13,6 @@ on:
         description: Type GENERATE_LEGACY_PERSONAL_RECOVERY_ENCRYPTED_CONFIG
         required: true
         type: string
-      operator_public_key_pem:
-        description: Ephemeral RSA public key PEM; keep the private key local
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -30,7 +26,6 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    environment: production
 
     steps:
       - name: Checkout Exact Main Commit
@@ -78,7 +73,7 @@ jobs:
         env:
           RECOVERY_OPS_EXPECTED_SHA: ${{ inputs.expected_sha }}
           RECOVERY_OPS_CONFIRMATION: ${{ inputs.confirmation }}
-          RECOVERY_OPS_OPERATOR_PUBLIC_KEY_PEM: ${{ inputs.operator_public_key_pem }}
+          RECOVERY_OPS_OPERATOR_PUBLIC_KEY_PEM_BASE64: ${{ secrets.ORDINARY_LEGACY_PERSONAL_RECOVERY_OPERATOR_PUBLIC_KEY_PEM_BASE64 }}
           RECOVERY_OPS_CANDIDATE_EMAIL_SHA256: ${{ secrets.ORDINARY_LEGACY_PERSONAL_RECOVERY_CANDIDATE_EMAIL_SHA256 }}
           RECOVERY_OPS_CANDIDATE_PERSONAL_ACCOUNT_ID: ${{ secrets.ORDINARY_LEGACY_PERSONAL_RECOVERY_CANDIDATE_PERSONAL_ACCOUNT_ID }}
           RECOVERY_OPS_SSH_HOST: ${{ secrets.SSH_HOST }}
