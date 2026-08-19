@@ -198,6 +198,15 @@ test("readiness reports aggregate merchant, personal metadata, and staff-overlap
     readiness,
     /app_account_type is distinct from[\s\S]+user_account_type[\s\S]+app_personal_id is distinct from[\s\S]+user_personal_id/i,
   );
+  for (const personalIdAlias of ["app_personal_id", "user_personal_id"]) {
+    assert.match(
+      readiness,
+      new RegExp(
+        `nullif\\(translate\\(coalesce\\([\\s\\S]+?\\),\\s*auth_metadata\\.js_trim_chars,\\s*''\\),\\s*''\\)\\s+as\\s+${personalIdAlias}`,
+        "i",
+      ),
+    );
+  }
   assert.match(
     readiness,
     /join public\.merchant_enterprise_staff_identities as staff_identity[\s\S]+'staffRegistryOverlapCount'/i,

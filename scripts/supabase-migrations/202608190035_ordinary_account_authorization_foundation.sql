@@ -673,7 +673,7 @@ begin
             then auth_metadata.user_account_id
           else null
         end
-      ), auth_metadata.js_trim_chars, '') as user_personal_id,
+      ), auth_metadata.js_trim_chars, ''), '') as user_personal_id,
       case
         when auth_metadata.legacy_account_type = 'personal' then
           nullif(translate(
