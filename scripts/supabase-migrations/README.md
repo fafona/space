@@ -109,11 +109,25 @@ It also installs exact restrictive authenticated INSERT and UPDATE policies
 for `site-main`. They close both the missing-sentinel recreation window and the
 legacy-RLS reattachment window while retaining ordinary merchant writes and
 privileged `service_role` BYPASSRLS operations. Email fallback reads remain
-until the later behavior cutover. Migration 038 must include both isolation
+until the later behavior cutover. Migration 039 must include both isolation
 policies in its exact preflight allowlist and explicitly remove or preserve
 them in its post-cutover policy catalog.
 
-The separately published migration `202608190038` is the irreversible behavior
+Migration `202608190038` adds one read-only recovery observer,
+`faolla_observe_ordinary_account_recovery_v1(uuid,text)`. It is a
+`service_role`-only `SECURITY DEFINER` bridge for the supervised legacy
+personal-account recovery case. For one fixed Auth UUID and one exact eight-
+digit personal ID, it returns only a versioned envelope of aggregate counts for
+non-system merchant aliases, `site-main`, staff/employee bindings, merchant-ID
+collision, target personal binding, another Auth UUID claiming the same
+personal ID, and the exact active canonical row. It returns no UUID, email,
+account ID, or metadata, performs no identity write, and leaves all source-
+table ACLs unchanged. Runtime schema/ACL readiness and exact 035/036/037
+prerequisites fail closed. This observer exists only to pre-prove the fixed
+recovery target before the existing 036 create-only RPC performs its atomic
+collision checks; it is not a generic bind or repair operation.
+
+The separately published migration `202608190039` is the irreversible behavior
 cutover stage. Apply it only after 036 and 037 are deployed, production
 canonical bindings are backfilled, the
 application has stopped every metadata/email authorization and allocator path,
@@ -146,10 +160,13 @@ applies through the newest migration in the deployed revision:
    back up, and apply 036.
 2. PR-B adds migration 037 and its isolation acceptance/contract. Deploy, back
    up, apply 037, and require the system-site overlap count to be zero.
-3. Perform the controlled canonical backfill, then deploy the application
+3. PR-C adds the service-only recovery observer 038. Deploy, back up, apply
+   038, and complete the one supervised legacy personal recovery without any
+   direct read grant on the protected identity tables.
+4. Perform the remaining controlled canonical backfill, then deploy the application
    positive-resolver cutover. Require authoritative readiness to be true.
-4. PR-C adds migration 038 and its cutover acceptance/contract. Deploy, back
-   up, and apply 038 manually. Never publish the behavior cutover before the
+5. PR-D adds migration 039 and its cutover acceptance/contract. Deploy, back
+   up, and apply 039 manually. Never publish the behavior cutover before the
    intervening isolation, backfill, and application gates pass.
 
 After applying a migration, verify it with:

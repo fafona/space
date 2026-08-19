@@ -35,6 +35,8 @@ const RESOLVE_AUTHORIZATION_RPC =
   "faolla_resolve_ordinary_account_authorization_v1";
 const AUTHORITATIVE_READINESS_RPC =
   "faolla_get_ordinary_account_authoritative_cutover_readiness_v1";
+const RECOVERY_OBSERVER_RPC =
+  "faolla_observe_ordinary_account_recovery_v1";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CASE_ID_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
@@ -147,6 +149,7 @@ export type OrdinaryAuthoritativeReadiness = {
 };
 
 export type LegacyPersonalRecoveryDirectoryObservation = {
+  schemaVersion: 1;
   merchantBindingCount: number;
   systemSiteBindingCount: number;
   staffBindingCount: number;
@@ -154,6 +157,7 @@ export type LegacyPersonalRecoveryDirectoryObservation = {
   accountIdentifierCollisionCount: number;
   personalAuthBindingCount: number;
   personalIdBindingCount: number;
+  personalOtherAuthBindingCount: number;
   exactCanonicalBindingCount: number;
 };
 
@@ -1172,6 +1176,7 @@ function normalizeDirectoryObservation(
   value: unknown,
 ): LegacyPersonalRecoveryDirectoryObservation {
   const source = exactRecord(value, [
+    "schemaVersion",
     "merchantBindingCount",
     "systemSiteBindingCount",
     "staffBindingCount",
@@ -1179,9 +1184,17 @@ function normalizeDirectoryObservation(
     "accountIdentifierCollisionCount",
     "personalAuthBindingCount",
     "personalIdBindingCount",
+    "personalOtherAuthBindingCount",
     "exactCanonicalBindingCount",
   ]);
+  if (source.schemaVersion !== 1) {
+    throw new LegacyPersonalRecoveryError(
+      "legacy_personal_recovery_upstream_unavailable",
+      503,
+    );
+  }
   const observation = {
+    schemaVersion: 1 as const,
     merchantBindingCount: normalizeNonnegativeInteger(
       source.merchantBindingCount,
     ),
@@ -1201,15 +1214,23 @@ function normalizeDirectoryObservation(
     personalIdBindingCount: normalizeNonnegativeInteger(
       source.personalIdBindingCount,
     ),
+    personalOtherAuthBindingCount: normalizeNonnegativeInteger(
+      source.personalOtherAuthBindingCount,
+    ),
     exactCanonicalBindingCount: normalizeNonnegativeInteger(
       source.exactCanonicalBindingCount,
     ),
   };
   if (
-    observation.systemSiteBindingCount > observation.merchantBindingCount ||
+    observation.personalOtherAuthBindingCount >
+      observation.personalIdBindingCount ||
     observation.exactCanonicalBindingCount >
       observation.personalAuthBindingCount ||
-    observation.exactCanonicalBindingCount > observation.personalIdBindingCount
+    observation.exactCanonicalBindingCount >
+      observation.personalIdBindingCount ||
+    observation.exactCanonicalBindingCount +
+        observation.personalOtherAuthBindingCount >
+      observation.personalIdBindingCount
   ) {
     throw new LegacyPersonalRecoveryError(
       "legacy_personal_recovery_upstream_unavailable",
@@ -1404,9 +1425,11 @@ function assertDirectorySafe(
     mode === "unbound"
       ? directory.personalAuthBindingCount !== 0 ||
         directory.personalIdBindingCount !== 0 ||
+        directory.personalOtherAuthBindingCount !== 0 ||
         directory.exactCanonicalBindingCount !== 0
       : directory.personalAuthBindingCount !== 1 ||
         directory.personalIdBindingCount !== 1 ||
+        directory.personalOtherAuthBindingCount !== 0 ||
         directory.exactCanonicalBindingCount !== 1;
   if (commonConflict || personalConflict) {
     throw new LegacyPersonalRecoveryError(
@@ -1837,4 +1860,5 @@ export const LEGACY_PERSONAL_RECOVERY_RPC_NAMES = {
   create: CREATE_AUTHORIZATION_RPC,
   resolve: RESOLVE_AUTHORIZATION_RPC,
   readiness: AUTHORITATIVE_READINESS_RPC,
+  observer: RECOVERY_OBSERVER_RPC,
 } as const;

@@ -127,6 +127,7 @@ function resolvedAuthorization() {
 
 function directory(bound: boolean) {
   return {
+    schemaVersion: 1 as const,
     merchantBindingCount: 0,
     systemSiteBindingCount: 0,
     staffBindingCount: 0,
@@ -134,6 +135,7 @@ function directory(bound: boolean) {
     accountIdentifierCollisionCount: 0,
     personalAuthBindingCount: bound ? 1 : 0,
     personalIdBindingCount: bound ? 1 : 0,
+    personalOtherAuthBindingCount: 0,
     exactCanonicalBindingCount: bound ? 1 : 0,
   };
 }
@@ -865,10 +867,14 @@ test("approval fails closed for merchant, staff, site-main, ID, and personal dir
     ["merchant", { merchantBindingCount: 1 }],
     ["staff", { staffBindingCount: 1 }],
     ["employee", { employeeBindingCount: 1 }],
-    ["site-main", { merchantBindingCount: 1, systemSiteBindingCount: 1 }],
+    ["site-main", { systemSiteBindingCount: 1 }],
     ["identifier", { accountIdentifierCollisionCount: 1 }],
     ["personal auth", { personalAuthBindingCount: 1 }],
     ["personal id", { personalIdBindingCount: 1 }],
+    ["other personal claimant", {
+      personalIdBindingCount: 1,
+      personalOtherAuthBindingCount: 1,
+    }],
   ];
   for (const [name, conflict] of cases) {
     await t.test(name, async () => {
@@ -879,6 +885,33 @@ test("approval fails closed for merchant, staff, site-main, ID, and personal dir
         approveLegacyPersonalRecovery(recoveryCase, fixture.dependencies),
         (error) =>
           errorCode(error) === "legacy_personal_recovery_directory_conflict",
+      );
+      assert.equal(fixture.createCalls(), 0);
+    });
+  }
+});
+
+test("approval rejects malformed recovery-observer envelopes before mutation", async (t) => {
+  const malformed = [
+    { ...directory(false), schemaVersion: 2 },
+    { ...directory(false), unexpected: 0 },
+    { ...directory(false), personalOtherAuthBindingCount: -1 },
+    {
+      ...directory(false),
+      personalIdBindingCount: 0,
+      personalOtherAuthBindingCount: 1,
+    },
+  ];
+  for (const [index, observation] of malformed.entries()) {
+    await t.test(String(index), async () => {
+      const user = consistentUser();
+      const recoveryCase = await addVerifiedMarker(user);
+      const fixture = approvalFixture(user);
+      fixture.dependencies.inspectDirectory = async () => observation;
+      await assert.rejects(
+        approveLegacyPersonalRecovery(recoveryCase, fixture.dependencies),
+        (error) =>
+          errorCode(error) === "legacy_personal_recovery_upstream_unavailable",
       );
       assert.equal(fixture.createCalls(), 0);
     });

@@ -75,20 +75,31 @@ run_sql_file "${REPOSITORY_ROOT}/scripts/supabase-migrations/202607250008_scoped
 
 mapfile -t enterprise_migrations < <(
   find "${REPOSITORY_ROOT}/scripts/supabase-migrations" -maxdepth 1 -type f \
-    \( -name '*_merchant_enterprise_*.sql' -o -name '*_merchant_order_task_link.sql' -o -name '*_ordinary_account_authorization_*.sql' -o -name '*_ordinary_account_system_site_principal_isolation.sql' \) \
+    \( -name '*_merchant_enterprise_*.sql' -o -name '*_merchant_order_task_link.sql' -o -name '*_ordinary_account_authorization_*.sql' -o -name '*_ordinary_account_system_site_principal_isolation.sql' -o -name '*_ordinary_account_recovery_observer.sql' \) \
     -print | sort
 )
 
 isolation_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations/202608190037_ordinary_account_system_site_principal_isolation.sql"
+recovery_observer_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations/202608190038_ordinary_account_recovery_observer.sql"
 cutover_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations/202608190037_ordinary_account_authorization_cutover.sql"
 expected_enterprise_migration_count=31
 expected_registry_count=36
 isolation_present=0
+recovery_observer_present=0
 cutover_present=0
 if [[ -f "${isolation_migration_path}" ]]; then
   expected_enterprise_migration_count=32
   expected_registry_count=37
   isolation_present=1
+fi
+if [[ -f "${recovery_observer_migration_path}" ]]; then
+  if [[ "${isolation_present}" -ne 1 ]]; then
+    echo 'Recovery observer 038 requires the exact 037 isolation migration' >&2
+    exit 1
+  fi
+  expected_enterprise_migration_count=$((expected_enterprise_migration_count + 1))
+  expected_registry_count=38
+  recovery_observer_present=1
 fi
 if [[ -f "${cutover_migration_path}" ]]; then
   if [[ "${isolation_present}" -eq 1 ]]; then
@@ -101,7 +112,7 @@ if [[ -f "${cutover_migration_path}" ]]; then
 fi
 
 if [[ "${#enterprise_migrations[@]}" -ne "${expected_enterprise_migration_count}" ]]; then
-  echo "Expected ${expected_enterprise_migration_count} enterprise/identity migrations (001-026 plus staged 032-036/037), found ${#enterprise_migrations[@]}" >&2
+  echo "Expected ${expected_enterprise_migration_count} enterprise/identity migrations (001-026 plus staged 032-038), found ${#enterprise_migrations[@]}" >&2
   printf '  %s\n' "${enterprise_migrations[@]}" >&2
   exit 1
 fi
@@ -390,6 +401,38 @@ for migration in "${enterprise_migrations[@]}"; do
       "insert into public.merchants(id, name, email, owner_user_id) values ('site-main', 'Platform system site', 'owner-a@example.test', 'd3500000-0000-4000-8000-000000000003'::uuid);"
     isolation_absent_site_retry_verified=1
   elif [[ "$(basename -- "${migration}")" == \
+    "202608190038_ordinary_account_recovery_observer.sql" ]]; then
+    echo '[enterprise-integration] rejecting a conflicting 038 recovery-observer registry name'
+    run_psql --command \
+      "insert into public.faolla_schema_migrations(version, name) values (202608190038, 'redteam_wrong_038');"
+    expect_sql_file_error "${migration}" \
+      'ordinary_account_recovery_observer_registry_conflict'
+    recovery_observer_registry_conflict_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select count(*) = 1 and to_regprocedure('public.faolla_observe_ordinary_account_recovery_v1(uuid,text)') is null from public.faolla_schema_migrations where version = 202608190038 and name = 'redteam_wrong_038';"
+    )"
+    if [[ "${recovery_observer_registry_conflict_state}" != 't' ]]; then
+      echo '038 recovery observer registry conflict changed function or registry state' >&2
+      exit 1
+    fi
+    run_psql --command \
+      "delete from public.faolla_schema_migrations where version = 202608190038 and name = 'redteam_wrong_038';"
+
+    run_sql_file "${migration}"
+
+    echo '[enterprise-integration] retrying unregistered 038 after custom delegated grants'
+    run_psql --command \
+      "grant execute on function public.faolla_observe_ordinary_account_recovery_v1(uuid,text) to redteam_custom_api with grant option; set role redteam_custom_api; grant execute on function public.faolla_observe_ordinary_account_recovery_v1(uuid,text) to redteam_custom_child; reset role; delete from public.faolla_schema_migrations where version = 202608190038 and name = 'ordinary_account_recovery_observer';"
+    PGOPTIONS="${PGOPTIONS} -c quote_all_identifiers=on" run_sql_file "${migration}"
+    recovery_observer_retry_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select count(*) = 1 and has_function_privilege('service_role', 'public.faolla_observe_ordinary_account_recovery_v1(uuid,text)', 'EXECUTE') and not has_function_privilege('anon', 'public.faolla_observe_ordinary_account_recovery_v1(uuid,text)', 'EXECUTE') and not has_function_privilege('authenticated', 'public.faolla_observe_ordinary_account_recovery_v1(uuid,text)', 'EXECUTE') and not has_function_privilege('redteam_custom_api', 'public.faolla_observe_ordinary_account_recovery_v1(uuid,text)', 'EXECUTE') and not has_function_privilege('redteam_custom_child', 'public.faolla_observe_ordinary_account_recovery_v1(uuid,text)', 'EXECUTE') from public.faolla_schema_migrations where version = 202608190038 and name = 'ordinary_account_recovery_observer';"
+    )"
+    if [[ "${recovery_observer_retry_state}" != 't' ]]; then
+      echo '038 recovery observer retry retained a non-service function grant' >&2
+      exit 1
+    fi
+  elif [[ "$(basename -- "${migration}")" == \
     "202608190037_ordinary_account_authorization_cutover.sql" ]]; then
     echo '[enterprise-integration] running all pre-cutover acceptance before 037 exists in the registry'
     run_pre_cutover_acceptance
@@ -535,7 +578,7 @@ fi
 
 registry_count="$(
   run_psql --tuples-only --no-align --command \
-    "select count(*) from public.faolla_schema_migrations where version in (202607250001, 202607250004, 202607250005, 202607250007, 202607250008, 202608180032, 202608190033, 202608190034, 202608190035, 202608190036, 202608190037) or version between 202607310001 and 202608040026;"
+    "select count(*) from public.faolla_schema_migrations where version in (202607250001, 202607250004, 202607250005, 202607250007, 202607250008, 202608180032, 202608190033, 202608190034, 202608190035, 202608190036, 202608190037, 202608190038) or version between 202607310001 and 202608040026;"
 )"
 if [[ "${registry_count}" -ne "${expected_registry_count}" ]]; then
   echo "Expected ${expected_registry_count} applied prerequisite/enterprise/identity versions, found ${registry_count}" >&2
@@ -556,6 +599,9 @@ if [[ "${isolation_present}" -eq 1 ]]; then
   fi
   PGOPTIONS="${PGOPTIONS} -c enterprise_integration.system_site_retry_updated_at_unchanged=true -c enterprise_integration.system_site_absent_retry_verified=true" \
     run_sql_file "${SCRIPT_DIR}/59-ordinary-account-system-site-principal-isolation.sql"
+  if [[ "${recovery_observer_present}" -eq 1 ]]; then
+    run_sql_file "${SCRIPT_DIR}/60-ordinary-account-recovery-observer.sql"
+  fi
   echo '[enterprise-integration] restoring serial and system-site race fixtures after isolation acceptance'
   run_psql --command \
     "update public.merchants set user_id = '10000000-0000-4000-8000-000000000001'::uuid, auth_user_id = '10000000-0000-4000-8000-000000000001'::uuid, owner_user_id = '10000000-0000-4000-8000-000000000001'::uuid, owner_id = '10000000-0000-4000-8000-000000000001'::uuid, auth_id = '10000000-0000-4000-8000-000000000001'::uuid, created_by = '10000000-0000-4000-8000-000000000001'::uuid, created_by_user_id = '10000000-0000-4000-8000-000000000001'::uuid where id = '10000001'; update public.merchants set user_id = 'd3500000-0000-4000-8000-000000000001'::uuid where id = 'site-main';"
